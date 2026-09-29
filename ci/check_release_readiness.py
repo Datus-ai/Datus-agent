@@ -15,6 +15,7 @@ import subprocess
 import sys
 import tomllib
 import urllib.request
+from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Iterable
@@ -52,13 +53,24 @@ def read_pyproject_version(repo_root: Path) -> Version:
 
 
 def parse_dependency_list(requirement_lines: Iterable[str]) -> dict[str, Requirement]:
-    requirements: dict[str, Requirement] = {}
+    parsed: list[Requirement] = []
     for raw_line in requirement_lines:
         line = raw_line.strip()
         if not line or line.startswith("#"):
             continue
-        requirement = Requirement(line)
-        requirements[canonicalize_name(requirement.name)] = requirement
+        parsed.append(Requirement(line))
+
+    # A package pinned per environment (`pandas==2.1.4; python_version < "3.13"`
+    # plus a second line) is keyed by name and marker, so each line is compared
+    # with its twin instead of the last one silently replacing the others.
+    counts = Counter(canonicalize_name(requirement.name) for requirement in parsed)
+    requirements: dict[str, Requirement] = {}
+    for requirement in parsed:
+        name = canonicalize_name(requirement.name)
+        key = f"{name}; {requirement.marker}" if counts[name] > 1 else name
+        if key in requirements:
+            raise ValueError(f"{requirement.name} is listed more than once with the same marker: {key}")
+        requirements[key] = requirement
     return requirements
 
 

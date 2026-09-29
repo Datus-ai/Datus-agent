@@ -13,7 +13,9 @@ import csv
 import hashlib
 import inspect
 import io
+import itertools
 import json
+import secrets
 from collections import OrderedDict
 from copy import copy
 from pathlib import Path
@@ -51,6 +53,7 @@ from datus.tools.semantic_tools.registry import semantic_adapter_registry
 from datus.utils.compress_utils import DataCompressor
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
+from datus.utils.mcp_decorators import mcp_tool, mcp_tool_class
 
 logger = get_logger(__name__)
 
@@ -442,6 +445,10 @@ def _run_async(coro):
     return run_async(coro)
 
 
+@mcp_tool_class(
+    name="semantic_tool",
+    availability_property="has_semantic_tools",
+)
 class SemanticTools:
     """Function tool wrapper for semantic layer operations."""
 
@@ -459,6 +466,32 @@ class SemanticTools:
             "validate_semantic",
             "attribution_analyze",
         ]
+
+    @classmethod
+    def create_dynamic(cls, agent_config: AgentConfig, sub_agent_name: Optional[str] = None) -> "SemanticTools":
+        """Create a SemanticTools instance for dynamic MCP mode.
+
+        Resolves the adapter the way the agent nodes do
+        (``resolve_semantic_adapter_type``), so an MCP client sees the same
+        semantic layer a node's model would.
+        """
+        from datus.agent.node.semantic_authoring import resolve_semantic_adapter_type
+
+        return cls(
+            agent_config,
+            sub_agent_name=sub_agent_name,
+            adapter_type=resolve_semantic_adapter_type(agent_config),
+        )
+
+    @classmethod
+    def create_static(
+        cls,
+        agent_config: AgentConfig,
+        sub_agent_name: Optional[str] = None,
+        database_name: Optional[str] = None,
+    ) -> "SemanticTools":
+        """Create a SemanticTools instance for static MCP mode (``database_name`` is unused)."""
+        return cls.create_dynamic(agent_config, sub_agent_name=sub_agent_name)
 
     def __init__(
         self,
@@ -509,7 +542,6 @@ class SemanticTools:
             token_threshold=METRIC_RESULT_TOKEN_BUDGET,
         )
         self._query_metrics_result_cache: OrderedDict[str, dict] = OrderedDict()
-        self._query_metrics_result_cache_counter = 0
 
         # Lazy load adapter and attribution tool
         self._adapter: Optional[BaseSemanticAdapter] = None
@@ -566,12 +598,19 @@ class SemanticTools:
         if not full_csv:
             return None
 
-        self._query_metrics_result_cache_counter += 1
-        cache_key = f"query_metrics:{self._query_metrics_result_cache_counter}"
+        # Random, not a counter: ``get_query_metrics_result`` hands a cached result
+        # to whoever names its key, and on the agent's dynamic MCP server one
+        # instance serves every client of a datasource.
+        cache_key = f"query_metrics:{secrets.token_urlsafe(12)}"
         self._query_metrics_result_cache[cache_key] = {
             "columns": list(columns),
             "csv": full_csv,
             "row_count": self._query_data_row_count(data),
+            # The rows themselves, for ``get_query_metrics_result`` to slice a page
+            # out of: re-parsing ``csv`` would cost every row before the offset and
+            # trip ``csv.field_size_limit`` on a large cell. The compressor copies
+            # before it changes anything, so this is still the full result.
+            "data": data,
         }
         while len(self._query_metrics_result_cache) > self.MAX_QUERY_METRICS_RESULT_CACHE_SIZE:
             self._query_metrics_result_cache.popitem(last=False)
@@ -579,6 +618,65 @@ class SemanticTools:
 
     def get_cached_query_metrics_result(self, cache_key: str) -> Optional[dict]:
         return self._query_metrics_result_cache.get(cache_key)
+
+    # One page has to fit an MCP response; the cached result is bounded only by the query.
+    MAX_QUERY_METRICS_RESULT_PAGE = 1000
+
+    # MCP only, deliberately not in ``available_tools``: a node's model is told the
+    # full result is used for its final output, and paging it into the context
+    # would be the opposite of the compression.
+    @mcp_tool(availability_check="has_semantic_adapter")
+    def get_query_metrics_result(self, result_id: str, offset: int = 0, limit: int = 500) -> FuncToolResult:
+        """
+        Read the full rows behind a ``query_metrics`` result, one page at a time.
+
+        ``query_metrics`` returns a compressed preview in ``data`` and, for a real
+        (non-dry-run) query, a ``result_id`` naming the complete result it kept.
+        Use this when the preview is not enough. It runs no query, and only knows
+        results that ``query_metrics`` returned to this caller.
+
+        Args:
+            result_id: The ``result_id`` an earlier ``query_metrics`` call returned.
+            offset: Index of the first row to return, 0-based.
+            limit: Maximum number of rows to return, at most 1000.
+
+        Returns:
+            result = {"result_id", "columns", "csv" (header plus this page's rows),
+            "row_count" (rows in the whole result), "offset", "returned", "has_more"}
+        """
+        result_id = str(result_id or "").strip()
+        cached = self.get_cached_query_metrics_result(result_id)
+        if cached is None:
+            return FuncToolResult(success=0, error=f"Unknown or expired query_metrics result_id: {result_id}")
+        offset = max(int(offset or 0), 0)
+        limit = min(max(int(limit or 0), 1), self.MAX_QUERY_METRICS_RESULT_PAGE)
+
+        # Serialized with the same writer as the full ``csv``, so a page reads
+        # exactly like the matching rows of it.
+        page = self._slice_query_data(cached["data"], offset, limit)
+        returned = self._query_data_row_count(page)
+        return FuncToolResult(
+            result={
+                "result_id": result_id,
+                "columns": list(cached["columns"]),
+                "csv": self._query_data_to_csv(list(cached["columns"]), page),
+                "row_count": cached["row_count"],
+                "offset": offset,
+                "returned": returned,
+                "has_more": offset + returned < cached["row_count"],
+            }
+        )
+
+    @staticmethod
+    def _slice_query_data(data: Any, offset: int, limit: int) -> Any:
+        """Rows ``[offset, offset + limit)`` of a query result, in its own shape."""
+        if hasattr(data, "num_rows") and callable(getattr(data, "slice", None)):  # pyarrow.Table
+            return data.slice(offset, limit)
+        if hasattr(data, "iloc"):  # pandas.DataFrame
+            return data.iloc[offset : offset + limit]
+        if isinstance(data, (list, tuple)):
+            return data[offset : offset + limit]
+        return list(itertools.islice(data, offset, offset + limit))
 
     @staticmethod
     def _drop_compiled_sql(metadata: dict) -> dict:
@@ -664,6 +762,11 @@ class SemanticTools:
     def _metric_catalog_paging(self) -> Tuple[int, int]:
         """Page size and page cap for adapter catalog scans, from the adapter's config."""
         return metric_catalog_paging(self.agent_config, self.adapter_type)
+
+    @property
+    def has_semantic_adapter(self) -> bool:
+        """Whether a semantic adapter is configured — the same gate ``available_tools`` uses."""
+        return bool(self._configured_adapter_type())
 
     def _configured_adapter_type(self) -> Optional[str]:
         """Return the configured adapter type without instantiating the adapter."""
@@ -991,6 +1094,7 @@ class SemanticTools:
             trans_to_function_tool(self.attribution_analyze),
         ]
 
+    @mcp_tool(availability_check="has_semantic_adapter")
     def list_metrics(
         self,
         path: Optional[List[str]] = None,
@@ -1160,6 +1264,7 @@ class SemanticTools:
         )
         return None
 
+    @mcp_tool(availability_check="has_semantic_adapter")
     def get_metric(
         self,
         name: str,
@@ -1281,6 +1386,7 @@ class SemanticTools:
 
     # Dosi binding names come from metric declarations and require an open schema.
     @tool_schema(strict_mode=False)
+    @mcp_tool(availability_check="has_semantic_adapter")
     def query_metrics(
         self,
         metrics: List[str],
@@ -1500,6 +1606,7 @@ class SemanticTools:
                 error=f"Failed to query metrics: {str(e)}",
             )
 
+    @mcp_tool(availability_check="has_semantic_adapter")
     def validate_semantic(
         self,
         scope: Literal["all", "semantic_model"] = "all",
@@ -1699,6 +1806,7 @@ class SemanticTools:
 
     # Dosi parameter names come from metric declarations and require an open schema.
     @tool_schema(strict_mode=False)
+    @mcp_tool(availability_check="has_semantic_adapter")
     def attribution_analyze(
         self,
         metric_name: str,

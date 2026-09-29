@@ -365,6 +365,16 @@ class SubAgentTaskTool:
 
     # ── node creation ─────────────────────────────────────────────────
 
+    def _nest_session(self, node, parent_session_id: str) -> None:
+        """Store the subagent's session under the main session, in the user's scope.
+
+        Path: ``{sessions_dir}/{user_scope}/{parent_session_id}/{subagent_session_id}.db``.
+        """
+        if not hasattr(node, "relocate_session"):
+            node.session_subdir = parent_session_id
+            return
+        node.relocate_session(scope=getattr(self._parent_node, "scope", None), session_subdir=parent_session_id)
+
     def _create_node(self, subagent_type: str, session_id: Optional[str] = None):
         """Create a new AgenticNode instance for the given subagent type.
 
@@ -781,12 +791,13 @@ class SubAgentTaskTool:
             if isinstance(parent_sid, str) and parent_sid:
                 try:
                     SessionManager._validate_session_id(parent_sid)
-                    node.session_subdir = parent_sid
                 except ValueError:
                     logger.warning(
                         "Parent session_id %r failed validation; falling back to flat layout",
                         parent_sid,
                     )
+                else:
+                    self._nest_session(node, parent_sid)
 
             # Verify the .db file actually exists after session_subdir is wired up
             # — session_manager resolves the nested directory layout per

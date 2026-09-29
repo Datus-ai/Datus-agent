@@ -184,12 +184,65 @@ class TestGlobalToolRegistry:
 
     def test_all_tools_have_docstrings(self):
         """All MCP tools must have docstrings (used as tool descriptions)."""
-        from datus.tools.func_tool.context_search import ContextSearchTools
+        import datus.mcp_server  # noqa: F401  (import registers every tool class)
+
+        for tool_config in get_tool_registry():
+            for name, method, _config in get_mcp_tools(tool_config.tool_class):
+                assert method.__doc__, f"{tool_config.tool_class.__name__}.{name} is missing a docstring"
+
+    @pytest.mark.parametrize(
+        ("name", "availability_property", "category", "expected"),
+        [
+            (
+                "semantic_tool",
+                "has_semantic_tools",
+                "semantic_tools",
+                {
+                    "list_metrics",
+                    "get_metric",
+                    "query_metrics",
+                    "get_query_metrics_result",
+                    "validate_semantic",
+                    "attribution_analyze",
+                },
+            ),
+            ("date_parsing_tool", "has_date_parsing_tools", "date_parsing_tools", {"parse_temporal_expressions"}),
+            (
+                "platform_doc_tool",
+                "has_platform_doc_tools",
+                "platform_doc_tools",
+                {"list_document_nav", "get_document", "search_document"},
+            ),
+            (
+                "filesystem_tool",
+                "has_filesystem_tools",
+                "filesystem_tools",
+                {"glob", "grep", "read_file", "read_image"},
+            ),
+        ],
+    )
+    def test_read_tool_classes_are_registered(self, name, availability_property, category, expected):
+        import datus.mcp_server  # noqa: F401  (import registers every tool class)
+
+        entries = [c for c in get_tool_registry() if c.name == name]
+        assert len(entries) == 1
+        assert entries[0].availability_property == availability_property
+        assert entries[0].tool_class.permission_category == category
+        assert {n for n, _, _ in get_mcp_tools(entries[0].tool_class)} == expected
+
+    def test_filesystem_writers_stay_off_mcp(self):
+        """Only the read methods carry @mcp_tool; an MCP call runs no permission hooks."""
+        from datus.tools.func_tool.filesystem_tools import FilesystemFuncTool
+
+        names = {n for n, _, _ in get_mcp_tools(FilesystemFuncTool)}
+        assert not names & {"write_file", "edit_file", "delete_file"}
+
+    def test_db_tool_registers_the_migration_helpers(self):
         from datus.tools.func_tool.database import DBFuncTool
 
-        for cls in [DBFuncTool, ContextSearchTools]:
-            for name, method, _config in get_mcp_tools(cls):
-                assert method.__doc__, f"{cls.__name__}.{name} is missing a docstring"
+        names = {n for n, _, _ in get_mcp_tools(DBFuncTool)}
+        assert {"get_migration_capabilities", "suggest_table_layout", "validate_ddl"} <= names
+        assert "transfer_query_result" not in names
 
 
 # ---------------------------------------------------------------------------
@@ -369,6 +422,26 @@ class TestToolContext:
         assert context.has_db_tools is False
         assert context.has_context_tools is False
 
+    def test_every_registered_class_has_its_context_properties(self):
+        """The dynamic wrapper reads ``name`` and ``availability_property`` off the
+        context; a class without its pair here would answer "not available"."""
+        import datus.mcp_server  # noqa: F401  (import registers every tool class)
+        from datus.mcp_server import ToolContext
+
+        for tool_config in get_tool_registry():
+            instance = MagicMock()
+            context = ToolContext(
+                datasource="test_ns",
+                subagent=None,
+                agent_config=MagicMock(),
+                tools={tool_config.name: instance},
+            )
+            assert getattr(context, tool_config.name) is instance, tool_config.name
+            assert getattr(context, tool_config.availability_property) is True, tool_config.name
+
+            empty = ToolContext(datasource="test_ns", subagent=None, agent_config=MagicMock(), tools={})
+            assert getattr(empty, tool_config.availability_property) is False, tool_config.name
+
     def test_tool_context_close(self):
         from datus.mcp_server import ToolContext
 
@@ -385,3 +458,218 @@ class TestToolContext:
         context.close()
         mock_tool.connector.close.assert_called_once()
         assert len(context.tools) == 0
+
+
+# ---------------------------------------------------------------------------
+# Plugin tool transformers on the MCP path
+# ---------------------------------------------------------------------------
+
+
+class _PolicyConfig:
+    """The slice of AgentConfig the transformer step reads."""
+
+    def __init__(self, policy_context=None):
+        self.policy_context = policy_context or {}
+        self.project_root = "/proj"
+
+    def active_plugin_names(self):
+        return None
+
+
+class _FakeSemanticTools:
+    permission_category = "semantic_tools"
+    sub_agent_name = "analyst"
+
+    def __init__(self, agent_config):
+        self.agent_config = agent_config
+        self.calls = []
+
+    def metric_datasets(self):
+        return {"revenue": ["orders"]}
+
+    @mcp_tool()
+    def query_metrics(self, metrics: list, where: str = "") -> FuncToolResult:
+        """Query metrics."""
+        self.calls.append({"metrics": metrics, "where": where})
+        return FuncToolResult(success=1, result="ok")
+
+
+def _patch_transformers(monkeypatch, by_pattern):
+    from datus.tools.middleware import tool_middleware
+
+    monkeypatch.setattr(tool_middleware, "collect_plugin_tool_transformers", lambda active=None: by_pattern)
+
+
+def _dynamic_query_metrics(instance):
+    ctx = MagicMock()
+    ctx.has_semantic_tools = True
+    ctx.semantic_tool = instance
+    return create_dynamic_tool_wrapper(
+        method_name="query_metrics",
+        method=_FakeSemanticTools.query_metrics,
+        config=_FakeSemanticTools.query_metrics._mcp_config,
+        context_getter=lambda: ctx,
+        instance_attr="semantic_tool",
+        availability_attr="has_semantic_tools",
+        format_result=lambda r: r.model_dump() if isinstance(r, FuncToolResult) else r,
+    )
+
+
+class TestPluginTransformersOnMCP:
+    """A metric row policy lives in the node's tool wrapper, not in SemanticTools.
+
+    An MCP call has no node, so the wrapper has to run the same chain or the
+    policy never applies to it.
+    """
+
+    def test_dynamic_wrapper_hands_the_method_the_transformed_args(self, monkeypatch):
+        seen = {}
+
+        def narrow(tool_name, args, context):
+            seen.update(tool_name=tool_name, context=context)
+            return {**args, "where": "region = 'EU'"}
+
+        _patch_transformers(monkeypatch, {"semantic_tools.query_metrics": [narrow]})
+        instance = _FakeSemanticTools(_PolicyConfig({"row_filter": "x"}))
+
+        result = _dynamic_query_metrics(instance)(metrics=["revenue"], where="")
+
+        assert result["success"] == 1
+        assert instance.calls == [{"metrics": ["revenue"], "where": "region = 'EU'"}]
+        # The category comes from the instance, so a category-qualified pattern matches.
+        assert seen["tool_name"] == "query_metrics"
+        assert seen["context"]["policy_context"] == {"row_filter": "x"}
+        assert seen["context"]["metric_datasets"] == {"revenue": ["orders"]}
+        assert seen["context"]["node_name"] == "analyst"
+        assert seen["context"]["agent_config"] is instance.agent_config
+
+    def test_a_refusing_transformer_denies_the_call(self, monkeypatch):
+        def refuse(tool_name, args, context):
+            raise ValueError("no datasets resolved for revenue")
+
+        _patch_transformers(monkeypatch, {"semantic_tools.*": [refuse]})
+        instance = _FakeSemanticTools(_PolicyConfig())
+
+        result = _dynamic_query_metrics(instance)(metrics=["revenue"])
+
+        assert result["success"] == 0
+        assert "Denied by policy" in result["error"]
+        assert "no datasets resolved" in result["error"]
+        assert instance.calls == [], "a denied call must not reach the tool"
+
+    def test_a_pattern_for_another_category_does_not_match(self, monkeypatch):
+        def narrow(tool_name, args, context):
+            return {**args, "where": "narrowed"}
+
+        _patch_transformers(monkeypatch, {"db_tools.query_metrics": [narrow]})
+        instance = _FakeSemanticTools(_PolicyConfig())
+
+        _dynamic_query_metrics(instance)(metrics=["revenue"], where="as-is")
+
+        assert instance.calls == [{"metrics": ["revenue"], "where": "as-is"}]
+
+    def test_static_wrapper_runs_the_same_chain(self, monkeypatch):
+        def narrow(tool_name, args, context):
+            return {**args, "where": "region = 'EU'"}
+
+        _patch_transformers(monkeypatch, {"semantic_tools.query_metrics": [narrow]})
+        instance = _FakeSemanticTools(_PolicyConfig())
+        wrapper = create_static_tool_wrapper(
+            method_name="query_metrics",
+            bound_method=instance.query_metrics,
+            config=instance.query_metrics._mcp_config,
+            format_result=lambda r: r.model_dump() if isinstance(r, FuncToolResult) else r,
+        )
+
+        wrapper(metrics=["revenue"])
+
+        assert instance.calls == [{"metrics": ["revenue"], "where": "region = 'EU'"}]
+
+
+# ---------------------------------------------------------------------------
+# Filesystem tool construction for MCP
+# ---------------------------------------------------------------------------
+
+
+class _FsConfig:
+    def __init__(self, project_root, node_config=None):
+        self.project_root = project_root
+        self.filesystem_strict = False  # the CLI default; MCP must not inherit it
+        self.filesystem_allowlist = None
+        self.path_manager = None
+        self._node_config = node_config or {}
+
+    def sub_agent_config(self, name):
+        return self._node_config
+
+
+class TestFilesystemToolForMCP:
+    def test_create_dynamic_is_strict_even_when_the_config_is_not(self, tmp_path):
+        """Outside strict mode an EXTERNAL path is left to PermissionHooks to
+        confirm, and an MCP call runs no hooks."""
+        from datus.tools.func_tool.filesystem_tools import FilesystemFuncTool
+
+        root = tmp_path / "project"
+        root.mkdir()
+        (root / "inside.txt").write_text("inside")
+        outside = tmp_path / "outside.txt"
+        outside.write_text("secret")
+
+        tool = FilesystemFuncTool.create_dynamic(_FsConfig(str(root)))
+
+        assert tool.strict is True
+        assert tool.read_file("inside.txt").success == 1
+        refused = tool.read_file(str(outside))
+        assert refused.success == 0
+        assert "secret" not in str(refused.result or "")
+
+    def test_create_dynamic_keeps_what_the_transformer_step_reads(self, tmp_path):
+        """Without ``agent_config`` the MCP wrapper would fall back to every
+        installed plugin and an empty policy context."""
+        from datus.tools.func_tool.filesystem_tools import FilesystemFuncTool
+
+        config = _FsConfig(str(tmp_path))
+        tool = FilesystemFuncTool.create_dynamic(config, sub_agent_name="analyst")
+
+        assert tool.agent_config is config
+        assert tool.sub_agent_name == "analyst"
+
+    def test_read_image_reaches_the_client_as_image_content(self, tmp_path):
+        """Through a real FastMCP: the image must arrive as an image block, not
+        as base64 inside a JSON text block."""
+        import asyncio
+
+        from mcp.server.fastmcp import FastMCP
+        from mcp.types import ImageContent, TextContent
+        from PIL import Image
+
+        from datus.mcp_server import DatusMCPServer
+        from datus.tools.func_tool.filesystem_tools import FilesystemFuncTool
+        from datus.utils.mcp_decorators import register_static_tools
+
+        Image.new("RGB", (4, 3), "red").save(tmp_path / "chart.png")
+        tool = FilesystemFuncTool.create_dynamic(_FsConfig(str(tmp_path)))
+        mcp = FastMCP(name="test")
+        register_static_tools(mcp, tool, DatusMCPServer._format_result)
+
+        result = asyncio.run(mcp.call_tool("read_image", {"path": "chart.png"}))
+        content = result[0] if isinstance(result, tuple) else result
+
+        images = [block for block in content if isinstance(block, ImageContent)]
+        assert len(images) == 1
+        assert images[0].mimeType == "image/png"
+        assert images[0].data and not images[0].data.startswith("data:")
+        texts = [block for block in content if isinstance(block, TextContent)]
+        assert texts and '"width": 4' in texts[0].text
+
+    def test_create_dynamic_roots_at_the_sub_agents_workspace(self, tmp_path):
+        from datus.tools.func_tool.filesystem_tools import FilesystemFuncTool
+
+        workspace = tmp_path / "ws"
+        workspace.mkdir()
+        tool = FilesystemFuncTool.create_dynamic(
+            _FsConfig(str(tmp_path / "project"), node_config={"workspace_root": str(workspace)}),
+            sub_agent_name="analyst",
+        )
+
+        assert tool.root_path == str(workspace)

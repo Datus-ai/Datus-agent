@@ -138,15 +138,35 @@ class TestSubmitUserInteractionConversion:
         assert result.errorCode == "BROKER_NOT_FOUND"
 
     @pytest.mark.asyncio
-    async def test_broker_submit_failure(self):
-        """Returns success=False when broker.submit returns False."""
+    async def test_unknown_interaction_key(self):
+        """A key the broker no longer holds reports INTERACTION_NOT_FOUND, not a bare failure."""
         task = _mock_task(broker_submit_return=False)
+        task.node.interaction_broker.is_pending = MagicMock(return_value=False)
         svc = _mock_svc(task=task)
         request = UserInteractionInput(session_id="s1", interaction_key="k1", input=[["1"]])
 
         result = await submit_user_interaction(request, svc)
 
+        task.node.interaction_broker.is_pending.assert_called_once_with("k1")
         assert result.success is False
+        assert result.errorCode == "INTERACTION_NOT_FOUND"
+        assert result.errorMessage == "This question is no longer waiting for an answer"
+        assert result.data == {"interaction_key": "k1", "submitted": False}
+
+    @pytest.mark.asyncio
+    async def test_rejected_answer_for_pending_key(self):
+        """A still-pending key whose answer the broker rejects reports INVALID_INPUT."""
+        task = _mock_task(broker_submit_return=False)
+        task.node.interaction_broker.is_pending = MagicMock(return_value=True)
+        svc = _mock_svc(task=task)
+        request = UserInteractionInput(session_id="s1", interaction_key="k1", input=[["9"]])
+
+        result = await submit_user_interaction(request, svc)
+
+        assert result.success is False
+        assert result.errorCode == "INVALID_INPUT"
+        assert result.errorMessage == "Answer does not match the question's options"
+        assert result.data == {"interaction_key": "k1", "submitted": False}
 
 
 def _mock_svc_with_nodes(agentic_nodes=None):

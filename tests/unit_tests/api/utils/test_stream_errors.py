@@ -76,3 +76,27 @@ def test_never_returns_empty_message():
     _, message = humanize_stream_error(InternalServerError(""))
 
     assert message
+
+
+class BadRequestError(Exception):
+    pass
+
+
+def test_message_containing_indexes_is_not_cut_to_a_bracket_segment():
+    # Anthropic validation messages index into the request (``content[0]``);
+    # only a message made entirely of ``[..]`` segments is a gateway pack.
+    raw = 'Error code: 400 - {"error": {"message": "messages[1].content[0]: tool_use ids must be unique"}}'
+    _, message = humanize_stream_error(BadRequestError(raw))
+
+    assert message == "messages[1].content[0]: tool_use ids must be unique"
+
+
+def test_decodes_sdk_python_dict_repr():
+    raw = (
+        "Error code: 400 - {'type': 'error', 'error': {'type': 'invalid_request_error', "
+        "'message': \"messages.1.content.0: Input tag 'output_text' found\"}, 'request_id': 'req_011C'}"
+    )
+    error_type, message = humanize_stream_error(BadRequestError(raw))
+
+    assert error_type == "UPSTREAM_BAD_REQUEST"
+    assert message == "messages.1.content.0: Input tag 'output_text' found"

@@ -36,6 +36,11 @@ def _build_tool_with_connector(connector: Mock) -> DBFuncTool:
     tool._primary_connector = connector
     tool._db_manager = None
     tool._default_database = "default"
+    # What the read-only gate reads; a writable tool with no config by default.
+    tool._read_only = False
+    tool.agent_config = None
+    tool.sub_agent_name = None
+    tool._default_datasource = ""
     return tool
 
 
@@ -162,6 +167,24 @@ class TestValidateDdl:
         result = tool.validate_ddl(datasource="default", ddl=ddl, target_table="t")
         assert result.success == 1
         mixin_connector.dry_run_ddl.assert_called_once()
+
+    def test_read_only_refuses_the_dry_run(self, mixin_connector):
+        """The dry-run is a real CREATE + DROP; a read-only tool must not run it."""
+        tool = _build_tool_with_connector(mixin_connector)
+        tool._read_only = True
+        ddl = "CREATE TABLE t (id BIGINT) DUPLICATE KEY(id) DISTRIBUTED BY HASH(id) BUCKETS 10"
+        result = tool.validate_ddl(datasource="default", ddl=ddl, target_table="t")
+        assert result.success == 0
+        assert "read-only" in result.error
+        mixin_connector.dry_run_ddl.assert_not_called()
+
+    def test_read_only_still_validates_statically(self, mixin_connector):
+        tool = _build_tool_with_connector(mixin_connector)
+        tool._read_only = True
+        ddl = "CREATE TABLE t (id BIGINT) DUPLICATE KEY(id) DISTRIBUTED BY HASH(id) BUCKETS 10"
+        result = tool.validate_ddl(datasource="default", ddl=ddl)
+        assert result.success == 1
+        assert result.result == {"errors": [], "validated": True}
 
     def test_dry_run_skipped_when_target_table_absent(self, mixin_connector):
         tool = _build_tool_with_connector(mixin_connector)

@@ -301,6 +301,33 @@ def anthropic_image_tool_content(value: Any) -> list[dict[str, Any]] | None:
     return blocks
 
 
+def mcp_image_tool_content(value: Any) -> list[Any] | None:
+    """Translate SDK image tool outputs to MCP text / image content blocks.
+
+    FastMCP passes content blocks through and serializes anything else as JSON
+    text, so without this an MCP client receives the image as a base64 string
+    inside a JSON document instead of an image it can render.
+    """
+    from mcp.types import ImageContent, TextContent
+
+    # Same parse as the Anthropic translation — only the block types differ.
+    blocks = anthropic_image_tool_content(value)
+    if blocks is None:
+        return None
+    content: list[Any] = []
+    for block in blocks:
+        if block["type"] == "text":
+            content.append(TextContent(type="text", text=block["text"]))
+        elif block["source"]["type"] == "base64":
+            content.append(
+                ImageContent(type="image", data=block["source"]["data"], mimeType=block["source"]["media_type"])
+            )
+        else:
+            # MCP image content carries bytes, not a URL; hand the URL over as text.
+            content.append(TextContent(type="text", text=block["source"]["url"]))
+    return content
+
+
 def is_tool_image_user_message(value: Any) -> bool:
     """Return whether a user message is the synthetic carrier for tool images."""
     value = _as_dict(value)

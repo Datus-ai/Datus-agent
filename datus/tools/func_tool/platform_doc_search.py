@@ -9,6 +9,7 @@ from agents import Tool
 from datus.configuration.agent_config import AgentConfig
 from datus.tools.func_tool.base import FuncToolResult, trans_to_function_tool
 from datus.utils.loggings import get_logger
+from datus.utils.mcp_decorators import mcp_tool, mcp_tool_class
 
 logger = get_logger(__name__)
 
@@ -18,6 +19,10 @@ _NAME_GET_DOC = "platform_doc_search_tools.get_document"
 _NAME_SEARCH_DOC = "platform_doc_search_tools.search_document"
 
 
+@mcp_tool_class(
+    name="platform_doc_tool",
+    availability_property="has_platform_doc_tools",
+)
 class PlatformDocSearchTool:
     """Function-call tool for platform documentation search.
 
@@ -31,8 +36,30 @@ class PlatformDocSearchTool:
 
     permission_category: str = "platform_doc_tools"
 
+    @classmethod
+    def create_dynamic(cls, agent_config: AgentConfig, sub_agent_name: Optional[str] = None) -> "PlatformDocSearchTool":
+        """Create an instance for dynamic MCP mode; the docs are not scoped per sub-agent."""
+        return cls(agent_config)
+
+    @classmethod
+    def create_static(
+        cls,
+        agent_config: AgentConfig,
+        sub_agent_name: Optional[str] = None,
+        database_name: Optional[str] = None,
+    ) -> "PlatformDocSearchTool":
+        """Create an instance for static MCP mode."""
+        return cls(agent_config)
+
     def __init__(self, agent_config: AgentConfig):
         self.agent_config = agent_config
+
+    @property
+    def has_indexed_docs(self) -> bool:
+        """Whether any platform has an indexed docstore — the same gate ``available_tools`` uses."""
+        from datus.storage.document.store import list_indexed_platforms
+
+        return bool(list_indexed_platforms())
 
     @staticmethod
     def all_tools_name() -> List[str]:
@@ -62,6 +89,7 @@ class PlatformDocSearchTool:
 
         return tools
 
+    @mcp_tool(availability_check="has_indexed_docs")
     def list_document_nav(
         self,
         platform: str,
@@ -107,6 +135,7 @@ class PlatformDocSearchTool:
             logger.error(f"Failed to list document nav for '{platform}': {e}")
             return FuncToolResult(success=0, error=str(e))
 
+    @mcp_tool(availability_check="has_indexed_docs")
     def get_document(
         self,
         platform: str,
@@ -165,6 +194,7 @@ class PlatformDocSearchTool:
             logger.error(f"Failed to get document for titles {titles}: {e}")
             return FuncToolResult(success=0, error=str(e))
 
+    @mcp_tool(availability_check="has_indexed_docs")
     def search_document(
         self,
         platform: str,

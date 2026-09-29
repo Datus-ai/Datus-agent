@@ -11,14 +11,12 @@ Sending ``str(exc)`` straight to the browser (as ``SSEErrorData.error``) means
 the user sees that raw, byte-escaped blob. ``humanize_stream_error`` maps the
 exception to a stable machine ``error_type`` (so the frontend can localize) and
 a clean human ``message`` — preferring the provider's own wording when it can
-be decoded, falling back to a generic sentence otherwise. The original
-exception is still logged server-side with a full traceback for debugging.
+be decoded (``datus.models.model_error.provider_error_message``), falling back
+to a generic sentence otherwise. The original exception is still logged
+server-side with a full traceback for debugging.
 """
 
-import ast
-import json
-import re
-from typing import Optional
+from datus.models.model_error import provider_error_message
 
 # Stable ``error_type`` codes the frontend can map to localized copy. Keyed by
 # litellm/openai exception class names (matched anywhere in the MRO, so
@@ -70,15 +68,6 @@ _DEFAULT_ERROR: tuple[str, str] = (
     "Something went wrong while generating the response. Please try again.",
 )
 
-# Long opaque tokens (request ids, trace ids) embedded in a provider message —
-# stripped so the surfaced sentence stays readable. Hex-specific lookarounds
-# (not ``\b``) so ids are stripped even when they touch CJK text: CJK chars are
-# ``\w`` under Unicode, so ``\b`` finds no boundary between "错误" and a hex id.
-_ID_TOKEN = re.compile(r"(?<![0-9a-fA-F])[0-9a-fA-F]{16,}(?![0-9a-fA-F])")
-_CJK = re.compile(r"[一-鿿]")
-_BYTES_LITERAL = re.compile(r"b'(?:[^'\\]|\\.)*'|b\"(?:[^\"\\]|\\.)*\"")
-_MAX_LEN = 300
-
 
 def humanize_stream_error(exc: BaseException) -> tuple[str, str]:
     """Return ``(error_type, message)`` safe to send to the client.
@@ -88,9 +77,7 @@ def humanize_stream_error(exc: BaseException) -> tuple[str, str]:
     Never returns a raw byte-escaped blob.
     """
     error_type, fallback = _classify(exc)
-    provider_message = _extract_provider_message(exc)
-    message = provider_message or fallback
-    return error_type, _clean(message)
+    return error_type, provider_error_message(exc) or fallback
 
 
 def _classify(exc: BaseException) -> tuple[str, str]:
@@ -99,70 +86,3 @@ def _classify(exc: BaseException) -> tuple[str, str]:
         if mapped:
             return mapped
     return _DEFAULT_ERROR
-
-
-def _extract_provider_message(exc: BaseException) -> Optional[str]:
-    """Best-effort: pull the provider's human message out of ``str(exc)``.
-
-    Handles the ``... - b'{...}'`` litellm shape (Python bytes-repr wrapping
-    provider JSON) and bare embedded JSON. Returns None if nothing readable
-    can be recovered.
-    """
-    raw = str(exc)
-    if not raw:
-        return None
-
-    payload = _decode_embedded_payload(raw)
-    if payload is None:
-        return None
-
-    message = payload.get("error", {}).get("message") if isinstance(payload.get("error"), dict) else None
-    message = message or payload.get("message")
-    if not isinstance(message, str) or not message.strip():
-        return None
-
-    return _pick_readable_segment(message)
-
-
-def _decode_embedded_payload(raw: str) -> Optional[dict]:
-    # ``b'...\xe7...'`` — a Python bytes literal; eval it back to bytes and
-    # decode as UTF-8 so escaped multibyte chars become real text.
-    literal = _BYTES_LITERAL.search(raw)
-    if literal:
-        try:
-            decoded = ast.literal_eval(literal.group(0))
-            text = decoded.decode("utf-8", "replace") if isinstance(decoded, bytes) else str(decoded)
-            return json.loads(text)
-        except (ValueError, SyntaxError, json.JSONDecodeError):
-            pass
-
-    # Bare embedded JSON object anywhere in the string.
-    start, end = raw.find("{"), raw.rfind("}")
-    if 0 <= start < end:
-        try:
-            return json.loads(raw[start : end + 1])
-        except json.JSONDecodeError:
-            pass
-
-    return None
-
-
-def _pick_readable_segment(message: str) -> str:
-    """Some providers pack the message as ``[code][human text][request_id]``.
-
-    Pick the most human-readable bracketed segment (CJK first, then longest);
-    fall back to the whole message when there are no brackets.
-    """
-    segments = re.findall(r"\[([^\[\]]+)\]", message)
-    if segments:
-        segments.sort(key=lambda s: (1 if _CJK.search(s) else 0, len(s)), reverse=True)
-        return segments[0]
-    return message
-
-
-def _clean(message: str) -> str:
-    message = _ID_TOKEN.sub("", message)
-    message = re.sub(r"\s+", " ", message).strip(" ,;:")
-    if len(message) > _MAX_LEN:
-        message = message[:_MAX_LEN].rstrip() + "…"
-    return message or _DEFAULT_ERROR[1]

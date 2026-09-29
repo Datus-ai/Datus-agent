@@ -198,6 +198,25 @@ class TestInteractionBrokerInit:
         assert broker.is_queue_empty() is True
 
 
+class TestInteractionBrokerIsPending:
+    """Tests for InteractionBroker.is_pending()."""
+
+    @pytest.mark.asyncio
+    async def test_is_pending_tracks_one_key_until_answered(self):
+        """is_pending is True only for the waiting key, and turns False once it is answered."""
+        broker = InteractionBroker()
+        task = asyncio.create_task(broker.request([InteractionEvent(content="Go?", choices={"y": "Yes", "n": "No"})]))
+        await asyncio.sleep(0.05)
+        action_id = broker._output_queue.get_nowait().action_id
+
+        assert broker.is_pending(action_id) is True
+        assert broker.is_pending("some-other-key") is False
+
+        assert await broker.submit(action_id, [["y"]]) is True
+        assert await task == [["y"]]
+        assert broker.is_pending(action_id) is False
+
+
 class TestInteractionBrokerRequest:
     """Tests for InteractionBroker.request() method."""
 

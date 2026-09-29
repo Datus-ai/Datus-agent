@@ -53,7 +53,7 @@ datus           # 进入 REPL 后依次使用 /model、/datasource、/init
 ### 第三步：下载并准备 BIRD 数据集
 
 !!! note
-    此步骤仅用于 BIRD 基准测试。如需运行 Spider 2.0-Snow，请跳至 [第四步](#第四步运行基准测试)。
+    此步骤仅用于 BIRD 基准测试。如需运行 Spider 2.0-Snow，请按下文准备数据。
 
 将 BIRD dev 数据集下载并解压到 Datus 主目录（默认为 `~/.datus`）：
 
@@ -89,6 +89,22 @@ cd ~
 datus-agent bootstrap-kb --datasource bird_sqlite --benchmark bird_dev
 ```
 
+### 准备 Spider 2.0-Snow 数据 {#spider2-data}
+
+Spider2 数据需要单独下载。下面的稀疏检出仅获取 Snow 基准测试数据和开发脚本使用的标准表，不会初始化 Spider2 中无关的子模块。数据固定在 Datus Agent 原先引用的[提交版本](https://github.com/xlang-ai/Spider2/tree/94ba92bbd5de296a408e5a5fd4df9f5091741931)。
+
+```bash title="Terminal"
+mkdir -p ~/.datus/benchmark/spider2
+git -C ~/.datus/benchmark/spider2 init
+git -C ~/.datus/benchmark/spider2 remote add origin https://github.com/xlang-ai/Spider2.git
+git -C ~/.datus/benchmark/spider2 sparse-checkout set spider2-snow methods/gold-tables
+git -C ~/.datus/benchmark/spider2 fetch --depth=1 --filter=blob:none origin 94ba92bbd5de296a408e5a5fd4df9f5091741931
+git -C ~/.datus/benchmark/spider2 checkout --detach FETCH_HEAD
+test -f ~/.datus/benchmark/spider2/spider2-snow/spider2-snow.jsonl
+```
+
+如果 `agent.home` 不是 `~/.datus`，请相应替换命令中的目录。数据应放在 Datus Agent 源码仓库之外。基准测试从 `spider2-snow/` 读取题目和标准结果；仓库内的 schema recall 脚本还会读取 `methods/gold-tables/`。
+
 ### 第四步：运行基准测试 {#第四步运行基准测试}
 
 !!! warning
@@ -117,7 +133,7 @@ datus-agent bootstrap-kb --datasource bird_sqlite --benchmark bird_dev
 **Spider 2.0-Snow 数据集**
 
 !!! info
-    任务 ID（instance ID）可在 [spider2-snow.jsonl](https://github.com/xlang-ai/Spider2/blob/main/spider2-snow/spider2-snow.jsonl) 中查询。
+    任务 ID（instance ID）可在[固定版本的 spider2-snow.jsonl](https://github.com/xlang-ai/Spider2/blob/94ba92bbd5de296a408e5a5fd4df9f5091741931/spider2-snow/spider2-snow.jsonl) 中查询。
 
 !!! note
     运行 Spider 2.0-Snow 基准测试前，请确保已配置 Snowflake 相关环境变量。

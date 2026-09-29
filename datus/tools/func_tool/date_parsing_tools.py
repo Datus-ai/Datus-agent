@@ -12,14 +12,37 @@ from datus.models.base import LLMBaseModel
 from datus.tools.date_tools import DateParserTool
 from datus.tools.func_tool.base import FuncToolResult, trans_to_function_tool
 from datus.utils.loggings import get_logger
+from datus.utils.mcp_decorators import mcp_tool, mcp_tool_class
 
 logger = get_logger(__name__)
 
 
+@mcp_tool_class(
+    name="date_parsing_tool",
+    availability_property="has_date_parsing_tools",
+)
 class DateParsingTools:
     """Function tool wrapper for date parsing operations."""
 
     permission_category: str = "date_parsing_tools"
+
+    @classmethod
+    def create_dynamic(cls, agent_config: AgentConfig, sub_agent_name: Optional[str] = None) -> "DateParsingTools":
+        """Create an instance for dynamic MCP mode, on the configured active model.
+
+        Every ``parse_temporal_expressions`` call is one LLM request on that model.
+        """
+        return cls(agent_config, LLMBaseModel.create_model(agent_config))
+
+    @classmethod
+    def create_static(
+        cls,
+        agent_config: AgentConfig,
+        sub_agent_name: Optional[str] = None,
+        database_name: Optional[str] = None,
+    ) -> "DateParsingTools":
+        """Create an instance for static MCP mode."""
+        return cls.create_dynamic(agent_config, sub_agent_name=sub_agent_name)
 
     def __init__(self, agent_config: AgentConfig, model: LLMBaseModel):
         self.agent_config = agent_config
@@ -49,6 +72,7 @@ class DateParsingTools:
             trans_to_function_tool(self.parse_temporal_expressions),
         ]
 
+    @mcp_tool()
     def parse_temporal_expressions(
         self,
         task_text: str,
