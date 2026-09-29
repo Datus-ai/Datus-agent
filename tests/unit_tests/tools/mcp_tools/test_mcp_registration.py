@@ -616,6 +616,45 @@ class TestFilesystemToolForMCP:
         assert refused.success == 0
         assert "secret" not in str(refused.result or "")
 
+    def test_create_dynamic_keeps_what_the_transformer_step_reads(self, tmp_path):
+        """Without ``agent_config`` the MCP wrapper would fall back to every
+        installed plugin and an empty policy context."""
+        from datus.tools.func_tool.filesystem_tools import FilesystemFuncTool
+
+        config = _FsConfig(str(tmp_path))
+        tool = FilesystemFuncTool.create_dynamic(config, sub_agent_name="analyst")
+
+        assert tool.agent_config is config
+        assert tool.sub_agent_name == "analyst"
+
+    def test_read_image_reaches_the_client_as_image_content(self, tmp_path):
+        """Through a real FastMCP: the image must arrive as an image block, not
+        as base64 inside a JSON text block."""
+        import asyncio
+
+        from mcp.server.fastmcp import FastMCP
+        from mcp.types import ImageContent, TextContent
+        from PIL import Image
+
+        from datus.mcp_server import DatusMCPServer
+        from datus.tools.func_tool.filesystem_tools import FilesystemFuncTool
+        from datus.utils.mcp_decorators import register_static_tools
+
+        Image.new("RGB", (4, 3), "red").save(tmp_path / "chart.png")
+        tool = FilesystemFuncTool.create_dynamic(_FsConfig(str(tmp_path)))
+        mcp = FastMCP(name="test")
+        register_static_tools(mcp, tool, DatusMCPServer._format_result)
+
+        result = asyncio.run(mcp.call_tool("read_image", {"path": "chart.png"}))
+        content = result[0] if isinstance(result, tuple) else result
+
+        images = [block for block in content if isinstance(block, ImageContent)]
+        assert len(images) == 1
+        assert images[0].mimeType == "image/png"
+        assert images[0].data and not images[0].data.startswith("data:")
+        texts = [block for block in content if isinstance(block, TextContent)]
+        assert texts and '"width": 4' in texts[0].text
+
     def test_create_dynamic_roots_at_the_sub_agents_workspace(self, tmp_path):
         from datus.tools.func_tool.filesystem_tools import FilesystemFuncTool
 

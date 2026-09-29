@@ -94,6 +94,7 @@ from datus.tools.func_tool.filesystem_tools import FilesystemFuncTool
 from datus.tools.func_tool.platform_doc_search import PlatformDocSearchTool
 from datus.tools.func_tool.reference_template_tools import ReferenceTemplateTools
 from datus.tools.func_tool.semantic_tools import SemanticTools
+from datus.utils.image_content import mcp_image_tool_content
 from datus.utils.loggings import configure_entrypoint_logging, get_logger
 from datus.utils.multiprocessing_utils import configure_multiprocessing_start_method
 
@@ -456,10 +457,17 @@ class LightweightDynamicMCPServer:
         return ctx
 
     @staticmethod
-    def _format_result(result: Union[FuncToolResult, Any]) -> Dict[str, Any]:
-        """Convert FuncToolResult to a dictionary for MCP response."""
+    def _format_result(result: Union[FuncToolResult, Any]) -> Union[Dict[str, Any], List[Any]]:
+        """Convert a tool result for the MCP response.
+
+        ``FuncToolResult`` becomes a dict. Image outputs (``read_image``) become
+        MCP content blocks, so the client gets an image rather than base64 text.
+        """
         if isinstance(result, FuncToolResult):
             return result.model_dump()
+        content = mcp_image_tool_content(result)
+        if content is not None:
+            return content
         return {"success": 1, "error": None, "result": result}
 
     def _register_tools(self):
@@ -1008,10 +1016,17 @@ class DatusMCPServer:
                 register_static_tools(self.mcp, tool_instance, self._format_result)
 
     @staticmethod
-    def _format_result(result: Union[FuncToolResult, Any]) -> Dict[str, Any]:
-        """Convert FuncToolResult to a dictionary for MCP response."""
+    def _format_result(result: Union[FuncToolResult, Any]) -> Union[Dict[str, Any], List[Any]]:
+        """Convert a tool result for the MCP response.
+
+        ``FuncToolResult`` becomes a dict. Image outputs (``read_image``) become
+        MCP content blocks, so the client gets an image rather than base64 text.
+        """
         if isinstance(result, FuncToolResult):
             return result.model_dump()
+        content = mcp_image_tool_content(result)
+        if content is not None:
+            return content
         return {"success": 1, "error": None, "result": result}
 
     def run(

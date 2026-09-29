@@ -113,13 +113,18 @@ class FilesystemFuncTool(BaseTool):
             except Exception:  # noqa: BLE001 - same fallback as AgenticNode._make_filesystem_tool
                 datus_home = None
 
-        return cls(
+        tool = cls(
             root_path=os.path.expanduser(root_path),
             current_node=sub_agent_name,
             datus_home=datus_home,
             strict=True,
             path_allowlist=getattr(agent_config, "filesystem_allowlist", None) or None,
         )
+        # Read by the MCP wrapper's plugin-transformer step: without the config
+        # it cannot see the active plugins or the policy context.
+        tool.agent_config = agent_config
+        tool.sub_agent_name = sub_agent_name
+        return tool
 
     @classmethod
     def create_static(

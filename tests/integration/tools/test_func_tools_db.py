@@ -452,13 +452,17 @@ class TestAllToolsNameContract:
             "plan_datasource",
             "import_database_file",
             "check_datasource_quality",
+            "get_migration_capabilities",
+            "suggest_table_layout",
+            "validate_ddl",
         }
         assert decorated.issubset(set(names))
 
     def test_all_tools_name_includes_directly_mounted_tools(self):
-        """Tools gen_job mounts directly (no decorator) stay in the surface so the
-        permission registry can classify them under db_tools — dropping them would
-        silently disable the ASK gate on ``transfer_query_result``."""
+        """Tools gen_job mounts directly stay in the surface so the permission
+        registry can classify them under db_tools — dropping them would silently
+        disable the ASK gate on ``transfer_query_result``. The other three also
+        carry @mcp_tool now; ``transfer_query_result`` does not."""
         names = set(DBFuncTool.all_tools_name())
 
         for tool in ("transfer_query_result", "get_migration_capabilities", "suggest_table_layout", "validate_ddl"):

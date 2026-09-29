@@ -3766,6 +3766,11 @@ class DBFuncTool:
 
         # If static errors were found, skip dry_run — DDL is already invalid.
         if target_table and not errors and hasattr(connector, "dry_run_ddl"):
+            # The dry-run is a real CREATE + DROP, so it is gated like every
+            # other write path. MCP calls reach this with no PermissionHooks.
+            refusal = self._refuse_write_if_read_only("validate_ddl", datasource=datasource)
+            if refusal:
+                return refusal
             try:
                 dry_errors = connector.dry_run_ddl(ddl, target_table)
                 if dry_errors:
