@@ -375,3 +375,32 @@ def test_composite_using_has_one_complete_expression(tmp_path):
     (tmp_path / "q.sql").write_text("SELECT * FROM a LEFT JOIN b USING (\n id,\n dt\n)")
     result = extract(tmp_path, paths=["q.sql"])
     assert result["joins"] == [{"expression": "#1 LEFT JOIN #2 USING (id, dt)", "evidence": ["f1:1-4"]}]
+
+
+def test_python_helpers_without_sql_keep_the_scan_complete(tmp_path):
+    (tmp_path / "pkg").mkdir()
+    (tmp_path / "pkg" / "__init__.py").write_text("")
+    (tmp_path / "pkg" / "util.py").write_text(
+        'def connect():\n    """Create the connection."""\n    return f"""SELECT * FROM {t}"""\n'
+    )
+    (tmp_path / "pkg" / "job.py").write_text('SQL = """INSERT INTO t SELECT * FROM s"""\n')
+    result = extract(tmp_path, paths=["**/*.py"])
+    assert result["complete"] is True
+    assert [(e["target"], e["sources"]) for e in result["lineage"]] == [("t", ["s"])]
+
+
+def test_session_and_ddl_statements_add_no_read_edges(tmp_path):
+    (tmp_path / "etl.sql").write_text(
+        "USE dw;\nALTER TABLE t1 ADD COLUMN c INT;\nANALYZE TABLE t2;\nINSERT INTO t3 SELECT * FROM s;"
+    )
+    result = extract(tmp_path, paths=["*.sql"])
+    assert [(e["target"], e["sources"], e["operation"]) for e in result["lineage"]] == [("t3", ["s"], "insert")]
+
+
+def test_merge_match_condition_is_join_evidence(tmp_path):
+    (tmp_path / "upsert.sql").write_text("MERGE INTO t USING s\nON t.id = s.id\nWHEN MATCHED THEN UPDATE SET t.v = s.v")
+    response = make_tool(tmp_path).extract_sql_lineage(paths=["*.sql"], dialect="postgres")
+    [join] = response.result["joins"]
+    assert join["expression"] == "#2 INNER JOIN #1 ON t.id = s.id"
+    assert response.result["tables"] == {"#1": "s", "#2": "t"}
+    assert evidence(response.result, join) == [("upsert.sql", 2)]

@@ -160,6 +160,52 @@ def test_python_sources_contribute_only_sql_strings():
     assert edge_map(result)["dw.t"].line == 3
 
 
+@pytest.mark.parametrize(
+    "literal",
+    [
+        '"""Create the connection."""',
+        '"""Select the rows from the cache."""',
+        '"""Update the settings for a user."""',
+        'f"""SELECT * FROM {table}"""',
+        'rf"""INSERT INTO {target} SELECT * FROM s"""',
+        'F"""\nCREATE TABLE {name} AS SELECT 1 FROM s\n"""',
+    ],
+)
+def test_python_prose_and_runtime_formatted_strings_are_not_sql(literal):
+    source = f"def run():\n    {literal}\n    q = '''INSERT INTO dw.t SELECT a FROM dw.s'''\n"
+    assert [f.text for f in extract_sql_from_python(source, "dag.py")] == ["INSERT INTO dw.t SELECT a FROM dw.s"]
+
+
+@pytest.mark.parametrize(
+    "prose", ["Create the connection.", "Update the settings.", "Delete stale files.", "With care, merge the rows."]
+)
+def test_python_prose_strings_outside_docstrings_are_not_sql(prose):
+    source = f'HELP = """{prose}"""\nq = """\nINSERT INTO dw.t SELECT a FROM dw.s\n"""\n'
+    assert len(extract_sql_from_python(source, "dag.py")) == 1
+
+
+def test_python_docstring_detection_tolerates_unparsable_source():
+    source = 'print "py2"\nq = """SELECT a FROM dw.s"""\n'
+    assert [f.text for f in extract_sql_from_python(source, "dag.py")] == ["SELECT a FROM dw.s"]
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "USE dw",
+        "ALTER TABLE dw.t1 ADD COLUMN c INT",
+        "ALTER TABLE t1 ADD PARTITION (dt = '2024-01-01')",
+        "ANALYZE TABLE t2",
+        "SET x = 1",
+    ],
+)
+def test_non_data_statements_read_no_tables_and_are_not_queries(sql):
+    result = run(sql, dialect="hive" if "PARTITION" in sql else "mysql")
+    assert all(f.read_tables == [] and f.operation != "QUERY" for f in result.statement_facts)
+    assert result.lineage == []
+    assert result.queries == 0
+
+
 # ---------------------------------------------------------------- joins
 
 
@@ -210,6 +256,120 @@ def test_unqualified_column_with_several_sources_is_counted_unresolved():
 
 def test_using_clause_is_a_join_key():
     assert join_set(run("SELECT * FROM dw.a JOIN dw.b USING (id)")) == {("dw.a", "dw.b", (("id", "id"),))}
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT * FROM dw.a JOIN dw.b USING (id) JOIN dw.c ON c.k = b.k",
+        "SELECT * FROM dw.a JOIN dw.b USING (id) JOIN dw.c ON c.k = b.k JOIN dw.d ON d.k = c.k",
+        "SELECT * FROM dw.a JOIN dw.b USING (id) LEFT JOIN (SELECT k FROM dw.c) c ON c.k = b.k",
+    ],
+)
+def test_using_binds_only_to_relations_written_before_it(sql):
+    result = run(sql)
+    assert ("dw.a", "dw.b", (("id", "id"),)) in join_set(result)
+    assert [c for c in result.conditions if c.status == "unresolved"] == []
+
+
+@pytest.mark.parametrize(
+    "where",
+    [
+        "a.x IN (SELECT id FROM dw.b)",
+        "a.x NOT IN (SELECT id FROM dw.b WHERE b.flag = 1)",
+        "EXISTS (SELECT 1 FROM dw.b)",
+        "a.x = (SELECT MAX(id) FROM dw.b)",
+        "a.x > (SELECT AVG(b.v) FROM dw.b WHERE b.k IN (SELECT k FROM dw.c))",
+    ],
+)
+def test_subquery_predicates_are_not_unresolved_relationships(where):
+    result = run(f"SELECT * FROM dw.a WHERE {where}")
+    assert result.joins == []
+    assert [c for c in result.conditions if c.status == "unresolved"] == []
+    assert result.join_predicates_unresolved == 0
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT * FROM dw.a WHERE EXISTS (SELECT 1 FROM dw.b WHERE b.id = a.id)",
+        "SELECT * FROM dw.a WHERE NOT EXISTS (SELECT 1 FROM dw.b WHERE a.id = b.id AND b.flag = 1)",
+        "SELECT * FROM dw.a WHERE a.v > (SELECT AVG(v) FROM dw.b WHERE b.id = a.id)",
+        "SELECT * FROM dw.a WHERE EXISTS (SELECT 1 FROM dw.x WHERE EXISTS (SELECT 1 FROM dw.b WHERE b.id = a.id))",
+    ],
+)
+def test_correlated_subquery_equality_is_a_join_key(sql):
+    result = run(sql)
+    assert ("dw.a", "dw.b", (("id", "id"),)) in join_set(result)
+    assert [c for c in result.conditions if c.status == "unresolved"] == []
+
+
+def test_correlation_does_not_leak_into_derived_tables():
+    # A derived table cannot see outer aliases, so ``a`` inside it is not the outer relation.
+    result = run("SELECT * FROM dw.a JOIN (SELECT b.id FROM dw.b WHERE b.id = a.id) x ON x.id = a.id")
+    assert ("dw.a", "dw.b", (("id", "id"),)) in join_set(result)
+    assert len(result.joins) == 1
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT * FROM dw.orders o WHERE o.created = updated",
+        "SELECT * FROM dw.orders o WHERE created = o.updated",
+        "SELECT * FROM dw.orders WHERE created = updated",
+        "SELECT * FROM (SELECT * FROM dw.orders) o WHERE o.created = updated",
+    ],
+)
+def test_single_source_row_comparison_is_not_a_self_join(sql):
+    result = run(sql)
+    assert result.joins == []
+    assert result.join_predicates == 0
+
+
+@pytest.mark.parametrize(
+    "sql, dialect, left, right",
+    [
+        (
+            "MERGE INTO dw.t USING dw.s ON t.id = s.id WHEN MATCHED THEN UPDATE SET t.v = s.v",
+            "postgres",
+            "dw.s",
+            "dw.t",
+        ),
+        (
+            "MERGE INTO dw.t tg USING (SELECT id AS sid, v FROM dw.s WHERE k = 1) src ON tg.id = src.sid "
+            "WHEN MATCHED THEN UPDATE SET tg.v = src.v",
+            "postgres",
+            "dw.s",
+            "dw.t",
+        ),
+        (
+            "WITH src AS (SELECT id AS sid FROM dw.s) MERGE INTO dw.t USING src ON t.id = src.sid "
+            "WHEN MATCHED THEN DELETE",
+            "postgres",
+            "dw.s",
+            "dw.t",
+        ),
+        ("UPDATE dw.t JOIN dw.s ON t.id = s.id SET t.v = s.v", "mysql", "dw.s", "dw.t"),
+        ("UPDATE dw.t SET v = s.v FROM dw.s WHERE t.id = s.id", "postgres", "dw.s", "dw.t"),
+        ("DELETE FROM dw.t USING dw.s WHERE t.id = s.id", "postgres", "dw.s", "dw.t"),
+        ("DELETE t FROM dw.t JOIN dw.s ON t.id = s.id WHERE s.x = 1", "mysql", "dw.s", "dw.t"),
+    ],
+)
+def test_dml_match_conditions_are_join_keys(sql, dialect, left, right):
+    result = run(sql, dialect=dialect)
+    [join] = result.joins
+    assert (join.left_table, join.right_table) == (left, right)
+    assert len(join.keys) == 1
+    assert join.statement_target == "dw.t"
+    assert set(expression_tables(join.expression)) == {left, right}
+    assert [c for c in result.conditions if c.status == "unresolved"] == []
+
+
+def test_dml_where_filters_become_rules_without_changing_sources():
+    sql = "UPDATE dw.t JOIN dw.s ON t.id = s.id SET t.v = s.v WHERE s.k = 1"
+    result = run(sql)
+    assert edge_map(result)["dw.t"].sources == ["dw.s"]
+    assert [(p.table, p.column, p.predicate) for p in result.predicates] == [("dw.s", "k", "= 1")]
 
 
 # ---------------------------------------------------------------- rules

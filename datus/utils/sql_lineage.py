@@ -33,6 +33,7 @@ scope — those need the database or judgment and belong to the calling skill.
 
 from __future__ import annotations
 
+import ast
 import hashlib
 import re
 from collections import defaultdict
@@ -45,7 +46,7 @@ import sqlglot
 from sqlglot import expressions as exp
 from sqlglot.dialects import Dialect
 from sqlglot.errors import ParseError, TokenError
-from sqlglot.optimizer.scope import Scope, traverse_scope
+from sqlglot.optimizer.scope import Scope, ScopeType, traverse_scope
 from sqlglot.tokens import TokenType
 
 from datus.utils.loggings import get_logger
@@ -72,8 +73,22 @@ _JINJA_COMMENT_RE = re.compile(r"\{#.*?#\}", re.DOTALL)
 _JINJA_EXPR_RE = re.compile(r"\{\{.*?\}\}", re.DOTALL)
 _DOLLAR_VAR_RE = re.compile(r"\$\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*\}")
 
-_PY_TRIPLE_QUOTED_RE = re.compile(r"(?:[rRfFbBuU]{0,2})(\"\"\"|''')(.*?)\1", re.DOTALL)
-_SQL_LEAD_RE = re.compile(r"^\s*(?:--[^\n]*\n\s*)*(insert|create|merge|with|select|update|delete)\b", re.IGNORECASE)
+_PY_TRIPLE_QUOTED_RE = re.compile(r"(?<![\w\"'])([rRfFbBuU]{0,2})(\"\"\"|''')(.*?)\2", re.DOTALL)
+# The verb must be followed by the clause that makes it a statement, so prose such as a
+# "Create the connection." docstring is not mistaken for SQL.
+_SQL_LEAD_RE = re.compile(
+    r"^\s*(?:--[^\n]*\n\s*)*(?:"
+    r"insert\s+(?:into|overwrite)\b"
+    r"|create\s+(?:or\s+replace\s+)?(?:(?:global\s+|local\s+)?(?:temporary|temp)\s+|external\s+|materialized\s+)?"
+    r"(?:table|view)\b"
+    r"|merge\s+into\b"
+    r"|with\s+(?:recursive\s+)?[\w`\"]+\s*(?:\([^)]*\)\s*)?as\s*\("
+    r"|select\b.*?\bfrom\b"
+    r"|update\s+[\w.`\"]+(?:\s+(?:as\s+)?\w+)?\s+(?:set|join|inner|left|right|from)\b"
+    r"|delete\s+(?:[\w.`\"]+\s+)?from\b"
+    r")",
+    re.IGNORECASE | re.DOTALL,
+)
 
 
 @dataclass
@@ -268,18 +283,39 @@ def preprocess_template(sql: str) -> Tuple[str, bool]:
 def extract_sql_from_python(source: str, file: str) -> List[SqlFragment]:
     """Pull SQL-looking triple-quoted strings out of Python source.
 
-    Only literal triple-quoted strings whose first keyword is a SQL verb are
-    taken; SQL assembled by concatenation or formatting at runtime cannot be
-    recovered statically and is left out.
+    Only literal triple-quoted strings that open with a SQL statement are
+    taken; f-strings and SQL assembled by concatenation or formatting at
+    runtime cannot be recovered statically and are left out.
     """
     fragments = []
+    docstrings = _docstring_positions(source)
     for match in _PY_TRIPLE_QUOTED_RE.finditer(source):
-        body = match.group(2)
-        if not _SQL_LEAD_RE.match(body):
+        body = match.group(3)
+        if "f" in match.group(1).lower() or not _SQL_LEAD_RE.match(body):
             continue
-        body_start = match.start(2)
+        line_start = source.rfind("\n", 0, match.start()) + 1
+        position = (source.count("\n", 0, match.start()) + 1, len(source[line_start : match.start()].encode()))
+        if position in docstrings:
+            continue
+        body_start = match.start(3)
         fragments.append(SqlFragment(text=body, file=file, line_offset=source.count("\n", 0, body_start)))
     return fragments
+
+
+def _docstring_positions(source: str) -> set:
+    """``(line, utf8_column)`` of every module / class / function docstring; empty when unparsable."""
+    try:
+        tree = ast.parse(source)
+    except (SyntaxError, ValueError):
+        return set()
+    positions = set()
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)) and node.body:
+            first = node.body[0]
+            if isinstance(first, ast.Expr) and isinstance(first.value, ast.Constant):
+                if isinstance(first.value.value, str):
+                    positions.add((first.value.lineno, first.value.col_offset))
+    return positions
 
 
 def split_statements(sql: str, dialect: Optional[str]) -> List[Tuple[str, int]]:
@@ -388,7 +424,52 @@ def _write_target(stmt: exp.Expression) -> Tuple[Optional[exp.Table], str, Optio
         return (stmt.this if isinstance(stmt.this, exp.Table) else None), "UPDATE", stmt
     if isinstance(stmt, exp.Delete):
         return (stmt.this if isinstance(stmt.this, exp.Table) else None), "DELETE", stmt
-    return None, "QUERY", stmt
+    if isinstance(stmt, exp.Query):
+        return None, "QUERY", stmt
+    # USE / ALTER / ANALYZE / SET ...: the table they name is neither read nor written as data.
+    return None, stmt.key.upper(), None
+
+
+def _flatten_relation(relation: exp.Expression) -> List[exp.Join]:
+    """``t JOIN s ON ...`` nested under a DML target as a flat list of joins, ``t`` first."""
+    relation = relation.copy()
+    nested = relation.args.get("joins") or []
+    relation.set("joins", None)
+    return [exp.Join(this=relation), *nested]
+
+
+def _dml_scan_query(stmt: exp.Expression) -> Optional[exp.Select]:
+    """An equivalent ``SELECT * FROM ... JOIN ... WHERE ...`` over the relations a DML statement matches.
+
+    MERGE ON, UPDATE ... JOIN / FROM and DELETE ... USING conditions live outside any SELECT
+    scope; restating them as one lets the scope-based join and rule extraction see them.
+    """
+    if isinstance(stmt, exp.Merge):
+        using, on = stmt.args.get("using"), stmt.args.get("on")
+        if stmt.this is None or using is None or on is None:
+            return None
+        parts = _flatten_relation(stmt.this) + [exp.Join(this=using.copy(), on=on.copy())]
+    elif isinstance(stmt, (exp.Update, exp.Delete)):
+        if not isinstance(stmt.this, exp.Table):
+            return None
+        parts = _flatten_relation(stmt.this)
+        if isinstance(stmt, exp.Update):
+            from_clause = stmt.args.get("from")
+            relations = [from_clause.this] if from_clause is not None else []
+        else:
+            relations = stmt.args.get("using") or []
+        for relation in relations:
+            parts += _flatten_relation(relation)
+    else:
+        return None
+    select = exp.Select(expressions=[exp.Star()])
+    select.set("from", exp.From(this=parts[0].this))
+    select.set("joins", parts[1:] or None)
+    if stmt.args.get("where") is not None:
+        select.set("where", stmt.args["where"].copy())
+    if stmt.args.get("with") is not None:
+        select.set("with", stmt.args["with"].copy())
+    return select
 
 
 def _source_tables(query: exp.Expression, target: Optional[exp.Table], default_database: str) -> List[str]:
@@ -505,10 +586,10 @@ def _resolve_expression(scope: Scope, projection: exp.Expression, default_databa
 
 
 def _inside_subquery(column: exp.Column, root: exp.Expression) -> bool:
-    """True when ``column`` sits in a scalar subquery nested under ``root``."""
+    """True when ``column`` sits in a subquery (scalar, IN or EXISTS) nested under ``root``."""
     parent = column.parent
     while parent is not None and parent is not root:
-        if isinstance(parent, exp.Subquery):
+        if isinstance(parent, (exp.Subquery, exp.Query)):
             return True
         parent = parent.parent
     return False
@@ -531,9 +612,32 @@ def _derived(origin: _Origin, node: exp.Expression) -> _Origin:
     return _Origin(origin.table, origin.column, text)
 
 
+def _alias_scope(scope: Scope, alias: str, selected: bool = False) -> Optional[Scope]:
+    """The scope that binds ``alias``: this one, or an enclosing one for a correlated subquery."""
+    current = scope
+    while current is not None:
+        if alias in (current.selected_sources if selected else current.sources):
+            return current
+        # Only WHERE / SELECT subqueries see outer names; CTEs and derived tables do not.
+        if current.scope_type != ScopeType.SUBQUERY:
+            return None
+        current = current.parent
+    return None
+
+
+def _column_alias(scope: Scope, column: exp.Column) -> str:
+    """The relation alias ``column`` belongs to; an unqualified column is attributable only with one source."""
+    if column.table:
+        return column.table
+    if len(scope.selected_sources) == 1:
+        return next(iter(scope.selected_sources))
+    return ""
+
+
 def _column_source(scope: Scope, column: exp.Column):
     if column.table:
-        return scope.sources.get(column.table)
+        owner = _alias_scope(scope, column.table)
+        return owner.sources.get(column.table) if owner is not None else None
     # An unqualified column is only attributable when the scope has one source.
     if len(scope.selected_sources) == 1:
         return next(iter(scope.selected_sources.values()))[1]
@@ -617,6 +721,7 @@ def _scope_relation(scope: Scope, alias: str, default_database: str) -> str:
     their projection reads; their columns may be renamed or computed, so they are never
     rewritten as physical tables.
     """
+    scope = _alias_scope(scope, alias, selected=True) or scope
     node, source = scope.selected_sources[alias]
     if isinstance(source, exp.Table):
         if not _is_physical(source):
@@ -661,7 +766,7 @@ def _join_expression(
     default_database: str,
 ) -> str:
     aliases = list(dict.fromkeys(column.table for column in predicate.find_all(exp.Column) if column.table))
-    aliases = [alias for alias in aliases if alias in scope.selected_sources]
+    aliases = [alias for alias in aliases if _alias_scope(scope, alias, selected=True) is not None]
     if right_alias:
         lefts = [alias for alias in aliases if alias != right_alias]
         if not lefts:
@@ -688,13 +793,17 @@ def _join_edges_in_scope(
     if not isinstance(select, exp.Select):
         return []
     predicates = []
+    from_clause = select.args.get("from")
+    # USING can only bind to relations written before its JOIN.
+    preceding = [from_clause.this.alias_or_name] if from_clause is not None else []
     for join in select.args.get("joins") or []:
         kind = (join.side or join.kind or "INNER").upper()
+        right = join.this.alias_or_name
         if join.args.get("on") is not None:
-            predicates.append((join.args["on"], kind, join.this.alias_or_name, join.args["on"]))
+            predicates.append((join.args["on"], kind, right, join.args["on"]))
+        lefts = [alias for alias in preceding if alias in scope.selected_sources and alias != right]
+        preceding.append(right)
         for using in join.args.get("using") or []:
-            right = join.this.alias_or_name
-            lefts = [alias for alias in scope.selected_sources if alias != right]
             if len(lefts) == 1:
                 predicates.append(
                     (
@@ -728,12 +837,13 @@ def _join_edges_in_scope(
         grouped = defaultdict(set)
         transforms = defaultdict(dict)
         for atom, negated in _atoms(predicate, False):
-            columns = list(atom.find_all(exp.Column))
+            # Columns inside a nested subquery belong to that subquery's own scope.
+            columns = [c for c in atom.find_all(exp.Column) if not _inside_subquery(c, atom)]
             # Constant filters are handled by the rule extractor.
             if len(columns) < 2:
                 continue
             # Comparisons within one alias are row conditions, not self-joins.
-            if len({c.table for c in columns}) == 1:
+            if len({_column_alias(scope, c) for c in columns}) == 1:
                 continue
             result.join_predicates += 1
             lefts = rights = []
@@ -754,8 +864,12 @@ def _join_edges_in_scope(
                     )
                 )
                 continue
-            left_aliases = {c.table for c in atom.this.find_all(exp.Column)}
-            right_aliases = {c.table for c in atom.expression.find_all(exp.Column)}
+            left_aliases = {
+                _column_alias(scope, c) for c in atom.this.find_all(exp.Column) if not _inside_subquery(c, atom)
+            }
+            right_aliases = {
+                _column_alias(scope, c) for c in atom.expression.find_all(exp.Column) if not _inside_subquery(c, atom)
+            }
             alternatives = {}
             for left in lefts:
                 for right in rights:
@@ -1339,7 +1453,7 @@ def _extract_fragment(
         parameters: List[str] = []
         collections = [result.joins, result.predicates, result.mappings, result.window_functions, result.conditions]
         starts = [len(records) for records in collections]
-        for scope in _iter_scopes(query):
+        for scope in _iter_scopes(_dml_scan_query(stmt) or query):
             if target is not None:
                 parameters.extend(_parameters_in_scope(scope))
             if "joins" in sections:

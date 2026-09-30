@@ -122,10 +122,8 @@ class LineageTools:
                     continue
                 digests[digest] = display
                 if file_path.suffix.lower() == ".py":
-                    extracted = extract_sql_from_python(text, display)
-                    fragments.extend(extracted)
-                    if not extracted:
-                        unreadable.append({"file": display, "line": 0, "reason": "no supported literal SQL fragments"})
+                    # A Python file without SQL literals is simply not a SQL source, not a failed input.
+                    fragments.extend(extract_sql_from_python(text, display))
                 else:
                     fragments.append(SqlFragment(text=text, file=display))
 
