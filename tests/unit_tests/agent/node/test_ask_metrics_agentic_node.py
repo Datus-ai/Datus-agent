@@ -40,7 +40,7 @@ def _semantic_tools():
 def _context_tools(tree):
     tools = Mock()
     tools.list_subject_tree.return_value = FuncToolResult(result=tree)
-    for name in ("search_metrics", "get_metrics"):
+    for name in ("search_metrics",):
         setattr(tools, name, Mock(name=name))
     return tools
 
@@ -149,7 +149,6 @@ class TestAskMetricsAgenticNode:
         tool_names = [tool.name for tool in node.tools]
         assert tool_names == [
             "search_metrics",
-            "get_metrics",
             "list_metrics",
             "get_metric",
             "query_metrics",
@@ -397,7 +396,6 @@ class TestAskMetricsAgenticNode:
         assert [tool.name for tool in list_node.tools] == ["query_metrics", "search_metrics"]
         assert [tool.name for tool in invalid_node.tools] == [
             "search_metrics",
-            "get_metrics",
             "list_metrics",
             "get_metric",
             "query_metrics",
@@ -806,7 +804,6 @@ class TestAskMetricsAgenticNode:
             "query_metrics",
             "attribution_analyze",
             "search_metrics",
-            "get_metrics",
         }
 
     def test_extract_subject_tree_ignores_non_dict_nodes(self):

@@ -10,9 +10,8 @@ Use the narrow metric workflow below:
 2. Match requested metrics against the subject tree before using search.
    - Treat snake_case names, space-separated names, and obvious subject-path names as direct matches (`discounted revenue` -> `discounted_revenue`; `Lineitem Volume` with only `shipped_quantity` -> `shipped_quantity`).
    - When the subject tree gives a direct metric/path match, do not call `search_metrics`; use that metric name and path directly.
-3. If you need the full definition for a known subject-tree metric, call `get_metrics(subject_path, name)` directly. Do not use `search_metrics` just to confirm a known metric.
-4. Use `search_metrics` only when the subject tree does not contain a direct match, the tree is partial and the needed path is absent, or multiple plausible metrics remain ambiguous.
-5. Call `get_metric` before grouping, filtering, attribution, or choosing a
+3. Use `search_metrics` only when the subject tree does not contain a direct match, the tree is partial and the needed path is absent, or multiple plausible metrics remain ambiguous.
+4. Call `get_metric` for a known metric before grouping, filtering, attribution, or choosing a
    time grain. Read `time_dimension` and `time_granularities` from the result
    row as discovery hints; grains are ordered finest to coarsest, and the first
    grain is the default. Pass every name in `required_dimensions` to
@@ -27,11 +26,10 @@ Use the narrow metric workflow below:
 
 - Use only the metric/context tools available to you.
 - `query_metrics` and `attribution_analyze` are the only tools that may produce metric results or attribution results.
-- `get_metrics` retrieves details for a known subject path and metric name.
 - `search_metrics` discovers candidate metrics only when direct subject-tree matching is insufficient.
 - `list_metrics` enumerates executable Dosi metrics.
 - Omit optional tool arguments when they are not needed. Never pass empty JSON values such as `"where":` or `"limit":`; either pass a valid value or omit the argument.
-- Prefer `get_metric` and `query_metrics` after a direct subject-tree match. Call `get_metrics` for the definition text only when the answer depends on it; `get_metric` is required by step 5 regardless, because the query contract it reports is not in the subject tree. `get_metric` describes one metric per call — issue the calls in parallel when you need several.
+- Prefer `get_metric` and `query_metrics` after a direct subject-tree match. `get_metric` describes one metric per call — issue the calls in parallel when you need several.
 - Treat `get_metric.time_granularities` as advisory defaults, not an exhaustive allowlist. When the user explicitly requests a grain, pass it to `query_metrics` for Dosi validation. If no grain is requested, prefer the advertised default and omit unnecessary `time_granularity`. Split metrics only after Dosi reports an incompatibility.
 - Do not call unavailable tools such as DB tools, SQL tools, date parsing tools, validation tools, non-metric context tools, or semantic object search tools.
 - Infer concrete time ranges yourself from the current date. Do not ask for a date parser tool.

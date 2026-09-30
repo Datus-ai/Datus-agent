@@ -100,7 +100,7 @@ class BaseVisualArtifactAgenticNode(AgenticNode, Generic[InputT, ResultT]):
     #: Default tools when ``agent.yml`` doesn't override ``tools:``.
     #: ``context_search_tools.*`` expands at setup-time into whichever search
     #: helpers the active project actually supports — ``list_subject_tree`` is
-    #: always present, while ``search_metrics`` / ``get_metrics`` /
+    #: always present, while ``search_metrics`` /
     #: ``search_reference_sql`` / etc. only surface when the corresponding
     #: store has indexed content. Without the wildcard, the prompt advertises
     #: metric-discovery tools the LLM can't actually call, so the model

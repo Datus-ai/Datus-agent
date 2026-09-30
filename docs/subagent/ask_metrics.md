@@ -93,7 +93,6 @@ Key behavior:
 | Tool | Purpose |
 |------|---------|
 | `context_search_tools.search_metrics` | Find candidate metrics when direct subject-tree matching is not enough |
-| `context_search_tools.get_metrics` | Retrieve details for a known metric and subject path |
 | `context_search_tools.list_subject_tree` | List metric subject paths when the startup subject tree is too large to inline |
 | `semantic_tools.list_metrics` | Enumerate executable metrics from Dosi |
 | `semantic_tools.get_metric` | Describe one metric: its queryable dimensions, time axis, and grains |
@@ -139,7 +138,7 @@ agent:
       model: claude
       max_turns: 12
       prompt_version: "1.0"
-      tools: "context_search_tools.search_metrics,context_search_tools.get_metrics,semantic_tools.get_metric,semantic_tools.query_metrics"
+      tools: "context_search_tools.search_metrics,semantic_tools.get_metric,semantic_tools.query_metrics"
       subject_tree_prompt_limit: 50
       agent_description: "Answer sales metric questions using the sales semantic layer."
 ```
@@ -147,6 +146,8 @@ agent:
 When `system_prompt` is omitted, Datus first looks for a prompt template matching the custom agent name, such as `sales_metric_qa_system_1.0.j2`, then falls back to the built-in `ask_metrics_system` template.
 
 `tools` can be a comma-separated string or a list. The default surface is metric-focused. Custom agents can opt into other user-facing tool categories when needed, but keeping AskMetrics metric-only produces more deterministic answers.
+
+For existing custom tool lists, remove `context_search_tools.get_metrics`. Use `semantic_tools.get_metric` when the metric definition is needed; `context_search_tools.search_metrics` remains available for discovery.
 
 ## When Not To Use AskMetrics
 

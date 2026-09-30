@@ -28,13 +28,10 @@ You **MUST** use the available context search tools below to gather domain knowl
 {% endif -%}
 {% endif -%}
 
-{% if "list_subject_tree" in context_tools or "get_metrics" in context_tools or "get_reference_sql" in context_tools -%}
+{% if "list_subject_tree" in context_tools or "get_reference_sql" in context_tools -%}
 **Tree Navigation** — browse the domain hierarchy and fetch by exact name:
 {% if "list_subject_tree" in context_tools -%}
 - `list_subject_tree()` — call this first to get the available domain taxonomy
-{% endif -%}
-{% if "get_metrics" in context_tools -%}
-- `get_metrics(subject_path=[...], name="...")` — fetch a specific metric by its path and name from the tree
 {% endif -%}
 {% if "get_reference_sql" in context_tools -%}
 - `get_reference_sql(subject_path=[...], name="...")` — fetch a specific reference SQL by its path and name from the tree

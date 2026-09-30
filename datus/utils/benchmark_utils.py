@@ -488,7 +488,7 @@ def _extract_artifacts_from_action_history(
             _collect_reference_sql_artifacts(artifacts, result_payload)
         elif function_name == "search_table":
             _collect_semantic_model_artifacts(artifacts, result_payload)
-        elif function_name in {"search_metrics", "get_metrics"}:
+        elif function_name in {"search_metrics", "get_metric"}:
             _collect_metric_artifacts(artifacts, result_payload)
 
 

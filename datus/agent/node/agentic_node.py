@@ -990,31 +990,23 @@ class AgenticNode(Node):
 
     @staticmethod
     def _render_context_hint_part(hints: Optional[List[Dict[str, Any]]]) -> str:
-        """Render look-up hints for referenced items that couldn't be pre-loaded.
-
-        Names the item and points the model at the exact tool call so it fetches
-        the detail directly instead of searching the subject tree blindly.
-        """
+        """Render names and paths for referenced items that couldn't be pre-loaded."""
         if not hints:
             return ""
-        tool_by_kind = {"metric": "get_metrics", "reference_sql": "get_reference_sql"}
         label_by_kind = {"metric": "Metric", "reference_sql": "Reference SQL", "knowledge": "Knowledge"}
-        lines = [
-            "## Referenced items to look up",
-            "The user attached these but their details are not loaded here. Fetch each with the "
-            "indicated tool (using the exact subject_path and name) before answering — do not search blindly:",
-        ]
+        lines = ["## Referenced items", "The user attached these references; their details are not loaded here:"]
         for h in hints:
             kind = h.get("kind", "")
             name = h.get("name", "")
             subject_path = h.get("subject_path", []) or []
             label = label_by_kind.get(kind, kind or "Item")
-            tool = tool_by_kind.get(kind)
-            if tool:
-                lines.append(f'- {label} "{name}" → call {tool}(subject_path={subject_path}, name="{name}")')
+            if kind == "reference_sql":
+                lines.append(f'- {label} "{name}" → call get_reference_sql(subject_path={subject_path}, name="{name}")')
+            elif kind == "metric":
+                lines.append(f'- {label} "{name}" (subject_path: {subject_path})')
             else:
                 full = "/".join(list(subject_path) + [name])
-                lines.append(f'- {label} "{name}" (subject path: {full}) → locate it via list_subject_tree')
+                lines.append(f'- {label} "{name}" (subject path: {full})')
         return "\n".join(lines)
 
     def _build_enhanced_message(

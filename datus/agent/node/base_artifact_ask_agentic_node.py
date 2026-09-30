@@ -1130,8 +1130,7 @@ class BaseArtifactAskAgenticNode(ChatAgenticNode):
 
         # Reverse index: (kind, tuple(path), name) -> sorted list of
         # referencing query slugs. The path is part of the key because
-        # ``get_metrics(path, name)`` / ``get_reference_sql(path, name)``
-        # both take (path, name) and two different assets can legitimately
+        # Two different assets can legitimately
         # share a leaf ``name`` under different folders (e.g.
         # ``Commerce/Orders/aov`` vs ``Finance/Reporting/aov``). Keying
         # on name alone would conflate them and the "used by" list would
@@ -1200,8 +1199,9 @@ class BaseArtifactAskAgenticNode(ChatAgenticNode):
             "",
             (
                 "The artifact was grounded in the following subject-library "
-                "assets. To fetch a canonical definition, call "
-                "`get_metrics(path, name)` / `get_reference_sql(path, name)`:"
+                "assets. Use `get_metric(name)` for executable metric details when "
+                "the name is unambiguous, "
+                "or `get_reference_sql(path, name)` for reference SQL:"
             ),
             "",
         ]

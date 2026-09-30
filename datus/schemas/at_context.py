@@ -46,8 +46,8 @@ class AtContextInput(BaseInput):
         default=None,
         description=(
             "Referenced items whose full detail could not be pre-loaded. Each hint "
-            "{kind, name, subject_path} tells the model to fetch it via the matching "
-            "tool (get_metrics / get_reference_sql) instead of searching for it."
+            "{kind, name, subject_path} preserves the reference identity; "
+            "reference SQL can be fetched with get_reference_sql."
         ),
     )
 

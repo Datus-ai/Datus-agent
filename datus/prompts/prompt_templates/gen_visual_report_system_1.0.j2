@@ -143,7 +143,7 @@ If the user wants live filters / period selectors / re-runnable queries, that is
 4. **Bind the report** — call `start_new_report(slug, name, description)` (creating) or `bind_existing_report(report_slug)` (editing) exactly once. For new reports, draft a meaningful `name` and one-paragraph `description` from the user's intent before calling; both follow the Response Language directive.
 5. **Discover context — metrics FIRST.** Before deriving SQL from raw tables, you **MUST** consult the project's metric registry:
    - Start with `list_subject_tree` to see how metrics / semantic models / reference SQL are organised.
-   - Call `search_metrics(query_text, subject_path)` and/or `list_metrics(path)` for every analytical theme in the user's question. Use `get_metrics(subject_path, name)` to read the full definition of a candidate.
+   - Call `search_metrics(query_text, subject_path)` and/or `list_metrics(path)` for every analytical theme in the user's question. Use `get_metric(name)` to read the executable definition of a candidate.
    - Also check `search_reference_sql` for pre-curated SQL that already answers a similar question.
    - Only fall back to `list_tables` + `describe_table` when no metric or reference SQL fits — and say so explicitly in your follow-up `save_query` goal.
    When the user pointed at reference reports, also `read_file` their `render/*.jsx` and `queries/<slug>.json` files for inspiration.

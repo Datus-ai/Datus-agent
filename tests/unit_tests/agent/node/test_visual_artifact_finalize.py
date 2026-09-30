@@ -40,6 +40,7 @@ from datus.agent.node.visual_artifact._visual_artifact_finalize import (
     run_intent_curation,
     update_manifest_key_tables,
 )
+from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
 from datus.schemas.analysis_artifacts import (
     FinalizeAnalysisOutput,
     Insight,
@@ -1443,6 +1444,43 @@ class TestRunIntentCuration:
 
 
 class TestRunFinalizeAnalysis:
+    def test_get_metric_result_reaches_finalize_prompt(self, tmp_path: Path):
+        artifact_dir, queries_dir, analysis_dir = _make_artifact_layout(tmp_path)
+        model = Mock(spec=["generate_with_json_output"])
+        model.generate_with_json_output.return_value = _full_finalize_response()
+        actions = [
+            ActionHistory(
+                action_id="metric-success",
+                role=ActionRole.TOOL,
+                action_type="get_metric",
+                input={"function_name": "get_metric", "arguments": {"name": "revenue"}},
+                output={"result": {"name": "revenue"}},
+                status=ActionStatus.SUCCESS,
+            ),
+            ActionHistory(
+                action_id="metric-failed",
+                role=ActionRole.TOOL,
+                action_type="get_metric",
+                input={"function_name": "get_metric", "arguments": {"name": "missing_metric"}},
+                status=ActionStatus.FAILED,
+            ),
+        ]
+
+        run_finalize_analysis(
+            model=model,
+            artifact_kind="report",
+            artifact_dir=artifact_dir,
+            queries_dir=queries_dir,
+            analysis_dir=analysis_dir,
+            actions=actions,
+        )
+
+        prompt = model.generate_with_json_output.call_args.args[0]
+        assert "## SUBJECT-LIBRARY TOOL CALLS (reminder)" in prompt
+        assert '"tool": "get_metric"' in prompt
+        assert '"name": "revenue"' in prompt
+        assert "missing_metric" not in prompt
+
     def test_end_to_end_writes_expected_files(self, tmp_path: Path):
         artifact_dir, queries_dir, analysis_dir = _make_artifact_layout(tmp_path)
 
