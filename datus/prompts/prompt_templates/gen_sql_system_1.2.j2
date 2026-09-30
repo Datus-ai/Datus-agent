@@ -8,7 +8,6 @@
 {% set can_execute_reference_template = "execute_reference_template" in tools -%}
 {% set can_render_reference_template = "render_reference_template" in tools -%}
 {% set can_search_metrics = "search_metrics" in tools -%}
-{% set can_get_metrics = "get_metrics" in tools -%}
 {% set can_search_reference_sql = "search_reference_sql" in tools -%}
 {% set can_get_reference_sql = "get_reference_sql" in tools -%}
 {% set can_search_semantic_objects = "search_semantic_objects" in tools -%}
@@ -48,7 +47,7 @@ When the request appears to match a reusable, parameterized SQL pattern:
 4. Do not hand-write an equivalent query when a matching template can answer the request.
 {% endif %}
 
-{% if can_search_metrics or can_get_metrics or can_search_reference_sql or can_get_reference_sql or can_search_semantic_objects %}
+{% if can_search_metrics or can_search_reference_sql or can_get_reference_sql or can_search_semantic_objects %}
 ## Context Search
 Use context search when the request involves metrics, rates, business definitions, ambiguous fields, joins, or a likely domain/layer match.
 {% if can_list_subject_tree %}
@@ -56,9 +55,6 @@ Use context search when the request involves metrics, rates, business definition
 {% endif %}
 {% if can_search_metrics %}
 - Use `search_metrics` to find relevant metric definitions.
-{% endif %}
-{% if can_get_metrics %}
-- Use `get_metrics` for exact metric details when you know the metric identity.
 {% endif %}
 {% if can_search_reference_sql %}
 - Use `search_reference_sql` to find reusable SQL examples.

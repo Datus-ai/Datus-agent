@@ -1591,16 +1591,15 @@ class ChatTaskManager:
         """Resolve @-reference paths to typed objects (+ look-up hints).
 
         Tables come from the schema-metadata completer with a name-only fallback.
-        Metrics and reference SQL are resolved by EXACT subject path via the same
-        non-vector, path-scoped store lookup the get_metrics / get_reference_sql
-        tools use — deliberately NOT the completer's vector search, which is empty
-        until the KB is vectorised (and is slated for removal).
+        Metrics and reference SQL are resolved by EXACT subject path via
+        non-vector, path-scoped store lookups — deliberately NOT the completer's
+        vector search, which is empty until the KB is vectorised (and is slated
+        for removal).
 
         Anything that can't be pre-loaded (a metric/sql that didn't resolve, and
         every @Knowledge ref, which has no store loader) becomes a ``hint`` —
-        ``{kind, name, subject_path}`` — so the prompt can still name it and tell
-        the model which tool to call, instead of dropping it and forcing a blind
-        search.
+        ``{kind, name, subject_path}`` — so the prompt can still name it
+        instead of dropping it and forcing a blind search.
         """
         logger.info(
             "AT-CONTEXT resolving: table_paths=%s metric_paths=%s sql_paths=%s knowledge_paths=%s "

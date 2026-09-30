@@ -20,7 +20,6 @@ class ToolService:
     CONTEXT_TOOL_NAMES = {
         "list_subject_tree",
         "search_metrics",
-        "get_metrics",
         "search_reference_sql",
         "get_reference_sql",
         "search_semantic_objects",

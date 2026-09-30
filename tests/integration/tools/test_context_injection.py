@@ -273,7 +273,6 @@ class TestContextInjectionRealLLM:
             "search_reference_sql",
             "get_reference_sql",
             "search_metrics",
-            "get_metrics",
             "search_semantic_objects",
             "list_subject_tree",
         }

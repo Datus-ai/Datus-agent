@@ -93,7 +93,6 @@ graph LR
 | 工具 | 用途 |
 |------|------|
 | `context_search_tools.search_metrics` | 当主题树无法直接匹配时搜索候选指标 |
-| `context_search_tools.get_metrics` | 获取已知主题路径和指标名的指标详情 |
 | `context_search_tools.list_subject_tree` | 当启动时主题树过大、只能内联部分内容时列出指标主题路径 |
 | `semantic_tools.list_metrics` | 从 Dosi 列出可执行指标 |
 | `semantic_tools.get_metric` | 描述单个指标：可查询维度、时间轴和粒度 |
@@ -139,7 +138,7 @@ agent:
       model: claude
       max_turns: 12
       prompt_version: "1.0"
-      tools: "context_search_tools.search_metrics,context_search_tools.get_metrics,semantic_tools.get_metric,semantic_tools.query_metrics"
+      tools: "context_search_tools.search_metrics,semantic_tools.get_metric,semantic_tools.query_metrics"
       subject_tree_prompt_limit: 50
       agent_description: "Answer sales metric questions using the sales semantic layer."
 ```
@@ -147,6 +146,8 @@ agent:
 如果省略 `system_prompt`，Datus 会先查找与自定义 agent 名称匹配的模板，例如 `sales_metric_qa_system_1.0.j2`，找不到时再回退到内置 `ask_metrics_system` 模板。
 
 `tools` 可以是逗号分隔字符串，也可以是列表。默认工具面聚焦指标。自定义 agent 可以按需选择其他用户可见工具类别，但保持 AskMetrics 仅使用指标工具通常能得到更稳定的回答。
+
+已有自定义工具列表需要移除 `context_search_tools.get_metrics`。需要指标定义时使用 `semantic_tools.get_metric`；发现候选指标仍可使用 `context_search_tools.search_metrics`。
 
 ## 不适合使用 AskMetrics 的场景
 

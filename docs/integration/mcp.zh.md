@@ -224,12 +224,17 @@ datus-mcp --dynamic --host 0.0.0.0 --port 8000 --transport http
 
 ## 可用工具
 
-MCP 服务暴露以下工具：
+MCP 服务注册以下工具。实际可用情况取决于数据源和已配置的能力；请以当前连接的 `tools/list` 为准。
 
-| 类别           | 工具                                                                                                                                                              |
-|----------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| **数据库**     | `list_databases`, `list_schemas`, `list_tables`, `search_table`, `describe_table`, `read_query`                                                                   |
-| **上下文搜索** | `list_subject_tree`, `search_metrics`, `get_metrics`, `search_reference_sql`, `get_reference_sql`, `search_semantic_objects`, `search_knowledge`, `get_knowledge` |
+| 类别 | 工具 |
+| --- | --- |
+| **数据库** | `check_datasource_quality`, `describe_table`, `execute_sql`, `get_migration_capabilities`, `import_database_file`, `list_databases`, `list_schemas`, `list_tables`, `load_file_as_table`, `plan_datasource`, `search_table`, `suggest_table_layout`, `validate_ddl` |
+| **上下文搜索** | `get_reference_sql`, `list_subject_tree`, `search_metrics`, `search_reference_sql`, `search_semantic_objects` |
+| **语义模型** | `attribution_analyze`, `get_metric`, `get_query_metrics_result`, `list_metrics`, `query_metrics`, `validate_semantic` |
+| **参考模板** | `execute_reference_template`, `get_reference_template`, `render_reference_template`, `search_reference_template` |
+| **日期解析** | `parse_temporal_expressions` |
+| **平台文档** | `get_document`, `list_document_nav`, `search_document` |
+| **文件系统** | `glob`, `grep`, `read_file`, `read_image` |
 
 ## 命令行参数
 

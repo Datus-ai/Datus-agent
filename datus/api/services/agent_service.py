@@ -167,7 +167,6 @@ SUBAGENT_TOOL_REFERENCE: dict[str, dict[str, Any]] = {
     "ask_metrics": {
         "default_tools": [
             "context_search_tools.search_metrics",
-            "context_search_tools.get_metrics",
             "semantic_tools.list_metrics",
             "semantic_tools.get_metric",
             "semantic_tools.query_metrics",

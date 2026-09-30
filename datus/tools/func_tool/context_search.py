@@ -23,7 +23,6 @@ logger = get_logger(__name__)
 _NAME = "context_search_tools"
 _NAME_LIST_SUBJECT_TREE = "context_search_tools.list_subject_tree"
 _NAME_METRICS = "context_search_tools.search_metrics"
-_NAME_GET_METRICS = "context_search_tools.get_metrics"
 _NAME_SQL = "context_search_tools.search_reference_sql"
 _NAME_GET_SQL = "context_search_tools.get_reference_sql"
 _NAME_SEMANTIC = "context_search_tools.search_semantic_objects"
@@ -120,10 +119,7 @@ class ContextSearchTools:
         return self._has_tool_permission(_NAME, *tool_names)
 
     def _show_metrics(self):
-        return self.has_metrics and self._has_context_tool_permission(
-            _NAME_METRICS,
-            _NAME_GET_METRICS,
-        )
+        return self.has_metrics and self._has_context_tool_permission(_NAME_METRICS)
 
     def _show_sql(self):
         return self.has_reference_sql and self._has_context_tool_permission(
@@ -172,8 +168,7 @@ class ContextSearchTools:
             if not has_subject_tree:
                 tools.append(trans_to_function_tool(self.list_subject_tree))
                 has_subject_tree = True
-            for tool in (self.search_metrics, self.get_metrics):
-                tools.append(trans_to_function_tool(tool))
+            tools.append(trans_to_function_tool(self.search_metrics))
 
         if self._show_sql():
             if not has_subject_tree:
@@ -297,36 +292,6 @@ class ContextSearchTools:
             return FuncToolResult(success=1, error=None, result=metrics)
         except Exception as e:
             logger.error(f"Failed to search metrics for '{query_text}': {e}")
-            return FuncToolResult(success=0, error=str(e))
-
-    @mcp_tool(availability_check="has_metrics")
-    def get_metrics(self, subject_path: List[str], name: str = "") -> FuncToolResult:
-        """
-        Get metric details by exact subject path and name.
-        Use `search_metrics` for similarity-based search, use this for precise retrieval
-        when you already know the path.
-
-        Args:
-            subject_path: Subject hierarchy path (e.g., ['Finance', 'Revenue', 'Q1'])
-            name: The exact name of the metric
-
-        Returns:
-            FuncToolResult with metric detail containing name, description, constraint, and sql_query
-        """
-        # Normalize null values from LLM
-        name = normalize_null(name) or ""
-        try:
-            metrics = self.metric_rag.get_metrics_detail(
-                subject_path=subject_path,
-                name=name,
-            )
-            logger.debug(f"result of search_metrics: {metrics}")
-            if metrics:
-                return FuncToolResult(success=1, error=None, result=metrics[0])
-            else:
-                return FuncToolResult(success=0, error="No matched result", result=None)
-        except Exception as e:
-            logger.error(f"Failed to get metrics details for `{'/'.join(subject_path)}/{name}`: {str(e)}")
             return FuncToolResult(success=0, error=str(e))
 
     @mcp_tool(availability_check="has_reference_sql")

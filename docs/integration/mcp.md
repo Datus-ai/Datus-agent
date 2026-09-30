@@ -224,12 +224,17 @@ Info endpoints:
 
 ## Available Tools
 
-The MCP server exposes the following tools:
+The MCP server registers these tools. Availability depends on the datasource and configured capabilities; use `tools/list` for the active connection.
 
-| Category           | Tools                                                                                                                                                             |
-|--------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| **Database**       | `list_databases`, `list_schemas`, `list_tables`, `search_table`, `describe_table`, `read_query`                                                                   |
-| **Context Search** | `list_subject_tree`, `search_metrics`, `get_metrics`, `search_reference_sql`, `get_reference_sql`, `search_semantic_objects`, `search_knowledge`, `get_knowledge` |
+| Category | Tools |
+| --- | --- |
+| **Database** | `check_datasource_quality`, `describe_table`, `execute_sql`, `get_migration_capabilities`, `import_database_file`, `list_databases`, `list_schemas`, `list_tables`, `load_file_as_table`, `plan_datasource`, `search_table`, `suggest_table_layout`, `validate_ddl` |
+| **Context Search** | `get_reference_sql`, `list_subject_tree`, `search_metrics`, `search_reference_sql`, `search_semantic_objects` |
+| **Semantic** | `attribution_analyze`, `get_metric`, `get_query_metrics_result`, `list_metrics`, `query_metrics`, `validate_semantic` |
+| **Reference Templates** | `execute_reference_template`, `get_reference_template`, `render_reference_template`, `search_reference_template` |
+| **Date Parsing** | `parse_temporal_expressions` |
+| **Platform Docs** | `get_document`, `list_document_nav`, `search_document` |
+| **Filesystem** | `glob`, `grep`, `read_file`, `read_image` |
 
 ## Command Line Options
 

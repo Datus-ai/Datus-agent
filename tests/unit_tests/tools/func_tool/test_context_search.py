@@ -110,11 +110,8 @@ def build_tools(mock_agent_config):
         metric_rag.search_all_metrics.return_value = metric_entries
         metric_rag.search_metrics.return_value = metric_cfg.get("search_return", [])
         metric_rag.get_metrics_size.return_value = metric_cfg.get("size", len(metric_entries))
-        metric_rag.get_metrics_detail.return_value = metric_cfg.get("detail_return", [])
         if "search_metrics_side_effect" in metric_cfg:
             metric_rag.search_metrics.side_effect = metric_cfg["search_metrics_side_effect"]
-        if "detail_side_effect" in metric_cfg:
-            metric_rag.get_metrics_detail.side_effect = metric_cfg["detail_side_effect"]
 
         sql_rag = Mock()
         sql_entries = sql_cfg.get("entries", [])
@@ -160,63 +157,6 @@ def build_tools(mock_agent_config):
         return tools, metric_rag, sql_rag, semantic_rag
 
     return _builder
-
-
-class TestGetMetrics:
-    def test_success(self, build_tools):
-        metric_detail = {"name": "revenue", "description": "Total revenue", "sql_query": "SELECT SUM(amount)"}
-        tools, metric_rag, _, _ = build_tools(
-            metric_cfg={
-                "entries": [{"subject_path": ["Finance"], "name": "revenue"}],
-                "detail_return": [metric_detail],
-            }
-        )
-
-        result = tools.get_metrics(subject_path=["Finance"], name="revenue")
-
-        assert result.success == 1
-        assert result.result == metric_detail
-
-    def test_not_found(self, build_tools):
-        tools, _, _, _ = build_tools(
-            metric_cfg={
-                "entries": [{"subject_path": ["Finance"], "name": "revenue"}],
-                "detail_return": [],
-            }
-        )
-
-        result = tools.get_metrics(subject_path=["Finance"], name="unknown")
-
-        assert result.success == 0
-        assert "No matched result" in result.error
-
-    def test_exception_returns_failure(self, build_tools):
-        tools, metric_rag, _, _ = build_tools(
-            metric_cfg={
-                "entries": [{"subject_path": ["Finance"], "name": "revenue"}],
-                "detail_side_effect": Exception("db error"),
-            }
-        )
-
-        result = tools.get_metrics(subject_path=["Finance"], name="revenue")
-
-        assert result.success == 0
-        assert "db error" in result.error
-
-    def test_null_name_normalized(self, build_tools):
-        tools, metric_rag, _, _ = build_tools(
-            metric_cfg={
-                "entries": [{"subject_path": ["Finance"], "name": "revenue"}],
-                "detail_return": [],
-            }
-        )
-
-        tools.get_metrics(subject_path=["Finance"], name="null")
-
-        metric_rag.get_metrics_detail.assert_called_once_with(
-            subject_path=["Finance"],
-            name="",
-        )
 
 
 class TestGetReferenceSQL:
@@ -588,7 +528,6 @@ def test_available_tools_with_metrics_and_sql(build_context_search_tools):
     assert tool_names == {
         "list_subject_tree",
         "search_metrics",
-        "get_metrics",
         "search_reference_sql",
         "get_reference_sql",
     }
@@ -601,7 +540,7 @@ def test_available_tools_metrics_only(build_context_search_tools):
     )
 
     tool_names = {tool.name for tool in tools.available_tools()}
-    assert tool_names == {"list_subject_tree", "search_metrics", "get_metrics"}
+    assert tool_names == {"list_subject_tree", "search_metrics"}
 
 
 def test_available_tools_sql_only(build_context_search_tools):

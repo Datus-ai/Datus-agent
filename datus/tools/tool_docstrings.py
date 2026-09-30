@@ -335,43 +335,8 @@ Example:
     ]
 
 Note:
-    Returns up to 1000 items per layer. If you need full details including
-    SQL queries, use get_metrics() or get_sql_history() instead.
-"""
-
-GET_METRICS_DOC = """
-Get complete definition of a specific metric.
-
-Retrieves the full metric definition including description and SQL query,
-ready for use in generating SQL statements.
-
-Use this tool when you need to:
-- Get the SQL query for a specific metric
-- Understand how a metric is calculated
-- Reuse existing metric logic in your SQL generation
-
-**Application Guidance**: If results are found, MUST prioritize reusing the 'sql_query'
-directly or with minimal adjustments (e.g., add date filters, change table names).
-
-Args:
-    domain: Domain name
-    layer1: Primary layer name
-    layer2: Secondary layer name
-    name: Metric name
-
-Returns:
-    dict: Metric details containing:
-        - 'success' (int): 1 if successful, 0 if failed
-        - 'error' (str or None): Error message if failed
-        - 'result' (list): List with single metric dict containing:
-            - 'name': Metric name
-            - 'description': Metric description
-            - 'sql_query': SQL query to calculate the metric
-
-Example:
-    [{"name": "total_revenue",
-      "description": "Sum of all sales",
-      "sql_query": "SELECT SUM(amount) FROM orders WHERE date > '2020'"}]
+    Returns up to 1000 items per layer. Use get_metric(name) for executable
+    metric details or get_sql_history() for historical SQL.
 """
 
 GET_SQL_HISTORY_DOC = """

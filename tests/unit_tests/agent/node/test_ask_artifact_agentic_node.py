@@ -1178,8 +1178,7 @@ class TestArtifactContextBlockInlining:
         the queries that use the other. Without the path-aware key,
         the prompt would falsely tell the LLM that a Finance-team
         query references the Commerce metric (or vice versa) and a
-        ``get_metrics(path, name)`` lookup would resolve to the wrong
-        asset.
+        reference would point to the wrong asset.
         """
         commerce_aov = {"path": ["Commerce", "Orders"], "name": "aov"}
         finance_aov = {"path": ["Finance", "Reporting"], "name": "aov"}
@@ -1905,7 +1904,7 @@ def _fs_tool_names(node) -> set:
 # a few specific context_search methods, all date parsing — and crucially NO
 # db_tools, so ``read_query`` must not leak in.
 _NO_DB_WHITELIST = (
-    "context_search_tools.get_metrics,context_search_tools.list_subject_tree,"
+    "context_search_tools.list_subject_tree,"
     "context_search_tools.search_metrics,date_parsing_tools.*,"
     "semantic_tools.attribution_analyze,semantic_tools.get_metric,"
     "semantic_tools.list_metrics,semantic_tools.query_metrics"
