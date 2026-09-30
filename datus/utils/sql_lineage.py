@@ -38,12 +38,15 @@ import re
 from collections import defaultdict
 from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
+from functools import lru_cache
 from typing import Dict, Iterable, List, Optional, Tuple
 
 import sqlglot
 from sqlglot import expressions as exp
+from sqlglot.dialects import Dialect
 from sqlglot.errors import ParseError, TokenError
 from sqlglot.optimizer.scope import Scope, traverse_scope
+from sqlglot.tokens import TokenType
 
 from datus.utils.loggings import get_logger
 
@@ -113,6 +116,9 @@ class JoinEdge:
     aliases: List[str] = field(default_factory=list)
 
     statement_id: str = ""
+    condition_span: Optional[Tuple[int, int]] = None
+    # Source fragment template: physical tables are wrapped in TABLE_REF_MARK (see render_expression).
+    expression: str = ""
 
 
 @dataclass
@@ -187,6 +193,7 @@ class Condition:
     branch: Optional[int] = None
 
     statement_id: str = ""
+    condition_span: Optional[Tuple[int, int]] = None
 
 
 @dataclass
@@ -249,12 +256,12 @@ def preprocess_template(sql: str) -> Tuple[str, bool]:
     def _keep_newlines(match: re.Match) -> str:
         return "\n" * match.group(0).count("\n")
 
-    sql = _DBT_REF_RE.sub(lambda m: m.group(1), sql)
-    sql = _DBT_SOURCE_RE.sub(lambda m: f"{m.group(1)}.{m.group(2)}", sql)
+    sql = _DBT_REF_RE.sub(lambda m: m.group(1) + _keep_newlines(m), sql)
+    sql = _DBT_SOURCE_RE.sub(lambda m: f"{m.group(1)}.{m.group(2)}" + _keep_newlines(m), sql)
     sql = _JINJA_COMMENT_RE.sub(_keep_newlines, sql)
     sql = _JINJA_BLOCK_RE.sub(_keep_newlines, sql)
-    sql = _JINJA_EXPR_RE.sub("__tpl__", sql)
-    sql = _DOLLAR_VAR_RE.sub(lambda m: f"__tpl_{m.group(1)}__", sql)
+    sql = _JINJA_EXPR_RE.sub(lambda m: "__tpl__" + _keep_newlines(m), sql)
+    sql = _DOLLAR_VAR_RE.sub(lambda m: f"__tpl_{m.group(1)}__" + _keep_newlines(m), sql)
     return sql, sql != original
 
 
@@ -533,8 +540,148 @@ def _column_source(scope: Scope, column: exp.Column):
     return None
 
 
+class _SourcePositionParser:
+    """Capture complete predicate token spans without searching rendered SQL.
+
+    Mixed into the selected dialect's parser, without mutating sqlglot globals.
+    These two parser hooks also retain closing parentheses and keyword-only
+    operands, which identifier metadata alone cannot locate reliably.
+    """
+
+    def _parse_assignment(self):
+        start = self._curr
+        if self._prev and self._prev.token_type in (TokenType.ON, TokenType.WHERE):
+            start = self._prev
+        expression = super()._parse_assignment()
+        self._record_span(expression, start)
+        return expression
+
+    def _parse_using_identifiers(self):
+        start = self._prev
+        identifiers = super()._parse_using_identifiers()
+        for identifier in identifiers:
+            self._record_span(identifier, start)
+        return identifiers
+
+    def _record_span(self, expression, start):
+        if expression is not None and start is not None and self._prev is not None:
+            if self._prev.end >= start.start:
+                expression.meta["lineage_span"] = (
+                    self.sql.count("\n", 0, start.start) + 1,
+                    self.sql.count("\n", 0, self._prev.end + 1) + 1,
+                )
+
+
+@lru_cache(maxsize=32)
+def _position_parser_class(parser_class):
+    return type(f"Lineage{parser_class.__name__}", (_SourcePositionParser, parser_class), {})
+
+
+def _parse_with_positions(text: str, dialect: Optional[str]) -> Optional[exp.Expression]:
+    selected = Dialect.get_or_raise(dialect)
+    parser = _position_parser_class(selected.parser_class)(dialect=selected)
+    statements = parser.parse(selected.tokenize(text), text)
+    return next((statement for statement in statements if statement is not None), None)
+
+
+def _condition_span(node: exp.Expression, line_offset: int) -> Optional[Tuple[int, int]]:
+    span = node.meta.get("lineage_span")
+    return (span[0] + line_offset, span[1] + line_offset) if span else None
+
+
+# Join expressions are templates: every physical table is wrapped in this marker so the
+# tool layer can substitute response-local IDs without re-parsing the fragment.
+TABLE_REF_MARK = "\x1f"
+_TABLE_REF = re.compile(f"{TABLE_REF_MARK}([^{TABLE_REF_MARK}]*){TABLE_REF_MARK}")
+
+
+def _table_ref(name: str) -> str:
+    return f"{TABLE_REF_MARK}{name}{TABLE_REF_MARK}"
+
+
+def expression_tables(expression: str) -> List[str]:
+    """Physical table names referenced by a join expression template, in order of appearance."""
+    return list(dict.fromkeys(_TABLE_REF.findall(expression)))
+
+
+def render_expression(expression: str, resolve) -> str:
+    """Replace every table marker with ``resolve(full_name)``."""
+    return _TABLE_REF.sub(lambda match: resolve(match.group(1)), expression)
+
+
+def _scope_relation(scope: Scope, alias: str, default_database: str) -> str:
+    """Keep projection aliases bound to their scope, not a replacement physical table.
+
+    Physical relations render as ``<ref> AS alias`` (or ``<ref>`` when unaliased). CTE and
+    derived relations keep their scope name followed by ``{<ref>,...}``, the physical tables
+    their projection reads; their columns may be renamed or computed, so they are never
+    rewritten as physical tables.
+    """
+    node, source = scope.selected_sources[alias]
+    if isinstance(source, exp.Table):
+        if not _is_physical(source):
+            relation = source.copy()
+            relation.set("joins", None)
+            return _render(relation)
+        ref = _table_ref(table_full_name(source, default_database))
+        return f"{ref} AS {_render(exp.to_identifier(source.alias))}" if source.alias else ref
+
+    physical = set()
+    pending = [source]
+    visited = set()
+    while pending:
+        current = pending.pop()
+        if id(current) in visited:
+            continue
+        visited.add(id(current))
+        pending.extend(current.union_scopes)
+        pending.extend(current.subquery_scopes)
+        for _, child in current.selected_sources.values():
+            if isinstance(child, Scope):
+                pending.append(child)
+            elif isinstance(child, exp.Table) and _is_physical(child):
+                physical.add(table_full_name(child, default_database))
+    scope_alias = ""
+    if isinstance(node, exp.Table):
+        label, scope_alias = _render(exp.to_identifier(node.name)), node.alias
+    else:
+        parent = source.expression.parent
+        table_alias = parent.args.get("alias") if parent is not None else None
+        label = _render(table_alias.this) if table_alias else _render(exp.to_identifier(alias))
+    label += "{" + ",".join(_table_ref(name) for name in sorted(physical)) + "}"
+    return f"{label} AS {_render(exp.to_identifier(scope_alias))}" if scope_alias else label
+
+
+def _join_expression(
+    scope: Scope,
+    predicate: exp.Expression,
+    kind: str,
+    right_alias: str,
+    source_node: exp.Expression,
+    default_database: str,
+) -> str:
+    aliases = list(dict.fromkeys(column.table for column in predicate.find_all(exp.Column) if column.table))
+    aliases = [alias for alias in aliases if alias in scope.selected_sources]
+    if right_alias:
+        lefts = [alias for alias in aliases if alias != right_alias]
+        if not lefts:
+            return ""
+        # Every relation the condition references stays visible; extra left-side aliases
+        # follow the first one as a comma list, as they would in a FROM clause.
+        left = ", ".join(_scope_relation(scope, alias, default_database) for alias in lefts)
+        right = _scope_relation(scope, right_alias, default_database)
+        if isinstance(source_node, exp.Identifier):
+            columns = source_node.parent.args.get("using") or [source_node]
+            clause = "USING (" + ", ".join(_render(column) for column in columns) + ")"
+        else:
+            clause = "ON " + _render(predicate)
+        return f"{left} {kind} JOIN {right} {clause}"
+    relations = [_scope_relation(scope, alias, default_database) for alias in aliases]
+    return " CROSS JOIN ".join(relations) + " WHERE " + _render(predicate)
+
+
 def _join_edges_in_scope(
-    scope: Scope, default_database: str, result: ExtractionResult, file: str, line: int
+    scope: Scope, default_database: str, result: ExtractionResult, file: str, line: int, line_offset: int = 0
 ) -> List[Tuple]:
     """Resolve conjunctive equalities, preserving canonical outer-join direction."""
     select = scope.expression
@@ -544,7 +691,7 @@ def _join_edges_in_scope(
     for join in select.args.get("joins") or []:
         kind = (join.side or join.kind or "INNER").upper()
         if join.args.get("on") is not None:
-            predicates.append((join.args["on"], kind, join.this.alias_or_name))
+            predicates.append((join.args["on"], kind, join.this.alias_or_name, join.args["on"]))
         for using in join.args.get("using") or []:
             right = join.this.alias_or_name
             lefts = [alias for alias in scope.selected_sources if alias != right]
@@ -556,6 +703,7 @@ def _join_edges_in_scope(
                         ),
                         kind,
                         right,
+                        using,
                     )
                 )
             else:
@@ -563,13 +711,20 @@ def _join_edges_in_scope(
                 result.join_predicates_unresolved += 1
                 result.conditions.append(
                     Condition(
-                        f"USING ({using.name})", "JOIN", "unresolved", file, line, "Multiple possible left sources"
+                        f"USING ({using.name})",
+                        "JOIN",
+                        "unresolved",
+                        file,
+                        line,
+                        "Multiple possible left sources",
+                        condition_span=_condition_span(using, line_offset),
                     )
                 )
     if select.args.get("where") is not None:
-        predicates.append((select.args["where"].this, "WHERE", ""))
+        predicates.append((select.args["where"].this, "WHERE", "", select.args["where"].this))
     edges = []
-    for predicate, kind, right_alias in predicates:
+    for predicate, kind, right_alias, source_node in predicates:
+        span = _condition_span(source_node, line_offset)
         grouped = defaultdict(set)
         transforms = defaultdict(dict)
         for atom, negated in _atoms(predicate, False):
@@ -595,6 +750,7 @@ def _join_edges_in_scope(
                         file,
                         line,
                         "Relationship is not a resolvable conjunctive equality",
+                        condition_span=span,
                     )
                 )
                 continue
@@ -626,8 +782,23 @@ def _join_edges_in_scope(
                             transforms[key][f"{source}.{origin.column}"] = origin.transform
             for key, (lo_cols, hi_cols) in alternatives.items():
                 grouped[key].add(("|".join(lo_cols), "|".join(hi_cols)))
+        expression = (
+            _join_expression(scope, predicate, kind, right_alias, source_node, default_database) if grouped else ""
+        )
         for key, keys in grouped.items():
-            edges.append((key[0], key[1], sorted(keys), key[2], transforms[key], _render(predicate), list(key[3])))
+            edges.append(
+                (
+                    key[0],
+                    key[1],
+                    sorted(keys),
+                    key[2],
+                    transforms[key],
+                    _render(predicate),
+                    list(key[3]),
+                    span,
+                    expression,
+                )
+            )
     return edges
 
 
@@ -1121,7 +1292,7 @@ def _extract_fragment(
         result.statements += 1
         sequence = result.statements
         try:
-            stmt = sqlglot.parse_one(text, read=dialect or None)
+            stmt = _parse_with_positions(text, dialect)
         except (ParseError, TokenError, ValueError) as e:
             result.unresolved.append(Unresolved(fragment.file, line, f"parse error: {_short_error(e)}"))
             continue
@@ -1172,9 +1343,17 @@ def _extract_fragment(
             if target is not None:
                 parameters.extend(_parameters_in_scope(scope))
             if "joins" in sections:
-                for left, right, keys, join_type, transforms, condition, aliases in _join_edges_in_scope(
-                    scope, default_database, result, fragment.file, line
-                ):
+                for (
+                    left,
+                    right,
+                    keys,
+                    join_type,
+                    transforms,
+                    condition,
+                    aliases,
+                    condition_span,
+                    expression,
+                ) in _join_edges_in_scope(scope, default_database, result, fragment.file, line, span_start - 1):
                     result.joins.append(
                         JoinEdge(
                             left,
@@ -1187,6 +1366,8 @@ def _extract_fragment(
                             target_name,
                             condition,
                             aliases,
+                            condition_span=condition_span,
+                            expression=expression,
                         )
                     )
             if "rules" in sections:

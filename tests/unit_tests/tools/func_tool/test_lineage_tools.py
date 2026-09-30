@@ -2,410 +2,376 @@
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
-"""Tests for the ``extract_sql_lineage`` function tool."""
+"""Behavioral contracts for the compact, complete lineage tool response."""
 
+import asyncio
+import json
+import os
 from types import SimpleNamespace
 
 import pytest
 
 from datus.tools.func_tool.lineage_tools import LineageTools
 
-ETL_ORDERS = """-- build the order detail
-insert into dw.dwd_orders
-select o.order_id, o.store_code, -- store the order belongs to
-       s.brand_name,
-       case when o.order_type = 1 then 'MA' when o.order_type = 2 then 'IMAC' end as order_type_name,
-       count(distinct o.item_id) as item_num -- each item counted once
-from dw.ods_orders o
-left join dw.dim_store s on o.store_code = s.store_code
-where s.billing_status = 1 and s.brand_name not in ('X') and o.pt_date >= '${pt_date}'
-"""
 
-ETL_ORDERS_V2 = ETL_ORDERS.replace("-- build the order detail", "-- build the order detail (v2)")
-
-ETL_SUMMARY = """insert into dw.dws_orders_daily
-select d.store_code, count(*) as order_num
-from (
-    select store_code, row_number() over (partition by order_id order by update_time desc) as rn
-    from dw.dwd_orders
-) d
-join dw.dim_store s on d.store_code = s.store_code
-where d.rn = 1 and s.billing_status = 1 and s.brand_name not in ('X')
-group by d.store_code
-"""
-
-DAG = '''
-def build():
-    run("""
-    insert into dw.ads_orders select * from dw.dws_orders_daily
-    """)
-'''
-
-
-@pytest.fixture
-def workspace(tmp_path):
-    etl = tmp_path / "etl"
-    etl.mkdir()
-    (etl / "dwd_orders.sql").write_text(ETL_ORDERS, encoding="utf-8")
-    (etl / "dwd_orders_v2.sql").write_text(ETL_ORDERS_V2, encoding="utf-8")
-    (etl / "dws_orders_daily.sql").write_text(ETL_SUMMARY, encoding="utf-8")
-    (tmp_path / "dags").mkdir()
-    (tmp_path / "dags" / "ads.py").write_text(DAG, encoding="utf-8")
-    return tmp_path
-
-
-def make_tool(root, datasources=None, current=""):
-    config = SimpleNamespace(
-        current_datasource=current,
-        services=SimpleNamespace(datasources=datasources or {}),
-    )
-    return LineageTools(config, root_path=str(root))
+def make_tool(root, datasources=None, current="", **kwargs):
+    config = SimpleNamespace(current_datasource=current, services=SimpleNamespace(datasources=datasources or {}))
+    return LineageTools(config, root_path=str(root), **kwargs)
 
 
 def extract(root, **kwargs):
-    kwargs.setdefault("dialect", "mysql")
-    kwargs.setdefault("default_database", "dw")
-    result = make_tool(root).extract_sql_lineage(**kwargs)
-    assert result.success == 1, result.error
-    return result.result
+    response = make_tool(root).extract_sql_lineage(dialect="mysql", default_database="dw", **kwargs)
+    assert response.success == 1, response.error
+    return response.result
 
 
-def test_full_result_contract(workspace):
-    result = extract(workspace, paths=["etl/**/*.sql", "dags/*.py"])
-    assert set(result) == {
-        "schema_version",
-        "lineage",
-        "roots",
-        "tables",
-        "joins",
-        "rules",
-        "conditions",
-        "comments",
-        "unresolved",
-        "stats",
-        "pagination",
-    }
-
-    lineage = {e["target"]: e for e in result["lineage"]}
-    assert set(lineage) == {"dwd_orders", "dws_orders_daily", "ads_orders"}
-    # Versioned copies collapse into one target listing both scripts.
-    assert lineage["dwd_orders"]["scripts"] == ["etl/dwd_orders.sql", "etl/dwd_orders_v2.sql"]
-    assert lineage["dwd_orders"]["load_modes"] == ["insert"]
-    assert lineage["dwd_orders"]["parameterized_predicates"] == ["pt_date >= '${pt_date}'"]
-    assert lineage["ads_orders"]["scripts"] == ["dags/ads.py"]
-    assert result["roots"] == ["dim_store", "ods_orders"]
-
-    joins = {tuple(j["tables"]): j for j in result["joins"]}
-    assert joins[("dim_store", "ods_orders")]["on"] == ["store_code"]
-    assert joins[("dim_store", "ods_orders")]["occurrences"] == 2
-
-    stats = result["stats"]
-    assert stats["files_scanned"] == 4
-    assert stats["statements"] == stats["parsed"] == 4
-    # dwd_orders x2 (target + 2 sources), dws (target + 2 sources), ads (target + 1 source)
-    assert stats["databases_referenced"] == {"dw": 11}
+def evidence(result, row):
+    return [(result["files"][ref.split(":")[0]], int(ref.split(":")[1])) for ref in row["evidence"]]
 
 
-def test_rules_are_ranked_by_how_many_files_use_them(workspace):
-    rules = extract(workspace, paths=["etl/*.sql"], sections=["rules"])["rules"]
-    top = rules["filters"][:2]
-    assert {(f["column"], f["predicate"], f["files"]) for f in top} == {
-        ("dim_store.billing_status", "= 1", 3),
-        ("dim_store.brand_name", "NOT IN ('X')", 3),
-    }
-    [mapping] = rules["value_mappings"]
-    assert mapping["column"] == "ods_orders.order_type"
-    assert mapping["values"] == {"1": "MA", "2": "IMAC"}
-    assert mapping["occurrences"] == 4
-    assert mapping["partial"] is True
-    assert mapping["distinct_statements"] == 1
-    assert rules["dedup"][0]["table"] == "dwd_orders"
-    assert rules["dedup"][0]["partition_by"] == ["order_id"]
-    assert rules["dedup"][0]["order_by"] == ["update_time DESC"]
-
-
-def test_comments_split_into_labels_metrics_and_notes_and_dedupe_copies(workspace):
-    comments = extract(workspace, paths=["etl/*.sql"], sections=["comments"])["comments"]
-    assert comments["column_labels"] == {"store_code": "store the order belongs to"}
-    [metric] = comments["metric_notes"]
-    assert metric["column"] == "item_num"
-    assert metric["label"] == "each item counted once"
-    assert metric["copies"] == 2
-    # The opening comment of each script is its header, kept whole and deduplicated across copies.
-    assert [h["text"] for h in comments["file_headers"]] == ["build the order detail", "build the order detail (v2)"]
-    assert comments["notes"] == []
-
-
-def test_sections_filter_output_and_reject_unknown_names(workspace):
-    result = extract(workspace, paths=["etl/*.sql"], sections=["joins"])
-    assert "rules" not in result and "comments" not in result and "joins" in result
-    bad = make_tool(workspace).extract_sql_lineage(paths=["etl/*.sql"], sections=["lineage", "bogus"])
-    assert bad.success == 0
-    assert "bogus" in bad.error
-
-
-def test_max_items_truncation_is_reported(workspace):
-    result = extract(workspace, paths=["etl/*.sql"], sections=["rules"], max_items=1)
-    assert len(result["rules"]["filters"]) == 1
-    assert result["stats"]["truncated_lists"]["rules.filters"] > 1
-
-
-def test_paths_outside_workspace_are_skipped_not_read(workspace, tmp_path_factory):
-    outside = tmp_path_factory.mktemp("outside") / "secret.sql"
-    outside.write_text("insert into dw.t select * from dw.s", encoding="utf-8")
-    result = extract(workspace, paths=[str(outside), "missing/*.sql"])
-    assert result["lineage"] == []
-    reasons = sorted(u["reason"] for u in result["unresolved"])
-    assert reasons == ["no files matched", "outside the readable workspace"]
-
-
-def test_empty_paths_is_an_error(workspace):
-    result = make_tool(workspace).extract_sql_lineage(paths=[])
-    assert result.success == 0
-
-
-def test_datasource_supplies_dialect_and_default_database(workspace):
-    datasources = {"wh": SimpleNamespace(type="mysql", database="dw")}
-    tool = make_tool(workspace, datasources=datasources, current="wh")
-    result = tool.extract_sql_lineage(paths=["etl/dws_orders_daily.sql"], sections=[])
-    assert result.success == 1
-    assert result.result["stats"]["default_database"] == "dw"
-    assert result.result["stats"]["dialect"] == "mysql"
-    assert result.result["lineage"][0]["target"] == "dws_orders_daily"
-
-
-def test_unknown_datasource_is_an_error(workspace):
-    result = make_tool(workspace).extract_sql_lineage(paths=["etl/*.sql"], datasource="nope")
-    assert result.success == 0
-    assert "nope" in result.error
-
-
-def test_explicit_dialect_overrides_datasource(workspace):
-    datasources = {"wh": SimpleNamespace(type="sqlite", database="")}
-    tool = make_tool(workspace, datasources=datasources, current="wh")
-    result = tool.extract_sql_lineage(paths=["etl/*.sql"], dialect="starrocks", sections=[])
-    assert result.result["stats"]["dialect"] == "starrocks"
-
-
-def test_available_tools_exposes_one_function(workspace):
-    tools = make_tool(workspace).available_tools()
-    assert [t.name for t in tools] == ["extract_sql_lineage"]
-    assert LineageTools.all_tools_name() == ["extract_sql_lineage"]
-
-
-def test_query_only_corpus_reports_read_tables(tmp_path):
-    """Read inventory and database statistics must include SELECT-only corpora."""
-    (tmp_path / "q.sql").write_text("SELECT * FROM other.orders")
+def test_compact_contract_and_copy_provenance(tmp_path):
+    sql = "INSERT INTO t SELECT a.id FROM a LEFT JOIN b ON a.id=b.id WHERE a.dt >= '${day}';"
+    (tmp_path / "a.sql").write_text(sql)
+    (tmp_path / "b.sql").write_text("-- copied script\n" + sql)
     result = extract(tmp_path, paths=["*.sql"])
-    assert result["roots"] == ["other.orders"]
-    assert result["stats"]["tables_read_only"] == 1
-    assert result["stats"]["databases_referenced"] == {"other": 1}
-    assert result["tables"][0]["table"] == "other.orders"
+    assert set(result) == {"schema_version", "complete", "files", "lineage", "tables", "joins", "stats"}
+    assert result["schema_version"] == 5
+    assert result["complete"] is True
+    [edge] = result["lineage"]
+    assert {k: v for k, v in edge.items() if k != "evidence"} == {
+        "target": "t",
+        "sources": ["a", "b"],
+        "operation": "insert",
+        "parameterized_predicates": ["dt >= '${day}'"],
+    }
+    assert evidence(result, edge) == [("a.sql", 1), ("b.sql", 2)]
+    [join] = result["joins"]
+    assert join["expression"] == "#1 LEFT JOIN #2 ON a.id = b.id"
+    assert set(join) == {"expression", "evidence"}
+    assert evidence(result, join) == [("a.sql", 1), ("b.sql", 2)]
+    assert result["tables"] == {"#1": "a", "#2": "b"}
+    assert result["stats"] == {"files": 2, "statements": 2, "parsed": 2, "dialect": "mysql", "default_database": "dw"}
 
 
-def test_rule_frequency_deduplicates_copies_and_exposes_denominator(tmp_path):
-    """Copied SQL must not inflate independent support for a business rule."""
-    for name, sql in {
-        "a": "SELECT * FROM s WHERE flag = 1",
-        "b": "-- copy\nSELECT * FROM s WHERE flag = 1",
-        "c": "SELECT * FROM s",
-    }.items():
-        (tmp_path / f"{name}.sql").write_text(sql)
-    result = extract(tmp_path, paths=["*.sql"], sections=["rules"])
-    [rule] = result["rules"]["filters"]
-    assert (rule["files"], rule["distinct_statements"], rule["table_read_statements"]) == (2, 1, 2)
-    assert rule["evidence_total"] == 2
-    assert {e["file"] for e in rule["evidence"]} == {"a.sql", "b.sql"}
+def test_byte_identical_copies_are_analyzed_once_and_mapped_to_the_original(tmp_path):
+    sql = "INSERT INTO t SELECT a.id FROM a LEFT JOIN b ON a.id=b.id"
+    (tmp_path / "a.sql").write_text(sql)
+    (tmp_path / "copy.sql").write_text(sql)
+    (tmp_path / "c.sql").write_text("SELECT * FROM c")
+    result = extract(tmp_path, paths=["*.sql"])
+    assert result["files"] == {"f1": "a.sql", "f2": "c.sql", "f3": "=f1"}
+    assert [row["evidence"] for row in result["lineage"] + result["joins"]] == [["f1:1"], ["f2:1"], ["f1:1"]]
+    assert result["stats"]["files"] == 3
+    assert result["complete"] is True
+    # Identity is content, not name: a diverging copy is analyzed and cited on its own.
+    (tmp_path / "copy.sql").write_text(sql + " WHERE a.flag = 1")
+    result = extract(tmp_path, paths=["*.sql"])
+    assert result["files"] == {"f1": "a.sql", "f2": "c.sql", "f3": "copy.sql"}
+    assert sorted(ref for row in result["lineage"] for ref in row["evidence"]) == ["f1:1", "f2:1", "f3:1"]
 
 
-@pytest.mark.parametrize("max_files", [0, -1])
-def test_invalid_scan_limit_is_rejected(tmp_path, max_files):
-    """Invalid limits must not silently select an arbitrary file subset."""
-    result = make_tool(tmp_path).extract_sql_lineage(paths=["*.sql"], max_files=max_files)
-    assert result.success == 0
-    assert "max_files" in result.error
+def test_all_files_and_connected_edges_returned_together(tmp_path):
+    """A graph exceeding the former file/page limits must arrive in one response."""
+    for i in range(510):
+        (tmp_path / f"{i:03}.sql").write_text(f"INSERT INTO t{i + 1} SELECT * FROM t{i}")
+    result = extract(tmp_path, paths=["*.sql"])
+    assert result["complete"] is True
+    assert result["stats"]["files"] == result["stats"]["parsed"] == 510
+    assert {(e["target"], tuple(e["sources"])) for e in result["lineage"]} == {
+        (f"t{i + 1}", (f"t{i}",)) for i in range(510)
+    }
+    assert len(result["files"]) == 510
 
 
-def test_pagination_recovers_all_query_tables(tmp_path):
-    """Every omitted table must remain accessible by the returned offset."""
-    (tmp_path / "q.sql").write_text("SELECT * FROM a; SELECT * FROM b; SELECT * FROM c")
-    first = extract(tmp_path, paths=["*.sql"], sections=[], max_items=2)
-    assert first["pagination"]["tables"]["total"] == 3
-    second = extract(
-        tmp_path,
-        paths=["*.sql"],
-        sections=[],
-        max_items=2,
-        offset=first["pagination"]["tables"]["next_offset"],
-        result_path="tables",
+def test_distinct_operations_and_sql_for_one_target_are_not_mixed(tmp_path):
+    (tmp_path / "q.sql").write_text(
+        "INSERT INTO t SELECT * FROM a WHERE flag=1;\n"
+        "INSERT INTO t SELECT * FROM a WHERE flag=2;\n"
+        "INSERT INTO t SELECT * FROM b;\n"
+        "TRUNCATE TABLE t; INSERT INTO t SELECT * FROM a;"
     )
-    assert [t["table"] for t in first["tables"] + second["tables"]] == ["a", "b", "c"]
-
-
-def test_output_budget_provides_resumable_results(tmp_path):
-    """A large header corpus must respect the budget without losing continuation."""
-    import json
-
-    for i in range(8):
-        (tmp_path / f"{i}.sql").write_text("-- " + str(i) + "x" * 1500 + "\nSELECT * FROM s")
-    result = extract(tmp_path, paths=["*.sql"], sections=["comments"], max_output_chars=6000)
-    assert len(json.dumps(result, ensure_ascii=False)) <= 6000
-    assert result["pagination"]["comments.file_headers"]["next_offset"] == len(result["comments"]["file_headers"])
-
-
-def test_transform_variants_do_not_collapse(tmp_path):
-    """Identical physical columns with different transformations remain distinct relationships."""
-    (tmp_path / "q.sql").write_text("SELECT * FROM a JOIN b ON a.id=b.id; SELECT * FROM a JOIN b ON LEFT(a.id,6)=b.id")
-    result = extract(tmp_path, paths=["*.sql"], sections=["joins"])
-    assert len(result["joins"]) == 2
-    assert [r.get("transforms", {}) for r in result["joins"]] == [{}, {"a.id": "LEFT(a.id, 6)"}]
-
-
-def test_full_evidence_can_be_retrieved_after_summary_sampling(tmp_path):
-    """Evidence sampling has an explicit detail path that recovers every occurrence."""
-    for i in range(5):
-        (tmp_path / f"{i}.sql").write_text("SELECT * FROM s WHERE flag=1")
-    summary = extract(tmp_path, paths=["*.sql"], sections=["rules"])
-    [rule] = summary["rules"]["filters"]
-    assert rule["evidence_total"] == 5
-    assert len(rule["evidence"]) == 3
-    detail = extract(tmp_path, paths=["*.sql"], sections=["rules"], result_path="filter_occurrences")
-    assert {r["file"] for r in detail["filter_occurrences"]} == {f"{i}.sql" for i in range(5)}
-    assert {r["predicate"] for r in detail["filter_occurrences"]} == {"= 1"}
-
-
-def test_budgeted_header_pages_recover_every_header(tmp_path):
-    """Pagination must progress and recover all headers within the same character budget."""
-    import json
-
-    for i in range(9):
-        (tmp_path / f"{i}.sql").write_text("-- " + str(i) + "x" * 1800 + "\nSELECT * FROM s")
-    collected = []
-    offset = 0
-    for _ in range(9):
-        page = extract(
-            tmp_path,
-            paths=["*.sql"],
-            sections=["comments"],
-            result_path="comments.file_headers",
-            offset=offset,
-            max_output_chars=6000,
-        )
-        assert len(json.dumps(page, ensure_ascii=False)) <= 6000
-        collected.extend(h["file"] for h in page["comments"]["file_headers"])
-        next_offset = page["pagination"]["comments.file_headers"]["next_offset"]
-        if next_offset is None:
-            break
-        assert next_offset > offset
-        offset = next_offset
-    assert collected == [f"{i}.sql" for i in range(9)]
-
-
-def test_workspace_symlink_does_not_bypass_path_policy(tmp_path, tmp_path_factory):
-    """Resolving a symlink must not turn an external file into workspace data."""
-    outside = tmp_path_factory.mktemp("external") / "q.sql"
-    outside.write_text("SELECT * FROM secret")
-    (tmp_path / "q.sql").symlink_to(outside)
     result = extract(tmp_path, paths=["*.sql"])
-    assert result["tables"] == []
-    assert result["unresolved"][0]["reason"] == "outside the readable workspace"
+    assert [(e["target"], e["sources"], e["operation"]) for e in result["lineage"]] == [
+        ("t", ["a"], "insert"),
+        ("t", ["a"], "insert"),
+        ("t", ["b"], "insert"),
+        ("t", ["a"], "truncate_reload"),
+    ]
+    assert [evidence(result, e) for e in result["lineage"]] == [
+        [("q.sql", 1)],
+        [("q.sql", 2)],
+        [("q.sql", 3)],
+        [("q.sql", 4)],
+    ]
 
 
-def test_hidden_config_sql_is_not_read(tmp_path):
-    """Explicit paths must obey the same hidden-directory rule as globs."""
-    (tmp_path / ".datus").mkdir()
-    (tmp_path / ".datus" / "q.sql").write_text("SELECT * FROM private_config")
-    result = extract(tmp_path, paths=[".datus/q.sql"])
-    assert result["tables"] == []
-    assert result["unresolved"][0]["reason"] == "outside the readable workspace"
+def test_nested_temporary_folding_preserves_build_evidence(tmp_path):
+    (tmp_path / "q.sql").write_text(
+        "CREATE TABLE tmp_a AS SELECT * FROM src;\n"
+        "CREATE TABLE tmp_b AS SELECT * FROM tmp_a;\n"
+        "CREATE TABLE tmp_c AS SELECT * FROM tmp_b;\n"
+        "INSERT INTO final SELECT * FROM tmp_c;\n"
+        "DROP TABLE tmp_c; DROP TABLE tmp_b; DROP TABLE tmp_a;"
+    )
+    result = extract(tmp_path, paths=["*.sql"])
+    [edge] = result["lineage"]
+    assert edge["sources"] == ["src"]
+    assert edge["target"] == "final"
+    assert set(edge["via_temp"]) == {"tmp_a", "tmp_b", "tmp_c"}
+    assert evidence(result, edge) == [("q.sql", 1), ("q.sql", 2), ("q.sql", 3), ("q.sql", 4)]
 
 
-def test_empty_python_extraction_is_visible(tmp_path):
-    """Dynamic Python SQL cannot silently look like a successfully analyzed empty file."""
+def test_cte_union_query_inventory_and_self_read_write(tmp_path):
+    (tmp_path / "q.sql").write_text(
+        "WITH x AS (SELECT id FROM a), y AS (SELECT id FROM x), z AS (SELECT id FROM y) "
+        "SELECT * FROM z UNION ALL SELECT id FROM b;\n"
+        "INSERT INTO t SELECT * FROM t;"
+    )
+    result = extract(tmp_path, paths=["*.sql"])
+    assert {(e["target"], tuple(e["sources"]), e["operation"]) for e in result["lineage"]} == {
+        (None, ("a", "b"), "select"),
+        ("t", ("t",), "insert"),
+    }
+
+
+@pytest.mark.parametrize(
+    "condition,kind",
+    [
+        ("a.id=b.id", "LEFT"),
+        ("LEFT(a.id,6)=b.id", "LEFT"),
+        ("a.id=b.id AND a.dt=b.dt", "LEFT"),
+    ],
+)
+def test_join_expression_and_composite_keys(tmp_path, condition, kind):
+    (tmp_path / "q.sql").write_text(f"SELECT * FROM a LEFT JOIN b ON {condition}")
+    result = extract(tmp_path, paths=["*.sql"])
+    [join] = result["joins"]
+    assert (
+        join["expression"]
+        == {
+            "a.id=b.id": "#1 LEFT JOIN #2 ON a.id = b.id",
+            "LEFT(a.id,6)=b.id": "#1 LEFT JOIN #2 ON LEFT(a.id, 6) = b.id",
+            "a.id=b.id AND a.dt=b.dt": "#1 LEFT JOIN #2 ON a.id = b.id AND a.dt = b.dt",
+        }[condition]
+    )
+
+
+def test_join_transform_outer_direction_and_self_aliases(tmp_path):
+    (tmp_path / "q.sql").write_text(
+        "SELECT * FROM z LEFT JOIN a ON DATE(z.dt)=a.day;\n"
+        "SELECT * FROM employee e LEFT JOIN employee m ON CAST(e.manager AS BIGINT)=m.id AND e.x=e.y"
+    )
+    result = extract(tmp_path, paths=["*.sql"])
+    first, second = result["joins"]
+    assert result["tables"] == {"#1": "a", "#2": "employee", "#3": "z"}
+    assert first["expression"] == "#3 LEFT JOIN #1 ON DATE(z.dt) = a.day"
+    assert second["expression"] == "#2 AS e LEFT JOIN #2 AS m ON CAST(e.manager AS SIGNED) = m.id AND e.x = e.y"
+
+
+def test_table_ids_are_shared_across_files_and_keep_foreign_database_qualifiers(tmp_path):
+    (tmp_path / "one.sql").write_text("SELECT * FROM dw.orders o JOIN ods.store s ON o.store_id = s.id")
+    (tmp_path / "two.sql").write_text(
+        "SELECT * FROM (SELECT store_id AS sid, SUM(amt) AS amt FROM orders GROUP BY 1) agg\n"
+        "LEFT JOIN ods.store s ON agg.sid = s.id"
+    )
+    result = extract(tmp_path, paths=["*.sql"])
+    assert result["tables"] == {"#1": "orders", "#2": "ods.store"}
+    assert [row["expression"] for row in result["joins"]] == [
+        "#1 AS o INNER JOIN #2 AS s ON o.store_id = s.id",
+        "agg{#1} LEFT JOIN #2 AS s ON agg.sid = s.id",
+    ]
+    assert not any("/*" in row["expression"] for row in result["joins"])
+
+
+def test_unresolved_join_expression_marks_coverage_incomplete(tmp_path):
+    (tmp_path / "q.sql").write_text("SELECT * FROM a JOIN b ON a.id=b.id OR a.alt=b.alt")
+    result = extract(tmp_path, paths=["*.sql"])
+    assert result["complete"] is False
+    assert result["lineage"][0]["sources"] == ["a", "b"]
+    assert result["joins"] == []
+
+
+def test_parse_failure_and_dynamic_python_keep_surviving_graph(tmp_path):
+    (tmp_path / "q.sql").write_text("SELECT * FROM a;\nSELECT FROM WHERE (((;\nSELECT * FROM b;")
     (tmp_path / "q.py").write_text("query = prefix + table")
+    result = extract(tmp_path, paths=["*.sql", "*.py"])
+    assert result["complete"] is False
+    assert [e["sources"] for e in result["lineage"]] == [["a"], ["b"]]
+    assert result["stats"]["parsed"] == 2
+    assert result["stats"]["statements"] == 3
+
+
+def test_python_literals_and_templates(tmp_path):
+    (tmp_path / "q.py").write_text('def build():\n    run("""\nINSERT INTO t SELECT * FROM {{ ref(\'s\') }}\n""")\n')
     result = extract(tmp_path, paths=["*.py"])
-    assert result["unresolved"][0]["reason"] == "no supported literal SQL fragments"
+    [edge] = result["lineage"]
+    assert (edge["target"], edge["sources"], edge["operation"]) == ("t", ["s"], "insert")
+    assert evidence(result, edge) == [("q.py", 3)]
 
 
-def test_scan_limit_stops_with_explicit_truncation(tmp_path):
-    """Scanning a subset must not be reported as complete corpus coverage."""
-    for i in range(4):
-        (tmp_path / f"{i}.sql").write_text("SELECT * FROM s")
-    result = extract(tmp_path, paths=["*.sql"], max_files=2)
-    assert result["stats"]["files_scanned"] == 2
-    assert result["stats"]["files_truncated"] is True
+@pytest.mark.parametrize("mode", ["external", "symlink", "hidden"])
+def test_unreadable_zones_cannot_be_read(tmp_path, tmp_path_factory, mode):
+    outside = tmp_path_factory.mktemp("outside") / "q.sql"
+    outside.write_text("SELECT * FROM private_table")
+    paths = [str(outside)]
+    if mode == "symlink":
+        (tmp_path / "q.sql").symlink_to(outside)
+        paths = ["*.sql"]
+    elif mode == "hidden":
+        (tmp_path / ".datus").mkdir()
+        (tmp_path / ".datus" / "q.sql").write_text("SELECT * FROM private_table")
+        paths = [".datus/q.sql"]
+    result = extract(tmp_path, paths=paths)
+    assert result["complete"] is False
+    assert result["lineage"] == []
 
 
-def test_unknown_detail_collection_returns_actionable_error(tmp_path):
-    """Invalid detail paths must report valid alternatives in the tool envelope."""
-    result = make_tool(tmp_path).extract_sql_lineage(paths=["*.sql"], result_path="bad")
-    assert result.success == 0
-    assert "Unknown result_path: bad" in result.error
+def test_missing_oversized_and_duplicate_inputs(tmp_path):
+    (tmp_path / "q.sql").write_text("SELECT * FROM s")
+    (tmp_path / "large.sql").write_text("--" + "x" * (2 * 1024 * 1024))
+    result = extract(tmp_path, paths=["q.sql", "q.sql", "missing.sql", "missing/*.sql", "large.sql"])
+    assert len(result["lineage"]) == 1
+    assert result["complete"] is False
+    assert result["lineage"][0]["sources"] == ["s"]
+    assert result["stats"]["files"] == 1
 
 
-def test_lineage_detail_preserves_multiple_statements_on_same_line(tmp_path):
-    """Statement IDs disambiguate source evidence even when start lines are equal."""
-    (tmp_path / "q.sql").write_text("INSERT INTO x SELECT * FROM a; INSERT INTO y SELECT * FROM b")
-    result = extract(tmp_path, paths=["*.sql"])
-    assert [e["evidence"][0]["statement_id"] for e in result["lineage"]] == ["q.sql:0:1", "q.sql:0:2"]
+def test_datasource_defaults_and_explicit_override(tmp_path):
+    (tmp_path / "q.sql").write_text("SELECT * FROM dw.s")
+    tool = make_tool(tmp_path, {"wh": SimpleNamespace(type="sqlite", database="dw")}, "wh")
+    response = tool.extract_sql_lineage(paths=["q.sql"], dialect="starrocks")
+    assert response.success == 1
+    assert response.result["stats"]["dialect"] == "starrocks"
+    assert response.result["stats"]["default_database"] == "dw"
+    assert response.result["lineage"][0]["sources"] == ["s"]
+    assert tool.extract_sql_lineage(paths=["q.sql"], datasource="missing").success == 0
+    assert tool.extract_sql_lineage(paths=[]).success == 0
 
 
-def test_cached_corpus_is_invalidated_by_content_not_mtime(tmp_path):
-    """Same-size edits with a restored mtime must not serve stale table facts."""
-    import os
-
+def test_content_and_permissions_rechecked_on_cached_input(tmp_path):
     path = tmp_path / "q.sql"
     path.write_text("SELECT * FROM a")
     stat = path.stat()
     tool = make_tool(tmp_path)
-    first = tool.extract_sql_lineage(paths=["*.sql"], dialect="mysql")
-    assert first.result["roots"] == ["a"]
+    assert tool.extract_sql_lineage(paths=["q.sql"]).result["lineage"][0]["sources"] == ["a"]
     path.write_text("SELECT * FROM b")
     os.utime(path, ns=(stat.st_atime_ns, stat.st_mtime_ns))
-    second = tool.extract_sql_lineage(paths=["*.sql"], dialect="mysql")
-    assert second.result["roots"] == ["b"]
-    detail = tool.extract_sql_lineage(paths=["*.sql"], dialect="mysql", result_path="statements")
-    assert detail.result["statements"][0]["read_tables"] == ["b"]
-
-
-def test_statement_ids_survive_narrowing_paths(tmp_path):
-    """A source reference identifies the same statement in corpus and file views."""
-    (tmp_path / "a.sql").write_text("SELECT * FROM a")
-    (tmp_path / "b.sql").write_text("SELECT * FROM b")
-    full = extract(tmp_path, paths=["*.sql"], result_path="statements")
-    detail = extract(tmp_path, paths=["b.sql"], result_path="statements")
-    assert full["statements"][1]["statement_id"] == detail["statements"][0]["statement_id"]
+    assert tool.extract_sql_lineage(paths=["q.sql"]).result["lineage"][0]["sources"] == ["b"]
+    path.unlink()
+    response = tool.extract_sql_lineage(paths=["q.sql"])
+    assert response.result["complete"] is False
+    assert response.result["lineage"] == []
 
 
 @pytest.mark.asyncio
-async def test_concurrent_sdk_calls_keep_each_corpus_isolated(tmp_path):
-    """The registered tool can analyze independent corpora concurrently without cache cross-talk."""
-    import asyncio
-    import json
-
+async def test_sdk_invocation_returns_independent_complete_graphs(tmp_path):
     (tmp_path / "a.sql").write_text("SELECT * FROM a")
     (tmp_path / "b.sql").write_text("SELECT * FROM b")
     [tool] = make_tool(tmp_path).available_tools()
-    names = ["a", "b"] * 8
+    names = ["a", "b"] * 4
     results = await asyncio.gather(
-        *[
-            tool.on_invoke_tool(None, json.dumps({"paths": [f"{name}.sql"], "dialect": "mysql", "sections": []}))
-            for name in names
-        ]
+        *[tool.on_invoke_tool(None, json.dumps({"paths": [f"{name}.sql"], "dialect": "mysql"})) for name in names]
     )
     assert [r["success"] for r in results] == [1] * len(names)
-    assert [r["result"]["roots"] for r in results] == [[name] for name in names]
+    assert [r["result"]["lineage"][0]["sources"] for r in results] == [[name] for name in names]
+    assert [r["result"]["complete"] for r in results] == [True] * len(names)
+    # The SDK schema is the public invocation contract, including the removal of sections/pagination.
+    assert set(tool.params_json_schema["properties"]) == {"paths", "datasource", "dialect", "default_database"}
 
 
-def test_oversized_single_rule_returns_source_reference(tmp_path):
-    """An indivisible record must make progress and point back to its complete source."""
-    import json
+@pytest.mark.parametrize("dialect", ["mysql", "postgres", "snowflake", "spark", "tsql"])
+def test_join_evidence_locates_complete_conditions_in_source(tmp_path, dialect):
+    sql = (
+        "-- header\n"
+        "SELECT * FROM a LEFT JOIN b\n"
+        "ON a.id = b.id\n"
+        "AND COALESCE(a.code,\n"
+        "  'x') = COALESCE(b.code,\n"
+        "  'x'\n"
+        ")\n"
+        "WHERE a.flag = 1;\n"
+        "SELECT * FROM a LEFT JOIN b\n"
+        "ON a.id = b.id\n"
+        "AND COALESCE(a.code,\n"
+        "  'x') = COALESCE(b.code,\n"
+        "  'x'\n"
+        ")\n"
+    )
+    (tmp_path / "q.sql").write_text(sql)
+    response = make_tool(tmp_path).extract_sql_lineage(paths=["q.sql"], dialect=dialect)
+    assert response.success == 1
+    [join] = response.result["joins"]
+    assert join["evidence"] == ["f1:3-7", "f1:10-14"]
+    assert [row["evidence"] for row in response.result["lineage"]] == [["f1:2"], ["f1:9"]]
 
-    values = ",".join(str(i) for i in range(2000))
-    (tmp_path / "q.sql").write_text(f"SELECT * FROM s WHERE id IN ({values})")
-    result = extract(tmp_path, paths=["*.sql"], sections=["rules"], result_path="rules.filters", max_output_chars=6000)
-    [item] = result["rules"]["filters"]
-    assert item["detail_omitted"] is True
-    assert item["evidence"] == [{"file": "q.sql", "line": 1}]
-    assert result["pagination"]["rules.filters"]["next_offset"] is None
-    assert len(json.dumps(result, ensure_ascii=False)) <= 6000
+
+def test_join_evidence_python_templates_nested_scopes_and_using(tmp_path):
+    sql = '''# python header
+query = """
+SELECT * FROM (
+ SELECT a.id FROM {{
+ ref('a')
+ }} a JOIN b
+ USING (
+ id
+ )
+) x JOIN c
+ON x.id = c.id
+WHERE x.id >
+ c.id;
+SELECT * FROM a, b
+WHERE a.id = b.id
+"""
+'''
+    (tmp_path / "q.py").write_text(sql)
+    result = extract(tmp_path, paths=["q.py"])
+    assert {row["expression"]: row["evidence"] for row in result["joins"]} == {
+        "#1 AS a INNER JOIN #2 USING (id)": ["f1:7-9"],
+        "#1 CROSS JOIN #2 WHERE a.id = b.id": ["f1:15"],
+        "x{#1,#2} INNER JOIN #3 ON x.id = c.id": ["f1:11"],
+    }
+    assert result["complete"] is False
+
+
+def test_missing_parser_positions_explicitly_mark_statement_fallback(tmp_path, monkeypatch):
+    import sqlglot
+
+    monkeypatch.setattr(
+        "datus.utils.sql_lineage._parse_with_positions", lambda text, dialect: sqlglot.parse_one(text, read=dialect)
+    )
+    (tmp_path / "q.sql").write_text("-- header\nSELECT * FROM a JOIN b\nON a.id = b.id\nWHERE a.id > b.id")
+    result = extract(tmp_path, paths=["q.sql"])
+    assert result["joins"][0]["evidence"] == ["f1:2@statement"]
+
+
+def test_cte_and_union_relations_keep_projected_names_and_all_physical_sources(tmp_path):
+    (tmp_path / "q.sql").write_text(
+        "WITH unused AS (SELECT * FROM secret), x AS (SELECT LEFT(code,6) AS id FROM raw_a "
+        "UNION ALL SELECT id FROM raw_b)\n"
+        "SELECT * FROM x AS p LEFT JOIN dimension d\nON p.id = d.id;"
+    )
+    result = extract(tmp_path, paths=["q.sql"])
+    assert result["complete"] is True
+    assert result["joins"] == [
+        {
+            "expression": "x{#2,#3} AS p LEFT JOIN #1 AS d ON p.id = d.id",
+            "evidence": ["f1:3"],
+        }
+    ]
+    # Tables read only by the unused CTE are not part of any join, so they get no ID.
+    assert result["tables"] == {"#1": "dimension", "#2": "raw_a", "#3": "raw_b"}
+
+
+def test_multi_alias_predicate_identifies_additional_scope(tmp_path):
+    (tmp_path / "q.sql").write_text("SELECT * FROM a JOIN b ON a.id=b.id LEFT JOIN c\nON a.id=c.id AND b.flag=c.flag")
+    result = extract(tmp_path, paths=["q.sql"])
+    assert result["joins"][1] == {
+        "expression": "#1, #2 LEFT JOIN #3 ON a.id = c.id AND b.flag = c.flag",
+        "evidence": ["f1:2"],
+    }
+
+
+def test_composite_using_has_one_complete_expression(tmp_path):
+    (tmp_path / "q.sql").write_text("SELECT * FROM a LEFT JOIN b USING (\n id,\n dt\n)")
+    result = extract(tmp_path, paths=["q.sql"])
+    assert result["joins"] == [{"expression": "#1 LEFT JOIN #2 USING (id, dt)", "evidence": ["f1:1-4"]}]

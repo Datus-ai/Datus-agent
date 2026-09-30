@@ -6,7 +6,7 @@ Run it with the `/init` command inside the REPL.
 
 ## What it does
 
-- Statically analyzes the project's SQL (ETL scripts and SQL embedded in Python DAGs) with the `extract_sql_lineage` tool: table lineage, join keys, recurring filters, code-to-label mappings, de-duplication patterns, and the authors' comments. Nothing is executed.
+- Statically analyzes the project's SQL (ETL scripts and SQL embedded in Python DAGs) with the `extract_sql_lineage` tool: table dependencies, join keys, directions and expressions. Reads filters, mappings, windows and author comments directly from the source SQL. Nothing is executed.
 - Reads the human-written docs in the project (business rules, metric definitions, data dictionaries).
 - Verifies what it found with a few dozen cheap, read-only database queries: which table versions exist and are fresh, table grain, join cardinality, actual code values.
 - Writes an `AGENTS.md` project map at the project root: data architecture, core tables, cross-domain rules, and a knowledge index.
@@ -14,7 +14,9 @@ Run it with the `/init` command inside the REPL.
 
 It is the **lightweight** tier: no vector index and no confirmation gate. It takes a few minutes on a project with a hundred or so scripts. For the vector-indexed knowledge base, use [`/build-kb`](build_kb.md).
 
-The analyzer returns a versioned, paginated result. It inventories tables even in SELECT-only corpora and attaches source evidence to relationships and rules. Initialization follows required pages and reads source files when records are clipped. Parameterized conditions do not prove incremental loading, and ROW_NUMBER alone does not prove de-duplication or table grain. Recurrence across independent SQL statements is a verification lead, not a mandatory business rule.
+The analyzer returns `schema_version=5`: the complete dependency graph and resolved joins in one response, without `sections`, pagination or result-size clipping. `lineage` includes SELECT-only reads (`target=null`), separating different SQL and write operations. Each join contains only `expression` and `evidence`: the expression combines relations, aliases, join direction and conditions. Physical tables appear as `tables` IDs (`#3 AS o`); CTE/derived relations keep their scope name followed by the physical tables they read (`x{#1,#2}`) — read their projections in the original SQL. `files` stores paths once, and `=f3` marks a byte-identical copy of `f3` that is analyzed and cited only once. Join evidence uses `file_id:start-end` (or a single line) for the actual condition; `@statement` explicitly marks a statement-start fallback. Lineage evidence still locates statement starts. Detailed `issues` are omitted; `complete=false` signals inputs or relationships that need source inspection.
+
+**Breaking change from schema v2:** remove `sections`, `max_items`, `max_files`, `offset`, `result_path` and `max_output_chars` from calls. The tool no longer returns rules, comments, table/root inventories or detailed occurrence collections. Read source files for business rules and explanations. Initialization inventories filters, CASE/IF, windows and comments across the scripts, then reads core definitions in context. Parameterized predicates do not prove incremental loading; ROW_NUMBER alone does not prove table grain.
 
 ## When to use it
 

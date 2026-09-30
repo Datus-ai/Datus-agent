@@ -7,11 +7,14 @@
 import pytest
 
 from datus.utils.sql_lineage import (
+    TABLE_REF_MARK,
     SqlFragment,
+    expression_tables,
     extract_comments,
     extract_from_fragments,
     extract_sql_from_python,
     preprocess_template,
+    render_expression,
     split_statements,
 )
 
@@ -587,3 +590,58 @@ def test_join_row_condition_does_not_invent_self_relationship(join_type):
     """Comparisons within one row are not additional self-join relationships."""
     result = run(f"SELECT * FROM a {join_type} b ON a.id=b.id AND b.x=b.y")
     assert join_set(result) == {("dw.a", "dw.b", (("id", "id"),))}
+
+
+def test_condition_spans_preserve_nested_scope_and_fragment_offsets():
+    sql = """SELECT * FROM (
+ SELECT a.id FROM (
+  SELECT a.id FROM a JOIN b
+  ON a.id = b.id
+ ) a JOIN c
+ ON a.id = c.id
+) x JOIN d
+ON x.id = d.id
+AND d.label = 'WHERE fake ON fake
+still a literal'
+WHERE x.id > d.id"""
+    result = extract_from_fragments(
+        [SqlFragment(sql, "script.py", line_offset=10)], dialect="mysql", sections={"joins"}
+    )
+    assert {(j.left_table, j.right_table): j.condition_span for j in result.joins} == {
+        ("a", "b"): (14, 14),
+        ("a", "c"): (16, 16),
+        ("a", "d"): (18, 20),
+    }
+    assert result.conditions[0].condition_span == (21, 21)
+    assert all(j.line == 11 for j in result.joins)
+
+
+def test_ambiguous_using_evidence_locates_original_clause():
+    result = run("SELECT * FROM a JOIN b ON a.id = b.id\nJOIN c USING (\n id\n)")
+    [condition] = result.conditions
+    assert condition.reason == "Multiple possible left sources"
+    assert condition.condition_span == (2, 4)
+
+
+@pytest.mark.parametrize(
+    "template", ["{{\n ref('a')\n}}", "{{ source(\n'db',\n'a') }}", "{{\n name\n}}", "${\nname\n}"]
+)
+def test_multiline_template_preserves_subsequent_source_lines(template):
+    sql = f"SELECT * FROM {template} a\nJOIN b\nON a.id = b.id"
+    processed, templated = preprocess_template(sql)
+    assert templated
+    assert processed.count("\n") == sql.count("\n")
+    [join] = run(sql).joins
+    assert join.condition_span == (5, 5)
+
+
+def test_join_expression_templates_mark_full_physical_names_for_the_tool_layer():
+    sql = "SELECT * FROM (SELECT id FROM raw.a UNION ALL SELECT id FROM b) x LEFT JOIN dim.d ON x.id = d.id"
+    result = extract_from_fragments([SqlFragment(sql, "q.sql")], dialect="mysql", default_database="dw")
+    # One physical pair per UNION branch, but a single fragment template for the tool to render.
+    assert len(result.joins) == 2
+    [template] = {join.expression for join in result.joins}
+    assert expression_tables(template) == ["dw.b", "raw.a", "dim.d"]
+    rendered = render_expression(template, lambda name: f"<{name}>")
+    assert rendered == "x{<dw.b>,<raw.a>} LEFT JOIN <dim.d> ON x.id = d.id"
+    assert TABLE_REF_MARK not in rendered
