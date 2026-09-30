@@ -357,6 +357,7 @@ class DosiRuntime:
         dry_run: bool = False,
         *,
         params: Optional[Dict[str, Any]] = None,
+        context_filter: Optional[str] = None,
     ) -> QueryResult:
         binding = await asyncio.to_thread(load_binding)
         handle = await asyncio.to_thread(self._handle_for_metrics, metrics)
@@ -378,6 +379,7 @@ class DosiRuntime:
             limit=limit,
             order_by=order_by,
             params=params,
+            context_filter=context_filter,
         )
         connection = handle.profile_name
         try:
@@ -1072,6 +1074,7 @@ class DosiRuntime:
         limit: Optional[int],
         order_by: Optional[List[str]],
         params: Optional[Dict[str, Any]] = None,
+        context_filter: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Assemble the engine's MetricQuery dict. Pure: no engine I/O."""
         del metric_rows  # Kept for backward-compatible direct-call tests/callers.
@@ -1124,6 +1127,8 @@ class DosiRuntime:
             query["params"] = dict(params)
         if where:
             query["where_sql"] = where
+        if context_filter:
+            query["context_filter"] = context_filter
         if time_start or time_end:
             time_range: Dict[str, Any] = {"start": time_start, "end": time_end}
             if not any(is_time_dimension(item["field"]) for item in group_by):

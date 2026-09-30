@@ -1350,3 +1350,43 @@ async def test_lineage_graph_rejects_pre_lineage_binding(make_runtime, monkeypat
     monkeypatch.delattr(FakeEngine, "lineage")
     with pytest.raises(SemanticCoreException, match=r"dosi-engine>=0\.1\.9"):
         await runtime.lineage_graph()
+
+
+def _execute_calls() -> list[dict]:
+    return [call for engine in FakeEngine.instances for call in engine.execute_calls]
+
+
+@pytest.mark.asyncio
+async def test_query_metrics_passes_context_filter_only_when_set(make_runtime):
+    runtime = make_runtime()
+    await runtime.query_metrics(
+        metrics=["revenue"],
+        dimensions=["orders.status"],
+        where="orders.status <> 'void'",
+        context_filter="orders.region = 'east'",
+    )
+    await runtime.query_metrics(metrics=["revenue"], dimensions=["orders.status"])
+    scoped, plain = _execute_calls()
+    assert scoped["query"]["context_filter"] == "orders.region = 'east'"
+    assert scoped["query"]["where_sql"] == "orders.status <> 'void'"
+    assert "context_filter" not in plain["query"]
+
+
+@pytest.mark.asyncio
+async def test_result_filter_metric_not_selected_suggests_selecting_it(make_runtime, monkeypatch):
+    def execute(self, query, **kwargs):
+        raise QueryError(
+            'where_sql names metric "order_count", which the query does not select',
+            code="result_filter_metric_not_selected",
+            metrics=["order_count"],
+            candidates=["revenue"],
+            hint='add "order_count" to `metrics`',
+        )
+
+    monkeypatch.setattr(FakeEngine, "execute", execute)
+    with pytest.raises(SemanticValidationException) as exc:
+        await make_runtime().query_metrics(metrics=["revenue"], dimensions=["orders.status"], where="order_count > 1")
+    payload = exc.value.payload
+    assert payload.code == "result_filter_metric_not_selected"
+    assert payload.suggested_retry == {"metrics": ["revenue", "order_count"]}
+    assert "order_count" in payload.message

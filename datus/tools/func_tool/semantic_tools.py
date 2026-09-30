@@ -1237,6 +1237,7 @@ class SemanticTools:
         order_by: Optional[List[str]] = None,
         params: Optional[Dict[str, Any]] = None,
         dry_run: bool = False,
+        context_filter: Optional[str] = None,
     ) -> FuncToolResult:
         """
         Query metrics data (requires runtime).
@@ -1259,7 +1260,19 @@ class SemanticTools:
             time_start: Optional inclusive start of a half-open time range (ISO date YYYY-MM-DD)
             time_end: Optional exclusive end of a half-open time range (ISO date YYYY-MM-DD)
             time_granularity: Optional time granularity for aggregation ('day', 'week', 'month', 'quarter', 'year')
-            where: Optional SQL WHERE clause (without WHERE keyword)
+            where: Optional SQL boolean expression (without the WHERE keyword). Each
+                   top-level AND condition runs where its columns exist: a condition on a
+                   selected metric (`revenue > 1000`) filters the result rows after
+                   aggregation, like HAVING; in a query with a window metric, a condition
+                   on group-by fields only also filters the result, so the kept rows keep
+                   the ranks and partition counts of the whole population; every other
+                   condition filters rows before aggregation.
+            context_filter: Optional SQL boolean expression that always filters the input
+                   rows before aggregation, scoping the population a window metric
+                   ranks, counts or weighs. `where="market = 'North'"` shows North's rank
+                   among all markets; `context_filter="market = 'North'"` ranks North's
+                   rows against each other. Only window metrics (get_metric type
+                   "window") tell the two apart.
             limit: Optional maximum number of rows
             order_by: Optional list of result columns to sort by. Use column name for ascending,
                       prefix with '-' for descending. A Dosi input dimension `metric_time` may
@@ -1303,11 +1316,12 @@ class SemanticTools:
         time_end = normalize_null(time_end)
         time_granularity = normalize_null(time_granularity)
         where = normalize_null(where)
+        context_filter = normalize_null(context_filter)
         limit = normalize_null(limit)
         logger.debug(
             f"query_metrics called: metrics={metrics}, dimensions={dimensions}, "
             f"time=[{time_start},{time_end}], granularity={time_granularity}, where={where}, "
-            f"limit={limit}, dry_run={dry_run}"
+            f"context_filter={context_filter}, limit={limit}, dry_run={dry_run}"
         )
 
         try:
@@ -1325,6 +1339,8 @@ class SemanticTools:
             }
             if params:
                 runtime_query_kwargs["params"] = params
+            if context_filter:
+                runtime_query_kwargs["context_filter"] = context_filter
             result = _run_async(runtime.query_metrics(**runtime_query_kwargs))
 
             # Drop non-JSON-serializable metadata entries. ``str(v)`` on

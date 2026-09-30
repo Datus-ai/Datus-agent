@@ -1,0 +1,66 @@
+# Minimal Dosi model for the Agent's query-filter integration suite: one
+# scored-items table, one plain metric and two window metrics (a rank and its
+# partition count). The dataset and window metrics mirror the `scores` scenario
+# of the engine's own datus_window corpus, so the numbers the engine pins there
+# (`result_filter_keeps_population_ranks`, `context_filter_scopes_rank_population`)
+# are the numbers this suite expects through the Agent tool.
+
+version: "0.2.0.dev0"
+
+semantic_model:
+  - name: window_filters_model
+    description: Agent-to-Dosi filter placement and multi-window integration fixture
+    datasets:
+      - name: scores
+        source: main.activity_scores
+        fields:
+          - name: product
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: product
+          - name: item
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: item
+          - name: day
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: day
+            dimension:
+              is_time: true
+          - name: score
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: score
+
+    metrics:
+      - name: score_total
+        description: Total score
+        expression:
+          dialects:
+            - dialect: ANSI_SQL
+              expression: SUM(scores.score)
+
+      - name: item_rank
+        description: Item's competition rank within its product (gaps after ties)
+        expression:
+          dialects:
+            - dialect: ANSI_SQL
+              expression: SUM(scores.score)
+        custom_extensions:
+          - vendor_name: DATUS
+            data: '{"v": "1.3", "window": {"rank": {"function": "rank", "partition": {"mode": "query_dimensions_except", "exclude": ["scores.item"]}}}}'
+
+      - name: items_in_product
+        description: Items in the product partition
+        expression:
+          dialects:
+            - dialect: ANSI_SQL
+              expression: SUM(scores.score)
+        custom_extensions:
+          - vendor_name: DATUS
+            data: '{"v": "1.9", "window": {"frame": {"function": "count", "scope": "partition", "partition": {"mode": "query_dimensions_except", "exclude": ["scores.item"]}}}}'
