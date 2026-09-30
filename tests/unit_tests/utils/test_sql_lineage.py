@@ -140,6 +140,42 @@ def test_preprocess_template_variants(raw, expected_fragment):
     assert expected_fragment in sql
 
 
+@pytest.mark.parametrize(
+    "header",
+    [
+        "{{ config(materialized='table') }}",
+        "{{ config(materialized='incremental', unique_key='id') }}",
+        "{{\n  config(\n    materialized='table',\n    tags=['daily']\n  )\n}}",
+        "{{- config(materialized='view') -}}",
+    ],
+)
+def test_dbt_config_header_does_not_break_the_model(header):
+    sql = f"{header}\nSELECT o.id FROM {{{{ ref('orders') }}}} o\nJOIN {{{{ ref('users') }}}} u\nON o.uid = u.id"
+    result = extract_from_fragments([SqlFragment(sql, "m.sql")], dialect="snowflake", default_database=DB)
+    assert result.unresolved == []
+    [fact] = result.statement_facts
+    assert set(fact.read_tables) == {"dw.orders", "dw.users"}
+    [join] = result.joins
+    header_lines = header.count("\n")
+    assert join.condition_span == (header_lines + 4, header_lines + 4)
+
+
+@pytest.mark.parametrize(
+    "ref",
+    [
+        "ref('orders')",
+        "ref('shop', 'orders')",
+        'ref("shop", "orders")',
+        "ref('orders', v=2)",
+        "ref('shop','orders', version=3)",
+    ],
+)
+def test_dbt_ref_variants_resolve_to_the_model_name(ref):
+    result = run(f"SELECT * FROM {{{{ {ref} }}}}", dialect="snowflake")
+    [fact] = result.statement_facts
+    assert fact.read_tables == ["dw.orders"]
+
+
 def test_preprocess_keeps_line_numbers_across_jinja_blocks():
     raw = "{% if x %}\n\n{% endif %}\nSELECT 1"
     sql, _ = preprocess_template(raw)

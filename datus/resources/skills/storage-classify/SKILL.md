@@ -71,7 +71,7 @@ Walk top to bottom; the first match wins. Each item routes to exactly one store.
 | reference_sql | `./subject/sql_summaries/{id}.yaml` + LanceDB `reference_sql` | YAML — `id` / `name` / `sql` / `summary` / `search_text` / `tags` | `task(type="gen_sql_summary", …)` — prompt MUST carry **one** complete SQL; **one call per query** (never batch multiple SQLs into a single entry) |
 | knowledge | `./knowledge/<domain-slug>.md`, indexed under `AGENTS.md ## Knowledge` | Markdown per domain: `## Tables` / `## Relationships` / `## Lineage` / `## Metric Definitions` (written by `/init`), business-rule topics (atomic facts), `## Known Issues` | `extract-knowledge` (**lite** mode); `/init` writes its sections directly |
 | memory | `{workspace_root}/.datus/memory/{node}/MEMORY.md` (only `chat` and custom subagents) | Markdown — **hard 2000-byte cap** | `add_memory` / `edit_memory` (the only writers) |
-| AGENTS.md | `./AGENTS.md` (project root; first ~200 lines injected into `<project_context>`) | Markdown — Architecture / Directory / Services / Knowledge … | **edit directly** (`write_file` / `edit_file`) |
+| AGENTS.md | `./AGENTS.md` (project root; first ~200 lines injected into `<project_context>`) | Markdown — Data Architecture / Directory Map / Core Tables / Global Rules / SQL Conventions / KB index / Knowledge (see *AGENTS.md Section Ownership*) | **edit directly** (`write_file` / `edit_file`) |
 | skills | `./.datus/skills/` (project) > `~/.datus/skills/` (user) > `datus/resources/skills/` (builtin); first-wins | `SKILL.md` + YAML frontmatter | `create-skill` |
 
 **When NOT to pick a store:**
@@ -107,9 +107,9 @@ Because you edit `AGENTS.md` yourself, keep its sections consistent and minimal.
 
 Handling order:
 
-1. **`AGENTS.md` missing** → `write_file` a minimal skeleton (`# <project dir name>` plus the relevant section); leave the inventory + knowledge/memory sections for `/init` to fill in and the vector-index sections (`## Semantic Models` / `## Metrics` / `## Reference SQL`) for `/build-kb`. Do not block on the user running `/init` first.
+1. **`AGENTS.md` missing** → `write_file` a minimal skeleton (`# <project dir name>` plus the relevant section); leave the project-map sections (`## Data Architecture` … `## SQL Conventions`) and the initial `## Knowledge` index for `/init` to fill in and the vector-index sections (`## Semantic Models` / `## Metrics` / `## Reference SQL`) for `/build-kb`. Do not block on the user running `/init` first.
 2. **Exists but missing the target section** → insert it in the canonical order above (Knowledge goes last).
-3. **Exists with the section** → prefer a minimal `edit_file`. Never rewrite the whole file when a scoped edit suffices, and never touch `## Knowledge` entries owned by `extract-knowledge`.
+3. **Exists with the section** → prefer a minimal `edit_file`. Never rewrite the whole file when a scoped edit suffices, and never overwrite `## Knowledge` entries you did not write (the section is maintained by `/init` and `extract-knowledge`).
 
 ## Disambiguation (overlapping boundaries)
 
@@ -138,7 +138,7 @@ End with a short human-readable summary: how many pieces were classified, where 
 - Do not bundle multiple SQLs into one `gen_sql_summary` call — one query per call, one entry per query.
 - Do not run `extract-knowledge` in deep mode — use lite.
 - Do not exceed the 2000-byte `memory` cap, and do not write `memory` with any tool other than `add_memory` / `edit_memory`.
-- Do not overwrite `## Knowledge` entries in `AGENTS.md` — those are owned by `extract-knowledge`.
+- Do not overwrite `## Knowledge` entries in `AGENTS.md` that you did not write — the section is maintained by `/init` and `extract-knowledge`, append only.
 - Do not persist one-shot content, generic SQL knowledge, or anything inferable from `INFORMATION_SCHEMA` / table comments / column names.
 - Do not generate the artifact's content yourself (e.g. write the SQL, invent the metric) — your job is classification and routing, not authoring.
 - Do not resolve a destructive overwrite silently — go through `ask_user`.

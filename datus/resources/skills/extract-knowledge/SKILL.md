@@ -280,7 +280,7 @@ Maintain the `## Knowledge` section of `./AGENTS.md`, so that later main agents 
 **AGENTS.md handling order:**
 
 1. **`./AGENTS.md` missing** → `write_file` a minimal skeleton (just `# <project directory name>` + the `## Knowledge` section; leave the rest for `/init` to fill in later). Do not wait for the user to run `/init` first.
-2. **AGENTS.md exists but lacks the `## Knowledge` section** → insert after `## Artifacts` (or at end of file if Artifacts is also absent).
+2. **AGENTS.md exists but lacks the `## Knowledge` section** → insert it as the last section (the canonical order in `storage-classify` puts Knowledge last).
 3. **Rescan `./knowledge/`** and **rewrite the entire `## Knowledge` section** sorted alphabetically by domain title — guarantees the index stays consistent across runs.
 
 **Fixed structure of the `## Knowledge` section:**

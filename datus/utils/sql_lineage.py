@@ -66,7 +66,12 @@ def _render(node: exp.Expression) -> str:
 
 # dbt macros resolve to real table names; every other template construct is
 # replaced by an identifier-safe placeholder so the statement still parses.
-_DBT_REF_RE = re.compile(r"\{\{\s*ref\(\s*['\"]([^'\"]+)['\"]\s*\)\s*\}\}")
+# ``ref('model')``, ``ref('package', 'model')`` and ``ref('model', v=2)`` all resolve to the model name.
+_DBT_REF_RE = re.compile(
+    r"\{\{\s*ref\(\s*['\"]([^'\"]+)['\"](?:\s*,\s*['\"]([^'\"]+)['\"])?(?:\s*,\s*\w+\s*=\s*[^)]*)?\s*\)\s*\}\}"
+)
+# dbt ``config()`` calls render to nothing, so they must not leave a placeholder behind.
+_DBT_CONFIG_RE = re.compile(r"\{\{-?\s*config\s*\(.*?\)\s*-?\}\}", re.DOTALL)
 _DBT_SOURCE_RE = re.compile(r"\{\{\s*source\(\s*['\"]([^'\"]+)['\"]\s*,\s*['\"]([^'\"]+)['\"]\s*\)\s*\}\}")
 _JINJA_BLOCK_RE = re.compile(r"\{%-?.*?-?%\}", re.DOTALL)
 _JINJA_COMMENT_RE = re.compile(r"\{#.*?#\}", re.DOTALL)
@@ -262,7 +267,7 @@ def preprocess_template(sql: str) -> Tuple[str, bool]:
 
     Returns ``(sql, templated)``. ``${var}`` becomes ``__tpl_var__`` (valid both
     inside string literals and as an identifier part), dbt ``ref`` / ``source``
-    become the referenced table name, and any other Jinja construct is dropped
+    become the referenced table name, dbt ``config()`` is dropped, and any other Jinja construct is dropped
     or replaced by ``__tpl__``. Line breaks inside removed blocks are kept so
     reported line numbers stay aligned with the original file.
     """
@@ -271,7 +276,8 @@ def preprocess_template(sql: str) -> Tuple[str, bool]:
     def _keep_newlines(match: re.Match) -> str:
         return "\n" * match.group(0).count("\n")
 
-    sql = _DBT_REF_RE.sub(lambda m: m.group(1) + _keep_newlines(m), sql)
+    sql = _DBT_CONFIG_RE.sub(_keep_newlines, sql)
+    sql = _DBT_REF_RE.sub(lambda m: (m.group(2) or m.group(1)) + _keep_newlines(m), sql)
     sql = _DBT_SOURCE_RE.sub(lambda m: f"{m.group(1)}.{m.group(2)}" + _keep_newlines(m), sql)
     sql = _JINJA_COMMENT_RE.sub(_keep_newlines, sql)
     sql = _JINJA_BLOCK_RE.sub(_keep_newlines, sql)

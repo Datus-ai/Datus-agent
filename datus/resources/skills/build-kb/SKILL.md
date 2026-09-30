@@ -1,6 +1,6 @@
 ---
 name: build-kb
-description: Build the project's vector-indexed knowledge base from files plus database metadata — optionally scoped to specific files / tables / datasources / domains. Scan the in-scope material, classify it into business domains, explore each domain's tables and docs in parallel with explore subagents (the validated-query SQL corpus is enumerated directly, no explore needed), then (after the user confirms a generation manifest — or directly, in the same turn, when the user has waived confirmation) route every artifact to its store via storage-classify, generating semantic_models / metrics / reference_sql (and mining any extra knowledge), and refresh AGENTS.md's KB index. The lightweight /init handles the AGENTS.md inventory plus file-based knowledge/memory; this skill owns the heavy vector-store generation.
+description: Build the project's vector-indexed knowledge base from files plus database metadata — optionally scoped to specific files / tables / datasources / domains. Scan the in-scope material, classify it into business domains, explore each domain's tables and docs in parallel with explore subagents (the validated-query SQL corpus is enumerated directly, no explore needed), then (after the user confirms a generation manifest — or directly, in the same turn, when the user has waived confirmation) route every artifact to its store via storage-classify, generating semantic_models / metrics / reference_sql (and mining any extra knowledge), and refresh AGENTS.md's KB index. The lightweight /init writes the AGENTS.md project map plus the file-based ./knowledge/*.md; this skill owns the heavy vector-store generation.
 tags:
   - build-kb
   - knowledge-base
@@ -14,7 +14,7 @@ user_invocable: true
 
 # Build Knowledge Base
 
-You are building the project's **vector-indexed knowledge base** — `semantic_models`, `metrics`, and `reference_sql` (the LanceDB-backed stores) — from the project's files and database metadata. This is the heavy companion to the lightweight `/init`: `/init` already produces the `AGENTS.md` inventory and the file-based stores (`./knowledge/*.md`, `memory`); **this skill owns the expensive generation** that writes the vector stores and then refreshes `AGENTS.md`'s KB index sections.
+You are building the project's **vector-indexed knowledge base** — `semantic_models`, `metrics`, and `reference_sql` (the LanceDB-backed stores) — from the project's files and database metadata. This is the heavy companion to the lightweight `/init`: `/init` already produces the `AGENTS.md` project map and the file-based `./knowledge/*.md`; **this skill owns the expensive generation** that writes the vector stores and then refreshes `AGENTS.md`'s KB index sections.
 
 This is an orchestration skill running in the main agent context, so you may call `task`, `todo_write`/`todo_list`/`todo_read`/`todo_update`, `ask_user`, `add_memory`/`edit_memory`, the filesystem tools (`glob`, `grep`, `read_file`, `write_file`, `edit_file`), and the database tools (`list_databases`, `list_tables`, `describe_table`, `search_table`, `execute_sql`).
 
@@ -33,7 +33,7 @@ This is an orchestration skill running in the main agent context, so you may cal
 1. **Parse the scope hints** into any of: in-scope **files** (globs / paths, e.g. `queries/*.sql`), **datasources**, **tables** (e.g. `orders`, `order_items`), and **business domains** (e.g. "only the sales domain"). Free text — interpret generously, e.g. `/build-kb orders + order_items tables and queries/*.sql, sales domain only`.
    - **Also detect a confirmation-skip opt-out.** If the current invocation's hints explicitly waive the manifest confirmation gate (e.g. "skip confirmation", "no confirm", "auto", "don't stop for confirmation", "直接执行" / "跳过确认" / "不用确认"), set **auto-run = true**. Absent such an explicit signal, **auto-run = false** (the default — always confirm). A bare scope hint is NOT an opt-out; only an explicit waive counts.
 2. **Infer the goal and datasource defaults** the same way `/init` does: read `README.md` (first 3000 chars) or derive a 1-2 sentence goal. For datasources, **default to the currently active datasource** of the session (the one pinned via `--datasource` / `/datasource`, i.e. the project's `default_datasource`); **when multiple datasources are configured, scope to that active one only — do NOT cover all of them** unless the Step 0.1 hints explicitly name other datasources. Hints from Step 0.1 **override** these defaults.
-3. **Reuse `/init`'s inventory when present.** If `./AGENTS.md` exists, read it to reuse the directory map / data-assets inventory rather than re-scanning the whole tree — narrow your scan to the in-scope subset.
+3. **Reuse `/init`'s inventory when present.** If `./AGENTS.md` exists, read it to reuse its `## Directory Map` / `## Core Tables` rather than re-scanning the whole tree — narrow your scan to the in-scope subset.
 4. Use `glob` to scan the in-scope directory tree (top 3 levels). Skip hidden dirs and `__pycache__` / `node_modules` / `.venv`.
 5. **Load routing rules now:** call `load_skill("storage-classify")` and extract its **Decision Tree** and **Per-Store Reference** into a local summary. This must happen before Step 2 so the routing rules can be inlined into every explore subagent prompt — explore subagents run in isolated contexts and cannot load skills themselves.
 
@@ -81,7 +81,7 @@ subject (the domain)
        prompt-seed: the self-contained seed to hand the downstream generator — not just a bare ref but the context it needs (e.g. table names + the column encodings/intent for semantic_modeling; for a SQL example *discovered in a doc*, the full SQL + the business question + any mandatory filter for gen_sql_summary)
 ```
 
-Coverage focuses on **semantic_models, metrics, and knowledge** (plus **reference_sql only for SQL newly discovered in docs** — the validated-query corpus was already enumerated in Step 1) — `/init` already wrote the AGENTS.md inventory and the initial knowledge/memory, so here the explorer should surface vector-store candidates plus any **additional** knowledge atoms the corpus reveals (do not re-propose facts `/init` already filed; do not propose other stores beyond memory/AGENTS.md notes).
+Coverage focuses on **semantic_models, metrics, and knowledge** (plus **reference_sql only for SQL newly discovered in docs** — the validated-query corpus was already enumerated in Step 1) — `/init` already wrote the AGENTS.md project map and the initial knowledge files, so here the explorer should surface vector-store candidates plus any **additional** knowledge atoms the corpus reveals (do not re-propose facts `/init` already filed; do not propose other stores beyond memory/AGENTS.md notes).
 
 **The validated-query corpus is NOT explored here — you enumerated it directly in Step 1.** The only `reference_sql` refs an explorer should return are SQL it *newly discovers* while investigating tables or docs (e.g. an example query embedded in a Markdown doc). For any such discovered SQL, instruct the explorer to carry the **original natural-language question** (if the doc states one) in the `prompt-seed` — it is the best retrieval key for future questions.
 
@@ -147,7 +147,7 @@ After all generation completes, update `./AGENTS.md` **last**, following the *AG
   - `## Semantic Models` — `N` models (`schools`, `satscores`, `frpm`); retrieve with `search_semantic_model`.
   - `## Metrics` — `N` metrics (`county_avg_sat_math`, `avg_frpm_rate`, …); retrieve with `search_metrics`.
   - `## Reference SQL` — `N` validated queries; retrieve similar `(question → SQL)` examples with `search_reference_sql` before writing new SQL.
-- **`## Knowledge` — append only.** This section is **owned by `extract-knowledge`** and `/init` already filed the initial atoms. If Step 3 mined *additional* knowledge, append one bullet per new `./knowledge/*.md` (`- [<Domain>](knowledge/<slug>.md) — <one-line scope>`), writing the scope line to convey unguessable specifics (exact thresholds, literal filter codes, enum spellings, term→column mappings). **Never overwrite existing entries.**
+- **`## Knowledge` — append only.** This section is **maintained by `/init` and `extract-knowledge`** (see `storage-classify`), and `/init` already filed the initial knowledge files. If Step 3 mined *additional* knowledge, append one bullet per new `./knowledge/*.md` (`- [<Domain>](knowledge/<slug>.md) — <one-line scope>`), writing the scope line to convey unguessable specifics (exact thresholds, literal filter codes, enum spellings, term→column mappings). **Never overwrite existing entries.**
 
 If `./AGENTS.md` does not exist (the user never ran `/init`), create the full file per the *AGENTS.md Section Ownership* — the same skeleton `/init` would have written — then fill the KB index as above. In that fallback only, also induce a `## SQL Conventions` section from the validated-SQL corpus (see below).
 
@@ -178,6 +178,6 @@ Tell the user the KB is built and AGENTS.md's index is refreshed.
 - **Routing lives in `storage-classify`, not here.** When in doubt about which store an item belongs to, defer to its decision tree and disambiguation table.
 - The explore subagent's `subject → store → ref` output is exactly `storage-classify`'s input contract — they dovetail.
 - **Scope is the whole point of this skill vs `/init`.** Honor the resolved scope in every step — never scan, explore, or generate outside it unless the user gave no hints (whole-project default).
-- **`/init` owns the file-based stores; this skill owns the vector stores.** Do not duplicate the AGENTS.md inventory or re-file knowledge/memory `/init` already wrote — only add what the heavy generation produces.
+- **`/init` owns the AGENTS.md project map and the initial knowledge files; this skill owns the vector stores.** Do not duplicate the project map or re-file knowledge `/init` already wrote — only add what the heavy generation produces.
 - Use placeholder comments when you cannot determine something rather than inventing facts.
 - **Do not ask the user anything before the manifest.** Scope is resolved in Step 0 and confirmed at the turn boundary; the manifest is the single confirmation gate, not an `ask_user`. (The only later `ask_user` allowed is the Step 4 guard before wholesale-overwriting an existing `AGENTS.md`.)

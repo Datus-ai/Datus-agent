@@ -2098,6 +2098,24 @@ class TestChatAgenticNodeHonoursConfiguredTools:
         selected = self._node(real_agent_config, tools="lineage_tools.*")
         assert [tool.name for tool in selected.tools if tool.name == "extract_sql_lineage"] == ["extract_sql_lineage"]
 
+    @pytest.mark.parametrize("tools", [None, "lineage_tools.*"])
+    def test_lineage_tool_is_never_exposed_to_vscode_sessions(self, real_agent_config, mock_llm_create, tools):
+        """vscode proxies only filesystem tools to the IDE, so a server-side lineage
+        scan would read the daemon's CWD instead of the user's workspace."""
+        real_agent_config._client_source = "vscode"
+        node = self._node(real_agent_config, tools=tools)
+
+        assert node.lineage_tools is None
+        assert "extract_sql_lineage" not in {tool.name for tool in node.tools}
+        node._rebuild_tools()
+        assert "extract_sql_lineage" not in {tool.name for tool in node.tools}
+
+    def test_lineage_tool_stays_mounted_for_web_sessions(self, real_agent_config, mock_llm_create):
+        real_agent_config._client_source = "web"
+        node = self._node(real_agent_config)
+
+        assert "extract_sql_lineage" in {tool.name for tool in node.tools}
+
     def test_bash_is_dropped_even_though_init_built_it(self, real_agent_config, mock_llm_create):
         """`bash_tool` is created in `AgenticNode.__init__`, not in
         `setup_tools`, and `_rebuild_tools` re-adds it from the attribute on

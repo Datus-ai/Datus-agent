@@ -260,7 +260,7 @@ class _Shaper:
             # A folded edge must still locate the intermediate builders. Match the fragment
             # as well as the file, since Python may contain separate temporary lifetimes.
             fragment = fact.statement_id.rsplit(":", 2)[1]
-            for raw in ex.raw_lineage:
+            for raw in ex.raw_lineage if edge.via_temp else []:
                 origin = self.facts[raw.sequence]
                 if (
                     raw.file == edge.file

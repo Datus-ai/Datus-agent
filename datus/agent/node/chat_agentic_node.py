@@ -290,6 +290,10 @@ class ChatAgenticNode(AgenticNode):
 
     def _setup_lineage_tools(self):
         """Setup static SQL lineage extraction, anchored at the same root as the filesystem tools."""
+        # vscode proxies only filesystem_tools.* to the IDE; lineage would scan the daemon's CWD.
+        if getattr(self.agent_config, "_client_source", None) == "vscode":
+            self.lineage_tools = None
+            return
         try:
             self.lineage_tools = LineageTools(
                 self.agent_config,
