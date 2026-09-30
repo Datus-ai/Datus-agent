@@ -69,6 +69,8 @@ _NORMAL_RULES = [
     # context search / date utilities
     _rule("context_search_tools", "*", PermissionLevel.ALLOW),
     _rule("date_parsing_tools", "*", PermissionLevel.ALLOW),
+    # static SQL analysis: reads workspace files inside the filesystem policy, executes nothing
+    _rule("lineage_tools", "*", PermissionLevel.ALLOW),
     # db read. ``execute_sql`` is the unified SQL entry point; its gating is
     # handled dynamically per statement class in
     # ``PermissionHooks._handle_sql_permission`` driven by each profile's
