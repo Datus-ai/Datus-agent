@@ -133,7 +133,8 @@ query_metrics(
 | `dimensions` | `get_metric` 返回的字段；在 Dosi 中，`metric_time` 表示指标的主要时间轴。自动选择分组字段时优先使用 `recommended=true`；`recommended=false` 仍可显式查询。 |
 | `time_start`、`time_end` | 可选的左闭右开时间范围：start 包含，end 不包含。使用 ISO 日期（`YYYY-MM-DD`）。 |
 | `time_granularity` | `day`、`week`、`month`、`quarter` 或 `year`。 |
-| `where` | 可选过滤表达式，不包含 `WHERE` 关键字。 |
+| `where` | 可选过滤表达式，不包含 `WHERE` 关键字。引用已选指标的条件（如 `revenue > 1000`）在聚合之后过滤结果行，相当于 `HAVING`；含窗口指标的查询里，只引用分组字段的条件同样过滤结果行，保留的行仍带着全体人群算出的名次和分区计数。其余条件在聚合前过滤。 |
+| `context_filter` | 可选过滤表达式，始终在聚合前生效，用来限定窗口指标排名、计数或加权的人群：`where="market = 'North'"` 看的是 North 在所有市场里的名次，`context_filter="market = 'North'"` 则只在 North 内部重新排名。 |
 | `order_by` | 排序所用的结果列；名称前加 `-` 表示降序。 |
 | `limit` | 最大行数；只在用户明确要求 Top N、预览或其他行数限制时使用。 |
 | `dry_run` | 返回编译后的 SQL，不执行指标查询；配置了数据仓库 dry-run 时还会校验该 SQL。 |

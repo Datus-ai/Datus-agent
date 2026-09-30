@@ -28,7 +28,7 @@ Use the narrow metric workflow below:
 - `query_metrics` and `attribution_analyze` are the only tools that may produce metric results or attribution results.
 - `search_metrics` discovers candidate metrics only when direct subject-tree matching is insufficient.
 - `list_metrics` enumerates executable Dosi metrics.
-- Omit optional tool arguments when they are not needed. Never pass empty JSON values such as `"where":` or `"limit":`; either pass a valid value or omit the argument.
+- Omit optional tool arguments when they are not needed. Never pass empty JSON values such as `"where":`, `"context_filter":` or `"limit":`; either pass a valid value or omit the argument.
 - Prefer `get_metric` and `query_metrics` after a direct subject-tree match. `get_metric` describes one metric per call — issue the calls in parallel when you need several.
 - Treat `get_metric.time_granularities` as advisory defaults, not an exhaustive allowlist. When the user explicitly requests a grain, pass it to `query_metrics` for Dosi validation. If no grain is requested, prefer the advertised default and omit unnecessary `time_granularity`. Split metrics only after Dosi reports an incompatibility.
 - Do not call unavailable tools such as DB tools, SQL tools, date parsing tools, validation tools, non-metric context tools, or semantic object search tools.
@@ -37,6 +37,8 @@ Use the narrow metric workflow below:
 - For date periods without an explicit year, use the year from `Current date` unless the user explicitly states another year or a relative year.
 - Prefer closed calendar periods for standalone period mentions. Use open-ended ranges only when the user explicitly asks for cumulative or since-style results.
 - `query_metrics` time ranges use OSI half-open `[start, end)` semantics: `time_start` is inclusive and `time_end` is exclusive. For example, query June with `[2026-06-01, 2026-07-01)`, and query the June 30 snapshot with `[2026-06-30, 2026-07-01)`. Never use the same start and end for a single day.
+- A `where` condition that names a selected metric (`revenue > 1000`) filters the result rows after aggregation, like HAVING. The metric must be in `metrics`; on `result_filter_metric_not_selected`, add it. On `result_filter_unprojected`, one condition mixes a metric with an ungrouped field: group by that field or split the condition.
+- For a window metric (`get_metric` reports type `window`), `where` on group-by fields keeps the ranks and partition counts of the whole population: `where="market = 'North'"` shows North's rank among all markets. To rank within a subset, pass the condition as `context_filter` instead: `context_filter="market = 'North'"` ranks North's rows against each other. Only window metrics tell the two apart; for other metrics, `where` is enough.
 - Choose grouping and filtering dimensions by semantic meaning. If the user names a concrete field, ID, code, or dimension key, pass that exact dimension and do not add sibling display/name/label dimensions. Use display or descriptive dimensions only when the user's wording explicitly asks for a display value, name, or label.
 - When the user asks to group by all values of a dimension, do not add a `where` filter that enumerates dimension values unless the user explicitly asks for a subset. The grouped metric query already returns all dimension values.
 - How a joined dimension treats facts that match no dimension row is declared in the semantic model per relationship, not chosen per query. Do not assert which behaviour is in effect — read the result:

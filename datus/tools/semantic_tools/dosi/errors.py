@@ -103,6 +103,14 @@ def validation_error_from_query_error(
             if requested_time_granularity:
                 suggested_retry["time_granularity"] = requested_time_granularity
 
+    if suggested_retry is None and code == "result_filter_metric_not_selected":
+        # ``exc.metrics`` names the metric the filter referenced but the query
+        # did not select; ``candidates`` are the selected ones. The fix is to
+        # select it too, which is concrete enough to state as a retry.
+        missing = [m for m in (getattr(exc, "metrics", ()) or ()) if m not in (requested_metrics or [])]
+        if missing:
+            suggested_retry = {"metrics": list(requested_metrics or []) + missing}
+
     unsupported_dimensions: List[str] = []
     if code in {"unknown_dimension", "ambiguous_dimension"}:
         # The offending name is whichever requested dimension is not itself

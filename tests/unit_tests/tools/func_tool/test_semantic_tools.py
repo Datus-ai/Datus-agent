@@ -2263,3 +2263,43 @@ class TestCompressorModelName:
         assert "original_rows" not in envelope
         assert "compressed_data" not in envelope
         assert "compression_type" not in envelope
+
+
+@pytest.mark.usefixtures("mock_runtime")
+class TestQueryMetricsContextFilter:
+    """``context_filter`` on the tool surface."""
+
+    def test_context_filter_reaches_the_runtime(self, semantic_tools, mock_runtime):
+        query_result = QueryResult(
+            columns=["status", "item_rank"],
+            data=[{"status": "paid", "item_rank": 1}],
+            metadata={},
+        )
+        with patch("datus.tools.func_tool.semantic_tools._run_async", return_value=query_result):
+            result = semantic_tools.query_metrics(
+                metrics=["item_rank"],
+                dimensions=["status"],
+                where="status = 'paid'",
+                context_filter="region = 'east'",
+            )
+
+        assert result.success == 1
+        kwargs = mock_runtime.query_metrics.call_args.kwargs
+        assert kwargs["where"] == "status = 'paid'"
+        assert kwargs["context_filter"] == "region = 'east'"
+
+    @pytest.mark.parametrize("context_filter", [None, "null", "", "  "])
+    def test_an_unset_context_filter_is_not_passed_to_the_runtime(self, semantic_tools, mock_runtime, context_filter):
+        query_result = QueryResult(columns=["revenue"], data=[{"revenue": 1}], metadata={})
+        with patch("datus.tools.func_tool.semantic_tools._run_async", return_value=query_result):
+            result = semantic_tools.query_metrics(metrics=["revenue"], context_filter=context_filter)
+
+        assert result.success == 1
+        assert "context_filter" not in mock_runtime.query_metrics.call_args.kwargs
+
+    def test_tool_schema_exposes_context_filter(self, semantic_tools):
+        tool = trans_to_function_tool(semantic_tools.query_metrics)
+        properties = tool.params_json_schema["properties"]
+        assert "context_filter" in properties
+        assert "context_filter" not in tool.params_json_schema.get("required", [])
+        assert "before aggregation" in properties["context_filter"]["description"]
