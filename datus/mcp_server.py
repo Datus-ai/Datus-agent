@@ -354,6 +354,13 @@ class ToolContextManager:
                 logger.warning(f"Failed to initialize {tool_config.name} for {datasource}: {e}")
                 tools[tool_config.name] = None
 
+        # Wire db_func_tool into reference_template_tool so execute_reference_template
+        # can run the rendered SQL directly, matching the behaviour of Chat API agents.
+        ref_tool = tools.get("reference_template_tool")
+        db_tool = tools.get("db_tool")
+        if ref_tool is not None and db_tool is not None:
+            ref_tool.db_func_tool = db_tool
+
         return ToolContext(
             datasource=datasource,
             subagent=subagent,
@@ -362,7 +369,6 @@ class ToolContextManager:
         )
 
     def close_all(self):
-        """Close all managed contexts."""
         for cache_key, context in list(self._contexts.items()):
             try:
                 context.close()
@@ -959,6 +965,13 @@ class DatusMCPServer:
             except Exception as e:
                 logger.warning(f"Failed to initialize {tool_config.name}: {e}")
                 self.tools[tool_config.name] = None
+
+        # Wire db_func_tool into reference_template_tool so execute_reference_template
+        # can run the rendered SQL directly, matching the behaviour of Chat API agents.
+        ref_tool = self.tools.get("reference_template_tool")
+        db_tool = self.tools.get("db_tool")
+        if ref_tool is not None and db_tool is not None:
+            ref_tool.db_func_tool = db_tool
 
     # Backward compatibility properties
     @property
