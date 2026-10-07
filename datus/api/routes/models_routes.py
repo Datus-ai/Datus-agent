@@ -16,7 +16,6 @@ from datus.api.deps import ServiceDep
 from datus.api.models.base_models import Result
 from datus.api.models.config_models import ModelInfo, ModelPricing, ModelsData
 from datus.cli.provider_model_catalog import load_cache_fetched_at, load_cached_model_details
-from datus.utils.image_model_support import image_model_support
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
@@ -84,16 +83,7 @@ def _build_model_info(
         context_length=context_length,
         max_tokens=max_tokens,
         pricing=pricing,
-        supports_image_input=image_model_support(slug, entry.get("input_modalities")),
     )
-
-
-def _custom_image_support(agent_config: Any, model_key: str) -> Optional[bool]:
-    extras = getattr(agent_config, "model_extras", None)
-    if not isinstance(extras, dict):
-        return None
-    value = extras.get(model_key, {}).get("supports_image_input")
-    return value if isinstance(value, bool) else None
 
 
 def _resolve_current_model(
@@ -197,7 +187,6 @@ async def list_models(svc: ServiceDep) -> Result[ModelsData]:
                     id=model_key,
                     model=actual_model,
                     name=model_key,
-                    supports_image_input=_custom_image_support(agent_config, model_key),
                     context_length=spec_ctx if isinstance(spec_ctx, int) else None,
                     max_tokens=spec_max if isinstance(spec_max, int) else None,
                 )

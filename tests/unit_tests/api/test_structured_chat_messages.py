@@ -18,7 +18,6 @@ from datus.api.models.cli_models import StreamChatInput
 from datus.api.routes.chat_routes import insert_message
 from datus.api.services.chat_task_manager import ChatTask, ChatTaskManager
 from datus.models.session_manager import SessionManager
-from datus.utils.image_model_support import image_model_support
 
 
 @pytest.fixture
@@ -121,15 +120,6 @@ def test_history_and_copy_preserve_original_contents(tmp_path, image_part):
             assert "/server/image.png" in raw
     finally:
         manager.close_all_sessions()
-
-
-def test_capability_metadata_does_not_guess_unknown_models():
-    assert image_model_support("openai/gpt-4o") is True
-    assert image_model_support("gpt-5.4") is True
-    assert image_model_support("deepseek-v4-pro") is False
-    assert image_model_support("new-private-model") is None
-    assert image_model_support("new-private-model", ["text", "image"]) is True
-    assert image_model_support("new-private-model", ["text"]) is False
 
 
 def test_insert_limits_the_total_joined_markdown_length():
