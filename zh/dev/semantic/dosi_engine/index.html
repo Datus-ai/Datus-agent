@@ -8,9 +8,13 @@
       
       
       
-        <link rel="canonical" href="https://docs.datus.ai/zh/dev/dev/configuration/semantic_layer/">
+        <link rel="canonical" href="https://docs.datus.ai/zh/dev/dev/semantic/dosi_engine/">
       
       
+        <link rel="prev" href="../../configuration/nodes/">
+      
+      
+        <link rel="next" href="../../adapters/db_adapters/">
       
       
         
@@ -25,7 +29,7 @@
     
     
       
-        <title>语义层配置（Semantic Layer） - Datus Docs</title>
+        <title>语义引擎 - Datus Docs</title>
       
     
     
@@ -72,7 +76,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#semantic-layer" class="md-skip">
+        <a href="#dosi" class="md-skip">
           跳转至
         </a>
       
@@ -109,7 +113,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              语义层配置（Semantic Layer）
+              语义引擎
             
           </span>
         </div>
@@ -254,10 +258,12 @@
   
   
   
+    
+  
   
     
     
-      <li class="md-tabs__item">
+      <li class="md-tabs__item md-tabs__item--active">
         <a href="../.." class="md-tabs__link">
           
   
@@ -339,6 +345,8 @@
       
   
   
+    
+  
   
   
     
@@ -382,18 +390,23 @@
       
         
       
-    
-    
-    
-      
+        
       
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_1" >
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_1" checked>
         
           
           <div class="md-nav__link md-nav__container">
@@ -415,13 +428,13 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_1" id="__nav_1_label" tabindex="0">
+              <label class="md-nav__link " for="__nav_1" id="__nav_1_label" tabindex="">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_1_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_1_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_1">
             <span class="md-nav__icon md-icon"></span>
             
@@ -3082,7 +3095,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../introduction/" class="md-nav__link">
+      <a href="../../configuration/introduction/" class="md-nav__link">
         
   
   
@@ -3110,7 +3123,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../agent/" class="md-nav__link">
+      <a href="../../configuration/agent/" class="md-nav__link">
         
   
   
@@ -3138,7 +3151,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../compact/" class="md-nav__link">
+      <a href="../../configuration/compact/" class="md-nav__link">
         
   
   
@@ -3166,7 +3179,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../workflow/" class="md-nav__link">
+      <a href="../../configuration/workflow/" class="md-nav__link">
         
   
   
@@ -3194,7 +3207,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../benchmark/" class="md-nav__link">
+      <a href="../../configuration/benchmark/" class="md-nav__link">
         
   
   
@@ -3222,7 +3235,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../sql_policy/" class="md-nav__link">
+      <a href="../../configuration/sql_policy/" class="md-nav__link">
         
   
   
@@ -3250,7 +3263,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../web_tool/" class="md-nav__link">
+      <a href="../../configuration/web_tool/" class="md-nav__link">
         
   
   
@@ -3278,7 +3291,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../image_tool/" class="md-nav__link">
+      <a href="../../configuration/image_tool/" class="md-nav__link">
         
   
   
@@ -3402,7 +3415,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../datasources/" class="md-nav__link">
+      <a href="../../configuration/datasources/" class="md-nav__link">
         
   
   
@@ -3430,7 +3443,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../datasources/sqlite/" class="md-nav__link">
+      <a href="../../configuration/datasources/sqlite/" class="md-nav__link">
         
   
   
@@ -3458,7 +3471,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../datasources/duckdb/" class="md-nav__link">
+      <a href="../../configuration/datasources/duckdb/" class="md-nav__link">
         
   
   
@@ -3486,7 +3499,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../datasources/mysql/" class="md-nav__link">
+      <a href="../../configuration/datasources/mysql/" class="md-nav__link">
         
   
   
@@ -3514,7 +3527,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../datasources/postgresql/" class="md-nav__link">
+      <a href="../../configuration/datasources/postgresql/" class="md-nav__link">
         
   
   
@@ -3542,7 +3555,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../datasources/greenplum/" class="md-nav__link">
+      <a href="../../configuration/datasources/greenplum/" class="md-nav__link">
         
   
   
@@ -3570,7 +3583,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../datasources/redshift/" class="md-nav__link">
+      <a href="../../configuration/datasources/redshift/" class="md-nav__link">
         
   
   
@@ -3598,7 +3611,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../datasources/snowflake/" class="md-nav__link">
+      <a href="../../configuration/datasources/snowflake/" class="md-nav__link">
         
   
   
@@ -3626,7 +3639,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../datasources/bigquery/" class="md-nav__link">
+      <a href="../../configuration/datasources/bigquery/" class="md-nav__link">
         
   
   
@@ -3654,7 +3667,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../datasources/starrocks/" class="md-nav__link">
+      <a href="../../configuration/datasources/starrocks/" class="md-nav__link">
         
   
   
@@ -3682,7 +3695,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../datasources/doris/" class="md-nav__link">
+      <a href="../../configuration/datasources/doris/" class="md-nav__link">
         
   
   
@@ -3710,7 +3723,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../datasources/tidb/" class="md-nav__link">
+      <a href="../../configuration/datasources/tidb/" class="md-nav__link">
         
   
   
@@ -3738,7 +3751,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../datasources/clickhouse/" class="md-nav__link">
+      <a href="../../configuration/datasources/clickhouse/" class="md-nav__link">
         
   
   
@@ -3766,7 +3779,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../datasources/trino/" class="md-nav__link">
+      <a href="../../configuration/datasources/trino/" class="md-nav__link">
         
   
   
@@ -3794,7 +3807,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../datasources/hive/" class="md-nav__link">
+      <a href="../../configuration/datasources/hive/" class="md-nav__link">
         
   
   
@@ -3822,7 +3835,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../datasources/spark/" class="md-nav__link">
+      <a href="../../configuration/datasources/spark/" class="md-nav__link">
         
   
   
@@ -3850,7 +3863,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../datasources/clickzetta/" class="md-nav__link">
+      <a href="../../configuration/datasources/clickzetta/" class="md-nav__link">
         
   
   
@@ -3878,7 +3891,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../datasources/hologres/" class="md-nav__link">
+      <a href="../../configuration/datasources/hologres/" class="md-nav__link">
         
   
   
@@ -3906,7 +3919,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../datasources/maxcompute/" class="md-nav__link">
+      <a href="../../configuration/datasources/maxcompute/" class="md-nav__link">
         
   
   
@@ -3934,7 +3947,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../datasources/oracle/" class="md-nav__link">
+      <a href="../../configuration/datasources/oracle/" class="md-nav__link">
         
   
   
@@ -3962,7 +3975,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../datasources/gaussdb/" class="md-nav__link">
+      <a href="../../configuration/datasources/gaussdb/" class="md-nav__link">
         
   
   
@@ -3990,7 +4003,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../datasources/dws/" class="md-nav__link">
+      <a href="../../configuration/datasources/dws/" class="md-nav__link">
         
   
   
@@ -4026,7 +4039,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../storage/" class="md-nav__link">
+      <a href="../../configuration/storage/" class="md-nav__link">
         
   
   
@@ -4054,7 +4067,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../nodes/" class="md-nav__link">
+      <a href="../../configuration/nodes/" class="md-nav__link">
         
   
   
@@ -4087,12 +4100,118 @@
                 
   
   
+    
   
   
-    
-    
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
       
         
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    语义引擎
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    语义引擎
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="目录">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      目录
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        安装
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        配置
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#agent" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Agent 使用的能力
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
       
         
       
@@ -4111,10 +4230,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_1_13" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_1_14" >
         
           
-          <label class="md-nav__link" for="__nav_1_13" id="__nav_1_13_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_1_14" id="__nav_1_14_label" tabindex="0">
             
   
   
@@ -4132,8 +4251,8 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_1_13_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_1_13">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_1_14_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_1_14">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -4166,186 +4285,6 @@
   
 
       </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    
-    
-      
-        
-      
-        
-      
-        
-      
-        
-      
-    
-    
-    
-      
-      
-    
-    
-    <li class="md-nav__item md-nav__item--nested">
-      
-        
-        
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_1_13_2" >
-        
-          
-          <label class="md-nav__link" for="__nav_1_13_2" id="__nav_1_13_2_label" tabindex="0">
-            
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    语义层适配器
-  
-
-    
-  </span>
-  
-  
-
-            <span class="md-nav__icon md-icon"></span>
-          </label>
-        
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_1_13_2_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_1_13_2">
-            <span class="md-nav__icon md-icon"></span>
-            
-  
-    语义层适配器
-  
-
-          </label>
-          <ul class="md-nav__list" data-md-scrollfix>
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../adapters/semantic_adapters/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    概览
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../adapters/metricflow_semantic_adapter/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    MetricFlow 语义适配器
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../adapters/osi_semantic_adapter/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    OSI 语义适配器
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../adapters/dosi_semantic_adapter/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Dosi Semantic Adapter
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-          </ul>
-        </nav>
-      
     </li>
   
 
@@ -4437,10 +4376,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_1_14" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_1_15" >
         
           
-          <label class="md-nav__link" for="__nav_1_14" id="__nav_1_14_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_1_15" id="__nav_1_15_label" tabindex="0">
             
   
   
@@ -4458,8 +4397,8 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_1_14_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_1_14">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_1_15_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_1_15">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -4531,10 +4470,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_1_15" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_1_16" >
         
           
-          <label class="md-nav__link" for="__nav_1_15" id="__nav_1_15_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_1_16" id="__nav_1_16_label" tabindex="0">
             
   
   
@@ -4552,8 +4491,8 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_1_15_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_1_15">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_1_16_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_1_16">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -4677,10 +4616,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_1_16" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_1_17" >
         
           
-          <label class="md-nav__link" for="__nav_1_16" id="__nav_1_16_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_1_17" id="__nav_1_17_label" tabindex="0">
             
   
   
@@ -4698,8 +4637,8 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_1_16_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_1_16">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_1_17_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_1_17">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -4771,7 +4710,7 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_1_17" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_1_18" >
         
           
           <div class="md-nav__link md-nav__container">
@@ -4793,14 +4732,14 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_1_17" id="__nav_1_17_label" tabindex="0">
+              <label class="md-nav__link " for="__nav_1_18" id="__nav_1_18_label" tabindex="0">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_1_17_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_1_17">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_1_18_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_1_18">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -4940,7 +4879,7 @@
   <a href="#_1" class="md-nav__link">
     <span class="md-ellipsis">
       
-        配置结构
+        安装
       
     </span>
   </a>
@@ -4951,7 +4890,7 @@
   <a href="#_2" class="md-nav__link">
     <span class="md-ellipsis">
       
-        选择规则
+        配置
       
     </span>
   </a>
@@ -4959,43 +4898,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#metricflow" class="md-nav__link">
+  <a href="#agent" class="md-nav__link">
     <span class="md-ellipsis">
       
-        MetricFlow 说明
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#osi" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        OSI 说明
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#dosi" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Dosi 说明
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#cli-services" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        通过 CLI 配置（/services）
+        Agent 使用的能力
       
     </span>
   </a>
@@ -5019,7 +4925,7 @@
 
 
   
-    <a href="https://github.com/Datus-ai/Datus-agent/edit/main/docs/configuration/semantic_layer.zh.md" title="编辑此页" class="md-content__button md-icon" rel="edit">
+    <a href="https://github.com/Datus-ai/Datus-agent/edit/main/docs/semantic/dosi_engine.zh.md" title="编辑此页" class="md-content__button md-icon" rel="edit">
       
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
     </a>
@@ -5027,71 +4933,25 @@
   
 
 
-<h1 id="semantic-layer">语义层配置（Semantic Layer）<a class="headerlink" href="#semantic-layer" title="Permanent link">&para;</a></h1>
-<p>语义适配器统一配置在 <code>agent.services.semantic_layer</code> 下。如果不配置或配置为空，Datus 使用内置默认语义适配器 <code>dosi</code>。Dosi 同时支持语义创作和查询；MetricFlow 与 OSI 只有在显式配置时启用，用于兼容已有资产的查询。</p>
-<p>语义层选择是项目级全局设置。旧配置里 node 级的语义格式字段会被忽略；需要显式 pin 时，只改这里。</p>
-<h2 id="_1">配置结构<a class="headerlink" href="#_1" title="Permanent link">&para;</a></h2>
-<div class="language-yaml highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nt">agent</span><span class="p">:</span>
-</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="w">  </span><span class="nt">services</span><span class="p">:</span>
-</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="w">    </span><span class="nt">semantic_layer</span><span class="p">:</span>
-</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="w">      </span><span class="nt">dosi</span><span class="p">:</span>
-</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="w">        </span><span class="nt">default</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span><span class="w">                   </span><span class="c1"># 可选；Dosi 同时也是内置默认</span>
-</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="w">        </span><span class="c1"># 使用原生 Dosi 执行。仅当数据源目录中有多个 OSI 文件时，</span>
-</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="w">        </span><span class="c1"># 才需要显式配置 semantic_model_path。</span>
-</span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>
-</span><span id="__span-0-9"><a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a><span class="w">      </span><span class="nt">metricflow</span><span class="p">:</span><span class="w">                       </span><span class="c1"># 仅查询兼容</span>
-</span><span id="__span-0-10"><a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a><span class="w">        </span><span class="nt">timeout</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">300</span>
-</span><span id="__span-0-11"><a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a><span class="w">        </span><span class="nt">config_path</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">./conf/agent.yml</span><span class="w">   </span><span class="c1"># 可选的高级覆盖项</span>
-</span><span id="__span-0-12"><a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a>
-</span><span id="__span-0-13"><a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a><span class="w">      </span><span class="nt">osi</span><span class="p">:</span><span class="w">                              </span><span class="c1"># 仅查询兼容</span>
-</span><span id="__span-0-14"><a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a><span class="w">        </span><span class="c1"># execution_backend 默认是 metricflow，通常不需要配置。</span>
+<h1 id="dosi">Dosi 语义引擎<a class="headerlink" href="#dosi" title="Permanent link">&para;</a></h1>
+<p>Datus Agent 将 <code>dosi-engine</code> Python binding 作为锁定依赖内置。语义工具通过 <code>datus/tools/semantic_tools/dosi/</code> 中的运行时代码直接调用原生引擎。</p>
+<h2 id="_1">安装<a class="headerlink" href="#_1" title="Permanent link">&para;</a></h2>
+<p>在 Datus-agent checkout 中运行：</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>uv<span class="w"> </span>sync<span class="w"> </span>--locked
 </span></code></pre></div>
-<h2 id="_2">选择规则<a class="headerlink" href="#_2" title="Permanent link">&para;</a></h2>
-<p><code>AgentConfig.resolve_semantic_adapter</code> 解析活动语义适配器的顺序与 BI Dashboard / Scheduler 完全一致:</p>
-<ol>
-<li>服务管理类调用处显式传入的 <code>adapter_type</code>。</li>
-<li><code>./.datus/config.yml</code> 中的项目级 pin —— <code>semantic:</code> 字段。</li>
-<li>YAML 全局 <code>default: true</code> 标志:<code>services.semantic_layer</code> 中至多一条可标 default,多于一条会在加载阶段直接报错。</li>
-<li>单条快捷:仅有一条 semantic adapter 时,自动使用它。</li>
-<li>section 为空时使用内置默认。</li>
-</ol>
-<p>如果配置了多条 semantic adapter 但没有 <code>default: true</code>，Datus 会认为配置有歧义并报错。</p>
-<p><code>services.semantic_layer</code> 下的 key <strong>必须等于 adapter type</strong>(例如 <code>metricflow</code>)。如果同时写了 <code>type:</code> 字段,其值必须与 key 一致,否则 Datus 会在启动时抛出配置错误。比较时会先 lowercase + trim,因此 <code>MetricFlow</code>、<code>metricflow</code> 都会被视为与 <code>metricflow</code> 匹配。</p>
-<h2 id="metricflow">MetricFlow 说明<a class="headerlink" href="#metricflow" title="Permanent link">&para;</a></h2>
-<ul>
-<li>Datus 不会默认选择或安装 MetricFlow；只有查询已有 MetricFlow 项目时才显式配置 <code>metricflow</code>。</li>
-<li>MetricFlow 在 Datus 中仅保留查询能力；新的语义创作使用 Dosi。</li>
-<li><code>config_path</code> 是可选项。</li>
-<li>Datus 默认会基于当前 <code>services.datasources</code> 中选中的数据源和项目语义模型目录自动构建运行时配置。</li>
-<li>MetricFlow 验证会直接读取配置中的项目语义模型目录，包括位于 gitignore 项目路径下的生成 YAML。</li>
-<li>仅当你需要 MetricFlow 直接读取某个指定的 <code>agent.yml</code> 时才需要设置 <code>config_path</code>。</li>
-</ul>
-<h2 id="osi">OSI 说明<a class="headerlink" href="#osi" title="Permanent link">&para;</a></h2>
-<ul>
-<li>OSI 是显式配置的仅查询兼容适配器，用于读取已有 strict OSI core YAML。</li>
-<li>当前 OSI 执行后端默认是 MetricFlow，通常不需要设置 <code>execution_backend</code>。</li>
-<li>使用 <code>pip install "datus-semantic-osi[metricflow]"</code> 安装；CLI 也会使用相同的 extra，确保查询后端可用。</li>
-<li>配置 <code>services.semantic_layer.osi</code> 并标记 <code>default: true</code>，可在同时配置其他 adapter 时全局选择 OSI。空的 <code>osi: {}</code> 只有在它是唯一 semantic adapter，或当前项目 pin 到 <code>semantic: osi</code> 时才会被选中。</li>
-</ul>
-<h2 id="dosi">Dosi 说明<a class="headerlink" href="#dosi" title="Permanent link">&para;</a></h2>
-<ul>
-<li>Dosi 复用相同的 OSI authoring 格式和 DATUS <code>custom_extensions</code> 流程。</li>
-<li><code>datus-semantic-dosi</code> 直接通过原生 engine 执行，不设置 <code>execution_backend: metricflow</code>。</li>
-<li>每个 adapter 实例加载一个 OSI 文档。如果数据源语义模型目录包含多个文件，需要显式配置 <code>semantic_model_path</code>。</li>
-<li><code>pip install datus-semantic-dosi</code> 会同时安装 adapter 和 <code>dosi-engine</code>。</li>
-<li>交互式启动且没有语义层配置时，Datus 会自动安装并选择 Dosi；无人值守环境需要显式安装选中的 adapter。</li>
-</ul>
-<h2 id="cli-services">通过 CLI 配置（<code>/services</code>）<a class="headerlink" href="#cli-services" title="Permanent link">&para;</a></h2>
-<p>在 Datus REPL 中运行 <code>/services semantic</code>（或者从其他 tab 按 <code>Tab</code> 切过来）会进入配置 TUI 的 <strong>Semantic</strong> tab。该 tab 支持：</p>
-<ul>
-<li>在尾部的 <code>+ Add new semantic</code> 行按 <code>Enter</code> 新增一个语义层。选择 adapter type，例如 <code>metricflow</code>、<code>osi</code> 或 <code>dosi</code>。如果适配器包尚未安装，CLI 会安装对应包；OSI 会安装 <code>datus-semantic-osi[metricflow]</code>，Dosi 会安装 <code>datus-semantic-dosi</code>。</li>
-<li>用 <code>x</code> 删除条目；用 <code>t</code> 触发一次注册探测。</li>
-<li><code>d</code> 切换<strong>全局</strong> <code>default: true</code>:按 <code>d</code> 把光标项设为默认,并自动清掉其他条目的 default。</li>
-<li><code>p</code> 设置<strong>项目级</strong> default:值写入 <code>./.datus/config.yml</code> 的 <code>semantic: &lt;name&gt;</code>,只对当前项目生效,优先级高于全局标记。在已 pin 的行上再按一次 <code>p</code> 清除。</li>
-<li>对没有可编辑字段的 adapter，此 tab 不显示 <code>e edit</code>。</li>
-</ul>
-<p>新建条目会写入 <code>~/.datus/conf/agent.yml</code>，形态为 <code>services.semantic_layer.&lt;type&gt;: {type: &lt;type&gt;}</code>。</p>
-<p>首次进入交互式 REPL 时,Datus 会跑一遍 bootstrap:若尚无项目级 pin,而 YAML 中能解析出明确的默认值(单条快捷或唯一标 <code>default: true</code>),Datus 会自动写入项目级 pin。若多条都未标 default,启动时会弹出一个轻量选择器。CI / Docker 等无人值守环境可设置 <code>DATUS_DISABLE_SERVICE_BOOTSTRAP=1</code> 关闭。</p>
+<p>锁文件固定了 Agent 和 CI 使用的引擎版本。开发和部署应使用该锁定环境。</p>
+<h2 id="_2">配置<a class="headerlink" href="#_2" title="Permanent link">&para;</a></h2>
+<div class="language-yaml highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="nt">agent</span><span class="p">:</span>
+</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">  </span><span class="nt">services</span><span class="p">:</span>
+</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="w">    </span><span class="nt">datasources</span><span class="p">:</span>
+</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="w">      </span><span class="nt">warehouse</span><span class="p">:</span>
+</span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="w">        </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">duckdb</span>
+</span><span id="__span-1-6"><a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="w">        </span><span class="nt">uri</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">/absolute/path/to/warehouse.db</span>
+</span></code></pre></div>
+<p>Dosi 是内置语义引擎，无需选择。Agent 递归发现 <code>subject/semantic_models/&lt;datasource&gt;/</code> 下的 OSI YAML 或 JSON 文件，跳过单独的指标片段。可用 <code>semantic_model_path</code> 为单次请求指定文件。旧的 <code>agent.services.semantic_layer</code> 和项目级 <code>semantic</code> 配置会被忽略并输出警告。</p>
+<h2 id="agent">Agent 使用的能力<a class="headerlink" href="#agent" title="Permanent link">&para;</a></h2>
+<p>Agent 使用 Dosi 发现语义模型、指标及指标可用维度，编译和执行指标查询，校验指定模型，以及运行原生归因。<code>semantic_modeling</code> 使用引擎的创作规范和校验。Explorer 在 OSI YAML 中读取、修改和删除指标节点，并同步受影响的 Knowledge Base 条目。独立的 Dosi CLI、REST 和 MCP 服务不属于 Agent 集成范围。</p>
+<p>每个模型文件对应一个引擎实例，文件变化后运行时会刷新。Dosi 负责 SQL 方言和查询规划；Agent 提供当前数据源连接，并在 Knowledge Base 中维护主题路径。</p>
 
 
 
@@ -5116,6 +4976,44 @@
       
         <footer class="md-footer">
   
+    
+      
+      <nav class="md-footer__inner md-grid" aria-label="页脚" >
+        
+          
+          <a href="../../configuration/nodes/" class="md-footer__link md-footer__link--prev" aria-label="上一页: 节点">
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+            </div>
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                上一页
+              </span>
+              <div class="md-ellipsis">
+                节点
+              </div>
+            </div>
+          </a>
+        
+        
+          
+          <a href="../../adapters/db_adapters/" class="md-footer__link md-footer__link--next" aria-label="下一页: 数据库适配器">
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                下一页
+              </span>
+              <div class="md-ellipsis">
+                数据库适配器
+              </div>
+            </div>
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M4 11v2h12l-5.5 5.5 1.42 1.42L19.84 12l-7.92-7.92L10.5 5.5 16 11z"/></svg>
+            </div>
+          </a>
+        
+      </nav>
     
   
   <div class="md-footer-meta md-typeset">
