@@ -50,9 +50,7 @@ def analyze_source(
     """Statically analyze ``text`` (never executed) and attribute every edge to ``source_id``."""
     # A Python file without SQL literals is simply not a SQL source, not a failed input.
     fragments = extract_sql_from_python(text, source_id) if python else [SqlFragment(text=text, file=source_id)]
-    extraction = extract_from_fragments(
-        fragments, dialect=dialect, default_database=default_database, sections={"comments"}
-    )
+    extraction = extract_from_fragments(fragments, dialect=dialect, default_database=default_database)
     record = SourceRecord(
         kind=kind,
         sha256=content_digest(text),
