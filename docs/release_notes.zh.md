@@ -497,7 +497,7 @@
 
 **增强**
 
-- **MetricFlow 集成** - 从 `env_settings.yml` 加载配置，改进项目检测，输出格式更整洁。[#214](https://github.com/Datus-ai/Datus-agent/issues/214) [#216](https://github.com/Datus-ai/Datus-agent/issues/216) [文档](metricflow/introduction.md)
+- **MetricFlow 集成** - 从 `env_settings.yml` 加载配置，改进项目检测，输出格式更整洁。[#214](https://github.com/Datus-ai/Datus-agent/issues/214) [#216](https://github.com/Datus-ai/Datus-agent/issues/216)
 - **灵活的模型配置** - 在 agent 配置中支持多个模型 provider 与 specification。[#195](https://github.com/Datus-ai/Datus-agent/issues/195)
 - **CLI 展示改进** - 优化表格宽度渲染，SQL 查询可读性更好。[#200](https://github.com/Datus-ai/Datus-agent/issues/200)
 - **改进的初始化流程** - 增强 `datus-agent init` 的错误处理与初始化流程。[#194](https://github.com/Datus-ai/Datus-agent/issues/194)
