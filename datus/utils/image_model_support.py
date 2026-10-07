@@ -19,6 +19,7 @@ def image_model_support(model: str, modalities: list[str] | None = None) -> bool
         "gpt-4o",
         "gpt-4o-mini",
         "gpt-5.3-codex",
+        "gpt-5.4",
         "gpt-5.4-mini",
         "gpt-5.5",
         "gpt-5.5-pro",

@@ -125,6 +125,7 @@ def test_history_and_copy_preserve_original_contents(tmp_path, image_part):
 
 def test_capability_metadata_does_not_guess_unknown_models():
     assert image_model_support("openai/gpt-4o") is True
+    assert image_model_support("gpt-5.4") is True
     assert image_model_support("deepseek-v4-pro") is False
     assert image_model_support("new-private-model") is None
     assert image_model_support("new-private-model", ["text", "image"]) is True
