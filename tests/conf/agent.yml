@@ -188,11 +188,11 @@ agent:
     datasources:
       bird_sqlite:
         type: sqlite
-        path_pattern: ~/benchmark/bird/dev_20240627/dev_databases/**/*.sqlite # just support glob pattern
+        path_pattern: ${DATUS_TEST_BIRD_ROOT:-~/benchmark/bird/dev_20240627/dev_databases}/**/*.sqlite
       bird_school:
         name: california_schools
         type: sqlite
-        uri: ~/benchmark/bird/dev_20240627/dev_databases/california_schools/california_schools.sqlite # just support glob pattern
+        uri: ${DATUS_TEST_BIRD_ROOT:-~/benchmark/bird/dev_20240627/dev_databases}/california_schools/california_schools.sqlite
       duckdb:
         type: duckdb
         name: duck

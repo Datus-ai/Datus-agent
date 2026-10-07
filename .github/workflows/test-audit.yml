@@ -48,6 +48,7 @@ jobs:
           # versions already on main, not whatever the PR author supplied.
           path: base
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Checkout PR head (untrusted data — never executed)
         if: ${{ github.event_name == 'pull_request_target' }}
@@ -56,6 +57,7 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha }}
           path: pr
           fetch-depth: 0
+          persist-credentials: false
           # recent actions/checkout v4 releases refuse fork-PR checkouts under
           # pull_request_target by default. Safe here by construction: the
           # pr/ tree is data for the base-repo auditor and is never executed.

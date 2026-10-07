@@ -12,13 +12,16 @@ import argparse
 import json
 import os
 import textwrap
-import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Any, Sequence
+
+import defusedxml.ElementTree as ET
+from defusedxml.common import DefusedXmlException
 
 COMMENT_MARKER = "<!-- datus-merge-queue-failure-comment -->"
 DEFAULT_MAX_FAILURES = 5
 DEFAULT_MAX_DETAIL_CHARS = 1800
+MAX_ARTIFACT_FILE_BYTES = 1_000_000
 
 
 def _local_name(tag: str) -> str:
@@ -33,12 +36,26 @@ def _truncate(value: str, max_chars: int = DEFAULT_MAX_DETAIL_CHARS) -> str:
 
 
 def _fence(value: str) -> str:
-    sanitized = value.replace("```", "` ` `")
+    sanitized = value.replace("```", "` ` `").replace("@", "@\u200b").replace("<", "&lt;").replace(">", "&gt;")
     return f"```text\n{sanitized}\n```"
+
+
+def _safe_inline(value: object, max_chars: int = 240) -> str:
+    return (
+        str(value)[:max_chars]
+        .replace("\n", " ")
+        .replace("\r", " ")
+        .replace("`", "'")
+        .replace("@", "@\u200b")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+    )
 
 
 def _load_json(path: Path) -> dict[str, Any] | None:
     try:
+        if not path.is_file() or path.is_symlink() or path.stat().st_size > MAX_ARTIFACT_FILE_BYTES:
+            return None
         data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return None
@@ -61,8 +78,10 @@ def load_junit_failures(artifacts_dir: Path, *, max_failures: int = DEFAULT_MAX_
     failures: list[dict[str, str]] = []
     for path in sorted(artifacts_dir.rglob("test-results-merge-*.xml")):
         try:
+            if not path.is_file() or path.is_symlink() or path.stat().st_size > MAX_ARTIFACT_FILE_BYTES:
+                continue
             root = ET.parse(path).getroot()
-        except (ET.ParseError, OSError):
+        except (DefusedXmlException, ET.ParseError, OSError):
             continue
 
         for testcase in root.iter():
@@ -110,11 +129,12 @@ def _format_suite_results(results: Sequence[dict[str, Any]]) -> list[str]:
 
     lines: list[str] = []
     for result in results:
-        suite = result.get("suite", "unknown")
-        exit_code = result.get("exit_code", "unknown")
+        suite = _safe_inline(result.get("suite", "unknown"))
+        raw_exit_code = result.get("exit_code", "unknown")
+        exit_code = _safe_inline(raw_exit_code)
         targets = result.get("targets", [])
         target_count = len(targets) if isinstance(targets, list) else "unknown"
-        status = "failed" if exit_code != 0 else "passed"
+        status = "failed" if raw_exit_code != 0 else "passed"
         lines.append(f"- `{suite}`: {status}, exit code `{exit_code}`, targets `{target_count}`")
     return lines
 
@@ -127,10 +147,10 @@ def _format_failures(failures: Sequence[dict[str, str]]) -> list[str]:
     for index, failure in enumerate(failures, 1):
         classname = failure["classname"]
         name = failure["name"]
-        test_id = f"{classname}::{name}" if classname else name
+        test_id = _safe_inline(f"{classname}::{name}" if classname else name)
         lines.append(f"{index}. `{test_id}`")
         if failure["message"]:
-            lines.append(f"   - {failure['kind']}: `{_truncate(failure['message'], 240)}`")
+            lines.append(f"   - {failure['kind']}: `{_safe_inline(failure['message'])}`")
         if failure["details"]:
             lines.append("")
             lines.append(_fence(_truncate(failure["details"])))

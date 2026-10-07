@@ -124,6 +124,16 @@ def test_build_comment_explains_missing_artifacts(tmp_path, build_merge_queue_fa
     assert "No JUnit failure details were found in the merge queue artifacts. Use the linked run logs." in comment
 
 
+def test_load_junit_failures_rejects_xml_entities(tmp_path, build_merge_queue_failure_comment):
+    (tmp_path / "test-results-merge-malicious.xml").write_text(
+        '<!DOCTYPE testsuite [<!ENTITY value "expanded">]>'
+        '<testsuite><testcase name="malicious"><failure>&value;</failure></testcase></testsuite>',
+        encoding="utf-8",
+    )
+
+    assert build_merge_queue_failure_comment.load_junit_failures(tmp_path) == []
+
+
 def test_failed_jobs_from_needs_extracts_failed_jobs(build_merge_queue_failure_comment):
     needs_json = dedent(
         """
