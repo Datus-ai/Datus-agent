@@ -5,18 +5,16 @@ on:
 
 jobs:
   coverage:
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
           ref: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha || github.sha }}
           fetch-depth: 0
-          # recent actions/checkout v4 releases refuse fork-PR checkouts under
-          # pull_request_target by default. Running the PR's test suite in
-          # this context is this workflow's long-standing design; opt in
-          # explicitly to restore it.
-          allow-unsafe-pr-checkout: true
+          persist-credentials: false
 
       - name: Fetch base branch
         run: |
@@ -50,6 +48,9 @@ jobs:
       - name: Check release metadata
         run: python3 ci/check_release_readiness.py
 
+      - name: Check coverage commenter boundary
+        run: node --test ci/post-coverage-comment.test.js
+
       - name: Validate harness coverage map
         run: |
           set +e
@@ -66,8 +67,7 @@ jobs:
 
       - name: Setup config file
         run: |
-          cp /home/datus_ci/ci_template/agent.yml conf/agent.yml
-          cp /home/datus_ci/ci_template/ci.env .env
+          cp conf/agent.yml.example conf/agent.yml
 
       - name: Restore tracked test config
         run: git restore --source=HEAD --worktree --staged tests/conf/agent.yml
@@ -78,6 +78,12 @@ jobs:
           echo "DATUS_TEST_HOME=$DATUS_TEST_HOME" >> "$GITHUB_ENV"
           sed -i "s|home: .datus_test_data|home: $DATUS_TEST_HOME|g" tests/conf/agent.yml
           sed -i "s|project_root: .datus_test_data/workspace|project_root: $DATUS_TEST_HOME/workspace|g" tests/conf/agent.yml
+
+      - name: Prepare small BIRD test fixtures
+        run: |
+          DATUS_TEST_BIRD_ROOT="$RUNNER_TEMP/datus-ci-bird/dev_databases"
+          python3 ci/prepare_ci_bird.py "$DATUS_TEST_BIRD_ROOT"
+          echo "DATUS_TEST_BIRD_ROOT=$DATUS_TEST_BIRD_ROOT" >> "$GITHUB_ENV"
 
       - name: Pre-install the DuckDB excel extension
         run: |
@@ -106,23 +112,6 @@ jobs:
           con.execute("LOAD excel")
           print(f"duckdb {duckdb.__version__}: excel extension ready in {ext_dir}")
           PY
-
-      - name: Load environment variables
-        run: |
-          echo "Loading environment variables from .env file..."
-          # Export all variables from .env to GITHUB_ENV so they persist across steps
-          while IFS= read -r line || [ -n "$line" ]; do
-            # Skip empty lines and comments
-            if [[ ! -z "$line" && ! "$line" =~ ^[[:space:]]*# ]]; then
-              # Remove any surrounding whitespace and export to GITHUB_ENV
-              var_name=$(echo "$line" | cut -d'=' -f1)
-              var_value=$(echo "$line" | cut -d'=' -f2-)
-              echo "::add-mask::$var_value"
-              echo "Loading variable: $var_name"
-              echo "$line" >> "$GITHUB_ENV"
-            fi
-          done < .env
-          echo "Environment variables loaded successfully"
 
       - name: Run tests and extract coverage
         id: metrics
@@ -156,10 +145,13 @@ jobs:
           fi
           rm -rf "$target"
 
-      - name: Post coverage comment
-        if: ${{ always() && github.event_name == 'pull_request_target' && steps.metrics.outcome != 'cancelled' }}
-        uses: actions/github-script@v7
+      - name: Prepare coverage comment data
+        if: ${{ always() && github.event_name == 'pull_request' && steps.metrics.outputs.test_total != '' }}
         env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_HEAD_REPO_ID: ${{ github.event.pull_request.head.repo.id }}
+          PR_HEAD_REF: ${{ github.event.pull_request.head.ref }}
           METRIC_OVERALL: ${{ steps.metrics.outputs.overall }}
           METRIC_DIFF: ${{ steps.metrics.outputs.diff }}
           METRIC_TEST_OUTCOME: ${{ steps.metrics.outputs.test_outcome }}
@@ -167,10 +159,19 @@ jobs:
           METRIC_TEST_PASSED: ${{ steps.metrics.outputs.test_passed }}
           METRIC_TEST_FAILED: ${{ steps.metrics.outputs.test_failed }}
           METRIC_TEST_SKIPPED: ${{ steps.metrics.outputs.test_skipped }}
+        run: python3 ci/write_coverage_comment_data.py
+
+      - name: Upload coverage comment data
+        if: ${{ always() && github.event_name == 'pull_request' && steps.metrics.outputs.test_total != '' }}
+        uses: actions/upload-artifact@v4
         with:
-          script: |
-            const script = require('./ci/post-coverage-comment.js');
-            await script({ github, context, core });
+          name: coverage-comment-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ci/coverage-comment.json
+            ci/diff-cover-report.md
+            ci/test-report.md
+          if-no-files-found: error
+          retention-days: 7
 
       - name: Check coverage thresholds
         if: always() && steps.metrics.outcome != 'cancelled'

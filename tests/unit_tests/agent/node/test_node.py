@@ -361,6 +361,8 @@ class TestNodeFactory:
                 assert result.row_count == 1
                 assert isinstance(result.sql_return, str)
                 assert result.sql_return.endswith("\n")
+                if exec_input["database_name"] == "financial":
+                    assert int(result.sql_return.splitlines()[1]) > 0
 
         except Exception as e:
             logger.error(f"Execution node test failed: {str(e)}")

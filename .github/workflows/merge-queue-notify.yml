@@ -1,0 +1,152 @@
+name: Merge Queue Failure Notification
+
+on:
+  workflow_run:
+    workflows: ["Merge Queue Gate"]
+    types: [completed]
+
+permissions: {}
+
+jobs:
+  notify-failure:
+    if: ${{ github.event.workflow_run.event == 'merge_group' && github.event.workflow_run.conclusion == 'failure' }}
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      issues: write
+    steps:
+      - name: Checkout trusted notification helper
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+
+      - name: Download merge queue results
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: merge-queue-results
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: ${{ runner.temp }}/merge-queue-artifacts
+
+      - name: Build failure comment
+        env:
+          QUEUE_REPOSITORY: ${{ github.repository }}
+          QUEUE_WORKFLOW: ${{ github.event.workflow_run.name }}
+          QUEUE_REF: ${{ github.event.workflow_run.head_branch }}
+          QUEUE_SHA: ${{ github.event.workflow_run.head_sha }}
+          QUEUE_RUN_NUMBER: ${{ github.event.workflow_run.run_number }}
+          QUEUE_RUN_URL: ${{ github.event.workflow_run.html_url }}
+          QUEUE_ARTIFACT_DIR: ${{ runner.temp }}/merge-queue-artifacts
+        run: |
+          python3 ci/build_merge_queue_failure_comment.py \
+            --artifacts-dir "$QUEUE_ARTIFACT_DIR" \
+            --output "$RUNNER_TEMP/merge-queue-failure-comment.md" \
+            --repository "$QUEUE_REPOSITORY" \
+            --workflow "$QUEUE_WORKFLOW" \
+            --event merge_group \
+            --ref "$QUEUE_REF" \
+            --sha "$QUEUE_SHA" \
+            --run-number "$QUEUE_RUN_NUMBER" \
+            --run-url "$QUEUE_RUN_URL" \
+            --failed-jobs merge-queue-gate
+
+      - name: Comment on PR with merge queue failure
+        uses: actions/github-script@v7
+        env:
+          COMMENT_PATH: ${{ runner.temp }}/merge-queue-failure-comment.md
+        with:
+          script: |
+            const fs = require('fs');
+            const run = context.payload.workflow_run;
+            if (run.event !== 'merge_group' || run.repository?.id !== context.payload.repository?.id) {
+              throw new Error('Unexpected merge queue workflow run');
+            }
+            const prNumbers = [...new Set(
+              [...(run.head_branch || '').matchAll(/(?:^|[/-])pr-(\d+)(?=[/-]|$)/g)]
+                .map(match => Number(match[1])),
+            )];
+            if (prNumbers.length === 0) {
+              core.warning(`No PR number found in merge queue ref: ${run.head_branch}`);
+              return;
+            }
+            const body = fs.readFileSync(process.env.COMMENT_PATH, 'utf8');
+            const marker = '<!-- datus-merge-queue-failure-comment -->';
+            for (const issue_number of prNumbers) {
+              const { data: pr } = await github.rest.pulls.get({
+                owner: context.repo.owner, repo: context.repo.repo, pull_number: issue_number,
+              });
+              if (pr.base.repo.id !== context.payload.repository.id) {
+                throw new Error('Merge queue ref does not match this repository');
+              }
+              const comments = await github.paginate(github.rest.issues.listComments, {
+                owner: context.repo.owner, repo: context.repo.repo, issue_number, per_page: 100,
+              });
+              const existing = comments.find(c => c.user?.type === 'Bot' && c.body?.includes(marker));
+              if (existing) {
+                await github.rest.issues.updateComment({
+                  owner: context.repo.owner, repo: context.repo.repo,
+                  comment_id: existing.id, body,
+                });
+              } else {
+                await github.rest.issues.createComment({
+                  owner: context.repo.owner, repo: context.repo.repo, issue_number, body,
+                });
+              }
+            }
+
+      - name: Send Feishu failure notification
+        uses: actions/github-script@v7
+        env:
+          FEISHU_WEBHOOK_URL: ${{ secrets.FEISHU_NOTIFY_CI_URL }}
+        with:
+          script: |
+            const https = require('https');
+            const webhook = process.env.FEISHU_WEBHOOK_URL;
+            if (!webhook) {
+              core.warning('FEISHU_WEBHOOK_URL is not set; skipping Feishu notification.');
+              return;
+            }
+            const run = context.payload.workflow_run;
+            const messageBody = `## Merge Queue Failure
+
+            **Repository:** ${context.repo.owner}/${context.repo.repo}
+            **Workflow:** ${run.name}
+            **Event:** ${run.event}
+            **Ref:** ${run.head_branch}
+            **SHA:** ${run.head_sha}
+            **Failed jobs:** merge-queue-gate
+            **Run:** [#${run.run_number}](${run.html_url})
+
+            *Automated Feishu notification from GitHub Actions.*`;
+            const url = new URL(webhook);
+            const data = JSON.stringify({
+              msg_type: 'interactive',
+              card: {
+                type: 'template',
+                data: {
+                  template_id: 'AAqz7JC34dHlY',
+                  template_version_name: '1.0.0',
+                  template_variable: { report_result: messageBody },
+                },
+              },
+            });
+            await new Promise((resolve) => {
+              const req = https.request(url, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(data) },
+              }, res => {
+                res.resume();
+                res.on('end', () => {
+                  if (res.statusCode >= 400) core.warning(`Feishu returned HTTP ${res.statusCode}`);
+                  resolve();
+                });
+              });
+              req.on('error', error => {
+                core.warning(`Error sending Feishu notification: ${error.message}`);
+                resolve();
+              });
+              req.end(data);
+            });
