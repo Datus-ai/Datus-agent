@@ -12,9 +12,11 @@ import argparse
 import json
 import os
 import textwrap
-import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Any, Sequence
+
+import defusedxml.ElementTree as ET
+from defusedxml.common import DefusedXmlException
 
 COMMENT_MARKER = "<!-- datus-merge-queue-failure-comment -->"
 DEFAULT_MAX_FAILURES = 5
@@ -79,7 +81,7 @@ def load_junit_failures(artifacts_dir: Path, *, max_failures: int = DEFAULT_MAX_
             if not path.is_file() or path.is_symlink() or path.stat().st_size > MAX_ARTIFACT_FILE_BYTES:
                 continue
             root = ET.parse(path).getroot()
-        except (ET.ParseError, OSError):
+        except (DefusedXmlException, ET.ParseError, OSError):
             continue
 
         for testcase in root.iter():

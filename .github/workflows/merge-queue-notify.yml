@@ -31,6 +31,14 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           path: ${{ runner.temp }}/merge-queue-artifacts
 
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install XML parser
+        run: python -m pip install --disable-pip-version-check --no-input 'defusedxml==0.7.1'
+
       - name: Build failure comment
         env:
           QUEUE_REPOSITORY: ${{ github.repository }}
@@ -41,7 +49,7 @@ jobs:
           QUEUE_RUN_URL: ${{ github.event.workflow_run.html_url }}
           QUEUE_ARTIFACT_DIR: ${{ runner.temp }}/merge-queue-artifacts
         run: |
-          python3 ci/build_merge_queue_failure_comment.py \
+          python ci/build_merge_queue_failure_comment.py \
             --artifacts-dir "$QUEUE_ARTIFACT_DIR" \
             --output "$RUNNER_TEMP/merge-queue-failure-comment.md" \
             --repository "$QUEUE_REPOSITORY" \
