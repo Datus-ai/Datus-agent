@@ -244,7 +244,22 @@ class TestSessionManagerExecution:
         )
         checkpoint = sm.checkpoint_turn(session_id)
 
+        sm.save_message_contents(
+            session_id,
+            {"kept": {"text": "kept question", "parts": [{"type": "markdown", "payload": {"content": "kept"}}]}},
+        )
+
         asyncio.run(session.add_items([{"role": "user", "content": "cancelled question"}]))
+        sm.save_message_contents(
+            session_id,
+            {
+                "cancelled": {
+                    "text": "cancelled question",
+                    "parts": [{"type": "markdown", "payload": {"content": "cancelled"}}],
+                }
+            },
+            previous_message_id=checkpoint.max_message_id,
+        )
         db_path = os.path.join(sm.session_dir, f"{session_id}.db")
         with sqlite3.connect(db_path) as conn:
             conn.execute(
@@ -273,6 +288,11 @@ class TestSessionManagerExecution:
             {"role": "assistant", "content": "kept answer"},
         ]
         with sqlite3.connect(db_path) as conn:
+            contents = conn.execute(
+                "SELECT contents_json FROM chat_message_contents WHERE session_id = ?", (session_id,)
+            ).fetchall()
+            assert len(contents) == 1
+            assert json.loads(contents[0][0]) == [{"type": "markdown", "payload": {"content": "kept"}}]
             assert (
                 conn.execute("SELECT COUNT(*) FROM agent_messages WHERE session_id = ?", (session_id,)).fetchone()[0]
                 == 2

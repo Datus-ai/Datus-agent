@@ -336,6 +336,11 @@ class SessionManager:
                             checkpoint.max_message_id,
                         ),
                     )
+                if self._table_exists(conn, "chat_message_contents"):
+                    conn.execute(
+                        "DELETE FROM chat_message_contents WHERE session_id = ? AND message_id > ?",
+                        (session_id, checkpoint.max_message_id),
+                    )
                 if self._table_exists(conn, "agent_messages"):
                     conn.execute(
                         "DELETE FROM agent_messages WHERE session_id = ? AND id > ?",

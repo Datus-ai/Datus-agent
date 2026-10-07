@@ -351,9 +351,7 @@ class FeedbackChatInput(ChatInput):
 
     @model_validator(mode="after")
     def validate_message(self):
-        if self.messages is not None:
-            return super().validate_message()
-
+        # Feedback uses the server-rendered reaction prompt, not caller message parts.
         return self
 
     @field_validator("source_session_id", "reaction_emoji", "reference_msg")

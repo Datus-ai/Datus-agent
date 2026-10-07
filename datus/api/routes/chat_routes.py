@@ -199,7 +199,7 @@ async def stream_chat_feedback(
     )
     stream_input = StreamChatInput(
         **request.model_dump(
-            exclude={"message", "reaction_emoji", "reference_msg", "reaction_msg"},
+            exclude={"message", "messages", "reaction_emoji", "reference_msg", "reaction_msg"},
         ),
         message=rendered_message,
         subagent_id="feedback",
