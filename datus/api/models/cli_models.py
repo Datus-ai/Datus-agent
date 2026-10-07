@@ -349,6 +349,13 @@ class FeedbackChatInput(ChatInput):
     reference_msg: str = Field(..., description="Text of the bot message the user reacted to")
     reaction_msg: Optional[str] = Field(default=None, description="Optional free-text comment attached to the reaction")
 
+    @model_validator(mode="after")
+    def validate_message(self):
+        if self.messages is not None:
+            return super().validate_message()
+
+        return self
+
     @field_validator("source_session_id", "reaction_emoji", "reference_msg")
     @classmethod
     def _reject_blank_required_field(cls, value: str) -> str:
