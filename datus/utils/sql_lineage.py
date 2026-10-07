@@ -55,6 +55,10 @@ logger = get_logger(__name__)
 
 _MAX_RESOLVE_DEPTH = 12
 
+# Bump whenever extraction output changes, so persisted lineage analyzed by an older version is
+# reported stale and re-analyzed on the next upsert.
+ANALYZER_VERSION = 1
+
 # Dialect used to render expressions back to SQL (transforms, window keys), so
 # they read the way the author wrote them rather than in sqlglot's default dialect.
 _RENDER_DIALECT: ContextVar[Optional[str]] = ContextVar("sql_lineage_render_dialect", default=None)

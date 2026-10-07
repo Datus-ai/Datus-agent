@@ -2,42 +2,55 @@
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
-"""Compact, unpaginated table lineage and join evidence from workspace SQL."""
+"""Persisted project lineage: analyze SQL into ``lineage/lineage.json`` and query it by table."""
 
 from __future__ import annotations
 
 import glob
-import hashlib
 import os
 import re
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from agents import Tool
 
 from datus.configuration.agent_config import AgentConfig
+from datus.storage.lineage.analysis import analyze_source, content_digest
+from datus.storage.lineage.graph import LineageGraph, Statement
+from datus.storage.lineage.models import LineageDocument, SourceRecord, is_query_node
+from datus.storage.lineage.store import LINEAGE_FILE_NAME, LineageStore, graph_keys, remove_source, replace_source
 from datus.tools.func_tool.base import FuncToolResult, trans_to_function_tool
 from datus.tools.func_tool.fs_path_policy import PathAllowlist, PathZone, classify_path
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
-from datus.utils.sql_lineage import (
-    ExtractionResult,
-    SqlFragment,
-    expression_tables,
-    extract_from_fragments,
-    extract_sql_from_python,
-    render_expression,
-)
+from datus.utils.sql_lineage import ANALYZER_VERSION
 from datus.utils.sql_utils import parse_dialect
 
 logger = get_logger(__name__)
 
 _MAX_FILE_BYTES = 2 * 1024 * 1024
 _READABLE_ZONES = (PathZone.INTERNAL, PathZone.WHITELIST)
+_INLINE_PREFIX = "inline:"
+_MAX_REPORTED_ISSUES = 50
+
+
+@dataclass
+class _Input:
+    source_id: str
+    kind: Literal["file", "inline"]
+    text: str
+    python: bool = False
+    size: Optional[int] = None
+    mtime: Optional[float] = None
 
 
 class LineageTools:
-    """Read-only static analysis: no SQL execution, database access or file writes."""
+    """Static analysis only: SQL is parsed, never executed, and no database is accessed.
+
+    Writes go to the project lineage file alone; every read of a source file passes the
+    filesystem read policy.
+    """
 
     permission_category: str = "lineage_tools"
 
@@ -46,107 +59,341 @@ class LineageTools:
         agent_config: Optional[AgentConfig] = None,
         root_path: Optional[str] = None,
         path_allowlist: Optional[PathAllowlist] = None,
+        lineage_path: Optional[str] = None,
     ):
         self.agent_config = agent_config
         self.root_path = Path(root_path or os.getcwd()).expanduser().resolve(strict=False)
         self.path_allowlist = path_allowlist
-        self._extraction_cache: Optional[tuple[tuple, ExtractionResult]] = None
+        self.store = LineageStore(Path(lineage_path) if lineage_path else self._default_lineage_path())
 
     @classmethod
     def all_tools_name(cls) -> List[str]:
-        return ["extract_sql_lineage"]
+        return ["upsert_lineage", "delete_lineage", "query_lineage"]
 
     def available_tools(self) -> List[Tool]:
-        return [trans_to_function_tool(self.extract_sql_lineage)]
+        return [
+            trans_to_function_tool(self.upsert_lineage),
+            trans_to_function_tool(self.delete_lineage),
+            trans_to_function_tool(self.query_lineage),
+        ]
 
-    def extract_sql_lineage(
+    def _default_lineage_path(self) -> Path:
+        path_manager = getattr(self.agent_config, "path_manager", None)
+        if path_manager is not None:
+            return Path(path_manager.lineage_dir) / LINEAGE_FILE_NAME
+        return self.root_path / "lineage" / LINEAGE_FILE_NAME
+
+    # -- write ------------------------------------------------------------------------------
+
+    def upsert_lineage(
         self,
-        paths: List[str],
+        paths: Optional[List[str]] = None,
+        sql: Optional[str] = None,
+        source_id: Optional[str] = None,
         datasource: Optional[str] = None,
         dialect: Optional[str] = None,
         default_database: Optional[str] = None,
+        prune_missing: bool = False,
     ) -> FuncToolResult:
-        """Return the entire table dependency graph and observed joins in one response.
+        """Analyze SQL and save its table lineage into the project graph.
 
-        Statically parses SQL and supported Python SQL literals; never executes them.
-        Read source files for filters, mappings, windows, metrics and author comments.
-        Syntax does not establish business grain, join cardinality or incremental loading.
+        Statically parses SQL and supported Python SQL literals; never executes them. Each file,
+        or each piece of inline SQL, is one source: re-analyzing a source replaces everything it
+        contributed before, so lineage from deleted statements disappears. Sources whose content,
+        dialect, default database and analyzer version are unchanged are skipped, so repeated
+        calls are cheap. Returns a change summary only; call query_lineage to read the graph.
 
         Args:
             paths: Workspace-relative SQL/Python files or globs, or paths on the read allowlist.
+                Provide exactly one of paths or sql.
+            sql: SQL text that does not live in a file. Save only validated SQL worth keeping,
+                never ad-hoc exploration.
+            source_id: Stable name for sql, stored as "inline:<source_id>". Defaults to a content
+                hash, so saving the same SQL twice is idempotent.
             datasource: Datasource supplying dialect and default database; defaults to active.
             dialect: Override the datasource dialect, e.g. starrocks, mysql or hive.
-            default_database: Qualify bare tables; this prefix is shortened in the result.
+            default_database: Database used to qualify bare table names.
+            prune_missing: With paths, also remove saved sources matching the patterns whose files
+                no longer exist.
 
         Returns:
-            success/error/result envelope. schema_version=5 includes lineage and joins, with no
-            pagination, clipping, rules, comments or issues. lineage records contain target,
-            sources, operation and evidence; SELECT has target=null. Identical SQL with the same
-            dependencies and operation is grouped. Safe temporary lifetimes are folded with
-            via_temp and source evidence retained. Each joins record contains expression and
-            evidence. expression combines relations, aliases, join type and ON/USING/WHERE
-            conditions in their original scope: a physical table appears as its tables ID,
-            "#3 AS o" or "#3"; a CTE/derived relation keeps its scope name followed by the
-            physical tables its projection reads, "x{#1,#2}" -- read the projection for renamed
-            or computed keys and never bind them to physical columns. Relations listed before the
-            JOIN keyword are all in scope for the condition. These are source fragments, not
-            standalone executable SQL or column lineage. tables maps "#n" IDs to table names;
-            files maps "fn" IDs to paths, or to "=fn" when the file is byte-identical to an
-            already analyzed file (its evidence is cited once). Join evidence is
-            "file_id:start-end" (or "file_id:line" for one line), covering the condition clause.
-            A suffix "@statement" explicitly marks fallback to the statement start. lineage
-            evidence remains statement starts. complete=false signals skipped/failed inputs or
-            unresolved relationships; read source files to investigate, as detailed issues are
-            omitted. stats reports scan counts and effective dialect/database. The graph may
-            contain cycles and does not prove external ownership.
+            revision of the saved graph; added, updated and removed source IDs; unchanged count;
+            skipped inputs with reasons; incomplete sources with the statements that could not be
+            analyzed (line and reason); delta counts of nodes and edges. An incomplete source may
+            miss dependencies: read its source around the reported lines.
         """
-        if not paths:
-            return FuncToolResult(success=0, error="paths must contain at least one file or glob pattern")
+        if bool(paths) == bool(sql):
+            return FuncToolResult(success=0, error="Provide exactly one of paths or sql")
+        if source_id and not sql:
+            return FuncToolResult(success=0, error="source_id only applies to sql")
+        if prune_missing and not paths:
+            return FuncToolResult(success=0, error="prune_missing only applies to paths")
         try:
             dialect, database = self._resolve_dialect(datasource, dialect, default_database)
-            files, unreadable = self._collect_files(paths)
-            fragments: List[SqlFragment] = []
-            # Byte-identical copies are analyzed once; the response maps them to the original.
-            digests: Dict[str, str] = {}
-            duplicates: Dict[str, str] = {}
-            for file_path in files:
-                display = self._display(file_path)
-                try:
-                    text = file_path.read_text(encoding="utf-8", errors="replace")
-                except OSError as e:
-                    unreadable.append({"file": display, "line": 0, "reason": f"unreadable: {e}"})
-                    continue
-                digest = hashlib.sha256(text.encode()).hexdigest()
-                if digest in digests:
-                    duplicates[display] = digests[digest]
-                    continue
-                digests[digest] = display
-                if file_path.suffix.lower() == ".py":
-                    # A Python file without SQL literals is simply not a SQL source, not a failed input.
-                    fragments.extend(extract_sql_from_python(text, display))
-                else:
-                    fragments.append(SqlFragment(text=text, file=display))
-
-            # Recheck file permissions and contents on every call, including cache hits.
-            cache_key = (
-                dialect,
-                database,
-                tuple((f.file, f.line_offset, hashlib.sha256(f.text.encode()).digest()) for f in fragments),
-            )
-            cached = self._extraction_cache
-            if cached is not None and cached[0] == cache_key:
-                extraction = cached[1]
-            else:
-                extraction = extract_from_fragments(
-                    fragments, dialect=dialect, default_database=database, sections={"joins"}
-                )
-                self._extraction_cache = (cache_key, extraction)
-            result = _Shaper(extraction, database, [self._display(p) for p in files], duplicates).shape(unreadable)
-            result["stats"].update(files=len(files), dialect=dialect or "", default_database=database)
+            inputs, skipped = self._read_inputs(paths or [], sql, source_id)
+            added: List[str] = []
+            updated: List[str] = []
+            removed: List[str] = []
+            incomplete: List[Dict[str, Any]] = []
+            unchanged = 0
+            with self.store.edit() as document:
+                nodes_before, edges_before = graph_keys(document)
+                for item in inputs:
+                    existing = document.sources.get(item.source_id)
+                    if existing is not None and self._unchanged(existing, item, dialect or "", database):
+                        unchanged += 1
+                        # Same content under a new mtime: remember it, so staleness checks need not hash.
+                        existing.size, existing.mtime = item.size, item.mtime
+                        continue
+                    contribution = analyze_source(
+                        item.source_id,
+                        item.text,
+                        kind=item.kind,
+                        python=item.python,
+                        dialect=dialect,
+                        default_database=database,
+                        size=item.size,
+                        mtime=item.mtime,
+                    )
+                    replace_source(document, item.source_id, contribution)
+                    (added if existing is None else updated).append(item.source_id)
+                    if not contribution.record.complete:
+                        issues = [issue.model_dump() for issue in contribution.record.issues]
+                        incomplete.append({"source": item.source_id, "issues": issues})
+                if prune_missing:
+                    for sid, record in list(document.sources.items()):
+                        if (
+                            record.kind == "file"
+                            and any(_pattern_matches(sid, self._normalize_pattern(p)) for p in paths or [])
+                            and not self._source_path(sid).exists()
+                        ):
+                            remove_source(document, sid)
+                            removed.append(sid)
+                nodes_after, edges_after = graph_keys(document)
+            result = {
+                "revision": document.revision,
+                "added": added,
+                "updated": updated,
+                "unchanged": unchanged,
+                "removed": removed,
+                "skipped": skipped,
+                "incomplete": _cap_issues(incomplete),
+                "delta": _delta(nodes_before, edges_before, nodes_after, edges_after),
+            }
             return FuncToolResult(result=result)
         except Exception as e:
-            logger.error(f"extract_sql_lineage failed: {e}")
+            logger.error(f"upsert_lineage failed: {e}")
             return FuncToolResult(success=0, error=str(e))
+
+    def delete_lineage(self, sources: List[str]) -> FuncToolResult:
+        """Remove saved sources and every edge only they supported.
+
+        Args:
+            sources: Source IDs or globs over source IDs, e.g. "etl/old/*.sql" or "inline:*".
+                Matching uses saved IDs, so sources whose files are already gone can be removed.
+
+        Returns:
+            revision, removed source IDs, patterns that matched nothing (not_found), and delta
+            counts of nodes and edges.
+        """
+        if not sources:
+            return FuncToolResult(success=0, error="sources must contain at least one source ID or pattern")
+        try:
+            patterns = [self._normalize_pattern(p) for p in sources]
+            with self.store.edit() as document:
+                nodes_before, edges_before = graph_keys(document)
+                removed = [sid for sid in document.sources if any(_pattern_matches(sid, p) for p in patterns)]
+                for sid in removed:
+                    remove_source(document, sid)
+                nodes_after, edges_after = graph_keys(document)
+            not_found = [
+                raw for raw, pattern in zip(sources, patterns) if not any(_pattern_matches(s, pattern) for s in removed)
+            ]
+            result = {
+                "revision": document.revision,
+                "removed": removed,
+                "not_found": not_found,
+                "delta": _delta(nodes_before, edges_before, nodes_after, edges_after),
+            }
+            return FuncToolResult(result=result)
+        except Exception as e:
+            logger.error(f"delete_lineage failed: {e}")
+            return FuncToolResult(success=0, error=str(e))
+
+    # -- read -------------------------------------------------------------------------------
+
+    def query_lineage(
+        self,
+        tables: Optional[List[str]] = None,
+        direction: str = "both",
+        depth: int = 1,
+        include_queries: bool = False,
+    ) -> FuncToolResult:
+        """Read table lineage from the project graph saved by upsert_lineage.
+
+        With tables, returns the subgraph around them; without, the whole table graph. Results are
+        never paginated or clipped: narrow tables or depth instead. The graph may contain cycles
+        and only covers analyzed sources: a table without upstream here is a root of this corpus,
+        not proof of external ownership.
+
+        Args:
+            tables: Table names or globs: full names, names without the default database, or bare
+                table names, matched case-insensitively. A plain name matching several tables is
+                returned in ambiguous instead of being guessed.
+            direction: upstream, downstream or both.
+            depth: Table hops to follow from tables; -1 follows to roots and leaves. Ignored
+                without tables.
+            include_queries: Also return saved pure queries reading the returned tables, as
+                "query:<hash>" targets; otherwise nodes carry only a queried_by count.
+
+        Returns:
+            lineage records, one per statement: target, sources (every table the statement
+            reads, possibly beyond depth), operation, via_temp (folded temporary tables) and
+            evidence "file_id:line". The first evidence is the statement start; the rest locate
+            the statements that built via_temp tables. Read the source there for filters,
+            formulas and join logic. files maps file IDs to source IDs; copies lists sources
+            byte-identical to a cited file, whose statements are cited once under that file.
+            nodes maps each returned
+            table to role (root/intermediate/leaf/isolated, ignoring queries), component (weakly
+            connected subgraph) and, when non-zero, queried_by; kind appears for views and
+            queries, and label for queries that carry the author's comment. components lists the
+            multi-table subgraphs involved with their size, plus roots and leaves when tables is
+            omitted. complete=false means some
+            sources involved are stale (changed since analysis: re-run upsert_lineage) or
+            incomplete (statements failed to parse): never treat a missing edge as absent.
+            resolved, ambiguous and not_found report how tables were matched. Names are
+            shortened by stats.default_database.
+        """
+        if direction not in ("upstream", "downstream", "both"):
+            return FuncToolResult(success=0, error="direction must be upstream, downstream or both")
+        if not isinstance(depth, int) or depth < -1:
+            return FuncToolResult(success=0, error="depth must be a non-negative integer or -1")
+        try:
+            _, database = self._resolve_dialect(None, None, None)
+            document = self.store.load()
+            # Shorten by the database the sources were analyzed with when they agree: scripts may
+            # qualify tables with a database other than the datasource's.
+            databases = {record.default_database for record in document.sources.values()}
+            if len(databases) == 1:
+                database = databases.pop()
+            graph = LineageGraph(document)
+            result: Dict[str, Any] = {}
+            if tables:
+                resolution = graph.resolve(tables, database)
+                nodes, edges = graph.traverse(resolution.tables, direction, depth)
+                checked = None
+            else:
+                resolution = None
+                nodes, edges = set(graph.tables), graph.all_table_edges()
+                checked = list(document.sources)
+            statements = graph.statements_for(edges)
+            if include_queries:
+                statements += graph.query_statements(nodes)
+            shaper = _Shaper(database, statements, document)
+            checked = checked if checked is not None else shaper.cited_sources()
+            stale = [(sid, reason) for sid in checked if (reason := self._staleness(sid, document.sources.get(sid)))]
+            incomplete = [sid for sid in checked if sid in document.sources and not document.sources[sid].complete]
+            result["complete"] = not stale and not incomplete
+            if resolution is not None:
+                result["resolved"] = {k: [shaper.short(n) for n in v] for k, v in resolution.resolved.items()}
+                if resolution.ambiguous:
+                    result["ambiguous"] = {k: [shaper.short(n) for n in v] for k, v in resolution.ambiguous.items()}
+                if resolution.not_found:
+                    result["not_found"] = resolution.not_found
+            result["files"] = {fid: sid for sid, fid in shaper.file_ids.items()}
+            if shaper.copies:
+                result["copies"] = shaper.copies
+            result["nodes"] = shaper.nodes(graph, nodes, statements if include_queries else [])
+            result["lineage"] = shaper.records()
+            result["components"] = shaper.components(graph, nodes, detail=resolution is None)
+            if stale:
+                result["stale"] = [{"source": shaper.ref(sid), "reason": reason} for sid, reason in stale]
+            if incomplete:
+                result["incomplete"] = [shaper.ref(sid) for sid in incomplete]
+            result["stats"] = {
+                "default_database": database,
+                "tables": sum(1 for n in nodes if not is_query_node(n)),
+                "statements": len(result["lineage"]),
+                "revision": document.revision,
+            }
+            if not document.sources:
+                result["hint"] = "No lineage has been saved for this project yet; call upsert_lineage first."
+            return FuncToolResult(result=result)
+        except Exception as e:
+            logger.error(f"query_lineage failed: {e}")
+            return FuncToolResult(success=0, error=str(e))
+
+    # -- helpers ----------------------------------------------------------------------------
+
+    def _read_inputs(self, paths: List[str], sql: Optional[str], source_id: Optional[str]):
+        if sql:
+            name = (source_id or "").strip() or f"adhoc-{content_digest(sql)[:8]}"
+            return [_Input(source_id=f"{_INLINE_PREFIX}{name}", kind="inline", text=sql)], []
+        files, skipped = self._collect_files(paths)
+        inputs = []
+        for path in files:
+            display = self._display(path)
+            try:
+                text = path.read_text(encoding="utf-8", errors="replace")
+                stat = path.stat()
+            except OSError as e:
+                skipped.append({"file": display, "reason": f"unreadable: {e}"})
+                continue
+            inputs.append(
+                _Input(
+                    source_id=display,
+                    kind="file",
+                    text=text,
+                    python=path.suffix.lower() == ".py",
+                    size=stat.st_size,
+                    mtime=stat.st_mtime,
+                )
+            )
+        return inputs, skipped
+
+    @staticmethod
+    def _unchanged(record: SourceRecord, item: _Input, dialect: str, database: str) -> bool:
+        return (
+            record.kind == item.kind
+            and record.sha256 == content_digest(item.text)
+            and record.dialect == dialect
+            and record.default_database == database
+            and record.analyzer_version == ANALYZER_VERSION
+        )
+
+    def _staleness(self, source_id: str, record: Optional[SourceRecord]) -> Optional[str]:
+        if record is None:
+            return None
+        if record.analyzer_version < ANALYZER_VERSION:
+            return "analyzer_upgraded"
+        if record.kind != "file":
+            return None
+        path = self._source_path(source_id)
+        try:
+            stat = path.stat()
+            if stat.st_size == record.size and stat.st_mtime == record.mtime:
+                return None
+            digest = content_digest(path.read_text(encoding="utf-8", errors="replace"))
+        except OSError:
+            return "deleted"
+        return None if digest == record.sha256 else "modified"
+
+    def _source_path(self, source_id: str) -> Path:
+        path = Path(source_id)
+        return path if path.is_absolute() else self.root_path / path
+
+    def _normalize_pattern(self, pattern: str) -> str:
+        """Express a pattern the way source IDs are stored: workspace-relative when possible."""
+        if pattern.startswith(_INLINE_PREFIX):
+            return pattern
+        expanded = os.path.expanduser(pattern)
+        if os.path.isabs(expanded):
+            path = Path(expanded) if glob.has_magic(expanded) else Path(expanded).resolve(strict=False)
+            try:
+                return str(path.relative_to(self.root_path))
+            except ValueError:
+                return str(path)
+        return os.path.normpath(expanded) if not glob.has_magic(expanded) else expanded.removeprefix("./")
 
     def _resolve_dialect(self, datasource: Optional[str], dialect: Optional[str], default_database: Optional[str]):
         explicit_dialect = dialect
@@ -184,7 +431,7 @@ class LineageTools:
                 classify_path(str(prefix_path), root_path=self.root_path, allowlist=self.path_allowlist).zone
                 not in _READABLE_ZONES
             ):
-                skipped.append({"file": pattern, "line": 0, "reason": "outside the readable workspace"})
+                skipped.append({"file": pattern, "reason": "outside the readable workspace"})
                 continue
             matches = glob.iglob(anchor, recursive=True) if glob.has_magic(anchor) else iter([anchor])
             matched = False
@@ -193,25 +440,25 @@ class LineageTools:
                 path = Path(match)
                 if not path.is_file():
                     if not glob.has_magic(anchor):
-                        skipped.append({"file": pattern, "line": 0, "reason": "not a readable file"})
+                        skipped.append({"file": pattern, "reason": "not a readable file"})
                     continue
                 if (
                     classify_path(str(path), root_path=self.root_path, allowlist=self.path_allowlist).zone
                     not in _READABLE_ZONES
                 ):
-                    skipped.append({"file": pattern, "line": 0, "reason": "outside the readable workspace"})
+                    skipped.append({"file": pattern, "reason": "outside the readable workspace"})
                     continue
                 if path.suffix.lower() not in {".sql", ".py"}:
                     continue
                 if path.stat().st_size > _MAX_FILE_BYTES:
-                    skipped.append({"file": self._display(path), "line": 0, "reason": "file too large"})
+                    skipped.append({"file": self._display(path), "reason": "file too large"})
                     continue
                 resolved = path.resolve(strict=False)
                 if resolved in seen:
                     continue
                 seen[resolved] = None
             if not matched:
-                skipped.append({"file": pattern, "line": 0, "reason": "no files matched"})
+                skipped.append({"file": pattern, "reason": "no files matched"})
         return sorted(seen), skipped
 
     def _display(self, path: Path) -> str:
@@ -221,105 +468,148 @@ class LineageTools:
             return str(path)
 
 
-class _Shaper:
-    """Compact graph with complete provenance; never slice a connected component."""
+def _glob_regex(pattern: str) -> "re.Pattern[str]":
+    """Path-aware glob: ``*`` and ``?`` stop at ``/``; ``**/`` spans any number of directories."""
+    out, i = [], 0
+    while i < len(pattern):
+        if pattern.startswith("**/", i):
+            out.append("(?:.*/)?")
+            i += 3
+        elif pattern.startswith("**", i):
+            out.append(".*")
+            i += 2
+        elif pattern[i] == "*":
+            out.append("[^/]*")
+            i += 1
+        elif pattern[i] == "?":
+            out.append("[^/]")
+            i += 1
+        elif pattern[i] == "[" and (end := pattern.find("]", i + 2)) != -1:
+            body = pattern[i + 1 : end]
+            body = "^" + body[1:] if body.startswith("!") else body
+            out.append(f"[{body.replace(chr(92), chr(92) * 2)}]")
+            i = end + 1
+        else:
+            out.append(re.escape(pattern[i]))
+            i += 1
+    return re.compile("".join(out) + r"\Z")
 
-    def __init__(self, extraction: ExtractionResult, database: str, files: List[str], duplicates: Dict[str, str]):
-        self.extraction = extraction
+
+def _pattern_matches(source_id: str, pattern: str) -> bool:
+    if not glob.has_magic(pattern):
+        return source_id == pattern
+    return bool(_glob_regex(pattern).match(source_id))
+
+
+def _delta(nodes_before, edges_before, nodes_after, edges_after) -> Dict[str, int]:
+    return {
+        "nodes_added": len(nodes_after - nodes_before),
+        "nodes_removed": len(nodes_before - nodes_after),
+        "edges_added": len(edges_after - edges_before),
+        "edges_removed": len(edges_before - edges_after),
+    }
+
+
+def _cap_issues(incomplete: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Report at most ``_MAX_REPORTED_ISSUES`` issues; the rest stay in the saved source records."""
+    budget = _MAX_REPORTED_ISSUES
+    capped = []
+    for entry in incomplete:
+        issues = entry["issues"][: max(budget, 0)]
+        budget -= len(issues)
+        row = {"source": entry["source"], "issues": issues}
+        if len(issues) < len(entry["issues"]):
+            row["issues_omitted"] = len(entry["issues"]) - len(issues)
+        capped.append(row)
+    return capped
+
+
+class _Shaper:
+    """Compact response: file IDs for sources and table names shortened by the default database."""
+
+    def __init__(self, database: str, statements: List[Statement], document: LineageDocument):
         self.prefix = f"{database}." if database else ""
-        self.file_ids = {name: f"f{i}" for i, name in enumerate(sorted(files), 1)}
-        self.duplicates = duplicates
-        self.facts = {f.sequence: f for f in extraction.statement_facts}
-        tables = sorted({name for join in extraction.joins for name in expression_tables(join.expression)})
-        self.table_ids = {name: f"#{i}" for i, name in enumerate(tables, 1)}
+        # Byte-identical sources analyzed the same way contribute identical statements: cite the
+        # first one and list the others as its copies.
+        canonical: Dict[str, str] = {}
+        first: Dict[tuple, str] = {}
+        for sid in sorted({st.source for st in statements}):
+            record = document.sources.get(sid)
+            key = (record.sha256, record.dialect, record.default_database) if record is not None else (sid,)
+            canonical[sid] = first.setdefault(key, sid)
+        self.statements = [st for st in statements if canonical[st.source] == st.source]
+        cited = sorted({st.source for st in self.statements})
+        self.file_ids = {sid: f"f{i}" for i, sid in enumerate(cited, 1)}
+        self.copies: Dict[str, List[str]] = {}
+        for sid, original in canonical.items():
+            if sid != original:
+                self.copies.setdefault(self.file_ids[original], []).append(sid)
+        self._canonical = canonical
+
+    def cited_sources(self) -> List[str]:
+        return list(self._canonical)
 
     def short(self, name: str) -> str:
         return name[len(self.prefix) :] if self.prefix and name.startswith(self.prefix) else name
 
-    def reference(self, file: str, line: int) -> str:
-        return f"{self.file_ids[file]}:{line}"
+    def ref(self, source_id: str) -> str:
+        return self.file_ids.get(source_id, source_id)
 
-    def condition_reference(self, record) -> str:
-        if record.condition_span is None:
-            return f"{self.reference(record.file, record.line)}@statement"
-        start, end = record.condition_span
-        reference = self.reference(record.file, start)
-        return f"{reference}-{end}" if end != start else reference
-
-    @staticmethod
-    def _add(grouped: Dict[tuple, Dict[str, Any]], key: tuple, item: Dict[str, Any], refs: List[str]) -> None:
-        row = grouped.setdefault(key, {**item, "evidence": []})
-        row["evidence"] = list(dict.fromkeys([*row["evidence"], *refs]))
-
-    def _lineage(self) -> List[Dict[str, Any]]:
-        grouped: Dict[tuple, Dict[str, Any]] = {}
-        ex = self.extraction
-        for edge in ex.lineage:
-            fact = self.facts[edge.sequence]
-            dependencies = [fact]
-            # A folded edge must still locate the intermediate builders. Match the fragment
-            # as well as the file, since Python may contain separate temporary lifetimes.
-            fragment = fact.statement_id.rsplit(":", 2)[1]
-            for raw in ex.raw_lineage if edge.via_temp else []:
-                origin = self.facts[raw.sequence]
-                if (
-                    raw.file == edge.file
-                    and raw.target in edge.via_temp
-                    and raw.sequence < edge.sequence
-                    and origin.statement_id.rsplit(":", 2)[1] == fragment
-                ):
-                    dependencies.append(origin)
-            item = {
-                "target": self.short(edge.target),
-                "sources": sorted(self.short(s) for s in edge.sources),
-                "operation": edge.load_mode,
+    def records(self) -> List[Dict[str, Any]]:
+        rows = []
+        for st in self.statements:
+            fid = self.file_ids[st.source]
+            evidence = [f"{fid}:{st.line}"]
+            evidence.extend(f"{fid}:{line}" for hop in st.via_temp for line in hop.lines)
+            row: Dict[str, Any] = {
+                "target": self.short(st.target),
+                "sources": sorted(self.short(s) for s in st.sources),
+                "operation": st.operation,
             }
-            if edge.via_temp:
-                item["via_temp"] = [self.short(t) for t in edge.via_temp]
-            if edge.parameterized_predicates:
-                item["parameterized_predicates"] = edge.parameterized_predicates
-            key = (
-                edge.target,
-                tuple(sorted(edge.sources)),
-                edge.load_mode,
-                tuple(edge.via_temp),
-                tuple(edge.parameterized_predicates),
-                tuple(f.sql_hash for f in dependencies),
-            )
-            refs = [self.reference(f.file, f.line) for f in sorted(dependencies, key=lambda f: f.sequence)]
-            self._add(grouped, key, item, refs)
-        for fact in ex.statement_facts:
-            if fact.operation == "QUERY":
-                item = {
-                    "target": None,
-                    "sources": sorted(self.short(t) for t in fact.read_tables),
-                    "operation": "select",
-                }
-                self._add(grouped, (None, fact.sql_hash), item, [self.reference(fact.file, fact.line)])
-        return list(grouped.values())
+            if st.via_temp:
+                row["via_temp"] = [self.short(hop.table) for hop in st.via_temp]
+            row["evidence"] = list(dict.fromkeys(evidence))
+            rows.append(row)
+        return sorted(rows, key=lambda r: (r["target"], r["evidence"][0]))
 
-    def _joins(self) -> List[Dict[str, Any]]:
-        grouped: Dict[tuple, Dict[str, Any]] = {}
-        for join in self.extraction.joins:
-            item = {"expression": render_expression(join.expression, self.table_ids.__getitem__)}
-            self._add(grouped, (join.expression,), item, [self.condition_reference(join)])
-        return list(grouped.values())
+    def nodes(self, graph: LineageGraph, tables, query_statements: List[Statement]) -> Dict[str, Any]:
+        components = graph.components()
+        document: LineageDocument = graph.document
+        result: Dict[str, Any] = {}
+        for table in sorted(tables):
+            entry: Dict[str, Any] = {}
+            kind = document.nodes[table].kind if table in document.nodes else "table"
+            if kind != "table":
+                entry["kind"] = kind
+            entry["role"] = graph.role(table)
+            entry["component"] = components[table]
+            if queried := graph.queried_by(table):
+                entry["queried_by"] = queried
+            result[self.short(table)] = entry
+        for st in query_statements:
+            if is_query_node(st.target) and st.target not in result:
+                node = document.nodes.get(st.target)
+                entry = {"kind": "query"}
+                if node is not None and node.label:
+                    entry["label"] = node.label
+                result[st.target] = entry
+        return result
 
-    def _files(self) -> Dict[str, str]:
-        return {
-            file_id: f"={self.file_ids[self.duplicates[name]]}" if name in self.duplicates else name
-            for name, file_id in self.file_ids.items()
-        }
-
-    def shape(self, unreadable: List[Dict[str, Any]]) -> Dict[str, Any]:
-        ex = self.extraction
-        incomplete = bool(unreadable or ex.unresolved or any(c.status == "unresolved" for c in ex.conditions))
-        return {
-            "schema_version": 5,
-            "complete": not incomplete,
-            "files": self._files(),
-            "lineage": self._lineage(),
-            "tables": {table_id: self.short(name) for name, table_id in self.table_ids.items()},
-            "joins": self._joins(),
-            "stats": {"statements": ex.statements, "parsed": ex.parsed},
-        }
+    def components(self, graph: LineageGraph, tables, detail: bool) -> List[Dict[str, Any]]:
+        membership = graph.components()
+        wanted = {membership[t] for t in tables if t in membership}
+        groups: Dict[int, List[str]] = {}
+        for table, component in membership.items():
+            if component in wanted:
+                groups.setdefault(component, []).append(table)
+        rows = []
+        for component in sorted(groups):
+            members = sorted(groups[component])
+            if len(members) < 2:
+                continue
+            row: Dict[str, Any] = {"id": component, "tables": len(members)}
+            if detail:
+                row["roots"] = [self.short(t) for t in members if graph.role(t) == "root"]
+                row["leaves"] = [self.short(t) for t in members if graph.role(t) == "leaf"]
+            rows.append(row)
+        return rows
