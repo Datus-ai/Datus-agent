@@ -13,6 +13,7 @@ import contextlib
 import importlib.util
 import io
 import sys
+from datetime import date
 from pathlib import Path
 
 import duckdb
@@ -1756,9 +1757,15 @@ def test_the_weekly_shape_reaches_the_data(engine_module, tmp_path, shape, low, 
     import duckdb
 
     out = tmp_path / f"{shape}.duckdb"
-    engine_module.DDLEngine(BUDGET_DDL, rows=9_000, months=6, seed=1, profile={"weekly_shape": shape}).generate(
-        str(out), verbose=False
-    )
+    # Use a fixed complete half-year so the weekly-shape assertion does not depend on today's partial month.
+    engine_module.DDLEngine(
+        BUDGET_DDL,
+        rows=9_000,
+        months=6,
+        seed=1,
+        end_date=date(2026, 6, 30),
+        profile={"weekly_shape": shape, "trend_mom": 0},
+    ).generate(str(out), verbose=False)
 
     con = duckdb.connect(str(out))
     try:
