@@ -196,6 +196,10 @@ class SessionManager:
         session = self.get_session(session_id) if self.session_exists(session_id) else self._sessions.get(session_id)
         if session:
             run_async(session.clear_session())
+            db_path = os.path.join(self.session_dir, f"{session_id}.db")
+            with sqlite3.connect(db_path, timeout=5.0) as conn:
+                conn.execute(self._MESSAGE_CONTENTS_DDL)
+                conn.execute("DELETE FROM chat_message_contents WHERE session_id = ?", (session_id,))
             logger.debug(f"Cleared session: {session_id}")
         else:
             logger.warning(f"Attempted to clear non-existent session: {session_id}")
@@ -619,7 +623,7 @@ class SessionManager:
             new_conn.execute(self._MESSAGE_CONTENTS_DDL)
             new_conn.executemany(
                 "INSERT OR REPLACE INTO chat_message_contents VALUES (?, ?, ?)",
-                [(new_session_id, text, json.dumps(parts)) for text, parts in content_rows.items()],
+                [(new_session_id, message_id, json.dumps(parts)) for message_id, parts in content_rows.items()],
             )
             new_conn.commit()
 
@@ -763,6 +767,9 @@ class SessionManager:
             # compacted.
             meta_rows = self._read_session_meta(cursor, source_session_id)
             content_rows = self._read_message_contents(src_conn, source_session_id)
+            content_rows = {
+                message_id: parts for message_id, parts in content_rows.items() if message_id in kept_message_ids
+            }
 
         # Insert session record, messages, message_structure, and turn_usage into the new DB.
         # Preserve agent_messages.id so message_structure.message_id references remain valid.
@@ -816,7 +823,7 @@ class SessionManager:
             new_conn.execute(self._MESSAGE_CONTENTS_DDL)
             new_conn.executemany(
                 "INSERT OR REPLACE INTO chat_message_contents VALUES (?, ?, ?)",
-                [(new_session_id, text, json.dumps(parts)) for text, parts in content_rows.items()],
+                [(new_session_id, message_id, json.dumps(parts)) for message_id, parts in content_rows.items()],
             )
             new_conn.commit()
 
@@ -1421,31 +1428,58 @@ class SessionManager:
 
     _MESSAGE_CONTENTS_DDL = (
         "CREATE TABLE IF NOT EXISTS chat_message_contents ("
-        "session_id TEXT NOT NULL, message_text TEXT NOT NULL, contents_json TEXT NOT NULL, "
-        "PRIMARY KEY (session_id, message_text))"
+        "session_id TEXT NOT NULL, message_id INTEGER NOT NULL, contents_json TEXT NOT NULL, "
+        "PRIMARY KEY (session_id, message_id))"
     )
 
-    def save_message_contents(self, session_id: str, contents: Dict[str, list]) -> None:
+    def get_max_message_id(self, session_id: str) -> int:
+        self._validate_session_id(session_id)
+        db_path = os.path.join(self.session_dir, f"{session_id}.db")
+        if not os.path.isfile(db_path):
+            return 0
+        with sqlite3.connect(db_path, timeout=5.0) as conn:
+            row = conn.execute(
+                "SELECT COALESCE(MAX(id), 0) FROM agent_messages WHERE session_id = ?", (session_id,)
+            ).fetchone()
+            return int(row[0])
+
+    def save_message_contents(self, session_id: str, contents: Dict[str, dict], previous_message_id: int = 0) -> None:
         self._validate_session_id(session_id)
         db_path = os.path.join(self.session_dir, f"{session_id}.db")
         if not os.path.isfile(db_path):
             return
         with sqlite3.connect(db_path, timeout=5.0) as conn:
             conn.execute(self._MESSAGE_CONTENTS_DDL)
+            rows = conn.execute(
+                "SELECT id, message_data FROM agent_messages WHERE session_id = ? AND id > ? ORDER BY id",
+                (session_id, previous_message_id),
+            ).fetchall()
+            pending = [record for record in contents.values() if record.get("persist", True)]
+            persisted = []
+            for message_id, raw in rows:
+                message = json.loads(raw)
+                if message.get("role") != "user":
+                    continue
+                text = extract_user_input(message.get("content", "")).strip()
+                for index, record in enumerate(pending):
+                    if record["text"].strip() == text:
+                        persisted.append((session_id, message_id, json.dumps(record["parts"], ensure_ascii=False)))
+                        pending.pop(index)
+                        break
             conn.executemany(
                 "INSERT OR REPLACE INTO chat_message_contents VALUES (?, ?, ?)",
-                [(session_id, text.strip(), json.dumps(parts, ensure_ascii=False)) for text, parts in contents.items()],
+                persisted,
             )
 
     @staticmethod
-    def _read_message_contents(conn, session_id: str) -> Dict[str, list]:
+    def _read_message_contents(conn, session_id: str) -> Dict[int, list]:
         try:
             rows = conn.execute(
-                "SELECT message_text, contents_json FROM chat_message_contents WHERE session_id = ?", (session_id,)
+                "SELECT message_id, contents_json FROM chat_message_contents WHERE session_id = ?", (session_id,)
             ).fetchall()
         except sqlite3.OperationalError:
             return {}
-        return {text: json.loads(parts) for text, parts in rows}
+        return {message_id: json.loads(parts) for message_id, parts in rows}
 
     def get_max_user_turn_number(self, session_id: str) -> int:
         """Return the highest ``user_turn_number`` recorded, or 0 when none/no DB.
@@ -1722,8 +1756,8 @@ class SessionManager:
                             turn_no = turn_map.get(row_id)
                             if turn_no is not None and turn_no in context_map:
                                 user_msg["at_context"] = context_map[turn_no]
-                            if content.strip() in content_map:
-                                user_msg["message_contents"] = content_map[content.strip()]
+                            if row_id in content_map:
+                                user_msg["message_contents"] = content_map[row_id]
                             messages.append(user_msg)
                             continue
 

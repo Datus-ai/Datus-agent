@@ -69,7 +69,10 @@ class InsertMessageInput(BaseModel):
     @model_validator(mode="after")
     def validate_message(self):
         if self.messages is not None:
-            self.message = "\n\n".join(part.payload.content for part in self.messages if part.type == "markdown")
+            text = "\n\n".join(part.payload.content for part in self.messages if part.type == "markdown")
+            if len(text) > 4000:
+                raise ValueError("Joined Markdown message must be at most 4000 characters")
+            self.message = text
             if not self.message.strip() and not any(part.type == "image" for part in self.messages):
                 raise ValueError("messages must contain text or an image")
         elif not self.message:

@@ -30,6 +30,7 @@ from datus.api.models.cli_models import (
     SSEUsageData,
     StreamChatInput,
 )
+from datus.api.models.message_contents import PreparedChatMessage
 from datus.api.services.action_sse_converter import action_to_sse_event
 from datus.api.services.background_drain import track_background_task
 from datus.api.services.turn_stats import TurnStatsCollector, resolve_subagent
@@ -353,7 +354,9 @@ class ChatTask:
         # to_thread`` that can take hundreds of ms). ``_run_loop`` points the
         # node at this same instance, so the filter drains these on turn one.
         self.pending_input_queue: PendingInputQueue = PendingInputQueue()
-        self.message_contents: Dict[str, list] = {}
+        self.message_contents: Dict[str, dict] = {}
+        self.content_events: Dict[str, str] = {}
+        self.previous_message_id: Optional[int] = 0
         # Whether ``/chat/insert`` may still enqueue. ``_run_loop`` flips this
         # off once it stops draining (final drain empty), so inserts arriving
         # during the run's tail (persist / usage / end events) get
@@ -371,6 +374,24 @@ class ChatTask:
         self.settled: bool = False
         # ``SSEEndData`` of a completed turn; the usage the host is billed for.
         self.end_usage: Optional[Dict[str, Any]] = None
+
+    def register_message_contents(self, text: str, parts: list) -> PreparedChatMessage:
+        content_id = uuid.uuid4().hex
+        self.message_contents[content_id] = {"text": str(text), "parts": parts, "persist": True}
+        return PreparedChatMessage(text, content_id)
+
+    def restore_message_contents(self, text: str, action_id: str, content_id: Optional[str] = None):
+        content_id = content_id or self.content_events.get(action_id) or getattr(text, "content_id", None)
+        if content_id is None:
+            claimed = set(self.content_events.values())
+            content_id = next(
+                (key for key, record in self.message_contents.items() if key not in claimed and record["text"] == text),
+                None,
+            )
+        if content_id in self.message_contents:
+            self.content_events[action_id] = content_id
+            return self.message_contents[content_id]["parts"]
+        return None
 
 
 #: ``(usage, error, status, turn_id)``: the turn's SSEEndData-shaped usage, the
@@ -576,6 +597,12 @@ class ChatTaskManager:
 
         # Placeholder — asyncio_task set immediately after
         task = ChatTask(session_id=session_id, asyncio_task=None)  # type: ignore[arg-type]
+        task.register_message_contents(
+            request.message,
+            [part.model_dump(mode="json") for part in request.messages]
+            if request.messages is not None
+            else [{"type": "markdown", "payload": {"content": request.message}}],
+        )
         task.stats_context = dict(stats_context or {})
         task.on_turn_end = on_turn_end
         task.turn_id = uuid.uuid4().hex
@@ -773,8 +800,9 @@ class ChatTaskManager:
 
             node = await asyncio.to_thread(_init_node)
             task.node = node
-            if request.messages is not None:
-                task.message_contents[request.message] = [part.model_dump(mode="json") for part in request.messages]
+            task.previous_message_id = await asyncio.to_thread(
+                self._max_message_id, agent_config, node.session_id, user_id
+            )
             # Enable mid-run insert (steering): point the node at the
             # task-scoped queue that ``start_chat`` created before the node
             # existed, so messages POSTed to ``/chat/insert`` during node
@@ -1001,7 +1029,9 @@ class ChatTaskManager:
                             sse.event == "message"
                             and getattr(getattr(sse.data, "payload", None), "role", None) == "user"
                         ):
-                            original = task.message_contents.get(action.messages)
+                            original = task.restore_message_contents(
+                                action.messages, action.action_id, (action.input or {}).get("message_content_id")
+                            )
                             if original is not None:
                                 sse.data.payload.content = [IMessageContent(**part) for part in original]
                         await self._push_event(task, sse)
@@ -1055,14 +1085,16 @@ class ChatTaskManager:
                 for text in residual:
                     event_id = await self._emit_user_insert_sse(task, text, event_id)
                 combined = "\n\n".join(residual)
-                if any(text in task.message_contents for text in residual):
-                    task.message_contents[combined] = [
-                        part
-                        for text in residual
-                        for part in task.message_contents.get(
-                            text, [{"type": "markdown", "payload": {"content": text}}]
-                        )
-                    ]
+                if len(residual) > 1:
+                    parts = []
+                    for text in residual:
+                        record = task.message_contents.get(getattr(text, "content_id", None))
+                        if record is not None:
+                            record["persist"] = False
+                            parts.extend(record["parts"])
+                        else:
+                            parts.append({"type": "markdown", "payload": {"content": text}})
+                    task.register_message_contents(combined, parts)
                 node.input = self._create_node_input(
                     user_message=combined,
                     current_node=node,
@@ -1084,7 +1116,7 @@ class ChatTaskManager:
                 self._persist_turn_at_context, agent_config, session_id, request, user_id, pre_turn_number
             )
 
-            await self._persist_message_contents(task, agent_config, session_id, user_id)
+            await self._persist_message_contents(task, agent_config, node.session_id, user_id)
 
             # 7. End event
             token_kwargs: dict = {}
@@ -1138,8 +1170,8 @@ class ChatTaskManager:
             event_id += 1
 
         finally:
-            if task.status != "completed":
-                await self._persist_message_contents(task, agent_config, session_id, user_id)
+            if task.status != "completed" and task.node is not None:
+                await self._persist_message_contents(task, agent_config, task.node.session_id, user_id)
             trace_stack.close()
             self._emit_turn_stats(
                 task,
@@ -1188,13 +1220,14 @@ class ChatTaskManager:
             logger.warning("Turn settlement hook failed for session %s", task.session_id, exc_info=True)
 
     async def _persist_message_contents(self, task, agent_config, session_id, user_id) -> None:
-        if not task.message_contents:
+        if not task.message_contents or task.previous_message_id is None:
             return
         try:
             await asyncio.to_thread(
                 self._session_manager(agent_config, user_id).save_message_contents,
                 session_id,
                 task.message_contents,
+                task.previous_message_id,
             )
         except Exception:
             logger.exception("Failed to persist message contents for %s", session_id)
@@ -1292,7 +1325,7 @@ class ChatTaskManager:
         )
         sse = action_to_sse_event(action, event_id, action.action_id)
         if sse:
-            original = task.message_contents.get(text)
+            original = task.restore_message_contents(text, action.action_id)
             if original is not None:
                 sse.data.payload.content = [IMessageContent(**part) for part in original]
             await self._push_event(task, sse)
@@ -1316,6 +1349,13 @@ class ChatTaskManager:
             return self._session_manager(agent_config, user_id).get_max_user_turn_number(session_id)
         except Exception:
             return 0
+
+    def _max_message_id(self, agent_config: AgentConfig, session_id: str, user_id: Optional[str]) -> Optional[int]:
+        try:
+            return self._session_manager(agent_config, user_id).get_max_message_id(session_id)
+        except Exception:
+            logger.warning("Cannot snapshot message identities for %s", session_id, exc_info=True)
+            return None
 
     def _persist_turn_at_context(
         self,

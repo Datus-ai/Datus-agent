@@ -13,14 +13,18 @@ class MarkdownPayload(BaseModel):
     content: str = Field(max_length=200_000)
 
 
-class ImagePayload(BaseModel):
+class AttachmentPayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     attachmentId: str = Field(pattern=r"^[a-f0-9]{32}$")
+    mimeType: str
+    createdAt: str = Field(max_length=40)
+
+
+class ImagePayload(AttachmentPayload):
     mimeType: Literal["image/png", "image/jpeg", "image/webp"]
     width: int = Field(gt=0, le=2048)
     height: int = Field(gt=0, le=2048)
-    createdAt: str = Field(max_length=40)
 
 
 class MarkdownMessageContent(BaseModel):
@@ -34,3 +38,17 @@ class ImageMessageContent(BaseModel):
 
 
 ChatMessageContent = Annotated[MarkdownMessageContent | ImageMessageContent, Field(discriminator="type")]
+
+
+class PreparedChatMessage(str):
+    """Carry an API submission identity through the existing text-only queue."""
+
+    content_id: str
+
+    def __new__(cls, text: str, content_id: str):
+        value = super().__new__(cls, text)
+        value.content_id = content_id
+        return value
+
+    def __getnewargs__(self):
+        return str(self), self.content_id

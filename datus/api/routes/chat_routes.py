@@ -497,8 +497,12 @@ async def insert_message(
             errorMessage="Pending input queue is not initialized for this session",
         )
 
-    if request.messages is not None:
-        task.message_contents[text] = [part.model_dump(mode="json") for part in request.messages]
+    text = task.register_message_contents(
+        text,
+        [part.model_dump(mode="json") for part in request.messages]
+        if request.messages is not None
+        else [{"type": "markdown", "payload": {"content": text}}],
+    )
     queue.push(text)
     return Result[InsertMessageData](
         success=True,

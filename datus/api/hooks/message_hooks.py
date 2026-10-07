@@ -8,6 +8,7 @@ from typing import Awaitable, Callable
 
 from fastapi import HTTPException, Request
 
+from datus.api.models.chat_models import InsertMessageInput
 from datus.api.models.message_contents import ChatMessageContent
 
 MessageResolver = Callable[[Request, list[ChatMessageContent]], Awaitable[tuple[str, list[ChatMessageContent]]]]
@@ -29,3 +30,6 @@ async def prepare_chat_messages(http_request: Request, request) -> None:
         raise HTTPException(status_code=400, detail="This host does not support chat attachments")
     else:
         request.message = "\n\n".join(part.payload.content for part in request.messages)
+
+    if isinstance(request, InsertMessageInput) and len(request.message) > 4000:
+        raise HTTPException(status_code=422, detail="Prepared insert message must be at most 4000 characters")
