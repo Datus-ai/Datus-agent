@@ -472,7 +472,9 @@ class ChatService:
                             SSEMessagePayload(
                                 message_id=str(uuid.uuid4()),
                                 role="user",
-                                content=[IMessageContent(type="markdown", payload={"content": content})],
+                                content=[IMessageContent(**part) for part in msg["message_contents"]]
+                                if msg.get("message_contents")
+                                else [IMessageContent(type="markdown", payload={"content": content})],
                                 at_context=at_context,
                             )
                         )

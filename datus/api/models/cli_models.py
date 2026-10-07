@@ -3,8 +3,9 @@
 from enum import Enum
 from typing import Any, Dict, List, Literal, Optional, Union
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from datus.api.models.message_contents import ChatMessageContent
 from datus.utils.time_utils import now_utc_iso
 
 
@@ -140,7 +141,19 @@ class ChatInput(BaseModel):
     )
 
     # Core message fields
-    message: str = Field(..., description="Chat message")
+    message: str = Field(default="", description="Legacy text message; messages takes precedence")
+    messages: Optional[List[ChatMessageContent]] = Field(default=None, min_length=1, max_length=20)
+
+    @model_validator(mode="after")
+    def validate_message(self):
+        if self.messages is not None:
+            self.message = "\n\n".join(part.payload.content for part in self.messages if part.type == "markdown")
+            if not self.message.strip() and not any(part.type == "image" for part in self.messages):
+                raise ValueError("messages must contain text or an image")
+        elif not self.message.strip():
+            raise ValueError("message or messages is required")
+        return self
+
     session_id: Optional[str] = Field(None, description="Session ID")
     origin: Optional[str] = Field(
         default=None,
@@ -335,6 +348,11 @@ class FeedbackChatInput(ChatInput):
     reaction_emoji: str = Field(..., description="Normalized emoji name (e.g. 'thumbsup')")
     reference_msg: str = Field(..., description="Text of the bot message the user reacted to")
     reaction_msg: Optional[str] = Field(default=None, description="Optional free-text comment attached to the reaction")
+
+    @model_validator(mode="after")
+    def validate_message(self):
+        # Feedback uses the server-rendered reaction prompt, not caller message parts.
+        return self
 
     @field_validator("source_session_id", "reaction_emoji", "reference_msg")
     @classmethod
