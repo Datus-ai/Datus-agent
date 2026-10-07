@@ -31,6 +31,8 @@ from datus.schemas.action_history import ActionHistoryManager, ActionRole, Actio
 from datus.schemas.chat_agentic_node_models import ChatNodeInput, ChatNodeResult
 from tests.unit_tests.mock_llm_model import MockToolCall, build_simple_response, build_tool_then_response
 
+LINEAGE_TOOL_NAMES = {"upsert_lineage", "delete_lineage", "query_lineage"}
+
 # ===========================================================================
 # ChatAgenticNode Inheritance Tests
 # ===========================================================================
@@ -2082,21 +2084,23 @@ class TestChatAgenticNodeHonoursConfiguredTools:
             assert excluded not in names
 
     def test_lineage_tool_is_mounted_by_default_and_survives_a_rebuild(self, real_agent_config, mock_llm_create):
-        """`/init` relies on the main chat agent having `extract_sql_lineage`; a
-        task-database switch rebuilds the tool list, which must not drop it."""
+        """`/init` relies on the main chat agent having the lineage tools; a
+        task-database switch rebuilds the tool list, which must not drop them."""
         node = self._node(real_agent_config)
 
-        assert "extract_sql_lineage" in {tool.name for tool in node.tools}
+        assert LINEAGE_TOOL_NAMES <= {tool.name for tool in node.tools}
         node._rebuild_tools()
-        assert "extract_sql_lineage" in {tool.name for tool in node.tools}
+        assert LINEAGE_TOOL_NAMES <= {tool.name for tool in node.tools}
 
     def test_lineage_tool_follows_the_configured_families(self, real_agent_config, mock_llm_create):
         excluded = self._node(real_agent_config, tools="db_tools.*")
         assert excluded.lineage_tools is None
-        assert "extract_sql_lineage" not in {tool.name for tool in excluded.tools}
+        assert not LINEAGE_TOOL_NAMES & {tool.name for tool in excluded.tools}
 
         selected = self._node(real_agent_config, tools="lineage_tools.*")
-        assert [tool.name for tool in selected.tools if tool.name == "extract_sql_lineage"] == ["extract_sql_lineage"]
+        assert sorted(tool.name for tool in selected.tools if tool.name in LINEAGE_TOOL_NAMES) == sorted(
+            LINEAGE_TOOL_NAMES
+        )
 
     @pytest.mark.parametrize("tools", [None, "lineage_tools.*"])
     def test_lineage_tool_is_never_exposed_to_vscode_sessions(self, real_agent_config, mock_llm_create, tools):
@@ -2106,15 +2110,15 @@ class TestChatAgenticNodeHonoursConfiguredTools:
         node = self._node(real_agent_config, tools=tools)
 
         assert node.lineage_tools is None
-        assert "extract_sql_lineage" not in {tool.name for tool in node.tools}
+        assert not LINEAGE_TOOL_NAMES & {tool.name for tool in node.tools}
         node._rebuild_tools()
-        assert "extract_sql_lineage" not in {tool.name for tool in node.tools}
+        assert not LINEAGE_TOOL_NAMES & {tool.name for tool in node.tools}
 
     def test_lineage_tool_stays_mounted_for_web_sessions(self, real_agent_config, mock_llm_create):
         real_agent_config._client_source = "web"
         node = self._node(real_agent_config)
 
-        assert "extract_sql_lineage" in {tool.name for tool in node.tools}
+        assert LINEAGE_TOOL_NAMES <= {tool.name for tool in node.tools}
 
     def test_bash_is_dropped_even_though_init_built_it(self, real_agent_config, mock_llm_create):
         """`bash_tool` is created in `AgenticNode.__init__`, not in
