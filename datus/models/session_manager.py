@@ -578,6 +578,7 @@ class SessionManager:
             # for the copy's own scan to find, so without this the new session
             # would list as untitled.
             meta_rows = self._read_session_meta(cursor, source_session_id)
+            content_rows = self._read_message_contents(src_conn, source_session_id)
 
         # Materialize tables in the new DB first (short-lived session is released
         # before bulk inserts), then use a single raw connection with executemany
@@ -615,6 +616,11 @@ class SessionManager:
                 [(new_session_id, *row) for row in turn_usage_rows],
             )
             self._write_session_meta(new_conn, new_session_id, meta_rows)
+            new_conn.execute(self._MESSAGE_CONTENTS_DDL)
+            new_conn.executemany(
+                "INSERT OR REPLACE INTO chat_message_contents VALUES (?, ?, ?)",
+                [(new_session_id, text, json.dumps(parts)) for text, parts in content_rows.items()],
+            )
             new_conn.commit()
 
         # Cache a fresh session pointing at the populated DB (tables already
@@ -756,6 +762,7 @@ class SessionManager:
             # session — and it is the only copy left once the source has been
             # compacted.
             meta_rows = self._read_session_meta(cursor, source_session_id)
+            content_rows = self._read_message_contents(src_conn, source_session_id)
 
         # Insert session record, messages, message_structure, and turn_usage into the new DB.
         # Preserve agent_messages.id so message_structure.message_id references remain valid.
@@ -806,6 +813,11 @@ class SessionManager:
                     (new_session_id, *usage_row),
                 )
             self._write_session_meta(new_conn, new_session_id, meta_rows)
+            new_conn.execute(self._MESSAGE_CONTENTS_DDL)
+            new_conn.executemany(
+                "INSERT OR REPLACE INTO chat_message_contents VALUES (?, ?, ?)",
+                [(new_session_id, text, json.dumps(parts)) for text, parts in content_rows.items()],
+            )
             new_conn.commit()
 
         logger.info(
@@ -1407,6 +1419,34 @@ class SessionManager:
         ")"
     )
 
+    _MESSAGE_CONTENTS_DDL = (
+        "CREATE TABLE IF NOT EXISTS chat_message_contents ("
+        "session_id TEXT NOT NULL, message_text TEXT NOT NULL, contents_json TEXT NOT NULL, "
+        "PRIMARY KEY (session_id, message_text))"
+    )
+
+    def save_message_contents(self, session_id: str, contents: Dict[str, list]) -> None:
+        self._validate_session_id(session_id)
+        db_path = os.path.join(self.session_dir, f"{session_id}.db")
+        if not os.path.isfile(db_path):
+            return
+        with sqlite3.connect(db_path, timeout=5.0) as conn:
+            conn.execute(self._MESSAGE_CONTENTS_DDL)
+            conn.executemany(
+                "INSERT OR REPLACE INTO chat_message_contents VALUES (?, ?, ?)",
+                [(session_id, text.strip(), json.dumps(parts, ensure_ascii=False)) for text, parts in contents.items()],
+            )
+
+    @staticmethod
+    def _read_message_contents(conn, session_id: str) -> Dict[str, list]:
+        try:
+            rows = conn.execute(
+                "SELECT message_text, contents_json FROM chat_message_contents WHERE session_id = ?", (session_id,)
+            ).fetchall()
+        except sqlite3.OperationalError:
+            return {}
+        return {text: json.loads(parts) for text, parts in rows}
+
     def get_max_user_turn_number(self, session_id: str) -> int:
         """Return the highest ``user_turn_number`` recorded, or 0 when none/no DB.
 
@@ -1605,6 +1645,7 @@ class SessionManager:
                 # feature or carried no references.
                 turn_map = self._read_message_turn_map(conn, session_id)
                 context_map = self._read_user_message_context(conn, session_id)
+                content_map = self._read_message_contents(conn, session_id)
 
                 # Aggregate consecutive assistant messages
                 current_assistant_group = None
@@ -1681,6 +1722,8 @@ class SessionManager:
                             turn_no = turn_map.get(row_id)
                             if turn_no is not None and turn_no in context_map:
                                 user_msg["at_context"] = context_map[turn_no]
+                            if content.strip() in content_map:
+                                user_msg["message_contents"] = content_map[content.strip()]
                             messages.append(user_msg)
                             continue
 

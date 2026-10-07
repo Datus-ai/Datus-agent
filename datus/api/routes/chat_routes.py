@@ -25,6 +25,7 @@ from datus.api.hooks import (
     get_chat_hooks,
     get_turn_stats_hook,
 )
+from datus.api.hooks.message_hooks import prepare_chat_messages
 from datus.api.models.base_models import Result
 from datus.api.models.chat_models import (
     InsertMessageData,
@@ -125,6 +126,7 @@ async def stream_chat(
     ctx: AppContextDep,
     http_request: Request,
 ):
+    await prepare_chat_messages(http_request, request)
     sub_agent_id = request.subagent_id
     if sub_agent_id and not _is_valid_subagent_id(svc, sub_agent_id):
         raise HTTPException(
@@ -463,6 +465,7 @@ async def submit_user_interaction(
 async def insert_message(
     request: InsertMessageInput,
     svc: ServiceDep,
+    http_request: Request = None,
 ) -> Result[InsertMessageData]:
     task_manager = svc.task_manager
     task = task_manager.get_task(request.session_id)
@@ -477,6 +480,7 @@ async def insert_message(
             errorMessage="No active chat task for this session",
         )
 
+    await prepare_chat_messages(http_request, request)
     text = request.message.strip()
     if not text:
         return Result[InsertMessageData](
@@ -493,6 +497,8 @@ async def insert_message(
             errorMessage="Pending input queue is not initialized for this session",
         )
 
+    if request.messages is not None:
+        task.message_contents[text] = [part.model_dump(mode="json") for part in request.messages]
     queue.push(text)
     return Result[InsertMessageData](
         success=True,

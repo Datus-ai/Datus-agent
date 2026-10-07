@@ -268,6 +268,7 @@ class ModelInfo(BaseModel):
     context_length: Optional[int] = Field(None, description="Maximum context window in tokens")
     max_tokens: Optional[int] = Field(None, description="Maximum completion tokens")
     pricing: Optional[ModelPricing] = Field(None, description="Per-token pricing, when available")
+    supports_image_input: Optional[bool] = None
 
 
 class ModelsData(BaseModel):

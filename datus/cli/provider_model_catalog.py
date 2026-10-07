@@ -188,6 +188,10 @@ def _bucket_by_vendor(
             if slug.endswith("-fast"):
                 continue
         entry: Dict[str, Any] = {"id": slug}
+        architecture = item.get("architecture")
+        modalities = architecture.get("input_modalities") if isinstance(architecture, dict) else None
+        if isinstance(modalities, list) and modalities and all(isinstance(value, str) for value in modalities):
+            entry["input_modalities"] = modalities
         name = item.get("name")
         if isinstance(name, str) and name:
             entry["name"] = name
@@ -235,6 +239,10 @@ def _aggregate_openrouter(raw_models: List[Dict[str, Any]]) -> List[Dict[str, An
         if _is_model_unfit(slug, ctx_len):
             continue
         entry: Dict[str, Any] = {"id": full_id}
+        architecture = item.get("architecture")
+        modalities = architecture.get("input_modalities") if isinstance(architecture, dict) else None
+        if isinstance(modalities, list) and modalities and all(isinstance(value, str) for value in modalities):
+            entry["input_modalities"] = modalities
         name = item.get("name")
         if isinstance(name, str) and name:
             entry["name"] = name
