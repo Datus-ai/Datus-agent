@@ -68,41 +68,37 @@ jobs:
         with:
           script: |
             const fs = require('fs');
+            const { parseQueuePrNumber } = require(`${process.env.GITHUB_WORKSPACE}/ci/merge-queue-ref.js`);
             const run = context.payload.workflow_run;
             if (run.event !== 'merge_group' || run.repository?.id !== context.payload.repository?.id) {
               throw new Error('Unexpected merge queue workflow run');
             }
-            const prNumbers = [...new Set(
-              [...(run.head_branch || '').matchAll(/(?:^|[/-])pr-(\d+)(?=[/-]|$)/g)]
-                .map(match => Number(match[1])),
-            )];
-            if (prNumbers.length === 0) {
+            const issue_number = parseQueuePrNumber(run.head_branch);
+            if (issue_number === null) {
               core.warning(`No PR number found in merge queue ref: ${run.head_branch}`);
               return;
             }
             const body = fs.readFileSync(process.env.COMMENT_PATH, 'utf8');
             const marker = '<!-- datus-merge-queue-failure-comment -->';
-            for (const issue_number of prNumbers) {
-              const { data: pr } = await github.rest.pulls.get({
-                owner: context.repo.owner, repo: context.repo.repo, pull_number: issue_number,
+            const { data: pr } = await github.rest.pulls.get({
+              owner: context.repo.owner, repo: context.repo.repo, pull_number: issue_number,
+            });
+            if (pr.base.repo.id !== context.payload.repository.id) {
+              throw new Error('Merge queue ref does not match this repository');
+            }
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner: context.repo.owner, repo: context.repo.repo, issue_number, per_page: 100,
+            });
+            const existing = comments.find(c => c.user?.type === 'Bot' && c.body?.includes(marker));
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner, repo: context.repo.repo,
+                comment_id: existing.id, body,
               });
-              if (pr.base.repo.id !== context.payload.repository.id) {
-                throw new Error('Merge queue ref does not match this repository');
-              }
-              const comments = await github.paginate(github.rest.issues.listComments, {
-                owner: context.repo.owner, repo: context.repo.repo, issue_number, per_page: 100,
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner, repo: context.repo.repo, issue_number, body,
               });
-              const existing = comments.find(c => c.user?.type === 'Bot' && c.body?.includes(marker));
-              if (existing) {
-                await github.rest.issues.updateComment({
-                  owner: context.repo.owner, repo: context.repo.repo,
-                  comment_id: existing.id, body,
-                });
-              } else {
-                await github.rest.issues.createComment({
-                  owner: context.repo.owner, repo: context.repo.repo, issue_number, body,
-                });
-              }
             }
 
       - name: Send Feishu failure notification

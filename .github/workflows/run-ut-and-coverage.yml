@@ -48,8 +48,8 @@ jobs:
       - name: Check release metadata
         run: python3 ci/check_release_readiness.py
 
-      - name: Check coverage commenter boundary
-        run: node --test ci/post-coverage-comment.test.js
+      - name: Check CI comment boundaries
+        run: node --test ci/post-coverage-comment.test.js ci/merge-queue-ref.test.js
 
       - name: Validate harness coverage map
         run: |
