@@ -93,7 +93,7 @@ async def test_insert_echoes_structured_content(image_part):
         result = await insert_message(
             InsertMessageInput(session_id=task.session_id, messages=[image_part]), svc, Request({"type": "http"})
         )
-        assert result.success
+        assert result.success is True
         text = task.pending_input_queue.snapshot()[0]
         manager = ChatTaskManager()
         await manager._emit_user_insert_sse(task, text, 1)
