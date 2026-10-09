@@ -67,4 +67,4 @@ Put Dosi-only metadata in the owning object's DATUS `custom_extensions` entry. E
 
 Validate the final model with the native Dosi parser/compiler after the last mutation.
 
-For a parameterized metric, inspect its `param_schema` in `list_metrics`, then verify query behavior with `query_metrics(params={...}, dry_run=True)`. Exercise the default and meaningful enum/boundary or list-valued cases; never invent undeclared parameter names. Native validation proves the definition compiles, while this optional query check proves a user-requested binding shape.
+For a parameterized metric, inspect its `params` in `get_metric`, then verify query behavior with `query_metrics(params={...}, dry_run=True)`. Exercise the default and meaningful enum/boundary or list-valued cases; never invent undeclared parameter names. Native validation proves the definition compiles, while this optional query check proves a user-requested binding shape.

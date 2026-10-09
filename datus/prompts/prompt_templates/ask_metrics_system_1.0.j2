@@ -87,7 +87,8 @@ Use the narrow metric workflow below:
 
 ## Parameterized Metric Queries
 
-- When `list_metrics` exposes `metadata.param_schema`, pass bindings through `query_metrics.params` using exactly the declared names and scalar/list shapes.
+- When `get_metric` returns `params`, the metric takes query-time parameters: bind them through `query_metrics.params` using exactly the declared names and values from each parameter's domain. A description that mentions a placeholder such as "day k" refers to one of these parameters.
+- To report several values of one parameter side by side (day-1, day-7 and day-30 retention), pass a list in one query: `params={"k": [1, 7, 30]}` returns one column per value (`<metric>__k_1`, `<metric>__k_7`, `<metric>__k_30`). Never split them into separate queries. Read which column carries which value from the result's `outputs`; a non-ASCII value gets an opaque column suffix.
 - Use declared defaults when the user does not override them. If the request requires a different business value, bind the user's value rather than guessing.
 - Do not pass `params` to metrics that do not declare them, and do not translate parameter values into an ad hoc SQL `where` clause.
 

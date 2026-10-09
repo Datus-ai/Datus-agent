@@ -1589,6 +1589,20 @@ class TestGetMetric:
 
         assert "required_dimensions" not in result.result
 
+    def test_passes_through_the_declared_parameters(self, semantic_tools_with_runtime):
+        """Without the declaration the agent cannot tell that "day k" in a
+        description is a bindable parameter, nor which values it takes."""
+        tool, _ = semantic_tools_with_runtime
+        params = [{"name": "k", "type": "int", "default": 1, "allowed": [1, 2, 6, 13, 29]}]
+        engine_params = [{**params[0], "slots": ["filter.literal"]}]
+        metric = _detail_metric("retained_players", {"base_kind": "aggregate", "params": engine_params})
+
+        with self._wire([metric]):
+            result = tool.get_metric(name="retained_players")
+
+        # `slots` is where the engine substitutes the value: an internal, not a binding hint.
+        assert result.result["params"] == params
+
     def test_unknown_name_fails_with_the_name(self, semantic_tools_with_runtime):
         tool, _ = semantic_tools_with_runtime
         metric = _detail_metric("kpi_issues", {"base_kind": "aggregate"})

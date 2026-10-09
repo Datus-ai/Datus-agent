@@ -137,6 +137,7 @@ query_metrics(
 | `context_filter` | 可选过滤表达式，始终在聚合前生效，用来限定窗口指标排名、计数或加权的人群：`where="market = 'North'"` 看的是 North 在所有市场里的名次，`context_filter="market = 'North'"` 则只在 North 内部重新排名。 |
 | `order_by` | 排序所用的结果列；名称前加 `-` 表示降序。 |
 | `limit` | 最大行数；只在用户明确要求 Top N、预览或其他行数限制时使用。 |
+| `params` | 按名字绑定指标声明的参数（`get_metric` 的 `params` 字段列出了这些参数）。传列表时一次查询绑定多个值，每个值各返回一列：`{"k": [1, 7]}` 得到 `<metric>__k_1` 和 `<metric>__k_7`。未传的参数取默认值。 |
 | `dry_run` | 返回编译后的 SQL，不执行指标查询；配置了数据仓库 dry-run 时还会校验该 SQL。 |
 
 例如，要包含 2024 年 1 月的全部数据，应使用 `time_start="2024-01-01"` 和 `time_end="2024-02-01"`。
