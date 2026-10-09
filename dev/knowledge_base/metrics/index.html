@@ -5230,6 +5230,10 @@
 <td>Maximum rows, used only when the user asks for Top N, a preview, or another explicit row limit.</td>
 </tr>
 <tr>
+<td><code>params</code></td>
+<td>Bindings for the parameters a metric declares (<code>get_metric</code> returns them as <code>params</code>), by name. A list binds several values in one query and returns one column per value: <code>{"k": [1, 7]}</code> yields <code>&lt;metric&gt;__k_1</code> and <code>&lt;metric&gt;__k_7</code>. Omitted parameters take their defaults.</td>
+</tr>
+<tr>
 <td><code>dry_run</code></td>
 <td>Return compiled SQL without executing the metric query; a configured warehouse dry-run provider also validates the SQL.</td>
 </tr>
