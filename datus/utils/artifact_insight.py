@@ -61,13 +61,15 @@ def _read_list(files: dict[str, str], path: str, model: type[BaseModel], warning
     return result
 
 
-def query_lineage(sql: str | None, template: QueryTemplateMetaFile | None, datasource: str | None) -> QueryLineage:
+def query_lineage(
+    sql: str | None, template: QueryTemplateMetaFile | None, datasource: str | None, *, is_template: bool = False
+) -> QueryLineage:
     from sqlglot import exp, parse
     from sqlglot.optimizer.scope import traverse_scope
 
-    origin = "sample_parameters" if template else "saved_sql"
+    origin = "sample_parameters" if template or is_template else "saved_sql"
     result = QueryLineage(status="unavailable", origin=origin, datasource=datasource)
-    if not sql:
+    if not sql or (is_template and template is None):
         return result
     try:
         if template:
@@ -92,6 +94,39 @@ def query_lineage(sql: str | None, template: QueryTemplateMetaFile | None, datas
     return result
 
 
+# Skip declarations inside comments, string constants and template literals.
+_JS_NON_CODE = re.compile(r"""//[^\n]*|/\*[\s\S]*?\*/|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`""")
+
+
+def _literal_attributes(attrs: str) -> str:
+    """Remove JSX expression bodies so nested props cannot bind their parent."""
+    pieces, start, depth = [], 0, 0
+    i = 0
+    while i < len(attrs):
+        if attrs[i] in {"'", '"', "`"}:
+            quote = attrs[i]
+            i += 1
+            while i < len(attrs):
+                if attrs[i] == "\\":
+                    i += 2
+                    continue
+                if attrs[i] == quote:
+                    break
+                i += 1
+        elif attrs[i] == "{":
+            if depth == 0:
+                pieces.append(attrs[start:i])
+            depth += 1
+        elif attrs[i] == "}" and depth:
+            depth -= 1
+            if depth == 0:
+                start = i + 1
+        i += 1
+    if depth == 0:
+        pieces.append(attrs[start:])
+    return " ".join(pieces)
+
+
 def _blocks(files: dict[str, str], query_names: set[str]) -> list[ArtifactBlock]:
     from datus.tools.func_tool._visual_artifact_cards import (
         BLOCK_HANDLE_OPEN_RE,
@@ -105,14 +140,17 @@ def _blocks(files: dict[str, str], query_names: set[str]) -> list[ArtifactBlock]
     for path, source in sorted(files.items()):
         if not path.startswith("render/") or not path.endswith((".jsx", ".js")):
             continue
+        non_code = [(m.start(), m.end()) for m in _JS_NON_CODE.finditer(source)]
         # Use the same static declaration grammar as validate_render; only literal
         # bindings are shown. Dynamic/spread wrappers remain explicitly partial.
         for pattern, id_attr in ((CHART_CARD_OPEN_RE, "chartId"), (BLOCK_HANDLE_OPEN_RE, "handleId")):
             for match in pattern.finditer(source):
+                if any(start <= match.start() < end for start, end in non_code):
+                    continue
                 attrs = match.group(1)
                 if SPREAD_ATTR_RE.search(attrs):
                     continue
-                values = dict(attr.findall(attrs))
+                values = dict(attr.findall(_literal_attributes(attrs)))
                 block_id = values.get(id_attr)
                 if not block_id or not re.fullmatch(r"[a-z0-9_]{1,64}", block_id):
                     continue
@@ -161,6 +199,12 @@ def build_artifact_insight(manifest: dict, files: dict[str, str]) -> ArtifactIns
             else None
         )
         result = _read(files, base + ".json", QueryResultFile, warnings) if parsed_manifest.kind == "report" else None
+        if brief is not None and brief.name != name:
+            warnings.append(base + ".brief.json")
+            brief = None
+        if template is not None and template.slug != name:
+            warnings.append(base + ".params.json")
+            template = None
         goal = (
             template.description if template else (sql.splitlines()[0][3:] if sql and sql.startswith("-- ") else None)
         )
@@ -173,7 +217,7 @@ def build_artifact_insight(manifest: dict, files: dict[str, str]) -> ArtifactIns
                 brief=brief,
                 result=result,
                 template=template,
-                lineage=query_lineage(sql, template, datasource),
+                lineage=query_lineage(sql, template, datasource, is_template=parsed_manifest.kind == "dashboard"),
             )
         )
     metric_details = []

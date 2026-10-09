@@ -140,3 +140,30 @@ def test_dynamic_and_ambiguous_cards_do_not_invent_query_links():
     <ChartCard chartId="duplicate" sqlId="queries/sales" />"""
     blocks = build_artifact_insight(manifest(), files).blocks
     assert [(b.id, b.query_ids) for b in blocks] == [("dynamic", [])]
+
+
+def test_mismatched_sidecar_identity_is_not_attributed_to_query():
+    files = report_files()
+    brief = json.loads(files["queries/sales.brief.json"])
+    brief["name"] = "other"
+    files["queries/sales.brief.json"] = json.dumps(brief)
+    data = build_artifact_insight(manifest(), files)
+    assert data.queries[0].brief is None
+    assert "queries/sales.brief.json" in data.warnings
+
+
+def test_dashboard_missing_metadata_never_looks_like_a_saved_execution():
+    data = build_artifact_insight(manifest("dashboard"), {"queries/sales.sql.j2": "SELECT * FROM orders"})
+    assert data.queries[0].lineage.origin == "sample_parameters"
+    assert data.queries[0].lineage.status == "unavailable"
+
+
+def test_comments_strings_and_nested_attributes_are_not_content_bindings():
+    files = report_files()
+    files["render/app.jsx"] = """// <ChartCard chartId="comment" sqlId="queries/sales" />
+    const example = `<ChartCard chartId="example" sqlId="queries/sales" />`;
+    <ChartCard chartId="real" title={<span sqlId="queries/sales">Sales</span>} />
+    <ChartCard chartId="bound" sqlId="queries/sales" title="Sales" />
+    """
+    blocks = build_artifact_insight(manifest(), files).blocks
+    assert [(b.id, b.query_ids) for b in blocks] == [("real", []), ("bound", ["sales"])]
