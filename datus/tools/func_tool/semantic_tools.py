@@ -111,6 +111,7 @@ _METRIC_DETAIL_KEYS = (
     "subset_of",
     "requires_time_axis",
     "required_dimensions",
+    "params",
 )
 
 
@@ -155,7 +156,8 @@ def _metric_detail_row(metric: Any, subject_path: Optional[List[str]] = None) ->
 
     ``measures`` stays out for the same reason it stays out of the summary: the
     names are compiled internals, unusable as tool arguments, and they dominate
-    the row — 386 of 561 tokens for a metric built from 21 of them.
+    the row — 386 of 561 tokens for a metric built from 21 of them. A
+    parameter's ``slots`` (where the engine substitutes it) stays out likewise.
     """
     row = _metric_summary_row(metric, subject_path)
     metadata = _normalize_metric_metadata(getattr(metric, "metadata", None))
@@ -163,6 +165,11 @@ def _metric_detail_row(metric: Any, subject_path: Optional[List[str]] = None) ->
         value = metadata.get(key)
         if value is not None:
             row[key] = value
+    if isinstance(row.get("params"), list):
+        row["params"] = [
+            {k: v for k, v in param.items() if k != "slots"} if isinstance(param, dict) else param
+            for param in row["params"]
+        ]
     datasets = _normalize_dataset_names(metadata.get("datasets"))
     if datasets:
         row["datasets"] = datasets
@@ -1133,6 +1140,9 @@ class SemanticTools:
                 the query before this metric means anything. Pass every one of
                 them to query_metrics; the runtime rejects the query otherwise.
               - window: the partition and rank rule behind those requirements.
+              - params (List[Dict]): the query-time parameters the metric
+                declares, each with name, type, default and its domain
+                (allowed values or min/max). Bind them with query_metrics params.
               - time_dimension, time_granularities: the metric's time axis and
                 the grains the runtime compiles for it.
               - datasets: the datasets the metric reads.
@@ -1279,8 +1289,17 @@ class SemanticTools:
                       produce a result/order key such as `metric_time__day`. Examples:
                       ['metric_time__day'] for ascending, ['-message_count'] for descending.
                       Do NOT use 'asc'/'desc' keywords.
-            params: Optional parameter bindings for Dosi parameterized metrics.
-                Values may be scalars or lists and are passed through unchanged.
+            params: Optional bindings for the parameters a metric declares
+                (get_metric `params`), by name. A scalar binds one value; a
+                non-default one names the column `<metric>__k_7`. A list returns one
+                column per value in the same query: `{"k": [1, 7]}` returns
+                `<metric>__k_1` and `<metric>__k_7`, so several values of one
+                parameter side by side never need separate queries. Omitted
+                parameters take their default, and the column keeps the plain
+                metric name. A value that does not spell a readable suffix
+                (non-ASCII text, punctuation) gets an opaque token instead, so map
+                columns to bindings through the result metadata `outputs`, never by
+                parsing column names.
             dry_run: If True, return the compiled SQL without executing the query.
                 A configured warehouse dry-run provider also validates that SQL.
 
