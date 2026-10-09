@@ -144,16 +144,28 @@ def bake_reference_sql_snapshots(
         }
         revision = query_revision(files)
 
+        reusable: dict[tuple[tuple[str, ...], str], ReferenceSqlSnapshot] = {}
         if target.is_file():
             try:
-                if json.loads(target.read_text(encoding="utf-8"))["query_revision"] == revision:
-                    return None
+                saved = json.loads(target.read_text(encoding="utf-8"))
+                if saved["query_revision"] == revision:
+                    entries = [ReferenceSqlSnapshot.model_validate(item) for item in saved["reference_sql"]]
+                    reusable = {
+                        (tuple(item.ref.path), item.ref.name): item for item in entries if item.status == "captured"
+                    }
+                    if all((tuple(ref.path), ref.name) in reusable for ref in refs.reference_sql):
+                        return None
             except (ValueError, KeyError, TypeError):
                 pass
 
         captured_at = datetime.now(timezone.utc).isoformat()
         snapshots = []
         for ref in refs.reference_sql:
+            previous = reusable.get((tuple(ref.path), ref.name))
+            if previous is not None:
+                snapshots.append(previous.model_dump())
+                continue
+
             sql, summary = None, None
             if context_search_tools is not None:
                 try:

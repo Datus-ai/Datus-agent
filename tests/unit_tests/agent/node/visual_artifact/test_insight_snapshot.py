@@ -262,3 +262,43 @@ def test_reference_sql_lookup_failure_is_explicit(tmp_path, candidate):
     ][0]
     assert saved["status"] == "unavailable"
     assert saved["sql"] is None
+
+
+@pytest.mark.parametrize("kind", ["report", "dashboard"])
+@pytest.mark.parametrize("retry_succeeds", [False, True])
+def test_reference_snapshot_retries_only_unavailable_entries(tmp_path, kind, retry_succeeds):
+    from datus.agent.node.visual_artifact._insight_snapshot import bake_reference_sql_snapshots
+
+    refs = SubjectRefs(reference_sql=[dict(path=[path], name="revenue") for path in ["Sales", "Finance"]])
+    tools = SimpleNamespace(
+        get_reference_sql=Mock(
+            side_effect=[
+                SimpleNamespace(success=1, result={"name": "revenue", "sql": "SELECT 1", "summary": "Original"}),
+                SimpleNamespace(success=0, result=None),
+            ]
+        )
+    )
+    assert bake_reference_sql_snapshots(tmp_path, refs, tools, artifact_kind=kind) is None
+    target = tmp_path / "analysis/reference_sql_snapshots.json"
+    saved = json.loads(target.read_text(encoding="utf-8"))
+    saved["reference_sql"][0]["captured_at"] = "2020-01-01T00:00:00Z"
+    target.write_text(json.dumps(saved), encoding="utf-8")
+    original = saved["reference_sql"][0]
+    tools.get_reference_sql.reset_mock(side_effect=True)
+    tools.get_reference_sql.return_value = SimpleNamespace(
+        success=int(retry_succeeds), result={"name": "revenue", "sql": "SELECT 2", "summary": "Retried"}
+    )
+
+    assert bake_reference_sql_snapshots(tmp_path, refs, tools, artifact_kind=kind) is None
+    tools.get_reference_sql.assert_called_once_with(subject_path=["Finance"], name="revenue")
+    updated = json.loads(target.read_text(encoding="utf-8"))["reference_sql"]
+    assert updated[0] == original
+    assert updated[1]["status"] == ("captured" if retry_succeeds else "unavailable")
+    assert updated[1]["sql"] == ("SELECT 2" if retry_succeeds else None)
+
+    if retry_succeeds:
+        before = target.read_bytes()
+        tools.get_reference_sql.reset_mock()
+        assert bake_reference_sql_snapshots(tmp_path, refs, tools, artifact_kind=kind) is None
+        tools.get_reference_sql.assert_not_called()
+        assert target.read_bytes() == before
