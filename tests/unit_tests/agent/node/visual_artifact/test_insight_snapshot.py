@@ -3,6 +3,7 @@
 """Snapshot producer and reader agree; dependencies do not include available joins."""
 
 import json
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
@@ -47,7 +48,8 @@ def test_nested_derived_metrics_terminate_on_cycles():
     assert metric_tables([g], "m4") == ["shop.orders"]
 
 
-def test_dashboard_snapshot_roundtrip_and_render_only_reuse(tmp_path):
+@pytest.mark.parametrize("default_encoding", ["utf-8", "ascii"])
+def test_dashboard_snapshot_roundtrip_and_render_only_reuse(tmp_path, monkeypatch, default_encoding):
     queries = tmp_path / "queries"
     queries.mkdir()
     (queries / "sales.sql.j2").write_text("SELECT amount FROM shop.orders")
@@ -56,20 +58,31 @@ def test_dashboard_snapshot_roundtrip_and_render_only_reuse(tmp_path):
         runtime=SimpleNamespace(lineage_graph=AsyncMock(return_value=[graph()])),
         get_metric=Mock(
             return_value=SimpleNamespace(
-                success=1, result={"name": "revenue", "path": ["Sales"], "description": "Net sales"}
+                success=1, result={"name": "revenue", "path": ["Sales"], "description": "Net sales \u00e9"}
             )
         ),
     )
     assert bake_metric_snapshots(tmp_path, refs, tools, artifact_kind="dashboard") is None
     target = tmp_path / "analysis/metric_snapshots.json"
-    original = target.read_text()
-    files = {p.relative_to(tmp_path).as_posix(): p.read_text() for p in tmp_path.rglob("*") if p.is_file()}
+    original = target.read_text(encoding="utf-8")
+    files = {
+        p.relative_to(tmp_path).as_posix(): p.read_text(encoding="utf-8") for p in tmp_path.rglob("*") if p.is_file()
+    }
     manifest = dict(slug="sales", name="Sales", description="Sales", kind="dashboard", created_at="2026-01-01")
     snapshot = build_artifact_insight(manifest, files).metric_details[0]
     assert snapshot.detail["definition"]["expression"] == "SUM(orders.amount)"
     assert snapshot.tables == ["shop.orders"]
-    assert bake_metric_snapshots(tmp_path, refs, tools, artifact_kind="dashboard") is None
-    assert target.read_text() == original
+    read_text = Path.read_text
+
+    def read_with_locale_default(path, encoding=None, errors=None):
+        return read_text(path, encoding=encoding or default_encoding, errors=errors)
+
+    # A non-UTF-8 platform default must not recapture an unchanged snapshot.
+    with monkeypatch.context() as patch:
+        patch.setattr(Path, "read_text", read_with_locale_default)
+        assert bake_metric_snapshots(tmp_path, refs, tools, artifact_kind="dashboard") is None
+
+    assert target.read_text(encoding="utf-8") == original
     tools.get_metric.assert_called_once_with(name="revenue", path=["Sales"])
     # A changed saved query cannot keep the previous model snapshot on failure.
     (queries / "sales.sql.j2").write_text("SELECT amount FROM shop.archive")

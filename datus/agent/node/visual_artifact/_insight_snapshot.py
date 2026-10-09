@@ -76,7 +76,7 @@ def bake_metric_snapshots(artifact_dir: Path, refs, semantic_tools, *, artifact_
 
         if target.is_file():
             try:
-                if json.loads(target.read_text())["query_revision"] == revision:
+                if json.loads(target.read_text(encoding="utf-8"))["query_revision"] == revision:
                     return None
             except (ValueError, KeyError, TypeError):
                 pass
