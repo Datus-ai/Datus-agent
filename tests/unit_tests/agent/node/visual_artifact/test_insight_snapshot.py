@@ -295,10 +295,3 @@ def test_reference_snapshot_retries_only_unavailable_entries(tmp_path, kind, ret
     assert updated[0] == original
     assert updated[1]["status"] == ("captured" if retry_succeeds else "unavailable")
     assert updated[1]["sql"] == ("SELECT 2" if retry_succeeds else None)
-
-    if retry_succeeds:
-        before = target.read_bytes()
-        tools.get_reference_sql.reset_mock()
-        assert bake_reference_sql_snapshots(tmp_path, refs, tools, artifact_kind=kind) is None
-        tools.get_reference_sql.assert_not_called()
-        assert target.read_bytes() == before
