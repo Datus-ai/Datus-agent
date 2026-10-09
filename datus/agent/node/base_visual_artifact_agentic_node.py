@@ -500,6 +500,7 @@ class BaseVisualArtifactAgenticNode(AgenticNode, Generic[InputT, ResultT]):
                 # so finalize still runs when this is None (e.g. node was
                 # configured without db tools — unusual but supported).
                 db_func_tool=self.db_func_tool,
+                semantic_tools=self.semantic_tools,
                 on_progress=on_progress,
             )
         except Exception as exc:

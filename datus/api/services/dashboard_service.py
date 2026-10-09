@@ -44,6 +44,7 @@ from datus.schemas.gen_visual_dashboard_models import (
 from datus.schemas.gen_visual_report_models import QueryColumnMeta
 from datus.tools.func_tool.dashboard_artifact_tools import render_dashboard_template
 from datus.tools.func_tool.report_artifact_tools import _normalize_value
+from datus.utils.artifact_files import iter_artifact_files
 from datus.utils.exceptions import ErrorCode
 from datus.utils.loggings import get_logger
 
@@ -54,16 +55,6 @@ _MAX_QUERY_ROWS = 100_000
 # dashboard that ships every probe SQL alongside its JSX.
 _MAX_BUNDLE_BYTES: int = 25 * 1024 * 1024
 _MAX_FILES: int = 200
-
-# Dashboard-specific allowlist for the bundle walker. ``queries/`` carries
-# Jinja2 templates + params metadata (vs. report's pre-executed SQL + JSON
-# result pairs). See ``Datus-saas/docs/gen-dashboard-artifact.md`` for the
-# on-disk contract.
-_DASHBOARD_ARTIFACT_DIRS: Dict[str, Tuple[Tuple[str, ...], bool]] = {
-    "render": ((".jsx", ".js", ".css", ".json", ".md"), True),
-    "queries": ((".sql.j2", ".params.json"), False),
-    "analysis": ((".md", ".json"), False),
-}
 
 _ISO_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
@@ -91,45 +82,7 @@ def _resolve_dashboard_dir(project_files_root: Path, dashboard_slug: str) -> Opt
 
 
 def _iter_artifact_files(artifact_dir: Path) -> List[Path]:
-    """Walk ``artifact_dir`` and return allowed files sorted by slug-relative path.
-
-    Honours the per-prefix allowlist; files under any other directory or
-    whose name doesn't end in one of the listed suffix patterns are
-    silently dropped so a stray scratch file doesn't trip detail.
-    ``endswith``-based matching also supports compound suffixes like
-    ``.sql.j2`` / ``.params.json``.
-
-    Each candidate is resolved before being kept so a symlink under
-    ``render/`` / ``queries/`` cannot exfiltrate a file from outside the
-    artifact directory into the inline bundle — the LLM controls these
-    paths and a stray ``ln -s /etc/passwd render/foo.jsx`` would
-    otherwise survive the ``is_file()`` probe (which follows symlinks).
-    """
-    artifact_dir_resolved = artifact_dir.resolve()
-    found: List[Path] = []
-    for sub, (allowed_suffixes, recursive) in _DASHBOARD_ARTIFACT_DIRS.items():
-        root = artifact_dir / sub
-        if not root.is_dir():
-            continue
-        iterator = root.rglob("*") if recursive else root.iterdir()
-        for path in iterator:
-            if not path.is_file():
-                continue
-            name_lower = path.name.lower()
-            if not any(name_lower.endswith(suffix) for suffix in allowed_suffixes):
-                continue
-            resolved = path.resolve()
-            if not resolved.is_file():
-                continue
-            try:
-                resolved.relative_to(artifact_dir_resolved)
-            except ValueError:
-                # Symlink (or other indirection) escapes the artifact root —
-                # drop silently rather than leak content from outside.
-                continue
-            found.append(path)
-    found.sort(key=lambda p: p.relative_to(artifact_dir).as_posix())
-    return found
+    return iter_artifact_files(artifact_dir, "dashboard")
 
 
 def _coerce_param_value(decl: TemplateParamDecl, raw: Any) -> Any:
