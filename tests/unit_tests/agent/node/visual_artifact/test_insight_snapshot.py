@@ -217,7 +217,7 @@ async def test_reference_sql_roundtrip_reuse_and_stale_detection(tmp_path, kind)
             )
         else:
             result = await ReportService().get_detail(project_files_root=tmp_path, report_slug="sales")
-        assert result.success, result.errorMessage
+        assert result.success is True, result.errorMessage
         return build_artifact_insight(result.data.manifest.model_dump(), {f.path: f.content for f in result.data.files})
 
     insight = await read_bundle()
