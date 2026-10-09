@@ -189,3 +189,13 @@ def test_quoted_physical_identifiers_and_subqueries_remain_resolved():
     lineage = query_lineage('SELECT * FROM (SELECT * FROM "shop"."TABLE") AS t', None, "retail")
     assert lineage.tables == ["shop.TABLE"]
     assert lineage.status == "parsed"
+
+
+@pytest.mark.parametrize("content", ["invalid json", "{}", "null", "[]", '{"reference_sql": []}'])
+def test_malformed_reference_snapshots_do_not_break_saved_queries(content):
+    files = report_files()
+    files["analysis/reference_sql_snapshots.json"] = content
+    insight = build_artifact_insight(manifest(), files)
+    assert insight.reference_sql_details == []
+    assert insight.queries[0].sql == files["queries/sales.sql"]
+    assert insight.warnings == ["analysis/reference_sql_snapshots.json"]

@@ -501,6 +501,7 @@ class BaseVisualArtifactAgenticNode(AgenticNode, Generic[InputT, ResultT]):
                 # configured without db tools — unusual but supported).
                 db_func_tool=self.db_func_tool,
                 semantic_tools=self.semantic_tools,
+                context_search_tools=self.context_search_tools,
                 on_progress=on_progress,
             )
         except Exception as exc:

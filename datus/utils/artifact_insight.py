@@ -16,7 +16,14 @@ import re
 from pydantic import BaseModel, ValidationError
 
 from datus.schemas.analysis_artifacts import Insight, QueryBrief, SuggestedQuestion
-from datus.schemas.artifact_insight import ArtifactBlock, ArtifactInsight, InsightQuery, MetricSnapshot, QueryLineage
+from datus.schemas.artifact_insight import (
+    ArtifactBlock,
+    ArtifactInsight,
+    InsightQuery,
+    MetricSnapshot,
+    QueryLineage,
+    ReferenceSqlSnapshot,
+)
 from datus.schemas.artifact_manifest import ArtifactManifest
 from datus.schemas.gen_visual_dashboard_models import QueryTemplateMetaFile
 from datus.schemas.gen_visual_report_models import QueryResultFile, extract_query_slug
@@ -268,6 +275,18 @@ def build_artifact_insight(manifest: dict, files: dict[str, str]) -> ArtifactIns
         except (ValueError, TypeError, KeyError):
             warnings.append("analysis/metric_snapshots.json")
 
+    reference_sql_details = []
+    reference_path = "analysis/reference_sql_snapshots.json"
+    if reference_path in files:
+        try:
+            raw = json.loads(files[reference_path])
+            if raw["query_revision"] != query_revision(files):
+                warnings.append(f"{reference_path}:stale")
+            else:
+                reference_sql_details = [ReferenceSqlSnapshot.model_validate(s) for s in raw["reference_sql"]]
+        except (ValueError, TypeError, KeyError):
+            warnings.append(reference_path)
+
     blocks = _blocks(files, names)
 
     return ArtifactInsight(
@@ -277,6 +296,7 @@ def build_artifact_insight(manifest: dict, files: dict[str, str]) -> ArtifactIns
         blocks=blocks,
         blocks_status="partial" if blocks else "unavailable",
         metric_details=metric_details,
+        reference_sql_details=reference_sql_details,
         key_tables_schema=_read(files, "analysis/key_tables_schema.json", KeyTablesSchemaFile, warnings),
         insights=_read_list(files, "analysis/insights.json", Insight, warnings)
         if parsed_manifest.kind == "report"
