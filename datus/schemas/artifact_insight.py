@@ -47,6 +47,14 @@ class MetricSnapshot(BaseModel):
     lineage_status: Literal["resolved", "unavailable"] = "unavailable"
 
 
+class ReferenceSqlSnapshot(BaseModel):
+    ref: SubjectAssetRef
+    captured_at: str
+    status: Literal["captured", "unavailable"]
+    sql: str | None = None
+    summary: str | None = None
+
+
 class ArtifactInsight(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -58,6 +66,7 @@ class ArtifactInsight(BaseModel):
     blocks_status: Literal["partial", "unavailable"] = "unavailable"
     queries: list[InsightQuery] = Field(default_factory=list)
     metric_details: list[MetricSnapshot] = Field(default_factory=list)
+    reference_sql_details: list[ReferenceSqlSnapshot] = Field(default_factory=list)
     key_tables_schema: KeyTablesSchemaFile | None = None
     insights: list[Insight] = Field(default_factory=list)
     suggested_questions: list[SuggestedQuestion] = Field(default_factory=list)

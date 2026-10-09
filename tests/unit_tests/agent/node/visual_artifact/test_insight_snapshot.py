@@ -179,3 +179,86 @@ async def test_snapshot_survives_real_detail_bundle(tmp_path, kind):
     assert len(insight.metric_details) == 1
     assert insight.metric_details[0].ref == refs.metrics[0]
     assert insight.warnings == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["report", "dashboard"])
+async def test_reference_sql_roundtrip_reuse_and_stale_detection(tmp_path, kind):
+    from datus.agent.node.visual_artifact._insight_snapshot import bake_reference_sql_snapshots
+    from datus.api.services.dashboard_service import DashboardService
+    from datus.api.services.report_service import ReportService
+
+    artifact_dir = tmp_path / f"{kind}s" / "sales"
+    queries = artifact_dir / "queries"
+    queries.mkdir(parents=True)
+    manifest = dict(slug="sales", name="Sales", description="Sales", kind=kind, created_at="2026-01-01")
+    (artifact_dir / "manifest.json").write_text(json.dumps(manifest))
+    suffix = ".sql.j2" if kind == "dashboard" else ".sql"
+    (artifact_dir / "render").mkdir()
+    (artifact_dir / "render/app.jsx").write_text("export default function App() { return null; }")
+    query_file = queries / f"sales{suffix}"
+    query_file.write_text("SELECT amount FROM shop.orders")
+    refs = SubjectRefs(reference_sql=[dict(path=["Sales"], name="paid_revenue")])
+    (queries / "sales.brief.json").write_text(
+        json.dumps(dict(name="sales", hypothesis="Sales", uses=refs.model_dump()))
+    )
+    original_sql = "-- Revenue \u00e9\nSELECT SUM(amount) FROM shop.orders"
+    tools = SimpleNamespace(
+        get_reference_sql=Mock(
+            return_value=SimpleNamespace(success=1, result=dict(name="paid_revenue", sql=original_sql, summary="Sales"))
+        )
+    )
+    assert bake_reference_sql_snapshots(artifact_dir, refs, tools, artifact_kind=kind) is None
+
+    async def read_bundle():
+        if kind == "dashboard":
+            result = await DashboardService(agent_config=None).get_detail(
+                project_files_root=tmp_path, dashboard_slug="sales"
+            )
+        else:
+            result = await ReportService().get_detail(project_files_root=tmp_path, report_slug="sales")
+        assert result.success, result.errorMessage
+        return build_artifact_insight(result.data.manifest.model_dump(), {f.path: f.content for f in result.data.files})
+
+    insight = await read_bundle()
+    assert insight.warnings == []
+    saved = insight.reference_sql_details[0]
+    assert saved.ref == refs.reference_sql[0]
+    assert saved.status == "captured"
+    assert saved.sql == original_sql
+    assert saved.summary == "Sales"
+    tools.get_reference_sql.assert_called_once_with(subject_path=["Sales"], name="paid_revenue")
+
+    # An unchanged query preserves its original reference even if the library changes.
+    tools.get_reference_sql.side_effect = RuntimeError("Library unavailable")
+    assert bake_reference_sql_snapshots(artifact_dir, refs, tools, artifact_kind=kind) is None
+    assert (await read_bundle()).reference_sql_details[0] == saved
+    assert tools.get_reference_sql.call_count == 1
+
+    query_file.write_text("SELECT amount FROM shop.archive")
+    stale = await read_bundle()
+    assert stale.reference_sql_details == []
+    assert "analysis/reference_sql_snapshots.json:stale" in stale.warnings
+    assert bake_reference_sql_snapshots(artifact_dir, refs, tools, artifact_kind=kind) is None
+    unavailable = (await read_bundle()).reference_sql_details[0]
+    assert unavailable.status == "unavailable"
+    assert unavailable.sql is None
+
+
+@pytest.mark.parametrize(
+    "candidate",
+    [None, {}, {"name": "other", "sql": "SELECT 1"}, {"name": "paid", "sql": " "}, {"name": "paid", "sql": 42}],
+)
+def test_reference_sql_lookup_failure_is_explicit(tmp_path, candidate):
+    from datus.agent.node.visual_artifact._insight_snapshot import bake_reference_sql_snapshots
+
+    refs = SubjectRefs(reference_sql=[dict(path=["Sales"], name="paid")])
+    tools = SimpleNamespace(
+        get_reference_sql=Mock(return_value=SimpleNamespace(success=bool(candidate), result=candidate))
+    )
+    assert bake_reference_sql_snapshots(tmp_path, refs, tools, artifact_kind="report") is None
+    saved = json.loads((tmp_path / "analysis/reference_sql_snapshots.json").read_text(encoding="utf-8"))[
+        "reference_sql"
+    ][0]
+    assert saved["status"] == "unavailable"
+    assert saved["sql"] is None

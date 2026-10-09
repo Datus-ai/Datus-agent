@@ -1252,6 +1252,7 @@ def run_finalize_analysis(
     actions: Iterable[ActionHistory],
     db_func_tool: Optional[Any] = None,
     semantic_tools: Optional[Any] = None,
+    context_search_tools: Optional[Any] = None,
     on_progress: Optional[Callable[[int], None]] = None,
     skip_narrative: bool = False,
     language_directive: Optional[str] = None,
@@ -1389,6 +1390,16 @@ def run_finalize_analysis(
     snapshot_error = bake_metric_snapshots(artifact_dir, refs, semantic_tools, artifact_kind=artifact_kind)
     if snapshot_error:
         warnings.append(snapshot_error)
+    # A render-only edit must not backfill an old artifact with today's SQL.
+    if not skip_narrative:
+        from datus.agent.node.visual_artifact._insight_snapshot import bake_reference_sql_snapshots
+
+        reference_error = bake_reference_sql_snapshots(
+            artifact_dir, refs, context_search_tools, artifact_kind=artifact_kind
+        )
+        if reference_error:
+            warnings.append(reference_error)
+
     write_err = write_subject_refs(analysis_dir, refs)
     if write_err:
         warnings.append(write_err)

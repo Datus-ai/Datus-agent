@@ -6,7 +6,8 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
-from datus.schemas.artifact_insight import MetricSnapshot
+from datus.schemas.analysis_artifacts import SubjectRefs
+from datus.schemas.artifact_insight import MetricSnapshot, ReferenceSqlSnapshot
 from datus.schemas.artifact_manifest import ArtifactKind
 from datus.utils.artifact_files import iter_artifact_files
 from datus.utils.artifact_insight import query_revision
@@ -124,5 +125,64 @@ def bake_metric_snapshots(artifact_dir: Path, refs, semantic_tools, *, artifact_
         )
     except Exception as exc:
         return f"metric snapshots unavailable: {type(exc).__name__}"
+
+    return None
+
+
+def bake_reference_sql_snapshots(
+    artifact_dir: Path, refs: SubjectRefs, context_search_tools, *, artifact_kind: ArtifactKind
+) -> str | None:
+    """Freeze referenced SQL at generation time, without running SQL or an LLM."""
+    from datus.tools.func_tool.report_artifact_tools import _atomic_write_text
+
+    target = artifact_dir / "analysis" / "reference_sql_snapshots.json"
+
+    try:
+        files = {
+            p.relative_to(artifact_dir).as_posix(): p.read_text(encoding="utf-8")
+            for p in iter_artifact_files(artifact_dir, artifact_kind, queries_only=True)
+        }
+        revision = query_revision(files)
+
+        if target.is_file():
+            try:
+                if json.loads(target.read_text(encoding="utf-8"))["query_revision"] == revision:
+                    return None
+            except (ValueError, KeyError, TypeError):
+                pass
+
+        captured_at = datetime.now(timezone.utc).isoformat()
+        snapshots = []
+        for ref in refs.reference_sql:
+            sql, summary = None, None
+            if context_search_tools is not None:
+                try:
+                    result = context_search_tools.get_reference_sql(subject_path=ref.path, name=ref.name)
+                    if result.success and isinstance(result.result, dict):
+                        candidate = result.result
+                        text = candidate.get("sql")
+                        if candidate.get("name") == ref.name and isinstance(text, str) and text.strip():
+                            sql = text
+                            summary = candidate.get("summary") if isinstance(candidate.get("summary"), str) else None
+                except Exception:
+                    pass
+
+            snapshots.append(
+                ReferenceSqlSnapshot(
+                    ref=ref,
+                    captured_at=captured_at,
+                    status="captured" if sql is not None else "unavailable",
+                    sql=sql,
+                    summary=summary,
+                ).model_dump()
+            )
+
+        target.parent.mkdir(parents=True, exist_ok=True)
+        _atomic_write_text(
+            target,
+            json.dumps({"query_revision": revision, "reference_sql": snapshots}, ensure_ascii=False, indent=2),
+        )
+    except Exception as exc:
+        return f"reference SQL snapshots unavailable: {type(exc).__name__}"
 
     return None
