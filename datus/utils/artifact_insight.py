@@ -80,13 +80,22 @@ def query_lineage(
         if not trees or any(tree is None or not isinstance(tree, exp.Query) for tree in trees):
             return result
         tables = set()
+        incomplete = False
         for tree in trees:
             for scope in traverse_scope(tree):
+                # UNNEST and lateral table functions are scopes, not exp.Table.
+                if isinstance(scope.expression, exp.UDTF):
+                    incomplete = True
                 for source in scope.sources.values():
                     if isinstance(source, exp.Table):
-                        tables.add(".".join(part.name for part in source.parts))
+                        parts = source.parts
+                        if parts and all(isinstance(part, exp.Identifier) and part.name for part in parts):
+                            tables.add(".".join(part.name for part in parts))
+                        else:
+                            # SQLGlot also wraps function calls in exp.Table.
+                            incomplete = True
         # A template's trial parameter branch cannot prove every runtime branch.
-        result.status = "partial" if template else "parsed"
+        result.status = "partial" if template or incomplete else "parsed"
         result.tables = sorted(tables)
     except Exception:
         # Unsupported SQL/dialects and dynamic identifiers must remain unknown.

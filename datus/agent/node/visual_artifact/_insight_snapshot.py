@@ -7,6 +7,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from datus.schemas.artifact_insight import MetricSnapshot
+from datus.schemas.artifact_manifest import ArtifactKind
+from datus.utils.artifact_files import iter_artifact_files
 from datus.utils.artifact_insight import query_revision
 from datus.utils.async_utils import run_async
 
@@ -49,7 +51,7 @@ def metric_tables(graphs: list[dict], name: str) -> list[str] | None:
     return sorted(tables)
 
 
-def bake_metric_snapshots(artifact_dir: Path, refs, semantic_tools) -> str | None:
+def bake_metric_snapshots(artifact_dir: Path, refs, semantic_tools, *, artifact_kind: ArtifactKind) -> str | None:
     """Capture the local model at finalization, tied to the saved query bytes.
 
     A render-only edit reuses the original definition snapshots. A model lookup
@@ -61,10 +63,7 @@ def bake_metric_snapshots(artifact_dir: Path, refs, semantic_tools) -> str | Non
     try:
         files = {
             p.relative_to(artifact_dir).as_posix(): p.read_text(encoding="utf-8")
-            for p in (artifact_dir / "queries").iterdir()
-            if p.is_file()
-            and p.resolve().is_relative_to(artifact_dir.resolve())
-            and p.name.endswith((".sql", ".sql.j2", ".json"))
+            for p in iter_artifact_files(artifact_dir, artifact_kind, queries_only=True)
         }
         revision = query_revision(files)
         if target.is_file():

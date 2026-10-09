@@ -1386,7 +1386,7 @@ def run_finalize_analysis(
     refs = aggregate_subject_refs(queries_dir)
     from datus.agent.node.visual_artifact._insight_snapshot import bake_metric_snapshots
 
-    snapshot_error = bake_metric_snapshots(artifact_dir, refs, semantic_tools)
+    snapshot_error = bake_metric_snapshots(artifact_dir, refs, semantic_tools, artifact_kind=artifact_kind)
     if snapshot_error:
         warnings.append(snapshot_error)
     write_err = write_subject_refs(analysis_dir, refs)

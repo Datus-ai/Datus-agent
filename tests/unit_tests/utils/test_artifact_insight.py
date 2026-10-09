@@ -167,3 +167,25 @@ def test_comments_strings_and_nested_attributes_are_not_content_bindings():
     """
     blocks = build_artifact_insight(manifest(), files).blocks
     assert [(b.id, b.query_ids) for b in blocks] == [("real", []), ("bound", ["sales"])]
+
+
+@pytest.mark.parametrize(
+    "sql,tables",
+    [
+        ("SELECT * FROM generate_series(1, 10)", []),
+        ("SELECT * FROM TABLE(FLATTEN(input => PARSE_JSON('[1,2]')))", []),
+        ("SELECT * FROM shop.orders CROSS JOIN generate_series(1, 10) AS series", ["shop.orders"]),
+        ("SELECT * FROM shop.orders, LATERAL FLATTEN(input => orders.items)", ["shop.orders"]),
+        ("SELECT * FROM UNNEST(ARRAY(1, 2))", []),
+    ],
+)
+def test_function_sources_never_become_physical_tables(sql, tables):
+    lineage = query_lineage(sql, None, "retail")
+    assert lineage.tables == tables
+    assert lineage.status == "partial"
+
+
+def test_quoted_physical_identifiers_and_subqueries_remain_resolved():
+    lineage = query_lineage('SELECT * FROM (SELECT * FROM "shop"."TABLE") AS t', None, "retail")
+    assert lineage.tables == ["shop.TABLE"]
+    assert lineage.status == "parsed"
