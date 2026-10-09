@@ -5230,6 +5230,10 @@
 <td>最大行数；只在用户明确要求 Top N、预览或其他行数限制时使用。</td>
 </tr>
 <tr>
+<td><code>params</code></td>
+<td>按名字绑定指标声明的参数（<code>get_metric</code> 的 <code>params</code> 字段列出了这些参数）。传列表时一次查询绑定多个值，每个值各返回一列：<code>{"k": [1, 7]}</code> 得到 <code>&lt;metric&gt;__k_1</code> 和 <code>&lt;metric&gt;__k_7</code>。未传的参数取默认值。</td>
+</tr>
+<tr>
 <td><code>dry_run</code></td>
 <td>返回编译后的 SQL，不执行指标查询；配置了数据仓库 dry-run 时还会校验该 SQL。</td>
 </tr>
