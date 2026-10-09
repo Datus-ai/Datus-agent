@@ -20,15 +20,19 @@ def _metric_match(graphs: list[dict], name: str):
         for node in graph.get("nodes", [])
         if node.get("kind") in {"metric_atomic", "metric_derived"} and node.get("name") == name
     ]
+
     if len(matches) != 1:
         return None
+
     return matches[0]
 
 
 def metric_tables(graphs: list[dict], name: str) -> list[str] | None:
     match = _metric_match(graphs, name)
+
     if match is None:
         return None
+
     graph, metric = match
     nodes = {n["id"]: n for n in graph["nodes"]}
     upstream: dict[str, list[str]] = {}
@@ -36,6 +40,7 @@ def metric_tables(graphs: list[dict], name: str) -> list[str] | None:
         # Joins describe available relationships, not required dependencies.
         if edge.get("kind") in {"reads_table", "aggregates", "derive_base", "window_base", "compose_member"}:
             upstream.setdefault(edge["target"], []).append(edge["source"])
+
     pending, seen, tables = [metric["id"]], set(), set()
     while pending:
         key = pending.pop()
@@ -48,6 +53,7 @@ def metric_tables(graphs: list[dict], name: str) -> list[str] | None:
         if node["kind"] == "physical_table":
             tables.add(node.get("detail", {}).get("table") or node["name"])
         pending.extend(upstream.get(key, []))
+
     return sorted(tables)
 
 
@@ -60,18 +66,21 @@ def bake_metric_snapshots(artifact_dir: Path, refs, semantic_tools, *, artifact_
     from datus.tools.func_tool.report_artifact_tools import _atomic_write_text
 
     target = artifact_dir / "analysis" / "metric_snapshots.json"
+
     try:
         files = {
             p.relative_to(artifact_dir).as_posix(): p.read_text(encoding="utf-8")
             for p in iter_artifact_files(artifact_dir, artifact_kind, queries_only=True)
         }
         revision = query_revision(files)
+
         if target.is_file():
             try:
                 if json.loads(target.read_text())["query_revision"] == revision:
                     return None
             except (ValueError, KeyError, TypeError):
                 pass
+
         graphs = []
         if refs.metrics and semantic_tools is not None:
             try:
@@ -79,6 +88,7 @@ def bake_metric_snapshots(artifact_dir: Path, refs, semantic_tools, *, artifact_
                     graphs = run_async(semantic_tools.runtime.lineage_graph())
             except Exception:
                 pass
+
         captured_at = datetime.now(timezone.utc).isoformat()
         snapshots = []
         for ref in refs.metrics:
@@ -95,6 +105,7 @@ def bake_metric_snapshots(artifact_dir: Path, refs, semantic_tools, *, artifact_
                                 detail["definition"] = match[1].get("detail", {})
                 except Exception:
                     pass
+
             tables = metric_tables(graphs, ref.name) if detail else None
             snapshots.append(
                 MetricSnapshot(
@@ -106,10 +117,12 @@ def bake_metric_snapshots(artifact_dir: Path, refs, semantic_tools, *, artifact_
                     lineage_status="resolved" if tables is not None else "unavailable",
                 ).model_dump()
             )
+
         target.parent.mkdir(parents=True, exist_ok=True)
         _atomic_write_text(
             target, json.dumps({"query_revision": revision, "metrics": snapshots}, ensure_ascii=False, indent=2)
         )
     except Exception as exc:
         return f"metric snapshots unavailable: {type(exc).__name__}"
+
     return None
