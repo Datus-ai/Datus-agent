@@ -418,6 +418,7 @@ class DashboardService:
                 code = "METRIC_MODEL_CHANGED"
             else:
                 code = "METRIC_QUERY_FAILED"
+                logger.exception("Unexpected metric query execution failure", query_name=query.name)
             return Result(success=False, errorCode=code, errorMessage=str(exc))
 
     async def run_query(

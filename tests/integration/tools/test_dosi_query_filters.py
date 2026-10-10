@@ -205,8 +205,9 @@ def test_metric_artifact_uses_real_engine_and_enforced_connector(query_tool, mon
 
 
 @pytest.mark.parametrize("product", ["p2", "no_matching_product"])
+@pytest.mark.parametrize("root_model", [False, True])
 def test_standalone_published_metric_uses_frozen_model_after_studio_model_changes(
-    query_tool, monkeypatch, tmp_path, product
+    query_tool, monkeypatch, tmp_path, product, root_model
 ):
     """An artifact-only viewer has no Studio files or subject index."""
     from datus.api.models.base_models import Result
@@ -246,6 +247,8 @@ def test_standalone_published_metric_uses_frozen_model_after_studio_model_change
     )
     assert saved.success == 1, saved.error
     recipe = MetricQueryFile.model_validate_json((tools.queries_dir / "scores.metric.json").read_text(encoding="utf-8"))
+    if root_model:
+        recipe = recipe.model_copy(update={"model_path": "model.yaml"})
     meta = (tools.queries_dir / "scores.params.json").read_text(encoding="utf-8")
     direct = _rows(
         query_tool,

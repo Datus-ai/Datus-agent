@@ -103,6 +103,51 @@ def _save(env, kind="report", query=None, **kwargs):
     return tools, saved
 
 
+def test_report_metric_result_limit_counts_utf8_bytes_and_preserves_saved_files(environment, monkeypatch):
+    env = environment
+    with sqlite3.connect(env.root / "shop.sqlite") as connection:
+        connection.execute("UPDATE orders SET region = ?", ("地区" * 500,))
+    query = {"metric": REF, "dimensions": ["orders.region"]}
+    tools, saved = _save(env, query=query)
+    assert saved.success == 1, saved.error
+    before = {path.name: path.read_bytes() for path in tools.queries_dir.iterdir()}
+    result = before["sales.json"].decode("utf-8").rstrip("\n")
+    cap = (len(result) + len(result.encode("utf-8"))) // 2
+    assert len(result) < cap < len(result.encode("utf-8"))
+    monkeypatch.setattr("datus.tools.func_tool.report_artifact_tools._MAX_QUERY_BYTES", cap)
+    rejected = tools.save_metric_query(
+        name="sales", query=query, goal="Revenue by region", hypothesis="North has higher revenue"
+    )
+    assert rejected.success == 0
+    assert "5 MB" in rejected.error
+    assert {path.name: path.read_bytes() for path in tools.queries_dir.iterdir()} == before
+
+
+@pytest.mark.parametrize(
+    "source_metric, reusable",
+    [(REF, True), (None, True), ({**REF, "name": "other"}, False), ({**REF, "path": ["Other"]}, False)],
+)
+def test_insight_only_combines_matching_metric_result_identity(environment, source_metric, reusable):
+    tools, saved = _save(environment)
+    assert saved.success == 1, saved.error
+    files = {
+        path.relative_to(tools.report_dir).as_posix(): path.read_text(encoding="utf-8")
+        for path in tools.report_dir.rglob("*")
+        if path.is_file()
+    }
+    result = json.loads(files["queries/sales.json"])
+    if source_metric is None:
+        result["source"].pop("metric")
+    else:
+        result["source"]["metric"] = source_metric
+    files["queries/sales.json"] = json.dumps(result)
+    insight = build_artifact_insight(json.loads(files["manifest.json"]), files)
+    assert (insight.queries[0].metric_query is not None) == reusable
+    assert insight.queries[0].source_kind == ("metric" if reusable else "sql")
+    assert ("queries/sales.metric.json:source_mismatch" in insight.warnings) == (not reusable)
+    assert [detail.ref.model_dump() for detail in insight.metric_details] == ([REF] if reusable else [])
+
+
 @pytest.mark.parametrize(
     "dimensions, expected",
     [

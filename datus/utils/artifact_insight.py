@@ -251,7 +251,18 @@ def build_artifact_insight(manifest: dict, files: dict[str, str]) -> ArtifactIns
             template = None
 
         if metric and (
-            metric.name != name or sql is not None or (result and (result.source or {}).get("kind") != "metric")
+            metric.name != name
+            or sql is not None
+            or (
+                result
+                and (
+                    (result.source or {}).get("kind") != "metric"
+                    or (
+                        (result.source or {}).get("metric") is not None
+                        and result.source["metric"] != metric.metric.model_dump()
+                    )
+                )
+            )
         ):
             warnings.append(base + ".metric.json:source_mismatch")
             metric = None

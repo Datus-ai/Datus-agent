@@ -208,7 +208,7 @@ def execute_published_metric_query(query: MetricQueryFile, *, runtime_config, db
     with TemporaryDirectory(prefix="datus-metric-query-") as directory:
         root = Path(directory)
         model = root / query.model_path
-        model.parent.mkdir(parents=True)
+        model.parent.mkdir(parents=True, exist_ok=True)
         model.write_bytes(query.model_snapshot.encode("utf-8"))
         config = runtime_config.model_copy(
             update={
@@ -313,7 +313,7 @@ class MetricArtifactToolsMixin:
     def _save_metric_artifact(self, name, query, goal, hypothesis, caveats, params, sample_params) -> FuncToolResult:
         from datus.api.services.dashboard_service import _validate_params
         from datus.tools.func_tool._visual_artifact_helpers import upsert_manifest_after_save
-        from datus.tools.func_tool.report_artifact_tools import _atomic_write_text
+        from datus.tools.func_tool.report_artifact_tools import _MAX_QUERY_BYTES, _atomic_write_text
 
         kind = "dashboard" if params is not None else "report"
         tool_name = "save_metric_query_template" if params is not None else "save_metric_query"
@@ -352,6 +352,8 @@ class MetricArtifactToolsMixin:
             }
             if kind == "report":
                 files[f"{name}.json"] = payload.model_dump_json(indent=2)
+                if len(files[f"{name}.json"].encode("utf-8")) > _MAX_QUERY_BYTES:
+                    raise ValueError("Query result exceeds the 5 MB limit. Aggregate or lower limit before saving.")
             else:
                 meta = QueryTemplateMetaFile(
                     slug=name,
