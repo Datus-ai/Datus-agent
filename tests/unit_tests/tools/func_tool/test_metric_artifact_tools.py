@@ -331,17 +331,31 @@ def test_optional_dashboard_slicer_can_be_omitted(environment):
     assert tools._validate_metric_queries("dashboard") is None
 
 
-def test_same_metric_cannot_mix_model_revisions_within_one_artifact(environment):
+@pytest.mark.parametrize("kind", ["report", "dashboard"])
+def test_same_metric_queries_can_be_resaved_sequentially_but_mixed_revisions_fail_final_validation(environment, kind):
     env = environment
-    tools, saved = _save(env)
+    kwargs = {"params": [], "sample_params": {}} if kind == "dashboard" else {}
+    tools, saved = _save(env, kind, **kwargs)
     assert saved.success == 1, saved.error
-    env.model.write_text("version: '0.2.0.dev0'\nsemantic_model: []\n# changed\n", encoding="utf-8")
-    next_query = tools.save_metric_query(
-        name="next_sales",
+    save = tools.save_metric_query_template if kind == "dashboard" else tools.save_metric_query
+    args = dict(
         query={"metric": REF},
         goal="Next sales",
         hypothesis="Revenue changes",
+        **kwargs,
     )
-    assert next_query.success == 0
-    assert "cannot mix model revisions" in next_query.error
-    assert not (tools.queries_dir / "next_sales.metric.json").exists()
+    second = save(name="next_sales", **args)
+    assert second.success == 1, second.error
+    assert tools._validate_metric_queries(kind) is None
+    env.model.write_text("version: '0.2.0.dev0'\nsemantic_model: []\n# changed\n", encoding="utf-8")
+    first_update = save(name="sales", **args)
+    assert first_update.success == 1, first_update.error
+    assert "cannot mix model revisions" in tools._validate_metric_queries(kind)
+    second_update = save(name="next_sales", **args)
+    assert second_update.success == 1, second_update.error
+    assert tools._validate_metric_queries(kind) is None
+    recipes = [
+        MetricQueryFile.model_validate_json(path.read_text(encoding="utf-8"))
+        for path in tools.queries_dir.glob("*.metric.json")
+    ]
+    assert len({recipe.model_revision for recipe in recipes}) == 1

@@ -204,7 +204,10 @@ def test_metric_artifact_uses_real_engine_and_enforced_connector(query_tool, mon
     assert recipe["metric_tables"] == ["main.activity_scores"]
 
 
-def test_standalone_published_metric_uses_frozen_model_after_studio_model_changes(query_tool, monkeypatch, tmp_path):
+@pytest.mark.parametrize("product", ["p2", "no_matching_product"])
+def test_standalone_published_metric_uses_frozen_model_after_studio_model_changes(
+    query_tool, monkeypatch, tmp_path, product
+):
     """An artifact-only viewer has no Studio files or subject index."""
     from datus.api.models.base_models import Result
     from datus.api.services.dashboard_service import DashboardService
@@ -249,7 +252,7 @@ def test_standalone_published_metric_uses_frozen_model_after_studio_model_change
         query_tool.query_metrics(
             metrics=["score_total"],
             dimensions=["scores.product"],
-            where="scores.product = 'p2'",
+            where=f"scores.product = '{product}'",
         ),
     )
     Path(query_tool.runtime.artifact_metric_binding("score_total")["model_path"]).unlink()
@@ -280,7 +283,7 @@ def test_standalone_published_metric_uses_frozen_model_after_studio_model_change
                 project_files_root=Path(viewer.project_root),
                 dashboard_slug="published_scores",
                 query_slug="scores",
-                params={"product": "p2"},
+                params={"product": product},
                 published_version=3,
                 published_template_loader=loader,
             )
@@ -288,4 +291,51 @@ def test_standalone_published_metric_uses_frozen_model_after_studio_model_change
     assert result.success is True, result.errorMessage
     assert result.data.rows == [{"product": row["product"], "score_total": float(row["score_total"])} for row in direct]
     assert result.data.source == {"kind": "metric", "metric": ref}
+    assert [column.name for column in result.data.columns] == ["product", "score_total"]
+    assert result.data.row_count == len(direct)
     assert recipe.model_snapshot == MODEL_PATH.read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize("dimensions", [["scores.product"], PRODUCT_ITEM])
+def test_metric_artifact_preserves_native_projection_when_no_rows_match(query_tool, monkeypatch, dimensions):
+    """An empty result retains the exact grouped projection from the real engine."""
+    import json
+
+    ref = {"path": ["Scores"], "name": "score_total"}
+    monkeypatch.setattr(
+        query_tool,
+        "get_metric",
+        lambda **kwargs: FuncToolResult(
+            success=1, result={**ref, "dimensions": [{"name": item} for item in PRODUCT_ITEM]}
+        ),
+    )
+    native = query_tool.query_metrics(
+        metrics=[ref["name"]], dimensions=dimensions, where="scores.product = 'no_matching_product'"
+    )
+    assert native.success == 1, native.error
+    native_page = query_tool.get_query_metrics_result(native.result["result_id"])
+    assert native_page.success == 1, native_page.error
+    native_rows = csv.DictReader(io.StringIO(native_page.result["csv"]))
+    assert list(native_rows) == []
+    tools = ReportArtifactTools(
+        agent_config=query_tool.agent_config,
+        db_func_tool=DBFuncTool(agent_config=query_tool.agent_config),
+        semantic_tools=query_tool,
+    )
+    assert tools.start_new_report("empty_scores", "Scores", "Empty native result").success == 1
+    saved = tools.save_metric_query(
+        name="scores",
+        query={
+            "metric": ref,
+            "dimensions": dimensions,
+            "filters": [{"dimension": "scores.product", "value": "no_matching_product"}],
+        },
+        goal="Scores for an absent product",
+        hypothesis="An unmatched filter returns an empty result",
+    )
+    assert saved.success == 1, saved.error
+    actual = json.loads((tools.queries_dir / "scores.json").read_text(encoding="utf-8"))
+    assert actual["rows"] == []
+    assert actual["row_count"] == 0
+    assert [column["name"] for column in actual["columns"]] == native_rows.fieldnames
+    assert tools._validate_metric_queries("report") is None

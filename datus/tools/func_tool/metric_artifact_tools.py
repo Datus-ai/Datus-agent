@@ -149,25 +149,24 @@ def execute_metric_artifact_query(
     if oversize is not None:
         raise ValueError(oversize.error)
     result = db_tool.execute_read_enforced(
-        sql, connector, datasource=datasource, result_format="list", policy_context=policy_context
+        sql, connector, datasource=datasource, result_format="arrow", policy_context=policy_context
     )
     if not result.success:
         if getattr(result, "error_code", None) == ErrorCode.POLICY_DENIED.code:
             raise DatusException(ErrorCode.POLICY_DENIED, result.error)
         raise ValueError(result.error or "metric query execution failed")
-    raw_rows = result.sql_return or []
+    # Arrow retains every projected column even when no rows match. Compiler
+    # outputs describe metric aliases, not the complete grouped projection.
+    table = result.sql_return
+    if not hasattr(table, "column_names") or not hasattr(table, "to_pylist"):
+        raise ValueError("metric execution must return an Arrow result with projection columns")
+    names = list(table.column_names)
+    raw_rows = table.to_pylist()
     if not isinstance(raw_rows, list) or any(not isinstance(row, dict) for row in raw_rows):
         raise ValueError("metric execution must return complete dictionary rows")
     if len(raw_rows) > query.limit:
         raise ValueError("metric execution exceeded the saved row limit")
     rows = [{key: _normalize_value(value) for key, value in row.items()} for row in raw_rows]
-    names = (
-        list(rows[0])
-        if rows
-        else [
-            item["name"] for item in compiled.metadata.get("outputs", []) if isinstance(item, dict) and item.get("name")
-        ]
-    )
     if not names:
         raise ValueError("metric engine returned no output columns")
     columns = [
@@ -236,8 +235,15 @@ class MetricArtifactToolsMixin:
     def _validate_metric_queries(self, kind: str) -> str | None:
         """Check complete tool-produced bundles before declaring render success."""
         try:
+            metric_revisions: dict[tuple[tuple[str, ...], str], str] = {}
             for path in self.queries_dir.glob("*.metric.json"):
                 saved = MetricQueryFile.model_validate_json(path.read_text(encoding="utf-8"))
+                identity = (tuple(saved.metric.path), saved.metric.name)
+                previous_revision = metric_revisions.setdefault(identity, saved.model_revision)
+                if previous_revision != saved.model_revision:
+                    raise ValueError(
+                        "one artifact cannot mix model revisions of the same metric; resave all its queries"
+                    )
                 name = path.name.removesuffix(".metric.json")
                 if saved.name != name or any(
                     (self.queries_dir / f"{name}{suffix}").exists() for suffix in (".sql", ".sql.j2")
@@ -340,15 +346,6 @@ class MetricArtifactToolsMixin:
                 params=values,
             )
             saved = MetricQueryFile(**request.model_dump(), name=name, goal=goal.strip(), **binding)
-            for sibling in self.queries_dir.glob("*.metric.json"):
-                if sibling.name == f"{name}.metric.json":
-                    continue
-                previous = MetricQueryFile.model_validate_json(sibling.read_text(encoding="utf-8"))
-                if previous.metric == saved.metric and previous.model_revision != saved.model_revision:
-                    raise ValueError(
-                        "one artifact cannot mix model revisions of the same metric; resave all its queries"
-                    )
-
             files = {
                 f"{name}.metric.json": saved.model_dump_json(indent=2),
                 f"{name}.brief.json": json.dumps(brief.model_dump(exclude_none=True), ensure_ascii=False, indent=2),
