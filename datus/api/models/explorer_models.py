@@ -127,6 +127,7 @@ class MetricInfo(BaseModel):
 
     name: str = Field(..., description="Metric name")
     yaml: str = Field(..., description="Metric YAML content")
+    semantic_model_file: Optional[str] = Field(None, description="Project-relative source model for Studio editing")
 
 
 class EditMetricInput(BaseModel):

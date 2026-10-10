@@ -1349,3 +1349,35 @@ class TestSchemaOnlyDialectCatalog:
             infos = svc._get_connection_info(connector, "pg_ds", ListDatabasesInput())
 
         assert [(i.name, i.schema_name) for i in infos] == [("shop", "public")]
+
+
+@pytest.mark.asyncio
+async def test_prepare_rejects_other_datasource_without_mutating_file(tmp_path):
+    from datus.api.models.table_models import PrepareMetricDefinitionsInput
+
+    target, selector = _write_model(tmp_path, _osi_yaml(), datasource="other")
+    before = target.read_bytes()
+    result = await _service(models_root=tmp_path).prepare_metric_definitions(
+        PrepareMetricDefinitionsInput(semantic_model_file=selector, yaml=_osi_yaml(), changed_metrics=[])
+    )
+    assert result.success is False
+    assert "switch the active datasource" in result.errorMessage
+    assert target.read_bytes() == before
+
+
+@pytest.mark.asyncio
+async def test_prepare_returns_native_diagnostics_without_writing(tmp_path):
+    from datus.api.models.table_models import PrepareMetricDefinitionsInput
+
+    target, selector = _write_model(tmp_path, _osi_yaml())
+    before = target.read_bytes()
+    result = await _service(models_root=tmp_path).prepare_metric_definitions(
+        PrepareMetricDefinitionsInput(
+            semantic_model_file=selector, yaml=_osi_yaml(metric_name="bad"), changed_metrics=["bad"]
+        )
+    )
+    assert result.success is True
+    assert result.data.valid is False
+    assert result.data.patches == []
+    assert result.data.validation["issues"]
+    assert target.read_bytes() == before
