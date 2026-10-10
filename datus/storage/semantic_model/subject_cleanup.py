@@ -45,6 +45,10 @@ def finish_cleanup(config: "AgentConfig", datasource: str, yaml_path: str, nodes
     if not nodes:
         return
     stores = _DatasourceStores(config, datasource)
+    # Persist the whole chain before deleting its leaves. Once a leaf is gone,
+    # its parent cannot be discovered from that leaf on a retry.
+    ancestors = {ancestor["node_id"] for node_id in nodes for ancestor in stores.tree.get_ancestors(node_id)}
+    nodes = remember_cleanup(config, datasource, yaml_path, nodes | ancestors)
     stores.remove_emptied_nodes(nodes)
     path = _path(config)
     with _exclusive(path):

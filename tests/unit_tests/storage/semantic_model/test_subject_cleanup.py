@@ -22,3 +22,38 @@ def test_retry_retains_old_nodes_after_cleanup_failure(tmp_path):
         finish_cleanup(config, "warehouse", "model.yml", retry)
         stores.return_value.remove_emptied_nodes.assert_called_once_with({11, 12, 15})
     assert remember_cleanup(config, "warehouse", "model.yml", []) == set()
+
+
+@pytest.mark.parametrize("failed_depth", [1, 2])
+def test_retry_finishes_ancestors_after_partial_deletion(real_agent_config, failed_depth):
+    from datus.storage.semantic_model.reconcile import _DatasourceStores
+
+    config = real_agent_config
+    datasource = config.current_datasource
+    stores = _DatasourceStores(config, datasource)
+    tree = stores.tree
+    path = ["old", "orders", "metrics"]
+    leaf = tree.find_or_create_path(path)
+    manual = tree.find_or_create_path(["manual"])
+    failed_node = tree.get_node_by_path(path[:failed_depth])["node_id"]
+    nodes = remember_cleanup(config, datasource, "model.yml", {leaf})
+    delete_node = tree.delete_node
+
+    def fail_ancestor(node_id, **kwargs):
+        if node_id == failed_node:
+            raise RuntimeError("ancestor deletion failed")
+        return delete_node(node_id, **kwargs)
+
+    with patch("datus.storage.semantic_model.reconcile._DatasourceStores", return_value=stores):
+        with patch.object(tree, "delete_node", side_effect=fail_ancestor):
+            with pytest.raises(RuntimeError, match="ancestor deletion failed"):
+                finish_cleanup(config, datasource, "model.yml", nodes)
+        assert tree.get_node(leaf) is None
+        assert tree.get_full_path(failed_node) == path[:failed_depth]
+
+        retry = remember_cleanup(config, datasource, "model.yml", [])
+        finish_cleanup(config, datasource, "model.yml", retry)
+
+    assert tree.get_node_by_path(["old"]) is None
+    assert tree.get_full_path(manual) == ["manual"]
+    assert remember_cleanup(config, datasource, "model.yml", []) == set()
