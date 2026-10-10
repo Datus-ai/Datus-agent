@@ -1091,7 +1091,7 @@ class DashboardArtifactTools(MetricArtifactToolsMixin):
                     success=0,
                     error=f"queries/{meta_path.name} is corrupt or off-spec: {exc}",
                 )
-            # Make sure the .sql.j2 sibling exists.
+            # Require exactly one SQL or metric sibling source.
             sql_exists = (self.queries_dir / f"{slug}.sql.j2").is_file()
             metric_path = self.queries_dir / f"{slug}.metric.json"
             if metric_path.is_file():
@@ -1110,7 +1110,10 @@ class DashboardArtifactTools(MetricArtifactToolsMixin):
             if not sql_exists and not metric_path.is_file():
                 return FuncToolResult(
                     success=0,
-                    error=f"queries/{slug}.params.json has no sibling {slug}.sql.j2 — re-run save_query_template.",
+                    error=(
+                        f"queries/{slug}.params.json has no sibling {slug}.sql.j2 or {slug}.metric.json — "
+                        "re-run save_query_template or save_metric_query_template."
+                    ),
                 )
 
         module_keys: Set[str] = set(modules.keys())

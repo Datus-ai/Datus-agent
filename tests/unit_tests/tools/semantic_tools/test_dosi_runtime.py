@@ -10,6 +10,8 @@ from __future__ import annotations
 import os
 import sys
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -1403,3 +1405,30 @@ def test_artifact_metric_binding_pins_model_content_and_connection(make_runtime,
     model_file.write_text(model_file.read_text() + "# Updated definition snapshot\n", encoding="utf-8")
     revised = runtime.artifact_metric_binding("revenue")
     assert revised["model_revision"] != binding["model_revision"]
+
+
+def test_artifact_metric_binding_uses_one_catalog_snapshot(make_runtime, model_file, tmp_path, monkeypatch):
+    import hashlib
+
+    updated = tmp_path / "updated.yaml"
+    updated.write_text("# A later registry snapshot\n", encoding="utf-8")
+    snapshots = [
+        (((str(model_file), SimpleNamespace(profile_name="original")),), {"revenue": str(model_file)}, {}),
+        (((str(updated), SimpleNamespace(profile_name="updated")),), {"revenue": str(updated)}, {}),
+    ]
+    runtime = make_runtime()
+    catalog = MagicMock(side_effect=snapshots)
+    monkeypatch.setattr(runtime, "_catalog", catalog)
+    assert runtime.artifact_metric_binding("revenue") == {
+        "model_path": str(model_file),
+        "model_revision": hashlib.sha256(model_file.read_bytes()).hexdigest(),
+        "datasource": "original",
+    }
+    catalog.assert_called_once()
+
+
+def test_artifact_metric_binding_unknown_metric_preserves_validation_error(make_runtime):
+    with pytest.raises(SemanticValidationException) as exc:
+        make_runtime().artifact_metric_binding("unknown")
+    assert exc.value.payload.code == "unknown_metric"
+    assert exc.value.payload.metrics == ["unknown"]

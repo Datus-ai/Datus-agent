@@ -176,6 +176,18 @@ async def test_load_local_template_pair_missing_returns_template_not_found(tmp_p
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("metric_json, message", [("{", "Invalid JSON"), ("{}", "Field required")])
+async def test_load_local_corrupt_metric_returns_template_corrupt(tmp_path, metric_json, message):
+    dashboard = _write_dashboard(tmp_path)
+    (dashboard / "queries/by_region.sql.j2").unlink()
+    (dashboard / "queries/by_region.metric.json").write_text(metric_json, encoding="utf-8")
+    result = await _load_local_template_pair(tmp_path, "demo", "by_region")
+    assert result.success is False
+    assert result.errorCode == "TEMPLATE_CORRUPT"
+    assert message in result.errorMessage
+
+
+@pytest.mark.asyncio
 async def test_load_local_template_pair_rejects_invalid_dashboard_slug(tmp_path: Path):
     # Slug with traversal / invalid chars — fails the slug regex guard.
     result = await _load_local_template_pair(tmp_path, "../escape", "by_region")

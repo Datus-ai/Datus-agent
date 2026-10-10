@@ -351,8 +351,17 @@ class DosiRuntime:
         pins datasets, relationships and derived members as well as the metric.
         """
         handles, metric_to_path, _ = self._catalog()
-        handle = self._handle_for_metric(metric_name)
-        path = metric_to_path[metric_name]
+        path = metric_to_path.get(metric_name)
+        if path is None:
+            candidates = ", ".join(sorted(metric_to_path))
+            raise SemanticValidationException(
+                SemanticValidationError(
+                    code="unknown_metric",
+                    metrics=[metric_name],
+                    message=(f"unknown metric {metric_name!r} | candidates: {candidates or '(none)'}"),
+                )
+            )
+        handle = dict(handles)[path]
         return {
             "model_path": path,
             "model_revision": hashlib.sha256(Path(path).read_bytes()).hexdigest(),

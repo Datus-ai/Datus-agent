@@ -202,7 +202,11 @@ async def _load_local_template_pair(
             for path in (metric_path, meta_path):
                 if not path.resolve().is_relative_to(dashboard_dir):
                     raise ValueError("metric query sidecar escapes the dashboard directory")
-            sql_template = MetricQueryFile.model_validate_json(await asyncio.to_thread(metric_path.read_text, "utf-8"))
+            metric_text = await asyncio.to_thread(metric_path.read_text, "utf-8")
+            try:
+                sql_template = MetricQueryFile.model_validate_json(metric_text)
+            except ValueError as exc:
+                return Result(success=False, errorCode="TEMPLATE_CORRUPT", errorMessage=str(exc))
         else:
             sql_template = await asyncio.to_thread(sql_path.read_text, "utf-8")
         meta_text = await asyncio.to_thread(meta_path.read_text, "utf-8")

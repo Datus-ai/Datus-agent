@@ -341,4 +341,8 @@ def test_metric_artifact_preserves_native_projection_when_no_rows_match(query_to
     assert actual["rows"] == []
     assert actual["row_count"] == 0
     assert [column["name"] for column in actual["columns"]] == native_rows.fieldnames
+    assert {column["name"]: column["type"] for column in actual["columns"]} == {
+        **{item.removeprefix("scores."): "string" for item in dimensions},
+        "score_total": "number",
+    }
     assert tools._validate_metric_queries("report") is None

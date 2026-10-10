@@ -8,6 +8,7 @@ import sqlite3
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
+import pyarrow as pa
 import pytest
 
 from datus.api.services.dashboard_service import DashboardService, _load_local_template_pair
@@ -101,6 +102,31 @@ def _save(env, kind="report", query=None, **kwargs):
         **kwargs,
     )
     return tools, saved
+
+
+@pytest.mark.parametrize("kind", ["report", "dashboard"])
+@pytest.mark.parametrize(
+    "arrow_type, expected",
+    [
+        (pa.int64(), "integer"),
+        (pa.float64(), "number"),
+        (pa.decimal128(12, 2), "number"),
+        (pa.bool_(), "boolean"),
+        (pa.date32(), "date"),
+        (pa.timestamp("us"), "date"),
+        (pa.string(), "string"),
+    ],
+)
+def test_empty_metric_result_preserves_arrow_column_types(environment, kind, arrow_type, expected):
+    table = pa.Table.from_batches([], schema=pa.schema([("region", pa.string()), ("revenue", arrow_type)]))
+    environment.db.execute_read_enforced.return_value = SimpleNamespace(success=True, sql_return=table)
+    options = {"params": [], "sample_params": {}} if kind == "dashboard" else {}
+    tools, saved = _save(environment, kind, query={"metric": REF, "dimensions": ["orders.region"]}, **options)
+    assert saved.success == 1, saved.error
+    suffix = ".params.json" if kind == "dashboard" else ".json"
+    actual = json.loads((tools.queries_dir / f"sales{suffix}").read_text(encoding="utf-8"))
+    assert actual["columns"] == [{"name": "region", "type": "string"}, {"name": "revenue", "type": expected}]
+    assert actual.get("sample_row_count", actual.get("row_count")) == 0
 
 
 def test_report_metric_result_limit_counts_utf8_bytes_and_preserves_saved_files(environment, monkeypatch):

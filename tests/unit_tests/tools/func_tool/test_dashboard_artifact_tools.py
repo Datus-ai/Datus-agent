@@ -755,6 +755,17 @@ export default function App() {
 
 
 class TestValidateRender:
+    def test_missing_source_names_both_query_types_and_save_operations(self, dashboard_tools, project_root):
+        _seed_template(dashboard_tools)
+        (dashboard_tools.queries_dir / "revenue_by_region.sql.j2").unlink()
+        _write_render(project_root, dashboard_tools.dashboard_slug, {"app.jsx": _VALID_APP_JSX})
+        result = dashboard_tools.validate_render()
+        assert result.success == 0
+        assert "revenue_by_region.sql.j2" in result.error
+        assert "revenue_by_region.metric.json" in result.error
+        assert "save_query_template" in result.error
+        assert "save_metric_query_template" in result.error
+
     def test_happy_path(self, dashboard_tools: DashboardArtifactTools, project_root: Path):
         _seed_template(dashboard_tools)
         _write_render(project_root, dashboard_tools.dashboard_slug, {"app.jsx": _VALID_APP_JSX})

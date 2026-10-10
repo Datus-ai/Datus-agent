@@ -10,13 +10,28 @@ import math
 from pathlib import Path
 from typing import Any
 
+import pyarrow as pa
+
 from datus.schemas.analysis_artifacts import QueryBrief, SubjectRefs
 from datus.schemas.gen_visual_dashboard_models import QueryTemplateMetaFile, TemplateParamDecl
-from datus.schemas.gen_visual_report_models import QueryColumnMeta, QueryResultFile
+from datus.schemas.gen_visual_report_models import ColumnSemanticType, QueryColumnMeta, QueryResultFile
 from datus.schemas.metric_artifact_query import MetricQueryFile, MetricQueryRequest, ParamRef
 from datus.tools.func_tool.base import FuncToolResult
 from datus.utils.async_utils import run_async
 from datus.utils.exceptions import DatusException, ErrorCode
+
+
+def _arrow_column_type(dtype: pa.DataType) -> ColumnSemanticType:
+    """Keep the projected semantic type when no values are available."""
+    if pa.types.is_boolean(dtype):
+        return "boolean"
+    if pa.types.is_integer(dtype):
+        return "integer"
+    if pa.types.is_floating(dtype) or pa.types.is_decimal(dtype):
+        return "number"
+    if pa.types.is_date(dtype) or pa.types.is_timestamp(dtype):
+        return "date"
+    return "string"
 
 
 def _bound(value: Any, params: dict[str, Any]) -> Any:
@@ -170,7 +185,15 @@ def execute_metric_artifact_query(
     if not names:
         raise ValueError("metric engine returned no output columns")
     columns = [
-        QueryColumnMeta(name=name, type=_infer_column_type([row.get(name) for row in rows[:200]])) for name in names
+        QueryColumnMeta(
+            name=name,
+            type=(
+                _infer_column_type([row.get(name) for row in rows[:200]])
+                if rows
+                else _arrow_column_type(table.schema.field(index).type)
+            ),
+        )
+        for index, name in enumerate(names)
     ]
     from datus.tools.func_tool._visual_artifact_helpers import utc_now_iso
 
