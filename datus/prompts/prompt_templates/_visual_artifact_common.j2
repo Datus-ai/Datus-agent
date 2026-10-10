@@ -139,7 +139,8 @@ The four sections are not optional ordering — they are the only ordering React
 | Prop | Required | Notes |
 |---|---|---|
 | `chartId` | yes | Stable id, unique across `render/*.jsx`. Convention: matches the sqlId basename (`queries/revenue_by_month` → `chartId="revenue_by_month"`). Must match `^[a-z0-9_]{1,64}$`. |
-| `sqlId` | yes | Same literal you passed to `useQuerySql`, in `queries/<slug>` form. ChartCard forwards it to the inner chart-actions menu for View SQL / Export. |
+| `sqlId` | yes | Primary query, in `queries/<slug>` form. ChartCard forwards it to the inner chart-actions menu for View SQL / Export. Keep this prop even when the card uses multiple queries. |
+| `queryIds` | when multiple queries contribute | Literal array of all saved query references contributing to this card, including inputs to calculated values, comparison badges, ratios, and annotations. The runtime combines it with the primary `sqlId`, deduplicating references. |
 | `chartType` | yes | One of: `'bar' \| 'line' \| 'area' \| 'pie' \| 'scatter' \| 'radar' \| 'composed' \| 'radial-bar' \| 'treemap' \| 'funnel' \| 'gauge' \| 'heatmap' \| 'waterfall' \| 'table' \| 'kpi' \| 'custom'`. Picks the value that matches the chart primitive you render below. The first seven map directly to recharts components (`BarChart`, `LineChart`, `AreaChart`, `PieChart`, `ScatterChart`, `RadarChart`, `ComposedChart`); `radial-bar` / `treemap` / `funnel` are also recharts-native (`RadialBarChart`, `Treemap`, `FunnelChart`). `gauge` / `heatmap` / `waterfall` aren't recharts-native — render them via hand-rolled SVG (or a `radial-bar` subset for gauges); the enum value is still preferred over `'custom'` because it carries intent that the edit-time LLM uses. Use `'custom'` only for shapes that don't match any of the named entries. Surfaced to ``validate_render`` only — it is **not** included in the targeted-edit envelope; the LLM reads the JSX before editing anyway. |
 | `data` | recommended | The `data` field from the matching `useQuerySql(sqlId, params)`. Required if the chart-actions menu needs to expose View SQL / Export CSV / Export JSON; PNG export still works without it. |
 | `params` | recommended in dashboard mode | The same params object you passed to `useQuerySql`. ChartCard does not consume it — it gets snapshotted into the edit-intent payload so the follow-up LLM call sees the filter state the user was looking at. |
@@ -149,6 +150,24 @@ The four sections are not optional ordering — they are the only ordering React
 | `style` / `className` | optional | Standard passthroughs. |
 
 **Do not pass `__sourcePath`.** It is auto-injected by the artifact runtime at module-load time; any value you set is overwritten.
+
+### Declare every block's query sources
+
+For a card combining multiple query results, keep `sqlId` as its primary query and declare **every actual contributing query** in a literal `queryIds` array. This links the content block to each source in Scope & Sources; it does not fetch data, join results, or change the existing primary-query export menu. Both SQL and metric-backed saved queries use the same `queries/<slug>` reference.
+
+```jsx
+<ChartCard chartId="cost_trend" sqlId="queries/monthly_contribution" chartType="composed"
+  queryIds={["queries/monthly_contribution", "queries/monthly_supply_cost", "queries/monthly_margin"]}
+  title="Monthly costs" data={contributionData}>
+  {/* Chart combining all three query results */}
+</ChartCard>
+<BlockHandle handleId="kpi_total_supply_cost" name="Total supply cost" kind="kpi"
+  sqlId="queries/monthly_supply_cost">
+  <KpiVisual value={totalSupplyCost} />
+</BlockHandle>
+```
+
+Use literal `chartId` / `handleId` and literal query references on these declarations. Do not put all different-query KPI declarations solely in a `.map()` with dynamic `handleId={item.id}` / `sqlId={item.query}`; the static graph cannot determine their sources. Dynamic prop forwarding in existing shared wrappers remains supported at runtime, but yields partial static attribution. Do not attach unused queries just to make the graph look connected.
 
 ### Block handles for non-chart blocks
 
@@ -160,17 +179,18 @@ While an artifact is being authored, its creator needs a way to point at any blo
 
 **Wrap each of these in its own `BlockHandle`:**
 
-- **Every KPI tile, individually.** A KPI strip is 4–6 tiles fed by ONE query — it is *not* 4–6 ChartCards (that would stack six card headers and six action menus into a row meant to read as one line of numbers). One handle per tile, because the user wants to change one number, not the whole row.
+- **Every KPI tile, individually.** A KPI strip is 4–6 tiles fed by one or more queries — it is *not* 4–6 ChartCards (that would stack six card headers and six action menus into a row meant to read as one line of numbers). One handle per tile, because the user wants to change one number, not the whole row.
 - **Every insight / key-finding / callout panel** — the highlight boxes summarising what the data says.
 - **The filter strip** — one handle for the strip as a whole.
 
-The runtime does **not** ship a KPI-card component: own that visual in `render/shared/kpi-card.jsx` so it stays yours to restyle. Put the `BlockHandle` inside that shared component and every tile gets a handle for free.
+The runtime does **not** ship a KPI-card component: own that visual in `render/shared/kpi-card.jsx` so it stays yours to restyle. For a single-query strip, the shared component may forward its handle props. For tiles using different queries, put explicit `BlockHandle` declarations with literal ids and query references at the call site, wrapping the shared visual; forwarded ids cannot be statically linked in the source graph.
 
 | Prop | Required | Notes |
 |---|---|---|
 | `handleId` | yes | Stable id, **globally unique across the whole render tree and sharing one namespace with `chartId`** (both land in the same field of the edit payload). Must match `^[a-z0-9_]{1,64}$`. Prefix by role so it reads as its own label: `kpi_total_revenue`, `insight_panel`, `filter_strip`. |
 | `name` | yes | Human-readable label shown verbatim on the chat chip. Write what the user calls the thing ("Total revenue", "总营收") — never the id. |
 | `kind` | recommended | `'kpi'` for single-value tiles, `'note'` for insight / callout copy, `'filter'` for filter chrome. Defaults to `'note'`. |
+| `queryIds` | when multiple queries contribute | Same declaration as ChartCard. May also be used without `sqlId` for blocks that have no single primary query. |
 | `sqlId` | when query-backed | `'queries/<slug>'`, same literal you passed to `useQuerySql`. Omit entirely for a static block (a hand-written callout, the filter strip) — the follow-up turn then edits from the JSX alone. |
 | `params` | dashboard mode, when query-backed | Same params object as the query; snapshotted into the payload so the follow-up turn sees the filter state the user was looking at. |
 | `placement` | optional | `'top-right'` (default) or `'top-left'`. Switch to `'top-left'` when the block's top-right corner already holds something (a period badge, a status pill). |
@@ -178,9 +198,9 @@ The runtime does **not** ship a KPI-card component: own that visual in `render/s
 
 **Do not pass `__sourcePath`** here either — same auto-injection rule as ChartCard.
 
-**`BlockHandle` carries no View SQL / Export menu, on purpose.** Granularity is the reason: a KPI strip is N tiles over ONE query, so what the handle carries is per-tile (change *this* number, ask about *this* number) while the SQL is per-strip — N menus would all open the identical statement.
+**`BlockHandle` carries no View SQL / Export menu, on purpose.** Granularity is the reason: a single-query KPI strip is N tiles over ONE query, so what the handle carries is per-tile (change *this* number, ask about *this* number) while the SQL is per-strip — N menus would all open the identical statement.
 
-So when a wrapped block is query-backed, render a standalone `<ChartEntryMore sqlId={...} data={data} />` yourself, **at the granularity the query actually has** — once per strip, not once per tile — and mark that container with `data-datus-chart-card` so the menu's PNG export can find its capture root. Without a menu somewhere, a KPI strip's query is unreachable from the UI entirely: dashboards render their queries live, so the `.sql.j2` files are never shipped to the viewer.
+For a **single-query KPI strip**, render a standalone `<ChartEntryMore sqlId={...} data={data} />` yourself — **once per strip, not once per tile** — and mark that container with `data-datus-chart-card` so the menu's PNG export can find its capture root. For a **multi-query KPI strip**, omit the strip-level menu: it would expose only one query. Instead, declare literal block ids and query references on each `BlockHandle` (`sqlId` for a single source, `queryIds={[...]}` when several sources contribute), and use Scope & Sources to review the declared queries.
 
 ```jsx
 // render/shared/kpi-card.jsx — the KPI visual is yours, the handle comes
