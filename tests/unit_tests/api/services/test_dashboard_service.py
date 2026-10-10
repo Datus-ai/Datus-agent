@@ -21,7 +21,8 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from unittest.mock import MagicMock
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -53,6 +54,39 @@ _SAMPLE_MANIFEST = {
     "created_at": "2026-05-20T00:00:00Z",
 }
 _SAMPLE_APP_JSX = "import React from 'react';\nexport default function App() { return null; }\n"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "message, policy_code, expected_code",
+    [
+        ("connector failed", None, "METRIC_QUERY_FAILED"),
+        ("compiler failed", None, "METRIC_QUERY_FAILED"),
+        ("METRIC_MODEL_SNAPSHOT_MISSING", None, "METRIC_MODEL_SNAPSHOT_MISSING"),
+        ("METRIC_MODEL_CHANGED", None, "METRIC_MODEL_CHANGED"),
+        ("read denied", ErrorCode.POLICY_DENIED, "POLICY_DENIED"),
+    ],
+)
+async def test_metric_failure_logs_traceback_only_for_unexpected_errors(
+    monkeypatch, message, policy_code, expected_code
+):
+    from datus.api.services import dashboard_service
+
+    error = ValueError(message)
+    error.code = policy_code
+    monkeypatch.setattr(dashboard_service.asyncio, "to_thread", AsyncMock(side_effect=error))
+    logger = MagicMock()
+    monkeypatch.setattr(dashboard_service, "logger", logger)
+    query = SimpleNamespace(name="sales", datasource="warehouse", parameter_names=lambda: set())
+    meta = SimpleNamespace(slug="sales", datasource="warehouse", params=[])
+    result = await DashboardService(agent_config=MagicMock())._run_metric_query(query, meta, {}, None, None)
+    assert result.success is False
+    assert result.errorCode == expected_code
+    assert result.errorMessage == message
+    if expected_code == "METRIC_QUERY_FAILED":
+        logger.exception.assert_called_once()
+    else:
+        logger.exception.assert_not_called()
 
 
 def _write_dashboard(
@@ -139,6 +173,18 @@ async def test_load_local_template_pair_missing_returns_template_not_found(tmp_p
 
     assert result.success is False
     assert result.errorCode == "TEMPLATE_NOT_FOUND"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("metric_json, message", [("{", "Invalid JSON"), ("{}", "Field required")])
+async def test_load_local_corrupt_metric_returns_template_corrupt(tmp_path, metric_json, message):
+    dashboard = _write_dashboard(tmp_path)
+    (dashboard / "queries/by_region.sql.j2").unlink()
+    (dashboard / "queries/by_region.metric.json").write_text(metric_json, encoding="utf-8")
+    result = await _load_local_template_pair(tmp_path, "demo", "by_region")
+    assert result.success is False
+    assert result.errorCode == "TEMPLATE_CORRUPT"
+    assert message in result.errorMessage
 
 
 @pytest.mark.asyncio

@@ -14,7 +14,7 @@ ARTIFACT_DIRS = {
     },
     "dashboard": {
         "render": ((".jsx", ".js", ".css", ".json", ".md"), True),
-        "queries": ((".sql.j2", ".params.json", ".brief.json"), False),
+        "queries": ((".sql.j2", ".params.json", ".brief.json", ".metric.json"), False),
         "analysis": ((".md", ".json"), False),
     },
 }

@@ -344,6 +344,30 @@ class DosiRuntime:
             graphs.append(await asyncio.to_thread(lineage, redact_sql=redact_sql))
         return graphs
 
+    def artifact_metric_binding(self, metric_name: str) -> dict[str, str]:
+        """Resolve an artifact's metric to its complete model and connection.
+
+        Model names remain unique within a datasource. The full document hash
+        pins datasets, relationships and derived members as well as the metric.
+        """
+        handles, metric_to_path, _ = self._catalog()
+        path = metric_to_path.get(metric_name)
+        if path is None:
+            candidates = ", ".join(sorted(metric_to_path))
+            raise SemanticValidationException(
+                SemanticValidationError(
+                    code="unknown_metric",
+                    metrics=[metric_name],
+                    message=(f"unknown metric {metric_name!r} | candidates: {candidates or '(none)'}"),
+                )
+            )
+        handle = dict(handles)[path]
+        return {
+            "model_path": path,
+            "model_revision": hashlib.sha256(Path(path).read_bytes()).hexdigest(),
+            "datasource": self.datasource or handle.profile_name or "default",
+        }
+
     async def query_metrics(
         self,
         metrics: List[str],

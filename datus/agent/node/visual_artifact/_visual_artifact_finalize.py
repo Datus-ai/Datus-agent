@@ -339,7 +339,11 @@ def collect_query_previews(queries_dir: Path, *, max_rows: int = 5) -> List[Dict
     previews: List[Dict[str, Any]] = []
     if not queries_dir.is_dir():
         return previews
-    for sql_path in sorted(queries_dir.glob("*.sql")) + sorted(queries_dir.glob("*.sql.j2")):
+    for sql_path in (
+        sorted(queries_dir.glob("*.sql"))
+        + sorted(queries_dir.glob("*.sql.j2"))
+        + sorted(queries_dir.glob("*.metric.json"))
+    ):
         # ``foo.sql.j2`` → slug ``foo``; ``foo.sql`` → slug ``foo``.
         slug = sql_path.name.split(".", 1)[0]
         # Report result file shape.
@@ -695,6 +699,14 @@ def aggregate_referenced_tables(queries_dir: Path) -> List[str]:
             logger.warning("Failed to read %s for key_tables aggregation: %s", tpl_path, exc)
             continue
         tables.update(_extract_tables_from_one_sql(text))
+    from datus.schemas.metric_artifact_query import MetricQueryFile
+
+    for metric_path in sorted(queries_dir.glob("*.metric.json")):
+        try:
+            metric = MetricQueryFile.model_validate_json(metric_path.read_text(encoding="utf-8"))
+            tables.update(metric.metric_tables)
+        except (OSError, ValueError) as exc:
+            logger.warning("Cannot read metric source %s: %s", metric_path, exc)
     return _dedupe_table_references(tables)
 
 

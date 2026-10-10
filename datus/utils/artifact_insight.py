@@ -28,6 +28,7 @@ from datus.schemas.artifact_manifest import ArtifactManifest
 from datus.schemas.gen_visual_dashboard_models import QueryTemplateMetaFile
 from datus.schemas.gen_visual_report_models import QueryResultFile, extract_query_slug
 from datus.schemas.key_tables_schema import KeyTablesSchemaFile
+from datus.schemas.metric_artifact_query import MetricQueryFile
 
 
 def artifact_revision(manifest: dict, files: dict[str, str]) -> str:
@@ -223,7 +224,7 @@ def build_artifact_insight(manifest: dict, files: dict[str, str]) -> ArtifactIns
     for path in files:
         if path.startswith("queries/") and path.endswith(".json"):
             name = path[len("queries/") : -len(".json")]
-            for ending in (".brief", ".params"):
+            for ending in (".brief", ".params", ".metric"):
                 name = name.removesuffix(ending)
             names.add(name)
 
@@ -233,6 +234,7 @@ def build_artifact_insight(manifest: dict, files: dict[str, str]) -> ArtifactIns
 
         base = f"queries/{name}"
         sql = files.get(base + suffix)
+        metric = _read(files, base + ".metric.json", MetricQueryFile, warnings)
         brief = _read(files, base + ".brief.json", QueryBrief, warnings)
         template = (
             _read(files, base + ".params.json", QueryTemplateMetaFile, warnings)
@@ -248,19 +250,51 @@ def build_artifact_insight(manifest: dict, files: dict[str, str]) -> ArtifactIns
             warnings.append(base + ".params.json")
             template = None
 
-        goal = (
-            template.description if template else (sql.splitlines()[0][3:] if sql and sql.startswith("-- ") else None)
+        if metric and (
+            metric.name != name
+            or sql is not None
+            or (
+                result
+                and (
+                    (result.source or {}).get("kind") != "metric"
+                    or (
+                        (result.source or {}).get("metric") is not None
+                        and result.source["metric"] != metric.metric.model_dump()
+                    )
+                )
+            )
+        ):
+            warnings.append(base + ".metric.json:source_mismatch")
+            metric = None
+        generated_sql = metric.generated_sql if metric else sql
+        lineage = query_lineage(
+            generated_sql,
+            None if metric else template,
+            metric.datasource if metric else result.datasource if result else template.datasource if template else None,
+            is_template=parsed_manifest.kind == "dashboard" and metric is None,
         )
-        datasource = result.datasource if result else template.datasource if template else None
+        if metric:
+            lineage.origin = "metric_sample" if template else "metric_query"
+            if template and lineage.status == "parsed":
+                lineage.status = "partial"
+        goal = (
+            metric.goal
+            if metric
+            else template.description
+            if template
+            else (sql.splitlines()[0][3:] if sql and sql.startswith("-- ") else None)
+        )
         queries.append(
             InsightQuery(
                 name=name,
+                source_kind="metric" if metric else "sql",
+                metric_query=metric,
                 goal=goal,
-                sql=sql,
+                sql=generated_sql,
                 brief=brief,
                 result=result,
                 template=template,
-                lineage=query_lineage(sql, template, datasource, is_template=parsed_manifest.kind == "dashboard"),
+                lineage=lineage,
             )
         )
 
@@ -274,6 +308,25 @@ def build_artifact_insight(manifest: dict, files: dict[str, str]) -> ArtifactIns
                 metric_details = [MetricSnapshot.model_validate(m) for m in raw["metrics"]]
         except (ValueError, TypeError, KeyError):
             warnings.append("analysis/metric_snapshots.json")
+
+    # Execution-time metric definitions survive render edits and finalization.
+    # Do not overwrite them with today's catalog for a referenced SQL query.
+    native_snapshots = {}
+    for query in queries:
+        if query.metric_query:
+            metric = query.metric_query
+            key = (tuple(metric.metric.path), metric.metric.name)
+            native_snapshots[key] = MetricSnapshot(
+                origin="metric_execution",
+                ref=metric.metric,
+                captured_at=metric.captured_at,
+                status="captured",
+                detail=metric.metric_detail,
+                tables=metric.metric_tables,
+                lineage_status="resolved",
+            )
+    metric_details = [m for m in metric_details if (tuple(m.ref.path), m.ref.name) not in native_snapshots]
+    metric_details.extend(native_snapshots.values())
 
     reference_sql_details = []
     reference_path = "analysis/reference_sql_snapshots.json"
