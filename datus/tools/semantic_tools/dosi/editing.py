@@ -22,6 +22,13 @@ from sqlglot import exp
 from datus.tools.semantic_tools.dosi.authoring import dosi_validation_text_payload
 
 _OPERATORS = {ast.Add: "+", ast.Sub: "-", ast.Mult: "*", ast.Div: "/", ast.Mod: "%"}
+_MAX_EXPANDED_SQL = 1_000_000
+
+
+def _bounded_sql(text: str) -> str:
+    if len(text) > _MAX_EXPANDED_SQL:
+        raise ValueError("Expanded metric SQL exceeds the automatic editing limit")
+    return text
 
 
 def _formula(text: str) -> ast.expr:
@@ -199,13 +206,16 @@ def prepare_metric_definitions(
                         matches = [item["expression"] for item in variants if item["dialect"] == language]
                         if len(matches) != 1:
                             raise ValueError(f"{name}: {node.id} must provide exactly one {language} expression")
-                        return f"({resolved.get((node.id, language), _ratio_sql(matches[0], language))})"
+                        value = resolved.get((node.id, language))
+                        if value is None:
+                            value = _ratio_sql(matches[0], language)
+                        return _bounded_sql(f"({value})")
                     if isinstance(node, ast.Constant):
                         return str(node.value)
                     if isinstance(node, ast.UnaryOp):
                         sign = "-" if isinstance(node.op, ast.USub) else "+"
                         return f"({sign}{render(node.operand)})"
-                    return f"({render(node.left)} {_OPERATORS[type(node.op)]} {render(node.right)})"
+                    return _bounded_sql(f"({render(node.left)} {_OPERATORS[type(node.op)]} {render(node.right)})")
 
                 expanded = _ratio_sql(render(trees[name]), language)
                 resolved[(name, language)] = expanded
@@ -236,6 +246,7 @@ def prepare_metric_definitions(
         KeyError,
         TypeError,
         AttributeError,
+        RecursionError,
         yaml.YAMLError,
         sqlglot.errors.SqlglotError,
     ) as exc:

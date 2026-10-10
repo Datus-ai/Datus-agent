@@ -117,3 +117,35 @@ def test_empty_metric_list_keeps_dataset():
     doc["semantic_model"][0]["metrics"] = []
     result = prepare_metric_definitions(yaml.safe_dump(doc), [])
     assert result["valid"], result["validation"]
+
+
+def test_exponential_expansion_is_rejected_before_native_compilation(monkeypatch):
+    from datus.tools.semantic_tools.dosi import editing
+
+    doc = model()
+    metrics = doc["semantic_model"][0]["metrics"]
+    for index in range(20):
+        previous = f"repeated_{index - 1}" if index else "revenue"
+        metrics.append(
+            {
+                "name": f"repeated_{index}",
+                "expression": {"dialects": [{"dialect": "ANSI_SQL", "expression": "SUM(orders.amount)"}]},
+                "custom_extensions": [
+                    {
+                        "vendor_name": "DATUS",
+                        "data": json.dumps(
+                            {"v": "1.9", "derive": {"type": "compose", "expr": f"{previous} + {previous}"}}
+                        ),
+                    }
+                ],
+            }
+        )
+
+    def unexpected_compile(_):
+        pytest.fail("Oversized expansion must not reach native compilation")
+
+    monkeypatch.setattr(editing, "dosi_validation_text_payload", unexpected_compile)
+    result = prepare_metric_definitions(yaml.safe_dump(doc), ["revenue"])
+    assert result["valid"] is False
+    assert result["patches"] == []
+    assert "exceeds" in result["validation"]["issues"][0]["message"]
