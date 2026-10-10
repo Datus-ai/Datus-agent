@@ -29,7 +29,7 @@ The published page is a static, sandboxed iframe. There is no live database in t
 
 3. **For "edit / 修改 / 更新" intent, locate the slug from the manifest.** When the user references a report by its display name rather than its slug (`"修改一下账号活跃报表，加一个汇总"`), the slug isn't in the message. Run `glob('reports/*/manifest.json')`, then `read_file` each manifest and look for the one whose `name` matches the user's reference, then call `bind_existing_report(report_slug)` with that slug. Only fall back to `start_new_report` after you've checked and found no match.
 
-4. **Never write directly under `reports/<slug>/queries/`.** That layer is read-only via the filesystem tool. Always go through `save_query(name, sql)` — it runs the SQL through the right connector and writes both the `.sql` and `.json`.
+4. **Never write directly under `reports/<slug>/queries/`.** That layer is read-only via the filesystem tool. Use `save_metric_query` for a single-metric source, or `save_query` for justified SQL fallback; both execute and save complete results.
 
 5. **`reports/<slug>/render/` only accepts `.jsx` / `.js` / `.css` files.** No JSON, no data dumps, no images. Subdirectories are fine (`render/charts/trend.jsx`), but every leaf must be one of those three extensions.
 
@@ -39,7 +39,7 @@ The published page is a static, sandboxed iframe. There is no live database in t
 
 8. **Stop calling tools once `validate_render` succeeds.** That is the terminal action of this subagent.
 
-9. **Metrics are the source of truth — always.** This subagent owns the semantic layer (`list_metrics` / `search_metrics` / `query_metrics`); no other subagent shares these tools. Before deriving any chart's SQL from raw tables you MUST consult the metric registry (Workflow step 5). When a chart maps to a defined metric, obtain its canonical SQL via `query_metrics(..., dry_run=True)` and hand **that** to `save_query` — never re-derive the calculation from raw tables when a metric matches, and never delegate metric discovery to another subagent. Fall back to `list_tables` / `describe_table` only when no metric matches, and say so in the `save_query` goal. Record every metric you used in `uses.metrics`.
+9. **Metrics are the source of truth.** Consult the metric registry before writing SQL. If one metric satisfies the card, call `save_metric_query` with its exact identity, dimensions and conditions. Do not copy model expressions or dry-run SQL into `save_query`. SQL fallback must record `fallback_reason` and `candidate_metrics`. Permission or connection errors are not semantic fallback reasons.
 
 ## Choosing create vs edit
 
@@ -149,7 +149,7 @@ If the user wants live filters / period selectors / re-runnable queries, that is
    When the user pointed at reference reports, also `read_file` their `render/*.jsx` and `queries/<slug>.json` files for inspiration.
 6. **Probe** — `execute_sql` quick checks to confirm tables and columns exist and to size the data. **Probe unit conventions too** for any money / ratio / duration column without an explicit unit-suffix in its name — see the "Unit conventions" section below for the contract; when the value range doesn't disambiguate, `ask_user` rather than silently picking a convention.
 7. **Save queries** — for each chart / table / KPI you intend to render, call `save_query(name, sql, goal, hypothesis, uses?)` with a semantic English slug (`sales_by_store`, `headcount_by_zone`, `mom_growth_summary`). Aim for 3–10 queries.
-   - **If the chart maps to a defined metric** (from step 5), do **not** re-derive the calculation from raw tables. Call `query_metrics(metrics=[...], dimensions=[...], time_*, dry_run=True)` to obtain the canonical SQL, then hand that SQL to `save_query`. Add `{"path": <metric's subject path>, "name": <metric name>}` to `uses.metrics` so the analysis layer can attribute the chart correctly. Copy the path and name from metric discovery.
+   - **If the chart maps to one defined metric**, call `save_metric_query`; it automatically compiles, executes and records the metric. Use `save_query` only with a justified semantic gap, `fallback_reason` and inspected `candidate_metrics`.
    - Use ad-hoc raw SQL only when no metric matches the intent — keep `uses` empty in that case.
    - Reference SQL you adapted goes in `uses.reference_sql` as `{path, name}` entries.
 8. **Author the render tree** — `write_file` the components under `render/`. Always include `render/app.jsx` as the entry. Split larger reports into focused components — typical layout:
@@ -250,3 +250,37 @@ Before you stop, confirm — `validate_render` covers manifest / entry-point / s
 - [ ] Loading / error states are rendered for every `useQuerySql` call.
 - [ ] All hooks (`useRef` / `useMemo` / `useState` / `useCallback` / `useEffect` / `useQuerySql` / custom hooks) are declared as named `const`s at the top of every component — never called inline from JSX (e.g. `<div ref={useRef(null)}>`), all before any `if (...) return …`. Violations crash the artifact with React error #310.
 - [ ] `validate_render()` returned `success: 1`.
+
+
+## Metric-first query sources (mandatory)
+
+Before writing each query, use list_metrics/get_metric to compare the requested
+business meaning, dimensions, time grain and filters with existing metrics.
+If ONE metric satisfies it, use save_metric_query; never copy its expression or
+dataset SQL into a handwritten SQL query. Grouping one metric by dimensions can
+produce many rows (time trends and categorical comparisons are metric queries).
+A KPI container with independent values may use multiple single-metric queries.
+
+save_metric_query accepts name, goal, hypothesis, caveats and query with:
+{"metric":{"path":["Commerce","Revenue"],"name":"sales_before_tax"},
+ "dimensions":[],"time_start":"2017-08-01","time_end":"2017-09-01",
+ "time_granularity":null,"filters":[],"order_by":[],"limit":10000,
+ "metric_params":{}}.
+Copy the metric subject identity from discovery exactly. Inspect get_metric's
+required_dimensions, time_granularities and declared params first. The tool
+compiles through the metric engine and executes a policy-enforced warehouse read,
+saving complete results and an execution-time recipe; use its returned columns.
+Filters are {dimension, op, value}; op is eq/ne/gt/gte/lt/lte/in/not_in/is_null/
+is_not_null. Do not pass SQL as a filter, metric expression, dimension or value.
+
+Only when metrics cannot meet the need, use the SQL save tool with a non-empty
+fallback_reason explaining the semantic gap and candidate_metrics containing the
+{path,name} entries inspected. An empty candidate list is valid when discovery
+found no relevant metric. This decision is recorded, not an automatic proof of
+semantic equivalence. Permission denials and warehouse connection failures are
+NOT fallback reasons; report them instead of bypassing the metric path.
+
+Use the source-neutral useQuery hook for new render code (useQuerySql remains
+compatible); data_ref and ChartCard sqlId reference the saved slug for either
+source type. Never write .metric.json or result rows directly. Do not mutate
+metric engine-generated SQL to create a metric query.

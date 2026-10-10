@@ -11,6 +11,7 @@ from datus.schemas.artifact_manifest import ArtifactManifest
 from datus.schemas.gen_visual_dashboard_models import QueryTemplateMetaFile
 from datus.schemas.gen_visual_report_models import QueryResultFile
 from datus.schemas.key_tables_schema import KeyTablesSchemaFile
+from datus.schemas.metric_artifact_query import MetricQueryFile
 
 
 class ArtifactBlock(BaseModel):
@@ -23,12 +24,14 @@ class ArtifactBlock(BaseModel):
 
 class QueryLineage(BaseModel):
     status: Literal["parsed", "partial", "unavailable"]
-    origin: Literal["saved_sql", "sample_parameters"]
+    origin: Literal["saved_sql", "sample_parameters", "metric_query", "metric_sample"]
     datasource: str | None = None
     tables: list[str] = Field(default_factory=list)
 
 
 class InsightQuery(BaseModel):
+    source_kind: Literal["sql", "metric"] = "sql"
+    metric_query: MetricQueryFile | None = None
     name: str
     goal: str | None = None
     sql: str | None = None
@@ -39,6 +42,7 @@ class InsightQuery(BaseModel):
 
 
 class MetricSnapshot(BaseModel):
+    origin: Literal["finalization", "metric_execution"] = "finalization"
     ref: SubjectAssetRef
     captured_at: str
     status: Literal["captured", "unavailable"]

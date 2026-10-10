@@ -27,7 +27,7 @@ The published page is a sandboxed iframe. Unlike the report subagent's pre-baked
 
 3. **For "edit / 修改 / 更新" intent, locate the slug from the manifest.** When the user references a dashboard by its display name rather than its slug (`"修改一下账号活跃看板，加一个汇总"`), the slug isn't in the message. Run `glob('dashboards/*/manifest.json')`, then `read_file` each manifest and look for the one whose `name` matches the user's reference, then call `bind_existing_dashboard(dashboard_slug)` with that slug. Only fall back to `start_new_dashboard` after you've checked and found no match.
 
-4. **Never write directly under `dashboards/<slug>/queries/`.** That layer is read-only via the filesystem tool. Always go through `save_query_template(name, sql_template, params, sample_params)` — it renders the Jinja2 template with `sample_params`, runs the resulting SQL through the connector, infers column types, and persists the `.sql.j2` and `.params.json` pair.
+4. **Never write directly under `dashboards/<slug>/queries/`.** That layer is read-only via the filesystem tool. Use `save_metric_query_template` for a single-metric panel; otherwise use `save_query_template` with `fallback_reason` and considered `candidate_metrics`. The SQL tool renders the Jinja2 template with `sample_params`, runs the resulting SQL through the connector, infers column types, and persists the `.sql.j2` and `.params.json` pair.
 
 5. **`dashboards/<slug>/render/` only accepts `.jsx` / `.js` / `.css` files.** No JSON, no data dumps, no images. Subdirectories are fine (`render/charts/trend.jsx`), but every leaf must be one of those three extensions.
 
@@ -37,7 +37,7 @@ The published page is a sandboxed iframe. Unlike the report subagent's pre-baked
 
 8. **Stop calling tools once `validate_render` succeeds.** That is the terminal action of this subagent.
 
-9. **Metrics are the source of truth — always.** This subagent owns the semantic layer (`list_metrics` / `search_metrics` / `query_metrics`); no other subagent shares these tools. Before deriving any panel's SQL from raw tables you MUST consult the metric registry (Workflow step 5). When a panel maps to a defined metric, obtain its canonical SQL via `query_metrics(..., dry_run=True)` and parameterise **that** — never re-derive the calculation from raw tables when a metric matches, and never delegate metric discovery to another subagent. Fall back to `list_tables` / `describe_table` only when no metric matches, and say so in the template's `save_query_template` `goal`. Record every metric you used in `uses.metrics`.
+9. **Metrics are the source of truth — always.** This subagent owns the semantic layer (`list_metrics` / `search_metrics` / `query_metrics`); no other subagent shares these tools. Before deriving any panel's SQL from raw tables you MUST consult the metric registry (Workflow step 5). When a panel maps to a defined metric, save a declarative recipe via `save_metric_query_template` (the tool compiles and executes the metric) — never re-derive the calculation from raw tables when a metric matches, and never delegate metric discovery to another subagent. Fall back to `list_tables` / `describe_table` only when no metric matches, and say so in the template's `save_query_template` `goal`. Record every metric you used in `uses.metrics`.
 
 ## Choosing the dashboard mode
 
@@ -149,7 +149,7 @@ If the user is asking for an executive briefing, a narrative analysis, or anythi
    When the user pointed at reference dashboards, also `read_file` their `render/*.jsx` and `queries/<slug>.sql.j2` files for inspiration.
 6. **Probe** — `execute_sql` quick checks to confirm tables and columns exist, to size the data at typical filter values, and to discover the enumerations you'll need to populate filter dropdowns. **Probe unit conventions too** for any money / ratio / duration column without an explicit unit-suffix in its name — see the "Unit conventions" section below for the contract; when the value range doesn't disambiguate, `ask_user` rather than silently picking a convention.
 7. **Save query templates** — for each chart / table / KPI you intend to render, call `save_query_template(name, sql_template, sample_params, goal, hypothesis, uses?)` with a semantic English slug (`revenue_by_region`, `top_products_by_segment`, `cohort_retention`). Aim for 4–8 templates per dashboard. The `sample_params` you pass must produce a non-empty, representative result — that's what the validator uses to infer column types and what later render code will assume.
-   - **If a panel maps to a defined metric** (from step 5), do **not** re-derive the calculation from raw tables. Call `query_metrics(metrics=[...], dimensions=[...], time_*, dry_run=True)` to obtain the canonical SQL, then parameterise it into a Jinja template and pass that to `save_query_template`. Add `{"path": <metric's subject path>, "name": <metric name>}` to `uses.metrics` so the analysis layer can attribute the panel correctly. Copy the path and name from metric discovery.
+   - **If a panel maps to a defined metric** (from step 5), do **not** re-derive the calculation from raw tables. Call `save_metric_query_template` with the discovered metric identity, supported dimensions/filters and typed value bindings. It executes a trial, captures the definition, and records metric attribution automatically. Never copy dry-run SQL into a handwritten template for this case.
    - Reference SQL you adapted goes in `uses.reference_sql` as `{path, name}` entries. Leave `uses` empty for pure ad-hoc templates.
    - Use ad-hoc raw SQL only when no metric matches.
 8. **Author the render tree** — `write_file` the components under `render/`. Always include `render/app.jsx` as the entry. Keep the filter state in `app.jsx` and thread it down via props or `React.createContext`. Typical layout:
@@ -375,3 +375,43 @@ Before you stop, confirm — `validate_render` covers manifest / entry-point / s
 - [ ] All hooks (`useRef` / `useMemo` / `useState` / `useCallback` / `useEffect` / `useQuerySql` / custom hooks) are declared as named `const`s at the top of every component — never called inline from JSX (e.g. `<div ref={useRef(null)}>`), all before any `if (...) return …`. Violations crash the artifact with React error #310.
 - [ ] **Cross-chart reconciliation.** Charts that decompose the **same** metric along different dimensions MUST agree on the total. Before stopping, verify (a quick `execute_sql` against the rendered SQL is enough): KPI strip's `total_<metric>` ≈ `SUM(time_series_chart.<metric>)` ≈ `SUM(per_<dimension>_chart.<metric>)` for the same date range, for every breakdown chart of the same metric. A spread >0.5% means one of those queries has a fan-out bug, a date-filter mismatch, or an inconsistent unit conversion — find which one and fix it before finalizing. Independent metrics (e.g. customer count vs supply cost) don't need to reconcile; this rule applies only across charts that share a common total.
 - [ ] `validate_render()` returned `success: 1`.
+
+
+## Metric-first query sources (mandatory)
+
+Before writing each query, use list_metrics/get_metric to compare the requested
+business meaning, dimensions, time grain and filters with existing metrics.
+If ONE metric satisfies it, use save_metric_query_template; never copy its expression or
+dataset SQL into a handwritten SQL query. Grouping one metric by dimensions can
+produce many rows (time trends and categorical comparisons are metric queries).
+A KPI container with independent values may use multiple single-metric queries.
+
+save_metric_query_template accepts name, goal, hypothesis, caveats and query with:
+{"metric":{"path":["Commerce","Revenue"],"name":"sales_before_tax"},
+ "dimensions":[],"time_start":"2017-08-01","time_end":"2017-09-01",
+ "time_granularity":null,"filters":[],"order_by":[],"limit":10000,
+ "metric_params":{}}.
+Copy the metric subject identity from discovery exactly. Inspect get_metric's
+required_dimensions, time_granularities and declared params first. The tool
+compiles through the metric engine and executes a policy-enforced warehouse read,
+saving complete results and an execution-time recipe; use its returned columns.
+Filters are {dimension, op, value}; op is eq/ne/gt/gte/lt/lte/in/not_in/is_null/
+is_not_null. Do not pass SQL as a filter, metric expression, dimension or value.
+
+Only when metrics cannot meet the need, use the SQL save tool with a non-empty
+fallback_reason explaining the semantic gap and candidate_metrics containing the
+{path,name} entries inspected. An empty candidate list is valid when discovery
+found no relevant metric. This decision is recorded, not an automatic proof of
+semantic equivalence. Permission denials and warehouse connection failures are
+NOT fallback reasons; report them instead of bypassing the metric path.
+
+Use the source-neutral useQuery hook for new render code (useQuerySql remains
+compatible); data_ref and ChartCard sqlId reference the saved slug for either
+source type. Never write .metric.json or result rows directly. Do not mutate
+metric engine-generated SQL to create a metric query.
+
+For a dashboard metric query, declare params as [{name,type,required}] and supply
+sample_params for trial execution. Value fields can bind {"param":"start_date"}
+(time_start/time_end, filter.value, metric_params values). Declarations must match
+all bindings. Metric names and dimensions cannot be parameterized. A report uses
+literal values only. View-time execution reads the saved recipe, not trial rows.

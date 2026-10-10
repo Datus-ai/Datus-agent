@@ -54,6 +54,7 @@ from datus.tools.func_tool._visual_artifact_helpers import (
     write_query_brief,
 )
 from datus.tools.func_tool.base import FuncToolResult, trans_to_function_tool
+from datus.tools.func_tool.metric_artifact_tools import MetricArtifactToolsMixin
 from datus.tools.func_tool.report_artifact_tools import (
     _DEFAULT_EXPORT_RE,
     _IMPORT_PATH_RE,
@@ -80,7 +81,7 @@ _MAX_PARAMS_META_BYTES = 64 * 1024  # 64 KB hard cap per params.json
 # dashboard always parameterizes its queries.
 _USE_QUERY_SQL_LITERAL_RE = re.compile(
     r"""
-    useQuerySql\s*\(\s*
+    useQuery(?:Sql)?\s*\(\s*
     ['"]([^'"\\\n]+)['"]                 # 1: sqlId literal
     \s*,\s*
     (\{[^{}]*(?:\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}[^{}]*)*\})  # 2: params object literal (depth ≤ 3)
@@ -91,7 +92,7 @@ _USE_QUERY_SQL_LITERAL_RE = re.compile(
 
 # A useQuerySql call with only one argument — the dashboard subagent rejects
 # this; pass an explicit params object (use `{}` when the template takes none).
-_USE_QUERY_SQL_NO_PARAMS_RE = re.compile(r"useQuerySql\s*\(\s*['\"][^'\"\\\n]+['\"]\s*\)")
+_USE_QUERY_SQL_NO_PARAMS_RE = re.compile(r"useQuery(?:Sql)?\s*\(\s*['\"][^'\"\\\n]+['\"]\s*\)")
 
 # Property keys in the params object literal — only static string / bare
 # identifier keys are statically checked. Computed keys or spread syntax
@@ -343,7 +344,7 @@ class DashboardFilesystemFuncTool(ArtifactFilesystemFuncTool):
 # --------------------------------------------------------------------------- #
 
 
-class DashboardArtifactTools:
+class DashboardArtifactTools(MetricArtifactToolsMixin):
     """LLM-facing tools that produce the dashboard artifact tree.
 
     Lifecycle mirrors :class:`ReportArtifactTools`:
@@ -370,9 +371,11 @@ class DashboardArtifactTools:
         agent_config,
         db_func_tool,
         user_message: str = "",
+        semantic_tools=None,
     ) -> None:
         self.agent_config = agent_config
         self._db_func_tool = db_func_tool
+        self._semantic_tools = semantic_tools
         # See ReportArtifactTools.__init__ for the rationale — mirror logic.
         self._user_message = user_message or ""
 
@@ -401,6 +404,7 @@ class DashboardArtifactTools:
             # ``additionalProperties: true`` JSON schema this produces; we
             # validate keys + types ourselves once the call lands.
             trans_to_function_tool(self.save_query_template, strict_mode=False),
+            trans_to_function_tool(self.save_metric_query_template, strict_mode=False),
             trans_to_function_tool(self.validate_render),
         ]
 
@@ -625,6 +629,8 @@ class DashboardArtifactTools:
         uses: Optional[Dict[str, Any]] = None,
         caveats: str = "",
         datasource: str = "",
+        fallback_reason: str = "",
+        candidate_metrics: Optional[List[Dict[str, Any]]] = None,
     ) -> FuncToolResult:
         """
         Persist a parameterized Jinja2 SQL template after a trial render,
@@ -724,6 +730,23 @@ class DashboardArtifactTools:
                     "If you don't have a hypothesis, skip the query."
                 ),
             )
+        if self._semantic_tools is not None and not fallback_reason.strip():
+            return FuncToolResult(
+                success=0,
+                error="Use the single-metric save tool whenever it meets the need. SQL fallback requires fallback_reason and candidate_metrics after checking metric capabilities.",
+            )
+        source_selection = (
+            {"reason": fallback_reason.strip(), "candidate_metrics": candidate_metrics or []}
+            if fallback_reason.strip()
+            else None
+        )
+        if source_selection is not None:
+            from datus.schemas.analysis_artifacts import SqlSourceSelection
+
+            try:
+                SqlSourceSelection.model_validate(source_selection)
+            except ValueError as exc:
+                return FuncToolResult(success=0, error=f"Invalid SQL source selection: {exc}")
         try:
             uses_obj = coerce_uses_arg(uses)
         except ValueError as exc:
@@ -917,9 +940,11 @@ class DashboardArtifactTools:
             hypothesis=hypothesis.strip(),
             uses=uses_obj,
             caveats=caveats.strip() if caveats else "",
+            source_selection=source_selection,
         )
         if brief_err:
             return FuncToolResult(success=0, error=brief_err)
+        (self.queries_dir / f"{name}.metric.json").unlink(missing_ok=True)
 
         manifest_warning = upsert_manifest_after_save(
             self.dashboard_dir / "manifest.json",
@@ -983,6 +1008,10 @@ class DashboardArtifactTools:
         not_bound = self._require_active("validate_render")
         if not_bound is not None:
             return not_bound
+
+        metric_error = self._validate_metric_queries("dashboard")
+        if metric_error:
+            return FuncToolResult(success=0, error=metric_error)
 
         # Manifest must exist before render-tree validation — it's part
         # of the artifact contract that the list pages / IDE rely on.
@@ -1063,7 +1092,22 @@ class DashboardArtifactTools:
                     error=f"queries/{meta_path.name} is corrupt or off-spec: {exc}",
                 )
             # Make sure the .sql.j2 sibling exists.
-            if not (self.queries_dir / f"{slug}.sql.j2").is_file():
+            sql_exists = (self.queries_dir / f"{slug}.sql.j2").is_file()
+            metric_path = self.queries_dir / f"{slug}.metric.json"
+            if metric_path.is_file():
+                from datus.schemas.metric_artifact_query import MetricQueryFile
+
+                try:
+                    metric = MetricQueryFile.model_validate_json(metric_path.read_text(encoding="utf-8"))
+                    if (
+                        sql_exists
+                        or metric.name != slug
+                        or metric.parameter_names() != {p.name for p in meta_obj.params}
+                    ):
+                        raise ValueError("metric identity, parameters or exclusive source do not match")
+                except ValueError as exc:
+                    return FuncToolResult(success=0, error=f"Invalid metric query {slug}: {exc}")
+            if not sql_exists and not metric_path.is_file():
                 return FuncToolResult(
                     success=0,
                     error=f"queries/{slug}.params.json has no sibling {slug}.sql.j2 — re-run save_query_template.",

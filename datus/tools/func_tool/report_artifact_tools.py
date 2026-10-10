@@ -54,6 +54,7 @@ from datus.tools.func_tool._visual_artifact_helpers import (
     write_query_brief,
 )
 from datus.tools.func_tool.base import FuncToolResult, trans_to_function_tool
+from datus.tools.func_tool.metric_artifact_tools import MetricArtifactToolsMixin
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
@@ -65,7 +66,7 @@ _MAX_QUERY_BYTES = 5 * 1024 * 1024  # 5 MB hard cap per query result file
 # Catches every literal-string argument to useQuerySql(...). Template strings
 # and dynamic expressions are intentionally skipped (the system prompt allows
 # them for enumerable filter selectors that resolve at runtime).
-_USE_QUERY_SQL_LITERAL_RE = re.compile(r"useQuerySql\s*\(\s*['\"]([^'\"\\\n]+)['\"]\s*\)")
+_USE_QUERY_SQL_LITERAL_RE = re.compile(r"useQuery(?:Sql)?\s*\(\s*['\"]([^'\"\\\n]+)['\"]\s*\)")
 
 # Catches both `import ... from '<path>'` and `export ... from '<path>'`
 # variants. Side-effect imports `import './foo'` are matched via the
@@ -276,7 +277,7 @@ class ReportFilesystemFuncTool(ArtifactFilesystemFuncTool):
 # --------------------------------------------------------------------------- #
 
 
-class ReportArtifactTools:
+class ReportArtifactTools(MetricArtifactToolsMixin):
     """LLM-facing tools that produce the report artifact tree.
 
     Lifecycle:
@@ -304,9 +305,11 @@ class ReportArtifactTools:
         agent_config,
         db_func_tool,
         user_message: str = "",
+        semantic_tools=None,
     ) -> None:
         self.agent_config = agent_config
         self._db_func_tool = db_func_tool
+        self._semantic_tools = semantic_tools
         # Raw user prompt that drove this node invocation — appended to
         # analysis/intent.md verbatim when the artifact is created / bound,
         # so the file becomes the authoritative log of what the user asked
@@ -344,6 +347,7 @@ class ReportArtifactTools:
             # which ``Dict[str, Any]`` emits. We validate the shape
             # ourselves via :func:`coerce_uses_arg` once the call lands.
             trans_to_function_tool(self.save_query, strict_mode=False),
+            trans_to_function_tool(self.save_metric_query, strict_mode=False),
             trans_to_function_tool(self.validate_render),
         ]
 
@@ -571,6 +575,8 @@ class ReportArtifactTools:
         uses: Optional[Dict[str, Any]] = None,
         caveats: str = "",
         datasource: str = "",
+        fallback_reason: str = "",
+        candidate_metrics: Optional[List[Dict[str, Any]]] = None,
     ) -> FuncToolResult:
         """
         Run a read-only SQL, persist the SQL text, the result, AND the per-query brief sidecar.
@@ -662,6 +668,23 @@ class ReportArtifactTools:
                     "If you don't have a hypothesis, skip the query."
                 ),
             )
+        if self._semantic_tools is not None and not fallback_reason.strip():
+            return FuncToolResult(
+                success=0,
+                error="Use the single-metric save tool whenever it meets the need. SQL fallback requires fallback_reason and candidate_metrics after checking metric capabilities.",
+            )
+        source_selection = (
+            {"reason": fallback_reason.strip(), "candidate_metrics": candidate_metrics or []}
+            if fallback_reason.strip()
+            else None
+        )
+        if source_selection is not None:
+            from datus.schemas.analysis_artifacts import SqlSourceSelection
+
+            try:
+                SqlSourceSelection.model_validate(source_selection)
+            except ValueError as exc:
+                return FuncToolResult(success=0, error=f"Invalid SQL source selection: {exc}")
         try:
             uses_obj = coerce_uses_arg(uses)
         except ValueError as exc:
@@ -781,9 +804,11 @@ class ReportArtifactTools:
             hypothesis=hypothesis.strip(),
             uses=uses_obj,
             caveats=caveats.strip() if caveats else "",
+            source_selection=source_selection,
         )
         if brief_err:
             return FuncToolResult(success=0, error=brief_err)
+        (self.queries_dir / f"{name}.metric.json").unlink(missing_ok=True)
 
         # Manifest upsert (datasources union-add + updated_at bump). Soft
         # failure — log warning, expose in result, but don't fail the
@@ -859,6 +884,10 @@ class ReportArtifactTools:
         not_bound = self._require_active("validate_render")
         if not_bound is not None:
             return not_bound
+
+        metric_error = self._validate_metric_queries("report")
+        if metric_error:
+            return FuncToolResult(success=0, error=metric_error)
 
         # Manifest must exist before render-tree validation — it's part of
         # the artifact contract that the list pages / IDE rely on. For

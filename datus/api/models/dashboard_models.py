@@ -101,6 +101,7 @@ class SqlQueryResultEnvelope(BaseModel):
 
     executed_at: str = Field(..., description="ISO 8601 UTC timestamp of the executing query")
     datasource: str = Field(..., description="Logical datasource the query ran against")
+    source: Optional[Dict[str, Any]] = None
     row_count: int = Field(..., ge=0)
     columns: List[QueryColumnMeta] = Field(..., description="Column name + inferred semantic type")
     rows: List[Dict[str, Any]] = Field(default_factory=list, description="Result rows; each is a {column → scalar} map")

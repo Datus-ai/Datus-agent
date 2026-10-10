@@ -1390,3 +1390,16 @@ async def test_result_filter_metric_not_selected_suggests_selecting_it(make_runt
     assert payload.code == "result_filter_metric_not_selected"
     assert payload.suggested_retry == {"metrics": ["revenue", "order_count"]}
     assert "order_count" in payload.message
+
+
+def test_artifact_metric_binding_pins_model_content_and_connection(make_runtime, model_file):
+    import hashlib
+
+    runtime = make_runtime(datasource="warehouse", connection="warehouse")
+    binding = runtime.artifact_metric_binding("revenue")
+    assert binding["model_path"] == str(model_file)
+    assert binding["datasource"] == "warehouse"
+    assert binding["model_revision"] == hashlib.sha256(model_file.read_bytes()).hexdigest()
+    model_file.write_text(model_file.read_text() + "# Updated definition snapshot\n", encoding="utf-8")
+    revised = runtime.artifact_metric_binding("revenue")
+    assert revised["model_revision"] != binding["model_revision"]

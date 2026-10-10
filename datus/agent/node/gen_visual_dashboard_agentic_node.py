@@ -99,6 +99,7 @@ class GenVisualDashboardAgenticNode(
         return DashboardArtifactTools(
             agent_config=self.agent_config,
             db_func_tool=self.db_func_tool,
+            semantic_tools=self.semantic_tools,
             user_message=getattr(user_input, "user_message", "") or "",
         )
 

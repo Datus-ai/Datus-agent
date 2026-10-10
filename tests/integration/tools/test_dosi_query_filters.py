@@ -17,6 +17,8 @@ import duckdb
 import pytest
 
 from datus.configuration.agent_config import AgentConfig, NodeConfig
+from datus.tools.func_tool import DBFuncTool, ReportArtifactTools
+from datus.tools.func_tool.base import FuncToolResult
 from datus.tools.func_tool.semantic_tools import SemanticTools
 
 pytestmark = [pytest.mark.acceptance, pytest.mark.nightly]
@@ -60,7 +62,10 @@ def query_tool(tmp_path, monkeypatch) -> SemanticTools:
         },
     )
     config.current_datasource = "window_filters"
-    monkeypatch.setattr(config.path_manager, "semantic_model_path", lambda datasource: FIXTURE_DIR)
+    model_dir = Path(config.project_root) / "subject" / "semantic_models" / "window_filters"
+    model_dir.mkdir(parents=True)
+    (model_dir / "model.yaml").write_text(MODEL_PATH.read_text(encoding="utf-8"), encoding="utf-8")
+    monkeypatch.setattr(config.path_manager, "semantic_model_path", lambda datasource: model_dir)
 
     # Metric queries do not use MetricRAG. Replacing that unrelated storage
     # dependency keeps this suite on the real engine binding, SQL execution,
@@ -149,3 +154,51 @@ def test_where_on_an_unselected_metric_is_refused_with_a_retry(query_tool):
     rows = _rows(query_tool, retried)
     assert rows, "the suggested retry must be a runnable query"
     assert all(int(row["item_rank"]) > 1 for row in rows)
+
+
+def test_metric_artifact_uses_real_engine_and_enforced_connector(query_tool, monkeypatch):
+    """A saved grouped metric agrees with native execution, including filters."""
+    import json
+
+    ref = {"path": ["Scores"], "name": "score_total"}
+    monkeypatch.setattr(
+        query_tool,
+        "get_metric",
+        lambda **kwargs: FuncToolResult(
+            success=1,
+            result={**ref, "dimensions": [{"name": item} for item in PRODUCT_ITEM]},
+        ),
+    )
+    tools = ReportArtifactTools(
+        agent_config=query_tool.agent_config,
+        db_func_tool=DBFuncTool(agent_config=query_tool.agent_config),
+        semantic_tools=query_tool,
+    )
+    assert tools.start_new_report("metric_engine", "Scores", "Native metric integration").success
+    saved = tools.save_metric_query(
+        name="scores",
+        query={
+            "metric": ref,
+            "dimensions": PRODUCT_ITEM,
+            "filters": [{"dimension": "scores.item", "op": "in", "value": ["b", "i"]}],
+        },
+        goal="Scores by item",
+        hypothesis="Only selected items appear",
+    )
+    assert saved.success, saved.error
+    actual = json.loads((tools.queries_dir / "scores.json").read_text(encoding="utf-8"))
+    direct = _rows(
+        query_tool,
+        query_tool.query_metrics(
+            metrics=["score_total"],
+            dimensions=PRODUCT_ITEM,
+            where="scores.item IN ('b', 'i')",
+        ),
+    )
+    assert {(row["product"], row["item"]): float(row["score_total"]) for row in actual["rows"]} == {
+        (row["product"], row["item"]): float(row["score_total"]) for row in direct
+    }
+    assert actual["source"] == {"kind": "metric", "metric": ref}
+    recipe = json.loads((tools.queries_dir / "scores.metric.json").read_text(encoding="utf-8"))
+    assert recipe["generated_sql"] == actual["sql"]
+    assert recipe["metric_tables"] == ["main.activity_scores"]

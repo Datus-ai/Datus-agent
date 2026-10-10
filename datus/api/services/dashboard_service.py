@@ -42,6 +42,7 @@ from datus.schemas.gen_visual_dashboard_models import (
     TemplateParamDecl,
 )
 from datus.schemas.gen_visual_report_models import QueryColumnMeta
+from datus.schemas.metric_artifact_query import MetricQueryFile
 from datus.tools.func_tool.dashboard_artifact_tools import render_dashboard_template
 from datus.tools.func_tool.report_artifact_tools import _normalize_value
 from datus.utils.artifact_files import iter_artifact_files
@@ -59,7 +60,7 @@ _MAX_FILES: int = 200
 _ISO_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 
-PublishedTemplateLoader = Callable[[int], Awaitable[Result[Tuple[str, str]]]]
+PublishedTemplateLoader = Callable[[int], Awaitable[Result[Tuple[str | MetricQueryFile, str]]]]
 
 
 def _resolve_dashboard_dir(project_files_root: Path, dashboard_slug: str) -> Optional[Path]:
@@ -164,7 +165,7 @@ def _validate_params(decls: List[TemplateParamDecl], supplied: Dict[str, Any]) -
 
 async def _load_local_template_pair(
     project_files_root: Path, dashboard_slug: str, query_slug: str
-) -> Result[Tuple[str, str]]:
+) -> Result[Tuple[str | MetricQueryFile, str]]:
     """Read the on-disk ``queries/<query_slug>.{sql.j2,params.json}`` pair
     under ``dashboards/<dashboard_slug>/``.
 
@@ -182,9 +183,10 @@ async def _load_local_template_pair(
 
     sql_path = dashboard_dir / "queries" / f"{query_slug}.sql.j2"
     meta_path = dashboard_dir / "queries" / f"{query_slug}.params.json"
+    metric_path = dashboard_dir / "queries" / f"{query_slug}.metric.json"
 
     def _stat() -> bool:
-        return sql_path.is_file() and meta_path.is_file()
+        return (sql_path.is_file() or metric_path.is_file()) and meta_path.is_file()
 
     exists = await asyncio.to_thread(_stat)
     if not exists:
@@ -194,9 +196,17 @@ async def _load_local_template_pair(
             errorMessage=f"queries/{query_slug}.sql.j2 + .params.json not found",
         )
     try:
-        sql_template = await asyncio.to_thread(sql_path.read_text, "utf-8")
+        if metric_path.is_file():
+            if sql_path.is_file():
+                raise ValueError("query has both SQL and metric sources")
+            for path in (metric_path, meta_path):
+                if not path.resolve().is_relative_to(dashboard_dir):
+                    raise ValueError("metric query sidecar escapes the dashboard directory")
+            sql_template = MetricQueryFile.model_validate_json(await asyncio.to_thread(metric_path.read_text, "utf-8"))
+        else:
+            sql_template = await asyncio.to_thread(sql_path.read_text, "utf-8")
         meta_text = await asyncio.to_thread(meta_path.read_text, "utf-8")
-    except OSError as exc:
+    except (OSError, ValueError) as exc:
         logger.exception("Failed reading template files for %s/%s: %s", dashboard_slug, query_slug, exc)
         return Result(success=False, errorCode="TEMPLATE_NOT_FOUND", errorMessage=str(exc))
     return Result(success=True, data=(sql_template, meta_text))
@@ -350,6 +360,53 @@ class DashboardService:
 
     # -- run_query -----------------------------------------------------------
 
+    async def _run_metric_query(self, query, meta, params, project_root, policy_context):
+        from datus.tools import func_tool as func_tool_mod
+        from datus.tools.func_tool.metric_artifact_tools import execute_metric_artifact_query
+        from datus.tools.func_tool.semantic_tools import SemanticTools
+
+        if (
+            query.name != meta.slug
+            or query.datasource != meta.datasource
+            or query.parameter_names() != {p.name for p in meta.params}
+        ):
+            return Result(
+                success=False,
+                errorCode="TEMPLATE_CORRUPT",
+                errorMessage="metric recipe does not match its parameter metadata",
+            )
+        try:
+
+            def execute():
+                db_tool = func_tool_mod.DBFuncTool(
+                    agent_config=self.agent_config, sub_agent_name="gen_visual_dashboard"
+                )
+                semantic_tools = SemanticTools(
+                    agent_config=self.agent_config,
+                    sub_agent_name="gen_visual_dashboard",
+                    runtime_db_context_provider=lambda: {"datasource": query.datasource},
+                )
+                return execute_metric_artifact_query(
+                    query,
+                    semantic_tools=semantic_tools,
+                    db_tool=db_tool,
+                    project_root=Path(self.agent_config.project_root),
+                    params=params,
+                    policy_context=policy_context,
+                    saved=query,
+                )
+
+            payload, _ = await asyncio.to_thread(execute)
+            return Result(success=True, data=SqlQueryResultEnvelope(**payload.model_dump()))
+        except Exception as exc:
+            if getattr(exc, "code", None) in {ErrorCode.POLICY_DENIED, ErrorCode.POLICY_DENIED.code}:
+                code = "POLICY_DENIED"
+            elif "METRIC_MODEL_CHANGED" in str(exc):
+                code = "METRIC_MODEL_CHANGED"
+            else:
+                code = "METRIC_QUERY_FAILED"
+            return Result(success=False, errorCode=code, errorMessage=str(exc))
+
     async def run_query(
         self,
         *,
@@ -433,6 +490,9 @@ class DashboardService:
                 errorCode="INVALID_PARAMS",
                 errorMessage=str(exc),
             )
+
+        if isinstance(sql_template, MetricQueryFile):
+            return await self._run_metric_query(sql_template, meta, coerced, project_files_root, policy_context)
 
         try:
             rendered_sql = render_dashboard_template(sql_template, meta.params, coerced)
