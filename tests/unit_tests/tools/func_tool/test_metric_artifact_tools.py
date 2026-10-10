@@ -148,7 +148,7 @@ async def test_dashboard_producer_loads_as_metric_and_live_values_are_bound(envi
     )
     assert saved.success == 1, saved.error
     loaded = await _load_local_template_pair(env.root, "demo", "sales")
-    assert loaded.success == True
+    assert loaded.success is True
     assert isinstance(loaded.data[0], MetricQueryFile)
     import datus.tools.func_tool as func_tools
     import datus.tools.func_tool.semantic_tools as semantic_mod
@@ -163,7 +163,7 @@ async def test_dashboard_producer_loads_as_metric_and_live_values_are_bound(envi
         params={"region": "North"},
         policy_context=policy,
     )
-    assert result.success == True, result.errorMessage
+    assert result.success is True, result.errorMessage
     assert result.data.rows == [{"region": "North", "revenue": 17.0}]
     assert env.db.execute_read_enforced.call_args.kwargs["policy_context"] is policy
     assert tools._validate_metric_queries("dashboard") is None
@@ -300,7 +300,7 @@ def test_ambiguous_filter_literal_is_rejected(value):
 def test_pinned_execution_does_not_depend_on_live_subject_index(environment):
     env = environment
     tools, result = _save(env)
-    assert result.success == True, result.error
+    assert result.success == 1, result.error
     saved = MetricQueryFile.model_validate_json((tools.queries_dir / "sales.metric.json").read_text())
     env.semantic.get_metric = MagicMock(side_effect=AssertionError("published subject index unavailable"))
     payload, _ = execute_metric_artifact_query(
