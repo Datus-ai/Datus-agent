@@ -657,7 +657,23 @@ class ExplorerService:
                     errorCode=ErrorCode.TOOL_EXECUTION_ERROR,
                     errorMessage=f"Failed to read metric source: {e}",
                 )
-            return Result[MetricInfo](success=True, data=MetricInfo(name=metric_name, yaml=source.text))
+            from pathlib import Path
+
+            from datus.agent.node.semantic_authoring import osi_semantic_models_root
+
+            source_file = None
+            root = osi_semantic_models_root(self.agent_config)
+            if root is not None:
+                try:
+                    relative = Path(source.file_path).resolve().relative_to(root.resolve())
+                    source_file = (Path("subject") / "semantic_models" / relative).as_posix()
+                except ValueError:
+                    pass
+
+            return Result[MetricInfo](
+                success=True,
+                data=MetricInfo(name=metric_name, yaml=source.text, semantic_model_file=source_file),
+            )
 
         except Exception as e:
             logger.error(f"Failed to get metric: {e}")

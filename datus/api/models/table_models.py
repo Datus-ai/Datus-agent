@@ -126,6 +126,20 @@ class SaveSemanticModelInput(ValidateSemanticModelInput):
     )
 
 
+class PrepareMetricDefinitionsInput(ValidateSemanticModelInput):
+    """A full candidate plus the explicitly changed computation roots."""
+
+    changed_metrics: List[str] = Field(default_factory=list, max_length=1000)
+    rename_from: Optional[str] = None
+    rename_to: Optional[str] = None
+
+
+class PrepareMetricDefinitionsData(BaseModel):
+    valid: bool
+    patches: List[Dict[str, Any]] = Field(default_factory=list)
+    validation: Dict[str, Any] = Field(default_factory=dict)
+
+
 class ValidateSemanticModelData(BaseModel):
     """Validate semantic model result data."""
 
