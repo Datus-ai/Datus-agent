@@ -1011,8 +1011,7 @@ class TestValidateRenderChartCard:
         _write_render(project_root, dashboard_tools.dashboard_slug, {"app.jsx": source})
         result = dashboard_tools.validate_render()
         assert result.success == success, result.error
-        if not success:
-            assert "queryIds" in result.error
+        assert ("queryIds" in (result.error or "")) == (not success)
 
     def test_chart_card_happy_path_emits_cards_registry(
         self, dashboard_tools: DashboardArtifactTools, project_root: Path

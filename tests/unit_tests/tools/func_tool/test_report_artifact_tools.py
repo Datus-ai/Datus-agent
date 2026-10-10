@@ -470,8 +470,7 @@ class TestValidateRender:
         _write_render(project_root, report_tools.report_slug, {"app.jsx": source})
         result = report_tools.validate_render()
         assert result.success == success, result.error
-        if not success:
-            assert "queryIds" in result.error
+        assert ("queryIds" in (result.error or "")) == (not success)
 
     def test_happy_path(self, report_tools: ReportArtifactTools, project_root: Path):
         report_tools.save_query(
