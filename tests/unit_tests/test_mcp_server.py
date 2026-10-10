@@ -9,12 +9,17 @@ All tests are CI-level: zero external dependencies, zero network access.
 All external calls (AgentConfig, tools, FastMCP) are mocked.
 """
 
+from collections.abc import Callable, Iterator
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from datus.mcp_server import ToolContext, ToolContextManager
+from datus.mcp_server import DatusMCPServer, ToolContext, ToolContextManager
 from datus.tools.func_tool.base import FuncToolResult
+from datus.tools.func_tool.database import DBFuncTool
+from datus.tools.func_tool.reference_template_tools import ReferenceTemplateTools
+from datus.utils.mcp_decorators import ToolClassConfig
 
 # =============================================================================
 # Fixtures
@@ -233,6 +238,111 @@ class TestToolContextManagerGetOrCreate:
 
         keys = list(context_manager._contexts.keys())
         assert keys[-1] == "ns_a:"
+
+
+@pytest.fixture(params=["dynamic", "static"])
+def initialize_mcp_tools(
+    request: pytest.FixtureRequest, context_manager: ToolContextManager
+) -> Iterator[Callable[[list[ToolClassConfig]], dict[str, Any]]]:
+    agent_config = _make_agent_config("ns1")
+
+    def initialize(registry: list[ToolClassConfig]) -> dict[str, Any]:
+        with patch("datus.mcp_server.get_tool_registry", return_value=registry):
+            if request.param == "dynamic":
+                return context_manager._create_context("ns1", subagent="agent1").tools
+            return DatusMCPServer("ns1", sub_agent="agent1").tools
+
+    with (
+        patch("datus.mcp_server.load_agent_config", return_value=agent_config),
+        patch("datus.mcp_server.FastMCP"),
+        patch.object(DatusMCPServer, "_register_tools"),
+    ):
+        yield initialize
+
+
+@pytest.fixture
+def reference_template_dependencies() -> Iterator[tuple[MagicMock, list[ToolClassConfig]]]:
+    database_tool = MagicMock(spec=DBFuncTool)
+    database_tool.read_query.return_value = FuncToolResult(result=[{"product_id": 42}])
+    registry = [
+        ToolClassConfig("db_tool", DBFuncTool, "has_db_tools"),
+        ToolClassConfig("reference_template_tool", ReferenceTemplateTools, "has_reference_template_tools"),
+    ]
+    with (
+        patch("datus.tools.func_tool.reference_template_tools.ReferenceTemplateRAG") as store_class,
+        patch.object(DBFuncTool, "create_dynamic", return_value=database_tool),
+        patch.object(DBFuncTool, "create_static", return_value=database_tool),
+    ):
+        store_class.return_value.get_reference_template_size.return_value = 1
+        store_class.return_value.get_reference_template_detail.return_value = [
+            {
+                "name": "product_lookup",
+                "template": "SELECT {{ product_id }} AS product_id",
+                "parameters": '[{"name": "product_id"}]',
+            }
+        ]
+        yield database_tool, registry
+
+
+class TestMCPReferenceTemplateExecution:
+    @pytest.mark.parametrize("template_first", [False, True], ids=["database-first", "template-first"])
+    def test_initialized_template_executes_with_database_tool(
+        self,
+        initialize_mcp_tools: Callable[[list[ToolClassConfig]], dict[str, Any]],
+        reference_template_dependencies: tuple[MagicMock, list[ToolClassConfig]],
+        template_first: bool,
+    ) -> None:
+        database_tool, registry = reference_template_dependencies
+        if template_first:
+            registry = list(reversed(registry))
+        tools = initialize_mcp_tools(registry)
+        template_tool = tools["reference_template_tool"]
+
+        result = template_tool.execute_reference_template(
+            subject_path=["retail", "products"],
+            name="product_lookup",
+            params='{"product_id": 42}',
+            datasource="ns1",
+        )
+
+        assert result.success == 1, result.error
+        assert result.result["rendered_sql"] == "SELECT 42 AS product_id"
+        assert result.result["query_result"] == [{"product_id": 42}]
+        assert template_tool.db_func_tool is tools["db_tool"] is database_tool
+        database_tool.read_query.assert_called_once_with("SELECT 42 AS product_id", datasource="ns1")
+        assert "execute_reference_template" in {tool.name for tool in template_tool.available_tools()}
+
+    @pytest.mark.parametrize("missing_tool", ["db_tool", "reference_template_tool"])
+    @pytest.mark.parametrize("failure_mode", ["unregistered", "initialization-failed"])
+    def test_unavailable_dependency_preserves_remaining_tools(
+        self,
+        initialize_mcp_tools: Callable[[list[ToolClassConfig]], dict[str, Any]],
+        reference_template_dependencies: tuple[MagicMock, list[ToolClassConfig]],
+        missing_tool: str,
+        failure_mode: str,
+    ) -> None:
+        database_tool, registry = reference_template_dependencies
+        missing_class = next(entry.tool_class for entry in registry if entry.name == missing_tool)
+        if failure_mode == "unregistered":
+            registry = [entry for entry in registry if entry.name != missing_tool]
+        with (
+            patch.object(missing_class, "create_dynamic", side_effect=RuntimeError("Tool unavailable")),
+            patch.object(missing_class, "create_static", side_effect=RuntimeError("Tool unavailable")),
+        ):
+            tools = initialize_mcp_tools(registry)
+
+        assert tools.get(missing_tool) is None
+        if missing_tool == "db_tool":
+            template_tool = tools["reference_template_tool"]
+            assert template_tool.db_func_tool is None
+            result = template_tool.render_reference_template(
+                ["retail", "products"], "product_lookup", '{"product_id": 42}'
+            )
+            assert result.success == 1, result.error
+            assert result.result["rendered_sql"] == "SELECT 42 AS product_id"
+        else:
+            assert tools["db_tool"] is database_tool
+        database_tool.read_query.assert_not_called()
 
 
 class TestToolContextManagerCloseAll:
