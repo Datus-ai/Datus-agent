@@ -70,3 +70,10 @@ def test_computed_arrays_remain_partial_and_do_not_invent_static_sources():
     assert result.issues == []
     assert result.query_refs == {"queries/sales"}
     assert any("queryIds" in warning for warning in result.warnings)
+
+
+def test_quoted_display_text_cannot_override_source_properties():
+    result = scan("""<ChartCard chartId="real" chartType="line" sqlId="queries/sales"
+        title="sqlId='queries/missing'" queryIds={['cost']} />""")
+    assert result.issues == []
+    assert result.query_refs == {"queries/sales", "queries/cost"}

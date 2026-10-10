@@ -229,3 +229,12 @@ def test_dynamic_arrays_never_invent_partial_query_bindings(value):
     files = report_files()
     files["render/app.jsx"] = f'<ChartCard chartId="dynamic" sqlId="queries/sales" queryIds={{{value}}} />'
     assert build_artifact_insight(manifest(), files).blocks[0].query_ids == ["sales"]
+
+
+def test_source_property_names_inside_quoted_titles_are_only_display_text():
+    from datus.utils.artifact_insight import _blocks
+
+    source = """<ChartCard chartId="real" sqlId="queries/sales" title="sqlId='queries/cost'" />"""
+    blocks = _blocks({"render/app.jsx": source}, {"sales", "cost"})
+    assert blocks[0].query_ids == ["sales"]
+    assert blocks[0].title == "sqlId='queries/cost'"

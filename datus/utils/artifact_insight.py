@@ -132,7 +132,6 @@ def _blocks(files: dict[str, str], query_names: set[str]) -> list[ArtifactBlock]
 
     blocks: dict[str, ArtifactBlock] = {}
     duplicates: set[str] = set()
-    attr = re.compile(r"""\b(chartId|handleId|title|name|kind|chartType|sqlId)\s*=\s*['"]([^'"]+)['"]""")
 
     for path, source in sorted(files.items()):
         if not path.startswith("render/") or not path.endswith((".jsx", ".js")):
@@ -152,7 +151,7 @@ def _blocks(files: dict[str, str], query_names: set[str]) -> list[ArtifactBlock]
                     continue
 
                 props = parse_card_attributes(attrs)
-                values = dict(attr.findall(props.literals))
+                values = props.literals
                 block_id = values.get(id_attr)
                 if not block_id or not re.fullmatch(r"[a-z0-9_]{1,64}", block_id):
                     continue

@@ -73,21 +73,6 @@ BLOCK_HANDLE_OPEN_RE = re.compile(r"<BlockHandle\b" + _JSX_ATTR_BLOCK, re.VERBOS
 SPREAD_ATTR_RE = re.compile(r"(?<=\s)\{\s*\.{3}")
 
 
-# Per-attribute extraction inside a ``<ChartCard ... >`` opening tag. Captures
-# only the three required string-literal props the validator audits
-# (``chartId``, ``sqlId``, ``chartType``); other props are ignored here and
-# checked by the runtime / typescript at viewer time.
-CHART_CARD_STR_ATTR_RE = re.compile(
-    r"""\b(chartId|sqlId|chartType)\s*=\s*['"]([^'"]+)['"]""",
-)
-
-
-# String-literal props audited on ``<BlockHandle>``.
-BLOCK_HANDLE_STR_ATTR_RE = re.compile(
-    r"""\b(handleId|name|kind|sqlId)\s*=\s*['"]([^'"]+)['"]""",
-)
-
-
 # Presence of a prop regardless of whether its value is a literal. Used to
 # tell "the author forgot ``handleId``" (an issue) apart from "``handleId``
 # is forwarded from a wrapper component" (legitimate — see below).
@@ -141,7 +126,7 @@ _QUERY_ARRAY_RE = re.compile(rf"\[\s*(?:{_ARRAY_STRING}(?:\s*,\s*{_ARRAY_STRING}
 
 @dataclass
 class CardAttributes:
-    literals: str
+    literals: dict[str, str]
     query_ids: list[str] | None = None
     dynamic_sources: bool = False
     source_error: str | None = None
@@ -192,7 +177,7 @@ def parse_card_attributes(attrs: str) -> CardAttributes:
         values[name] = attrs[start:i]
 
     result = CardAttributes(
-        literals=" ".join(f"{name}={value}" for name, value in values.items() if value.startswith(("'", '"')))
+        literals={name: value[1:-1] for name, value in values.items() if value.startswith(("'", '"'))}
     )
     raw = values.get("queryIds")
     if raw is None:
@@ -305,7 +290,7 @@ def scan_render_cards(
                 continue
             attrs = cc_match.group(1) or ""
             props = parse_card_attributes(attrs)
-            attr_values: Dict[str, str] = dict(CHART_CARD_STR_ATTR_RE.findall(props.literals))
+            attr_values: Dict[str, str] = props.literals
 
             # Spread props (``<ChartCard {...rest}>``) hide attributes from
             # static inspection. Surface as a warning, then bail on the
@@ -374,7 +359,7 @@ def scan_render_cards(
                 continue
             attrs = eh_match.group(1) or ""
             props = parse_card_attributes(attrs)
-            attr_values = dict(BLOCK_HANDLE_STR_ATTR_RE.findall(props.literals))
+            attr_values = props.literals
             present = set(BLOCK_HANDLE_ANY_ATTR_RE.findall(attrs))
 
             if SPREAD_ATTR_RE.search(attrs):
