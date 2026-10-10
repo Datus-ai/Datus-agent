@@ -65,7 +65,16 @@ def _ratio_sql(sql: str, dialect: str) -> str:
     is an expression, not a Ratio, and must not receive this cast. Native Dosi
     validates the result; no SQL query or compiled SELECT is used as source.
     """
-    aliases = {"ansi_sql": None, "postgresql": "postgres", "starrocks": "starrocks"}
+    aliases = {
+        "ansi_sql": None,
+        "postgresql": "postgres",
+        "greenplum": "postgres",
+        "hologres": "postgres",
+        "gaussdb": "postgres",
+        "dws": "postgres",
+        "doris": "starrocks",
+        "tidb": "mysql",
+    }
     language = aliases.get(dialect.lower(), dialect.lower())
     node = sqlglot.parse_one(sql, read=language)
 
