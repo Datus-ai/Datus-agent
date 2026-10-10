@@ -267,6 +267,11 @@ class DatusPathManager:
         return self.subject_dir / "sql_summaries"
 
     @property
+    def lineage_dir(self) -> Path:
+        """Project lineage graph directory: ``{project_root}/lineage``."""
+        return self._project_root / "lineage"
+
+    @property
     def project_skills_dir(self) -> Path:
         """Project-level skills directory: ``{project_root}/.datus/skills``."""
         return self._project_root / ".datus" / "skills"
@@ -288,6 +293,7 @@ class DatusPathManager:
         "subject": "subject_dir",
         "semantic_models": "semantic_models_dir",
         "sql_summaries": "sql_summaries_dir",
+        "lineage": "lineage_dir",
         "project_skills": "project_skills_dir",
     }
 

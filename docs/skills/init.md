@@ -6,7 +6,7 @@ Run it with the `/init` command inside the REPL.
 
 ## What it does
 
-- Statically analyzes the project's SQL (ETL scripts and SQL embedded in Python DAGs) with the `extract_sql_lineage` tool: table dependencies, join keys, directions and expressions. Reads filters, mappings, windows and author comments directly from the source SQL. Nothing is executed.
+- Statically analyzes the project's SQL (ETL scripts and SQL embedded in Python DAGs) into a persisted table lineage graph with the `upsert_lineage` tool, then reads it with `query_lineage`. Reads joins, filters, mappings, windows and author comments directly from the source SQL. Nothing is executed.
 - Reads the human-written docs in the project (business rules, metric definitions, data dictionaries).
 - Verifies what it found with a few dozen cheap, read-only database queries: which table versions exist and are fresh, table grain, join cardinality, actual code values.
 - Writes an `AGENTS.md` project map at the project root: data architecture, core tables, cross-domain rules, and a knowledge index.
@@ -14,9 +14,11 @@ Run it with the `/init` command inside the REPL.
 
 It is the **lightweight** tier: no vector index and no confirmation gate. It takes a few minutes on a project with a hundred or so scripts. For the vector-indexed knowledge base, use [`/build-kb`](build_kb.md).
 
-The analyzer returns `schema_version=5`: the complete dependency graph and resolved joins in one response, without `sections`, pagination or result-size clipping. `lineage` includes SELECT-only reads (`target=null`), separating different SQL and write operations. Each join contains only `expression` and `evidence`: the expression combines relations, aliases, join direction and conditions. Physical tables appear as `tables` IDs (`#3 AS o`); CTE/derived relations keep their scope name followed by the physical tables they read (`x{#1,#2}`) — read their projections in the original SQL. `files` stores paths once, and `=f3` marks a byte-identical copy of `f3` that is analyzed and cited only once. Join evidence uses `file_id:start-end` (or a single line) for the actual condition; `@statement` explicitly marks a statement-start fallback. Lineage evidence still locates statement starts. Detailed `issues` are omitted; `complete=false` signals inputs or relationships that need source inspection.
+The lineage graph is saved in `lineage/lineage.json`, one file for the whole project. Every analyzed file (or saved inline SQL) is a *source*: `upsert_lineage` re-analyzes only sources whose content, dialect, default database or analyzer version changed, and replaces everything a source contributed before, so lineage from deleted statements disappears. `prune_missing=True` also removes sources whose files were deleted, and `delete_lineage` removes sources by ID or glob. The file holds three parts: `sources` (content hash, dialect, default database, parse issues), `nodes` (tables, views and `query:<hash>` nodes for pure queries, with the author's comment as `label`) and `edges` (upstream → downstream, each with the statements that produced it: source, line, operation and folded temporary tables).
 
-**Breaking change from schema v2:** remove `sections`, `max_items`, `max_files`, `offset`, `result_path` and `max_output_chars` from calls. The tool no longer returns rules, comments, table/root inventories or detailed occurrence collections. Read source files for business rules and explanations. Initialization inventories filters, CASE/IF, windows and comments across the scripts, then reads core definitions in context. Parameterized predicates do not prove incremental loading; ROW_NUMBER alone does not prove table grain.
+`query_lineage` returns the subgraph around the requested tables (or the whole table graph) with one record per statement, `file_id:line` evidence, each table's role and connected component, and how many saved queries read it. `complete=false` means a source involved changed since it was analyzed or has statements that failed to parse.
+
+**Breaking change:** `extract_sql_lineage` is replaced by `upsert_lineage`, `delete_lineage` and `query_lineage`. The lineage tools no longer return joins: initialization reads join conditions from the source SQL and verifies cardinality against the database. Parameterized predicates do not prove incremental loading; ROW_NUMBER alone does not prove table grain.
 
 ## When to use it
 
