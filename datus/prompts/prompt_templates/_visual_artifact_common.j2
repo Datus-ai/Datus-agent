@@ -198,9 +198,9 @@ The runtime does **not** ship a KPI-card component: own that visual in `render/s
 
 **Do not pass `__sourcePath`** here either — same auto-injection rule as ChartCard.
 
-**`BlockHandle` carries no View SQL / Export menu, on purpose.** Granularity is the reason: a KPI strip is N tiles over ONE query, so what the handle carries is per-tile (change *this* number, ask about *this* number) while the SQL is per-strip — N menus would all open the identical statement.
+**`BlockHandle` carries no View SQL / Export menu, on purpose.** Granularity is the reason: a single-query KPI strip is N tiles over ONE query, so what the handle carries is per-tile (change *this* number, ask about *this* number) while the SQL is per-strip — N menus would all open the identical statement.
 
-So when a wrapped block is query-backed, render a standalone `<ChartEntryMore sqlId={...} data={data} />` yourself, **at the granularity the query actually has** — once per strip, not once per tile — and mark that container with `data-datus-chart-card` so the menu's PNG export can find its capture root. Without a menu somewhere, a KPI strip's query is unreachable from the UI entirely: dashboards render their queries live, so the `.sql.j2` files are never shipped to the viewer.
+For a **single-query KPI strip**, render a standalone `<ChartEntryMore sqlId={...} data={data} />` yourself — **once per strip, not once per tile** — and mark that container with `data-datus-chart-card` so the menu's PNG export can find its capture root. For a **multi-query KPI strip**, omit the strip-level menu: it would expose only one query. Instead, declare literal block ids and query references on each `BlockHandle` (`sqlId` for a single source, `queryIds={[...]}` when several sources contribute), and use Scope & Sources to review the declared queries.
 
 ```jsx
 // render/shared/kpi-card.jsx — the KPI visual is yours, the handle comes
