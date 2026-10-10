@@ -256,6 +256,7 @@ class MetricArtifactToolsMixin:
                         saved.parameter_names()
                         or result.datasource != saved.datasource
                         or result.sql != saved.generated_sql
+                        or (result.source or {}).get("kind") != "metric"
                         or (result.source or {}).get("metric") != saved.metric.model_dump()
                     ):
                         raise ValueError(f"{name}: metric result does not match its recipe")

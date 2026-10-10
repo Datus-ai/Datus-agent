@@ -288,4 +288,4 @@ def test_standalone_published_metric_uses_frozen_model_after_studio_model_change
     assert result.success is True, result.errorMessage
     assert result.data.rows == [{"product": row["product"], "score_total": float(row["score_total"])} for row in direct]
     assert result.data.source == {"kind": "metric", "metric": ref}
-    assert recipe.model_snapshot is not None
+    assert recipe.model_snapshot == MODEL_PATH.read_text(encoding="utf-8")
