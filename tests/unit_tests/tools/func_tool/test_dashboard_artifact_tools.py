@@ -1002,6 +1002,18 @@ export default function App() {
 class TestValidateRenderChartCard:
     """Static validation around the runtime-provided ``<ChartCard>``."""
 
+    @pytest.mark.parametrize("extra,success", [("revenue_by_region", 1), ("missing", 0)])
+    def test_validates_additional_declared_sources(
+        self, dashboard_tools: DashboardArtifactTools, project_root: Path, extra, success
+    ):
+        _seed_template(dashboard_tools)
+        source = _CHART_CARD_APP_JSX.replace('chartType="bar"', f'chartType="bar" queryIds={{["queries/{extra}"]}}')
+        _write_render(project_root, dashboard_tools.dashboard_slug, {"app.jsx": source})
+        result = dashboard_tools.validate_render()
+        assert result.success == success, result.error
+        if not success:
+            assert "queryIds" in result.error
+
     def test_chart_card_happy_path_emits_cards_registry(
         self, dashboard_tools: DashboardArtifactTools, project_root: Path
     ):

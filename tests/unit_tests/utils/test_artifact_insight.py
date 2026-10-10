@@ -199,3 +199,33 @@ def test_malformed_reference_snapshots_do_not_break_saved_queries(content):
     assert insight.reference_sql_details == []
     assert insight.queries[0].sql == files["queries/sales.sql"]
     assert insight.warnings == ["analysis/reference_sql_snapshots.json"]
+
+
+@pytest.mark.parametrize("tag,id_prop", [("ChartCard", "chartId"), ("BlockHandle", "handleId")])
+def test_literal_query_arrays_keep_primary_and_every_additional_saved_source(tag, id_prop):
+    files = report_files()
+    files["queries/cost.json"] = files["queries/sales.json"]
+    files["render/app.jsx"] = f"""<{tag} {id_prop}="combined" sqlId="queries/sales"
+        queryIds={{['queries/cost', 'sales.json', 'queries/cost',]}} />"""
+    data = build_artifact_insight(manifest(), files)
+    assert data.blocks[0].query_ids == ["sales", "cost"]
+
+
+def test_query_array_only_block_links_sources_but_not_unknown_or_nested_props():
+    files = report_files()
+    files["render/app.jsx"] = """<BlockHandle handleId="cost" name="Cost"
+        queryIds={['queries/sales', 'queries/missing']} />
+        <ChartCard chartId="nested" title={<span queryIds={['queries/sales']} />} />
+        <BlockHandle handleId="dynamic" queryIds={sources} />"""
+    assert [(b.id, b.query_ids) for b in build_artifact_insight(manifest(), files).blocks] == [
+        ("nested", []),
+        ("cost", ["sales"]),
+        ("dynamic", []),
+    ]
+
+
+@pytest.mark.parametrize("value", ["['queries/sales', sources]", "getSources()", "['queries/sales'] + sideEffect()"])
+def test_dynamic_arrays_never_invent_partial_query_bindings(value):
+    files = report_files()
+    files["render/app.jsx"] = f'<ChartCard chartId="dynamic" sqlId="queries/sales" queryIds={{{value}}} />'
+    assert build_artifact_insight(manifest(), files).blocks[0].query_ids == ["sales"]

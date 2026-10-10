@@ -133,6 +133,109 @@ VALID_CHART_TYPES: Set[str] = {
 # the chart-actions menu.
 VALID_BLOCK_HANDLE_KINDS: Set[str] = {"kpi", "note", "filter"}
 
+JS_NON_CODE_RE = re.compile(r"""//[^\n]*|/\*[\s\S]*?\*/|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`""")
+_ATTR_NAME_RE = re.compile(r"[\w:$-]+")
+_ARRAY_STRING = r"""(?:'[^'\\\n]*'|"[^"\\\n]*")"""
+_QUERY_ARRAY_RE = re.compile(rf"\[\s*(?:{_ARRAY_STRING}(?:\s*,\s*{_ARRAY_STRING})*\s*,?)?\s*\]")
+
+
+@dataclass
+class CardAttributes:
+    literals: str
+    query_ids: list[str] | None = None
+    dynamic_sources: bool = False
+    source_error: str | None = None
+
+
+def parse_card_attributes(attrs: str) -> CardAttributes:
+    """Read top-level literal props and queryIds arrays, never executing JSX."""
+    values: dict[str, str] = {}
+    duplicates: set[str] = set()
+    i = 0
+    while i < len(attrs):
+        name_match = _ATTR_NAME_RE.match(attrs, i)
+        if not name_match:
+            token = JS_NON_CODE_RE.match(attrs, i)
+            i = token.end() if token else i + 1
+            continue
+        name = name_match.group()
+        i = name_match.end()
+        while i < len(attrs) and attrs[i].isspace():
+            i += 1
+        if i >= len(attrs) or attrs[i] != "=":
+            continue
+        i += 1
+        while i < len(attrs) and attrs[i].isspace():
+            i += 1
+        start = i
+        token = JS_NON_CODE_RE.match(attrs, i)
+        if token:
+            i = token.end()
+        elif i < len(attrs) and attrs[i] == "{":
+            depth = 1
+            i += 1
+            while i < len(attrs) and depth:
+                token = JS_NON_CODE_RE.match(attrs, i)
+                if token:
+                    i = token.end()
+                    continue
+                if attrs[i] == "{":
+                    depth += 1
+                elif attrs[i] == "}":
+                    depth -= 1
+                i += 1
+        else:
+            while i < len(attrs) and not attrs[i].isspace():
+                i += 1
+        if name in values:
+            duplicates.add(name)
+        values[name] = attrs[start:i]
+
+    result = CardAttributes(
+        literals=" ".join(f"{name}={value}" for name, value in values.items() if value.startswith(("'", '"')))
+    )
+    raw = values.get("queryIds")
+    if raw is None:
+        return result
+    if "queryIds" in duplicates:
+        result.source_error = "queryIds must be declared once"
+        return result
+    if not (raw.startswith("{") and raw.endswith("}")):
+        result.source_error = "queryIds must be a string array expression"
+        return result
+    expression = raw[1:-1].strip()
+    # Comments are whitespace; retain strings verbatim, including comment-like text.
+    expression = JS_NON_CODE_RE.sub(
+        lambda match: " " if match.group().startswith(("//", "/*")) else match.group(), expression
+    )
+    if _QUERY_ARRAY_RE.fullmatch(expression):
+        result.query_ids = [match.group()[1:-1] for match in re.finditer(_ARRAY_STRING, expression)]
+    else:
+        # Forwarding and computed arrays remain legal but statically partial.
+        result.dynamic_sources = True
+    return result
+
+
+def _collect_query_ids(
+    result: CardScanResult,
+    props: CardAttributes,
+    rel: str,
+    query_exists: Callable[[str], bool],
+    missing_query_hint: str,
+) -> None:
+    if props.source_error:
+        result.issues.append(f"render/{rel}: {props.source_error}.")
+    if props.dynamic_sources:
+        result.warnings.append(f"render/{rel}: queryIds is dynamic — source validation is deferred to runtime.")
+    for ref in props.query_ids or []:
+        slug = extract_query_slug(ref)
+        if slug is None:
+            result.issues.append(f"render/{rel}: queryIds contains an invalid query reference: {ref!r}.")
+            continue
+        result.query_refs.add(f"queries/{slug}")
+        if not query_exists(slug):
+            result.issues.append(f"render/{rel}: queryIds reference 'queries/{slug}' points to {missing_query_hint}.")
+
 
 @dataclass
 class CardScanResult:
@@ -194,11 +297,15 @@ def scan_render_cards(
     for mod in modules.values():
         rel = mod["rel"]
         source = mod["source"]
+        non_code = [(m.start(), m.end()) for m in JS_NON_CODE_RE.finditer(source)]
 
         # ---- <ChartCard ... > opening tags — required props + enums.
         for cc_match in CHART_CARD_OPEN_RE.finditer(source):
+            if any(start <= cc_match.start() < end for start, end in non_code):
+                continue
             attrs = cc_match.group(1) or ""
-            attr_values: Dict[str, str] = dict(CHART_CARD_STR_ATTR_RE.findall(attrs))
+            props = parse_card_attributes(attrs)
+            attr_values: Dict[str, str] = dict(CHART_CARD_STR_ATTR_RE.findall(props.literals))
 
             # Spread props (``<ChartCard {...rest}>``) hide attributes from
             # static inspection. Surface as a warning, then bail on the
@@ -210,6 +317,7 @@ def scan_render_cards(
                 )
                 continue
 
+            _collect_query_ids(result, props, rel, query_exists, missing_query_hint)
             missing = [k for k in ("chartId", "sqlId", "chartType") if k not in attr_values]
             if missing:
                 result.issues.append(
@@ -262,8 +370,11 @@ def scan_render_cards(
         # Literals get the full shape + uniqueness treatment; forwarded
         # props are deferred to runtime.
         for eh_match in BLOCK_HANDLE_OPEN_RE.finditer(source):
+            if any(start <= eh_match.start() < end for start, end in non_code):
+                continue
             attrs = eh_match.group(1) or ""
-            attr_values = dict(BLOCK_HANDLE_STR_ATTR_RE.findall(attrs))
+            props = parse_card_attributes(attrs)
+            attr_values = dict(BLOCK_HANDLE_STR_ATTR_RE.findall(props.literals))
             present = set(BLOCK_HANDLE_ANY_ATTR_RE.findall(attrs))
 
             if SPREAD_ATTR_RE.search(attrs):
@@ -273,6 +384,7 @@ def scan_render_cards(
                 )
                 continue
 
+            _collect_query_ids(result, props, rel, query_exists, missing_query_hint)
             missing = [k for k in ("handleId", "name") if k not in present]
             if missing:
                 result.issues.append(

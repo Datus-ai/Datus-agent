@@ -121,48 +121,13 @@ def query_lineage(
     return result
 
 
-# Skip declarations inside comments, string constants and template literals.
-_JS_NON_CODE = re.compile(r"""//[^\n]*|/\*[\s\S]*?\*/|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`""")
-
-
-def _literal_attributes(attrs: str) -> str:
-    """Remove JSX expression bodies so nested props cannot bind their parent."""
-    pieces, start, depth = [], 0, 0
-    i = 0
-
-    while i < len(attrs):
-        if attrs[i] in {"'", '"', "`"}:
-            quote = attrs[i]
-            i += 1
-
-            while i < len(attrs):
-                if attrs[i] == "\\":
-                    i += 2
-                    continue
-                if attrs[i] == quote:
-                    break
-                i += 1
-        elif attrs[i] == "{":
-            if depth == 0:
-                pieces.append(attrs[start:i])
-            depth += 1
-        elif attrs[i] == "}" and depth:
-            depth -= 1
-            if depth == 0:
-                start = i + 1
-        i += 1
-
-    if depth == 0:
-        pieces.append(attrs[start:])
-
-    return " ".join(pieces)
-
-
 def _blocks(files: dict[str, str], query_names: set[str]) -> list[ArtifactBlock]:
     from datus.tools.func_tool._visual_artifact_cards import (
         BLOCK_HANDLE_OPEN_RE,
         CHART_CARD_OPEN_RE,
+        JS_NON_CODE_RE,
         SPREAD_ATTR_RE,
+        parse_card_attributes,
     )
 
     blocks: dict[str, ArtifactBlock] = {}
@@ -173,7 +138,7 @@ def _blocks(files: dict[str, str], query_names: set[str]) -> list[ArtifactBlock]
         if not path.startswith("render/") or not path.endswith((".jsx", ".js")):
             continue
 
-        non_code = [(m.start(), m.end()) for m in _JS_NON_CODE.finditer(source)]
+        non_code = [(m.start(), m.end()) for m in JS_NON_CODE_RE.finditer(source)]
 
         # Use the same static declaration grammar as validate_render; only literal
         # bindings are shown. Dynamic/spread wrappers remain explicitly partial.
@@ -186,7 +151,8 @@ def _blocks(files: dict[str, str], query_names: set[str]) -> list[ArtifactBlock]
                 if SPREAD_ATTR_RE.search(attrs):
                     continue
 
-                values = dict(attr.findall(_literal_attributes(attrs)))
+                props = parse_card_attributes(attrs)
+                values = dict(attr.findall(props.literals))
                 block_id = values.get(id_attr)
                 if not block_id or not re.fullmatch(r"[a-z0-9_]{1,64}", block_id):
                     continue
@@ -194,12 +160,17 @@ def _blocks(files: dict[str, str], query_names: set[str]) -> list[ArtifactBlock]
                     duplicates.add(block_id)
                     continue
 
-                query = extract_query_slug(values.get("sqlId", ""))
                 blocks[block_id] = ArtifactBlock(
                     id=block_id,
                     title=values.get("title") or values.get("name") or block_id,
                     kind=values.get("chartType") or values.get("kind") or "chart",
-                    query_ids=[query] if query in query_names else [],
+                    query_ids=list(
+                        dict.fromkeys(
+                            slug
+                            for ref in [values.get("sqlId", ""), *(props.query_ids or [])]
+                            if (slug := extract_query_slug(ref)) in query_names
+                        )
+                    ),
                     source_path=path,
                 )
 

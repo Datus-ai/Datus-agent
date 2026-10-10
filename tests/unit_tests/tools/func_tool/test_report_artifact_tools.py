@@ -453,6 +453,26 @@ export default function KpiBanner({ rows }) {
 
 
 class TestValidateRender:
+    @pytest.mark.parametrize("extra,success", [("sales_by_store", 1), ("missing", 0)])
+    def test_validates_additional_declared_sources(
+        self, report_tools: ReportArtifactTools, project_root: Path, extra, success
+    ):
+        saved = report_tools.save_query(
+            name="sales_by_store", sql="SELECT store_name FROM sales", goal="Stores", hypothesis="Saved stores"
+        )
+        assert saved.success == 1, saved.error
+        source = (
+            "import { ChartCard } from '@datus/web-artifact';\n"
+            "export default function App() { return ("
+            '<ChartCard chartId="combined" chartType="line" sqlId="queries/sales_by_store" '
+            f'queryIds={{["queries/{extra}"]}}><div /></ChartCard>); }}'
+        )
+        _write_render(project_root, report_tools.report_slug, {"app.jsx": source})
+        result = report_tools.validate_render()
+        assert result.success == success, result.error
+        if not success:
+            assert "queryIds" in result.error
+
     def test_happy_path(self, report_tools: ReportArtifactTools, project_root: Path):
         report_tools.save_query(
             name="sales_by_store",
