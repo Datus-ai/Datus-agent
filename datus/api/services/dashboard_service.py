@@ -360,9 +360,12 @@ class DashboardService:
 
     # -- run_query -----------------------------------------------------------
 
-    async def _run_metric_query(self, query, meta, params, project_root, policy_context):
+    async def _run_metric_query(self, query, meta, params, project_root, policy_context, published=False):
         from datus.tools import func_tool as func_tool_mod
-        from datus.tools.func_tool.metric_artifact_tools import execute_metric_artifact_query
+        from datus.tools.func_tool.metric_artifact_tools import (
+            execute_metric_artifact_query,
+            execute_published_metric_query,
+        )
         from datus.tools.func_tool.semantic_tools import SemanticTools
 
         if (
@@ -386,6 +389,14 @@ class DashboardService:
                     sub_agent_name="gen_visual_dashboard",
                     runtime_db_context_provider=lambda: {"datasource": query.datasource},
                 )
+                if published:
+                    return execute_published_metric_query(
+                        query,
+                        runtime_config=semantic_tools.runtime.config,
+                        db_tool=db_tool,
+                        params=params,
+                        policy_context=policy_context,
+                    )
                 return execute_metric_artifact_query(
                     query,
                     semantic_tools=semantic_tools,
@@ -401,6 +412,8 @@ class DashboardService:
         except Exception as exc:
             if getattr(exc, "code", None) in {ErrorCode.POLICY_DENIED, ErrorCode.POLICY_DENIED.code}:
                 code = "POLICY_DENIED"
+            elif "METRIC_MODEL_SNAPSHOT_MISSING" in str(exc):
+                code = "METRIC_MODEL_SNAPSHOT_MISSING"
             elif "METRIC_MODEL_CHANGED" in str(exc):
                 code = "METRIC_MODEL_CHANGED"
             else:
@@ -492,7 +505,14 @@ class DashboardService:
             )
 
         if isinstance(sql_template, MetricQueryFile):
-            return await self._run_metric_query(sql_template, meta, coerced, project_files_root, policy_context)
+            return await self._run_metric_query(
+                sql_template,
+                meta,
+                coerced,
+                project_files_root,
+                policy_context,
+                published=published_version is not None,
+            )
 
         try:
             rendered_sql = render_dashboard_template(sql_template, meta.params, coerced)

@@ -202,3 +202,90 @@ def test_metric_artifact_uses_real_engine_and_enforced_connector(query_tool, mon
     recipe = json.loads((tools.queries_dir / "scores.metric.json").read_text(encoding="utf-8"))
     assert recipe["generated_sql"] == actual["sql"]
     assert recipe["metric_tables"] == ["main.activity_scores"]
+
+
+def test_standalone_published_metric_uses_frozen_model_after_studio_model_changes(query_tool, monkeypatch, tmp_path):
+    """An artifact-only viewer has no Studio files or subject index."""
+    from datus.api.models.base_models import Result
+    from datus.api.services.dashboard_service import DashboardService
+    from datus.schemas.metric_artifact_query import MetricQueryFile
+    from datus.tools.func_tool import DashboardArtifactTools
+    from datus.utils.async_utils import run_async
+
+    ref = {"path": ["Scores"], "name": "score_total"}
+    monkeypatch.setattr(
+        query_tool,
+        "get_metric",
+        lambda **kwargs: FuncToolResult(
+            success=1,
+            result={**ref, "dimensions": [{"name": "scores.product"}]},
+        ),
+    )
+    tools = DashboardArtifactTools(
+        agent_config=query_tool.agent_config,
+        db_func_tool=DBFuncTool(agent_config=query_tool.agent_config),
+        semantic_tools=query_tool,
+    )
+    assert tools.start_new_dashboard("published_scores", "Scores", "Pinned model").success == 1
+    saved = tools.save_metric_query_template(
+        name="scores",
+        query={
+            "metric": ref,
+            "dimensions": ["scores.product"],
+            "filters": [
+                {"dimension": "scores.product", "value": {"param": "product"}},
+            ],
+        },
+        goal="Product scores",
+        hypothesis="Only selected product appears",
+        params=[{"name": "product", "type": "string", "required": True}],
+        sample_params={"product": "p1"},
+    )
+    assert saved.success == 1, saved.error
+    recipe = MetricQueryFile.model_validate_json((tools.queries_dir / "scores.metric.json").read_text(encoding="utf-8"))
+    meta = (tools.queries_dir / "scores.params.json").read_text(encoding="utf-8")
+    direct = _rows(
+        query_tool,
+        query_tool.query_metrics(
+            metrics=["score_total"],
+            dimensions=["scores.product"],
+            where="scores.product = 'p2'",
+        ),
+    )
+    Path(query_tool.runtime.artifact_metric_binding("score_total")["model_path"]).unlink()
+    # The publication's artifact-only root is empty, and the live model is gone.
+    viewer = AgentConfig(
+        nodes={"semantic": NodeConfig(model="mock", input=None)},
+        home=str(tmp_path / "viewer_home"),
+        project_name="published_metric_viewer",
+        project_root=str(tmp_path / "empty_viewer"),
+        target="mock",
+        models={"mock": {"type": "openai", "api_key": "unused", "model": "unused", "base_url": "http://127.0.0.1:1"}},
+        services={
+            "datasources": {
+                "window_filters": {"type": "duckdb", "uri": str(tmp_path / "window_filters.duckdb"), "default": True}
+            }
+        },
+    )
+
+    viewer.current_datasource = "window_filters"
+
+    async def loader(version):
+        assert version == 3
+        return Result(success=True, data=(recipe, meta))
+
+    with patch("datus.tools.func_tool.semantic_tools.MetricRAG"):
+        result = run_async(
+            DashboardService(agent_config=viewer).run_query(
+                project_files_root=Path(viewer.project_root),
+                dashboard_slug="published_scores",
+                query_slug="scores",
+                params={"product": "p2"},
+                published_version=3,
+                published_template_loader=loader,
+            )
+        )
+    assert result.success is True, result.errorMessage
+    assert result.data.rows == [{"product": row["product"], "score_total": float(row["score_total"])} for row in direct]
+    assert result.data.source == {"kind": "metric", "metric": ref}
+    assert recipe.model_snapshot is not None

@@ -189,11 +189,45 @@ def execute_metric_artifact_query(
         "datasource": datasource,
         "model_path": relative_path,
         "model_revision": binding["model_revision"],
+        "model_snapshot": model_path.read_bytes().decode("utf-8"),
         "metric_detail": detail,
         "metric_tables": tables,
         "captured_at": payload.executed_at,
         "generated_sql": sql,
     }
+
+
+def execute_published_metric_query(query: MetricQueryFile, *, runtime_config, db_tool, params, policy_context):
+    """Compile only the artifact's frozen model, including standalone dashboards."""
+    from tempfile import TemporaryDirectory
+    from types import SimpleNamespace
+
+    from datus.tools.semantic_tools.dosi import DosiRuntime
+
+    if query.model_snapshot is None:
+        raise ValueError("METRIC_MODEL_SNAPSHOT_MISSING: republish a metric query with its semantic model snapshot")
+    with TemporaryDirectory(prefix="datus-metric-query-") as directory:
+        root = Path(directory)
+        model = root / query.model_path
+        model.parent.mkdir(parents=True)
+        model.write_bytes(query.model_snapshot.encode("utf-8"))
+        config = runtime_config.model_copy(
+            update={
+                "semantic_model_path": str(model),
+                "semantic_models_path": None,
+                "datasource": query.datasource,
+                "connection": query.datasource,
+            }
+        )
+        return execute_metric_artifact_query(
+            query,
+            semantic_tools=SimpleNamespace(runtime=DosiRuntime(config)),
+            db_tool=db_tool,
+            project_root=root,
+            params=params,
+            policy_context=policy_context,
+            saved=query,
+        )
 
 
 class MetricArtifactToolsMixin:

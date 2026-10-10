@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from pathlib import PurePosixPath
 from typing import Any, Literal
 
@@ -49,6 +50,7 @@ class MetricQueryFile(MetricQueryRequest):
     datasource: str = Field(min_length=1)
     model_path: str = Field(min_length=1)
     model_revision: str = Field(pattern=r"^[a-f0-9]{64}$")
+    model_snapshot: str | None = None
     metric_detail: dict[str, Any]
     metric_tables: list[str] = Field(default_factory=list)
     captured_at: str
@@ -59,6 +61,11 @@ class MetricQueryFile(MetricQueryRequest):
         path = PurePosixPath(self.model_path)
         if path.is_absolute() or ".." in path.parts or "\\" in self.model_path:
             raise ValueError("model_path must be a relative project path without traversal")
+        if (
+            self.model_snapshot is not None
+            and hashlib.sha256(self.model_snapshot.encode("utf-8")).hexdigest() != self.model_revision
+        ):
+            raise ValueError("model_snapshot must match model_revision")
         if self.metric_detail.get("name") != self.metric.name or self.metric_detail.get("path") != self.metric.path:
             raise ValueError("saved metric detail must match the metric's subject identity")
         return self
