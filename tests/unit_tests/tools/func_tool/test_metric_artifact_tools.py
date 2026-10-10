@@ -91,7 +91,7 @@ def _save(env, kind="report", query=None, **kwargs):
     cls = ReportArtifactTools if kind == "report" else DashboardArtifactTools
     tools = cls(agent_config=env.config, db_func_tool=env.db, semantic_tools=env.semantic)
     start = tools.start_new_report if kind == "report" else tools.start_new_dashboard
-    assert start("demo", "Metric demo", "A metric backed artifact").success
+    assert start("demo", "Metric demo", "A metric backed artifact").success == 1
     save = tools.save_metric_query if kind == "report" else tools.save_metric_query_template
     saved = save(
         name="sales",
@@ -113,7 +113,7 @@ def _save(env, kind="report", query=None, **kwargs):
 def test_report_metric_executes_complete_result_and_preserves_execution_definition(environment, dimensions, expected):
     env = environment
     tools, saved = _save(env, query={"metric": REF, "dimensions": dimensions})
-    assert saved.success, saved.error
+    assert saved.success == 1, saved.error
     result = json.loads((tools.queries_dir / "sales.json").read_text())
     assert result["rows"] == expected
     assert result["row_count"] == len(expected)
@@ -146,9 +146,9 @@ async def test_dashboard_producer_loads_as_metric_and_live_values_are_bound(envi
         params=[{"name": "region", "type": "string"}],
         sample_params={"region": "South"},
     )
-    assert saved.success, saved.error
+    assert saved.success == 1, saved.error
     loaded = await _load_local_template_pair(env.root, "demo", "sales")
-    assert loaded.success
+    assert loaded.success == True
     assert isinstance(loaded.data[0], MetricQueryFile)
     import datus.tools.func_tool as func_tools
     import datus.tools.func_tool.semantic_tools as semantic_mod
@@ -163,7 +163,7 @@ async def test_dashboard_producer_loads_as_metric_and_live_values_are_bound(envi
         params={"region": "North"},
         policy_context=policy,
     )
-    assert result.success, result.errorMessage
+    assert result.success == True, result.errorMessage
     assert result.data.rows == [{"region": "North", "revenue": 17.0}]
     assert env.db.execute_read_enforced.call_args.kwargs["policy_context"] is policy
     assert tools._validate_metric_queries("dashboard") is None
@@ -173,7 +173,7 @@ async def test_dashboard_producer_loads_as_metric_and_live_values_are_bound(envi
 def test_saved_model_change_refuses_execution_before_warehouse_read(environment):
     env = environment
     tools, saved = _save(env)
-    assert saved.success
+    assert saved.success == 1
     recipe = MetricQueryFile.model_validate_json((tools.queries_dir / "sales.metric.json").read_text())
     env.model.write_text("different model", encoding="utf-8")
     with pytest.raises(ValueError, match="METRIC_MODEL_CHANGED"):
@@ -198,7 +198,7 @@ def test_policy_denial_never_persists_metric_or_falls_back_to_sql(environment):
 @pytest.mark.parametrize("change", ["source", "brief", "result"])
 def test_metric_bundle_validation_rejects_mismatched_sidecars(environment, change):
     tools, saved = _save(environment)
-    assert saved.success
+    assert saved.success == 1
     if change == "source":
         (tools.queries_dir / "sales.sql").write_text("SELECT 1")
     elif change == "brief":
@@ -211,12 +211,12 @@ def test_metric_bundle_validation_rejects_mismatched_sidecars(environment, chang
         data = json.loads(path.read_text())
         data["sql"] = "SELECT 0"
         path.write_text(json.dumps(data))
-    assert tools._validate_metric_queries("report")
+    assert "Invalid saved metric query" in tools._validate_metric_queries("report")
 
 
 def test_sql_fallback_requires_recorded_reason_and_clears_previous_metric_source(environment):
     tools, saved = _save(environment)
-    assert saved.success
+    assert saved.success == 1
     args = dict(
         name="sales", sql="SELECT COUNT(*) AS total FROM orders", goal="Custom analysis", hypothesis="There are orders"
     )
@@ -225,7 +225,7 @@ def test_sql_fallback_requires_recorded_reason_and_clears_previous_metric_source
     fallback = tools.save_query(
         **args, fallback_reason="Needs a count that no existing metric defines", candidate_metrics=[REF]
     )
-    assert fallback.success, fallback.error
+    assert fallback.success == 1, fallback.error
     brief = json.loads((tools.queries_dir / "sales.brief.json").read_text())
     assert brief["source_selection"]["candidate_metrics"] == [REF]
     assert not (tools.queries_dir / "sales.metric.json").exists()
@@ -300,7 +300,7 @@ def test_ambiguous_filter_literal_is_rejected(value):
 def test_pinned_execution_does_not_depend_on_live_subject_index(environment):
     env = environment
     tools, result = _save(env)
-    assert result.success, result.error
+    assert result.success == True, result.error
     saved = MetricQueryFile.model_validate_json((tools.queries_dir / "sales.metric.json").read_text())
     env.semantic.get_metric = MagicMock(side_effect=AssertionError("published subject index unavailable"))
     payload, _ = execute_metric_artifact_query(
