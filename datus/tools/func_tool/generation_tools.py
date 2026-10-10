@@ -1689,6 +1689,20 @@ class GenerationTools:
                     if previous_name and normalize_metric_name(previous_name) not in declared_by_key:
                         deleted_metric_names.add(previous_name)
 
+            from datus.storage.semantic_model.subject_cleanup import finish_cleanup, remember_cleanup
+            from datus.storage.subject_tree.store import SUBJECT_ID_COLUMN_NAME
+
+            cleanup_nodes = set()
+            if include_metrics:
+                old_nodes = {
+                    row[SUBJECT_ID_COLUMN_NAME]
+                    for row in _rows_to_dicts(metric_snapshot)
+                    if row.get(SUBJECT_ID_COLUMN_NAME) is not None
+                }
+                cleanup_nodes = remember_cleanup(
+                    self.agent_config, self.agent_config.current_datasource, osi_file_path, old_nodes
+                )
+
             try:
                 if dataset_rows and self.semantic_dataset_rag is not None:
                     self.semantic_dataset_rag.upsert_batch(dataset_rows)
@@ -1712,6 +1726,9 @@ class GenerationTools:
                         f"{', '.join(restore_failures)}"
                     ) from sync_exc
                 raise
+
+            if cleanup_nodes:
+                finish_cleanup(self.agent_config, self.agent_config.current_datasource, osi_file_path, cleanup_nodes)
 
             from datus.storage.semantic_model.sync_state import forget_digests, record_digests
 

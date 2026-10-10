@@ -79,8 +79,9 @@ def _record_compiled_evidence(generation_tools, target, metric_names):
 
 
 @pytest.fixture
-def mock_agent_config():
+def mock_agent_config(tmp_path):
     config = Mock()
+    config.path_manager.project_data_dir = tmp_path / "project-data"
     config.current_datasource = "ns1"
     config.current_db_config.return_value = None
     return config
@@ -1999,3 +2000,21 @@ class TestOsiDatasetColumnRoles:
         columns = {c["name"]: c for c in GenerationTools._osi_dataset_columns(dataset)}
 
         assert columns["region"]["role"] == "field"
+
+
+def test_full_sync_cleans_only_previously_occupied_nodes(generation_tools, tmp_path):
+    target = tmp_path / "model.yml"
+    target.write_text("version: 0.2.0.dev0\n")
+    generation_tools.metric_rag.list_artifact_rows.return_value = [
+        {"id": "old", "name": "retired", "subject_node_id": 27}
+    ]
+    with (
+        patch.object(generation_tools, "_load_osi_document", return_value=SimpleNamespace()),
+        patch.object(generation_tools, "extract_osi_metric_names", return_value=[]),
+        patch.object(generation_tools, "_build_osi_metric_objects", return_value=[]),
+        patch.object(generation_tools, "_sync_osi_semantic_objects_to_db", return_value={"success": True}),
+        patch("datus.storage.semantic_model.reconcile._DatasourceStores") as stores,
+    ):
+        result = generation_tools.sync_osi_to_db(str(target))
+    assert result["success"] is True
+    stores.return_value.remove_emptied_nodes.assert_called_once_with({27})
