@@ -311,3 +311,37 @@ def test_pinned_execution_does_not_depend_on_live_subject_index(environment):
         saved=saved,
     )
     assert payload.rows == [{"revenue": 25.0}]
+
+
+def test_optional_dashboard_slicer_can_be_omitted(environment):
+    tools, saved = _save(
+        environment,
+        "dashboard",
+        query={
+            "metric": REF,
+            "dimensions": ["orders.region"],
+            "filters": [{"dimension": "orders.region", "value": {"param": "region"}}],
+        },
+        params=[{"name": "region", "type": "string", "required": False}],
+        sample_params={},
+    )
+    assert saved.success == 1, saved.error
+    assert saved.result["row_count"] == 2
+    assert environment.runtime.calls[-1]["where"] is None
+    assert tools._validate_metric_queries("dashboard") is None
+
+
+def test_same_metric_cannot_mix_model_revisions_within_one_artifact(environment):
+    env = environment
+    tools, saved = _save(env)
+    assert saved.success == 1, saved.error
+    env.model.write_text("version: '0.2.0.dev0'\nsemantic_model: []\n# changed\n", encoding="utf-8")
+    next_query = tools.save_metric_query(
+        name="next_sales",
+        query={"metric": REF},
+        goal="Next sales",
+        hypothesis="Revenue changes",
+    )
+    assert next_query.success == 0
+    assert "cannot mix model revisions" in next_query.error
+    assert not (tools.queries_dir / "next_sales.metric.json").exists()
