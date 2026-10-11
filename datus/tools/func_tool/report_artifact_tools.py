@@ -853,6 +853,9 @@ class ReportArtifactTools(MetricArtifactToolsMixin):
             ``@datus/web-artifact``), OR
           - a relative path that resolves to a file under ``render/``.
         * No file escapes ``render/`` via ``../`` import.
+        * Card ids and query sources must be statically declared at the call
+          site. Dynamic ids/sources and spread card props block finalization;
+          shared KPI components should contain only the visual body.
         * No ``use*()`` hook call sits below a ``return`` in the same function
           — the Rules-of-Hooks violation that renders as a blank artifact.
         * Every ``<ChartCard>`` / ``<BlockHandle>`` declares its required
@@ -968,6 +971,7 @@ class ReportArtifactTools(MetricArtifactToolsMixin):
             modules,
             query_exists=lambda slug: (self.queries_dir / f"{slug}.json").is_file(),
             missing_query_hint="a query not produced via save_query",
+            require_static_sources=True,
         )
         issues: List[str] = list(cards.issues)
         card_warnings: List[str] = list(cards.warnings)

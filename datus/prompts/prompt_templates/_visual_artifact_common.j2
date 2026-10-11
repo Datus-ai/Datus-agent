@@ -183,7 +183,7 @@ While an artifact is being authored, its creator needs a way to point at any blo
 - **Every insight / key-finding / callout panel** — the highlight boxes summarising what the data says.
 - **The filter strip** — one handle for the strip as a whole.
 
-The runtime does **not** ship a KPI-card component: own that visual in `render/shared/kpi-card.jsx` so it stays yours to restyle. For a single-query strip, the shared component may forward its handle props. For tiles using different queries, put explicit `BlockHandle` declarations with literal ids and query references at the call site, wrapping the shared visual; forwarded ids cannot be statically linked in the source graph.
+The runtime does **not** ship a KPI-card component: own that visual in `render/shared/kpi-card.jsx` so it stays yours to restyle. Keep that shared component visual-only: no nested `BlockHandle`, `handleId`, or query-source props. For both single-query and multi-query strips, put each `BlockHandle` at the call site with a literal id and literal query references. Values, labels, icons, and params can remain dynamic. Existing published wrappers still run, but `validate_render()` rejects dynamic identities/sources when finalizing an authored or edited artifact.
 
 | Prop | Required | Notes |
 |---|---|---|
@@ -203,31 +203,26 @@ The runtime does **not** ship a KPI-card component: own that visual in `render/s
 For a **single-query KPI strip**, render a standalone `<ChartEntryMore sqlId={...} data={data} />` yourself — **once per strip, not once per tile** — and mark that container with `data-datus-chart-card` so the menu's PNG export can find its capture root. For a **multi-query KPI strip**, omit the strip-level menu: it would expose only one query. Instead, declare literal block ids and query references on each `BlockHandle` (`sqlId` for a single source, `queryIds={[...]}` when several sources contribute), and use Scope & Sources to review the declared queries.
 
 ```jsx
-// render/shared/kpi-card.jsx — the KPI visual is yours, the handle comes
-// from the runtime. Every tile rendered through this component gets an
-// edit entry point without the caller having to remember one.
-import { BlockHandle } from '@datus/web-artifact';
+// render/shared/kpi-card.jsx — reusable visual, with no handle inside.
 import { COLORS } from './colors';
 
-export function KpiCard({ handleId, label, value, badge, icon: Icon, sqlId, params }) {
+export function KpiCard({ label, value, badge, icon: Icon }) {
   return (
-    <BlockHandle handleId={handleId} name={label} kind="kpi" sqlId={sqlId} params={params}>
-      <div style={{ height: '100%', boxSizing: 'border-box', backgroundColor: COLORS.card, borderRadius: 12, padding: '16px 18px', boxShadow: '0 1px 3px rgba(0,0,0,0.06)' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, fontWeight: 600, color: COLORS.muted, marginBottom: 6 }}>
-          <Icon size={16} strokeWidth={2} color={COLORS.muted} />
-          {label}
-        </div>
-        <div style={{ fontSize: 24, fontWeight: 700, color: COLORS.navy }}>{value}</div>
-        {badge}
+    <div style={{ height: '100%', boxSizing: 'border-box', backgroundColor: COLORS.card, borderRadius: 12, padding: '16px 18px', boxShadow: '0 1px 3px rgba(0,0,0,0.06)' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, fontWeight: 600, color: COLORS.muted, marginBottom: 6 }}>
+        <Icon size={16} strokeWidth={2} color={COLORS.muted} />
+        {label}
       </div>
-    </BlockHandle>
+      <div style={{ fontSize: 24, fontWeight: 700, color: COLORS.navy }}>{value}</div>
+      {badge}
+    </div>
   );
 }
 ```
 
 ```jsx
-// render/kpi-strip.jsx — one query, N tiles, one handle each, ONE menu.
-import { useDatusArtifact, ChartEntryMore, Skeleton, ErrorBlock } from '@datus/web-artifact';
+// render/kpi-strip.jsx — one query, literal handles for every tile, ONE menu.
+import { useDatusArtifact, BlockHandle, ChartEntryMore, Skeleton, ErrorBlock } from '@datus/web-artifact';
 import { Banknote, Receipt, Users, Landmark } from 'lucide-react';
 import { KpiCard } from './shared/kpi-card';
 import { formatCurrency, formatInt } from './shared/formatters';
@@ -240,27 +235,38 @@ export function KpiStrip({ params }) {
   if (errorMessage) return <ErrorBlock msg={errorMessage} onRetry={refetch} />;
 
   const r = data?.rows?.[0] ?? {};
-  const tiles = [
-    { handleId: 'kpi_total_revenue', label: 'Total revenue', value: formatCurrency(r.total_revenue), icon: Banknote },
-    { handleId: 'kpi_total_orders', label: 'Orders', value: formatInt(r.total_orders), icon: Receipt },
-    { handleId: 'kpi_customers', label: 'Customers', value: formatInt(r.unique_customers), icon: Users },
-    { handleId: 'kpi_avg_order_value', label: 'Avg order value', value: formatCurrency(r.avg_order_value), icon: Landmark },
-  ];
-
   return (
-    // data-datus-chart-card marks the screenshot root for the strip's menu.
     <div data-datus-chart-card style={{ marginBottom: 24 }}>
       <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 6 }}>
         <ChartEntryMore sqlId="queries/kpi_summary" data={data} />
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 12 }}>
-        {tiles.map(t => (
-          <KpiCard key={t.handleId} {...t} sqlId="queries/kpi_summary" params={params} />
-        ))}
+        <BlockHandle handleId="kpi_total_revenue" name="Total revenue" kind="kpi" sqlId="queries/kpi_summary" params={params}>
+          <KpiCard label="Total revenue" value={formatCurrency(r.total_revenue)} icon={Banknote} />
+        </BlockHandle>
+        <BlockHandle handleId="kpi_total_orders" name="Orders" kind="kpi" sqlId="queries/kpi_summary" params={params}>
+          <KpiCard label="Orders" value={formatInt(r.total_orders)} icon={Receipt} />
+        </BlockHandle>
+        <BlockHandle handleId="kpi_customers" name="Customers" kind="kpi" sqlId="queries/kpi_summary" params={params}>
+          <KpiCard label="Customers" value={formatInt(r.unique_customers)} icon={Users} />
+        </BlockHandle>
+        <BlockHandle handleId="kpi_avg_order_value" name="Avg order value" kind="kpi" sqlId="queries/kpi_summary" params={params}>
+          <KpiCard label="Avg order value" value={formatCurrency(r.avg_order_value)} icon={Landmark} />
+        </BlockHandle>
       </div>
     </div>
   );
 }
+```
+
+For a multi-query strip, keep the same explicit handles and omit the strip-level menu. A frontend-calculated ratio still declares the saved queries supplying its numerator and denominator. If both counts come from one query, declare just that query; if they come from two, use `queryIds`:
+
+```jsx
+<BlockHandle handleId="kpi_repeat_rate" name="Period repeat rate" kind="kpi"
+  sqlId="queries/repeat_customers"
+  queryIds={["queries/repeat_customers", "queries/purchasing_customers"]} params={params}>
+  <KpiCard label="Period repeat rate" value={repeatRate} icon={Users} />
+</BlockHandle>
 ```
 
 An insight panel that a query drives gets the same treatment — a handle for the copy, a menu for the numbers behind it. Its top-right corner is usually taken by a period badge, so move the handle to the left:

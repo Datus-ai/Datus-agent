@@ -1199,13 +1199,12 @@ class TestValidateRenderChartCard:
         # Crucially: NO "spread props" warning when only nested literal spread is present.
         assert not any("spread props" in w for w in warnings)
 
-    def test_chart_card_spread_props_warning_not_error(
+    def test_chart_card_spread_props_require_static_declarations(
         self, dashboard_tools: DashboardArtifactTools, project_root: Path
     ):
         _seed_template(dashboard_tools)
-        # Spread props hide attributes from the regex scanner. The validator
-        # downgrades to a warning + skips the per-prop checks rather than
-        # raising — the LLM occasionally wraps Card props in a helper.
+        # Hidden source props must be expanded before finalization so the
+        # content block can be linked without runtime inference.
         app = (
             "import React from 'react';\n"
             "import { useDatusArtifact, ChartCard } from '@datus/web-artifact';\n"
@@ -1226,9 +1225,9 @@ class TestValidateRenderChartCard:
         )
         _write_render(project_root, dashboard_tools.dashboard_slug, {"app.jsx": app})
         result = dashboard_tools.validate_render()
-        assert result.success == 1, result.error
-        warnings = result.result.get("warnings", [])
-        assert any("spread props" in w for w in warnings)
+        assert result.success == 0
+        assert "spread props" in result.error
+        assert "call site" in result.error
 
 
 # ----------------------------------------------------------------------------- #
@@ -1347,14 +1346,13 @@ class TestValidateRenderBlockHandle:
         assert "duplicates" in (result.error or "")
         assert "revenue_by_region" in (result.error or "")
 
-    def test_edit_handle_forwarded_props_deferred_to_runtime(
+    def test_edit_handle_forwarded_props_require_static_declaration(
         self, dashboard_tools: DashboardArtifactTools, project_root: Path
     ):
         """A shared KPI-card wrapper forwards handleId / name from its props.
 
-        Those values only exist at runtime, so the shape + uniqueness checks
-        can't run — but the handle itself is well-formed and must not be
-        reported as missing required props.
+        Finalization must reject the missing static identity/source and give
+        the model a concrete repair direction instead of returning success.
         """
         _seed_template(dashboard_tools)
         shared = (
@@ -1388,9 +1386,10 @@ class TestValidateRenderBlockHandle:
             {"app.jsx": app, "shared/kpi-card.jsx": shared},
         )
         result = dashboard_tools.validate_render()
-        assert result.success == 1, result.error
-        # Nothing statically knowable → no registry entry for the tile.
-        assert result.result["cards"] == []
+        assert result.success == 0
+        assert "string-literal handleId" in result.error
+        assert "call site" in result.error
+        assert "sqlId" in result.error
 
 
 # ----------------------------------------------------------------------------- #

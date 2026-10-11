@@ -120,3 +120,9 @@ You'll get a sharper report when your prompt includes:
 - **The breakdowns you want** — *"by region"*, *"by tenure bucket"*, *"monthly trend"*.
 
 If you skip any of these the agent will guess from your project's metrics and ask only when intent is genuinely ambiguous.
+
+## Content Source Declarations
+
+When authoring or editing an artifact, declare each `ChartCard` / `BlockHandle` id and query source as literals so Scope & Sources can connect content blocks to their queries. Keep shared KPI components visual-only and wrap each tile with a literal `BlockHandle` at its call site. Use a literal `queryIds` array when several queries contribute, including the queries providing a frontend-calculated ratio's numerator and denominator.
+
+`validate_render()` rejects dynamic ids, dynamic query sources, and spread card props that hide the declarations, with actionable repair messages. Existing dynamic wrappers continue to run, but must expose static declarations before an authored edit can finalize. Do not declare unused queries just to connect the graph.

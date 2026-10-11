@@ -77,3 +77,99 @@ def test_quoted_display_text_cannot_override_source_properties():
         title="sqlId='queries/missing'" queryIds={['cost']} />""")
     assert result.issues == []
     assert result.query_refs == {"queries/sales", "queries/cost"}
+
+
+@pytest.mark.parametrize(
+    "source,expected",
+    [
+        ('<BlockHandle handleId={id} name={label} kind="kpi" sqlId={sqlId} />', "handleId"),
+        ('<BlockHandle handleId="tile" name="Tile" sqlId={query} />', "sqlId"),
+        ('<BlockHandle handleId="tile" name="Tile" queryIds={sources} />', "queryIds"),
+        ('<BlockHandle handleId="tile" name="Tile" queryIds={["sales"].concat(extra)} />', "queryIds"),
+        ("<BlockHandle {...props} />", "spread props"),
+        ("<ChartCard {...props} />", "spread props"),
+        ('<ChartCard chartId="chart" chartType="line" sqlId="sales" queryIds={sources} />', "queryIds"),
+    ],
+)
+def test_authoring_rejects_sources_that_cannot_be_statically_attributed(source, expected):
+    result = scan_render_cards(
+        {"app": {"rel": "app.jsx", "source": source}},
+        query_exists=lambda name: name in {"sales", "cost"},
+        missing_query_hint="a missing saved query",
+        require_static_sources=True,
+    )
+    assert any(expected in issue and "call site" in issue for issue in result.issues)
+
+
+@pytest.mark.parametrize("tag", ["ChartCard", "BlockHandle"])
+def test_legacy_spread_inspection_remains_compatible(tag):
+    result = scan(f"<{tag} {{...props}} />")
+    assert result.issues == []
+    assert any("spread props" in warning for warning in result.warnings)
+    assert result.registry() == []
+
+
+def test_literal_kpi_wrapper_registers_the_content_and_all_contributing_queries():
+    from datus.utils.artifact_insight import _blocks
+
+    source = """<BlockHandle handleId="repeat_rate" name={label} kind="kpi"
+        sqlId="sales" queryIds={['sales', 'cost']} params={params}>
+        <KpiCard value={ratio} />
+    </BlockHandle>"""
+    result = scan_render_cards(
+        {"app": {"rel": "app.jsx", "source": source}},
+        query_exists=lambda name: name in {"sales", "cost"},
+        missing_query_hint="a missing saved query",
+        require_static_sources=True,
+    )
+    assert result.issues == []
+    assert result.registry() == [{"chart_id": "repeat_rate", "jsx_path": "render/app.jsx", "kind": "kpi"}]
+    blocks = _blocks({"render/app.jsx": source}, {"sales", "cost"})
+    assert [(b.id, b.query_ids) for b in blocks] == [("repeat_rate", ["sales", "cost"])]
+
+
+def test_nested_display_props_and_comments_do_not_trigger_strict_source_errors():
+    source = """// <BlockHandle handleId={ignored} name={label} sqlId={query} />
+    <BlockHandle handleId="tile" name="sqlId={query}" kind="note"
+        style={{...defaults}}>
+        <div sqlId={displayProp} />
+    </BlockHandle>"""
+    result = scan_render_cards(
+        {"app": {"rel": "app.jsx", "source": source}},
+        query_exists=lambda _: False,
+        missing_query_hint="a missing saved query",
+        require_static_sources=True,
+    )
+    assert result.issues == []
+    assert result.query_refs == set()
+    assert result.registry() == [{"chart_id": "tile", "jsx_path": "render/app.jsx", "kind": "note"}]
+
+
+@pytest.mark.parametrize("kind", ["dashboard", "report"])
+def test_system_prompt_kpi_example_finalizes_with_complete_content_sources(kind):
+    import re
+    from pathlib import Path
+
+    from jinja2 import Environment, FileSystemLoader
+
+    from datus.utils.artifact_insight import _blocks
+
+    template_dir = Path(__file__).resolve().parents[4] / "datus/prompts/prompt_templates"
+    env = Environment(loader=FileSystemLoader(template_dir))
+    prompt = env.get_template(f"gen_visual_{kind}_system_1.0.j2").render()
+    examples = re.findall(r"```jsx\n(.*?)```", prompt, re.DOTALL)
+    files = {
+        "render/shared/kpi-card.jsx": next(s for s in examples if s.startswith("// render/shared/kpi-card.jsx")),
+        "render/kpi-strip.jsx": next(s for s in examples if s.startswith("// render/kpi-strip.jsx")),
+    }
+    result = scan_render_cards(
+        {path: {"rel": path.removeprefix("render/"), "source": source} for path, source in files.items()},
+        query_exists=lambda name: name == "kpi_summary",
+        missing_query_hint="a missing saved query",
+        require_static_sources=True,
+    )
+    assert result.issues == []
+    blocks = _blocks(files, {"kpi_summary"})
+    assert {b.id for b in blocks} == {"kpi_total_revenue", "kpi_total_orders", "kpi_customers", "kpi_avg_order_value"}
+    assert all(b.query_ids == ["kpi_summary"] for b in blocks)
+    assert {card["chart_id"] for card in result.registry()} == {b.id for b in blocks}

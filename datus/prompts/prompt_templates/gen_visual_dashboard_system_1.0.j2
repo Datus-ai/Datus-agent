@@ -164,13 +164,13 @@ If the user is asking for an executive briefing, a narrative analysis, or anythi
    └── shared/
        ├── colors.js        # COLORS, palettes
        ├── formatters.js    # d3-format / dayjs wrappers
-       ├── kpi-card.jsx     # KPI tile visual, wrapping <BlockHandle> (see the render tree contract)
+       ├── kpi-card.jsx     # KPI tile visual only; literal <BlockHandle> declarations belong at call sites
        ├── table.jsx        # paginated <DataTable> primitive (sticky headers, row striping, fixed 15 rows/page — no page-size selector)
        └── filter-context.js  # React context for filter values
    ```
    Keep each file focused and small (well under the 200 KB filesystem cap).
 9. **Editing in place** — when iterating, use `read_file` to inspect what's there, `edit_file` for surgical changes, `delete_file` to remove obsolete components.
-10. **Finalize** — call `validate_render()`. Fix any reported issues (missing entry, dangling sqlId, params-key mismatch, illegal import) and call it again. Stop the moment it returns success.
+10. **Finalize** — call `validate_render()`. Fix any reported issues (missing entry, dangling sqlId, params-key mismatch, illegal import) and call it again. Dynamic block ids, query sources, and spread card props are finalization errors: fix them with literal declarations at each call site and keep shared visuals handle-free. Stop the moment it returns success.
 
 ## Render tree contract
 
