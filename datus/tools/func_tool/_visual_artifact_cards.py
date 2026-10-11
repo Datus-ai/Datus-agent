@@ -129,6 +129,7 @@ class CardAttributes:
     literals: dict[str, str]
     query_ids: list[str] | None = None
     dynamic_sources: bool = False
+    dynamic_sql_id: bool = False
     source_error: str | None = None
 
 
@@ -177,7 +178,8 @@ def parse_card_attributes(attrs: str) -> CardAttributes:
         values[name] = attrs[start:i]
 
     result = CardAttributes(
-        literals={name: value[1:-1] for name, value in values.items() if value.startswith(("'", '"'))}
+        literals={name: value[1:-1] for name, value in values.items() if value.startswith(("'", '"'))},
+        dynamic_sql_id="sqlId" in values and not values["sqlId"].startswith(("'", '"')),
     )
     raw = values.get("queryIds")
     if raw is None:
@@ -207,11 +209,23 @@ def _collect_query_ids(
     rel: str,
     query_exists: Callable[[str], bool],
     missing_query_hint: str,
+    require_static_sources: bool,
 ) -> None:
     if props.source_error:
         result.issues.append(f"render/{rel}: {props.source_error}.")
     if props.dynamic_sources:
-        result.warnings.append(f"render/{rel}: queryIds is dynamic — source validation is deferred to runtime.")
+        if require_static_sources:
+            result.issues.append(
+                f"render/{rel}: queryIds must be a literal string array for Scope & Sources. "
+                "Declare every contributing query at the card's call site; keep shared components visual-only."
+            )
+        else:
+            result.warnings.append(f"render/{rel}: queryIds is dynamic — source validation is deferred to runtime.")
+    if require_static_sources and props.dynamic_sql_id:
+        result.issues.append(
+            f"render/{rel}: sqlId must be a string literal for Scope & Sources. "
+            "Declare it at the card's call site; keep shared components visual-only."
+        )
     for ref in props.query_ids or []:
         slug = extract_query_slug(ref)
         if slug is None:
@@ -258,6 +272,7 @@ def scan_render_cards(
     *,
     query_exists: Callable[[str], bool],
     missing_query_hint: str,
+    require_static_sources: bool = False,
 ) -> CardScanResult:
     """Validate every ``<ChartCard>`` / ``<BlockHandle>`` in a render tree.
 
@@ -272,6 +287,9 @@ def scan_render_cards(
         missing_query_hint: Tail of the message shown when ``query_exists``
             says no, e.g. ``"a template not produced via save_query_template"``.
             Kind-specific because the fix differs.
+        require_static_sources: Reject dynamic ids/sources and spread props
+            during authoring finalization. The default preserves inspection
+            compatibility for existing dynamic wrappers.
 
     Returns:
         A :class:`CardScanResult`. Issues are hard failures; warnings are
@@ -293,16 +311,18 @@ def scan_render_cards(
             attr_values: Dict[str, str] = props.literals
 
             # Spread props (``<ChartCard {...rest}>``) hide attributes from
-            # static inspection. Surface as a warning, then bail on the
-            # rest of the checks for this match to avoid false positives.
+            # static inspection. Authoring rejects them; legacy inspection
+            # warns and skips per-prop checks to avoid false positives.
             if SPREAD_ATTR_RE.search(attrs):
-                result.warnings.append(
+                messages = result.issues if require_static_sources else result.warnings
+                messages.append(
                     f"render/{rel}: <ChartCard> uses spread props — static "
-                    "validation of chartId / sqlId / chartType is deferred to runtime."
+                    "validation of chartId / sqlId / chartType is unavailable. "
+                    "Declare literal ids and query sources at the card's call site for Scope & Sources."
                 )
                 continue
 
-            _collect_query_ids(result, props, rel, query_exists, missing_query_hint)
+            _collect_query_ids(result, props, rel, query_exists, missing_query_hint, require_static_sources)
             missing = [k for k in ("chartId", "sqlId", "chartType") if k not in attr_values]
             if missing:
                 result.issues.append(
@@ -353,7 +373,8 @@ def scan_render_cards(
         # ``handleId`` / ``name`` from its own props, so those values are
         # expressions rather than string literals at this call site.
         # Literals get the full shape + uniqueness treatment; forwarded
-        # props are deferred to runtime.
+        # props are deferred to runtime during legacy inspection, but must
+        # become literal call-site declarations before authoring finalizes.
         for eh_match in BLOCK_HANDLE_OPEN_RE.finditer(source):
             if any(start <= eh_match.start() < end for start, end in non_code):
                 continue
@@ -363,13 +384,15 @@ def scan_render_cards(
             present = set(BLOCK_HANDLE_ANY_ATTR_RE.findall(attrs))
 
             if SPREAD_ATTR_RE.search(attrs):
-                result.warnings.append(
+                messages = result.issues if require_static_sources else result.warnings
+                messages.append(
                     f"render/{rel}: <BlockHandle> uses spread props — static "
-                    "validation of handleId / name / kind is deferred to runtime."
+                    "validation of handleId / name / kind is unavailable. "
+                    "Declare literal ids and query sources at the card's call site for Scope & Sources."
                 )
                 continue
 
-            _collect_query_ids(result, props, rel, query_exists, missing_query_hint)
+            _collect_query_ids(result, props, rel, query_exists, missing_query_hint, require_static_sources)
             missing = [k for k in ("handleId", "name") if k not in present]
             if missing:
                 result.issues.append(
@@ -408,6 +431,12 @@ def scan_render_cards(
                 # Forwarded from a wrapper component's props — the id only
                 # exists at runtime, so shape and uniqueness can't be
                 # checked here.
+                if require_static_sources:
+                    result.issues.append(
+                        f"render/{rel}: <BlockHandle> requires a string-literal handleId for Scope & Sources. "
+                        "Move BlockHandle to the card's call site with literal ids and query sources; "
+                        "keep the shared component visual-only, without a nested BlockHandle."
+                    )
                 continue
 
             if not CHART_ID_RE.fullmatch(handle_id):

@@ -164,13 +164,13 @@ If the user is asking for an executive briefing, a narrative analysis, or anythi
    └── shared/
        ├── colors.js        # COLORS, palettes
        ├── formatters.js    # d3-format / dayjs wrappers
-       ├── kpi-card.jsx     # KPI tile visual, wrapping <BlockHandle> (see the render tree contract)
+       ├── kpi-card.jsx     # KPI tile visual only; literal <BlockHandle> declarations belong at call sites
        ├── table.jsx        # paginated <DataTable> primitive (sticky headers, row striping, fixed 15 rows/page — no page-size selector)
        └── filter-context.js  # React context for filter values
    ```
    Keep each file focused and small (well under the 200 KB filesystem cap).
 9. **Editing in place** — when iterating, use `read_file` to inspect what's there, `edit_file` for surgical changes, `delete_file` to remove obsolete components.
-10. **Finalize** — call `validate_render()`. Fix any reported issues (missing entry, dangling sqlId, params-key mismatch, illegal import) and call it again. Stop the moment it returns success.
+10. **Finalize** — call `validate_render()`. Fix any reported issues (missing entry, dangling sqlId, params-key mismatch, illegal import) and call it again. Dynamic block ids, query sources, and spread card props are finalization errors: fix them with literal declarations at each call site and keep shared visuals handle-free. Stop the moment it returns success.
 
 ## Render tree contract
 
@@ -307,9 +307,11 @@ If the user asks for a follow-up change ("swap revenue for unit sales", "add a Y
 4. If a new template is needed, `save_query_template` to add or overwrite a `.sql.j2`. If an existing template needs a new param, re-call `save_query_template` with the updated declaration + new `sample_params`.
 5. `edit_file` (preferred for small changes) or `write_file` (when restructuring a component) on just the affected files.
 6. `delete_file` any components / templates that no longer belong.
-7. `validate_render()` once.
+7. `validate_render()`. Repair reported issues and repeat until it succeeds.
 
 You do NOT need to rewrite `app.jsx` for a localised change — surgical edits are the whole point of the multi-file layout.
+
+When editing an existing artifact, finalization may report static-source errors in legacy wrappers. Make only the necessary declaration repairs (move handles to literal call sites while preserving block ids, layout, calculations, and query bundles), then revalidate. This narrowly scoped source repair is allowed alongside a targeted edit; do not redesign unrelated blocks or add unused sources.
 
 ### Targeted single-block edits
 
@@ -332,13 +334,13 @@ When the user message contains this tag (typically introduced by a `修改下面
 1. `bind_existing_dashboard(<dashboard-slug>)`.
 2. `read_file(<jsx-path>)`, plus `read_file('queries/<sql-id basename>.sql.j2')` only if `sql-id` is present AND the change touches the SQL.
 3. Keep the change inside the scope `target-kind` defines (below). Absent a wider scope, that means the pinned JSX file plus its companion `.sql.j2` / `.params.json` when the SQL changed — and never an unrelated block or query template.
-4. `validate_render()` once.
+4. `validate_render()`. Repair reported issues and repeat until it succeeds.
 
 `target-kind` tells you what was pinned and how far the edit may reach, which matters because several blocks usually share one file:
 
 - `chart` (or absent) — a whole ChartCard. Scope: that JSX file.
 - `note` — one insight / callout block. Usually a copy or scope change; leave the surrounding charts alone. Scope: that JSX file.
-- `kpi` — **one tile**. Mind where `jsx-path` points: tiles normally render through `shared/kpi-card.jsx`, so that is the file the envelope names for *every* tile — and editing it changes all of them at once. What distinguishes one tile is its **call site**: the entry in the strip's tile list (or the `<KpiCard …>` element) whose id matches `chart-id`, labelled `chart-name`. Edit that call site, in the strip file, even though the envelope names the shared component. Touch `shared/kpi-card.jsx` itself **only** when the user asked for something that genuinely applies to every tile ("make all the KPI numbers bigger") — and say so in your reply, since the blast radius is larger than what they clicked.
+- `kpi` — **one tile**. Mind where `jsx-path` points: newly authored tiles declare their handle at the call site. In older artifacts the envelope may name `shared/kpi-card.jsx` for every tile — editing that shared file changes all of them at once. What distinguishes one tile is its **call site**: the entry in the strip's tile list (or the `<KpiCard …>` element) whose id matches `chart-id`, labelled `chart-name`. Edit that call site, in the strip file, even though the envelope names the shared component. Touch `shared/kpi-card.jsx` itself **only** when the user asked for something that genuinely applies to every tile ("make all the KPI numbers bigger") — and say so in your reply, since the blast radius is larger than what they clicked.
 - `filter` — the filter strip, the one kind whose scope is deliberately wide. Adding, removing or renaming a filter option changes a parameter, and a parameter is a contract: update **every** dependent file in the same turn — each affected template's `-- @datus-params` declaration and body (re-save via `save_query_template`, with fresh `sample_params`), every `useQuerySql(…, params)` call site whose keys must match, and the filter JSX itself. A partial edit here fails `validate_render`'s params-key check, which is exactly the point: finish the contract, then validate once.
 
 When `sql-id` is absent the block is not query-backed (a hand-written callout, the filter strip). Do not invent a template for it — edit the JSX.

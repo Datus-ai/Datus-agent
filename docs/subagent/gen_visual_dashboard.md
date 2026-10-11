@@ -139,3 +139,9 @@ You'll get a sharper dashboard when your prompt includes:
 - **The time window** — *"last 90 days"*, *"all of 2025"* (this also becomes the default value of the date-range filter).
 
 If you skip any of these the agent will guess from your project's metrics and the SQL you gave it, and will only ask when intent is genuinely ambiguous.
+
+## Content Source Declarations
+
+When authoring or editing an artifact, declare each `ChartCard` / `BlockHandle` id and query source as literals so Scope & Sources can connect content blocks to their queries. Keep shared KPI components visual-only and wrap each tile with a literal `BlockHandle` at its call site. Use a literal `queryIds` array when several queries contribute, including the queries providing a frontend-calculated ratio's numerator and denominator.
+
+`validate_render()` rejects dynamic ids, dynamic query sources, and spread card props that hide the declarations, with actionable repair messages. Existing dynamic wrappers continue to run, but must expose static declarations before an authored edit can finalize. Do not declare unused queries just to connect the graph.

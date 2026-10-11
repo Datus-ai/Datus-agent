@@ -847,10 +847,11 @@ class TestValidateRenderCards:
         assert "save_query" in (result.error or "")
         assert "save_query_template" not in (result.error or "")
 
-    def test_forwarded_handle_id_deferred_to_runtime(self, report_tools: ReportArtifactTools, project_root: Path):
-        # A shared KPI tile forwards handleId/name from its own props, so
-        # the values aren't literals here. That's the documented pattern,
-        # not an error.
+    def test_forwarded_handle_id_requires_static_declaration(
+        self, report_tools: ReportArtifactTools, project_root: Path
+    ):
+        # A forwarded handle cannot contribute a content node to static insight.
+        # Finalization must ask the model to declare it at the call site.
         shared = """\
 import React from 'react';
 import { BlockHandle } from '@datus/web-artifact';
@@ -881,10 +882,9 @@ export default function App() {
         )
 
         result = report_tools.validate_render()
-        assert result.success == 1, result.error
-        # Runtime-only ids can't be registered — the registry stays empty
-        # rather than guessing.
-        assert result.result["cards"] == []
+        assert result.success == 0
+        assert "string-literal handleId" in result.error
+        assert "call site" in result.error
 
     def test_nested_jsx_in_a_prop_value_does_not_truncate_the_tag(
         self, report_tools: ReportArtifactTools, project_root: Path
@@ -929,7 +929,7 @@ export default function App() {
         assert "not a valid queries/<slug> reference" in (result.error or "")
         assert "save_query" not in (result.error or "")
 
-    def test_spread_props_warn_instead_of_failing(self, report_tools: ReportArtifactTools, project_root: Path):
+    def test_spread_props_require_static_declarations(self, report_tools: ReportArtifactTools, project_root: Path):
         body = """\
       <ChartCard {...cardProps} data={data}>
         <div />
@@ -937,8 +937,9 @@ export default function App() {
         _write_render(project_root, report_tools.report_slug, {"app.jsx": _cards_app_jsx(body)})
 
         result = report_tools.validate_render()
-        assert result.success == 1, result.error
-        assert any("spread props" in w for w in result.result["warnings"])
+        assert result.success == 0
+        assert "spread props" in result.error
+        assert "call site" in result.error
 
 
 # ----------------------------------------------------------------------------- #
