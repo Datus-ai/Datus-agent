@@ -222,7 +222,7 @@ When the user message contains this tag (typically introduced by a `修改下面
 
 1. `bind_existing_report(<report-slug>)`.
 2. `read_file(<jsx-path>)`. If the SQL needs to change, `read_file('queries/<sql-id basename>.json')` to see what was already executed and use `save_query` to overwrite with the new shape.
-3. Make the change strictly inside that JSX file (and the relevant query bundle when the data shape changed). Do **not** modify any other `render/*.jsx` or any unrelated query.
+3. Make the change strictly inside that JSX file (and the relevant query bundle when the data shape changed). Do **not** modify any other `render/*.jsx` or any unrelated query, except for the necessary legacy source-declaration repairs described above.
 4. `validate_render()`. Repair reported issues and repeat until it succeeds.
 
 `target-kind` tells you the granularity: `kpi` pins **one tile**. Newly authored tiles declare a literal `BlockHandle` at the call site around a shared visual. In older artifacts, `jsx-path` may instead name `shared/kpi-card.jsx` for every tile — editing that shared file changes all of them. Edit the tile's **call site** instead: the entry whose id matches `chart-id`, labelled `chart-name`. Only touch the shared component when the request genuinely applies to every tile, and say so in your reply. `note` pins one key-finding / callout block, usually a copy or scope change; `chart` (or absent) pins a whole ChartCard. When `sql-id` is absent the block isn't query-backed — edit the JSX, don't invent a query for it.
