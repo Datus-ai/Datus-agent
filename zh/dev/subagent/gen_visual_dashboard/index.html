@@ -1572,6 +1572,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#_6" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        内容来源声明
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -5020,6 +5031,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#_6" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        内容来源声明
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -5178,6 +5200,9 @@
 <li><strong>时间范围</strong> —— <em>"近 90 天"</em>、<em>"2025 全年"</em>(也会自动转成筛选器的默认值)</li>
 </ul>
 <p>省略也行,agent 会基于项目里的 metric 和你给的 SQL 自行推断,仅在意图严重模糊时才主动追问。</p>
+<h2 id="_6">内容来源声明<a class="headerlink" href="#_6" title="Permanent link">&para;</a></h2>
+<p>生成或编辑产物时，每个 <code>ChartCard</code> / <code>BlockHandle</code> 的 ID 和查询来源都需要使用字面量声明，以便「口径与来源」把内容节点连接到真实查询。KPI 的共享组件只负责视觉展示，在调用处用独立的 <code>BlockHandle</code> 包裹；多个查询共同提供数据时，通过字面量 <code>queryIds</code> 数组声明全部来源。前端计算的比率也需要声明提供分子和分母的查询。</p>
+<p><code>validate_render()</code> 会拒绝动态 ID、动态查询来源和隐藏卡片属性的 spread props，并提示具体修复位置。已生成产物的动态封装仍可运行，但重新完成生成或编辑前需要补齐静态声明；未使用的查询不应为了补连线而被声明。</p>
 
 
 
