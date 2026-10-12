@@ -6,7 +6,8 @@
     <link rel="icon" type="image/svg+xml" href="https://docs.datus.ai/assets/logo-light.png" />
     <title>Datus Chatbot</title>
 
-    <!-- Datus Chatbot (React is bundled) -->
+    <!-- Load the global React runtime before the chatbot bundle. -->
+    <script src="{{ react_js }}"></script>
     <link rel="stylesheet" href="{{ chatbot_css }}" />
     <script src="{{ chatbot_js }}"></script>
 
