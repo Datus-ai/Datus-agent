@@ -2853,26 +2853,22 @@ class AgenticNode(Node):
         return [pattern.strip() for pattern in patterns.split(",") if pattern.strip()]
 
     def _get_database_skill_candidates(self) -> List[str]:
-        """Return conventional skill names for the configured database types."""
-        if not self.agent_config:
+        """Return the optional dialect skill for the DB tool's bound connector."""
+        db_func_tool = getattr(self, "db_func_tool", None)
+        if db_func_tool is None:
             return []
-        getter = getattr(self.agent_config, "current_db_configs", None)
         try:
-            configs = getter() if callable(getter) else getattr(self.agent_config, "datasource_configs", {})
+            connector = db_func_tool.connector
+            if connector is None:
+                return []
+            db_type = connector.get_type()
         except Exception as exc:
-            logger.debug("Failed to read database configs for skill candidates: %s", exc)
-            return []
-        if not isinstance(configs, dict):
+            logger.debug("Failed to read bound database type for skill candidates: %s", exc)
             return []
 
-        candidates = []
-        for config in configs.values():
-            db_type = config.get("type", "") if isinstance(config, dict) else getattr(config, "type", "")
-            db_type = getattr(db_type, "value", db_type)
-            normalized = str(db_type or "").strip().lower().replace("_", "-")
-            if normalized:
-                candidates.append(f"db-{normalized}-sql")
-        return list(dict.fromkeys(candidates))
+        db_type = getattr(db_type, "value", db_type)
+        normalized = str(db_type or "").strip().lower().replace("_", "-")
+        return [f"db-{normalized}-sql"] if normalized else []
 
     def _render_required_skill_content(self, skill_name: str, content: str) -> str:
         """Render node-specific runtime values into a required skill."""
@@ -2894,7 +2890,9 @@ class AgenticNode(Node):
                 fails fast instead.
         """
         required_skills = self._get_required_skills()
-        database_candidates = self._get_database_skill_candidates()
+        database_candidates = (
+            self._get_database_skill_candidates() if getattr(self, "db_func_tool", None) is not None else []
+        )
         if not required_skills and not database_candidates:
             return base_prompt
 
