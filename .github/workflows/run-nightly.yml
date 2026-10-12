@@ -450,12 +450,16 @@ jobs:
           chatbot_root="$RUNNER_TEMP/datus-chatbot-${{ github.run_id }}-${{ github.run_attempt }}"
           mkdir -p "$chatbot_root"
           chatbot_version=$(uv run --no-sync python -c 'from datus.cli.web.chatbot import _CDN_CHATBOT_VERSION; print(_CDN_CHATBOT_VERSION)')
-          npm pack "@datus/web-chatbot@$chatbot_version" \
+          react_version=$(uv run --no-sync python -c 'from datus.cli.web.chatbot import _CDN_REACT_VERSION; print(_CDN_REACT_VERSION)')
+          npm pack "@datus/web-chatbot@$chatbot_version" "react@$react_version" \
             --ignore-scripts --json --registry=https://registry.npmjs.org \
             --fetch-timeout=60000 --fetch-retries=2 \
             --pack-destination "$chatbot_root" > "$chatbot_root/pack.json"
           chatbot_archive=$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))[0]["filename"])' "$chatbot_root/pack.json")
+          react_archive=$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))[1]["filename"])' "$chatbot_root/pack.json")
           tar -xzf "$chatbot_root/$chatbot_archive" -C "$chatbot_root" --strip-components=1 package/dist
+          tar -xOf "$chatbot_root/$react_archive" package/umd/react.production.min.js > "$chatbot_root/dist/react.production.min.js"
+          test -s "$chatbot_root/dist/react.production.min.js"
           test -s "$chatbot_root/dist/datus-chatbot.css"
           test -s "$chatbot_root/dist/datus-chatbot.umd.js"
           echo "DATUS_TEST_CHATBOT_DIST=$chatbot_root/dist" >> "$GITHUB_ENV"

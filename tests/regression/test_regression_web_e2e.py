@@ -10,7 +10,8 @@ Playwright browser tests for the web chatbot interface:
 Prerequisites:
     pip install playwright pytest-playwright
     playwright install chromium
-    Set DATUS_TEST_CHATBOT_DIST to the published @datus/web-chatbot dist directory.
+    Set DATUS_TEST_CHATBOT_DIST to the published @datus/web-chatbot dist directory
+    with react.production.min.js from react@18.3.1 added alongside the bundle.
 """
 
 import json
