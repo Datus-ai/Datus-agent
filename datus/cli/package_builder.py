@@ -46,13 +46,12 @@ from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 import yaml
 
 import datus
-from datus.api.services.dashboard_service import _DASHBOARD_ARTIFACT_DIRS
-from datus.api.services.report_service import _REPORT_ARTIFACT_DIRS
 from datus.cli.upgrade_service import DatusPackage, enumerate_datus_packages
 from datus.configuration.agent_config import _normalize_project_name, _validate_project_name
 from datus.configuration.agent_config_loader import parse_config_path
 from datus.configuration.project_config import PROJECT_CONFIG_REL, load_project_override
 from datus.schemas.artifact_manifest import ARTIFACT_SLUG_RE
+from datus.utils.artifact_files import iter_artifact_files
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
 from datus.utils.path_manager import DatusPathManager
@@ -698,17 +697,13 @@ def list_metric_datasources(root: Path) -> List[str]:
     return sorted(p.name for p in base.iterdir() if p.is_dir())
 
 
-# kind → (top-level dir name, per-prefix walker allowlist). The single map
-# both slug listing and artifact staging branch on.
-_ARTIFACT_KIND_DIRS: Dict[str, Tuple[str, Dict[str, Tuple[Tuple[str, ...], bool]]]] = {
-    "report": ("reports", _REPORT_ARTIFACT_DIRS),
-    "dashboard": ("dashboards", _DASHBOARD_ARTIFACT_DIRS),
-}
+# Shared top-level artifact directories for slug listing and staging.
+_ARTIFACT_KIND_DIRS: Dict[str, str] = {"report": "reports", "dashboard": "dashboards"}
 
 
 def list_artifact_slugs(root: Path, kind: str) -> List[str]:
     """Slugs with a ``manifest.json`` under ``reports/`` / ``dashboards/``."""
-    kind_dir, _ = _ARTIFACT_KIND_DIRS[kind]
+    kind_dir = _ARTIFACT_KIND_DIRS[kind]
     base = root / kind_dir
     if not base.is_dir():
         return []
@@ -964,27 +959,11 @@ def select_reference_sql(root: Path, selected_subjects: Sequence[str]) -> Tuple[
     return entries, len(entries), warnings
 
 
-def _artifact_walk(artifact_dir: Path, dirs_spec: Dict[str, Tuple[Tuple[str, ...], bool]]) -> List[Path]:
-    """Allowlist walk mirroring ``report_service._iter_artifact_files``."""
-    out: List[Path] = []
-    resolved_root = artifact_dir.resolve()
-    for sub, (suffixes, recursive) in dirs_spec.items():
-        base = artifact_dir / sub
-        if not base.is_dir():
-            continue
-        iterator = base.rglob("*") if recursive else base.iterdir()
-        for path in iterator:
-            if not path.is_file() or _is_junk_path(path.relative_to(base)):
-                continue
-            name_lower = path.name.lower()
-            if not any(name_lower.endswith(sfx) for sfx in suffixes):
-                continue
-            try:
-                path.resolve().relative_to(resolved_root)
-            except ValueError:
-                continue  # symlink escaping the artifact — drop
-            out.append(path)
-    return sorted(out)
+def _artifact_walk(artifact_dir: Path, kind: str) -> List[Path]:
+    """Use canonical artifact selection, excluding transient packaging junk."""
+    return [
+        path for path in iter_artifact_files(artifact_dir, kind) if not _is_junk_path(path.relative_to(artifact_dir))
+    ]
 
 
 def select_artifacts(
@@ -1001,14 +980,14 @@ def select_artifacts(
     against the CDN are rewritten in memory to relative ``_assets/`` URLs
     and the two dist files are staged — the source project is never touched.
     """
-    kind_dir, dirs_spec = _ARTIFACT_KIND_DIRS[kind]
+    kind_dir = _ARTIFACT_KIND_DIRS[kind]
     kept = _resolve_selection(list_artifact_slugs(root, kind), requested, f"{kind} slug")
 
     entries: List[StagedEntry] = []
     warnings: List[str] = []
     for slug in kept:
         artifact_dir = root / kind_dir / slug
-        for path in _artifact_walk(artifact_dir, dirs_spec):
+        for path in _artifact_walk(artifact_dir, kind):
             rel = path.relative_to(root).as_posix()
             entries.append(StagedEntry(arcname=rel, source=path))
         manifest = artifact_dir / "manifest.json"

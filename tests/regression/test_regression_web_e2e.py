@@ -10,8 +10,12 @@ Playwright browser tests for the web chatbot interface:
 Prerequisites:
     pip install playwright pytest-playwright
     playwright install chromium
+    Set DATUS_TEST_CHATBOT_DIST to the published @datus/web-chatbot dist directory
+    with react.production.min.js from react@18.3.1 added alongside the bundle.
 """
 
+import json
+import os
 import socket
 import subprocess
 import sys
@@ -21,6 +25,7 @@ from pathlib import Path
 import pytest
 
 from tests.nightly_requirements import import_required
+from tests.web_e2e_support import local_chatbot_dist
 
 requests = import_required("requests", reason="requests not installed")
 import_required(
@@ -66,10 +71,18 @@ def _terminate_process(proc: subprocess.Popen, timeout: int = 5) -> None:
 
 
 @pytest.fixture(scope="module")
-def web_server(tmp_path_factory):
+def web_artifacts(tmp_path_factory):
+    configured = os.getenv("DATUS_WEB_E2E_ARTIFACT_DIR")
+    path = Path(configured) if configured else tmp_path_factory.mktemp("web-e2e-artifacts")
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+@pytest.fixture(scope="module")
+def web_server(web_artifacts):
     """Start the FastAPI web chatbot server, wait for ready, yield URL, then terminate."""
-    log_dir = tmp_path_factory.mktemp("web-e2e-server")
-    log_path = log_dir / "server.log"
+    chatbot_dist = local_chatbot_dist()
+    log_path = web_artifacts / "server.log"
     log_file = log_path.open("w", encoding="utf-8")
     proc = None
     last_failure = "server was not started"
@@ -84,6 +97,8 @@ def web_server(tmp_path_factory):
                     "-m",
                     "datus.cli.main",
                     "--web",
+                    "--chatbot-dist",
+                    str(chatbot_dist),
                     "--port",
                     str(web_port),
                     "--host",
@@ -125,20 +140,52 @@ def web_server(tmp_path_factory):
         log_file.close()
 
 
+@pytest.fixture
+def web_page(page, web_server, web_artifacts, request):
+    """Persist network, console, screenshot and trace evidence, including on reruns."""
+    events = []
+    # Browser smoke tests must render using local assets, without external services.
+    page.route(
+        "**/*", lambda route: route.continue_() if route.request.url.startswith(web_server + "/") else route.abort()
+    )
+    page.on("request", lambda req: events.append({"event": "request", "url": req.url}))
+    page.on("response", lambda resp: events.append({"event": "response", "url": resp.url, "status": resp.status}))
+    page.on(
+        "requestfailed", lambda req: events.append({"event": "requestfailed", "url": req.url, "error": req.failure})
+    )
+    page.on("pageerror", lambda error: events.append({"event": "pageerror", "error": str(error)}))
+    page.on("console", lambda msg: events.append({"event": "console", "type": msg.type, "text": msg.text}))
+    stem = request.node.name
+    page.context.tracing.start(screenshots=True, snapshots=True, sources=True)
+    try:
+        yield page
+    finally:
+        try:
+            page.screenshot(path=str(web_artifacts / f"{stem}.png"), timeout=5_000)
+        except playwright_sync_api.Error as exc:
+            events.append({"event": "screenshot_error", "error": str(exc)})
+        page.context.tracing.stop(path=str(web_artifacts / f"{stem}.zip"))
+        (web_artifacts / f"{stem}.json").write_text(json.dumps(events, indent=2) + "\n", encoding="utf-8")
+
+
 @pytest.mark.regression
 class TestWebE2E:
     """Playwright end-to-end tests for the web chatbot UI."""
 
-    def test_page_loads(self, page, web_server):
+    def test_page_loads(self, web_page, web_server):
         """R13-E01: Page loads successfully with chatbot root."""
-        page.goto(web_server)
-        page.wait_for_load_state("networkidle")
+        page = web_page
+        page.goto(web_server, wait_until="domcontentloaded")
         expect(page.locator("#chatbot-root")).to_be_visible()
+        expect(page.locator("#chatbot-root > *").first).to_be_visible(timeout=10_000)
 
-    def test_chat_input_exists(self, page, web_server):
+    def test_chat_input_exists(self, web_page, web_server):
         """R13-E03: Chat input is visible and interactable."""
-        page.goto(web_server)
-        page.wait_for_load_state("networkidle")
+        page = web_page
+        page.goto(web_server, wait_until="domcontentloaded")
         # The chatbot component should render an input area
         chat_input = page.locator("#chatbot-root textarea, #chatbot-root input[type='text']")
         expect(chat_input.first).to_be_visible(timeout=10_000)
+        expect(chat_input.first).to_be_editable()
+        chat_input.first.fill("Web UI smoke test")
+        expect(chat_input.first).to_have_value("Web UI smoke test")
