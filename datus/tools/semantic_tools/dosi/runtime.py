@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import re
 import threading
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -56,6 +57,19 @@ from datus.tools.semantic_tools.models import (
     ValidationIssue,
     ValidationResult,
 )
+
+
+def _echo(compiled: Dict[str, Any]) -> Dict[str, Any]:
+    """What each part of the query read (``parts``), the conditions a part
+    could not read (``skipped``) and ``warnings``, as the engine reports
+    them — passed through so the caller can check where every condition
+    landed."""
+    out: Dict[str, Any] = {}
+    for key in ("parts", "skipped", "warnings"):
+        value = compiled.get(key)
+        if value:
+            out[key] = value
+    return out
 
 
 class DosiRuntime:
@@ -156,10 +170,19 @@ class DosiRuntime:
                     "derive_family",
                     "derive_base",
                     "derive_expr",
+                    "derive_predicate",
                     "subset_of",
                 ):
                     value = row.get(key)
                     if value is not None:
+                        metadata[key] = value
+                # Which dimensions the query must group by, and which parts of
+                # the metric a filter's position changes: both are gathered by
+                # Dosi over the whole tree the metric is computed from, so they
+                # pass through as published rather than being rebuilt here.
+                for key in ("required_dimensions", "parts", "time_axis"):
+                    value = row.get(key)
+                    if value:
                         metadata[key] = value
                 if effective_time:
                     metadata["time_dimension"] = effective_time
@@ -306,6 +329,9 @@ class DosiRuntime:
                 time_granularities=(grains_by_name.get(str(row.get("name") or ""), []) if row.get("is_time") else []),
                 recommended=row.get("is_dimension"),
                 recommendation_source=(str(row.get("source")) if row.get("source") is not None else None),
+                parts=row.get("parts") or None,
+                pairs=row.get("pairs") or None,
+                params=row.get("params") or None,
             )
             for row in rows
             if row.get("name")
@@ -382,9 +408,12 @@ class DosiRuntime:
         *,
         params: Optional[Dict[str, Any]] = None,
         context_filter: Optional[str] = None,
+        define: Optional[Dict[str, Any]] = None,
     ) -> QueryResult:
         binding = await asyncio.to_thread(load_binding)
-        handle = await asyncio.to_thread(self._handle_for_metrics, metrics)
+        # Temporary metrics (define) are not in the catalog: the model is the
+        # one owning the metrics they are built from.
+        handle = await asyncio.to_thread(self._handle_for_metrics, self._catalog_metrics(metrics, define))
         engine = await asyncio.to_thread(handle.get)
         dimensions = list(dimensions or [])
         # Fetched off the event loop; _build_query stays pure (no engine I/O).
@@ -404,6 +433,7 @@ class DosiRuntime:
             order_by=order_by,
             params=params,
             context_filter=context_filter,
+            define=define,
         )
         connection = handle.profile_name
         try:
@@ -426,6 +456,7 @@ class DosiRuntime:
                         "dry_run": True,
                         "explain": True,
                         **({"outputs": compiled["outputs"]} if compiled.get("outputs") is not None else {}),
+                        **_echo(compiled),
                     },
                 )
             result = await asyncio.to_thread(
@@ -442,6 +473,7 @@ class DosiRuntime:
                     "dialect": result["dialect"],
                     "row_count": result["row_count"],
                     **({"outputs": result["outputs"]} if result.get("outputs") is not None else {}),
+                    **_echo(result),
                 },
             )
         except Exception as exc:  # noqa: BLE001 - mapped to typed errors below
@@ -907,6 +939,36 @@ class DosiRuntime:
             )
         return dict(handles)[model_path]
 
+    def _catalog_metrics(self, metrics: List[str], define: Optional[Dict[str, Any]]) -> List[str]:
+        """The catalog metrics a query reads: its own, with each temporary
+        metric (``define.metrics``) replaced by its base or the metrics its
+        ``expr`` names."""
+        temporary = (define or {}).get("metrics") or {}
+        if not isinstance(temporary, dict) or not temporary:
+            return list(metrics)
+        _, metric_to_path, _ = self._catalog()
+        out: List[str] = []
+
+        def add(name: str) -> None:
+            if name in metric_to_path and name not in out:
+                out.append(name)
+
+        for name in metrics:
+            if name not in temporary:
+                add(name)
+        for entry in temporary.values():
+            if not isinstance(entry, dict):
+                continue
+            if isinstance(entry.get("base"), str):
+                add(entry["base"])
+            if isinstance(entry.get("expr"), str):
+                for token in re.findall(r"[A-Za-z_][A-Za-z0-9_]*", entry["expr"]):
+                    add(token)
+        # A name neither temporary nor in the catalog stays, so the lookup
+        # reports it as unknown rather than the query silently losing it.
+        out.extend(name for name in metrics if name not in temporary and name not in metric_to_path)
+        return out or list(metrics)
+
     def _handle_for_metrics(self, metrics: List[str]) -> EngineHandle:
         handles, metric_to_path, model_to_path = self._catalog()
         unknown = [name for name in dict.fromkeys(metrics) if name not in metric_to_path]
@@ -1099,6 +1161,7 @@ class DosiRuntime:
         order_by: Optional[List[str]],
         params: Optional[Dict[str, Any]] = None,
         context_filter: Optional[str] = None,
+        define: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """Assemble the engine's MetricQuery dict. Pure: no engine I/O."""
         del metric_rows  # Kept for backward-compatible direct-call tests/callers.
@@ -1153,6 +1216,8 @@ class DosiRuntime:
             query["where_sql"] = where
         if context_filter:
             query["context_filter"] = context_filter
+        if define:
+            query["define"] = dict(define)
         if time_start or time_end:
             time_range: Dict[str, Any] = {"start": time_start, "end": time_end}
             if not any(is_time_dimension(item["field"]) for item in group_by):

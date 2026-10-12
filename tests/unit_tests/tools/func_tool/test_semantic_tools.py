@@ -17,6 +17,7 @@ from datus.tools.func_tool.semantic_tools import SemanticTools, _run_async
 from datus.tools.semantic_tools.models import (
     AttributionRequest,
     AttributionWindow,
+    DimensionInfo,
     QueryResult,
 )
 
@@ -227,6 +228,73 @@ class TestQueryMetricsCompression:
             "metrics": ["revenue"],
             "params": {"regions": ["APAC", "EMEA"], "threshold": 100},
         }
+
+    def test_query_metrics_passes_define_through(self, semantic_tools):
+        calls = {}
+
+        class _Runtime:
+            service_type = "dosi"
+
+            async def query_metrics(self, metrics, define=None, **kwargs):
+                calls["metrics"] = metrics
+                calls["define"] = define
+                return QueryResult(columns=["new_players"], data=[{"new_players": 1}])
+
+        semantic_tools._runtime = _Runtime()
+        define = {
+            "metrics": {"new_players": {"base": "players", "where": "players.type = 'new'"}},
+            "fields": {"players.first_pay_day": {"base": "players.player_first_pay_day", "time_range": None}},
+        }
+        result = semantic_tools.query_metrics(metrics=["new_players"], define=define)
+
+        assert result.success == 1
+        assert calls == {"metrics": ["new_players"], "define": define}
+
+    def test_query_metrics_refuses_flat_define_with_the_object_to_resend(self, semantic_tools, mock_runtime):
+        """New names at the top level would surface as unknown metrics; the refusal says where they go."""
+        result = semantic_tools.query_metrics(
+            metrics=["new_players"],
+            define={
+                "new_players": {"base": "players", "where": "players.type = 'new'"},
+                "players.first_pay_day": {"base": "players.player_first_pay_day", "time_range": None},
+                "fields": {"players.last_pay_day": {"base": "players.player_last_pay_day"}},
+            },
+        )
+
+        assert result.success == 0
+        assert "define.metrics" in result.error and "define.fields" in result.error
+        assert result.result["error_type"] == "define_invalid"
+        assert result.result["suggested_define"] == {
+            "metrics": {"new_players": {"base": "players", "where": "players.type = 'new'"}},
+            "fields": {
+                "players.last_pay_day": {"base": "players.player_last_pay_day"},
+                "players.first_pay_day": {"base": "players.player_first_pay_day", "time_range": None},
+            },
+        }
+        mock_runtime.query_metrics.assert_not_called()
+
+    def test_query_metrics_refuses_define_section_that_is_not_an_object(self, semantic_tools, mock_runtime):
+        result = semantic_tools.query_metrics(metrics=["players"], define={"metrics": ["new_players"]})
+
+        assert result.success == 0
+        assert "define.metrics must be an object" in result.error
+        mock_runtime.query_metrics.assert_not_called()
+
+    def test_query_metrics_refuses_define_that_is_not_an_object(self, semantic_tools, mock_runtime):
+        result = semantic_tools.query_metrics(metrics=["players"], define="new_players = players where type = 'new'")
+
+        assert result.success == 0
+        assert result.error == 'query_metrics define must be an object: {"metrics": {...}, "fields": {...}}'
+        mock_runtime.query_metrics.assert_not_called()
+
+    def test_tool_schema_declares_define_sections(self, semantic_tools):
+        schema = trans_to_function_tool(semantic_tools.query_metrics).params_json_schema
+
+        ref = next(option["$ref"] for option in schema["properties"]["define"]["anyOf"] if "$ref" in option)
+        define = schema["$defs"][ref.rsplit("/", 1)[-1]]
+        assert set(define["properties"]) == {"metrics", "fields"}
+        assert define["additionalProperties"] is False
+        assert "metrics" in schema["properties"]["define"]["description"]
 
     def test_query_metrics_small_data_not_compressed(self, semantic_tools):
         """Test that small data within token threshold is not compressed."""
@@ -1602,6 +1670,76 @@ class TestGetMetric:
 
         # `slots` is where the engine substitutes the value: an internal, not a binding hint.
         assert result.result["params"] == params
+
+    def test_passes_through_where_filters_change_the_metric(self, semantic_tools_with_runtime):
+        """A composed share hides that its denominator is a fixed total; the
+        runtime's `parts` is what tells the agent a region filter in
+        context_filter would narrow it. Passed through as published."""
+        tool, _ = semantic_tools_with_runtime
+        placement = {
+            "metrics": [
+                {
+                    "name": "revenue_company_total",
+                    "kind": "fixed",
+                    "definition": "fixed(revenue)",
+                    "used_in": ["revenue_share_of_company"],
+                }
+            ]
+        }
+        metric = _detail_metric(
+            "revenue_share_of_company",
+            {"base_kind": "ratio", "derive_family": "compose", "parts": placement},
+        )
+
+        with self._wire([metric]):
+            result = tool.get_metric(name="revenue_share_of_company")
+
+        assert result.result["parts"] == placement
+
+    def test_passes_through_a_filter_predicate(self, semantic_tools_with_runtime):
+        tool, _ = semantic_tools_with_runtime
+        predicate = "logins.login_date >= :window_start AND logins.login_date <= :window_end"
+        metric = _detail_metric(
+            "login_days_in_window",
+            {"base_kind": "aggregate", "derive_family": "filter", "derive_predicate": predicate},
+        )
+
+        with self._wire([metric]):
+            result = tool.get_metric(name="login_days_in_window")
+
+        assert result.result["derive_predicate"] == predicate
+
+    def test_dimension_rows_keep_placement_only_where_the_runtime_reports_it(self, semantic_tools_with_runtime):
+        """A fixed field's base parameters are bound by the query but declared by
+        no queried metric, so its dimension row is where the agent finds them.
+        Ordinary rows stay free of the empty keys."""
+        tool, _ = semantic_tools_with_runtime
+        params = [{"name": "window_start", "type": "string", "default": "1970-01-01"}]
+        placement = [
+            {
+                "name": "logins.window_days",
+                "kind": "fixed",
+                "definition": "fixed(login_days_in_window, logins.user_id)",
+                "used_in": [],
+                "source": "logins",
+                "time_axis": "logins.login_date",
+                "filterable_columns": ["logins.platform"],
+            }
+        ]
+        rows = [
+            DimensionInfo(name="logins.window_days", parts=placement, params=params),
+            DimensionInfo(name="logins.user_id"),
+        ]
+        metric = _detail_metric("active_users", {"base_kind": "aggregate"})
+
+        with self._wire([metric], dimension_rows=rows):
+            result = tool.get_metric(name="active_users")
+
+        window_days, user_id = result.result["dimensions"]
+        assert window_days["parts"] == placement
+        assert window_days["params"] == params
+        assert "parts" not in user_id
+        assert "params" not in user_id
 
     def test_unknown_name_fails_with_the_name(self, semantic_tools_with_runtime):
         tool, _ = semantic_tools_with_runtime
