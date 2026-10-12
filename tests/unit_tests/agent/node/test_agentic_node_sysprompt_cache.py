@@ -9,8 +9,8 @@ Covers:
   node instances, rebuild on a meta change (model switch), no caching without a
   session id.
 - ``_system_prompt_snapshot_meta``: identity keys exclude per-turn live values
-  (datasource, profile, date) but DO include the response language, which the
-  Chat API sets per request.
+  (datasource, profile, date) but DO include the response language and bound
+  database skill, which can change between Chat API requests.
 - ``_build_datasource_reminder``: live per-turn datasource + dialect line for
   the user-message ``<system_reminder>`` envelope; never mentions the
   permission profile.
@@ -37,6 +37,12 @@ import pytest
 
 from datus.agent.node.agentic_node import AgenticNode
 from datus.models.session_manager import SessionManager
+from datus.tools.db_tools import ConnectorRegistry
+from datus.tools.db_tools.config import DuckDBConfig, SQLiteConfig
+from datus.tools.func_tool.database import DBFuncTool
+from datus.tools.skill_tools.skill_config import SkillConfig
+from datus.tools.skill_tools.skill_manager import SkillManager
+from datus.utils.constants import DBType
 from datus.utils.exceptions import DatusException, ErrorCode
 
 TEMPLATE_DIR = Path(__file__).resolve().parents[4] / "datus" / "prompts" / "prompt_templates"
@@ -176,7 +182,7 @@ class TestGetSessionSystemPrompt:
         assert list(tmp_path.glob("*.sysprompt.json")) == []
 
     def test_datasource_switch_does_not_rebuild(self, session_manager):
-        """The live datasource is a user-message concern, never a cache key."""
+        """Without DB tools, datasource changes do not affect the system prompt."""
         node = _SnapshotNode(session_manager, _agent_config(current_datasource="main"))
         node._get_session_system_prompt(prompt_version="1.2")
         node.agent_config = _agent_config(current_datasource="dev")
@@ -225,6 +231,139 @@ class TestGetSessionSystemPrompt:
         assert node.build_count == 2
 
 
+class _DialectSnapshotNode(_SnapshotNode):
+    """Exercise real skill injection through the existing snapshot test node."""
+
+    REQUIRED_SKILLS = "snapshot-guide"
+
+    def __init__(self, session_manager, agent_config, skill_manager, *, db_func_tool=None):
+        super().__init__(session_manager, agent_config, db_func_tool=db_func_tool)
+        self.skill_manager = skill_manager
+
+    def _get_system_prompt(self, prompt_version=None, template_context=None):
+        prompt = super()._get_system_prompt(prompt_version, template_context)
+        return self._inject_required_skills(prompt)
+
+
+@pytest.fixture
+def snapshot_skills(tmp_path):
+    skills_dir = tmp_path / "snapshot_skills"
+    for name in ("snapshot-guide", "db-sqlite-sql", "db-duckdb-sql"):
+        skill_dir = skills_dir / name
+        skill_dir.mkdir(parents=True)
+        (skill_dir / "SKILL.md").write_text(
+            f"---\nname: {name}\ndescription: {name} rules\n---\n\nInstructions for {name}.\n"
+        )
+    return SkillManager(config=SkillConfig(directories=[str(skills_dir)]))
+
+
+@pytest.fixture
+def snapshot_db_tools(tmp_path):
+    connectors = {
+        "sqlite_a": ConnectorRegistry.create_connector(DBType.SQLITE, SQLiteConfig(db_path=str(tmp_path / "a.sqlite"))),
+        "sqlite_b": ConnectorRegistry.create_connector(DBType.SQLITE, SQLiteConfig(db_path=str(tmp_path / "b.sqlite"))),
+        "duckdb": ConnectorRegistry.create_connector(
+            DBType.DUCKDB, DuckDBConfig(db_path=str(tmp_path / "c.duckdb"), enable_external_access=False)
+        ),
+    }
+    tools = {name: DBFuncTool(connector) for name, connector in connectors.items()}
+    yield tools
+    for connector in connectors.values():
+        connector.close()
+
+
+class TestBoundDatabaseSkillSnapshot:
+    @pytest.mark.parametrize(
+        ("before", "after"),
+        [("sqlite_a", "duckdb"), ("duckdb", "sqlite_a"), ("sqlite_a", None), (None, "sqlite_a")],
+    )
+    def test_bound_skill_change_rebuilds_snapshot(
+        self, session_manager, snapshot_skills, snapshot_db_tools, before, after
+    ):
+        cfg = _agent_config(current_datasource="sqlite_a")
+        first_node = _DialectSnapshotNode(
+            session_manager, cfg, snapshot_skills, db_func_tool=snapshot_db_tools.get(before)
+        )
+        first = first_node._get_session_system_prompt("1.2")
+        # The API creates a fresh node for each request. Keep the config selection
+        # fixed to verify that the actual bound connector determines the identity.
+        next_node = _DialectSnapshotNode(
+            session_manager, cfg, snapshot_skills, db_func_tool=snapshot_db_tools.get(after)
+        )
+        second = next_node._get_session_system_prompt("1.2")
+
+        assert next_node.build_count == 1
+        assert second != first
+        assert '<required_skill name="snapshot-guide">' in second
+        if after is None:
+            assert '<required_skill name="db-' not in second
+        else:
+            dialect = snapshot_db_tools[after].connector.get_type().value
+            assert f'<required_skill name="db-{dialect}-sql">' in second
+            other_dialect = "duckdb" if dialect == "sqlite" else "sqlite"
+            assert f'<required_skill name="db-{other_dialect}-sql">' not in second
+        snapshot = session_manager.load_system_prompt_snapshot(next_node.session_id)
+        assert snapshot["prompt"] == second
+        assert next_node._get_session_system_prompt("1.2") == second
+        assert next_node.build_count == 1
+
+    def test_same_dialect_across_datasources_reuses_snapshot(self, session_manager, snapshot_skills, snapshot_db_tools):
+        first_node = _DialectSnapshotNode(
+            session_manager,
+            _agent_config(current_datasource="sqlite_a"),
+            snapshot_skills,
+            db_func_tool=snapshot_db_tools["sqlite_a"],
+        )
+        first = first_node._get_session_system_prompt("1.2")
+        next_node = _DialectSnapshotNode(
+            session_manager,
+            _agent_config(current_datasource="sqlite_b"),
+            snapshot_skills,
+            db_func_tool=snapshot_db_tools["sqlite_b"],
+        )
+
+        assert next_node._get_session_system_prompt("1.2") == first
+        assert next_node.build_count == 0
+        assert '<required_skill name="db-sqlite-sql">' in first
+        assert '<required_skill name="db-duckdb-sql">' not in first
+
+    def test_without_db_tools_datasource_changes_reuse_prompt_without_dialect_skills(
+        self, session_manager, snapshot_skills
+    ):
+        services = SimpleNamespace(
+            datasources={"sqlite_a": SimpleNamespace(type=DBType.SQLITE), "duckdb": SimpleNamespace(type=DBType.DUCKDB)}
+        )
+        first_node = _DialectSnapshotNode(
+            session_manager, _agent_config(current_datasource="sqlite_a", services=services), snapshot_skills
+        )
+        first = first_node._get_session_system_prompt("1.2")
+        next_node = _DialectSnapshotNode(
+            session_manager, _agent_config(current_datasource="duckdb", services=services), snapshot_skills
+        )
+
+        assert next_node._get_session_system_prompt("1.2") == first
+        assert next_node.build_count == 0
+        assert '<required_skill name="db-' not in first
+        assert '<required_skill name="snapshot-guide">' in first
+
+    def test_legacy_snapshot_without_bound_skill_identity_rebuilds_once(
+        self, session_manager, snapshot_skills, snapshot_db_tools
+    ):
+        node = _DialectSnapshotNode(
+            session_manager, _agent_config(), snapshot_skills, db_func_tool=snapshot_db_tools["sqlite_a"]
+        )
+        legacy_meta = node._system_prompt_snapshot_meta("1.2")
+        legacy_meta.pop("database_skill", None)
+        session_manager.save_system_prompt_snapshot(node.session_id, "Legacy prompt", legacy_meta)
+
+        prompt = node._get_session_system_prompt("1.2")
+
+        assert prompt != "Legacy prompt"
+        assert '<required_skill name="db-sqlite-sql">' in prompt
+        assert node._get_session_system_prompt("1.2") == prompt
+        assert node.build_count == 1
+
+
 class TestSnapshotMeta:
     def test_meta_is_exactly_the_identity_keys(self, session_manager):
         node = _SnapshotNode(session_manager, _agent_config(current_datasource="main"))
@@ -235,6 +374,7 @@ class TestSnapshotMeta:
             "prompt_version": "1.2",
             "model_name": "openai:gpt-4.1",
             "language": "",
+            "database_skill": "",
         }
 
     def test_the_template_is_part_of_the_identity(self, session_manager):

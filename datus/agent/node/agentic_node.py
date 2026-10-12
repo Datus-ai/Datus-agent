@@ -776,10 +776,9 @@ class AgenticNode(Node):
     def _build_datasource_reminder(self, user_input: Any = None) -> str:
         """Live per-turn datasource line for the user-message envelope.
 
-        The frozen system-prompt snapshot must never pin the *current*
-        datasource: a mid-session ``/datasource`` switch would silently leave a
-        stale dialect in every later turn. Instead this line rides in the
-        ``<system_reminder>`` envelope of each user message. It merges what
+        The current datasource belongs in the ``<system_reminder>`` envelope
+        of each user message; the system-prompt snapshot tracks only the bound
+        database skill in its identity. This reminder merges what
         used to be a separate "Database Context" block — dialect, catalog,
         database (resolved via the connector default), adapter-provided SQL
         semantics, and schema — into one line so the dialect is stated exactly
@@ -1168,11 +1167,12 @@ class AgenticNode(Node):
         the inputs that change the prompt's identity within a session: the
         node template, its version, and the active model (a model switch also
         resets the provider-side prefix cache, so rebuilding is free). The
-        live per-turn datasource/dialect is injected in the user message
-        instead, so it deliberately does **not** appear here. ``language`` DOES
+        live per-turn datasource is injected in the user message instead. The
+        bound database skill is part of the system prompt, so its identity
+        appears here and a dialect switch rebuilds the snapshot. ``language`` DOES
         appear: it is a per-request field on the Chat API, so a user switching
         the UI language mid-session must not keep replaying a snapshot that
-        pins the old one. Date, memory, and skills stay frozen until the
+        pins the old one. Date, memory, and skill contents stay frozen until the
         snapshot is rebuilt.
         """
         agent_config = getattr(self, "agent_config", None)
@@ -1209,6 +1209,7 @@ class AgenticNode(Node):
             "prompt_version": str(version or ""),
             "model_name": model_id,
             "language": str(language or "").strip(),
+            "database_skill": ",".join(self._get_database_skill_candidates()),
         }
 
     def _system_prompt_template_name(self) -> str:
