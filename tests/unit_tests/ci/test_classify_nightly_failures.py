@@ -304,3 +304,97 @@ def test_verbose_token_test_names_do_not_create_credential_finding(tmp_path):
     classification = json.loads(output_file.read_text(encoding="utf-8"))
 
     assert classification["summary"]["finding_count"] == 0
+
+
+def _pattern_findings(tmp_path, log, manifest):
+    manifest_file = tmp_path / "manifest.json"
+    log_file = tmp_path / "nightly.log"
+    registry_file = tmp_path / "registry.yml"
+    manifest_file.write_text(json.dumps(manifest), encoding="utf-8")
+    log_file.write_text(log, encoding="utf-8")
+    registry_file.write_text("version: 1\nentries: []\n", encoding="utf-8")
+    args = classify_nightly_failures.build_parser().parse_args(
+        [
+            "--manifest",
+            str(manifest_file),
+            "--log-file",
+            str(log_file),
+            "--registry",
+            str(registry_file),
+            "--exit-code",
+            "1",
+        ]
+    )
+    classification = classify_nightly_failures.build_classification(args)
+    return [finding for finding in classification["findings"] if finding["source"] == "log.pattern"]
+
+
+def test_successful_suites_do_not_route_simulated_errors_as_failures(tmp_path):
+    manifest = {"suites": [{"name": "Full Unit Tests", "status": "passed", "mode": "blocking"}]}
+    log = (
+        "=== Full Unit Tests ===\n"
+        "tests/unit_tests/test_errors.py::test_auth[401 unauthorized] PASSED\n"
+        "ERROR API error: Authentication failed\n"
+        "1 passed\n"
+        "=== Starting Superset Services ===\n"
+        "Waiting for Superset HTTP readiness\n"
+        "Superset HTTP readiness probe succeeded\n"
+    )
+    findings = _pattern_findings(tmp_path, log, manifest)
+    assert findings == []
+
+
+def test_failed_unit_suite_routes_only_failure_output(tmp_path):
+    manifest = {"suites": [{"name": "Full Unit Tests", "status": "failed", "mode": "blocking"}]}
+    log = (
+        "=== Full Unit Tests ===\n"
+        "tests/unit_tests/test_errors.py::test_auth[401 unauthorized] PASSED\n"
+        "ERROR API error: Authentication failed\n"
+        "==================================== ERRORS ====================================\n"
+        "E ImportError: cannot import name ARTIFACT_DIRS\n"
+        "2 errors during collection\n"
+    )
+    findings = _pattern_findings(tmp_path, log, manifest)
+    assert findings == []
+
+
+def test_warn_only_credentials_keep_suite_mode_and_matching_evidence(tmp_path):
+    manifest = {"suites": [{"name": "Provider Health Tests", "status": "failed", "mode": "warn-only"}]}
+    log = (
+        "=== Provider Health Tests (warn-only) ===\n"
+        "=================================== FAILURES ===================================\n"
+        "E Authentication failed: invalid api key\n"
+        "=== Flaky Log Classification ===\n"
+        "Unrelated trailing output\n"
+    )
+    findings = _pattern_findings(tmp_path, log, manifest)
+    assert len(findings) == 1
+    finding = findings[0]
+    assert finding["category"] == "credential_or_config"
+    assert finding["blocking"] is False
+    assert finding["severity"] == "warning"
+    assert finding["details"]["suite"] == "Provider Health Tests"
+    assert finding["details"]["log_tail"] == ["E Authentication failed: invalid api key"]
+
+
+def test_real_readiness_failure_still_routes_to_docker():
+    findings = []
+    classify_nightly_failures.classify_log_patterns("ERROR: service readiness failed\n", findings)
+    assert len(findings) == 1
+    assert findings[0]["category"] == "docker_infra"
+    assert findings[0]["blocking"] is True
+    assert findings[0]["details"]["log_tail"] == ["ERROR: service readiness failed"]
+
+
+def test_docker_download_sizes_do_not_create_provider_failure():
+    findings = []
+    classify_nightly_failures.classify_log_patterns("layer Downloading 429.1MB\nlayer Extracting 529.8MB\n", findings)
+    assert findings == []
+
+
+def test_http_rate_limit_remains_a_provider_warning():
+    findings = []
+    classify_nightly_failures.classify_log_patterns("Error code: 429\n", findings)
+    assert len(findings) == 1
+    assert findings[0]["category"] == "provider_outage"
+    assert findings[0]["blocking"] is False
