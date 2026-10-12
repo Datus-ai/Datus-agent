@@ -1261,6 +1261,24 @@ async def test_a_name_neither_temporary_nor_in_the_catalog_is_reported_unknown(t
 
 
 @pytest.mark.asyncio
+async def test_temporary_metrics_built_from_no_catalog_metric_name_the_unknown_bases(tmp_path, monkeypatch):
+    runtime = _orders_and_users_runtime(tmp_path, monkeypatch)
+    define = {
+        "metrics": {
+            "paid": {"base": "order_cnt", "where": "orders.status = 'paid'"},
+            "paid_again": {"base": "paid"},
+            "ratio": {"expr": "paid / paid_again"},
+        }
+    }
+
+    with pytest.raises(SemanticValidationException) as exc:
+        await runtime.query_metrics(metrics=["ratio"], define=define, dry_run=True)
+
+    assert (exc.value.payload.code, exc.value.payload.metrics) == ("define_invalid", ["order_cnt"])
+    assert "unknown bases: order_cnt" in exc.value.payload.message
+
+
+@pytest.mark.asyncio
 async def test_semantic_models_path_rejects_duplicate_metric_names(tmp_path, monkeypatch):
     from datus.tools.semantic_tools.dosi.config import DosiConfig
     from datus.tools.semantic_tools.dosi.runtime import DosiRuntime

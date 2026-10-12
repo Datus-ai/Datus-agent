@@ -967,7 +967,28 @@ class DosiRuntime:
         # A name neither temporary nor in the catalog stays, so the lookup
         # reports it as unknown rather than the query silently losing it.
         out.extend(name for name in metrics if name not in temporary and name not in metric_to_path)
-        return out or list(metrics)
+        if out:
+            return out
+        # Only temporary metrics were asked for, and none is built from a
+        # catalog metric: name the bases that resolve to nothing, not the
+        # temporary names, which were never meant to be in the catalog.
+        bases = sorted(
+            {
+                entry["base"]
+                for entry in temporary.values()
+                if isinstance(entry, dict) and isinstance(entry.get("base"), str) and entry["base"] not in temporary
+            }
+        )
+        raise SemanticValidationException(
+            SemanticValidationError(
+                code="define_invalid",
+                metrics=bases,
+                message=(
+                    "no temporary metric in define.metrics is built from a catalog metric"
+                    + (f" | unknown bases: {', '.join(bases)}" if bases else "")
+                ),
+            )
+        )
 
     def _handle_for_metrics(self, metrics: List[str]) -> EngineHandle:
         handles, metric_to_path, model_to_path = self._catalog()
