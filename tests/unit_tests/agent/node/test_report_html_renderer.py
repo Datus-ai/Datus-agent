@@ -167,8 +167,8 @@ def test_render_report_html_defaults_to_cdn(tmp_path: Path):
     _seed_report(tmp_path, report_slug="cdn_default")
     out_path = render_report_html(project_root=tmp_path, report_slug="cdn_default")
     body = out_path.read_text(encoding="utf-8")
-    assert "https://unpkg.com/@datus/web-artifact-render@2.0.0/dist/index.css" in body
-    assert "https://unpkg.com/@datus/web-artifact-render@2.0.0/dist/index.umd.js" in body
+    assert "https://unpkg.com/@datus/web-artifact-render@~2.0.0/dist/index.css" in body
+    assert "https://unpkg.com/@datus/web-artifact-render@~2.0.0/dist/index.umd.js" in body
     assert not (tmp_path / "reports" / "cdn_default" / "_assets").exists()
 
 

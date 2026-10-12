@@ -178,8 +178,8 @@ class TestCreateWebApp:
             client = TestClient(app, raise_server_exceptions=False)
             resp = client.get("/")
             assert resp.status_code == 200
-            assert "https://unpkg.com/@datus/web-chatbot@2.0.0/dist/datus-chatbot.umd.js" in resp.text
-            assert "https://unpkg.com/@datus/web-chatbot@2.0.0/dist/datus-chatbot.css" in resp.text
+            assert "https://unpkg.com/@datus/web-chatbot@~2.0.0/dist/datus-chatbot.umd.js" in resp.text
+            assert "https://unpkg.com/@datus/web-chatbot@~2.0.0/dist/datus-chatbot.css" in resp.text
             react_url = "https://unpkg.com/react@18.3.1/umd/react.production.min.js"
             assert resp.text.index(react_url) < resp.text.index("datus-chatbot.umd.js")
 

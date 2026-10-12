@@ -31,7 +31,7 @@ _TEMPLATES_DIR = os.path.join(os.path.dirname(__file__), "templates")
 
 # CDN URLs used when --chatbot-dist is NOT provided (production mode).
 # The v2 bundle also has classic JSX references that require a global React runtime.
-_CDN_CHATBOT_VERSION = "2.0.0"
+_CDN_CHATBOT_VERSION = "~2.0.0"
 _CDN_REACT_VERSION = "18.3.1"
 _CDN_REACT_JS = f"https://unpkg.com/react@{_CDN_REACT_VERSION}/umd/react.production.min.js"
 _CDN_CHATBOT_CSS = f"https://unpkg.com/@datus/web-chatbot@{_CDN_CHATBOT_VERSION}/dist/datus-chatbot.css"
