@@ -31,7 +31,7 @@ _TEMPLATES_DIR = os.path.join(os.path.dirname(__file__), "templates")
 
 # CDN URLs used when --chatbot-dist is NOT provided (production mode).
 # React is bundled into datus-chatbot.umd.js, no separate React CDN needed.
-_CDN_CHATBOT_VERSION = "1.1.3"
+_CDN_CHATBOT_VERSION = "2.0.0"
 _CDN_CHATBOT_CSS = f"https://unpkg.com/@datus/web-chatbot@{_CDN_CHATBOT_VERSION}/dist/datus-chatbot.css"
 _CDN_CHATBOT_JS = f"https://unpkg.com/@datus/web-chatbot@{_CDN_CHATBOT_VERSION}/dist/datus-chatbot.umd.js"
 

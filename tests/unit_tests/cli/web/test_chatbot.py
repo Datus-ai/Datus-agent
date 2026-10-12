@@ -153,7 +153,7 @@ class TestCreateWebApp:
         from fastapi import FastAPI
         from fastapi.testclient import TestClient
 
-        from datus.cli.web.chatbot import _CDN_CHATBOT_CSS, _CDN_CHATBOT_JS, create_web_app
+        from datus.cli.web.chatbot import create_web_app
 
         args = argparse.Namespace(
             datasource="test",
@@ -178,8 +178,8 @@ class TestCreateWebApp:
             client = TestClient(app, raise_server_exceptions=False)
             resp = client.get("/")
             assert resp.status_code == 200
-            assert _CDN_CHATBOT_JS in resp.text
-            assert _CDN_CHATBOT_CSS in resp.text
+            assert "https://unpkg.com/@datus/web-chatbot@2.0.0/dist/datus-chatbot.umd.js" in resp.text
+            assert "https://unpkg.com/@datus/web-chatbot@2.0.0/dist/datus-chatbot.css" in resp.text
 
     def test_warns_when_dist_missing(self):
         """Should warn and fall back to CDN when dist path doesn't exist."""

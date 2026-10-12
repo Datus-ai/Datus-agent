@@ -221,9 +221,8 @@ def test_render_dashboard_html_defaults_to_cdn(tmp_path: Path):
     _seed_dashboard(tmp_path, dashboard_slug="cdn_default")
     out_path = render_dashboard_html(project_root=tmp_path, dashboard_slug="cdn_default")
     body = out_path.read_text(encoding="utf-8")
-    assert "https://unpkg.com/@datus/web-artifact-render" in body
-    assert "index.css" in body
-    assert "index.umd.js" in body
+    assert "https://unpkg.com/@datus/web-artifact-render@2.0.0/dist/index.css" in body
+    assert "https://unpkg.com/@datus/web-artifact-render@2.0.0/dist/index.umd.js" in body
     assert not (tmp_path / "dashboards" / "cdn_default" / "_assets").exists()
 
 
