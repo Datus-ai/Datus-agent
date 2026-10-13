@@ -2664,23 +2664,6 @@
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Querying metrics">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#where-a-condition-goes" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Where a condition goes
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
 </li>
       
         <li class="md-nav__item">
@@ -5024,23 +5007,6 @@
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Querying metrics">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#where-a-condition-goes" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Where a condition goes
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
 </li>
       
         <li class="md-nav__item">
@@ -5241,7 +5207,7 @@
 </tr>
 <tr>
 <td><code>time_start</code>, <code>time_end</code></td>
-<td>Optional half-open time range: start is inclusive and end is exclusive. Use ISO dates (<code>YYYY-MM-DD</code>). Every metric and every fixed field applies it on its own table's time field (<code>time_axis</code>).</td>
+<td>Optional half-open time range: start is inclusive and end is exclusive. Use ISO dates (<code>YYYY-MM-DD</code>).</td>
 </tr>
 <tr>
 <td><code>time_granularity</code></td>
@@ -5253,11 +5219,7 @@
 </tr>
 <tr>
 <td><code>context_filter</code></td>
-<td>Optional scope every number obeys, applied before aggregation in every part of the query that can read its columns; a part that cannot is skipped and listed in the result's <code>skipped</code> and <code>warnings</code>. It scopes the population a window metric ranks, counts or weighs: <code>where="market = 'North'"</code> shows North's rank among all markets, <code>context_filter="market = 'North'"</code> ranks North's rows against each other. It also scopes the rows a fixed level-of-detail value is computed over, which <code>where</code> does not.</td>
-</tr>
-<tr>
-<td><code>define</code></td>
-<td>Temporary metrics and fields for this query only, for a condition or a period that belongs to one number. See <a href="#where-a-condition-goes">Where a condition goes</a>.</td>
+<td>Optional filter that always applies before aggregation. It scopes the population a window metric ranks, counts or weighs: <code>where="market = 'North'"</code> shows North's rank among all markets, <code>context_filter="market = 'North'"</code> ranks North's rows against each other.</td>
 </tr>
 <tr>
 <td><code>order_by</code></td>
@@ -5269,94 +5231,42 @@
 </tr>
 <tr>
 <td><code>params</code></td>
-<td>Bindings for the parameters a metric declares (<code>get_metric</code> returns them as <code>params</code>), by name. A list binds several values in one query and returns one column per value: <code>{"k": [1, 7]}</code> yields <code>&lt;metric&gt;__k_1</code> and <code>&lt;metric&gt;__k_7</code>. Omitted parameters take their defaults. A fixed field whose base takes parameters lists them as <code>params</code> on its dimension row; bind them the same way.</td>
+<td>Bindings for the parameters a metric declares (<code>get_metric</code> returns them as <code>params</code>), by name. A list binds several values in one query and returns one column per value: <code>{"k": [1, 7]}</code> yields <code>&lt;metric&gt;__k_1</code> and <code>&lt;metric&gt;__k_7</code>. Omitted parameters take their defaults.</td>
 </tr>
 <tr>
 <td><code>dry_run</code></td>
-<td>Return compiled SQL without executing the metric query; a configured warehouse dry-run provider also validates the SQL. The result carries the query's <code>parts</code>, as an executed query does.</td>
+<td>Return compiled SQL without executing the metric query; a configured warehouse dry-run provider also validates the SQL.</td>
 </tr>
 </tbody>
 </table>
 <p>For example, to include all of January 2024, use <code>time_start="2024-01-01"</code> and <code>time_end="2024-02-01"</code>.</p>
-<h3 id="where-a-condition-goes">Where a condition goes<a class="headerlink" href="#where-a-condition-goes" title="Permanent link">&para;</a></h3>
-<p>Each condition of a question goes in one place:</p>
-<ul>
-<li><code>time_start</code>/<code>time_end</code>: the period. Every metric and every fixed field (a per-entity value such as a customer's order count) applies it on its own table's time field, its <code>time_axis</code>. A part whose table has no time field is read whole, and the result says so.</li>
-<li><code>context_filter</code>: a scope every number obeys, such as one platform or one campaign. Every part of the query applies it where it can read the columns; a part that cannot is listed in <code>skipped</code> and <code>warnings</code>.</li>
-<li><code>define</code>: a condition, or another period, that belongs to one number only. Name a temporary metric or field for it and use the new name in <code>metrics</code>, <code>dimensions</code> or <code>where</code>. An entry inherits the period and <code>context_filter</code>: <code>time_range</code> replaces the period (<code>None</code> reads every period, as a first purchase day or a lifetime total needs), <code>context_filter</code> replaces the scope and <code>where</code> narrows on top. A define <code>where</code> narrows that one number and never removes result rows; a condition that should drop rows goes in <code>context_filter</code> or <code>where</code>.</li>
-<li><code>where</code>: the result rows. A condition on a field never changes a fixed field's value; a condition on a selected metric filters after aggregation. A snapshot table's version day goes here.</li>
-</ul>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="n">query_metrics</span><span class="p">(</span>
-</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>    <span class="n">metrics</span><span class="o">=</span><span class="p">[</span><span class="s2">"new_customers"</span><span class="p">,</span> <span class="s2">"returning_customers"</span><span class="p">],</span>
-</span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a>    <span class="n">time_start</span><span class="o">=</span><span class="s2">"2024-01-01"</span><span class="p">,</span>
-</span><span id="__span-5-4"><a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a>    <span class="n">time_end</span><span class="o">=</span><span class="s2">"2024-02-01"</span><span class="p">,</span>
-</span><span id="__span-5-5"><a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a>    <span class="n">define</span><span class="o">=</span><span class="p">{</span>
-</span><span id="__span-5-6"><a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a>        <span class="s2">"metrics"</span><span class="p">:</span> <span class="p">{</span>
-</span><span id="__span-5-7"><a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a>            <span class="s2">"new_customers"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"base"</span><span class="p">:</span> <span class="s2">"customers"</span><span class="p">,</span> <span class="s2">"where"</span><span class="p">:</span> <span class="s2">"customers.type = 'new'"</span><span class="p">},</span>
-</span><span id="__span-5-8"><a id="__codelineno-5-8" name="__codelineno-5-8" href="#__codelineno-5-8"></a>            <span class="s2">"returning_customers"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"base"</span><span class="p">:</span> <span class="s2">"customers"</span><span class="p">,</span> <span class="s2">"where"</span><span class="p">:</span> <span class="s2">"customers.type = 'returning'"</span><span class="p">},</span>
-</span><span id="__span-5-9"><a id="__codelineno-5-9" name="__codelineno-5-9" href="#__codelineno-5-9"></a>        <span class="p">},</span>
-</span><span id="__span-5-10"><a id="__codelineno-5-10" name="__codelineno-5-10" href="#__codelineno-5-10"></a>    <span class="p">},</span>
-</span><span id="__span-5-11"><a id="__codelineno-5-11" name="__codelineno-5-11" href="#__codelineno-5-11"></a><span class="p">)</span>
-</span></code></pre></div>
-<p>The positions differ only where a value depends on rows outside its own group: a fixed level-of-detail value, an <code>include</code>/<code>exclude</code> grain, or a window. <code>get_metric</code> lists those as <code>parts</code>, for the metric and for each dimension that is or reads a fixed field. Each entry has a <code>name</code>, a <code>kind</code>, a <code>definition</code> for fixed/include/exclude (<code>fixed(revenue)</code> is one value for the whole table), <code>used_in</code> (the metrics and fields between it and the metric asked about), <code>source</code> (the dataset it reads), <code>time_axis</code> (absent when the source has no time field) and <code>filterable_columns</code> (the columns a define condition on it may use). <code>query_metrics</code> returns the query's <code>parts</code> with the period and conditions each one reads, so a dry run shows a misplaced condition before the query runs.</p>
-<table>
-<thead>
-<tr>
-<th><code>kind</code></th>
-<th>How the positions act on it</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>fixed</code></td>
-<td>The period lands on its own <code>time_axis</code>, and <code>context_filter</code> narrows it where it can read the columns; <code>where</code> does not. A condition on the fixed field itself goes in <code>where</code>; a condition for this value only goes in <code>define</code>.</td>
-</tr>
-<tr>
-<td><code>include</code>, <code>exclude</code></td>
-<td>Every position narrows it.</td>
-</tr>
-<tr>
-<td><code>window_offset</code>, <code>window_cumulative</code></td>
-<td>Dates go in <code>time_start</code>/<code>time_end</code>; in <code>where</code> they cut the lookback and the compared value comes back empty.</td>
-</tr>
-<tr>
-<td><code>window_rolling</code></td>
-<td><code>time_start</code>/<code>time_end</code>, <code>context_filter</code> and <code>where</code> give the same numbers.</td>
-</tr>
-<tr>
-<td><code>window_rank</code></td>
-<td><code>where</code> on a grouped field keeps the value among all rows; <code>context_filter</code> computes it within the subset.</td>
-</tr>
-</tbody>
-</table>
-<p>For "each region's share of the whole company in January", the company total should change with January but not with the region, so January goes in <code>time_start</code>/<code>time_end</code> and the region in <code>where</code>.</p>
 <h2 id="creating-and-updating-metrics">Creating and updating metrics<a class="headerlink" href="#creating-and-updating-metrics" title="Permanent link">&para;</a></h2>
 <p>Use <code>semantic_modeling</code> for normal authoring. It can create required datasets and fields, add or update metrics in the same YAML, validate the complete model, dry-run representative queries when requested, and synchronize both Knowledge Base projections.</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>Add a monthly revenue growth metric to the sales model, use order_date as business time, validate it, and dry-run a yearly query.
+<div class="language-text highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>Add a monthly revenue growth metric to the sales model, use order_date as business time, validate it, and dry-run a yearly query.
 </span></code></pre></div>
 <p>For batch authoring from a CSV containing <code>question</code> and <code>sql</code>, use the unified semantic-modeling component:</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>datus-agent<span class="w"> </span>bootstrap-kb<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-7-2"><a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="w">  </span>--datasource<span class="w"> </span>&lt;your_datasource&gt;<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-7-3"><a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="w">  </span>--components<span class="w"> </span>semantic_modeling<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-7-4"><a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a><span class="w">  </span>--success_story<span class="w"> </span>path/to/success_story.csv<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-7-5"><a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a><span class="w">  </span>--kb_update_strategy<span class="w"> </span>incremental<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-7-6"><a id="__codelineno-7-6" name="__codelineno-7-6" href="#__codelineno-7-6"></a><span class="w">  </span>--metrics-batch-size<span class="w"> </span><span class="m">5</span>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>datus-agent<span class="w"> </span>bootstrap-kb<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-6-2"><a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="w">  </span>--datasource<span class="w"> </span>&lt;your_datasource&gt;<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-6-3"><a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="w">  </span>--components<span class="w"> </span>semantic_modeling<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-6-4"><a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="w">  </span>--success_story<span class="w"> </span>path/to/success_story.csv<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-6-5"><a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a><span class="w">  </span>--kb_update_strategy<span class="w"> </span>incremental<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-6-6"><a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a><span class="w">  </span>--metrics-batch-size<span class="w"> </span><span class="m">5</span>
 </span></code></pre></div>
 <p><code>--metrics-batch-size</code> controls how many history rows are processed in one authoring batch. <code>--subject_tree</code> may provide allowed comma-separated categories; when omitted, authoring reuses existing categories or creates suitable ones.</p>
 <p>The default <code>check</code> strategy does not author metrics. It only reports the current semantic-dataset and metric projection counts, so use <code>incremental</code> or <code>overwrite</code> when generation is intended.</p>
 <h2 id="synchronizing-the-knowledge-base">Synchronizing the Knowledge Base<a class="headerlink" href="#synchronizing-the-knowledge-base" title="Permanent link">&para;</a></h2>
 <p>A successful <code>semantic_modeling</code> run synchronizes its target file automatically. If YAML was edited manually, reconcile all semantic-object and metric projections with:</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>datus-agent<span class="w"> </span>bootstrap-kb<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-8-2"><a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="w">  </span>--datasource<span class="w"> </span>&lt;your_datasource&gt;<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-8-3"><a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a><span class="w">  </span>--components<span class="w"> </span>semantic_model<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-8-4"><a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a><span class="w">  </span>--kb_update_strategy<span class="w"> </span>sync-yaml
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>datus-agent<span class="w"> </span>bootstrap-kb<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-7-2"><a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="w">  </span>--datasource<span class="w"> </span>&lt;your_datasource&gt;<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-7-3"><a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="w">  </span>--components<span class="w"> </span>semantic_model<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-7-4"><a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a><span class="w">  </span>--kb_update_strategy<span class="w"> </span>sync-yaml
 </span></code></pre></div>
 <p><code>sync-yaml</code> reads every model under the active datasource by default, replaces each artifact's projected rows, removes metrics no longer declared in that artifact, and prunes rows for deleted files during a directory-wide sync. It does not call an LLM or query the warehouse.</p>
 <p>To check the number of indexed metrics without changing them:</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-9-1"><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a>datus-agent<span class="w"> </span>bootstrap-kb<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-9-2"><a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a><span class="w">  </span>--datasource<span class="w"> </span>&lt;your_datasource&gt;<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-9-3"><a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a><span class="w">  </span>--components<span class="w"> </span>metrics<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-9-4"><a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a><span class="w">  </span>--kb_update_strategy<span class="w"> </span>check
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>datus-agent<span class="w"> </span>bootstrap-kb<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-8-2"><a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="w">  </span>--datasource<span class="w"> </span>&lt;your_datasource&gt;<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-8-3"><a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a><span class="w">  </span>--components<span class="w"> </span>metrics<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-8-4"><a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a><span class="w">  </span>--kb_update_strategy<span class="w"> </span>check
 </span></code></pre></div>
 <h2 id="related-guides">Related guides<a class="headerlink" href="#related-guides" title="Permanent link">&para;</a></h2>
 <ul>
