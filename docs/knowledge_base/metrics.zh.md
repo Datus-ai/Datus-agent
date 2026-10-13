@@ -131,52 +131,16 @@ query_metrics(
 | --- | --- |
 | `metrics` | 一个或多个准确的指标名。 |
 | `dimensions` | `get_metric` 返回的字段；在 Dosi 中，`metric_time` 表示指标的主要时间轴。自动选择分组字段时优先使用 `recommended=true`；`recommended=false` 仍可显式查询。 |
-| `time_start`、`time_end` | 可选的左闭右开时间范围：start 包含，end 不包含。使用 ISO 日期（`YYYY-MM-DD`）。每个指标、每个 fixed 字段都按自己所在表的时间字段（`time_axis`）取这个时段。 |
+| `time_start`、`time_end` | 可选的左闭右开时间范围：start 包含，end 不包含。使用 ISO 日期（`YYYY-MM-DD`）。 |
 | `time_granularity` | `day`、`week`、`month`、`quarter` 或 `year`。 |
 | `where` | 可选过滤表达式，不包含 `WHERE` 关键字。引用已选指标的条件（如 `revenue > 1000`）在聚合之后过滤结果行，相当于 `HAVING`；含窗口指标的查询里，只引用分组字段的条件同样过滤结果行，保留的行仍带着全体人群算出的名次和分区计数。其余条件在聚合前过滤。 |
-| `context_filter` | 可选过滤表达式，是所有数都要遵守的范围，在查询中每个读得到这些列的部分里于聚合前生效；读不到的部分跳过这个条件，并列在结果的 `skipped` 和 `warnings` 里。它限定窗口指标排名、计数或加权的人群：`where="market = 'North'"` 看的是 North 在所有市场里的名次，`context_filter="market = 'North'"` 则只在 North 内部重新排名。它也会限定固定粒度（fixed）值计算所用的行，`where` 不会。 |
-| `define` | 只在本次查询里用的临时指标和字段，用于只属于某一个数的条件或时段。见[条件放在哪里](#条件放在哪里)。 |
+| `context_filter` | 可选过滤表达式，始终在聚合前生效，用来限定窗口指标排名、计数或加权的人群：`where="market = 'North'"` 看的是 North 在所有市场里的名次，`context_filter="market = 'North'"` 则只在 North 内部重新排名。 |
 | `order_by` | 排序所用的结果列；名称前加 `-` 表示降序。 |
 | `limit` | 最大行数；只在用户明确要求 Top N、预览或其他行数限制时使用。 |
-| `params` | 按名字绑定指标声明的参数（`get_metric` 的 `params` 字段列出了这些参数）。传列表时一次查询绑定多个值，每个值各返回一列：`{"k": [1, 7]}` 得到 `<metric>__k_1` 和 `<metric>__k_7`。未传的参数取默认值。fixed 字段的 base 带参数时，维度行上的 `params` 会列出这些参数，绑定方法相同。 |
-| `dry_run` | 返回编译后的 SQL，不执行指标查询；配置了数据仓库 dry-run 时还会校验该 SQL。结果和实际执行一样带有查询的 `parts`。 |
+| `params` | 按名字绑定指标声明的参数（`get_metric` 的 `params` 字段列出了这些参数）。传列表时一次查询绑定多个值，每个值各返回一列：`{"k": [1, 7]}` 得到 `<metric>__k_1` 和 `<metric>__k_7`。未传的参数取默认值。 |
+| `dry_run` | 返回编译后的 SQL，不执行指标查询；配置了数据仓库 dry-run 时还会校验该 SQL。 |
 
 例如，要包含 2024 年 1 月的全部数据，应使用 `time_start="2024-01-01"` 和 `time_end="2024-02-01"`。
-
-### 条件放在哪里
-
-问题里的每个条件只放在一个位置：
-
-- `time_start`/`time_end`：时段。每个指标、每个 fixed 字段（按实体取的值，比如某个客户的订单数）都按自己所在表的时间字段取它，也就是 `time_axis`。所在表没有时间字段的部分会读全表，结果里会说明。
-- `context_filter`：所有数都要遵守的范围，比如只看某个平台、某个活动。查询的每个部分读得到这些列就应用它，读不到的部分跳过它，并列在 `skipped` 和 `warnings` 里。
-- `define`：只属于某一个数的条件或时段。给它起一个临时指标或字段的名字，在 `metrics`、`dimensions` 或 `where` 里用这个新名字。每一项继承查询的时段和 `context_filter`：`time_range` 换掉时段（`None` 表示读全部历史，首次购买日、累计值要这样写），`context_filter` 换掉范围，`where` 在此基础上再收窄。define 的 `where` 只收窄这一个数，不删结果行；要去掉行的条件放 `context_filter` 或 `where`。
-- `where`：要哪些结果行。字段上的条件不会改变 fixed 字段的值；引用已选指标的条件在聚合之后过滤。快照表取哪一天的快照写在这里。
-
-```python
-query_metrics(
-    metrics=["new_customers", "returning_customers"],
-    time_start="2024-01-01",
-    time_end="2024-02-01",
-    define={
-        "metrics": {
-            "new_customers": {"base": "customers", "where": "customers.type = 'new'"},
-            "returning_customers": {"base": "customers", "where": "customers.type = 'returning'"},
-        },
-    },
-)
-```
-
-只有当一个值依赖它所在分组以外的行时，放在不同位置才会算出不同的数：固定粒度（fixed）值、`include`/`exclude` 粒度，以及窗口。`get_metric` 把这些部分列在 `parts` 里，指标上有，本身是 fixed 字段或读了 fixed 字段的维度上也有。每一项有 `name`、`kind`，fixed/include/exclude 还有 `definition`（`fixed(revenue)` 表示全表一个值），以及 `used_in`（它和所查指标之间经过的指标和字段）、`source`（它读的数据集）、`time_axis`（数据集没有时间字段时不出现）和 `filterable_columns`（define 里针对它的条件能用的列）。`query_metrics` 会返回本次查询的 `parts`，列出每个部分读的时段和条件，所以 dry run 时就能看出条件放错了位置。
-
-| `kind` | 各位置的作用 |
-| --- | --- |
-| `fixed` | 时段按它自己的 `time_axis` 取；`context_filter` 在读得到列时缩小它，`where` 不会。针对 fixed 字段本身的条件放 `where`；只属于这个值的条件放 `define`。 |
-| `include`、`exclude` | 每个位置都会缩小它。 |
-| `window_offset`、`window_cumulative` | 日期放 `time_start`/`time_end`；放 `where` 会截掉回看，比较值为空。 |
-| `window_rolling` | `time_start`/`time_end`、`context_filter` 和 `where` 结果相同。 |
-| `window_rank` | `where` 条件字段参与分组时，值在全体中计算；`context_filter` 在子集内计算。 |
-
-例如「1 月各地区占全公司的比例」：全公司总额应该随 1 月变化、不随地区变化，所以 1 月放 `time_start`/`time_end`，地区放 `where`。
 
 ## 创建和更新指标
 

@@ -131,52 +131,16 @@ query_metrics(
 | --- | --- |
 | `metrics` | One or more exact metric names. |
 | `dimensions` | Fields returned by `get_metric`; with Dosi, `metric_time` selects the primary time axis. Prefer `recommended=true` for automatic grouping, while `recommended=false` remains explicitly queryable. |
-| `time_start`, `time_end` | Optional half-open time range: start is inclusive and end is exclusive. Use ISO dates (`YYYY-MM-DD`). Every metric and every fixed field applies it on its own table's time field (`time_axis`). |
+| `time_start`, `time_end` | Optional half-open time range: start is inclusive and end is exclusive. Use ISO dates (`YYYY-MM-DD`). |
 | `time_granularity` | `day`, `week`, `month`, `quarter`, or `year`. |
 | `where` | Optional filter expression without the `WHERE` keyword. A condition on a selected metric (`revenue > 1000`) filters the result rows after aggregation, like `HAVING`; in a query with a window metric, a condition on group-by fields only also filters the result, so the kept rows keep the ranks and partition counts of the whole population. Every other condition filters rows before aggregation. |
-| `context_filter` | Optional scope every number obeys, applied before aggregation in every part of the query that can read its columns; a part that cannot is skipped and listed in the result's `skipped` and `warnings`. It scopes the population a window metric ranks, counts or weighs: `where="market = 'North'"` shows North's rank among all markets, `context_filter="market = 'North'"` ranks North's rows against each other. It also scopes the rows a fixed level-of-detail value is computed over, which `where` does not. |
-| `define` | Temporary metrics and fields for this query only, for a condition or a period that belongs to one number. See [Where a condition goes](#where-a-condition-goes). |
+| `context_filter` | Optional filter that always applies before aggregation. It scopes the population a window metric ranks, counts or weighs: `where="market = 'North'"` shows North's rank among all markets, `context_filter="market = 'North'"` ranks North's rows against each other. |
 | `order_by` | Result columns to sort; prefix a name with `-` for descending order. |
 | `limit` | Maximum rows, used only when the user asks for Top N, a preview, or another explicit row limit. |
-| `params` | Bindings for the parameters a metric declares (`get_metric` returns them as `params`), by name. A list binds several values in one query and returns one column per value: `{"k": [1, 7]}` yields `<metric>__k_1` and `<metric>__k_7`. Omitted parameters take their defaults. A fixed field whose base takes parameters lists them as `params` on its dimension row; bind them the same way. |
-| `dry_run` | Return compiled SQL without executing the metric query; a configured warehouse dry-run provider also validates the SQL. The result carries the query's `parts`, as an executed query does. |
+| `params` | Bindings for the parameters a metric declares (`get_metric` returns them as `params`), by name. A list binds several values in one query and returns one column per value: `{"k": [1, 7]}` yields `<metric>__k_1` and `<metric>__k_7`. Omitted parameters take their defaults. |
+| `dry_run` | Return compiled SQL without executing the metric query; a configured warehouse dry-run provider also validates the SQL. |
 
 For example, to include all of January 2024, use `time_start="2024-01-01"` and `time_end="2024-02-01"`.
-
-### Where a condition goes
-
-Each condition of a question goes in one place:
-
-- `time_start`/`time_end`: the period. Every metric and every fixed field (a per-entity value such as a customer's order count) applies it on its own table's time field, its `time_axis`. A part whose table has no time field is read whole, and the result says so.
-- `context_filter`: a scope every number obeys, such as one platform or one campaign. Every part of the query applies it where it can read the columns; a part that cannot is listed in `skipped` and `warnings`.
-- `define`: a condition, or another period, that belongs to one number only. Name a temporary metric or field for it and use the new name in `metrics`, `dimensions` or `where`. An entry inherits the period and `context_filter`: `time_range` replaces the period (`None` reads every period, as a first purchase day or a lifetime total needs), `context_filter` replaces the scope and `where` narrows on top. A define `where` narrows that one number and never removes result rows; a condition that should drop rows goes in `context_filter` or `where`.
-- `where`: the result rows. A condition on a field never changes a fixed field's value; a condition on a selected metric filters after aggregation. A snapshot table's version day goes here.
-
-```python
-query_metrics(
-    metrics=["new_customers", "returning_customers"],
-    time_start="2024-01-01",
-    time_end="2024-02-01",
-    define={
-        "metrics": {
-            "new_customers": {"base": "customers", "where": "customers.type = 'new'"},
-            "returning_customers": {"base": "customers", "where": "customers.type = 'returning'"},
-        },
-    },
-)
-```
-
-The positions differ only where a value depends on rows outside its own group: a fixed level-of-detail value, an `include`/`exclude` grain, or a window. `get_metric` lists those as `parts`, for the metric and for each dimension that is or reads a fixed field. Each entry has a `name`, a `kind`, a `definition` for fixed/include/exclude (`fixed(revenue)` is one value for the whole table), `used_in` (the metrics and fields between it and the metric asked about), `source` (the dataset it reads), `time_axis` (absent when the source has no time field) and `filterable_columns` (the columns a define condition on it may use). `query_metrics` returns the query's `parts` with the period and conditions each one reads, so a dry run shows a misplaced condition before the query runs.
-
-| `kind` | How the positions act on it |
-| --- | --- |
-| `fixed` | The period lands on its own `time_axis`, and `context_filter` narrows it where it can read the columns; `where` does not. A condition on the fixed field itself goes in `where`; a condition for this value only goes in `define`. |
-| `include`, `exclude` | Every position narrows it. |
-| `window_offset`, `window_cumulative` | Dates go in `time_start`/`time_end`; in `where` they cut the lookback and the compared value comes back empty. |
-| `window_rolling` | `time_start`/`time_end`, `context_filter` and `where` give the same numbers. |
-| `window_rank` | `where` on a grouped field keeps the value among all rows; `context_filter` computes it within the subset. |
-
-For "each region's share of the whole company in January", the company total should change with January but not with the region, so January goes in `time_start`/`time_end` and the region in `where`.
 
 ## Creating and updating metrics
 
