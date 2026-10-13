@@ -48,6 +48,7 @@ class EmbeddingModel:
         registry_name: str = EmbeddingProvider.SENTENCE_TRANSFORMERS,
         openai_config: Optional["ModelConfig"] = None,
         batch_size: int = 64,
+        send_dimensions: Optional[bool] = None,
     ):
         self.registry_name = registry_name
         self.model_name = model_name
@@ -56,6 +57,7 @@ class EmbeddingModel:
         self._model = None
         self.batch_size = batch_size
         self.openai_config = openai_config
+        self.send_dimensions = send_dimensions
         self.lock = Lock()
 
         # error handling
@@ -74,6 +76,7 @@ class EmbeddingModel:
         new._model = self._model  # share the heavy model object
         new.batch_size = self.batch_size
         new.openai_config = copy.deepcopy(self.openai_config, memo)
+        new.send_dimensions = self.send_dimensions
         new.lock = Lock()
         new.is_model_failed = self.is_model_failed
         new.model_error_message = self.model_error_message
@@ -81,11 +84,14 @@ class EmbeddingModel:
         return new
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        config = {
             "registry_name": self.registry_name,
             "model_name": self.model_name,
             "dim_size": self._dim_size,
         }
+        if self.send_dimensions is not None:
+            config["send_dimensions"] = self.send_dimensions
+        return config
 
     @property
     def model(self):
@@ -217,15 +223,19 @@ class EmbeddingModel:
             logger.debug(f"Initializing model {self.registry_name}/{self.model_name}")
             from datus.storage.embedding_openai import OpenAIEmbeddings
 
+            request_options = {}
+            if self.send_dimensions is not None:
+                request_options["send_dimensions"] = self.send_dimensions
             if self.openai_config:
                 self._model = OpenAIEmbeddings.create(
                     name=self.model_name,
                     dim=self._dim_size,
                     api_key=self.openai_config.api_key,
                     base_url=self.openai_config.base_url,
+                    **request_options,
                 )
             else:
-                self._model = OpenAIEmbeddings.create(name=self.model_name, dim=self._dim_size)
+                self._model = OpenAIEmbeddings.create(name=self.model_name, dim=self._dim_size, **request_options)
             # check if the model is initialized
             self._model.generate_embeddings(["foo"])
             logger.debug(f"Model {self.registry_name}/{self.model_name} initialized successfully")
@@ -263,8 +273,9 @@ def init_embedding_models(
             continue
         if "model_name" not in config:
             continue
-        if config["model_name"] in models:
-            target_model = models[config["model_name"]]
+        model_key = (config["model_name"], config["dim_size"], config.get("send_dimensions"))
+        if model_key in models:
+            target_model = models[model_key]
         else:
             target_openai_config = config.get("target_model")
             if target_openai_config:
@@ -282,8 +293,9 @@ def init_embedding_models(
                 registry_name=config.get("registry_name", EmbeddingProvider.SENTENCE_TRANSFORMERS),
                 batch_size=config.get("batch_size", 32),
                 openai_config=target_openai_config,
+                send_dimensions=config.get("send_dimensions"),
             )
-            models[config["model_name"]] = target_model
+            models[model_key] = target_model
         EMBEDDING_MODELS[name] = target_model
         storage_models[name] = target_model
 
