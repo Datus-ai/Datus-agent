@@ -668,7 +668,7 @@ requires-dist = [
     { name = "datus-scheduler-core", specifier = ">=0.1.1" },
     { name = "datus-storage-base", specifier = ">=0.1.5,<0.2.0" },
     { name = "defusedxml", specifier = ">=0.7.1" },
-    { name = "dosi-engine", specifier = "==0.1.12" },
+    { name = "dosi-engine", specifier = "==0.1.13" },
     { name = "duckdb", specifier = "==1.5.2" },
     { name = "duckdb-engine", specifier = ">=0.17.0" },
     { name = "fastapi", specifier = ">=0.104.0,<1.0" },
@@ -717,7 +717,7 @@ requires-dist = [
 [package.metadata.requires-dev]
 ci = [
     { name = "datus-storage-postgresql", specifier = ">=0.1.5" },
-    { name = "dosi-engine", specifier = "==0.1.12" },
+    { name = "dosi-engine", specifier = "==0.1.13" },
 ]
 dev = [
     { name = "build", specifier = ">=1.2.0" },
@@ -877,12 +877,14 @@ wheels = [
 
 [[package]]
 name = "dosi-engine"
-version = "0.1.12"
+version = "0.1.13"
 source = { registry = "https://pypi.org/simple" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/34/79/368167a6b5c8af8eca64f1e7d3670922fef0585b02dd1cb43cbfb1509336/dosi_engine-0.1.12-cp312-abi3-macosx_11_0_arm64.whl", hash = "sha256:6530635ea9c5b6f88fbae91f267d268f5079b65f284c31eaf1397cfdad7db76f", size = 55486772, upload-time = "2026-09-27T23:19:00.482Z" },
-    { url = "https://files.pythonhosted.org/packages/8c/82/4a23cb7682e98bc6dff28deaf8348ae8601c42f165ea823aae83cb3d0f77/dosi_engine-0.1.12-cp312-abi3-manylinux_2_28_aarch64.whl", hash = "sha256:d1270d8081cee54130cdc38215b98acc37731a1227d866cdef1dab417a51ea27", size = 45827001, upload-time = "2026-09-27T23:19:03.728Z" },
-    { url = "https://files.pythonhosted.org/packages/9a/03/f0ccee21d0e69929d0a51bad1338d8311d3d8d6967003382dac348168bd3/dosi_engine-0.1.12-cp312-abi3-manylinux_2_28_x86_64.whl", hash = "sha256:da1f6fc5a9094458c30d3550f90dc5b7edda4f981f2028035c1584b13ddf3512", size = 47400999, upload-time = "2026-09-27T23:19:06.271Z" },
+    { url = "https://files.pythonhosted.org/packages/c4/cd/06b649e2ea68bb95a5d5e6949541042b17e1711e39edee97e2b01fccd702/dosi_engine-0.1.13-cp312-abi3-macosx_10_12_x86_64.whl", hash = "sha256:91c96e7a1f995fda46bc32a9e2994d39203596f89e9681ff0f292bf79c8de895", size = 57115449, upload-time = "2026-10-13T15:12:49.497Z" },
+    { url = "https://files.pythonhosted.org/packages/78/6c/67fb48de58054177cf21ea5a20b725b3a3567e3a09fea2135a3fd90da015/dosi_engine-0.1.13-cp312-abi3-macosx_11_0_arm64.whl", hash = "sha256:fcd43a41d88b0937d772de38259a210f19e82dbe2cfa513313e5781e634590d1", size = 55567924, upload-time = "2026-10-13T15:12:52.607Z" },
+    { url = "https://files.pythonhosted.org/packages/44/a5/0f742d22abe652d0ba2d2e2aff656598433417e3ea80ad379e653efcee9a/dosi_engine-0.1.13-cp312-abi3-manylinux_2_28_aarch64.whl", hash = "sha256:b435e8c5f24d99c0bfe203cf9101b775d39b66fb6d37d08e6157601d98284461", size = 46573018, upload-time = "2026-10-13T15:12:55.306Z" },
+    { url = "https://files.pythonhosted.org/packages/81/5f/0bbecbbdff73b7e62efb1349e8995d842a2f826d3c6fc595b4f91d6efd5b/dosi_engine-0.1.13-cp312-abi3-manylinux_2_28_x86_64.whl", hash = "sha256:76a6d47458049e29b0a9a8844d74150f3fe26fe571b1119c32b8af7b185a4378", size = 48214827, upload-time = "2026-10-13T15:12:58.097Z" },
+    { url = "https://files.pythonhosted.org/packages/46/77/1b8f001712be9eaf1a29c3fc0e318d2b51344cf97b3c16fbd16c71c0f4f7/dosi_engine-0.1.13-cp312-abi3-win_amd64.whl", hash = "sha256:1a179f22d2e643784675f133e6b4f6c3804ac84243a8fb44f270e49888d8e4c8", size = 35126070, upload-time = "2026-10-13T15:13:00.424Z" },
 ]
 
 [[package]]
