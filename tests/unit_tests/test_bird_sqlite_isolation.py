@@ -16,6 +16,7 @@ def _table_names(db_path: Path) -> set[str]:
 
 
 def test_isolate_bird_sqlite_databases_copies_and_sanitizes_generated_tables(tmp_path, monkeypatch):
+    monkeypatch.delenv("DATUS_TEST_BIRD_ROOT", raising=False)
     fake_home = tmp_path / "home"
     source_root = fake_home / "benchmark" / "bird" / "dev_20240627" / "dev_databases"
     source_db = source_root / "california_schools" / "california_schools.sqlite"

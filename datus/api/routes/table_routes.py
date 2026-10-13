@@ -15,6 +15,8 @@ from datus.api.models.table_models import (
     GetTableDetailData,
     GetTablesColumnsData,
     GetTablesColumnsInput,
+    PrepareMetricDefinitionsData,
+    PrepareMetricDefinitionsInput,
     SaveSemanticModelData,
     SaveSemanticModelInput,
     ValidateSemanticModelData,
@@ -22,6 +24,16 @@ from datus.api.models.table_models import (
 )
 
 router = APIRouter(prefix="/api/v1", tags=["table"])
+
+
+@router.post("/semantic_model/prepare", response_model=Result[PrepareMetricDefinitionsData])
+async def prepare_metric_definitions(
+    request: PrepareMetricDefinitionsInput,
+    svc: ServiceDep,
+) -> Result[PrepareMetricDefinitionsData]:
+    """Update candidate computations and validate without persistence or queries."""
+    return await svc.datasource.prepare_metric_definitions(request)
+
 
 # Pre-configured parameter to avoid definition-time evaluation in defaults.
 DATASOURCE_QUERY = Query("", description="Datasource to resolve the table against; empty means the current one")

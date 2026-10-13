@@ -776,10 +776,9 @@ class AgenticNode(Node):
     def _build_datasource_reminder(self, user_input: Any = None) -> str:
         """Live per-turn datasource line for the user-message envelope.
 
-        The frozen system-prompt snapshot must never pin the *current*
-        datasource: a mid-session ``/datasource`` switch would silently leave a
-        stale dialect in every later turn. Instead this line rides in the
-        ``<system_reminder>`` envelope of each user message. It merges what
+        The current datasource belongs in the ``<system_reminder>`` envelope
+        of each user message; the system-prompt snapshot tracks only the bound
+        database skill in its identity. This reminder merges what
         used to be a separate "Database Context" block — dialect, catalog,
         database (resolved via the connector default), adapter-provided SQL
         semantics, and schema — into one line so the dialect is stated exactly
@@ -1168,11 +1167,12 @@ class AgenticNode(Node):
         the inputs that change the prompt's identity within a session: the
         node template, its version, and the active model (a model switch also
         resets the provider-side prefix cache, so rebuilding is free). The
-        live per-turn datasource/dialect is injected in the user message
-        instead, so it deliberately does **not** appear here. ``language`` DOES
+        live per-turn datasource is injected in the user message instead. The
+        bound database skill is part of the system prompt, so its identity
+        appears here and a dialect switch rebuilds the snapshot. ``language`` DOES
         appear: it is a per-request field on the Chat API, so a user switching
         the UI language mid-session must not keep replaying a snapshot that
-        pins the old one. Date, memory, and skills stay frozen until the
+        pins the old one. Date, memory, and skill contents stay frozen until the
         snapshot is rebuilt.
         """
         agent_config = getattr(self, "agent_config", None)
@@ -1209,6 +1209,7 @@ class AgenticNode(Node):
             "prompt_version": str(version or ""),
             "model_name": model_id,
             "language": str(language or "").strip(),
+            "database_skill": ",".join(self._get_database_skill_candidates()),
         }
 
     def _system_prompt_template_name(self) -> str:
@@ -2853,26 +2854,22 @@ class AgenticNode(Node):
         return [pattern.strip() for pattern in patterns.split(",") if pattern.strip()]
 
     def _get_database_skill_candidates(self) -> List[str]:
-        """Return conventional skill names for the configured database types."""
-        if not self.agent_config:
+        """Return the optional dialect skill for the DB tool's bound connector."""
+        db_func_tool = getattr(self, "db_func_tool", None)
+        if db_func_tool is None:
             return []
-        getter = getattr(self.agent_config, "current_db_configs", None)
         try:
-            configs = getter() if callable(getter) else getattr(self.agent_config, "datasource_configs", {})
+            connector = db_func_tool.connector
+            if connector is None:
+                return []
+            db_type = connector.get_type()
         except Exception as exc:
-            logger.debug("Failed to read database configs for skill candidates: %s", exc)
-            return []
-        if not isinstance(configs, dict):
+            logger.debug("Failed to read bound database type for skill candidates: %s", exc)
             return []
 
-        candidates = []
-        for config in configs.values():
-            db_type = config.get("type", "") if isinstance(config, dict) else getattr(config, "type", "")
-            db_type = getattr(db_type, "value", db_type)
-            normalized = str(db_type or "").strip().lower().replace("_", "-")
-            if normalized:
-                candidates.append(f"db-{normalized}-sql")
-        return list(dict.fromkeys(candidates))
+        db_type = getattr(db_type, "value", db_type)
+        normalized = str(db_type or "").strip().lower().replace("_", "-")
+        return [f"db-{normalized}-sql"] if normalized else []
 
     def _render_required_skill_content(self, skill_name: str, content: str) -> str:
         """Render node-specific runtime values into a required skill."""
@@ -2894,7 +2891,9 @@ class AgenticNode(Node):
                 fails fast instead.
         """
         required_skills = self._get_required_skills()
-        database_candidates = self._get_database_skill_candidates()
+        database_candidates = (
+            self._get_database_skill_candidates() if getattr(self, "db_func_tool", None) is not None else []
+        )
         if not required_skills and not database_candidates:
             return base_prompt
 

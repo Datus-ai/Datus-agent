@@ -241,13 +241,17 @@ class InteractionBroker:
         if self._closed:
             logger.debug("InteractionBroker.emit_user_insert called after close(); ignored")
             return
+        input_data = {"user_message": text, "source": "mid_run_insert"}
+        content_id = getattr(text, "content_id", None)
+        if content_id is not None:
+            input_data["message_content_id"] = content_id
         action = ActionHistory(
             action_id=str(uuid.uuid4()),
             role=ActionRole.USER,
             status=ActionStatus.SUCCESS,
             action_type="user_insert",
             messages=text,
-            input={"user_message": text, "source": "mid_run_insert"},
+            input=input_data,
             output={"user_message": text},
         )
         self._output_queue.put_nowait(action)

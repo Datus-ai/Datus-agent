@@ -79,8 +79,9 @@ def _record_compiled_evidence(generation_tools, target, metric_names):
 
 
 @pytest.fixture
-def mock_agent_config():
+def mock_agent_config(tmp_path):
     config = Mock()
+    config.path_manager.project_data_dir = tmp_path / "project-data"
     config.current_datasource = "ns1"
     config.current_db_config.return_value = None
     return config
@@ -1999,3 +2000,92 @@ class TestOsiDatasetColumnRoles:
         columns = {c["name"]: c for c in GenerationTools._osi_dataset_columns(dataset)}
 
         assert columns["region"]["role"] == "field"
+
+
+def test_full_sync_cleans_only_previously_occupied_nodes(generation_tools, tmp_path):
+    target = tmp_path / "model.yml"
+    target.write_text("version: 0.2.0.dev0\n")
+    generation_tools.metric_rag.list_artifact_rows.return_value = [
+        {"id": "old", "name": "retired", "subject_node_id": 27}
+    ]
+    with (
+        patch.object(generation_tools, "_load_osi_document", return_value=SimpleNamespace()),
+        patch.object(generation_tools, "extract_osi_metric_names", return_value=[]),
+        patch.object(generation_tools, "_build_osi_metric_objects", return_value=[]),
+        patch.object(generation_tools, "_sync_osi_semantic_objects_to_db", return_value={"success": True}),
+        patch("datus.storage.semantic_model.reconcile._DatasourceStores") as stores,
+    ):
+        result = generation_tools.sync_osi_to_db(str(target))
+    assert result["success"] is True
+    stores.return_value.remove_emptied_nodes.assert_called_once_with({27})
+
+
+@pytest.mark.parametrize("scoped", [False, True])
+def test_metric_publication_cleans_old_nodes_only_after_replacement(generation_tools, tmp_path, scoped):
+    from datus.storage.semantic_model.subject_cleanup import remember_cleanup
+
+    target = str(tmp_path / "model.yml")
+    generation_tools.metric_rag.list_artifact_rows.return_value = [
+        {"id": "old", "name": "retired", "subject_node_id": 27},
+        {"id": "kept", "name": "kept", "subject_node_id": 28},
+    ]
+    events = []
+
+    def replace_rows(*args):
+        pending = remember_cleanup(generation_tools.agent_config, "ns1", target, [])
+        assert pending == {27, 28}
+        events.append("replace")
+
+    generation_tools.metric_rag.delete_artifact_rows_except.side_effect = replace_rows
+    with (
+        patch.object(generation_tools, "_load_osi_document", return_value=SimpleNamespace()),
+        patch.object(generation_tools, "extract_osi_metric_names", return_value=["kept"]),
+        patch.object(generation_tools, "_build_osi_metric_objects", return_value=[{"id": "kept", "name": "kept"}]),
+        patch("datus.storage.semantic_model.reconcile._DatasourceStores") as stores,
+    ):
+        stores.return_value.remove_emptied_nodes.side_effect = lambda nodes: events.append("cleanup")
+        result = generation_tools._sync_osi_metric_to_db(target, metric_names_to_sync={"kept"} if scoped else None)
+
+    assert result["success"] is True
+    assert result["metric_names"] == ["kept"]
+    assert events == ["replace", "cleanup"]
+    stores.return_value.remove_emptied_nodes.assert_called_once_with({27, 28})
+    assert remember_cleanup(generation_tools.agent_config, "ns1", target, []) == set()
+
+
+@pytest.mark.parametrize("failure_stage", ["replacement", "cleanup"])
+def test_metric_publication_retains_cleanup_work_on_failure(generation_tools, tmp_path, failure_stage):
+    from datus.storage.semantic_model.subject_cleanup import remember_cleanup
+
+    target = str(tmp_path / "model.yml")
+    snapshot = [{"id": "old", "name": "retired", "subject_node_id": 27}]
+    generation_tools.metric_rag.list_artifact_rows.return_value = snapshot
+    with (
+        patch.object(generation_tools, "_load_osi_document", return_value=SimpleNamespace()),
+        patch.object(generation_tools, "extract_osi_metric_names", return_value=[]),
+        patch.object(generation_tools, "_build_osi_metric_objects", return_value=[]),
+        patch("datus.storage.semantic_model.reconcile._DatasourceStores") as stores,
+    ):
+        if failure_stage == "replacement":
+            generation_tools.metric_rag.delete_artifact_rows_except.side_effect = RuntimeError("replace failed")
+        else:
+            stores.return_value.remove_emptied_nodes.side_effect = RuntimeError("cleanup failed")
+        result = generation_tools._sync_osi_metric_to_db(target)
+
+        assert result["success"] is False
+        assert remember_cleanup(generation_tools.agent_config, "ns1", target, []) == {27}
+        if failure_stage == "replacement":
+            stores.return_value.remove_emptied_nodes.assert_not_called()
+            generation_tools.metric_rag.restore_artifact_rows.assert_called_once_with(target, snapshot)
+        else:
+            generation_tools.metric_rag.restore_artifact_rows.assert_not_called()
+            generation_tools.metric_rag.list_artifact_rows.return_value = []
+
+        generation_tools.metric_rag.delete_artifact_rows_except.side_effect = None
+        stores.return_value.remove_emptied_nodes.side_effect = None
+        stores.return_value.remove_emptied_nodes.reset_mock()
+        retry = generation_tools._sync_osi_metric_to_db(target)
+
+    assert retry["success"] is True
+    stores.return_value.remove_emptied_nodes.assert_called_once_with({27})
+    assert remember_cleanup(generation_tools.agent_config, "ns1", target, []) == set()

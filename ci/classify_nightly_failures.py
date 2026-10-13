@@ -28,7 +28,8 @@ CATEGORIES = (
 PROVIDER_SUITE_PATTERNS = (re.compile(r"\b(provider_health|Provider Health Tests)\b", re.IGNORECASE),)
 PROVIDER_ERROR_PATTERNS = (
     re.compile(
-        r"\b(429|529|rate limit|quota|overload|ProviderError|APITimeout|APIConnectionError)\b",
+        r"\b(?:HTTP(?: status)?|status(?:_code)?|Error code)\s*[:=]?\s*(?:429|529)\b"
+        r"|\b(rate limit|quota|overload|ProviderError|APITimeout|APIConnectionError)\b",
         re.IGNORECASE,
     ),
 )
@@ -37,7 +38,8 @@ DOCKER_SUITE_PATTERNS = (
 )
 DOCKER_ERROR_PATTERNS = (
     re.compile(r"\b(Host port is already in use|No container found|Docker .* required)\b", re.IGNORECASE),
-    re.compile(r"\b(service health|readiness|unhealthy|timed out waiting)\b", re.IGNORECASE),
+    re.compile(r"\b(unhealthy|timed out waiting)\b", re.IGNORECASE),
+    re.compile(r"\b(service health|readiness)\b.*\b(failed|failure|timeout|error)\b", re.IGNORECASE),
 )
 CREDENTIAL_PATTERNS = (
     re.compile(r"\b(unauthorized|forbidden|authentication failed|invalid api key)\b", re.IGNORECASE),
@@ -241,39 +243,57 @@ def classify_suites(manifest: dict[str, Any] | None, log_text: str, findings: li
         )
 
 
-def classify_log_patterns(log_text: str, findings: list[dict[str, Any]]) -> None:
-    if not log_text:
-        return
-    if match_any(CREDENTIAL_PATTERNS, log_text):
-        add_finding(
-            findings,
-            category="credential_or_config",
-            title="Credential or configuration error pattern observed",
-            severity="error",
-            blocking=True,
-            source="log.pattern",
-            details={"log_tail": tail_lines(log_text, 40)},
-        )
-    if match_any(DOCKER_ERROR_PATTERNS, log_text):
-        add_finding(
-            findings,
-            category="docker_infra",
-            title="Docker or service readiness error pattern observed",
-            severity="error",
-            blocking=True,
-            source="log.pattern",
-            details={"log_tail": tail_lines(log_text, 40)},
-        )
-    if match_any(PROVIDER_ERROR_PATTERNS, log_text):
-        add_finding(
-            findings,
-            category="provider_outage",
-            title="Provider failure pattern observed",
-            severity="warning",
-            blocking=False,
-            source="log.pattern",
-            details={"log_tail": tail_lines(log_text, 40)},
-        )
+def failure_log_sections(log_text: str, manifest: dict[str, Any] | None) -> list[tuple[str, bool, str]]:
+    """Scope signals to failed suites; pytest progress includes expected mock errors."""
+    suites = {str(suite.get("name")): suite for suite in ((manifest or {}).get("suites") or [])}
+    sections: list[tuple[str, list[str]]] = [("", [])]
+    for line in strip_ansi(log_text).splitlines():
+        header = re.fullmatch(r"=== (.+?) ===", line)
+        if header:
+            name = header.group(1).removesuffix(" (warn-only)")
+            sections.append((name, []))
+        else:
+            sections[-1][1].append(line)
+
+    scoped = []
+    for name, lines in sections:
+        suite = suites.get(name)
+        if suite and suite.get("status") in {"passed", "skipped"}:
+            continue
+        # Ignore pytest progress and captured mock errors before the failure report.
+        reports = [i for i, line in enumerate(lines) if re.fullmatch(r"=+ (FAILURES|ERRORS) =+", line)]
+        if reports:
+            lines = lines[min(reports) :]
+        elif any("test session starts" in line for line in lines):
+            continue
+        blocking = not suite or suite.get("mode", "blocking") == "blocking"
+        scoped.append((name, blocking, "\n".join(lines)))
+    return scoped
+
+
+def classify_log_patterns(
+    log_text: str, findings: list[dict[str, Any]], manifest: dict[str, Any] | None = None
+) -> None:
+    rules = (
+        (CREDENTIAL_PATTERNS, "credential_or_config", "Credential or configuration error pattern observed", True),
+        (DOCKER_ERROR_PATTERNS, "docker_infra", "Docker or service readiness error pattern observed", True),
+        (PROVIDER_ERROR_PATTERNS, "provider_outage", "Provider failure pattern observed", False),
+    )
+    for name, suite_blocking, section in failure_log_sections(log_text, manifest):
+        for patterns, category, title, can_block in rules:
+            matching_lines = [line for line in section.splitlines() if match_any(patterns, line)]
+            if not matching_lines:
+                continue
+            blocking = can_block and suite_blocking
+            add_finding(
+                findings,
+                category=category,
+                title=title,
+                severity="error" if blocking else "warning",
+                blocking=blocking,
+                source="log.pattern",
+                details={"suite": name, "log_tail": matching_lines[-40:]},
+            )
 
 
 def summarize_findings(findings: list[dict[str, Any]]) -> dict[str, Any]:
@@ -312,7 +332,7 @@ def build_classification(args: argparse.Namespace) -> dict[str, Any]:
 
     classifier_errors.extend(classify_flaky_registry(registry_path, log_file, findings))
     classify_suites(manifest, log_text, findings)
-    classify_log_patterns(log_text, findings)
+    classify_log_patterns(log_text, findings, manifest)
 
     if args.exit_code != 0 and not any(finding.get("blocking") for finding in findings):
         add_finding(

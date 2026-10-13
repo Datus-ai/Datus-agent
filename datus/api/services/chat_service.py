@@ -436,6 +436,7 @@ class ChatService:
             # Use SessionManager to get messages from SQLite
             session_manager = SessionManager(session_dir=self._session_dir, scope=user_id)
             raw_messages = session_manager.get_session_messages(session_id)
+            tool_results = session_manager.get_tool_result_contents(session_id)
 
             if not raw_messages:
                 return Result[ChatHistoryData](success=True, data=ChatHistoryData())
@@ -472,7 +473,9 @@ class ChatService:
                             SSEMessagePayload(
                                 message_id=str(uuid.uuid4()),
                                 role="user",
-                                content=[IMessageContent(type="markdown", payload={"content": content})],
+                                content=[IMessageContent(**part) for part in msg["message_contents"]]
+                                if msg.get("message_contents")
+                                else [IMessageContent(type="markdown", payload={"content": content})],
                                 at_context=at_context,
                             )
                         )
@@ -502,6 +505,15 @@ class ChatService:
                             )
                         )
                         event_id += 1
+
+            # Restore the canonical streamed result, including its duration,
+            # after conversion so expanded Subagent results are restored too.
+            for message in sse_messages:
+                for part in message.content:
+                    if part.type == "call-tool-result":
+                        saved = tool_results.get(part.payload.get("callToolId"))
+                        if saved is not None:
+                            part.payload = saved
 
             logger.info(
                 "chat.history_loaded",

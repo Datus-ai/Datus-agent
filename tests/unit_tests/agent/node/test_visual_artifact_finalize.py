@@ -2234,3 +2234,40 @@ class TestFinalizeStageText:
     def test_unknown_stage_returns_none(self, language):
         assert finalize_stage_text(0, language) is None
         assert finalize_stage_text(99, language) is None
+
+
+@pytest.mark.parametrize("skip_narrative", [False, True])
+def test_reference_snapshot_finalization_respects_render_only_edits(tmp_path, skip_narrative):
+    from types import SimpleNamespace
+
+    artifact_dir, queries_dir, analysis_dir = _make_artifact_layout(tmp_path)
+    refs = {"reference_sql": [{"path": ["Sales"], "name": "paid"}]}
+    (queries_dir / "reference.brief.json").write_text(json.dumps({"name": "reference", "uses": refs}))
+    (queries_dir / "reference.sql").write_text("SELECT 1")
+    (analysis_dir / "insights.json").write_text("[]")
+    (analysis_dir / "suggested_questions.json").write_text("[]")
+    model = Mock(spec=["generate_with_json_output", "generate"])
+    model.generate_with_json_output.return_value = _full_finalize_response()
+    context = SimpleNamespace(
+        get_reference_sql=Mock(return_value=SimpleNamespace(success=1, result={"name": "paid", "sql": "SELECT 42"}))
+    )
+
+    result = run_finalize_analysis(
+        model=model,
+        artifact_kind="report",
+        artifact_dir=artifact_dir,
+        queries_dir=queries_dir,
+        analysis_dir=analysis_dir,
+        actions=[],
+        context_search_tools=context,
+        skip_narrative=skip_narrative,
+    )
+
+    assert result["ok"] is True
+    saved = analysis_dir / "reference_sql_snapshots.json"
+    if skip_narrative:
+        context.get_reference_sql.assert_not_called()
+        assert not saved.exists()  # Render-only edits must not invent historical snapshots.
+    else:
+        context.get_reference_sql.assert_called_once_with(subject_path=["Sales"], name="paid")
+        assert json.loads(saved.read_text(encoding="utf-8"))["reference_sql"][0]["sql"] == "SELECT 42"

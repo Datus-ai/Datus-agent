@@ -30,14 +30,17 @@ logger = get_logger(__name__)
 _TEMPLATES_DIR = os.path.join(os.path.dirname(__file__), "templates")
 
 # CDN URLs used when --chatbot-dist is NOT provided (production mode).
-# React is bundled into datus-chatbot.umd.js, no separate React CDN needed.
-_CDN_CHATBOT_VERSION = "1.1.3"
+# The v2 bundle also has classic JSX references that require a global React runtime.
+_CDN_CHATBOT_VERSION = "~2.0.0"
+_CDN_REACT_VERSION = "18.3.1"
+_CDN_REACT_JS = f"https://unpkg.com/react@{_CDN_REACT_VERSION}/umd/react.production.min.js"
 _CDN_CHATBOT_CSS = f"https://unpkg.com/@datus/web-chatbot@{_CDN_CHATBOT_VERSION}/dist/datus-chatbot.css"
 _CDN_CHATBOT_JS = f"https://unpkg.com/@datus/web-chatbot@{_CDN_CHATBOT_VERSION}/dist/datus-chatbot.umd.js"
 
 # Dev URLs used when --chatbot-dist IS provided (local development mode).
 _DEV_CHATBOT_CSS = "/chatbot-assets/datus-chatbot.css"
 _DEV_CHATBOT_JS = "/chatbot-assets/datus-chatbot.umd.js"
+_DEV_REACT_JS = "/chatbot-assets/react.production.min.js"
 
 
 def _build_agent_args(args: argparse.Namespace) -> argparse.Namespace:
@@ -124,13 +127,23 @@ def create_web_app(args: argparse.Namespace) -> FastAPI:
     else:
         chatbot_css, chatbot_js = _CDN_CHATBOT_CSS, _CDN_CHATBOT_JS
 
+    react_js = (
+        _DEV_REACT_JS
+        if use_local and os.path.isfile(os.path.join(chatbot_dist, "react.production.min.js"))
+        else _CDN_REACT_JS
+    )
+
     # ── Render the HTML template ───────────────────────────────────
     html_template = _read_template()
     user_name = getattr(args, "user_name", None) or os.getenv("USER", "User")
 
     # Pre-render the static parts (asset URLs); dynamic parts (origin, user)
     # are rendered per-request so reverse proxies and alternate hostnames work.
-    static_html = html_template.replace("{{ chatbot_css }}", chatbot_css).replace("{{ chatbot_js }}", chatbot_js)
+    static_html = (
+        html_template.replace("{{ chatbot_css }}", chatbot_css)
+        .replace("{{ chatbot_js }}", chatbot_js)
+        .replace("{{ react_js }}", react_js)
+    )
 
     # Override the default JSON root endpoint with the chatbot page
     @app.get("/", response_class=HTMLResponse, include_in_schema=False)

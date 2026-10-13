@@ -55,9 +55,9 @@ logger = get_logger(__name__)
 _DIST_CSS_NAME = "index.css"
 _DIST_JS_NAME = "index.umd.js"
 
-# Pinned package version on unpkg. Keep in lockstep with
-# ``packages/web-artifact-render/package.json`` on the SaaS side.
-_CDN_BUNDLE_VERSION = "~0.1.0"
+# Allow compatible 2.0.x patches on unpkg, without advancing to 2.1.
+# Keep the baseline aligned with the web-artifact-render package on the SaaS side.
+_CDN_BUNDLE_VERSION = "~2.0.0"
 
 #: CDN URL for the shared UMD CSS bundle.
 CDN_BUNDLE_CSS = f"https://unpkg.com/@datus/web-artifact-render@{_CDN_BUNDLE_VERSION}/dist/{_DIST_CSS_NAME}"

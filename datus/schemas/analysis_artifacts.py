@@ -106,6 +106,12 @@ class SubjectAssetRef(BaseModel):
     )
 
 
+class SqlSourceSelection(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    reason: str = Field(min_length=1, max_length=2000)
+    candidate_metrics: List[SubjectAssetRef] = Field(default_factory=list)
+
+
 class SubjectRefs(BaseModel):
     """Subject-library attribution payload — shared shape for both
     ``QueryBrief.uses`` (the per-query declaration written by the LLM
@@ -199,6 +205,8 @@ class QueryBrief(BaseModel):
             "aggregates get an empty string."
         ),
     )
+
+    source_selection: Optional[SqlSourceSelection] = None
 
 
 class Insight(BaseModel):

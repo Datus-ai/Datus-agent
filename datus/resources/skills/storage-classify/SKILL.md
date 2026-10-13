@@ -6,7 +6,7 @@ tags:
   - classification
   - routing
   - persistence
-version: "1.3.0"
+version: "1.4.0"
 user_invocable: false
 disable_model_invocation: false
 ---
@@ -53,7 +53,7 @@ Walk top to bottom; the first match wins. Each item routes to exactly one store.
    → **metrics** — `task(type="semantic_modeling", prompt=<metric description or SQL>)`.
 4. **A complete, validated SQL worth indexing for semantic search / future reuse** (plus a human summary).
    → **reference_sql** — `task(type="gen_sql_summary", prompt=<the complete SQL + business context>)`. **One SQL = one call = one entry.** `gen_sql_summary` produces exactly one `reference_sql` row per invocation, so dispatch a **separate** `task(gen_sql_summary)` call for every distinct query. NEVER bundle multiple SQLs into one prompt — that collapses them into a single useless entry whose `sql`/`search_text` mixes unrelated queries and breaks few-shot retrieval. When the query came with an original natural-language question, pass it along and instruct the generator to use it **verbatim as `search_text`** — a future user question matches a stored question far better than it matches SQL keywords.
-5. **A high-level project overview** — architecture, directory map, services, data assets, or the knowledge index.
+5. **A high-level project overview** — data architecture, directory map, core tables, cross-domain global rules, or the knowledge index.
    → **AGENTS.md** — edit the file directly (see *AGENTS.md Section Ownership*).
 6. **A lightweight, cross-session preference or context bound to one agent** (≤ 2000 bytes) — a user/team habit, a default the agent should remember next session.
    → **memory** — `add_memory` / `edit_memory`.
@@ -69,9 +69,9 @@ Walk top to bottom; the first match wins. Each item routes to exactly one store.
 | semantic_models | `./subject/semantic_models/{datasource}/{name}.yml` (anchored to project root) | Dosi YAML plus reconciled LanceDB `semantic_model` rows | `task(type="semantic_modeling", …)` — prompt MUST name the table(s) |
 | metrics | Metrics embedded in Dosi YAML plus reconciled LanceDB `metrics` rows | Vector rows — `measure_expr`, `metric_type`, `base_measures`, dimensions | `task(type="semantic_modeling", …)` — author prerequisites and metrics together when needed |
 | reference_sql | `./subject/sql_summaries/{id}.yaml` + LanceDB `reference_sql` | YAML — `id` / `name` / `sql` / `summary` / `search_text` / `tags` | `task(type="gen_sql_summary", …)` — prompt MUST carry **one** complete SQL; **one call per query** (never batch multiple SQLs into a single entry) |
-| knowledge | `./knowledge/<domain-slug>.md`, indexed under `AGENTS.md ## Knowledge` | Markdown atomic facts (no longer a vector store) | `extract-knowledge` (**lite** mode) |
+| knowledge | `./knowledge/<domain-slug>.md`, indexed under `AGENTS.md ## Knowledge` | Markdown per domain: `## Tables` / `## Relationships` / `## Lineage` / `## Metric Definitions` (written by `/init`), business-rule topics (atomic facts), `## Known Issues` | `extract-knowledge` (**lite** mode); `/init` writes its sections directly |
 | memory | `{workspace_root}/.datus/memory/{node}/MEMORY.md` (only `chat` and custom subagents) | Markdown — **hard 2000-byte cap** | `add_memory` / `edit_memory` (the only writers) |
-| AGENTS.md | `./AGENTS.md` (project root; first ~200 lines injected into `<project_context>`) | Markdown — Architecture / Directory / Services / Knowledge … | **edit directly** (`write_file` / `edit_file`) |
+| AGENTS.md | `./AGENTS.md` (project root; first ~200 lines injected into `<project_context>`) | Markdown — Data Architecture / Directory Map / Core Tables / Global Rules / SQL Conventions / KB index / Knowledge (see *AGENTS.md Section Ownership*) | **edit directly** (`write_file` / `edit_file`) |
 | skills | `./.datus/skills/` (project) > `~/.datus/skills/` (user) > `datus/resources/skills/` (builtin); first-wins | `SKILL.md` + YAML frontmatter | `create-skill` |
 
 **When NOT to pick a store:**
@@ -91,16 +91,15 @@ Because you edit `AGENTS.md` yourself, keep its sections consistent and minimal.
 | Section | Purpose | Edit constraint |
 |---------|---------|-----------------|
 | `# <project name>` | One-line project description | Keep one line |
-| `## Architecture` | Data flow / stack / how services connect | Brief; ASCII diagram only if complex |
-| `## Directory Map` | Directory / Purpose / Key Entry Point / Consumer | Table; main dirs only |
-| `## Services` | Service / Type / Connection / Description | Configured DBs + user-mentioned services |
-| `## Data Assets` | Per-database high-level summary | **Never enumerate every table** — categorize + count |
-| `## Recommended Tools` | Runtime tools per service type | Only configured/mentioned services |
+| `## Data Architecture` | Datasource / database, layers & naming, loading, main table-level flows, name mappings | Written by `/init`; brief bullets, no table dumps |
+| `## Directory Map` | Path / Contents | Only directories a downstream agent opens (scripts by layer, docs) |
+| `## Core Tables` | Table / Layer / Grain / Use for / Details (link) | Written by `/init`; ≤ 30 rows; details live in knowledge files |
+| `## Global Rules` | Rules that hold across domains (mandatory filters on shared tables, version choice, source priority, time conventions) | Written by `/init`; few bullets, each backed by docs or cross-script frequency |
 | `## SQL Conventions` | Project's induced SQL output discipline (answer-shape rules) | **Induced from the project's validated-SQL corpus** by `/init`; schema-free bullets; project-level presentation guidance, NOT knowledge |
 | `## Semantic Models` | KB index: how many models, which tables | Count + `search_semantic_model`; do NOT inline definitions |
 | `## Metrics` | KB index: how many metrics, key names | Count + `search_metrics`; do NOT inline definitions |
 | `## Reference SQL` | KB index: how many validated queries | Count + `search_reference_sql`; retrieved for few-shot, not read as files |
-| `## Knowledge` | Index of `./knowledge/*.md` (mapped to files) | **Maintained by `extract-knowledge`** — do not overwrite its entries |
+| `## Knowledge` | Index of `./knowledge/*.md` (mapped to files) | Maintained by `/init` and `extract-knowledge` — do not overwrite entries you did not write |
 
 **AGENTS.md is the KB entry point.** It is injected into every node's `<project_context>`, so it is the one reliable place that tells a downstream agent *what KB exists and how to reach it*. Index retrieval-backed stores (semantic_models/metrics/reference_sql) by **count + which search tool**; index `knowledge` by **file links**. Never inline the stores' contents.
 
@@ -108,9 +107,9 @@ Because you edit `AGENTS.md` yourself, keep its sections consistent and minimal.
 
 Handling order:
 
-1. **`AGENTS.md` missing** → `write_file` a minimal skeleton (`# <project dir name>` plus the relevant section); leave the inventory + knowledge/memory sections for `/init` to fill in and the vector-index sections (`## Semantic Models` / `## Metrics` / `## Reference SQL`) for `/build-kb`. Do not block on the user running `/init` first.
+1. **`AGENTS.md` missing** → `write_file` a minimal skeleton (`# <project dir name>` plus the relevant section); leave the project-map sections (`## Data Architecture` … `## SQL Conventions`) and the initial `## Knowledge` index for `/init` to fill in and the vector-index sections (`## Semantic Models` / `## Metrics` / `## Reference SQL`) for `/build-kb`. Do not block on the user running `/init` first.
 2. **Exists but missing the target section** → insert it in the canonical order above (Knowledge goes last).
-3. **Exists with the section** → prefer a minimal `edit_file`. Never rewrite the whole file when a scoped edit suffices, and never touch `## Knowledge` entries owned by `extract-knowledge`.
+3. **Exists with the section** → prefer a minimal `edit_file`. Never rewrite the whole file when a scoped edit suffices, and never overwrite `## Knowledge` entries you did not write (the section is maintained by `/init` and `extract-knowledge`).
 
 ## Disambiguation (overlapping boundaries)
 
@@ -139,7 +138,7 @@ End with a short human-readable summary: how many pieces were classified, where 
 - Do not bundle multiple SQLs into one `gen_sql_summary` call — one query per call, one entry per query.
 - Do not run `extract-knowledge` in deep mode — use lite.
 - Do not exceed the 2000-byte `memory` cap, and do not write `memory` with any tool other than `add_memory` / `edit_memory`.
-- Do not overwrite `## Knowledge` entries in `AGENTS.md` — those are owned by `extract-knowledge`.
+- Do not overwrite `## Knowledge` entries in `AGENTS.md` that you did not write — the section is maintained by `/init` and `extract-knowledge`, append only.
 - Do not persist one-shot content, generic SQL knowledge, or anything inferable from `INFORMATION_SCHEMA` / table comments / column names.
 - Do not generate the artifact's content yourself (e.g. write the SQL, invent the metric) — your job is classification and routing, not authoring.
 - Do not resolve a destructive overwrite silently — go through `ask_user`.

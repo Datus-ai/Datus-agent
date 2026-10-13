@@ -153,7 +153,7 @@ class TestCreateWebApp:
         from fastapi import FastAPI
         from fastapi.testclient import TestClient
 
-        from datus.cli.web.chatbot import _CDN_CHATBOT_CSS, _CDN_CHATBOT_JS, create_web_app
+        from datus.cli.web.chatbot import create_web_app
 
         args = argparse.Namespace(
             datasource="test",
@@ -178,8 +178,10 @@ class TestCreateWebApp:
             client = TestClient(app, raise_server_exceptions=False)
             resp = client.get("/")
             assert resp.status_code == 200
-            assert _CDN_CHATBOT_JS in resp.text
-            assert _CDN_CHATBOT_CSS in resp.text
+            assert "https://unpkg.com/@datus/web-chatbot@~2.0.0/dist/datus-chatbot.umd.js" in resp.text
+            assert "https://unpkg.com/@datus/web-chatbot@~2.0.0/dist/datus-chatbot.css" in resp.text
+            react_url = "https://unpkg.com/react@18.3.1/umd/react.production.min.js"
+            assert resp.text.index(react_url) < resp.text.index("datus-chatbot.umd.js")
 
     def test_warns_when_dist_missing(self):
         """Should warn and fall back to CDN when dist path doesn't exist."""
@@ -294,6 +296,7 @@ agent:
     dist_dir.mkdir()
     (dist_dir / "datus-chatbot.css").write_text("/* chatbot css */", encoding="utf-8")
     (dist_dir / "datus-chatbot.umd.js").write_text("// chatbot js", encoding="utf-8")
+    (dist_dir / "react.production.min.js").write_text("// React runtime", encoding="utf-8")
 
     args = argparse.Namespace(
         datasource="local_sqlite",
@@ -338,6 +341,9 @@ agent:
     assert "chatbot-root" in response.text
     assert "/chatbot-assets/datus-chatbot.css" in response.text
     assert "/chatbot-assets/datus-chatbot.umd.js" in response.text
+    assert response.text.index("/chatbot-assets/react.production.min.js") < response.text.index(
+        "/chatbot-assets/datus-chatbot.umd.js"
+    )
     assert "api-root" not in response.text
     assert "http://testserver" in response.text
     assert 'Ada \\"Data\\"' in response.text

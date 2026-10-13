@@ -10,9 +10,10 @@ package (no copy to ``~/.datus/skills`` required). Users can override it by
 dropping a same-named SKILL.md into ``./.datus/skills/init/`` (project-level)
 or ``~/.datus/skills/init/`` (user-level).
 
-``/init`` is the lightweight pass: it scans the files and database metadata,
-writes an ``AGENTS.md`` inventory skeleton, and files the cheap file-based
-stores (atomic facts to ``./knowledge/*.md``, durable preferences to memory).
+``/init`` is the lightweight pass: it statically analyzes the project's SQL
+(``extract_sql_lineage``), reads the human-written docs, verifies findings with
+cheap database probes, and writes the ``AGENTS.md`` project map plus
+per-domain ``./knowledge/*.md`` files.
 It deliberately stops short of the expensive vector-indexed stores
 (``semantic_models`` / ``metrics`` / ``reference_sql``) — those are built by
 the ``build-kb`` skill behind ``/build-kb`` (see ``build_kb_commands.py``).
@@ -41,7 +42,8 @@ logger = get_logger(__name__)
 _INIT_PROMPT = (
     "Initialize this project workspace by following the `init` skill. "
     'Call `load_skill(skill_name="init")` first and execute its steps in order. '
-    "If `AGENTS.md` already exists, confirm before overwriting it."
+    "If `AGENTS.md` already exists, update the sections you own in place and confirm "
+    "only before replacing the whole file."
     "{user_context}"
 )
 
@@ -57,7 +59,7 @@ class InitCommands:
         """Dispatch ``/init`` — delegate to the chat pipeline.
 
         Any text after ``/init`` is forwarded verbatim as extra goal/scope
-        hints the skill folds into its inferred context and manifest.
+        hints the skill folds into its inferred context.
         """
         chat_commands = getattr(self.cli, "chat_commands", None)
         if chat_commands is None:

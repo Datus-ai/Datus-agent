@@ -344,6 +344,30 @@ class DosiRuntime:
             graphs.append(await asyncio.to_thread(lineage, redact_sql=redact_sql))
         return graphs
 
+    def artifact_metric_binding(self, metric_name: str) -> dict[str, str]:
+        """Resolve an artifact's metric to its complete model and connection.
+
+        Model names remain unique within a datasource. The full document hash
+        pins datasets, relationships and derived members as well as the metric.
+        """
+        handles, metric_to_path, _ = self._catalog()
+        path = metric_to_path.get(metric_name)
+        if path is None:
+            candidates = ", ".join(sorted(metric_to_path))
+            raise SemanticValidationException(
+                SemanticValidationError(
+                    code="unknown_metric",
+                    metrics=[metric_name],
+                    message=(f"unknown metric {metric_name!r} | candidates: {candidates or '(none)'}"),
+                )
+            )
+        handle = dict(handles)[path]
+        return {
+            "model_path": path,
+            "model_revision": hashlib.sha256(Path(path).read_bytes()).hexdigest(),
+            "datasource": self.datasource or handle.profile_name or "default",
+        }
+
     async def query_metrics(
         self,
         metrics: List[str],
@@ -357,6 +381,7 @@ class DosiRuntime:
         dry_run: bool = False,
         *,
         params: Optional[Dict[str, Any]] = None,
+        context_filter: Optional[str] = None,
     ) -> QueryResult:
         binding = await asyncio.to_thread(load_binding)
         handle = await asyncio.to_thread(self._handle_for_metrics, metrics)
@@ -378,6 +403,7 @@ class DosiRuntime:
             limit=limit,
             order_by=order_by,
             params=params,
+            context_filter=context_filter,
         )
         connection = handle.profile_name
         try:
@@ -1072,6 +1098,7 @@ class DosiRuntime:
         limit: Optional[int],
         order_by: Optional[List[str]],
         params: Optional[Dict[str, Any]] = None,
+        context_filter: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Assemble the engine's MetricQuery dict. Pure: no engine I/O."""
         del metric_rows  # Kept for backward-compatible direct-call tests/callers.
@@ -1124,6 +1151,8 @@ class DosiRuntime:
             query["params"] = dict(params)
         if where:
             query["where_sql"] = where
+        if context_filter:
+            query["context_filter"] = context_filter
         if time_start or time_end:
             time_range: Dict[str, Any] = {"start": time_start, "end": time_end}
             if not any(is_time_dimension(item["field"]) for item in group_by):

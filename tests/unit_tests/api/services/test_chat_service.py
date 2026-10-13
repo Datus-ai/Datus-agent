@@ -4,20 +4,90 @@ import asyncio
 import json
 import os
 from contextlib import AbstractContextManager
+from datetime import datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
 
+from datus.api.services.action_sse_converter import action_to_sse_event
 from datus.api.services.chat_service import (
     _DEFAULT_MAX_SESSION_PAGE_SIZE,
     _DEFAULT_SESSION_PAGE_SIZE,
     ChatService,
 )
-from datus.api.services.chat_task_manager import ChatTaskManager
+from datus.api.services.chat_task_manager import ChatTask, ChatTaskManager
 from datus.models.session_manager import SessionManager
 from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
 from datus.utils.exceptions import ErrorCode
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("seconds", [0.0, 0.329, 2.5])
+@pytest.mark.parametrize("native", [False, True])
+@pytest.mark.parametrize("tool_name", ["execute_sql", "read_file"])
+@pytest.mark.parametrize("failed", [False, True])
+async def test_history_keeps_streamed_tool_duration_after_batch_persistence(
+    tmp_path, seconds, native, tool_name, failed
+):
+    config = SimpleNamespace(session_dir=str(tmp_path))
+    session_id = "chat_session_timing"
+    storage = SessionManager(session_dir=str(tmp_path))
+    session = storage.get_session(session_id)
+    task = ChatTask(session_id=session_id, asyncio_task=MagicMock())
+    manager = ChatTaskManager()
+    started = datetime(2026, 1, 1)
+    action = ActionHistory(
+        action_id="complete_call_sql",
+        role=ActionRole.TOOL,
+        action_type=tool_name,
+        input={"function_name": tool_name, "arguments": {}},
+        output={"success": False, "error": "Database error", "result": None}
+        if failed
+        else {"success": True, "result": {"rows": 1}},
+        status=ActionStatus.FAILED if failed else ActionStatus.SUCCESS,
+        start_time=started,
+        end_time=started + timedelta(seconds=seconds),
+    )
+    event = action_to_sse_event(action, 0, "tool-result")
+    await manager._push_event(task, event)
+    tool_items = (
+        [
+            {
+                "role": "assistant",
+                "content": [{"type": "tool_use", "id": "call_sql", "name": tool_name, "input": {}}],
+            },
+            {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "call_sql", "content": "{}"}]},
+        ]
+        if native
+        else [
+            {"type": "function_call", "call_id": "call_sql", "name": tool_name, "arguments": "{}"},
+            {"type": "function_call_output", "call_id": "call_sql", "output": "{}"},
+        ]
+    )
+    await session.add_items(
+        [
+            {"role": "user", "content": "Run SQL"},
+            *tool_items,
+        ]
+    )
+    await manager._persist_message_contents(task, config, session_id, None)
+    history = ChatService(config).get_history(session_id)
+    assert history.success is True
+    results = [part.payload for msg in history.data.messages for part in msg.content if part.type == "call-tool-result"]
+    assert len(results) == 1
+    assert results[0]["duration"] == event.data.payload.content[0].payload["duration"]
+    assert results[0]["duration"] == seconds
+    assert results[0] == event.data.payload.content[0].payload
+    copied = storage.copy_session(session_id, "copied")
+    copy_history = ChatService(config).get_history(copied)
+    copy_results = [
+        part.payload for msg in copy_history.data.messages for part in msg.content if part.type == "call-tool-result"
+    ]
+    assert copy_results[0]["duration"] == seconds
+
+    # Display-only timings must never become part of the SDK's model input.
+    assert await session.get_items() == [{"role": "user", "content": "Run SQL"}, *tool_items]
 
 
 @pytest.fixture
@@ -660,6 +730,48 @@ class TestChatServiceGetHistorySubagent:
             ("call-tool-result", "task", 0, None),
             ("thinking", "The subagent finished.", 0, None),
         ]
+
+    def test_nested_history_uses_saved_result_contents_from_the_parent_scope(self, chat_svc):
+        main = self._main_manager(chat_svc)
+        self._write(
+            main,
+            self.MAIN,
+            [
+                {"role": "user", "content": "build a model"},
+                *self._task_items("call_task1", "build a model", "done"),
+            ],
+        )
+        self._write(self._sub_manager(chat_svc), self.SUB, self._sub_run("build a model", "call_read1", "Done."))
+        contents = {}
+        for call_id, tool_name, duration, parent in [
+            ("call_read1", "read_file", 0.329, "call_task1"),
+            ("call_task1", "task", 2.5, None),
+        ]:
+            contents[call_id] = {
+                "tool_call_id": call_id,
+                "parent_action_id": parent,
+                "parts": [
+                    {
+                        "type": "call-tool-result",
+                        "payload": {
+                            "callToolId": call_id,
+                            "toolName": tool_name,
+                            "duration": duration,
+                            "shortDesc": "Done",
+                            "result": {"success": 1, "result": "saved result"},
+                        },
+                    }
+                ],
+            }
+        main.save_message_contents(self.MAIN, contents)
+        result = chat_svc.get_history(self.MAIN, user_id=self.USER)
+        results = {
+            part.payload["callToolId"]: part.payload
+            for msg in result.data.messages
+            for part in msg.content
+            if part.type == "call-tool-result"
+        }
+        assert results == {call_id: record["parts"][0]["payload"] for call_id, record in contents.items()}
 
     def test_resumed_subagent_session_replays_each_run_under_its_own_task(self, chat_svc):
         self._write(

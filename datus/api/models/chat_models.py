@@ -2,7 +2,9 @@
 
 from typing import Any, Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
+
+from datus.api.models.message_contents import ChatMessageContent
 
 
 class ToolResult(BaseModel):
@@ -56,12 +58,26 @@ class InsertMessageInput(BaseModel):
     """Input for appending a free-text user message to a running chat."""
 
     session_id: str = Field(..., description="Active chat session id")
+    messages: Optional[list[ChatMessageContent]] = Field(default=None, min_length=1, max_length=20)
     message: str = Field(
-        ...,
+        default="",
         min_length=1,
         max_length=4000,
         description="Free-text user message to inject into the agent's pending input queue",
     )
+
+    @model_validator(mode="after")
+    def validate_message(self):
+        if self.messages is not None:
+            text = "\n\n".join(part.payload.content for part in self.messages if part.type == "markdown")
+            if len(text) > 4000:
+                raise ValueError("Joined Markdown message must be at most 4000 characters")
+            self.message = text
+            if not self.message.strip() and not any(part.type == "image" for part in self.messages):
+                raise ValueError("messages must contain text or an image")
+        elif not self.message:
+            raise ValueError("message or messages is required")
+        return self
 
 
 class InsertMessageData(BaseModel):

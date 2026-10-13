@@ -645,6 +645,60 @@ class TestExplorerServicePreviewMetric:
         assert seen["context"]["policy_context"] == ctx
         assert seen["context"]["metric_datasets"] == {"revenue": ["orders"]}
 
+    async def test_metric_policy_may_scope_the_population_through_context_filter(self, monkeypatch, real_agent_config):
+        """A policy that narrows the calculation population lands in ``context_filter``.
+
+        In a window query ``where`` on group-by fields is evaluated after ranking,
+        so a tenant scope written there would leave the ranks and partition counts
+        of every tenant's rows in the result. The transformer is handed the
+        caller's ``context_filter`` and whatever it returns there is what the
+        runtime compiles, alongside the caller's other window parameters.
+        """
+        from datus.api.models.explorer_models import MetricPreviewInput
+        from datus.api.services.explorer_service import ExplorerService
+
+        seen = {}
+
+        def fake_query_metrics(**kwargs):
+            seen.update(kwargs)
+            return self._func_result(result={"metadata": {"sql": "SELECT 1"}})
+
+        tools = self._patch_tools(monkeypatch, runtime=object(), query_metrics=fake_query_metrics)
+        tools.metric_datasets = lambda: {"item_rank": ["scores"]}
+
+        def fake_transform(tool_name, args, *, context, **kwargs):
+            seen["transform_args"] = dict(args)
+            return {**args, "context_filter": f"({args['context_filter']}) AND scores.tenant = 't1'"}
+
+        import datus.tools.middleware as middleware_mod
+
+        monkeypatch.setattr(middleware_mod, "transform_tool_args", fake_transform)
+
+        service = ExplorerService(agent_config=real_agent_config)
+        monkeypatch.setattr(service, "_metric_is_in_scope", lambda path: True)
+        monkeypatch.setattr(service, "_require_datasource", lambda: None)
+
+        await service.preview_metric(
+            MetricPreviewInput(
+                subject_path=["a", "item_rank"],
+                where="scores.item = 'b'",
+                context_filter="scores.product = 'p1'",
+                time_start="2026-01-01",
+                time_end="2026-02-01",
+            ),
+            policy_context={"row_filter": {"access_mode": "scoped"}},
+        )
+
+        assert seen["transform_args"] == {
+            "metrics": ["item_rank"],
+            "where": "scores.item = 'b'",
+            "context_filter": "scores.product = 'p1'",
+        }
+        assert seen["where"] == "scores.item = 'b'"
+        assert seen["context_filter"] == "(scores.product = 'p1') AND scores.tenant = 't1'"
+        assert (seen["time_start"], seen["time_end"]) == ("2026-01-01", "2026-02-01")
+        assert seen["dry_run"] is True
+
     async def test_metric_policy_refusal_becomes_policy_denied(self, monkeypatch, real_agent_config):
         """A transformer that cannot resolve datasets refuses; the caller has
         to hear that rather than receive an unfiltered query."""

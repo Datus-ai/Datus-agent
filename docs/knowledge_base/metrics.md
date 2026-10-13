@@ -133,9 +133,11 @@ query_metrics(
 | `dimensions` | Fields returned by `get_metric`; with Dosi, `metric_time` selects the primary time axis. Prefer `recommended=true` for automatic grouping, while `recommended=false` remains explicitly queryable. |
 | `time_start`, `time_end` | Optional half-open time range: start is inclusive and end is exclusive. Use ISO dates (`YYYY-MM-DD`). |
 | `time_granularity` | `day`, `week`, `month`, `quarter`, or `year`. |
-| `where` | Optional filter expression without the `WHERE` keyword. |
+| `where` | Optional filter expression without the `WHERE` keyword. A condition on a selected metric (`revenue > 1000`) filters the result rows after aggregation, like `HAVING`; in a query with a window metric, a condition on group-by fields only also filters the result, so the kept rows keep the ranks and partition counts of the whole population. Every other condition filters rows before aggregation. |
+| `context_filter` | Optional filter that always applies before aggregation. It scopes the population a window metric ranks, counts or weighs: `where="market = 'North'"` shows North's rank among all markets, `context_filter="market = 'North'"` ranks North's rows against each other. |
 | `order_by` | Result columns to sort; prefix a name with `-` for descending order. |
 | `limit` | Maximum rows, used only when the user asks for Top N, a preview, or another explicit row limit. |
+| `params` | Bindings for the parameters a metric declares (`get_metric` returns them as `params`), by name. A list binds several values in one query and returns one column per value: `{"k": [1, 7]}` yields `<metric>__k_1` and `<metric>__k_7`. Omitted parameters take their defaults. |
 | `dry_run` | Return compiled SQL without executing the metric query; a configured warehouse dry-run provider also validates the SQL. |
 
 For example, to include all of January 2024, use `time_start="2024-01-01"` and `time_end="2024-02-01"`.

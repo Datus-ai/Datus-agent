@@ -470,9 +470,10 @@ class TestInsertMessageEndpoint:
 
     @staticmethod
     def _make_task_with_queue(queue=None, status="running"):
+        from datus.api.services.chat_task_manager import ChatTask
         from datus.cli.execution_state import PendingInputQueue
 
-        task = MagicMock()
+        task = ChatTask(session_id="s1", asyncio_task=None)
         task.status = status
         task.pending_input_queue = queue if queue is not None else PendingInputQueue()
         return task

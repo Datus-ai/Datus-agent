@@ -19,7 +19,7 @@ permissions:
 jobs:
   merge-queue-gate:
     name: Merge Queue Gate
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     steps:
       - name: Publish PR gate context
         if: ${{ github.event_name == 'pull_request_target' }}
@@ -32,6 +32,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Set up Python
         if: ${{ github.event_name != 'pull_request_target' }}
@@ -76,8 +77,7 @@ jobs:
       - name: Setup config file
         if: ${{ github.event_name != 'pull_request_target' }}
         run: |
-          cp /home/datus_ci/ci_template/agent.yml conf/agent.yml
-          cp /home/datus_ci/ci_template/ci.env .env
+          cp conf/agent.yml.example conf/agent.yml
 
       - name: Restore tracked test config
         if: ${{ github.event_name != 'pull_request_target' }}
@@ -91,16 +91,12 @@ jobs:
           sed -i "s|home: .datus_test_data|home: $DATUS_TEST_HOME|g" tests/conf/agent.yml
           sed -i "s|project_root: .datus_test_data/workspace|project_root: $DATUS_TEST_HOME/workspace|g" tests/conf/agent.yml
 
-      - name: Load environment variables
+      - name: Prepare small BIRD test fixtures
         if: ${{ github.event_name != 'pull_request_target' }}
         run: |
-          while IFS= read -r line || [ -n "$line" ]; do
-            if [[ ! -z "$line" && ! "$line" =~ ^[[:space:]]*# ]]; then
-              var_value=$(echo "$line" | cut -d'=' -f2-)
-              echo "::add-mask::$var_value"
-              echo "$line" >> "$GITHUB_ENV"
-            fi
-          done < .env
+          DATUS_TEST_BIRD_ROOT="$RUNNER_TEMP/datus-ci-bird/dev_databases"
+          python3 ci/prepare_ci_bird.py "$DATUS_TEST_BIRD_ROOT"
+          echo "DATUS_TEST_BIRD_ROOT=$DATUS_TEST_BIRD_ROOT" >> "$GITHUB_ENV"
 
       - name: Run deterministic merge queue suites
         if: ${{ github.event_name != 'pull_request_target' }}
@@ -139,186 +135,3 @@ jobs:
           path: |
             ci/merge-queue-results.json
             ci/test-results-merge-*.xml
-
-  notify-failure:
-    name: Notify Merge Queue Failure
-    needs:
-      - merge-queue-gate
-    if: ${{ always() && needs.merge-queue-gate.result == 'failure' }}
-    runs-on: self-hosted
-    permissions:
-      actions: read
-      contents: read
-      issues: write
-    steps:
-      - name: Checkout notification helper
-        if: ${{ github.event_name == 'merge_group' }}
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ github.sha }}
-          fetch-depth: 1
-
-      - name: Download merge queue artifacts
-        if: ${{ github.event_name == 'merge_group' }}
-        uses: actions/download-artifact@v4
-        continue-on-error: true
-        with:
-          name: merge-queue-results
-          path: ci/merge-queue-artifacts
-
-      - name: Build PR failure comment
-        if: ${{ github.event_name == 'merge_group' }}
-        env:
-          NEEDS_JSON: ${{ toJson(needs) }}
-        run: |
-          python3 ci/build_merge_queue_failure_comment.py \
-            --artifacts-dir ci/merge-queue-artifacts \
-            --output ci/merge-queue-failure-comment.md \
-            --repository "${{ github.repository }}" \
-            --workflow "${{ github.workflow }}" \
-            --event "${{ github.event_name }}" \
-            --ref "${{ github.ref }}" \
-            --sha "${{ github.sha }}" \
-            --run-number "${{ github.run_number }}" \
-            --run-url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-
-      - name: Comment on PR with merge queue failure
-        if: ${{ github.event_name == 'merge_group' }}
-        uses: actions/github-script@v7
-        env:
-          COMMENT_PATH: ci/merge-queue-failure-comment.md
-        with:
-          script: |
-            const fs = require('fs');
-            const commentPath = process.env.COMMENT_PATH;
-            if (!fs.existsSync(commentPath)) {
-              core.warning(`Merge queue failure comment was not generated: ${commentPath}`);
-              return;
-            }
-
-            const body = fs.readFileSync(commentPath, 'utf8');
-            const marker = '<!-- datus-merge-queue-failure-comment -->';
-            const sources = [
-              context.ref,
-              context.payload?.merge_group?.head_ref,
-              context.payload?.merge_group?.base_ref,
-            ].filter(Boolean).join('\n');
-            const prNumbers = [
-              ...new Set([...sources.matchAll(/(?:^|[/-])pr-(\d+)(?=[/-]|$)/g)].map((match) => Number(match[1]))),
-            ];
-
-            if (prNumbers.length === 0) {
-              core.warning(`Unable to determine PR number from merge queue ref: ${context.ref}`);
-              return;
-            }
-
-            for (const issue_number of prNumbers) {
-              let existing = null;
-              for await (const response of github.paginate.iterator(github.rest.issues.listComments, {
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number,
-                per_page: 100,
-              })) {
-                existing = response.data.find(
-                  (comment) => comment.user?.type === 'Bot' && comment.body?.includes(marker),
-                );
-                if (existing) {
-                  break;
-                }
-              }
-              if (existing) {
-                await github.rest.issues.updateComment({
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  comment_id: existing.id,
-                  body,
-                });
-              } else {
-                await github.rest.issues.createComment({
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  issue_number,
-                  body,
-                });
-              }
-            }
-
-      - name: Send Feishu failure notification
-        uses: actions/github-script@v7
-        env:
-          FEISHU_WEBHOOK_URL: ${{ secrets.FEISHU_NOTIFY_CI_URL }}
-          NEEDS_JSON: ${{ toJson(needs) }}
-        with:
-          script: |
-            const https = require('https');
-            const webhook = process.env.FEISHU_WEBHOOK_URL;
-            if (!webhook) {
-              core.warning('FEISHU_WEBHOOK_URL is not set; skipping Feishu notification.');
-              return;
-            }
-
-            const needs = JSON.parse(process.env.NEEDS_JSON || '{}');
-            const failedJobs = Object.entries(needs)
-              .filter(([, job]) => job.result === 'failure')
-              .map(([name]) => name)
-              .join(', ') || 'unknown';
-            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
-            const messageBody = `## Merge Queue Failure
-
-            **Repository:** ${context.repo.owner}/${context.repo.repo}
-            **Workflow:** ${context.workflow}
-            **Event:** ${context.eventName}
-            **Ref:** ${context.ref}
-            **SHA:** ${context.sha}
-            **Failed jobs:** ${failedJobs}
-            **Run:** [#${context.runNumber}](${runUrl})
-
-            *Automated Feishu notification from GitHub Actions.*`;
-
-            const url = new URL(webhook);
-            const data = JSON.stringify({
-              msg_type: 'interactive',
-              card: {
-                type: 'template',
-                data: {
-                  template_id: 'AAqz7JC34dHlY',
-                  template_version_name: '1.0.0',
-                  template_variable: {
-                    report_result: messageBody,
-                  },
-                },
-              },
-            });
-
-            await new Promise((resolve) => {
-              const req = https.request(
-                {
-                  hostname: url.hostname,
-                  port: url.port || 443,
-                  path: url.pathname + url.search,
-                  method: 'POST',
-                  headers: {
-                    'Content-Type': 'application/json',
-                    'Content-Length': Buffer.byteLength(data),
-                  },
-                },
-                (res) => {
-                  res.resume();
-                  res.on('end', () => {
-                    if (res.statusCode >= 400) {
-                      core.warning(`Feishu notification returned HTTP ${res.statusCode}`);
-                    } else {
-                      console.log(`Feishu notification sent: ${res.statusCode}`);
-                    }
-                    resolve();
-                  });
-                },
-              );
-              req.on('error', (error) => {
-                core.warning(`Error sending Feishu notification: ${error.message}`);
-                resolve();
-              });
-              req.write(data);
-              req.end();
-            });

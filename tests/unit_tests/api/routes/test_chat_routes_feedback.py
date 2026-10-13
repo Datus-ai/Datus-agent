@@ -39,14 +39,36 @@ async def _drain(response):
 
 
 @pytest.mark.asyncio
-async def test_feedback_endpoint_renders_prompt_and_routes_to_feedback_subagent():
+@pytest.mark.parametrize(
+    "messages",
+    [
+        None,
+        [{"type": "markdown", "payload": {"content": "caller text"}}],
+        [
+            {
+                "type": "image",
+                "payload": {
+                    "attachmentId": "a" * 32,
+                    "mimeType": "image/png",
+                    "width": 80,
+                    "height": 80,
+                    "createdAt": "2026-10-07T00:00:00Z",
+                },
+            }
+        ],
+    ],
+)
+async def test_feedback_endpoint_renders_prompt_and_routes_to_feedback_subagent(messages):
     svc = _build_svc()
     request = FeedbackChatInput(
         source_session_id="chat_session_abc",
         reaction_emoji="thumbsup",
         reference_msg="Here is your SQL result",
         database="sales_db",
+        message="server prompt placeholder",
+        messages=messages,
     )
+    assert request.message == "server prompt placeholder"
 
     response = await stream_chat_feedback(request, svc, _build_ctx(), MagicMock())
     await _drain(response)
@@ -61,6 +83,7 @@ async def test_feedback_endpoint_renders_prompt_and_routes_to_feedback_subagent(
     assert call_args.kwargs["sub_agent_id"] == "feedback"
     assert call_args.kwargs["user_id"] == "tester"
     assert stream_input.message == '[The user reacted to this message "Here is your SQL result" with [thumbsup]]'
+    assert stream_input.messages is None
 
 
 @pytest.mark.parametrize(

@@ -24,6 +24,8 @@ from datus.api.models.table_models import (
     GetSemanticModelData,
     GetTableDetailData,
     GetTablesColumnsData,
+    PrepareMetricDefinitionsData,
+    PrepareMetricDefinitionsInput,
     SaveSemanticModelData,
     SaveSemanticModelInput,
     TableColumnBrief,
@@ -1192,6 +1194,36 @@ class DatasourceService:
                     sync=sync_result,
                 ),
             )
+
+    async def prepare_metric_definitions(
+        self, request: PrepareMetricDefinitionsInput
+    ) -> Result[PrepareMetricDefinitionsData]:
+        """Prepare an in-memory candidate under the same file boundary as save."""
+        from datus.tools.semantic_tools.dosi.editing import prepare_metric_definitions
+
+        try:
+            self._resolve_writable_semantic_model_file(request.semantic_model_file)
+            if len(request.yaml) > 5_000_000:
+                raise ValueError("Candidate model exceeds the 5 MB editor limit")
+            model_name, _, identity_error = self._osi_candidate_identity(request.yaml)
+            if identity_error:
+                raise ValueError(identity_error)
+            if request.semantic_model_name and request.semantic_model_name != model_name:
+                raise ValueError("Candidate model name does not match the target")
+
+            result = await asyncio.to_thread(
+                prepare_metric_definitions,
+                request.yaml,
+                request.changed_metrics,
+                rename_from=request.rename_from,
+                rename_to=request.rename_to,
+            )
+            return Result(success=True, data=PrepareMetricDefinitionsData(**result))
+        except ValueError as exc:
+            return Result(success=False, errorCode=ErrorCode.INVALID_PARAMETERS, errorMessage=str(exc))
+        except Exception as exc:
+            logger.exception("Failed to prepare metric definitions")
+            return Result(success=False, errorCode=ErrorCode.INTERNAL_COMMAND_ERROR, errorMessage=str(exc))
 
     async def validate_semantic_model(self, request: ValidateSemanticModelInput) -> Result[ValidateSemanticModelData]:
         """Validate submitted SemanticModel YAML without changing the live artifact."""

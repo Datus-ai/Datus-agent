@@ -339,7 +339,11 @@ def collect_query_previews(queries_dir: Path, *, max_rows: int = 5) -> List[Dict
     previews: List[Dict[str, Any]] = []
     if not queries_dir.is_dir():
         return previews
-    for sql_path in sorted(queries_dir.glob("*.sql")) + sorted(queries_dir.glob("*.sql.j2")):
+    for sql_path in (
+        sorted(queries_dir.glob("*.sql"))
+        + sorted(queries_dir.glob("*.sql.j2"))
+        + sorted(queries_dir.glob("*.metric.json"))
+    ):
         # ``foo.sql.j2`` → slug ``foo``; ``foo.sql`` → slug ``foo``.
         slug = sql_path.name.split(".", 1)[0]
         # Report result file shape.
@@ -695,6 +699,14 @@ def aggregate_referenced_tables(queries_dir: Path) -> List[str]:
             logger.warning("Failed to read %s for key_tables aggregation: %s", tpl_path, exc)
             continue
         tables.update(_extract_tables_from_one_sql(text))
+    from datus.schemas.metric_artifact_query import MetricQueryFile
+
+    for metric_path in sorted(queries_dir.glob("*.metric.json")):
+        try:
+            metric = MetricQueryFile.model_validate_json(metric_path.read_text(encoding="utf-8"))
+            tables.update(metric.metric_tables)
+        except (OSError, ValueError) as exc:
+            logger.warning("Cannot read metric source %s: %s", metric_path, exc)
     return _dedupe_table_references(tables)
 
 
@@ -1251,6 +1263,8 @@ def run_finalize_analysis(
     analysis_dir: Path,
     actions: Iterable[ActionHistory],
     db_func_tool: Optional[Any] = None,
+    semantic_tools: Optional[Any] = None,
+    context_search_tools: Optional[Any] = None,
     on_progress: Optional[Callable[[int], None]] = None,
     skip_narrative: bool = False,
     language_directive: Optional[str] = None,
@@ -1383,6 +1397,21 @@ def run_finalize_analysis(
     # attribution index and key_tables hint to work with, even when the
     # narrative-side outputs are missing.
     refs = aggregate_subject_refs(queries_dir)
+    from datus.agent.node.visual_artifact._insight_snapshot import bake_metric_snapshots
+
+    snapshot_error = bake_metric_snapshots(artifact_dir, refs, semantic_tools, artifact_kind=artifact_kind)
+    if snapshot_error:
+        warnings.append(snapshot_error)
+    # A render-only edit must not backfill an old artifact with today's SQL.
+    if not skip_narrative:
+        from datus.agent.node.visual_artifact._insight_snapshot import bake_reference_sql_snapshots
+
+        reference_error = bake_reference_sql_snapshots(
+            artifact_dir, refs, context_search_tools, artifact_kind=artifact_kind
+        )
+        if reference_error:
+            warnings.append(reference_error)
+
     write_err = write_subject_refs(analysis_dir, refs)
     if write_err:
         warnings.append(write_err)

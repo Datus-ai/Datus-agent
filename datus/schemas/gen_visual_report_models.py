@@ -62,6 +62,8 @@ class QueryResultFile(BaseModel):
     row_count: int = Field(..., ge=0)
     columns: List[QueryColumnMeta] = Field(..., min_length=1)
     rows: List[Dict[str, Any]] = Field(...)
+    sql: Optional[str] = None
+    source: Optional[Dict[str, Any]] = None
 
     @model_validator(mode="after")
     def _row_count_matches(self) -> "QueryResultFile":

@@ -196,6 +196,10 @@ class SessionManager:
         session = self.get_session(session_id) if self.session_exists(session_id) else self._sessions.get(session_id)
         if session:
             run_async(session.clear_session())
+            db_path = os.path.join(self.session_dir, f"{session_id}.db")
+            with sqlite3.connect(db_path, timeout=5.0) as conn:
+                conn.execute(self._MESSAGE_CONTENTS_DDL)
+                conn.execute("DELETE FROM chat_message_contents WHERE session_id = ?", (session_id,))
             logger.debug(f"Cleared session: {session_id}")
         else:
             logger.warning(f"Attempted to clear non-existent session: {session_id}")
@@ -331,6 +335,11 @@ class SessionManager:
                             session_id,
                             checkpoint.max_message_id,
                         ),
+                    )
+                if self._table_exists(conn, "chat_message_contents"):
+                    conn.execute(
+                        "DELETE FROM chat_message_contents WHERE session_id = ? AND message_id > ?",
+                        (session_id, checkpoint.max_message_id),
                     )
                 if self._table_exists(conn, "agent_messages"):
                     conn.execute(
@@ -578,6 +587,7 @@ class SessionManager:
             # for the copy's own scan to find, so without this the new session
             # would list as untitled.
             meta_rows = self._read_session_meta(cursor, source_session_id)
+            content_rows = self._read_message_contents(src_conn, source_session_id)
 
         # Materialize tables in the new DB first (short-lived session is released
         # before bulk inserts), then use a single raw connection with executemany
@@ -615,6 +625,11 @@ class SessionManager:
                 [(new_session_id, *row) for row in turn_usage_rows],
             )
             self._write_session_meta(new_conn, new_session_id, meta_rows)
+            new_conn.execute(self._MESSAGE_CONTENTS_DDL)
+            new_conn.executemany(
+                "INSERT OR REPLACE INTO chat_message_contents VALUES (?, ?, ?)",
+                [(new_session_id, message_id, json.dumps(parts)) for message_id, parts in content_rows.items()],
+            )
             new_conn.commit()
 
         # Cache a fresh session pointing at the populated DB (tables already
@@ -756,6 +771,10 @@ class SessionManager:
             # session — and it is the only copy left once the source has been
             # compacted.
             meta_rows = self._read_session_meta(cursor, source_session_id)
+            content_rows = self._read_message_contents(src_conn, source_session_id)
+            content_rows = {
+                message_id: parts for message_id, parts in content_rows.items() if message_id in kept_message_ids
+            }
 
         # Insert session record, messages, message_structure, and turn_usage into the new DB.
         # Preserve agent_messages.id so message_structure.message_id references remain valid.
@@ -806,6 +825,11 @@ class SessionManager:
                     (new_session_id, *usage_row),
                 )
             self._write_session_meta(new_conn, new_session_id, meta_rows)
+            new_conn.execute(self._MESSAGE_CONTENTS_DDL)
+            new_conn.executemany(
+                "INSERT OR REPLACE INTO chat_message_contents VALUES (?, ?, ?)",
+                [(new_session_id, message_id, json.dumps(parts)) for message_id, parts in content_rows.items()],
+            )
             new_conn.commit()
 
         logger.info(
@@ -1407,6 +1431,127 @@ class SessionManager:
         ")"
     )
 
+    _MESSAGE_CONTENTS_DDL = (
+        "CREATE TABLE IF NOT EXISTS chat_message_contents ("
+        "session_id TEXT NOT NULL, message_id INTEGER NOT NULL, contents_json TEXT NOT NULL, "
+        "PRIMARY KEY (session_id, message_id))"
+    )
+
+    def get_max_message_id(self, session_id: str) -> int:
+        self._validate_session_id(session_id)
+        db_path = os.path.join(self.session_dir, f"{session_id}.db")
+        if not os.path.isfile(db_path):
+            return 0
+        with sqlite3.connect(db_path, timeout=5.0) as conn:
+            row = conn.execute(
+                "SELECT COALESCE(MAX(id), 0) FROM agent_messages WHERE session_id = ?", (session_id,)
+            ).fetchone()
+            return int(row[0])
+
+    def save_message_contents(self, session_id: str, contents: Dict[str, dict], previous_message_id: int = 0) -> None:
+        """Save structured user content and streamed tool results outside model input.
+
+        Tool results match persisted result rows by call ID. Nested results are
+        attached to the outer task result so existing copy/rewind/rollback
+        handling for chat_message_contents preserves the entire task's display.
+        """
+        self._validate_session_id(session_id)
+        db_path = os.path.join(self.session_dir, f"{session_id}.db")
+        if not os.path.isfile(db_path):
+            return
+        with sqlite3.connect(db_path, timeout=5.0) as conn:
+            conn.execute(self._MESSAGE_CONTENTS_DDL)
+            rows = conn.execute(
+                "SELECT id, message_data FROM agent_messages WHERE session_id = ? AND id > ? ORDER BY id",
+                (session_id, previous_message_id),
+            ).fetchall()
+            records = [record for record in contents.values() if record.get("persist", True)]
+            pending = [record for record in records if not record.get("tool_call_id")]
+            tools = {record["tool_call_id"]: record for record in records if record.get("tool_call_id")}
+            result_rows: Dict[str, int] = {}
+            persisted: Dict[int, list] = {}
+            for message_id, raw in rows:
+                message = json.loads(raw)
+                if message.get("type") == "function_call_output" and message.get("call_id"):
+                    result_rows[message["call_id"]] = message_id
+                blocks = message.get("content")
+                if isinstance(blocks, list):
+                    for block in blocks:
+                        if (
+                            isinstance(block, dict)
+                            and block.get("type") in ("tool_result", "web_search_tool_result", "web_fetch_tool_result")
+                            and block.get("tool_use_id")
+                        ):
+                            result_rows[block["tool_use_id"]] = message_id
+                if message.get("role") != "user":
+                    continue
+                text = extract_user_input(message.get("content", "")).strip()
+                for index, record in enumerate(pending):
+                    if record["text"].strip() == text:
+                        persisted[message_id] = list(record["parts"])
+                        pending.pop(index)
+                        break
+            for call_id, record in tools.items():
+                owner = call_id
+                seen = set()
+                while owner not in result_rows and owner in tools and owner not in seen:
+                    seen.add(owner)
+                    owner = tools[owner].get("parent_action_id")
+                if owner in result_rows:
+                    persisted.setdefault(result_rows[owner], []).extend(record["parts"])
+            conn.executemany(
+                "INSERT OR REPLACE INTO chat_message_contents VALUES (?, ?, ?)",
+                [
+                    (session_id, message_id, json.dumps(parts, ensure_ascii=False))
+                    for message_id, parts in persisted.items()
+                ],
+            )
+
+    def get_tool_result_contents(self, session_id: str) -> Dict[str, dict]:
+        """Only replay display content whose owning model message still exists."""
+        self._validate_session_id(session_id)
+        db_path = os.path.join(self.session_dir, f"{session_id}.db")
+        if not os.path.isfile(db_path):
+            return {}
+        with sqlite3.connect(db_path, timeout=5.0) as conn:
+            try:
+                rows = conn.execute(
+                    "SELECT c.contents_json FROM chat_message_contents c "
+                    "JOIN agent_messages m ON m.id = c.message_id AND m.session_id = c.session_id "
+                    "WHERE c.session_id = ? ORDER BY c.message_id",
+                    (session_id,),
+                ).fetchall()
+            except sqlite3.OperationalError:
+                return {}
+        results = {}
+        for (raw,) in rows:
+            try:
+                parts = json.loads(raw)
+            except (json.JSONDecodeError, TypeError, UnicodeDecodeError):
+                continue
+            if not isinstance(parts, list):
+                continue
+            for part in parts:
+                if not isinstance(part, dict) or part.get("type") != "call-tool-result":
+                    continue
+                payload = part.get("payload")
+                if not isinstance(payload, dict):
+                    continue
+                call_id = payload.get("callToolId")
+                if isinstance(call_id, str) and call_id:
+                    results[call_id] = payload
+        return results
+
+    @staticmethod
+    def _read_message_contents(conn, session_id: str) -> Dict[int, list]:
+        try:
+            rows = conn.execute(
+                "SELECT message_id, contents_json FROM chat_message_contents WHERE session_id = ?", (session_id,)
+            ).fetchall()
+        except sqlite3.OperationalError:
+            return {}
+        return {message_id: json.loads(parts) for message_id, parts in rows}
+
     def get_max_user_turn_number(self, session_id: str) -> int:
         """Return the highest ``user_turn_number`` recorded, or 0 when none/no DB.
 
@@ -1605,6 +1750,7 @@ class SessionManager:
                 # feature or carried no references.
                 turn_map = self._read_message_turn_map(conn, session_id)
                 context_map = self._read_user_message_context(conn, session_id)
+                content_map = self._read_message_contents(conn, session_id)
 
                 # Aggregate consecutive assistant messages
                 current_assistant_group = None
@@ -1681,6 +1827,8 @@ class SessionManager:
                             turn_no = turn_map.get(row_id)
                             if turn_no is not None and turn_no in context_map:
                                 user_msg["at_context"] = context_map[turn_no]
+                            if row_id in content_map:
+                                user_msg["message_contents"] = content_map[row_id]
                             messages.append(user_msg)
                             continue
 

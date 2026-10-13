@@ -500,6 +500,8 @@ class BaseVisualArtifactAgenticNode(AgenticNode, Generic[InputT, ResultT]):
                 # so finalize still runs when this is None (e.g. node was
                 # configured without db tools — unusual but supported).
                 db_func_tool=self.db_func_tool,
+                semantic_tools=self.semantic_tools,
+                context_search_tools=self.context_search_tools,
                 on_progress=on_progress,
             )
         except Exception as exc:
@@ -656,7 +658,15 @@ class BaseVisualArtifactAgenticNode(AgenticNode, Generic[InputT, ResultT]):
         into the artifact tree — or a validate attempt — means the model
         was mid-build and owes a successful ``validate_render``.
         """
-        return {"write_file", "edit_file", "delete_file", self.QUERY_SAVE_ACTION_TYPE, "validate_render"}
+        return {
+            "write_file",
+            "edit_file",
+            "delete_file",
+            self.QUERY_SAVE_ACTION_TYPE,
+            "save_metric_query",
+            "save_metric_query_template",
+            "validate_render",
+        }
 
     def _missing_binding_error(self) -> str:
         kind = self.ARTIFACT_KIND
@@ -713,7 +723,11 @@ class BaseVisualArtifactAgenticNode(AgenticNode, Generic[InputT, ResultT]):
         tool_calls = [a for a in all_actions if a.role == ActionRole.TOOL and a.status == ActionStatus.SUCCESS]
         tokens_used = self._extract_total_tokens(all_actions)
 
-        query_actions = [a for a in tool_calls if a.action_type == self.QUERY_SAVE_ACTION_TYPE]
+        query_actions = [
+            a
+            for a in tool_calls
+            if a.action_type in {self.QUERY_SAVE_ACTION_TYPE, "save_metric_query", "save_metric_query_template"}
+        ]
         app_jsx_rel_path: Optional[str] = None
         render_file_count = 0
         for tc in reversed(tool_calls):

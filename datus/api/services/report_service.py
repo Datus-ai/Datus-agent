@@ -17,12 +17,13 @@ import datetime as _dt
 import json
 import re
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import List, Optional
 
 from datus.api.models.base_models import Result
 from datus.api.models.report_models import ArtifactFile, ReportDetail
 from datus.configuration.agent_config import AgentConfig
 from datus.schemas.artifact_manifest import ArtifactManifest
+from datus.utils.artifact_files import iter_artifact_files
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
@@ -31,24 +32,6 @@ logger = get_logger(__name__)
 # report that ships every probe SQL alongside its JSX.
 _MAX_BUNDLE_BYTES: int = 25 * 1024 * 1024
 _MAX_FILES: int = 200
-
-# Per-prefix allowlist driving the flat artifact walker. Each entry maps
-# a slug-relative top-level directory to ``(allowed_suffixes, recursive)``:
-#
-#   * ``render/``   — recursive (.jsx subdirs like charts/, shared/);
-#                     also accepts .json / .md sidecars LLMs may write
-#                     alongside their JSX modules
-#   * ``queries/``  — one level (LLM writes flat <slug>.sql/.json pairs)
-#   * ``analysis/`` — one level (intent.md, insights.json, …)
-#
-# Adding a new top-level dir under reports/<slug>/ is a one-line entry;
-# everything else (walking, byte/file caps, sort, detail) adapts
-# automatically.
-_REPORT_ARTIFACT_DIRS: Dict[str, Tuple[Tuple[str, ...], bool]] = {
-    "render": ((".jsx", ".js", ".css", ".json", ".md"), True),
-    "queries": ((".sql", ".json"), False),
-    "analysis": ((".md", ".json"), False),
-}
 
 # Same shape as the SaaS-side ``visual_reports.slug`` column constraint.
 REPORT_SLUG_RE = re.compile(r"^[a-z0-9_]{1,80}$")
@@ -74,44 +57,7 @@ def _resolve_report_dir(project_files_root: Path, report_slug: str) -> Optional[
 
 
 def _iter_artifact_files(artifact_dir: Path) -> List[Path]:
-    """Walk ``artifact_dir`` and return allowed files sorted by slug-relative path.
-
-    Honours the per-prefix allowlist; files under any other directory or
-    whose name doesn't end in one of the listed suffix patterns are
-    silently dropped so a stray scratch file doesn't trip detail.
-
-    Each candidate is resolved before being kept so a symlink under
-    ``render/`` / ``queries/`` / ``analysis/`` cannot exfiltrate a file
-    from outside the artifact directory into the inline bundle — the LLM
-    controls these paths and a stray ``ln -s /etc/passwd render/foo.jsx``
-    would otherwise survive the ``is_file()`` probe (which follows
-    symlinks).
-    """
-    artifact_dir_resolved = artifact_dir.resolve()
-    found: List[Path] = []
-    for sub, (allowed_suffixes, recursive) in _REPORT_ARTIFACT_DIRS.items():
-        root = artifact_dir / sub
-        if not root.is_dir():
-            continue
-        iterator = root.rglob("*") if recursive else root.iterdir()
-        for path in iterator:
-            if not path.is_file():
-                continue
-            name_lower = path.name.lower()
-            if not any(name_lower.endswith(suffix) for suffix in allowed_suffixes):
-                continue
-            resolved = path.resolve()
-            if not resolved.is_file():
-                continue
-            try:
-                resolved.relative_to(artifact_dir_resolved)
-            except ValueError:
-                # Symlink (or other indirection) escapes the artifact root —
-                # drop silently rather than leak content from outside.
-                continue
-            found.append(path)
-    found.sort(key=lambda p: p.relative_to(artifact_dir).as_posix())
-    return found
+    return iter_artifact_files(artifact_dir, "report")
 
 
 class ReportService:

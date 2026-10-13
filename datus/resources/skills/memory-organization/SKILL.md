@@ -79,7 +79,7 @@ Once the user confirms or corrects the plan, apply each action with the store's 
 - **Misclassified items** → re-route through the correct owner: regenerate semantic assets with `semantic_modeling`, reference SQL with `gen_sql_summary`, skills with `gen_skill`, or knowledge with `extract-knowledge` (lite) — passing the lifted content + context above — then remove the stale copy from the wrong store.
 - **Duplicates** → consolidate via `edit_file` (knowledge / reference_sql YAML index) or `edit_memory` (memory).
 - **Conflicts** → keep the resolved entry (per the Step 2 `ask_user` decision) and remove the other.
-- **AGENTS.md index / structure** → fix with a scoped `edit_file`; never rewrite the whole file when a scoped edit suffices, and never touch `## Knowledge` entries owned by `extract-knowledge` beyond removing provably dead links.
+- **AGENTS.md index / structure** → fix with a scoped `edit_file`; never rewrite the whole file when a scoped edit suffices, and never touch `## Knowledge` entries you did not write (maintained by `/init` and `extract-knowledge`) beyond removing provably dead links.
 - **Stale / erroneous entries** → remove them.
 
 For any destructive overwrite or deletion that the plan did not already spell out, go through `ask_user` first. Never hand-write `semantic_models` / `metrics` / `reference_sql` YAML — always go through the matching subagent. **Concurrency ≤ 3** for heavy `task` calls; update each todo (`in_progress` → `completed` / `failed`) as you go.
@@ -93,7 +93,7 @@ End with a short human-readable summary: how many issues were remediated, what c
 - Do not hand-write `semantic_models` / `metrics` / `reference_sql` YAML or vector-store rows — always delegate to the matching `task` subagent.
 - Do not run `extract-knowledge` in deep mode — use lite.
 - Do not exceed the 2000-byte `memory` cap, and do not write `memory` with any tool other than `add_memory` / `edit_memory`.
-- Do not overwrite `## Knowledge` entries in `AGENTS.md` beyond removing provably dead index links — those are owned by `extract-knowledge`.
+- Do not overwrite `## Knowledge` entries in `AGENTS.md` beyond removing provably dead index links — the section is maintained by `/init` and `extract-knowledge`.
 - Do not execute any remediation before the user confirms the plan.
 - Do not delete or overwrite content destructively without an explicit plan row or an `ask_user` confirmation.
 - Do not generate replacement content yourself — your job is to audit, classify, and re-route, not to author.

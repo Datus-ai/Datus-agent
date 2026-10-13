@@ -3,7 +3,7 @@ Explorer service for catalog and subject tree management.
 """
 
 import asyncio
-from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Tuple
 
 from datus.api.models.base_models import Result
 from datus.api.models.explorer_models import (
@@ -657,7 +657,23 @@ class ExplorerService:
                     errorCode=ErrorCode.TOOL_EXECUTION_ERROR,
                     errorMessage=f"Failed to read metric source: {e}",
                 )
-            return Result[MetricInfo](success=True, data=MetricInfo(name=metric_name, yaml=source.text))
+            from pathlib import Path
+
+            from datus.agent.node.semantic_authoring import osi_semantic_models_root
+
+            source_file = None
+            root = osi_semantic_models_root(self.agent_config)
+            if root is not None:
+                try:
+                    relative = Path(source.file_path).resolve().relative_to(root.resolve())
+                    source_file = (Path("subject") / "semantic_models" / relative).as_posix()
+                except ValueError:
+                    pass
+
+            return Result[MetricInfo](
+                success=True,
+                data=MetricInfo(name=metric_name, yaml=source.text, semantic_model_file=source_file),
+            )
 
         except Exception as e:
             logger.error(f"Failed to get metric: {e}")
@@ -749,14 +765,23 @@ class ExplorerService:
             )
 
     def _narrow_by_metric_policy(
-        self, tools, metric_name: str, where: Optional[str], policy_context: Optional[Dict[str, Any]]
-    ) -> Optional[str]:
-        """Add any metric row policy's condition to ``where``.
+        self,
+        tools,
+        metric_name: str,
+        where: Optional[str],
+        policy_context: Optional[Dict[str, Any]],
+        context_filter: Optional[str] = None,
+    ) -> Tuple[Optional[str], Optional[str]]:
+        """Add any metric row policy's condition to the query's filters.
 
         Runs the same transformer chain the agent's ``query_metrics`` goes
         through, via the node-free entry point — there is no node here.
-        Returns ``where`` unchanged when no policy matches or none is
-        configured; raises ``ToolTransformDenied`` when a transformer refuses.
+        Returns ``(where, context_filter)``: unchanged when no policy matches
+        or none is configured; raises ``ToolTransformDenied`` when a
+        transformer refuses. Both filters are handed over and read back
+        because a policy scoping the calculation population (the rows a
+        window metric ranks against) belongs in ``context_filter``, not
+        ``where``, which a window query evaluates after ranking.
         """
         from datus.tools.middleware import transform_tool_args
 
@@ -767,9 +792,12 @@ class ExplorerService:
         # deployment would find its own previews refused.
         effective = policy_context or getattr(self.agent_config, "policy_context", None)
 
+        request_args: Dict[str, Any] = {"metrics": [metric_name], "where": where}
+        if context_filter:
+            request_args["context_filter"] = context_filter
         args = transform_tool_args(
             "query_metrics",
-            {"metrics": [metric_name], "where": where},
+            request_args,
             # The registry a direct caller does not have: manifests declare
             # these as ``semantic_tools.query_metrics``.
             category="semantic_tools",
@@ -787,9 +815,10 @@ class ExplorerService:
         # Default to the original: the contract lets a transformer return any
         # dict, and reading a missing key as "no filter" would widen the query.
         narrowed = args.get("where", where)
-        if narrowed != where:
+        narrowed_context = args.get("context_filter", context_filter)
+        if narrowed != where or narrowed_context != context_filter:
             logger.info(f"Metric policy narrowed the preview of '{metric_name}'")
-        return narrowed
+        return narrowed, narrowed_context
 
     async def preview_metric(
         self, request: MetricPreviewInput, policy_context: Optional[Dict[str, Any]] = None
@@ -861,8 +890,13 @@ class ExplorerService:
                 # that synchronously — on the loop thread it would park the
                 # whole API process for the length of a runtime round trip.
                 # Same reason the compile below is handed to a thread.
-                where = await asyncio.to_thread(
-                    self._narrow_by_metric_policy, tools, metric_name, request.where, policy_context
+                where, context_filter = await asyncio.to_thread(
+                    self._narrow_by_metric_policy,
+                    tools,
+                    metric_name,
+                    request.where,
+                    policy_context,
+                    request.context_filter,
                 )
             except ToolTransformDenied as exc:
                 # The transformer declines rather than guesses when it cannot
@@ -888,6 +922,7 @@ class ExplorerService:
                 limit=request.limit,
                 order_by=request.order_by or None,
                 dry_run=True,
+                context_filter=context_filter,
             )
 
             if func_result.success == 1:

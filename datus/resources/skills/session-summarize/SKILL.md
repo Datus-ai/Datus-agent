@@ -78,7 +78,7 @@ Once the user confirms or corrects the manifest:
 
 1. Treat `storage-classify`'s **Decision Tree** + **Per-Store Reference** + **Context Handoff to Subagents** as the routing authority for every item.
 2. **Make every delegated prompt self-contained (see storage-classify's *Context Handoff*).** Each generator runs in a fresh context and sees none of this session — so inline the **datasource (+ dialect)**, the **business intent / question** the session established, and the **rules/encodings surfaced this session** that the artifact must honor. Use the `prompt-seed` you recorded in Step 2 as the carrier, not a bare ref. Route each item with the prescribed mechanism:
-   - **Light items** → write directly: `memory` via `add_memory` / `edit_memory` (≤ 2000 bytes); small `AGENTS.md` notes via `edit_file` (never overwrite `## Knowledge` entries owned by `extract-knowledge`).
+   - **Light items** → write directly: `memory` via `add_memory` / `edit_memory` (≤ 2000 bytes); small `AGENTS.md` notes via `edit_file` (never overwrite `## Knowledge` entries you did not write; the section is maintained by `/init` and `extract-knowledge`).
    - **Heavy items** → delegate (placeholders are the *minimum* each prompt must carry):
      - semantic_models / metrics → `task(type="semantic_modeling", prompt="<datasource> · table(s) · metric definitions if any · intent · known column encodings, join-key traps, and mandatory filters>")`
      - reference_sql → `task(type="gen_sql_summary", prompt="<datasource/dialect> · the complete SQL · the business question it answered · why it is written this way>")` — one call per SQL (instruct the generator: when the original question is known, use it verbatim as `search_text`)
@@ -96,7 +96,7 @@ End with a short human-readable summary: how many items were persisted, where ea
 - Do not hand-write `semantic_models` / `metrics` / `reference_sql` YAML or vector-store rows — always delegate to the matching `task` subagent.
 - Do not run `extract-knowledge` in deep mode — use lite.
 - Do not exceed the 2000-byte `memory` cap, and do not write `memory` with any tool other than `add_memory` / `edit_memory`.
-- Do not overwrite `## Knowledge` entries in `AGENTS.md` — those are owned by `extract-knowledge`.
+- Do not overwrite `## Knowledge` entries in `AGENTS.md` — the section is maintained by `/init` and `extract-knowledge`.
 - Do not persist one-shot content, generic SQL knowledge, presentation/answer conventions, or anything inferable from `INFORMATION_SCHEMA` / table comments / column names.
 - Do not generate the artifact's content yourself — your job is to harvest, classify, and route, not to author.
 - Do not run any generation before the user confirms the manifest.

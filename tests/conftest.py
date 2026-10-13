@@ -181,8 +181,9 @@ def isolate_bird_sqlite_databases(
 ) -> Path:
     """Repoint BIRD SQLite datasources at isolated writable database copies.
 
-    Nightly/acceptance configs intentionally reference the developer or CI
-    benchmark checkout under ``~/benchmark``. Tests that initialize adapters
+    Nightly configs reference the benchmark checkout under ``~/benchmark``;
+    PR and merge-queue jobs set ``DATUS_TEST_BIRD_ROOT`` to small generated
+    fixtures. Tests that initialize adapters
     capable of DDL, such as Legacy, must not write support tables back into
     that shared fixture. This helper copies the requested databases into a
     tmp-root benchmark layout, removes known generated support tables from the
@@ -193,16 +194,23 @@ def isolate_bird_sqlite_databases(
     if not names:
         raise ValueError("database_names must contain at least one database")
 
-    source_root = Path.home() / _BIRD_DEV_DATABASES
+    ci_source = os.getenv("DATUS_TEST_BIRD_ROOT")
+    source_root = Path(ci_source).expanduser().resolve() if ci_source else Path.home() / _BIRD_DEV_DATABASES
     if not source_root.exists():
-        pytest.skip(f"BIRD benchmark database root not found: {source_root}")
+        message = f"BIRD benchmark database root not found: {source_root}"
+        if ci_source:
+            pytest.fail(message)
+        pytest.skip(message)
 
     dest_root = Path(tmp_root) / _BIRD_DEV_DATABASES
     copied_paths: dict[str, Path] = {}
     for name in names:
         src = source_root / name / f"{name}.sqlite"
         if not src.exists():
-            pytest.skip(f"BIRD benchmark SQLite database not found: {src}")
+            message = f"BIRD benchmark SQLite database not found: {src}"
+            if ci_source:
+                pytest.fail(message)
+            pytest.skip(message)
         dst = dest_root / name / src.name
         dst.parent.mkdir(parents=True, exist_ok=True)
         if not reuse_existing or not dst.exists():

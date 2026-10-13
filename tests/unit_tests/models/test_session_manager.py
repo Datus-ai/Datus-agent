@@ -42,6 +42,188 @@ from datus.utils.async_utils import run_async
 from datus.utils.exceptions import DatusException
 from datus.utils.path_manager import DatusPathManager
 
+
+def _tool_content(call_id, duration, parent=None):
+    return {
+        "tool_call_id": call_id,
+        "parent_action_id": parent,
+        "parts": [
+            {
+                "type": "call-tool-result",
+                "payload": {
+                    "callToolId": call_id,
+                    "toolName": "execute_sql",
+                    "duration": duration,
+                    "shortDesc": "Done",
+                    "result": {"success": 1, "result": {"rows": 1}},
+                },
+            }
+        ],
+    }
+
+
+@pytest.mark.asyncio
+async def test_tool_contents_follow_rewind_rollback_clear_and_compaction(tmp_path):
+    manager = SessionManager(session_dir=str(tmp_path))
+    session_id = "chat_session_content_lifecycle"
+    session = manager.get_session(session_id)
+    for call_id, duration in [("first", 0.329), ("second", 2.5)]:
+        previous = manager.get_max_message_id(session_id)
+        await session.add_items(
+            [
+                {"role": "user", "content": call_id},
+                {"type": "function_call", "call_id": call_id, "name": "execute_sql", "arguments": "{}"},
+                {"type": "function_call_output", "call_id": call_id, "output": "{}"},
+            ]
+        )
+        manager.save_message_contents(session_id, {call_id: _tool_content(call_id, duration)}, previous)
+    rewound = manager.rewind_session(session_id, 1)
+    assert set(manager.get_tool_result_contents(rewound)) == {"first"}
+    assert manager.get_tool_result_contents(rewound)["first"]["duration"] == 0.329
+    checkpoint = manager.checkpoint_turn(session_id)
+    await session.add_items([{"type": "function_call_output", "call_id": "third", "output": "{}"}])
+    manager.save_message_contents(session_id, {"third": _tool_content("third", 1.25)}, checkpoint.max_message_id)
+    manager.rollback_turn(session_id, checkpoint)
+    assert set(manager.get_tool_result_contents(session_id)) == {"first", "second"}
+    await session.replace_items([{"role": "user", "content": "compacted"}])
+    assert manager.get_tool_result_contents(session_id) == {}
+    manager.clear_session(rewound)
+    assert manager.get_tool_result_contents(rewound) == {}
+
+
+@pytest.mark.asyncio
+async def test_nested_tool_contents_are_stored_with_the_outer_task_message(tmp_path):
+    manager = SessionManager(session_dir=str(tmp_path))
+    session_id = "chat_session_nested_contents"
+    session = manager.get_session(session_id)
+    await session.add_items(
+        [
+            {"role": "user", "content": "Run task"},
+            {"type": "function_call", "call_id": "outer", "name": "task", "arguments": "{}"},
+            {"type": "function_call_output", "call_id": "outer", "output": "{}"},
+        ]
+    )
+    records = {
+        "leaf": _tool_content("leaf", 0.125, "inner"),
+        "inner": _tool_content("inner", 1.5, "middle"),
+        "middle": _tool_content("middle", 2.5, "outer"),
+        "outer": _tool_content("outer", 3.5),
+        "orphan": _tool_content("orphan", 99),
+        "cycle": _tool_content("cycle", 1, "cycle"),
+    }
+    manager.save_message_contents(session_id, records)
+    results = manager.get_tool_result_contents(session_id)
+    assert results == {key: records[key]["parts"][0]["payload"] for key in ["leaf", "inner", "middle", "outer"]}
+    copied = manager.copy_session(session_id, "copied")
+    assert manager.get_tool_result_contents(copied) == results
+
+
+@pytest.mark.asyncio
+async def test_multiple_native_tool_contents_stay_out_of_user_messages(tmp_path):
+    manager = SessionManager(session_dir=str(tmp_path))
+    assert manager.get_tool_result_contents("missing_session") == {}
+    manager.save_message_contents("missing_session", {})
+    session_id = "chat_session_native_contents"
+    session = manager.get_session(session_id)
+    assert manager.get_tool_result_contents(session_id) == {}
+    items = [
+        {"role": "user", "content": "question"},
+        {
+            "role": "user",
+            "content": [{"type": "tool_result", "tool_use_id": call_id, "content": "{}"} for call_id in ["a", "b"]],
+        },
+    ]
+    await session.add_items(items)
+    records = {
+        "user": {"text": "question", "parts": [{"type": "markdown", "payload": {"content": "Original question"}}]},
+        "a": _tool_content("a", 0.125),
+        "b": _tool_content("b", 2.5),
+    }
+    manager.save_message_contents(session_id, records)
+    history = manager.get_session_messages(session_id)
+    assert history[0]["message_contents"] == records["user"]["parts"]
+    assert manager.get_tool_result_contents(session_id) == {
+        key: records[key]["parts"][0]["payload"] for key in ["a", "b"]
+    }
+    assert await session.get_items() == items
+    manager.save_message_contents(session_id, records)
+    with sqlite3.connect(os.path.join(manager.session_dir, f"{session_id}.db")) as conn:
+        saved = manager._read_message_contents(conn, session_id)
+    assert sorted(len(parts) for parts in saved.values()) == [1, 2]
+
+
+@pytest.mark.asyncio
+async def test_tool_contents_do_not_attach_to_previous_turns(tmp_path):
+    manager = SessionManager(session_dir=str(tmp_path))
+    session_id = "chat_session_old_contents"
+    session = manager.get_session(session_id)
+    await session.add_items([{"type": "function_call_output", "call_id": "same_id", "output": "{}"}])
+    boundary = manager.get_max_message_id(session_id)
+    manager.save_message_contents(session_id, {"same_id": _tool_content("same_id", 5)}, boundary)
+    assert manager.get_tool_result_contents(session_id) == {}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "{",
+        "null",
+        "42",
+        '"text"',
+        "{}",
+        '[null,42,"text",[]]',
+        '[{"type":"call-tool-result"}]',
+        '[{"type":"call-tool-result","payload":null}]',
+        '[{"type":"call-tool-result","payload":[]}]',
+        '[{"type":"call-tool-result","payload":{"callToolId":[]}}]',
+        '[{"type":"call-tool-result","payload":{"callToolId":{}}}]',
+        '[{"type":"call-tool-result","payload":{"callToolId":42}}]',
+    ],
+)
+async def test_corrupt_tool_content_rows_do_not_hide_valid_results(tmp_path, raw):
+    manager = SessionManager(session_dir=str(tmp_path))
+    session_id = "chat_session_corrupt_contents"
+    session = manager.get_session(session_id)
+    await session.add_items(
+        [
+            {"type": "function_call_output", "call_id": "valid", "output": "{}"},
+            {"type": "function_call_output", "call_id": "corrupt", "output": "{}"},
+        ]
+    )
+    record = _tool_content("valid", 0.329)
+    manager.save_message_contents(session_id, {"valid": record})
+    with sqlite3.connect(os.path.join(manager.session_dir, f"{session_id}.db")) as conn:
+        message_id = conn.execute("SELECT MAX(id) FROM agent_messages WHERE session_id = ?", (session_id,)).fetchone()[
+            0
+        ]
+        conn.execute("INSERT INTO chat_message_contents VALUES (?, ?, ?)", (session_id, message_id, raw))
+    assert manager.get_tool_result_contents(session_id) == {"valid": record["parts"][0]["payload"]}
+
+
+@pytest.mark.asyncio
+async def test_mixed_tool_content_parts_preserve_valid_payloads(tmp_path):
+    manager = SessionManager(session_dir=str(tmp_path))
+    session_id = "chat_session_mixed_contents"
+    await manager.get_session(session_id).add_items(
+        [{"type": "function_call_output", "call_id": "valid", "output": "{}"}]
+    )
+    record = _tool_content("valid", 0.329)
+    record["parts"] = [
+        None,
+        42,
+        [],
+        {"type": "call-tool-result", "payload": None},
+        *record["parts"],
+        {"type": "call-tool-result", "payload": {"callToolId": ""}},
+        {"type": "markdown", "payload": {"callToolId": "ignored"}},
+    ]
+    manager.save_message_contents(session_id, {"valid": record})
+    assert manager.get_tool_result_contents(session_id) == {
+        "valid": _tool_content("valid", 0.329)["parts"][0]["payload"]
+    }
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -244,7 +426,22 @@ class TestSessionManagerExecution:
         )
         checkpoint = sm.checkpoint_turn(session_id)
 
+        sm.save_message_contents(
+            session_id,
+            {"kept": {"text": "kept question", "parts": [{"type": "markdown", "payload": {"content": "kept"}}]}},
+        )
+
         asyncio.run(session.add_items([{"role": "user", "content": "cancelled question"}]))
+        sm.save_message_contents(
+            session_id,
+            {
+                "cancelled": {
+                    "text": "cancelled question",
+                    "parts": [{"type": "markdown", "payload": {"content": "cancelled"}}],
+                }
+            },
+            previous_message_id=checkpoint.max_message_id,
+        )
         db_path = os.path.join(sm.session_dir, f"{session_id}.db")
         with sqlite3.connect(db_path) as conn:
             conn.execute(
@@ -273,6 +470,11 @@ class TestSessionManagerExecution:
             {"role": "assistant", "content": "kept answer"},
         ]
         with sqlite3.connect(db_path) as conn:
+            contents = conn.execute(
+                "SELECT contents_json FROM chat_message_contents WHERE session_id = ?", (session_id,)
+            ).fetchall()
+            assert len(contents) == 1
+            assert json.loads(contents[0][0]) == [{"type": "markdown", "payload": {"content": "kept"}}]
             assert (
                 conn.execute("SELECT COUNT(*) FROM agent_messages WHERE session_id = ?", (session_id,)).fetchone()[0]
                 == 2

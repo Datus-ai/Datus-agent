@@ -21,6 +21,7 @@ from datus.schemas.action_history import ActionRole, ActionStatus
 from datus.schemas.chat_agentic_node_models import ChatNodeInput, ChatNodeResult
 from datus.tools.func_tool import ContextSearchTools, DBFuncTool, FilesystemFuncTool, PlatformDocSearchTool
 from datus.tools.func_tool.date_parsing_tools import DateParsingTools
+from datus.tools.func_tool.lineage_tools import LineageTools
 from datus.tools.func_tool.reference_template_tools import ReferenceTemplateTools
 from datus.tools.permission.permission_manager import PermissionManager
 from datus.tools.skill_tools.skill_func_tool import SkillFuncTool
@@ -94,6 +95,7 @@ class ChatAgenticNode(AgenticNode):
         self.context_search_tools: Optional[ContextSearchTools] = None
         self.degraded_capabilities: Dict[str, str] = {}
         self.date_parsing_tools: Optional[DateParsingTools] = None
+        self.lineage_tools: Optional[LineageTools] = None
         self.filesystem_func_tool: Optional[FilesystemFuncTool] = None
         self._platform_doc_tool: Optional[PlatformDocSearchTool] = None
         self.reference_template_tools: Optional[ReferenceTemplateTools] = None
@@ -202,6 +204,8 @@ class ChatAgenticNode(AgenticNode):
             self._setup_date_parsing_tools()
         if self._family_enabled(selected, "filesystem_tools"):
             self._setup_filesystem_tools()
+        if self._family_enabled(selected, "lineage_tools"):
+            self._setup_lineage_tools()
         if self._family_enabled(selected, "memory_tools"):
             self._setup_memory_tools()
         # self.bash_tool was created in AgenticNode.__init__, so leaving it in
@@ -283,6 +287,22 @@ class ChatAgenticNode(AgenticNode):
             logger.debug(f"Setup filesystem tools with root path: {self.filesystem_func_tool.root_path}")
         except Exception as e:
             logger.error(f"Failed to setup filesystem tools: {e}")
+
+    def _setup_lineage_tools(self):
+        """Setup static SQL lineage extraction, anchored at the same root as the filesystem tools."""
+        # vscode proxies only filesystem_tools.* to the IDE; lineage would scan the daemon's CWD.
+        if getattr(self.agent_config, "_client_source", None) == "vscode":
+            self.lineage_tools = None
+            return
+        try:
+            self.lineage_tools = LineageTools(
+                self.agent_config,
+                root_path=self._resolve_workspace_root(),
+                path_allowlist=self._resolve_filesystem_allowlist(),
+            )
+            self.tools.extend(self.lineage_tools.available_tools())
+        except Exception as e:
+            logger.error(f"Failed to setup lineage tools: {e}")
 
     def _setup_platform_doc_tools(self):
         """Setup platform documentation search tools."""
@@ -398,6 +418,8 @@ class ChatAgenticNode(AgenticNode):
             self.tools.extend(self.date_parsing_tools.available_tools())
         if self.filesystem_func_tool and enabled("filesystem_tools"):
             self.tools.extend(self.filesystem_func_tool.available_tools())
+        if self.lineage_tools and enabled("lineage_tools"):
+            self.tools.extend(self.lineage_tools.available_tools())
         if self.memory_func_tool and enabled("memory_tools"):
             self.tools.extend(self.memory_func_tool.available_tools())
         if self.bash_tool and enabled("bash_tools"):
