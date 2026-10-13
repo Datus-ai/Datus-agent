@@ -214,6 +214,10 @@ class DatusSQLiteSession(AdvancedSQLiteSession):
                     turn = max(0, max(turn, usage_turn) + pending_user_turns - users)
                     branch_turn = max(0, branch_turn + pending_user_turns - users)
                     conn.execute("DELETE FROM message_structure WHERE session_id = ?", (self.session_id,))
+                    if conn.execute(
+                        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'chat_tool_timings'"
+                    ).fetchone():
+                        conn.execute("DELETE FROM chat_tool_timings WHERE session_id = ?", (self.session_id,))
                     conn.execute(f"DELETE FROM {self.messages_table} WHERE session_id = ?", (self.session_id,))
                     conn.execute(
                         f"INSERT OR IGNORE INTO {self.sessions_table} (session_id) VALUES (?)", (self.session_id,)

@@ -355,6 +355,7 @@ class ChatTask:
         # node at this same instance, so the filter drains these on turn one.
         self.pending_input_queue: PendingInputQueue = PendingInputQueue()
         self.message_contents: Dict[str, dict] = {}
+        self.tool_timings: Dict[str, dict] = {}
         self.content_events: Dict[str, str] = {}
         self.previous_message_id: Optional[int] = 0
         # Whether ``/chat/insert`` may still enqueue. ``_run_loop`` flips this
@@ -1220,17 +1221,26 @@ class ChatTaskManager:
             logger.warning("Turn settlement hook failed for session %s", task.session_id, exc_info=True)
 
     async def _persist_message_contents(self, task, agent_config, session_id, user_id) -> None:
-        if not task.message_contents or task.previous_message_id is None:
+        if task.previous_message_id is None:
             return
         try:
-            await asyncio.to_thread(
-                self._session_manager(agent_config, user_id).save_message_contents,
-                session_id,
-                task.message_contents,
-                task.previous_message_id,
-            )
+            storage = self._session_manager(agent_config, user_id)
+            if task.message_contents:
+                await asyncio.to_thread(
+                    storage.save_message_contents, session_id, task.message_contents, task.previous_message_id
+                )
         except Exception:
             logger.exception("Failed to persist message contents for %s", session_id)
+        try:
+            if task.tool_timings:
+                await asyncio.to_thread(
+                    self._session_manager(agent_config, user_id).save_tool_timings,
+                    session_id,
+                    task.tool_timings,
+                    task.previous_message_id,
+                )
+        except Exception:
+            logger.exception("Failed to persist tool timings for %s", session_id)
 
     @staticmethod
     def _emit_turn_stats(
@@ -1393,6 +1403,13 @@ class ChatTaskManager:
 
     async def _push_event(self, task: ChatTask, event: SSEEvent) -> None:
         """Append an event to the task buffer and notify consumers."""
+        if isinstance(event.data, SSEMessageData):
+            for part in event.data.payload.content:
+                if part.type == "call-tool-result" and part.payload.get("callToolId"):
+                    task.tool_timings[part.payload["callToolId"]] = {
+                        "duration": part.payload.get("duration"),
+                        "parent_action_id": event.data.payload.parent_action_id,
+                    }
         logger.debug(f"Pushing event: {event}")
         async with task.condition:
             task.events.append(event)

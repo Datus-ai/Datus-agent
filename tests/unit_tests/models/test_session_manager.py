@@ -42,6 +42,78 @@ from datus.utils.async_utils import run_async
 from datus.utils.exceptions import DatusException
 from datus.utils.path_manager import DatusPathManager
 
+
+@pytest.mark.asyncio
+async def test_tool_timings_follow_rewind_rollback_and_compaction(tmp_path):
+    manager = SessionManager(session_dir=str(tmp_path))
+    session_id = "chat_session_timing_lifecycle"
+    session = manager.get_session(session_id)
+    for call_id, seconds in [("first", 0.329), ("second", 2.5)]:
+        previous = manager.get_max_message_id(session_id)
+        await session.add_items(
+            [
+                {"role": "user", "content": call_id},
+                {"type": "function_call", "call_id": call_id, "name": "execute_sql", "arguments": "{}"},
+                {"type": "function_call_output", "call_id": call_id, "output": "{}"},
+            ]
+        )
+        manager.save_tool_timings(session_id, {call_id: {"duration": seconds}}, previous)
+    rewound = manager.rewind_session(session_id, 1)
+    assert manager.get_tool_timings(rewound) == {"first": 0.329}
+
+    checkpoint = manager.checkpoint_turn(session_id)
+    await session.add_items(
+        [{"role": "user", "content": "third"}, {"type": "function_call_output", "call_id": "third", "output": "{}"}]
+    )
+    manager.save_tool_timings(session_id, {"third": {"duration": 1.1}}, checkpoint.max_message_id)
+    manager.rollback_turn(session_id, checkpoint)
+    assert manager.get_tool_timings(session_id) == {"first": 0.329, "second": 2.5}
+
+    await session.replace_items([{"role": "user", "content": "compacted"}])
+    assert manager.get_tool_timings(session_id) == {}
+    manager.clear_session(rewound)
+    assert manager.get_tool_timings(rewound) == {}
+
+
+@pytest.mark.asyncio
+async def test_nested_tool_timings_belong_to_the_outer_task_result(tmp_path):
+    manager = SessionManager(session_dir=str(tmp_path))
+    session_id = "chat_session_nested_timing"
+    session = manager.get_session(session_id)
+    await session.add_items(
+        [
+            {"role": "user", "content": "Run task"},
+            {"type": "function_call", "call_id": "outer", "name": "task", "arguments": "{}"},
+            {"type": "function_call_output", "call_id": "outer", "output": "{}"},
+        ]
+    )
+    timings = {
+        "leaf": {"duration": 0.125, "parent_action_id": "inner"},
+        "inner": {"duration": 1.5, "parent_action_id": "middle"},
+        "middle": {"duration": 2.5, "parent_action_id": "outer"},
+        "outer": {"duration": 3.5},
+        "orphan": {"duration": 9},
+        "cycle": {"duration": 1, "parent_action_id": "cycle"},
+    }
+    manager.save_tool_timings(session_id, timings)
+    assert manager.get_tool_timings(session_id) == {
+        key: timings[key]["duration"] for key in ["leaf", "inner", "middle", "outer"]
+    }
+    copied = manager.copy_session(session_id, "copy")
+    assert manager.get_tool_timings(copied) == manager.get_tool_timings(session_id)
+
+
+@pytest.mark.asyncio
+async def test_tool_timing_does_not_attach_to_a_previous_turn(tmp_path):
+    manager = SessionManager(session_dir=str(tmp_path))
+    session_id = "chat_session_old_timing"
+    session = manager.get_session(session_id)
+    await session.add_items([{"type": "function_call_output", "call_id": "same_id", "output": "{}"}])
+    boundary = manager.get_max_message_id(session_id)
+    manager.save_tool_timings(session_id, {"same_id": {"duration": 5}}, boundary)
+    assert manager.get_tool_timings(session_id) == {}
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

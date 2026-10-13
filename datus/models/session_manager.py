@@ -6,6 +6,7 @@
 
 import ast
 import json
+import math
 import os
 import re
 import sqlite3
@@ -200,6 +201,8 @@ class SessionManager:
             with sqlite3.connect(db_path, timeout=5.0) as conn:
                 conn.execute(self._MESSAGE_CONTENTS_DDL)
                 conn.execute("DELETE FROM chat_message_contents WHERE session_id = ?", (session_id,))
+                conn.execute(self._TOOL_TIMINGS_DDL)
+                conn.execute("DELETE FROM chat_tool_timings WHERE session_id = ?", (session_id,))
             logger.debug(f"Cleared session: {session_id}")
         else:
             logger.warning(f"Attempted to clear non-existent session: {session_id}")
@@ -339,6 +342,11 @@ class SessionManager:
                 if self._table_exists(conn, "chat_message_contents"):
                     conn.execute(
                         "DELETE FROM chat_message_contents WHERE session_id = ? AND message_id > ?",
+                        (session_id, checkpoint.max_message_id),
+                    )
+                if self._table_exists(conn, "chat_tool_timings"):
+                    conn.execute(
+                        "DELETE FROM chat_tool_timings WHERE session_id = ? AND message_id > ?",
                         (session_id, checkpoint.max_message_id),
                     )
                 if self._table_exists(conn, "agent_messages"):
@@ -587,6 +595,7 @@ class SessionManager:
             # for the copy's own scan to find, so without this the new session
             # would list as untitled.
             meta_rows = self._read_session_meta(cursor, source_session_id)
+            timing_rows = self._read_tool_timing_rows(src_conn, source_session_id)
             content_rows = self._read_message_contents(src_conn, source_session_id)
 
         # Materialize tables in the new DB first (short-lived session is released
@@ -625,6 +634,7 @@ class SessionManager:
                 [(new_session_id, *row) for row in turn_usage_rows],
             )
             self._write_session_meta(new_conn, new_session_id, meta_rows)
+            self._write_tool_timing_rows(new_conn, new_session_id, timing_rows)
             new_conn.execute(self._MESSAGE_CONTENTS_DDL)
             new_conn.executemany(
                 "INSERT OR REPLACE INTO chat_message_contents VALUES (?, ?, ?)",
@@ -771,10 +781,12 @@ class SessionManager:
             # session — and it is the only copy left once the source has been
             # compacted.
             meta_rows = self._read_session_meta(cursor, source_session_id)
+            timing_rows = self._read_tool_timing_rows(src_conn, source_session_id)
             content_rows = self._read_message_contents(src_conn, source_session_id)
             content_rows = {
                 message_id: parts for message_id, parts in content_rows.items() if message_id in kept_message_ids
             }
+            timing_rows = [row for row in timing_rows if row[0] in kept_message_ids]
 
         # Insert session record, messages, message_structure, and turn_usage into the new DB.
         # Preserve agent_messages.id so message_structure.message_id references remain valid.
@@ -825,6 +837,7 @@ class SessionManager:
                     (new_session_id, *usage_row),
                 )
             self._write_session_meta(new_conn, new_session_id, meta_rows)
+            self._write_tool_timing_rows(new_conn, new_session_id, timing_rows)
             new_conn.execute(self._MESSAGE_CONTENTS_DDL)
             new_conn.executemany(
                 "INSERT OR REPLACE INTO chat_message_contents VALUES (?, ?, ?)",
@@ -1436,6 +1449,87 @@ class SessionManager:
         "session_id TEXT NOT NULL, message_id INTEGER NOT NULL, contents_json TEXT NOT NULL, "
         "PRIMARY KEY (session_id, message_id))"
     )
+
+    _TOOL_TIMINGS_DDL = (
+        "CREATE TABLE IF NOT EXISTS chat_tool_timings ("
+        "session_id TEXT NOT NULL, message_id INTEGER NOT NULL, call_id TEXT NOT NULL, duration REAL NOT NULL, "
+        "PRIMARY KEY (session_id, message_id, call_id))"
+    )
+
+    @staticmethod
+    def _read_tool_timing_rows(conn, session_id: str) -> list:
+        try:
+            return conn.execute(
+                "SELECT t.message_id, t.call_id, t.duration FROM chat_tool_timings t "
+                "JOIN agent_messages m ON m.id = t.message_id AND m.session_id = t.session_id "
+                "WHERE t.session_id = ? ORDER BY t.message_id",
+                (session_id,),
+            ).fetchall()
+        except sqlite3.OperationalError:
+            return []
+
+    def _write_tool_timing_rows(self, conn, session_id: str, rows: list) -> None:
+        conn.execute(self._TOOL_TIMINGS_DDL)
+        conn.executemany(
+            "INSERT OR REPLACE INTO chat_tool_timings VALUES (?, ?, ?, ?)", [(session_id, *row) for row in rows]
+        )
+
+    def get_tool_timings(self, session_id: str) -> Dict[str, float]:
+        self._validate_session_id(session_id)
+        db_path = os.path.join(self.session_dir, f"{session_id}.db")
+        if not os.path.isfile(db_path):
+            return {}
+        with sqlite3.connect(db_path, timeout=5.0) as conn:
+            return {call_id: duration for _, call_id, duration in self._read_tool_timing_rows(conn, session_id)}
+
+    def save_tool_timings(self, session_id: str, timings: Dict[str, dict], previous_message_id: int = 0) -> None:
+        """Keep streamed timings outside SDK model input, tied to persisted result rows.
+
+        Nested tool results belong to their outer task result's row, so copying
+        or rewinding that task also carries exactly its nested display timings.
+        Do not attach a result that the model never persisted to an older turn.
+        """
+        self._validate_session_id(session_id)
+        db_path = os.path.join(self.session_dir, f"{session_id}.db")
+        if not timings or not os.path.isfile(db_path):
+            return
+        with sqlite3.connect(db_path, timeout=5.0) as conn:
+            result_rows = {}
+            for message_id, raw in conn.execute(
+                "SELECT id, message_data FROM agent_messages WHERE session_id = ? AND id > ? ORDER BY id",
+                (session_id, previous_message_id),
+            ):
+                message = json.loads(raw)
+                if message.get("type") == "function_call_output" and message.get("call_id"):
+                    result_rows[message["call_id"]] = message_id
+                content = message.get("content")
+                if isinstance(content, list):
+                    for block in content:
+                        if (
+                            isinstance(block, dict)
+                            and block.get("type") in ("tool_result", "web_search_tool_result", "web_fetch_tool_result")
+                            and block.get("tool_use_id")
+                        ):
+                            result_rows[block["tool_use_id"]] = message_id
+
+            rows = []
+            for call_id, record in timings.items():
+                duration = record.get("duration")
+                if (
+                    isinstance(duration, bool)
+                    or not isinstance(duration, (int, float))
+                    or not math.isfinite(duration)
+                    or duration < 0
+                ):
+                    continue
+                owner = call_id
+                seen = set()
+                while owner not in result_rows and owner in timings and owner not in seen:
+                    seen.add(owner)
+                    owner = timings[owner].get("parent_action_id")
+                if owner in result_rows:
+                    rows.append((result_rows[owner], call_id, duration))
+            self._write_tool_timing_rows(conn, session_id, rows)
 
     def get_max_message_id(self, session_id: str) -> int:
         self._validate_session_id(session_id)

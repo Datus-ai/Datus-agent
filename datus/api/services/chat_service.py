@@ -436,6 +436,7 @@ class ChatService:
             # Use SessionManager to get messages from SQLite
             session_manager = SessionManager(session_dir=self._session_dir, scope=user_id)
             raw_messages = session_manager.get_session_messages(session_id)
+            tool_timings = session_manager.get_tool_timings(session_id)
 
             if not raw_messages:
                 return Result[ChatHistoryData](success=True, data=ChatHistoryData())
@@ -504,6 +505,15 @@ class ChatService:
                             )
                         )
                         event_id += 1
+
+            # Tool timings are display metadata, not model messages. Apply them
+            # after conversion so expanded nested subagent results use them too.
+            for message in sse_messages:
+                for part in message.content:
+                    if part.type == "call-tool-result":
+                        call_id = part.payload.get("callToolId")
+                        if call_id in tool_timings:
+                            part.payload["duration"] = tool_timings[call_id]
 
             logger.info(
                 "chat.history_loaded",
