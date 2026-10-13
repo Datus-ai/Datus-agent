@@ -13,16 +13,21 @@ Tests the skill-related methods in the AgenticNode base class:
 """
 
 from unittest.mock import Mock, patch
+from xml.etree import ElementTree as ET
 
 import pytest
 
 from datus.agent.node.agentic_node import AgenticNode
 from datus.configuration.agent_config import AgentConfig
+from datus.tools.db_tools.config import SQLiteConfig
+from datus.tools.db_tools.sqlite_connector import SQLiteConnector
+from datus.tools.func_tool.database import DBFuncTool
 from datus.tools.permission.permission_config import PermissionConfig, PermissionLevel, PermissionRule
 from datus.tools.permission.permission_manager import PermissionManager
 from datus.tools.skill_tools.skill_config import SkillConfig
 from datus.tools.skill_tools.skill_func_tool import SkillFuncTool
 from datus.tools.skill_tools.skill_manager import SkillManager
+from datus.utils.constants import DBType
 
 # Globally patch LLMBaseModel.create_model to return None for all tests
 pytestmark = pytest.mark.usefixtures("mock_llm_model")
@@ -1147,6 +1152,28 @@ class TestBashToolToggle:
         assert node.bash_tool.execution_context_provider is None
 
 
+@pytest.fixture
+def bound_db_tool(tmp_path):
+    """Use the real primary-connector contract without any remote database."""
+    connector = SQLiteConnector(SQLiteConfig(db_path=str(tmp_path / "skills.sqlite")))
+    tool = DBFuncTool(connector)
+    yield tool
+    connector.close()
+
+
+@pytest.fixture
+def database_skill_manager(temp_skills_dir, skill_manager):
+    """Discover dialect skills from local files as installed adapters would."""
+    for db_type in ("sqlite", "duckdb", "oracle", "postgresql", "custom-db"):
+        skill_dir = temp_skills_dir / f"db-{db_type}-sql"
+        skill_dir.mkdir()
+        (skill_dir / "SKILL.md").write_text(
+            f"---\nname: db-{db_type}-sql\ndescription: {db_type} SQL rules\n---\n\n{db_type} dialect instructions.\n"
+        )
+    skill_manager.refresh()
+    return skill_manager
+
+
 class TestRequiredSkillsInjection:
     """``REQUIRED_SKILLS`` host-injection primitive (``_inject_required_skills``)."""
 
@@ -1207,6 +1234,8 @@ class TestRequiredSkillsInjection:
         mock_agent_config,
         skill_manager,
         temp_skills_dir,
+        bound_db_tool,
+        monkeypatch,
     ):
         skill_dir = temp_skills_dir / "db-oracle-sql"
         skill_dir.mkdir()
@@ -1228,23 +1257,30 @@ Use FETCH FIRST instead of LIMIT.
         }
         node = self._make_node(mock_agent_config, skill_manager, None)
 
+        monkeypatch.setattr(bound_db_tool.connector, "get_type", lambda: "oracle")
+        node.db_func_tool = bound_db_tool
+
         result = node._inject_required_skills("base prompt")
 
         assert '<required_skill name="db-oracle-sql">' in result
         assert "Use FETCH FIRST instead of LIMIT." in result
         assert "db-postgresql-sql" not in result
 
-    def test_database_skill_config_failure_leaves_prompt_unchanged(self, mock_agent_config, skill_manager):
-        mock_agent_config.current_db_configs.side_effect = RuntimeError("config unavailable")
-        node = self._make_node(mock_agent_config, skill_manager, None)
-
-        assert node._inject_required_skills("base prompt") == "base prompt"
+    def test_database_skill_connector_failure_leaves_prompt_unchanged(
+        self, mock_agent_config, database_skill_manager, bound_db_tool
+    ):
+        node = self._make_node(mock_agent_config, database_skill_manager, None)
+        node.db_func_tool = bound_db_tool
+        with patch.object(bound_db_tool.connector, "get_type", side_effect=RuntimeError("connector unavailable")):
+            assert node._inject_required_skills("base prompt") == "base prompt"
 
     def test_database_skill_outside_node_scope_is_skipped(
         self,
         mock_agent_config,
         skill_manager,
         temp_skills_dir,
+        bound_db_tool,
+        monkeypatch,
     ):
         skill_dir = temp_skills_dir / "db-oracle-sql"
         skill_dir.mkdir()
@@ -1264,5 +1300,118 @@ Use FETCH FIRST instead of LIMIT.
         skill_manager.refresh()
         mock_agent_config.current_db_configs.return_value = {"oracle_prod": {"type": "oracle"}}
         node = self._make_node(mock_agent_config, skill_manager, None)
+        monkeypatch.setattr(bound_db_tool.connector, "get_type", lambda: "oracle")
+        node.db_func_tool = bound_db_tool
+
+        assert node._inject_required_skills("base prompt") == "base prompt"
+
+    @pytest.mark.parametrize("node_name", ["ask_metrics", "gen_report"])
+    @pytest.mark.parametrize("required", [None, "sql-analysis"])
+    def test_nodes_without_db_tools_skip_dialect_skills(
+        self, mock_agent_config, database_skill_manager, node_name, required, monkeypatch
+    ):
+        mock_agent_config.current_db_configs.return_value = {"sqlite": {"type": DBType.SQLITE}}
+        node = self._make_node(mock_agent_config, database_skill_manager, required)
+        monkeypatch.setattr(node, "get_node_name", lambda: node_name)
+        node.db_func_tool = None
+
+        result = node._inject_required_skills("base prompt")
+
+        assert '<required_skill name="db-' not in result
+        if required:
+            assert f'<required_skill name="{required}">' in result
+        else:
+            assert result == "base prompt"
+
+    @pytest.mark.parametrize(
+        ("db_type", "expected"),
+        [(DBType.SQLITE, "sqlite"), (DBType.DUCKDB, "duckdb"), (" ORACLE ", "oracle"), ("CUSTOM_DB", "custom-db")],
+    )
+    def test_only_bound_connector_dialect_is_injected(
+        self, mock_agent_config, database_skill_manager, bound_db_tool, monkeypatch, db_type, expected
+    ):
+        mock_agent_config.current_db_configs.return_value = {
+            "oracle": {"type": "oracle"},
+            "postgres": {"type": "postgresql"},
+            "sqlite": {"type": DBType.SQLITE},
+            "another_sqlite": {"type": DBType.SQLITE},
+        }
+        mock_agent_config.current_datasource = "postgres"
+        node = self._make_node(mock_agent_config, database_skill_manager, None)
+        node.db_func_tool = bound_db_tool
+        monkeypatch.setattr(bound_db_tool.connector, "get_type", lambda: db_type)
+
+        result = node._inject_required_skills("base prompt")
+        skills = ET.fromstring(f"<prompt>{result}</prompt>").findall("required_skill")
+
+        assert [skill.attrib["name"] for skill in skills] == [f"db-{expected}-sql"]
+        assert f"{expected} dialect instructions." in skills[0].text
+
+    def test_real_connector_type_wins_over_changed_config(
+        self, mock_agent_config, database_skill_manager, bound_db_tool
+    ):
+        node = self._make_node(mock_agent_config, database_skill_manager, None)
+        node.db_func_tool = bound_db_tool
+        mock_agent_config.current_datasource = "duckdb"
+        mock_agent_config.current_db_configs.return_value = {"duckdb": {"type": DBType.DUCKDB}}
+
+        result = node._inject_required_skills("base prompt")
+
+        assert '<required_skill name="db-sqlite-sql">' in result
+        assert 'name="db-duckdb-sql"' not in result
+        mock_agent_config.current_db_configs.assert_not_called()
+
+    def test_required_and_bound_dialect_skill_is_injected_once(
+        self, mock_agent_config, database_skill_manager, bound_db_tool
+    ):
+        node = self._make_node(mock_agent_config, database_skill_manager, "db-sqlite-sql, db-sqlite-sql")
+        node.db_func_tool = bound_db_tool
+        mock_agent_config.current_db_configs.return_value = {"sqlite": {"type": DBType.SQLITE}}
+
+        result = node._inject_required_skills("base prompt")
+
+        assert result.count('<required_skill name="db-sqlite-sql">') == 1
+
+    def test_missing_optional_bound_dialect_skill_is_skipped(self, mock_agent_config, skill_manager, bound_db_tool):
+        node = self._make_node(mock_agent_config, skill_manager, "sql-analysis")
+        node.db_func_tool = bound_db_tool
+
+        result = node._inject_required_skills("base prompt")
+
+        assert '<required_skill name="sql-analysis">' in result
+        assert '<required_skill name="db-' not in result
+
+    def test_missing_explicit_skill_still_fails_with_db_tools(
+        self, mock_agent_config, database_skill_manager, bound_db_tool
+    ):
+        from datus.utils.exceptions import DatusException
+
+        node = self._make_node(mock_agent_config, database_skill_manager, "no-such-skill")
+        node.db_func_tool = bound_db_tool
+
+        with pytest.raises(DatusException, match="no-such-skill"):
+            node._inject_required_skills("base prompt")
+
+    @pytest.mark.parametrize("db_type", [None, "", "   "])
+    def test_empty_bound_type_does_not_fall_back_to_config(
+        self, mock_agent_config, database_skill_manager, bound_db_tool, monkeypatch, db_type
+    ):
+        mock_agent_config.current_db_configs.return_value = {"sqlite": {"type": DBType.SQLITE}}
+        node = self._make_node(mock_agent_config, database_skill_manager, "sql-analysis")
+        node.db_func_tool = bound_db_tool
+        monkeypatch.setattr(bound_db_tool.connector, "get_type", lambda: db_type)
+
+        result = node._inject_required_skills("base prompt")
+
+        assert '<required_skill name="sql-analysis">' in result
+        assert '<required_skill name="db-' not in result
+
+    def test_unbound_db_tool_does_not_fall_back_to_config(
+        self, mock_agent_config, database_skill_manager, bound_db_tool, monkeypatch
+    ):
+        mock_agent_config.current_db_configs.return_value = {"sqlite": {"type": DBType.SQLITE}}
+        node = self._make_node(mock_agent_config, database_skill_manager, None)
+        node.db_func_tool = bound_db_tool
+        monkeypatch.setattr(bound_db_tool, "_primary_connector", None)
 
         assert node._inject_required_skills("base prompt") == "base prompt"
