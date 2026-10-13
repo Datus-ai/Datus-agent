@@ -4986,15 +4986,17 @@
 <p>在 REPL 中使用 <code>/init</code> 命令运行。</p>
 <h2 id="_1">功能作用<a class="headerlink" href="#_1" title="Permanent link">&para;</a></h2>
 <ul>
-<li>用 <code>extract_sql_lineage</code> 工具静态分析项目里的 SQL（ETL 脚本和 Python DAG 中的 SQL）：表依赖、关联键、连接方向和表达式。过滤条件、映射、窗口及作者注释从 SQL 原文读取。不执行任何 SQL。</li>
+<li>用 <code>upsert_lineage</code> 工具把项目里的 SQL（ETL 脚本和 Python DAG 中的 SQL）静态分析成持久化的表级血缘图，再用 <code>query_lineage</code> 读取。关联条件、过滤条件、映射、窗口及作者注释从 SQL 原文读取。不执行任何 SQL。</li>
 <li>阅读项目中人写的文档（业务规则、指标定义、数据字典）。</li>
 <li>用几十条只读小查询核对这些发现：哪个版本的表存在且在更新、表的粒度、关联的基数、编码的实际取值。</li>
 <li>在项目根目录写一份 <code>AGENTS.md</code>：数据架构、核心表、跨业务域的规则，以及知识索引。</li>
 <li>每个业务域写一个 <code>knowledge/&lt;domain&gt;.md</code>：表卡片（用途、粒度、时间、编码、必带过滤）、关联关系、血缘、指标定义、业务规则，以及已知问题（例如文档和数据库对不上的地方）。</li>
 </ul>
 <p>它属于<strong>轻量</strong>层级：不建向量索引、无确认门。一百个左右脚本的项目需要几分钟。需要向量索引的知识库时，请使用 <a href="../build_kb/"><code>/build-kb</code></a>。</p>
-<p>分析工具返回 <code>schema_version=5</code>，一次给出完整表依赖图和已解析关联，不提供 <code>sections</code>、分页或结果大小截断。<code>lineage</code> 保留纯 SELECT 的读表（<code>target=null</code>），不同 SQL 和写入操作分别记录。每条 <code>joins</code> 只包含 <code>expression</code> 和 <code>evidence</code>：表达式合并表、别名、连接方向和条件；物理表以 <code>tables</code> 字典中的 ID 出现（如 <code>#3 AS o</code>），CTE/子查询保留作用域名称并在花括号里列出物理来源（如 <code>x{#1,#2}</code>），投影与计算字段需回读原 SQL。<code>files</code> 集中保存路径，<code>=f3</code> 表示与 <code>f3</code> 内容完全相同的副本，只分析和引用一次。关联证据使用 <code>文件ID:起始行-结束行</code>（单行省略范围），定位实际条件；<code>@statement</code> 明确表示退回语句起始行。表依赖证据仍指向语句起始行。不再返回 <code>issues</code>；<code>complete=false</code> 表示有输入或关联未完整解析，需检查原文件。</p>
-<p><strong>与 schema v2 不兼容的变化：</strong> 调用时删除 <code>sections</code>、<code>max_items</code>、<code>max_files</code>、<code>offset</code>、<code>result_path</code> 和 <code>max_output_chars</code>。工具不再返回规则、注释、表/根节点清单和逐条明细集合。init 会在原文件中检索过滤、CASE/IF、窗口和注释，再阅读核心定义的上下文。参数条件不证明增量加载，单独的 ROW_NUMBER 定义也不证明表粒度。</p>
+<p>血缘图保存在 <code>lineage/lineage.json</code>，整个项目共用一个文件。每个被分析的文件（或保存下来的一段 SQL）是一个来源：<code>upsert_lineage</code> 只重新分析内容、方言、默认库或解析器版本有变化的来源，并整份替换这个来源之前贡献的内容，所以 SQL 里删掉的语句，对应的血缘也会消失。方言和默认库作为项目设置保存在文件里，之后的调用不传这两个参数时，仍按同样的设置分析。<code>prune_missing=True</code> 会同时清理源文件已删除的来源，<code>delete_lineage</code> 可以按来源 ID 或 glob 删除。文件分四部分：<code>settings</code>（方言和默认库）、<code>sources</code>（内容 hash、方言、默认库、解析问题）、<code>nodes</code>（表、视图，以及代表纯查询的 <code>query:&lt;hash&gt;</code> 节点，<code>label</code> 取自作者注释）和 <code>edges</code>（上游 → 下游，每条边带着产生它的语句：来源、行号、加载方式和折叠的临时表；不读任何表的写入没有上游）。来源 ID 相对于项目根目录。文件里只有从 SQL 推导出的内容，没有时间戳或计数器，可以提交到版本库；如果合并后文件无法解析，可以用 <code>upsert_lineage(paths=[...], rebuild=True)</code> 从 SQL 文件重建。</p>
+<p><code>query_lineage</code> 返回指定表周围的子图（不传表则返回整张表级图）：每条语句一条记录，出处格式为 <code>文件ID:行号</code>，并给出每张表的角色、所属连通子图，以及有多少条已保存的查询读取它。<code>complete=false</code> 表示可能涉及所查表的来源（包括没有被任何返回语句引用的来源）在分析后有改动、是按其他设置分析的，或有语句没能解析。</p>
+<p>在 <code>normal</code> 权限模式下，<code>upsert_lineage</code> 和 <code>delete_lineage</code> 写 <code>lineage/lineage.json</code> 前会先询问；<code>auto</code> 模式下 <code>upsert_lineage</code> 直接执行，<code>delete_lineage</code> 仍会询问。</p>
+<p><strong>不兼容的变化：</strong> <code>extract_sql_lineage</code> 由 <code>upsert_lineage</code>、<code>delete_lineage</code> 和 <code>query_lineage</code> 取代。血缘工具不再返回关联关系：init 从 SQL 原文读取关联条件，并到数据库核实基数。参数条件不证明增量加载，单独的 ROW_NUMBER 定义也不证明表粒度。</p>
 <h2 id="_2">何时使用<a class="headerlink" href="#_2" title="Permanent link">&para;</a></h2>
 <ul>
 <li>新项目工作区还没有 <code>AGENTS.md</code>。</li>
