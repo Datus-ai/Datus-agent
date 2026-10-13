@@ -2664,10 +2664,27 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="查询指标">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#_6" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        条件放在哪里
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
-  <a href="#_6" class="md-nav__link">
+  <a href="#_7" class="md-nav__link">
     <span class="md-ellipsis">
       
         创建和更新指标
@@ -2689,7 +2706,7 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#_7" class="md-nav__link">
+  <a href="#_8" class="md-nav__link">
     <span class="md-ellipsis">
       
         相关文档
@@ -5007,10 +5024,27 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="查询指标">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#_6" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        条件放在哪里
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
-  <a href="#_6" class="md-nav__link">
+  <a href="#_7" class="md-nav__link">
     <span class="md-ellipsis">
       
         创建和更新指标
@@ -5032,7 +5066,7 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#_7" class="md-nav__link">
+  <a href="#_8" class="md-nav__link">
     <span class="md-ellipsis">
       
         相关文档
@@ -5207,7 +5241,7 @@
 </tr>
 <tr>
 <td><code>time_start</code>、<code>time_end</code></td>
-<td>可选的左闭右开时间范围：start 包含，end 不包含。使用 ISO 日期（<code>YYYY-MM-DD</code>）。</td>
+<td>可选的左闭右开时间范围：start 包含，end 不包含。使用 ISO 日期（<code>YYYY-MM-DD</code>）。每个指标、每个 fixed 字段都按自己所在表的时间字段（<code>time_axis</code>）取这个时段。</td>
 </tr>
 <tr>
 <td><code>time_granularity</code></td>
@@ -5219,7 +5253,11 @@
 </tr>
 <tr>
 <td><code>context_filter</code></td>
-<td>可选过滤表达式，始终在聚合前生效，用来限定窗口指标排名、计数或加权的人群：<code>where="market = 'North'"</code> 看的是 North 在所有市场里的名次，<code>context_filter="market = 'North'"</code> 则只在 North 内部重新排名。</td>
+<td>可选过滤表达式，是所有数都要遵守的范围，在查询中每个读得到这些列的部分里于聚合前生效；读不到的部分跳过这个条件，并列在结果的 <code>skipped</code> 和 <code>warnings</code> 里。它限定窗口指标排名、计数或加权的人群：<code>where="market = 'North'"</code> 看的是 North 在所有市场里的名次，<code>context_filter="market = 'North'"</code> 则只在 North 内部重新排名。它也会限定固定粒度（fixed）值计算所用的行，<code>where</code> 不会。</td>
+</tr>
+<tr>
+<td><code>define</code></td>
+<td>只在本次查询里用的临时指标和字段，用于只属于某一个数的条件或时段。见<a href="#条件放在哪里">条件放在哪里</a>。</td>
 </tr>
 <tr>
 <td><code>order_by</code></td>
@@ -5231,44 +5269,96 @@
 </tr>
 <tr>
 <td><code>params</code></td>
-<td>按名字绑定指标声明的参数（<code>get_metric</code> 的 <code>params</code> 字段列出了这些参数）。传列表时一次查询绑定多个值，每个值各返回一列：<code>{"k": [1, 7]}</code> 得到 <code>&lt;metric&gt;__k_1</code> 和 <code>&lt;metric&gt;__k_7</code>。未传的参数取默认值。</td>
+<td>按名字绑定指标声明的参数（<code>get_metric</code> 的 <code>params</code> 字段列出了这些参数）。传列表时一次查询绑定多个值，每个值各返回一列：<code>{"k": [1, 7]}</code> 得到 <code>&lt;metric&gt;__k_1</code> 和 <code>&lt;metric&gt;__k_7</code>。未传的参数取默认值。fixed 字段的 base 带参数时，维度行上的 <code>params</code> 会列出这些参数，绑定方法相同。</td>
 </tr>
 <tr>
 <td><code>dry_run</code></td>
-<td>返回编译后的 SQL，不执行指标查询；配置了数据仓库 dry-run 时还会校验该 SQL。</td>
+<td>返回编译后的 SQL，不执行指标查询；配置了数据仓库 dry-run 时还会校验该 SQL。结果和实际执行一样带有查询的 <code>parts</code>。</td>
 </tr>
 </tbody>
 </table>
 <p>例如，要包含 2024 年 1 月的全部数据，应使用 <code>time_start="2024-01-01"</code> 和 <code>time_end="2024-02-01"</code>。</p>
-<h2 id="_6">创建和更新指标<a class="headerlink" href="#_6" title="Permanent link">&para;</a></h2>
+<h3 id="_6">条件放在哪里<a class="headerlink" href="#_6" title="Permanent link">&para;</a></h3>
+<p>问题里的每个条件只放在一个位置：</p>
+<ul>
+<li><code>time_start</code>/<code>time_end</code>：时段。每个指标、每个 fixed 字段（按实体取的值，比如某个客户的订单数）都按自己所在表的时间字段取它，也就是 <code>time_axis</code>。所在表没有时间字段的部分会读全表，结果里会说明。</li>
+<li><code>context_filter</code>：所有数都要遵守的范围，比如只看某个平台、某个活动。查询的每个部分读得到这些列就应用它，读不到的部分跳过它，并列在 <code>skipped</code> 和 <code>warnings</code> 里。</li>
+<li><code>define</code>：只属于某一个数的条件或时段。给它起一个临时指标或字段的名字，在 <code>metrics</code>、<code>dimensions</code> 或 <code>where</code> 里用这个新名字。每一项继承查询的时段和 <code>context_filter</code>：<code>time_range</code> 换掉时段（<code>None</code> 表示读全部历史，首次购买日、累计值要这样写），<code>context_filter</code> 换掉范围，<code>where</code> 在此基础上再收窄。define 的 <code>where</code> 只收窄这一个数，不删结果行；要去掉行的条件放 <code>context_filter</code> 或 <code>where</code>。</li>
+<li><code>where</code>：要哪些结果行。字段上的条件不会改变 fixed 字段的值；引用已选指标的条件在聚合之后过滤。快照表取哪一天的快照写在这里。</li>
+</ul>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="n">query_metrics</span><span class="p">(</span>
+</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>    <span class="n">metrics</span><span class="o">=</span><span class="p">[</span><span class="s2">"new_customers"</span><span class="p">,</span> <span class="s2">"returning_customers"</span><span class="p">],</span>
+</span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a>    <span class="n">time_start</span><span class="o">=</span><span class="s2">"2024-01-01"</span><span class="p">,</span>
+</span><span id="__span-5-4"><a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a>    <span class="n">time_end</span><span class="o">=</span><span class="s2">"2024-02-01"</span><span class="p">,</span>
+</span><span id="__span-5-5"><a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a>    <span class="n">define</span><span class="o">=</span><span class="p">{</span>
+</span><span id="__span-5-6"><a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a>        <span class="s2">"metrics"</span><span class="p">:</span> <span class="p">{</span>
+</span><span id="__span-5-7"><a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a>            <span class="s2">"new_customers"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"base"</span><span class="p">:</span> <span class="s2">"customers"</span><span class="p">,</span> <span class="s2">"where"</span><span class="p">:</span> <span class="s2">"customers.type = 'new'"</span><span class="p">},</span>
+</span><span id="__span-5-8"><a id="__codelineno-5-8" name="__codelineno-5-8" href="#__codelineno-5-8"></a>            <span class="s2">"returning_customers"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"base"</span><span class="p">:</span> <span class="s2">"customers"</span><span class="p">,</span> <span class="s2">"where"</span><span class="p">:</span> <span class="s2">"customers.type = 'returning'"</span><span class="p">},</span>
+</span><span id="__span-5-9"><a id="__codelineno-5-9" name="__codelineno-5-9" href="#__codelineno-5-9"></a>        <span class="p">},</span>
+</span><span id="__span-5-10"><a id="__codelineno-5-10" name="__codelineno-5-10" href="#__codelineno-5-10"></a>    <span class="p">},</span>
+</span><span id="__span-5-11"><a id="__codelineno-5-11" name="__codelineno-5-11" href="#__codelineno-5-11"></a><span class="p">)</span>
+</span></code></pre></div>
+<p>只有当一个值依赖它所在分组以外的行时，放在不同位置才会算出不同的数：固定粒度（fixed）值、<code>include</code>/<code>exclude</code> 粒度，以及窗口。<code>get_metric</code> 把这些部分列在 <code>parts</code> 里，指标上有，本身是 fixed 字段或读了 fixed 字段的维度上也有。每一项有 <code>name</code>、<code>kind</code>，fixed/include/exclude 还有 <code>definition</code>（<code>fixed(revenue)</code> 表示全表一个值），以及 <code>used_in</code>（它和所查指标之间经过的指标和字段）、<code>source</code>（它读的数据集）、<code>time_axis</code>（数据集没有时间字段时不出现）和 <code>filterable_columns</code>（define 里针对它的条件能用的列）。<code>query_metrics</code> 会返回本次查询的 <code>parts</code>，列出每个部分读的时段和条件，所以 dry run 时就能看出条件放错了位置。</p>
+<table>
+<thead>
+<tr>
+<th><code>kind</code></th>
+<th>各位置的作用</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>fixed</code></td>
+<td>时段按它自己的 <code>time_axis</code> 取；<code>context_filter</code> 在读得到列时缩小它，<code>where</code> 不会。针对 fixed 字段本身的条件放 <code>where</code>；只属于这个值的条件放 <code>define</code>。</td>
+</tr>
+<tr>
+<td><code>include</code>、<code>exclude</code></td>
+<td>每个位置都会缩小它。</td>
+</tr>
+<tr>
+<td><code>window_offset</code>、<code>window_cumulative</code></td>
+<td>日期放 <code>time_start</code>/<code>time_end</code>；放 <code>where</code> 会截掉回看，比较值为空。</td>
+</tr>
+<tr>
+<td><code>window_rolling</code></td>
+<td><code>time_start</code>/<code>time_end</code>、<code>context_filter</code> 和 <code>where</code> 结果相同。</td>
+</tr>
+<tr>
+<td><code>window_rank</code></td>
+<td><code>where</code> 条件字段参与分组时，值在全体中计算；<code>context_filter</code> 在子集内计算。</td>
+</tr>
+</tbody>
+</table>
+<p>例如「1 月各地区占全公司的比例」：全公司总额应该随 1 月变化、不随地区变化，所以 1 月放 <code>time_start</code>/<code>time_end</code>，地区放 <code>where</code>。</p>
+<h2 id="_7">创建和更新指标<a class="headerlink" href="#_7" title="Permanent link">&para;</a></h2>
 <p>日常创作使用 <code>semantic_modeling</code>。它可以在同一份 YAML 中补充所需 dataset 和 field、创建或更新 metric、校验完整模型、按需 dry-run 代表性查询，并同步两个 Knowledge Base 投影。</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>在 sales 模型中增加月度收入增长指标，使用 order_date 作为业务时间，校验定义并 dry-run 一次按年查询。
+<div class="language-text highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>在 sales 模型中增加月度收入增长指标，使用 order_date 作为业务时间，校验定义并 dry-run 一次按年查询。
 </span></code></pre></div>
 <p>如果要从包含 <code>question</code> 和 <code>sql</code> 的 CSV 批量创作，使用统一的 semantic-modeling component：</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>datus-agent<span class="w"> </span>bootstrap-kb<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-6-2"><a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="w">  </span>--datasource<span class="w"> </span>&lt;your_datasource&gt;<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-6-3"><a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="w">  </span>--components<span class="w"> </span>semantic_modeling<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-6-4"><a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="w">  </span>--success_story<span class="w"> </span>path/to/success_story.csv<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-6-5"><a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a><span class="w">  </span>--kb_update_strategy<span class="w"> </span>incremental<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-6-6"><a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a><span class="w">  </span>--metrics-batch-size<span class="w"> </span><span class="m">5</span>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>datus-agent<span class="w"> </span>bootstrap-kb<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-7-2"><a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="w">  </span>--datasource<span class="w"> </span>&lt;your_datasource&gt;<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-7-3"><a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="w">  </span>--components<span class="w"> </span>semantic_modeling<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-7-4"><a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a><span class="w">  </span>--success_story<span class="w"> </span>path/to/success_story.csv<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-7-5"><a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a><span class="w">  </span>--kb_update_strategy<span class="w"> </span>incremental<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-7-6"><a id="__codelineno-7-6" name="__codelineno-7-6" href="#__codelineno-7-6"></a><span class="w">  </span>--metrics-batch-size<span class="w"> </span><span class="m">5</span>
 </span></code></pre></div>
 <p><code>--metrics-batch-size</code> 控制每个创作批次处理的历史记录数。<code>--subject_tree</code> 可以传入逗号分隔的允许分类；不传时，创作流程会复用已有分类或创建合适的分类。</p>
 <p>默认的 <code>check</code> 策略不会创作指标，只报告当前 semantic-dataset 与 metric 投影数量。需要生成时应明确使用 <code>incremental</code> 或 <code>overwrite</code>。</p>
 <h2 id="knowledge-base">同步 Knowledge Base<a class="headerlink" href="#knowledge-base" title="Permanent link">&para;</a></h2>
 <p><code>semantic_modeling</code> 成功完成后会自动同步目标文件。如果手工编辑了 YAML，可以用下面的命令协调全部 semantic-object 与 metric 投影：</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>datus-agent<span class="w"> </span>bootstrap-kb<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-7-2"><a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="w">  </span>--datasource<span class="w"> </span>&lt;your_datasource&gt;<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-7-3"><a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="w">  </span>--components<span class="w"> </span>semantic_model<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-7-4"><a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a><span class="w">  </span>--kb_update_strategy<span class="w"> </span>sync-yaml
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>datus-agent<span class="w"> </span>bootstrap-kb<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-8-2"><a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="w">  </span>--datasource<span class="w"> </span>&lt;your_datasource&gt;<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-8-3"><a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a><span class="w">  </span>--components<span class="w"> </span>semantic_model<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-8-4"><a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a><span class="w">  </span>--kb_update_strategy<span class="w"> </span>sync-yaml
 </span></code></pre></div>
 <p><code>sync-yaml</code> 默认读取当前 datasource 下的全部模型，替换各 artifact 的投影行，删除该 artifact 中已不再声明的指标，并在同步整个目录时清理已删除文件留下的行；不会调用 LLM，也不会查询数仓。</p>
 <p>如果只想查看已索引指标数量，不做任何修改：</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>datus-agent<span class="w"> </span>bootstrap-kb<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-8-2"><a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="w">  </span>--datasource<span class="w"> </span>&lt;your_datasource&gt;<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-8-3"><a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a><span class="w">  </span>--components<span class="w"> </span>metrics<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-8-4"><a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a><span class="w">  </span>--kb_update_strategy<span class="w"> </span>check
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-9-1"><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a>datus-agent<span class="w"> </span>bootstrap-kb<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-9-2"><a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a><span class="w">  </span>--datasource<span class="w"> </span>&lt;your_datasource&gt;<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-9-3"><a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a><span class="w">  </span>--components<span class="w"> </span>metrics<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-9-4"><a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a><span class="w">  </span>--kb_update_strategy<span class="w"> </span>check
 </span></code></pre></div>
-<h2 id="_7">相关文档<a class="headerlink" href="#_7" title="Permanent link">&para;</a></h2>
+<h2 id="_8">相关文档<a class="headerlink" href="#_8" title="Permanent link">&para;</a></h2>
 <ul>
 <li><a href="../../subagent/ask_metrics/">AskMetrics</a>：自然语言指标问答和能力边界</li>
 <li><a href="../../subagent/semantic_modeling/">语义建模</a>：完整创作流程与真实生成 YAML</li>
