@@ -355,6 +355,7 @@ class ChatTask:
         # node at this same instance, so the filter drains these on turn one.
         self.pending_input_queue: PendingInputQueue = PendingInputQueue()
         self.message_contents: Dict[str, dict] = {}
+        self.tool_result_contents: Dict[str, dict] = {}
         self.content_events: Dict[str, str] = {}
         self.previous_message_id: Optional[int] = 0
         # Whether ``/chat/insert`` may still enqueue. ``_run_loop`` flips this
@@ -1220,13 +1221,14 @@ class ChatTaskManager:
             logger.warning("Turn settlement hook failed for session %s", task.session_id, exc_info=True)
 
     async def _persist_message_contents(self, task, agent_config, session_id, user_id) -> None:
-        if not task.message_contents or task.previous_message_id is None:
+        contents = {**task.message_contents, **task.tool_result_contents}
+        if not contents or task.previous_message_id is None:
             return
         try:
             await asyncio.to_thread(
                 self._session_manager(agent_config, user_id).save_message_contents,
                 session_id,
-                task.message_contents,
+                contents,
                 task.previous_message_id,
             )
         except Exception:
@@ -1393,6 +1395,15 @@ class ChatTaskManager:
 
     async def _push_event(self, task: ChatTask, event: SSEEvent) -> None:
         """Append an event to the task buffer and notify consumers."""
+        if isinstance(event.data, SSEMessageData):
+            for part in event.data.payload.content:
+                call_id = part.payload.get("callToolId")
+                if part.type == "call-tool-result" and call_id:
+                    task.tool_result_contents[f"tool-result:{call_id}"] = {
+                        "tool_call_id": call_id,
+                        "parent_action_id": event.data.payload.parent_action_id,
+                        "parts": [copy.deepcopy(part.model_dump())],
+                    }
         logger.debug(f"Pushing event: {event}")
         async with task.condition:
             task.events.append(event)

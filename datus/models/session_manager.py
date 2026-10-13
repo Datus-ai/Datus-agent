@@ -1449,6 +1449,12 @@ class SessionManager:
             return int(row[0])
 
     def save_message_contents(self, session_id: str, contents: Dict[str, dict], previous_message_id: int = 0) -> None:
+        """Save structured user content and streamed tool results outside model input.
+
+        Tool results match persisted result rows by call ID. Nested results are
+        attached to the outer task result so existing copy/rewind/rollback
+        handling for chat_message_contents preserves the entire task's display.
+        """
         self._validate_session_id(session_id)
         db_path = os.path.join(self.session_dir, f"{session_id}.db")
         if not os.path.isfile(db_path):
@@ -1459,22 +1465,70 @@ class SessionManager:
                 "SELECT id, message_data FROM agent_messages WHERE session_id = ? AND id > ? ORDER BY id",
                 (session_id, previous_message_id),
             ).fetchall()
-            pending = [record for record in contents.values() if record.get("persist", True)]
-            persisted = []
+            records = [record for record in contents.values() if record.get("persist", True)]
+            pending = [record for record in records if not record.get("tool_call_id")]
+            tools = {record["tool_call_id"]: record for record in records if record.get("tool_call_id")}
+            result_rows: Dict[str, int] = {}
+            persisted: Dict[int, list] = {}
             for message_id, raw in rows:
                 message = json.loads(raw)
+                if message.get("type") == "function_call_output" and message.get("call_id"):
+                    result_rows[message["call_id"]] = message_id
+                blocks = message.get("content")
+                if isinstance(blocks, list):
+                    for block in blocks:
+                        if (
+                            isinstance(block, dict)
+                            and block.get("type") in ("tool_result", "web_search_tool_result", "web_fetch_tool_result")
+                            and block.get("tool_use_id")
+                        ):
+                            result_rows[block["tool_use_id"]] = message_id
                 if message.get("role") != "user":
                     continue
                 text = extract_user_input(message.get("content", "")).strip()
                 for index, record in enumerate(pending):
                     if record["text"].strip() == text:
-                        persisted.append((session_id, message_id, json.dumps(record["parts"], ensure_ascii=False)))
+                        persisted[message_id] = list(record["parts"])
                         pending.pop(index)
                         break
+            for call_id, record in tools.items():
+                owner = call_id
+                seen = set()
+                while owner not in result_rows and owner in tools and owner not in seen:
+                    seen.add(owner)
+                    owner = tools[owner].get("parent_action_id")
+                if owner in result_rows:
+                    persisted.setdefault(result_rows[owner], []).extend(record["parts"])
             conn.executemany(
                 "INSERT OR REPLACE INTO chat_message_contents VALUES (?, ?, ?)",
-                persisted,
+                [
+                    (session_id, message_id, json.dumps(parts, ensure_ascii=False))
+                    for message_id, parts in persisted.items()
+                ],
             )
+
+    def get_tool_result_contents(self, session_id: str) -> Dict[str, dict]:
+        """Only replay display content whose owning model message still exists."""
+        self._validate_session_id(session_id)
+        db_path = os.path.join(self.session_dir, f"{session_id}.db")
+        if not os.path.isfile(db_path):
+            return {}
+        with sqlite3.connect(db_path, timeout=5.0) as conn:
+            try:
+                rows = conn.execute(
+                    "SELECT c.contents_json FROM chat_message_contents c "
+                    "JOIN agent_messages m ON m.id = c.message_id AND m.session_id = c.session_id "
+                    "WHERE c.session_id = ? ORDER BY c.message_id",
+                    (session_id,),
+                ).fetchall()
+            except sqlite3.OperationalError:
+                return {}
+        return {
+            part["payload"]["callToolId"]: part["payload"]
+            for (raw,) in rows
+            for part in json.loads(raw)
+            if part.get("type") == "call-tool-result" and part.get("payload", {}).get("callToolId")
+        }
 
     @staticmethod
     def _read_message_contents(conn, session_id: str) -> Dict[int, list]:
