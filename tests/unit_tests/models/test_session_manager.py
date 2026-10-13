@@ -163,6 +163,67 @@ async def test_tool_contents_do_not_attach_to_previous_turns(tmp_path):
     assert manager.get_tool_result_contents(session_id) == {}
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "{",
+        "null",
+        "42",
+        '"text"',
+        "{}",
+        '[null,42,"text",[]]',
+        '[{"type":"call-tool-result"}]',
+        '[{"type":"call-tool-result","payload":null}]',
+        '[{"type":"call-tool-result","payload":[]}]',
+        '[{"type":"call-tool-result","payload":{"callToolId":[]}}]',
+        '[{"type":"call-tool-result","payload":{"callToolId":{}}}]',
+        '[{"type":"call-tool-result","payload":{"callToolId":42}}]',
+    ],
+)
+async def test_corrupt_tool_content_rows_do_not_hide_valid_results(tmp_path, raw):
+    manager = SessionManager(session_dir=str(tmp_path))
+    session_id = "chat_session_corrupt_contents"
+    session = manager.get_session(session_id)
+    await session.add_items(
+        [
+            {"type": "function_call_output", "call_id": "valid", "output": "{}"},
+            {"type": "function_call_output", "call_id": "corrupt", "output": "{}"},
+        ]
+    )
+    record = _tool_content("valid", 0.329)
+    manager.save_message_contents(session_id, {"valid": record})
+    with sqlite3.connect(os.path.join(manager.session_dir, f"{session_id}.db")) as conn:
+        message_id = conn.execute("SELECT MAX(id) FROM agent_messages WHERE session_id = ?", (session_id,)).fetchone()[
+            0
+        ]
+        conn.execute("INSERT INTO chat_message_contents VALUES (?, ?, ?)", (session_id, message_id, raw))
+    assert manager.get_tool_result_contents(session_id) == {"valid": record["parts"][0]["payload"]}
+
+
+@pytest.mark.asyncio
+async def test_mixed_tool_content_parts_preserve_valid_payloads(tmp_path):
+    manager = SessionManager(session_dir=str(tmp_path))
+    session_id = "chat_session_mixed_contents"
+    await manager.get_session(session_id).add_items(
+        [{"type": "function_call_output", "call_id": "valid", "output": "{}"}]
+    )
+    record = _tool_content("valid", 0.329)
+    record["parts"] = [
+        None,
+        42,
+        [],
+        {"type": "call-tool-result", "payload": None},
+        *record["parts"],
+        {"type": "call-tool-result", "payload": {"callToolId": ""}},
+        {"type": "markdown", "payload": {"callToolId": "ignored"}},
+    ]
+    manager.save_message_contents(session_id, {"valid": record})
+    assert manager.get_tool_result_contents(session_id) == {
+        "valid": _tool_content("valid", 0.329)["parts"][0]["payload"]
+    }
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

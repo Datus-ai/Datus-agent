@@ -1523,12 +1523,24 @@ class SessionManager:
                 ).fetchall()
             except sqlite3.OperationalError:
                 return {}
-        return {
-            part["payload"]["callToolId"]: part["payload"]
-            for (raw,) in rows
-            for part in json.loads(raw)
-            if part.get("type") == "call-tool-result" and part.get("payload", {}).get("callToolId")
-        }
+        results = {}
+        for (raw,) in rows:
+            try:
+                parts = json.loads(raw)
+            except (json.JSONDecodeError, TypeError, UnicodeDecodeError):
+                continue
+            if not isinstance(parts, list):
+                continue
+            for part in parts:
+                if not isinstance(part, dict) or part.get("type") != "call-tool-result":
+                    continue
+                payload = part.get("payload")
+                if not isinstance(payload, dict):
+                    continue
+                call_id = payload.get("callToolId")
+                if isinstance(call_id, str) and call_id:
+                    results[call_id] = payload
+        return results
 
     @staticmethod
     def _read_message_contents(conn, session_id: str) -> Dict[int, list]:
