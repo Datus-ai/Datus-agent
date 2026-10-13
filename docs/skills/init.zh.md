@@ -14,9 +14,11 @@
 
 它属于**轻量**层级：不建向量索引、无确认门。一百个左右脚本的项目需要几分钟。需要向量索引的知识库时，请使用 [`/build-kb`](build_kb.md)。
 
-血缘图保存在 `lineage/lineage.json`，整个项目共用一个文件。每个被分析的文件（或保存下来的一段 SQL）是一个来源：`upsert_lineage` 只重新分析内容、方言、默认库或解析器版本有变化的来源，并整份替换这个来源之前贡献的内容，所以 SQL 里删掉的语句，对应的血缘也会消失。`prune_missing=True` 会同时清理源文件已删除的来源，`delete_lineage` 可以按来源 ID 或 glob 删除。文件分三部分：`sources`（内容 hash、方言、默认库、解析问题）、`nodes`（表、视图，以及代表纯查询的 `query:<hash>` 节点，`label` 取自作者注释）和 `edges`（上游 → 下游，每条边带着产生它的语句：来源、行号、加载方式和折叠的临时表）。
+血缘图保存在 `lineage/lineage.json`，整个项目共用一个文件。每个被分析的文件（或保存下来的一段 SQL）是一个来源：`upsert_lineage` 只重新分析内容、方言、默认库或解析器版本有变化的来源，并整份替换这个来源之前贡献的内容，所以 SQL 里删掉的语句，对应的血缘也会消失。方言和默认库作为项目设置保存在文件里，之后的调用不传这两个参数时，仍按同样的设置分析。`prune_missing=True` 会同时清理源文件已删除的来源，`delete_lineage` 可以按来源 ID 或 glob 删除。文件分四部分：`settings`（方言和默认库）、`sources`（内容 hash、方言、默认库、解析问题）、`nodes`（表、视图，以及代表纯查询的 `query:<hash>` 节点，`label` 取自作者注释）和 `edges`（上游 → 下游，每条边带着产生它的语句：来源、行号、加载方式和折叠的临时表；不读任何表的写入没有上游）。来源 ID 相对于项目根目录。文件里只有从 SQL 推导出的内容，没有时间戳或计数器，可以提交到版本库；如果合并后文件无法解析，可以用 `upsert_lineage(paths=[...], rebuild=True)` 从 SQL 文件重建。
 
-`query_lineage` 返回指定表周围的子图（不传表则返回整张表级图）：每条语句一条记录，出处格式为 `文件ID:行号`，并给出每张表的角色、所属连通子图，以及有多少条已保存的查询读取它。`complete=false` 表示涉及的来源在分析后有改动，或有语句没能解析。
+`query_lineage` 返回指定表周围的子图（不传表则返回整张表级图）：每条语句一条记录，出处格式为 `文件ID:行号`，并给出每张表的角色、所属连通子图，以及有多少条已保存的查询读取它。`complete=false` 表示可能涉及所查表的来源（包括没有被任何返回语句引用的来源）在分析后有改动、是按其他设置分析的，或有语句没能解析。
+
+在 `normal` 权限模式下，`upsert_lineage` 和 `delete_lineage` 写 `lineage/lineage.json` 前会先询问；`auto` 模式下 `upsert_lineage` 直接执行，`delete_lineage` 仍会询问。
 
 **不兼容的变化：** `extract_sql_lineage` 由 `upsert_lineage`、`delete_lineage` 和 `query_lineage` 取代。血缘工具不再返回关联关系：init 从 SQL 原文读取关联条件，并到数据库核实基数。参数条件不证明增量加载，单独的 ROW_NUMBER 定义也不证明表粒度。
 

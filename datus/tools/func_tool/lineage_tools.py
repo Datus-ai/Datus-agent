@@ -11,14 +11,14 @@ import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Dict, Iterable, List, Literal, Optional, Pattern, Tuple
 
 from agents import Tool
 
 from datus.configuration.agent_config import AgentConfig
 from datus.storage.lineage.analysis import analyze_source, content_digest
-from datus.storage.lineage.graph import LineageGraph, Statement
-from datus.storage.lineage.models import LineageDocument, SourceRecord, is_query_node
+from datus.storage.lineage.graph import LineageGraph, Resolution, Statement
+from datus.storage.lineage.models import AnalysisSettings, LineageDocument, SourceRecord, is_query_node
 from datus.storage.lineage.store import LINEAGE_FILE_NAME, LineageStore, graph_keys, remove_source, replace_source
 from datus.tools.func_tool.base import FuncToolResult, trans_to_function_tool
 from datus.tools.func_tool.fs_path_policy import PathAllowlist, PathZone, classify_path
@@ -33,6 +33,14 @@ _MAX_FILE_BYTES = 2 * 1024 * 1024
 _READABLE_ZONES = (PathZone.INTERNAL, PathZone.WHITELIST)
 _INLINE_PREFIX = "inline:"
 _MAX_REPORTED_ISSUES = 50
+_REBUILD_HINT = (
+    "The lineage file is derived from the SQL sources: call upsert_lineage(paths=[<all SQL globs>], rebuild=True) "
+    "to rebuild it."
+)
+
+# Digest of each file keyed by the (size, mtime) it had when read. The lineage file keeps only
+# content facts, so this machine-local shortcut lives in memory and spares re-hashing unchanged files.
+_DIGESTS: Dict[Path, Tuple[Tuple[int, int], str]] = {}
 
 
 @dataclass
@@ -41,8 +49,6 @@ class _Input:
     kind: Literal["file", "inline"]
     text: str
     python: bool = False
-    size: Optional[int] = None
-    mtime: Optional[float] = None
 
 
 class LineageTools:
@@ -62,8 +68,15 @@ class LineageTools:
         lineage_path: Optional[str] = None,
     ):
         self.agent_config = agent_config
+        # Relative input paths resolve against the caller's workspace, like the filesystem tools.
         self.root_path = Path(root_path or os.getcwd()).expanduser().resolve(strict=False)
         self.path_allowlist = path_allowlist
+        path_manager = getattr(agent_config, "path_manager", None)
+        # Source IDs are relative to the project that owns the lineage file, so nodes with different
+        # workspaces read the same IDs the same way.
+        self.project_root = (
+            Path(path_manager.project_root).resolve(strict=False) if path_manager is not None else self.root_path
+        )
         self.store = LineageStore(Path(lineage_path) if lineage_path else self._default_lineage_path())
 
     @classmethod
@@ -81,7 +94,7 @@ class LineageTools:
         path_manager = getattr(self.agent_config, "path_manager", None)
         if path_manager is not None:
             return Path(path_manager.lineage_dir) / LINEAGE_FILE_NAME
-        return self.root_path / "lineage" / LINEAGE_FILE_NAME
+        return self.project_root / "lineage" / LINEAGE_FILE_NAME
 
     # -- write ------------------------------------------------------------------------------
 
@@ -94,14 +107,19 @@ class LineageTools:
         dialect: Optional[str] = None,
         default_database: Optional[str] = None,
         prune_missing: bool = False,
+        rebuild: bool = False,
     ) -> FuncToolResult:
         """Analyze SQL and save its table lineage into the project graph.
 
         Statically parses SQL and supported Python SQL literals; never executes them. Each file,
         or each piece of inline SQL, is one source: re-analyzing a source replaces everything it
         contributed before, so lineage from deleted statements disappears. Sources whose content,
-        dialect, default database and analyzer version are unchanged are skipped, so repeated
-        calls are cheap. Returns a change summary only; call query_lineage to read the graph.
+        analysis settings and analyzer version are unchanged are skipped, so repeated calls are
+        cheap. Returns a change summary only; call query_lineage to read the graph.
+
+        The dialect and default database are saved with the graph as project settings. A call
+        without them reuses the saved settings; the datasource supplies them only before any are
+        saved, or when datasource is passed. Passing them changes the settings for later calls.
 
         Args:
             paths: Workspace-relative SQL/Python files or globs, or paths on the read allowlist.
@@ -110,17 +128,23 @@ class LineageTools:
                 never ad-hoc exploration.
             source_id: Stable name for sql, stored as "inline:<source_id>". Defaults to a content
                 hash, so saving the same SQL twice is idempotent.
-            datasource: Datasource supplying dialect and default database; defaults to active.
-            dialect: Override the datasource dialect, e.g. starrocks, mysql or hive.
+            datasource: Datasource supplying dialect and default database instead of the saved
+                settings; defaults to the active one when nothing is saved yet.
+            dialect: Override the dialect, e.g. starrocks, mysql or hive.
             default_database: Database used to qualify bare table names.
             prune_missing: With paths, also remove saved sources matching the patterns whose files
                 no longer exist.
+            rebuild: With paths, discard the saved graph and its settings, then rebuild it from
+                paths alone (inline sources are dropped). Use it when the lineage file cannot be
+                read, e.g. after a merge conflict.
 
         Returns:
-            revision of the saved graph; added, updated and removed source IDs; unchanged count;
-            skipped inputs with reasons; incomplete sources with the statements that could not be
-            analyzed (line and reason); delta counts of nodes and edges. An incomplete source may
-            miss dependencies: read its source around the reported lines.
+            added, updated and removed source IDs; unchanged count; skipped inputs with reasons;
+            settings now saved (dialect, default_database); incomplete: every source of this call,
+            unchanged ones included, with the statements that could not be analyzed (line and
+            reason); stale: saved sources analyzed under other settings, to re-analyze with
+            upsert_lineage; delta counts of nodes and edges. An incomplete source may miss
+            dependencies: read its source around the reported lines.
         """
         if bool(paths) == bool(sql):
             return FuncToolResult(success=0, error="Provide exactly one of paths or sql")
@@ -128,89 +152,100 @@ class LineageTools:
             return FuncToolResult(success=0, error="source_id only applies to sql")
         if prune_missing and not paths:
             return FuncToolResult(success=0, error="prune_missing only applies to paths")
+        if rebuild and not paths:
+            return FuncToolResult(success=0, error="rebuild only applies to paths")
         try:
-            dialect, database = self._resolve_dialect(datasource, dialect, default_database)
+            # Validate an explicit datasource before reading any file.
+            datasource_settings = self._datasource_settings(datasource)
             inputs, skipped = self._read_inputs(paths or [], sql, source_id)
             added: List[str] = []
             updated: List[str] = []
             removed: List[str] = []
-            incomplete: List[Dict[str, Any]] = []
             unchanged = 0
-            with self.store.edit() as document:
+            with self.store.edit(discard=rebuild) as document:
+                saved = None if datasource else document.settings
+                settings = _merge_settings(saved or datasource_settings, dialect, default_database)
                 nodes_before, edges_before = graph_keys(document)
                 for item in inputs:
                     existing = document.sources.get(item.source_id)
-                    if existing is not None and self._unchanged(existing, item, dialect or "", database):
+                    if existing is not None and self._unchanged(existing, item, settings):
                         unchanged += 1
-                        # Same content under a new mtime: remember it, so staleness checks need not hash.
-                        existing.size, existing.mtime = item.size, item.mtime
                         continue
                     contribution = analyze_source(
                         item.source_id,
                         item.text,
                         kind=item.kind,
                         python=item.python,
-                        dialect=dialect,
-                        default_database=database,
-                        size=item.size,
-                        mtime=item.mtime,
+                        dialect=settings.dialect or None,
+                        default_database=settings.default_database,
                     )
                     replace_source(document, item.source_id, contribution)
                     (added if existing is None else updated).append(item.source_id)
-                    if not contribution.record.complete:
-                        issues = [issue.model_dump() for issue in contribution.record.issues]
-                        incomplete.append({"source": item.source_id, "issues": issues})
                 if prune_missing:
+                    patterns = [self._normalize_pattern(p) for p in paths or []]
                     for sid, record in list(document.sources.items()):
                         if (
                             record.kind == "file"
-                            and any(_pattern_matches(sid, self._normalize_pattern(p)) for p in paths or [])
+                            and any(_pattern_matches(sid, p) for p in patterns)
                             and not self._source_path(sid).exists()
                         ):
                             remove_source(document, sid)
                             removed.append(sid)
+                if document.sources:
+                    document.settings = settings
+                # Unchanged sources keep their unanalyzed statements: report them on every call.
+                incomplete = [
+                    {"source": sid, "issues": [issue.model_dump() for issue in record.issues]}
+                    for sid in dict.fromkeys(item.source_id for item in inputs)
+                    if (record := document.sources.get(sid)) is not None and not record.complete
+                ]
+                stale = sorted(sid for sid, record in document.sources.items() if not _analyzed_with(record, settings))
                 nodes_after, edges_after = graph_keys(document)
             result = {
-                "revision": document.revision,
                 "added": added,
                 "updated": updated,
                 "unchanged": unchanged,
                 "removed": removed,
                 "skipped": skipped,
+                "settings": settings.model_dump(),
                 "incomplete": _cap_issues(incomplete),
                 "delta": _delta(nodes_before, edges_before, nodes_after, edges_after),
             }
+            if stale:
+                result["stale"] = stale
             return FuncToolResult(result=result)
         except Exception as e:
             logger.error(f"upsert_lineage failed: {e}")
-            return FuncToolResult(success=0, error=str(e))
+            return FuncToolResult(success=0, error=_error_message(e))
 
     def delete_lineage(self, sources: List[str]) -> FuncToolResult:
         """Remove saved sources and every edge only they supported.
 
         Args:
-            sources: Source IDs or globs over source IDs, e.g. "etl/old/*.sql" or "inline:*".
-                Matching uses saved IDs, so sources whose files are already gone can be removed.
+            sources: Source IDs as upsert_lineage reports them, or globs over them, e.g.
+                "etl/old/*.sql" or "inline:*"; workspace paths are accepted too. Matching uses saved
+                IDs, so sources whose files are already gone can be removed.
 
         Returns:
-            revision, removed source IDs, patterns that matched nothing (not_found), and delta
-            counts of nodes and edges.
+            removed source IDs, patterns that matched nothing (not_found), and delta counts of
+            nodes and edges.
         """
         if not sources:
             return FuncToolResult(success=0, error="sources must contain at least one source ID or pattern")
         try:
-            patterns = [self._normalize_pattern(p) for p in sources]
+            patterns = [(raw, self._normalize_pattern(raw)) for raw in sources]
+
+            def matches(sid: str, raw: str, normalized: str) -> bool:
+                return _pattern_matches(sid, raw) or _pattern_matches(sid, normalized)
+
             with self.store.edit() as document:
                 nodes_before, edges_before = graph_keys(document)
-                removed = [sid for sid in document.sources if any(_pattern_matches(sid, p) for p in patterns)]
+                removed = [sid for sid in document.sources if any(matches(sid, *p) for p in patterns)]
                 for sid in removed:
                     remove_source(document, sid)
                 nodes_after, edges_after = graph_keys(document)
-            not_found = [
-                raw for raw, pattern in zip(sources, patterns) if not any(_pattern_matches(s, pattern) for s in removed)
-            ]
+            not_found = [raw for raw, normalized in patterns if not any(matches(s, raw, normalized) for s in removed)]
             result = {
-                "revision": document.revision,
                 "removed": removed,
                 "not_found": not_found,
                 "delta": _delta(nodes_before, edges_before, nodes_after, edges_after),
@@ -218,7 +253,7 @@ class LineageTools:
             return FuncToolResult(result=result)
         except Exception as e:
             logger.error(f"delete_lineage failed: {e}")
-            return FuncToolResult(success=0, error=str(e))
+            return FuncToolResult(success=0, error=_error_message(e))
 
     # -- read -------------------------------------------------------------------------------
 
@@ -250,48 +285,45 @@ class LineageTools:
             lineage records, one per statement: target, sources (every table the statement
             reads, possibly beyond depth), operation, via_temp (folded temporary tables) and
             evidence "file_id:line". The first evidence is the statement start; the rest locate
-            the statements that built via_temp tables. Read the source there for filters,
-            formulas and join logic. files maps file IDs to source IDs; copies lists sources
-            byte-identical to a cited file, whose statements are cited once under that file.
-            nodes maps each returned
+            the statements that built via_temp tables. A write that reads no table (VALUES,
+            constants) has empty sources. Read the source there for filters, formulas and join
+            logic. files maps file IDs to source IDs; copies lists sources byte-identical to a
+            cited file, whose statements are cited once under that file. nodes maps each returned
             table to role (root/intermediate/leaf/isolated, ignoring queries), component (weakly
             connected subgraph) and, when non-zero, queried_by; kind appears for views and
             queries, and label for queries that carry the author's comment. components lists the
             multi-table subgraphs involved with their size, plus roots and leaves when tables is
-            omitted. complete=false means some
-            sources involved are stale (changed since analysis: re-run upsert_lineage) or
-            incomplete (statements failed to parse): never treat a missing edge as absent.
-            resolved, ambiguous and not_found report how tables were matched. Names are
-            shortened by stats.default_database.
+            omitted. complete=false means a source that may involve the returned tables, cited or
+            not, is stale (changed since analysis, or analyzed under other settings: re-run
+            upsert_lineage) or incomplete (statements failed to parse: read them): never treat a
+            missing edge as absent. resolved, ambiguous and not_found report how tables were
+            matched. Names are shortened by stats.default_database.
         """
         if direction not in ("upstream", "downstream", "both"):
             return FuncToolResult(success=0, error="direction must be upstream, downstream or both")
         if not isinstance(depth, int) or depth < -1:
             return FuncToolResult(success=0, error="depth must be a non-negative integer or -1")
         try:
-            _, database = self._resolve_dialect(None, None, None)
             document = self.store.load()
-            # Shorten by the database the sources were analyzed with when they agree: scripts may
-            # qualify tables with a database other than the datasource's.
-            databases = {record.default_database for record in document.sources.values()}
-            if len(databases) == 1:
-                database = databases.pop()
+            settings = document.settings or self._datasource_settings(None)
+            database = settings.default_database
             graph = LineageGraph(document)
             result: Dict[str, Any] = {}
             if tables:
                 resolution = graph.resolve(tables, database)
                 nodes, edges = graph.traverse(resolution.tables, direction, depth)
-                checked = None
             else:
                 resolution = None
                 nodes, edges = set(graph.tables), graph.all_table_edges()
-                checked = list(document.sources)
             statements = graph.statements_for(edges)
             if include_queries:
                 statements += graph.query_statements(nodes)
             shaper = _Shaper(database, statements, document)
-            checked = checked if checked is not None else shaper.cited_sources()
-            stale = [(sid, reason) for sid in checked if (reason := self._staleness(sid, document.sources.get(sid)))]
+            if resolution is None:
+                stale = self._stale_sources(document, document.sources, settings)
+                checked = list(document.sources)
+            else:
+                stale, checked = self._scoped_checks(document, settings, shaper.cited_sources(), nodes, resolution)
             incomplete = [sid for sid in checked if sid in document.sources and not document.sources[sid].complete]
             result["complete"] = not stale and not incomplete
             if resolution is not None:
@@ -314,14 +346,64 @@ class LineageTools:
                 "default_database": database,
                 "tables": sum(1 for n in nodes if not is_query_node(n)),
                 "statements": len(result["lineage"]),
-                "revision": document.revision,
             }
             if not document.sources:
                 result["hint"] = "No lineage has been saved for this project yet; call upsert_lineage first."
             return FuncToolResult(result=result)
         except Exception as e:
             logger.error(f"query_lineage failed: {e}")
-            return FuncToolResult(success=0, error=str(e))
+            return FuncToolResult(success=0, error=_error_message(e))
+
+    def _stale_sources(
+        self, document: LineageDocument, source_ids: Iterable[str], settings: AnalysisSettings
+    ) -> List[Tuple[str, str]]:
+        return [
+            (sid, reason) for sid in source_ids if (reason := self._staleness(sid, document.sources.get(sid), settings))
+        ]
+
+    def _scoped_checks(
+        self,
+        document: LineageDocument,
+        settings: AnalysisSettings,
+        cited: List[str],
+        nodes: Iterable[str],
+        resolution: Resolution,
+    ) -> Tuple[List[Tuple[str, str]], List[str]]:
+        """Staleness and the sources whose completeness bounds a table-scoped answer.
+
+        Cited sources bound it directly. An uncited source matters when it may hold statements on
+        the returned tables that the graph lacks: its statements failed to parse, or its file
+        changed since analysis. Such a source is counted unless its text never names one of them.
+        A deleted uncited source contributed nothing to this subgraph, so it is ignored.
+        """
+        stale = self._stale_sources(document, cited, settings)
+        checked = list(cited)
+        cited_set = set(cited)
+        names = {table.rsplit(".", 1)[-1] for table in nodes if not is_query_node(table)}
+        names.update(name.rsplit(".", 1)[-1] for name in resolution.not_found)
+        # A glob that matched nothing names no text to look for, so every candidate may hold it.
+        pattern = None if any(glob.has_magic(name) for name in resolution.not_found) else _mention_pattern(names)
+        for sid, record in document.sources.items():
+            if sid in cited_set:
+                continue
+            reason = self._staleness(sid, record, settings)
+            if reason == "deleted" or (reason is None and record.complete):
+                continue
+            if self._may_mention(sid, record, pattern):
+                checked.append(sid)
+                if reason is not None:
+                    stale.append((sid, reason))
+        return stale, checked
+
+    def _may_mention(self, source_id: str, record: SourceRecord, pattern: Optional[Pattern[str]]) -> bool:
+        # Inline text is not kept, so an inline source can never be ruled out.
+        if pattern is None or record.kind != "file":
+            return True
+        try:
+            text = self._source_path(source_id).read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            return True
+        return pattern.search(text) is not None
 
     # -- helpers ----------------------------------------------------------------------------
 
@@ -334,84 +416,68 @@ class LineageTools:
         for path in files:
             display = self._display(path)
             try:
-                text = path.read_text(encoding="utf-8", errors="replace")
-                stat = path.stat()
+                text = _read_with_digest(path)[0]
             except OSError as e:
                 skipped.append({"file": display, "reason": f"unreadable: {e}"})
                 continue
-            inputs.append(
-                _Input(
-                    source_id=display,
-                    kind="file",
-                    text=text,
-                    python=path.suffix.lower() == ".py",
-                    size=stat.st_size,
-                    mtime=stat.st_mtime,
-                )
-            )
+            inputs.append(_Input(source_id=display, kind="file", text=text, python=path.suffix.lower() == ".py"))
         return inputs, skipped
 
     @staticmethod
-    def _unchanged(record: SourceRecord, item: _Input, dialect: str, database: str) -> bool:
+    def _unchanged(record: SourceRecord, item: _Input, settings: AnalysisSettings) -> bool:
         return (
             record.kind == item.kind
             and record.sha256 == content_digest(item.text)
-            and record.dialect == dialect
-            and record.default_database == database
+            and _analyzed_with(record, settings)
             and record.analyzer_version == ANALYZER_VERSION
         )
 
-    def _staleness(self, source_id: str, record: Optional[SourceRecord]) -> Optional[str]:
+    def _staleness(self, source_id: str, record: Optional[SourceRecord], settings: AnalysisSettings) -> Optional[str]:
         if record is None:
             return None
+        if record.kind == "file":
+            path = self._source_path(source_id)
+            try:
+                digest = _cached_digest(path)
+            except OSError:
+                return "deleted"
+            if digest != record.sha256:
+                return "modified"
         if record.analyzer_version < ANALYZER_VERSION:
             return "analyzer_upgraded"
-        if record.kind != "file":
-            return None
-        path = self._source_path(source_id)
-        try:
-            stat = path.stat()
-            if stat.st_size == record.size and stat.st_mtime == record.mtime:
-                return None
-            digest = content_digest(path.read_text(encoding="utf-8", errors="replace"))
-        except OSError:
-            return "deleted"
-        return None if digest == record.sha256 else "modified"
+        if not _analyzed_with(record, settings):
+            return "settings_changed"
+        return None
 
     def _source_path(self, source_id: str) -> Path:
         path = Path(source_id)
-        return path if path.is_absolute() else self.root_path / path
+        return path if path.is_absolute() else self.project_root / path
 
     def _normalize_pattern(self, pattern: str) -> str:
-        """Express a pattern the way source IDs are stored: workspace-relative when possible."""
+        """Express a workspace path or glob the way source IDs are stored."""
         if pattern.startswith(_INLINE_PREFIX):
             return pattern
         expanded = os.path.expanduser(pattern)
-        if os.path.isabs(expanded):
-            path = Path(expanded) if glob.has_magic(expanded) else Path(expanded).resolve(strict=False)
-            try:
-                return str(path.relative_to(self.root_path))
-            except ValueError:
-                return str(path)
-        return os.path.normpath(expanded) if not glob.has_magic(expanded) else expanded.removeprefix("./")
+        path = Path(expanded) if os.path.isabs(expanded) else self.root_path / expanded
+        # A glob cannot be resolved, but its ".." segments still collapse.
+        path = Path(os.path.normpath(path)) if glob.has_magic(expanded) else path.resolve(strict=False)
+        return self._source_id(path)
 
-    def _resolve_dialect(self, datasource: Optional[str], dialect: Optional[str], default_database: Optional[str]):
-        explicit_dialect = dialect
-        dialect = ""
-        database = default_database or ""
+    def _datasource_settings(self, datasource: Optional[str]) -> AnalysisSettings:
+        """Dialect and default database of ``datasource``, or of the active one when omitted."""
         config = self.agent_config
-        if config is not None:
-            name = datasource or getattr(config, "current_datasource", "") or ""
-            datasources = getattr(getattr(config, "services", None), "datasources", {}) or {}
-            if datasource and datasource not in datasources:
-                raise DatusException(ErrorCode.TOOL_INVALID_INPUT, f"Unknown datasource: {datasource}")
-            db_config = datasources.get(name)
-            if db_config is not None:
-                dialect = getattr(db_config, "type", "") or ""
-                if not database:
-                    database = getattr(db_config, "database", "") or ""
-        dialect = explicit_dialect or dialect
-        return (parse_dialect(dialect) if dialect else None), database
+        if config is None:
+            return AnalysisSettings()
+        name = datasource or getattr(config, "current_datasource", "") or ""
+        datasources = getattr(getattr(config, "services", None), "datasources", {}) or {}
+        if datasource and datasource not in datasources:
+            raise DatusException(ErrorCode.TOOL_INVALID_INPUT, f"Unknown datasource: {datasource}")
+        db_config = datasources.get(name)
+        if db_config is None:
+            return AnalysisSettings()
+        return _merge_settings(
+            AnalysisSettings(), getattr(db_config, "type", "") or "", getattr(db_config, "database", "") or ""
+        )
 
     def _collect_files(self, patterns: List[str]):
         """Expand all SQL/Python matches, applying the filesystem read policy to each path."""
@@ -462,10 +528,63 @@ class LineageTools:
         return sorted(seen), skipped
 
     def _display(self, path: Path) -> str:
+        return self._source_id(path.resolve(strict=False))
+
+    def _source_id(self, path: Path) -> str:
+        """Project-relative for files inside the project, absolute otherwise; always "/"-separated."""
         try:
-            return str(path.resolve(strict=False).relative_to(self.root_path))
+            return path.relative_to(self.project_root).as_posix()
         except ValueError:
-            return str(path)
+            return path.as_posix()
+
+
+def _merge_settings(
+    base: AnalysisSettings, dialect: Optional[str], default_database: Optional[str]
+) -> AnalysisSettings:
+    """``base`` with the given overrides; only a new dialect name still needs mapping to a parser."""
+    return AnalysisSettings(
+        dialect=parse_dialect(dialect) if dialect else base.dialect,
+        default_database=default_database or base.default_database,
+    )
+
+
+def _analyzed_with(record: SourceRecord, settings: AnalysisSettings) -> bool:
+    return record.dialect == settings.dialect and record.default_database == settings.default_database
+
+
+def _read_with_digest(path: Path) -> Tuple[str, str]:
+    """Read ``path`` and remember its digest under the (size, mtime) it had before the read.
+
+    Taking the stat first means a write racing the read leaves a stale key, which the next check
+    re-hashes, rather than a fresh key paired with old content.
+    """
+    stat = path.stat()
+    text = path.read_text(encoding="utf-8", errors="replace")
+    digest = content_digest(text)
+    _DIGESTS[path] = ((stat.st_size, stat.st_mtime_ns), digest)
+    return text, digest
+
+
+def _cached_digest(path: Path) -> str:
+    stat = path.stat()
+    cached = _DIGESTS.get(path)
+    if cached is not None and cached[0] == (stat.st_size, stat.st_mtime_ns):
+        return cached[1]
+    return _read_with_digest(path)[1]
+
+
+def _mention_pattern(names: Iterable[str]) -> Pattern[str]:
+    """Matches any of ``names`` as a whole identifier, ignoring case and quoting."""
+    names = sorted({name for name in names if name}, key=len, reverse=True)
+    if not names:
+        return re.compile(r"(?!)")
+    return re.compile(r"(?<![\w$])(?:" + "|".join(re.escape(name) for name in names) + r")(?![\w$])", re.IGNORECASE)
+
+
+def _error_message(error: Exception) -> str:
+    if isinstance(error, DatusException) and error.code == ErrorCode.COMMON_JSON_PARSE_ERROR:
+        return f"{error} {_REBUILD_HINT}"
+    return str(error)
 
 
 def _glob_regex(pattern: str) -> "re.Pattern[str]":

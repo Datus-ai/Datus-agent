@@ -7,7 +7,6 @@
 from __future__ import annotations
 
 import hashlib
-from datetime import datetime, timezone
 from typing import Dict, List, Literal, Optional
 
 from datus.storage.lineage.models import (
@@ -44,8 +43,6 @@ def analyze_source(
     python: bool = False,
     dialect: Optional[str] = None,
     default_database: str = "",
-    size: Optional[int] = None,
-    mtime: Optional[float] = None,
 ) -> SourceContribution:
     """Statically analyze ``text`` (never executed) and attribute every edge to ``source_id``."""
     # A Python file without SQL literals is simply not a SQL source, not a failed input.
@@ -54,12 +51,9 @@ def analyze_source(
     record = SourceRecord(
         kind=kind,
         sha256=content_digest(text),
-        size=size,
-        mtime=mtime,
         dialect=dialect or "",
         default_database=default_database,
         analyzer_version=ANALYZER_VERSION,
-        analyzed_at=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         statements=extraction.statements,
         parsed=extraction.parsed,
         complete=not extraction.unresolved,
@@ -93,7 +87,8 @@ def _add_writes(contribution: SourceContribution, extraction: ExtractionResult, 
                 }
             )
             hops.append(TempHop(table=temp, lines=lines))
-        for upstream in edge.sources:
+        # A write reading no table (VALUES, constants, an in-place UPDATE) still loads its target.
+        for upstream in edge.sources or [None]:
             evidence = Evidence(source=source_id, line=edge.line, operation=edge.load_mode, via_temp=hops or None)
             contribution.edges.append((upstream, edge.target, evidence))
 

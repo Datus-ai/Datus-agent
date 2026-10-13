@@ -19,7 +19,7 @@ def build(edges):
         evidence = Evidence(source=source, line=line, operation="insert", via_temp=rest[0] if rest else None)
         by_source.setdefault(source, []).append((up, down, evidence))
     for source, items in by_source.items():
-        record = SourceRecord(kind="file", sha256=source, analyzer_version=1, analyzed_at="")
+        record = SourceRecord(kind="file", sha256=source, analyzer_version=1)
         replace_source(document, source, SourceContribution(record=record, edges=items))
     return LineageGraph(document)
 
@@ -72,3 +72,21 @@ def test_exact_spelling_wins_over_case_variants():
     result = graph.resolve(["dw.orders", "DW.ORDERS"])
     assert result.resolved == {"dw.orders": ["dw.orders"]}
     assert result.ambiguous == {"DW.ORDERS": ["dw.Orders", "dw.orders"]}
+
+
+def test_writes_without_upstream_are_returned_with_the_table_they_load():
+    graph = build([(None, "flag", "seed", 1), ("flag", "report", "f", 2), ("s", "report", "f", 3)])
+
+    assert graph.role("flag") == "root"
+    assert graph.traverse(["flag"], "upstream", 1) == ({"flag"}, {(None, "flag")})
+    # Only an upstream walk reaches the loading statement; a downstream walk from it does not.
+    assert graph.traverse(["flag"], "downstream", 1) == ({"flag", "report"}, {("flag", "report")})
+    nodes, edges = graph.traverse(["report"], "upstream", -1)
+    assert nodes == {"flag", "report", "s"}
+    statements = graph.statements_for(edges)
+    assert [(st.target, st.source, st.line, st.sources) for st in statements] == [
+        ("flag", "seed", 1, []),
+        ("report", "f", 2, ["flag"]),
+        ("report", "f", 3, ["s"]),
+    ]
+    assert (None, "flag") in graph.all_table_edges()

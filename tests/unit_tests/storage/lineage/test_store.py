@@ -12,10 +12,11 @@ import pytest
 
 from datus.storage.lineage.models import Evidence, LineageDocument, SourceContribution, SourceRecord
 from datus.storage.lineage.store import LineageStore, remove_source, replace_source, serialize
+from datus.utils.exceptions import DatusException
 
 
 def contribution(source, edges, labels=None):
-    record = SourceRecord(kind="file", sha256=source, analyzer_version=1, analyzed_at="2026-01-01T00:00:00Z")
+    record = SourceRecord(kind="file", sha256=source, analyzer_version=1)
     return SourceContribution(
         record=record,
         edges=[(up, down, Evidence(source=source, line=line, operation=op)) for up, down, line, op in edges],
@@ -56,6 +57,49 @@ def test_query_label_is_kept_while_the_query_survives():
     assert "query:1" not in document.nodes
 
 
+def test_the_same_graph_built_separately_serializes_identically(tmp_path):
+    """Two checkouts that analyze the same sources must not conflict: nothing counts or timestamps writes."""
+    first, second = LineageStore(tmp_path / "1.json"), LineageStore(tmp_path / "2.json")
+    with first.edit() as document:
+        replace_source(document, "a.sql", contribution("a.sql", [("s", "t", 1, "insert")]))
+    for _ in range(3):
+        with second.edit() as document:
+            replace_source(document, "a.sql", contribution("a.sql", [("s", "x", 1, "insert")]))
+        with second.edit() as document:
+            replace_source(document, "a.sql", contribution("a.sql", [("s", "t", 1, "insert")]))
+
+    assert first.path.read_text() == second.path.read_text()
+
+
+def test_discarding_rebuilds_a_file_that_no_longer_parses(tmp_path):
+    store = LineageStore(tmp_path / "lineage.json")
+    store.path.write_text("<<<<<<< HEAD\n{}\n=======\n{}\n>>>>>>> branch\n")
+    with pytest.raises(DatusException):
+        store.load()
+
+    with store.edit(discard=True) as document:
+        assert document.sources == {}
+        replace_source(document, "a.sql", contribution("a.sql", [("s", "t", 1, "insert")]))
+
+    assert list(store.load().sources) == ["a.sql"]
+
+
+def test_writes_without_upstream_keep_their_target_until_the_source_goes():
+    document = LineageDocument()
+    replace_source(document, "seed.sql", contribution("seed.sql", [(None, "flag", 1, "insert")]))
+    replace_source(document, "a.sql", contribution("a.sql", [("flag", "t", 1, "insert")]))
+    assert set(document.nodes) == {"flag", "t"}
+    assert json.loads(serialize(document))["edges"][0] == {
+        "to": "flag",
+        "evidence": [{"source": "seed.sql", "line": 1, "operation": "insert"}],
+    }
+
+    remove_source(document, "a.sql")
+    assert set(document.nodes) == {"flag"}
+    remove_source(document, "seed.sql")
+    assert document.nodes == {}
+
+
 def test_serialization_does_not_depend_on_insertion_order(tmp_path):
     edges = [("s1", "t", 1, "insert"), ("s2", "t", 1, "insert"), ("t", "u", 2, "overwrite")]
     first, second = LineageStore(tmp_path / "1.json"), LineageStore(tmp_path / "2.json")
@@ -72,7 +116,7 @@ def test_serialization_does_not_depend_on_insertion_order(tmp_path):
     assert [ev["source"] for ev in saved["edges"][0]["evidence"]] == ["a.sql", "b.sql"]
 
 
-def test_edit_writes_only_changes_and_bumps_the_revision(tmp_path):
+def test_edit_writes_only_changes(tmp_path):
     store = LineageStore(tmp_path / "lineage" / "lineage.json")
     with store.edit() as document:
         pass
@@ -80,10 +124,11 @@ def test_edit_writes_only_changes_and_bumps_the_revision(tmp_path):
 
     with store.edit() as document:
         replace_source(document, "a.sql", contribution("a.sql", [("s", "t", 1, "insert")]))
+    written = store.path.stat().st_mtime_ns
     with store.edit() as document:
         pass
 
-    assert store.load().revision == 1
+    assert store.path.stat().st_mtime_ns == written
     assert store.path.read_text() == serialize(store.load())
     # Nothing but the graph is left in its directory: no lock or temporary file to commit.
     assert [p.name for p in store.path.parent.iterdir()] == ["lineage.json"]
@@ -119,7 +164,6 @@ def test_concurrent_edits_from_separate_stores_lose_no_update(tmp_path):
 
     document = LineageStore(path).load()
     assert len(document.sources) == 16
-    assert document.revision == 16
 
 
 def test_load_reflects_writes_by_another_store(tmp_path):

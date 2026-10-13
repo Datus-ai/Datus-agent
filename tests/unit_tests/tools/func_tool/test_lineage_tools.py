@@ -73,7 +73,7 @@ def test_upsert_persists_one_project_graph_across_directories(tmp_path):
     assert result["delta"] == {"nodes_added": 3, "nodes_removed": 0, "edges_added": 2, "edges_removed": 0}
     document = saved(tmp_path)
     assert document["schema_version"] == 1
-    assert document["revision"] == result["revision"] == 1
+    assert document["settings"] == result["settings"] == {"dialect": "mysql", "default_database": "dw"}
     assert set(document["sources"]) == {"dws/build.sql", "ods/load.sql"}
     assert document["nodes"] == {
         "dw.dwd_order": {"kind": "table"},
@@ -99,7 +99,6 @@ def test_unchanged_sources_are_skipped_without_rewriting_the_file(tmp_path):
     result = upsert(tool, paths=["*.sql"])
 
     assert (result["added"], result["updated"], result["unchanged"]) == ([], [], 1)
-    assert result["revision"] == 1
     assert (tmp_path / "lineage" / "lineage.json").read_bytes() == before
 
 
@@ -198,6 +197,7 @@ def test_inline_sql_is_an_idempotent_source(tmp_path):
         ({"paths": ["a.sql"], "sql": "SELECT 1"}, "exactly one of paths or sql"),
         ({"paths": ["a.sql"], "source_id": "x"}, "source_id only applies to sql"),
         ({"sql": "SELECT * FROM a", "prune_missing": True}, "prune_missing only applies to paths"),
+        ({"sql": "SELECT * FROM a", "rebuild": True}, "rebuild only applies to paths"),
     ],
 )
 def test_upsert_rejects_ambiguous_inputs(tmp_path, kwargs, error):
@@ -319,18 +319,167 @@ def test_corrupt_or_foreign_lineage_file_is_reported_not_overwritten(tmp_path):
     assert "schema_version" in response.error
 
 
-def test_lineage_file_defaults_to_the_project_lineage_dir(tmp_path):
-    lineage_dir = tmp_path / "project" / "lineage"
+def project_tool(project, workspace):
+    """A tool as a node with its own workspace inside ``project`` builds it."""
     config = SimpleNamespace(
         current_datasource="",
         services=SimpleNamespace(datasources={}),
-        path_manager=SimpleNamespace(lineage_dir=lineage_dir),
+        path_manager=SimpleNamespace(project_root=project, lineage_dir=project / "lineage"),
     )
-    write(tmp_path, "ws/q.sql", "INSERT INTO t SELECT * FROM s")
+    return LineageTools(config, root_path=str(workspace))
 
-    LineageTools(config, root_path=str(tmp_path / "ws")).upsert_lineage(paths=["q.sql"])
 
-    assert (lineage_dir / "lineage.json").exists()
+def test_lineage_file_defaults_to_the_project_lineage_dir(tmp_path):
+    project = tmp_path / "project"
+    write(project, "ws/q.sql", "INSERT INTO t SELECT * FROM s")
+
+    project_tool(project, project / "ws").upsert_lineage(paths=["q.sql"])
+
+    assert (project / "lineage" / "lineage.json").exists()
+
+
+def test_every_workspace_of_the_project_reads_the_same_source_ids(tmp_path):
+    project = tmp_path / "project"
+    write(project, "ws/jobs/a.sql", "INSERT INTO t SELECT * FROM s;")
+    node = project_tool(project, project / "ws")
+    other = project_tool(project, project)
+
+    added = upsert(node, paths=["jobs/*.sql"])["added"]
+
+    # Another workspace finds the file the ID names: nothing reads as deleted, nothing is pruned.
+    assert query(other)["complete"] is True
+    result = upsert(other, paths=["**/*.sql"], prune_missing=True)
+    assert (result["unchanged"], result["removed"]) == (1, [])
+    assert added == ["ws/jobs/a.sql"]
+    # Patterns are accepted both as reported IDs and as paths in the caller's workspace.
+    assert node.delete_lineage(sources=["jobs/a.sql"]).result["removed"] == ["ws/jobs/a.sql"]
+
+
+def test_saved_settings_apply_to_calls_that_omit_them(tmp_path):
+    write(tmp_path, "a.sql", "INSERT INTO t SELECT * FROM s;")
+    edited = write(tmp_path, "b.sql", "INSERT INTO u SELECT * FROM s;")
+    tool = make_tool(tmp_path, {"wh": SimpleNamespace(type="mysql", database="ods")}, "wh")
+    tool.upsert_lineage(paths=["*.sql"], default_database="dw")
+
+    edited.write_text("INSERT INTO u SELECT * FROM s2;")
+    later = tool.upsert_lineage(paths=["*.sql"]).result
+
+    assert (later["updated"], later["unchanged"]) == (["b.sql"], 1)
+    document = saved(tmp_path)
+    assert {record["default_database"] for record in document["sources"].values()} == {"dw"}
+    assert all(node.startswith("dw.") for node in document["nodes"])
+    assert query(tool)["complete"] is True
+    assert later["settings"] == document["settings"] == {"dialect": "mysql", "default_database": "dw"}
+
+
+def test_changed_settings_mark_sources_analyzed_under_the_old_ones_stale(tmp_path):
+    write(tmp_path, "a.sql", "INSERT INTO t SELECT * FROM s;")
+    write(tmp_path, "b.sql", "INSERT INTO u SELECT * FROM s;")
+    tool = make_tool(tmp_path)
+    upsert(tool, paths=["*.sql"])
+
+    result = upsert(tool, paths=["a.sql"], default_database="ods")
+
+    whole = query(tool)
+    assert whole["complete"] is False
+    assert [(whole["files"].get(s["source"], s["source"]), s["reason"]) for s in whole["stale"]] == [
+        ("b.sql", "settings_changed")
+    ]
+    assert result["stale"] == ["b.sql"]
+    assert "stale" not in tool.upsert_lineage(paths=["*.sql"]).result
+    assert query(tool)["complete"] is True
+
+
+def test_explicit_datasource_overrides_the_saved_settings(tmp_path):
+    write(tmp_path, "a.sql", "INSERT INTO t SELECT * FROM s;")
+    datasources = {
+        "wh": SimpleNamespace(type="mysql", database="ods"),
+        "lake": SimpleNamespace(type="hive", database="raw"),
+    }
+    tool = make_tool(tmp_path, datasources, "wh")
+    tool.upsert_lineage(paths=["a.sql"], default_database="dw")
+
+    result = tool.upsert_lineage(paths=["a.sql"], datasource="lake").result
+
+    assert result["settings"] == {"dialect": "hive", "default_database": "raw"}
+    assert result["updated"] == ["a.sql"]
+
+
+def test_unchanged_sources_still_report_their_unanalyzed_statements(tmp_path):
+    write(tmp_path, "q.sql", "INSERT INTO t SELECT * FROM a;\nSELECT FROM WHERE (((;")
+    write(tmp_path, "ok.sql", "INSERT INTO u SELECT * FROM a;")
+    tool = make_tool(tmp_path)
+    upsert(tool, paths=["*.sql"])
+
+    again = upsert(tool, paths=["*.sql"])
+
+    assert again["unchanged"] == 2
+    assert [(entry["source"], [i["line"] for i in entry["issues"]]) for entry in again["incomplete"]] == [
+        ("q.sql", [2])
+    ]
+
+
+def test_tables_loaded_without_reading_a_table_keep_their_loading_statements(tmp_path):
+    write(
+        tmp_path,
+        "seed.sql",
+        "INSERT INTO dim_flag VALUES (1, 'a');\nCREATE TABLE cfg AS SELECT 1 AS x;\nUPDATE dim_flag SET b = 1;",
+    )
+    write(tmp_path, "etl.sql", "INSERT INTO report SELECT * FROM dim_flag JOIN facts ON 1 = 1;")
+    tool = make_tool(tmp_path)
+    upsert(tool, paths=["*.sql"])
+
+    flag = query(tool, tables=["dim_flag"], direction="upstream")
+    assert records(flag) == [
+        ("dim_flag", [], "insert", [("seed.sql", 1)]),
+        ("dim_flag", [], "update", [("seed.sql", 3)]),
+    ]
+    assert query(tool, tables=["cfg"])["nodes"] == {"cfg": {"role": "isolated", "component": 2}}
+    # The loading statements sit one hop above the table, like any other write into it.
+    report = query(tool, tables=["report"], direction="upstream", depth=1)
+    assert [r[0] for r in records(report)] == ["report"]
+    deep = query(tool, tables=["report"], direction="upstream", depth=-1)
+    assert [r[0] for r in records(deep)] == ["dim_flag", "dim_flag", "report"]
+    assert ("cfg", [], "create", [("seed.sql", 2)]) in records(query(tool))
+
+
+def test_unchanged_content_leaves_the_file_identical_across_checkouts(tmp_path):
+    """The file is committed: the same sources must serialize the same on every machine and call."""
+    trees = [tmp_path / "one", tmp_path / "two"]
+    for root in trees:
+        write(root, "etl/a.sql", "INSERT INTO t SELECT * FROM s;")
+        write(root, "etl/b.sql", "SELECT FROM WHERE (((;")
+        upsert(make_tool(root), paths=["etl/*.sql"])
+    before = (trees[1] / "lineage" / "lineage.json").read_bytes()
+    assert (trees[0] / "lineage" / "lineage.json").read_bytes() == before
+
+    for path in (trees[1] / "etl").iterdir():
+        stat = path.stat()
+        os.utime(path, ns=(stat.st_atime_ns, stat.st_mtime_ns + 10**9))
+    result = upsert(make_tool(trees[1]), paths=["etl/*.sql"])
+
+    assert result["unchanged"] == 2
+    assert (trees[1] / "lineage" / "lineage.json").read_bytes() == before
+
+
+def test_rebuild_recovers_a_lineage_file_that_no_longer_parses(tmp_path):
+    write(tmp_path, "a.sql", "INSERT INTO t SELECT * FROM s;")
+    tool = make_tool(tmp_path)
+    upsert(tool, paths=["a.sql"])
+    upsert(tool, sql="SELECT * FROM t", source_id="saved")
+    conflicted = write(tmp_path, "lineage/lineage.json", "<<<<<<< HEAD\n{}\n=======\n{}\n>>>>>>> branch\n")
+
+    failed = tool.upsert_lineage(paths=["a.sql"])
+    assert failed.success == 0
+    assert "rebuild=True" in failed.error
+    assert tool.query_lineage().success == 0
+    assert conflicted.read_text().startswith("<<<<<<<")
+
+    rebuilt = upsert(tool, paths=["*.sql"], rebuild=True)
+
+    assert rebuilt["added"] == ["a.sql"]
+    assert list(saved(tmp_path)["sources"]) == ["a.sql"]
+    assert records(query(tool)) == [("t", ["s"], "insert", [("a.sql", 1)])]
 
 
 # -- delete ---------------------------------------------------------------------------------
@@ -427,7 +576,7 @@ def test_whole_graph_lists_disconnected_subgraphs(tmp_path):
         {"id": 1, "tables": 5, "roots": ["dim", "ods.raw"], "leaves": ["ads"]},
         {"id": 2, "tables": 2, "roots": ["other_s"], "leaves": ["other_t"]},
     ]
-    assert result["stats"] == {"default_database": "dw", "tables": 8, "statements": 5, "revision": 1}
+    assert result["stats"] == {"default_database": "dw", "tables": 8, "statements": 5}
 
 
 def test_table_names_resolve_without_guessing(tmp_path):
@@ -494,6 +643,48 @@ def test_stale_sources_make_the_result_incomplete_until_reanalyzed(tmp_path, mon
     monkeypatch.setattr(lineage_module, "ANALYZER_VERSION", lineage_module.ANALYZER_VERSION + 1)
     upgraded = query(tool)
     assert [s["reason"] for s in upgraded["stale"]] == ["analyzer_upgraded"]
+
+
+def test_scoped_completeness_covers_uncited_sources_that_may_hold_the_tables(tmp_path):
+    write(tmp_path, "a.sql", "INSERT INTO x SELECT * FROM s;")
+    write(tmp_path, "b.sql", "INSERT INTO y SELECT * FROM s;")
+    write(tmp_path, "unrelated_failure.sql", "INSERT INTO other SELECT * FROM (((;")
+    unrelated_edit = write(tmp_path, "unrelated_edit.sql", "INSERT INTO p SELECT * FROM q;")
+    gone = write(tmp_path, "gone.sql", "INSERT INTO p2 SELECT * FROM q2;")
+    tool = make_tool(tmp_path)
+    upsert(tool, paths=["*.sql"])
+    unrelated_edit.write_text("INSERT INTO p SELECT * FROM q3;")
+    gone.unlink()
+    # Sources that never name x neither cite it nor can hold a statement on it.
+    assert query(tool, tables=["x"])["complete"] is True
+
+    failing = write(tmp_path, "failing.sql", "INSERT INTO x SELECT * FROM (((;")
+    upsert(tool, paths=["failing.sql"])
+    result = query(tool, tables=["x"])
+    assert result["complete"] is False
+    assert result["incomplete"] == ["failing.sql"]
+    failing.unlink()
+    upsert(tool, paths=["failing.sql"], prune_missing=True)
+
+    # b.sql was analyzed before it gained a write into x.
+    (tmp_path / "b.sql").write_text("INSERT INTO y SELECT * FROM s;\nINSERT INTO x SELECT * FROM s2;")
+    result = query(tool, tables=["X"])
+    assert result["complete"] is False
+    assert result["stale"] == [{"source": "b.sql", "reason": "modified"}]
+
+
+def test_unknown_table_named_by_an_unparsed_statement_is_not_reported_complete(tmp_path):
+    write(tmp_path, "a.sql", "INSERT INTO t SELECT * FROM s;")
+    write(tmp_path, "b.sql", "INSERT INTO dim_area SELECT * FROM (((;")
+    tool = make_tool(tmp_path)
+    upsert(tool, paths=["*.sql"])
+
+    result = query(tool, tables=["dw.dim_area"])
+
+    assert result["not_found"] == ["dw.dim_area"]
+    assert result["complete"] is False
+    assert result["incomplete"] == ["b.sql"]
+    assert query(tool, tables=["t"])["complete"] is True
 
 
 def test_same_content_with_a_new_mtime_is_not_stale(tmp_path):
@@ -572,7 +763,6 @@ async def test_concurrent_sdk_upserts_all_persist(tmp_path):
 
     assert [r["success"] for r in results] == [1] * len(names)
     assert set(saved(tmp_path)["sources"]) == {f"{name}.sql" for name in names}
-    assert saved(tmp_path)["revision"] == len(names)
     # The SDK schema is the public invocation contract.
     assert set(tools) == {"upsert_lineage", "delete_lineage", "query_lineage"}
     assert set(tools["upsert_lineage"].params_json_schema["properties"]) == {
@@ -583,6 +773,7 @@ async def test_concurrent_sdk_upserts_all_persist(tmp_path):
         "dialect",
         "default_database",
         "prune_missing",
+        "rebuild",
     }
     assert set(tools["delete_lineage"].params_json_schema["properties"]) == {"sources"}
     assert set(tools["query_lineage"].params_json_schema["properties"]) == {

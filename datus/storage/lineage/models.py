@@ -23,16 +23,17 @@ class Issue(BaseModel):
 
 
 class SourceRecord(BaseModel):
-    """One analyzed SQL source; the unit that upsert replaces and delete removes."""
+    """One analyzed SQL source; the unit that upsert replaces and delete removes.
+
+    Only facts derived from the source's content are kept, so checkouts on different machines
+    produce the same record for the same content.
+    """
 
     kind: Literal["file", "inline"]
     sha256: str
-    size: Optional[int] = None
-    mtime: Optional[float] = None
     dialect: str = ""
     default_database: str = ""
     analyzer_version: int
-    analyzed_at: str
     statements: int = 0
     parsed: int = 0
     complete: bool = True
@@ -61,18 +62,29 @@ class Node(BaseModel):
 
 
 class Edge(BaseModel):
-    """Data flows from ``upstream`` to ``downstream``; one edge per table pair."""
+    """Data flows from ``upstream`` to ``downstream``; one edge per table pair.
+
+    An edge without ``upstream`` holds the writes that read no table (``INSERT ... VALUES``,
+    ``UPDATE t SET c = 1``), so a table loaded only that way still has its loading statements.
+    """
 
     model_config = ConfigDict(populate_by_name=True)
 
-    upstream: str = Field(alias="from")
+    upstream: Optional[str] = Field(default=None, alias="from")
     downstream: str = Field(alias="to")
     evidence: List[Evidence]
 
 
+class AnalysisSettings(BaseModel):
+    """How the project's sources are analyzed; saved with the graph so every call agrees."""
+
+    dialect: str = ""
+    default_database: str = ""
+
+
 class LineageDocument(BaseModel):
     schema_version: int = SCHEMA_VERSION
-    revision: int = 0
+    settings: Optional[AnalysisSettings] = None
     sources: Dict[str, SourceRecord] = Field(default_factory=dict)
     nodes: Dict[str, Node] = Field(default_factory=dict)
     edges: List[Edge] = Field(default_factory=list)
@@ -83,7 +95,7 @@ class SourceContribution:
     """Everything one source adds to the graph, produced by analysis and applied by the store."""
 
     record: SourceRecord
-    edges: List[Tuple[str, str, Evidence]] = field(default_factory=list)
+    edges: List[Tuple[Optional[str], str, Evidence]] = field(default_factory=list)
     query_labels: Dict[str, str] = field(default_factory=dict)
 
 

@@ -69,9 +69,9 @@ _NORMAL_RULES = [
     # context search / date utilities
     _rule("context_search_tools", "*", PermissionLevel.ALLOW),
     _rule("date_parsing_tools", "*", PermissionLevel.ALLOW),
-    # static SQL lineage: reads workspace files inside the filesystem policy, executes nothing, and
-    # writes only the deterministic analysis result to lineage/lineage.json
-    _rule("lineage_tools", "*", PermissionLevel.ALLOW),
+    # static SQL lineage read. ``upsert_lineage`` / ``delete_lineage`` write the project file
+    # lineage/lineage.json (deleting sources, saving inline SQL), so they fall through to ASK.
+    _rule("lineage_tools", "query_lineage", PermissionLevel.ALLOW),
     # db read. ``execute_sql`` is the unified SQL entry point; its gating is
     # handled dynamically per statement class in
     # ``PermissionHooks._handle_sql_permission`` driven by each profile's
@@ -316,6 +316,10 @@ _AUTO_EXTRA_RULES = [
     _rule("filesystem_tools", "delete_file", PermissionLevel.ALLOW),
     _rule("filesystem_tools", "upsert_osi_metrics", PermissionLevel.ALLOW),
     _rule("filesystem_tools", "upsert_osi_datasets", PermissionLevel.ALLOW),
+    # lineage analysis is a workspace write that re-derives sources from files; removing saved
+    # sources stays individually confirmable, like the object-scoped OSI deletes.
+    _rule("lineage_tools", "upsert_lineage", PermissionLevel.ALLOW),
+    _rule("lineage_tools", "delete_lineage", PermissionLevel.ASK),
     # plan writes
     _rule("tools", "todo_write", PermissionLevel.ALLOW),
     _rule("tools", "todo_update", PermissionLevel.ALLOW),

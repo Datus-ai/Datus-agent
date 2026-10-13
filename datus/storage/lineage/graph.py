@@ -17,6 +17,8 @@ from datus.storage.lineage.models import LineageDocument, TempHop, is_query_node
 Direction = Literal["upstream", "downstream", "both"]
 # A statement is the unit readers think in: one write (or query) at one place in one source.
 StatementKey = Tuple[str, int, str]  # (source, line, target)
+# (upstream, downstream); upstream is None for writes that read no table.
+EdgeKey = Tuple[Optional[str], str]
 
 
 @dataclass
@@ -54,9 +56,13 @@ class LineageGraph:
         self.readers: Dict[str, Set[str]] = defaultdict(set)
         self.query_inputs: Dict[str, Set[str]] = defaultdict(set)
         self.statements: Dict[StatementKey, Statement] = {}
-        self.statements_by_edge: Dict[Tuple[str, str], List[StatementKey]] = defaultdict(list)
+        self.statements_by_edge: Dict[EdgeKey, List[StatementKey]] = defaultdict(list)
+        # Tables written by statements that read no table.
+        self.loaded: Set[str] = set()
         for edge in document.edges:
-            if is_query_node(edge.downstream):
+            if edge.upstream is None:
+                self.loaded.add(edge.downstream)
+            elif is_query_node(edge.downstream):
                 self.readers[edge.upstream].add(edge.downstream)
                 self.query_inputs[edge.downstream].add(edge.upstream)
             else:
@@ -68,7 +74,8 @@ class LineageGraph:
                 if statement is None:
                     statement = Statement(edge.downstream, ev.source, ev.line, ev.operation or "select")
                     self.statements[key] = statement
-                statement.sources.append(edge.upstream)
+                if edge.upstream is not None:
+                    statement.sources.append(edge.upstream)
                 for hop in ev.via_temp or []:
                     if all(existing.table != hop.table for existing in statement.via_temp):
                         statement.via_temp.append(hop)
@@ -118,23 +125,29 @@ class LineageGraph:
 
     # -- traversal --------------------------------------------------------------------------
 
-    def traverse(self, seeds: Iterable[str], direction: Direction, depth: int) -> Tuple[Set[str], Set[Tuple[str, str]]]:
-        """Tables reached from ``seeds`` and the table edges walked; ``depth < 0`` means unbounded."""
+    def traverse(self, seeds: Iterable[str], direction: Direction, depth: int) -> Tuple[Set[str], Set[EdgeKey]]:
+        """Tables reached from ``seeds`` and the edges walked; ``depth < 0`` means unbounded.
+
+        Walking upstream from a table also walks its ``(None, table)`` edge, so the writes that load
+        it without reading any table are returned with the writes that do.
+        """
         seeds = list(seeds)
         nodes: Set[str] = set(seeds)
-        edges: Set[Tuple[str, str]] = set()
+        edges: Set[EdgeKey] = set()
         walks = []
         if direction in ("upstream", "both"):
-            walks.append((self.upstream, lambda current, nxt: (nxt, current)))
+            walks.append((self.upstream, lambda current, nxt: (nxt, current), True))
         if direction in ("downstream", "both"):
-            walks.append((self.downstream, lambda current, nxt: (current, nxt)))
-        for adjacency, as_edge in walks:
+            walks.append((self.downstream, lambda current, nxt: (current, nxt), False))
+        for adjacency, as_edge, upward in walks:
             visited = set(seeds)
             frontier = deque((seed, 0) for seed in seeds)
             while frontier:
                 current, distance = frontier.popleft()
                 if 0 <= depth <= distance:
                     continue
+                if upward and current in self.loaded:
+                    edges.add((None, current))
                 for nxt in sorted(adjacency.get(current, ())):
                     edges.add(as_edge(current, nxt))
                     if nxt not in visited:
@@ -143,11 +156,13 @@ class LineageGraph:
                         frontier.append((nxt, distance + 1))
         return nodes, edges
 
-    def all_table_edges(self) -> Set[Tuple[str, str]]:
-        return {(up, down) for down, ups in self.upstream.items() for up in ups}
+    def all_table_edges(self) -> Set[EdgeKey]:
+        edges: Set[EdgeKey] = {(up, down) for down, ups in self.upstream.items() for up in ups}
+        return edges | {(None, table) for table in self.loaded}
 
-    def statements_for(self, edges: Iterable[Tuple[str, str]]) -> List[Statement]:
-        keys = dict.fromkeys(key for edge in sorted(edges) for key in self.statements_by_edge.get(edge, ()))
+    def statements_for(self, edges: Iterable[EdgeKey]) -> List[Statement]:
+        ordered = sorted(edges, key=lambda edge: (edge[0] or "", edge[1]))
+        keys = dict.fromkeys(key for edge in ordered for key in self.statements_by_edge.get(edge, ()))
         return [self.statements[key] for key in keys]
 
     def query_statements(self, tables: Iterable[str]) -> List[Statement]:

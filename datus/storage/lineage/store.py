@@ -67,16 +67,29 @@ class LineageStore:
         return document
 
     @contextmanager
-    def edit(self) -> Iterator[LineageDocument]:
-        """Yield a fresh copy to mutate; it is written back only when its content changed."""
+    def edit(self, discard: bool = False) -> Iterator[LineageDocument]:
+        """Yield a fresh copy to mutate; it is written back only when its content changed.
+
+        ``discard`` starts from an empty graph without reading the file, so a file that no longer
+        parses (a merge conflict, a hand edit) can be rebuilt instead of blocking every write.
+        """
         with path_mutation_lock(self.path), self._exclusive():
-            document = self._read() if self.path.exists() else LineageDocument()
-            before = serialize(document)
+            if discard:
+                document, before = LineageDocument(), self._raw_text()
+            else:
+                document = self._read() if self.path.exists() else LineageDocument()
+                before = serialize(document)
             yield document
             normalize(document)
-            if serialize(document) != before:
-                document.revision += 1
-                atomic_write_text(self.path, serialize(document))
+            after = serialize(document)
+            if after != before:
+                atomic_write_text(self.path, after)
+
+    def _raw_text(self) -> Optional[str]:
+        try:
+            return self.path.read_text(encoding="utf-8")
+        except (OSError, ValueError):
+            return None
 
     def _read(self) -> LineageDocument:
         try:
@@ -137,7 +150,7 @@ def replace_source(document: LineageDocument, source_id: str, contribution: Sour
     """Upsert: the source's previous contribution is removed before the new one is merged in."""
     remove_source(document, source_id)
     document.sources[source_id] = contribution.record
-    by_pair: Dict[Tuple[str, str], Edge] = {(e.upstream, e.downstream): e for e in document.edges}
+    by_pair: Dict[Tuple[Optional[str], str], Edge] = {(e.upstream, e.downstream): e for e in document.edges}
     for upstream, downstream, evidence in contribution.edges:
         edge = by_pair.get((upstream, downstream))
         if edge is None:
@@ -155,7 +168,7 @@ def _rebuild_nodes(document: LineageDocument, labels: Dict[str, str]) -> None:
     nodes: Dict[str, Node] = {}
     for edge in document.edges:
         for node_id in (edge.upstream, edge.downstream):
-            if node_id in nodes:
+            if node_id is None or node_id in nodes:
                 continue
             if is_query_node(node_id):
                 previous = document.nodes.get(node_id)
@@ -170,7 +183,7 @@ def normalize(document: LineageDocument) -> None:
     """Deterministic order, so identical graphs serialize identically and diffs stay small."""
     for edge in document.edges:
         edge.evidence.sort(key=lambda ev: (ev.source, ev.line))
-    document.edges.sort(key=lambda e: (e.downstream, e.upstream))
+    document.edges.sort(key=lambda e: (e.downstream, e.upstream or ""))
     document.sources = dict(sorted(document.sources.items()))
     document.nodes = dict(sorted(document.nodes.items()))
 
@@ -180,4 +193,5 @@ def serialize(document: LineageDocument) -> str:
 
 
 def graph_keys(document: LineageDocument) -> Tuple[Set[str], Set[Tuple[str, str]]]:
-    return set(document.nodes), {(e.upstream, e.downstream) for e in document.edges}
+    """Nodes and table-to-table edges; writes that read no table are statements, not edges."""
+    return set(document.nodes), {(e.upstream, e.downstream) for e in document.edges if e.upstream is not None}

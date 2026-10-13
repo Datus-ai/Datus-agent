@@ -18,12 +18,31 @@ def labels(text, python=False):
 
 def test_record_describes_the_analysis():
     text = "INSERT INTO t SELECT * FROM s;\nSELECT FROM (;"
-    result = analyze_source("a.sql", text, kind="file", dialect="hive", default_database="dw", size=3, mtime=1.5)
+    result = analyze_source("a.sql", text, kind="file", dialect="hive", default_database="dw")
     record = result.record
     assert (record.sha256, record.dialect, record.default_database) == (content_digest(text), "hive", "dw")
-    assert (record.size, record.mtime, record.statements, record.parsed, record.complete) == (3, 1.5, 2, 1, False)
+    assert (record.statements, record.parsed, record.complete) == (2, 1, False)
     assert [(issue.line, issue.reason.split(":")[0]) for issue in record.issues] == [(2, "parse error")]
     assert [(up, down, ev.line, ev.operation) for up, down, ev in result.edges] == [("dw.s", "dw.t", 1, "insert")]
+
+
+def test_every_write_contributes_even_without_an_upstream_table():
+    text = (
+        "INSERT INTO dim_flag VALUES (1, 'a');\n"
+        "CREATE TABLE cfg AS SELECT 1 AS x;\n"
+        "UPDATE t SET a = 1 WHERE b = 2;\n"
+        "CREATE TEMPORARY TABLE tmp AS SELECT 1 AS y;\n"
+        "INSERT INTO fin SELECT * FROM tmp;\n"
+        "DROP TABLE tmp;\n"
+    )
+    result = analyze_source("a.sql", text, kind="file", dialect="mysql", default_database="dw")
+    writes = {down: (up, ev.line, [hop.table for hop in ev.via_temp or []]) for up, down, ev in result.edges}
+    assert writes == {
+        "dw.dim_flag": (None, 1, []),
+        "dw.cfg": (None, 2, []),
+        "dw.t": (None, 3, []),
+        "dw.fin": (None, 5, ["dw.tmp"]),
+    }
 
 
 def test_header_describes_only_the_first_statement_and_notes_only_the_line_they_annotate():
