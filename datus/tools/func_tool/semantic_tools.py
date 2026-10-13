@@ -17,10 +17,10 @@ import json
 import secrets
 from collections import OrderedDict
 from pathlib import Path
-from typing import Annotated, Any, Callable, Dict, List, Literal, Mapping, Optional, Tuple, TypedDict
+from typing import Any, Callable, Dict, List, Literal, Mapping, Optional, Tuple
 
 from agents import Tool
-from pydantic import BaseModel, ConfigDict, Field, with_config
+from pydantic import BaseModel
 
 from datus.configuration.agent_config import AgentConfig
 from datus.storage.metric.store import MetricRAG, normalize_metric_name
@@ -50,85 +50,6 @@ from datus.utils.mcp_decorators import mcp_tool, mcp_tool_class
 
 logger = get_logger(__name__)
 
-
-# The shape of `query_metrics.define`. Declared as types so the tool schema the model
-# reads shows the two keys and what goes under each; the tool still receives raw JSON,
-# checks the top level itself (_define_shape_error), and the engine checks the entries.
-@with_config(ConfigDict(extra="forbid"))
-class DefineTimeRange(TypedDict, total=False):
-    start: Annotated[str, Field(description="YYYY-MM-DD, inclusive")]
-    end: Annotated[str, Field(description="YYYY-MM-DD, exclusive")]
-    dimension: Annotated[str, Field(description="pin the range to this column (`dataset.field`); usually omitted")]
-
-
-@with_config(ConfigDict(extra="forbid"))
-class DefineMetric(TypedDict, total=False):
-    base: Annotated[str, Field(description="a catalog metric the new metric narrows")]
-    expr: Annotated[str, Field(description="arithmetic over metric names, instead of base")]
-    where: Annotated[str, Field(description="a condition for this metric only")]
-    time_range: Annotated[Optional[DefineTimeRange], Field(description="replaces the period; null reads every period")]
-    context_filter: Annotated[Optional[str], Field(description="replaces context_filter; null drops it")]
-
-
-@with_config(ConfigDict(extra="forbid"))
-class DefineField(TypedDict, total=False):
-    base: Annotated[str, Field(description="the fixed field (`dataset.field`) the new field recomputes")]
-    where: Annotated[str, Field(description="a condition for this field only")]
-    time_range: Annotated[Optional[DefineTimeRange], Field(description="replaces the period; null reads every period")]
-    context_filter: Annotated[Optional[str], Field(description="replaces context_filter; null drops it")]
-
-
-@with_config(ConfigDict(extra="forbid"))
-class QueryDefine(TypedDict, total=False):
-    metrics: Annotated[
-        Dict[str, DefineMetric],
-        Field(description="temporary metrics by new name; list a name in `metrics` to output it"),
-    ]
-    fields: Annotated[
-        Dict[str, DefineField],
-        Field(description="temporary fields by new name `dataset.name`, on the dataset of their base"),
-    ]
-
-
-_DEFINE_SECTIONS = ("metrics", "fields")
-
-
-def _define_shape_error(define: Dict[str, Any]) -> Optional[FuncToolResult]:
-    """Refuse a ``define`` whose top level is not ``metrics`` / ``fields``.
-
-    Models tend to put the new names at the top level. The catalog lookup would then
-    report a new metric as an unknown metric and the engine's explanation would never
-    be reached, so the refusal happens here and carries the corrected object to resend:
-    a name spelled ``dataset.name`` is a field, any other a metric.
-    """
-    section = next((k for k in _DEFINE_SECTIONS if k in define and not isinstance(define[k], dict)), None)
-    if section:
-        return FuncToolResult(
-            success=0,
-            error=(
-                f"query_metrics define.{section} must be an object keyed by the new names, "
-                f'e.g. define={{"{section}": {{"<new name>": {{"base": "...", "where": "..."}}}}}}'
-            ),
-            result={"error_type": "define_invalid"},
-        )
-    stray = [key for key in define if key not in _DEFINE_SECTIONS]
-    if not stray:
-        return None
-    suggested: Dict[str, Dict[str, Any]] = {key: dict(define[key]) for key in _DEFINE_SECTIONS if key in define}
-    for name in stray:
-        suggested.setdefault("fields" if "." in name else "metrics", {})[name] = define[name]
-    return FuncToolResult(
-        success=0,
-        error=(
-            f"query_metrics define takes two keys, `metrics` and `fields`, not {', '.join(stray)}: "
-            "a temporary metric goes under define.metrics (list its name in `metrics` to output it), "
-            "a temporary field under define.fields, named `dataset.name`. Resend with "
-            f"define={json.dumps(suggested, ensure_ascii=False)}"
-        ),
-        result={"error_type": "define_invalid", "suggested_define": suggested},
-    )
-
-
 NO_METRICS_PRESENT_MESSAGE = "No metrics present in the model."
 
 
@@ -146,11 +67,7 @@ def _normalize_dimension_rows(raw) -> list:
     normalized = []
     for d in raw:
         if hasattr(d, "model_dump"):
-            row = d.model_dump()
-            for key in _DIMENSION_OPTIONAL_KEYS:
-                if row.get(key) is None:
-                    row.pop(key, None)
-            normalized.append(row)
+            normalized.append(d.model_dump())
         elif isinstance(d, dict):
             normalized.append(d)
         elif isinstance(d, str):
@@ -195,14 +112,7 @@ _METRIC_DETAIL_KEYS = (
     "requires_time_axis",
     "required_dimensions",
     "params",
-    "derive_predicate",
-    "parts",
-    "time_axis",
 )
-
-# Dimension keys a runtime reports only for some fields. Dropped when empty so
-# an ordinary dimension row does not carry them as nulls.
-_DIMENSION_OPTIONAL_KEYS = ("parts", "pairs", "params")
 
 
 def _metric_summary_row(metric: Any, subject_path: Optional[List[str]] = None) -> dict:
@@ -1233,26 +1143,6 @@ class SemanticTools:
               - params (List[Dict]): the query-time parameters the metric
                 declares, each with name, type, default and its domain
                 (allowed values or min/max). Bind them with query_metrics params.
-              - time_axis (str): the time field the query period lands on for
-                this metric's own rows.
-              - parts (List[Dict]): the parts of this metric that read rows of
-                their own or depend on rows outside their group, present only
-                when there are any: fixed fields (per-entity values, used in
-                ``dimensions`` or ``where``), fixed/include/exclude metrics and
-                windows. Each has ``name``, ``kind``, ``definition`` for
-                fixed/include/exclude — ``fixed(revenue)`` is one value for the
-                whole table, ``fixed(order_count, users.user_id)`` one per user
-                — ``used_in`` (the metrics and fields between it and this
-                metric, innermost first), ``source`` (the dataset it reads),
-                ``time_axis`` (where the query period lands on it; absent when
-                its source has no time field, so the period does not narrow it)
-                and ``filterable_columns`` (what a define condition on it may
-                use). A fixed field may carry ``params`` its base takes; bind
-                them like the metric's own. A dimension row carries the same
-                ``parts`` (and ``params``) when the field is or reads a fixed
-                field, and ``pairs``: the same dimension spelled on other
-                datasets.
-              - derive_predicate (str): a filter metric's own condition.
               - time_dimension, time_granularities: the metric's time axis and
                 the grains the runtime compiles for it.
               - datasets: the datasets the metric reads.
@@ -1358,7 +1248,6 @@ class SemanticTools:
         params: Optional[Dict[str, Any]] = None,
         dry_run: bool = False,
         context_filter: Optional[str] = None,
-        define: Optional[QueryDefine] = None,
     ) -> FuncToolResult:
         """
         Query metrics data (requires runtime).
@@ -1370,63 +1259,6 @@ class SemanticTools:
         first N, maximum N rows, a preview, or another row-count restriction.
         When using limit for Top N/Bottom N, also pass order_by so the
         truncation has stable business meaning.
-
-        Where conditions go. One call is one query and returns one table. Write
-        columns as `dataset.field`. Dates in time_start/time_end are YYYY-MM-DD
-        (time_end exclusive); inside a condition, write a date in the column's
-        stored format.
-        - time_start/time_end: the period. Every metric and every fixed field
-          (a per-entity value, e.g. a player's login days) lands on its own
-          table's time field (`time_axis` in get_metric `parts`) inside it, so
-          it is never repeated elsewhere. A source without a time field is read
-          whole and the result says so.
-        - context_filter: a scope every number obeys (all platforms, one
-          activity id). Every part of the query applies it where it can read the
-          columns; a part that cannot is skipped and listed in the result's
-          `skipped` and `warnings`.
-        - where: picks result rows, like SQL WHERE. A condition on a field never
-          changes a fixed field's value; a condition on a selected metric filters
-          after it is computed. A snapshot or mapping table's version day ("which
-          day's data") goes here.
-        - define: a condition for one number only, another period for one number,
-          or every period for a value — give it a new name here. The object has
-          two keys and nothing else; the new names go one level down:
-            define={"metrics": {"<new metric>": {"base": "<metric>", "where": "...",
-                                "time_range": {"start": "...", "end": "..."},
-                                "context_filter": "..."},
-                                "<another>": {"expr": "<arithmetic over metrics>"}},
-                    "fields": {"<dataset>.<new field>": {"base": "<dataset>.<fixed field>",
-                               "time_range": {...}, "where": "..."}}}
-          For example, new and returning players side by side:
-            metrics=["new_players", "returning_players"],
-            define={"metrics": {
-              "new_players": {"base": "players", "where": "players.type = 'new'"},
-              "returning_players": {"base": "players", "where": "players.type = 'returning'"}}}
-          A new metric's name is listed in `metrics` to be output; a new field is
-          used by name in dimensions, where or another define entry.
-          An entry inherits the period and context_filter: `time_range` replaces
-          the period, `"time_range": null` reads every period (first payment
-          day, registration day, lifetime totals need it), `context_filter`
-          replaces the scope (null drops it), and `where` narrows on top. A
-          field's conditions may use only its part's `filterable_columns`; a
-          metric's `where` only fields of the dataset it aggregates (its fixed
-          fields included), applied inside that metric alone. A define `where`
-          narrows that one number and never removes result rows: a group with no
-          matching rows stays, with an empty or zero value. A condition that
-          should drop rows goes in context_filter or where. A field built on a
-          field that reads other fixed fields passes its conditions down to
-          them. Defined names work in metrics, dimensions, where and expr. A
-          define metric with its own period, grouped by metric_time, lands on its
-          own dates.
-        Ask in order: 1. the period? → time_start/time_end. 2. a scope every
-        number obeys? → context_filter. 3. a condition belonging to one number
-        only, another period, or a value over all history? → define. 4. which
-        result rows? → where. Dry-run first and check each entry of the returned
-        `parts` (the period and conditions every part reads), then execute.
-        Windows (`parts` kinds window_*): dates go in time_start/time_end — in
-        where they cut the lookback. For window_rank, where on a grouped field
-        keeps each row's rank among all rows; context_filter ranks within the
-        restricted rows.
 
         Args:
             metrics: List of metric names to query
@@ -1445,16 +1277,12 @@ class SemanticTools:
                    on group-by fields only also filters the result, so the kept rows keep
                    the ranks and partition counts of the whole population; every other
                    condition filters rows before aggregation.
-            context_filter: Optional SQL boolean expression every part of the query
-                   applies to its input rows before aggregation, where it can read
-                   the columns — the
-                   metrics, the rows a fixed value is computed over, the population
-                   a window ranks. `where="market = 'North'"` shows North's rank
-                   among all markets; `context_filter="market = 'North'"` ranks
-                   North's rows against each other.
-            define: Optional temporary metrics and fields for this query only: an object with
-                   the keys `metrics` and/or `fields` and nothing else, the new names one level
-                   down — see "Where conditions go" above.
+            context_filter: Optional SQL boolean expression that always filters the input
+                   rows before aggregation, scoping the population a window metric
+                   ranks, counts or weighs. `where="market = 'North'"` shows North's rank
+                   among all markets; `context_filter="market = 'North'"` ranks North's
+                   rows against each other. Only window metrics (get_metric type
+                   "window") tell the two apart.
             limit: Optional maximum number of rows
             order_by: Optional list of result columns to sort by. Use column name for ascending,
                       prefix with '-' for descending. A Dosi input dimension `metric_time` may
@@ -1462,8 +1290,7 @@ class SemanticTools:
                       ['metric_time__day'] for ascending, ['-message_count'] for descending.
                       Do NOT use 'asc'/'desc' keywords.
             params: Optional bindings for the parameters a metric declares
-                (get_metric `params`), or that a fixed field the query reads takes
-                (`params` on its dimension row or its `parts` entry), by name. A scalar binds one value; a
+                (get_metric `params`), by name. A scalar binds one value; a
                 non-default one names the column `<metric>__k_7`. A list returns one
                 column per value in the same query: `{"k": [1, 7]}` returns
                 `<metric>__k_1` and `<metric>__k_7`, so several values of one
@@ -1483,7 +1310,6 @@ class SemanticTools:
         dimensions = _normalize_name_list(dimensions)
         order_by = _normalize_name_list(order_by)
         params = normalize_null(params)
-        define = normalize_null(define)
 
         runtime, error = self._require_runtime("query_metrics")
         if error:
@@ -1502,15 +1328,6 @@ class SemanticTools:
                 success=0,
                 error="query_metrics params must be an object of parameter bindings",
             )
-        if define is not None and not isinstance(define, dict):
-            return FuncToolResult(
-                success=0,
-                error='query_metrics define must be an object: {"metrics": {...}, "fields": {...}}',
-            )
-        if define:
-            shape_error = _define_shape_error(define)
-            if shape_error:
-                return shape_error
         # Sanitize optional parameters: LLMs may pass string null placeholders
         # instead of omitting them. In particular, an empty-string limit must not
         # reach runtimes that convert a present limit with ``int(limit)``.
@@ -1543,8 +1360,6 @@ class SemanticTools:
                 runtime_query_kwargs["params"] = params
             if context_filter:
                 runtime_query_kwargs["context_filter"] = context_filter
-            if define:
-                runtime_query_kwargs["define"] = define
             result = _run_async(runtime.query_metrics(**runtime_query_kwargs))
 
             # Drop non-JSON-serializable metadata entries. ``str(v)`` on

@@ -38,7 +38,7 @@ Use the narrow metric workflow below:
 - Prefer closed calendar periods for standalone period mentions. Use open-ended ranges only when the user explicitly asks for cumulative or since-style results.
 - `query_metrics` time ranges use OSI half-open `[start, end)` semantics: `time_start` is inclusive and `time_end` is exclusive. For example, query June with `[2026-06-01, 2026-07-01)`, and query the June 30 snapshot with `[2026-06-30, 2026-07-01)`. Never use the same start and end for a single day.
 - A `where` condition that names a selected metric (`revenue > 1000`) filters the result rows after aggregation, like HAVING. The metric must be in `metrics`; on `result_filter_metric_not_selected`, add it. On `result_filter_unprojected`, one condition mixes a metric with an ungrouped field: group by that field or split the condition.
-- Where each condition goes (`time_start`/`time_end`, `context_filter` or `where`) follows the Placing Conditions section below.
+- For a window metric (`get_metric` reports type `window`), `where` on group-by fields keeps the ranks and partition counts of the whole population: `where="market = 'North'"` shows North's rank among all markets. To rank within a subset, pass the condition as `context_filter` instead: `context_filter="market = 'North'"` ranks North's rows against each other. Only window metrics tell the two apart; for other metrics, `where` is enough.
 - Choose grouping and filtering dimensions by semantic meaning. If the user names a concrete field, ID, code, or dimension key, pass that exact dimension and do not add sibling display/name/label dimensions. Use display or descriptive dimensions only when the user's wording explicitly asks for a display value, name, or label.
 - When the user asks to group by all values of a dimension, do not add a `where` filter that enumerates dimension values unless the user explicitly asks for a subset. The grouped metric query already returns all dimension values.
 - How a joined dimension treats facts that match no dimension row is declared in the semantic model per relationship, not chosen per query. Do not assert which behaviour is in effect — read the result:
@@ -85,23 +85,12 @@ Use the narrow metric workflow below:
 - When querying a period-over-period metric, pass the requested current time range and business dimensions/filters. The comparison offset is fixed by the metric; the query grain is not — pass `time_granularity` explicitly, using the business grain documented in the metric's description/AI guidance unless the user requests another.
 - Do not invent helper metrics named like `previous_month_*`, `*_previous_period`, or standalone prior-period values. Use them only if they are already listed as dedicated catalog metrics and directly match the user's requested final output.
 
-## Placing Conditions
-
-Every condition of the question goes in exactly one place (see "Where conditions go" in the `query_metrics` description). Before calling `query_metrics`, answer in order:
-1. What is the period? Put it in `time_start`/`time_end`. Every metric and every fixed field (`parts` of `get_metric` and dimension rows) reads the period on its own table's time field (`time_axis`); never repeat it in `where`.
-2. Is there a scope every number obeys (all platforms, an activity id)? Put it in `context_filter`.
-3. Does a condition belong to one number only, does one number need another period, or does a value need all history (first payment day, registration day, lifetime totals — read their descriptions)? Define a temporary metric or field for it in `define` and use the new name. `define` has two keys and nothing else, with the new names one level down: `{"metrics": {"<new metric>": {"base": "<metric>", "where": "..."}}, "fields": {"<dataset>.<new field>": {"base": "<dataset>.<fixed field>", "time_range": null}}}`. List a new metric's name in `metrics` to output it. A field's conditions may use only its part's `filterable_columns`; a metric's `where` only fields of the dataset it aggregates. A define `where` narrows that one number and never removes result rows: a group with no matching rows stays, with an empty or zero value. A condition that should drop rows belongs in `context_filter` or `where`.
-4. Which result rows does the question want? Put that in `where`: a condition on a field picks rows and never changes a fixed field's value; a condition on a selected metric filters after it is computed. A snapshot or mapping table's version day goes here.
-
-Then run with `dry_run: true` and check the returned `parts`: for each part, the period it reads (`range` and `on`), the conditions it applies, and anything in `skipped` or `warnings`. Fix the query if a part does not read what the question means, then execute. If the engine refuses the combination, follow its `suggested_retry`; when that means two queries, run both and say so in the answer.
-
 ## Parameterized Metric Queries
 
 - When `get_metric` returns `params`, the metric takes query-time parameters: bind them through `query_metrics.params` using exactly the declared names and values from each parameter's domain. A description that mentions a placeholder such as "day k" refers to one of these parameters.
 - To report several values of one parameter side by side (day-1, day-7 and day-30 retention), pass a list in one query: `params={"k": [1, 7, 30]}` returns one column per value (`<metric>__k_1`, `<metric>__k_7`, `<metric>__k_30`). Never split them into separate queries. Read which column carries which value from the result's `outputs`; a non-ASCII value gets an opaque column suffix.
 - Use declared defaults when the user does not override them. If the request requires a different business value, bind the user's value rather than guessing.
-- A fixed field whose base takes parameters lists them as `params` on its dimension row or its `parts` entry; bind those through `query_metrics.params` the same way when the query reads the field.
-- Do not pass `params` that neither a metric nor a field the query reads declares, and do not translate parameter values into an ad hoc SQL `where` clause.
+- Do not pass `params` to metrics that do not declare them, and do not translate parameter values into an ad hoc SQL `where` clause.
 
 ## Window Metric Queries
 

@@ -36,23 +36,6 @@ class DimensionInfo(BaseModel):
         None,
         description="How the grouping recommendation was declared or inferred",
     )
-    parts: Optional[List[Dict[str, Any]]] = Field(
-        None,
-        description=(
-            "The fixed fields behind this dimension — each a per-entity value read "
-            "from rows of its own — with the dataset it reads (source), where the "
-            "query period lands there (time_axis) and the columns a define condition "
-            "on it may use (filterable_columns); absent for an ordinary field"
-        ),
-    )
-    pairs: Optional[List[str]] = Field(
-        None,
-        description="The same dimension spelled on other datasets (conformed pairs)",
-    )
-    params: Optional[List[Dict[str, Any]]] = Field(
-        None,
-        description="Query-time parameters the field's level-of-detail base takes",
-    )
 
 
 class SemanticModelInfo(BaseModel):
