@@ -68,7 +68,7 @@ async def test_history_keeps_streamed_tool_duration_after_batch_persistence(tmp_
     )
     await manager._persist_message_contents(task, config, session_id, None)
     history = ChatService(config).get_history(session_id)
-    assert history.success
+    assert history.success is True
     results = [part.payload for msg in history.data.messages for part in msg.content if part.type == "call-tool-result"]
     assert len(results) == 1
     assert results[0]["duration"] == event.data.payload.content[0].payload["duration"]
@@ -724,6 +724,33 @@ class TestChatServiceGetHistorySubagent:
             ("call-tool-result", "task", 0, None),
             ("thinking", "The subagent finished.", 0, None),
         ]
+
+    def test_subagent_history_restores_timings_recorded_in_the_parent_scope(self, chat_svc):
+        main = self._main_manager(chat_svc)
+        self._write(
+            main,
+            self.MAIN,
+            [
+                {"role": "user", "content": "build a model"},
+                *self._task_items("call_task1", "build a model", "done"),
+            ],
+        )
+        self._write(self._sub_manager(chat_svc), self.SUB, self._sub_run("build a model", "call_read1", "Done."))
+        main.save_tool_timings(
+            self.MAIN,
+            {
+                "call_read1": {"duration": 0.329, "parent_action_id": "call_task1"},
+                "call_task1": {"duration": 2.5},
+            },
+        )
+        result = chat_svc.get_history(self.MAIN, user_id=self.USER)
+        results = {
+            part.payload["callToolId"]: part.payload["duration"]
+            for msg in result.data.messages
+            for part in msg.content
+            if part.type == "call-tool-result"
+        }
+        assert results == {"call_task1": 2.5, "call_read1": 0.329}
 
     def test_resumed_subagent_session_replays_each_run_under_its_own_task(self, chat_svc):
         self._write(

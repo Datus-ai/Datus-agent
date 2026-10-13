@@ -114,6 +114,54 @@ async def test_tool_timing_does_not_attach_to_a_previous_turn(tmp_path):
     assert manager.get_tool_timings(session_id) == {}
 
 
+@pytest.mark.asyncio
+async def test_tool_timing_supports_multiple_native_results_and_rejects_invalid_values(tmp_path):
+    manager = SessionManager(session_dir=str(tmp_path))
+    assert manager.get_tool_timings("missing_session") == {}
+    manager.save_tool_timings("missing_session", {"a": {"duration": 1}})
+    session_id = "chat_session_native_results"
+    session = manager.get_session(session_id)
+    assert manager.get_tool_timings(session_id) == {}
+    call_ids = [
+        "first",
+        "second",
+        "bad_negative",
+        "bad_nan",
+        "bad_infinite",
+        "bad_boolean",
+        "bad_string",
+        "bad_missing",
+    ]
+    await session.add_items(
+        [
+            {
+                "role": "user",
+                "content": [{"type": "tool_result", "tool_use_id": call_id, "content": "{}"} for call_id in call_ids],
+            }
+        ]
+    )
+    manager.save_tool_timings(
+        session_id,
+        dict(
+            zip(
+                call_ids,
+                [
+                    {"duration": 0.125},
+                    {"duration": 1.75},
+                    {"duration": -1},
+                    {"duration": float("nan")},
+                    {"duration": float("inf")},
+                    {"duration": True},
+                    {"duration": "1"},
+                    {},
+                ],
+                strict=True,
+            )
+        ),
+    )
+    assert manager.get_tool_timings(session_id) == {"first": 0.125, "second": 1.75}
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
