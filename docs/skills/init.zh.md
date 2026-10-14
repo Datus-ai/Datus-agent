@@ -21,7 +21,7 @@
 
 在 `normal` 权限模式下，`upsert_lineage` 和 `delete_lineage` 写 `lineage/lineage.json` 前会先询问；`auto` 模式下 `upsert_lineage` 直接执行，`delete_lineage` 仍会询问。
 
-**不兼容的变化：** `extract_sql_lineage` 由 `upsert_lineage`、`delete_lineage` 和 `query_lineage` 取代。血缘工具不再返回关联关系：init 从 SQL 原文读取关联条件，基数只取自声明的主键；脚本只是暗示的基数会作为待确认问题列出。参数条件不证明增量加载，单独的 ROW_NUMBER 定义也不证明表粒度。
+**不兼容的变化：** `extract_sql_lineage` 由 `upsert_lineage`、`delete_lineage` 和 `query_lineage` 取代。血缘工具不再返回关联关系：init 从 SQL 原文读取关联条件，只有关联条件覆盖了声明主键的全部列时才写基数；脚本只是暗示的基数会作为待确认问题列出。参数条件不证明增量加载，单独的 ROW_NUMBER 定义也不证明表粒度。
 
 ## 何时使用
 

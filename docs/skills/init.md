@@ -21,7 +21,7 @@ The lineage graph is saved in `lineage/lineage.json`, one file for the whole pro
 
 Under the `normal` permission profile, `upsert_lineage` and `delete_lineage` ask before writing `lineage/lineage.json`; `auto` runs `upsert_lineage` without asking and still asks before `delete_lineage`.
 
-**Breaking change:** `extract_sql_lineage` is replaced by `upsert_lineage`, `delete_lineage` and `query_lineage`. The lineage tools no longer return joins: initialization reads join conditions from the source SQL and takes cardinality only from declared keys; a cardinality the scripts merely suggest becomes a pending question. Parameterized predicates do not prove incremental loading; ROW_NUMBER alone does not prove table grain.
+**Breaking change:** `extract_sql_lineage` is replaced by `upsert_lineage`, `delete_lineage` and `query_lineage`. The lineage tools no longer return joins: initialization reads join conditions from the source SQL and states a cardinality only when the join covers every column of a declared key; a cardinality the scripts merely suggest becomes a pending question. Parameterized predicates do not prove incremental loading; ROW_NUMBER alone does not prove table grain.
 
 ## When to use it
 
