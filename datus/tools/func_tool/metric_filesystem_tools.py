@@ -14,6 +14,13 @@ from datus.storage.semantic_model.artifact_file import atomic_write_text, semant
 from datus.tools.func_tool.base import FuncToolResult
 from datus.tools.func_tool.filesystem_tools import FilesystemFuncTool
 from datus.tools.func_tool.fs_path_policy import PathZone, ResolvedPath
+from datus.tools.semantic_tools.metric_identity import (
+    ensure_metric_uid,
+    metric_definitions,
+    metric_uid,
+    prepare_metric_uids,
+    validate_metric_uids,
+)
 from datus.utils.memory_loader import apply_single_replacement
 
 if TYPE_CHECKING:
@@ -373,6 +380,7 @@ class MetricFilesystemFuncTool(FilesystemFuncTool):
         leave the file bytes unchanged but still enter this request's exact
         publish scope. The tool only owns the ``metrics`` collection, so
         datasets, fields, relationships, and model metadata remain unchanged.
+        Metric UIDs are assigned by the host and preserved on updates.
 
         Args:
             path: Existing OSI semantic-model YAML file under the project workspace.
@@ -456,6 +464,20 @@ class MetricFilesystemFuncTool(FilesystemFuncTool):
             created: List[str] = []
             updated: List[str] = []
             unchanged: List[str] = []
+            try:
+                for name, metric in incoming_by_name.items():
+                    previous = existing_metrics[metric_indexes[name]] if name in metric_indexes else None
+                    ensure_metric_uid(metric, previous)
+                validate_metric_uids(
+                    [
+                        metric
+                        for metric in existing_metrics
+                        if str(metric.get("name") or "").strip() not in incoming_by_name
+                    ]
+                    + list(incoming_by_name.values())
+                )
+            except ValueError as exc:
+                return FuncToolResult(success=0, error=f"Invalid OSI metric identity: {exc}")
             for name, metric in incoming_by_name.items():
                 if name in metric_indexes:
                     index = metric_indexes[name]
@@ -722,6 +744,11 @@ class OsiSemanticModelFilesystemFuncTool(MetricFilesystemFuncTool):
 
             if not isinstance(document, dict):
                 return FuncToolResult(success=0, error="OSI semantic model root must be a YAML object")
+            try:
+                if prepare_metric_uids(document, original_document, generate_missing=False):
+                    new_content = yaml.safe_dump(document, allow_unicode=True, sort_keys=False)
+            except ValueError as exc:
+                return FuncToolResult(success=0, error=f"Invalid OSI metric identity: {exc}")
             validation_error = self._validate_osi_document(document)
             if validation_error:
                 return FuncToolResult(success=0, error=f"Invalid OSI semantic model edit: {validation_error}")
@@ -732,6 +759,16 @@ class OsiSemanticModelFilesystemFuncTool(MetricFilesystemFuncTool):
             except OSError as exc:
                 return FuncToolResult(success=0, error=f"Cannot update {resolved.display}: {exc}")
             self._notify_mutation(target_path)
+            if self.osi_target_state is not None:
+                before_metrics = metric_definitions(original_document)
+                after_metrics = metric_definitions(document)
+                changed_metrics = [
+                    (after_metrics.get(key) or before_metrics[key])["name"]
+                    for key in sorted(before_metrics.keys() | after_metrics.keys())
+                    if before_metrics.get(key) != after_metrics.get(key)
+                ]
+                if changed_metrics:
+                    self.osi_target_state.record_metric_touch(target_path, new_content.encode("utf-8"), changed_metrics)
             if self.osi_target_state is not None and self.osi_target_state.planned is not None:
                 before = self._dataset_definitions(original_document)
                 after = self._dataset_definitions(document)
@@ -759,6 +796,22 @@ class OsiSemanticModelFilesystemFuncTool(MetricFilesystemFuncTool):
 
 class SemanticModelingFilesystemFuncTool(OsiSemanticModelFilesystemFuncTool):
     """Combined OSI surface for one dataset-and-metric authoring run."""
+
+    def ensure_metric_uids(self, path: str) -> Dict[str, str]:
+        """Host-only preparation before final validation; never an LLM tool."""
+        target_path = self._classify(path).resolved
+        with semantic_artifact_lock(target_path):
+            self._require_metric_revision(target_path)
+            original_content = target_path.read_bytes()
+            document = yaml.safe_load(original_content)
+            changed = prepare_metric_uids(document)
+            if changed:
+                serialized = yaml.safe_dump(document, allow_unicode=True, sort_keys=False)
+                self.osi_target_state.record_artifact_snapshot(target_path, original_content)
+                atomic_write_text(target_path, serialized)
+                self._notify_mutation(target_path)
+                self.osi_target_state.record_metric_touch(target_path, serialized.encode("utf-8"), changed)
+            return {metric["name"]: metric_uid(metric) for metric in metric_definitions(document).values()}
 
     @staticmethod
     def _query_source_extensions(value: Any) -> List[Dict[str, Any]]:

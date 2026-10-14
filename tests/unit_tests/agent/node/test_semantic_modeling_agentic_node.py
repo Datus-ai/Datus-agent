@@ -10,6 +10,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+import yaml
 
 from datus.agent.node import semantic_authoring
 from datus.schemas.action_history import ActionHistoryManager
@@ -38,6 +39,24 @@ def _accept_any_authoring_document(monkeypatch):
 
 def _stream_call_count(mock_llm_create) -> int:
     return sum(1 for call in mock_llm_create.call_history if call.get("method") == "generate_with_tools_stream")
+
+
+def _record_current_compiled_evidence(node, target):
+    names = node._semantic_validation_metric_names()
+    catalog = {name: {"name": name, "kind": "aggregate", "datasets": ["orders"], "measures": [name]} for name in names}
+    if names:
+        assert node.generation_evidence.record_compiled_validation(
+            {
+                "contract_digest": "sha256:" + hashlib.sha256(b"contract").hexdigest(),
+                "artifact_sha256": {str(target.resolve()): "sha256:" + hashlib.sha256(target.read_bytes()).hexdigest()},
+                "compiled_metrics": list(catalog.values()),
+                "compiled_metric_digests": {
+                    name: "sha256:" + hashlib.sha256(name.encode()).hexdigest() for name in names
+                },
+            },
+            metric_names=names,
+        )
+    return catalog
 
 
 def test_unified_dosi_node_composes_existing_authoring_surfaces(real_agent_config, mock_llm_create):
@@ -93,6 +112,9 @@ def test_unified_dosi_node_composes_existing_authoring_surfaces(real_agent_confi
     assert "Use a derived filter metric" in prompt
     assert "Use a parameterized metric only" in prompt
     assert "active contract explicitly permits" in prompt
+    assert "preserve its `uid` verbatim" in prompt
+    assert "For a new metric or an existing metric without `uid`, omit `uid`" in prompt
+    assert "ensure_metric_uids" not in tool_names
 
 
 def test_plan_file_uses_project_root_for_vscode_source(real_agent_config, mock_llm_create, tmp_path, monkeypatch):
@@ -662,9 +684,12 @@ def test_host_finalizer_validates_and_reconciles_complete_selected_yaml(
             metric_names=touched_metrics,
         )
     assert compiled_validation_recorded is bool(touched_metrics)
-    node.semantic_tools.validate_semantic = MagicMock(
-        return_value=FuncToolResult(result={"valid": True, "scope": expected_scope})
-    )
+
+    def validate_final_content(**kwargs):
+        assert _record_current_compiled_evidence(node, target) == expected_compiled_catalog
+        return FuncToolResult(result={"valid": True, "scope": expected_scope})
+
+    node.semantic_tools.validate_semantic = MagicMock(side_effect=validate_final_content)
 
     with patch.object(
         node.generation_tools,
@@ -712,3 +737,162 @@ def test_host_finalizer_reports_unavailable_semantic_validation(real_agent_confi
 
     with pytest.raises(RuntimeError, match="validate_semantic is unavailable"):
         node._finalize_selected_osi_artifact()
+
+
+@pytest.mark.parametrize("authoring_scope", ["full", "datasets"])
+@pytest.mark.parametrize("legacy_has_uid", [False, True])
+def test_finalizer_fills_legacy_uids_and_reconciles_existing_kb_identities(
+    real_agent_config, mock_llm_create, authoring_scope, legacy_has_uid
+):
+    from datus.agent.node.semantic_modeling_agentic_node import SemanticModelingAgenticNode
+    from datus.agent.node.stream_run_context import StreamRunContext
+    from datus.tools.func_tool.base import FuncToolResult
+    from datus.tools.semantic_tools.metric_identity import metric_uid
+
+    node = SemanticModelingAgenticNode(
+        agent_config=real_agent_config, execution_mode="workflow", authoring_scope=authoring_scope
+    )
+    model_dir = real_agent_config.path_manager.semantic_model_path(real_agent_config.current_datasource)
+    model_dir.mkdir(parents=True, exist_ok=True)
+    target = model_dir / "uid_model.yml"
+    retained_uid = "tz4a98xxat96iws9zmbrgj3a"
+    metrics = [
+        {
+            "name": name,
+            "description": name,
+            "expression": {"dialects": [{"dialect": "ANSI_SQL", "expression": "COUNT(*)"}]},
+        }
+        for name in ("legacy", "retained")
+    ]
+    metrics[1]["custom_extensions"] = [{"vendor_name": "DATUS", "data": json.dumps({"uid": retained_uid})}]
+    if legacy_has_uid:
+        metrics[0]["custom_extensions"] = [{"vendor_name": "DATUS", "data": json.dumps({"uid": "a" * 24})}]
+    target.write_text(
+        yaml.safe_dump(
+            {
+                "version": "0.2.0.dev0",
+                "semantic_model": [
+                    {"name": "uid_model", "datasets": [{"name": "orders", "source": "orders"}], "metrics": metrics}
+                ],
+            },
+            sort_keys=False,
+        )
+    )
+    node.osi_target_state.select(
+        {
+            "semantic_model_name": "uid_model",
+            "semantic_model_file": str(target),
+            "absolute_path": str(target.resolve()),
+            "artifact_sha256": hashlib.sha256(target.read_bytes()).hexdigest(),
+        },
+        mode="bound",
+    )
+    # Seed an existing KB identity so the unchanged YAML metric also needs sync.
+    doc = node.generation_tools._load_osi_document(metric_file=str(target))
+    rows = node.generation_tools._build_osi_metric_objects(
+        doc=doc, metric_file=str(target), target_metric_names={"retained"}, compiled_metric_catalog=None
+    )
+    rows[0]["uid"] = "previous-kb-identity"
+    node.generation_tools.metric_rag.upsert_batch(rows)
+    node.generation_evidence.record_semantic_artifact_validation("uid_model", target, validation_scope="all")
+
+    def validate_current(**kwargs):
+        current = yaml.safe_load(target.read_bytes())["semantic_model"][0]["metrics"]
+        assert all(metric_uid(metric) for metric in current)
+        assert {metric["name"] for metric in current} == set(node._semantic_validation_metric_names())
+        _record_current_compiled_evidence(node, target)
+        return FuncToolResult(result={"valid": True, "scope": "all"})
+
+    node.semantic_tools.validate_semantic = MagicMock(side_effect=validate_current)
+    original_content = target.read_bytes()
+    ctx = StreamRunContext(
+        user_input=SemanticNodeInput(user_message="Update the model"), action_history_manager=ActionHistoryManager()
+    )
+    ctx.response_content = {"status": "generated", "output": "Ready"}
+    result = node._build_success_result(ctx)
+    assert result.success
+    current = yaml.safe_load(target.read_bytes())["semantic_model"][0]["metrics"]
+    identities = {metric["name"]: metric_uid(metric) for metric in current}
+    assert identities["retained"] == retained_uid
+    assert len(identities["legacy"]) == 24
+    if legacy_has_uid:
+        assert target.read_bytes() == original_content
+    assert node.osi_target_state.touched_metric_names == ["legacy", "retained"]
+    kb_rows = node.generation_tools.metric_rag.list_artifact_rows(str(target))
+    assert {row["name"]: row["uid"] for row in kb_rows} == identities
+    node.semantic_tools.validate_semantic.assert_called_once()
+    assert node.generation_evidence.compiled_validation_passed(str(target), list(identities))
+    assert node.osi_target_state.artifact_snapshot_path == ""
+    content = target.read_bytes()
+    assert node._build_success_result(ctx).success
+    assert target.read_bytes() == content
+    node.semantic_tools.validate_semantic.assert_called_once()
+
+
+@pytest.mark.parametrize("second_name", ["order_count", "REVENUE"])
+def test_finalizer_enforces_kb_name_uniqueness_before_uid_or_kb_writes(real_agent_config, mock_llm_create, second_name):
+    from datus.agent.node.semantic_modeling_agentic_node import SemanticModelingAgenticNode
+    from datus.tools.semantic_tools.dosi.authoring import validate_dosi_document
+    from datus.tools.semantic_tools.metric_identity import metric_uid
+
+    node = SemanticModelingAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
+    model_dir = real_agent_config.path_manager.semantic_model_path(real_agent_config.current_datasource)
+    model_dir.mkdir(parents=True, exist_ok=True)
+    target = model_dir / "uid_name_validation.yml"
+    document = {
+        "version": "0.2.0.dev0",
+        "semantic_model": [
+            {
+                "name": "uid_name_validation",
+                "datasets": [
+                    {
+                        "name": "orders",
+                        "source": "orders",
+                        "fields": [
+                            {
+                                "name": "amount",
+                                "expression": {"dialects": [{"dialect": "ANSI_SQL", "expression": "amount"}]},
+                            }
+                        ],
+                    }
+                ],
+                "metrics": [
+                    {
+                        "name": name,
+                        "expression": {"dialects": [{"dialect": "ANSI_SQL", "expression": "SUM(orders.amount)"}]},
+                    }
+                    for name in ("revenue", second_name)
+                ],
+            }
+        ],
+    }
+    # Native Dosi accepts both names; the host also needs the KB's uniqueness rule.
+    validate_dosi_document(document)
+    target.write_text(yaml.safe_dump(document, sort_keys=False))
+    original = target.read_bytes()
+    node.osi_target_state.select(
+        {
+            "semantic_model_name": "uid_name_validation",
+            "semantic_model_file": str(target),
+            "absolute_path": str(target.resolve()),
+            "artifact_sha256": hashlib.sha256(original).hexdigest(),
+        },
+        mode="bound",
+    )
+    if second_name == "REVENUE":
+        with patch.object(node.generation_tools, "sync_osi_to_db") as sync:
+            with pytest.raises(ValueError, match="Metric name conflict"):
+                node._finalize_selected_osi_artifact()
+            sync.assert_not_called()
+        assert target.read_bytes() == original
+        assert not node.osi_target_state.touched_metric_names
+        assert not node.osi_target_state.artifact_snapshot_path
+        assert not node.generation_tools.metric_rag.list_artifact_rows(str(target))
+    else:
+        assert node._finalize_selected_osi_artifact() == str(target)
+        metrics = yaml.safe_load(target.read_bytes())["semantic_model"][0]["metrics"]
+        identities = {metric["name"]: metric_uid(metric) for metric in metrics}
+        assert len(set(identities.values())) == 2
+        assert all(identities.values())
+        kb_rows = node.generation_tools.metric_rag.list_artifact_rows(str(target))
+        assert {row["name"]: row["uid"] for row in kb_rows} == identities

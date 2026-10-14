@@ -36,7 +36,7 @@ semantic_model:
           dialects: [{dialect: ANSI_SQL, expression: 'SUM(orders.amount)'}]
         custom_extensions:
           - vendor_name: DATUS
-            data: '{"v":"1.2","window":{"type":"cumulative","function":"sum"},"subject_path":["sales","revenue"]}'
+            data: '{"v":"1.2","uid":"tz4a98xxat96iws9zmbrgj3a","window":{"type":"cumulative","function":"sum"},"subject_path":["sales","revenue"]}'
 """.lstrip(),
         encoding="utf-8",
     )
@@ -55,6 +55,7 @@ semantic_model:
     assert document.metrics[0].dataset == "orders"
     assert document.metrics[0].subject_path == ["sales", "revenue"]
     assert document.metrics[0].window == {"type": "cumulative", "function": "sum"}
+    assert document.metrics[0].uid == "tz4a98xxat96iws9zmbrgj3a"
 
 
 def test_load_osi_document_does_not_scan_sibling_artifacts(tmp_path):

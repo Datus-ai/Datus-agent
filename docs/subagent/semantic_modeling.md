@@ -138,6 +138,8 @@ Each authored file contains one object in the root `semantic_model` list. Group 
 
 Dosi authors OSI Core `0.2.0.dev0` YAML. Unknown core fields are rejected, so Datus-specific behavior belongs in `custom_extensions` rather than arbitrary YAML keys.
 
+Each metric has a stable, host-managed `uid` in its DATUS extension's JSON `data`. Semantic modeling assigns a 24-character CUID2 to new metrics and fills missing identities in the selected model before final validation. Preserve an existing `uid` when updating or renaming its metric; omit it when creating a different metric. The Knowledge Base stores the same value in its existing `uid` field. This identity comes from the extension, not `locked_metadata`.
+
 The principal fields are:
 
 | Object | Required or important fields | Meaning |

@@ -6,7 +6,7 @@ tags:
   - metrics
   - osi
   - dosi
-version: "1.2.0"
+version: "1.3.0"
 user_invocable: false
 disable_model_invocation: false
 allowed_agents:
@@ -31,7 +31,15 @@ Author the active Dosi semantic model as strict OSI core YAML. Use this skill fo
 
 ## Choose DATUS metric capabilities
 
-Put Dosi-only metadata in the owning object's DATUS `custom_extensions` entry. Encode `data` as one JSON-object string and stamp it with the runtime `<datus_extension_version>`. The injected active DATUS extension specification is authoritative for supported carriers, keys, exact shapes, enums, constraints, and examples; never invent a field from this conceptual guide.
+Put Dosi-only metadata in the owning object's DATUS `custom_extensions` entry. Encode `data` as one JSON-object string and stamp it with the runtime `<datus_extension_version>`. The injected active DATUS extension specification is authoritative for execution capabilities, supported carriers, keys, exact shapes, enums, constraints, and examples; never invent a field from this conceptual guide. Metric `uid` is host-managed identity metadata, described below, and does not alter engine execution.
+
+## Preserve metric identity
+
+- The metric's DATUS extension `uid` is managed by the host and contains a 24-character CUID2. Read an existing metric's definition before updating it, and preserve its `uid` verbatim when submitting the complete object, including when renaming that metric. Do not generate, modify, or copy it to another metric.
+- For a new metric or an existing metric without `uid`, omit `uid`; the host assigns it automatically during upsert or before final validation. Preserve all other extension metadata when editing.
+- Knowledge Base `uid` comes from this extension field. Do not author or read `locked_metadata.uid` as an identity source.
+
+## Choose metric definitions
 
 - Prefer a plain base metric when one aggregate or arithmetic expression completely represents the business meaning.
 - Use a derived filter metric when the business concept narrows one reusable base metric. Use a derived compose metric only when the result combines two or more reusable metrics. Author and validate every referenced base metric first; do not inline its calculation again or create a one-input passthrough.

@@ -3,6 +3,7 @@
 """Unit tests for GenerationTools - CI level, zero external dependencies."""
 
 import hashlib
+import json
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
@@ -112,6 +113,68 @@ class TestAvailableTools:
             mock_trans.side_effect = lambda f: Mock(name=f.__name__)
             tools = generation_tools.available_tools()
         assert len(tools) == 4
+
+
+def test_sync_projects_extension_uid_without_mutating_yaml(generation_tools, tmp_path):
+    target = tmp_path / "sales.yml"
+    uid = "tz4a98xxat96iws9zmbrgj3a"
+    target.write_text(
+        json.dumps(
+            {
+                "version": "0.2.0.dev0",
+                "semantic_model": [
+                    {
+                        "name": "sales",
+                        "datasets": [{"name": "orders", "source": "orders"}],
+                        "metrics": [
+                            {
+                                "name": "revenue",
+                                "expression": {
+                                    "dialects": [{"dialect": "ANSI_SQL", "expression": "SUM(orders.amount)"}]
+                                },
+                                "custom_extensions": [
+                                    {
+                                        "vendor_name": "DATUS",
+                                        "data": json.dumps({"uid": uid, "subject_path": ["sales", "revenue", "total"]}),
+                                    }
+                                ],
+                            },
+                            {
+                                "name": "order_count",
+                                "expression": {"dialects": [{"dialect": "ANSI_SQL", "expression": "COUNT(*)"}]},
+                            },
+                        ],
+                    }
+                ],
+            }
+        )
+    )
+    original = target.read_bytes()
+    generation_tools.metric_rag.list_artifact_rows.return_value = []
+    result = generation_tools.sync_osi_to_db(str(target), include_semantic_objects=False, compiled_metric_catalog=None)
+    assert result["success"], result
+    rows = {row["name"]: row for row in generation_tools.metric_rag.upsert_batch.call_args.args[0]}
+    assert rows["revenue"]["uid"] == uid
+    assert rows["revenue"]["id"] == "metric:revenue"
+    assert rows["order_count"]["uid"] == ""
+    assert target.read_bytes() == original
+
+
+def test_uid_sync_scope_uses_selected_artifact_and_datasource(generation_tools):
+    from datus_storage_base.conditions import And, eq
+
+    scope = eq("datasource_id", "warehouse")
+    generation_tools.metric_rag._sub_agent_conditions.return_value = [scope]
+    generation_tools.metric_rag.storage.search_all.return_value = [
+        {"name": "Current", "uid": "a" * 24},
+        {"name": "stale", "uid": "old-hub-identity"},
+    ]
+    assert generation_tools.metric_names_needing_uid_sync(
+        "/sales.yml", {"current": "a" * 24, "stale": "b" * 24, "missing": "c" * 24}
+    ) == ["stale", "missing"]
+    generation_tools.metric_rag.storage.search_all.assert_called_once_with(
+        where=And([scope, eq("yaml_path", "/sales.yml")]), select_fields=["name", "uid"]
+    )
 
 
 class TestCompiledMetricCatalog:

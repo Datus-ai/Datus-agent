@@ -94,6 +94,7 @@ class OsiMetric:
     unit: str | None = None
     format: str | None = None
     ai_context: Any = None
+    uid: str = ""
 
 
 @dataclass
@@ -312,6 +313,7 @@ def _metric(node: dict[str, Any], dataset_names: list[str]) -> OsiMetric:
         unit=str(payload.get("unit") or "") or None,
         format=str(payload.get("format") or "") or None,
         ai_context=node.get("ai_context"),
+        uid=str(payload.get("uid") or ""),
     )
 
 

@@ -140,9 +140,8 @@ class MetricStorage(BaseSubjectEmbeddingStore):
                     # -- Operations & Lineage --
                     pa.field("yaml_path", pa.string()),
                     pa.field("updated_at", pa.timestamp("ms")),
-                    # Semantic Hub stable node id (locked_metadata.uid); empty for
-                    # metrics not governed by the Hub. Lets retrieval be counted
-                    # per Hub uid (consumption tracking).
+                    # Stable metric identity from DATUS extension data.uid (CUID2).
+                    # Legacy rows remain empty until semantic modeling syncs them.
                     pa.field("uid", pa.string()),
                 ]
             ),
@@ -166,8 +165,8 @@ class MetricStorage(BaseSubjectEmbeddingStore):
         self.create_fts_index(FtsSpec((FtsField("name", boost=3.0), FtsField("description"))))
 
     def _scope_column_migration_exprs(self) -> Dict[str, str]:
-        # Also backfill the Hub uid column on pre-existing metric tables (empty
-        # default; real uids land on the next build-kb / pull vectorization),
+        # Also add uid to pre-existing metric tables (empty default; authored
+        # identities land on the next semantic-modeling reconciliation),
         # reusing the same best-effort ensure_columns migration as scope columns.
         exprs = super()._scope_column_migration_exprs()
         if self._schema is not None and "uid" in set(self._schema.names):
@@ -832,7 +831,7 @@ class MetricRAG:
         return enriched
 
     def _emit_retrieval(self, query_text: str, results: List[Dict[str, Any]]) -> None:
-        # Fire-and-forget: report retrieved Hub metrics so the host can count
+        # Fire-and-forget: report retrieved metrics so the host can count
         # consumption. Never let hook errors break a search.
         try:
             from datus.api.hooks import MetricRetrievalEvent, get_metric_retrieval_hook
@@ -847,7 +846,7 @@ class MetricRAG:
                     project_name=getattr(self.agent_config, "project_name", None),
                     sub_agent_name=self.sub_agent_name,
                     # uid is the contract's string field — normalize missing/null
-                    # to "" (empty = not Hub-governed) rather than forwarding None.
+                    # to "" (legacy identity missing) rather than forwarding None.
                     metrics=[{"id": r.get("id"), "name": r.get("name"), "uid": r.get("uid") or ""} for r in results],
                 )
             )
