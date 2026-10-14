@@ -368,8 +368,14 @@ def semantic_yaml_files(root: Path) -> list[Path]:
         return []
     found = {path for pattern in ("*.yml", "*.yaml") for path in root.rglob(pattern)}
     # ``metrics`` holds per-metric fragments, not whole semantic models; the
-    # authoring inventory skips them for the same reason.
-    return sorted(path for path in found if "metrics" not in path.relative_to(root).parts)
+    # authoring inventory skips them for the same reason. A top-level
+    # ``ontology`` directory holds Apache Ossie ontologies, which are not
+    # semantic models either.
+    return sorted(
+        path
+        for path in found
+        if "metrics" not in path.relative_to(root).parts and path.relative_to(root).parts[0] != "ontology"
+    )
 
 
 def sync_semantic_yaml_tree(

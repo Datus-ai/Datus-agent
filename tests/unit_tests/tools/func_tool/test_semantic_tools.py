@@ -2317,3 +2317,225 @@ class TestQueryMetricsContextFilter:
         assert "context_filter" in properties
         assert "context_filter" not in tool.params_json_schema.get("required", [])
         assert "before aggregation" in properties["context_filter"]["description"]
+
+
+# ── Ontology tools ─────────────────────────────────────────────────
+
+
+def _ontology_config(tmp_path=None):
+    config = Mock()
+    config.active_model.return_value.model = "gpt-4o"
+    config.current_datasource = "flights_db"
+    config.current_db_config.return_value = None
+    config.runtime_db_context.return_value = {}
+    config.path_manager.semantic_model_path.return_value = "/tmp/models/flights_db"
+    config.path_manager.ontology_path.return_value = "/tmp/models/ontology/flights_db"
+    return config
+
+
+def _validation_exception(**fields):
+    from datus.tools.semantic_tools.dosi.errors import SemanticValidationException
+    from datus.tools.semantic_tools.models import SemanticValidationError
+
+    return SemanticValidationException(SemanticValidationError(**fields))
+
+
+class TestOntologyToolRegistration:
+    def _names(self, tool):
+        with patch("datus.tools.func_tool.semantic_tools.trans_to_function_tool") as convert:
+            convert.side_effect = lambda function: SimpleNamespace(name=function.__name__)
+            return [registered.name for registered in tool.available_tools()]
+
+    def test_ontology_tools_hidden_by_default(self):
+        with patch("datus.tools.func_tool.semantic_tools.MetricRAG"):
+            tool = SemanticTools(agent_config=_ontology_config())
+        assert not set(SemanticTools.ONTOLOGY_TOOL_NAMES) & set(self._names(tool))
+
+    def test_ontology_tools_exposed_when_enabled(self):
+        with patch("datus.tools.func_tool.semantic_tools.MetricRAG"):
+            tool = SemanticTools(agent_config=_ontology_config(), ontology_enabled=True)
+        names = self._names(tool)
+        assert names[-3:] == ["describe_concept", "find_concept_paths", "select_records"]
+
+    def test_all_tools_name_lists_ontology_tools(self):
+        assert set(SemanticTools.ONTOLOGY_TOOL_NAMES) <= set(SemanticTools.all_tools_name())
+
+    def test_runtime_config_carries_ontology_dir_and_mapping_only_when_enabled(self):
+        with (
+            patch("datus.tools.func_tool.semantic_tools.MetricRAG"),
+            patch("datus.tools.func_tool.semantic_tools.DosiRuntime") as runtime,
+        ):
+            assert SemanticTools(agent_config=_ontology_config()).runtime is runtime.return_value
+            plain = runtime.call_args.args[0]
+            enabled_tools = SemanticTools(
+                agent_config=_ontology_config(), ontology_enabled=True, ontology_mapping=" m2 "
+            )
+            assert enabled_tools.runtime is runtime.return_value
+            enabled = runtime.call_args.args[0]
+        assert plain.ontology_dir is None and plain.ontology_mapping is None
+        assert enabled.ontology_dir == "/tmp/models/ontology/flights_db"
+        assert enabled.ontology_mapping == "m2"
+
+
+@pytest.fixture
+def ontology_tools():
+    with patch("datus.tools.func_tool.semantic_tools.MetricRAG"):
+        tool = SemanticTools(agent_config=_ontology_config(), ontology_enabled=True)
+    runtime = Mock()
+    tool._runtime = runtime
+    return tool, runtime
+
+
+class TestDescribeConcept:
+    def test_catalog(self, ontology_tools):
+        tool, runtime = ontology_tools
+        runtime.describe = AsyncMock(return_value={"concepts": [{"name": "Flight"}]})
+        result = tool.describe_concept()
+        assert result.success == 1
+        assert result.result == {"concepts": [{"name": "Flight"}]}
+        runtime.describe.assert_awaited_once_with(None)
+
+    @pytest.mark.parametrize("placeholder", ["", "null", "None"])
+    def test_null_placeholders_mean_catalog(self, ontology_tools, placeholder):
+        tool, runtime = ontology_tools
+        runtime.describe = AsyncMock(return_value={})
+        tool.describe_concept(placeholder)
+        assert runtime.describe.await_args.args[0] in (None, "")
+
+    def test_concept(self, ontology_tools):
+        tool, runtime = ontology_tools
+        runtime.describe = AsyncMock(return_value={"concept": "FlightAlert"})
+        assert tool.describe_concept("FlightAlert").result == {"concept": "FlightAlert"}
+        runtime.describe.assert_awaited_once_with("FlightAlert")
+
+    def test_unknown_concept_returns_structured_candidates(self, ontology_tools):
+        tool, runtime = ontology_tools
+        runtime.describe = AsyncMock(
+            side_effect=_validation_exception(
+                code="unknown_concept", candidates=["Flight", "FlightAlert"], message="unknown concept 'Flght'"
+            )
+        )
+        result = tool.describe_concept("Flght")
+        assert result.success == 0
+        assert result.result["code"] == "unknown_concept"
+        assert result.result["candidates"] == ["Flight", "FlightAlert"]
+
+    def test_infrastructure_failure_is_a_plain_failure(self, ontology_tools):
+        tool, runtime = ontology_tools
+        runtime.describe = AsyncMock(side_effect=RuntimeError("no ontology is loaded"))
+        result = tool.describe_concept()
+        assert result.success == 0
+        assert "no ontology is loaded" in result.error
+        assert result.result is None
+
+    def test_runtime_unavailable(self):
+        with (
+            patch("datus.tools.func_tool.semantic_tools.MetricRAG"),
+            patch("datus.tools.func_tool.semantic_tools.DosiRuntime", side_effect=RuntimeError("bad yaml")),
+        ):
+            tool = SemanticTools(agent_config=_ontology_config(), ontology_enabled=True)
+            result = tool.describe_concept()
+        assert result.success == 0
+        assert "describe_concept requires" in result.error and "bad yaml" in result.error
+
+
+class TestFindConceptPaths:
+    def test_paths(self, ontology_tools):
+        tool, runtime = ontology_tools
+        payload = {"paths": [{"path": "Flight.arrives_at"}], "equivalences": [], "max_hops": 3}
+        runtime.concept_paths = AsyncMock(return_value=payload)
+        result = tool.find_concept_paths(" Flight ", "Airport")
+        assert result.result == payload
+        runtime.concept_paths.assert_awaited_once_with("Flight", "Airport")
+
+    @pytest.mark.parametrize("source,target", [("", "Airport"), ("Flight", ""), (None, None)])
+    def test_requires_both_concepts(self, ontology_tools, source, target):
+        tool, runtime = ontology_tools
+        runtime.concept_paths = AsyncMock()
+        result = tool.find_concept_paths(source, target)
+        assert result.success == 0
+        runtime.concept_paths.assert_not_called()
+
+    def test_invalid_path_is_structured(self, ontology_tools):
+        tool, runtime = ontology_tools
+        runtime.concept_paths = AsyncMock(
+            side_effect=_validation_exception(code="invalid_concept_path", message="no path from Flight to Moon")
+        )
+        result = tool.find_concept_paths("Flight", "Moon")
+        assert result.success == 0
+        assert result.result["code"] == "invalid_concept_path"
+
+
+class TestSelectRecords:
+    @staticmethod
+    def _result(rows):
+        from datus.tools.semantic_tools.models import QueryResult
+
+        return QueryResult(
+            columns=["alert_id", "priority"],
+            data=rows,
+            metadata={
+                "sql": "SELECT ...",
+                "row_count": len(rows),
+                "requested_columns": [{"requested": "FlightAlert.id", "column": "alert_id"}],
+            },
+        )
+
+    def test_returns_envelope_and_caches_full_result(self, ontology_tools):
+        tool, runtime = ontology_tools
+        rows = [{"alert_id": "A007", "priority": "P1"}, {"alert_id": "A011", "priority": "P1"}]
+        runtime.select = AsyncMock(return_value=self._result(rows))
+        result = tool.select_records(
+            from_concept="FlightAlert",
+            fields=["FlightAlert.id", "FlightAlert.priority"],
+            where="FlightAlert.status = 'OPEN'",
+        )
+        assert result.success == 1
+        envelope = result.result
+        assert envelope["columns"] == ["alert_id", "priority"]
+        assert envelope["metadata"]["requested_columns"][0]["requested"] == "FlightAlert.id"
+        cached = tool.get_cached_query_metrics_result(envelope["result_id"])
+        assert cached["row_count"] == 2
+        assert "A011" in cached["csv"]
+        kwargs = runtime.select.await_args.kwargs
+        assert kwargs["limit"] == SemanticTools.SELECT_RECORDS_DEFAULT_LIMIT
+        assert kwargs["where"] == "FlightAlert.status = 'OPEN'"
+
+    def test_explicit_limit_and_order(self, ontology_tools):
+        tool, runtime = ontology_tools
+        runtime.select = AsyncMock(return_value=self._result([]))
+        tool.select_records(
+            from_concept="FlightAlert", fields="FlightAlert.id", order_by=["-FlightAlert.id"], limit="5"
+        )
+        kwargs = runtime.select.await_args.kwargs
+        assert kwargs["fields"] == ["FlightAlert.id"]
+        assert kwargs["order_by"] == ["-FlightAlert.id"]
+        assert kwargs["limit"] == 5
+
+    @pytest.mark.parametrize(
+        "from_concept,fields", [("", ["FlightAlert.id"]), ("FlightAlert", []), ("FlightAlert", None)]
+    )
+    def test_requires_concept_and_fields(self, ontology_tools, from_concept, fields):
+        tool, runtime = ontology_tools
+        runtime.select = AsyncMock()
+        result = tool.select_records(from_concept=from_concept, fields=fields)
+        assert result.success == 0
+        runtime.select.assert_not_called()
+
+    def test_value_not_in_domain_returns_allowed_values(self, ontology_tools):
+        tool, runtime = ontology_tools
+        violations = [{"reference": "FlightAlert.status", "literal": "unresolved", "allowed": ["OPEN", "RESOLVED"]}]
+        runtime.select = AsyncMock(
+            side_effect=_validation_exception(
+                code="value_not_in_domain",
+                candidates=["OPEN", "RESOLVED"],
+                detail={"violations": violations},
+                message='"unresolved" is not a value of FlightAlert.status',
+            )
+        )
+        result = tool.select_records(
+            from_concept="FlightAlert", fields=["FlightAlert.id"], where="FlightAlert.status = 'unresolved'"
+        )
+        assert result.success == 0
+        assert result.result["code"] == "value_not_in_domain"
+        assert result.result["detail"]["violations"] == violations

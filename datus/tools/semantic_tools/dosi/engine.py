@@ -32,6 +32,12 @@ _INSTALL_HINT = "dosi-engine is missing; reinstall datus-agent from its lockfile
 # both of its own model walks.
 _METRIC_FRAGMENT_DIR = "metrics"
 
+# ``subject/semantic_models/ontology/<datasource>/`` holds Apache Ossie
+# ontologies, so no datasource may own the ``ontology`` model directory.
+ONTOLOGY_DIR_NAME = "ontology"
+
+_MODEL_SUFFIXES = ("*.yaml", "*.yml", "*.json")
+
 
 def _normalize_sqlite_source(source: str) -> str:
     """Resolve Datus SQLite URI spellings to the underlying file."""
@@ -74,9 +80,14 @@ def resolve_model_files(config: DosiConfig) -> list[str]:
         return [config.semantic_model_path]
     models_dir = config.semantic_models_path
     if models_dir:
+        if Path(models_dir).name == ONTOLOGY_DIR_NAME:
+            raise SemanticCoreException(
+                f"{models_dir!r} is reserved for ontology files "
+                "(subject/semantic_models/ontology/<datasource>/); rename the datasource"
+            )
         candidates = sorted(
             path
-            for ext in ("*.yaml", "*.yml", "*.json")
+            for ext in _MODEL_SUFFIXES
             for path in glob.glob(os.path.join(models_dir, "**", ext), recursive=True)
             if _METRIC_FRAGMENT_DIR not in os.path.relpath(path, models_dir).split(os.sep)
         )
@@ -104,6 +115,56 @@ def resolve_model_file(config: DosiConfig) -> str:
             f"{len(candidates)} model files in {models_dir!r}; set semantic_model_path to select one"
         )
     raise AssertionError("multiple models cannot resolve from semantic_model_path")
+
+
+def resolve_ontology_files(config: DosiConfig) -> list[str]:
+    """Every ontology file under ``config.ontology_dir``, in a stable order.
+
+    A missing directory means the datasource has no ontology, which is not an
+    error here: only the ontology-aware agent turns that into one.
+    """
+    ontology_dir = config.ontology_dir
+    if not ontology_dir or not os.path.isdir(ontology_dir):
+        return []
+    return sorted(
+        path for ext in _MODEL_SUFFIXES for path in glob.glob(os.path.join(ontology_dir, "**", ext), recursive=True)
+    )
+
+
+def pair_ontologies(model_files: list[str], ontology_files: list[str]) -> tuple[dict[str, str], list[str]]:
+    """Pair each model file with the ontology that shares its file stem.
+
+    One model and one ontology pair regardless of names, which covers the
+    common single-model datasource. Returns ``(model -> ontology, unpaired
+    ontologies)``; two ontologies claiming one model are both left unpaired
+    rather than picking one silently.
+    """
+    if len(model_files) == 1 and len(ontology_files) == 1:
+        return {model_files[0]: ontology_files[0]}, []
+    by_stem: dict[str, list[str]] = {}
+    for ontology in ontology_files:
+        by_stem.setdefault(Path(ontology).stem, []).append(ontology)
+    pairs: dict[str, str] = {}
+    paired: set[str] = set()
+    for model in model_files:
+        matches = by_stem.get(Path(model).stem, [])
+        if len(matches) == 1:
+            pairs[model] = matches[0]
+            paired.add(matches[0])
+    return pairs, [ontology for ontology in ontology_files if ontology not in paired]
+
+
+def binding_supports_ontology(binding: Any = None) -> bool:
+    """Whether the installed binding answers ontology questions natively.
+
+    Loading an ontology predates this; ``describe`` and ``paths`` on the
+    engine are what the ontology agent needs, and arrive together.
+    """
+    try:
+        engine_cls = getattr(binding or load_binding(), "Engine", None)
+    except SemanticCoreException:
+        return False
+    return callable(getattr(engine_cls, "describe", None)) and callable(getattr(engine_cls, "paths", None))
 
 
 def load_binding() -> Any:
@@ -195,6 +256,21 @@ class EngineHandle:
             return None
         return _normalize_sqlite_source(str(source))
 
+    def _ontology_signature(self) -> Optional[tuple[int, int]]:
+        """An edited ontology rebuilds the engine, like an edited model."""
+        ontology = self._config.ontology_path
+        if not ontology:
+            return None
+        try:
+            stat = os.stat(ontology)
+        except OSError as exc:
+            raise SemanticCoreException(f"cannot read ontology {ontology!r}: {exc}") from exc
+        return stat.st_mtime_ns, stat.st_size
+
+    @property
+    def ontology_path(self) -> Optional[str]:
+        return self._config.ontology_path
+
     def _sqlite_signature(self) -> Optional[float]:
         source = self._sqlite_source()
         if source is None:
@@ -231,7 +307,7 @@ class EngineHandle:
         except OSError as exc:
             raise SemanticCoreException(f"cannot read semantic model {model_file!r}: {exc}") from exc
         with self._lock:
-            signature = (stat.st_mtime_ns, stat.st_size, self._sqlite_signature())
+            signature = (stat.st_mtime_ns, stat.st_size, self._sqlite_signature(), self._ontology_signature())
             if self._engine is None or signature != self._model_signature:
                 # A changed SQLite source must reopen the engine connection.
                 self._engine = self._build(config, model_file)
@@ -250,12 +326,23 @@ class EngineHandle:
         if findings:
             raise SemanticCoreException(legacy_window_error(findings))
         try:
+            ontology_kwargs: dict[str, Any] = {}
+            if config.ontology_path:
+                ontology_kwargs["ontology_path"] = config.ontology_path
+                if config.ontology_mapping:
+                    ontology_kwargs["mapping"] = config.ontology_mapping
             return binding.Engine(
                 model_path=model_file,
                 connections=self._runtime_connections(config),
                 pool_size=config.pool_size,
+                **ontology_kwargs,
             )
         except binding.OsiError as exc:
+            if config.ontology_path:
+                raise SemanticCoreException(
+                    f"Dosi failed to load model {model_file!r} with ontology {config.ontology_path!r}: "
+                    f"[{getattr(exc, 'code', '')}] {exc}"
+                ) from exc
             raise SemanticCoreException(f"Dosi failed to load model {model_file!r}: {exc}") from exc
 
     def _runtime_connections(self, config: DosiConfig) -> Optional[dict[str, dict[str, Any]]]:
@@ -309,6 +396,7 @@ class EngineRegistry:
         self._lock = threading.Lock()
         self._signature: tuple[tuple[str, int, int], ...] = ()
         self._handles: dict[str, EngineHandle] = {}
+        self._unpaired_ontologies: list[str] = []
 
     @staticmethod
     def _file_signature(path: str) -> Optional[tuple[str, int, int]]:
@@ -329,13 +417,31 @@ class EngineRegistry:
             files = [path for path, entry_signature in entries if entry_signature is not None]
             if not files:
                 raise SemanticCoreException("no readable OSI model file resolved for this datasource")
-            signature = tuple(entry_signature for _, entry_signature in entries if entry_signature is not None)
+            ontology_files = resolve_ontology_files(self._config)
+            # Adding, removing or renaming an ontology re-pairs the handles;
+            # content edits are caught per handle by EngineHandle.get.
+            signature = tuple(entry_signature for _, entry_signature in entries if entry_signature is not None) + tuple(
+                (path, 0, 0) for path in ontology_files
+            )
             if signature != self._signature:
+                pairs, unpaired = pair_ontologies(files, ontology_files)
+                self._unpaired_ontologies = unpaired
                 previous = self._handles
-                self._handles = {
-                    path: previous.get(path)
-                    or EngineHandle(self._config.model_copy(update={"semantic_model_path": path}))
-                    for path in files
-                }
+                handles: dict[str, EngineHandle] = {}
+                for path in files:
+                    ontology = pairs.get(path)
+                    kept = previous.get(path)
+                    if kept is not None and kept.ontology_path == ontology:
+                        handles[path] = kept
+                    else:
+                        handles[path] = EngineHandle(
+                            self._config.model_copy(update={"semantic_model_path": path, "ontology_path": ontology})
+                        )
+                self._handles = handles
                 self._signature = signature
             return self._signature, tuple((path, self._handles[path]) for path in files)
+
+    def unpaired_ontologies(self) -> list[str]:
+        """Ontology files the last snapshot could not pair with a model file."""
+        with self._lock:
+            return list(self._unpaired_ontologies)

@@ -1,0 +1,626 @@
+# Aviation scenario — the same world as model.yaml, in Apache Ossie ontology
+# form (ontology spec 0.2.0.dev0). Translated from the Palantir-style IR of
+# the Aviation / Flight Alert reconstruction pack by the rules in
+# design/palantir-vs-ossie-ontology-concepts.zh.md §4.
+#
+# Validate with the upstream validator:
+#   python validation/validate.py fixtures/aviation/ontology.yaml \
+#       --schema ontology/ontology.json          (run inside an apache/ossie checkout)
+#
+# Dosi does not load this file yet (RFC design/rfc-ontology-detail-query.zh.md
+# M2/M3). When lowering lands, the relationships and primary keys it
+# synthesizes from these concept/link mappings must match the hand-written
+# ones in model.yaml — that is the golden.
+#
+# Translation decisions worth knowing:
+#   * Palantir one-to-many links (Flight.has_delay, has_alert, has_sensor) are
+#     declared on the many side (Delay.flight, FlightAlert.flight,
+#     FlightSensor.flight) with ManyToOne — Ossie has no one-to-many spelling.
+#   * departs_from / arrives_at name their Airport role (origin / destination)
+#     so verbalizations and future expressions can tell the two apart.
+#   * FlightSensor is identified by its series id (the key readings reference),
+#     the sensor id is kept as a OneToOne relationship.
+#   * The sensor object's time-series capability, Palantir object "kinds", and
+#     the Action / Function layer have no Ossie form and are left out on
+#     purpose; the gap is recorded, not hidden.
+#   * `derived_by` expressions follow the grammar of the upstream flights.yaml
+#     example; no engine evaluates them yet (M5).
+version: 0.2.0.dev0
+name: Aviation
+description: >
+  Flights operated by aircraft for carriers between airports along routes,
+  with their delays, operational alerts and on-board sensor series.
+  Research reconstruction of Palantir's public Aviation reference ontology.
+requires:
+  - COUNT[Airport] > 0
+  - COUNT[Carrier] > 0
+ontology:
+# ---------------------------------------------------------------- value types
+- concept: FlightId
+  type: ValueType
+  extends: [ String ]
+- concept: FlightNumber
+  type: ValueType
+  extends: [ String ]
+- concept: AircraftId
+  type: ValueType
+  extends: [ String ]
+- concept: TailNumber
+  type: ValueType
+  extends: [ String ]
+- concept: CarrierId
+  type: ValueType
+  extends: [ String ]
+- concept: IataCode
+  description: "Two-letter IATA carrier designator"
+  type: ValueType
+  extends: [ String ]
+- concept: AirportCode
+  description: "Three-letter IATA airport code"
+  type: ValueType
+  extends: [ String ]
+- concept: RouteId
+  type: ValueType
+  extends: [ String ]
+- concept: SensorId
+  type: ValueType
+  extends: [ String ]
+- concept: SeriesId
+  description: "Identifier of a time series in the sensor store"
+  type: ValueType
+  extends: [ String ]
+- concept: AlertId
+  type: ValueType
+  extends: [ String ]
+- concept: DelayId
+  type: ValueType
+  extends: [ String ]
+- concept: NrMinutes
+  type: ValueType
+  extends: [ Integer ]
+- concept: NrMiles
+  type: ValueType
+  extends: [ Integer ]
+- concept: PassengerCount
+  type: ValueType
+  extends: [ Integer ]
+  requires: [ PassengerCount >= 0 ]
+- concept: FlightStatus
+  type: ValueType
+  extends: [ String ]
+- concept: DelayType
+  type: ValueType
+  extends: [ String ]
+  requires: [ "DelayType == 'AIR_TRAFFIC' OR DelayType == 'WEATHER' OR DelayType == 'MAINTENANCE' OR DelayType == 'CREW'" ]
+- concept: AlertType
+  type: ValueType
+  extends: [ String ]
+- concept: AlertPriority
+  type: ValueType
+  extends: [ String ]
+  requires: [ "AlertPriority == 'P0' OR AlertPriority == 'P1' OR AlertPriority == 'P2' OR AlertPriority == 'P3'" ]
+- concept: AlertStatus
+  type: ValueType
+  extends: [ String ]
+  requires: [ "AlertStatus == 'OPEN' OR AlertStatus == 'RESOLVED'" ]
+- concept: SeriesName
+  type: ValueType
+  extends: [ String ]
+- concept: UnitName
+  type: ValueType
+  extends: [ String ]
+- concept: ReadingValue
+  type: ValueType
+  extends: [ Float ]
+- concept: CityName
+  type: ValueType
+  extends: [ String ]
+- concept: TimezoneName
+  type: ValueType
+  extends: [ String ]
+# --------------------------------------------------------------- entity types
+- concept: Airport
+  type: EntityType
+  identify_by: [ code ]
+  relationships:
+  - name: code
+    roles: [ { concept: AirportCode } ]
+    multiplicity: OneToOne
+    verbalizes: [ '{Airport} is identified by {AirportCode}' ]
+  - name: name
+    roles: [ { concept: String } ]
+    multiplicity: ManyToOne
+    verbalizes: [ '{Airport} is named {String}' ]
+  - name: city
+    roles: [ { concept: CityName } ]
+    multiplicity: ManyToOne
+    verbalizes: [ '{Airport} serves {CityName}' ]
+  - name: timezone
+    roles: [ { concept: TimezoneName } ]
+    multiplicity: ManyToOne
+    verbalizes: [ '{Airport} keeps time in {TimezoneName}' ]
+- concept: Carrier
+  type: EntityType
+  identify_by: [ id ]
+  relationships:
+  - name: id
+    roles: [ { concept: CarrierId } ]
+    multiplicity: OneToOne
+    verbalizes: [ '{Carrier} is identified by {CarrierId}' ]
+  - name: iata_code
+    roles: [ { concept: IataCode } ]
+    multiplicity: OneToOne
+    verbalizes: [ '{Carrier} is designated {IataCode}' ]
+  - name: name
+    roles: [ { concept: String } ]
+    multiplicity: ManyToOne
+    verbalizes: [ '{Carrier} is named {String}' ]
+- concept: Aircraft
+  type: EntityType
+  identify_by: [ id ]
+  relationships:
+  - name: id
+    roles: [ { concept: AircraftId } ]
+    multiplicity: OneToOne
+    verbalizes: [ '{Aircraft} is identified by {AircraftId}' ]
+  - name: tail_number
+    roles: [ { concept: TailNumber } ]
+    multiplicity: OneToOne
+    verbalizes: [ '{Aircraft} carries registration {TailNumber}' ]
+  - name: model
+    roles: [ { concept: String } ]
+    multiplicity: ManyToOne
+    verbalizes: [ '{Aircraft} is a {String}' ]
+  - name: in_service
+    verbalizes: [ '{Aircraft} is in service' ]
+- concept: Route
+  type: EntityType
+  identify_by: [ id ]
+  relationships:
+  - name: id
+    roles: [ { concept: RouteId } ]
+    multiplicity: OneToOne
+    verbalizes: [ '{Route} is identified by {RouteId}' ]
+  - name: origin
+    roles: [ { concept: Airport, name: origin } ]
+    multiplicity: ManyToOne
+    verbalizes: [ '{Route} starts at {Airport:origin}' ]
+  - name: destination
+    roles: [ { concept: Airport, name: destination } ]
+    multiplicity: ManyToOne
+    verbalizes: [ '{Route} ends at {Airport:destination}' ]
+  - name: distance
+    roles: [ { concept: NrMiles } ]
+    multiplicity: ManyToOne
+    verbalizes: [ '{Route} spans {NrMiles}' ]
+- concept: Flight
+  type: EntityType
+  identify_by: [ id ]
+  relationships:
+  - name: id
+    roles: [ { concept: FlightId } ]
+    multiplicity: OneToOne
+    verbalizes: [ '{Flight} is identified by {FlightId}' ]
+  - name: number
+    roles: [ { concept: FlightNumber } ]
+    multiplicity: ManyToOne
+    verbalizes: [ '{Flight} flies as {FlightNumber}' ]
+  - name: operated_by
+    roles: [ { concept: Aircraft } ]
+    multiplicity: ManyToOne
+    verbalizes: [ '{Flight} is operated by {Aircraft}' ]
+  - name: flown_by
+    roles: [ { concept: Carrier } ]
+    multiplicity: ManyToOne
+    verbalizes: [ '{Flight} is flown by {Carrier}' ]
+  - name: follows_route
+    roles: [ { concept: Route } ]
+    multiplicity: ManyToOne
+    verbalizes: [ '{Flight} follows {Route}' ]
+  - name: departs_from
+    roles: [ { concept: Airport, name: origin } ]
+    multiplicity: ManyToOne
+    verbalizes: [ '{Flight} departs from {Airport:origin}' ]
+    requires: [ 'Flight.follows_route.origin == origin' ]
+  - name: arrives_at
+    roles: [ { concept: Airport, name: destination } ]
+    multiplicity: ManyToOne
+    verbalizes: [ '{Flight} arrives at {Airport:destination}' ]
+    requires: [ 'Flight.follows_route.destination == destination' ]
+  - name: scheduled_departure
+    roles: [ { concept: DateTime } ]
+    multiplicity: ManyToOne
+    verbalizes: [ '{Flight} is scheduled to depart at {DateTime}' ]
+  - name: actual_departure
+    roles: [ { concept: DateTime } ]
+    multiplicity: ManyToOne
+    verbalizes: [ '{Flight} departed at {DateTime}' ]
+  - name: scheduled_arrival
+    roles: [ { concept: DateTime } ]
+    multiplicity: ManyToOne
+    verbalizes: [ '{Flight} is scheduled to arrive at {DateTime}' ]
+  - name: actual_arrival
+    roles: [ { concept: DateTime } ]
+    multiplicity: ManyToOne
+    verbalizes: [ '{Flight} arrived at {DateTime}' ]
+  - name: passengers
+    roles: [ { concept: PassengerCount } ]
+    multiplicity: ManyToOne
+    verbalizes: [ '{Flight} carried {PassengerCount} passengers' ]
+  - name: status
+    roles: [ { concept: FlightStatus } ]
+    multiplicity: ManyToOne
+    verbalizes: [ '{Flight} has status {FlightStatus}' ]
+  - name: departure_delay
+    roles: [ { concept: NrMinutes } ]
+    multiplicity: ManyToOne
+    verbalizes: [ '{Flight} departed {NrMinutes} late' ]
+    derived_by: [ 'NrMinutes == MINUTES(Flight.actual_departure - Flight.scheduled_departure)' ]
+  - name: arrival_delay
+    roles: [ { concept: NrMinutes } ]
+    multiplicity: ManyToOne
+    verbalizes: [ '{Flight} arrived {NrMinutes} late' ]
+    derived_by: [ 'NrMinutes == MINUTES(Flight.actual_arrival - Flight.scheduled_arrival)' ]
+  - name: total_recorded_delay
+    roles: [ { concept: NrMinutes } ]
+    multiplicity: ManyToOne
+    verbalizes: [ '{Flight} accumulated {NrMinutes} of recorded delay' ]
+    derived_by: [ 'NrMinutes == SUM[Delay.minutes WHERE Delay.flight(Flight) GROUP BY Flight]' ]
+- concept: Delay
+  type: EntityType
+  identify_by: [ id ]
+  relationships:
+  - name: id
+    roles: [ { concept: DelayId } ]
+    multiplicity: OneToOne
+    verbalizes: [ '{Delay} is identified by {DelayId}' ]
+  - name: flight
+    roles: [ { concept: Flight } ]
+    multiplicity: ManyToOne
+    verbalizes: [ '{Delay} was recorded on {Flight}', '{Flight} has delay {Delay}' ]
+  - name: type
+    roles: [ { concept: DelayType } ]
+    multiplicity: ManyToOne
+    verbalizes: [ '{Delay} is of type {DelayType}' ]
+  - name: minutes
+    roles: [ { concept: NrMinutes } ]
+    multiplicity: ManyToOne
+    verbalizes: [ '{Delay} lasted {NrMinutes}' ]
+  - name: cause
+    roles: [ { concept: String } ]
+    multiplicity: ManyToOne
+    verbalizes: [ '{Delay} was caused by {String}' ]
+- concept: FlightAlert
+  type: EntityType
+  identify_by: [ id ]
+  relationships:
+  - name: id
+    roles: [ { concept: AlertId } ]
+    multiplicity: OneToOne
+    verbalizes: [ '{FlightAlert} is identified by {AlertId}' ]
+  - name: flight
+    roles: [ { concept: Flight } ]
+    multiplicity: ManyToOne
+    verbalizes: [ '{FlightAlert} was raised on {Flight}', '{Flight} has operational alert {FlightAlert}' ]
+  - name: type
+    roles: [ { concept: AlertType } ]
+    multiplicity: ManyToOne
+    verbalizes: [ '{FlightAlert} is of type {AlertType}' ]
+  - name: priority
+    roles: [ { concept: AlertPriority } ]
+    multiplicity: ManyToOne
+    verbalizes: [ '{FlightAlert} has priority {AlertPriority}' ]
+  - name: status
+    roles: [ { concept: AlertStatus } ]
+    multiplicity: ManyToOne
+    verbalizes: [ '{FlightAlert} is {AlertStatus}' ]
+  - name: created_at
+    roles: [ { concept: DateTime } ]
+    multiplicity: ManyToOne
+    verbalizes: [ '{FlightAlert} was created at {DateTime}' ]
+  - name: resolved_at
+    roles: [ { concept: DateTime } ]
+    multiplicity: ManyToOne
+    verbalizes: [ '{FlightAlert} was resolved at {DateTime}' ]
+  - name: resolution_comment
+    roles: [ { concept: String } ]
+    multiplicity: ManyToOne
+    verbalizes: [ '{FlightAlert} was resolved with comment- {String}' ]
+- concept: FlightSensor
+  description: "One sensor series recorded on board a flight (Palantir sensor object type)"
+  type: EntityType
+  identify_by: [ series ]
+  relationships:
+  - name: series
+    roles: [ { concept: SeriesId } ]
+    multiplicity: OneToOne
+    verbalizes: [ '{FlightSensor} records series {SeriesId}' ]
+  - name: id
+    roles: [ { concept: SensorId } ]
+    multiplicity: OneToOne
+    verbalizes: [ '{FlightSensor} is identified by {SensorId}' ]
+  - name: flight
+    roles: [ { concept: Flight } ]
+    multiplicity: ManyToOne
+    verbalizes: [ '{FlightSensor} is mounted on {Flight}', '{Flight} has sensor series {FlightSensor}' ]
+  - name: name
+    roles: [ { concept: SeriesName } ]
+    multiplicity: ManyToOne
+    verbalizes: [ '{FlightSensor} measures {SeriesName}' ]
+  - name: unit
+    roles: [ { concept: UnitName } ]
+    multiplicity: ManyToOne
+    verbalizes: [ '{FlightSensor} reports in {UnitName}' ]
+- concept: SensorReading
+  description: "One point of a sensor series; identified by the sensor and the timestamp"
+  type: EntityType
+  identify_by: [ sensor, at ]
+  relationships:
+  - name: sensor
+    roles: [ { concept: FlightSensor } ]
+    multiplicity: ManyToOne
+    verbalizes: [ '{SensorReading} belongs to {FlightSensor}' ]
+  - name: at
+    roles: [ { concept: DateTime } ]
+    multiplicity: ManyToOne
+    verbalizes: [ '{SensorReading} was taken at {DateTime}' ]
+  - name: value
+    roles: [ { concept: ReadingValue } ]
+    multiplicity: ManyToOne
+    verbalizes: [ '{SensorReading} measured {ReadingValue}' ]
+# ------------------------------------------------------------------- mappings
+ontology_mappings:
+- name: aviation_duckdb
+  # The logical layer only (datasets + fields). Relationships, primary keys
+  # and metrics are what ontology lowering must synthesize; model.yaml holds
+  # the hand-written answer.
+  semantic_model:
+    name: aviation
+    datasets:
+    - name: airports
+      source: main.airports
+      fields:
+      - { name: airport_code, expression: { dialects: [ { dialect: ANSI_SQL, expression: airport_code } ] } }
+      - { name: name, expression: { dialects: [ { dialect: ANSI_SQL, expression: name } ] } }
+      - { name: city, expression: { dialects: [ { dialect: ANSI_SQL, expression: city } ] } }
+      - { name: timezone, expression: { dialects: [ { dialect: ANSI_SQL, expression: timezone } ] } }
+    - name: carriers
+      source: main.carriers
+      fields:
+      - { name: carrier_id, expression: { dialects: [ { dialect: ANSI_SQL, expression: carrier_id } ] } }
+      - { name: iata_code, expression: { dialects: [ { dialect: ANSI_SQL, expression: iata_code } ] } }
+      - { name: name, expression: { dialects: [ { dialect: ANSI_SQL, expression: name } ] } }
+    - name: aircraft
+      source: main.aircraft
+      fields:
+      - { name: aircraft_id, expression: { dialects: [ { dialect: ANSI_SQL, expression: aircraft_id } ] } }
+      - { name: tail_number, expression: { dialects: [ { dialect: ANSI_SQL, expression: tail_number } ] } }
+      - { name: model, expression: { dialects: [ { dialect: ANSI_SQL, expression: model } ] } }
+      - { name: carrier_id, expression: { dialects: [ { dialect: ANSI_SQL, expression: carrier_id } ] } }
+      - { name: in_service, expression: { dialects: [ { dialect: ANSI_SQL, expression: in_service } ] } }
+    - name: routes
+      source: main.routes
+      fields:
+      - { name: route_id, expression: { dialects: [ { dialect: ANSI_SQL, expression: route_id } ] } }
+      - { name: origin_airport_code, expression: { dialects: [ { dialect: ANSI_SQL, expression: origin_airport_code } ] } }
+      - { name: destination_airport_code, expression: { dialects: [ { dialect: ANSI_SQL, expression: destination_airport_code } ] } }
+      - { name: distance_miles, expression: { dialects: [ { dialect: ANSI_SQL, expression: distance_miles } ] } }
+    - name: flights
+      source: main.flights
+      fields:
+      - { name: flight_id, expression: { dialects: [ { dialect: ANSI_SQL, expression: flight_id } ] } }
+      - { name: flight_number, expression: { dialects: [ { dialect: ANSI_SQL, expression: flight_number } ] } }
+      - { name: carrier_id, expression: { dialects: [ { dialect: ANSI_SQL, expression: carrier_id } ] } }
+      - { name: aircraft_id, expression: { dialects: [ { dialect: ANSI_SQL, expression: aircraft_id } ] } }
+      - { name: route_id, expression: { dialects: [ { dialect: ANSI_SQL, expression: route_id } ] } }
+      - { name: origin_airport_code, expression: { dialects: [ { dialect: ANSI_SQL, expression: origin_airport_code } ] } }
+      - { name: destination_airport_code, expression: { dialects: [ { dialect: ANSI_SQL, expression: destination_airport_code } ] } }
+      - { name: scheduled_departure, expression: { dialects: [ { dialect: ANSI_SQL, expression: scheduled_departure } ] } }
+      - { name: actual_departure, expression: { dialects: [ { dialect: ANSI_SQL, expression: actual_departure } ] } }
+      - { name: scheduled_arrival, expression: { dialects: [ { dialect: ANSI_SQL, expression: scheduled_arrival } ] } }
+      - { name: actual_arrival, expression: { dialects: [ { dialect: ANSI_SQL, expression: actual_arrival } ] } }
+      - { name: passenger_count, expression: { dialects: [ { dialect: ANSI_SQL, expression: passenger_count } ] } }
+      - { name: status, expression: { dialects: [ { dialect: ANSI_SQL, expression: status } ] } }
+    - name: delays
+      source: main.delays
+      fields:
+      - { name: delay_id, expression: { dialects: [ { dialect: ANSI_SQL, expression: delay_id } ] } }
+      - { name: flight_id, expression: { dialects: [ { dialect: ANSI_SQL, expression: flight_id } ] } }
+      - { name: delay_type, expression: { dialects: [ { dialect: ANSI_SQL, expression: delay_type } ] } }
+      - { name: delay_minutes, expression: { dialects: [ { dialect: ANSI_SQL, expression: delay_minutes } ] } }
+      - { name: cause_detail, expression: { dialects: [ { dialect: ANSI_SQL, expression: cause_detail } ] } }
+    - name: flight_alerts
+      source: main.flight_alerts
+      fields:
+      - { name: alert_id, expression: { dialects: [ { dialect: ANSI_SQL, expression: alert_id } ] } }
+      - { name: flight_id, expression: { dialects: [ { dialect: ANSI_SQL, expression: flight_id } ] } }
+      - { name: alert_type, expression: { dialects: [ { dialect: ANSI_SQL, expression: alert_type } ] } }
+      - { name: priority, expression: { dialects: [ { dialect: ANSI_SQL, expression: priority } ] } }
+      - { name: status, expression: { dialects: [ { dialect: ANSI_SQL, expression: status } ] } }
+      - { name: created_at, expression: { dialects: [ { dialect: ANSI_SQL, expression: created_at } ] } }
+      - { name: resolved_at, expression: { dialects: [ { dialect: ANSI_SQL, expression: resolved_at } ] } }
+      - { name: resolution_comment, expression: { dialects: [ { dialect: ANSI_SQL, expression: resolution_comment } ] } }
+    - name: flight_sensors
+      source: main.flight_sensors
+      fields:
+      - { name: sensor_id, expression: { dialects: [ { dialect: ANSI_SQL, expression: sensor_id } ] } }
+      - { name: flight_id, expression: { dialects: [ { dialect: ANSI_SQL, expression: flight_id } ] } }
+      - { name: series_id, expression: { dialects: [ { dialect: ANSI_SQL, expression: series_id } ] } }
+      - { name: series_name, expression: { dialects: [ { dialect: ANSI_SQL, expression: series_name } ] } }
+      - { name: unit, expression: { dialects: [ { dialect: ANSI_SQL, expression: unit } ] } }
+    - name: sensor_readings
+      source: main.sensor_readings
+      fields:
+      - { name: series_id, expression: { dialects: [ { dialect: ANSI_SQL, expression: series_id } ] } }
+      - { name: ts, expression: { dialects: [ { dialect: ANSI_SQL, expression: ts } ] } }
+      - { name: value_double, expression: { dialects: [ { dialect: ANSI_SQL, expression: value_double } ] } }
+  concept_mappings:
+  - concept: Airport
+    object_mappings:
+    - referent_mappings:
+      - { relationship: code, expression: airports.airport_code }
+    link_mappings:
+    - object_mapping:
+        referent_mappings:
+        - { relationship: code, expression: airports.airport_code }
+      children:
+      - { object_mapping: { concept: String, expression: airports.name }, relationship: name }
+      - { object_mapping: { concept: CityName, expression: airports.city }, relationship: city }
+      - { object_mapping: { concept: TimezoneName, expression: airports.timezone }, relationship: timezone }
+  - concept: Carrier
+    object_mappings:
+    - referent_mappings:
+      - { relationship: id, expression: carriers.carrier_id }
+    link_mappings:
+    - object_mapping:
+        referent_mappings:
+        - { relationship: id, expression: carriers.carrier_id }
+      children:
+      - { object_mapping: { concept: IataCode, expression: carriers.iata_code }, relationship: iata_code }
+      - { object_mapping: { concept: String, expression: carriers.name }, relationship: name }
+  - concept: Aircraft
+    object_mappings:
+    - referent_mappings:
+      - { relationship: id, expression: aircraft.aircraft_id }
+    link_mappings:
+    - object_mapping:
+        referent_mappings:
+        - { relationship: id, expression: "aircraft.aircraft_id WHERE ( aircraft.in_service == TRUE )" }
+      relationship: in_service
+    - object_mapping:
+        referent_mappings:
+        - { relationship: id, expression: aircraft.aircraft_id }
+      children:
+      - { object_mapping: { concept: TailNumber, expression: aircraft.tail_number }, relationship: tail_number }
+      - { object_mapping: { concept: String, expression: aircraft.model }, relationship: model }
+  - concept: Route
+    object_mappings:
+    - referent_mappings:
+      - { relationship: id, expression: routes.route_id }
+    link_mappings:
+    - object_mapping:
+        referent_mappings:
+        - { relationship: id, expression: routes.route_id }
+      children:
+      - object_mapping:
+          concept: Airport
+          referent_mappings:
+          - { relationship: code, expression: routes.origin_airport_code }
+        relationship: origin
+      - object_mapping:
+          concept: Airport
+          referent_mappings:
+          - { relationship: code, expression: routes.destination_airport_code }
+        relationship: destination
+      - { object_mapping: { concept: NrMiles, expression: routes.distance_miles }, relationship: distance }
+  - concept: Flight
+    object_mappings:
+    - referent_mappings:
+      - { relationship: id, expression: flights.flight_id }
+    link_mappings:
+    - object_mapping:
+        referent_mappings:
+        - { relationship: id, expression: flights.flight_id }
+      children:
+      - { object_mapping: { concept: FlightNumber, expression: flights.flight_number }, relationship: number }
+      - object_mapping:
+          concept: Aircraft
+          referent_mappings:
+          - { relationship: id, expression: flights.aircraft_id }
+        relationship: operated_by
+      - object_mapping:
+          concept: Carrier
+          referent_mappings:
+          - { relationship: id, expression: flights.carrier_id }
+        relationship: flown_by
+      - object_mapping:
+          concept: Route
+          referent_mappings:
+          - { relationship: id, expression: flights.route_id }
+        relationship: follows_route
+      - object_mapping:
+          concept: Airport
+          referent_mappings:
+          - { relationship: code, expression: flights.origin_airport_code }
+        relationship: departs_from
+      - object_mapping:
+          concept: Airport
+          referent_mappings:
+          - { relationship: code, expression: flights.destination_airport_code }
+        relationship: arrives_at
+      - { object_mapping: { concept: DateTime, expression: flights.scheduled_departure }, relationship: scheduled_departure }
+      - { object_mapping: { concept: DateTime, expression: flights.actual_departure }, relationship: actual_departure }
+      - { object_mapping: { concept: DateTime, expression: flights.scheduled_arrival }, relationship: scheduled_arrival }
+      - { object_mapping: { concept: DateTime, expression: flights.actual_arrival }, relationship: actual_arrival }
+      - { object_mapping: { concept: PassengerCount, expression: flights.passenger_count }, relationship: passengers }
+      - { object_mapping: { concept: FlightStatus, expression: flights.status }, relationship: status }
+  - concept: Delay
+    object_mappings:
+    - referent_mappings:
+      - { relationship: id, expression: delays.delay_id }
+    link_mappings:
+    - object_mapping:
+        referent_mappings:
+        - { relationship: id, expression: delays.delay_id }
+      children:
+      - object_mapping:
+          concept: Flight
+          referent_mappings:
+          - { relationship: id, expression: delays.flight_id }
+        relationship: flight
+      - { object_mapping: { concept: DelayType, expression: delays.delay_type }, relationship: type }
+      - { object_mapping: { concept: NrMinutes, expression: delays.delay_minutes }, relationship: minutes }
+      - { object_mapping: { concept: String, expression: delays.cause_detail }, relationship: cause }
+  - concept: FlightAlert
+    object_mappings:
+    - referent_mappings:
+      - { relationship: id, expression: flight_alerts.alert_id }
+    link_mappings:
+    - object_mapping:
+        referent_mappings:
+        - { relationship: id, expression: flight_alerts.alert_id }
+      children:
+      - object_mapping:
+          concept: Flight
+          referent_mappings:
+          - { relationship: id, expression: flight_alerts.flight_id }
+        relationship: flight
+      - { object_mapping: { concept: AlertType, expression: flight_alerts.alert_type }, relationship: type }
+      - { object_mapping: { concept: AlertPriority, expression: flight_alerts.priority }, relationship: priority }
+      - { object_mapping: { concept: AlertStatus, expression: flight_alerts.status }, relationship: status }
+      - { object_mapping: { concept: DateTime, expression: flight_alerts.created_at }, relationship: created_at }
+      - { object_mapping: { concept: DateTime, expression: flight_alerts.resolved_at }, relationship: resolved_at }
+      - { object_mapping: { concept: String, expression: flight_alerts.resolution_comment }, relationship: resolution_comment }
+  - concept: FlightSensor
+    object_mappings:
+    - referent_mappings:
+      - { relationship: series, expression: flight_sensors.series_id }
+    link_mappings:
+    - object_mapping:
+        referent_mappings:
+        - { relationship: series, expression: flight_sensors.series_id }
+      children:
+      - { object_mapping: { concept: SensorId, expression: flight_sensors.sensor_id }, relationship: id }
+      - object_mapping:
+          concept: Flight
+          referent_mappings:
+          - { relationship: id, expression: flight_sensors.flight_id }
+        relationship: flight
+      - { object_mapping: { concept: SeriesName, expression: flight_sensors.series_name }, relationship: name }
+      - { object_mapping: { concept: UnitName, expression: flight_sensors.unit }, relationship: unit }
+  - concept: SensorReading
+    object_mappings:
+    - referent_mappings:
+      - relationship: sensor
+        referent_mappings:
+        - { relationship: series, expression: sensor_readings.series_id }
+      - { relationship: at, expression: sensor_readings.ts }
+    link_mappings:
+    - object_mapping:
+        referent_mappings:
+        - relationship: sensor
+          referent_mappings:
+          - { relationship: series, expression: sensor_readings.series_id }
+        - { relationship: at, expression: sensor_readings.ts }
+      children:
+      - { object_mapping: { concept: ReadingValue, expression: sensor_readings.value_double }, relationship: value }

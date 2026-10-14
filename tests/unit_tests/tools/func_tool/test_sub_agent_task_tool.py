@@ -33,6 +33,9 @@ from datus.tools.func_tool.sub_agent_task_tool import (
 )
 from datus.utils.constants import HIDDEN_SYS_SUB_AGENTS, SYS_SUB_AGENTS
 
+# Built-ins offered only when their prerequisite exists (ontology_analyst needs an ontology).
+CONDITIONAL_SYS_SUB_AGENTS = {"ontology_analyst"}
+
 
 @pytest.fixture
 def mock_agent_config():
@@ -685,6 +688,7 @@ class TestResolveNodeType:
             "gen_sql": NodeType.TYPE_GEN_SQL,
             "chat": NodeType.TYPE_CHAT,
             "ask_metrics": NodeType.TYPE_ASK_METRICS,
+            "ontology_analyst": NodeType.TYPE_ONTOLOGY_ANALYST,
             "gen_report": NodeType.TYPE_GEN_REPORT,
             "gen_visual_report": NodeType.TYPE_GEN_VISUAL_REPORT,
             "gen_visual_dashboard": NodeType.TYPE_GEN_VISUAL_DASHBOARD,
@@ -1779,7 +1783,7 @@ class TestGetAvailableTypesBuiltIn:
         types = task_tool._get_available_types()
         assert HIDDEN_SYS_SUB_AGENTS.isdisjoint(types)
         for name in SYS_SUB_AGENTS:
-            if name in HIDDEN_SYS_SUB_AGENTS:
+            if name in HIDDEN_SYS_SUB_AGENTS or name in CONDITIONAL_SYS_SUB_AGENTS:
                 continue
             assert name in types, f"{name} not found in available types"
 
@@ -1804,8 +1808,52 @@ class TestGetAvailableTypesBuiltIn:
         which is not task()-delegatable)."""
         types = task_tool._get_available_types()
         builtin_in_list = [t for t in types if t in SYS_SUB_AGENTS]
-        expected = sorted(SYS_SUB_AGENTS - HIDDEN_SYS_SUB_AGENTS)
+        expected = sorted(SYS_SUB_AGENTS - HIDDEN_SYS_SUB_AGENTS - CONDITIONAL_SYS_SUB_AGENTS)
         assert builtin_in_list == expected
+
+
+@pytest.mark.ci
+class TestOntologyAnalystOffering:
+    """ontology_analyst refuses to run without an ontology, so it is offered only where one exists."""
+
+    @staticmethod
+    def _tool(tmp_path, datasource="flights_db"):
+        from datus.utils.path_manager import DatusPathManager
+
+        config = Mock(spec=AgentConfig)
+        config.current_datasource = datasource
+        config.agentic_nodes = {}
+        config.path_manager = DatusPathManager(datus_home=tmp_path / "home", project_root=tmp_path / "project")
+        return SubAgentTaskTool(agent_config=config), config.path_manager.ontology_path(datasource)
+
+    def test_not_offered_without_ontology_dir(self, tmp_path):
+        tool, _ = self._tool(tmp_path)
+        types = tool._get_available_types()
+        assert "ontology_analyst" not in types
+        assert "- ontology_analyst:" not in tool._build_task_description()
+
+    def test_not_offered_for_empty_ontology_dir(self, tmp_path):
+        tool, ontology_dir = self._tool(tmp_path)
+        ontology_dir.mkdir(parents=True)
+        (ontology_dir / "README.txt").write_text("not an ontology")
+        assert "ontology_analyst" not in tool._get_available_types()
+
+    @pytest.mark.parametrize("filename", ["aviation.yaml", "aviation.yml", "nested/aviation.json"])
+    def test_offered_when_datasource_has_ontology(self, tmp_path, filename):
+        tool, ontology_dir = self._tool(tmp_path)
+        target = ontology_dir / filename
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("ontology: []\n")
+        types = tool._get_available_types()
+        assert "ontology_analyst" in types
+        assert BUILTIN_SUBAGENT_DESCRIPTIONS["ontology_analyst"] in tool._build_task_description()
+
+    def test_other_datasource_ontology_does_not_count(self, tmp_path):
+        tool, _ = self._tool(tmp_path, datasource="flights_db")
+        _, other_dir = self._tool(tmp_path, datasource="other_db")
+        other_dir.mkdir(parents=True)
+        (other_dir / "o.yaml").write_text("ontology: []\n")
+        assert "ontology_analyst" not in tool._get_available_types()
 
 
 # ── Built-in subagent: _resolve_node_type ──────────────────────────
@@ -2053,6 +2101,8 @@ class TestBuildTaskDescriptionBuiltIn:
     def test_contains_builtin_descriptions(self, task_tool):
         desc = task_tool._build_task_description()
         for name, builtin_desc in BUILTIN_SUBAGENT_DESCRIPTIONS.items():
+            if name in CONDITIONAL_SYS_SUB_AGENTS:
+                continue
             assert builtin_desc in desc, f"Description for {name} not found"
 
     def test_routes_plugin_backed_platforms_to_main_agent(self, task_tool):

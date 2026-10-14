@@ -31,6 +31,7 @@ from datus.tools.semantic_tools.dosi.dialects import resolve_engine_dialect
 from datus.tools.semantic_tools.dosi.engine import (
     EngineHandle,
     EngineRegistry,
+    binding_supports_ontology,
     datus_extension_version,
     load_binding,
 )
@@ -404,6 +405,9 @@ class DosiRuntime:
         # Fetched off the event loop; _build_query stays pure (no engine I/O).
         dimension_rows = await asyncio.to_thread(engine.dimensions)
         metric_rows = await asyncio.to_thread(engine.metrics)
+        if handle.ontology_path:
+            concept_time = await asyncio.to_thread(self._concept_time_dimensions, engine, dimensions)
+            dimension_rows = [*dimension_rows, *({"name": name, "is_time": True} for name in sorted(concept_time))]
 
         query = self._build_query(
             dimension_rows,
@@ -464,6 +468,11 @@ class DosiRuntime:
                     "row_count": result["row_count"],
                     "time_dimensions": time_dimensions,
                     **({"outputs": result["outputs"]} if result.get("outputs") is not None else {}),
+                    **(
+                        {"requested_columns": result["requested_columns"]}
+                        if result.get("requested_columns") is not None
+                        else {}
+                    ),
                 },
             )
         except Exception as exc:  # noqa: BLE001 - mapped to typed errors below
@@ -477,6 +486,159 @@ class DosiRuntime:
                 requested_time_granularity=time_granularity,
             )
             raise  # unreachable; raise_mapped always raises
+
+    # ==================== Ontology Interface ====================
+
+    def ontology_handles(self) -> List[tuple[str, EngineHandle]]:
+        """Model files that load with a paired ontology, in catalog order."""
+        handles, _, _ = self._catalog()
+        return [(path, handle) for path, handle in handles if handle.ontology_path]
+
+    def has_ontology(self) -> bool:
+        return bool(self.ontology_handles())
+
+    def unpaired_ontologies(self) -> List[str]:
+        """Ontology files present for the datasource that pair with no model file."""
+        self._catalog()
+        return self._registry.unpaired_ontologies()
+
+    def ontology_info(self) -> List[Dict[str, Any]]:
+        """``Engine.ontology_info()`` per ontology-backed model file."""
+        infos: List[Dict[str, Any]] = []
+        for model_path, handle in self.ontology_handles():
+            engine = handle.get()
+            info_fn = getattr(engine, "ontology_info", None)
+            info = info_fn() if callable(info_fn) else None
+            infos.append(
+                {
+                    **(dict(info) if isinstance(info, dict) else {"source_path": handle.ontology_path}),
+                    "model_file": model_path,
+                }
+            )
+        return infos
+
+    def _require_ontology_handles(self) -> List[tuple[str, EngineHandle]]:
+        binding = load_binding()
+        if not binding_supports_ontology(binding):
+            raise SemanticCoreException(
+                "the installed dosi-engine binding cannot describe ontologies; "
+                "upgrade dosi-engine to a build whose Engine has describe() and paths()"
+            )
+        handles = self.ontology_handles()
+        if not handles:
+            raise SemanticCoreException(f"no ontology is loaded for datasource {self.datasource!r}")
+        return handles
+
+    def _first_answer(self, call: Any, **request_context: Any) -> Any:
+        """Ask each ontology-backed engine in turn; the first that knows the concept answers.
+
+        Concept names are only unique within one ontology, and a datasource
+        normally has one, so asking in catalog order is the routing rule. When
+        no engine knows the name, the last engine's rejection is raised: it
+        carries the candidates the agent retries with.
+        """
+        binding = load_binding()
+        last_exc: Optional[BaseException] = None
+        for _, handle in self._require_ontology_handles():
+            engine = handle.get()
+            try:
+                return call(engine), handle
+            except binding.QueryError as exc:
+                last_exc = exc
+        assert last_exc is not None
+        raise_mapped(last_exc, binding, **request_context)
+        raise last_exc  # unreachable; raise_mapped always raises
+
+    async def describe(self, name: Optional[str] = None) -> Dict[str, Any]:
+        """The ontology's concept catalog, or one concept's detail.
+
+        Payloads are the engine's own (the same JSON as the Dosi MCP
+        ``describe`` tool). A datasource with several ontology-backed model
+        files returns ``{"ontologies": [catalog, ...]}`` for the catalog.
+        """
+        name = str(name or "").strip() or None
+        if name is None:
+            handles = await asyncio.to_thread(self._require_ontology_handles)
+            catalogs = []
+            for model_path, handle in handles:
+                engine = await asyncio.to_thread(handle.get)
+                catalog = await asyncio.to_thread(engine.describe)
+                catalogs.append({**catalog, "model_file": Path(model_path).name})
+            return catalogs[0] if len(catalogs) == 1 else {"ontologies": catalogs}
+        detail, _ = await asyncio.to_thread(self._first_answer, lambda engine: engine.describe(name))
+        return detail
+
+    async def concept_paths(self, source: str, target: str) -> Dict[str, Any]:
+        """Every named path between two concepts, with roles and equivalences."""
+        result, _ = await asyncio.to_thread(self._first_answer, lambda engine: engine.paths(source, target))
+        return result
+
+    def _concept_time_dimensions(self, engine: Any, dimensions: List[str]) -> set[str]:
+        """Concept-path dimensions that name a time axis.
+
+        ``engine.dimensions()`` lists only ``dataset.field`` spellings, so a
+        concept path such as ``Delay.flight.scheduled_departure`` would never
+        receive the requested grain. The rooting concept's ``describe`` names
+        its reachable time axes.
+        """
+        if not callable(getattr(engine, "describe", None)):
+            return set()
+        dataset_names = {str(row.get("name")) for row in engine.datasets()}
+        roots = {d.split(".", 1)[0] for d in dimensions if "." in d and d.split(".", 1)[0] not in dataset_names}
+        found: set[str] = set()
+        for root in roots:
+            try:
+                detail = engine.describe(root)
+            except Exception:  # noqa: BLE001 - not a concept; the planner reports it
+                continue
+            for key in ("time_dimensions", "time_dimensions_reachable"):
+                for item in detail.get(key) or []:
+                    path = item.get("path") if isinstance(item, dict) else item
+                    if path:
+                        found.add(str(path))
+        return found & set(dimensions)
+
+    async def select(
+        self,
+        *,
+        from_concept: str,
+        fields: List[str],
+        where: Optional[str] = None,
+        order_by: Optional[List[str]] = None,
+        limit: Optional[int] = None,
+    ) -> QueryResult:
+        """Record-level (detail) query rooted on one concept; fields may be concept paths."""
+        binding = await asyncio.to_thread(load_binding)
+        _, handle = await asyncio.to_thread(self._first_answer, lambda engine: engine.describe(from_concept))
+        engine = await asyncio.to_thread(handle.get)
+        query: Dict[str, Any] = {"from": from_concept, "fields": list(fields)}
+        if where:
+            query["where_sql"] = where
+        if order_by:
+            query["order_by"] = [
+                {"key": key[1:], "desc": True} if key.startswith("-") else {"key": key, "desc": False}
+                for key in order_by
+            ]
+        if limit is not None:
+            query["limit"] = int(limit)
+        try:
+            result = await asyncio.to_thread(
+                engine.select,
+                query,
+                connection=handle.profile_name,
+                timeout_secs=float(self.config.timeout_seconds),
+            )
+        except Exception as exc:  # noqa: BLE001 - mapped to typed errors below
+            raise_mapped(exc, binding, requested_dimensions=list(fields))
+            raise  # unreachable; raise_mapped always raises
+        metadata: Dict[str, Any] = {
+            "sql": result["sql"],
+            "dialect": result["dialect"],
+            "row_count": result["row_count"],
+        }
+        if result.get("requested_columns") is not None:
+            metadata["requested_columns"] = result["requested_columns"]
+        return QueryResult(columns=list(result["columns"]), data=list(result["rows"]), metadata=metadata)
 
     async def attribute(self, request: AttributionRequest) -> AttributionResult:
         """Delegate attribution to the native engine that owns the metric."""

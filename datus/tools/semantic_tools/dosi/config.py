@@ -34,3 +34,12 @@ class DosiConfig(BaseModel):
     dialect: Optional[str] = None
     # Per-profile connection-pool cap inside the engine.
     pool_size: int = 8
+    # Apache Ossie ontology loaded beside the model (model-first). Set per
+    # engine handle once the registry pairs a model file with its ontology.
+    ontology_path: Optional[str] = None
+    # Directory of ontology files (Datus convention: subject/semantic_models/
+    # ontology/<datasource>). Unset means ontologies are not loaded at all,
+    # which keeps every non-ontology agent on the plain model.
+    ontology_dir: Optional[str] = None
+    # Picks one of several ``ontology_mappings`` in an ontology file.
+    ontology_mapping: Optional[str] = None

@@ -1,0 +1,529 @@
+# Aviation scenario — core-OSI semantic model for a reconstruction of
+# Palantir's public Aviation reference ontology (Flight / Aircraft / Carrier /
+# Airport / Route / FlightSensor / FlightAlert / Delay).
+#
+# This is the hand-written logical + semantic layer (RFC
+# design/rfc-ontology-detail-query.zh.md §3.6, workflow W1). `ontology.yaml`
+# next to it is the same world in Ossie ontology form; once ontology lowering
+# lands (M3) the relationships and primary keys below are what lowering must
+# reproduce from it.
+#
+# DELIBERATELY UNDER-DECLARED: this is the one fixture that carries no D-DIM
+# `is_dimension` declarations, so `dosi validate`'s authoring lint has
+# something to find and `dimension_shortlist.rs` can pin exactly what. Seven
+# fields trip it — `carriers.iata_code`, `aircraft.tail_number`,
+# `aircraft.carrier_id`, `flights.flight_number` (business keys no key or
+# relationship declares), `routes.distance_miles`,
+# `flights.departure_delay_minutes` (measurements no metric aggregates) and
+# `flight_alerts.resolved_at` (a timestamp with no `is_time`). Every other
+# fixture answers the lint; leave this one as it is.
+#
+# Join graph (every edge many→one):
+#   flights ─operated_by──▶ aircraft
+#   flights ─flown_by─────▶ carriers
+#   flights ─follows_route▶ routes ─origin──────▶ airports
+#                                  └destination─▶ airports
+#   flights ─departs_from─▶ airports          } same target, two roles:
+#   flights ─arrives_at───▶ airports          } `airports.x` from flights is
+#                                               ambiguous — name the path.
+#   delays ─────────▶ flights      } two independent 1:N children of flights;
+#   flight_alerts ──▶ flights      } aggregating both at once fans out.
+#   flight_sensors ─▶ flights
+#   sensor_readings ▶ flight_sensors (series_id)   narrow time series, 2 hops
+#                                                  below flights.
+# Deliberately absent (as in the source ontology): aircraft → carriers, so a
+# carrier is reachable from a flight by exactly one path.
+version: "0.2.0.dev0"
+
+semantic_model:
+  - name: aviation
+    description: Palantir Aviation / Flight Alert reconstruction (research fixture, not an official export)
+    datasets:
+      - name: airports
+        source: main.airports
+        primary_key: [airport_code]
+        fields:
+          - name: airport_code
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: airport_code
+          - name: name
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: name
+          - name: city
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: city
+          - name: timezone
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: timezone
+
+      - name: carriers
+        source: main.carriers
+        primary_key: [carrier_id]
+        fields:
+          - name: carrier_id
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: carrier_id
+          - name: iata_code
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: iata_code
+          - name: name
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: name
+
+      - name: aircraft
+        source: main.aircraft
+        primary_key: [aircraft_id]
+        fields:
+          - name: aircraft_id
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: aircraft_id
+          - name: tail_number
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: tail_number
+          - name: model
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: model
+          - name: carrier_id
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: carrier_id
+          - name: in_service
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: in_service
+
+      - name: routes
+        source: main.routes
+        primary_key: [route_id]
+        fields:
+          - name: route_id
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: route_id
+          - name: origin_airport_code
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: origin_airport_code
+          - name: destination_airport_code
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: destination_airport_code
+          - name: distance_miles
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: distance_miles
+          # Pre-declared bucketing (Palantir groupBy ranges / fixedWidth is
+          # ad hoc; here the bands are part of the model).
+          - name: distance_band
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: CASE WHEN distance_miles < 500 THEN 'short' WHEN distance_miles < 1500 THEN 'medium' ELSE 'long' END
+
+      - name: flights
+        source: main.flights
+        primary_key: [flight_id]
+        fields:
+          - name: flight_id
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: flight_id
+          - name: flight_number
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: flight_number
+          - name: carrier_id
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: carrier_id
+          - name: aircraft_id
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: aircraft_id
+          - name: route_id
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: route_id
+          - name: origin_airport_code
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: origin_airport_code
+          - name: destination_airport_code
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: destination_airport_code
+          - name: scheduled_departure
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: scheduled_departure
+            dimension:
+              is_time: true
+          - name: actual_departure
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: actual_departure
+          - name: scheduled_arrival
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: scheduled_arrival
+          - name: actual_arrival
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: actual_arrival
+          - name: passenger_count
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: passenger_count
+          - name: status
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: status
+          # Derived values (the ontology's Flight.departure_delay_minutes /
+          # Flight.arrival_delay_minutes). DATEDIFF('minute', a, b) is the ANSI
+          # form; dosi's `dialect_lower` rewrites the fixed-width units for
+          # Postgres/GaussDB and MySQL/TiDB, which have no 3-arg DATEDIFF.
+          # Doris, StarRocks and Trino still reject it — declared per case.
+          - name: departure_delay_minutes
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: DATEDIFF('minute', scheduled_departure, actual_departure)
+          - name: arrival_delay_minutes
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: DATEDIFF('minute', scheduled_arrival, actual_arrival)
+
+      - name: delays
+        source: main.delays
+        primary_key: [delay_id]
+        fields:
+          - name: delay_id
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: delay_id
+          - name: flight_id
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: flight_id
+          - name: delay_type
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: delay_type
+          - name: delay_minutes
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: delay_minutes
+          - name: cause_detail
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: cause_detail
+
+      - name: flight_alerts
+        source: main.flight_alerts
+        primary_key: [alert_id]
+        fields:
+          - name: alert_id
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: alert_id
+          - name: flight_id
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: flight_id
+          - name: alert_type
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: alert_type
+          - name: priority
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: priority
+          - name: status
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: status
+          - name: created_at
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: created_at
+            dimension:
+              is_time: true
+          - name: resolved_at
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: resolved_at
+          - name: resolution_comment
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: resolution_comment
+
+      - name: flight_sensors
+        source: main.flight_sensors
+        primary_key: [sensor_id]
+        unique_keys:
+          - [series_id]
+        fields:
+          - name: sensor_id
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: sensor_id
+          - name: flight_id
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: flight_id
+          - name: series_id
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: series_id
+          - name: series_name
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: series_name
+          - name: unit
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: unit
+
+      - name: sensor_readings
+        source: main.sensor_readings
+        fields:
+          - name: series_id
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: series_id
+          - name: ts
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: ts
+            dimension:
+              is_time: true
+          - name: value_double
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: value_double
+
+    relationships:
+      - name: flights_operated_by
+        from: flights
+        to: aircraft
+        from_columns: [aircraft_id]
+        to_columns: [aircraft_id]
+      - name: flights_flown_by
+        from: flights
+        to: carriers
+        from_columns: [carrier_id]
+        to_columns: [carrier_id]
+      - name: flights_follows_route
+        from: flights
+        to: routes
+        from_columns: [route_id]
+        to_columns: [route_id]
+      - name: flights_departs_from
+        from: flights
+        to: airports
+        from_columns: [origin_airport_code]
+        to_columns: [airport_code]
+      - name: flights_arrives_at
+        from: flights
+        to: airports
+        from_columns: [destination_airport_code]
+        to_columns: [airport_code]
+      - name: routes_origin
+        from: routes
+        to: airports
+        from_columns: [origin_airport_code]
+        to_columns: [airport_code]
+      - name: routes_destination
+        from: routes
+        to: airports
+        from_columns: [destination_airport_code]
+        to_columns: [airport_code]
+      - name: delays_flight
+        from: delays
+        to: flights
+        from_columns: [flight_id]
+        to_columns: [flight_id]
+      - name: flight_alerts_flight
+        from: flight_alerts
+        to: flights
+        from_columns: [flight_id]
+        to_columns: [flight_id]
+      - name: flight_sensors_flight
+        from: flight_sensors
+        to: flights
+        from_columns: [flight_id]
+        to_columns: [flight_id]
+      - name: sensor_readings_sensor
+        from: sensor_readings
+        to: flight_sensors
+        from_columns: [series_id]
+        to_columns: [series_id]
+
+    metrics:
+      # --- flights grain ---
+      - name: flight_count
+        description: Number of flights
+        expression:
+          dialects:
+            - dialect: ANSI_SQL
+              expression: COUNT(flights.flight_id)
+      - name: passengers
+        description: Passengers carried
+        expression:
+          dialects:
+            - dialect: ANSI_SQL
+              expression: SUM(flights.passenger_count)
+      - name: avg_arrival_delay_minutes
+        description: Average arrival delay in minutes (derived from the timestamps)
+        expression:
+          dialects:
+            - dialect: ANSI_SQL
+              expression: AVG(flights.arrival_delay_minutes)
+      # --- delays grain ---
+      - name: total_delay_minutes
+        description: Recorded delay minutes (Flight.total_recorded_delay_minutes in the ontology)
+        expression:
+          dialects:
+            - dialect: ANSI_SQL
+              expression: SUM(delays.delay_minutes)
+      - name: avg_delay_minutes
+        description: Average recorded delay per delay record
+        expression:
+          dialects:
+            - dialect: ANSI_SQL
+              expression: AVG(delays.delay_minutes)
+      - name: min_delay_minutes
+        description: Shortest recorded delay
+        expression:
+          dialects:
+            - dialect: ANSI_SQL
+              expression: MIN(delays.delay_minutes)
+      - name: max_delay_minutes
+        description: Longest recorded delay
+        expression:
+          dialects:
+            - dialect: ANSI_SQL
+              expression: MAX(delays.delay_minutes)
+      - name: delayed_flights
+        description: Distinct flights with at least one delay record
+        expression:
+          dialects:
+            - dialect: ANSI_SQL
+              expression: COUNT(DISTINCT delays.flight_id)
+      - name: maintenance_delays
+        description: Delay records of type MAINTENANCE
+        expression:
+          dialects:
+            - dialect: ANSI_SQL
+              expression: COUNT(CASE WHEN delays.delay_type = 'MAINTENANCE' THEN delays.delay_id END)
+      # --- flight_alerts grain ---
+      - name: alert_count
+        description: Number of flight alerts
+        expression:
+          dialects:
+            - dialect: ANSI_SQL
+              expression: COUNT(flight_alerts.alert_id)
+      - name: open_alert_count
+        description: Alerts still OPEN
+        expression:
+          dialects:
+            - dialect: ANSI_SQL
+              expression: COUNT(CASE WHEN flight_alerts.status = 'OPEN' THEN flight_alerts.alert_id END)
+      - name: flights_with_open_alert
+        description: Distinct flights carrying at least one OPEN alert
+        expression:
+          dialects:
+            - dialect: ANSI_SQL
+              expression: COUNT(DISTINCT CASE WHEN flight_alerts.status = 'OPEN' THEN flight_alerts.flight_id END)
+      - name: maintenance_alerts
+        description: Alerts of type MAINTENANCE
+        expression:
+          dialects:
+            - dialect: ANSI_SQL
+              expression: COUNT(CASE WHEN flight_alerts.alert_type = 'MAINTENANCE' THEN flight_alerts.alert_id END)
+      - name: pct_flights_with_open_alert
+        description: Share of flights with an OPEN alert, in percent (cross-dataset ratio at flight grain)
+        expression:
+          dialects:
+            - dialect: ANSI_SQL
+              expression: 100.0 * COUNT(DISTINCT CASE WHEN flight_alerts.status = 'OPEN' THEN flight_alerts.flight_id END) / COUNT(flights.flight_id)
+      # --- sensor_readings grain ---
+      - name: reading_count
+        description: Sensor readings
+        expression:
+          dialects:
+            - dialect: ANSI_SQL
+              expression: COUNT(sensor_readings.value_double)
+      - name: max_reading
+        description: Highest reading value
+        expression:
+          dialects:
+            - dialect: ANSI_SQL
+              expression: MAX(sensor_readings.value_double)
+      - name: latest_reading_ts
+        description: Timestamp of the most recent reading (the time only — pairing it with its value is the latest-point gap)
+        expression:
+          dialects:
+            - dialect: ANSI_SQL
+              expression: MAX(sensor_readings.ts)

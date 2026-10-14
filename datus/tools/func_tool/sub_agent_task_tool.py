@@ -51,6 +51,7 @@ NODE_CLASS_MAP = {
     "gen_sql": NodeType.TYPE_GEN_SQL,
     "chat": NodeType.TYPE_CHAT,
     "ask_metrics": NodeType.TYPE_ASK_METRICS,
+    "ontology_analyst": NodeType.TYPE_ONTOLOGY_ANALYST,
     "gen_report": NodeType.TYPE_GEN_REPORT,
     "gen_visual_report": NodeType.TYPE_GEN_VISUAL_REPORT,
     "gen_visual_dashboard": NodeType.TYPE_GEN_VISUAL_DASHBOARD,
@@ -94,7 +95,19 @@ BUILTIN_SUBAGENT_DESCRIPTIONS = {
         "Answer metric-based questions quickly using existing semantic metrics. "
         "Use for KPI values, trends, grouped metric results, and metric attribution "
         "when the question can be answered by the semantic layer. Does not fall back "
-        "to raw SQL. Returns JSON with {response, markdown_report, tokens_used}."
+        "to raw SQL. If ontology_analyst is offered, prefer it for this datasource. "
+        "Returns JSON with {response, markdown_report, tokens_used}."
+    ),
+    "ontology_analyst": (
+        "Answer data questions over the current datasource's Apache Ossie ontology "
+        "(business concepts, their role-named links and closed value sets) through the "
+        "semantic layer: metric values, trends and attribution like ask_metrics, plus "
+        "record-level answers (list ids, names, statuses of matching records). Prefer it "
+        "over ask_metrics whenever it is offered, especially when the question depends on "
+        "which relationship is meant (the airport a flight arrives at vs departs from), "
+        "filters on coded status values, or asks for individual records. Does not fall "
+        "back to raw SQL. Prompt: provide the question directly. "
+        "Returns JSON with {response, markdown_report, tokens_used}."
     ),
     "gen_report": (
         "Legacy Markdown report subagent. Use only when the user explicitly asks to use "
@@ -483,6 +496,21 @@ class SubAgentTaskTool:
                 is_subagent=True,
                 session_id=session_id,
             )
+        elif subagent_type == "ontology_analyst":
+            from datus.agent.node.ontology_analyst_agentic_node import OntologyAnalystAgenticNode
+
+            return OntologyAnalystAgenticNode(
+                node_id=f"task_ontology_analyst_{uuid.uuid4().hex[:8]}",
+                description="Ontology question-answering node for ontology_analyst",
+                node_type="ontology_analyst",
+                input_data=None,
+                agent_config=self.agent_config,
+                tools=None,
+                node_name="ontology_analyst",
+                execution_mode=self._resolve_execution_mode(),
+                is_subagent=True,
+                session_id=session_id,
+            )
         elif subagent_type == "ask_metrics":
             from datus.agent.node.ask_metrics_agentic_node import AskMetricsAgenticNode
 
@@ -604,6 +632,9 @@ class SubAgentTaskTool:
         if subagent_type == "ask_metrics":
             return NodeType.TYPE_ASK_METRICS, "ask_metrics"
 
+        if subagent_type == "ontology_analyst":
+            return NodeType.TYPE_ONTOLOGY_ANALYST, "ontology_analyst"
+
         # Built-in gen_visual_report type
         if subagent_type == "gen_visual_report":
             return NodeType.TYPE_GEN_VISUAL_REPORT, "gen_visual_report"
@@ -617,6 +648,7 @@ class SubAgentTaskTool:
             "semantic_modeling": (NodeType.TYPE_SEMANTIC, "semantic_modeling"),
             "gen_sql_summary": (NodeType.TYPE_SQL_SUMMARY, "gen_sql_summary"),
             "ask_metrics": (NodeType.TYPE_ASK_METRICS, "ask_metrics"),
+            "ontology_analyst": (NodeType.TYPE_ONTOLOGY_ANALYST, "ontology_analyst"),
             "gen_table": (NodeType.TYPE_GEN_TABLE, "gen_table"),
             "gen_job": (NodeType.TYPE_GEN_JOB, "gen_job"),
         }
@@ -1105,6 +1137,12 @@ class SubAgentTaskTool:
             return self._apply_db_context(GenSQLNodeInput(user_message=prompt), db_ctx)
 
         from datus.agent.node.ask_metrics_agentic_node import AskMetricsAgenticNode
+        from datus.agent.node.ontology_analyst_agentic_node import OntologyAnalystAgenticNode
+
+        if isinstance(node, OntologyAnalystAgenticNode):
+            from datus.schemas.ontology_analyst_agentic_node_models import OntologyAnalystNodeInput
+
+            return self._apply_db_context(OntologyAnalystNodeInput(user_message=prompt), db_ctx)
 
         if isinstance(node, AskMetricsAgenticNode):
             from datus.schemas.ask_metrics_agentic_node_models import AskMetricsNodeInput
@@ -1454,6 +1492,21 @@ class SubAgentTaskTool:
         # Wildcard mode (*): all discovered types, excluding self.
         return [t for t in self._discover_all_types() if t != self._parent_node_name]
 
+    def _current_datasource_has_ontology(self) -> bool:
+        """Whether ``subject/semantic_models/ontology/<datasource>/`` holds any ontology file."""
+        path_manager = getattr(self.agent_config, "path_manager", None)
+        datasource = getattr(self.agent_config, "current_datasource", None)
+        if path_manager is None or not isinstance(datasource, str) or not datasource:
+            return False
+        try:
+            ontology_dir = path_manager.ontology_path(datasource)
+            return ontology_dir.is_dir() and any(
+                path.suffix.lower() in {".yaml", ".yml", ".json"} for path in ontology_dir.rglob("*")
+            )
+        except Exception as e:  # noqa: BLE001 - discovery must not break the task tool
+            logger.debug(f"Ontology discovery failed for {datasource!r}: {e}")
+            return False
+
     def _discover_all_types(self) -> List[str]:
         """Return every subagent type that can currently be instantiated.
 
@@ -1465,6 +1518,9 @@ class SubAgentTaskTool:
         from datus.utils.constants import HIDDEN_SYS_SUB_AGENTS
 
         builtin_types = set(SYS_SUB_AGENTS - HIDDEN_SYS_SUB_AGENTS)
+        if not self._current_datasource_has_ontology():
+            # Offered only where it can run: without an ontology it refuses.
+            builtin_types.discard("ontology_analyst")
         types.extend(sorted(builtin_types))
 
         if self.agent_config and hasattr(self.agent_config, "agentic_nodes"):

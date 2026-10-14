@@ -36,7 +36,7 @@ scoped_context.sqls
 
 ## Step 1 — Validate names and scope
 
-1. Reject names reserved for builtin system agents: `semantic_modeling`, `gen_sql_summary`, `gen_sql`, `ask_metrics`, `gen_report`, `gen_visual_report`, `gen_visual_dashboard`, `gen_table`, `gen_job`, `gen_skill`, `gen_dashboard`, `scheduler`, and `feedback`.
+1. Reject names reserved for builtin system agents: `semantic_modeling`, `gen_sql_summary`, `gen_sql`, `ask_metrics`, `ontology_analyst`, `gen_report`, `gen_visual_report`, `gen_visual_dashboard`, `gen_table`, `gen_job`, `gen_skill`, `gen_dashboard`, `scheduler`, and `feedback`.
 2. Normalize metric and reference-SQL entries with Datus reference-path semantics: join subject-path segments with `.`, double-quote segments that require quoting, then append the item name for exact-item scope.
 3. Resolve every metric and reference-SQL entry against the corresponding post-sync shared Knowledge Base subject tree. Refuse unresolved or ambiguous entries; never silently omit an invalid scope token.
 4. Deduplicate every comma-separated scope while preserving its first-seen order.

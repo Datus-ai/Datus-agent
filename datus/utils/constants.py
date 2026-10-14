@@ -49,6 +49,7 @@ SYS_SUB_AGENTS = {
     "gen_sql_summary",
     "gen_sql",
     "ask_metrics",
+    "ontology_analyst",
     "gen_report",
     "gen_visual_report",
     "gen_visual_dashboard",

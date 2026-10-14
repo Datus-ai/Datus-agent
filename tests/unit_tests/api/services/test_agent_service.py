@@ -444,6 +444,18 @@ class TestGetUseTools:
             "reference_template_tools",
         }
 
+    def test_tool_reference_ontology_analyst_matches_the_node_defaults(self):
+        from datus.agent.node.ontology_analyst_agentic_node import OntologyAnalystAgenticNode
+
+        entry = SUBAGENT_TOOL_REFERENCE["ontology_analyst"]
+        assert entry["default_tools"] == list(OntologyAnalystAgenticNode.DEFAULT_TOOLS)
+        assert _validate_tools_for_agent_type(entry["default_tools"], "ontology_analyst") == []
+        semantic = set(entry["tool_types"]["semantic_tools"]["tools"])
+        assert {"describe_concept", "find_concept_paths", "select_records"} <= semantic
+
+    def test_ontology_analyst_seeds_its_own_prompt(self):
+        assert AgentService._TYPE_TO_TEMPLATE["ontology_analyst"] == "ontology_analyst_system"
+
     def test_ask_metrics_returns_broad_configurable_tool_types(self):
         """ask_metrics keeps narrow defaults but surfaces valid configurable tools."""
         result = AgentService.get_use_tools("ask_metrics")
