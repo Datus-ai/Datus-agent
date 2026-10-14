@@ -66,6 +66,13 @@ class TestNormalProfile:
         assert _resolve(config, "filesystem_tools", "delete_osi_datasets") == PermissionLevel.ASK
         assert _resolve(config, "tools", "todo_write") == PermissionLevel.ASK
 
+    def test_lineage_reads_allowed_and_writes_ask(self):
+        """Reading the project lineage graph is free; saving into or deleting from
+        lineage/lineage.json is a project write and asks like any other."""
+        assert _resolve(NORMAL, "lineage_tools", "query_lineage") == PermissionLevel.ALLOW
+        assert _resolve(NORMAL, "lineage_tools", "upsert_lineage") == PermissionLevel.ASK
+        assert _resolve(NORMAL, "lineage_tools", "delete_lineage") == PermissionLevel.ASK
+
     def test_named_destructive_denied(self):
         """Normal DENYs named destructive BI and scheduler tools."""
         config = NORMAL
@@ -166,6 +173,11 @@ class TestAutoProfile:
         assert _resolve(config, "filesystem_tools", "upsert_osi_metrics") == PermissionLevel.ALLOW
         assert _resolve(config, "filesystem_tools", "delete_osi_metrics") == PermissionLevel.ASK
         assert _resolve(config, "filesystem_tools", "delete_osi_datasets") == PermissionLevel.ASK
+
+    def test_lineage_analysis_allowed_delete_asks(self):
+        assert _resolve(AUTO, "lineage_tools", "query_lineage") == PermissionLevel.ALLOW
+        assert _resolve(AUTO, "lineage_tools", "upsert_lineage") == PermissionLevel.ALLOW
+        assert _resolve(AUTO, "lineage_tools", "delete_lineage") == PermissionLevel.ASK
 
     def test_bi_write_allowed_delete_asks(self):
         """Auto downgrades NORMAL's DENY on destructives to ASK — user is
