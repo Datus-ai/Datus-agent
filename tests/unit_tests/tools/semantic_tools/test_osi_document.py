@@ -166,7 +166,6 @@ semantic_model:
 
     dataset = load_osi_document(str(model), "events_model").datasets[0]
 
-    assert dataset.time_dimension is not None
     assert dataset.time_dimension.name == "occurred_at"
     assert dataset.time_dimension.type == "time"
     assert dataset.time_dimension.is_dimension is True
@@ -196,7 +195,6 @@ semantic_model:
 
     dataset = load_osi_document(str(model), "periods_model").datasets[0]
 
-    assert dataset.time_dimension is not None
     assert dataset.time_dimension.name == "fiscal_year"
     fields = {field.name: field for field in dataset.fields}
     assert fields["date_label"].type == "categorical"

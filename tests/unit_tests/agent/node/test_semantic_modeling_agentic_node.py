@@ -44,8 +44,8 @@ def _stream_call_count(mock_llm_create) -> int:
 def _record_current_compiled_evidence(node, target):
     names = node._semantic_validation_metric_names()
     catalog = {name: {"name": name, "kind": "aggregate", "datasets": ["orders"], "measures": [name]} for name in names}
-    if names:
-        assert node.generation_evidence.record_compiled_validation(
+    assert (
+        node.generation_evidence.record_compiled_validation(
             {
                 "contract_digest": "sha256:" + hashlib.sha256(b"contract").hexdigest(),
                 "artifact_sha256": {str(target.resolve()): "sha256:" + hashlib.sha256(target.read_bytes()).hexdigest()},
@@ -56,6 +56,8 @@ def _record_current_compiled_evidence(node, target):
             },
             metric_names=names,
         )
+        is True
+    )
     return catalog
 
 
@@ -810,13 +812,13 @@ def test_finalizer_fills_legacy_uids_and_reconciles_existing_kb_identities(
     )
     ctx.response_content = {"status": "generated", "output": "Ready"}
     result = node._build_success_result(ctx)
-    assert result.success
+    assert result.success is True
+    assert result.status == "generated"
     current = yaml.safe_load(target.read_bytes())["semantic_model"][0]["metrics"]
     identities = {metric["name"]: metric_uid(metric) for metric in current}
     assert identities["retained"] == retained_uid
     assert len(identities["legacy"]) == 24
-    if legacy_has_uid:
-        assert target.read_bytes() == original_content
+    assert (target.read_bytes() == original_content) is legacy_has_uid
     assert node.osi_target_state.touched_metric_names == ["legacy", "retained"]
     kb_rows = node.generation_tools.metric_rag.list_artifact_rows(str(target))
     assert {row["name"]: row["uid"] for row in kb_rows} == identities
@@ -824,7 +826,7 @@ def test_finalizer_fills_legacy_uids_and_reconciles_existing_kb_identities(
     assert node.generation_evidence.compiled_validation_passed(str(target), list(identities))
     assert node.osi_target_state.artifact_snapshot_path == ""
     content = target.read_bytes()
-    assert node._build_success_result(ctx).success
+    assert node._build_success_result(ctx).success is True
     assert target.read_bytes() == content
     node.semantic_tools.validate_semantic.assert_called_once()
 
