@@ -467,7 +467,7 @@ class MetricFilesystemFuncTool(FilesystemFuncTool):
             try:
                 for name, metric in incoming_by_name.items():
                     previous = existing_metrics[metric_indexes[name]] if name in metric_indexes else None
-                    ensure_metric_uid(metric, previous)
+                    ensure_metric_uid(metric, previous, preserve_candidate_uid=False)
                 validate_metric_uids(
                     [
                         metric

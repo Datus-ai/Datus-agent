@@ -19,6 +19,7 @@ from typing import Any
 
 import yaml
 
+from datus.tools.semantic_tools.metric_identity import validate_metric_uid
 from datus.utils.exceptions import DatusException, ErrorCode
 
 _TEMPORAL_DATATYPES = frozenset({"Date", "Time", "DateTime", "DateTimeTz"})
@@ -313,7 +314,7 @@ def _metric(node: dict[str, Any], dataset_names: list[str]) -> OsiMetric:
         unit=str(payload.get("unit") or "") or None,
         format=str(payload.get("format") or "") or None,
         ai_context=node.get("ai_context"),
-        uid=str(payload.get("uid") or ""),
+        uid=validate_metric_uid(payload.get("uid"), str(node.get("name") or "")),
     )
 
 

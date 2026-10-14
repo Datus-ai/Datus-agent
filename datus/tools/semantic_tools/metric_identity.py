@@ -37,27 +37,37 @@ def _extension(metric: dict[str, Any]) -> tuple[dict[str, Any] | None, dict[str,
     return entries[0], data
 
 
-def metric_uid(metric: dict[str, Any]) -> str:
-    """Read and validate a persisted 24-character CUID2 identity."""
-    _, payload = _extension(metric)
-    uid = payload.get("uid")
+def validate_metric_uid(uid: Any, metric_name: str) -> str:
+    """Validate a 24-character CUID2, allowing missing identities in legacy files."""
     if uid is None or uid == "":
         return ""
     if not isinstance(uid, str) or not _UID_PATTERN.fullmatch(uid):
-        raise ValueError(f"{metric.get('name')}: uid must be a 24-character CUID2 ([a-z][a-z0-9]{{23}})")
+        raise ValueError(f"{metric_name}: uid must be a 24-character CUID2 ([a-z][a-z0-9]{{23}})")
     return uid
 
 
+def metric_uid(metric: dict[str, Any]) -> str:
+    """Read and validate a persisted 24-character CUID2 identity."""
+    _, payload = _extension(metric)
+    return validate_metric_uid(payload.get("uid"), str(metric.get("name") or ""))
+
+
 def ensure_metric_uid(
-    metric: dict[str, Any], previous: dict[str, Any] | None = None, *, generate_missing: bool = True
+    metric: dict[str, Any],
+    previous: dict[str, Any] | None = None,
+    *,
+    generate_missing: bool = True,
+    preserve_candidate_uid: bool = True,
 ) -> bool:
     """Preserve an existing identity, or assign one to a metric without it.
 
     Existing identities take precedence over omitted or changed model output.
+    Upserts disable candidate identities to trust only the prior definition.
     Return whether the candidate was changed; otherwise preserve its exact data.
     """
     uid = metric_uid(previous) if previous is not None else ""
-    uid = uid or metric_uid(metric)
+    if not uid and preserve_candidate_uid:
+        uid = metric_uid(metric)
     if not uid:
         if not generate_missing:
             return False

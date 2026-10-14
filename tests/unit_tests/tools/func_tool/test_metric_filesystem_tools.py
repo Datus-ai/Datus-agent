@@ -180,18 +180,41 @@ def test_final_uid_preparation_covers_metrics_created_by_edit_file(identity_tool
     state.require_selected_revision(target)
 
 
-def test_duplicate_uid_update_leaves_file_unchanged(identity_tool):
-    from datus.tools.semantic_tools.metric_identity import ensure_metric_uid
+def test_upsert_copied_metric_assigns_distinct_host_uid(identity_tool):
+    from datus.tools.semantic_tools.metric_identity import ensure_metric_uid, metric_uid
 
     metric = _osi_metric("revenue", "SUM(orders.amount)")
     ensure_metric_uid(metric)
-    tool, target, _, _ = identity_tool([metric])
-    original = target.read_bytes()
+    tool, target, state, _ = identity_tool([metric])
     copied = {**metric, "name": "other_revenue"}
     result = tool.upsert_osi_metrics(str(target), json.dumps([copied]))
-    assert result.success == 0
-    assert "Duplicate metric uid" in result.error
-    assert target.read_bytes() == original
+    assert result.success == 1
+    assert result.result["created"] == ["other_revenue"]
+    authored = yaml.safe_load(target.read_bytes())["semantic_model"][0]["metrics"]
+    assert authored[0] == metric
+    assert metric_uid(authored[1]) != metric_uid(metric)
+    assert len(metric_uid(authored[1])) == 24
+    state.require_selected_revision(target)
+
+
+@pytest.mark.parametrize("existing", [False, True])
+@pytest.mark.parametrize("incoming_uid", ["tz4a98xxat96iws9zmbrgj3a", 123])
+def test_upsert_without_prior_uid_uses_host_identity(identity_tool, existing, incoming_uid):
+    from datus.tools.semantic_tools.metric_identity import metric_uid
+
+    metric = _osi_metric("revenue", "SUM(orders.amount)")
+    tool, target, state, _ = identity_tool([metric] if existing else [])
+    metric["custom_extensions"] = [{"vendor_name": "DATUS", "data": json.dumps({"uid": incoming_uid, "unit": "USD"})}]
+
+    result = tool.upsert_osi_metrics(str(target), json.dumps([metric]))
+
+    assert result.success == 1
+    authored = yaml.safe_load(target.read_bytes())["semantic_model"][0]["metrics"][0]
+    assert metric_uid(authored) != incoming_uid
+    assert len(metric_uid(authored)) == 24
+    assert json.loads(authored["custom_extensions"][0]["data"])["unit"] == "USD"
+    assert tool.upsert_osi_metrics(str(target), json.dumps([metric])).result["unchanged"] == ["revenue"]
+    state.require_selected_revision(target)
 
 
 @pytest.mark.parametrize("operation", ["upsert", "upsert_batch", "edit_file"])

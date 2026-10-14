@@ -160,6 +160,37 @@ def test_sync_projects_extension_uid_without_mutating_yaml(generation_tools, tmp
     assert target.read_bytes() == original
 
 
+@pytest.mark.parametrize("uid", [123, False, "bad-uid"])
+def test_sync_rejects_invalid_extension_uid_before_kb_writes(generation_tools, tmp_path, uid):
+    target = tmp_path / "sales.yml"
+    target.write_text(
+        json.dumps(
+            {
+                "semantic_model": [
+                    {
+                        "name": "sales",
+                        "metrics": [
+                            {
+                                "name": "revenue",
+                                "custom_extensions": [{"vendor_name": "DATUS", "data": json.dumps({"uid": uid})}],
+                            }
+                        ],
+                    }
+                ]
+            }
+        )
+    )
+    original = target.read_bytes()
+
+    result = generation_tools.sync_osi_to_db(str(target), include_semantic_objects=False, compiled_metric_catalog=None)
+
+    assert result["success"] is False
+    assert "revenue: uid must be a 24-character CUID2" in result["error"]
+    generation_tools.metric_rag.upsert_batch.assert_not_called()
+    generation_tools.metric_rag.delete_artifact_rows.assert_not_called()
+    assert target.read_bytes() == original
+
+
 def test_uid_sync_scope_uses_selected_artifact_and_datasource(generation_tools):
     from datus_storage_base.conditions import And, eq
 

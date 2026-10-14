@@ -1,6 +1,8 @@
 # Copyright 2025-present DatusAI, Inc.
 # Licensed under the Apache License, Version 2.0.
 
+import json
+
 import pytest
 
 from datus.tools.semantic_tools.osi_document import load_osi_document
@@ -77,6 +79,57 @@ semantic_model:
 
     assert [item.name for item in document.datasets] == ["budgets"]
     assert document.metrics == []
+
+
+@pytest.mark.parametrize("uid", [123, False, "a" * 23, "a" * 25, "1" + "a" * 23, "A" + "a" * 23, "a" * 23 + "-"])
+def test_load_osi_document_rejects_invalid_metric_uid(tmp_path, uid):
+    model = tmp_path / "sales.yml"
+    model.write_text(
+        json.dumps(
+            {
+                "semantic_model": [
+                    {
+                        "name": "sales",
+                        "metrics": [
+                            {
+                                "name": "revenue",
+                                "custom_extensions": [{"vendor_name": "DATUS", "data": json.dumps({"uid": uid})}],
+                            }
+                        ],
+                    }
+                ]
+            }
+        )
+    )
+
+    with pytest.raises(ValueError, match="revenue: uid must be a 24-character CUID2"):
+        load_osi_document(str(model), "sales")
+
+
+@pytest.mark.parametrize("payload", [{}, {"uid": None}, {"uid": ""}])
+def test_load_osi_document_preserves_missing_legacy_identity(tmp_path, payload):
+    model = tmp_path / "sales.yml"
+    model.write_text(
+        json.dumps(
+            {
+                "semantic_model": [
+                    {
+                        "name": "sales",
+                        "metrics": [
+                            {
+                                "name": "revenue",
+                                "custom_extensions": [{"vendor_name": "DATUS", "data": json.dumps(payload)}],
+                            }
+                        ],
+                    }
+                ]
+            }
+        )
+    )
+    original = model.read_bytes()
+
+    assert load_osi_document(str(model), "sales").metrics[0].uid == ""
+    assert model.read_bytes() == original
 
 
 def test_load_osi_document_preserves_authored_source_types(tmp_path):
