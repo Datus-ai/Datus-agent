@@ -467,7 +467,7 @@ class MetricFilesystemFuncTool(FilesystemFuncTool):
             try:
                 for name, metric in incoming_by_name.items():
                     previous = existing_metrics[metric_indexes[name]] if name in metric_indexes else None
-                    ensure_metric_uid(metric, previous, preserve_candidate_uid=False)
+                    ensure_metric_uid(metric, previous if previous is not None else {})
                 validate_metric_uids(
                     [
                         metric
@@ -745,7 +745,7 @@ class OsiSemanticModelFilesystemFuncTool(MetricFilesystemFuncTool):
             if not isinstance(document, dict):
                 return FuncToolResult(success=0, error="OSI semantic model root must be a YAML object")
             try:
-                if prepare_metric_uids(document, original_document or {}, generate_missing=False):
+                if prepare_metric_uids(document, original_document or {}):
                     new_content = yaml.safe_dump(document, allow_unicode=True, sort_keys=False)
             except ValueError as exc:
                 return FuncToolResult(success=0, error=f"Invalid OSI metric identity: {exc}")

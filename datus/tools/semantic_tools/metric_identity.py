@@ -53,27 +53,8 @@ def metric_uid(metric: dict[str, Any]) -> str:
     return validate_metric_uid(payload.get("uid"), str(metric.get("name") or ""))
 
 
-def ensure_metric_uid(
-    metric: dict[str, Any],
-    previous: dict[str, Any] | None = None,
-    *,
-    generate_missing: bool = True,
-    preserve_candidate_uid: bool = True,
-) -> bool:
-    """Preserve an existing identity, or assign one to a metric without it.
-
-    Existing identities take precedence over omitted or changed model output.
-    Authoring disables candidate identities to trust only the prior definition.
-    Return whether the candidate was changed; otherwise preserve its exact data.
-    """
-    uid = metric_uid(previous) if previous is not None else ""
-    if not uid and preserve_candidate_uid:
-        uid = metric_uid(metric)
-    if not uid:
-        if generate_missing:
-            uid = _UID_GENERATOR.generate()
-        elif preserve_candidate_uid:
-            return False
+def _set_metric_uid(metric: dict[str, Any], uid: str) -> bool:
+    """Set or remove one metric's UID without mutating shared YAML extensions."""
     extension, payload = _extension(metric)
     payload = dict(payload)
     if uid:
@@ -93,6 +74,17 @@ def ensure_metric_uid(
         extensions = [{**item, "data": data} if item is extension else item for item in extensions]
     metric["custom_extensions"] = extensions
     return True
+
+
+def ensure_metric_uid(metric: dict[str, Any], previous: dict[str, Any] | None = None) -> bool:
+    """Preserve the authoritative UID, generating one when it is missing.
+
+    With a prior definition, only its UID is authoritative. Without one, the
+    metric is an already-persisted definition being prepared for validation.
+    Return whether its extension changed.
+    """
+    uid = metric_uid(previous if previous is not None else metric)
+    return _set_metric_uid(metric, uid or _UID_GENERATOR.generate())
 
 
 def _named_metrics(document: Any) -> list[dict[str, Any]]:
@@ -144,8 +136,13 @@ def validate_metric_uids(metrics: list[dict[str, Any]]) -> None:
     validate_unique_metric_uids((str(metric.get("name") or ""), metric_uid(metric)) for metric in metrics)
 
 
-def prepare_metric_uids(document: Any, previous: Any = None, *, generate_missing: bool = True) -> list[str]:
-    """Maintain model identities and return names changed by this preparation."""
+def prepare_metric_uids(document: Any, previous: Any = None) -> list[str]:
+    """Preserve prior identities during edits, or fill missing UIDs at finalization.
+
+    An edit supplies its original document: unmatched candidate UIDs are cleared
+    for host generation at finalization. Finalization supplies no prior document
+    and preserves every persisted UID while assigning missing ones.
+    """
     metrics = _named_metrics(document)
     _validate_metric_names(metrics)
     old_metrics = metric_definitions(previous)
@@ -193,12 +190,12 @@ def prepare_metric_uids(document: Any, previous: Any = None, *, generate_missing
 
     changed = []
     for metric in metrics:
-        if ensure_metric_uid(
-            metric,
-            matched.get(str(metric["name"]).strip()),
-            generate_missing=generate_missing,
-            preserve_candidate_uid=previous is None,
-        ):
+        if previous is None:
+            updated = ensure_metric_uid(metric)
+        else:
+            prior = matched.get(str(metric["name"]).strip())
+            updated = _set_metric_uid(metric, metric_uid(prior) if prior is not None else "")
+        if updated:
             changed.append(metric["name"])
     validate_metric_uids(metrics)
     return changed

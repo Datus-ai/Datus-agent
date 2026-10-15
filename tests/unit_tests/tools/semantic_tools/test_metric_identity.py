@@ -99,7 +99,7 @@ def test_name_uniqueness_matches_kb_lowercase_rules():
 def test_case_only_rename_preserves_existing_uid_when_omitted():
     document = {"semantic_model": [{"metrics": [{"name": "REVENUE"}]}]}
     previous = {"semantic_model": [{"metrics": [_metric()]}]}
-    assert prepare_metric_uids(document, previous, generate_missing=False) == ["REVENUE"]
+    assert prepare_metric_uids(document, previous) == ["REVENUE"]
     assert metric_uid(document["semantic_model"][0]["metrics"][0]) == UID
 
 
@@ -114,7 +114,7 @@ def test_ambiguous_rename_cannot_reuse_prior_identity(ambiguous_side):
     previous = {"semantic_model": [{"metrics": previous_metrics}]}
     document = {"semantic_model": [{"metrics": candidates}]}
 
-    assert prepare_metric_uids(document, previous, generate_missing=False) == [metric["name"] for metric in candidates]
+    assert prepare_metric_uids(document, previous) == [metric["name"] for metric in candidates]
     assert [metric_uid(metric) for metric in candidates] == [""] * len(candidates)
     assert prepare_metric_uids(document) == [metric["name"] for metric in candidates]
     assert len({metric_uid(metric) for metric in candidates}) == len(candidates)

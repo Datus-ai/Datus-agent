@@ -138,7 +138,7 @@ subject/semantic_models/<datasource>/<semantic_model>.yml
 
 Dosi 生成 OSI Core `0.2.0.dev0` YAML。core schema 不允许未知字段，因此 Datus 特有行为必须写在 `custom_extensions` 中，不能随意增加 YAML key。
 
-每个指标的 DATUS extension 的 JSON `data` 中保存由宿主管理的稳定 `uid`。Semantic modeling 为新指标生成 24 位 CUID2，并在最终校验前补齐目标模型中缺失的标识。更新或重命名同一指标时保留原 `uid`；创建不同指标时省略该字段，由宿主生成。Knowledge Base 的现有 `uid` 字段保存同一个值，来源是 extension，而不是 `locked_metadata`。
+通过 semantic modeling 编写的指标，其 DATUS extension 的 JSON `data` 中保存由宿主管理的稳定 `uid`。Semantic modeling 为新指标生成 24 位 CUID2，并在最终校验前补齐目标模型中缺失的标识。更新或重命名同一指标时保留原 `uid`；创建不同指标时省略该字段，由宿主生成。Knowledge Base 的现有 `uid` 字段保存同一个值，来源是 extension，而不是 `locked_metadata`。
 
 主要字段如下：
 
