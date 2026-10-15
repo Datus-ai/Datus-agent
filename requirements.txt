@@ -29,7 +29,8 @@ opentelemetry-sdk==1.45.0
 opentelemetry-exporter-otlp==1.45.0
 litellm==1.100.1
 pydantic>=2.11.7,<3.0
-pyarrow>=23.0.1
+pyarrow>=23.0.1,<26; python_version < '3.13'
+pyarrow>=23.0.1; python_version >= '3.13'
 rich==14.0.0
 textual[syntax]==5.1.1
 prompt-toolkit>=3.0.51
