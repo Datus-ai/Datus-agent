@@ -13,6 +13,7 @@ same metric through two different airport roles. Expected values trace to
 
 from __future__ import annotations
 
+import copy
 import re
 from pathlib import Path
 from types import SimpleNamespace
@@ -43,8 +44,16 @@ pytestmark = [
 
 
 @pytest.fixture
-def ontology_agent_config(nightly_agent_config, tmp_path, monkeypatch):
-    """Point the nightly config's current datasource at the aviation model, ontology and a DuckDB seed."""
+def ontology_agent_config(tmp_path, monkeypatch):
+    """The acceptance config (real LLM) with its datasource pointed at the aviation model, ontology and seed.
+
+    Built on a DuckDB datasource rather than ``nightly_agent_config``, which
+    needs the BIRD benchmark checkout this suite does not use.
+    """
+    from tests.conftest import load_acceptance_config
+
+    nightly_agent_config = load_acceptance_config(datasource="local_duckdb")
+    nightly_agent_config.agentic_nodes = copy.deepcopy(nightly_agent_config.agentic_nodes)
     database = tmp_path / "aviation.duckdb"
     with duckdb.connect(str(database)) as connection:
         connection.execute((MODEL_DIR / "seed.sql").read_text(encoding="utf-8"))
@@ -112,6 +121,35 @@ QUESTIONS = [
         # The destination role's numbers mean the two roles were confused.
         [r"LAX[^\d\n]*3\b"],
         id="delayed_flights_by_origin",
+    ),
+    pytest.param(
+        "How many alerts are still unresolved? Break it down by priority.",
+        [r"P0[^\d\n]*1\b", r"P1[^\d\n]*3\b", r"P2[^\d\n]*4\b"],
+        [],
+        id="unresolved_alerts_by_priority",
+    ),
+    pytest.param(
+        "Looking only at flights scheduled to depart on 2026-08-14 and 2026-08-15, "
+        "how many delayed flights does each destination airport have?",
+        [r"LAX[^\d\n]*1\b", r"SFO[^\d\n]*1\b", r"JFK[^\d\n]*1\b"],
+        # SEA's only delayed flight departs outside the window.
+        [r"SEA[^\d\n]*[1-9]\b"],
+        id="delayed_flights_by_destination_in_window",
+    ),
+    pytest.param(
+        "Which delayed flights also have alerts? List the flight number, delay minutes and alert count.",
+        [
+            r"SK202[^\n]*95[^\n]*2",
+            r"SK103[^\n]*60[^\n]*2",
+            r"SK201[^\n]*55[^\n]*1",
+            r"SK102[^\n]*42[^\n]*2",
+            r"UA303[^\n]*30[^\n]*1",
+            r"UA401[^\n]*29[^\n]*1",
+            r"UA302[^\n]*25[^\n]*1",
+        ],
+        # Joining delays and alerts at record level splits SK202's 95 minutes into 65 and 30.
+        [r"SK202[^\n]*\b65\b"],
+        id="delayed_flights_with_alerts",
     ),
 ]
 
