@@ -465,6 +465,7 @@ class FakeOntologyEngine(FakeEngine):
         self.describe_calls: List[Optional[str]] = []
         self.paths_calls: List[tuple] = []
         self.select_calls: List[Dict[str, Any]] = []
+        self.compile_select_calls: List[Dict[str, Any]] = []
 
     @property
     def has_ontology(self) -> bool:
@@ -494,6 +495,17 @@ class FakeOntologyEngine(FakeEngine):
         self.paths_calls.append((source, target))
         self._require_ontology()
         return copy.deepcopy(ONTOLOGY_PATHS)
+
+    def compile_select(self, query, dialect=None, connection=None, pretty=False, dws_mode=None):
+        self.compile_select_calls.append({"query": query, "dialect": dialect, "connection": connection})
+        if self.fail_with is not None:
+            raise self.fail_with
+        return {
+            "dialect": dialect or "duckdb",
+            "sql": SELECT_RESULT["sql"],
+            "outputs": [],
+            "requested_columns": copy.deepcopy(SELECT_RESULT["requested_columns"]),
+        }
 
     def select(self, query, dialect=None, connection=None, timeout_secs=None, db_path=None):
         self.select_calls.append(

@@ -1068,7 +1068,8 @@ class SemanticTools:
                 ``FlightAlert.status = 'OPEN' AND FlightAlert.flight.arrives_at.code = 'JFK'``.
                 A literal compared to a property with a closed domain must be one
                 of the domain's values.
-            order_by: Optional result columns to sort by; prefix with '-' for descending.
+            order_by: Optional sort keys: a requested field path (``FlightAlert.id``) or a
+                result column name; prefix with '-' for descending.
             limit: Optional maximum number of rows (default 200).
 
         Returns:

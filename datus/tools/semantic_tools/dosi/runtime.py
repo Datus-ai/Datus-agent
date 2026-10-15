@@ -430,6 +430,15 @@ class DosiRuntime:
             item["field"]: item.get("grain") for item in query["group_by"] if item["field"] in time_fields
         }
         connection = handle.profile_name
+        if handle.ontology_path:
+            query = await asyncio.to_thread(
+                self._order_by_requested_columns,
+                query,
+                dimensions,
+                engine.compile,
+                self._dry_run_dialect(binding, connection),
+                connection,
+            )
         try:
             if dry_run:
                 compiled = await asyncio.to_thread(
@@ -573,6 +582,40 @@ class DosiRuntime:
         result, _ = await asyncio.to_thread(self._first_answer, lambda engine: engine.paths(source, target))
         return result
 
+    @staticmethod
+    def _order_by_requested_columns(
+        query: Dict[str, Any],
+        requested: List[str],
+        compile_fn: Any,
+        dialect: Optional[str],
+        connection: Optional[str],
+    ) -> Dict[str, Any]:
+        """Rewrite ``order_by`` keys that name a requested concept path to its output column.
+
+        Dosi orders by output column names, while an ontology caller thinks in
+        the concept paths it requested (``FlightAlert.id`` comes back as
+        ``alert_id``). One compile of the unordered query yields
+        ``requested_columns``, the engine's own path-to-column map. Keys that
+        are not requested paths, and any compile failure, leave the query as
+        is: the real call then reports the engine's own error.
+        """
+        order_by = query.get("order_by") or []
+        wanted = set(requested)
+        if not any(item.get("key") in wanted for item in order_by):
+            return query
+        probe = {key: value for key, value in query.items() if key not in ("order_by", "limit")}
+        try:
+            compiled = compile_fn(probe, dialect=dialect, connection=connection)
+        except Exception:  # noqa: BLE001 - the real call reports it
+            return query
+        columns = {
+            str(entry.get("requested")): str(entry.get("column"))
+            for entry in compiled.get("requested_columns") or []
+            if isinstance(entry, dict) and entry.get("requested") and entry.get("column")
+        }
+        rewritten = [{**item, "key": columns.get(item.get("key"), item.get("key"))} for item in order_by]
+        return {**query, "order_by": rewritten}
+
     def _concept_time_dimensions(self, engine: Any, dimensions: List[str]) -> set[str]:
         """Concept-path dimensions that name a time axis.
 
@@ -621,11 +664,20 @@ class DosiRuntime:
             ]
         if limit is not None:
             query["limit"] = int(limit)
+        connection = handle.profile_name
+        query = await asyncio.to_thread(
+            self._order_by_requested_columns,
+            query,
+            list(fields),
+            engine.compile_select,
+            self._dry_run_dialect(binding, connection),
+            connection,
+        )
         try:
             result = await asyncio.to_thread(
                 engine.select,
                 query,
-                connection=handle.profile_name,
+                connection=connection,
                 timeout_secs=float(self.config.timeout_seconds),
             )
         except Exception as exc:  # noqa: BLE001 - mapped to typed errors below

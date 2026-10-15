@@ -346,12 +346,46 @@ class TestRuntimeOntology:
             "from": "FlightAlert",
             "fields": ["FlightAlert.id", "FlightAlert.priority"],
             "where_sql": "FlightAlert.status = 'OPEN'",
-            "order_by": [{"key": "FlightAlert.id", "desc": True}],
+            # Ordered by the requested path, which the engine names ``alert_id``.
+            "order_by": [{"key": "alert_id", "desc": True}],
             "limit": 10,
         }
+        [probe] = FakeEngine.instances[-1].compile_select_calls
+        assert "order_by" not in probe["query"] and "limit" not in probe["query"]
         assert result.columns == ["alert_id", "priority"]
         assert result.metadata["row_count"] == 2
         assert result.metadata["requested_columns"][0] == {"requested": "FlightAlert.id", "column": "alert_id"}
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "order_by, expected",
+        [
+            (["priority"], [{"key": "priority", "desc": False}]),
+            (["-FlightAlert.created_at"], [{"key": "FlightAlert.created_at", "desc": True}]),
+        ],
+    )
+    async def test_select_order_keys_that_are_not_requested_paths_are_untouched(
+        self, tmp_path, ontology_binding, order_by, expected
+    ):
+        runtime = _runtime(*_layout(tmp_path))
+        await runtime.select(from_concept="FlightAlert", fields=["FlightAlert.id"], order_by=order_by)
+        engine = FakeEngine.instances[-1]
+        assert engine.select_calls[0]["query"]["order_by"] == expected
+        assert engine.compile_select_calls == []
+
+    @pytest.mark.asyncio
+    async def test_select_order_translation_failure_defers_to_the_real_call(
+        self, tmp_path, ontology_binding, monkeypatch
+    ):
+        runtime = _runtime(*_layout(tmp_path))
+
+        def failing_compile(engine, query, **kwargs):
+            raise QueryError("boom", code="unknown_dataset")
+
+        monkeypatch.setattr(FakeOntologyEngine, "compile_select", failing_compile)
+        await runtime.select(from_concept="FlightAlert", fields=["FlightAlert.id"], order_by=["FlightAlert.id"])
+        query = FakeEngine.instances[-1].select_calls[0]["query"]
+        assert query["order_by"] == [{"key": "FlightAlert.id", "desc": False}]
 
     @pytest.mark.asyncio
     async def test_select_value_not_in_domain_keeps_violations(self, tmp_path, ontology_binding, monkeypatch):

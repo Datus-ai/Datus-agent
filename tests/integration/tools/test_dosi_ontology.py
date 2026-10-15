@@ -174,6 +174,27 @@ class TestOntologyAnswers:
         )
         assert {row[id_column] for row in rows} == {"A007", "A011"}
 
+    def test_records_order_by_a_requested_concept_path(self, ontology_tools):
+        result = ontology_tools.select_records(
+            from_concept="FlightAlert",
+            fields=["FlightAlert.id", "FlightAlert.priority"],
+            where="FlightAlert.status = 'OPEN'",
+            order_by=["-FlightAlert.id"],
+        )
+        rows = _rows(ontology_tools, result)
+        ids = [row["alert_id"] for row in rows]
+        assert ids == sorted(ids, reverse=True)
+        assert len(ids) == 8
+
+    def test_metrics_order_by_a_requested_concept_path(self, ontology_tools):
+        result = ontology_tools.query_metrics(
+            metrics=["delayed_flights"],
+            dimensions=["Delay.flight.arrives_at.code"],
+            order_by=["-Delay.flight.arrives_at.code"],
+        )
+        codes = [row["airport_code"] for row in _rows(ontology_tools, result)]
+        assert codes == ["SFO", "SEA", "LAX", "JFK"]
+
     def test_a_metric_grouped_from_the_wrong_root_names_the_fix(self, ontology_tools):
         result = ontology_tools.query_metrics(metrics=["delayed_flights"], dimensions=["Flight.arrives_at.code"])
         assert result.success == 0
