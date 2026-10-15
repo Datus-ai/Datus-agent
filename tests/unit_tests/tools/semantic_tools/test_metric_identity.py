@@ -103,6 +103,24 @@ def test_case_only_rename_preserves_existing_uid_when_omitted():
     assert metric_uid(document["semantic_model"][0]["metrics"][0]) == UID
 
 
+@pytest.mark.parametrize("ambiguous_side", ["previous", "candidate"])
+def test_ambiguous_rename_cannot_reuse_prior_identity(ambiguous_side):
+    previous_metrics = [_metric()]
+    candidates = [{**_metric(), "name": "net_revenue"}]
+    if ambiguous_side == "previous":
+        previous_metrics.append({**_metric(), "name": "gross_revenue"})
+    else:
+        candidates.append({**_metric(), "name": "gross_revenue"})
+    previous = {"semantic_model": [{"metrics": previous_metrics}]}
+    document = {"semantic_model": [{"metrics": candidates}]}
+
+    assert prepare_metric_uids(document, previous, generate_missing=False) == [metric["name"] for metric in candidates]
+    assert [metric_uid(metric) for metric in candidates] == [""] * len(candidates)
+    assert prepare_metric_uids(document) == [metric["name"] for metric in candidates]
+    assert len({metric_uid(metric) for metric in candidates}) == len(candidates)
+    assert UID not in {metric_uid(metric) for metric in candidates}
+
+
 def test_native_dosi_accepts_host_identity_metadata():
     metric = {
         "name": "revenue",

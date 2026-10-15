@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Iterable
 from typing import Any
 
 from cuid2 import Cuid
@@ -62,25 +63,35 @@ def ensure_metric_uid(
     """Preserve an existing identity, or assign one to a metric without it.
 
     Existing identities take precedence over omitted or changed model output.
-    Upserts disable candidate identities to trust only the prior definition.
+    Authoring disables candidate identities to trust only the prior definition.
     Return whether the candidate was changed; otherwise preserve its exact data.
     """
     uid = metric_uid(previous) if previous is not None else ""
     if not uid and preserve_candidate_uid:
         uid = metric_uid(metric)
     if not uid:
-        if not generate_missing:
+        if generate_missing:
+            uid = _UID_GENERATOR.generate()
+        elif preserve_candidate_uid:
             return False
-        uid = _UID_GENERATOR.generate()
     extension, payload = _extension(metric)
-    if payload.get("uid") == uid:
-        return False
-    payload["uid"] = uid
-    data = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
-    if extension is None:
-        metric.setdefault("custom_extensions", []).append({"vendor_name": "DATUS", "data": data})
+    payload = dict(payload)
+    if uid:
+        if payload.get("uid") == uid:
+            return False
+        payload["uid"] = uid
     else:
-        extension["data"] = data
+        if "uid" not in payload:
+            return False
+        del payload["uid"]
+    data = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+    extensions = list(metric.get("custom_extensions", []))
+    if extension is None:
+        extensions.append({"vendor_name": "DATUS", "data": data})
+    else:
+        # YAML anchors can share extension objects across different metrics.
+        extensions = [{**item, "data": data} if item is extension else item for item in extensions]
+    metric["custom_extensions"] = extensions
     return True
 
 
@@ -116,18 +127,21 @@ def _validate_metric_names(metrics: list[dict[str, Any]]) -> None:
         owners[key] = name
 
 
-def validate_metric_uids(metrics: list[dict[str, Any]]) -> None:
-    """Reject conflicting names and identities within a model, allowing legacy missing ids."""
-    _validate_metric_names(metrics)
+def validate_unique_metric_uids(metrics: Iterable[tuple[str, str]]) -> None:
+    """Reject shared identities within a model while allowing missing legacy UIDs."""
     owners: dict[str, str] = {}
-    for metric in metrics:
-        uid = metric_uid(metric)
+    for name, uid in metrics:
         if not uid:
             continue
-        name = str(metric.get("name") or "")
         if uid in owners:
             raise ValueError(f"Duplicate metric uid {uid}: {owners[uid]} and {name}")
         owners[uid] = name
+
+
+def validate_metric_uids(metrics: list[dict[str, Any]]) -> None:
+    """Reject conflicting names and identities within a model, allowing legacy missing ids."""
+    _validate_metric_names(metrics)
+    validate_unique_metric_uids((str(metric.get("name") or ""), metric_uid(metric)) for metric in metrics)
 
 
 def prepare_metric_uids(document: Any, previous: Any = None, *, generate_missing: bool = True) -> list[str]:
@@ -136,9 +150,20 @@ def prepare_metric_uids(document: Any, previous: Any = None, *, generate_missing
     _validate_metric_names(metrics)
     old_metrics = metric_definitions(previous)
     old_metrics_by_key: dict[str, list[dict[str, Any]]] = {}
-    for name, metric in old_metrics.items():
+    old_metrics_by_uid: dict[str, list[dict[str, Any]]] = {}
+    for metric in _named_metrics(previous):
+        name = str(metric["name"]).strip()
         old_metrics_by_key.setdefault(normalize_metric_name(name), []).append(metric)
-    changed = []
+        try:
+            uid = metric_uid(metric)
+        except ValueError:
+            # A removed malformed definition cannot establish a rename. A
+            # retained one is still rejected when its identity is preserved.
+            continue
+        if uid:
+            old_metrics_by_uid.setdefault(uid, []).append(metric)
+
+    matched: dict[str, dict[str, Any]] = {}
     for metric in metrics:
         name = str(metric["name"]).strip()
         old_metric = old_metrics.get(name)
@@ -147,7 +172,33 @@ def prepare_metric_uids(document: Any, previous: Any = None, *, generate_missing
             matches = old_metrics_by_key.get(normalize_metric_name(name), [])
             if len(matches) == 1:
                 old_metric = matches[0]
-        if ensure_metric_uid(metric, old_metric, generate_missing=generate_missing):
+        if old_metric is not None:
+            matched[name] = old_metric
+
+    # An explicit UID may identify a rename only when both sides are unambiguous
+    # and the old definition is no longer matched to a retained metric.
+    unmatched_by_uid: dict[str, list[str]] = {}
+    for metric in metrics:
+        name = str(metric["name"]).strip()
+        if name not in matched:
+            _, payload = _extension(metric)
+            uid = payload.get("uid")
+            if isinstance(uid, str) and uid:
+                unmatched_by_uid.setdefault(uid, []).append(name)
+    retained = {id(metric) for metric in matched.values()}
+    for uid, names in unmatched_by_uid.items():
+        prior = old_metrics_by_uid.get(uid, [])
+        if len(names) == 1 and len(prior) == 1 and id(prior[0]) not in retained:
+            matched[names[0]] = prior[0]
+
+    changed = []
+    for metric in metrics:
+        if ensure_metric_uid(
+            metric,
+            matched.get(str(metric["name"]).strip()),
+            generate_missing=generate_missing,
+            preserve_candidate_uid=previous is None,
+        ):
             changed.append(metric["name"])
     validate_metric_uids(metrics)
     return changed

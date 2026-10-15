@@ -160,8 +160,19 @@ def test_sync_projects_extension_uid_without_mutating_yaml(generation_tools, tmp
     assert target.read_bytes() == original
 
 
-@pytest.mark.parametrize("uid", [123, False, "bad-uid"])
-def test_sync_rejects_invalid_extension_uid_before_kb_writes(generation_tools, tmp_path, uid):
+@pytest.mark.parametrize(
+    ("uids", "error"),
+    [
+        ([123], "revenue: uid must be a 24-character CUID2"),
+        ([False], "revenue: uid must be a 24-character CUID2"),
+        (["bad-uid"], "revenue: uid must be a 24-character CUID2"),
+        (
+            ["tz4a98xxat96iws9zmbrgj3a", "tz4a98xxat96iws9zmbrgj3a"],
+            "Duplicate metric uid tz4a98xxat96iws9zmbrgj3a: revenue and order_count",
+        ),
+    ],
+)
+def test_sync_rejects_invalid_metric_identities_before_kb_writes(generation_tools, tmp_path, uids, error):
     target = tmp_path / "sales.yml"
     target.write_text(
         json.dumps(
@@ -171,9 +182,10 @@ def test_sync_rejects_invalid_extension_uid_before_kb_writes(generation_tools, t
                         "name": "sales",
                         "metrics": [
                             {
-                                "name": "revenue",
+                                "name": name,
                                 "custom_extensions": [{"vendor_name": "DATUS", "data": json.dumps({"uid": uid})}],
                             }
+                            for name, uid in zip(("revenue", "order_count"), uids)
                         ],
                     }
                 ]
@@ -185,7 +197,7 @@ def test_sync_rejects_invalid_extension_uid_before_kb_writes(generation_tools, t
     result = generation_tools.sync_osi_to_db(str(target), include_semantic_objects=False, compiled_metric_catalog=None)
 
     assert result["success"] is False
-    assert "revenue: uid must be a 24-character CUID2" in result["error"]
+    assert error in result["error"]
     generation_tools.metric_rag.upsert_batch.assert_not_called()
     generation_tools.metric_rag.delete_artifact_rows.assert_not_called()
     assert target.read_bytes() == original

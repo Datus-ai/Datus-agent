@@ -197,6 +197,74 @@ def test_upsert_copied_metric_assigns_distinct_host_uid(identity_tool):
     state.require_selected_revision(target)
 
 
+@pytest.mark.parametrize("scenario", ["external", "retained", "legacy"])
+def test_edit_file_copied_uid_is_replaced_before_final_validation(identity_tool, scenario):
+    from datus.tools.semantic_tools.metric_identity import ensure_metric_uid, metric_uid
+
+    source = _osi_metric("source_revenue", "SUM(orders.amount)")
+    ensure_metric_uid(source)
+    legacy = _osi_metric("revenue", "SUM(orders.amount)")
+    prior = {"external": [], "retained": [source], "legacy": [legacy]}[scenario]
+    tool, target, state, _ = identity_tool(prior)
+    original = target.read_text()
+    document = yaml.safe_load(original)
+    candidate = {**source, "name": "revenue"}
+    document["semantic_model"][0]["metrics"] = [metric for metric in prior if metric["name"] != "revenue"] + [candidate]
+
+    result = tool.edit_file(str(target), original, yaml.safe_dump(document, sort_keys=False))
+
+    assert result.success == 1
+    edited = {metric["name"]: metric for metric in yaml.safe_load(target.read_bytes())["semantic_model"][0]["metrics"]}
+    assert metric_uid(edited["revenue"]) == ""
+    assert {name: metric for name, metric in edited.items() if name != "revenue"} == {
+        metric["name"]: metric for metric in prior if metric["name"] != "revenue"
+    }
+    identities = tool.ensure_metric_uids(str(target))
+    assert len(identities["revenue"]) == 24
+    assert identities["revenue"] != metric_uid(source)
+    prepared = target.read_bytes()
+    assert tool.ensure_metric_uids(str(target)) == identities
+    assert target.read_bytes() == prepared
+    state.require_selected_revision(target)
+
+
+def test_edit_file_rename_preserves_authoritative_uid(identity_tool):
+    from datus.tools.semantic_tools.metric_identity import ensure_metric_uid, metric_uid
+
+    source = _osi_metric("revenue", "SUM(orders.amount)")
+    ensure_metric_uid(source)
+    tool, target, state, _ = identity_tool([source])
+    original = target.read_text()
+    document = yaml.safe_load(original)
+    document["semantic_model"][0]["metrics"][0]["name"] = "net_revenue"
+
+    result = tool.edit_file(str(target), original, yaml.safe_dump(document, sort_keys=False))
+
+    assert result.success == 1
+    renamed = yaml.safe_load(target.read_bytes())["semantic_model"][0]["metrics"][0]
+    assert renamed["name"] == "net_revenue"
+    assert metric_uid(renamed) == metric_uid(source)
+    assert state.touched_metric_names == ["net_revenue", "revenue"]
+    assert tool.ensure_metric_uids(str(target)) == {"net_revenue": metric_uid(source)}
+    state.require_selected_revision(target)
+
+
+def test_edit_file_can_remove_metric_with_invalid_uid(identity_tool):
+    source = _osi_metric("revenue", "SUM(orders.amount)")
+    source["custom_extensions"] = [{"vendor_name": "DATUS", "data": '{"uid":123}'}]
+    tool, target, state, _ = identity_tool([source])
+    original = target.read_text()
+    document = yaml.safe_load(original)
+    document["semantic_model"][0]["metrics"] = []
+
+    result = tool.edit_file(str(target), original, yaml.safe_dump(document, sort_keys=False))
+
+    assert result.success == 1
+    assert yaml.safe_load(target.read_bytes())["semantic_model"][0]["metrics"] == []
+    assert state.touched_metric_names == ["revenue"]
+    assert tool.ensure_metric_uids(str(target)) == {}
+
+
 @pytest.mark.parametrize("existing", [False, True])
 @pytest.mark.parametrize("incoming_uid", ["tz4a98xxat96iws9zmbrgj3a", 123])
 def test_upsert_without_prior_uid_uses_host_identity(identity_tool, existing, incoming_uid):

@@ -117,9 +117,10 @@ def test_load_osi_document_preserves_missing_legacy_identity(tmp_path, payload):
                         "name": "sales",
                         "metrics": [
                             {
-                                "name": "revenue",
+                                "name": name,
                                 "custom_extensions": [{"vendor_name": "DATUS", "data": json.dumps(payload)}],
                             }
+                            for name in ("revenue", "order_count")
                         ],
                     }
                 ]
@@ -128,7 +129,34 @@ def test_load_osi_document_preserves_missing_legacy_identity(tmp_path, payload):
     )
     original = model.read_bytes()
 
-    assert load_osi_document(str(model), "sales").metrics[0].uid == ""
+    assert [metric.uid for metric in load_osi_document(str(model), "sales").metrics] == ["", ""]
+    assert model.read_bytes() == original
+
+
+def test_load_osi_document_rejects_duplicate_metric_uids(tmp_path):
+    model = tmp_path / "sales.yml"
+    uids = ("tz4a98xxat96iws9zmbrgj3a", "tz4a98xxat96iws9zmbrgj3a")
+    model.write_text(
+        json.dumps(
+            {
+                "semantic_model": [
+                    {
+                        "name": "sales",
+                        "metrics": [
+                            {
+                                "name": name,
+                                "custom_extensions": [{"vendor_name": "DATUS", "data": json.dumps({"uid": uid})}],
+                            }
+                            for name, uid in zip(("revenue", "order_count"), uids)
+                        ],
+                    }
+                ]
+            }
+        )
+    )
+    original = model.read_bytes()
+    with pytest.raises(ValueError, match="Duplicate metric uid .*: revenue and order_count"):
+        load_osi_document(str(model), "sales")
     assert model.read_bytes() == original
 
 

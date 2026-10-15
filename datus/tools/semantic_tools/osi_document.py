@@ -19,7 +19,7 @@ from typing import Any
 
 import yaml
 
-from datus.tools.semantic_tools.metric_identity import validate_metric_uid
+from datus.tools.semantic_tools.metric_identity import validate_metric_uid, validate_unique_metric_uids
 from datus.utils.exceptions import DatusException, ErrorCode
 
 _TEMPORAL_DATATYPES = frozenset({"Date", "Time", "DateTime", "DateTimeTz"})
@@ -373,9 +373,11 @@ def load_osi_document(path: str, semantic_model_name: str) -> OsiDocument:
     relationships_raw = [item for item in model.get("relationships") or [] if isinstance(item, dict)]
     metrics_raw = [item for item in model.get("metrics") or [] if isinstance(item, dict)]
     dataset_names = [str(item.get("name") or "") for item in datasets_raw]
+    metrics = [_metric(item, dataset_names) for item in metrics_raw]
+    validate_unique_metric_uids((metric.name, metric.uid) for metric in metrics)
     return OsiDocument(
         name=semantic_model_name,
         datasets=[_dataset(item) for item in datasets_raw],
         relationships=[_relationship(item) for item in relationships_raw],
-        metrics=[_metric(item, dataset_names) for item in metrics_raw],
+        metrics=metrics,
     )

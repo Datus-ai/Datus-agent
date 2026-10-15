@@ -745,7 +745,7 @@ class OsiSemanticModelFilesystemFuncTool(MetricFilesystemFuncTool):
             if not isinstance(document, dict):
                 return FuncToolResult(success=0, error="OSI semantic model root must be a YAML object")
             try:
-                if prepare_metric_uids(document, original_document, generate_missing=False):
+                if prepare_metric_uids(document, original_document or {}, generate_missing=False):
                     new_content = yaml.safe_dump(document, allow_unicode=True, sort_keys=False)
             except ValueError as exc:
                 return FuncToolResult(success=0, error=f"Invalid OSI metric identity: {exc}")
