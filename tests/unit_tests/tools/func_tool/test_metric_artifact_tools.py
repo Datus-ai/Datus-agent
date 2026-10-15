@@ -456,7 +456,7 @@ async def test_queries_share_model_files_and_bundle_preserves_exact_bytes(enviro
     (artifact_dir / "render" / "app.jsx").write_text("export default function App() { return null; }")
     service = ReportService() if kind == "report" else DashboardService(agent_config=env.config)
     detail = await service.get_detail(project_files_root=env.root, **{f"{kind}_slug": "demo"})
-    assert detail.success, detail.errorMessage
+    assert detail.success is True, detail.errorMessage
     files = {item.path: item.content for item in detail.data.files}
     assert files[recipes[0]["model_snapshot_path"]].encode() == content
     from datus.agent.node.visual_artifact._artifact_html_renderer import _read_artifact_files

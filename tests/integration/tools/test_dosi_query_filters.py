@@ -206,8 +206,9 @@ def test_metric_artifact_uses_real_engine_and_enforced_connector(query_tool, mon
 
 @pytest.mark.parametrize("product", ["p2", "no_matching_product"])
 @pytest.mark.parametrize("root_model", [False, True])
+@pytest.mark.parametrize("legacy", [False, True])
 def test_standalone_published_metric_uses_frozen_model_after_studio_model_changes(
-    query_tool, monkeypatch, tmp_path, product, root_model
+    query_tool, monkeypatch, tmp_path, product, root_model, legacy
 ):
     """An artifact-only viewer has no Studio files or subject index."""
     from datus.api.models.base_models import Result
@@ -215,6 +216,7 @@ def test_standalone_published_metric_uses_frozen_model_after_studio_model_change
     from datus.schemas.metric_artifact_query import MetricQueryFile
     from datus.tools.func_tool import DashboardArtifactTools
     from datus.utils.async_utils import run_async
+    from datus.utils.metric_artifact_models import resolve_metric_query_snapshot
 
     ref = {"path": ["Scores"], "name": "score_total"}
     monkeypatch.setattr(
@@ -247,6 +249,11 @@ def test_standalone_published_metric_uses_frozen_model_after_studio_model_change
     )
     assert saved.success == 1, saved.error
     recipe = MetricQueryFile.model_validate_json((tools.queries_dir / "scores.metric.json").read_text(encoding="utf-8"))
+    recipe = resolve_metric_query_snapshot(recipe, artifact_dir=tools.queries_dir.parent)
+    if legacy:
+        recipe = MetricQueryFile.model_validate(
+            {**recipe.model_dump(), "schema_version": "1.0", "model_snapshot_path": None}
+        )
     if root_model:
         recipe = recipe.model_copy(update={"model_path": "model.yaml"})
     meta = (tools.queries_dir / "scores.params.json").read_text(encoding="utf-8")
@@ -346,3 +353,62 @@ def test_metric_artifact_preserves_native_projection_when_no_rows_match(query_to
         "score_total": "number",
     }
     assert tools._validate_metric_queries("report") is None
+
+
+def test_published_dashboard_keeps_distinct_native_models(query_tool, monkeypatch):
+    """Two model files keep their own calculations after Studio files disappear."""
+    import yaml
+
+    from datus.schemas.metric_artifact_query import MetricQueryFile
+    from datus.tools.func_tool import DashboardArtifactTools
+    from datus.tools.func_tool.metric_artifact_tools import execute_published_metric_query
+    from datus.utils.artifact_files import iter_artifact_files
+    from datus.utils.metric_artifact_models import resolve_metric_query_snapshot
+
+    model_path = Path(query_tool.runtime.artifact_metric_binding("score_total")["model_path"])
+    second = yaml.safe_load(model_path.read_text())
+    model = second["semantic_model"][0]
+    model["name"] = "double_scores"
+    model["metrics"] = [model["metrics"][0]]
+    model["metrics"][0]["name"] = "score_double"
+    model["metrics"][0]["expression"]["dialects"][0]["expression"] = "2 * SUM(scores.score)"
+    second_path = model_path.with_name("double.yaml")
+    second_path.write_text(yaml.safe_dump(second), encoding="utf-8")
+    monkeypatch.setattr(
+        query_tool, "get_metric", lambda name, path: FuncToolResult(success=1, result={"name": name, "path": path})
+    )
+    db_tool = DBFuncTool(agent_config=query_tool.agent_config)
+    tools = DashboardArtifactTools(
+        agent_config=query_tool.agent_config, db_func_tool=db_tool, semantic_tools=query_tool
+    )
+    assert tools.start_new_dashboard("two_models", "Scores", "Distinct models").success == 1
+    for metric in ("score_total", "score_double"):
+        result = tools.save_metric_query_template(
+            name=metric,
+            query={"metric": {"path": ["Scores"], "name": metric}},
+            goal=metric,
+            hypothesis="Each model retains its calculation",
+            params=[],
+            sample_params={},
+        )
+        assert result.success == 1, result.error
+    assert tools._validate_metric_queries("dashboard") is None
+    artifact = tools.queries_dir.parent
+    files = {
+        path.relative_to(artifact).as_posix(): path.read_bytes().decode("utf-8")
+        for path in iter_artifact_files(artifact, "dashboard")
+    }
+    recipes = [
+        MetricQueryFile.model_validate_json(files[f"queries/{metric}.metric.json"])
+        for metric in ("score_total", "score_double")
+    ]
+    assert len({recipe.model_path for recipe in recipes}) == 2
+    assert len({recipe.model_snapshot_path for recipe in recipes}) == 2
+    model_path.unlink()
+    second_path.unlink()
+    for recipe, expected in zip(recipes, (151.0, 302.0)):
+        resolved = resolve_metric_query_snapshot(recipe, files=files)
+        payload, _ = execute_published_metric_query(
+            resolved, runtime_config=query_tool.runtime.config, db_tool=db_tool, params={}, policy_context={}
+        )
+        assert payload.rows == [{recipe.metric.name: expected}]
