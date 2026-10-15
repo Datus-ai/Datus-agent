@@ -20,7 +20,7 @@ import asyncio
 import hashlib
 import threading
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Iterable, List, Optional
 
 import yaml
 
@@ -405,7 +405,9 @@ class DosiRuntime:
         # Fetched off the event loop; _build_query stays pure (no engine I/O).
         dimension_rows = await asyncio.to_thread(engine.dimensions)
         metric_rows = await asyncio.to_thread(engine.metrics)
+        dataset_names: List[str] = []
         if handle.ontology_path:
+            dataset_names = await asyncio.to_thread(lambda: [str(row.get("name")) for row in engine.datasets()])
             concept_time = await asyncio.to_thread(self._concept_time_dimensions, engine, dimensions)
             dimension_rows = [*dimension_rows, *({"name": name, "is_time": True} for name in sorted(concept_time))]
 
@@ -468,9 +470,12 @@ class DosiRuntime:
                 connection=connection,
                 timeout_secs=float(self.config.timeout_seconds),
             )
+            columns, rows = list(result["columns"]), list(result["rows"])
+            if handle.ontology_path:
+                columns, rows = self._label_requested_columns(result, dataset_names)
             return QueryResult(
-                columns=list(result["columns"]),
-                data=list(result["rows"]),
+                columns=columns,
+                data=rows,
                 metadata={
                     "sql": result["sql"],
                     "dialect": result["dialect"],
@@ -616,6 +621,35 @@ class DosiRuntime:
         rewritten = [{**item, "key": columns.get(item.get("key"), item.get("key"))} for item in order_by]
         return {**query, "order_by": rewritten}
 
+    @staticmethod
+    def _label_requested_columns(
+        result: Dict[str, Any], dataset_names: Iterable[str] = ()
+    ) -> tuple[List[str], List[Dict[str, Any]]]:
+        """Name each output column after the concept path that requested it.
+
+        Dosi derives output names from the join path, so ``FlightAlert.flight.number``
+        comes back as ``flight_alerts_flight__flight_number``. The caller asked in
+        concept paths and orders by them, so the result speaks the same spelling.
+        A ``dataset.field`` request keeps the engine's name, as it does without an
+        ontology, and so does a rename that would collide with another output.
+        The SQL keeps the engine's aliases; ``requested_columns`` still links them.
+        """
+        columns = [str(column) for column in result["columns"]]
+        rows = list(result["rows"])
+        datasets = set(dataset_names)
+        labels: Dict[str, str] = {}
+        for entry in result.get("requested_columns") or []:
+            if not (isinstance(entry, dict) and entry.get("requested") and entry.get("column")):
+                continue
+            requested = str(entry["requested"])
+            if requested.split(".", 1)[0] not in datasets:
+                labels.setdefault(str(entry["column"]), requested)
+        renamed = [labels.get(column, column) for column in columns]
+        if not labels or len(set(renamed)) != len(renamed):
+            return columns, rows
+        mapping = dict(zip(columns, renamed))
+        return renamed, [{mapping.get(key, key): value for key, value in row.items()} for row in rows]
+
     def _concept_time_dimensions(self, engine: Any, dimensions: List[str]) -> set[str]:
         """Concept-path dimensions that name a time axis.
 
@@ -690,7 +724,9 @@ class DosiRuntime:
         }
         if result.get("requested_columns") is not None:
             metadata["requested_columns"] = result["requested_columns"]
-        return QueryResult(columns=list(result["columns"]), data=list(result["rows"]), metadata=metadata)
+        dataset_names = await asyncio.to_thread(lambda: [str(row.get("name")) for row in engine.datasets()])
+        columns, rows = self._label_requested_columns(result, dataset_names)
+        return QueryResult(columns=columns, data=rows, metadata=metadata)
 
     async def attribute(self, request: AttributionRequest) -> AttributionResult:
         """Delegate attribution to the native engine that owns the metric."""

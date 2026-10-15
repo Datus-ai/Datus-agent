@@ -1073,9 +1073,10 @@ class SemanticTools:
             limit: Optional maximum number of rows (default 200).
 
         Returns:
-            FuncToolResult with ``columns``, compressed ``data``, ``result_id`` of
-            the cached full result, and ``metadata`` (``row_count``, ``sql``,
-            ``requested_columns`` mapping each requested path to its column).
+            FuncToolResult with ``columns`` named by the requested field paths,
+            compressed ``data``, ``result_id`` of the cached full result, and
+            ``metadata`` (``row_count``, ``sql``, ``requested_columns`` mapping each
+            requested path to its SQL alias).
         """
         from_concept = str(from_concept or "").strip()
         fields = _normalize_name_list(fields)

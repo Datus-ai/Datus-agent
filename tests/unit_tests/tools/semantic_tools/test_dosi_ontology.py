@@ -352,9 +352,76 @@ class TestRuntimeOntology:
         }
         [probe] = FakeEngine.instances[-1].compile_select_calls
         assert "order_by" not in probe["query"] and "limit" not in probe["query"]
-        assert result.columns == ["alert_id", "priority"]
+        # Output columns carry the requested spelling; the SQL keeps the engine's aliases.
+        assert result.columns == ["FlightAlert.id", "FlightAlert.priority"]
+        assert result.data == [
+            {"FlightAlert.id": "A007", "FlightAlert.priority": "P1"},
+            {"FlightAlert.id": "A011", "FlightAlert.priority": "P1"},
+        ]
         assert result.metadata["row_count"] == 2
         assert result.metadata["requested_columns"][0] == {"requested": "FlightAlert.id", "column": "alert_id"}
+
+    @pytest.mark.parametrize(
+        "result, expected_columns, expected_rows",
+        [
+            pytest.param(
+                {
+                    "columns": ["alert_id", "flight_alerts_flight__flight_number", "row_rank"],
+                    "rows": [{"alert_id": "A007", "flight_alerts_flight__flight_number": "SK202", "row_rank": 1}],
+                    "requested_columns": [
+                        {"requested": "FlightAlert.id", "column": "alert_id"},
+                        {"requested": "FlightAlert.flight.number", "column": "flight_alerts_flight__flight_number"},
+                    ],
+                },
+                ["FlightAlert.id", "FlightAlert.flight.number", "row_rank"],
+                [{"FlightAlert.id": "A007", "FlightAlert.flight.number": "SK202", "row_rank": 1}],
+                id="join_path_names_become_requested_paths",
+            ),
+            pytest.param(
+                {
+                    "columns": ["alert_id", "FlightAlert.id"],
+                    "rows": [{"alert_id": "A007", "FlightAlert.id": "x"}],
+                    "requested_columns": [{"requested": "FlightAlert.id", "column": "alert_id"}],
+                },
+                ["alert_id", "FlightAlert.id"],
+                [{"alert_id": "A007", "FlightAlert.id": "x"}],
+                id="collision_keeps_engine_names",
+            ),
+            pytest.param(
+                {"columns": ["status", "order_count"], "rows": [{"status": "paid", "order_count": 2}]},
+                ["status", "order_count"],
+                [{"status": "paid", "order_count": 2}],
+                id="no_mapping_is_untouched",
+            ),
+            pytest.param(
+                {
+                    "columns": ["alert_id"],
+                    "rows": [],
+                    "requested_columns": [{"requested": "", "column": "alert_id"}, "malformed"],
+                },
+                ["alert_id"],
+                [],
+                id="malformed_entries_are_ignored",
+            ),
+            pytest.param(
+                {
+                    "columns": ["iata_code", "airport_code"],
+                    "rows": [{"iata_code": "SK", "airport_code": "JFK"}],
+                    "requested_columns": [
+                        {"requested": "carriers.iata_code", "column": "iata_code"},
+                        {"requested": "Delay.flight.arrives_at.code", "column": "airport_code"},
+                    ],
+                },
+                ["iata_code", "Delay.flight.arrives_at.code"],
+                [{"iata_code": "SK", "Delay.flight.arrives_at.code": "JFK"}],
+                id="dataset_spelling_keeps_engine_name",
+            ),
+        ],
+    )
+    def test_output_columns_are_named_by_requested_paths(self, result, expected_columns, expected_rows):
+        columns, rows = DosiRuntime._label_requested_columns(result, ["carriers", "flights"])
+        assert columns == expected_columns
+        assert rows == expected_rows
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(

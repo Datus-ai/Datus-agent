@@ -166,13 +166,13 @@ class TestOntologyAnswers:
                 "AND FlightAlert.flight.arrives_at.code = 'JFK'"
             ),
         )
+        assert result.result["columns"] == [
+            "FlightAlert.id",
+            "FlightAlert.flight.number",
+            "FlightAlert.flight.arrives_at.name",
+        ]
         rows = _rows(ontology_tools, result)
-        id_column = next(
-            entry["column"]
-            for entry in result.result["metadata"]["requested_columns"]
-            if entry["requested"] == "FlightAlert.id"
-        )
-        assert {row[id_column] for row in rows} == {"A007", "A011"}
+        assert {row["FlightAlert.id"] for row in rows} == {"A007", "A011"}
 
     def test_records_order_by_a_requested_concept_path(self, ontology_tools):
         result = ontology_tools.select_records(
@@ -182,7 +182,7 @@ class TestOntologyAnswers:
             order_by=["-FlightAlert.id"],
         )
         rows = _rows(ontology_tools, result)
-        ids = [row["alert_id"] for row in rows]
+        ids = [row["FlightAlert.id"] for row in rows]
         assert ids == sorted(ids, reverse=True)
         assert len(ids) == 8
 
@@ -192,7 +192,7 @@ class TestOntologyAnswers:
             dimensions=["Delay.flight.arrives_at.code"],
             order_by=["-Delay.flight.arrives_at.code"],
         )
-        codes = [row["airport_code"] for row in _rows(ontology_tools, result)]
+        codes = [row["Delay.flight.arrives_at.code"] for row in _rows(ontology_tools, result)]
         assert codes == ["SFO", "SEA", "LAX", "JFK"]
 
     def test_a_metric_grouped_from_the_wrong_root_names_the_fix(self, ontology_tools):
@@ -205,7 +205,7 @@ class TestOntologyAnswers:
         def by_airport(path):
             result = ontology_tools.query_metrics(metrics=["delayed_flights"], dimensions=[path])
             rows = _rows(ontology_tools, result)
-            return {row["airport_code"]: int(row["delayed_flights"]) for row in rows}
+            return {row[path]: int(row["delayed_flights"]) for row in rows}
 
         assert by_airport("Delay.flight.arrives_at.code") == {"LAX": 3, "JFK": 2, "SFO": 2, "SEA": 1}
         assert by_airport("Delay.flight.departs_from.code") == {"SFO": 6, "LAS": 1, "JFK": 1}
