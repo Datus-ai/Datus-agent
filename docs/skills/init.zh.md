@@ -1,16 +1,39 @@
 # Init
 
+<<<<<<< HEAD
 `init` 是初始化项目工作区的轻量方式。它扫描你的工作目录和已配置的数据源，然后写下一份简洁、持久的项目概览，让后续会话一开始就带有上下文——而不构建较重的向量知识库。
+=======
+`init` 是初始化项目工作区的轻量方式。它读取项目里的 SQL 脚本、文档和数据库表结构，写下一份简洁的项目说明：该用哪些表、表之间怎么关联、有哪些规则必须遵守。这样后续会话一开始就带着写 SQL 所需的上下文，而不必构建较重的向量知识库。
+>>>>>>> ce07705 ([Enhancement] Rewrite init as a goal-driven skill that reads schema only and writes confirmed statements only (#1504))
 
 在 REPL 中使用 `/init` 命令运行。
 
 ## 功能作用
 
+<<<<<<< HEAD
 - 扫描工作目录与已配置的数据源（名称、类型、表数量）。
 - 在项目根目录写一份 `AGENTS.md` 清单：架构、目录地图、服务、数据资产，以及知识索引。
 - 把持久的业务事实存为基于文件的 knowledge，把与 agent 绑定的偏好存为 memory。
 
 它属于**轻量**层级：快（数秒到一分钟）、不建向量索引、无确认门。需要向量索引的知识库时，请使用 [`/build-kb`](build_kb.md)。
+=======
+- 用 `upsert_lineage` 工具把项目里的 SQL（ETL 脚本和 Python DAG 中的 SQL）静态分析成持久化的表级血缘图，再用 `query_lineage` 读取。关联条件、过滤条件、映射、窗口及作者注释从 SQL 原文读取。不执行任何 SQL。
+- 阅读项目中人写的文档（业务规则、指标定义、数据字典）。
+- 用数据库表结构核对找到的表和列：表清单、列信息，以及从建表语句里读出的声明主键和分区方式。它不查询表里的数据，所以不统计行数、新鲜度和编码的实际取值。
+- 只写有来源明确说明的内容：建表语句、文档、SQL 注释、脚本实际做了什么、调度配置；粒度、主键、关联基数和表的地位都会注明出处。需要推断才能得出的结论不写进文件，比如从 `GROUP BY` 推出的粒度、哪个版本是当前版本，而是在回复末尾作为待确认问题列出。例外是从已验证的问答 SQL 语料里归纳出的约定：它们会直接写入，并注明来自哪些样例，供你事后查看。
+- 在项目根目录写一份 `AGENTS.md`：数据架构、核心表、跨业务域的规则，以及知识索引。
+- 每个业务域写一个 `knowledge/<domain>.md`：表卡片（用途、粒度、时间、编码、必带过滤）、关联关系、血缘、指标定义、业务规则，以及已知问题（例如文档和数据库对不上的地方）。
+
+它属于**轻量**层级：不建向量索引、无确认门。一百个左右脚本的项目需要几分钟。需要向量索引的知识库时，请使用 [`/build-kb`](build_kb.md)。
+
+血缘图保存在 `lineage/lineage.json`，整个项目共用一个文件。每个被分析的文件（或保存下来的一段 SQL）是一个来源：`upsert_lineage` 只重新分析内容、方言、默认库或解析器版本有变化的来源，并整份替换这个来源之前贡献的内容，所以 SQL 里删掉的语句，对应的血缘也会消失。方言和默认库作为项目设置保存在文件里，之后的调用不传这两个参数时，仍按同样的设置分析。`prune_missing=True` 会同时清理源文件已删除的来源，`delete_lineage` 可以按来源 ID 或 glob 删除。文件分四部分：`settings`（方言和默认库）、`sources`（内容 hash、方言、默认库、解析问题）、`nodes`（表、视图，以及代表纯查询的 `query:<hash>` 节点，`label` 取自作者注释）和 `edges`（上游 → 下游，每条边带着产生它的语句：来源、行号、加载方式和折叠的临时表；不读任何表的写入没有上游）。来源 ID 相对于项目根目录。文件里只有从 SQL 推导出的内容，没有时间戳或计数器，可以提交到版本库；如果合并后文件无法解析，可以用 `upsert_lineage(paths=[...], rebuild=True)` 从 SQL 文件重建。
+
+`query_lineage` 返回指定表周围的子图（不传表则返回整张表级图）：每条语句一条记录，出处格式为 `文件ID:行号`，并给出每张表的角色、所属连通子图，以及有多少条已保存的查询读取它。`complete=false` 表示可能涉及所查表的来源（包括没有被任何返回语句引用的来源）在分析后有改动、是按其他设置分析的，或有语句没能解析。
+
+在 `normal` 权限模式下，`upsert_lineage` 和 `delete_lineage` 写 `lineage/lineage.json` 前会先询问；`auto` 模式下 `upsert_lineage` 直接执行，`delete_lineage` 仍会询问。
+
+**不兼容的变化：** `extract_sql_lineage` 由 `upsert_lineage`、`delete_lineage` 和 `query_lineage` 取代。血缘工具不再返回关联关系：init 从 SQL 原文读取关联条件，只有关联条件覆盖了声明的主键或唯一键的全部列时才写基数；脚本只是暗示的基数会作为待确认问题列出。参数条件不证明增量加载，单独的 ROW_NUMBER 定义也不证明表粒度。
+>>>>>>> ce07705 ([Enhancement] Rewrite init as a goal-driven skill that reads schema only and writes confirmed statements only (#1504))
 
 ## 何时使用
 
@@ -48,6 +71,13 @@
 
 ## 注意事项
 
+<<<<<<< HEAD
 - knowledge 以文件形式存放在 `knowledge/` 下；memory 与 agent 绑定并跨会话保留。
 - `init` 只做清单盘点——不执行 SQL 查询。
+=======
+- knowledge 以 markdown 文件存放在 `knowledge/` 下，由 `AGENTS.md` 索引；每个会话只加载 `AGENTS.md` 的前 200 行，所以细节放在 knowledge 文件里。
+- 文档、SQL、数据库三者不一致时，`init` 会把冲突记在对应业务域的"已知问题"里，而不是悄悄选一边。
+- `init` 只读取表结构元数据（表清单、列信息、建表语句），从不对表数据执行 `SELECT`。
+- 待确认问题直接在同一个对话里回答。你确认的内容会写进 knowledge 文件或 `AGENTS.md`，并注明由你确认；你否定的会被丢弃；没有回答的不会保存在任何地方。
+>>>>>>> ce07705 ([Enhancement] Rewrite init as a goal-driven skill that reads schema only and writes confirmed statements only (#1504))
 - 生成语义模型、指标和参考 SQL 是 [`/build-kb`](build_kb.md) 的职责。
