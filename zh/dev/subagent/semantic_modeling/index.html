@@ -5242,6 +5242,7 @@
 <p>每个创作文件的根 <code>semantic_model</code> 列表只放一个模型对象。建议按业务域组织相关的事实表和维表，例如 <code>sales.yml</code> 或 <code>marketing.yml</code>。<code>source</code> 应优先引用物理表；只有稳定且值得复用的逻辑 dataset 才使用 SQL。</p>
 <h2 id="yaml">YAML 规范<a class="headerlink" href="#yaml" title="Permanent link">&para;</a></h2>
 <p>Dosi 生成 OSI Core <code>0.2.0.dev0</code> YAML。core schema 不允许未知字段，因此 Datus 特有行为必须写在 <code>custom_extensions</code> 中，不能随意增加 YAML key。</p>
+<p>通过 semantic modeling 编写的指标，其 DATUS extension 的 JSON <code>data</code> 中保存由宿主管理的稳定 <code>uid</code>。Semantic modeling 为新指标生成 24 位 CUID2，并在最终校验前补齐目标模型中缺失的标识。更新或重命名同一指标时保留原 <code>uid</code>；创建不同指标时省略该字段，由宿主生成。Knowledge Base 的现有 <code>uid</code> 字段保存同一个值，来源是 extension，而不是 <code>locked_metadata</code>。</p>
 <p>主要字段如下：</p>
 <table>
 <thead>
