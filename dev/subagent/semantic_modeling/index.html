@@ -5242,6 +5242,7 @@
 <p>Each authored file contains one object in the root <code>semantic_model</code> list. Group related fact and dimension datasets by business domain, such as <code>sales.yml</code> or <code>marketing.yml</code>. Use a physical table reference in <code>source</code> whenever possible; use SQL only for a stable logical dataset that deserves to be reused.</p>
 <h2 id="yaml-contract">YAML contract<a class="headerlink" href="#yaml-contract" title="Permanent link">&para;</a></h2>
 <p>Dosi authors OSI Core <code>0.2.0.dev0</code> YAML. Unknown core fields are rejected, so Datus-specific behavior belongs in <code>custom_extensions</code> rather than arbitrary YAML keys.</p>
+<p>Metrics authored through semantic modeling carry a stable, host-managed <code>uid</code> in their DATUS extension's JSON <code>data</code>. Semantic modeling assigns a 24-character CUID2 to new metrics and fills missing identities in the selected model before final validation. Preserve an existing <code>uid</code> when updating or renaming its metric; omit it when creating a different metric. The Knowledge Base stores the same value in its existing <code>uid</code> field. This identity comes from the extension, not <code>locked_metadata</code>.</p>
 <p>The principal fields are:</p>
 <table>
 <thead>
