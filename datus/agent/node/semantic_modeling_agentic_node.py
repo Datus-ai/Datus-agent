@@ -468,6 +468,10 @@ class SemanticModelingAgenticNode(SemanticAuthoringAgenticNode):
     def _finalize_selected_osi_artifact(self) -> str:
         """Validate and fully reconcile one target YAML before returning success."""
         semantic_model_file, resolved, model_name = self._selected_osi_artifact()
+        metric_uids = self.filesystem_func_tool.ensure_metric_uids(resolved)
+        uid_sync_names = self.generation_tools.metric_names_needing_uid_sync(resolved, metric_uids)
+        if uid_sync_names:
+            self.osi_target_state.record_metric_touch(resolved, None, uid_sync_names)
         metric_names = self.generation_tools.extract_osi_metric_names(resolved)
         present_metrics, _ = self.osi_target_state.partition_touched_metrics(metric_names)
         validation_scope = "all" if metric_names else "semantic_model"
@@ -477,7 +481,8 @@ class SemanticModelingAgenticNode(SemanticAuthoringAgenticNode):
             resolved,
             required_scope=validation_scope,
         )
-        if not artifact_validated:
+        metrics_compiled = self.generation_evidence.compiled_validation_passed(resolved, present_metrics)
+        if not artifact_validated or (present_metrics and not metrics_compiled):
             if not getattr(self, "semantic_tools", None):
                 raise RuntimeError(
                     "The selected semantic model needs validation, but validate_semantic is unavailable."

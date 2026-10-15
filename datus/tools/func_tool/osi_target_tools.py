@@ -188,10 +188,13 @@ class OsiSemanticModelTargetState:
             ):
                 self.planned_dataset_names.append(str(name).strip())
 
-    def record_metric_touch(self, path: str | Path, content: bytes, metric_names: List[str]) -> None:
-        """Record explicit metric changes for final-YAML reconciliation."""
+    def record_metric_touch(self, path: str | Path, content: Optional[bytes], metric_names: List[str]) -> None:
+        """Record metric reconciliation scope, optionally refreshing authored bytes."""
         self.require_selected_path(path)
-        self.artifact_sha256 = hashlib.sha256(content).hexdigest()
+        if content is None:
+            self._require_revision(path)
+        else:
+            self.artifact_sha256 = hashlib.sha256(content).hexdigest()
         self._record_touched_metric_names(metric_names)
 
     def record_dataset_touch(self, path: str | Path, content: bytes, dataset_names: List[str]) -> None:

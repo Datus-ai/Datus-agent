@@ -1374,6 +1374,7 @@ class GenerationTools:
                     "subject_path": subject_path,
                     "semantic_model_name": semantic_model_name,
                     "id": build_metric_id(subject_path, metric_name),
+                    "uid": getattr(metric, "uid", "") or "",
                     "description": getattr(metric, "description", "") or "",
                     "metric_type": (
                         metric_type
@@ -1606,6 +1607,17 @@ class GenerationTools:
         except Exception as e:
             logger.error(f"Error syncing OSI metrics to DB: {e}", exc_info=True)
             return {"success": False, "error": str(e)}
+
+    def metric_names_needing_uid_sync(self, metric_file: str, metric_uids: Dict[str, str]) -> List[str]:
+        """Find selected-artifact identities missing or stale in the scoped KB."""
+        if not metric_uids:
+            return []
+        rows = self.metric_rag.storage.search_all(
+            where=And([*_rag_scope_conditions(self.metric_rag), eq("yaml_path", metric_file)]),
+            select_fields=["name", "uid"],
+        )
+        existing = {normalize_metric_name(row["name"]): row.get("uid") for row in rows}
+        return [name for name, uid in metric_uids.items() if existing.get(normalize_metric_name(name)) != uid]
 
     def sync_osi_to_db(
         self,
