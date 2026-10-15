@@ -131,7 +131,9 @@ class LineageTools:
             datasource: Datasource supplying dialect and default database instead of the saved
                 settings; defaults to the active one when nothing is saved yet.
             dialect: Override the dialect, e.g. starrocks, mysql or hive.
-            default_database: Database used to qualify bare table names.
+            default_database: Database used to qualify bare table names. When the scripts qualify
+                tables with a database other than the datasource's, pass that database so bare and
+                qualified references to one table resolve to the same node.
             prune_missing: With paths, also remove saved sources matching the patterns whose files
                 no longer exist.
             rebuild: With paths, discard the saved graph and its settings, then rebuild it from
