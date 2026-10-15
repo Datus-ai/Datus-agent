@@ -41,7 +41,7 @@ logger = get_logger(__name__)
 
 _INIT_PROMPT = (
     "Initialize this project workspace by following the `init` skill. "
-    'Call `load_skill(skill_name="init")` first and execute its steps in order. '
+    'Call `load_skill(skill_name="init")` first and follow it. '
     "If `AGENTS.md` already exists, update the sections you own in place and confirm "
     "only before replacing the whole file."
     "{user_context}"

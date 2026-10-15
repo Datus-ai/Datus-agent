@@ -21,7 +21,7 @@
 
 在 `normal` 权限模式下，`upsert_lineage` 和 `delete_lineage` 写 `lineage/lineage.json` 前会先询问；`auto` 模式下 `upsert_lineage` 直接执行，`delete_lineage` 仍会询问。
 
-**不兼容的变化：** `extract_sql_lineage` 由 `upsert_lineage`、`delete_lineage` 和 `query_lineage` 取代。血缘工具不再返回关联关系：init 从 SQL 原文读取关联条件，只有关联条件覆盖了声明主键的全部列时才写基数；脚本只是暗示的基数会作为待确认问题列出。参数条件不证明增量加载，单独的 ROW_NUMBER 定义也不证明表粒度。
+**不兼容的变化：** `extract_sql_lineage` 由 `upsert_lineage`、`delete_lineage` 和 `query_lineage` 取代。血缘工具不再返回关联关系：init 从 SQL 原文读取关联条件，只有关联条件覆盖了声明的主键或唯一键的全部列时才写基数；脚本只是暗示的基数会作为待确认问题列出。参数条件不证明增量加载，单独的 ROW_NUMBER 定义也不证明表粒度。
 
 ## 何时使用
 
@@ -61,6 +61,6 @@
 
 - knowledge 以 markdown 文件存放在 `knowledge/` 下，由 `AGENTS.md` 索引；每个会话只加载 `AGENTS.md` 的前 200 行，所以细节放在 knowledge 文件里。
 - 文档、SQL、数据库三者不一致时，`init` 会把冲突记在对应业务域的"已知问题"里，而不是悄悄选一边。
-- `init` 只读取表结构元数据（表清单、列信息、`SHOW CREATE TABLE`），从不对表数据执行 `SELECT`。
+- `init` 只读取表结构元数据（表清单、列信息、建表语句），从不对表数据执行 `SELECT`。
 - 待确认问题直接在同一个对话里回答。你确认的内容会写进 knowledge 文件或 `AGENTS.md`，并注明由你确认；你否定的会被丢弃；没有回答的不会保存在任何地方。
 - 生成语义模型、指标和参考 SQL 是 [`/build-kb`](build_kb.md) 的职责。

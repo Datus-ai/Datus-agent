@@ -21,7 +21,7 @@ The lineage graph is saved in `lineage/lineage.json`, one file for the whole pro
 
 Under the `normal` permission profile, `upsert_lineage` and `delete_lineage` ask before writing `lineage/lineage.json`; `auto` runs `upsert_lineage` without asking and still asks before `delete_lineage`.
 
-**Breaking change:** `extract_sql_lineage` is replaced by `upsert_lineage`, `delete_lineage` and `query_lineage`. The lineage tools no longer return joins: initialization reads join conditions from the source SQL and states a cardinality only when the join covers every column of a declared key; a cardinality the scripts merely suggest becomes a pending question. Parameterized predicates do not prove incremental loading; ROW_NUMBER alone does not prove table grain.
+**Breaking change:** `extract_sql_lineage` is replaced by `upsert_lineage`, `delete_lineage` and `query_lineage`. The lineage tools no longer return joins: initialization reads join conditions from the source SQL and states a cardinality only when the join covers every column of a declared primary or unique key; a cardinality the scripts merely suggest becomes a pending question. Parameterized predicates do not prove incremental loading; ROW_NUMBER alone does not prove table grain.
 
 ## When to use it
 
@@ -61,6 +61,6 @@ Typical flow: run `/init` first for immediate context, then `/build-kb` when you
 
 - Knowledge is stored as markdown files under `knowledge/`, indexed from `AGENTS.md`; only the first 200 lines of `AGENTS.md` are loaded into every session, so details live in the knowledge files.
 - Where docs, SQL and the database disagree, `init` records the conflict under the domain's **Known Issues** instead of silently picking one side.
-- `init` reads only schema metadata (table lists, column descriptions, `SHOW CREATE TABLE`); it never runs `SELECT` against table data.
+- `init` reads only schema metadata (table lists, column descriptions, table DDL); it never runs `SELECT` against table data.
 - Answer the pending questions in the same chat. Confirmed answers are written to the knowledge files or `AGENTS.md`, marked as confirmed by you; rejected ones are dropped. Unanswered questions are not saved anywhere.
 - Generating semantic models, metrics, and reference SQL is the job of [`/build-kb`](build_kb.md).
