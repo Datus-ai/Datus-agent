@@ -1,7 +1,7 @@
 """Metric-retrieval hook for hosts that embed datus-agent.
 
 ``MetricRAG.search_metrics`` emits a :class:`MetricRetrievalEvent` after every
-search so a host (e.g. a SaaS wrapper) can count how often each Semantic Hub
+search so a host (e.g. a SaaS wrapper) can count how often each semantic
 metric is consumed by chatbot / NL2SQL. The hook is optional and
 **fire-and-forget**: search never awaits it and swallows its errors, so a slow
 or failing host can never break retrieval.
@@ -18,8 +18,8 @@ class MetricRetrievalEvent:
     """One metric search and the metrics it returned.
 
     ``metrics`` carries ``{"id", "name", "uid"}`` per hit; ``uid`` is the
-    Semantic Hub stable node id and is empty for metrics not governed by the Hub
-    (the host should ignore those when counting Hub consumption).
+    metric's DATUS extension identity (a 24-character CUID2). Legacy records
+    may have an empty uid until semantic modeling fills and synchronizes it.
     """
 
     query_text: str

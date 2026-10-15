@@ -366,6 +366,7 @@ class SemanticAuthoringAgenticNode(AgenticNode):
         meta = super()._system_prompt_snapshot_meta(prompt_version)
         # Earlier snapshots still instruct the model to validate keys against table data.
         meta["semantic_target_scope"] = "agent_bound_v4"
+        meta["metric_identity_policy"] = "cuid2_v1"
         meta.update(authoring_prompt_snapshot_meta(self.agent_config, self.NODE_NAME))
         return meta
 

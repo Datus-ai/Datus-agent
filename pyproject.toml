@@ -87,7 +87,7 @@ dependencies = [
     "markdown-it-py>=3.0.0",
     "tabulate>=0.9.0",
     # Agent embeds only the Dosi APIs used by its semantic tools and Explorer.
-    "dosi-engine==0.1.12",
+    "dosi-engine==0.1.13",
     # BI platform adapters (core models & interfaces)
     "datus-bi-core>=0.1.2",
     # Workflow scheduler adapters (core framework)
@@ -95,6 +95,7 @@ dependencies = [
     # Plugin manifest: config-schema validation and system-prompt templates
     "jsonschema>=4.17,<5",
     "jinja2>=3.1,<4",
+    "cuid2>=2.0.1,<3",
 ]
 
 [project.urls]
@@ -222,7 +223,7 @@ dev = [
 ci = [
     "datus-storage-postgresql>=0.1.5",
     # `requirements-test.txt` exports only dev and ci groups.
-    "dosi-engine==0.1.12",
+    "dosi-engine==0.1.13",
 ]
 
 [tool.coverage.run]
