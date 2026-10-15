@@ -207,6 +207,24 @@ class TestEngineLoading:
         (ontology_dir / "aviation.yaml").write_text(ONTOLOGY_YAML)
         assert registry.snapshot()[1][0][1].ontology_path == str(ontology_dir / "aviation.yaml")
 
+    def test_ontology_lowering_notes_do_not_reach_the_terminal(self, tmp_path, ontology_binding, monkeypatch):
+        import warnings
+
+        models_dir, ontology_dir = _layout(tmp_path)
+
+        class NotingEngine(FakeOntologyEngine):
+            def __init__(self, **kwargs):
+                warnings.warn("Flight.arrival_delay: `derived_by` rule kept as text", RuntimeWarning, stacklevel=2)
+                super().__init__(**kwargs)
+
+        monkeypatch.setattr(ontology_binding, "Engine", NotingEngine)
+        registry = EngineRegistry(DosiConfig(semantic_models_path=str(models_dir), ontology_dir=str(ontology_dir)))
+        with warnings.catch_warnings(record=True) as escaped:
+            warnings.simplefilter("always")
+            engine = registry.snapshot()[1][0][1].get()
+        assert engine.ontology_path == str(ontology_dir / "aviation.yaml")
+        assert [str(w.message) for w in escaped] == []
+
     def test_ontology_load_failure_names_the_ontology_and_code(self, tmp_path, ontology_binding, monkeypatch):
         models_dir, ontology_dir = _layout(tmp_path)
 

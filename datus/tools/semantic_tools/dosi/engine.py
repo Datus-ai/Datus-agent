@@ -11,6 +11,7 @@ import glob
 import os
 import re
 import threading
+import warnings
 from pathlib import Path
 from typing import Any, Optional
 
@@ -24,6 +25,9 @@ from datus.tools.semantic_tools.dosi.model import (
     load_document,
 )
 from datus.tools.semantic_tools.exceptions import SemanticCoreException
+from datus.utils.loggings import get_logger
+
+logger = get_logger(__name__)
 
 _INSTALL_HINT = "dosi-engine is missing; reinstall datus-agent from its lockfile"
 
@@ -331,12 +335,26 @@ class EngineHandle:
                 ontology_kwargs["ontology_path"] = config.ontology_path
                 if config.ontology_mapping:
                     ontology_kwargs["mapping"] = config.ontology_mapping
-            return binding.Engine(
-                model_path=model_file,
-                connections=self._runtime_connections(config),
-                pool_size=config.pool_size,
-                **ontology_kwargs,
-            )
+            if not config.ontology_path:
+                return binding.Engine(
+                    model_path=model_file,
+                    connections=self._runtime_connections(config),
+                    pool_size=config.pool_size,
+                )
+            # Ontology lowering reports constructs it keeps as text (``note:``)
+            # as RuntimeWarnings, which reach a CLI user's terminal on every
+            # load. The same notes are on ``Engine.warnings``; log them instead.
+            with warnings.catch_warnings(record=True) as lowering_notes:
+                warnings.simplefilter("always", RuntimeWarning)
+                engine = binding.Engine(
+                    model_path=model_file,
+                    connections=self._runtime_connections(config),
+                    pool_size=config.pool_size,
+                    **ontology_kwargs,
+                )
+            for note in lowering_notes:
+                logger.debug("Ontology %s: %s", config.ontology_path, note.message)
+            return engine
         except binding.OsiError as exc:
             if config.ontology_path:
                 raise SemanticCoreException(
