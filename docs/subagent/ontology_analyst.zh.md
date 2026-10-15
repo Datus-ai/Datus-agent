@@ -33,6 +33,103 @@ OntologyAnalyst 还能返回**明细记录**，例如“列出飞往 JFK 的航�
 
 缺少任何前置条件时，OntologyAnalyst 会在第一轮拒绝执行，说明缺了什么，并引导使用 `ask_metrics`；它不会在没有提示的情况下退化成普通指标问答。只有当前数据源的 ontology 目录里至少有一个文件时，主代理才会提供 `ontology_analyst` 作为可委派的子代理。
 
+## 快速上手：航空示例
+
+本节用 Datus-agent 仓库自带的航空示例（Dosi aviation 场景）完整体验一遍。数据很小，每个答案都可以手工核对：
+
+| 文件 | 内容 |
+|------|------|
+| `tests/data/semantic_models/aviation/aviation.yaml` | OSI 语义模型：9 张表，以及延误、告警、载客等指标 |
+| `tests/data/semantic_models/ontology/aviation/aviation.yaml` | Ossie ontology：Flight、Airport、FlightAlert、Delay 等概念，以及它们之间的角色和值域 |
+| `tests/data/semantic_models/aviation/seed.sql` | 种子数据：13 个航班、延误和告警记录 |
+
+### 1. 准备项目目录和数据库
+
+Datus 以启动时的当前目录作为项目根目录，`subject/` 也放在这个目录下。把下面的 `DATUS_REPO` 换成你本地 Datus-agent 仓库的路径：
+
+```bash
+export DATUS_REPO=~/src/Datus-agent
+mkdir -p ~/ontology-demo && cd ~/ontology-demo
+
+# 语义模型和 ontology，按约定的目录放置
+mkdir -p subject/semantic_models/aviation subject/semantic_models/ontology/aviation
+cp $DATUS_REPO/tests/data/semantic_models/aviation/aviation.yaml subject/semantic_models/aviation/
+cp $DATUS_REPO/tests/data/semantic_models/ontology/aviation/aviation.yaml subject/semantic_models/ontology/aviation/
+
+# 用种子数据生成 DuckDB 数据库（duckdb 随 Datus 一起安装）
+python -c "import duckdb, pathlib; duckdb.connect('aviation.duckdb').execute(pathlib.Path('$DATUS_REPO/tests/data/semantic_models/aviation/seed.sql').read_text())"
+```
+
+完成后的目录结构：
+
+```text
+~/ontology-demo/
+├── aviation.duckdb
+└── subject/semantic_models/
+    ├── aviation/aviation.yaml
+    └── ontology/aviation/aviation.yaml
+```
+
+### 2. 注册数据源
+
+在 `agent.yml`（默认位于 `~/.datus/conf/agent.yml`）中添加数据源。**数据源名必须与目录名 `aviation` 一致**：
+
+```yaml
+agent:
+  services:
+    datasources:
+      aviation:
+        type: duckdb
+        uri: ~/ontology-demo/aviation.duckdb
+```
+
+### 3. 启动并切换到 OntologyAnalyst
+
+```bash
+cd ~/ontology-demo
+datus --datasource aviation
+```
+
+```text
+/agent ontology_analyst
+```
+
+也可以留在主对话中，主代理检测到该数据源有 ontology 后会自动委派；或者在单个问题末尾加 `@Agent ontology_analyst`。
+
+### 4. 提问并核对答案
+
+以下问题都按业务人员的口吻提出，不包含指标名或字段名。“考察点”一列说明 ontology 在其中起什么作用。
+
+| 问题 | 预期答案 | 考察点 |
+|------|---------|--------|
+| 飞往 JFK 的航班里，有哪些未关闭的 P1 告警？给出告警号、类型、航班号和机场名。 | A007（WEATHER，SK202）和 A011（AIR_TRAFFIC，UA402），机场为 John F. Kennedy International Airport | 明细查询；两跳 + 到达角色；“未关闭”需要映射到值域里的 `OPEN` |
+| 现在还有多少未解决的告警？按优先级分。 | P0 1 条、P1 3 条、P2 4 条，共 8 条 | “未解决”不是合法值，需要映射到 `OPEN` |
+| 哪个目的地机场的延误航班最多？列出各目的地机场的延误航班数。 | LAX 3、JFK 2、SFO 2、SEA 1 | 指标要以 `Delay` 为根分组，经由 `arrives_at` 角色 |
+| 按出发机场统计，哪个机场的延误航班最多？列出各出发机场的延误航班数。 | SFO 6、JFK 1、LAS 1 | 同一个指标换成 `departs_from` 角色。如果答案和上一题相同，说明角色混淆了 |
+| 只看计划在 2026-08-14 和 2026-08-15 这两天起飞的航班，各目的地机场分别有多少延误航班？ | JFK 1、LAX 1、SFO 1，不应出现 SEA | 时间轴来自 `Delay.flight.scheduled_departure` |
+| 哪些延误的航班同时有告警？列出航班号、延误分钟数和告警数。 | SK202 95/2、SK103 60/2、SK201 55/1、SK102 42/2、UA303 30/1、UA401 29/1、UA302 25/1 | 两个子集合（延误、告警）挂在同一航班下，必须按航班分组，不能做明细 join（否则分钟数会被放大） |
+
+每个问题建议开一个新会话（`/clear`），避免上一题的发现影响下一题。
+
+### 5. 观察代理的过程
+
+工具调用会显示在对话中，重点看下面几项：
+
+- `describe_concept("FlightAlert")` 返回的 `FlightAlert.status` 带有 `domain: [OPEN, RESOLVED]`；
+- `find_concept_paths("Flight", "Airport")` 返回 4 条路径和 2 组等价关系，说明“机场”实际只有两种含义；
+- 如果代理先用了 `'unresolved'` 这样的字面量，会收到 `value_not_in_domain` 和允许值列表，随后改用 `OPEN` 重试；
+- 如果代理用 `Flight.arrives_at.code` 对 `delayed_flights` 分组，会收到 `invalid_relationship_path`，`candidates` 中给出 `Delay.flight.arrives_at.code`，代理随后按它重试。
+
+### 6. 常见问题
+
+| 提示信息 | 原因和处理 |
+|---------|-----------|
+| `ontology_analyst is unavailable: no ontology for datasource 'aviation'` | `subject/semantic_models/ontology/aviation/` 不存在或为空；检查目录名与数据源名一致，以及是否在项目根目录启动 |
+| `... pair with no semantic model file` | 数据源有多个模型文件，而 ontology 文件名与任何模型文件都不同；把 ontology 改成与对应模型同名 |
+| `the installed dosi-engine binding cannot describe ontologies` | 安装的 `dosi-engine` 版本过旧，升级到提供 `Engine.describe` / `Engine.paths` 的版本 |
+| `... ontology_mapping_unresolved` | ontology 声明了多个 `ontology_mappings`；在 `agentic_nodes.ontology_analyst.ontology_mapping` 中指定一个 |
+| 主代理不委派给 `ontology_analyst` | 只有当前数据源有 ontology 文件时才会提供；可以用 `/agent ontology_analyst` 或 `@Agent ontology_analyst` 显式指定 |
+
 ## 使用方式
 
 直接在主对话中提问。数据源有 ontology 时，主代理会自动委派合适的问题：

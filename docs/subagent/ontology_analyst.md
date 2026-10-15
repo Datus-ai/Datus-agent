@@ -33,6 +33,103 @@ Only OntologyAnalyst loads the ontology. AskMetrics and every other agent keep w
 
 If any prerequisite is missing, OntologyAnalyst refuses on its first turn, says what is missing, and points to `ask_metrics`. It never falls back to a plain-metric answer without saying so. The main agent offers `ontology_analyst` for delegation only when the current datasource has an ontology directory with at least one file in it.
 
+## Quick Start: the Aviation Example
+
+This walkthrough uses the aviation example shipped in the Datus-agent repository (the Dosi aviation scenario). The data is small, so you can check every answer by hand:
+
+| File | Contents |
+|------|----------|
+| `tests/data/semantic_models/aviation/aviation.yaml` | OSI semantic model: 9 tables, with delay, alert and passenger metrics |
+| `tests/data/semantic_models/ontology/aviation/aviation.yaml` | Ossie ontology: Flight, Airport, FlightAlert, Delay and other concepts, with their roles and value domains |
+| `tests/data/semantic_models/aviation/seed.sql` | Seed data: 13 flights with their delays and alerts |
+
+### 1. Prepare the project and the database
+
+Datus treats the directory you start it in as the project root, and `subject/` lives there. Set `DATUS_REPO` to your local Datus-agent checkout:
+
+```bash
+export DATUS_REPO=~/src/Datus-agent
+mkdir -p ~/ontology-demo && cd ~/ontology-demo
+
+# Model and ontology, in the conventional layout
+mkdir -p subject/semantic_models/aviation subject/semantic_models/ontology/aviation
+cp $DATUS_REPO/tests/data/semantic_models/aviation/aviation.yaml subject/semantic_models/aviation/
+cp $DATUS_REPO/tests/data/semantic_models/ontology/aviation/aviation.yaml subject/semantic_models/ontology/aviation/
+
+# Build a DuckDB database from the seed (duckdb is installed with Datus)
+python -c "import duckdb, pathlib; duckdb.connect('aviation.duckdb').execute(pathlib.Path('$DATUS_REPO/tests/data/semantic_models/aviation/seed.sql').read_text())"
+```
+
+The result:
+
+```text
+~/ontology-demo/
+├── aviation.duckdb
+└── subject/semantic_models/
+    ├── aviation/aviation.yaml
+    └── ontology/aviation/aviation.yaml
+```
+
+### 2. Register the datasource
+
+Add the datasource to `agent.yml` (by default `~/.datus/conf/agent.yml`). **The datasource name must match the directory name `aviation`:**
+
+```yaml
+agent:
+  services:
+    datasources:
+      aviation:
+        type: duckdb
+        uri: ~/ontology-demo/aviation.duckdb
+```
+
+### 3. Start Datus and select OntologyAnalyst
+
+```bash
+cd ~/ontology-demo
+datus --datasource aviation
+```
+
+```text
+/agent ontology_analyst
+```
+
+You can also stay in the main chat. The main agent delegates to `ontology_analyst` once it sees that the datasource has an ontology. To route a single question, append `@Agent ontology_analyst` to it.
+
+### 4. Ask, and check the answers
+
+Each question is phrased the way a business user would ask it, without metric or field names. The last column says what the ontology contributes.
+
+| Question | Expected answer | What it tests |
+|----------|-----------------|---------------|
+| Among flights to JFK, which P1 alerts are still open? Give the alert id, type, flight number and airport name. | A007 (WEATHER, SK202) and A011 (AIR_TRAFFIC, UA402), airport John F. Kennedy International Airport | Record query; two hops plus the arrival role; "still open" must map to the domain value `OPEN` |
+| How many alerts are still unresolved? Break it down by priority. | P0 1, P1 3, P2 4 (8 in total) | "Unresolved" is not a valid value and must map to `OPEN` |
+| Which destination airport has the most delayed flights? List the delayed flight count per destination airport. | LAX 3, JFK 2, SFO 2, SEA 1 | The metric is grouped from `Delay` through the `arrives_at` role |
+| By origin airport, which airport has the most delayed flights? List the delayed flight count per origin airport. | SFO 6, JFK 1, LAS 1 | The same metric through `departs_from`. Numbers equal to the previous answer mean the roles were confused |
+| Looking only at flights scheduled to depart on 2026-08-14 and 2026-08-15, how many delayed flights does each destination airport have? | JFK 1, LAX 1, SFO 1, and no SEA | The time axis comes from `Delay.flight.scheduled_departure` |
+| Which delayed flights also have alerts? List the flight number, delay minutes and alert count. | SK202 95/2, SK103 60/2, SK201 55/1, SK102 42/2, UA303 30/1, UA401 29/1, UA302 25/1 | Delays and alerts are two collections under one flight. Group by flight; a record join of both would inflate the minutes |
+
+Start a new session (`/clear`) for each question so that one answer does not inform the next.
+
+### 5. Watch what the agent does
+
+Tool calls appear in the conversation. Things to look for:
+
+- `describe_concept("FlightAlert")` shows `FlightAlert.status` with `domain: [OPEN, RESOLVED]`.
+- `find_concept_paths("Flight", "Airport")` returns four paths and two equivalences: "the airport" has only two meanings.
+- If the agent first tries a literal such as `'unresolved'`, it gets `value_not_in_domain` with the allowed values and retries with `OPEN`.
+- If it groups `delayed_flights` by `Flight.arrives_at.code`, it gets `invalid_relationship_path` with `Delay.flight.arrives_at.code` in `candidates`, and retries with that path.
+
+### 6. Troubleshooting
+
+| Message | Cause and fix |
+|---------|---------------|
+| `ontology_analyst is unavailable: no ontology for datasource 'aviation'` | `subject/semantic_models/ontology/aviation/` is missing or empty. Check that the directory name matches the datasource name and that Datus was started in the project root |
+| `... pair with no semantic model file` | The datasource has several model files and no model file has the ontology's name. Rename the ontology after the model it describes |
+| `the installed dosi-engine binding cannot describe ontologies` | `dosi-engine` is too old. Upgrade to a build whose `Engine` has `describe` and `paths` |
+| `... ontology_mapping_unresolved` | The ontology declares several `ontology_mappings`. Set `agentic_nodes.ontology_analyst.ontology_mapping` |
+| The main agent does not delegate to `ontology_analyst` | It is offered only when the current datasource has an ontology file. Use `/agent ontology_analyst` or `@Agent ontology_analyst` |
+
 ## Usage
 
 Ask in the main chat. When the datasource has an ontology, the main agent delegates suitable questions automatically:
