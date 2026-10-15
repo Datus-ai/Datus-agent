@@ -182,7 +182,7 @@ def _read_artifact_files(
                 # Symlink (or other indirection) escapes the artifact root —
                 # drop silently rather than leak content from outside.
                 continue
-            entries.append({"path": rel, "content": resolved.read_text(encoding="utf-8")})
+            entries.append({"path": rel, "content": resolved.read_bytes().decode("utf-8")})
     entries.sort(key=lambda entry: entry["path"])
     return entries
 

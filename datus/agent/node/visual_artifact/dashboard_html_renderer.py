@@ -61,7 +61,8 @@ _TEMPLATE_PATH = Path(__file__).parent / "templates" / "dashboard_index.html"
 # ``IDashboardDetail`` share one shape.
 _DASHBOARD_ARTIFACT_DIRS: Dict[str, Tuple[Tuple[str, ...], bool]] = {
     "render": ((".jsx", ".js", ".css", ".json"), True),
-    "queries": ((".sql.j2", ".params.json"), False),
+    "queries": ((".sql.j2", ".params.json", ".metric.json"), False),
+    "models": ((".yaml", ".yml", ".json"), False),
 }
 
 # Same shape as ``DASHBOARD_SLUG_RE`` in
