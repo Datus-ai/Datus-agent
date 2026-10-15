@@ -4814,6 +4814,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#043" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        0.4.3
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#042" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -5191,6 +5202,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#043" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        0.4.3
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#042" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -5548,6 +5570,32 @@
 
 <h1 id="release-notes">Release notes<a class="headerlink" href="#release-notes" title="Permanent link">&para;</a></h1>
 <h2 id="04">0.4<a class="headerlink" href="#04" title="Permanent link">&para;</a></h2>
+<h3 id="043">0.4.3<a class="headerlink" href="#043" title="Permanent link">&para;</a></h3>
+<p><strong>New Features</strong></p>
+<ul>
+<li><strong>SQL Lineage Analysis</strong> - <code>/init</code> statically analyzes dependencies and joins in SQL scripts and SQL embedded in Python DAGs. It combines project documentation with database schema checks to generate an <code>AGENTS.md</code> project map and knowledge files for each business domain. <a href="https://github.com/Datus-ai/Datus-agent/pull/1471">#1471</a> <a href="https://docs.datus.ai/0.4/skills/init/">Init</a></li>
+</ul>
+<p><strong>Enhancements</strong></p>
+<ul>
+<li><strong>Dosi Embedded Directly in the Agent</strong> - The Agent pins <code>dosi-engine==0.1.13</code> to handle metric discovery, querying, attribution, validation, and Explorer editing. External semantic adapter selection and the legacy <code>gen_metrics</code> / <code>gen_semantic_model</code> workflows are removed. <a href="https://github.com/Datus-ai/Datus-agent/pull/1475">#1475</a> <a href="https://github.com/Datus-ai/Datus-agent/pull/1503">#1503</a> <a href="https://docs.datus.ai/0.4/semantic/dosi_engine/">Dosi Semantic Engine</a></li>
+<li><strong>Initialization Reads Schema Metadata and Writes Sourced Facts</strong> - <code>/init</code> now reads only schema metadata: table lists, column information, and DDL. It no longer queries table data. Conclusions that require inference appear as pending questions at the end of the reply and are written only after you confirm them. The bundled skill also replaces fixed steps with concise, goal-oriented guidance. <a href="https://github.com/Datus-ai/Datus-agent/pull/1504">#1504</a> <a href="https://docs.datus.ai/0.4/skills/init/">Init</a></li>
+<li><strong>More Complete Metric Filters, Parameter Discovery, and Pagination</strong> - <code>context_filter</code> controls the population before aggregation and window calculations. <code>get_metric</code> returns parameter types, defaults, and allowed values. Result pagination accounts for both row count and content size, reducing oversized responses from wide rows. <a href="https://github.com/Datus-ai/Datus-agent/pull/1481">#1481</a> <a href="https://github.com/Datus-ai/Datus-agent/pull/1488">#1488</a> <a href="https://github.com/Datus-ai/Datus-agent/pull/1478">#1478</a> <a href="https://docs.datus.ai/0.4/knowledge_base/metrics/">Metrics</a></li>
+<li><strong>Broader MCP Tool Coverage and Policy Enforcement</strong> - MCP adds tools for semantic queries, documentation search, date parsing, read-only file access, and database migration assistance. MCP calls apply policy transformations, and file access enforces strict mode. The duplicate <code>context_search_tools.get_metrics</code> is removed in favor of <code>semantic_tools.get_metric</code>. <a href="https://github.com/Datus-ai/Datus-agent/pull/1470">#1470</a> <a href="https://github.com/Datus-ai/Datus-agent/pull/1479">#1479</a> <a href="https://docs.datus.ai/0.4/integration/mcp/">MCP Integration</a>. Dedicated documentation for registering the new tools is not yet available.</li>
+<li><strong>Standalone Web Pages Upgraded to 2.0.x and Packaging Fixed</strong> - Chatbot and Artifact Renderer use <code>~2.0.0</code>, with React loading completed. Packaging failures caused by Artifact file API changes are fixed, and nightly page validation and failure classification are updated. <a href="https://github.com/Datus-ai/Datus-agent/pull/1495">#1495</a></li>
+</ul>
+<p><strong>Bug Fixes</strong></p>
+<ul>
+<li><strong>Subject Tree Stays Consistent With Semantic YAML</strong> - Directories containing metrics can now be deleted. A new reconcile API synchronizes indexes after files are edited, moved, or deleted, removing stale metrics and directories left empty by the operation. <a href="https://github.com/Datus-ai/Datus-agent/pull/1464">#1464</a></li>
+<li><strong>Session History, Interaction Recovery, and User Isolation</strong> - Session history restores completed <code>ask_user</code> questions and answers, subagent execution steps, and saved tool durations. Subsessions are isolated by user and parent session, an empty <code>session_id</code> correctly creates a new session, and expired interactions return clear errors. <a href="https://github.com/Datus-ai/Datus-agent/pull/1462">#1462</a> <a href="https://github.com/Datus-ai/Datus-agent/pull/1472">#1472</a> <a href="https://github.com/Datus-ai/Datus-agent/pull/1473">#1473</a> <a href="https://github.com/Datus-ai/Datus-agent/pull/1476">#1476</a> <a href="https://github.com/Datus-ai/Datus-agent/pull/1499">#1499</a></li>
+<li><strong>Database Dialect Skills Follow the Bound Connection</strong> - Dialect skills are injected automatically only into nodes with database tools bound. Switching dialects or adding or removing database tools refreshes the system prompt snapshot, preventing reuse of prompts from an old connection. <a href="https://github.com/Datus-ai/Datus-agent/pull/1496">#1496</a></li>
+</ul>
+<p><strong>Upgrade Notes</strong></p>
+<ul>
+<li><strong>Migrate Legacy Semantic Configuration and Calls</strong> - <code>agent.services.semantic_layer</code> and project-level <code>semantic</code> configuration are ignored with a warning. Use <code>semantic_modeling</code> for modeling and replace <code>context_search_tools.get_metrics</code> in custom tool configurations with <code>semantic_tools.get_metric</code>. <a href="https://github.com/Datus-ai/Datus-agent/pull/1475">#1475</a> <a href="https://github.com/Datus-ai/Datus-agent/pull/1479">#1479</a> <a href="https://docs.datus.ai/0.4/semantic/dosi_engine/">Dosi</a> <a href="https://docs.datus.ai/0.4/integration/mcp/">MCP</a></li>
+<li><strong>Update Dependency Locks</strong> - PyArrow increases to <code>&gt;=23.0.1</code> and FastEmbed to <code>0.8.1</code>. The lockfile resolves Pillow to <code>12.3.0</code> and python-dotenv to <code>1.2.2</code>; pandas constraints depend on the Python version. The SQLAlchemy adapter also removes its old PyArrow upper bound, with version <code>0.1.9</code> released. <a href="https://github.com/Datus-ai/Datus-agent/pull/1465">#1465</a> <a href="https://github.com/Datus-ai/Datus-agent/pull/1474">#1474</a> <a href="https://github.com/Datus-ai/datus-db-adapters/pull/147">datus-db-adapters#147</a></li>
+<li><strong>Existing Session Compatibility Limits</strong> - Subsessions in the old shared directory are not migrated automatically, so restoring them after an upgrade may report that the session cannot be found. Actual tool durations that were never saved cannot be recovered. <a href="https://github.com/Datus-ai/Datus-agent/pull/1476">#1476</a> <a href="https://github.com/Datus-ai/Datus-agent/pull/1499">#1499</a></li>
+<li><strong>Update the Spider2 Benchmark Data Location</strong> - The Git submodule is removed. Prepare the data separately under <code>{agent.home}/benchmark/spider2/</code>. <a href="https://github.com/Datus-ai/Datus-agent/pull/1477">#1477</a> <a href="https://docs.datus.ai/0.4/benchmark/benchmark_manual/">Benchmark Manual</a></li>
+</ul>
 <h3 id="042">0.4.2<a class="headerlink" href="#042" title="Permanent link">&para;</a></h3>
 <p><strong>New Features</strong></p>
 <ul>
