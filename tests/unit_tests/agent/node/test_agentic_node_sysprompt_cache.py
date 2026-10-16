@@ -28,6 +28,7 @@ real :class:`SessionManager` over ``tmp_path`` — no LLM, no network.
 
 from __future__ import annotations
 
+import hashlib
 import re
 from pathlib import Path
 from types import SimpleNamespace
@@ -273,6 +274,22 @@ def snapshot_db_tools(tmp_path):
 
 
 class TestBoundDatabaseSkillSnapshot:
+    def test_same_named_skill_update_rebuilds_with_current_body(
+        self, session_manager, snapshot_skills, snapshot_db_tools
+    ):
+        node = _DialectSnapshotNode(
+            session_manager, _agent_config(), snapshot_skills, db_func_tool=snapshot_db_tools["sqlite_a"]
+        )
+        first = node._get_session_system_prompt("1.2")
+        skill = snapshot_skills.get_skill("db-sqlite-sql")
+        path = skill.location / "SKILL.md"
+        path.write_text(path.read_text().replace("Instructions", "Updated rules"))
+        second = node._get_session_system_prompt("1.2")
+        assert second != first and "Updated rules for db-sqlite-sql" in second
+        assert node.build_count == 2
+        assert node._get_session_system_prompt("1.2") == second
+        assert node.build_count == 2
+
     @pytest.mark.parametrize(
         ("before", "after"),
         [("sqlite_a", "duckdb"), ("duckdb", "sqlite_a"), ("sqlite_a", None), (None, "sqlite_a")],
@@ -375,6 +392,7 @@ class TestSnapshotMeta:
             "model_name": "openai:gpt-4.1",
             "language": "",
             "database_skill": "",
+            "injected_skills_sha256": hashlib.sha256(b"").hexdigest(),
         }
 
     def test_the_template_is_part_of_the_identity(self, session_manager):

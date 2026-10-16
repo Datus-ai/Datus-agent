@@ -1118,13 +1118,12 @@ class SemanticTools:
         """
         Get full detail for one metric, including its queryable dimensions.
 
-        Use it after list_metrics has narrowed the candidates down; list_metrics
-        omits this detail because it is large and only matters per chosen metric.
+        Use an exact name from the selected model or the metric catalog.
         Describes one metric per call — issue the calls in parallel to describe
         several.
 
         Args:
-            name: Metric name to describe, exactly as returned by list_metrics
+            name: Exact metric name from the selected model or metric catalog.
             path: Optional subject tree path (e.g., ["Finance", "Revenue"])
 
         Returns:
@@ -1157,9 +1156,7 @@ class SemanticTools:
         if not name:
             return FuncToolResult(
                 success=0,
-                error=(
-                    "get_metric requires a metric name. Call list_metrics first and pass a name exactly as returned."
-                ),
+                error="get_metric requires a metric name. Use an exact name from the selected model or metric catalog.",
             )
 
         try:
@@ -1171,7 +1168,7 @@ class SemanticTools:
         if metric is None:
             return FuncToolResult(
                 success=0,
-                error=f"Unknown metric {name!r}. Call list_metrics for the available names.",
+                error=f"Unknown metric {name!r}. Check the exact names in the selected model or metric catalog.",
             )
 
         try:
@@ -1320,7 +1317,7 @@ class SemanticTools:
                 success=0,
                 error=(
                     "query_metrics requires at least one metric name. "
-                    "Call list_metrics first and pass one or more metric names exactly as returned."
+                    "Pass exact names from the selected model or metric catalog."
                 ),
             )
         if params is not None and not isinstance(params, dict):
@@ -1464,7 +1461,11 @@ class SemanticTools:
         semantic_model_name: str = "",
     ) -> FuncToolResult:
         """
-        Validate Dosi semantic models (requires runtime).
+        Check model structure, references and metric compilation (requires runtime).
+
+        This does not execute business queries or compare values against a baseline.
+        Use query_metrics for execution, or verify_semantic_outputs when available
+        for execution and numerical comparison against a trusted reference.
 
         After successful validation, the runtime is reloaded to pick up any new
         metrics or semantic model changes. This ensures that subsequent calls to

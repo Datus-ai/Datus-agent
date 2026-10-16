@@ -3,10 +3,12 @@
 
 """Unit tests for datus/tools/func_tool/semantic_discovery_tools.py"""
 
+from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
+import sqlglot
 
 from datus.tools.func_tool.base import FuncToolResult
 from datus.tools.func_tool.semantic_discovery_tools import SemanticDiscoveryTools
@@ -29,7 +31,6 @@ def _make_tools(
     db_tool: MagicMock | None = None,
     enable_semantic_model_profiler: bool = False,
     source_sql_provider=None,
-    compact_source_inspection: bool = False,
 ) -> SemanticDiscoveryTools:
     if db_tool is None:
         db_tool = _make_db_tool()
@@ -37,7 +38,6 @@ def _make_tools(
         db_tool=db_tool,
         enable_semantic_model_profiler=enable_semantic_model_profiler,
         source_sql_provider=source_sql_provider,
-        compact_source_inspection=compact_source_inspection,
     )
 
 
@@ -47,16 +47,138 @@ def _make_tools(
 
 
 class TestInspectSemanticSources:
+    def test_sql_analysis_without_database_and_host_pinned_file_provenance(self, tmp_path):
+        source = tmp_path / "original.sql"
+        source.write_text("SELECT COUNT(*) n FROM orders")
+        tools = SemanticDiscoveryTools(root_path=str(tmp_path))
+        assert {t.name for t in tools.available_tools()} == {"inspect_semantic_sources", "get_semantic_source_evidence"}
+        tools.pin_source_files(["original.sql"])
+        result = tools.inspect_semantic_sources()
+        statement = result.result["calculation_evidence"]["statements"][0]
+        assert statement["input_kind"] == "original_file"
+        oid = statement["outputs"][0]
+        assert tools.get_semantic_source_evidence([oid]).success
+        tools.inspect_semantic_sources(sql_queries=["SELECT SUM(price) total FROM prices"])
+        assert tools.get_semantic_source_evidence([oid]).success
+        source.write_text("SELECT COUNT(DISTINCT store) n FROM orders")
+        changed = tools.inspect_semantic_sources()
+        assert changed.result["calculation_evidence"]["statements"][0]["input_kind"] == "file"
+        assert not tools.get_semantic_source_evidence([oid]).success
+        assert not tools.get_semantic_source_evidence(123).success
+        tools.reset_request_cache()
+        assert not tools._original_file_digests
+
+    def test_parallel_inspections_keep_all_inline_sources_and_coherent_metadata_cache(self):
+        db = _make_db_tool()
+        db.get_table_ddl.return_value = FuncToolResult(result={"definition": "CREATE TABLE orders(v INT)"})
+        db.describe_table.return_value = FuncToolResult(result={"columns": [{"name": "v"}]})
+        tools = _make_tools(db)
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            results = list(
+                pool.map(
+                    lambda sql: tools.inspect_semantic_sources(sql_queries=[sql]),
+                    ["SELECT COUNT(*) n FROM orders", "SELECT SUM(v) total FROM orders"],
+                )
+            )
+        assert all(result.success for result in results)
+        snapshot = tools.source_snapshot()
+        assert len(snapshot["analysis"]["statements"]) == 2
+        assert db.describe_table.call_count == 1
+
+    def test_details_expand_count_rowset_and_distinct_without_reparsing(self):
+        db = _make_db_tool()
+        db.get_table_ddl.return_value = FuncToolResult(result={"definition": "CREATE TABLE orders(store TEXT)"})
+        db.describe_table.return_value = FuncToolResult(result={"columns": [{"name": "store"}]})
+        tools = _make_tools(db)
+        response = tools.inspect_semantic_sources(
+            sql_queries=["SELECT COUNT(*) n FROM (SELECT DISTINCT store FROM orders WHERE store IS NOT NULL) d"]
+        )
+        inventory = response.result["calculation_evidence"]
+        assert len(inventory["outputs"]) == 1 and len(inventory["queries"]) == 1
+        calls = db.describe_table.call_count
+        expanded = tools.get_semantic_source_evidence([inventory["outputs"][0]["id"]])
+        assert expanded.success
+        assert len(expanded.result["queries"]) == 2
+        assert any(o["name"] == "store" for o in expanded.result["outputs"])
+        condition = expanded.result["queries"][0]["filters"]["where"].removeprefix("WHERE ")
+        assert sqlglot.parse_one(condition) == sqlglot.parse_one("store IS NOT NULL")
+        assert db.describe_table.call_count == calls
+
+    def test_details_include_computed_filter_and_join_keys(self):
+        tools = _make_tools()
+        response = tools.inspect_semantic_sources(
+            sql_queries=[
+                "SELECT COUNT(*) n FROM "
+                "(SELECT CASE WHEN state=1 THEN 1 ELSE 0 END eligible, store+1 join_key FROM orders) c "
+                "JOIN shops s ON c.join_key=s.id WHERE c.eligible=1"
+            ]
+        )
+        output_ids = response.result["calculation_evidence"]["statements"][0]["outputs"]
+        expanded = tools.get_semantic_source_evidence(output_ids)
+        by_name = {o["name"]: o for o in expanded.result["outputs"]}
+        assert "CASE WHEN state = 1" in by_name["eligible"]["expression"]
+        assert by_name["join_key"]["expression"] == "store + 1"
+
+    def test_sql_file_sources_are_deduplicated_refreshed_and_analyzed_without_execution(self, tmp_path):
+        db = _make_db_tool()
+        db.get_table_ddl.return_value = FuncToolResult(result={"definition": "CREATE TABLE orders(k INT, v INT)"})
+        db.describe_table.return_value = FuncToolResult(result={"columns": [{"name": "k"}, {"name": "v"}]})
+        source = tmp_path / "etl.sql"
+        sql = "SELECT k,SUM(v) n FROM orders WHERE k IN (1,2) GROUP BY k; SELECT COUNT(*) n FROM orders"
+        source.write_text(sql)
+        tools = SemanticDiscoveryTools(
+            db, root_path=str(tmp_path), source_sql_provider=lambda: [{"name": "provided", "sql": sql}]
+        )
+        first = tools.inspect_semantic_sources(sql_files=["etl.sql"], sql_queries=[sql])
+        assert first.success and first.result["source_sql_count"] == 1
+        assert len(first.result["calculation_evidence"]["statements"]) == 2
+        aliases = first.result["sources"][0]["aliases"]
+        assert aliases[:2] == ["provided", "etl.sql"] and aliases[2].startswith("inline_")
+        source.write_text("SELECT COUNT(DISTINCT k) n FROM orders")
+        changed = tools.inspect_semantic_sources(sql_files=["etl.sql"])
+        assert changed.result["source_revision"] != first.result["source_revision"]
+        assert changed.result["source_sql_count"] == 2
+        assert len(changed.result["calculation_evidence"]["statements"]) == 3
+        assert db.get_table_ddl.call_count == 1 and db.describe_table.call_count == 1
+        db.read_query.assert_not_called()
+
+    def test_failed_file_input_is_reported_and_does_not_reuse_old_file(self, tmp_path):
+        db = _make_db_tool()
+        db.get_table_ddl.return_value = FuncToolResult(result={"definition": "CREATE TABLE t(v INT)"})
+        db.describe_table.return_value = FuncToolResult(result={"columns": [{"name": "v"}]})
+        source = tmp_path / "etl.sql"
+        source.write_text("SELECT SUM(v) n FROM t")
+        tools = SemanticDiscoveryTools(db, root_path=str(tmp_path))
+        assert tools.inspect_semantic_sources(sql_files=["etl.sql"]).result["source_sql_count"] == 1
+        source.unlink()
+        result = tools.inspect_semantic_sources(sql_files=["etl.sql"])
+        assert not result.result["complete"] and result.result["source_sql_count"] == 0
+        assert result.result["issues"][0]["reason"] == "source_file_unavailable"
+        blocked = tools.inspect_semantic_sources(sql_files=[str(tmp_path.parent / "outside.sql")])
+        assert "outside the readable workspace" in blocked.result["issues"][0]["error"]
+
+    def test_absolute_and_relative_file_paths_replace_the_same_source(self, tmp_path):
+        source = tmp_path / "etl.sql"
+        source.write_text("SELECT COUNT(*) n FROM orders")
+        tools = SemanticDiscoveryTools(_make_db_tool(), root_path=str(tmp_path))
+        tools.inspect_semantic_sources(sql_files=["etl.sql"])
+        source.write_text("SELECT COUNT(DISTINCT store) n FROM orders")
+        refreshed = tools.inspect_semantic_sources(sql_files=[str(source)])
+        assert refreshed.result["source_sql_count"] == 1
+        assert refreshed.result["calculation_evidence"]["outputs"][0]["expression"] == "COUNT(DISTINCT store)"
+        source.unlink()
+        assert tools.inspect_semantic_sources(sql_files=["etl.sql"]).result["source_sql_count"] == 0
+
     @pytest.mark.parametrize("enable_profiler", [False, True])
     def test_exposes_source_inspection_and_optional_profiling(self, enable_profiler):
         tools = _make_tools(enable_semantic_model_profiler=enable_profiler)
 
-        expected = {"inspect_semantic_sources"}
+        expected = {"inspect_semantic_sources", "get_semantic_source_evidence"}
         if enable_profiler:
             expected.add("profile_semantic_model_evidence")
         assert {tool.name for tool in tools.available_tools()} == expected
 
-    def test_compact_result_preserves_ddl_keys_schema_and_relationship_evidence(self):
+    def test_preserves_ddl_keys_schema_and_scoped_calculation_evidence(self):
         db_tool = _make_db_tool()
         definitions = {
             "orders": (
@@ -91,7 +213,6 @@ class TestInspectSemanticSources:
         db_tool.describe_table.side_effect = schema
         tools = _make_tools(
             db_tool,
-            compact_source_inspection=True,
             source_sql_provider=lambda: [
                 {
                     "name": "revenue_by_region",
@@ -117,7 +238,10 @@ class TestInspectSemanticSources:
         assert customers["schema"]["columns"][1] == {"name": "region", "type": "VARCHAR"}
         assert orders["ddl"] == {"definition": definitions["orders"]}
         assert customers["ddl"] == {"definition": definitions["customers"]}
-        assert "sql_usage" not in orders
+        evidence = result.result["calculation_evidence"]
+        assert evidence["outputs"][-1]["expression"] == "SUM(o.amount)"
+        details = tools.get_semantic_source_evidence([evidence["outputs"][-1]["id"]])
+        assert details.result["queries"][0]["joins"][0]["condition"] == "o.customer_id = c.id"
         assert db_tool.get_table_ddl.call_count == 2
         assert db_tool.describe_table.call_count == 2
 
@@ -144,7 +268,7 @@ class TestInspectSemanticSources:
             result={"columns": [{"name": "id", "type": "INT"}]},
         )
 
-        result = _make_tools(db_tool, compact_source_inspection=True).inspect_semantic_sources(["orders", "orders"])
+        result = _make_tools(db_tool).inspect_semantic_sources(["orders", "orders"])
 
         assert result.success == 1
         assert len(result.result["tables"]) == 1
@@ -162,7 +286,7 @@ class TestInspectSemanticSources:
         )
         db_tool.describe_table.return_value = FuncToolResult(success=0, error="Describe unavailable")
 
-        result = _make_tools(db_tool, compact_source_inspection=True).inspect_semantic_sources(["orders"])
+        result = _make_tools(db_tool).inspect_semantic_sources(["orders"])
 
         assert result.success == 1
         assert result.result["tables"] == [
@@ -174,12 +298,12 @@ class TestInspectSemanticSources:
         ]
 
     def test_rejects_empty_table_scope(self):
-        result = _make_tools(compact_source_inspection=True).inspect_semantic_sources([])
+        result = _make_tools().inspect_semantic_sources([])
 
         assert result.success == 0
         assert "at least one" in result.error
 
-    def test_detailed_mode_retains_sql_usage_for_existing_authoring_nodes(self):
+    def test_retains_exact_calculation_instead_of_lossy_usage_statistics(self):
         db_tool = _make_db_tool()
         db_tool.get_table_ddl.return_value = FuncToolResult(
             success=1,
@@ -198,7 +322,8 @@ class TestInspectSemanticSources:
 
         assert result.success == 1
         assert result.result["tables"][0]["ddl"] == {"definition": "CREATE TABLE orders (amount DECIMAL)"}
-        assert result.result["tables"][0]["sql_usage"]["field_usage_statistics"]["amount"]["aggregate_count"] == 1
+        assert result.result["calculation_evidence"]["outputs"][0]["expression"] == "SUM(amount)"
+        assert result.result["calculation_evidence"]["outputs"][0]["kind"] == "aggregate"
 
 
 # ---------------------------------------------------------------------------

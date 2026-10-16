@@ -15,6 +15,26 @@
 
 YAML 文件是唯一事实来源。Knowledge Base 中的记录是从 YAML 派生出的可搜索索引，不是另一份需要单独维护的模型。
 
+## 来源证据和业务结果校验
+
+生成范围由用户描述和指定文档决定。SQL 提供计算证据和必要依赖；只有明确要求时才扩展覆盖其他旧计算。请求口径与 SQL 冲突时，交互式运行会询问用户；非交互式运行对冲突定义采用 SQL，并说明选择，生成范围仍以请求为准。
+
+可以提供表、SQL 文本或 UTF-8 SQL 文件路径。一份文件支持多条以分号分隔的语句和注释。`inspect_semantic_sources` 接收 `tables`、`sql_files`、`sql_queries`，以及可选的 `catalog`、`database`、`schema_name`；当前请求已有的结构化 SQL 自动纳入。工具遵守工作目录的读取权限，使用当前数据源方言取得实库元数据并静态分析，不执行 ETL 写入。
+
+入口先返回最终查询／落表输出的清单，使用 `get_semantic_source_evidence(output_ids=[...])` 批量展开相关计算，完整分析不会因按需读取而省略。证据按查询层和输出依赖组织，保留完整公式、业务常量、布尔条件及其发生位置、分组、关联、窗口和 UNION 分支。解析和元数据缺口带有来源位置。输出字段清单用于辅助建模，不会自动扩展成额外指标；动态 SQL、缺失的上游定义和未确认粒度会明确记录。
+
+完整范围的建模先用 `validate_semantic` 检查模型结构、引用和指标编译，它不执行实际业务查询。再为每个请求的输出选择一条查询路径：没有可信基准时直接调用 `query_metrics`；有可信原 SQL／落表基准时调用 `verify_semantic_outputs`，它内部查询指标一次，无须提前单独查询。必填的 `source_output_id` 引用原 SQL 的最终输出，映射完整原计算分组到 Dosi 查询维度，再对比原 SELECT 或已确认目标列的完整分组集合和数值。已存结果不会为凑齐共有维度而重新 SUM。两边需要采用相同的数据范围、统计人群和参数；对基准结果行的过滤不会改变窗口计算的输入人群。
+
+dataset 和 metric 写入工具的 `datasets_json`、`metrics_json` 优先接收结构化数组，兼容旧的 JSON 编码字符串。DATUS 扩展的 `data` 仍按 OSI 规范使用 JSON 字符串。
+
+基准对照先执行一次指标查询，再确认参考粒度、维度映射和范围，满足条件后比较完整结果。唯一的同名维度对应关系可自动补齐，别名或歧义需要显式映射。数值对照支持已确认的结果行过滤和完整时间桶；非空的 `context_filter` 仍会执行指标查询，但数值状态记为未验证（`input_population_unconfirmed`），不能为了通过而删除必要的输入过滤。查询状态与数值状态分别记录；根据 `category`、`reason_code`、`next_action` 修正问题，证据不足时保留原因，不反复修改模型。相同受阻检查再次提交时返回已有诊断，不再查询。
+
+数值基准来自调用方结构化传入的 `source_queries`、附加的 SQL 引用、用户消息中的原始 SQL，或生成前指定的原始文件。文件可通过 `SemanticNodeInput.source_sql_files` 传入，也可直接在用户消息中引用本地 `.sql` 路径；含空格的路径用行内代码、引号或 Markdown 链接表示。宿主程序在首次模型调用前按工作区读取规则固定内容，检查时自动纳入，修改后的文件降为诊断证据。URL、通配符和 SQL 代码里的路径不自动登记。其他 `sql_files` 和新增 `sql_queries` 用于诊断，传给分析工具的路径不会自动升级为可信基准。先完成描述再校验。仅修改描述或 AI 上下文不会使业务检查失效；发布前的结构校验仍绑定文件完整内容。计算定义或相关来源变化后，旧业务结果失效。
+
+没有可信基准时由 `query_metrics` 检查实际查询，数值正确性仍未验证。空结果、全 NULL、重复粒度、分组键缺失和来源不可用都不能证明一致。单项检查后，必要的组合查询有基准时使用 `companion_metrics` 对照，无基准时使用 `query_metrics(metrics=[...])`。最终派生指标会同时执行其依赖链。返回结果的 `business_validation` 记录基准对照，分别包含查询状态 `query_status` 和数值状态 `status`（`passed`、`failed`、`unverified`），以及原因和少量差异样例；空列表表示没有基准对照记录，单纯查询的结果由 `query_metrics` 返回。计算定义或相关来源证据变化后，旧结果失效。仅生成 dataset 的任务保持对应范围。
+
+`write_semantic_model_plan_file` 仅用于保存供人工审阅的计划图，不修改模型。需要计划文件的工作流在节点现有 `tools` 配置中显式列出 `semantic_tools.write_semantic_model_plan_file` 才会挂载它；仅配置类别或通配符不会启用，普通建模不需要计划文件。工具说明给出了完整计划对象格式，该格式与 OSI 模型对象不同。
+
 ## 可用范围和支持的数据库
 
 语义创作由内置 Dosi 引擎提供。直接支持的数据库范围取 `osi-engine` 已实现 SQL 方言与 `datus-db-adapters` 可安装数据库产品的交集：
@@ -118,11 +138,11 @@ datus --datasource duckdb_demo
 4. 校验完整目标文件，并在用户要求时 dry-run 代表性的指标查询。
 5. 将通过校验的 YAML 完整同步到 Knowledge Base。
 
-每次只编辑一个语义模型。如果现有模型都不合适，则按业务域创建新模型，而不是为每张物理表各建一个文件。只有查询结果本身是稳定、可复用的业务实体，或用户明确要求复现某条查询时，才会把 SQL 查询作为 dataset 的 `source`。
+每次只编辑一个语义模型。如果现有模型都不合适，则按业务域创建新模型。dataset 默认直接绑定完整名称的物理表或视图；物理 dataset 和独立的单表指标不要求主键或唯一键。用户提供的 SQL 是需要保留的计算口径证据，不规定 dataset 必须采用 SQL。只有某项具体行集转换无法由原生 field、relationship、metric 等能力忠实表达，或用户明确指定 query-backed 来源时，才使用范围最小的 SQL dataset；可独立表达的输入继续使用物理 dataset。
 
 最终结果会报告 `generated`、`skipped` 或 `blocked`。如果结果为 blocked，会说明缺少 schema 证据、目标不明确、定义无效或其他无法安全写入的原因。
 
-键声明只以源 DDL 为准：物理主键写入 `primary_key`，唯一约束或覆盖整表的普通列唯一索引写入 `unique_keys`，保留复合键的列顺序。语义建模不会扫描表数据来发现或验证键。DDL 未提供可用键时，省略该键及依赖它的新关系或指标，说明省略原因，并继续完成其余建模。最终模型仍执行 `validate_semantic` 校验。
+键声明只以源 DDL 为准：物理主键写入 `primary_key`，唯一约束或覆盖整表的普通列唯一索引写入 `unique_keys`，保留复合键的列顺序。语义建模不会扫描表数据来发现或验证键。缺少键证据时，省略该键以及要求目标键唯一的普通 `many_to_one` 关系，物理来源仍可使用。原生 `many_to_many` 事实配对按当前 DATUS 规则分别聚合后合并，不要求目标行唯一。若某个输出仍无法忠实表达，说明该输出的限制，同时保留独立的物理 dataset 和指标。把 JOIN 移入 SQL 不会证明数据唯一。最终模型仍执行 `validate_semantic` 校验。
 
 ## 生成文件的位置和组织方式
 
@@ -137,6 +157,8 @@ subject/semantic_models/<datasource>/<semantic_model>.yml
 ## YAML 规范
 
 Dosi 生成 OSI Core `0.2.0.dev0` YAML。core schema 不允许未知字段，因此 Datus 特有行为必须写在 `custom_extensions` 中，不能随意增加 YAML key。
+
+Authoring skill 默认注入紧凑的 OSI 结构与完整的 DATUS 能力目录。详细规则和示例由当前安装的引擎生成，放入当前会话的数据目录，以只读方式访问。Agent 使用已有的 `read_file` 按需读取对应能力文件，也可读取完整的 core 和 extension 规范。内容变化会生成新的参考文件目录，并使 prompt 缓存失效；无需新增工具或配置加载模式。
 
 通过 semantic modeling 编写的指标，其 DATUS extension 的 JSON `data` 中保存由宿主管理的稳定 `uid`。Semantic modeling 为新指标生成 24 位 CUID2，并在最终校验前补齐目标模型中缺失的标识。更新或重命名同一指标时保留原 `uid`；创建不同指标时省略该字段，由宿主生成。Knowledge Base 的现有 `uid` 字段保存同一个值，来源是 extension，而不是 `locked_metadata`。
 

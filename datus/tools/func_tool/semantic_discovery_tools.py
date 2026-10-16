@@ -9,18 +9,23 @@ This module provides read-only discovery tools for semantic-layer generation,
 including table relationships, column usage evidence, and semantic profiling.
 """
 
+import hashlib
 import json
 import re
+import threading
 import time
 from collections import Counter, defaultdict
 from datetime import date, datetime
 from decimal import Decimal
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
 
 from agents import Tool
 
 from datus.tools.func_tool.base import FuncToolResult
+from datus.tools.func_tool.fs_path_policy import PathAllowlist, PathZone, classify_path
 from datus.utils.loggings import get_logger
+from datus.utils.semantic_sources import SemanticSourceAnalyzer
 from datus.utils.sql_utils import parse_dialect
 
 if TYPE_CHECKING:
@@ -50,7 +55,10 @@ class SemanticDiscoveryTools:
         agent_config: Optional["AgentConfig"] = None,
         sub_agent_name: Optional[str] = None,
         source_sql_provider: Optional[Callable[[], List[Dict[str, Any]]]] = None,
-        compact_source_inspection: bool = False,
+        root_path: Optional[str] = None,
+        path_allowlist: Optional[PathAllowlist] = None,
+        source_file_reader: Optional[Callable[[str], FuncToolResult]] = None,
+        path_allowlist_provider: Optional[Callable[[], Optional[PathAllowlist]]] = None,
     ):
         """
         Initialize semantic discovery tools.
@@ -60,17 +68,62 @@ class SemanticDiscoveryTools:
             enable_semantic_model_profiler: Whether to expose the optional
                 semantic SQL history profiler tool.
         """
+        self._analysis_lock = threading.RLock()
         self.db_tool = db_tool
         self.agent_config = agent_config if agent_config is not None else getattr(db_tool, "agent_config", None)
         self.sub_agent_name = sub_agent_name if sub_agent_name is not None else getattr(db_tool, "sub_agent_name", None)
         self.enable_semantic_model_profiler = enable_semantic_model_profiler
         self.source_sql_provider = source_sql_provider
-        self.compact_source_inspection = compact_source_inspection
+        self.root_path = Path(root_path or ".").expanduser().resolve()
+        self.path_allowlist = path_allowlist
+        self.source_file_reader = source_file_reader
+        self.path_allowlist_provider = path_allowlist_provider
+        self._source_analyzers: Dict[tuple, SemanticSourceAnalyzer] = {}
+        self.source_analysis: Dict[str, Any] = {}
+        self.source_revision = ""
+        self.source_context: Dict[str, str] = {}
+        self._request_source_entries: Dict[str, Dict[str, Any]] = {}
         self._semantic_source_cache: Dict[tuple[str, str, str, str], Dict[str, Any]] = {}
+        self._original_file_digests: Dict[str, str] = {}
 
     def reset_request_cache(self) -> None:
         """Clear source metadata retained during one authoring request."""
-        self._semantic_source_cache.clear()
+        with self._analysis_lock:
+            self._semantic_source_cache.clear()
+            self._source_analyzers.clear()
+            self._request_source_entries.clear()
+            self.source_analysis = {}
+            self.source_revision = ""
+            self.source_context = {}
+            self._original_file_digests.clear()
+
+    def pin_source_files(self, paths: List[str]) -> None:
+        """Host-only: pin caller-designated files before the first model turn."""
+        with self._analysis_lock:
+            for path in paths:
+                identity = str((self.root_path / Path(path).expanduser()).resolve(strict=False))
+                self._original_file_digests[identity] = ""
+                try:
+                    resolved, text = self._read_source_file(path)
+                    self._original_file_digests[str(resolved)] = hashlib.sha256(text.encode()).hexdigest()
+                except (OSError, ValueError, UnicodeError):
+                    logger.warning("Could not pin caller source file %s", path)
+
+    def _read_source_file(self, path):
+        allowlist = self.path_allowlist_provider() if self.path_allowlist_provider else self.path_allowlist
+        resolved = classify_path(path, root_path=self.root_path, allowlist=allowlist)
+        if resolved.zone not in (PathZone.INTERNAL, PathZone.WHITELIST):
+            raise ValueError("SQL file is outside the readable workspace")
+        if self.source_file_reader is not None:
+            read = self.source_file_reader(path)
+            if not read.success or not isinstance(read.result, str):
+                raise ValueError(read.error or "SQL file did not return text")
+            text = read.result.lstrip("\ufeff")
+        else:
+            if resolved.resolved.stat().st_size > 2 * 1024 * 1024:
+                raise ValueError("SQL file exceeds the 2 MiB read limit")
+            text = resolved.resolved.read_text(encoding="utf-8-sig")
+        return resolved.resolved, text
 
     @classmethod
     def _aggregate_classes(cls):
@@ -86,10 +139,9 @@ class SemanticDiscoveryTools:
         from datus.tools.func_tool import trans_to_function_tool
 
         methods_to_convert = []
-        if self.db_tool is not None:
-            methods_to_convert.append(self.inspect_semantic_sources)
-            if self.enable_semantic_model_profiler:
-                methods_to_convert.append(self.profile_semantic_model_evidence)
+        methods_to_convert.extend([self.inspect_semantic_sources, self.get_semantic_source_evidence])
+        if self.db_tool is not None and self.enable_semantic_model_profiler:
+            methods_to_convert.append(self.profile_semantic_model_evidence)
         return [trans_to_function_tool(bound_method) for bound_method in methods_to_convert]
 
     # These compatibility methods remain callable by Python integrations while
@@ -211,133 +263,334 @@ class SemanticDiscoveryTools:
 
     def inspect_semantic_sources(
         self,
-        tables: List[str],
+        tables: Optional[List[str]] = None,
+        sql_files: Optional[List[str]] = None,
+        sql_queries: Optional[List[str]] = None,
         catalog: Optional[str] = "",
         database: Optional[str] = "",
         schema_name: Optional[str] = "",
     ) -> FuncToolResult:
-        """Inspect all semantic-model source tables in one read-only call.
+        """Inspect live tables and exact SQL calculation evidence in one read-only call.
 
         Args:
-            tables: Complete list of physical tables involved in the model.
-            catalog: Optional catalog override.
-            database: Optional database override.
-            schema_name: Optional schema override.
+            tables: Optional physical tables to inspect, including sources not named in SQL.
+            sql_files: UTF-8 SQL files in the readable workspace; each may contain multiple
+                semicolon-separated statements. Statements are analyzed, never executed.
+                Caller-designated files pinned by the host before generation have input_kind
+                original_file and may be comparison baselines while their contents match.
+                Other files have input_kind file and are diagnostic only; passing a path here
+                does not make it trusted. Use returned input_kind, not a guessed trust status.
+            sql_queries: Optional SQL texts for analysis. New inline SQL is diagnostic;
+                only SQL also supplied by the caller is eligible as a comparison baseline.
+            catalog: Default catalog for unqualified table references.
+            database: Default physical database for unqualified references.
+            schema_name: Default schema for unqualified references.
 
-        This tool batches schema and relationship discovery. It reads each
-        table's DDL and enriched schema once per request, uses DDL for declared
-        foreign keys, and mines JOIN evidence from the structured SQL supplied
-        with the current request. Every result retains raw DDL so declared keys,
-        composite-column order, and index conditions remain available alongside
-        enriched schema. Compact results omit SQL-usage statistics. It never searches unrelated
-        reference SQL; historical profiling remains a separate opt-in workflow.
+        Exact request SQL (structured queries, attached SQL and user SQL blocks) is
+        included automatically. Provide tables or at least one
+        SQL source. The current datasource determines the dialect. Each scope retains its
+        complete filters, grouping, joins, ordering and windows; outputs refer to shared
+        scopes and upstream output IDs. Formula constants are preserved. Outputs are
+        authoring evidence, not a mandate to create metrics outside the user's scope.
+        Final output IDs are in result.calculation_evidence.outputs[].id. Select by
+        source statement, output name and expression, and copy the exact ID into
+        verify_semantic_outputs.source_output_id for baseline comparisons.
+        The response inventories final outputs; call get_semantic_source_evidence with
+        relevant output IDs to expand exact dependencies and calculation scopes in batches.
+        All SQL is analyzed regardless of which details are read. `complete=false` and
+        `issues` identify partial evidence. Metadata-only inspection
+        is supported and never claims to establish business calculation definitions.
         """
+        with self._analysis_lock:
+            return self._inspect_sources(tables, sql_files, sql_queries, catalog, database, schema_name)
+
+    def _inspect_sources(self, tables, sql_files, sql_queries, catalog, database, schema_name):
         try:
-            normalized_tables = self._normalize_semantic_source_tables(tables)
+            entries = [{**e, "input_kind": "request"} for e in self._current_source_sql_entries()]
+            input_issues = []
+            unavailable_files = []
+            for path in dict.fromkeys([*self._original_file_digests, *(sql_files or [])]):
+                identity = str((self.root_path / Path(path).expanduser()).resolve(strict=False))
+                try:
+                    resolved, text = self._read_source_file(path)
+                    identity = str(resolved)
+                    original = self._original_file_digests.get(identity) == hashlib.sha256(text.encode()).hexdigest()
+                    entries.append(
+                        {
+                            "name": path,
+                            "identity": identity,
+                            "sql": text,
+                            "input_kind": "original_file" if original else "file",
+                        }
+                    )
+                except (OSError, ValueError, UnicodeError) as exc:
+                    unavailable_files.append(identity)
+                    input_issues.append({"context": path, "reason": "source_file_unavailable", "error": str(exc)})
+            entries.extend(
+                {
+                    "name": "inline_" + hashlib.sha256(text.encode()).hexdigest()[:12],
+                    "sql": text,
+                    "input_kind": "inline",
+                }
+                for text in sql_queries or []
+                if text.strip()
+            )
+            # Re-reading a named file replaces its old content. Byte-identical
+            # sources are analyzed once while all provenance names are retained.
+            for identity in unavailable_files:
+                for kind in ("file", "original_file"):
+                    self._request_source_entries.pop(kind + ":" + identity, None)
+            for entry in entries:
+                kind = "file" if entry["input_kind"] in {"file", "original_file"} else entry["input_kind"]
+                self._request_source_entries[kind + ":" + entry.get("identity", entry["name"])] = entry
+            deduplicated = {}
+            for entry in self._request_source_entries.values():
+                digest = hashlib.sha256(entry["sql"].strip().encode()).hexdigest()
+                if digest not in deduplicated:
+                    deduplicated[digest] = {**entry, "aliases": [entry["name"]]}
+                else:
+                    deduplicated[digest]["aliases"].append(entry["name"])
+                    if entry["input_kind"] in {"request", "original_file"}:
+                        deduplicated[digest]["input_kind"] = entry["input_kind"]
+            entries = list(deduplicated.values())
+            if not tables and not entries and not input_issues:
+                raise ValueError("Provide at least one table, SQL file or SQL query.")
+            dialect = self._source_dialect()
+            from datus.tools.db_tools.capabilities import supports_namespace
+
+            connector = getattr(self.db_tool, "connector", None)
+            if not isinstance(getattr(connector, "dialect", None), str):
+                connector = None
+            prefix = schema_name or ""
+            if not prefix and not supports_namespace("schema", connector=connector, dialect=dialect or ""):
+                if supports_namespace("database", connector=connector, dialect=dialect or ""):
+                    prefix = database or ""
+            self.source_context = {"catalog": catalog or "", "database": database or "", "prefix": prefix}
+            context = (dialect, catalog or "", database or "", schema_name or "")
+            analyzer = self._source_analyzers.setdefault(context, SemanticSourceAnalyzer(dialect, prefix))
+            initial = analyzer.analyze(entries)
+            from sqlglot import expressions as exp
+
+            names = [analyzer._table(exp.to_table(table, dialect=dialect)) for table in tables or []] + initial[
+                "tables"
+            ]
+            normalized_tables = self._normalize_semantic_source_tables(names) if names else []
             inspected_tables = []
-            for table in normalized_tables:
-                cache_key = (
-                    str(catalog or "").strip().casefold(),
-                    str(database or "").strip().casefold(),
-                    str(schema_name or "").strip().casefold(),
-                    self._normalize_identifier(table),
-                )
+            for table in normalized_tables if self.db_tool is not None else []:
+                cache_key = (catalog or "", database or "", schema_name or "", table)
                 inspected = self._semantic_source_cache.get(cache_key)
                 if inspected is None:
                     inspected = {"table_name": table}
-                    ddl_result = self.db_tool.get_table_ddl(table, catalog, database, schema_name)
-                    if ddl_result.success and isinstance(ddl_result.result, dict):
-                        inspected["ddl"] = ddl_result.result
-                    else:
-                        inspected["ddl_error"] = ddl_result.error or "DDL unavailable"
-
-                    schema_result = self.db_tool.describe_table(table, catalog, database, schema_name)
-                    if schema_result.success and isinstance(schema_result.result, dict):
-                        inspected["schema"] = schema_result.result
-                    else:
-                        inspected["schema_error"] = schema_result.error or "Schema unavailable"
+                    ddl = self.db_tool.get_table_ddl(table, catalog, database, schema_name)
+                    inspected.update(
+                        {"ddl": ddl.result}
+                        if ddl.success and isinstance(ddl.result, dict)
+                        else {"ddl_error": ddl.error or "DDL unavailable"}
+                    )
+                    schema = self.db_tool.describe_table(table, catalog, database, schema_name)
+                    inspected.update(
+                        {"schema": schema.result}
+                        if schema.success and isinstance(schema.result, dict)
+                        else {"schema_error": schema.error or "Schema unavailable"}
+                    )
                     self._semantic_source_cache[cache_key] = inspected
                 inspected_tables.append(inspected)
-
-            source_entries = self._current_source_sql_entries()
-            sql_evidence = {}
-            if not self.compact_source_inspection:
-                sql_evidence, parse_errors = self._semantic_profile_sql_evidence(
-                    source_entries,
-                    normalized_tables,
-                    max(len(normalized_tables), 1),
-                )
-            else:
-                parse_errors = []
+            schemas = {
+                table["table_name"]: [c["name"] for c in table["schema"].get("columns", []) if c.get("name")]
+                for table in inspected_tables
+                if "schema" in table
+            }
+            analysis = analyzer.analyze(entries, schemas)
+            analysis["issues"].extend(input_issues)
+            for table in inspected_tables:
+                for key in ("ddl_error", "schema_error"):
+                    if table.get(key):
+                        analysis["issues"].append({"context": table["table_name"], "reason": key, "error": table[key]})
+            analysis["complete"] = not analysis["issues"]
+            self.source_analysis = analysis
+            self.source_revision = hashlib.sha256(
+                json.dumps({"context": context, "analysis": analysis}, sort_keys=True, default=str).encode()
+            ).hexdigest()
             relationships = self._extract_foreign_keys_from_inspected_tables(inspected_tables)
-            tables_lower_map = {self._normalize_identifier(table.split(".")[-1]): table for table in normalized_tables}
-            for entry in source_entries:
-                sql_text = str(entry.get("sql") or "")
-                parsed_expressions = None
-                if self.compact_source_inspection:
-                    try:
-                        parsed_expressions = self._parse_sql(sql_text)
-                    except Exception as exc:
-                        parse_errors.append({"source_sql_name": entry.get("name") or "sql", "error": str(exc)})
-                        continue
-                relationships.extend(
-                    self._extract_join_relationships_from_sql(
-                        sql_text,
-                        tables_lower_map,
-                        parsed_expressions=parsed_expressions,
-                    )
-                )
-            relationships = self._deduplicate_relationships(relationships)
+            # SQL joins are returned in their exact scopes, including OR and transforms.
+            # Name-only candidates remain explicitly unverified metadata hints.
             if not relationships:
                 relationships = self._infer_relationships_from_inspected_tables(inspected_tables)
-
-            public_tables = []
-            for inspected in inspected_tables:
-                public_table = {"table_name": inspected["table_name"]}
-                if inspected.get("ddl") is not None:
-                    public_table["ddl"] = inspected["ddl"]
-                if inspected.get("schema") is not None:
-                    public_table["schema"] = inspected["schema"]
-                else:
-                    public_table["schema_error"] = inspected.get("schema_error") or "Schema unavailable"
-                if inspected.get("ddl_error"):
-                    public_table["ddl_error"] = inspected["ddl_error"]
-                if not self.compact_source_inspection:
-                    table_profile = self._semantic_profile_table_evidence_for(
-                        sql_evidence,
-                        inspected["table_name"],
-                    )
-                    public_table["sql_usage"] = {
-                        "query_count": table_profile.get("query_count", 0),
-                        "field_usage_statistics": table_profile.get("field_usage_statistics", {}),
-                        "aggregate_expressions": table_profile.get("aggregate_expressions", []),
-                        "group_by_expressions": table_profile.get("group_by_expressions", []),
-                        "common_filter_conditions": table_profile.get("common_filter_conditions", []),
+            final_outputs = {oid for statement in analysis["statements"] for oid in statement["outputs"]}
+            output_fields = {"id", "query_id", "name", "kind", "expression", "target_column", "calculation_queries"}
+            result = {
+                "tables": inspected_tables,
+                "relationships": self._deduplicate_relationships(relationships),
+                "source_sql_count": len(entries),
+                "sources": [
+                    {
+                        "name": e["name"],
+                        "aliases": e["aliases"],
+                        "question": e.get("question", ""),
+                        "input_kind": e["input_kind"],
                     }
-                public_tables.append(public_table)
+                    for e in entries
+                ],
+                "source_notes": [c for c in analysis["comments"] if c["kind"] == "header"],
+                "source_revision": self.source_revision,
+                "calculation_evidence": {
+                    "statements": [
+                        {k: v for k, v in statement.items() if k not in {"original_sql", "query_sql"}}
+                        for statement in analysis["statements"]
+                    ],
+                    "queries": [
+                        {k: q[k] for k in ("id", "operation", "group_by", "group_by_outputs", "branches") if k in q}
+                        for q in analysis["queries"]
+                        if any(oid in final_outputs for oid in q["outputs"])
+                    ],
+                    "outputs": [
+                        {k: v for k, v in o.items() if k in output_fields}
+                        for o in analysis["outputs"]
+                        if o["id"] in final_outputs
+                    ],
+                },
+                "evidence_scope": "final_outputs",
+                "detail_tool": "get_semantic_source_evidence",
+                "complete": analysis["complete"],
+                "issues": analysis["issues"],
+                "parse_errors": [i for i in analysis["issues"] if i["reason"] == "parse_error"],
+                "summary": f"Inspected {len(inspected_tables)} tables and {len(analysis['outputs'])} SQL outputs",
+            }
+            return FuncToolResult(result=result)
+        except Exception as exc:
+            return FuncToolResult(success=0, error=str(exc))
 
+    def get_semantic_source_evidence(self, output_ids: List[str]) -> FuncToolResult:
+        """Expand requested SQL outputs to their exact calculation and row-set evidence.
+
+        Args:
+            output_ids: Output IDs returned by inspect_semantic_sources. Batch the
+                outputs needed for the current business definitions. References can
+                name inner outputs returned by an earlier expansion as well.
+
+        Reads the current request's analyzed graph, without file/database access or
+        reparsing. Returns dependency outputs, grouping keys, query populations and
+        source locations. Unrelated projection fields stay in the final inventory;
+        DISTINCT row sets include all projections since they affect cardinality.
+        """
+        with self._analysis_lock:
+            return self._get_source_evidence(output_ids)
+
+    def _get_source_evidence(self, output_ids):
+        outputs = {o["id"]: o for o in self.source_analysis.get("outputs", [])}
+        queries = {q["id"]: q for q in self.source_analysis.get("queries", [])}
+        if not isinstance(output_ids, list) or not output_ids or any(not isinstance(oid, str) for oid in output_ids):
+            return FuncToolResult(success=0, error="output_ids must be a nonempty array of output ID strings")
+        unknown = [oid for oid in output_ids if oid not in outputs]
+        if unknown:
             return FuncToolResult(
-                result={
-                    "tables": public_tables,
-                    "relationships": relationships,
-                    "source_sql_count": len(source_entries),
-                    "parse_errors": parse_errors[:5],
-                    "summary": (
-                        f"Inspected {len(inspected_tables)} table(s) and found "
-                        f"{len(relationships)} relationship candidate(s) from the current request"
-                    ),
-                }
+                success=0,
+                error="Unknown or changed source outputs; inspect the affected sources again",
+                result={"unknown_output_ids": unknown},
             )
-        except Exception as e:
-            return FuncToolResult(success=0, error=str(e))
+        selected_outputs, selected_queries = set(), set()
+
+        def include_output(oid):
+            if oid in selected_outputs:
+                return
+            selected_outputs.add(oid)
+            output = outputs[oid]
+            include_query(output["query_id"])
+            for dependency in output["dependencies"]:
+                include_output(dependency)
+
+        def include_query(qid):
+            if qid in selected_queries or qid not in queries:
+                return
+            selected_queries.add(qid)
+            query = queries[qid]
+            for oid in query.get("dependencies", []):
+                include_output(oid)
+            for oid in query.get("group_by_outputs", []):
+                include_output(oid)
+            if query.get("distinct"):
+                for oid in query["outputs"]:
+                    include_output(oid)
+            for source in query.get("inputs", []):
+                if source.get("query_id"):
+                    include_query(source["query_id"])
+            for child in query.get("branches", []):
+                include_query(child)
+            for child in query.get("subqueries", []):
+                include_query(child)
+                for oid in queries[child]["outputs"]:
+                    include_output(oid)
+
+        for oid in output_ids:
+            include_output(oid)
+        selected_statements = {queries[qid]["statement_id"] for qid in selected_queries}
+        selected_sources = {s["source"] for s in self.source_analysis["statements"] if s["id"] in selected_statements}
+        return FuncToolResult(
+            result={
+                "source_revision": self.source_revision,
+                "requested_outputs": output_ids,
+                "outputs": [o for oid, o in outputs.items() if oid in selected_outputs],
+                "queries": [
+                    {**q, "outputs": [oid for oid in q["outputs"] if oid in selected_outputs]}
+                    for qid, q in queries.items()
+                    if qid in selected_queries
+                ],
+                "sources": [
+                    {"id": s["id"], "source": s["source"], "line": s["line"]}
+                    for s in self.source_analysis["statements"]
+                    if s["id"] in selected_statements
+                ],
+                "source_notes": [
+                    c for c in self.source_analysis.get("comments", []) if c["source"] in selected_sources
+                ],
+                "issues": [
+                    issue
+                    for issue in self.source_analysis["issues"]
+                    if issue["context"] in selected_queries | selected_outputs | selected_statements
+                ],
+            }
+        )
+
+    def source_snapshot(self) -> Dict[str, Any]:
+        """A coherent, immutable-by-replacement snapshot for a business check batch."""
+        with self._analysis_lock:
+            return {
+                "analysis": self.source_analysis,
+                "revision": self.source_revision,
+                "context": dict(self.source_context),
+                "dialect": self._source_dialect(),
+                "column_types": {
+                    table["table_name"]: {
+                        c["name"]: c.get("type", c.get("data_type", ""))
+                        for c in table.get("schema", {}).get("columns", [])
+                        if c.get("name")
+                    }
+                    for table in self._semantic_source_cache.values()
+                },
+            }
+
+    def _source_dialect(self) -> Optional[str]:
+        value = getattr(self.db_tool, "connector", None)
+        dialect = getattr(value, "dialect", None)
+        if isinstance(dialect, str) and dialect:
+            return parse_dialect(dialect)
+        if self.agent_config is not None:
+            try:
+                configured = self.agent_config.current_db_config(self.agent_config.current_datasource).type
+                configured = getattr(configured, "value", configured)
+                if isinstance(configured, str):
+                    return parse_dialect(configured)
+            except (AttributeError, KeyError, TypeError):
+                pass
+        return None
 
     def _normalize_semantic_source_tables(self, tables: List[str]) -> List[str]:
-        """Return non-empty source table names without case-insensitive duplicates."""
+        """Return non-empty table names without merging case-sensitive identifiers."""
         normalized = []
         seen = set()
         for raw_table in tables or []:
             table = str(raw_table or "").strip()
-            identity = self._normalize_identifier(table)
+            identity = table
             if not table or not identity or identity in seen:
                 continue
             seen.add(identity)
@@ -522,8 +775,12 @@ class SemanticDiscoveryTools:
                     "yaml_guidance": (
                         "Keep generated YAML concise: use profiling evidence to choose relationship "
                         "candidates, measures, dimensions, and time columns; historical joins do not "
-                        "prove keys. Declare keys only from source DDL and omit relationships whose "
-                        "target has no DDL-declared key; do not query table data to discover keys. "
+                        "prove keys. Declare keys only from source DDL; an ordinary many_to_one "
+                        "relationship requires a DDL-declared target key. Physical datasets and "
+                        "single-table metrics do not require keys. Evaluate supported conformed "
+                        "fact pairings separately under the active cardinality contract; missing "
+                        "keys alone do not justify a query-backed source. Do not query table data "
+                        "to discover keys. "
                         "Include compact distribution notes "
                         "in descriptions when useful, such as observed min/max, percentiles, "
                         "null rate, date span/freshness/duration, low-cardinality distinct counts, "
@@ -1814,7 +2071,6 @@ class SemanticDiscoveryTools:
         sample_sql_queries: int,
     ) -> List[Dict[str, Any]]:
         """Normalize direct SQL inputs or load reference SQL entries."""
-        import json
 
         entries: List[Dict[str, Any]] = []
         sql_entries: Optional[List[Dict[str, Any]]] = None
