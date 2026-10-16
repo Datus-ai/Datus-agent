@@ -16,7 +16,8 @@ import pytest
 from datus.tools.func_tool.semantic_plan_file_tools import SemanticPlanFileTools
 
 
-def test_writes_reviewable_plan_without_semantic_model_mutation(tmp_path):
+@pytest.mark.parametrize("structured", [False, True])
+def test_writes_reviewable_plan_without_semantic_model_mutation(tmp_path, structured):
     tool = SemanticPlanFileTools(tmp_path)
     plan = {
         "summary": "orders -> revenue",
@@ -68,7 +69,7 @@ def test_writes_reviewable_plan_without_semantic_model_mutation(tmp_path):
         ],
     }
 
-    result = tool.write_semantic_model_plan_file("sales_model", json.dumps(plan))
+    result = tool.write_semantic_model_plan_file("sales_model", plan if structured else json.dumps(plan))
 
     assert result.success == 1
     assert re.fullmatch(

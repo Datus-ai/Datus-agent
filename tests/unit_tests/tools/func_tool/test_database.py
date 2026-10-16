@@ -1977,6 +1977,26 @@ class TestDBFuncToolExecuteSql:
             mock_sem.return_value.get_size.return_value = 0
             return DBFuncTool(connector)
 
+    @pytest.mark.asyncio
+    async def test_readonly_schema_tracks_instance_policy_without_changing_write_instances(self):
+        from datus.tools.func_tool.base import FuncToolResult
+
+        tool = self._make_tool()
+        writable = tool.to_function_tool(tool.execute_sql)
+        assert {"min_rows", "max_rows"} <= writable.params_json_schema["properties"].keys()
+        assert "INSERT" in writable.description
+        tool._read_only = True
+        readonly = tool.to_function_tool(tool.execute_sql)
+        assert not {"min_rows", "max_rows"} & readonly.params_json_schema["properties"].keys()
+        assert "INSERT" not in readonly.description and "read-only" in readonly.description
+        tool.read_query = Mock(return_value=FuncToolResult(result=[{"n": 1}]))
+        rejected = await readonly.on_invoke_tool(None, '{"sql":"SELECT 1", "max_rows":10}')
+        assert rejected["success"] == 0
+        tool.read_query.assert_not_called()
+        result = await readonly.on_invoke_tool(None, '{"sql":"SELECT 1"}')
+        assert result["success"] == 1
+        assert {"min_rows", "max_rows"} <= writable.params_json_schema["properties"].keys()
+
     def test_select_routes_to_read_query(self):
         mock_connector = Mock()
         mock_connector.dialect = "sqlite"
@@ -2543,6 +2563,26 @@ class TestDBFuncToolExecuteReadEnforced:
         assert result.success is False
         assert "denied by policy" in result.error
         connector.execute_query.assert_not_called()
+
+    def test_reference_read_cannot_pass_after_policy_limit_or_result_truncation(self):
+        connector = self._connector()
+        tool = self._make_tool(connector)
+        runtime = Mock()
+        runtime.before_sql_read.return_value = SimpleNamespace(
+            allowed=True, sql="SELECT 1 AS n LIMIT 1", applied_policies=["row_limit"]
+        )
+        with patch("datus.tools.policy_runtime.PolicyRuntime", return_value=runtime):
+            result = tool.read_query("SELECT 1 AS n", compress=False)
+        assert not result.success and "rewrote the reference SQL" in result.error
+        connector.execute_query.assert_not_called()
+
+        runtime.before_sql_read.return_value = SimpleNamespace(allowed=True, sql=None, applied_policies=[])
+        runtime.after_read_result.return_value = SimpleNamespace(
+            allowed=True, result=[], applied_policies=["row_limit"]
+        )
+        with patch("datus.tools.policy_runtime.PolicyRuntime", return_value=runtime):
+            result = tool.read_query("SELECT 1 AS n", compress=False)
+        assert not result.success and "transformed the reference result" in result.error
 
     def test_policy_rewrite_to_non_read_is_rejected(self):
         connector = self._connector()

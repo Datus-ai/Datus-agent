@@ -4,7 +4,11 @@
 
 """Shared runtime for semantic authoring agentic nodes."""
 
+import re
+from pathlib import Path
 from typing import Any, AsyncGenerator, Dict, List, Literal, Optional
+
+from markdown_it import MarkdownIt
 
 from datus.agent.node.agentic_node import AgenticNode
 from datus.agent.node.stream_run_context import StreamRunContext
@@ -33,7 +37,6 @@ class SemanticAuthoringAgenticNode(AgenticNode):
 
     NODE_NAME = "semantic_authoring"
     INCLUDE_OSI_CORE_SPEC = False
-    COMPACT_SOURCE_INSPECTION = False
 
     def __init__(
         self,
@@ -164,6 +167,7 @@ class SemanticAuthoringAgenticNode(AgenticNode):
             "mutation_callback",
             self.generation_evidence.record_artifact_mutation,
         )
+        path_allowlist = kwargs.pop("path_allowlist", None) or self._resolve_filesystem_allowlist()
         return filesystem_tool_cls(
             root_path=root_path,
             current_node=current_node,
@@ -174,6 +178,8 @@ class SemanticAuthoringAgenticNode(AgenticNode):
             mutation_callback=mutation_callback,
             osi_target_state=self.osi_target_state,
             generation_evidence=self.generation_evidence,
+            path_allowlist=path_allowlist,
+            path_allowlist_provider=lambda: self._with_loaded_skill_roots(path_allowlist),
             **kwargs,
         )
 
@@ -186,12 +192,18 @@ class SemanticAuthoringAgenticNode(AgenticNode):
 
     def _render_required_skill_content(self, skill_name: str, content: str) -> str:
         """Resolve runtime values in Dosi authoring specifications."""
-        from datus.agent.node.semantic_authoring import render_required_authoring_skill
+        from datus.agent.node.semantic_authoring import prepare_authoring_references, render_required_authoring_skill
+
+        reference_dir = None
+        if skill_name == "dosi-semantic-authoring":
+            cache_dir = Path(self.agent_config.path_manager.session_data_dir(self.session_id)) / "semantic_authoring"
+            reference_dir = prepare_authoring_references(cache_dir)
 
         return render_required_authoring_skill(
             skill_name,
             super()._render_required_skill_content(skill_name, content),
             include_osi_core=self.INCLUDE_OSI_CORE_SPEC,
+            reference_dir=reference_dir,
         )
 
     def _setup_semantic_tools(self):
@@ -286,7 +298,9 @@ class SemanticAuthoringAgenticNode(AgenticNode):
                 agent_config=self.agent_config,
                 sub_agent_name=self.NODE_NAME,
                 source_sql_provider=self._semantic_discovery_source_sql,
-                compact_source_inspection=self.COMPACT_SOURCE_INSPECTION,
+                source_file_provider=self._semantic_discovery_source_files,
+                root_path=self._resolve_workspace_root(),
+                source_file_reader=lambda path: self.filesystem_func_tool.read_file(path),
             )
             discovery_tools = self.semantic_discovery_tools.available_tools()
             self.tools.extend(discovery_tools)
@@ -297,10 +311,41 @@ class SemanticAuthoringAgenticNode(AgenticNode):
         except Exception as e:
             logger.error(f"Failed to setup semantic discovery tools: {e}")
 
+    def _semantic_discovery_source_files(self) -> List[str]:
+        """Collect optional request file references for automatic source inspection."""
+        request = getattr(self, "input", None)
+        paths = list(getattr(request, "source_sql_files", None) or [])
+        message = getattr(request, "user_message", "") or ""
+        # SQL string literals and comments are not file references.
+        if any(entry["sql"] == message for entry in self._semantic_discovery_source_sql()):
+            return list(dict.fromkeys(paths))
+        lines = message.splitlines(keepends=True)
+        for token in MarkdownIt().parse(message):
+            if token.type == "fence" and token.map:
+                start, end = token.map
+                lines[start:end] = ["\n"] * (end - start)
+        message = "".join(lines)
+        # Spaces require quoting, inline code or a Markdown link. Bare paths
+        # must be delimited; never infer prose, expand globs or follow URLs.
+        references = re.finditer(
+            r"""[A-Za-z][\w+.-]*://[^\s`"'<>()]+|"""
+            r"""`([^`\n]+\.sql)`|"([^"\n]+\.sql)"|'([^'\n]+\.sql)'|"""
+            r"""\]\(\s*<?([^<>\n]+\.sql)>?\s*\)|"""
+            r"""(?<![\w/:])([^\s`"'<>()[\]{},;，；。:]+\.sql)(?![\w/?#]|\.(?=[\w./?#]))""",
+            message,
+            flags=re.IGNORECASE,
+        )
+        for match in references:
+            path = next((value.strip() for value in match.groups() if value is not None), "")
+            if path and "://" not in path and not any(char in path for char in "*?[]{}"):
+                paths.append(path)
+        return list(dict.fromkeys(paths))
+
     def _semantic_discovery_source_sql(self) -> List[Dict[str, Any]]:
-        """Expose structured SQL supplied directly by the current request."""
-        sources = list(getattr(getattr(self, "input", None), "source_queries", None) or [])
-        return [
+        """Expose exact caller SQL for automatic source inspection."""
+        request = getattr(self, "input", None)
+        sources = list(getattr(request, "source_queries", None) or [])
+        entries = [
             {
                 "name": source.source_sql_name,
                 "question": source.question,
@@ -308,6 +353,32 @@ class SemanticAuthoringAgenticNode(AgenticNode):
             }
             for source in sources
         ]
+        entries.extend(
+            {"name": source.name, "sql": source.sql} for source in getattr(request, "reference_sql", None) or []
+        )
+        message = getattr(request, "user_message", "") or ""
+        blocks = [
+            token.content
+            for token in MarkdownIt().parse(message)
+            if token.type == "fence" and token.info.strip().lower() == "sql"
+        ]
+        if not blocks and re.match(
+            r"(?is)^\s*(?:(?:--[^\n]*(?:\n|$)|/\*.*?\*/)\s*)*(SELECT|WITH|INSERT|CREATE)\b", message
+        ):
+            import sqlglot
+
+            from datus.utils.semantic_sources import query_of
+
+            try:
+                discovery = getattr(self, "semantic_discovery_tools", None)
+                dialect = discovery._source_dialect() if discovery is not None else None
+                statements = [s for s in sqlglot.parse(message, read=dialect) if s is not None]
+                if statements and all(query_of(s)[0] is not None for s in statements):
+                    blocks = [message]
+            except sqlglot.errors.SqlglotError:
+                pass
+        entries.extend({"name": f"user_sql_{i}", "sql": sql} for i, sql in enumerate(blocks, 1) if sql.strip())
+        return entries
 
     def _prepare_template_context(self, user_input: SemanticNodeInput) -> dict:
         """
@@ -366,6 +437,7 @@ class SemanticAuthoringAgenticNode(AgenticNode):
         meta = super()._system_prompt_snapshot_meta(prompt_version)
         # Earlier snapshots still instruct the model to validate keys against table data.
         meta["semantic_target_scope"] = "agent_bound_v4"
+        meta["semantic_evidence_policy"] = "scoped_sql_and_business_checks_v1"
         meta["metric_identity_policy"] = "cuid2_v1"
         meta.update(authoring_prompt_snapshot_meta(self.agent_config, self.NODE_NAME))
         return meta

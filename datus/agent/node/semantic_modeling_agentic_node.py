@@ -71,7 +71,6 @@ class SemanticModelingAgenticNode(SemanticAuthoringAgenticNode):
 
     NODE_NAME = "semantic_modeling"
     INCLUDE_OSI_CORE_SPEC = True
-    COMPACT_SOURCE_INSPECTION = True
     result_class = SemanticModelingNodeResult
 
     def __init__(
@@ -107,7 +106,6 @@ class SemanticModelingAgenticNode(SemanticAuthoringAgenticNode):
 
         self.tools = []
         self._setup_osi_target_tools()
-
         self._setup_db_tools(expose_tools=False)
         if self.db_func_tool is not None:
             self.tools.extend(
@@ -118,10 +116,23 @@ class SemanticModelingAgenticNode(SemanticAuthoringAgenticNode):
         self._setup_filesystem_tools()
         self._setup_semantic_plan_file_tool()
         self._setup_semantic_tools()
+        if self.authoring_scope == "full":
+            self._setup_semantic_verification_tools()
         if self.execution_mode == "interactive":
             self._setup_ask_user_tool()
 
         logger.info("Setup %s tools for %s: %s", len(self.tools), self.NODE_NAME, [tool.name for tool in self.tools])
+
+    def _setup_semantic_verification_tools(self):
+        from datus.tools.func_tool.semantic_verification_tools import SemanticVerificationTools
+
+        self.semantic_verification_tools = SemanticVerificationTools(
+            self.db_func_tool,
+            self.semantic_tools,
+            self.generation_evidence,
+            lambda: self.osi_target_state.selected_path,
+        )
+        self.tools.extend(self.semantic_verification_tools.available_tools())
 
     async def _before_stream(self, ctx: StreamRunContext) -> None:
         await super()._before_stream(ctx)
@@ -184,7 +195,16 @@ class SemanticModelingAgenticNode(SemanticAuthoringAgenticNode):
         fact_tables: Optional[List[str]] = None,
         dimension_tables: Optional[List[str]] = None,
     ) -> FuncToolResult:
-        """Plan a reused or new target only after checking existing models."""
+        """Select a reused or new target after checking existing models.
+
+        Success selects the target for this run; continue authoring without calling bind.
+
+        Args:
+            semantic_model_name: Exact existing name to reuse/repair, or the new model name.
+            business_domain: Business domain used to find a suitable existing model.
+            fact_tables: Physical fact tables needed by the requested outputs.
+            dimension_tables: Physical dimension tables needed by the requested outputs.
+        """
         required = self._existing_models_check_required()
         if required is not None:
             return required
@@ -203,7 +223,12 @@ class SemanticModelingAgenticNode(SemanticAuthoringAgenticNode):
         semantic_model_file: str = "",
         semantic_model_name: str = "",
     ) -> FuncToolResult:
-        """Bind an existing target only after checking existing models."""
+        """Select an existing target after checking existing models; select only once.
+
+        Args:
+            semantic_model_file: Exact existing model path. Supply this or semantic_model_name.
+            semantic_model_name: Exact existing name; when both selectors are supplied they must agree.
+        """
         required = self._existing_models_check_required()
         if required is not None:
             return required
@@ -247,7 +272,12 @@ class SemanticModelingAgenticNode(SemanticAuthoringAgenticNode):
             logger.error("Failed to setup semantic-modeling filesystem tools: %s", exc)
 
     def _setup_semantic_plan_file_tool(self) -> None:
-        """Allow the optional planning skill to persist a plan outside the model file."""
+        """Expose plan persistence only when the workflow explicitly requests the tool."""
+        configured = self.node_config.get("tools") or ""
+        patterns = configured.split(",") if isinstance(configured, str) else configured
+        if "semantic_tools.write_semantic_model_plan_file" not in {pattern.strip() for pattern in patterns}:
+            return
+
         from datus.tools.func_tool.semantic_plan_file_tools import SemanticPlanFileTools
 
         # Semantic models are authored under project_root even when a VS Code
@@ -395,6 +425,9 @@ class SemanticModelingAgenticNode(SemanticAuthoringAgenticNode):
             status=status,
             blocker_code=blocker_code if status == "blocked" else None,
             skip_reason=skip_reason if status == "skipped" else None,
+            business_validation=self.generation_evidence.business_verification_summary(
+                self.osi_target_state.selected_path or ""
+            ),
         )
 
     def _target_was_mutated(self) -> bool:

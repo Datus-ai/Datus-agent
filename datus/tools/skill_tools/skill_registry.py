@@ -237,11 +237,8 @@ class SkillRegistry:
             logger.warning(f"Skill not found: {name}")
             return None
 
-        # Return cached content if available
-        if skill.content is not None:
-            return skill.content
-
-        # Load content from file
+        # Entrypoints are small and loaded lazily. Read current bytes so a
+        # same-named skill update invalidates the system-prompt snapshot.
         skill_file = skill.location / "SKILL.md"
         try:
             content = skill_file.read_text(encoding="utf-8")

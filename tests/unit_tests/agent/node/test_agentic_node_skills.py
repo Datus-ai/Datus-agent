@@ -1345,7 +1345,7 @@ Use FETCH FIRST instead of LIMIT.
         skills = ET.fromstring(f"<prompt>{result}</prompt>").findall("required_skill")
 
         assert [skill.attrib["name"] for skill in skills] == [f"db-{expected}-sql"]
-        assert f"{expected} dialect instructions." in skills[0].text
+        assert f"{expected} dialect instructions." in "".join(skills[0].itertext())
 
     def test_real_connector_type_wins_over_changed_config(
         self, mock_agent_config, database_skill_manager, bound_db_tool

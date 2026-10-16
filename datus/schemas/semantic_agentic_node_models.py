@@ -162,6 +162,14 @@ class SemanticNodeInput(AtContextInput):
         default_factory=list,
         description="Structured SQL evidence supplied directly by workflow callers.",
     )
+    source_sql_files: List[str] = Field(
+        default_factory=list,
+        description=(
+            "Optional SQL file paths included automatically in source inspection. "
+            "Local .sql file references in user_message are also recognized; quote paths containing spaces. "
+            "The agent can also discover and inspect readable SQL files during generation."
+        ),
+    )
 
     # Configuration fields from agent.yml
     system_prompt: Optional[str] = Field(default=None, description="System prompt type identifier")
@@ -207,6 +215,10 @@ class GenMetricsNodeResult(SemanticNodeResult):
 class SemanticModelingNodeResult(SemanticNodeResult):
     """Outcome of unified semantic dataset and metric authoring."""
 
+    business_validation: List[Dict[str, Any]] = Field(
+        default_factory=list,
+        description="Baseline comparisons with query and numerical status; empty means no comparisons were recorded.",
+    )
     status: Optional[Literal["generated", "skipped", "blocked"]] = Field(
         default=None,
         description="Unified semantic-modeling outcome; None is reserved for execution errors.",

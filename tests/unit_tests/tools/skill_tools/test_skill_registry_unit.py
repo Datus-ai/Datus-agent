@@ -117,13 +117,16 @@ class TestSkillRegistryScanAndAccess:
         content = registry.load_skill_content("test-skill")
         assert "# Test Skill Body" in content
 
-    def test_load_skill_content_caches(self, skill_dir):
+    def test_load_skill_content_reads_updates_without_rediscovery(self, skill_dir):
         config = SkillConfig(directories=[str(skill_dir)])
         registry = SkillRegistry(config=config)
         registry.scan_directories()
         c1 = registry.load_skill_content("test-skill")
+        path = skill_dir / "test-skill" / "SKILL.md"
+        path.write_text(path.read_text().replace("Test Skill Body", "Updated Skill Body"))
         c2 = registry.load_skill_content("test-skill")
-        assert c1 == c2
+        assert "# Test Skill Body" in c1
+        assert "# Updated Skill Body" in c2
 
     def test_load_skill_content_not_found(self, skill_dir):
         config = SkillConfig(directories=[str(skill_dir)])

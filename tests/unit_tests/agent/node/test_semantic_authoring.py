@@ -64,8 +64,8 @@ def test_validate_dosi_authoring_document_uses_native_validator(monkeypatch):
 def test_dosi_prompt_uses_engine_owned_contract(monkeypatch):
     from datus.tools.semantic_tools.dosi import authoring_spec, engine
 
-    monkeypatch.setattr(authoring_spec, "authoring_spec_text", lambda dialect: f"core dialect: {dialect}")
-    monkeypatch.setattr(authoring_spec, "datus_extension_authoring_spec_text", lambda dialect: "engine contract")
+    monkeypatch.setattr(authoring_spec, "compact_authoring_spec_text", lambda dialect: f"core dialect: {dialect}")
+    monkeypatch.setattr(authoring_spec, "authoring_overview_text", lambda: "engine contract")
     monkeypatch.setattr(engine, "datus_extension_version", lambda: "1.8")
     rendered = semantic_authoring.render_required_authoring_skill(
         "dosi-semantic-authoring", 'extension version: "<datus_extension_version>"', include_osi_core=True
@@ -303,7 +303,83 @@ def test_semantic_authoring_base_configuration_is_neutral():
 
     assert SemanticAuthoringAgenticNode.NODE_NAME == "semantic_authoring"
     assert SemanticAuthoringAgenticNode.INCLUDE_OSI_CORE_SPEC is False
-    assert SemanticAuthoringAgenticNode.COMPACT_SOURCE_INSPECTION is False
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "SELECT COUNT(*) n FROM tickets",
+        "Please model this:\n```sql\nSELECT COUNT(*) n FROM tickets\n```",
+        "Please model this:\n~~~sql\nSELECT COUNT(*) n FROM tickets\n~~~",
+        "Please model this:\n````sql\nSELECT COUNT(*) n FROM tickets\n`````",
+    ],
+)
+def test_source_evidence_retains_exact_user_sql_and_attached_references(message):
+    from datus.agent.node.semantic_authoring_agentic_node import SemanticAuthoringAgenticNode
+    from datus.schemas.node_models import ReferenceSql
+    from datus.schemas.semantic_agentic_node_models import SemanticNodeInput
+
+    node = SemanticAuthoringAgenticNode.__new__(SemanticAuthoringAgenticNode)
+    node.input = SemanticNodeInput(
+        user_message=message, reference_sql=[ReferenceSql(name="attached", sql="SELECT SUM(cost) cost FROM tickets")]
+    )
+    entries = node._semantic_discovery_source_sql()
+    assert entries[0] == {"name": "attached", "sql": "SELECT SUM(cost) cost FROM tickets"}
+    assert entries[1]["sql"].strip() == "SELECT COUNT(*) n FROM tickets"
+    node.input.user_message = "Create a semantic model for repair workorders"
+    assert node._semantic_discovery_source_sql() == entries[:1]
+    node.input.user_message = "SELECT 'unfinished"
+    assert node._semantic_discovery_source_sql() == entries[:1]
+
+
+def test_request_sql_files_are_included_when_sources_are_inspected(tmp_path):
+    from datus.agent.node.semantic_authoring_agentic_node import SemanticAuthoringAgenticNode
+    from datus.schemas.semantic_agentic_node_models import SemanticNodeInput
+    from datus.tools.func_tool.semantic_discovery_tools import SemanticDiscoveryTools
+
+    original = tmp_path / "original query.sql"
+    original.write_text("SELECT SUM(cost) cost FROM tickets", encoding="utf-8")
+    node = SemanticAuthoringAgenticNode.__new__(SemanticAuthoringAgenticNode)
+    node.input = SemanticNodeInput(user_message="Model the calculation in `original query.sql`.")
+    discovery = SemanticDiscoveryTools(
+        root_path=str(tmp_path), source_file_provider=node._semantic_discovery_source_files
+    )
+
+    result = discovery.inspect_semantic_sources()
+    assert result.success
+    assert result.result["calculation_evidence"]["outputs"][0]["expression"] == "SUM(cost)"
+
+    original.write_text("SELECT SUM(cost) + 1 cost FROM tickets", encoding="utf-8")
+    result = discovery.inspect_semantic_sources()
+    assert result.success
+    assert result.result["calculation_evidence"]["outputs"][0]["expression"] == "SUM(cost) + 1"
+
+
+@pytest.mark.parametrize(
+    "message,expected",
+    [
+        ("Use sql/original.sql and `SQL/monthly.SQL`.", ["sql/original.sql", "SQL/monthly.SQL"]),
+        (
+            'Use "original query.sql" and [ETL](<sql/monthly query.sql>).',
+            ["original query.sql", "sql/monthly query.sql"],
+        ),
+        ("Use `explicit.sql` and explicit.sql.", ["explicit.sql"]),
+        ("Use reports/kpi.sql. Then model it.", ["reports/kpi.sql"]),
+        ("Use reports/kpi.sql.bak, source.sql/part, source.sql?download=1 and source.sql#section.", []),
+        ("SELECT 'not_a_file.sql' AS label", []),
+        ("-- Source note\n/* Original query */ SELECT 'not_a_file.sql' AS label", []),
+        ("Model this:\n````sql\nSELECT 'not_a_file.sql' AS label\n`````\nUse `real.sql`.", ["real.sql"]),
+        ("Model this:\n~~~sql\nSELECT 'not_a_file.sql' AS label\n~~~\nUse `real.sql`.", ["real.sql"]),
+        ("Use https://example.org/source.sql and `sql/*.sql`.", []),
+    ],
+)
+def test_caller_sql_file_references(message, expected):
+    from datus.agent.node.semantic_authoring_agentic_node import SemanticAuthoringAgenticNode
+    from datus.schemas.semantic_agentic_node_models import SemanticNodeInput
+
+    node = SemanticAuthoringAgenticNode.__new__(SemanticAuthoringAgenticNode)
+    node.input = SemanticNodeInput(user_message=message, source_sql_files=["explicit.sql"])
+    assert node._semantic_discovery_source_files() == list(dict.fromkeys(["explicit.sql", *expected]))
 
 
 @pytest.mark.asyncio
@@ -322,7 +398,9 @@ async def test_semantic_authoring_base_resets_request_local_state(monkeypatch):
     node.generation_evidence = SimpleNamespace(reset=lambda: resets.append("evidence"))
     node.osi_target_state = SimpleNamespace(reset=lambda: resets.append("target"))
     node.osi_target_tools = SimpleNamespace(invalidate_inventory=lambda: resets.append("inventory"))
-    node.semantic_discovery_tools = SimpleNamespace(reset_request_cache=lambda: resets.append("discovery"))
+    node.semantic_discovery_tools = SimpleNamespace(
+        reset_request_cache=lambda: resets.append("discovery"),
+    )
 
     await node._before_stream(object())
 

@@ -95,6 +95,7 @@ class FakeAgenticNode(AgenticNode):
         self.interrupt_controller = _NoopInterrupt()
         self.permission_hooks = None
         self.skill_manager = None
+        self.agent_config = None
         self.before_calls: List[str] = []
         self._pinned_model = model
 

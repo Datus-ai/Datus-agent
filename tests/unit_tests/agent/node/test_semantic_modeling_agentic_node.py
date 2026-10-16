@@ -25,16 +25,13 @@ def _accept_any_authoring_document(monkeypatch):
     monkeypatch.setattr(
         semantic_authoring,
         "render_required_authoring_skill",
-        lambda _name, content, *, include_osi_core=False: (
+        lambda _name, content, *, include_osi_core=False, reference_dir=None: (
             content
-            + (
-                "\n## Active OSI Core authoring specification\n# Apache Ossie - Core Metadata Spec"
-                if include_osi_core
-                else ""
-            )
-            + "\n## Active DATUS extension authoring specification"
+            + ("\n## OSI Core reference shapes" if include_osi_core else "")
+            + "\n## Active DATUS capability directory"
         ),
     )
+    monkeypatch.setattr(semantic_authoring, "prepare_authoring_references", lambda cache_dir: cache_dir)
 
 
 def _stream_call_count(mock_llm_create) -> int:
@@ -61,6 +58,49 @@ def _record_current_compiled_evidence(node, target):
     return catalog
 
 
+def test_loaded_database_references_are_readable_without_loading_them_into_the_prompt(
+    real_agent_config, mock_llm_create, tmp_path, tmp_path_factory, monkeypatch
+):
+    from datus.agent.node.semantic_modeling_agentic_node import SemanticModelingAgenticNode
+    from datus.tools.skill_tools.skill_config import SkillConfig
+    from datus.tools.skill_tools.skill_manager import SkillManager
+
+    node = SemanticModelingAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(exist_ok=True)
+    node.node_config["workspace_root"] = str(workspace)
+    filesystem = node._make_filesystem_tool(strict=True)
+    name = node._get_database_skill_candidates()[0]
+    resource_root = tmp_path_factory.mktemp("adapter_bundle")
+    bundle = resource_root / name
+    (bundle / "references").mkdir(parents=True)
+    (bundle / "SKILL.md").write_text(
+        f"---\nname: {name}\ndescription: Query rules\n---\n"
+        "# Query rules\nFor imports, read [Loading](references/data-loading.md).\n"
+    )
+    reference = bundle / "references/data-loading.md"
+    reference.write_text("# Loading details\nINSERT INTO target SELECT * FROM files;\n")
+    outside = resource_root / "outside.md"
+    outside.write_text("Outside the loaded bundle")
+    (bundle / "references/escape.md").symlink_to(outside)
+    node.skill_manager = SkillManager(config=SkillConfig(directories=[str(bundle.parent)]))
+    monkeypatch.setattr(node, "_get_required_skills", lambda: [])
+
+    assert not filesystem.read_file(str(reference)).success
+    prompt = node._inject_required_skills("Build metrics from supplied ETL")
+    assert f"<skill_location>{bundle}</skill_location>" in prompt
+    assert "Loading details" not in prompt
+    assert filesystem.read_file(str(reference)).result == reference.read_text()
+    assert filesystem._classify(str(reference)).read_only
+    assert not filesystem.write_file(str(reference), "Changed").success
+    assert not filesystem.read_file(str(bundle / "references/escape.md")).success
+    sql = bundle / "references/example.sql"
+    sql.write_text("SELECT 1 AS n")
+    assert node.semantic_discovery_tools.inspect_semantic_sources(sql_files=[str(sql)]).success
+    policy = node._make_filesystem_policy()
+    assert bundle in policy.allowlist_provider().read
+
+
 def test_unified_dosi_node_composes_existing_authoring_surfaces(real_agent_config, mock_llm_create):
     from datus.agent.node.semantic_modeling_agentic_node import SemanticModelingAgenticNode
 
@@ -77,6 +117,8 @@ def test_unified_dosi_node_composes_existing_authoring_surfaces(real_agent_confi
         "describe_table",
         "execute_sql",
         "inspect_semantic_sources",
+        "get_semantic_source_evidence",
+        "verify_semantic_outputs",
         "read_file",
         "edit_file",
         "upsert_osi_datasets",
@@ -86,15 +128,22 @@ def test_unified_dosi_node_composes_existing_authoring_surfaces(real_agent_confi
         "glob",
         "grep",
         "validate_semantic",
-        "write_semantic_model_plan_file",
     }.issubset(tool_names)
-    assert {"write_file", "delete_file", "load_file_as_table", "import_database_file", "bash", "task"}.isdisjoint(
-        tool_names
-    )
+    assert {
+        "write_file",
+        "delete_file",
+        "load_file_as_table",
+        "import_database_file",
+        "bash",
+        "task",
+        "write_semantic_model_plan_file",
+    }.isdisjoint(tool_names)
     assert node.db_func_tool.read_only is True
     assert node._get_required_skills() == ["dosi-semantic-authoring"]
-    assert node.semantic_discovery_tools.compact_source_inspection is True
-    assert {tool.name for tool in node.semantic_discovery_tools.available_tools()} == {"inspect_semantic_sources"}
+    assert {tool.name for tool in node.semantic_discovery_tools.available_tools()} == {
+        "inspect_semantic_sources",
+        "get_semantic_source_evidence",
+    }
 
     with patch("datus.storage.metric.store.MetricStorage.get_subject_tree_flat") as subject_tree_lookup:
         prompt = node._get_system_prompt(template_context=node._prepare_template_context(node.input))
@@ -107,15 +156,9 @@ def test_unified_dosi_node_composes_existing_authoring_surfaces(real_agent_confi
     assert "extract reusable fields, relationships, and native business metrics" in prompt
     assert '<required_skill name="dosi-semantic-authoring">' in prompt
     node._populate_tool_registry()
-    assert node.tool_registry.get("write_semantic_model_plan_file") == "semantic_tools"
-    assert "## Active OSI Core authoring specification" in prompt
-    assert "# Apache Ossie - Core Metadata Spec" in prompt
-    assert "## Active DATUS extension authoring specification" in prompt
-    assert "Use a derived filter metric" in prompt
-    assert "Use a parameterized metric only" in prompt
-    assert "active contract explicitly permits" in prompt
-    assert "preserve its `uid` verbatim" in prompt
-    assert "For a new metric or an existing metric without `uid`, omit `uid`" in prompt
+    assert node.tool_registry.get("verify_semantic_outputs") == "semantic_tools"
+    assert "## OSI Core reference shapes" in prompt
+    assert "## Active DATUS capability directory" in prompt
     assert "ensure_metric_uids" not in tool_names
 
 
@@ -126,9 +169,15 @@ def test_plan_file_uses_project_root_for_vscode_source(real_agent_config, mock_l
     daemon_cwd.mkdir()
     monkeypatch.chdir(daemon_cwd)
     real_agent_config._client_source = "vscode"
+    real_agent_config.agentic_nodes.setdefault("semantic_modeling", {})["tools"] = (
+        "semantic_tools,semantic_tools.write_semantic_model_plan_file"
+    )
 
     node = SemanticModelingAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
     assert node._resolve_workspace_root() == "."
+    assert "write_semantic_model_plan_file" in {tool.name for tool in node.tools}
+    node._populate_tool_registry()
+    assert node.tool_registry.get("write_semantic_model_plan_file") == "semantic_tools"
 
     result = node.semantic_plan_file_tool.write_semantic_model_plan_file("sales_model", '{"summary":"plan"}')
 
@@ -178,8 +227,8 @@ def test_resumed_session_rebuilds_legacy_key_policy_and_caches_current_skill(
         prompt = node._get_session_system_prompt(template_context=context)
 
         assert '<required_skill name="dosi-semantic-authoring">' in prompt
-        assert "Use source DDL as the only evidence for new key declarations" in prompt
-        assert "Do not execute data queries to discover or verify keys" in prompt
+        assert "Declare keys only from source DDL" in prompt
+        assert "Never query data to discover or verify keys" in prompt
         assert node.session_manager.load_system_prompt_snapshot(node.session_id)["prompt"] == prompt
         assert node._get_session_system_prompt(template_context=context) == prompt
         build_prompt.assert_called_once()
@@ -483,12 +532,15 @@ def test_factory_creates_unified_semantic_modeling_node(real_agent_config, mock_
     assert isinstance(node_input, SemanticNodeInput)
 
 
-def test_generated_result_uses_selected_artifact_finalizer(real_agent_config, mock_llm_create):
+@pytest.mark.parametrize("discovery_available", [True, False])
+def test_generated_result_uses_selected_artifact_finalizer(real_agent_config, mock_llm_create, discovery_available):
     from datus.agent.node.semantic_modeling_agentic_node import SemanticModelingAgenticNode
     from datus.agent.node.stream_run_context import StreamRunContext
 
     node = SemanticModelingAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
     node.input = SemanticNodeInput(user_message="Update the orders dataset")
+    if not discovery_available:
+        node.semantic_discovery_tools = None
     node._finalize_selected_osi_artifact = MagicMock(return_value="subject/semantic_models/warehouse/orders.yml")
     ctx = StreamRunContext(user_input=node.input, action_history_manager=ActionHistoryManager())
     ctx.response_content = {
@@ -501,6 +553,7 @@ def test_generated_result_uses_selected_artifact_finalizer(real_agent_config, mo
     node._finalize_selected_osi_artifact.assert_called_once_with()
     assert result.status == "generated"
     assert result.semantic_models == ["subject/semantic_models/warehouse/orders.yml"]
+    assert result.business_validation == []
 
 
 @pytest.mark.asyncio

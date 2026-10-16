@@ -10,10 +10,11 @@ import json
 import re
 from pathlib import Path
 from threading import Lock
+from typing import Any
 from uuid import uuid4
 
 from datus.storage.semantic_model.artifact_file import atomic_write_text, path_mutation_lock
-from datus.tools.func_tool.base import FuncToolResult
+from datus.tools.func_tool.base import FuncToolResult, tool_schema
 
 
 def _reject_non_finite_number(value: str):
@@ -264,19 +265,50 @@ class SemanticPlanFileTools:
 
         return [trans_to_function_tool(self.write_semantic_model_plan_file)]
 
-    def write_semantic_model_plan_file(self, model_name: str, plan_json: str) -> FuncToolResult:
+    @tool_schema(strict_mode=False)
+    def write_semantic_model_plan_file(self, model_name: str, plan_json: dict[str, Any] | str) -> FuncToolResult:
         """Convert planning JSON to a graph and write it without changing the model.
 
-        Use with a planning workflow that prepares the JSON for human review.
+        Optional human-review artifact, not a prerequisite for authoring or target
+        selection. The plan uses the format below, not OSI dataset/metric objects.
+        Saving checks its structure and references; it does not validate the model,
+        approve a source choice or execute a query.
 
         Args:
             model_name: Selected semantic-model name; revisions reuse its plan directory.
-            plan_json: Flat JSON object following the loaded planning skill's framework.
+            plan_json: Structured object; legacy JSON-encoded objects also work.
+                Only these top-level keys are accepted (all optional):
+                summary (string), datasets, field_decisions, relationships, metrics
+                (arrays of objects, default empty). Each dataset, relationship and
+                metric requires a unique nonempty name within its array.
+                Dataset: name, optional action (create/update/reuse), source_kind
+                (physical/query). For physical use source as the table name; for
+                query use source_tables as an array of table names and omit source
+                entirely (no SELECT in a plan). Create/update with physical/query
+                source_kind requires sources.
+                Record query rowset_semantics and native_gap or user_requirement.
+                Field decision: dataset and field are required; dataset must name
+                a planned dataset. Optional role, group_by and reason are retained.
+                Relationship: name, from_dataset, to_dataset are required; both
+                datasets must be planned. Optional from_fields/to_fields are arrays
+                of field names in matching order; action and reason are retained.
+                Metric: name, optional dataset (a planned dataset), kind
+                (atomic/parameterized/filter/compose/window), depends_on (array of
+                planned metric names, no duplicates), action, role and reason.
+                Include reused datasets/metrics when other objects reference them.
+
+        Returns:
+            Workspace-relative JSON graph path, revision and object counts, or a
+            validation/write error. The semantic model file is never changed.
         """
         if not isinstance(model_name, str) or not self._MODEL_NAME.fullmatch(model_name):
             return FuncToolResult(success=0, error="model_name must be a simple semantic-model name")
         try:
-            plan = json.loads(plan_json, parse_constant=_reject_non_finite_number)
+            plan = (
+                json.loads(plan_json, parse_constant=_reject_non_finite_number)
+                if isinstance(plan_json, str)
+                else plan_json
+            )
         except (TypeError, ValueError) as exc:
             return FuncToolResult(success=0, error=f"plan_json must be valid JSON: {exc}")
         if not isinstance(plan, dict):
