@@ -62,7 +62,6 @@ class GenerationEvidence:
     compiled_artifact_sha256: Dict[str, str] = field(default_factory=dict)
     compiled_metric_names: Set[str] = field(default_factory=set)
     mutated_artifact_paths: Set[str] = field(default_factory=set)
-    business_output_checks: Dict[str, Dict[str, Any]] = field(default_factory=dict)
     business_verifications: Dict[str, Dict[str, Any]] = field(default_factory=dict)
     run_id: int = field(default=0, compare=False, repr=False)
 
@@ -71,7 +70,6 @@ class GenerationEvidence:
         self.run_id += 1
         self.invalidate_artifact_evidence()
         self.mutated_artifact_paths.clear()
-        self.business_output_checks.clear()
         self.business_verifications.clear()
 
     def record_artifact_mutation(self, path: str | Path | None = None) -> None:
@@ -116,84 +114,36 @@ class GenerationEvidence:
         self.compiled_metric_names.clear()
 
     def record_business_verification(self, path: str | Path, record: Dict[str, Any]) -> None:
-        """Retain independently executed query/result evidence for one exact model revision."""
+        """Keep the latest result for a business output and query in this run."""
         if record.get("run_id", self.run_id) != self.run_id:
             return
         check = record["check"]
-        # A corrected mapping replaces the current result for the same output
-        # and query, rather than leaving the old rejection in the final report.
-        identity = {k: check.get(k) for k in ("name", "metric", "companion_metrics", "query")}
+        identity = {key: check.get(key) for key in ("name", "metric", "query")}
         key = hashlib.sha256(json.dumps(identity, sort_keys=True, default=str).encode()).hexdigest()
-        self.business_output_checks[key] = check
-        state = record.get("artifact") or self._business_artifact_state(path)
-        self.business_verifications[key] = {**record, "artifact": state}
+        self.business_verifications[key] = {
+            **record,
+            "artifact": record.get("artifact") or self._semantic_artifact_state(path),
+        }
 
-    def business_verification_summary(
-        self, path: str | Path, source_revision: str = "", source_output_ids: Optional[Set[str]] = None
-    ) -> List[Dict[str, Any]]:
-        """Never present old model/source results as current business validation."""
-        current = self._business_artifact_state(path)
+    def business_verification_summary(self, path: str | Path) -> List[Dict[str, Any]]:
+        """Report query comparisons, marking results stale after the model changes."""
+        current = self._semantic_artifact_state(path) if path else None
         summary = []
-        for key, check in self.business_output_checks.items():
-            record = self.business_verifications.get(key)
-            if (
-                record
-                and current
-                and record.get("artifact") == current
-                and (
-                    (not check.get("source_output_id") or check["source_output_id"] in source_output_ids)
-                    if source_output_ids is not None
-                    else record.get("source_revision") == source_revision
+        for record in self.business_verifications.values():
+            if current and record.get("artifact") == current:
+                summary.append(
+                    {key: value for key, value in record.items() if key not in {"artifact", "check", "run_id"}}
                 )
-            ):
-                summary.append({k: v for k, v in record.items() if k not in {"artifact", "check", "run_id"}})
             else:
                 summary.append(
                     {
-                        "name": check["name"],
-                        "metric": check["metric"],
-                        "query_status": "unverified",
+                        "name": record["name"],
+                        "metric": record["metric"],
                         "status": "unverified",
-                        "comparison_status": "not_run",
-                        "category": "stale_evidence",
-                        "reason_code": "model_or_source_changed",
-                        "next_action": "rerun_affected_check",
-                        "reason": "Model or source evidence changed; rerun this check",
+                        "reason": "Model changed after this comparison; rerun the check for the current model",
                     }
                 )
         return summary
-
-    @staticmethod
-    def _business_artifact_state(path: str | Path) -> Optional[Dict[str, str]]:
-        """Ignore narrative-only edits for business checks; publish gates still use bytes."""
-        import yaml
-
-        try:
-            resolved = Path(path).expanduser().resolve(strict=True)
-
-            model = yaml.safe_load(resolved.read_text(encoding="utf-8"))
-
-            def narrative(node):
-                if isinstance(node, dict):
-                    node.pop("description", None)
-                    node.pop("ai_context", None)
-
-            # Strip only OSI narrative locations, never identically named keys
-            # inside formulas, extension payloads or parameter bindings.
-            for semantic_model in model.get("semantic_model", []) if isinstance(model, dict) else []:
-                narrative(semantic_model)
-                for collection in ("datasets", "metrics", "relationships"):
-                    for node in semantic_model.get(collection, []):
-                        narrative(node)
-                        if collection == "datasets":
-                            for field in node.get("fields", []):
-                                narrative(field)
-            return {
-                "path": str(resolved),
-                "sha256": hashlib.sha256(json.dumps(model, sort_keys=True, default=str).encode()).hexdigest(),
-            }
-        except (OSError, RuntimeError, ValueError, TypeError, AttributeError, yaml.YAMLError):
-            return None
 
     @property
     def kb_sync_passed(self) -> bool:

@@ -93,55 +93,55 @@ def _by_item(rows: list[dict[str, str]]) -> dict[tuple[str, str], dict[str, str]
     return {(row["product"], row["item"]): row for row in rows}
 
 
-def test_business_verification_compares_native_window_results_and_population(query_tool):
-    """Real inspection, DB reads and Dosi execution agree on post-window filtering."""
+def test_business_verification_compares_explicit_window_queries_without_changing_scope(query_tool):
+    """Compare real native ranks, keeping post-window and input filtering explicit."""
     from datus.tools.func_tool.generation_evidence import GenerationEvidence
-    from datus.tools.func_tool.semantic_discovery_tools import SemanticDiscoveryTools
     from datus.tools.func_tool.semantic_verification_tools import SemanticVerificationTools
 
     db = DBFuncTool(agent_config=query_tool.agent_config, read_only=True)
-    discovery = SemanticDiscoveryTools(
-        db,
-        agent_config=query_tool.agent_config,
-        source_sql_provider=lambda: [
-            {
-                "name": "original.sql",
-                "sql": "SELECT product,item,RANK() OVER (PARTITION BY product ORDER BY SUM(score) DESC) r "
-                "FROM main.activity_scores GROUP BY product,item",
-            }
-        ],
-    )
-    inspected = discovery.inspect_semantic_sources()
-    assert inspected.success, inspected.error
-    source_id = inspected.result["calculation_evidence"]["statements"][0]["outputs"][-1]
     artifact = Path(query_tool.agent_config.project_root) / "subject/semantic_models/window_filters/model.yaml"
-    verifier = SemanticVerificationTools(db, query_tool, discovery, GenerationEvidence(), lambda: artifact)
+    verifier = SemanticVerificationTools(db, query_tool, GenerationEvidence(), lambda: artifact)
+    reference = (
+        "SELECT product,item,MIN(day) unused_day,"
+        "RANK() OVER (PARTITION BY product ORDER BY SUM(score) DESC) r "
+        "FROM main.activity_scores GROUP BY product,item"
+    )
+    selected = "item IN ('b','i')"
+    post_filter = f"SELECT * FROM ({reference}) original WHERE {selected}"
+    pre_filter = reference.replace(" GROUP BY", f" WHERE {selected} GROUP BY")
     base = {
         "name": "Item rank",
         "metric": "item_rank",
-        "source_output_id": source_id,
+        "reference_column": "r",
         "dimension_mapping": {"product": "scores.product", "item": "scores.item"},
-        "reference_where": "item IN ('b','i')",
     }
     result = verifier.verify_semantic_outputs(
         [
-            {**base, "query": {"dimensions": PRODUCT_ITEM, "where": "scores.item IN ('b','i')"}},
             {
                 **base,
-                "companion_metrics": ["score_total"],
+                "reference_sql": post_filter,
                 "query": {"dimensions": PRODUCT_ITEM, "where": "scores.item IN ('b','i')"},
             },
-            {**base, "query": {"dimensions": PRODUCT_ITEM, "context_filter": "scores.item IN ('b','i')"}},
+            {
+                **base,
+                "reference_sql": post_filter,
+                "query": {"dimensions": PRODUCT_ITEM, "context_filter": "scores.item IN ('b','i')"},
+            },
+            {
+                **base,
+                "reference_sql": pre_filter,
+                "query": {"dimensions": PRODUCT_ITEM, "context_filter": "scores.item IN ('b','i')"},
+            },
+            {**base, "reference_sql": "DELETE FROM main.activity_scores", "query": {"dimensions": PRODUCT_ITEM}},
         ]
     )
     assert result.success, result.error
-    full_population, combined, changed_population = result.result["checks"]
-    assert full_population["status"] == "passed", full_population
-    assert full_population["reference_groups"] == 2
-    assert combined["status"] == "passed", combined
-    assert changed_population["status"] == "unverified", changed_population
-    assert changed_population["category"] == "scope_unconfirmed"
-    assert changed_population["query_status"] == "passed"
+    full_population, changed_population, scoped_population, refused_write = result.result["checks"]
+    assert full_population["status"] == "passed" and full_population["reference_groups"] == 2
+    assert changed_population["status"] == "failed" and changed_population["value_differences"] == 2
+    assert scoped_population["status"] == "passed"
+    assert refused_write["status"] == "unverified" and refused_write["reference_status"] == "failed"
+    assert db.read_query("SELECT COUNT(*) n FROM main.activity_scores", compress=False).result == [{"n": 10}]
 
 
 def test_where_keeps_the_whole_population_ranks_and_context_filter_rescopes_them(query_tool):

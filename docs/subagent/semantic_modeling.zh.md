@@ -29,13 +29,28 @@ YAML 文件是唯一事实来源。Knowledge Base 中的记录是从 YAML 派生
 |------|----------|
 | `validate_semantic` | 模型结构、引用和编译，不执行实际业务查询。 |
 | `query_metrics` | 没有数值对照来源时，执行指标查询。 |
-| `verify_semantic_outputs` | 内部执行指标查询，将完整结果与已分析的参考 SQL 或已确认的落表列比较，无须提前单独查询指标。 |
+| `verify_semantic_outputs` | 执行一个指标和一份明确的参考 SELECT，比较完整分组和值，无须提前单独查询指标。 |
 
-Agent 在任务中发现的 SQL 可以直接分析并用于数值比较，无须提前登记。文件可以位于 agent 能读取的任意目录，来源分析复用 agent 的文件读取工具。请求中的 SQL、发现的文件和传入的 SQL 文本都可以作为对照来源；`input_kind` 仅记录来源。应选择符合用户要求计算口径的 SQL。比较使用分析时记录的 SQL 内容；来源变化后重新分析，更新输出 ID 并使受影响的旧证据失效。不要为获得数值通过而修改参考计算。
+Agent 在任务中发现的 SQL 可以直接使用，无须提前登记，源文件可以位于 agent 能读取的任意目录。来源分析和详情展开用于辅助理解计算；数值比较不依赖这些输出 ID，也不要求先证明完整 ETL 血缘。
 
-每项基准对照用 `source_output_id` 选择原始最终输出，用 `dimension_mapping` 将完整原计算粒度映射到模型查询维度。两边必须采用相同的数据范围、统计人群和参数。已存结果直接读取，不重新聚合。程序可以对齐结果行过滤和完整时间桶；非空 `context_filter` 无法确认输入人群相同，数值状态会记为未验证。应保留必要过滤并说明限制。
+每项检查传入 `metric`、`query`、可执行的 `reference_sql`、`reference_column`，以及参考结果键到指标查询维度或结果列的 `dimension_mapping`。标量结果使用空映射 `{}`。工具单独查询这个指标，读取完整缓存结果，通过现有只读数据库路径执行参考 SQL，再比较指定的分组和值。工具不补维度、不推断粒度、不改写过滤、不重新聚合已存值，也不缓存失败检查；每次调用都会重新执行。
 
-返回结果的 `business_validation` 分别记录查询状态 `query_status` 和数值状态 `status`（`passed`、`failed`、`unverified`），附原因和少量差异样例。空结果、全 NULL、重复粒度、缺失分组键或来源不可用都不能证明一致。空列表表示没有基准对照记录；单纯查询的检查结果由 `query_metrics` 返回。生成完成本身不证明数值正确。计算定义或相关来源变化后，旧对照结果失效；证据不足时结束该项对照，继续其他独立输出。仅生成 dataset 的任务保持对应范围。
+```json
+{
+  "checks": [{
+    "name": "按市场统计收入",
+    "metric": "revenue",
+    "query": {"dimensions": ["orders.market"]},
+    "reference_sql": "SELECT market, SUM(amount) AS revenue_value FROM orders GROUP BY market",
+    "reference_column": "revenue_value",
+    "dimension_mapping": {"market": "orders.market"}
+  }]
+}
+```
+
+两边应使用对应的业务分组、统计人群、时间范围和参数。输入过滤与窗口后的过滤应在参考 SQL 的对应位置表达。参考结果中的额外列、内层分组键不要求加入指标查询维度，加入后可能改变排名分区。比较证明的是传入结果的一致性，选择正确业务口径的参考查询仍属于建模工作。
+
+返回结果的 `business_validation` 记录 `status`（`passed`、`failed`、`unverified`）、原因和少量差异样例。缺组、多组或数值不同记为失败；查询错误、缺列、重复键、空结果、全 NULL 或完整结果不可用记为未验证。模型修改后旧结果失效，应重新执行相关检查。空列表表示没有对照记录。每个业务输出先单独检查，再进行必要的组合查询，避免其他指标补齐分组后掩盖稀疏指标缺少零值人群的问题。仅生成 dataset 的任务保持对应范围。
 
 ## 可用范围和支持的数据库
 

@@ -273,8 +273,7 @@ class SemanticDiscoveryTools:
         scopes and upstream output IDs. Formula constants are preserved. Outputs are
         authoring evidence, not a mandate to create metrics outside the user's scope.
         Final output IDs are in result.calculation_evidence.outputs[].id. Select by
-        source statement, output name and expression, and copy the exact ID into
-        verify_semantic_outputs.source_output_id for baseline comparisons.
+        source statement, output name and expression when requesting evidence details.
         The response inventories final outputs; call get_semantic_source_evidence with
         relevant output IDs to expand exact dependencies and calculation scopes in batches.
         All SQL is analyzed regardless of which details are read. `complete=false` and

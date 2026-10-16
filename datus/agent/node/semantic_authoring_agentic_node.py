@@ -136,9 +136,6 @@ class SemanticAuthoringAgenticNode(AgenticNode):
             self.osi_target_tools.invalidate_inventory()
         if self.semantic_discovery_tools is not None:
             self.semantic_discovery_tools.reset_request_cache()
-        verification = getattr(self, "semantic_verification_tools", None)
-        if verification is not None:
-            verification.reset_request_cache()
 
     def _ensure_bash_tool_in_tools(self) -> None:
         """Keep semantic authoring on its narrow filesystem surface."""

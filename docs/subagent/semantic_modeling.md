@@ -29,13 +29,28 @@ Provide relevant tables, SQL text or UTF-8 SQL file paths. Files may contain mul
 |------|----------------|
 | `validate_semantic` | Model structure, references and compilation; no business query execution. |
 | `query_metrics` | Actual metric queries when no numerical reference exists. |
-| `verify_semantic_outputs` | Executes the metric query internally and compares its complete results with analyzed reference SQL or confirmed stored columns. No separate metric query is needed first. |
+| `verify_semantic_outputs` | Executes one metric and one explicit reference SELECT, then compares their complete result keys and values. No separate metric query is needed first. |
 
-SQL discovered during the task can be analyzed and used for numerical comparison without advance registration. Files may be anywhere the agent can read; source inspection reuses the agent's file reader. Request SQL, discovered files and inline SQL are all eligible references; `input_kind` records provenance only. Choose SQL that expresses the requested calculation. The comparison uses the SQL captured by source analysis; re-inspect changed sources to refresh their output IDs and invalidate affected evidence. Do not rewrite a reference merely to obtain a numerical pass.
+SQL discovered during the task can be used without advance registration. Source files may be anywhere the agent can read. Source inspection and evidence expansion help interpret calculations; numerical comparison does not depend on their IDs or on proving the full ETL lineage.
 
-For each baseline comparison, `source_output_id` selects the original final output and `dimension_mapping` maps its complete calculation grain to model query dimensions. Both sides must use the same population, time scope and parameters. Stored results are read directly without reaggregation. Result-row filters and complete time buckets can be aligned; a nonempty `context_filter` leaves numerical comparison unverified because input-population equivalence is not established. Preserve required filters and report that limitation.
+For each check, supply `metric`, `query`, executable `reference_sql`, `reference_column`, and `dimension_mapping` from reference result keys to metric query dimensions or result columns. Use `{}` for scalar results. The tool executes the metric alone, reads the full cached result, executes the reference through the existing read-only database path, and compares the specified keys and values. It does not add dimensions, infer grain, rewrite filters, reaggregate stored values or cache failed checks. Every invocation executes again.
 
-The result's `business_validation` entries distinguish query execution (`query_status`) from numerical comparison (`status`: `passed`, `failed`, or `unverified`), with reasons and bounded difference examples. Empty/all-NULL results, duplicate grain, missing group keys or unavailable sources cannot prove equivalence. An empty list means no baseline comparisons were recorded; query-only checks are returned by `query_metrics`. A generated model does not by itself prove numerical correctness. Changed calculations or relevant sources invalidate old comparison evidence; insufficient evidence ends that comparison while independent outputs continue. Datasets-only runs retain their dataset scope.
+```json
+{
+  "checks": [{
+    "name": "Revenue by market",
+    "metric": "revenue",
+    "query": {"dimensions": ["orders.market"]},
+    "reference_sql": "SELECT market, SUM(amount) AS revenue_value FROM orders GROUP BY market",
+    "reference_column": "revenue_value",
+    "dimension_mapping": {"market": "orders.market"}
+  }]
+}
+```
+
+Choose matching business grouping, population, time range and parameters in both queries. Keep input filters and post-window filters at the corresponding stages of the reference SQL. Extra reference columns and inner grouping keys do not require extra metric dimensions: adding them may change a ranking partition. Comparison establishes agreement for the supplied results; choosing the correct business reference remains part of modeling.
+
+The result's `business_validation` entries report `status` (`passed`, `failed`, or `unverified`), reasons and bounded difference examples. Missing/extra groups or unequal values fail. Query errors, missing columns, duplicate keys, empty/all-NULL results or unavailable full results are unverified. Model edits make previous comparisons stale; rerun the affected checks after editing. An empty list means no comparisons were recorded. Check each business output independently before necessary combined queries: another metric can supply groups that a sparse metric lacks. Datasets-only runs retain their dataset scope.
 
 ## Availability and supported databases
 

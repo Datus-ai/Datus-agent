@@ -1465,7 +1465,7 @@ class SemanticTools:
 
         This does not execute business queries or compare values against a baseline.
         Use query_metrics for execution, or verify_semantic_outputs when available
-        for execution and numerical comparison against a trusted reference.
+        for execution and numerical comparison against an explicit reference SELECT.
 
         After successful validation, the runtime is reloaded to pick up any new
         metrics or semantic model changes. This ensures that subsequent calls to
