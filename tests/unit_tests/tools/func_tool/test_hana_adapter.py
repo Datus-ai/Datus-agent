@@ -86,6 +86,16 @@ def test_incomplete_analysis_rejected_before_sdk_even_without_scope(connector, s
     connect.assert_not_called()
 
 
+@pytest.mark.parametrize("sql", ['SELECT TOP 1 * FROM "Sales"."Orders"', 'SELECT * FROM "Sales"."Orders" FOR UPDATE'])
+def test_writable_unified_dispatch_rejects_unverified_hana_before_sdk(connector, sql):
+    tool = DBFuncTool(connector, read_only=False)
+    with patch("datus_hana.connector.dbapi.connect") as connect:
+        result = tool.execute_sql(sql)
+    assert result.success == 0
+    assert "SQL analysis" in result.error
+    connect.assert_not_called()
+
+
 def test_physical_table_scope_and_quoted_case(connector):
     sql = 'WITH x AS (SELECT * FROM "Sales"."Orders") SELECT * FROM x'
     assert extract_table_names(sql, "hana") == ['"Sales"."Orders"']

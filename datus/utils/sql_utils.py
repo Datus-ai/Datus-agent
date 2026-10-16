@@ -310,8 +310,6 @@ def parse_table_name_parts(full_table_name: str, dialect: str = "snowflake") -> 
             )
         return {field: str(parsed[field] or "") for field in expected_fields}
 
-    dialect = parse_dialect(raw_dialect)
-
     # Split the table name by dots
     # Handle different quote styles: `backticks`, "double quotes", [brackets]
     quote_patterns = [
@@ -361,7 +359,7 @@ def parse_table_name_parts(full_table_name: str, dialect: str = "snowflake") -> 
     # Right-align the parts onto the dialect's field order (always >= 2 fields,
     # so an unknown dialect degrades to the widest shape rather than to a bare
     # table name).
-    field_mapping = table_name_field_order(dialect)
+    field_mapping = table_name_field_order(raw_dialect)
     max_parts = len(field_mapping)
 
     # If we have more parts than expected, take the last N parts
