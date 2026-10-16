@@ -278,6 +278,7 @@ class TestInspectSemanticSources:
         assert customers["ddl"] == {"definition": definitions["customers"]}
         evidence = result.result["calculation_evidence"]
         assert evidence["outputs"][-1]["expression"] == "SUM(o.amount)"
+        assert evidence["outputs"][-1]["kind"] == "aggregate"
         details = tools.get_semantic_source_evidence([evidence["outputs"][-1]["id"]])
         assert details.result["queries"][0]["joins"][0]["condition"] == "o.customer_id = c.id"
         assert db_tool.get_table_ddl.call_count == 2
@@ -340,28 +341,6 @@ class TestInspectSemanticSources:
 
         assert result.success == 0
         assert "at least one" in result.error
-
-    def test_retains_exact_calculation_instead_of_lossy_usage_statistics(self):
-        db_tool = _make_db_tool()
-        db_tool.get_table_ddl.return_value = FuncToolResult(
-            success=1,
-            result={"definition": "CREATE TABLE orders (amount DECIMAL)"},
-        )
-        db_tool.describe_table.return_value = FuncToolResult(
-            success=1,
-            result={"columns": [{"name": "amount", "type": "DECIMAL"}]},
-        )
-        tools = _make_tools(
-            db_tool,
-            source_sql_provider=lambda: [{"name": "revenue", "sql": "SELECT SUM(amount) FROM orders"}],
-        )
-
-        result = tools.inspect_semantic_sources(["orders"])
-
-        assert result.success == 1
-        assert result.result["tables"][0]["ddl"] == {"definition": "CREATE TABLE orders (amount DECIMAL)"}
-        assert result.result["calculation_evidence"]["outputs"][0]["expression"] == "SUM(amount)"
-        assert result.result["calculation_evidence"]["outputs"][0]["kind"] == "aggregate"
 
 
 # ---------------------------------------------------------------------------

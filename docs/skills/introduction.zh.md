@@ -184,12 +184,7 @@ agentic_nodes:
 
 ## 在 Subagent 中使用技能
 
-默认情况下，**聊天 Subagent 会自动加载所有已发现的技能**。其他 Subagent（报告生成、SQL 生成、指标等）**不会加载任何技能**，除非在 `agent.yml` 中显式配置。
-
-| Subagent 类型 | 默认加载的技能 |
-|---------------|---------------|
-| Chat | 所有已发现的技能 |
-| 其他所有 Subagent（报告、SQL、指标等） | 无 |
+Chat 会展示权限允许的已发现技能，供 `load_skill` 按需加载，不会注入所有技能正文。其他 Subagent 通过 `agent.yml` 配置或内置默认值提供可选技能。数据库指导和节点必需的技能（如 `dosi-semantic-authoring`）会独立注入，不依赖这个可选技能目录。
 
 ### 为自定义 Subagent 启用技能
 

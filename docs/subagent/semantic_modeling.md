@@ -17,23 +17,25 @@ The YAML file is the source of truth. Knowledge Base records are a searchable in
 
 ## Source evidence and business checks
 
-The requested description and designated documents determine which metrics are generated. SQL supplies calculation evidence and necessary dependencies; additional legacy calculations are included only when explicitly requested. When the requested definition conflicts with supplied SQL, an interactive run asks you to resolve the conflict. A noninteractive run follows the supplied SQL for that conflicting definition and reports the choice, while keeping the requested output scope.
+The user's description and designated documents determine which outputs are generated. SQL supplies calculation evidence and dependencies; other legacy calculations are included only when explicitly requested. When the requested definition conflicts with supplied SQL, an interactive run asks you to resolve the conflict. A noninteractive run follows SQL for that conflicting definition and reports the choice.
 
-You can provide tables, SQL text, or paths to UTF-8 SQL files. One file may contain multiple semicolon-separated statements and comments. `inspect_semantic_sources` accepts `tables`, `sql_files`, `sql_queries`, and optional `catalog`, `database`, and `schema_name`. Structured request SQL is included automatically. It reads files through the workspace read policy, uses the current datasource dialect, fetches live metadata, and analyzes SQL without executing ETL writes.
+Provide relevant tables, SQL text or UTF-8 SQL file paths. Files may contain multiple semicolon-separated statements and comments. API callers can use `SemanticNodeInput.source_queries` and `source_sql_files`; local `.sql` references in the user message are also recognized. Use inline code, quotes or a Markdown link for paths containing spaces. Source inspection fetches live metadata and analyzes SQL without executing ETL writes. Without SQL, the agent can model from the requested definitions and live schema.
 
-The initial response inventories final query/stored outputs. Batch `get_semantic_source_evidence(output_ids=[...])` to expand the relevant calculations; every source is analyzed regardless of which details are read. Evidence uses shared query scopes and output dependencies: exact formulas and constants, complete Boolean filters and their stages, grouping, joins, windows and UNION branches. Parse or metadata gaps are reported with source locations. Its output inventory is evidence, not a list of additional metrics to generate. Unsupported dynamic SQL, missing upstream definitions, or unknown grain remain explicit gaps.
+`inspect_semantic_sources` returns a final-output inventory. The agent selects the requested outputs and uses `get_semantic_source_evidence(output_ids=[...])` for their formulas, dependencies, filters, grouping, joins, windows and UNION branches. Returned IDs identify outputs and must be copied unchanged. Unsupported syntax, missing upstream definitions and uncertain grain remain explicit gaps.
 
-For full-scope authoring, use `validate_semantic` to check model structure, references and metric compilation; it does not execute business queries. Then choose one execution path for each requested output. Without a trusted baseline, call `query_metrics` directly. With a trusted original SQL/stored baseline, call `verify_semantic_outputs`; it queries the metric once internally, so no separate metric query is needed first. Its required `source_output_id` identifies the original final output. The tool compares complete group sets and values against the source SELECT or confirmed stored columns, without summing stored results to force a smaller grain. Use the same time scope, population and parameter bindings on both sides; a reference result filter does not filter a window's input population.
+### Validation and execution
 
-Dataset and metric upserts accept structured arrays in `datasets_json` and `metrics_json`; JSON-encoded strings remain supported for legacy callers. DATUS extension `data` remains a JSON string.
+| Tool | What it checks |
+|------|----------------|
+| `validate_semantic` | Model structure, references and compilation; no business query execution. |
+| `query_metrics` | Actual metric queries when no trusted numerical baseline exists. |
+| `verify_semantic_outputs` | Executes the metric query internally and compares its complete results with trusted original SQL or confirmed stored columns. No separate metric query is needed first. |
 
-For baseline comparisons, verification executes the metric query once, then checks the reference grain, mapping and scope before comparing complete results. Unique exact-name dimension correspondences are inferred; aliases and ambiguities require explicit mappings. Numerical comparison supports proven result-row filters and whole time buckets. A nonempty `context_filter` still executes the metric query but leaves numerical comparison unverified (`input_population_unconfirmed`); do not remove a required population filter to obtain a pass. Query status and numerical status are reported separately. Follow `category`, `reason_code` and `next_action`; retain insufficient evidence without repeatedly changing the model. An unchanged blocked check returns the previous diagnosis without querying again.
+Numerical baselines come from caller-supplied SQL or original files designated before generation. The host pins readable files before the first model turn; changed files and newly supplied diagnostic SQL cannot establish numerical correctness. Files follow workspace read permissions; URLs, globs and paths inside SQL code are not automatically designated as original files.
 
-Caller `source_queries`, attached SQL references, exact SQL supplied in the user message, and original files designated before generation are eligible numerical baselines. File paths may be supplied in `SemanticNodeInput.source_sql_files` or as local `.sql` references in the user message. Use inline code, quotes or a Markdown link for paths containing spaces. The host pins readable files before the first model turn, and inspection includes them automatically; modified files become diagnostic. URLs, globs and paths inside SQL code are not automatically designated. Other `sql_files` and new `sql_queries` remain diagnostic; passing a path to an inspection tool cannot promote it to a trusted baseline. Finish narrative edits before verification. Description/AI-context changes preserve business checks, while publish validation still requires exact artifact bytes. Changed calculations or relevant sources invalidate business evidence.
+For each baseline comparison, `source_output_id` selects the original final output and `dimension_mapping` maps its complete calculation grain to model query dimensions. Both sides must use the same population, time scope and parameters. Stored results are read directly without reaggregation. Result-row filters and complete time buckets can be aligned; a nonempty `context_filter` leaves numerical comparison unverified because input-population equivalence is not established. Preserve required filters and report that limitation.
 
-Without a trustworthy reference, `query_metrics` checks execution and numerical correctness remains unverified. Empty/all-NULL results, duplicate grain, missing grouping keys and unavailable sources also cannot prove equivalence. After individual outputs, use `companion_metrics` for necessary baseline comparisons of combined queries, or `query_metrics(metrics=[...])` for execution only. Final derived metrics exercise their dependency chains. The result's `business_validation` entries record baseline comparisons, distinguishing `query_status` from numerical `status` (`passed`, `failed`, `unverified`), with reasons and bounded difference examples. An empty list means no baseline comparisons were recorded; query-only checks are reported by `query_metrics`. Changes to calculations or relevant source evidence invalidate old results. Datasets-only authoring retains its dataset scope.
-
-The optional `write_semantic_model_plan_file` tool writes a review graph without changing the semantic model. Enable it only for a planning workflow by including `semantic_tools.write_semantic_model_plan_file` explicitly in the node's existing `tools` configuration. A category wildcard alone does not expose it; ordinary authoring needs no plan file. Its tool specification defines the plan object format, which differs from OSI model objects.
+The result's `business_validation` entries distinguish query execution (`query_status`) from numerical comparison (`status`: `passed`, `failed`, or `unverified`), with reasons and bounded difference examples. Empty/all-NULL results, duplicate grain, missing group keys or unavailable sources cannot prove equivalence. An empty list means no baseline comparisons were recorded; query-only checks are returned by `query_metrics`. A generated model does not by itself prove numerical correctness. Changed calculations or relevant sources invalidate old comparison evidence; insufficient evidence ends that comparison while independent outputs continue. Datasets-only runs retain their dataset scope.
 
 ## Availability and supported databases
 
@@ -135,14 +137,16 @@ During one run, the subagent:
 1. Inspects existing models and chooses one target using an explicit filename hint, a unique fact table, or the business domain.
 2. Reads the live datasource schema and relationship evidence before authoring.
 3. Creates or updates datasets, fields, relationships, and metrics in dependency order.
-4. Validates the complete target file and, when requested, dry-runs representative metric queries.
+4. Validates the complete target file, queries requested outputs and compares them with trusted baselines when available.
 5. Reconciles the validated YAML into the Knowledge Base.
 
 It edits exactly one semantic model per run. If no existing model fits, it creates a business-domain model rather than one file per physical table. Datasets normally bind directly to qualified physical tables or views; primary or unique keys are not required for a physical dataset or its independent single-table metrics. Supplied SQL describes the calculation to preserve, not a required dataset source shape. A minimal query-backed dataset is used only for a specific required row-set transformation that supported native fields, relationships, and metrics cannot faithfully express, or when the user explicitly requests a query-backed source. Independently expressible inputs remain on physical datasets.
 
-The result reports `generated`, `skipped`, or `blocked`. A blocked result explains the missing schema evidence, ambiguous target, invalid definition, or other condition that prevented a safe update.
+The result reports `generated`, `skipped`, or `blocked`. A blocked result identifies a missing, ambiguous or invalid target model. Missing calculation evidence is reported for the affected outputs and does not by itself block independent work.
 
 Key declarations come only from source DDL: physical primary keys become `primary_key`, and unique constraints or whole-table unique indexes on plain columns become `unique_keys`, preserving composite-column order. Semantic modeling does not scan table data to discover or verify keys. Missing key evidence leaves the key and an ordinary `many_to_one` relationship requiring that target key undeclared; it does not prevent using a physical source. Supported `many_to_many` fact pairings follow the active DATUS contract, aggregate each fact separately, and do not assert target-row uniqueness. If a particular output still cannot be represented faithfully, its limitation is reported while independent physical datasets and metrics are retained. Moving a JOIN into SQL does not prove uniqueness. The final model still undergoes `validate_semantic` validation.
+
+The optional `write_semantic_model_plan_file` tool writes a review graph without changing the semantic model. Enable it only for a planning workflow by including `semantic_tools.write_semantic_model_plan_file` explicitly in the node's existing `tools` configuration. A category wildcard alone does not expose it; ordinary authoring needs no plan file. Its tool specification defines the plan object format, which differs from OSI model objects.
 
 ## Generated files and organization
 
@@ -152,11 +156,13 @@ New files are written under the active project and datasource:
 subject/semantic_models/<datasource>/<semantic_model>.yml
 ```
 
-Each authored file contains one object in the root `semantic_model` list. Group related fact and dimension datasets by business domain, such as `sales.yml` or `marketing.yml`. Use a physical table reference in `source` whenever possible; use SQL only for a stable logical dataset that deserves to be reused.
+Each authored file contains one object in the root `semantic_model` list. Group related fact and dimension datasets by business domain, such as `sales.yml` or `marketing.yml`. Choose physical or query-backed sources according to the source-selection rules above.
 
 ## YAML contract
 
 Dosi authors OSI Core `0.2.0.dev0` YAML. Unknown core fields are rejected, so Datus-specific behavior belongs in `custom_extensions` rather than arbitrary YAML keys.
+
+Dataset and metric upsert tools accept structured arrays in `datasets_json` and `metrics_json`; legacy JSON-encoded strings remain supported. DATUS extension `data` is always a JSON string.
 
 The authoring skill injects compact OSI shapes and the complete active DATUS capability directory. Detailed rules and examples are generated from the installed engine into the current session's read-only data directory. The agent uses the existing `read_file` tool to open the capability files it needs; the full core and extension references remain available there. Content changes create a new reference bundle and invalidate the prompt snapshot. No additional tool or loading-mode setting is required.
 
@@ -169,12 +175,12 @@ The principal fields are:
 | Root | `version`, `semantic_model` | OSI version and model list |
 | Semantic model | `name`, `datasets`; optional `description`, `ai_context`, `relationships`, `metrics`, `custom_extensions` | One business domain |
 | Dataset | `name`, `source`; optional `primary_key`, `unique_keys`, `fields`, descriptions and extensions | A physical table or reusable query |
-| Field | `name`, `expression`; optional `dimension`, `label`, descriptions and extensions | A groupable or filterable attribute |
+| Field | `name`, `expression`; optional `dimension`, `label`, descriptions and extensions | A source column or expression; dimension policy controls grouping availability |
 | Relationship | `name`, `from`, `to`, `from_columns`, `to_columns` | An equi-join; column arrays pair by position |
 | Metric | `name`, `expression`; optional descriptions, `ai_context`, and extensions | A reusable aggregate calculation |
 | Expression | `dialects` containing `dialect` and `expression` | One or more SQL-dialect implementations |
 
-Use the dialect tag for the active datasource, for example `DUCKDB`, `POSTGRESQL`, `SNOWFLAKE`, `STARROCKS`, `DORIS`, `MYSQL`, `CLICKHOUSE`, `TRINO`, `REDSHIFT`, `HOLOGRES`, `GAUSSDB`, or `ORACLE`. `ANSI_SQL` is appropriate only when the expression is genuinely portable.
+Use the dialect tag for the active datasource, for example `DUCKDB`, `POSTGRESQL`, `SNOWFLAKE`, `STARROCKS`, `DORIS`, `MYSQL`, `CLICKHOUSE`, `TRINO`, `REDSHIFT`, `HOLOGRES`, `GAUSSDB`, or `ORACLE`.
 
 ### Complete example
 
@@ -270,7 +276,7 @@ Important rules:
 - The generated payload carries the engine's current extension version. Let `semantic_modeling` stamp it instead of hardcoding a version in automation.
 - Put each key on its supported object: `time_dimension` on a dataset or metric, `time_granularity` on a time field, `join_type` on a relationship, and metric behavior on a metric.
 
-The executable extension keys are:
+Common executable extension keys include the following. The active engine's capability references provide the complete current contract.
 
 | Carrier | Keys | Purpose |
 | --- | --- | --- |
@@ -287,7 +293,7 @@ Keep the core metric expression as a valid aggregate even when `window` or `deri
 
 ## Validation and compatibility
 
-Always validate the whole file after manual edits. Structural validity alone is not enough: dataset and field references, relationship keys, dialect expressions, extension carriers, derived metrics, and windows must also be semantically consistent. `semantic_modeling` performs this final validation and can dry-run metric queries when execution evidence is needed.
+Always validate the whole file after manual edits. Structural validity alone is not enough: dataset and field references, relationship keys, dialect expressions, extension carriers, derived metrics, and windows must also be semantically consistent. `semantic_modeling` performs this final validation and checks requested outputs as described above. A dry run produces compiled SQL; it does not establish execution or numerical correctness.
 
 Existing OSI YAML can be repaired and validated in place. Models in other formats need conversion to OSI first.
 

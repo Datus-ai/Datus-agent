@@ -17,23 +17,25 @@ YAML 文件是唯一事实来源。Knowledge Base 中的记录是从 YAML 派生
 
 ## 来源证据和业务结果校验
 
-生成范围由用户描述和指定文档决定。SQL 提供计算证据和必要依赖；只有明确要求时才扩展覆盖其他旧计算。请求口径与 SQL 冲突时，交互式运行会询问用户；非交互式运行对冲突定义采用 SQL，并说明选择，生成范围仍以请求为准。
+生成范围由用户描述和指定文档决定。SQL 提供计算证据和依赖；只有明确要求时才扩展覆盖其他旧计算。请求口径与 SQL 冲突时，交互式运行会询问用户；非交互式运行对冲突定义采用 SQL，并说明选择。
 
-可以提供表、SQL 文本或 UTF-8 SQL 文件路径。一份文件支持多条以分号分隔的语句和注释。`inspect_semantic_sources` 接收 `tables`、`sql_files`、`sql_queries`，以及可选的 `catalog`、`database`、`schema_name`；当前请求已有的结构化 SQL 自动纳入。工具遵守工作目录的读取权限，使用当前数据源方言取得实库元数据并静态分析，不执行 ETL 写入。
+可以提供相关表、SQL 文本或 UTF-8 SQL 文件路径。一份文件支持多条以分号分隔的语句和注释。API 调用方可使用 `SemanticNodeInput.source_queries` 和 `source_sql_files`，也支持用户消息中的本地 `.sql` 路径；含空格的路径用行内代码、引号或 Markdown 链接表示。来源检查会取得实库元数据并分析 SQL，不执行 ETL 写入。没有 SQL 时，也可以根据需求定义和真实 schema 建模。
 
-入口先返回最终查询／落表输出的清单，使用 `get_semantic_source_evidence(output_ids=[...])` 批量展开相关计算，完整分析不会因按需读取而省略。证据按查询层和输出依赖组织，保留完整公式、业务常量、布尔条件及其发生位置、分组、关联、窗口和 UNION 分支。解析和元数据缺口带有来源位置。输出字段清单用于辅助建模，不会自动扩展成额外指标；动态 SQL、缺失的上游定义和未确认粒度会明确记录。
+`inspect_semantic_sources` 先返回最终输出清单，Agent 选择请求范围内的输出，再用 `get_semantic_source_evidence(output_ids=[...])` 展开公式、依赖、过滤、分组、关联、窗口和 UNION 分支。返回的 ID 用于定位输出，必须原样传递。不支持的语法、缺失的上游定义和未确认粒度会明确记录。
 
-完整范围的建模先用 `validate_semantic` 检查模型结构、引用和指标编译，它不执行实际业务查询。再为每个请求的输出选择一条查询路径：没有可信基准时直接调用 `query_metrics`；有可信原 SQL／落表基准时调用 `verify_semantic_outputs`，它内部查询指标一次，无须提前单独查询。必填的 `source_output_id` 引用原 SQL 的最终输出，映射完整原计算分组到 Dosi 查询维度，再对比原 SELECT 或已确认目标列的完整分组集合和数值。已存结果不会为凑齐共有维度而重新 SUM。两边需要采用相同的数据范围、统计人群和参数；对基准结果行的过滤不会改变窗口计算的输入人群。
+### 校验与执行
 
-dataset 和 metric 写入工具的 `datasets_json`、`metrics_json` 优先接收结构化数组，兼容旧的 JSON 编码字符串。DATUS 扩展的 `data` 仍按 OSI 规范使用 JSON 字符串。
+| 工具 | 检查内容 |
+|------|----------|
+| `validate_semantic` | 模型结构、引用和编译，不执行实际业务查询。 |
+| `query_metrics` | 没有可信数值基准时，执行指标查询。 |
+| `verify_semantic_outputs` | 内部执行指标查询，将完整结果与可信原 SQL 或已确认的落表列比较，无须提前单独查询指标。 |
 
-基准对照先执行一次指标查询，再确认参考粒度、维度映射和范围，满足条件后比较完整结果。唯一的同名维度对应关系可自动补齐，别名或歧义需要显式映射。数值对照支持已确认的结果行过滤和完整时间桶；非空的 `context_filter` 仍会执行指标查询，但数值状态记为未验证（`input_population_unconfirmed`），不能为了通过而删除必要的输入过滤。查询状态与数值状态分别记录；根据 `category`、`reason_code`、`next_action` 修正问题，证据不足时保留原因，不反复修改模型。相同受阻检查再次提交时返回已有诊断，不再查询。
+数值基准来自调用方提供的 SQL，或生成前指定的原始文件。宿主程序在首次模型调用前固定可读文件的内容；修改后的文件和新增诊断 SQL 不能作为证明数值正确的基准。文件读取遵守工作区权限；URL、通配符和 SQL 代码里的路径不会自动登记为原始文件。
 
-数值基准来自调用方结构化传入的 `source_queries`、附加的 SQL 引用、用户消息中的原始 SQL，或生成前指定的原始文件。文件可通过 `SemanticNodeInput.source_sql_files` 传入，也可直接在用户消息中引用本地 `.sql` 路径；含空格的路径用行内代码、引号或 Markdown 链接表示。宿主程序在首次模型调用前按工作区读取规则固定内容，检查时自动纳入，修改后的文件降为诊断证据。URL、通配符和 SQL 代码里的路径不自动登记。其他 `sql_files` 和新增 `sql_queries` 用于诊断，传给分析工具的路径不会自动升级为可信基准。先完成描述再校验。仅修改描述或 AI 上下文不会使业务检查失效；发布前的结构校验仍绑定文件完整内容。计算定义或相关来源变化后，旧业务结果失效。
+每项基准对照用 `source_output_id` 选择原始最终输出，用 `dimension_mapping` 将完整原计算粒度映射到模型查询维度。两边必须采用相同的数据范围、统计人群和参数。已存结果直接读取，不重新聚合。程序可以对齐结果行过滤和完整时间桶；非空 `context_filter` 无法确认输入人群相同，数值状态会记为未验证。应保留必要过滤并说明限制。
 
-没有可信基准时由 `query_metrics` 检查实际查询，数值正确性仍未验证。空结果、全 NULL、重复粒度、分组键缺失和来源不可用都不能证明一致。单项检查后，必要的组合查询有基准时使用 `companion_metrics` 对照，无基准时使用 `query_metrics(metrics=[...])`。最终派生指标会同时执行其依赖链。返回结果的 `business_validation` 记录基准对照，分别包含查询状态 `query_status` 和数值状态 `status`（`passed`、`failed`、`unverified`），以及原因和少量差异样例；空列表表示没有基准对照记录，单纯查询的结果由 `query_metrics` 返回。计算定义或相关来源证据变化后，旧结果失效。仅生成 dataset 的任务保持对应范围。
-
-`write_semantic_model_plan_file` 仅用于保存供人工审阅的计划图，不修改模型。需要计划文件的工作流在节点现有 `tools` 配置中显式列出 `semantic_tools.write_semantic_model_plan_file` 才会挂载它；仅配置类别或通配符不会启用，普通建模不需要计划文件。工具说明给出了完整计划对象格式，该格式与 OSI 模型对象不同。
+返回结果的 `business_validation` 分别记录查询状态 `query_status` 和数值状态 `status`（`passed`、`failed`、`unverified`），附原因和少量差异样例。空结果、全 NULL、重复粒度、缺失分组键或来源不可用都不能证明一致。空列表表示没有基准对照记录；单纯查询的检查结果由 `query_metrics` 返回。生成完成本身不证明数值正确。计算定义或相关来源变化后，旧对照结果失效；证据不足时结束该项对照，继续其他独立输出。仅生成 dataset 的任务保持对应范围。
 
 ## 可用范围和支持的数据库
 
@@ -135,14 +137,16 @@ datus --datasource duckdb_demo
 1. 查看已有模型，通过明确的文件名、唯一事实表或业务域选择一个目标。
 2. 在写入前读取真实 datasource 的 schema 和 relationship 证据。
 3. 按依赖顺序创建或更新 dataset、field、relationship 和 metric。
-4. 校验完整目标文件，并在用户要求时 dry-run 代表性的指标查询。
+4. 校验完整目标文件，查询请求的输出；有可信基准时进行数值对照。
 5. 将通过校验的 YAML 完整同步到 Knowledge Base。
 
 每次只编辑一个语义模型。如果现有模型都不合适，则按业务域创建新模型。dataset 默认直接绑定完整名称的物理表或视图；物理 dataset 和独立的单表指标不要求主键或唯一键。用户提供的 SQL 是需要保留的计算口径证据，不规定 dataset 必须采用 SQL。只有某项具体行集转换无法由原生 field、relationship、metric 等能力忠实表达，或用户明确指定 query-backed 来源时，才使用范围最小的 SQL dataset；可独立表达的输入继续使用物理 dataset。
 
-最终结果会报告 `generated`、`skipped` 或 `blocked`。如果结果为 blocked，会说明缺少 schema 证据、目标不明确、定义无效或其他无法安全写入的原因。
+最终结果会报告 `generated`、`skipped` 或 `blocked`。blocked 表示目标模型缺失、不明确或无效。计算证据不足会在对应输出中说明，本身不会阻止其他独立建模工作。
 
 键声明只以源 DDL 为准：物理主键写入 `primary_key`，唯一约束或覆盖整表的普通列唯一索引写入 `unique_keys`，保留复合键的列顺序。语义建模不会扫描表数据来发现或验证键。缺少键证据时，省略该键以及要求目标键唯一的普通 `many_to_one` 关系，物理来源仍可使用。原生 `many_to_many` 事实配对按当前 DATUS 规则分别聚合后合并，不要求目标行唯一。若某个输出仍无法忠实表达，说明该输出的限制，同时保留独立的物理 dataset 和指标。把 JOIN 移入 SQL 不会证明数据唯一。最终模型仍执行 `validate_semantic` 校验。
+
+`write_semantic_model_plan_file` 仅用于保存供人工审阅的计划图，不修改模型。需要计划文件的工作流在节点现有 `tools` 配置中显式列出 `semantic_tools.write_semantic_model_plan_file` 才会挂载它；仅配置类别或通配符不会启用，普通建模不需要计划文件。工具说明给出了完整计划对象格式，该格式与 OSI 模型对象不同。
 
 ## 生成文件的位置和组织方式
 
@@ -152,11 +156,13 @@ datus --datasource duckdb_demo
 subject/semantic_models/<datasource>/<semantic_model>.yml
 ```
 
-每个创作文件的根 `semantic_model` 列表只放一个模型对象。建议按业务域组织相关的事实表和维表，例如 `sales.yml` 或 `marketing.yml`。`source` 应优先引用物理表；只有稳定且值得复用的逻辑 dataset 才使用 SQL。
+每个创作文件的根 `semantic_model` 列表只放一个模型对象。建议按业务域组织相关的事实表和维表，例如 `sales.yml` 或 `marketing.yml`。物理来源和 query-backed 来源的选择遵循上面的规则。
 
 ## YAML 规范
 
 Dosi 生成 OSI Core `0.2.0.dev0` YAML。core schema 不允许未知字段，因此 Datus 特有行为必须写在 `custom_extensions` 中，不能随意增加 YAML key。
+
+dataset 和 metric 写入工具的 `datasets_json`、`metrics_json` 接收结构化数组，兼容旧的 JSON 编码字符串。DATUS 扩展的 `data` 始终使用 JSON 字符串。
 
 Authoring skill 默认注入紧凑的 OSI 结构与完整的 DATUS 能力目录。详细规则和示例由当前安装的引擎生成，放入当前会话的数据目录，以只读方式访问。Agent 使用已有的 `read_file` 按需读取对应能力文件，也可读取完整的 core 和 extension 规范。内容变化会生成新的参考文件目录，并使 prompt 缓存失效；无需新增工具或配置加载模式。
 
@@ -169,12 +175,12 @@ Authoring skill 默认注入紧凑的 OSI 结构与完整的 DATUS 能力目录�
 | 根对象 | `version`、`semantic_model` | OSI 版本和模型列表 |
 | Semantic model | `name`、`datasets`；可选 `description`、`ai_context`、`relationships`、`metrics`、`custom_extensions` | 一个业务域 |
 | Dataset | `name`、`source`；可选 `primary_key`、`unique_keys`、`fields`、说明和 extension | 物理表或可复用查询 |
-| Field | `name`、`expression`；可选 `dimension`、`label`、说明和 extension | 可分组或过滤的属性 |
+| Field | `name`、`expression`；可选 `dimension`、`label`、说明和 extension | 来源列或表达式，维度策略决定能否参与分组 |
 | Relationship | `name`、`from`、`to`、`from_columns`、`to_columns` | 等值关联；两组列按位置配对 |
 | Metric | `name`、`expression`；可选说明、`ai_context` 和 extension | 可复用的聚合度量 |
 | Expression | 包含 `dialect` 和 `expression` 的 `dialects` | 一种或多种 SQL 方言实现 |
 
-表达式应使用当前 datasource 对应的方言标签，例如 `DUCKDB`、`POSTGRESQL`、`SNOWFLAKE`、`STARROCKS`、`DORIS`、`MYSQL`、`CLICKHOUSE`、`TRINO`、`REDSHIFT`、`HOLOGRES`、`GAUSSDB` 或 `ORACLE`。只有表达式确实可以跨数据库使用时才应写 `ANSI_SQL`。
+表达式应使用当前 datasource 对应的方言标签，例如 `DUCKDB`、`POSTGRESQL`、`SNOWFLAKE`、`STARROCKS`、`DORIS`、`MYSQL`、`CLICKHOUSE`、`TRINO`、`REDSHIFT`、`HOLOGRES`、`GAUSSDB` 或 `ORACLE`。
 
 ### 完整示例
 
@@ -270,7 +276,7 @@ custom_extensions:
 - 生成的 payload 会携带当前 engine 的 extension 版本。自动化流程应由 `semantic_modeling` 写入版本，不要自行固定。
 - 每个 key 只能写在允许的对象上：dataset 或 metric 使用 `time_dimension`，时间 field 使用 `time_granularity`，relationship 使用 `join_type`，metric 计算行为写在 metric 上。
 
-参与实际计算的 extension key 包括：
+下面列出常见的计算扩展 key；完整的当前规范以引擎提供的能力参考文件为准。
 
 | 承载对象 | Key | 用途 |
 | --- | --- | --- |
@@ -287,7 +293,7 @@ Datus 还会写入 `subject_path`、`unit`、`format`、`metric_kind`、`source_
 
 ## 校验和兼容性
 
-手工修改后应始终校验整个文件。仅通过 YAML 结构校验还不够：dataset 和 field 引用、relationship key、方言表达式、extension 承载对象、派生指标和 window 都必须保持语义一致。`semantic_modeling` 会执行最终校验，并可在需要执行证据时 dry-run 指标查询。
+手工修改后应始终校验整个文件。仅通过 YAML 结构校验还不够：dataset 和 field 引用、relationship key、方言表达式、extension 承载对象、派生指标和 window 都必须保持语义一致。`semantic_modeling` 会执行最终校验，并按上述流程检查请求的输出。dry-run 只产生编译后的 SQL，不能证明实际执行成功或数值正确。
 
 旧的引擎选择配置会被忽略并输出警告。已有 OSI YAML 可以原地修复和校验；旧语义层 YAML 需要先转换为 OSI。
 

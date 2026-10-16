@@ -178,12 +178,7 @@ agentic_nodes:
 
 ## Using Skills in Subagents
 
-By default, the **chat subagent loads all discovered skills** automatically. Other subagents (report generation, SQL generation, metrics, etc.) **do not load any skills** unless explicitly configured in `agent.yml`.
-
-| Subagent Type | Skills Loaded by Default |
-|---------------|------------------------|
-| Chat | All discovered skills |
-| All other subagents (report, SQL, metrics, etc.) | None |
+Chat exposes permitted discovered skills for on-demand `load_skill` calls; it does not inject all skill bodies. Other subagents expose optional skills through their `agent.yml` configuration or built-in defaults. Database guidance and node-required skills, such as `dosi-semantic-authoring`, are injected independently of that optional catalog.
 
 ### Enabling Skills for Customized Subagents
 

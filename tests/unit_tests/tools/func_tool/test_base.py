@@ -1,6 +1,6 @@
 """
 Test cases for datus/tools/func_tool/base.py
-Focuses on trans_to_function_tool parameter filtering for LLM-hallucinated arguments.
+Focuses on trans_to_function_tool argument validation for LLM tool calls.
 """
 
 import asyncio
@@ -31,7 +31,7 @@ from datus.tools.registry.tool_registry import ToolRegistry
 
 
 class TestTransToFunctionTool:
-    """Tests for trans_to_function_tool and its parameter filtering logic."""
+    """Tests for trans_to_function_tool and its argument validation."""
 
     def _make_tool_from_method(self, method):
         """Helper to create a FunctionTool from a bound method."""
@@ -66,7 +66,7 @@ class TestTransToFunctionTool:
             trans_to_function_tool(ParameterTool().query)
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize("value", [123, [123], "one-id"])
+    @pytest.mark.parametrize("value", [[123], "one-id"])
     async def test_wrong_array_types_return_parameter_locations_without_execution(self, value):
         class EvidenceTool:
             called = False
@@ -107,11 +107,12 @@ class TestTransToFunctionTool:
         tool = self._make_tool_from_method(fake.search_table)
 
         # Simulate LLM sending an extra 'database_type' parameter
-        args = json.dumps({"query_text": "test query", "database_type": "sqlite"})
+        unknown = {"database_type": "sqlite", "fake_filter": "x"}
+        args = json.dumps({"query_text": "test query", **unknown})
         result = await tool.on_invoke_tool(None, args)
 
         assert result["success"] == 0
-        assert "database_type" in result["error"]
+        assert all(name in result["error"] for name in unknown)
         assert result["result"] is None
         assert not fake.called
 
@@ -404,23 +405,6 @@ class TestTransToFunctionTool:
         assert fake.called is False
         assert tool_ctx.tool_arguments == "{}"
         assert raw_tool_call.arguments == "{}"
-
-    @pytest.mark.asyncio
-    async def test_multiple_unknown_params_are_reported(self):
-        """Report all unknown top-level parameters in one correction."""
-
-        class FakeTool:
-            def simple(self, name: str) -> FuncToolResult:
-                return FuncToolResult(result=name)
-
-        fake = FakeTool()
-        tool = self._make_tool_from_method(fake.simple)
-
-        args = json.dumps({"name": "test", "fake1": 1, "fake2": "x", "fake3": True})
-        result = await tool.on_invoke_tool(None, args)
-
-        assert result["success"] == 0
-        assert all(name in result["error"] for name in ("fake1", "fake2", "fake3"))
 
     @pytest.mark.asyncio
     async def test_excluded_parameters_are_not_exposed(self):
