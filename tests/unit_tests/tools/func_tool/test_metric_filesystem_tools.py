@@ -354,6 +354,58 @@ def osi_schema_validator(monkeypatch):
 
 
 class TestMetricFilesystemFuncTool:
+    @pytest.mark.parametrize("rewrite_uid", [False, True])
+    def test_osi_edit_rejects_duplicate_yaml_keys_before_writing(self, tmp_path, rewrite_uid):
+        from datus.tools.semantic_tools.metric_identity import ensure_metric_uid, metric_uid
+
+        metric = _osi_metric("revenue", "SUM(orders.amount)")
+        ensure_metric_uid(metric)
+        document = {
+            "version": "0.2.0.dev0",
+            "semantic_model": [
+                {
+                    "name": "sales",
+                    "datasets": [
+                        {
+                            "name": "orders",
+                            "source": "orders",
+                            "fields": [
+                                {
+                                    "name": "amount",
+                                    "expression": {"dialects": [{"dialect": "ANSI_SQL", "expression": "amount"}]},
+                                }
+                            ],
+                        }
+                    ],
+                    "relationships": [],
+                    "metrics": [metric],
+                }
+            ],
+        }
+        target = tmp_path / "sales.yml"
+        original = yaml.safe_dump(document, sort_keys=False)
+        target.write_text(original)
+        candidate = original.replace("source: orders", "source: analytics.orders")
+        if rewrite_uid:
+            candidate = candidate.replace(metric_uid(metric), "model-mistake")
+        on_mutation = Mock()
+        tool = SemanticModelingFilesystemFuncTool(root_path=str(tmp_path), mutation_callback=on_mutation)
+
+        rejected = tool.edit_file(str(target), original, candidate + "  relationships: []\n")
+
+        assert rejected.success == 0
+        assert "duplicate field `relationships`" in rejected.error
+        assert rejected.result["written"] is False
+        assert target.read_bytes() == original.encode()
+        on_mutation.assert_not_called()
+
+        repaired = tool.edit_file(str(target), original, candidate)
+        assert repaired.success == 1, repaired.error
+        saved = yaml.safe_load(target.read_text())["semantic_model"][0]
+        assert saved["datasets"][0]["source"] == "analytics.orders"
+        assert metric_uid(saved["metrics"][0]) == metric_uid(metric)
+        on_mutation.assert_called_once_with(target)
+
     def test_osi_available_tools_include_narrow_dataset_mutations(self, tmp_path):
         tool = MetricFilesystemFuncTool(
             root_path=str(tmp_path),

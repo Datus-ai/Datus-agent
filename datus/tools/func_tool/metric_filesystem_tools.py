@@ -707,7 +707,7 @@ class MetricFilesystemFuncTool(FilesystemFuncTool):
             state.record_artifact_rollback(rollback_content)
         return True
 
-    def _validate_osi_document(self, document: Dict[str, Any]) -> Optional[str]:
+    def _validate_osi_document(self, document: Dict[str, Any] | str) -> Optional[str]:
         from datus.agent.node.semantic_authoring import (
             validate_osi_authoring_document,
         )
@@ -779,11 +779,14 @@ class OsiSemanticModelFilesystemFuncTool(MetricFilesystemFuncTool):
             if not isinstance(document, dict):
                 return FuncToolResult(success=0, error="OSI semantic model root must be a YAML object")
             try:
-                if prepare_metric_uids(document, original_document or {}):
-                    new_content = yaml.safe_dump(document, allow_unicode=True, sort_keys=False)
+                identities_changed = prepare_metric_uids(document, original_document or {})
             except ValueError as exc:
                 return FuncToolResult(success=0, error=f"Invalid OSI metric identity: {exc}")
-            validation_error = self._validate_osi_document(document)
+            # Validate the edit before any reserialization can hide duplicate keys.
+            validation_error = self._validate_osi_document(new_content)
+            if not validation_error and identities_changed:
+                new_content = yaml.safe_dump(document, allow_unicode=True, sort_keys=False)
+                validation_error = self._validate_osi_document(new_content)
             if validation_error:
                 return FuncToolResult(
                     success=0,

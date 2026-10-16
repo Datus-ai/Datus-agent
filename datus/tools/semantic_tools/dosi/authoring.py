@@ -102,10 +102,10 @@ def dosi_validation_payload(document: dict[str, Any]) -> dict[str, Any]:
     return dosi_validation_text_payload(model_text)
 
 
-def validate_dosi_document(document: dict[str, Any]) -> None:
-    """Reject a raw OSI document unless every native-Dosi preflight passes."""
+def validate_dosi_document(document: dict[str, Any] | str) -> None:
+    """Validate source text verbatim, or serialize an already parsed OSI document."""
 
-    payload = dosi_validation_payload(document)
+    payload = dosi_validation_text_payload(document) if isinstance(document, str) else dosi_validation_payload(document)
     if payload.get("valid"):
         return
     messages = validation_messages(payload) or ["native Dosi validation failed"]

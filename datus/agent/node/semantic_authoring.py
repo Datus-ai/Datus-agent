@@ -154,8 +154,8 @@ def _dataset_table_references(agent_config: Any, dataset: Dict[str, Any], datase
 
 
 def validate_osi_authoring_document(document: Any) -> Optional[str]:
-    """Validate a Dosi semantic-model document."""
-    if not isinstance(document, dict):
+    """Validate a Dosi document or its unmodified YAML source text."""
+    if not isinstance(document, (dict, str)):
         return "YAML document must be an object"
     from datus.tools.semantic_tools.dosi.authoring import validate_dosi_document
     from datus.tools.semantic_tools.exceptions import SemanticCoreException
