@@ -58,6 +58,14 @@ from datus.tools.semantic_tools.models import (
 )
 
 
+def _echo(compiled: Dict[str, Any]) -> Dict[str, Any]:
+    """The engine's ``warnings`` — a condition some part of the query could
+    not read, a source the period does not scope — passed through so the
+    caller sees every condition that did not land."""
+    warnings = compiled.get("warnings")
+    return {"warnings": warnings} if warnings else {}
+
+
 class DosiRuntime:
     """Agent's model catalog, query, validation, and editor boundary for Dosi."""
 
@@ -108,7 +116,6 @@ class DosiRuntime:
     ) -> List[MetricDefinition]:
         extension_version = await asyncio.to_thread(datus_extension_version)
         handles, _, _ = await asyncio.to_thread(self._catalog)
-        binding = await asyncio.to_thread(load_binding)
         metrics = []
         for model_path, handle in handles:
             engine = await asyncio.to_thread(handle.get)
@@ -116,8 +123,6 @@ class DosiRuntime:
             dataset_rows = await asyncio.to_thread(engine.datasets)
             dimension_rows = await asyncio.to_thread(engine.dimensions)
             payloads = await asyncio.to_thread(self._metric_payloads, model_path)
-            connection = handle.profile_name
-            dialect = self._dry_run_dialect(binding, connection)
             for row in rows:
                 hints = payloads.get(str(row.get("name") or ""), {})
                 metric_path = (
@@ -157,29 +162,28 @@ class DosiRuntime:
                     "derive_family",
                     "derive_base",
                     "derive_expr",
+                    "derive_predicate",
                     "subset_of",
                 ):
                     value = row.get(key)
                     if value is not None:
                         metadata[key] = value
+                # Which parts of the metric a filter's position changes, gathered
+                # by Dosi over the whole tree the metric is computed from (as
+                # required_dimensions above is), so they pass through as
+                # published rather than being rebuilt here.
+                for key in ("parts", "time_axis"):
+                    value = row.get(key)
+                    if value:
+                        metadata[key] = value
                 if effective_time:
                     metadata["time_dimension"] = effective_time
                 if isinstance(window, dict):
-                    requires_time_axis = await asyncio.to_thread(
-                        self._probe_requires_time_axis,
-                        engine,
-                        binding,
-                        str(row.get("name") or ""),
-                        dialect=dialect,
-                        connection=connection,
-                        required_dimensions=list(row.get("required_dimensions") or []),
-                    )
-                    metadata.update(
-                        {
-                            "window": window,
-                            "requires_time_axis": requires_time_axis,
-                        }
-                    )
+                    # Whether a query needs a grouped time axis is a compile
+                    # probe; get_dimensions makes it for the one metric asked
+                    # about (and marks the axis time_axis_required), so the
+                    # catalog listing compiles nothing.
+                    metadata["window"] = window
                 if "fill_nulls_with" in hints:
                     metadata["fill_nulls_with"] = hints["fill_nulls_with"]
                 metrics.append(
@@ -320,6 +324,9 @@ class DosiRuntime:
                 time_granularities=(grains_by_name.get(str(row.get("name") or ""), []) if row.get("is_time") else []),
                 recommended=row.get("is_dimension"),
                 recommendation_source=(str(row.get("source")) if row.get("source") is not None else None),
+                parts=row.get("parts") or None,
+                pairs=row.get("pairs") or None,
+                params=row.get("params") or None,
             )
             for row in rows
             if row.get("name")
@@ -440,6 +447,7 @@ class DosiRuntime:
                         "dry_run": True,
                         "explain": True,
                         **({"outputs": compiled["outputs"]} if compiled.get("outputs") is not None else {}),
+                        **_echo(compiled),
                     },
                 )
             result = await asyncio.to_thread(
@@ -456,6 +464,7 @@ class DosiRuntime:
                     "dialect": result["dialect"],
                     "row_count": result["row_count"],
                     **({"outputs": result["outputs"]} if result.get("outputs") is not None else {}),
+                    **_echo(result),
                 },
             )
         except Exception as exc:  # noqa: BLE001 - mapped to typed errors below
@@ -921,17 +930,44 @@ class DosiRuntime:
             )
         return dict(handles)[model_path]
 
+    @staticmethod
+    def _field_names_among(names: List[str], handles: tuple[tuple[str, EngineHandle], ...]) -> List[str]:
+        """The names a model knows as a field, spelled ``dataset.field`` or bare.
+
+        Asked when a name is not a metric: a field put in ``metrics`` otherwise
+        comes back as an unknown metric beside the whole metric catalog, which
+        reads as "pick another metric" rather than "this belongs in dimensions".
+        """
+        found: set[str] = set()
+        for _, handle in handles:
+            try:
+                rows = handle.get().dimensions()
+            except Exception:  # noqa: BLE001 - only a hint: the unknown-metric message still stands
+                continue
+            known = {str(row.get("name") or "") for row in rows if isinstance(row, dict)}
+            for name in names:
+                if name in known or any(full.endswith(f".{name}") for full in known):
+                    found.add(name)
+        return [name for name in names if name in found]
+
     def _handle_for_metrics(self, metrics: List[str]) -> EngineHandle:
         handles, metric_to_path, model_to_path = self._catalog()
         unknown = [name for name in dict.fromkeys(metrics) if name not in metric_to_path]
         if unknown:
-            candidates = ", ".join(sorted(metric_to_path))
-            raise SemanticValidationException(
-                SemanticValidationError(
-                    code="unknown_metric",
-                    metrics=unknown,
-                    message=(f"unknown metric(s): {', '.join(unknown)} | candidates: {candidates or '(none)'}"),
+            fields = self._field_names_among(unknown, handles)
+            message = f"unknown metric(s): {', '.join(unknown)}"
+            if fields:
+                one = len(fields) == 1
+                message += (
+                    f" | {', '.join(fields)} {'is a field' if one else 'are fields'}, not "
+                    f"{'a metric' if one else 'metrics'}: group by {'it' if one else 'them'} in `dimensions`, "
+                    f"or use {'it' if one else 'them'} in `where`"
                 )
+            if len(fields) < len(unknown):
+                candidates = ", ".join(sorted(metric_to_path))
+                message += f" | candidates: {candidates or '(none)'}"
+            raise SemanticValidationException(
+                SemanticValidationError(code="unknown_metric", metrics=unknown, message=message)
             )
         if not metrics:
             raise SemanticValidationException(

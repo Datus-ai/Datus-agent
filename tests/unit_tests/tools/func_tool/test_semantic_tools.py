@@ -2,6 +2,7 @@
 Test cases for SemanticTools utility functions and query_metrics compression.
 """
 
+import copy
 import hashlib
 import json
 from enum import Enum
@@ -17,6 +18,7 @@ from datus.tools.func_tool.semantic_tools import SemanticTools, _run_async
 from datus.tools.semantic_tools.models import (
     AttributionRequest,
     AttributionWindow,
+    DimensionInfo,
     QueryResult,
 )
 
@@ -227,6 +229,238 @@ class TestQueryMetricsCompression:
             "metrics": ["revenue"],
             "params": {"regions": ["APAC", "EMEA"], "threshold": 100},
         }
+
+    def test_query_metrics_hints_in_list_values_missing_from_a_grouped_field(self, semantic_tools):
+        calls = []
+
+        class _Runtime:
+            service_type = "dosi"
+
+            async def query_metrics(self, **kwargs):
+                calls.append(kwargs)
+                return QueryResult(columns=["imode", "players"], data=[{"imode": 1251206313870885120, "players": 4}])
+
+        semantic_tools._runtime = _Runtime()
+        result = semantic_tools.query_metrics(
+            metrics=["players"],
+            dimensions=["matches.imode"],
+            where="matches.imode IN (1251206313870885120, 1281781308570207232)",
+        )
+
+        assert result.result["metadata"]["hints"] == [
+            "matches.imode IN (...): 1 of 2 values matched no row in this query: 1281781308570207232. Check "
+            "whether matches.imode holds these values at all before reading their absence as no data."
+        ]
+        assert len(calls) == 1
+
+    def test_query_metrics_checks_an_in_list_on_an_ungrouped_field_by_grouping_it_too(self, semantic_tools):
+        """A list of names checked against a name table that lacks some of them drops those names silently."""
+        calls = []
+
+        class _Runtime:
+            service_type = "dosi"
+
+            async def query_metrics(self, **kwargs):
+                calls.append(kwargs)
+                if "names.name" in kwargs["dimensions"]:
+                    return QueryResult(columns=["name", "players"], data=[{"name": "bridge", "players": 3}])
+                return QueryResult(columns=["metric_time", "imode", "players"], data=[{"imode": 7, "players": 3}])
+
+        semantic_tools._runtime = _Runtime()
+        result = semantic_tools.query_metrics(
+            metrics=["players"],
+            dimensions=["matches.imode"],
+            time_granularity="day",
+            context_filter="names.name IN ('bridge', 'duel')",
+            limit=10,
+        )
+
+        assert result.result["metadata"]["hints"] == [
+            "names.name IN (...): 1 of 2 values matched no row in this query: duel. Check whether names.name "
+            "holds these values at all before reading their absence as no data."
+        ]
+        # Grouped by the listed field alone: at most one row per listed value.
+        assert calls[1]["dimensions"] == ["names.name"]
+        assert calls[1]["time_granularity"] is None
+        assert calls[1]["limit"] is None
+        assert calls[1]["order_by"] is None
+        assert calls[1]["context_filter"] == "names.name IN ('bridge', 'duel')"
+
+    def test_query_metrics_rechecks_a_grouped_in_list_field_when_a_limit_cut_the_result(self, semantic_tools):
+        """A limited result can drop listed values that do have rows; it cannot say which matched none."""
+        calls = []
+
+        class _Runtime:
+            service_type = "dosi"
+
+            async def query_metrics(self, **kwargs):
+                calls.append(kwargs)
+                if kwargs["limit"] is None:
+                    return QueryResult(columns=["name", "players"], data=[{"name": "bridge"}, {"name": "duel"}])
+                return QueryResult(columns=["name", "players"], data=[{"name": "bridge", "players": 3}])
+
+        semantic_tools._runtime = _Runtime()
+        result = semantic_tools.query_metrics(
+            metrics=["players"],
+            dimensions=["names.name"],
+            where="names.name IN ('bridge', 'duel', 'arena')",
+            order_by=["-players"],
+            limit=1,
+        )
+
+        assert result.result["metadata"]["hints"] == [
+            "names.name IN (...): 1 of 3 values matched no row in this query: arena. Check whether names.name "
+            "holds these values at all before reading their absence as no data."
+        ]
+        assert len(calls) == 2
+        assert calls[1]["dimensions"] == ["names.name"]
+        assert calls[1]["limit"] is None
+
+    def test_query_metrics_skips_the_in_list_check_when_where_filters_on_a_selected_metric(self, semantic_tools):
+        """A condition on a metric filters after aggregation, so a regrouped check would not mean the same."""
+        calls = []
+
+        class _Runtime:
+            service_type = "dosi"
+
+            async def query_metrics(self, **kwargs):
+                calls.append(kwargs)
+                return QueryResult(columns=["players"], data=[{"players": 3}])
+
+        semantic_tools._runtime = _Runtime()
+        result = semantic_tools.query_metrics(
+            metrics=["players"],
+            where="names.name IN ('bridge', 'duel') AND players > 2",
+        )
+
+        assert result.success == 1
+        assert "hints" not in result.result["metadata"]
+        assert len(calls) == 1
+
+    def test_filters_on_metric_matches_a_bare_metric_name_only(self):
+        from datus.tools.func_tool.semantic_tools import _filters_on_metric
+
+        assert _filters_on_metric("players > 2", ["players"]) is True
+        assert _filters_on_metric("stats.players > 2 AND players_d7 > 0", ["players"]) is False
+        assert _filters_on_metric(None, ["players"]) is False
+
+    def test_result_column_for_prefers_the_qualified_name_and_refuses_an_ambiguous_short_one(self):
+        from datus.tools.func_tool.semantic_tools import _result_column_for
+
+        assert _result_column_for("names.name", ["matches.name", "names.name"]) == "names.name"
+        assert _result_column_for("names.name", ["name", "players"]) == "name"
+        assert _result_column_for("names.name", ["name", "name", "players"]) is None
+        assert _result_column_for("names.name", ["players"]) is None
+
+    def test_query_metrics_drops_the_in_list_check_when_the_probe_fails(self, semantic_tools):
+        class _Runtime:
+            service_type = "dosi"
+
+            async def query_metrics(self, **kwargs):
+                if "names.name" in kwargs["dimensions"]:
+                    raise RuntimeError("fan-out")
+                return QueryResult(columns=["players"], data=[{"players": 3}])
+
+        semantic_tools._runtime = _Runtime()
+        result = semantic_tools.query_metrics(metrics=["players"], where="names.name IN ('bridge', 'duel')")
+
+        assert result.success == 1
+        assert "hints" not in result.result["metadata"]
+
+    def test_query_metrics_checks_each_in_list_field_once_and_skips_an_unreadable_probe(self, semantic_tools):
+        probes = []
+
+        class _Runtime:
+            service_type = "dosi"
+
+            async def query_metrics(self, **kwargs):
+                if "names.name" in kwargs["dimensions"]:
+                    probes.append(kwargs["dimensions"])
+                    return QueryResult(columns=["something_else"], data=[{"something_else": 1}])
+                return QueryResult(columns=["players"], data=[{"players": 3}])
+
+        semantic_tools._runtime = _Runtime()
+        result = semantic_tools.query_metrics(
+            metrics=["players"],
+            where="names.name IN ('bridge') AND names.name IN ('duel')",
+            context_filter="names.name IN ('arena')",
+        )
+
+        assert result.success == 1
+        assert "hints" not in result.result["metadata"]
+        assert len(probes) == 1
+
+    def test_in_list_conditions_reads_only_plain_lists_of_literals(self):
+        from datus.tools.func_tool.semantic_tools import _in_list_conditions
+
+        sql = (
+            "a.mode IN (101, 102) AND b.name in ('it''s', 'x') AND c.id NOT IN (1, 2) "
+            "AND d.id IN (SELECT id FROM t) AND e.code IN (f.code, 'y')"
+        )
+
+        assert _in_list_conditions(sql) == [("a.mode", ["101", "102"]), ("b.name", ["it's", "x"])]
+        assert _in_list_conditions("NOT a.mode IN (101)") == []
+
+    def test_query_metrics_says_how_to_query_a_metric_without_a_time_axis(self, semantic_tools):
+        """The engine lists every time field of the model; the agent needs: no period here, the day in where."""
+        from datus.tools.semantic_tools.dosi.errors import SemanticValidationException
+        from datus.tools.semantic_tools.models import SemanticValidationError
+
+        snapshot = _detail_metric("snapshot_players", {"base_kind": "aggregate", "datasets": ["players_snapshot"]})
+
+        class _Runtime:
+            service_type = "dosi"
+
+            async def list_metrics(self, path=None, limit=None, offset=0):
+                return [snapshot] if offset == 0 else []
+
+            async def query_metrics(self, metrics, **kwargs):
+                raise SemanticValidationException(
+                    SemanticValidationError(
+                        code="no_primary_time_dimension",
+                        metrics=["snapshot_players__k_7"],
+                        required_dimensions=["events.event_hour", "logins.stat_date"],
+                        message='metric "snapshot_players__k_7" has no primary time dimension '
+                        "| candidates: events.event_hour, logins.stat_date",
+                    )
+                )
+
+        semantic_tools._runtime = _Runtime()
+        result = semantic_tools.query_metrics(
+            metrics=["snapshot_players"], time_start="2024-01-01", time_end="2024-01-02", params={"k": [7]}
+        )
+
+        assert result.success == 0
+        assert result.error.startswith("snapshot_players has no time axis: the table (players_snapshot) it reads")
+        assert "without time_start/time_end" in result.error and "in `where`" in result.error
+        assert "event_hour" not in result.error
+        assert result.result["code"] == "no_primary_time_dimension"
+        assert result.result["required_dimensions"] == []
+
+    def test_the_no_time_axis_advice_stands_without_the_catalog(self, semantic_tools):
+        from datus.tools.semantic_tools.dosi.errors import SemanticValidationException
+        from datus.tools.semantic_tools.models import SemanticValidationError
+
+        class _Runtime:
+            service_type = "dosi"
+
+            async def list_metrics(self, path=None, limit=None, offset=0):
+                raise RuntimeError("catalog unavailable")
+
+            async def query_metrics(self, metrics, **kwargs):
+                raise SemanticValidationException(
+                    SemanticValidationError(
+                        code="no_primary_time_dimension",
+                        metrics=["snapshot_players"],
+                        message='metric "snapshot_players" has no primary time dimension',
+                    )
+                )
+
+        semantic_tools._runtime = _Runtime()
+        result = semantic_tools.query_metrics(metrics=["snapshot_players"], time_start="2024-01-01")
+
+        assert result.success == 0
+        assert result.error.startswith("snapshot_players has no time axis: the table it reads")
 
     def test_query_metrics_small_data_not_compressed(self, semantic_tools):
         """Test that small data within token threshold is not compressed."""
@@ -1186,9 +1420,9 @@ class TestListMetrics:
         # unit/format stay out — get_metric carries the per-metric detail.
         assert envelope["items"] == [
             {
+                # ``kind`` stays out: a row without it is an aggregate.
                 "name": "orders",
                 "description": "Order count",
-                "kind": "aggregate",
                 "time_dimension": "orders.ordered_at",
                 # The knowledge-base path wins over the runtime's own ``path``.
                 "path": ["Commerce", "Orders"],
@@ -1491,6 +1725,29 @@ def _detail_metric(name, metadata, measures=("m",)):
     return metric
 
 
+def _expand_metric_detail(reply):
+    """A get_metric reply with what it leaves out put back, as the docstring
+    reads a missing key: the default values."""
+    full = copy.deepcopy(reply)
+    full.setdefault("kind", "aggregate")
+    full.setdefault("required_dimensions", [])
+    for row in full.get("dimensions") or []:
+        for key, value in {
+            "type": None,
+            "is_primary_key": None,
+            "recommended": True,
+            "recommendation_source": "inferred",
+            "required": False,
+            "required_reason": None,
+            "time_axis_required": False,
+        }.items():
+            row.setdefault(key, value)
+        for part in row.get("parts") or []:
+            part.setdefault("kind", "fixed")
+            part.setdefault("used_in", [])
+    return full
+
+
 class TestGetMetric:
     RANKED = {
         "base_kind": "ratio",
@@ -1603,6 +1860,214 @@ class TestGetMetric:
         # `slots` is where the engine substitutes the value: an internal, not a binding hint.
         assert result.result["params"] == params
 
+    def test_passes_through_where_filters_change_the_metric(self, semantic_tools_with_runtime):
+        """A composed share hides that its denominator is a fixed total; the
+        runtime's `parts` is what tells the agent a region filter in
+        context_filter would narrow it. Passed through as published."""
+        tool, _ = semantic_tools_with_runtime
+        placement = {
+            "metrics": [
+                {
+                    "name": "revenue_company_total",
+                    "kind": "fixed",
+                    "definition": "fixed(revenue)",
+                    "used_in": ["revenue_share_of_company"],
+                }
+            ]
+        }
+        metric = _detail_metric(
+            "revenue_share_of_company",
+            {"base_kind": "ratio", "derive_family": "compose", "parts": placement},
+        )
+
+        with self._wire([metric]):
+            result = tool.get_metric(name="revenue_share_of_company")
+
+        assert result.result["parts"] == placement
+
+    def test_passes_through_a_filter_predicate(self, semantic_tools_with_runtime):
+        tool, _ = semantic_tools_with_runtime
+        predicate = "logins.login_date >= :window_start AND logins.login_date <= :window_end"
+        metric = _detail_metric(
+            "login_days_in_window",
+            {"base_kind": "aggregate", "derive_family": "filter", "derive_predicate": predicate},
+        )
+
+        with self._wire([metric]):
+            result = tool.get_metric(name="login_days_in_window")
+
+        assert result.result["derive_predicate"] == predicate
+
+    def test_dimension_rows_keep_placement_only_where_the_runtime_reports_it(self, semantic_tools_with_runtime):
+        """A fixed field's base parameters are bound by the query but declared by
+        no queried metric, so its dimension row is where the agent finds them.
+        Ordinary rows stay free of the empty keys."""
+        tool, _ = semantic_tools_with_runtime
+        params = [{"name": "window_start", "type": "string", "default": "1970-01-01"}]
+        placement = [
+            {
+                "name": "logins.window_days",
+                "kind": "fixed",
+                "definition": "fixed(login_days_in_window, logins.user_id)",
+                "used_in": [],
+                "source": "logins",
+                "time_axis": "logins.login_date",
+            }
+        ]
+        rows = [
+            DimensionInfo(name="logins.window_days", parts=placement, params=params),
+            DimensionInfo(name="logins.user_id"),
+        ]
+        metric = _detail_metric("active_users", {"base_kind": "aggregate"})
+
+        with self._wire([metric], dimension_rows=rows):
+            result = tool.get_metric(name="active_users")
+
+        window_days, user_id = result.result["dimensions"]
+        # The part keeps what places a filter; the defaults stay out (a dimension
+        # row's parts are fixed fields, and this one is the row's own field).
+        assert window_days["parts"] == [
+            {
+                "name": "logins.window_days",
+                "definition": "fixed(login_days_in_window, logins.user_id)",
+                "source": "logins",
+                "time_axis": "logins.login_date",
+            }
+        ]
+        assert window_days["params"] == params
+        assert "parts" not in user_id
+        assert "params" not in user_id
+
+    def test_dimension_rows_leave_out_default_values(self, semantic_tools_with_runtime):
+        """Every row of a model repeated these; a missing key now means the
+        default the docstring names, and only the rows that differ say so."""
+        tool, _ = semantic_tools_with_runtime
+        rows = [
+            DimensionInfo(name="logins.platform", recommended=True, recommendation_source="inferred"),
+            DimensionInfo(
+                name="logins.login_date", type="time", recommended=True, recommendation_source="inferred:time"
+            ),
+            DimensionInfo(name="logins.seconds", recommended=False, recommendation_source="inferred:measure"),
+            DimensionInfo(
+                name="logins.user_id", is_primary_key=True, recommended=True, recommendation_source="declared"
+            ),
+        ]
+        metric = _detail_metric("active_users", {"base_kind": "aggregate"})
+
+        with self._wire([metric], dimension_rows=rows):
+            result = tool.get_metric(name="active_users")
+
+        platform, login_date, seconds, user_id = result.result["dimensions"]
+        assert platform == {"name": "logins.platform", "description": None}
+        assert login_date == {
+            "name": "logins.login_date",
+            "description": None,
+            "type": "time",
+            "recommendation_source": "inferred:time",
+        }
+        assert seconds == {
+            "name": "logins.seconds",
+            "description": None,
+            "recommended": False,
+            "recommendation_source": "inferred:measure",
+        }
+        assert user_id == {
+            "name": "logins.user_id",
+            "description": None,
+            "is_primary_key": True,
+            "recommendation_source": "declared",
+        }
+        assert "kind" not in result.result
+
+    def test_a_time_axis_a_dimension_requires_is_stated_on_the_metric(self, semantic_tools_with_runtime):
+        """get_dimensions probes the metric itself, so a compose over a
+        period-over-period window is marked as the window is; the listing never
+        probes, so the metric metadata does not say it."""
+        tool, _ = semantic_tools_with_runtime
+        rows = [
+            DimensionInfo(
+                name="metric_time",
+                type="time",
+                is_primary_time=True,
+                time_granularities=["day", "month"],
+                required=True,
+                required_reason="time_axis",
+                time_axis_required=True,
+            ),
+            DimensionInfo(name="cell.brand"),
+        ]
+        metric = _detail_metric("revenue_growth", {"base_kind": "expression", "derive_family": "compose"})
+
+        with self._wire([metric], dimension_rows=rows):
+            result = tool.get_metric(name="revenue_growth").result
+
+        assert result["requires_time_axis"] is True
+        (axis, brand) = result["dimensions"]
+        assert axis["required_reason"] == "time_axis"
+        assert axis["time_axis_required"] is True
+        assert "required" not in brand and "time_axis_required" not in brand
+
+        with self._wire([metric], dimension_rows=[DimensionInfo(name="cell.brand")]):
+            result = tool.get_metric(name="revenue_growth").result
+
+        assert "requires_time_axis" not in result
+
+    def test_the_reply_expands_back_to_every_value(self, semantic_tools_with_runtime):
+        """Leaving the defaults out loses nothing: putting them back gives the
+        rows the runtime reported."""
+        tool, _ = semantic_tools_with_runtime
+        rows = [
+            DimensionInfo(
+                name="users.login_days",
+                recommended=True,
+                recommendation_source="inferred",
+                parts=[
+                    {
+                        "name": "users.login_days",
+                        "kind": "fixed",
+                        "definition": "fixed(login_days, users.user_id)",
+                        "used_in": [],
+                        "source": "logins",
+                        "time_axis": "logins.login_date",
+                    }
+                ],
+                pairs=["profiles.login_days"],
+            ),
+            DimensionInfo(
+                name="users.active_tier",
+                recommended=True,
+                recommendation_source="inferred",
+                parts=[
+                    {
+                        "name": "users.login_days",
+                        "kind": "fixed",
+                        "definition": "fixed(login_days, users.user_id)",
+                        "used_in": ["users.active_tier"],
+                        "source": "logins",
+                        "time_axis": "logins.login_date",
+                    }
+                ],
+            ),
+            DimensionInfo(name="logins.seconds", recommended=False, recommendation_source="inferred:measure"),
+            DimensionInfo(
+                name="logins.login_date", type="time", recommended=True, recommendation_source="inferred:time"
+            ),
+        ]
+        metric = _detail_metric(
+            "active_users", {"base_kind": "aggregate", "derive_family": "filter", "required_dimensions": []}
+        )
+
+        with self._wire([metric], dimension_rows=rows):
+            compact = tool.get_metric(name="active_users").result
+        with (
+            self._wire([metric], dimension_rows=rows),
+            patch("datus.tools.func_tool.semantic_tools._compact_metric_detail", side_effect=lambda row: row),
+        ):
+            full = tool.get_metric(name="active_users").result
+
+        assert compact != full
+        assert _expand_metric_detail(compact) == full
+
     def test_unknown_name_fails_with_the_name(self, semantic_tools_with_runtime):
         tool, _ = semantic_tools_with_runtime
         metric = _detail_metric("kpi_issues", {"base_kind": "aggregate"})
@@ -1630,7 +2095,7 @@ class TestGetMetric:
             result = tool.get_metric(name="kpi_issues")
 
         assert result.success == 1
-        assert result.result["kind"] == "aggregate"
+        assert result.result["description"] == "kpi_issues description"
         assert "planner unavailable" in result.result["dimensions_error"]
         assert "dimensions" not in result.result
 
@@ -1679,10 +2144,23 @@ class TestGetMetric:
             assert "time_granularities" not in row
         # The grouping recommendation is per dimension, so unlike the time axis
         # it stays on the row instead of being promoted to the metric.
-        assert result.result["dimensions"][0]["recommended"] is True
+        assert "recommended" not in result.result["dimensions"][0]  # recommended: the default stays out
         assert result.result["dimensions"][0]["recommendation_source"] == "inferred:time"
         assert result.result["dimensions"][1]["recommended"] is False
         assert result.result["dimensions"][1]["recommendation_source"] == "inferred:primary_key"
+        assert "time_axis" not in result.result  # it has one: time_dimension says which
+
+    def test_says_outright_that_a_metric_has_no_time_axis(self, semantic_tools_with_runtime):
+        """A snapshot metric takes no period; an absent key read as "unknown" and the agent sent one."""
+        tool, _ = semantic_tools_with_runtime
+        metric = _detail_metric("snapshot_players", {"base_kind": "aggregate"})
+
+        with self._wire([metric], dimension_rows=[{"name": "players_snapshot.region"}]):
+            result = tool.get_metric(name="snapshot_players")
+
+        assert result.success == 1
+        assert result.result["time_axis"] is None
+        assert "time_dimension" not in result.result
 
     def test_describes_a_metric_that_only_a_later_catalog_page_holds(self, semantic_tools_with_runtime):
         """Every name list_metrics can hand out, get_metric has to accept.

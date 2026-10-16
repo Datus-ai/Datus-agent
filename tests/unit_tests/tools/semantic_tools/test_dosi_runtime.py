@@ -232,7 +232,9 @@ semantic_model:
     assert running.type == "window"
     assert running.path == ["sales", "revenue"]
     assert running.unit == "USD"
-    assert running.metadata["requires_time_axis"] is True
+    # The listing compiles nothing; get_dimensions answers the time axis.
+    assert "requires_time_axis" not in running.metadata
+    assert FakeEngine.instances[-1].compile_calls == []
     assert running.metadata["window"] == {
         "type": "cumulative",
         "function": "sum",
@@ -306,12 +308,17 @@ semantic_model:
     monkeypatch.setattr(FakeEngine, "metrics", lambda self: [dict(row) for row in rows])
     monkeypatch.setattr(FakeEngine, "time_axis_metrics", {"first_revenue"})
 
-    metrics = {metric.name: metric for metric in await make_runtime().list_metrics()}
+    runtime = make_runtime()
+    metrics = {metric.name: metric for metric in await runtime.list_metrics()}
     assert metrics["order_rank"].metadata["window_family"] == "rank"
     assert metrics["order_rank"].metadata["window_function"] == "rank"
-    assert metrics["order_rank"].metadata["requires_time_axis"] is False
-    assert metrics["first_revenue"].metadata["requires_time_axis"] is True
-    assert metrics["revenue_range"].metadata["requires_time_axis"] is False
+
+    def axis_required(dimensions):
+        return any(d.time_axis_required for d in dimensions)
+
+    assert not axis_required(await runtime.get_dimensions("order_rank"))
+    assert axis_required(await runtime.get_dimensions("first_revenue"))
+    assert not axis_required(await runtime.get_dimensions("revenue_range"))
 
 
 @pytest.mark.asyncio
@@ -534,6 +541,88 @@ async def test_get_dimensions_trusts_native_membership_without_non_time_probes(m
     engine = FakeEngine.instances[-1]
     assert engine.dimension_calls[-1] == "revenue"
     assert [call["query"].get("group_by") for call in engine.compile_calls] == [[]]
+
+
+@pytest.mark.asyncio
+async def test_list_metrics_passes_through_what_dosi_gathers_over_the_tree(make_runtime, monkeypatch):
+    """`required_dimensions` and `parts` are gathered by Dosi over
+    every metric a value is computed from; rebuilding either here would miss
+    what a member's member declares. Empty answers add no key."""
+    placement = {
+        "metrics": [
+            {
+                "name": "revenue_company_total",
+                "kind": "fixed",
+                "definition": "fixed(revenue)",
+                "used_in": ["revenue_share"],
+            }
+        ]
+    }
+    rows = [
+        {
+            "name": "revenue_share",
+            "kind": "ratio",
+            "datasets": ["orders"],
+            "measures": ["revenue"],
+            "derive_family": "compose",
+            "derive_expr": "revenue / revenue_company_total",
+            "required_dimensions": ["stores.region"],
+            "parts": placement,
+        },
+        {
+            "name": "wallet_revenue",
+            "kind": "aggregate",
+            "datasets": ["orders"],
+            "measures": ["revenue"],
+            "derive_family": "filter",
+            "derive_base": "revenue",
+            "derive_predicate": "orders.channel = 'wallet'",
+            "required_dimensions": [],
+        },
+    ]
+    monkeypatch.setattr(FakeEngine, "metrics", lambda self: [dict(r) for r in rows])
+
+    metrics = {metric.name: metric for metric in await make_runtime().list_metrics()}
+
+    share = metrics["revenue_share"].metadata
+    assert share["parts"] == placement
+    assert share["required_dimensions"] == ["stores.region"]
+    wallet = metrics["wallet_revenue"].metadata
+    assert wallet["derive_predicate"] == "orders.channel = 'wallet'"
+    assert wallet["required_dimensions"] == []
+    assert "parts" not in wallet
+
+
+@pytest.mark.asyncio
+async def test_get_dimensions_passes_through_a_fixed_fields_placement_and_params(make_runtime, monkeypatch):
+    placement = [
+        {
+            "name": "orders.window_days",
+            "kind": "fixed",
+            "definition": "fixed(days_in_window, orders.user_id)",
+            "used_in": [],
+            "source": "orders",
+            "time_axis": "orders.order_date",
+        }
+    ]
+    params = [{"name": "window_start", "type": "string", "default": "1970-01-01", "declared_on": "days_in_window"}]
+    native_rows = [
+        {"name": "orders.window_days", "is_time": False, "parts": placement, "params": params},
+        {"name": "orders.status", "is_time": False},
+    ]
+
+    def dimensions(self, metric=None):
+        self.dimension_calls.append(metric)
+        return [dict(row) for row in native_rows]
+
+    monkeypatch.setattr(FakeEngine, "dimensions", dimensions)
+
+    window_days, status = await make_runtime().get_dimensions("revenue")
+
+    assert window_days.parts == placement
+    assert window_days.params == params
+    assert status.parts is None
+    assert status.params is None
 
 
 @pytest.mark.asyncio
@@ -1131,6 +1220,61 @@ async def test_semantic_models_path_rejects_cross_model_query(tmp_path, monkeypa
     assert exc.value.payload.metrics == ["order_count", "active_users"]
     assert "order_count -> orders_model" in exc.value.payload.message
     assert "active_users -> users_model" in exc.value.payload.message
+
+
+def _orders_and_users_runtime(tmp_path, monkeypatch):
+    from datus.tools.semantic_tools.dosi.config import DosiConfig
+    from datus.tools.semantic_tools.dosi.runtime import DosiRuntime
+
+    _write_model(tmp_path / "orders.yaml", "orders_model", ["order_count", "revenue"])
+    _write_model(tmp_path / "users.yaml", "users_model", ["active_users"])
+    _install_file_catalog(monkeypatch, {"orders": ["order_count", "revenue"], "users": ["active_users"]})
+    return DosiRuntime(DosiConfig(semantic_models_path=str(tmp_path)))
+
+
+@pytest.mark.asyncio
+async def test_a_field_asked_for_as_a_metric_is_named_a_field(tmp_path, monkeypatch):
+    """Beside the whole metric catalog, a field in ``metrics`` read as "pick another metric"."""
+    runtime = _orders_and_users_runtime(tmp_path, monkeypatch)
+
+    with pytest.raises(SemanticValidationException) as exc:
+        await runtime.query_metrics(metrics=["order_count", "orders.status"], dry_run=True)
+
+    payload = exc.value.payload
+    assert (payload.code, payload.metrics) == ("unknown_metric", ["orders.status"])
+    assert "orders.status is a field, not a metric: group by it in `dimensions`" in payload.message
+    assert "candidates" not in payload.message
+
+
+@pytest.mark.asyncio
+async def test_a_model_whose_dimensions_fail_leaves_the_unknown_metric_message(tmp_path, monkeypatch):
+    """The field check is only a hint: a model it cannot read keeps the plain refusal."""
+    runtime = _orders_and_users_runtime(tmp_path, monkeypatch)
+
+    def dimensions(engine, metric=None):
+        raise RuntimeError("model unreadable")
+
+    monkeypatch.setattr(FakeEngine, "dimensions", dimensions)
+
+    with pytest.raises(SemanticValidationException) as exc:
+        await runtime.query_metrics(metrics=["order_count", "orders.status"], dry_run=True)
+
+    message = exc.value.payload.message
+    assert "is a field" not in message
+    assert message.endswith("candidates: active_users, order_count, revenue")
+
+
+@pytest.mark.asyncio
+async def test_an_unknown_name_beside_a_field_keeps_the_metric_candidates(tmp_path, monkeypatch):
+    runtime = _orders_and_users_runtime(tmp_path, monkeypatch)
+
+    with pytest.raises(SemanticValidationException) as exc:
+        await runtime.query_metrics(metrics=["order_count", "status", "nope"], dry_run=True)
+
+    message = exc.value.payload.message
+    assert "status is a field" in message
+    assert "nope" not in message.split("|")[1]
+    assert message.endswith("candidates: active_users, order_count, revenue")
 
 
 @pytest.mark.asyncio

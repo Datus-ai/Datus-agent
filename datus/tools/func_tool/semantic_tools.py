@@ -9,11 +9,13 @@ Provides unified interface to semantic layer services through runtimes.
 All public semantic tools require a successfully initialized semantic runtime.
 """
 
+import copy
 import csv
 import hashlib
 import io
 import itertools
 import json
+import re
 import secrets
 from collections import OrderedDict
 from pathlib import Path
@@ -50,6 +52,63 @@ from datus.utils.mcp_decorators import mcp_tool, mcp_tool_class
 
 logger = get_logger(__name__)
 
+
+_IN_LIST = re.compile(r"(?<![\w.])([A-Za-z_]\w*\.[A-Za-z_]\w*)\s+IN\s*\(([^()]*)\)", re.IGNORECASE)
+_IN_ITEM = re.compile(r"\s*(?:'((?:[^']|'')*)'|(-?\d+(?:\.\d+)?))\s*(?:,|$)")
+
+
+def _in_list_conditions(sql: Optional[str]) -> List[Tuple[str, List[str]]]:
+    """``dataset.field IN (literal, ...)`` conditions of a condition string.
+
+    ``NOT IN`` and lists holding anything but string or number literals are
+    left out: only a plain list of values can be checked value by value.
+    """
+    found: List[Tuple[str, List[str]]] = []
+    for match in _IN_LIST.finditer(sql or ""):
+        if sql[: match.start()].rstrip().upper().endswith("NOT"):
+            continue
+        body = match.group(2)
+        values: List[str] = []
+        position = 0
+        while position < len(body):
+            item = _IN_ITEM.match(body, position)
+            if not item or item.end() == position:
+                values = []
+                break
+            values.append(item.group(1).replace("''", "'") if item.group(1) is not None else item.group(2))
+            position = item.end()
+        if values:
+            found.append((match.group(1), values))
+    return found
+
+
+def _value_key(value: Any) -> str:
+    text = str(value).strip()
+    try:
+        number = float(text)
+    except ValueError:
+        return text
+    return str(int(number)) if number.is_integer() else text
+
+
+def _result_column_for(field: str, columns: List[str]) -> Optional[str]:
+    """The result column of ``field``: its qualified name, else its bare name when only one column has it."""
+    if field in columns:
+        return field
+    short = field.split(".")[-1]
+    matches = [column for column in columns if column == short]
+    return matches[0] if len(matches) == 1 else None
+
+
+def _filters_on_metric(where: Optional[str], metrics: List[str]) -> bool:
+    """Whether ``where`` names a selected metric, which filters the result rows after aggregation."""
+    return any(
+        re.search(rf"(?<![\w.]){re.escape(metric)}(?![\w.])", where or "")
+        for metric in metrics
+        if isinstance(metric, str)
+    )
+
+
 NO_METRICS_PRESENT_MESSAGE = "No metrics present in the model."
 
 
@@ -67,7 +126,11 @@ def _normalize_dimension_rows(raw) -> list:
     normalized = []
     for d in raw:
         if hasattr(d, "model_dump"):
-            normalized.append(d.model_dump())
+            row = d.model_dump()
+            for key in _DIMENSION_OPTIONAL_KEYS:
+                if row.get(key) is None:
+                    row.pop(key, None)
+            normalized.append(row)
         elif isinstance(d, dict):
             normalized.append(d)
         elif isinstance(d, str):
@@ -112,7 +175,66 @@ _METRIC_DETAIL_KEYS = (
     "requires_time_axis",
     "required_dimensions",
     "params",
+    "derive_predicate",
+    "parts",
+    "time_axis",
 )
+
+# Dimension keys a runtime reports only for some fields. Dropped when empty so
+# an ordinary dimension row does not carry them as nulls.
+_DIMENSION_OPTIONAL_KEYS = ("parts", "pairs", "params")
+
+# Values a tool row leaves out when it holds them; the list_metrics and
+# get_metric docstrings say what a missing key means. Kept in, every one of a
+# metric's dimension rows repeated them: about a fifth of a get_metric reply.
+_METRIC_ROW_DEFAULTS: Dict[str, Any] = {"kind": "aggregate"}
+# get_metric only: no requirement is the common case, so an empty list is left out.
+_METRIC_DETAIL_DEFAULTS: Dict[str, Any] = {**_METRIC_ROW_DEFAULTS, "required_dimensions": []}
+_DIMENSION_ROW_DEFAULTS: Dict[str, Any] = {
+    "type": None,
+    "is_primary_key": None,
+    "recommended": True,
+    "recommendation_source": "inferred",
+    "required": False,
+    "required_reason": None,
+    "time_axis_required": False,
+}
+# A dimension row's parts are always fixed fields, and ``used_in`` is empty when
+# the part is the row's own field.
+_DIMENSION_PART_DEFAULTS: Dict[str, Any] = {"kind": "fixed", "used_in": []}
+
+
+def _omit_defaults(row: Mapping[str, Any], defaults: Mapping[str, Any]) -> dict:
+    """``row`` without the keys that hold the value ``defaults`` gives them.
+
+    The type has to match too, so a ``1`` never passes for a ``True`` default.
+    """
+    return {
+        key: value
+        for key, value in row.items()
+        if not (key in defaults and type(value) is type(defaults[key]) and value == defaults[key])
+    }
+
+
+def _compact_dimension_row(row: Mapping[str, Any]) -> dict:
+    """One dimension row of a get_metric reply, its parts included, without the defaults."""
+    out = _omit_defaults(row, _DIMENSION_ROW_DEFAULTS)
+    if isinstance(out.get("parts"), list):
+        out["parts"] = [
+            _omit_defaults(p, _DIMENSION_PART_DEFAULTS) if isinstance(p, Mapping) else p for p in out["parts"]
+        ]
+    return out
+
+
+def _compact_metric_detail(row: Mapping[str, Any]) -> dict:
+    """A get_metric row as the agent reads it, defaults left out. Nothing is
+    lost — each omission has one meaning, stated in the docstring. Works on a
+    copy: the parts are the runtime's cached metadata.
+    """
+    out = _omit_defaults(copy.deepcopy(dict(row)), _METRIC_DETAIL_DEFAULTS)
+    if isinstance(out.get("dimensions"), list):
+        out["dimensions"] = [_compact_dimension_row(d) if isinstance(d, Mapping) else d for d in out["dimensions"]]
+    return out
 
 
 def _metric_summary_row(metric: Any, subject_path: Optional[List[str]] = None) -> dict:
@@ -951,7 +1073,8 @@ class SemanticTools:
 
         Returns one summary row per metric: enough to choose metrics and to see
         how they derive from each other, without the per-metric detail that only
-        matters once a metric is chosen. Call get_metric for that detail.
+        matters once a metric is chosen. Call get_metric for that detail. A row
+        without ``kind`` is an aggregate.
 
         Args:
             path: Optional subject tree path filter (e.g., ["Finance", "Revenue"])
@@ -960,10 +1083,11 @@ class SemanticTools:
 
         Returns:
             FuncToolResult with result as FuncToolListResult:
-              - items (List[Dict]): metric summaries. Always name, description and
-                kind (aggregate / ratio / expression). Present when the metric has
-                them: derive_family ("compose" for metrics combined by a formula,
-                "window" for metrics ranked or re-aggregated over a partition;
+              - items (List[Dict]): metric summaries. Always name and description;
+                kind (ratio / expression) only when the metric is not a plain
+                aggregate — a row without kind is an aggregate. Present when the
+                metric has them: derive_family ("compose" for metrics combined by
+                a formula, "window" for metrics ranked or re-aggregated over a partition;
                 absent for atoms aggregated straight off the source),
                 derive_expr (the formula, for compose metrics), derive_base (the
                 upstream metric, for window metrics), time_dimension, path.
@@ -1004,7 +1128,10 @@ class SemanticTools:
 
                 async_result = self._runtime_metrics_for_names(runtime, set(kb_paths))
                 runtime_metrics = [
-                    _metric_summary_row(metric, kb_paths[normalize_metric_name(metric.name)])
+                    _omit_defaults(
+                        _metric_summary_row(metric, kb_paths[normalize_metric_name(metric.name)]),
+                        _METRIC_ROW_DEFAULTS,
+                    )
                     for metric in async_result
                     if normalize_metric_name(metric.name) in kb_paths
                 ]
@@ -1019,7 +1146,11 @@ class SemanticTools:
 
             async_result = _run_async(runtime.list_metrics(path=None, limit=limit, offset=offset))
             runtime_metrics = [
-                _metric_summary_row(metric, kb_paths.get(normalize_metric_name(metric.name))) for metric in async_result
+                _omit_defaults(
+                    _metric_summary_row(metric, kb_paths.get(normalize_metric_name(metric.name))),
+                    _METRIC_ROW_DEFAULTS,
+                )
+                for metric in async_result
             ]
             # Runtime path has no guaranteed upstream total — leave it None so consumers
             # know to use has_more / len(items) < limit as the pagination hint.
@@ -1123,6 +1254,21 @@ class SemanticTools:
         Describes one metric per call — issue the calls in parallel to describe
         several.
 
+        The reply leaves default values out. A metric without ``kind`` is an
+        aggregate, and one without ``required_dimensions`` needs no dimension in
+        particular. A dimension without ``type`` is not a time field, one without
+        ``recommended`` is recommended (``recommended=false`` advises against
+        grouping by it, which stays allowed), one without
+        ``recommendation_source`` was plainly inferred, and one without
+        ``required`` may be left out of the query: ``required=true`` comes with
+        ``required_reason`` — ``metric_definition`` for a name in
+        ``required_dimensions``, ``time_axis`` (with ``time_axis_required=true``)
+        for the time axis a window orders by, grouped at a grain. A dimension row's
+        ``parts`` are fixed fields, without ``used_in`` when the part is the
+        row's own field. ``"time_axis": null`` marks a metric
+        whose table has no time field (a snapshot, say): query it without
+        time_start/time_end and pick the day it reads in ``where``.
+
         Args:
             name: Metric name to describe, exactly as returned by list_metrics
             path: Optional subject tree path (e.g., ["Finance", "Revenue"])
@@ -1131,18 +1277,50 @@ class SemanticTools:
             FuncToolResult with result as a dict carrying every list_metrics
             field plus, when the runtime reports them:
               - dimensions (List[Dict]): dimensions queryable for this metric,
-                verified by the runtime. Group by these in query_metrics.
-                ``recommended`` is a grouping-selection hint, not an allow/deny
-                flag: a dimension with ``recommended=false`` can still be
-                grouped explicitly. ``recommendation_source`` explains whether
-                the runtime declared or inferred that classification.
+                verified by the runtime. Group by these in query_metrics. Each
+                has ``name`` and ``description``; ``type`` is ``"time"`` on a
+                time field and absent otherwise. ``recommended=false`` marks a
+                dimension advised against — a grouping-selection hint, not an
+                allow/deny flag: it can still be grouped explicitly — and a row
+                without ``recommended`` is recommended.
+                ``recommendation_source`` says why the runtime classified it so
+                (``declared``, ``inferred:measure``, ``inferred:time``, ...); a
+                row without it was plainly inferred.
               - required_dimensions (List[str]): dimensions the runtime needs in
-                the query before this metric means anything. Pass every one of
-                them to query_metrics; the runtime rejects the query otherwise.
+                the query before this metric means anything, gathered over every
+                metric it is computed from. Pass every one of them to
+                query_metrics, as named and without a grain; the runtime rejects
+                the query otherwise.
+              - requires_time_axis (bool): true when the query must also group
+                by the metric's time axis at a grain (`metric_time` plus
+                time_granularity), as a period-over-period or running window
+                does, directly or through a metric it is computed from. Absent
+                when it need not.
               - window: the partition and rank rule behind those requirements.
               - params (List[Dict]): the query-time parameters the metric
                 declares, each with name, type, default and its domain
                 (allowed values or min/max). Bind them with query_metrics params.
+              - time_axis (str): the time field the query period lands on for
+                this metric's own rows; null when there is none, so the
+                metric takes no period and its day goes in ``where``.
+              - parts (List[Dict]): the parts of this metric that read rows of
+                their own or depend on rows outside their group, present only
+                when there are any: fixed fields (per-entity values, used in
+                ``dimensions`` or ``where``), fixed/include/exclude metrics and
+                windows. Each has ``name``, ``kind``, ``definition`` for
+                fixed/include/exclude — ``fixed(revenue)`` is one value for the
+                whole table, ``fixed(order_count, users.user_id)`` one per user
+                — ``used_in`` (the metrics and fields between it and this
+                metric, innermost first), ``source`` (the dataset it reads),
+                ``time_axis`` (where the query period lands on it; absent when
+                its source has no time field, so the period does not narrow it).
+                A fixed field may carry ``params`` its base takes; bind them
+                like the metric's own. A dimension row carries the same
+                ``parts`` (and ``params``) when the field is or reads a fixed
+                field — always fixed fields there, so ``kind`` is left out, and
+                ``used_in`` is left out when the part is the row's own field —
+                and ``pairs``: the same dimension spelled on other datasets.
+              - derive_predicate (str): a filter metric's own condition.
               - time_dimension, time_granularities: the metric's time axis and
                 the grains the runtime compiles for it.
               - datasets: the datasets the metric reads.
@@ -1198,12 +1376,20 @@ class SemanticTools:
                 dimension_row.pop("is_primary_time", None)
                 dimension_row.pop("time_granularities", None)
             row["dimensions"] = rows
+            if any(dimension_row.get("time_axis_required") for dimension_row in rows):
+                # The probe behind it compiles the metric itself, so a compose
+                # over a time-ordered window needs the axis as the window does.
+                row["requires_time_axis"] = True
             if capabilities.get("time_dimension"):
                 row["time_dimension"] = capabilities["time_dimension"]
             if capabilities.get("time_granularities"):
                 row["time_granularities"] = capabilities["time_granularities"]
+            if not row.get("time_axis") and not row.get("time_dimension"):
+                # Said outright: an absent key read as "unknown", and the agent
+                # sent a period the engine then rejected.
+                row["time_axis"] = None
 
-        return FuncToolResult(success=1, result=row)
+        return FuncToolResult(success=1, result=_compact_metric_detail(row))
 
     @staticmethod
     def _build_metrics_envelope(
@@ -1258,7 +1444,8 @@ class SemanticTools:
         final output. Use limit only when the user explicitly asks for Top N,
         first N, maximum N rows, a preview, or another row-count restriction.
         When using limit for Top N/Bottom N, also pass order_by so the
-        truncation has stable business meaning.
+        truncation has stable business meaning. An executed result's metadata
+        may carry `hints`: values of an `IN (...)` list that matched no row.
 
         Args:
             metrics: List of metric names to query
@@ -1410,6 +1597,9 @@ class SemanticTools:
                 # characters for a 4-column result) and nothing downstream reads it
                 # outside dry-run publish evidence.
                 safe_metadata = self._drop_compiled_sql(safe_metadata)
+                hints = self._query_hints(runtime, runtime_query_kwargs, result)
+                if hints:
+                    safe_metadata["hints"] = hints
 
             # Column order in the result follows runtime compilation, not the
             # request, so without this the compressor gives up whichever column
@@ -1446,16 +1636,131 @@ class SemanticTools:
             if payload is not None and getattr(payload, "error_type", None) == "semantic_validation_error":
                 data = payload.model_dump() if hasattr(payload, "model_dump") else dict(payload)
                 logger.debug(f"query_metrics validation rejection: code={data.get('code')}")
-                return FuncToolResult(
-                    success=0,
-                    error=getattr(payload, "message", "") or "query_metrics validation failed",
-                    result=data,
-                )
+                message = getattr(payload, "message", "") or "query_metrics validation failed"
+                if data.get("code") == "no_primary_time_dimension":
+                    message = self._no_time_axis_message(runtime, metrics, data.get("metrics") or [])
+                    data["message"] = message
+                    # Every time field of the model, unrelated to the metric: the
+                    # agent read them as places to move the period to.
+                    data["required_dimensions"] = []
+                return FuncToolResult(success=0, error=message, result=data)
             logger.error(f"Error querying metrics: {e}")
             return FuncToolResult(
                 success=0,
                 error=f"Failed to query metrics: {str(e)}",
             )
+
+    def _query_hints(
+        self,
+        runtime: DosiRuntime,
+        query_kwargs: Dict[str, Any],
+        result: Any,
+    ) -> List[str]:
+        """Values of an ``IN (...)`` list that matched no row.
+
+        A list of names checked against a name table that lacks some of them
+        drops those names silently, and the agent read the shorter result as
+        "no data for them". The result answers that itself only when it groups
+        by the field and holds every row (no ``limit``); otherwise the same
+        conditions are run grouped by that field alone, which returns at most
+        one row per listed value. A ``where`` naming a selected metric filters
+        rows after aggregation, so its outcome depends on the grouping and no
+        check is made.
+        """
+        if _filters_on_metric(query_kwargs.get("where"), list(query_kwargs.get("metrics") or [])):
+            return []
+        columns = list(getattr(result, "columns", None) or [])
+        rows = [row for row in (getattr(result, "data", None) or []) if isinstance(row, Mapping)]
+        hints: List[str] = []
+        checked = set()
+        conditions = _in_list_conditions(query_kwargs.get("where")) + _in_list_conditions(
+            query_kwargs.get("context_filter")
+        )
+        for field, values in conditions:
+            if field in checked:
+                continue
+            checked.add(field)
+            present = self._values_present(runtime, query_kwargs, field, columns, rows)
+            if present is None:
+                continue
+            missing = [value for value in values if _value_key(value) not in present]
+            if missing:
+                hints.append(
+                    f"{field} IN (...): {len(missing)} of {len(values)} values matched no row in this query: "
+                    f"{', '.join(missing)}. Check whether {field} holds these values at all before reading "
+                    f"their absence as no data."
+                )
+        return hints
+
+    def _values_present(
+        self,
+        runtime: DosiRuntime,
+        query_kwargs: Dict[str, Any],
+        field: str,
+        columns: List[str],
+        rows: List[Mapping[str, Any]],
+    ) -> Optional[set]:
+        column = _result_column_for(field, columns)
+        if column is not None and query_kwargs.get("limit") is None:
+            return {_value_key(row.get(column)) for row in rows if row.get(column) is not None}
+        probe_kwargs = dict(query_kwargs)
+        probe_kwargs["dimensions"] = [field]
+        probe_kwargs["time_granularity"] = None
+        probe_kwargs["limit"] = None
+        probe_kwargs["order_by"] = None
+        try:
+            probe = _run_async(runtime.query_metrics(**probe_kwargs))
+        except Exception as exc:  # the result stands without the check
+            logger.debug("IN-list check on %s skipped: %s", field, exc)
+            return None
+        probe_columns = list(getattr(probe, "columns", None) or [])
+        column = _result_column_for(field, probe_columns)
+        if column is None:
+            return None
+        return {
+            _value_key(row.get(column))
+            for row in (getattr(probe, "data", None) or [])
+            if isinstance(row, Mapping) and row.get(column) is not None
+        }
+
+    def _no_time_axis_message(
+        self,
+        runtime: DosiRuntime,
+        metrics: List[str],
+        rejected: List[str],
+    ) -> str:
+        """How to query a metric the period cannot land on.
+
+        The engine names the metric (a parameter binding's column, such as
+        ``m__k_7``, for a parameterized one) and lists every time field of the
+        model, which reads as a list of places to move the period to. What the
+        agent needs instead: no period for this metric, its day in ``where``.
+        """
+        names: List[str] = []
+        for name in rejected or metrics:
+            requested = next((m for m in metrics if name == m or name.startswith(f"{m}__")), name)
+            if requested not in names:
+                names.append(requested)
+        datasets: List[str] = []
+        for name in names:
+            try:
+                metric = self._runtime_metric_by_name(runtime, name)
+            except Exception as exc:  # the advice stands without the dataset names
+                logger.debug("no dataset names for %s: %s", name, exc)
+                continue
+            metadata = _normalize_metric_metadata(getattr(metric, "metadata", None)) if metric is not None else {}
+            for dataset in _normalize_dataset_names(metadata.get("datasets")):
+                if dataset not in datasets:
+                    datasets.append(dataset)
+        one = len(names) == 1
+        tables = f" ({', '.join(datasets)})" if datasets else ""
+        return (
+            f"{', '.join(names)} {'has' if one else 'have'} no time axis: the table{tables} "
+            f"{'it reads has' if one else 'they read have'} no time field the period or `metric_time` could "
+            "land on (a snapshot or mapping table, say). Query "
+            f"{'it' if one else 'them'} without time_start/time_end, time_granularity and `metric_time`, and pick "
+            "the day it reads with a condition on its table's date column in `where`."
+        )
 
     @mcp_tool()
     def validate_semantic(
