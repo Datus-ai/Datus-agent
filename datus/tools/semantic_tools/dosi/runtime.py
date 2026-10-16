@@ -132,6 +132,7 @@ class DosiRuntime:
                 metadata: Dict[str, Any] = {
                     "datasets": list(row.get("datasets") or []),
                     "base_kind": row.get("kind"),
+                    "required_dimensions": list(row.get("required_dimensions") or []),
                     "datus_ext_version": extension_version,
                 }
                 for key in ("params", "param_schema"):
@@ -171,6 +172,7 @@ class DosiRuntime:
                         str(row.get("name") or ""),
                         dialect=dialect,
                         connection=connection,
+                        required_dimensions=list(row.get("required_dimensions") or []),
                     )
                     metadata.update(
                         {
@@ -223,6 +225,7 @@ class DosiRuntime:
         metric_rows = await asyncio.to_thread(engine.metrics)
         dataset_rows = await asyncio.to_thread(engine.datasets)
         metric_row = next(row for row in metric_rows if row.get("name") == metric_name)
+        required_dimensions = list(metric_row.get("required_dimensions") or [])
         connection = handle.profile_name
         dialect = self._dry_run_dialect(binding, connection)
 
@@ -233,6 +236,7 @@ class DosiRuntime:
             metric_name,
             dialect=dialect,
             connection=connection,
+            required_dimensions=required_dimensions,
         )
         physical_time_dimension = self._effective_time_dimension(
             metric_row,
@@ -251,6 +255,7 @@ class DosiRuntime:
                 grains: List[str] = []
                 for grain in queryable_grains(row.get("time_granularity")):
                     group_by = [{"field": name, "grain": grain}]
+                    group_by.extend({"field": dim} for dim in required_dimensions if dim != name)
                     if requires_time_axis and name not in {
                         "metric_time",
                         physical_time_dimension,
@@ -295,14 +300,23 @@ class DosiRuntime:
             return supported
 
         grains_by_name = await asyncio.to_thread(_time_grains)
+        primary_time = "metric_time" if has_metric_time else physical_time_dimension
+        required_time = primary_time if requires_time_axis else None
         return [
             DimensionInfo(
                 name=str(row.get("name") or ""),
                 description=row.get("description") or None,
-                type="time" if row.get("is_time") else None,
-                is_primary_time=bool(
-                    row.get("name") == "metric_time" if has_metric_time else row.get("name") == physical_time_dimension
+                required=row.get("name") in required_dimensions or row.get("name") == required_time,
+                required_reason=(
+                    "time_axis"
+                    if row.get("name") == required_time
+                    else "metric_definition"
+                    if row.get("name") in required_dimensions
+                    else None
                 ),
+                time_axis_required=row.get("name") == required_time,
+                type="time" if row.get("is_time") else None,
+                is_primary_time=row.get("name") == primary_time,
                 time_granularities=(grains_by_name.get(str(row.get("name") or ""), []) if row.get("is_time") else []),
                 recommended=row.get("is_dimension"),
                 recommendation_source=(str(row.get("source")) if row.get("source") is not None else None),
@@ -996,14 +1010,16 @@ class DosiRuntime:
         *,
         dialect: Optional[str],
         connection: Optional[str],
+        required_dimensions: Optional[List[str]] = None,
     ) -> bool:
         """Ask the native planner whether a metric needs a grouped time axis."""
 
+        required_group_by = [{"field": name} for name in required_dimensions or []]
         without_axis = cls._probe_compile(
             engine,
             binding,
             metric_name,
-            [],
+            required_group_by,
             dialect=dialect,
             connection=connection,
         )
@@ -1015,7 +1031,8 @@ class DosiRuntime:
                     engine,
                     binding,
                     metric_name,
-                    [{"field": "metric_time", "grain": grain}],
+                    [{"field": "metric_time", "grain": grain}]
+                    + [item for item in required_group_by if item["field"] != "metric_time"],
                     dialect=dialect,
                     connection=connection,
                 )

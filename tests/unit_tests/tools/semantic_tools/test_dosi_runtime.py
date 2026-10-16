@@ -171,6 +171,7 @@ async def test_list_metrics_maps_rows_and_slices(make_runtime):
     assert metrics[0].metadata == {
         "datasets": ["orders"],
         "base_kind": "aggregate",
+        "required_dimensions": [],
         "datus_ext_version": "1.2",
         "time_dimension": "orders.order_date",
     }
@@ -553,6 +554,9 @@ async def test_window_dimension_discovery_includes_required_time_axis(make_runti
     assert "orders.status" in dimensions
     assert "customers.region" in dimensions
     assert dimensions["metric_time"].is_primary_time is True
+    assert dimensions["metric_time"].time_axis_required is True
+    assert dimensions["metric_time"].required is True
+    assert dimensions["metric_time"].required_reason == "time_axis"
     assert dimensions["metric_time"].time_granularities == [
         "day",
         "week",
@@ -575,6 +579,9 @@ async def test_window_dimension_discovery_falls_back_to_physical_time_axis(make_
 
     assert "metric_time" not in result
     assert result["orders.order_date"].is_primary_time is True
+    assert result["orders.order_date"].time_axis_required is True
+    assert result["orders.order_date"].required is True
+    assert result["orders.order_date"].required_reason == "time_axis"
     assert result["orders.order_date"].time_granularities == [
         "day",
         "week",
@@ -1432,3 +1439,47 @@ def test_artifact_metric_binding_unknown_metric_preserves_validation_error(make_
         make_runtime().artifact_metric_binding("unknown")
     assert exc.value.payload.code == "unknown_metric"
     assert exc.value.payload.metrics == ["unknown"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("metric_name", ["revenue", "running_revenue"])
+async def test_required_grouping_reaches_discovery_and_compile_probes(make_runtime, monkeypatch, metric_name):
+    """Native requirements survive discovery and do not break time-grain probes."""
+    original_metrics = FakeEngine.metrics
+    original_compile = FakeEngine.compile
+
+    def metrics(engine):
+        return [
+            {**row, "required_dimensions": ["orders.status"]} if row["name"] == metric_name else row
+            for row in original_metrics(engine)
+        ]
+
+    def compile_query(engine, query, **kwargs):
+        fields = [item["field"] for item in query.get("group_by") or []]
+        if "orders.status" not in fields:
+            raise QueryError("required grouping is missing", code="window_exclusion_not_grouped")
+        return original_compile(engine, query, **kwargs)
+
+    monkeypatch.setattr(FakeEngine, "metrics", metrics)
+    monkeypatch.setattr(FakeEngine, "compile", compile_query)
+    runtime = make_runtime()
+    dimensions = await runtime.get_dimensions(metric_name)
+    required = [dimension for dimension in dimensions if dimension.required]
+    expected_required = {"orders.status", "metric_time"} if metric_name == "running_revenue" else {"orders.status"}
+    assert {dimension.name for dimension in required} == expected_required
+    assert next(d for d in required if d.name == "orders.status").required_reason == "metric_definition"
+    assert all(d.required_reason is None for d in dimensions if not d.required)
+    time_dimension = next(d for d in dimensions if d.name == "metric_time")
+    assert time_dimension.time_granularities == ["day", "week", "month", "quarter", "year"]
+    detail = next(metric for metric in await runtime.list_metrics() if metric.name == metric_name)
+    assert detail.metadata["required_dimensions"] == ["orders.status"]
+
+
+@pytest.mark.asyncio
+async def test_dimensions_without_native_requirements_remain_optional(make_runtime):
+    dimensions = await make_runtime().get_dimensions("revenue")
+    assert dimensions
+    assert all(
+        not dimension.required and dimension.required_reason is None and not dimension.time_axis_required
+        for dimension in dimensions
+    )
