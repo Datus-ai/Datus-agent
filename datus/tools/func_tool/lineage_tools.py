@@ -544,6 +544,11 @@ def _merge_settings(
     base: AnalysisSettings, dialect: Optional[str], default_database: Optional[str]
 ) -> AnalysisSettings:
     """``base`` with the given overrides; only a new dialect name still needs mapping to a parser."""
+    from datus.tools.db_tools import connector_registry
+
+    analyzer_getter = getattr(connector_registry, "get_sql_analyzer", None)
+    if dialect and callable(analyzer_getter) and analyzer_getter(dialect) is not None:
+        raise ValueError("Static lineage is unsupported for this adapter's limited SQL analysis path")
     return AnalysisSettings(
         dialect=parse_dialect(dialect) if dialect else base.dialect,
         default_database=default_database or base.default_database,
