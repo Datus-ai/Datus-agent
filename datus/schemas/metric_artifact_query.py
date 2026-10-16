@@ -12,8 +12,6 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from datus.schemas.analysis_artifacts import SubjectAssetRef
 
-MODEL_SNAPSHOT_HASH_LENGTHS = (16, 32, 64)
-
 
 class ParamRef(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -69,7 +67,7 @@ class MetricQueryFile(MetricQueryRequest):
         if self.model_snapshot_path is not None:
             allowed = {
                 f"models/{self.model_revision[:length]}{suffix}"
-                for length in MODEL_SNAPSHOT_HASH_LENGTHS
+                for length in (16, 64)
                 for suffix in (".yaml", ".yml", ".json")
             }
             if self.model_snapshot_path not in allowed:

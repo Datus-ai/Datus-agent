@@ -19,7 +19,7 @@ from datus.schemas.metric_artifact_query import MetricQueryFile, MetricQueryRequ
 from datus.tools.func_tool.base import FuncToolResult
 from datus.utils.async_utils import run_async
 from datus.utils.exceptions import DatusException, ErrorCode
-from datus.utils.metric_artifact_models import resolve_metric_query_snapshot, save_metric_query_snapshot
+from datus.utils.metric_artifact_models import resolve_metric_query_snapshot
 
 
 def _arrow_column_type(dtype: pa.DataType) -> ColumnSemanticType:
@@ -378,7 +378,7 @@ class MetricArtifactToolsMixin:
             )
             model_content = binding.pop("model_snapshot")
             suffix = Path(binding["model_path"]).suffix.lower()
-            model_relative = f"models/{binding['model_revision']}{suffix}"
+            model_relative = f"models/{binding['model_revision'][:16]}{suffix}"
             saved = MetricQueryFile(
                 **request.model_dump(),
                 name=name,
@@ -412,10 +412,14 @@ class MetricArtifactToolsMixin:
             if sum(len(value.encode("utf-8")) for value in [*files.values(), model_content]) > 20 * 1024 * 1024:
                 raise ValueError("metric query files exceed the 20 MB limit; aggregate or lower limit")
             artifact_dir = self.queries_dir.parent
-            # Content-addressed files let several models and queries coexist.
-            # Write before the recipe, so a failed save never leaves a dangling reference.
-            saved = save_metric_query_snapshot(saved, model_content, artifact_dir=artifact_dir)
-            files[f"{name}.metric.json"] = saved.model_dump_json(indent=2, exclude_none=True)
+            model_file = artifact_dir / model_relative
+            if not model_file.resolve().is_relative_to(artifact_dir.resolve()):
+                raise ValueError("metric model snapshot escapes the artifact directory")
+            # Publish the model before its recipe; reuse matching bytes, reject collisions.
+            try:
+                _atomic_write_text(model_file, model_content, overwrite=False)
+            except FileExistsError:
+                resolve_metric_query_snapshot(saved, artifact_dir=artifact_dir)
             for filename, content in files.items():
                 _atomic_write_text(self.queries_dir / filename, content + "\n")
             for suffix in (".sql", ".sql.j2"):

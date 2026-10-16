@@ -524,24 +524,23 @@ def test_multiple_models_with_same_basename_remain_distinct(environment, kind, m
 
 
 @pytest.mark.parametrize("kind", ["report", "dashboard"])
-def test_saved_recipe_points_to_extended_filename_after_collision(environment, kind):
+def test_conflicting_snapshot_fails_without_changing_recipe_or_model(environment, kind):
     env = environment
     options = {"params": [], "sample_params": {}} if kind == "dashboard" else {}
     tools, first = _save(env, kind, **options)
     assert first.success == 1, first.error
     recipe_path = tools.queries_dir / "sales.metric.json"
-    previous = MetricQueryFile.model_validate_json(recipe_path.read_text())
+    original_recipe = recipe_path.read_bytes()
+    previous = MetricQueryFile.model_validate_json(original_recipe)
     occupied = tools.queries_dir.parent / previous.model_snapshot_path
     occupied.write_bytes(b"another model occupies this short filename")
     save = tools.save_metric_query_template if kind == "dashboard" else tools.save_metric_query
     saved = save(name="sales", query={"metric": REF}, goal="Revenue", hypothesis="Revenue", **options)
-    assert saved.success == 1, saved.error
-    current = MetricQueryFile.model_validate_json(recipe_path.read_text())
-    assert current.model_snapshot_path == f"models/{previous.model_revision[:32]}.yml"
-    assert current.model_revision == previous.model_revision
-    assert (tools.queries_dir.parent / current.model_snapshot_path).read_bytes() == env.model.read_bytes()
+    assert saved.success == 0
+    assert "must match model_revision" in saved.error
+    assert recipe_path.read_bytes() == original_recipe
     assert occupied.read_bytes() == b"another model occupies this short filename"
-    assert tools._validate_metric_queries(kind) is None
+    assert list(occupied.parent.iterdir()) == [occupied]
 
 
 @pytest.mark.parametrize("legacy", [False, True])

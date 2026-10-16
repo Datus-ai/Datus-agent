@@ -1,53 +1,14 @@
 # Copyright 2025-present DatusAI, Inc.
 # Licensed under the Apache License, Version 2.0.
-"""Save and resolve frozen metric models without reading the live project."""
+"""Resolve frozen metric models from an artifact, never from the live project."""
 
 from __future__ import annotations
 
 import hashlib
-import os
-import tempfile
 from collections.abc import Mapping
 from pathlib import Path
 
-from datus.schemas.metric_artifact_query import MODEL_SNAPSHOT_HASH_LENGTHS, MetricQueryFile
-
-
-def save_metric_query_snapshot(query: MetricQueryFile, content: str, *, artifact_dir: Path) -> MetricQueryFile:
-    """Save under a short hash, extending it on collision without replacing any file.
-
-    Publish complete bytes with an exclusive hard link so concurrent writers
-    cannot overwrite another model or observe a partially written snapshot.
-    The full SHA-256 remains authoritative at every filename length.
-    """
-    if query.model_snapshot_path is None:
-        raise ValueError("saving a metric model requires model_snapshot_path")
-    resolve_metric_query_snapshot(query, files={query.model_snapshot_path: content})
-    root = artifact_dir.resolve()
-    models = root / "models"
-    if not models.resolve().is_relative_to(root):
-        raise ValueError("metric model snapshot escapes the artifact directory")
-    models.mkdir(parents=True, exist_ok=True)
-    suffix = Path(query.model_snapshot_path).suffix
-    with tempfile.NamedTemporaryFile(dir=models, prefix=".model-", delete=False) as stream:
-        temporary = Path(stream.name)
-        try:
-            stream.write(content.encode("utf-8"))
-            stream.close()
-            for length in MODEL_SNAPSHOT_HASH_LENGTHS:
-                relative = f"models/{query.model_revision[:length]}{suffix}"
-                target = root / relative
-                if not target.resolve().is_relative_to(root):
-                    raise ValueError("metric model snapshot escapes the artifact directory")
-                try:
-                    os.link(temporary, target)
-                except FileExistsError:
-                    if hashlib.sha256(target.read_bytes()).hexdigest() != query.model_revision:
-                        continue
-                return query.model_copy(update={"model_snapshot_path": relative})
-            raise ValueError("metric model snapshot conflicts with an existing full SHA-256 filename")
-        finally:
-            temporary.unlink(missing_ok=True)
+from datus.schemas.metric_artifact_query import MetricQueryFile
 
 
 def resolve_metric_query_snapshot(
