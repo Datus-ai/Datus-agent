@@ -988,7 +988,8 @@ def _format_list_metrics_markup(envelope: Mapping[str, Any]) -> List[str]:
             [
                 [
                     str(row.get("name") or "?"),
-                    str(row.get("kind") or ""),
+                    # list_metrics leaves out the default kind
+                    str(row.get("kind", "aggregate") or ""),
                     _derivation_phrase(row),
                     str(row.get("description") or ""),
                 ]
@@ -1009,7 +1010,8 @@ def _format_get_metric_markup(result: Mapping[str, Any], description_width: int 
     has to carry, the table is the menu it chooses from.
     """
     lines: List[str] = []
-    kind = str(result.get("kind") or "").strip()
+    # get_metric leaves out the default kind
+    kind = str(result.get("kind", "aggregate") or "").strip()
     family = str(result.get("derive_family") or "").strip()
     headline = " · ".join(part for part in (kind, family) if part)
     if headline:
@@ -1069,8 +1071,11 @@ def _format_get_metric_markup(result: Mapping[str, Any], description_width: int 
         if str(row.get("name") or "") in required_names:
             return "required"
         # Otherwise it is a hint, not a gate: a dimension advised against is
-        # still queryable when a caller names it explicitly.
-        return str(row.get("recommendation_source") or "") if row.get("recommended") else "not advised"
+        # still queryable when a caller names it explicitly. get_metric leaves
+        # out the defaults: recommended, and plainly inferred.
+        if not row.get("recommended", True):
+            return "not advised"
+        return str(row.get("recommendation_source", "inferred") or "")
 
     lines.append("")
     lines.append(f"[bold]dimensions ({len(dimensions)})[/bold]")

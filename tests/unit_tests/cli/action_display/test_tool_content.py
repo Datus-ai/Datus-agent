@@ -1262,6 +1262,14 @@ class TestBuildListMetricsSemantic:
             assert f"metric_{i}" in rendered
             assert f"desc {i}" in rendered
 
+    def test_verbose_reads_a_missing_kind_as_aggregate(self):
+        """list_metrics leaves out the default kind; the table still names it."""
+        items = [{"name": "orders", "description": "Order count"}, {"name": "aov", "kind": "ratio"}]
+        tc = _build_list_metrics_semantic(self._envelope(items), verbose=True)
+        rendered = [" ".join(line.split()) for line in tc.output_lines]
+        assert any(line.startswith("orders aggregate") for line in rendered)
+        assert any(line.startswith("aov ratio") for line in rendered)
+
     def test_verbose_gives_a_composite_its_whole_formula(self):
         """The formula is the decomposition — the reason to open verbose on a
         scorecard — so the cell wraps it rather than clipping it."""
@@ -1347,6 +1355,36 @@ class TestBuildGetMetric:
         rendered = [" ".join(line.split()) for line in tc.output_lines]
         assert any(line.startswith("cell.brand required") for line in rendered)
         assert not any("not advised" in line for line in rendered)
+
+    def test_verbose_reads_the_left_out_defaults(self):
+        """get_metric leaves out recommended=true and a plain "inferred" source;
+        a row without them is recommended, not advised against."""
+        a = _make(
+            input_data={"function_name": "get_metric"},
+            output_data={
+                "raw_output": json.dumps(
+                    {
+                        "success": 1,
+                        "result": {
+                            "name": "orders",
+                            "dimensions": [
+                                {"name": "orders.channel"},
+                                {
+                                    "name": "orders.amount",
+                                    "recommended": False,
+                                    "recommendation_source": "inferred:measure",
+                                },
+                            ],
+                        },
+                    }
+                )
+            },
+        )
+        tc = _build_get_metric(a, verbose=True)
+        rendered = [" ".join(line.split()) for line in tc.output_lines]
+        assert rendered[0] == "[bold]aggregate[/bold]"
+        assert any(line.startswith("orders.channel inferred") for line in rendered)
+        assert any(line.startswith("orders.amount not advised") for line in rendered)
 
     def test_compact_reports_unresolved_dimensions(self):
         a = _make(
