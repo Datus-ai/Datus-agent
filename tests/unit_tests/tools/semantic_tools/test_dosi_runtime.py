@@ -554,6 +554,9 @@ async def test_window_dimension_discovery_includes_required_time_axis(make_runti
     assert "orders.status" in dimensions
     assert "customers.region" in dimensions
     assert dimensions["metric_time"].is_primary_time is True
+    assert dimensions["metric_time"].time_axis_required is True
+    assert dimensions["metric_time"].required is True
+    assert dimensions["metric_time"].required_reason == "time_axis"
     assert dimensions["metric_time"].time_granularities == [
         "day",
         "week",
@@ -576,6 +579,9 @@ async def test_window_dimension_discovery_falls_back_to_physical_time_axis(make_
 
     assert "metric_time" not in result
     assert result["orders.order_date"].is_primary_time is True
+    assert result["orders.order_date"].time_axis_required is True
+    assert result["orders.order_date"].required is True
+    assert result["orders.order_date"].required_reason == "time_axis"
     assert result["orders.order_date"].time_granularities == [
         "day",
         "week",
@@ -1459,8 +1465,9 @@ async def test_required_grouping_reaches_discovery_and_compile_probes(make_runti
     runtime = make_runtime()
     dimensions = await runtime.get_dimensions(metric_name)
     required = [dimension for dimension in dimensions if dimension.required]
-    assert [dimension.name for dimension in required] == ["orders.status"]
-    assert required[0].required_reason == "metric_definition"
+    expected_required = {"orders.status", "metric_time"} if metric_name == "running_revenue" else {"orders.status"}
+    assert {dimension.name for dimension in required} == expected_required
+    assert next(d for d in required if d.name == "orders.status").required_reason == "metric_definition"
     assert all(d.required_reason is None for d in dimensions if not d.required)
     time_dimension = next(d for d in dimensions if d.name == "metric_time")
     assert time_dimension.time_granularities == ["day", "week", "month", "quarter", "year"]
@@ -1472,4 +1479,7 @@ async def test_required_grouping_reaches_discovery_and_compile_probes(make_runti
 async def test_dimensions_without_native_requirements_remain_optional(make_runtime):
     dimensions = await make_runtime().get_dimensions("revenue")
     assert dimensions
-    assert all(not dimension.required and dimension.required_reason is None for dimension in dimensions)
+    assert all(
+        not dimension.required and dimension.required_reason is None and not dimension.time_axis_required
+        for dimension in dimensions
+    )

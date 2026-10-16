@@ -754,6 +754,7 @@ class ExplorerService:
                 data=MetricDimensionsData(
                     metric=metric_name,
                     dimensions=items,
+                    time_axis_required=any(getattr(d, "time_axis_required", False) for d in dimensions or []),
                     **time_capabilities,
                 ),
             )

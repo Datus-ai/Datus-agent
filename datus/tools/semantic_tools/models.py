@@ -23,6 +23,9 @@ class DimensionInfo(BaseModel):
         None,
         description="Whether this is the metric's canonical time dimension",
     )
+    time_axis_required: bool = Field(
+        False, description="Whether this canonical time axis must be grouped with a time granularity"
+    )
     time_granularities: List[str] = Field(
         default_factory=list,
         description=("Queryable time granularities for the canonical time dimension, ordered from finest to coarsest"),

@@ -300,16 +300,23 @@ class DosiRuntime:
             return supported
 
         grains_by_name = await asyncio.to_thread(_time_grains)
+        primary_time = "metric_time" if has_metric_time else physical_time_dimension
+        required_time = primary_time if requires_time_axis else None
         return [
             DimensionInfo(
                 name=str(row.get("name") or ""),
                 description=row.get("description") or None,
-                required=row.get("name") in required_dimensions,
-                required_reason="metric_definition" if row.get("name") in required_dimensions else None,
-                type="time" if row.get("is_time") else None,
-                is_primary_time=bool(
-                    row.get("name") == "metric_time" if has_metric_time else row.get("name") == physical_time_dimension
+                required=row.get("name") in required_dimensions or row.get("name") == required_time,
+                required_reason=(
+                    "time_axis"
+                    if row.get("name") == required_time
+                    else "metric_definition"
+                    if row.get("name") in required_dimensions
+                    else None
                 ),
+                time_axis_required=row.get("name") == required_time,
+                type="time" if row.get("is_time") else None,
+                is_primary_time=row.get("name") == primary_time,
                 time_granularities=(grains_by_name.get(str(row.get("name") or ""), []) if row.get("is_time") else []),
                 recommended=row.get("is_dimension"),
                 recommendation_source=(str(row.get("source")) if row.get("source") is not None else None),

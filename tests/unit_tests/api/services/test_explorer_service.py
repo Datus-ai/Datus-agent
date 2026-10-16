@@ -534,6 +534,36 @@ class TestExplorerServiceMetricDimensions:
             ("customers.region", False, None),
         ]
 
+    @pytest.mark.parametrize("axis_required", [False, True])
+    async def test_time_axis_requirement_is_serialized(self, real_agent_config, monkeypatch, axis_required):
+        from unittest.mock import AsyncMock
+
+        from datus.tools.semantic_tools.models import DimensionInfo
+
+        runtime = MagicMock()
+        runtime.get_dimensions = AsyncMock(
+            return_value=[
+                DimensionInfo(
+                    name="metric_time",
+                    type="time",
+                    is_primary_time=True,
+                    time_axis_required=axis_required,
+                    required=axis_required,
+                    required_reason="time_axis" if axis_required else None,
+                    time_granularities=["month", "year"],
+                ),
+            ]
+        )
+        self._patch_runtime(monkeypatch, runtime=runtime)
+        service = ExplorerService(agent_config=real_agent_config)
+        result = await service.get_metric_dimensions(SubjectPathInput(subject_path=["Finance", "revenue"]))
+        assert result.success is True
+        data = result.model_dump()["data"]
+        assert data["time_axis_required"] is axis_required
+        assert data["time_dimension"] == "metric_time"
+        assert data["time_granularities"] == ["month", "year"]
+        assert data["dimensions"][0]["required"] is axis_required
+
     async def test_maps_dimension_fields(self, real_agent_config, monkeypatch):
         """Runtime DimensionInfo objects are mapped onto the response model."""
         from types import SimpleNamespace
