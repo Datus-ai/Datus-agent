@@ -12,6 +12,7 @@ from datus.tools.func_tool.database import DBFuncTool
 from datus.tools.func_tool.lineage_tools import LineageTools
 from datus.utils.constants import SQLType
 from datus.utils.sql_utils import (
+    READ_ONLY_NON_READ,
     extract_table_names,
     extract_table_names_strict,
     format_sql_to_pretty,
@@ -68,7 +69,7 @@ def test_complete_no_table_query_is_distinct_from_failed_analysis(analyzer):
         with pytest.raises(ValueError, match="unsupported syntax"):
             extract("opaque statement", "native-test")
     assert parse_sql_type("SELECT vendor syntax", "native-test") == SQLType.UNKNOWN
-    assert validate_read_only_sql("SELECT vendor syntax", "native-test")[0] is not None
+    assert validate_read_only_sql("SELECT vendor syntax", "native-test") == (READ_ONLY_NON_READ, SQLType.UNKNOWN)
 
 
 def test_unregistered_dialects_keep_existing_path(analyzer):
