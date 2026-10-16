@@ -332,38 +332,27 @@ def test_source_evidence_retains_exact_user_sql_and_attached_references(message)
     assert node._semantic_discovery_source_sql() == entries[:1]
 
 
-@pytest.mark.asyncio
-async def test_caller_sql_files_are_pinned_before_generation(monkeypatch, tmp_path):
-    from datus.agent.node.agentic_node import AgenticNode
+def test_request_sql_files_are_included_when_sources_are_inspected(tmp_path):
     from datus.agent.node.semantic_authoring_agentic_node import SemanticAuthoringAgenticNode
     from datus.schemas.semantic_agentic_node_models import SemanticNodeInput
-    from datus.tools.func_tool.generation_evidence import GenerationEvidence
     from datus.tools.func_tool.semantic_discovery_tools import SemanticDiscoveryTools
 
-    async def _parent_before_stream(_self, _ctx):
-        pass
-
-    monkeypatch.setattr(AgenticNode, "_before_stream", _parent_before_stream)
     original = tmp_path / "original query.sql"
     original.write_text("SELECT SUM(cost) cost FROM tickets", encoding="utf-8")
     node = SemanticAuthoringAgenticNode.__new__(SemanticAuthoringAgenticNode)
     node.input = SemanticNodeInput(user_message="Model the calculation in `original query.sql`.")
-    node.generation_evidence = GenerationEvidence()
-    node.osi_target_state = SimpleNamespace(reset=lambda: None)
-    node.osi_target_tools = None
-    node.semantic_discovery_tools = SemanticDiscoveryTools(root_path=str(tmp_path))
+    discovery = SemanticDiscoveryTools(
+        root_path=str(tmp_path), source_file_provider=node._semantic_discovery_source_files
+    )
 
-    await node._before_stream(object())
-    result = node.semantic_discovery_tools.inspect_semantic_sources()
+    result = discovery.inspect_semantic_sources()
     assert result.success
-    assert result.result["calculation_evidence"]["statements"][0]["input_kind"] == "original_file"
+    assert result.result["calculation_evidence"]["outputs"][0]["expression"] == "SUM(cost)"
 
     original.write_text("SELECT SUM(cost) + 1 cost FROM tickets", encoding="utf-8")
-    diagnostic = tmp_path / "generated.sql"
-    diagnostic.write_text("SELECT COUNT(*) n FROM tickets", encoding="utf-8")
-    result = node.semantic_discovery_tools.inspect_semantic_sources(sql_files=["generated.sql"])
+    result = discovery.inspect_semantic_sources()
     assert result.success
-    assert {s["input_kind"] for s in result.result["calculation_evidence"]["statements"]} == {"file"}
+    assert result.result["calculation_evidence"]["outputs"][0]["expression"] == "SUM(cost) + 1"
 
 
 @pytest.mark.parametrize(
@@ -409,16 +398,14 @@ async def test_semantic_authoring_base_resets_request_local_state(monkeypatch):
     node.generation_evidence = SimpleNamespace(reset=lambda: resets.append("evidence"))
     node.osi_target_state = SimpleNamespace(reset=lambda: resets.append("target"))
     node.osi_target_tools = SimpleNamespace(invalidate_inventory=lambda: resets.append("inventory"))
-    node.input = SimpleNamespace(source_sql_files=["original.sql"])
     node.semantic_discovery_tools = SimpleNamespace(
         reset_request_cache=lambda: resets.append("discovery"),
-        pin_source_files=lambda paths: resets.append(paths),
     )
 
     await node._before_stream(object())
 
     assert node.result is None
-    assert resets == ["parent", "evidence", "target", "inventory", "discovery", ["original.sql"]]
+    assert resets == ["parent", "evidence", "target", "inventory", "discovery"]
 
 
 @pytest.mark.asyncio

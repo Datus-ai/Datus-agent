@@ -28,10 +28,10 @@ YAML 文件是唯一事实来源。Knowledge Base 中的记录是从 YAML 派生
 | 工具 | 检查内容 |
 |------|----------|
 | `validate_semantic` | 模型结构、引用和编译，不执行实际业务查询。 |
-| `query_metrics` | 没有可信数值基准时，执行指标查询。 |
-| `verify_semantic_outputs` | 内部执行指标查询，将完整结果与可信原 SQL 或已确认的落表列比较，无须提前单独查询指标。 |
+| `query_metrics` | 没有数值对照来源时，执行指标查询。 |
+| `verify_semantic_outputs` | 内部执行指标查询，将完整结果与已分析的参考 SQL 或已确认的落表列比较，无须提前单独查询指标。 |
 
-数值基准来自调用方提供的 SQL，或生成前指定的原始文件。宿主程序在首次模型调用前固定可读文件的内容；修改后的文件和新增诊断 SQL 不能作为证明数值正确的基准。文件读取遵守工作区权限；URL、通配符和 SQL 代码里的路径不会自动登记为原始文件。
+Agent 在任务中发现的 SQL 可以直接分析并用于数值比较，无须提前登记。文件可以位于 agent 能读取的任意目录，来源分析复用 agent 的文件读取工具。请求中的 SQL、发现的文件和传入的 SQL 文本都可以作为对照来源；`input_kind` 仅记录来源。应选择符合用户要求计算口径的 SQL。比较使用分析时记录的 SQL 内容；来源变化后重新分析，更新输出 ID 并使受影响的旧证据失效。不要为获得数值通过而修改参考计算。
 
 每项基准对照用 `source_output_id` 选择原始最终输出，用 `dimension_mapping` 将完整原计算粒度映射到模型查询维度。两边必须采用相同的数据范围、统计人群和参数。已存结果直接读取，不重新聚合。程序可以对齐结果行过滤和完整时间桶；非空 `context_filter` 无法确认输入人群相同，数值状态会记为未验证。应保留必要过滤并说明限制。
 
@@ -111,7 +111,7 @@ datus --datasource duckdb_demo
 在 Datus REPL 中，通常直接描述期望得到的业务模型即可。主 agent 会把创建或更新语义 dataset 和 metric 的请求委派给 `semantic_modeling`。表名、目标模型、指标和原始 SQL 都可以按需要写进请求。
 
 ```text
-更新 sales.yml，基于 orders.order_date 添加收入月环比指标，并实际执行指标查询；提供可信原 SQL 或落表基准时，再比较结果。
+更新 sales.yml，基于 orders.order_date 添加收入月环比指标，并实际执行指标查询；有相关原 SQL 或落表结果时，再比较结果。
 ```
 
 ```text
@@ -137,7 +137,7 @@ datus --datasource duckdb_demo
 1. 查看已有模型，通过明确的文件名、唯一事实表或业务域选择一个目标。
 2. 在写入前读取真实 datasource 的 schema 和 relationship 证据。
 3. 按依赖顺序创建或更新 dataset、field、relationship 和 metric。
-4. 校验完整目标文件，查询请求的输出；有可信基准时进行数值对照。
+4. 校验完整目标文件，查询请求的输出；有参考结果时进行数值对照。
 5. 将通过校验的 YAML 完整同步到 Knowledge Base。
 
 每次只编辑一个语义模型。如果现有模型都不合适，则按业务域创建新模型。dataset 默认直接绑定完整名称的物理表或视图；物理 dataset 和独立的单表指标不要求主键或唯一键。用户提供的 SQL 是需要保留的计算口径证据，不规定 dataset 必须采用 SQL。只有某项具体行集转换无法由原生 field、relationship、metric 等能力忠实表达，或用户明确指定 query-backed 来源时，才使用范围最小的 SQL dataset；可独立表达的输入继续使用物理 dataset。

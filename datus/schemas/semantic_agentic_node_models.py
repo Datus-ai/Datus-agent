@@ -165,9 +165,9 @@ class SemanticNodeInput(AtContextInput):
     source_sql_files: List[str] = Field(
         default_factory=list,
         description=(
-            "Explicit original SQL file paths, pinned before generation for result comparison. "
-            "Local .sql file references in user_message are also pinned automatically; "
-            "quote paths containing spaces. Later tool arguments cannot designate a trusted baseline."
+            "Optional SQL file paths included automatically in source inspection. "
+            "Local .sql file references in user_message are also recognized; quote paths containing spaces. "
+            "The agent can also discover and inspect readable SQL files during generation."
         ),
     )
 

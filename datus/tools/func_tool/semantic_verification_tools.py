@@ -1,7 +1,7 @@
 # Copyright 2025-present DatusAI, Inc.
 # Licensed under the Apache License, Version 2.0.
 
-"""Query business outputs once and compare them against trusted source results."""
+"""Query business outputs once and compare them against analyzed source results."""
 
 from __future__ import annotations
 
@@ -61,7 +61,7 @@ class SemanticOutputCheck(BaseModel):
         min_length=1,
         description=(
             "Copy the exact id from inspect_semantic_sources result.calculation_evidence.outputs[].id. "
-            "Select the trusted original SQL's final output by source statement, column name and expression. "
+            "Select the reference SQL's final output by source statement, column name and expression. "
             "Pass the returned output ID unchanged."
         ),
     )
@@ -259,10 +259,12 @@ class SemanticVerificationTools:
 
     @tool_schema(strict_mode=False)
     def verify_semantic_outputs(self, checks: list[SemanticOutputCheck]) -> FuncToolResult:
-        """Compare business outputs to trusted original SQL or confirmed stored values.
+        """Compare business outputs to analyzed reference SQL or confirmed stored values.
 
-        Use only when a trusted reference exists. For execution-only checks without
-        a trusted baseline, call query_metrics directly instead. This tool runs
+        Select a relevant reference from inspect_semantic_sources. Files discovered
+        during the task and inline SQL are eligible without advance registration;
+        input_kind is provenance only. For execution-only checks without a reference,
+        call query_metrics directly instead. This tool runs
         each metric query once internally, so do not query it separately first.
         It then checks the reference grain, mapping, population and filters before comparing.
         Never add dimensions or change a metric's window to satisfy a reference
@@ -271,7 +273,7 @@ class SemanticVerificationTools:
         different evidence; record_unverified means stop changing the model for this check.
         Repeating an unchanged blocked check returns its diagnosis without rerunning it.
         Supply final metric names and query dimensions from get_metric. The required
-        source_output_id identifies a final output from trusted original SQL.
+        source_output_id identifies a final output from the analyzed reference SQL.
         Preserve the source calculation grain and
         bind the same population, time and parameters on both sides. A reference_where
         filters result rows, never a window's input population. `stored` reads the
@@ -601,15 +603,6 @@ class SemanticVerificationTools:
                 "reference_not_final",
                 "A reference must be a final query output, not a pure intermediate calculation",
                 "fix_check",
-            )
-        if statement.get("input_kind") not in {"request", "original_file"}:
-            raise _VerificationProblem(
-                "no_reference",
-                "diagnostic_reference",
-                "Query executed; this SQL is diagnostic, not a caller-supplied original baseline. "
-                "Agreement cannot prove reproduction of the original calculation.",
-                "record_unverified",
-                reference_origin=statement.get("input_kind", "unknown"),
             )
         if check.reference == "sql" and (statement.get("parameters") or statement.get("templated")):
             missing = sorted(set(statement.get("parameters", [])) - check.source_parameters.keys())

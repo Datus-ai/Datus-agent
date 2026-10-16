@@ -481,15 +481,25 @@ def test_value_difference_count_is_complete_while_examples_are_bounded():
     assert result["value_differences"] == 10 and len(result["examples"]["different"]) == 5
 
 
-def test_diagnostic_sql_cannot_claim_original_equivalence(setup_verifier):
+@pytest.mark.parametrize("source_kind", ["file", "inline"])
+def test_discovered_sql_is_compared_without_advance_registration(setup_verifier, tmp_path, source_kind):
     state = setup_verifier
-    state.discovery.source_analysis = SemanticSourceAnalyzer("sqlite").analyze(
-        [{"name": "agent_sql", "sql": REFERENCE, "input_kind": "inline"}]
-    )
-    state.source_id = state.discovery.source_analysis["statements"][0]["outputs"][-1]
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    state.discovery.root_path = workspace
+    if source_kind == "file":
+        source = tmp_path / "original.sql"
+        source.write_text(REFERENCE)
+        analyzed = state.discovery.inspect_semantic_sources(sql_files=[str(source)])
+    else:
+        analyzed = state.discovery.inspect_semantic_sources(sql_queries=[REFERENCE])
+    assert analyzed.success, analyzed.error
+    statement = analyzed.result["calculation_evidence"]["statements"][0]
+    assert statement["input_kind"] == source_kind
+    state.source_id = statement["outputs"][-1]
     result = state.verifier.verify_semantic_outputs([check(state)]).result["checks"][0]
-    assert result["query_status"] == "passed" and result["reason_code"] == "diagnostic_reference"
-    assert not state.reads
+    assert result["status"] == "passed" and result["reference_groups"] == 3
+    assert len(state.reads) == 1
 
 
 def test_duplicate_projected_group_alias_and_automatic_unique_mapping(setup_verifier):

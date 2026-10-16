@@ -136,7 +136,6 @@ class SemanticAuthoringAgenticNode(AgenticNode):
             self.osi_target_tools.invalidate_inventory()
         if self.semantic_discovery_tools is not None:
             self.semantic_discovery_tools.reset_request_cache()
-            self.semantic_discovery_tools.pin_source_files(self._semantic_discovery_source_files())
         verification = getattr(self, "semantic_verification_tools", None)
         if verification is not None:
             verification.reset_request_cache()
@@ -302,10 +301,9 @@ class SemanticAuthoringAgenticNode(AgenticNode):
                 agent_config=self.agent_config,
                 sub_agent_name=self.NODE_NAME,
                 source_sql_provider=self._semantic_discovery_source_sql,
+                source_file_provider=self._semantic_discovery_source_files,
                 root_path=self._resolve_workspace_root(),
-                path_allowlist=self._resolve_filesystem_allowlist(),
                 source_file_reader=lambda path: self.filesystem_func_tool.read_file(path),
-                path_allowlist_provider=self._resolve_filesystem_allowlist,
             )
             discovery_tools = self.semantic_discovery_tools.available_tools()
             self.tools.extend(discovery_tools)
@@ -317,11 +315,11 @@ class SemanticAuthoringAgenticNode(AgenticNode):
             logger.error(f"Failed to setup semantic discovery tools: {e}")
 
     def _semantic_discovery_source_files(self) -> List[str]:
-        """Collect caller file references before any model can create or change them."""
+        """Collect optional request file references for automatic source inspection."""
         request = getattr(self, "input", None)
         paths = list(getattr(request, "source_sql_files", None) or [])
         message = getattr(request, "user_message", "") or ""
-        # SQL string literals and comments are not caller file designations.
+        # SQL string literals and comments are not file references.
         if any(entry["sql"] == message for entry in self._semantic_discovery_source_sql()):
             return list(dict.fromkeys(paths))
         lines = message.splitlines(keepends=True)
@@ -347,7 +345,7 @@ class SemanticAuthoringAgenticNode(AgenticNode):
         return list(dict.fromkeys(paths))
 
     def _semantic_discovery_source_sql(self) -> List[Dict[str, Any]]:
-        """Expose exact caller SQL, without trusting later model-written queries."""
+        """Expose exact caller SQL for automatic source inspection."""
         request = getattr(self, "input", None)
         sources = list(getattr(request, "source_queries", None) or [])
         entries = [

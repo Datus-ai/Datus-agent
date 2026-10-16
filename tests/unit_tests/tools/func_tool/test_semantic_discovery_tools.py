@@ -47,47 +47,43 @@ def _make_tools(
 
 
 class TestInspectSemanticSources:
-    def test_failed_source_reader_does_not_pin_or_abort_other_files(self, tmp_path):
-        for name in ["failed.sql", "original.sql"]:
-            (tmp_path / name).write_text("SELECT COUNT(*) n FROM orders")
+    def test_source_files_reuse_the_agent_reader_outside_the_workspace(self, tmp_path):
+        from datus.tools.func_tool.filesystem_tools import FilesystemFuncTool
 
-        def reader(path):
-            if path == "failed.sql":
-                raise AttributeError("filesystem tool unavailable")
-            return FuncToolResult(result=(tmp_path / path).read_text())
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        source = tmp_path / "original.sql"
+        source.write_text("SELECT COUNT(*) n FROM orders")
+        filesystem = FilesystemFuncTool(root_path=str(workspace))
+        reader = MagicMock(wraps=filesystem.read_file)
+        tools = SemanticDiscoveryTools(root_path=str(workspace), source_file_reader=reader)
+        result = tools.inspect_semantic_sources(sql_files=[str(source)])
+        assert result.success and result.result["source_sql_count"] == 1
+        reader.assert_called_once_with(str(source))
+        source.unlink()
+        unavailable = tools.inspect_semantic_sources(sql_files=[str(source)])
+        assert unavailable.result["source_sql_count"] == 0
+        assert "File not found" in unavailable.result["issues"][0]["error"]
 
-        tools = SemanticDiscoveryTools(root_path=str(tmp_path), source_file_reader=reader)
-        tools.pin_source_files(["failed.sql", "original.sql"])
-        tools.source_file_reader = None
-        trusted = tools.inspect_semantic_sources(sql_files=["original.sql"])
-        assert trusted.result["calculation_evidence"]["statements"][0]["input_kind"] == "original_file"
-        tools.reset_request_cache()
-        tools.source_file_reader = reader
-        tools.pin_source_files(["failed.sql"])
-        tools.source_file_reader = None
-        untrusted = tools.inspect_semantic_sources(sql_files=["failed.sql"])
-        assert untrusted.result["calculation_evidence"]["statements"][0]["input_kind"] == "file"
-
-    def test_sql_analysis_without_database_and_host_pinned_file_provenance(self, tmp_path):
+    def test_sql_analysis_without_database_and_changed_file_refresh(self, tmp_path):
         source = tmp_path / "original.sql"
         source.write_text("SELECT COUNT(*) n FROM orders")
         tools = SemanticDiscoveryTools(root_path=str(tmp_path))
         assert {t.name for t in tools.available_tools()} == {"inspect_semantic_sources", "get_semantic_source_evidence"}
-        tools.pin_source_files(["original.sql"])
-        result = tools.inspect_semantic_sources()
+        result = tools.inspect_semantic_sources(sql_files=["original.sql"])
         statement = result.result["calculation_evidence"]["statements"][0]
-        assert statement["input_kind"] == "original_file"
+        assert statement["input_kind"] == "file"
         oid = statement["outputs"][0]
         assert tools.get_semantic_source_evidence([oid]).success
         tools.inspect_semantic_sources(sql_queries=["SELECT SUM(price) total FROM prices"])
         assert tools.get_semantic_source_evidence([oid]).success
         source.write_text("SELECT COUNT(DISTINCT store) n FROM orders")
-        changed = tools.inspect_semantic_sources()
-        assert changed.result["calculation_evidence"]["statements"][0]["input_kind"] == "file"
+        changed = tools.inspect_semantic_sources(sql_files=["original.sql"])
+        assert changed.success
         assert not tools.get_semantic_source_evidence([oid]).success
         assert not tools.get_semantic_source_evidence(123).success
         tools.reset_request_cache()
-        assert not tools._original_file_digests
+        assert not tools.source_analysis
 
     def test_parallel_inspections_keep_all_inline_sources_and_coherent_metadata_cache(self):
         db = _make_db_tool()
@@ -201,8 +197,6 @@ class TestInspectSemanticSources:
         result = tools.inspect_semantic_sources(sql_files=["etl.sql"])
         assert not result.result["complete"] and result.result["source_sql_count"] == 0
         assert result.result["issues"][0]["reason"] == "source_file_unavailable"
-        blocked = tools.inspect_semantic_sources(sql_files=[str(tmp_path.parent / "outside.sql")])
-        assert "outside the readable workspace" in blocked.result["issues"][0]["error"]
 
     def test_absolute_and_relative_file_paths_replace_the_same_source(self, tmp_path):
         source = tmp_path / "etl.sql"

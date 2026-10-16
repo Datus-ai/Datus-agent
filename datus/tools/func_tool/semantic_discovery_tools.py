@@ -23,7 +23,6 @@ from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
 from agents import Tool
 
 from datus.tools.func_tool.base import FuncToolResult
-from datus.tools.func_tool.fs_path_policy import PathAllowlist, PathZone, classify_path
 from datus.utils.loggings import get_logger
 from datus.utils.semantic_sources import SemanticSourceAnalyzer
 from datus.utils.sql_utils import parse_dialect
@@ -55,10 +54,9 @@ class SemanticDiscoveryTools:
         agent_config: Optional["AgentConfig"] = None,
         sub_agent_name: Optional[str] = None,
         source_sql_provider: Optional[Callable[[], List[Dict[str, Any]]]] = None,
+        source_file_provider: Optional[Callable[[], List[str]]] = None,
         root_path: Optional[str] = None,
-        path_allowlist: Optional[PathAllowlist] = None,
         source_file_reader: Optional[Callable[[str], FuncToolResult]] = None,
-        path_allowlist_provider: Optional[Callable[[], Optional[PathAllowlist]]] = None,
     ):
         """
         Initialize semantic discovery tools.
@@ -74,10 +72,9 @@ class SemanticDiscoveryTools:
         self.sub_agent_name = sub_agent_name if sub_agent_name is not None else getattr(db_tool, "sub_agent_name", None)
         self.enable_semantic_model_profiler = enable_semantic_model_profiler
         self.source_sql_provider = source_sql_provider
+        self.source_file_provider = source_file_provider
         self.root_path = Path(root_path or ".").expanduser().resolve()
-        self.path_allowlist = path_allowlist
         self.source_file_reader = source_file_reader
-        self.path_allowlist_provider = path_allowlist_provider
         self._source_analyzers: Dict[tuple, SemanticSourceAnalyzer] = {}
         self.source_analysis: Dict[str, Any] = {}
         self.source_revision = ""
@@ -85,7 +82,6 @@ class SemanticDiscoveryTools:
         self._source_tables: List[Dict[str, Any]] = []
         self._request_source_entries: Dict[str, Dict[str, Any]] = {}
         self._semantic_source_cache: Dict[tuple, Dict[str, Any]] = {}
-        self._original_file_digests: Dict[str, str] = {}
 
     def reset_request_cache(self) -> None:
         """Clear source metadata retained during one authoring request."""
@@ -97,35 +93,19 @@ class SemanticDiscoveryTools:
             self.source_revision = ""
             self.source_context = {}
             self._source_tables = []
-            self._original_file_digests.clear()
-
-    def pin_source_files(self, paths: List[str]) -> None:
-        """Host-only: pin caller-designated files before the first model turn."""
-        with self._analysis_lock:
-            for path in paths:
-                try:
-                    identity = str((self.root_path / Path(path).expanduser()).resolve(strict=False))
-                    self._original_file_digests[identity] = ""
-                    resolved, text = self._read_source_file(path)
-                    self._original_file_digests[str(resolved)] = hashlib.sha256(text.encode()).hexdigest()
-                except Exception as exc:
-                    logger.warning("Could not pin caller source file %s: %s", path, exc)
 
     def _read_source_file(self, path):
-        allowlist = self.path_allowlist_provider() if self.path_allowlist_provider else self.path_allowlist
-        resolved = classify_path(path, root_path=self.root_path, allowlist=allowlist)
-        if resolved.zone not in (PathZone.INTERNAL, PathZone.WHITELIST):
-            raise ValueError("SQL file is outside the readable workspace")
+        resolved = (self.root_path / Path(path).expanduser()).resolve(strict=False)
         if self.source_file_reader is not None:
             read = self.source_file_reader(path)
             if not read.success or not isinstance(read.result, str):
                 raise ValueError(read.error or "SQL file did not return text")
             text = read.result.lstrip("\ufeff")
         else:
-            if resolved.resolved.stat().st_size > 2 * 1024 * 1024:
+            if resolved.stat().st_size > 2 * 1024 * 1024:
                 raise ValueError("SQL file exceeds the 2 MiB read limit")
-            text = resolved.resolved.read_text(encoding="utf-8-sig")
-        return resolved.resolved, text
+            text = resolved.read_text(encoding="utf-8-sig")
+        return resolved, text
 
     @classmethod
     def _aggregate_classes(cls):
@@ -276,21 +256,19 @@ class SemanticDiscoveryTools:
 
         Args:
             tables: Optional physical tables to inspect, including sources not named in SQL.
-            sql_files: UTF-8 SQL files in the readable workspace; each may contain multiple
+            sql_files: UTF-8 SQL files readable by the agent; each may contain multiple
                 semicolon-separated statements. Statements are analyzed, never executed.
-                Caller-designated files pinned by the host before generation have input_kind
-                original_file and may be comparison baselines while their contents match.
-                Other files have input_kind file and are diagnostic only; passing a path here
-                does not make it trusted. Use returned input_kind, not a guessed trust status.
-            sql_queries: Optional SQL texts for analysis. New inline SQL is diagnostic;
-                only SQL also supplied by the caller is eligible as a comparison baseline.
+                Files discovered during the task can be used for result comparison without
+                advance registration, including files outside the workspace. Relative paths
+                resolve under the workspace root; reads use the agent's existing file reader.
+            sql_queries: Optional SQL texts for analysis and result comparison.
             catalog: Default catalog for unqualified table references.
             database: Default physical database for unqualified references.
             schema_name: Default schema for unqualified references.
 
-        Exact request SQL (structured queries, attached SQL and user SQL blocks) is
-        included automatically. Provide tables or at least one
-        SQL source. The current datasource determines the dialect. Each scope retains its
+        Request SQL and explicit request file references are included automatically.
+        input_kind records provenance only. Provide tables or at least one SQL source.
+        The current datasource determines the dialect. Each scope retains its
         complete filters, grouping, joins, ordering and windows; outputs refer to shared
         scopes and upstream output IDs. Formula constants are preserved. Outputs are
         authoring evidence, not a mandate to create metrics outside the user's scope.
@@ -311,18 +289,18 @@ class SemanticDiscoveryTools:
             entries = [{**e, "input_kind": "request"} for e in self._current_source_sql_entries()]
             input_issues = []
             unavailable_files = []
-            for path in dict.fromkeys([*self._original_file_digests, *(sql_files or [])]):
+            request_files = self.source_file_provider() if self.source_file_provider else []
+            for path in dict.fromkeys([*request_files, *(sql_files or [])]):
                 identity = str((self.root_path / Path(path).expanduser()).resolve(strict=False))
                 try:
                     resolved, text = self._read_source_file(path)
                     identity = str(resolved)
-                    original = self._original_file_digests.get(identity) == hashlib.sha256(text.encode()).hexdigest()
                     entries.append(
                         {
                             "name": path,
                             "identity": identity,
                             "sql": text,
-                            "input_kind": "original_file" if original else "file",
+                            "input_kind": "file",
                         }
                     )
                 except (OSError, ValueError, UnicodeError) as exc:
@@ -340,11 +318,9 @@ class SemanticDiscoveryTools:
             # Re-reading a named file replaces its old content. Byte-identical
             # sources are analyzed once while all provenance names are retained.
             for identity in unavailable_files:
-                for kind in ("file", "original_file"):
-                    self._request_source_entries.pop(kind + ":" + identity, None)
+                self._request_source_entries.pop("file:" + identity, None)
             for entry in entries:
-                kind = "file" if entry["input_kind"] in {"file", "original_file"} else entry["input_kind"]
-                self._request_source_entries[kind + ":" + entry.get("identity", entry["name"])] = entry
+                self._request_source_entries[entry["input_kind"] + ":" + entry.get("identity", entry["name"])] = entry
             deduplicated = {}
             for entry in self._request_source_entries.values():
                 digest = hashlib.sha256(entry["sql"].strip().encode()).hexdigest()
@@ -352,7 +328,7 @@ class SemanticDiscoveryTools:
                     deduplicated[digest] = {**entry, "aliases": [entry["name"]]}
                 else:
                     deduplicated[digest]["aliases"].append(entry["name"])
-                    if entry["input_kind"] in {"request", "original_file"}:
+                    if entry["input_kind"] == "request":
                         deduplicated[digest]["input_kind"] = entry["input_kind"]
             entries = list(deduplicated.values())
             if not tables and not entries and not input_issues:

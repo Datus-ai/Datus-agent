@@ -28,10 +28,10 @@ Provide relevant tables, SQL text or UTF-8 SQL file paths. Files may contain mul
 | Tool | What it checks |
 |------|----------------|
 | `validate_semantic` | Model structure, references and compilation; no business query execution. |
-| `query_metrics` | Actual metric queries when no trusted numerical baseline exists. |
-| `verify_semantic_outputs` | Executes the metric query internally and compares its complete results with trusted original SQL or confirmed stored columns. No separate metric query is needed first. |
+| `query_metrics` | Actual metric queries when no numerical reference exists. |
+| `verify_semantic_outputs` | Executes the metric query internally and compares its complete results with analyzed reference SQL or confirmed stored columns. No separate metric query is needed first. |
 
-Numerical baselines come from caller-supplied SQL or original files designated before generation. The host pins readable files before the first model turn; changed files and newly supplied diagnostic SQL cannot establish numerical correctness. Files follow workspace read permissions; URLs, globs and paths inside SQL code are not automatically designated as original files.
+SQL discovered during the task can be analyzed and used for numerical comparison without advance registration. Files may be anywhere the agent can read; source inspection reuses the agent's file reader. Request SQL, discovered files and inline SQL are all eligible references; `input_kind` records provenance only. Choose SQL that expresses the requested calculation. The comparison uses the SQL captured by source analysis; re-inspect changed sources to refresh their output IDs and invalidate affected evidence. Do not rewrite a reference merely to obtain a numerical pass.
 
 For each baseline comparison, `source_output_id` selects the original final output and `dimension_mapping` maps its complete calculation grain to model query dimensions. Both sides must use the same population, time scope and parameters. Stored results are read directly without reaggregation. Result-row filters and complete time buckets can be aligned; a nonempty `context_filter` leaves numerical comparison unverified because input-population equivalence is not established. Preserve required filters and report that limitation.
 
@@ -111,7 +111,7 @@ Without dimensions, the two metrics return `545` and approximately `1,695,997.0`
 In the Datus REPL, normally describe the business outcome directly. The main agent delegates requests that create or update semantic datasets and metrics to `semantic_modeling`. Name the tables, target model, metrics, or source SQL when those details matter.
 
 ```text
-Update sales.yml. Add monthly revenue growth based on orders.order_date and execute the metric query. Compare with trusted source SQL or stored results when provided.
+Update sales.yml. Add monthly revenue growth based on orders.order_date and execute the metric query. Compare with relevant source SQL or stored results when available.
 ```
 
 ```text
@@ -137,7 +137,7 @@ During one run, the subagent:
 1. Inspects existing models and chooses one target using an explicit filename hint, a unique fact table, or the business domain.
 2. Reads the live datasource schema and relationship evidence before authoring.
 3. Creates or updates datasets, fields, relationships, and metrics in dependency order.
-4. Validates the complete target file, queries requested outputs and compares them with trusted baselines when available.
+4. Validates the complete target file, queries requested outputs and compares them with reference results when available.
 5. Reconciles the validated YAML into the Knowledge Base.
 
 It edits exactly one semantic model per run. If no existing model fits, it creates a business-domain model rather than one file per physical table. Datasets normally bind directly to qualified physical tables or views; primary or unique keys are not required for a physical dataset or its independent single-table metrics. Supplied SQL describes the calculation to preserve, not a required dataset source shape. A minimal query-backed dataset is used only for a specific required row-set transformation that supported native fields, relationships, and metrics cannot faithfully express, or when the user explicitly requests a query-backed source. Independently expressible inputs remain on physical datasets.
