@@ -104,7 +104,7 @@ Use the narrow metric workflow below:
 
 ## Window Metric Queries
 
-- When a selected window metric exposes `requires_time_axis: true`, group by the reserved input dimension `metric_time` and pass the requested grain separately as `time_granularity`. Discover the available/native grains from `get_metric.time_granularities`; do not invent a concrete time field. Do not add `metric_time` solely because a metric has window metadata; value-ordered rank, value, or frame metrics may use only the business dimensions requested by the user.
+- When a selected metric exposes `requires_time_axis: true` (a window metric, or a metric computed from one), group by the reserved input dimension `metric_time` and pass the requested grain separately as `time_granularity`. Discover the available/native grains from `get_metric.time_granularities`; do not invent a concrete time field. Do not add `metric_time` solely because a metric has window metadata; value-ordered rank, value, or frame metrics may use only the business dimensions requested by the user.
 - A grained time result uses the engine's suffixed output name and that name may be used as an `order_by` key. Never pass the suffixed output name in `dimensions`; Dosi query input remains `metric_time` plus `time_granularity`.
 - For cumulative metrics, use the business query grain requested by the user or documented in metric metadata/AI guidance. A metric `window.reset` value controls the reset boundary; it is not automatically the query grain.
 - For rolling metrics, `periods` counts result buckets. Choose the bucket grain from the user's request or metric guidance and pass that grain separately.

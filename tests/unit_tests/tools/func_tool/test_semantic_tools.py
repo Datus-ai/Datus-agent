@@ -1979,6 +1979,39 @@ class TestGetMetric:
         }
         assert "kind" not in result.result
 
+    def test_a_time_axis_a_dimension_requires_is_stated_on_the_metric(self, semantic_tools_with_runtime):
+        """get_dimensions probes the metric itself, so a compose over a
+        period-over-period window is marked as the window is; the listing never
+        probes, so the metric metadata does not say it."""
+        tool, _ = semantic_tools_with_runtime
+        rows = [
+            DimensionInfo(
+                name="metric_time",
+                type="time",
+                is_primary_time=True,
+                time_granularities=["day", "month"],
+                required=True,
+                required_reason="time_axis",
+                time_axis_required=True,
+            ),
+            DimensionInfo(name="cell.brand"),
+        ]
+        metric = _detail_metric("revenue_growth", {"base_kind": "expression", "derive_family": "compose"})
+
+        with self._wire([metric], dimension_rows=rows):
+            result = tool.get_metric(name="revenue_growth").result
+
+        assert result["requires_time_axis"] is True
+        (axis, brand) = result["dimensions"]
+        assert axis["required_reason"] == "time_axis"
+        assert axis["time_axis_required"] is True
+        assert "required" not in brand and "time_axis_required" not in brand
+
+        with self._wire([metric], dimension_rows=[DimensionInfo(name="cell.brand")]):
+            result = tool.get_metric(name="revenue_growth").result
+
+        assert "requires_time_axis" not in result
+
     def test_the_reply_expands_back_to_every_value(self, semantic_tools_with_runtime):
         """Leaving the defaults out loses nothing: putting them back gives the
         rows the runtime reported."""

@@ -232,7 +232,9 @@ semantic_model:
     assert running.type == "window"
     assert running.path == ["sales", "revenue"]
     assert running.unit == "USD"
-    assert running.metadata["requires_time_axis"] is True
+    # The listing compiles nothing; get_dimensions answers the time axis.
+    assert "requires_time_axis" not in running.metadata
+    assert FakeEngine.instances[-1].compile_calls == []
     assert running.metadata["window"] == {
         "type": "cumulative",
         "function": "sum",
@@ -306,12 +308,17 @@ semantic_model:
     monkeypatch.setattr(FakeEngine, "metrics", lambda self: [dict(row) for row in rows])
     monkeypatch.setattr(FakeEngine, "time_axis_metrics", {"first_revenue"})
 
-    metrics = {metric.name: metric for metric in await make_runtime().list_metrics()}
+    runtime = make_runtime()
+    metrics = {metric.name: metric for metric in await runtime.list_metrics()}
     assert metrics["order_rank"].metadata["window_family"] == "rank"
     assert metrics["order_rank"].metadata["window_function"] == "rank"
-    assert metrics["order_rank"].metadata["requires_time_axis"] is False
-    assert metrics["first_revenue"].metadata["requires_time_axis"] is True
-    assert metrics["revenue_range"].metadata["requires_time_axis"] is False
+
+    def axis_required(dimensions):
+        return any(d.time_axis_required for d in dimensions)
+
+    assert not axis_required(await runtime.get_dimensions("order_rank"))
+    assert axis_required(await runtime.get_dimensions("first_revenue"))
+    assert not axis_required(await runtime.get_dimensions("revenue_range"))
 
 
 @pytest.mark.asyncio

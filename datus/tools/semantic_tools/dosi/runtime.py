@@ -116,7 +116,6 @@ class DosiRuntime:
     ) -> List[MetricDefinition]:
         extension_version = await asyncio.to_thread(datus_extension_version)
         handles, _, _ = await asyncio.to_thread(self._catalog)
-        binding = await asyncio.to_thread(load_binding)
         metrics = []
         for model_path, handle in handles:
             engine = await asyncio.to_thread(handle.get)
@@ -124,8 +123,6 @@ class DosiRuntime:
             dataset_rows = await asyncio.to_thread(engine.datasets)
             dimension_rows = await asyncio.to_thread(engine.dimensions)
             payloads = await asyncio.to_thread(self._metric_payloads, model_path)
-            connection = handle.profile_name
-            dialect = self._dry_run_dialect(binding, connection)
             for row in rows:
                 hints = payloads.get(str(row.get("name") or ""), {})
                 metric_path = (
@@ -182,21 +179,11 @@ class DosiRuntime:
                 if effective_time:
                     metadata["time_dimension"] = effective_time
                 if isinstance(window, dict):
-                    requires_time_axis = await asyncio.to_thread(
-                        self._probe_requires_time_axis,
-                        engine,
-                        binding,
-                        str(row.get("name") or ""),
-                        dialect=dialect,
-                        connection=connection,
-                        required_dimensions=list(row.get("required_dimensions") or []),
-                    )
-                    metadata.update(
-                        {
-                            "window": window,
-                            "requires_time_axis": requires_time_axis,
-                        }
-                    )
+                    # Whether a query needs a grouped time axis is a compile
+                    # probe; get_dimensions makes it for the one metric asked
+                    # about (and marks the axis time_axis_required), so the
+                    # catalog listing compiles nothing.
+                    metadata["window"] = window
                 if "fill_nulls_with" in hints:
                     metadata["fill_nulls_with"] = hints["fill_nulls_with"]
                 metrics.append(

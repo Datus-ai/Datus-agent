@@ -1287,8 +1287,15 @@ class SemanticTools:
                 (``declared``, ``inferred:measure``, ``inferred:time``, ...); a
                 row without it was plainly inferred.
               - required_dimensions (List[str]): dimensions the runtime needs in
-                the query before this metric means anything. Pass every one of
-                them to query_metrics; the runtime rejects the query otherwise.
+                the query before this metric means anything, gathered over every
+                metric it is computed from. Pass every one of them to
+                query_metrics, as named and without a grain; the runtime rejects
+                the query otherwise.
+              - requires_time_axis (bool): true when the query must also group
+                by the metric's time axis at a grain (`metric_time` plus
+                time_granularity), as a period-over-period or running window
+                does, directly or through a metric it is computed from. Absent
+                when it need not.
               - window: the partition and rank rule behind those requirements.
               - params (List[Dict]): the query-time parameters the metric
                 declares, each with name, type, default and its domain
@@ -1369,6 +1376,10 @@ class SemanticTools:
                 dimension_row.pop("is_primary_time", None)
                 dimension_row.pop("time_granularities", None)
             row["dimensions"] = rows
+            if any(dimension_row.get("time_axis_required") for dimension_row in rows):
+                # The probe behind it compiles the metric itself, so a compose
+                # over a time-ordered window needs the axis as the window does.
+                row["requires_time_axis"] = True
             if capabilities.get("time_dimension"):
                 row["time_dimension"] = capabilities["time_dimension"]
             if capabilities.get("time_granularities"):
