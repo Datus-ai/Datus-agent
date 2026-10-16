@@ -206,9 +206,9 @@ def test_metric_artifact_uses_real_engine_and_enforced_connector(query_tool, mon
 
 @pytest.mark.parametrize("product", ["p2", "no_matching_product"])
 @pytest.mark.parametrize("root_model", [False, True])
-@pytest.mark.parametrize("legacy", [False, True])
+@pytest.mark.parametrize("snapshot_format", ["short", "full", "inline"])
 def test_standalone_published_metric_uses_frozen_model_after_studio_model_changes(
-    query_tool, monkeypatch, tmp_path, product, root_model, legacy
+    query_tool, monkeypatch, tmp_path, product, root_model, snapshot_format
 ):
     """An artifact-only viewer has no Studio files or subject index."""
     from datus.api.models.base_models import Result
@@ -249,8 +249,13 @@ def test_standalone_published_metric_uses_frozen_model_after_studio_model_change
     )
     assert saved.success == 1, saved.error
     recipe = MetricQueryFile.model_validate_json((tools.queries_dir / "scores.metric.json").read_text(encoding="utf-8"))
+    assert recipe.model_snapshot_path == f"models/{recipe.model_revision[:16]}.yaml"
+    if snapshot_format == "full":
+        full_path = f"models/{recipe.model_revision}.yaml"
+        (tools.queries_dir.parent / recipe.model_snapshot_path).rename(tools.queries_dir.parent / full_path)
+        recipe = MetricQueryFile.model_validate({**recipe.model_dump(), "model_snapshot_path": full_path})
     recipe = resolve_metric_query_snapshot(recipe, artifact_dir=tools.queries_dir.parent)
-    if legacy:
+    if snapshot_format == "inline":
         recipe = MetricQueryFile.model_validate(
             {**recipe.model_dump(), "schema_version": "1.0", "model_snapshot_path": None}
         )

@@ -12,6 +12,8 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from datus.schemas.analysis_artifacts import SubjectAssetRef
 
+MODEL_SNAPSHOT_HASH_LENGTHS = (16, 32, 64)
+
 
 class ParamRef(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -65,7 +67,11 @@ class MetricQueryFile(MetricQueryRequest):
         if self.schema_version == "1.1" and self.model_snapshot_path is None:
             raise ValueError("schema 1.1 requires model_snapshot_path")
         if self.model_snapshot_path is not None:
-            allowed = {f"models/{self.model_revision}{suffix}" for suffix in (".yaml", ".yml", ".json")}
+            allowed = {
+                f"models/{self.model_revision[:length]}{suffix}"
+                for length in MODEL_SNAPSHOT_HASH_LENGTHS
+                for suffix in (".yaml", ".yml", ".json")
+            }
             if self.model_snapshot_path not in allowed:
                 raise ValueError("model_snapshot_path must name a content-addressed file under models/")
         if (

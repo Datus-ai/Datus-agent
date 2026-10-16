@@ -451,6 +451,9 @@ async def test_queries_share_model_files_and_bundle_preserves_exact_bytes(enviro
     recipes = [json.loads((tools.queries_dir / f"{name}.metric.json").read_text()) for name in ("sales", "total")]
     assert all(item["schema_version"] == "1.1" and "model_snapshot" not in item for item in recipes)
     assert recipes[0]["model_snapshot_path"] == recipes[1]["model_snapshot_path"]
+    revision = hashlib.sha256(content).hexdigest()
+    assert all(item["model_revision"] == revision for item in recipes)
+    assert recipes[0]["model_snapshot_path"] == f"models/{revision[:16]}.yml"
     assert len(list((artifact_dir / "models").iterdir())) == 1
     assert (artifact_dir / recipes[0]["model_snapshot_path"]).read_bytes() == content
     (artifact_dir / "render" / "app.jsx").write_text("export default function App() { return null; }")
@@ -517,6 +520,27 @@ def test_multiple_models_with_same_basename_remain_distinct(environment, kind, m
         env.model.read_bytes(),
         second_model.read_bytes(),
     }
+    assert tools._validate_metric_queries(kind) is None
+
+
+@pytest.mark.parametrize("kind", ["report", "dashboard"])
+def test_saved_recipe_points_to_extended_filename_after_collision(environment, kind):
+    env = environment
+    options = {"params": [], "sample_params": {}} if kind == "dashboard" else {}
+    tools, first = _save(env, kind, **options)
+    assert first.success == 1, first.error
+    recipe_path = tools.queries_dir / "sales.metric.json"
+    previous = MetricQueryFile.model_validate_json(recipe_path.read_text())
+    occupied = tools.queries_dir.parent / previous.model_snapshot_path
+    occupied.write_bytes(b"another model occupies this short filename")
+    save = tools.save_metric_query_template if kind == "dashboard" else tools.save_metric_query
+    saved = save(name="sales", query={"metric": REF}, goal="Revenue", hypothesis="Revenue", **options)
+    assert saved.success == 1, saved.error
+    current = MetricQueryFile.model_validate_json(recipe_path.read_text())
+    assert current.model_snapshot_path == f"models/{previous.model_revision[:32]}.yml"
+    assert current.model_revision == previous.model_revision
+    assert (tools.queries_dir.parent / current.model_snapshot_path).read_bytes() == env.model.read_bytes()
+    assert occupied.read_bytes() == b"another model occupies this short filename"
     assert tools._validate_metric_queries(kind) is None
 
 
