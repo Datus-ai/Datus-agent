@@ -434,7 +434,8 @@ def test_same_metric_queries_can_be_resaved_sequentially_but_mixed_revisions_fai
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("kind", ["report", "dashboard"])
-async def test_queries_share_model_files_and_bundle_preserves_exact_bytes(environment, kind):
+@pytest.mark.parametrize("model_name", [None, "flights.yml", "jeff_shop.yml"])
+async def test_queries_share_model_files_and_bundle_preserves_exact_bytes(environment, kind, model_name):
     from datus.api.services.report_service import ReportService
     from datus.utils.metric_artifact_models import resolve_metric_query_snapshot
 
@@ -451,8 +452,18 @@ async def test_queries_share_model_files_and_bundle_preserves_exact_bytes(enviro
     recipes = [json.loads((tools.queries_dir / f"{name}.metric.json").read_text()) for name in ("sales", "total")]
     assert all(item["schema_version"] == "1.1" and "model_snapshot" not in item for item in recipes)
     assert recipes[0]["model_snapshot_path"] == recipes[1]["model_snapshot_path"]
+    revision = hashlib.sha256(content).hexdigest()
+    assert all(item["model_revision"] == revision for item in recipes)
+    assert recipes[0]["model_snapshot_path"] == f"models/{revision[:16]}.yml"
     assert len(list((artifact_dir / "models").iterdir())) == 1
     assert (artifact_dir / recipes[0]["model_snapshot_path"]).read_bytes() == content
+    if model_name is not None:
+        renamed = f"models/{model_name}"
+        (artifact_dir / recipes[0]["model_snapshot_path"]).rename(artifact_dir / renamed)
+        for name, item in zip(("sales", "total"), recipes):
+            item["model_snapshot_path"] = renamed
+            (tools.queries_dir / f"{name}.metric.json").write_text(json.dumps(item))
+    assert tools._validate_metric_queries(kind) is None
     (artifact_dir / "render" / "app.jsx").write_text("export default function App() { return null; }")
     service = ReportService() if kind == "report" else DashboardService(agent_config=env.config)
     detail = await service.get_detail(project_files_root=env.root, **{f"{kind}_slug": "demo"})
@@ -518,6 +529,26 @@ def test_multiple_models_with_same_basename_remain_distinct(environment, kind, m
         second_model.read_bytes(),
     }
     assert tools._validate_metric_queries(kind) is None
+
+
+@pytest.mark.parametrize("kind", ["report", "dashboard"])
+def test_conflicting_snapshot_fails_without_changing_recipe_or_model(environment, kind):
+    env = environment
+    options = {"params": [], "sample_params": {}} if kind == "dashboard" else {}
+    tools, first = _save(env, kind, **options)
+    assert first.success == 1, first.error
+    recipe_path = tools.queries_dir / "sales.metric.json"
+    original_recipe = recipe_path.read_bytes()
+    previous = MetricQueryFile.model_validate_json(original_recipe)
+    occupied = tools.queries_dir.parent / previous.model_snapshot_path
+    occupied.write_bytes(b"another model occupies this short filename")
+    save = tools.save_metric_query_template if kind == "dashboard" else tools.save_metric_query
+    saved = save(name="sales", query={"metric": REF}, goal="Revenue", hypothesis="Revenue", **options)
+    assert saved.success == 0
+    assert "must match model_revision" in saved.error
+    assert recipe_path.read_bytes() == original_recipe
+    assert occupied.read_bytes() == b"another model occupies this short filename"
+    assert list(occupied.parent.iterdir()) == [occupied]
 
 
 @pytest.mark.parametrize("legacy", [False, True])
