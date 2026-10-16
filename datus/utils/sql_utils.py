@@ -135,6 +135,9 @@ def extract_table_names(sql, dialect="snowflake", ignore_empty=False) -> List[st
     Returns a list of unique table names with original case preserved.
     Filters out CTE (Common Table Expression) tables.
     """
+    analyzer = _registry_hook("get_sql_analyzer", dialect)
+    if analyzer is not None:
+        return list(analyzer(sql).require_complete().tables)
     # Parse the SQL using sqlglot
     read_dialect = parse_read_dialect(dialect)
     try:
@@ -149,6 +152,9 @@ def extract_table_names(sql, dialect="snowflake", ignore_empty=False) -> List[st
 
 def extract_table_names_strict(sql, dialect="snowflake", ignore_empty=False) -> List[str]:
     """Extract table names and raise when sqlglot cannot parse the SQL."""
+    analyzer = _registry_hook("get_sql_analyzer", dialect)
+    if analyzer is not None:
+        return list(analyzer(sql).require_complete().tables)
     read_dialect = parse_read_dialect(dialect)
     parsed = sqlglot.parse_one(sql, read=read_dialect, error_level=sqlglot.ErrorLevel.RAISE)
     if parsed is None:
@@ -252,7 +258,8 @@ def table_name_field_order(dialect: str = "snowflake") -> List[str]:
     right-align the same way; their order still follows the capabilities they
     declare.
     """
-    d = parse_dialect((dialect or "").strip().lower())
+    # Namespace capabilities belong to the adapter, not its compatible parser.
+    d = (dialect or "").strip().lower()
     from datus.tools.db_tools import connector_registry
 
     # Built-in connectors
@@ -725,6 +732,11 @@ def parse_sql_type(sql: str, dialect: str) -> SQLType:
     """
     if not sql or not isinstance(sql, str):
         return SQLType.UNKNOWN
+
+    analyzer = _registry_hook("get_sql_analyzer", dialect)
+    if analyzer is not None:
+        analysis = analyzer(sql)
+        return SQLType(analysis.sql_type.value) if analysis.status == "complete" else SQLType.UNKNOWN
 
     stripped_sql = sql.strip()
     if not stripped_sql:
@@ -1317,6 +1329,9 @@ def normalize_sql(sql: str) -> str:
 def format_sql_to_pretty(sql: str, dialect: str) -> str:
     """Pretty print SQL if possible, otherwise return the original text."""
     if not sql:
+        return sql
+    if _registry_hook("get_sql_analyzer", dialect) is not None:
+        # An adapter-owned analyzer supplies facts, not a compatible generator.
         return sql
     read_dialect = parse_read_dialect(dialect)
     try:

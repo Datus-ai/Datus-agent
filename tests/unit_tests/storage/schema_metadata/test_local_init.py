@@ -872,6 +872,46 @@ class TestInitLocalSchema:
         assert mock_init_duckdb.call_args.kwargs["database_name"] == "db2"
         assert mock_init_duckdb.call_args.kwargs["schema_name"] == ""
 
+    @pytest.mark.parametrize("connection_database", ["", "TENANT"])
+    def test_schema_only_datasource_stores_metadata_without_database_namespace(self, connection_database):
+        """A fixed-target adapter discovers schema objects with or without a tenant setting."""
+        from datus.storage.schema_metadata.local_init import init_local_schema
+
+        store = MagicMock()
+        config, db_config = self._make_real_agent_config(db_type="schema_engine", db_name=connection_database)
+        config.list_databases.return_value = [connection_database] if connection_database else []
+        db_config.schema = "APP"
+        manager, connector = _make_db_manager()
+        connector.default_catalog.return_value = ""
+        connector.database_name = connection_database
+        connector.get_tables_with_ddl.return_value = [
+            {
+                "identifier": '"APP"."ORDERS"',
+                "catalog_name": "",
+                "database_name": "",
+                "schema_name": "APP",
+                "table_name": "ORDERS",
+                "definition": 'CREATE TABLE "APP"."ORDERS" (ID INTEGER)',
+            }
+        ]
+
+        with (
+            patch("datus.storage.schema_metadata.local_init.exists_table_value", return_value=({}, set())),
+            patch(
+                "datus.storage.schema_metadata.local_init.supports_namespace",
+                side_effect=lambda namespace, **kwargs: namespace == "schema",
+            ),
+        ):
+            init_local_schema(store, config, manager, table_type="table")
+
+        connector.get_tables_with_ddl.assert_called_once_with(catalog_name="", database_name="", schema_name="APP")
+        tables, values = store.store_batch.call_args.args
+        assert [(table["database_name"], table["schema_name"], table["table_name"]) for table in tables] == [
+            ("", "APP", "ORDERS")
+        ]
+        assert values == []
+        store.after_init.assert_called_once_with(build_mode="overwrite")
+
     def test_empty_database_list_skips_dispatch(self):
         """A datasource resolving to zero databases skips schema init without raising."""
         from datus.storage.schema_metadata.local_init import init_local_schema
