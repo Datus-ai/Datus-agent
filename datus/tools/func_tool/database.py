@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Set, Union
 
 from agents import Tool
-from datus_db_core import BaseSqlConnector
+from datus_db_core import BaseSqlConnector, connector_registry
 
 from datus.configuration.agent_config import AgentConfig
 from datus.schemas.agent_models import SubAgentConfig
@@ -1114,8 +1114,26 @@ class DBFuncTool:
         if not table_names:
             return []  # can't parse → allow (SHOW/DESCRIBE/EXPLAIN have no tables)
         out_of_scope: List[str] = []
+        analyzer_getter = getattr(connector_registry, "get_sql_analyzer", None)
+        native_analysis = callable(analyzer_getter) and analyzer_getter(dialect) is not None
         for name in table_names:
             coordinate = self._build_table_coordinate(raw_name=name, connector=routed_connector)
+            if native_analysis:
+                candidates = [pattern for pattern in self._scoped_patterns if pattern.matches(coordinate)]
+                unresolved = [
+                    field for field in self._field_order if field != "table" and not getattr(coordinate, field)
+                ]
+                if candidates and not any(
+                    all(getattr(pattern, field) in ("", "*", "%") for field in unresolved) for pattern in candidates
+                ):
+                    field = next(
+                        field
+                        for field in unresolved
+                        if any(getattr(pattern, field) not in ("", "*", "%") for pattern in candidates)
+                    )
+                    raise ValueError(
+                        f"Unresolved {field} in SQL scope analysis; qualify the table or configure context"
+                    )
             if not self._table_matches_scope(coordinate):
                 out_of_scope.append(name)
         return out_of_scope
@@ -2490,6 +2508,9 @@ class DBFuncTool:
                 return guard_error
 
             connector = self._get_connector(datasource, database)
+            analysis_error = self._validate_adapter_sql_analysis(sql, connector)
+            if analysis_error is not None:
+                return analysis_error
             sql_type = parse_sql_type(sql, connector.dialect)
 
             if sql_type in (SQLType.SELECT, SQLType.METADATA_SHOW, SQLType.EXPLAIN):
@@ -2664,6 +2685,13 @@ class DBFuncTool:
                 sql_query=sql,
             )
         if enforced_sql != sql:
+            analyzer_getter = getattr(connector_registry, "get_sql_analyzer", None)
+            if callable(analyzer_getter) and analyzer_getter(connector.dialect) is not None:
+                return ExecuteSQLResult(
+                    success=False,
+                    error="SQL policy rewriting is unsupported for this adapter's limited SQL analysis path.",
+                    sql_query=sql,
+                )
             # A policy rewrite (e.g. an injected LIMIT) must still be a single
             # read-only statement — re-validate so it can't smuggle in DML/DDL.
             validation_error, _ = self._validate_read_sql(enforced_sql, connector)
@@ -2766,6 +2794,17 @@ class DBFuncTool:
             effective_datasource = getattr(services, "default_datasource", "") or ""
         return effective_datasource or "default"
 
+    @staticmethod
+    def _validate_adapter_sql_analysis(sql: str, connector: BaseSqlConnector) -> Optional[FuncToolResult]:
+        """Reject unverified adapter SQL before any read/write/DDL dispatch."""
+        analyzer_getter = getattr(connector_registry, "get_sql_analyzer", None)
+        analyzer = analyzer_getter(connector.dialect) if callable(analyzer_getter) else None
+        if analyzer is not None:
+            analysis = analyzer(sql)
+            if analysis.status != "complete":
+                return FuncToolResult(success=0, error=f"SQL analysis {analysis.status}: {analysis.diagnostic}")
+        return None
+
     def _validate_read_sql(self, sql: str, connector: BaseSqlConnector) -> tuple[Optional[FuncToolResult], SQLType]:
         from datus.utils.sql_utils import (
             READ_ONLY_MULTI_STATEMENT,
@@ -2774,6 +2813,9 @@ class DBFuncTool:
             validate_read_only_sql,
         )
 
+        analysis_error = self._validate_adapter_sql_analysis(sql, connector)
+        if analysis_error is not None:
+            return analysis_error, SQLType.UNKNOWN
         violation, sql_type = validate_read_only_sql(sql, connector.dialect)
         if violation:
             error = {
@@ -2805,7 +2847,10 @@ class DBFuncTool:
             )
             return FuncToolResult(success=0, error=error), sql_type
 
-        out_of_scope = self._check_sql_table_scope(sql, connector)
+        try:
+            out_of_scope = self._check_sql_table_scope(sql, connector)
+        except ValueError as error:
+            return FuncToolResult(success=0, error=str(error)), sql_type
         if out_of_scope:
             return (
                 FuncToolResult(
@@ -2931,6 +2976,9 @@ class DBFuncTool:
         # (CREATE/ALTER/DROP, CREATE DATABASE, TRUNCATE, MERGE, GRANT, ...). The
         # only guard is defense-in-depth: read-only and DML statements have
         # dedicated paths (read_query / execute_write) and must not land here.
+        analysis_error = self._validate_adapter_sql_analysis(cleaned, connector)
+        if analysis_error is not None:
+            return analysis_error
         stmt_type = parse_sql_type(cleaned, connector.dialect)
         if stmt_type in (SQLType.SELECT, SQLType.METADATA_SHOW, SQLType.EXPLAIN):
             return FuncToolResult(
