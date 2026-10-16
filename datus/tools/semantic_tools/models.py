@@ -11,6 +11,8 @@ class DimensionInfo(BaseModel):
     """Information about a dimension."""
 
     name: str = Field(..., description="Dimension name")
+    required: bool = Field(False, description="Whether this metric always requires the dimension in group-by")
+    required_reason: Optional[str] = Field(None, description="Stable requirement reason code, e.g. 'metric_definition'")
     description: Optional[str] = Field(None, description="Dimension description")
     type: Optional[str] = Field(
         None,

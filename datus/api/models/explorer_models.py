@@ -164,6 +164,8 @@ class MetricDimensionItem(BaseModel):
     """A queryable dimension of a metric."""
 
     name: str = Field(..., description="Dimension name")
+    required: bool = Field(False, description="Whether this metric always requires the dimension in group-by")
+    required_reason: Optional[str] = Field(None, description="Stable requirement reason code, e.g. 'metric_definition'")
     type: Optional[str] = Field(None, description="Dimension type, e.g. 'time', 'string', 'number'")
     description: Optional[str] = Field(None, description="Dimension description")
     is_primary_key: Optional[bool] = Field(None, description="Whether the dimension is a primary key")

@@ -511,6 +511,29 @@ class TestExplorerServiceMetricDimensions:
         assert result.success is False
         assert "runtime is not available" in result.errorMessage
 
+    async def test_required_dimensions_are_serialized_for_preview(self, real_agent_config, monkeypatch):
+        """The API keeps runtime requirements on the dimension objects."""
+        from unittest.mock import AsyncMock
+
+        from datus.tools.semantic_tools.models import DimensionInfo
+
+        runtime = MagicMock()
+        runtime.get_dimensions = AsyncMock(
+            return_value=[
+                DimensionInfo(name="orders.status", required=True, required_reason="metric_definition"),
+                DimensionInfo(name="customers.region"),
+            ]
+        )
+        self._patch_runtime(monkeypatch, runtime=runtime)
+        service = ExplorerService(agent_config=real_agent_config)
+        result = await service.get_metric_dimensions(SubjectPathInput(subject_path=["Finance", "revenue"]))
+        assert result.success is True
+        dimensions = result.model_dump()["data"]["dimensions"]
+        assert [(d["name"], d["required"], d["required_reason"]) for d in dimensions] == [
+            ("orders.status", True, "metric_definition"),
+            ("customers.region", False, None),
+        ]
+
     async def test_maps_dimension_fields(self, real_agent_config, monkeypatch):
         """Runtime DimensionInfo objects are mapped onto the response model."""
         from types import SimpleNamespace
