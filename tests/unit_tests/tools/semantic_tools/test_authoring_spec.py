@@ -133,6 +133,29 @@ def test_directory_covers_every_capability_and_points_to_native_rules(contract):
     assert documents["osi-core.yaml"] == authoring_spec.authoring_spec_text("<osi_dialect>")
 
 
+@pytest.mark.parametrize("reference", ["window", 7])
+def test_invalid_schema_reference_returns_contract_error(contract, reference):
+    from datus.tools.semantic_tools.exceptions import SemanticCoreException
+
+    contract["carriers"]["metric"]["window"]["schema_ref"] = reference
+    with pytest.raises(SemanticCoreException, match="Unresolved authoring schema reference"):
+        authoring_spec.authoring_reference_documents()
+
+
+def test_native_validation_retains_non_object_compile_diagnostics(monkeypatch):
+    from types import SimpleNamespace
+
+    from datus.tools.semantic_tools.dosi import authoring
+
+    errors = ["Native diagnostic", {"code": "not_an_aggregate", "message": "Aggregate required"}]
+    monkeypatch.setattr(
+        authoring, "load_binding", lambda: SimpleNamespace(validate=lambda _: {"compile_errors": errors})
+    )
+    result = authoring.dosi_validation_text_payload("semantic_model: []")
+    assert result["compile_errors"][0] == "Native diagnostic"
+    assert "aggregate SQL" in result["compile_errors"][1]["hint"]
+
+
 def test_reference_cache_reuses_content_and_refreshes_same_version_changes(contract, tmp_path):
     first = prepare_authoring_references(tmp_path)
     before = {p.name: p.stat().st_mtime_ns for p in first.iterdir()}

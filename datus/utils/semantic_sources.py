@@ -55,9 +55,12 @@ def query_of(tree: exp.Expression) -> tuple[exp.Query | None, exp.Table | None]:
 class SemanticSourceAnalyzer:
     """Parse each source once; resolve columns again when live schemas arrive."""
 
-    def __init__(self, dialect: str | None = None, default_database: str = ""):
+    def __init__(
+        self, dialect: str | None = None, default_database: str = "", *, source_context: dict[str, str] | None = None
+    ):
         self.dialect = dialect or None
         self.default_database = default_database
+        self.source_context = dict(source_context or {})
         self._parsed: dict[str, list[ParsedStatement]] = {}
         self._comments: dict[str, list] = {}
 
@@ -170,7 +173,9 @@ class SemanticSourceAnalyzer:
             return (
                 "s_"
                 + hashlib.sha256(
-                    json.dumps([self.dialect, self.default_database, evidence], sort_keys=True).encode()
+                    json.dumps(
+                        [self.dialect, self.default_database, self.source_context, evidence], sort_keys=True
+                    ).encode()
                 ).hexdigest()[:20]
             )
 

@@ -83,7 +83,7 @@ class SemanticDiscoveryTools:
         self.source_revision = ""
         self.source_context: Dict[str, str] = {}
         self._request_source_entries: Dict[str, Dict[str, Any]] = {}
-        self._semantic_source_cache: Dict[tuple[str, str, str, str], Dict[str, Any]] = {}
+        self._semantic_source_cache: Dict[tuple, Dict[str, Any]] = {}
         self._original_file_digests: Dict[str, str] = {}
 
     def reset_request_cache(self) -> None:
@@ -101,13 +101,13 @@ class SemanticDiscoveryTools:
         """Host-only: pin caller-designated files before the first model turn."""
         with self._analysis_lock:
             for path in paths:
-                identity = str((self.root_path / Path(path).expanduser()).resolve(strict=False))
-                self._original_file_digests[identity] = ""
                 try:
+                    identity = str((self.root_path / Path(path).expanduser()).resolve(strict=False))
+                    self._original_file_digests[identity] = ""
                     resolved, text = self._read_source_file(path)
                     self._original_file_digests[str(resolved)] = hashlib.sha256(text.encode()).hexdigest()
-                except (OSError, ValueError, UnicodeError):
-                    logger.warning("Could not pin caller source file %s", path)
+                except Exception as exc:
+                    logger.warning("Could not pin caller source file %s: %s", path, exc)
 
     def _read_source_file(self, path):
         allowlist = self.path_allowlist_provider() if self.path_allowlist_provider else self.path_allowlist
@@ -365,9 +365,26 @@ class SemanticDiscoveryTools:
             if not prefix and not supports_namespace("schema", connector=connector, dialect=dialect or ""):
                 if supports_namespace("database", connector=connector, dialect=dialect or ""):
                     prefix = database or ""
+
+            def context_string(value):
+                return value if isinstance(value, str) else ""
+
+            datasource = context_string(getattr(self.db_tool, "_default_datasource", "")) or context_string(
+                getattr(self.agent_config, "current_datasource", "")
+            )
+            binding_context = {
+                "datasource": datasource,
+                "catalog": catalog or context_string(getattr(connector, "catalog_name", "")),
+                "database": database or context_string(getattr(connector, "database_name", "")),
+                "schema": schema_name or context_string(getattr(connector, "schema_name", "")),
+            }
+            # Keep reference-query qualification exactly as requested, while
+            # binding evidence and metadata caches to the resolved connection.
             self.source_context = {"catalog": catalog or "", "database": database or "", "prefix": prefix}
-            context = (dialect, catalog or "", database or "", schema_name or "")
-            analyzer = self._source_analyzers.setdefault(context, SemanticSourceAnalyzer(dialect, prefix))
+            context = (dialect, *binding_context.values(), prefix)
+            analyzer = self._source_analyzers.setdefault(
+                context, SemanticSourceAnalyzer(dialect, prefix, source_context=binding_context)
+            )
             initial = analyzer.analyze(entries)
             from sqlglot import expressions as exp
 
@@ -377,7 +394,7 @@ class SemanticDiscoveryTools:
             normalized_tables = self._normalize_semantic_source_tables(names) if names else []
             inspected_tables = []
             for table in normalized_tables if self.db_tool is not None else []:
-                cache_key = (catalog or "", database or "", schema_name or "", table)
+                cache_key = (*context, table)
                 inspected = self._semantic_source_cache.get(cache_key)
                 if inspected is None:
                     inspected = {"table_name": table}

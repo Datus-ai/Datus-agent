@@ -47,6 +47,27 @@ def _make_tools(
 
 
 class TestInspectSemanticSources:
+    def test_failed_source_reader_does_not_pin_or_abort_other_files(self, tmp_path):
+        for name in ["failed.sql", "original.sql"]:
+            (tmp_path / name).write_text("SELECT COUNT(*) n FROM orders")
+
+        def reader(path):
+            if path == "failed.sql":
+                raise AttributeError("filesystem tool unavailable")
+            return FuncToolResult(result=(tmp_path / path).read_text())
+
+        tools = SemanticDiscoveryTools(root_path=str(tmp_path), source_file_reader=reader)
+        tools.pin_source_files(["failed.sql", "original.sql"])
+        tools.source_file_reader = None
+        trusted = tools.inspect_semantic_sources(sql_files=["original.sql"])
+        assert trusted.result["calculation_evidence"]["statements"][0]["input_kind"] == "original_file"
+        tools.reset_request_cache()
+        tools.source_file_reader = reader
+        tools.pin_source_files(["failed.sql"])
+        tools.source_file_reader = None
+        untrusted = tools.inspect_semantic_sources(sql_files=["failed.sql"])
+        assert untrusted.result["calculation_evidence"]["statements"][0]["input_kind"] == "file"
+
     def test_sql_analysis_without_database_and_host_pinned_file_provenance(self, tmp_path):
         source = tmp_path / "original.sql"
         source.write_text("SELECT COUNT(*) n FROM orders")
@@ -84,6 +105,23 @@ class TestInspectSemanticSources:
         snapshot = tools.source_snapshot()
         assert len(snapshot["analysis"]["statements"]) == 2
         assert db.describe_table.call_count == 1
+
+    def test_bound_catalog_change_refreshes_metadata_and_output_identity(self):
+        db = _make_db_tool()
+        db._default_datasource = "warehouse"
+        db.connector = SimpleNamespace(dialect="mysql", catalog_name="first", database_name="app", schema_name="")
+        db.get_table_ddl.return_value = FuncToolResult(result={"definition": "CREATE TABLE orders(v INT)"})
+        db.describe_table.return_value = FuncToolResult(result={"columns": [{"name": "v"}]})
+        tools = _make_tools(db)
+        first = tools.inspect_semantic_sources(sql_queries=["SELECT SUM(v) n FROM orders"])
+        assert first.success, first.error
+        oid = first.result["calculation_evidence"]["statements"][0]["outputs"][0]
+        db.connector.catalog_name = "second"
+        second = tools.inspect_semantic_sources()
+        assert second.success, second.error
+        assert oid != second.result["calculation_evidence"]["statements"][0]["outputs"][0]
+        assert db.describe_table.call_count == 2
+        assert tools.source_snapshot()["context"]["catalog"] == ""
 
     def test_details_expand_count_rowset_and_distinct_without_reparsing(self):
         db = _make_db_tool()

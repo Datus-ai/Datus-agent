@@ -388,7 +388,9 @@ class SemanticVerificationTools:
             by_id = {o["id"]: o for o in analysis["outputs"]}
             queries = {q["id"]: q for q in analysis["queries"]}
             try:
-                grain = self._grain(statement, output, by_id, queries, set(check.dimension_mapping))
+                grain = self._grain(
+                    statement, output, by_id, queries, set(check.dimension_mapping), dialect=snapshot["dialect"]
+                )
             except ValueError:
                 grain = []
             mapping = dict(check.dimension_mapping)
@@ -620,7 +622,9 @@ class SemanticVerificationTools:
                     missing_parameters=missing,
                 )
         try:
-            grain = self._grain(statement, output, outputs, queries, set(check.dimension_mapping))
+            grain = self._grain(
+                statement, output, outputs, queries, set(check.dimension_mapping), dialect=snapshot["dialect"]
+            )
         except ValueError as exc:
             raise _VerificationProblem(
                 "reference_unresolved", "reference_grain_unresolved", str(exc), "record_unverified"
@@ -751,7 +755,9 @@ class SemanticVerificationTools:
                     "its effect on the input population is unconfirmed",
                     "record_unverified",
                 )
-            column.replace(exp.column(mapping[name]))
+            # Generated filters bind to quoted output aliases; explicit source
+            # filters retain their authored identifier spelling for comparison.
+            column.replace(exp.column(mapping[name], quoted=not bool(check.reference_where)))
         if check.reference_where:
             other = sqlglot.parse_one(check.reference_where, read=dialect, into=exp.Condition)
             if predicate != other:
@@ -766,7 +772,7 @@ class SemanticVerificationTools:
         return exp.select("*").from_(reference.subquery("reference_result")).where(predicate)
 
     @staticmethod
-    def _grain(statement, output, outputs, queries, preferred_dimensions=None) -> list[str]:
+    def _grain(statement, output, outputs, queries, preferred_dimensions=None, *, dialect=None) -> list[str]:
         root = queries[statement["query_id"]]
         if root.get("operation") == "UNION":
             position = root["outputs"].index(output["id"])
@@ -781,6 +787,7 @@ class SemanticVerificationTools:
                     outputs,
                     queries,
                     preferred_dimensions,
+                    dialect=dialect,
                 )
                 positions = {i for i, oid in enumerate(branch["outputs"]) if outputs[oid]["name"] in branch_grain}
                 key_positions.append(positions)
@@ -794,7 +801,7 @@ class SemanticVerificationTools:
                     continue
                 expressions = [outputs[oids[i]]["expression"] for oids in branch_outputs]
                 if all(expression is not None for expression in expressions):
-                    nodes = [sqlglot.parse_one(expression) for expression in expressions]
+                    nodes = [sqlglot.parse_one(expression, read=dialect) for expression in expressions]
                     if all(isinstance(node, (exp.Literal, exp.Null, exp.Boolean)) for node in nodes):
                         if len(set(expressions)) > 1:
                             positions.add(i)

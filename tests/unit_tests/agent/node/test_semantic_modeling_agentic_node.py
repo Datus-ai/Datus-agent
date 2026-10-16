@@ -532,12 +532,15 @@ def test_factory_creates_unified_semantic_modeling_node(real_agent_config, mock_
     assert isinstance(node_input, SemanticNodeInput)
 
 
-def test_generated_result_uses_selected_artifact_finalizer(real_agent_config, mock_llm_create):
+@pytest.mark.parametrize("discovery_available", [True, False])
+def test_generated_result_uses_selected_artifact_finalizer(real_agent_config, mock_llm_create, discovery_available):
     from datus.agent.node.semantic_modeling_agentic_node import SemanticModelingAgenticNode
     from datus.agent.node.stream_run_context import StreamRunContext
 
     node = SemanticModelingAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
     node.input = SemanticNodeInput(user_message="Update the orders dataset")
+    if not discovery_available:
+        node.semantic_discovery_tools = None
     node._finalize_selected_osi_artifact = MagicMock(return_value="subject/semantic_models/warehouse/orders.yml")
     ctx = StreamRunContext(user_input=node.input, action_history_manager=ActionHistoryManager())
     ctx.response_content = {
@@ -550,6 +553,7 @@ def test_generated_result_uses_selected_artifact_finalizer(real_agent_config, mo
     node._finalize_selected_osi_artifact.assert_called_once_with()
     assert result.status == "generated"
     assert result.semantic_models == ["subject/semantic_models/warehouse/orders.yml"]
+    assert result.business_validation == []
 
 
 @pytest.mark.asyncio

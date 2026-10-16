@@ -369,6 +369,8 @@ async def test_caller_sql_files_are_pinned_before_generation(monkeypatch, tmp_pa
             ["original query.sql", "sql/monthly query.sql"],
         ),
         ("Use `explicit.sql` and explicit.sql.", ["explicit.sql"]),
+        ("Use reports/kpi.sql. Then model it.", ["reports/kpi.sql"]),
+        ("Use reports/kpi.sql.bak, source.sql/part, source.sql?download=1 and source.sql#section.", []),
         ("SELECT 'not_a_file.sql' AS label", []),
         ("-- Source note\n/* Original query */ SELECT 'not_a_file.sql' AS label", []),
         ("Model this:\n```sql\nSELECT 'not_a_file.sql' AS label\n```\nUse `real.sql`.", ["real.sql"]),

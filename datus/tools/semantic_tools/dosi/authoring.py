@@ -87,7 +87,7 @@ def dosi_validation_text_payload(
         ),
     }
     for issue in payload.get("compile_errors") or []:
-        if issue.get("code") in hints:
+        if isinstance(issue, dict) and issue.get("code") in hints:
             issue["hint"] = hints[issue["code"]]
     return payload
 

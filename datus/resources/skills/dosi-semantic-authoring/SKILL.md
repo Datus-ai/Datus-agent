@@ -103,6 +103,8 @@ semantic_model:
             data: '{"v":"<datus_extension_version>","derive":{"type":"compose","expr":"CASE WHEN revenue_rank <= 3 THEN 90 WHEN revenue_rank >= market_count - 2 THEN 0 ELSE 40 END"}}'
 ```
 
+The score's basic SQL is the mechanical expansion required by validation: `SUM(orders.amount) >= SUM(orders.amount) - 2` does not encode ranking. Runtime ranking and scoring come from `derive.expr` and its referenced windows.
+
 ## Identity and source semantics
 
 - Keep one model per file and stable `snake_case` names. Upserts replace complete same-named objects: read before updating and preserve unrelated properties. Preserve an existing metric's host-managed `uid` verbatim, including a rename; omit it for new metrics or those without one. Never generate or copy a UID, or use `locked_metadata.uid` as its source.

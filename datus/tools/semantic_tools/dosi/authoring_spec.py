@@ -128,7 +128,7 @@ def _capability_spec(contract: dict[str, Any], capability: str) -> dict[str, Any
         if isinstance(value, dict):
             ref = value.get("schema_ref")
             if ref:
-                prefix, name = ref.split(".", 1)
+                prefix, _, name = str(ref).partition(".")
                 if prefix != "definitions" or name not in contract["definitions"]:
                     raise SemanticCoreException(f"Unresolved authoring schema reference: {ref}")
                 if name not in definitions:

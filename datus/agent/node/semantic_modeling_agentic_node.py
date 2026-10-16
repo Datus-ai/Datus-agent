@@ -426,10 +426,14 @@ class SemanticModelingAgenticNode(SemanticAuthoringAgenticNode):
             status=status,
             blocker_code=blocker_code if status == "blocked" else None,
             skip_reason=skip_reason if status == "skipped" else None,
-            business_validation=self.generation_evidence.business_verification_summary(
-                self.osi_target_state.selected_path or "",
-                self.semantic_discovery_tools.source_revision,
-                {o["id"] for o in self.semantic_discovery_tools.source_analysis.get("outputs", [])},
+            business_validation=(
+                self.generation_evidence.business_verification_summary(
+                    self.osi_target_state.selected_path or "",
+                    self.semantic_discovery_tools.source_revision,
+                    {o["id"] for o in self.semantic_discovery_tools.source_analysis.get("outputs", [])},
+                )
+                if self.semantic_discovery_tools is not None
+                else []
             ),
         )
 

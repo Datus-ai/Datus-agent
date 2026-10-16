@@ -167,14 +167,67 @@ def test_compile_failure_does_not_execute_metric_or_reference(setup_verifier):
     assert "dry_run" not in state.semantic.query_metrics.call_args.kwargs and not state.reads
 
 
-def test_mapped_result_filter_is_applied_after_reference_aggregation(setup_verifier):
+@pytest.mark.parametrize("reference_where", [None, "market IN ('A','C')"])
+def test_mapped_result_filter_is_applied_after_reference_aggregation(setup_verifier, reference_where):
     state = setup_verifier
     result = state.verifier.verify_semantic_outputs(
-        [check(state, query={"dimensions": ["complaints.market"], "where": "complaints.market IN ('A','C')"})]
+        [
+            check(
+                state,
+                query={"dimensions": ["complaints.market"], "where": "complaints.market IN ('A','C')"},
+                reference_where=reference_where,
+            )
+        ]
     ).result["checks"][0]
     assert result["status"] == "passed" and result["reference_groups"] == 2
     assert "AS reference_result" in state.reads[0]
     assert state.reads[0].index("GROUP BY") < state.reads[0].index("WHERE")
+
+
+@pytest.mark.parametrize("dialect", ["postgres", "snowflake"])
+def test_generated_result_filter_preserves_quoted_alias_case(setup_verifier, dialect):
+    state = setup_verifier
+    sql = REFERENCE.replace("AS market", 'AS "Market"')
+    state.discovery.source_analysis = SemanticSourceAnalyzer(dialect).analyze(
+        [{"name": "original", "sql": sql, "input_kind": "request"}]
+    )
+    state.discovery._source_dialect = lambda: dialect
+    state.source_id = state.discovery.source_analysis["statements"][0]["outputs"][-1]
+    state.sql_by_metric["good"] = sql.replace("complaint_num", "good")
+    result = state.verifier.verify_semantic_outputs(
+        [
+            check(
+                state,
+                query={"dimensions": ["complaints.Market"], "where": "complaints.Market = 'A'"},
+                dimension_mapping={"Market": "complaints.Market"},
+            )
+        ]
+    ).result["checks"][0]
+    assert result["status"] == "passed", result
+    assert 'WHERE "Market"' in state.reads[0]
+
+
+@pytest.mark.parametrize("context_key", ["datasource", "catalog", "database", "schema"])
+def test_context_changes_invalidate_output_ids_and_business_evidence(setup_verifier, context_key):
+    state = setup_verifier
+    state.discovery.agent_config = SimpleNamespace(current_datasource="warehouse")
+    state.discovery.source_sql_provider = lambda: [{"name": "original", "sql": REFERENCE}]
+    first = state.discovery.inspect_semantic_sources()
+    assert first.success, first.error
+    state.source_id = first.result["calculation_evidence"]["statements"][0]["outputs"][-1]
+    result = state.verifier.verify_semantic_outputs([check(state)]).result["checks"][0]
+    assert result["status"] == "passed", result
+    kwargs = {}
+    if context_key == "datasource":
+        state.discovery.agent_config.current_datasource = "other"
+    else:
+        kwargs["schema_name" if context_key == "schema" else context_key] = "other"
+    second = state.discovery.inspect_semantic_sources(**kwargs)
+    assert second.success, second.error
+    ids = {o["id"] for o in state.discovery.source_analysis["outputs"]}
+    assert state.source_id not in ids
+    summary = state.evidence.business_verification_summary(state.artifact, state.discovery.source_revision, ids)
+    assert summary[0]["status"] == "unverified" and summary[0]["category"] == "stale_evidence"
 
 
 @pytest.mark.parametrize(
@@ -293,13 +346,15 @@ def test_outer_scalar_aggregate_establishes_its_own_grain(setup_verifier):
     assert result["comparison_grain"] == []
 
 
-def test_union_branch_grain_includes_fixed_branch_dimension(setup_verifier):
+@pytest.mark.parametrize("dialect", ["sqlite", "mysql", "starrocks"])
+def test_union_branch_grain_includes_fixed_branch_dimension(setup_verifier, dialect):
     state = setup_verifier
     sql = (
-        "SELECT 'KFC' brand, market, COUNT(*) n FROM tickets GROUP BY market "
-        "UNION ALL SELECT 'PH' brand, market, COUNT(*) n FROM tickets GROUP BY market"
+        "SELECT 'KFC' brand, `market`, COUNT(*) n FROM tickets GROUP BY `market` "
+        "UNION ALL SELECT 'PH' brand, `market`, COUNT(*) n FROM tickets GROUP BY `market`"
     )
-    state.discovery.source_analysis = SemanticSourceAnalyzer("sqlite").analyze(
+    state.discovery._source_dialect = lambda: dialect
+    state.discovery.source_analysis = SemanticSourceAnalyzer(dialect).analyze(
         [{"name": "union", "sql": sql, "input_kind": "request"}]
     )
     state.source_id = state.discovery.source_analysis["statements"][0]["outputs"][-1]
