@@ -17,6 +17,8 @@ from datus.utils.sql_utils import (
     extract_table_names_strict,
     format_sql_to_pretty,
     parse_sql_type,
+    parse_table_name_parts,
+    table_name_field_order,
     validate_read_only_sql,
 )
 
@@ -77,6 +79,28 @@ def test_unregistered_dialects_keep_existing_path(analyzer):
     assert parse_sql_type("INSERT INTO test_table VALUES (1)", "sqlite") == SQLType.INSERT
 
 
+def test_namespace_shape_uses_adapter_without_custom_identifier_parser(monkeypatch):
+    monkeypatch.setattr(connector_registry, "get_parser_dialect", lambda dialect: "postgres")
+    monkeypatch.setattr(connector_registry, "get_identifier_parser", lambda dialect: None)
+    monkeypatch.setattr(connector_registry, "support_catalog", lambda dialect: False)
+    monkeypatch.setattr(connector_registry, "support_database", lambda dialect: dialect != "schema-test")
+    monkeypatch.setattr(connector_registry, "support_schema", lambda dialect: True)
+
+    assert table_name_field_order("schema-test") == ["schema_name", "table_name"]
+    assert parse_table_name_parts("APP.ORDERS", "schema-test") == {
+        "catalog_name": "",
+        "database_name": "",
+        "schema_name": "APP",
+        "table_name": "ORDERS",
+    }
+    assert parse_table_name_parts("TARGET.APP.ORDERS", "schema-test") == {
+        "catalog_name": "",
+        "database_name": "",
+        "schema_name": "APP",
+        "table_name": "ORDERS",
+    }
+
+
 @pytest.fixture
 def native_connector(analyzer):
     return SimpleNamespace(
@@ -85,6 +109,8 @@ def native_connector(analyzer):
         schema_name="",
         get_effective_capabilities=lambda: {"database"},
         execute_query=Mock(return_value=ExecuteSQLResult(success=True, sql_return=[{"id": 1}], result_format="list")),
+        execute_ddl=Mock(),
+        execute_insert=Mock(),
     )
 
 
@@ -103,6 +129,23 @@ def test_unsupported_analysis_rejects_read_before_connector_dispatch(native_conn
     native_connector.execute_query.assert_not_called()
 
 
+@pytest.mark.parametrize("status", ["unsupported", "incomplete", "error"])
+@pytest.mark.parametrize("entrypoint", ["execute_sql", "execute_ddl"])
+def test_writable_tool_rejects_incomplete_analysis_before_any_dispatch(
+    native_connector, monkeypatch, status, entrypoint
+):
+    monkeypatch.setattr(connector_registry, "get_sql_analyzer", lambda dialect: lambda sql: Analysis(status))
+    tool = DBFuncTool(native_connector, read_only=False)
+
+    result = getattr(tool, entrypoint)("SELECT vendor syntax")
+
+    assert result.success == 0
+    assert result.error == f"SQL analysis {status}: unsupported syntax"
+    native_connector.execute_query.assert_not_called()
+    native_connector.execute_ddl.assert_not_called()
+    native_connector.execute_insert.assert_not_called()
+
+
 @pytest.mark.parametrize("database", ["", "S"])
 def test_scoped_native_read_requires_resolved_namespace(native_connector, monkeypatch, database):
     # SQLite supplies a real identifier parser without any optional vendor SDK.
@@ -118,6 +161,33 @@ def test_scoped_native_read_requires_resolved_namespace(native_connector, monkey
     else:
         assert not result.success
         assert "Unresolved database" in result.error
+        native_connector.execute_query.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "scopes,allowed,error",
+    [
+        (["PRIVATE.other", "t"], True, ""),
+        (["PRIVATE.t", "t"], True, ""),
+        (["PRIVATE.t", "OTHER.other"], False, "Unresolved database"),
+        (["PRIVATE.other", "OTHER.other"], False, "outside scoped context"),
+    ],
+)
+def test_unresolved_namespaces_consider_only_matching_scope_patterns(
+    native_connector, monkeypatch, scopes, allowed, error
+):
+    getter = connector_registry.get_sql_analyzer
+    monkeypatch.setattr(connector_registry, "get_sql_analyzer", lambda dialect: getter("native-test"))
+    native_connector.dialect = "sqlite"
+    tool = DBFuncTool(native_connector, read_only=True, scoped_tables=scopes)
+
+    result = tool.execute_read_enforced("SELECT * FROM t", native_connector)
+
+    assert bool(result.success) is allowed, result.error
+    if allowed:
+        native_connector.execute_query.assert_called_once_with("SELECT * FROM t", result_format="list")
+    else:
+        assert error in result.error
         native_connector.execute_query.assert_not_called()
 
 

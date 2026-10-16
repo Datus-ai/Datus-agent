@@ -112,10 +112,10 @@ def init_local_schema(
     if supports_namespace("schema", dialect=db_config.type) and not supports_namespace(
         "database", dialect=db_config.type
     ):
-        # Schema-only adapters discover objects on their fixed connection target.
-        # A configured database may select that target (for example a tenant),
-        # but must not become a component of SQL object names or store keys.
-        databases = [""]
+        # Preserve the fixed connection target for filtering and connector
+        # selection. init_other_three_level_schema clears the SQL database
+        # namespace only after selecting the connection.
+        databases = [getattr(db_config, "database", "") or ""]
     if not databases:
         default_database = getattr(db_config, "database", "")
         databases = [default_database] if default_database else []
