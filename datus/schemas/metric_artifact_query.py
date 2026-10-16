@@ -65,13 +65,16 @@ class MetricQueryFile(MetricQueryRequest):
         if self.schema_version == "1.1" and self.model_snapshot_path is None:
             raise ValueError("schema 1.1 requires model_snapshot_path")
         if self.model_snapshot_path is not None:
-            allowed = {
-                f"models/{self.model_revision[:length]}{suffix}"
-                for length in (16, 64)
-                for suffix in (".yaml", ".yml", ".json")
-            }
-            if self.model_snapshot_path not in allowed:
-                raise ValueError("model_snapshot_path must name a content-addressed file under models/")
+            snapshot_path = PurePosixPath(self.model_snapshot_path)
+            # The bundle stores model files directly under models/. Their names
+            # are independent of model_revision, which verifies only the bytes.
+            if (
+                snapshot_path.parent != PurePosixPath("models")
+                or snapshot_path.suffix.lower() not in (".yaml", ".yml", ".json")
+                or "\\" in self.model_snapshot_path
+                or snapshot_path.as_posix() != self.model_snapshot_path
+            ):
+                raise ValueError("model_snapshot_path must name a model file directly under models/")
         if (
             self.model_snapshot is not None
             and hashlib.sha256(self.model_snapshot.encode("utf-8")).hexdigest() != self.model_revision

@@ -434,7 +434,8 @@ def test_same_metric_queries_can_be_resaved_sequentially_but_mixed_revisions_fai
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("kind", ["report", "dashboard"])
-async def test_queries_share_model_files_and_bundle_preserves_exact_bytes(environment, kind):
+@pytest.mark.parametrize("model_name", [None, "flights.yml", "jeff_shop.yml"])
+async def test_queries_share_model_files_and_bundle_preserves_exact_bytes(environment, kind, model_name):
     from datus.api.services.report_service import ReportService
     from datus.utils.metric_artifact_models import resolve_metric_query_snapshot
 
@@ -456,6 +457,13 @@ async def test_queries_share_model_files_and_bundle_preserves_exact_bytes(enviro
     assert recipes[0]["model_snapshot_path"] == f"models/{revision[:16]}.yml"
     assert len(list((artifact_dir / "models").iterdir())) == 1
     assert (artifact_dir / recipes[0]["model_snapshot_path"]).read_bytes() == content
+    if model_name is not None:
+        renamed = f"models/{model_name}"
+        (artifact_dir / recipes[0]["model_snapshot_path"]).rename(artifact_dir / renamed)
+        for name, item in zip(("sales", "total"), recipes):
+            item["model_snapshot_path"] = renamed
+            (tools.queries_dir / f"{name}.metric.json").write_text(json.dumps(item))
+    assert tools._validate_metric_queries(kind) is None
     (artifact_dir / "render" / "app.jsx").write_text("export default function App() { return null; }")
     service = ReportService() if kind == "report" else DashboardService(agent_config=env.config)
     detail = await service.get_detail(project_files_root=env.root, **{f"{kind}_slug": "demo"})

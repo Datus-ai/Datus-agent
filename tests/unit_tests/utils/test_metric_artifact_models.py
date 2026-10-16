@@ -84,12 +84,14 @@ def test_legacy_recipe_without_snapshot_cannot_be_published():
         "/tmp/model.yml",
         "models/../model.yml",
         "models\\model.yml",
-        "models/other.yml",
         "models//other.yml",
+        "models/./other.yml",
+        "models/sub/other.yml",
+        "models/other.txt",
     ],
 )
-def test_reference_is_confined_to_its_content_address(path):
-    with pytest.raises(ValueError, match="content-addressed file"):
+def test_reference_is_confined_to_the_model_bundle_directory(path):
+    with pytest.raises(ValueError, match="model file directly under models/"):
         recipe(model_snapshot_path=path)
 
 
@@ -109,14 +111,26 @@ def test_model_symlink_cannot_escape_artifact(tmp_path):
         resolve_metric_query_snapshot(query, artifact_dir=root)
 
 
-@pytest.mark.parametrize("length", [0, 8, 15, 17, 32, 63, 65])
-def test_reference_rejects_unsupported_hash_lengths(length):
-    revision = recipe().model_revision
-    with pytest.raises(ValueError, match="content-addressed file"):
-        recipe(model_snapshot_path=f"models/{(revision + '0')[:length]}.yml")
-
-
-@pytest.mark.parametrize("length", [16, 64])
-def test_reference_must_match_revision_prefix(length):
-    with pytest.raises(ValueError, match="content-addressed file"):
-        recipe(model_snapshot_path=f"models/{'0' * length}.yml")
+@pytest.mark.parametrize("name", ["flights.yml", "jeff_shop.yml", "model.yaml", "model.json", "0" * 64 + ".yml"])
+@pytest.mark.parametrize("source", ["disk", "bundle"])
+def test_model_filename_is_independent_of_content_revision(tmp_path, name, source):
+    content = "semantic_model: []\r\n"
+    query = recipe(content, model_snapshot_path=f"models/{name}")
+    files = {query.model_snapshot_path: content}
+    if source == "disk":
+        target = tmp_path / query.model_snapshot_path
+        target.parent.mkdir()
+        target.write_bytes(content.encode())
+        options = {"artifact_dir": tmp_path}
+    else:
+        options = {"files": files}
+    resolved = resolve_metric_query_snapshot(query, **options)
+    assert resolved.model_snapshot == content
+    assert resolved.model_revision == hashlib.sha256(content.encode()).hexdigest()
+    # A human-readable name does not weaken content verification.
+    if source == "disk":
+        target.write_text("changed model")
+    else:
+        files[query.model_snapshot_path] = "changed model"
+    with pytest.raises(ValueError, match="must match model_revision"):
+        resolve_metric_query_snapshot(query, **options)
