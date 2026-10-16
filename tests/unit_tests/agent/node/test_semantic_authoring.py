@@ -306,7 +306,13 @@ def test_semantic_authoring_base_configuration_is_neutral():
 
 
 @pytest.mark.parametrize(
-    "message", ["SELECT COUNT(*) n FROM tickets", "Please model this:\n```sql\nSELECT COUNT(*) n FROM tickets\n```"]
+    "message",
+    [
+        "SELECT COUNT(*) n FROM tickets",
+        "Please model this:\n```sql\nSELECT COUNT(*) n FROM tickets\n```",
+        "Please model this:\n~~~sql\nSELECT COUNT(*) n FROM tickets\n~~~",
+        "Please model this:\n````sql\nSELECT COUNT(*) n FROM tickets\n`````",
+    ],
 )
 def test_source_evidence_retains_exact_user_sql_and_attached_references(message):
     from datus.agent.node.semantic_authoring_agentic_node import SemanticAuthoringAgenticNode
@@ -373,7 +379,8 @@ async def test_caller_sql_files_are_pinned_before_generation(monkeypatch, tmp_pa
         ("Use reports/kpi.sql.bak, source.sql/part, source.sql?download=1 and source.sql#section.", []),
         ("SELECT 'not_a_file.sql' AS label", []),
         ("-- Source note\n/* Original query */ SELECT 'not_a_file.sql' AS label", []),
-        ("Model this:\n```sql\nSELECT 'not_a_file.sql' AS label\n```\nUse `real.sql`.", ["real.sql"]),
+        ("Model this:\n````sql\nSELECT 'not_a_file.sql' AS label\n`````\nUse `real.sql`.", ["real.sql"]),
+        ("Model this:\n~~~sql\nSELECT 'not_a_file.sql' AS label\n~~~\nUse `real.sql`.", ["real.sql"]),
         ("Use https://example.org/source.sql and `sql/*.sql`.", []),
     ],
 )

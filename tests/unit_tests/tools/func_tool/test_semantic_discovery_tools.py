@@ -111,7 +111,11 @@ class TestInspectSemanticSources:
         db._default_datasource = "warehouse"
         db.connector = SimpleNamespace(dialect="mysql", catalog_name="first", database_name="app", schema_name="")
         db.get_table_ddl.return_value = FuncToolResult(result={"definition": "CREATE TABLE orders(v INT)"})
-        db.describe_table.return_value = FuncToolResult(result={"columns": [{"name": "v"}]})
+        db.describe_table.side_effect = lambda *args: FuncToolResult(
+            result={
+                "columns": [{"name": "v", "type": "DATETIME" if db.connector.catalog_name == "first" else "VARCHAR"}]
+            }
+        )
         tools = _make_tools(db)
         first = tools.inspect_semantic_sources(sql_queries=["SELECT SUM(v) n FROM orders"])
         assert first.success, first.error
@@ -122,6 +126,11 @@ class TestInspectSemanticSources:
         assert oid != second.result["calculation_evidence"]["statements"][0]["outputs"][0]
         assert db.describe_table.call_count == 2
         assert tools.source_snapshot()["context"]["catalog"] == ""
+        assert tools.source_snapshot()["column_types"] == {"orders": {"v": "VARCHAR"}}
+        db.connector.catalog_name = "first"
+        assert tools.inspect_semantic_sources().success
+        assert tools.source_snapshot()["column_types"] == {"orders": {"v": "DATETIME"}}
+        assert db.describe_table.call_count == 2
 
     def test_details_expand_count_rowset_and_distinct_without_reparsing(self):
         db = _make_db_tool()

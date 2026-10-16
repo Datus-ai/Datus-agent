@@ -8,6 +8,8 @@ import re
 from pathlib import Path
 from typing import Any, AsyncGenerator, Dict, List, Literal, Optional
 
+from markdown_it import MarkdownIt
+
 from datus.agent.node.agentic_node import AgenticNode
 from datus.agent.node.stream_run_context import StreamRunContext
 from datus.configuration.agent_config import AgentConfig
@@ -322,7 +324,12 @@ class SemanticAuthoringAgenticNode(AgenticNode):
         # SQL string literals and comments are not caller file designations.
         if any(entry["sql"] == message for entry in self._semantic_discovery_source_sql()):
             return list(dict.fromkeys(paths))
-        message = re.sub(r"(?ms)^[ \t]*(`{3,}|~{3,})[^\n]*\n.*?^[ \t]*\1[^\S\n]*(?:\n|$)", "", message)
+        lines = message.splitlines(keepends=True)
+        for token in MarkdownIt().parse(message):
+            if token.type == "fence" and token.map:
+                start, end = token.map
+                lines[start:end] = ["\n"] * (end - start)
+        message = "".join(lines)
         # Spaces require quoting, inline code or a Markdown link. Bare paths
         # must be delimited; never infer prose, expand globs or follow URLs.
         references = re.finditer(
@@ -355,7 +362,11 @@ class SemanticAuthoringAgenticNode(AgenticNode):
             {"name": source.name, "sql": source.sql} for source in getattr(request, "reference_sql", None) or []
         )
         message = getattr(request, "user_message", "") or ""
-        blocks = re.findall(r"(?im)^\s*```sql[^\S\n]*\n(.*?)^\s*```[^\S\n]*$", message, flags=re.DOTALL)
+        blocks = [
+            token.content
+            for token in MarkdownIt().parse(message)
+            if token.type == "fence" and token.info.strip().lower() == "sql"
+        ]
         if not blocks and re.match(
             r"(?is)^\s*(?:(?:--[^\n]*(?:\n|$)|/\*.*?\*/)\s*)*(SELECT|WITH|INSERT|CREATE)\b", message
         ):

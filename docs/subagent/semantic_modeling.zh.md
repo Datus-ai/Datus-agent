@@ -111,7 +111,7 @@ datus --datasource duckdb_demo
 在 Datus REPL 中，通常直接描述期望得到的业务模型即可。主 agent 会把创建或更新语义 dataset 和 metric 的请求委派给 `semantic_modeling`。表名、目标模型、指标和原始 SQL 都可以按需要写进请求。
 
 ```text
-更新 sales.yml，基于 orders.order_date 添加收入月环比指标，并用 dry-run 查询验证。
+更新 sales.yml，基于 orders.order_date 添加收入月环比指标，并实际执行指标查询；提供可信原 SQL 或落表基准时，再比较结果。
 ```
 
 ```text

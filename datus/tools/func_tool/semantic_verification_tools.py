@@ -877,7 +877,7 @@ class SemanticVerificationTools:
                     exp.alias_(exp.column(outputs[o]["target_column"], quoted=True), outputs[o]["name"], quoted=True)
                     for o in projection_outputs
                 ]
-            ).from_(exp.to_table(table))
+            ).from_(exp.to_table(table, dialect=dialect))
         else:
             sql = statement["query_sql"]
             from datus.utils.sql_lineage import preprocess_template
@@ -902,14 +902,14 @@ class SemanticVerificationTools:
                         node.set("this", text)
             if "__tpl" in query.sql():
                 raise ValueError("Source SQL contains unresolved template constructs")
-            context = snapshot["context"]
-            for scope in traverse_scope(query):
-                for source in scope.sources.values():
-                    if isinstance(source, exp.Table):
-                        if not source.db and context.get("prefix"):
-                            source.set("db", exp.to_identifier(context["prefix"]))
-                        if not source.catalog and context.get("catalog"):
-                            source.set("catalog", exp.to_identifier(context["catalog"]))
+        context = snapshot["context"]
+        for scope in traverse_scope(query):
+            for source in scope.sources.values():
+                if isinstance(source, exp.Table):
+                    if not source.db and context.get("prefix"):
+                        source.set("db", exp.to_identifier(context["prefix"]))
+                    if not source.catalog and context.get("catalog"):
+                        source.set("catalog", exp.to_identifier(context["catalog"]))
         if isinstance(query, exp.Select) and not any(p.is_star for p in query.selects):
             if len(query.selects) != len(projection_outputs):
                 raise ValueError("Reference output columns are unresolved")

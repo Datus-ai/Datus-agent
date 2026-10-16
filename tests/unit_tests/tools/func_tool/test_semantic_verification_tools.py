@@ -333,6 +333,29 @@ def test_stored_values_use_confirmed_target_columns_without_reaggregation(setup_
     assert "GROUP BY" not in state.reads[0] and "SUM(" not in state.reads[0]
 
 
+@pytest.mark.parametrize("reference", ["sql", "stored"])
+def test_reference_sources_use_selected_catalog(setup_verifier, reference):
+    from sqlglot import exp
+
+    from datus.tools.func_tool.semantic_verification_tools import SemanticOutputCheck
+
+    state = setup_verifier
+    analysis = SemanticSourceAnalyzer("starrocks", "analytics").analyze(
+        [{"name": "etl", "sql": "INSERT INTO summary(market,n) SELECT market,COUNT(*) n FROM tickets GROUP BY market"}]
+    )
+    statement = analysis["statements"][0]
+    outputs = {o["id"]: o for o in analysis["outputs"]}
+    request = SemanticOutputCheck.model_validate(check(state, reference=reference))
+    snapshot = {"dialect": "starrocks", "context": {"catalog": "selected", "prefix": "analytics"}}
+    query = state.verifier._reference_query(request, statement, outputs, snapshot, statement["outputs"])
+    table = query.find(exp.Table)
+    assert (table.catalog, table.db, table.name) == (
+        "selected",
+        "analytics",
+        "summary" if reference == "stored" else "tickets",
+    )
+
+
 def test_outer_scalar_aggregate_establishes_its_own_grain(setup_verifier):
     state = setup_verifier
     sql = "SELECT SUM(n) total FROM (SELECT market,COUNT(*) n FROM tickets GROUP BY market)c"
@@ -513,10 +536,12 @@ def test_declared_timestamp_result_compares_equivalent_encodings(setup_verifier)
     state.discovery.source_analysis = SemanticSourceAnalyzer("sqlite").analyze(
         [{"name": "original", "sql": "SELECT MAX(ts) last_visit FROM visits", "input_kind": "request"}]
     )
-    state.discovery._semantic_source_cache[()] = {
-        "table_name": "visits",
-        "schema": {"columns": [{"name": "ts", "type": "DATETIME"}]},
-    }
+    state.discovery._source_tables = [
+        {
+            "table_name": "visits",
+            "schema": {"columns": [{"name": "ts", "type": "DATETIME"}]},
+        }
+    ]
     state.source_id = state.discovery.source_analysis["statements"][0]["outputs"][-1]
     state.sql_by_metric["good"] = "SELECT replace(MAX(ts),'T',' ') good FROM visits"
     result = state.verifier.verify_semantic_outputs([check(state, query={}, dimension_mapping={})]).result["checks"][0]

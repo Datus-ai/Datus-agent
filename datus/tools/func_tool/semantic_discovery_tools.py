@@ -82,6 +82,7 @@ class SemanticDiscoveryTools:
         self.source_analysis: Dict[str, Any] = {}
         self.source_revision = ""
         self.source_context: Dict[str, str] = {}
+        self._source_tables: List[Dict[str, Any]] = []
         self._request_source_entries: Dict[str, Dict[str, Any]] = {}
         self._semantic_source_cache: Dict[tuple, Dict[str, Any]] = {}
         self._original_file_digests: Dict[str, str] = {}
@@ -95,6 +96,7 @@ class SemanticDiscoveryTools:
             self.source_analysis = {}
             self.source_revision = ""
             self.source_context = {}
+            self._source_tables = []
             self._original_file_digests.clear()
 
     def pin_source_files(self, paths: List[str]) -> None:
@@ -380,7 +382,7 @@ class SemanticDiscoveryTools:
             }
             # Keep reference-query qualification exactly as requested, while
             # binding evidence and metadata caches to the resolved connection.
-            self.source_context = {"catalog": catalog or "", "database": database or "", "prefix": prefix}
+            source_context = {"catalog": catalog or "", "database": database or "", "prefix": prefix}
             context = (dialect, *binding_context.values(), prefix)
             analyzer = self._source_analyzers.setdefault(
                 context, SemanticSourceAnalyzer(dialect, prefix, source_context=binding_context)
@@ -425,6 +427,8 @@ class SemanticDiscoveryTools:
                         analysis["issues"].append({"context": table["table_name"], "reason": key, "error": table[key]})
             analysis["complete"] = not analysis["issues"]
             self.source_analysis = analysis
+            self.source_context = source_context
+            self._source_tables = inspected_tables
             self.source_revision = hashlib.sha256(
                 json.dumps({"context": context, "analysis": analysis}, sort_keys=True, default=str).encode()
             ).hexdigest()
@@ -582,7 +586,7 @@ class SemanticDiscoveryTools:
                         for c in table.get("schema", {}).get("columns", [])
                         if c.get("name")
                     }
-                    for table in self._semantic_source_cache.values()
+                    for table in self._source_tables
                 },
             }
 

@@ -111,7 +111,7 @@ Without dimensions, the two metrics return `545` and approximately `1,695,997.0`
 In the Datus REPL, normally describe the business outcome directly. The main agent delegates requests that create or update semantic datasets and metrics to `semantic_modeling`. Name the tables, target model, metrics, or source SQL when those details matter.
 
 ```text
-Update sales.yml. Add monthly revenue growth based on orders.order_date, and verify it with a dry-run query.
+Update sales.yml. Add monthly revenue growth based on orders.order_date and execute the metric query. Compare with trusted source SQL or stored results when provided.
 ```
 
 ```text
