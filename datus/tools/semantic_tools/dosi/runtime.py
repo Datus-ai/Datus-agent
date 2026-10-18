@@ -419,6 +419,12 @@ class DosiRuntime:
             params=params,
             context_filter=context_filter,
         )
+        time_fields = self._query_time_dimensions(dimension_rows, dimensions)
+        # Reuse the engine's field roles and the exact grains sent in this query.
+        # A missing grain means raw time keys; do not infer a coarser bucket.
+        time_dimensions = {
+            item["field"]: item.get("grain") for item in query["group_by"] if item["field"] in time_fields
+        }
         connection = handle.profile_name
         try:
             if dry_run:
@@ -439,6 +445,7 @@ class DosiRuntime:
                         "dialect": compiled["dialect"],
                         "dry_run": True,
                         "explain": True,
+                        "time_dimensions": time_dimensions,
                         **({"outputs": compiled["outputs"]} if compiled.get("outputs") is not None else {}),
                     },
                 )
@@ -455,6 +462,7 @@ class DosiRuntime:
                     "sql": result["sql"],
                     "dialect": result["dialect"],
                     "row_count": result["row_count"],
+                    "time_dimensions": time_dimensions,
                     **({"outputs": result["outputs"]} if result.get("outputs") is not None else {}),
                 },
             )
@@ -1101,6 +1109,15 @@ class DosiRuntime:
         db_config = self.config.db_config or {}
         return resolve_engine_dialect(db_config.get("type"), binding.DIALECTS)
 
+    @staticmethod
+    def _query_time_dimensions(dimension_rows: List[Dict[str, Any]], dimensions: List[str]) -> set[str]:
+        time_names = {row["name"] for row in dimension_rows if row.get("is_time")}
+        return {
+            name
+            for name in dimensions
+            if name == "metric_time" or name in time_names or any(full.endswith(f".{name}") for full in time_names)
+        }
+
     def _build_query(
         self,
         dimension_rows: List[Dict[str, Any]],
@@ -1119,26 +1136,20 @@ class DosiRuntime:
     ) -> Dict[str, Any]:
         """Assemble the engine's MetricQuery dict. Pure: no engine I/O."""
         del metric_rows  # Kept for backward-compatible direct-call tests/callers.
-        time_dimension_names = {row["name"] for row in dimension_rows if row.get("is_time")}
-
-        def is_time_dimension(name: str) -> bool:
-            return (
-                name == "metric_time"
-                or name in time_dimension_names
-                or any(full.endswith(f".{name}") for full in time_dimension_names)
-            )
+        time_dimensions = self._query_time_dimensions(dimension_rows, dimensions)
 
         group_by: List[Dict[str, Any]] = []
         grain_attached = False
         requested_grain = str(time_granularity or "").strip().lower() or None
         for dimension in dimensions:
             item: Dict[str, Any] = {"field": dimension}
-            if requested_grain and is_time_dimension(dimension):
+            if requested_grain and dimension in time_dimensions:
                 item["grain"] = requested_grain
                 grain_attached = True
             group_by.append(item)
 
         if time_granularity and not grain_attached:
+            time_dimension_names = {row["name"] for row in dimension_rows if row.get("is_time")}
             model_time_dims = ["metric_time", *sorted(time_dimension_names)]
             raise SemanticValidationException(
                 SemanticValidationError(
@@ -1172,7 +1183,7 @@ class DosiRuntime:
             query["context_filter"] = context_filter
         if time_start or time_end:
             time_range: Dict[str, Any] = {"start": time_start, "end": time_end}
-            if not any(is_time_dimension(item["field"]) for item in group_by):
+            if not time_dimensions:
                 # The reserved time name lets the engine resolve each metric's
                 # effective axis and report no_primary_time_dimension or
                 # metric_time_conflict itself. The Agent must not guess from

@@ -27,7 +27,6 @@ from datus.cli.action_display.tool_content import (
     _build_get_reference_sql,
     _build_glob,
     _build_grep,
-    _build_inspect_semantic_sources,
     _build_list_databases,
     _build_list_document_nav,
     _build_list_metrics_semantic,
@@ -1895,33 +1894,6 @@ class TestBuildParseDates:
 # ── Semantic model generation tools ───────────────────────────────
 
 
-@pytest.mark.ci
-class TestBuildInspectSemanticSources:
-    def test_compact(self):
-        a = _make(
-            input_data={"function_name": "inspect_semantic_sources"},
-            output_data={
-                "raw_output": '{"success": 1, "result": {"tables": ['
-                '{"table_name": "a"}, {"table_name": "b"}], "relationships": ['
-                '{"source_table": "a", "target_table": "b"}]}}'
-            },
-        )
-        tc = _build_inspect_semantic_sources(a, verbose=False)
-        assert tc.compact_result == "2 tables, 1 relationships"
-
-    def test_verbose_shows_combined_result(self):
-        a = _make(
-            input_data={"function_name": "inspect_semantic_sources", "arguments": {"tables": ["t1"]}},
-            output_data={
-                "raw_output": '{"success": 1, "result": {"tables": ['
-                '{"table_name": "t1", "ddl": {"definition": "CREATE TABLE t1 (id INT)"}}],'
-                '"relationships": []}}'
-            },
-        )
-        tc = _build_inspect_semantic_sources(a, verbose=True)
-        assert tc.output_lines
-
-
 class TestBuildProfileSemanticModelEvidence:
     def test_compact(self):
         payload = {
@@ -2174,7 +2146,6 @@ class TestAllToolsRegistered:
         # Date
         "parse_temporal_expressions",
         # Semantic discovery
-        "inspect_semantic_sources",
         "profile_semantic_model_evidence",
         # Skill
         "bash",

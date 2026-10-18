@@ -127,9 +127,14 @@ class GenerationEvidence:
 
     def business_verification_summary(self, path: str | Path) -> List[Dict[str, Any]]:
         """Report query comparisons, marking results stale after the model changes."""
-        current = self._semantic_artifact_state(path) if path else None
+        if not path:
+            return []
+        requested_path = str(Path(path).expanduser().resolve())
+        current = self._semantic_artifact_state(requested_path)
         summary = []
         for record in self.business_verifications.values():
+            if (record.get("artifact") or {}).get("path") != requested_path:
+                continue
             if current and record.get("artifact") == current:
                 summary.append(
                     {key: value for key, value in record.items() if key not in {"artifact", "check", "run_id"}}

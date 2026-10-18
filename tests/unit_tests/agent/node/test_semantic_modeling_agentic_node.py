@@ -14,7 +14,7 @@ import yaml
 
 from datus.agent.node import semantic_authoring
 from datus.schemas.action_history import ActionHistoryManager
-from datus.schemas.semantic_agentic_node_models import SemanticNodeInput, SourceQueryEvidence
+from datus.schemas.semantic_agentic_node_models import SemanticNodeInput
 from tests.unit_tests.mock_llm_model import build_simple_response
 
 
@@ -96,7 +96,7 @@ def test_loaded_database_references_are_readable_without_loading_them_into_the_p
     assert not filesystem.read_file(str(bundle / "references/escape.md")).success
     sql = bundle / "references/example.sql"
     sql.write_text("SELECT 1 AS n")
-    assert node.semantic_discovery_tools.inspect_semantic_sources(sql_files=[str(sql)]).success
+    assert filesystem.read_file(str(sql)).result == sql.read_text()
     policy = node._make_filesystem_policy()
     assert bundle in policy.allowlist_provider().read
 
@@ -105,7 +105,13 @@ def test_unified_dosi_node_composes_existing_authoring_surfaces(real_agent_confi
     from datus.agent.node.semantic_modeling_agentic_node import SemanticModelingAgenticNode
 
     node = SemanticModelingAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
-    node.input = SemanticNodeInput(user_message="Create the order dataset and its revenue metric")
+    node.input = SemanticNodeInput(
+        user_message=(
+            "Create the order dataset and its revenue metric using `sql/order ETL.sql`.\n"
+            "SELECT region, SUM(amount) AS revenue FROM orders GROUP BY region;"
+        )
+    )
+    assert node.input.user_message in node._build_enhanced_message(node.input)
     tool_names = {tool.name for tool in node.tools}
 
     assert node.get_node_name() == "semantic_modeling"
@@ -116,8 +122,6 @@ def test_unified_dosi_node_composes_existing_authoring_surfaces(real_agent_confi
         "list_tables",
         "describe_table",
         "execute_sql",
-        "inspect_semantic_sources",
-        "get_semantic_source_evidence",
         "verify_semantic_outputs",
         "read_file",
         "edit_file",
@@ -140,10 +144,6 @@ def test_unified_dosi_node_composes_existing_authoring_surfaces(real_agent_confi
     }.isdisjoint(tool_names)
     assert node.db_func_tool.read_only is True
     assert node._get_required_skills() == ["dosi-semantic-authoring"]
-    assert {tool.name for tool in node.semantic_discovery_tools.available_tools()} == {
-        "inspect_semantic_sources",
-        "get_semantic_source_evidence",
-    }
 
     with patch("datus.storage.metric.store.MetricStorage.get_subject_tree_flat") as subject_tree_lookup:
         prompt = node._get_system_prompt(template_context=node._prepare_template_context(node.input))
@@ -343,30 +343,6 @@ def test_datasets_only_scope_rolls_back_metric_changes_made_through_edit_file(
     assert target.read_text(encoding="utf-8") == original
 
 
-def test_unified_node_exposes_structured_request_sql_as_discovery_evidence(real_agent_config, mock_llm_create):
-    from datus.agent.node.semantic_modeling_agentic_node import SemanticModelingAgenticNode
-
-    node = SemanticModelingAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
-    node.input = SemanticNodeInput(
-        user_message="Create reusable order metrics",
-        source_queries=[
-            SourceQueryEvidence(
-                source_sql_name="orders_revenue",
-                question="What is order revenue?",
-                sql="SELECT SUM(amount) AS revenue FROM orders",
-            )
-        ],
-    )
-
-    assert node._semantic_discovery_source_sql() == [
-        {
-            "name": "orders_revenue",
-            "question": "What is order revenue?",
-            "sql": "SELECT SUM(amount) AS revenue FROM orders",
-        }
-    ]
-
-
 def test_interactive_prompt_confirms_ambiguous_semantics_and_target(real_agent_config, mock_llm_create):
     from datus.agent.node.semantic_modeling_agentic_node import SemanticModelingAgenticNode
 
@@ -532,15 +508,12 @@ def test_factory_creates_unified_semantic_modeling_node(real_agent_config, mock_
     assert isinstance(node_input, SemanticNodeInput)
 
 
-@pytest.mark.parametrize("discovery_available", [True, False])
-def test_generated_result_uses_selected_artifact_finalizer(real_agent_config, mock_llm_create, discovery_available):
+def test_generated_result_uses_selected_artifact_finalizer(real_agent_config, mock_llm_create):
     from datus.agent.node.semantic_modeling_agentic_node import SemanticModelingAgenticNode
     from datus.agent.node.stream_run_context import StreamRunContext
 
     node = SemanticModelingAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
     node.input = SemanticNodeInput(user_message="Update the orders dataset")
-    if not discovery_available:
-        node.semantic_discovery_tools = None
     node._finalize_selected_osi_artifact = MagicMock(return_value="subject/semantic_models/warehouse/orders.yml")
     ctx = StreamRunContext(user_input=node.input, action_history_manager=ActionHistoryManager())
     ctx.response_content = {

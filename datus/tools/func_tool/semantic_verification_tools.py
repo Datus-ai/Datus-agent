@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
+from pathlib import Path
 from time import perf_counter
 from typing import Any, Callable
 
@@ -39,7 +40,7 @@ class SemanticOutputCheck(BaseModel):
         description=(
             "Executable read-only SELECT/WITH for the matching population, time range and result grain. "
             "Use the source SELECT or query stored result columns directly; do not reaggregate stored values "
-            "or rewrite a calculation merely to obtain a pass. No source output ID is needed."
+            "or rewrite a calculation merely to obtain a pass."
         ),
     )
     reference_column: str = Field(min_length=1, description="Value column returned by reference_sql")
@@ -49,6 +50,7 @@ class SemanticOutputCheck(BaseModel):
         description=(
             "Reference result key -> metric query dimension or returned key column. "
             "Use {} for scalar results. Only these keys are compared; no dimensions are added. "
+            "Time dimensions normalize ISO date representations, including YYYY-MM and YYYY. "
             "Duplicate keys in either full result are reported as unverified."
         ),
     )
@@ -100,13 +102,13 @@ def compare_output_rows(
     *,
     absolute_tolerance: Decimal = Decimal("0.000001"),
     relative_tolerance: Decimal = Decimal(0),
-    time_columns: set[str] | None = None,
-    time_granularity: str | None = None,
+    time_dimensions: dict[str, str | None] | None = None,
 ) -> dict:
     """Compare group sets and values without reaggregating or dropping duplicates."""
 
     def key_value(value, column):
-        if column in (time_columns or set()) and value is not None:
+        if column in (time_dimensions or {}) and value is not None:
+            time_granularity = time_dimensions[column]
             try:
                 parsed = _as_datetime(value)
             except ValueError:
@@ -125,18 +127,18 @@ def compare_output_rows(
     def index(rows, keys, value_column, source):
         indexed = {}
         for row in rows:
-            missing = [k for k in [*keys, value_column] if k not in row]
+            missing = [k for k in [*keys.values(), value_column] if k not in row]
             if missing:
                 raise ValueError(f"{source} result is missing columns: {', '.join(missing)}")
-            key = tuple(key_value(row[c], c) for c in keys)
+            key = tuple(key_value(row[c], reference_key) for reference_key, c in keys.items())
             if key in indexed:
                 raise ValueError(f"{source} has duplicate rows at the comparison grain: {key!r}")
             indexed[key] = row[value_column]
         return indexed
 
     try:
-        left = index(expected, list(dimensions), reference_value, "Reference")
-        right = index(actual, list(dimensions.values()), metric_value, "Metric")
+        left = index(expected, {key: key for key in dimensions}, reference_value, "Reference")
+        right = index(actual, dimensions, metric_value, "Metric")
     except (ValueError, TypeError) as exc:
         return {"status": "unverified", "reason": str(exc)}
     if not left and not right:
@@ -161,11 +163,7 @@ def compare_output_rows(
             if any(value is not None and not value.is_finite() for value in (da, db)):
                 return {"status": "unverified", "reason": "Non-finite values cannot prove business equivalence"}
             if da is not None and db is not None:
-                equal = (
-                    da == db
-                    if isinstance(a, int)
-                    else abs(da - db) <= max(absolute_tolerance, relative_tolerance * max(abs(da), abs(db)))
-                )
+                equal = abs(da - db) <= max(absolute_tolerance, relative_tolerance * max(abs(da), abs(db)))
             else:
                 equal = a == b
         if not equal:
@@ -214,8 +212,9 @@ class SemanticVerificationTools:
         Each check queries exactly one metric and executes reference_sql once through
         the existing read-only database tool. It compares full cached metric rows,
         never the compressed preview. Supply the reference value column and result-key
-        mapping explicitly. No SQL analysis, source IDs, grain inference, filter rewriting,
-        automatic dimensions or retry/cache state is involved.
+        mapping explicitly; these keys determine which result groups are compared.
+        The metric must belong to the selected model when one is selected. Recorded
+        comparisons are bound to the metric's actual model file and version.
 
         Choose matching populations, time ranges, parameters and business grouping in
         both queries. Query arguments are passed unchanged; where filters result rows
@@ -249,12 +248,21 @@ class SemanticVerificationTools:
         results = []
         for check in validated:
             started = perf_counter()
-            artifact = self.artifact_provider()
-            before = self.evidence._semantic_artifact_state(artifact) if artifact else None
+            before = None
             run_id = self.evidence.run_id
             result = {"status": "unverified", "query_status": "not_run", "reference_status": "not_run"}
             try:
+                binding = self.semantic_tools.runtime.artifact_metric_binding(check.metric)
+                actual_path = str(Path(binding["model_path"]).resolve())
+                selected = self.artifact_provider()
+                if selected and actual_path != str(Path(selected).resolve()):
+                    raise ValueError(
+                        f"Metric {check.metric!r} belongs to {actual_path}, not the selected model {selected}"
+                    )
+                before = {"path": actual_path, "sha256": binding["model_revision"]}
                 self._compare(check, result)
+                if self.evidence._semantic_artifact_state(actual_path) != before:
+                    result.update(status="unverified", reason="Model changed during this comparison; rerun the check")
             except (ValueError, KeyError, TypeError, ArithmeticError) as exc:
                 result.update(status="unverified", reason=str(exc))
             except Exception as exc:
@@ -269,7 +277,7 @@ class SemanticVerificationTools:
             )
             if before is not None:
                 self.evidence.record_business_verification(
-                    artifact, {**result, "artifact": before, "check": check.model_dump(), "run_id": run_id}
+                    before["path"], {**result, "artifact": before, "check": check.model_dump(), "run_id": run_id}
                 )
             results.append(result)
         return FuncToolResult(result={"checks": results})
@@ -306,16 +314,21 @@ class SemanticVerificationTools:
         if len(metric_columns) > 1:
             raise ValueError("The parameter bindings produce multiple value columns; compare one binding per check")
         metric_column = metric_columns[0] if metric_columns else check.metric
+        time_bindings = {
+            dimension: (self._result_column(dimension, cache["columns"], grain), grain)
+            for dimension, grain in (payload.get("metadata") or {}).get("time_dimensions", {}).items()
+        }
         dimensions = {
-            source: self._result_column(dimension, cache["columns"], check.query.time_granularity)
+            source: time_bindings[dimension][0]
+            if dimension in time_bindings
+            else self._result_column(dimension, cache["columns"], None)
             for source, dimension in check.dimension_mapping.items()
         }
-        time_columns = {
-            column
-            for source, dimension in check.dimension_mapping.items()
-            if check.query.time_granularity
-            and dimension in {"metric_time", f"metric_time__{check.query.time_granularity}"}
-            for column in (source, dimensions[source])
+        time_dimensions = {
+            source: grain
+            for source, column in dimensions.items()
+            for time_column, grain in time_bindings.values()
+            if column == time_column
         }
 
         reference = self.db_tool.read_query(check.reference_sql, compress=False)
@@ -332,16 +345,15 @@ class SemanticVerificationTools:
                 dimensions,
                 absolute_tolerance=absolute,
                 relative_tolerance=relative,
-                time_columns=time_columns,
-                time_granularity=check.query.time_granularity,
+                time_dimensions=time_dimensions,
             )
         )
 
     @staticmethod
     def _result_column(dimension: str, columns: list[str], grain: str | None) -> str:
         candidates = [dimension, dimension.rsplit(".", 1)[-1]]
-        if dimension == "metric_time" and grain:
-            candidates.append(f"metric_time__{grain}")
+        if grain:
+            candidates = [f"{candidate}__{grain}" for candidate in candidates]
         matches = list(dict.fromkeys(candidate for candidate in candidates if candidate in columns))
         if len(matches) != 1:
             raise ValueError(f"Cannot identify metric result column for {dimension!r}; returned columns: {columns}")

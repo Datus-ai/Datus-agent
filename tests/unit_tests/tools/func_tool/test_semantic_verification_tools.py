@@ -52,11 +52,32 @@ def setup_verifier(tmp_path):
         rows = [dict(row) for row in connection.execute(sql_by_metric[metric])]
         cache[metric] = {"data": rows, "columns": list(rows[0]) if rows else ["market", metric]}
         # The presentation deliberately omits groups; comparison must use full rows.
-        return FuncToolResult(result={"result_id": metric, "data": rows[:1]})
+        return FuncToolResult(
+            result={
+                "result_id": metric,
+                "data": rows[:1],
+                "metadata": {
+                    "time_dimensions": {
+                        name: kwargs.get("time_granularity")
+                        for name in kwargs.get("dimensions", [])
+                        if name == "metric_time"
+                    }
+                },
+            }
+        )
 
-    semantic = SimpleNamespace(query_metrics=MagicMock(side_effect=query), get_cached_query_metrics_result=cache.get)
     artifact = tmp_path / "model.yml"
     artifact.write_text("semantic_model: []")
+
+    def binding(metric):
+        snapshot = GenerationEvidence._semantic_artifact_state(artifact)
+        return {"model_path": snapshot["path"], "model_revision": snapshot["sha256"]}
+
+    semantic = SimpleNamespace(
+        query_metrics=MagicMock(side_effect=query),
+        get_cached_query_metrics_result=cache.get,
+        runtime=SimpleNamespace(artifact_metric_binding=binding),
+    )
     evidence = GenerationEvidence()
     verifier = SemanticVerificationTools(SimpleNamespace(read_query=execute), semantic, evidence, lambda: artifact)
     yield SimpleNamespace(
@@ -200,9 +221,10 @@ def test_changes_during_execution_cannot_publish_current_success(setup_verifier,
         return response
 
     state.semantic.query_metrics.side_effect = changed
-    state.verifier.verify_semantic_outputs([check()])
+    result = state.verifier.verify_semantic_outputs([check()]).result["checks"][0]
     summary = state.evidence.business_verification_summary(state.artifact)
     if change == "model":
+        assert result["status"] == "unverified" and "Model changed" in result["reason"]
         assert summary[0]["status"] == "unverified"
     else:
         assert not summary
@@ -232,7 +254,29 @@ def test_null_zero_extra_groups_and_decimal_tolerance_are_compared_explicitly():
     )
     assert result["status"] == "failed"
     assert result["extra_groups"] == 1 and result["value_differences"] == 1
-    assert compare_output_rows([{"v": 2}], [{"v": 2.0000001}], "v", "v", {})["status"] == "failed"
+
+
+@pytest.mark.parametrize("expected", [100, 100.0, Decimal("100"), "100"])
+@pytest.mark.parametrize(
+    "actual,absolute,relative,status",
+    [
+        ("100.01", "0.1", "0", "passed"),
+        ("100.01", "0", "0.001", "passed"),
+        ("100.01", "0", "0", "failed"),
+        ("100.2", "0.1", "0", "failed"),
+    ],
+)
+def test_numeric_tolerances_do_not_depend_on_connector_result_type(expected, actual, absolute, relative, status):
+    result = compare_output_rows(
+        [{"v": expected}],
+        [{"v": actual}],
+        "v",
+        "v",
+        {},
+        absolute_tolerance=Decimal(absolute),
+        relative_tolerance=Decimal(relative),
+    )
+    assert result["status"] == status
 
 
 def test_explicit_time_key_normalization():
@@ -242,10 +286,33 @@ def test_explicit_time_key_normalization():
         "v",
         "m",
         {"month": "metric_time__month"},
-        time_columns={"month", "metric_time__month"},
-        time_granularity="month",
+        time_dimensions={"month": "month"},
     )
     assert result["status"] == "passed"
+
+
+@pytest.mark.parametrize(
+    "dimension,actual_key,status",
+    [
+        ("metric_time", "2026-08-01", "passed"),
+        ("metric_time", "2026-08-02", "failed"),
+        ("batch_code", "2026-08-01", "failed"),
+    ],
+)
+def test_implicit_metric_time_normalizes_format_without_changing_grain(setup_verifier, dimension, actual_key, status):
+    state = setup_verifier
+    state.sql_by_metric["good"] = f"SELECT '{actual_key}' AS {dimension}, 1 AS good"
+    result = state.verifier.verify_semantic_outputs(
+        [
+            check(
+                reference_sql="SELECT '2026-08' AS month, 1 AS complaint_num",
+                query={"dimensions": [dimension]},
+                dimension_mapping={"month": dimension},
+            )
+        ]
+    ).result["checks"][0]
+    assert result["status"] == status
+    assert "time_granularity" not in state.semantic.query_metrics.call_args.kwargs
 
 
 @pytest.mark.parametrize("value", [float("inf"), "NaN"])

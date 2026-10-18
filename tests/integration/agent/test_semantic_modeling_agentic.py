@@ -20,7 +20,7 @@ from lancedb.embeddings.base import TextEmbeddingFunction
 from datus.agent.node.semantic_modeling_agentic_node import SemanticModelingAgenticNode
 from datus.configuration.agent_config import AgentConfig, NodeConfig
 from datus.schemas.action_history import ActionHistoryManager, ActionRole, ActionStatus
-from datus.schemas.semantic_agentic_node_models import SemanticNodeInput, SourceQueryEvidence
+from datus.schemas.semantic_agentic_node_models import SemanticNodeInput
 from datus.storage import embedding_models
 from datus.storage.embedding_models import EmbeddingModel
 from datus.storage.metric.store import MetricRAG
@@ -297,19 +297,14 @@ async def test_semantic_modeling_authors_one_queryable_dosi_model_with_real_llm(
         user_message=(
             "Create one Dosi semantic model named nightly_school_counts for the main.schools table. "
             "Include the reusable dataset fields needed for a metric named school_count that counts schools. "
-            "Validate it, reconcile it to the Knowledge Base, and return status generated."
+            "Validate it, reconcile it to the Knowledge Base, and return status generated.\n"
+            "Reference calculation: How many schools are there?\n"
+            "```sql\nSELECT COUNT(*) AS school_count FROM schools\n```"
         ),
         semantic_model_name="nightly_school_counts",
         business_domain="schools",
         fact_tables=["main.schools"],
         max_turns=30,
-        source_queries=[
-            SourceQueryEvidence(
-                source_sql_name="school_count",
-                question="How many schools are there?",
-                sql="SELECT COUNT(*) AS school_count FROM schools",
-            )
-        ],
     )
 
     actions = [action async for action in node.execute_stream(ActionHistoryManager())]

@@ -19,9 +19,9 @@ The YAML file is the source of truth. Knowledge Base records are a searchable in
 
 The user's description and designated documents determine which outputs are generated. SQL supplies calculation evidence and dependencies; other legacy calculations are included only when explicitly requested. When the requested definition conflicts with supplied SQL, an interactive run asks you to resolve the conflict. A noninteractive run follows SQL for that conflicting definition and reports the choice.
 
-Provide relevant tables, SQL text or UTF-8 SQL file paths. Files may contain multiple semicolon-separated statements and comments. API callers can use `SemanticNodeInput.source_queries` and `source_sql_files`; local `.sql` references in the user message are also recognized. Use inline code, quotes or a Markdown link for paths containing spaces. Source inspection fetches live metadata and analyzes SQL without executing ETL writes. Without SQL, the agent can model from the requested definitions and live schema.
+Provide relevant table names, SQL text or file paths in `SemanticNodeInput.user_message`. Files may contain multiple semicolon-separated statements and comments. The agent reads relevant documents and SQL files with `read_file`, discovers tables with `list_tables` or `search_table`, and checks fields with `describe_table`. Batch initialization includes each source question and its full SQL in the message. Without SQL, the agent can model from the requested definitions and live schema.
 
-`inspect_semantic_sources` returns a final-output inventory. The agent selects the requested outputs and uses `get_semantic_source_evidence(output_ids=[...])` for their formulas, dependencies, filters, grouping, joins, windows and UNION branches. Returned IDs identify outputs and must be copied unchanged. Unsupported syntax, missing upstream definitions and uncertain grain remain explicit gaps.
+The agent follows each requested calculation through the original SQL, including aliases, filters, grouping, joins, windows and UNION branches. It preserves the groups retained by joins and zero/NULL handling. Read-only queries can resolve questions about the data. Missing definitions or unsupported calculations are reported explicitly.
 
 ### Validation and execution
 
@@ -31,9 +31,9 @@ Provide relevant tables, SQL text or UTF-8 SQL file paths. Files may contain mul
 | `query_metrics` | Actual metric queries when no numerical reference exists. |
 | `verify_semantic_outputs` | Executes one metric and one explicit reference SELECT, then compares their complete result keys and values. No separate metric query is needed first. |
 
-SQL discovered during the task can be used without advance registration. Source files may be anywhere the agent can read. Source inspection and evidence expansion help interpret calculations; numerical comparison does not depend on their IDs or on proving the full ETL lineage.
+Source files may be anywhere the agent can read. Once a requested business output and its dependencies are ready, check it independently before building downstream scores or totals. Prefer the original SELECT or a direct query of confirmed stored results as the numerical reference.
 
-For each check, supply `metric`, `query`, executable `reference_sql`, `reference_column`, and `dimension_mapping` from reference result keys to metric query dimensions or result columns. Use `{}` for scalar results. The tool executes the metric alone, reads the full cached result, executes the reference through the existing read-only database path, and compares the specified keys and values. It does not add dimensions, infer grain, rewrite filters, reaggregate stored values or cache failed checks. Every invocation executes again.
+For each check, supply `metric`, `query`, executable `reference_sql`, `reference_column`, and `dimension_mapping` from reference result keys to metric query dimensions or result columns. Use `{}` for scalar results. The tool executes the metric alone, reads the full cached result, executes the reference through the existing read-only database path, and compares the specified keys and values. It does not add dimensions, infer grain, rewrite filters, reaggregate stored values or cache failed checks. Every invocation executes again. Time dimensions reported by the runtime, including physical time fields and `metric_time`, normalize ISO date representations, so `2026-08` and `2026-08-01` can match even without `time_granularity`. Without an explicit grain, dates are not truncated.
 
 ```json
 {
@@ -50,7 +50,7 @@ For each check, supply `metric`, `query`, executable `reference_sql`, `reference
 
 Choose matching business grouping, population, time range and parameters in both queries. Keep input filters and post-window filters at the corresponding stages of the reference SQL. Extra reference columns and inner grouping keys do not require extra metric dimensions: adding them may change a ranking partition. Comparison establishes agreement for the supplied results; choosing the correct business reference remains part of modeling.
 
-The result's `business_validation` entries report `status` (`passed`, `failed`, or `unverified`), reasons and bounded difference examples. Missing/extra groups or unequal values fail. Query errors, missing columns, duplicate keys, empty/all-NULL results or unavailable full results are unverified. Model edits make previous comparisons stale; rerun the affected checks after editing. An empty list means no comparisons were recorded. Check each business output independently before necessary combined queries: another metric can supply groups that a sparse metric lacks. Datasets-only runs retain their dataset scope.
+The result's `business_validation` entries report `status` (`passed`, `failed`, or `unverified`), reasons and bounded difference examples. Missing/extra groups or unequal values fail. Query errors, missing columns, duplicate keys, empty/all-NULL results or unavailable full results are unverified. Comparisons are recorded against the queried metric's actual model file and revision. When a model is selected, a metric from a different model is rejected before querying. Model edits make previous comparisons stale; rerun the affected checks after editing. An empty list means no comparisons were recorded. Check each business output independently before necessary combined queries: another metric can supply groups that a sparse metric lacks. Datasets-only runs retain their dataset scope.
 
 ## Availability and supported databases
 

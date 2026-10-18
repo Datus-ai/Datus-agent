@@ -111,7 +111,6 @@ class SemanticModelingAgenticNode(SemanticAuthoringAgenticNode):
             self.tools.extend(
                 tool for tool in self.db_func_tool.available_tools() if tool.name in _SEMANTIC_READ_ONLY_DB_TOOLS
             )
-        self._setup_semantic_discovery_tools()
         self._setup_generation_tools()
         self._setup_filesystem_tools()
         self._setup_semantic_plan_file_tool()

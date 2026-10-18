@@ -552,19 +552,6 @@ class TestGenerationFormatters:
         out = _summarize("generate_sql_summary_id", {"success": 1, "result": "abc12345"})
         assert out == "id: abc12345"
 
-    def test_inspect_semantic_sources(self):
-        out = _summarize(
-            "inspect_semantic_sources",
-            {
-                "success": 1,
-                "result": {
-                    "tables": [{"table_name": "a"}, {"table_name": "b"}],
-                    "relationships": [{}],
-                },
-            },
-        )
-        assert out == "2 tables, 1 rels"
-
     def test_profile_semantic_model_evidence(self):
         out = _summarize(
             "profile_semantic_model_evidence",
@@ -971,7 +958,6 @@ def test_failure_path_uniform(tool: str):
         ("check_semantic_model_exists", {"exists": True}, "table exists"),
         ("check_semantic_model_exists", {"exists": False}, "table not found"),
         ("publish_metrics", {"metric_file": "m.yml"}, "metric generated"),
-        ("inspect_semantic_sources", {"tables": [{}, {}], "relationships": [{}, {}, {}]}, "2 tables, 3 rels"),
         (
             "profile_semantic_model_evidence",
             {"data_profiled": False, "tables": {"orders": {}}},
@@ -1084,7 +1070,6 @@ _LENGTH_CONTRACT_SAMPLES: list[tuple[str, Any]] = [
     ("publish_semantic_model", {"semantic_model_files": ["a"] * 99}),
     ("publish_metrics", {"sync": {"success": True}}),
     ("generate_sql_summary_id", "very_long_summary_id_12345"),
-    ("inspect_semantic_sources", {"tables": [{}] * 99, "relationships": [{}] * 99}),
     ("profile_semantic_model_evidence", {"data_profiled": True, "tables": {str(i): {} for i in range(99)}}),
     # scheduler
     ("submit_sql_job", {"job_id": "very_long_job_id_here"}),
