@@ -41,7 +41,7 @@ SQLite 和 DuckDB 内置在 Datus 中。其他 datasource 均由可独立安装�
 | [TiDB](datasources/tidb.md) | `tidb` | `datus-tidb` | database → table |
 | [ClickHouse](datasources/clickhouse.md) | `clickhouse` | `datus-clickhouse` | database → table |
 | [Trino](datasources/trino.md) | `trino` | `datus-trino` | catalog → schema → table |
-| [Hive](datasources/hive.md) | `hive` | `datus-hive` | database → table |
+| [Hive / 星环 Inceptor](datasources/hive.md) | `hive` | `datus-hive` | database → table |
 | [Spark SQL](datasources/spark.md) | `spark` | `datus-spark` | database → table |
 | [ClickZetta](datasources/clickzetta.md) | `clickzetta` | `datus-clickzetta` | instance/workspace → schema → table |
 | [Hologres](datasources/hologres.md) | `hologres` | `datus-hologres` | database → schema → table |
