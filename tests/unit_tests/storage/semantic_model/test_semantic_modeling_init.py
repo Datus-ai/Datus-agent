@@ -3,6 +3,7 @@
 
 """Tests for the unified Dosi bootstrap orchestration."""
 
+import csv
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, call, patch
 
@@ -11,6 +12,8 @@ import pytest
 from datus.schemas.semantic_agentic_node_models import SourceQueryEvidence
 from datus.storage.semantic_model.semantic_modeling_init import (
     SEMANTIC_MODELING_RESPONSE_ACTION_TYPE,
+    _build_batch_prompt,
+    _load_source_queries,
     _run_semantic_modeling_batch,
     init_success_story_semantic_modeling_async,
 )
@@ -18,7 +21,6 @@ from datus.storage.semantic_model.semantic_modeling_init import (
 
 def _query(index: int) -> SourceQueryEvidence:
     return SourceQueryEvidence(
-        source_sql_name=f"sql_{index}",
         question=f"Question {index}",
         sql=f"SELECT {index}",
     )
@@ -29,6 +31,22 @@ def _config() -> MagicMock:
     config.current_db_config.return_value = SimpleNamespace(catalog="", database="db", schema="")
     config.runtime_db_context.return_value = {}
     return config
+
+
+def test_csv_batch_keeps_full_sql_and_skips_empty_rows(tmp_path):
+    source = tmp_path / "stories.csv"
+    sql = "SELECT market, SUM(amount) total\nFROM orders GROUP BY market;\nSELECT COUNT(*) FROM orders;"
+    with source.open("w", newline="") as stream:
+        writer = csv.writer(stream)
+        writer.writerow(["question", "sql"])
+        writer.writerows([["Revenue", sql], ["", "SELECT 1"], ["Empty", ""], ["Blank", "  "]])
+
+    queries, error = _load_source_queries(str(source))
+
+    assert not error
+    assert [(query.question, query.sql) for query in queries] == [("Revenue", sql), ("", "SELECT 1")]
+    prompt = _build_batch_prompt(queries)
+    assert sql in prompt and "Question: Revenue" in prompt and "Query 2:" in prompt
 
 
 @pytest.mark.asyncio
@@ -143,6 +161,7 @@ async def test_batch_accepts_no_semantic_change_as_idempotent_success():
     assert success is True
     assert error == ""
     assert result["status"] == "skipped"
+    assert "Question: Question 1\nSQL:\nSELECT 1" in node.input.user_message
     event_helper.item_completed.assert_called_once_with("batch-1", sql_count=1)
 
 

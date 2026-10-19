@@ -93,6 +93,137 @@ def _by_item(rows: list[dict[str, str]]) -> dict[tuple[str, str], dict[str, str]
     return {(row["product"], row["item"]): row for row in rows}
 
 
+def test_business_verification_compares_explicit_window_queries_without_changing_scope(query_tool):
+    """Compare real native ranks, keeping post-window and input filtering explicit."""
+    from datus.tools.func_tool.generation_evidence import GenerationEvidence
+    from datus.tools.func_tool.semantic_verification_tools import SemanticVerificationTools
+
+    db = DBFuncTool(agent_config=query_tool.agent_config, read_only=True)
+    artifact = Path(query_tool.agent_config.project_root) / "subject/semantic_models/window_filters/model.yaml"
+    verifier = SemanticVerificationTools(db, query_tool, GenerationEvidence(), lambda: artifact)
+    reference = (
+        "SELECT product,item,MIN(day) unused_day,"
+        "RANK() OVER (PARTITION BY product ORDER BY SUM(score) DESC) r "
+        "FROM main.activity_scores GROUP BY product,item"
+    )
+    selected = "item IN ('b','i')"
+    post_filter = f"SELECT * FROM ({reference}) original WHERE {selected}"
+    pre_filter = reference.replace(" GROUP BY", f" WHERE {selected} GROUP BY")
+    base = {
+        "name": "Item rank",
+        "metric": "item_rank",
+        "reference_column": "r",
+        "dimension_mapping": {"product": "scores.product", "item": "scores.item"},
+    }
+    result = verifier.verify_semantic_outputs(
+        [
+            {
+                **base,
+                "reference_sql": post_filter,
+                "query": {"dimensions": PRODUCT_ITEM, "where": "scores.item IN ('b','i')"},
+            },
+            {
+                **base,
+                "reference_sql": post_filter,
+                "query": {"dimensions": PRODUCT_ITEM, "context_filter": "scores.item IN ('b','i')"},
+            },
+            {
+                **base,
+                "reference_sql": pre_filter,
+                "query": {"dimensions": PRODUCT_ITEM, "context_filter": "scores.item IN ('b','i')"},
+            },
+            {**base, "reference_sql": "DELETE FROM main.activity_scores", "query": {"dimensions": PRODUCT_ITEM}},
+        ]
+    )
+    assert result.success, result.error
+    full_population, changed_population, scoped_population, refused_write = result.result["checks"]
+    assert full_population["status"] == "passed" and full_population["reference_groups"] == 2
+    assert changed_population["status"] == "failed" and changed_population["value_differences"] == 2
+    assert scoped_population["status"] == "passed"
+    assert refused_write["status"] == "unverified" and refused_write["reference_status"] == "failed"
+    assert db.read_query("SELECT COUNT(*) n FROM main.activity_scores", compress=False).result == [{"n": 10}]
+
+
+@pytest.mark.parametrize(
+    "dimension,grain,mapping",
+    [
+        ("metric_time", None, "metric_time"),
+        ("metric_time", "month", "metric_time"),
+        ("scores.day", None, "scores.day"),
+        ("scores.day", "month", "scores.day"),
+        ("scores.day", "month", "day__month"),
+    ],
+)
+def test_business_verification_normalizes_native_time_dimensions(query_tool, dimension, grain, mapping):
+    """A month label and its native date key compare without inventing a query grain."""
+    from datus.tools.func_tool.generation_evidence import GenerationEvidence
+    from datus.tools.func_tool.semantic_verification_tools import SemanticVerificationTools
+
+    db = DBFuncTool(agent_config=query_tool.agent_config, read_only=True)
+    verifier = SemanticVerificationTools(db, query_tool, GenerationEvidence(), lambda: None)
+    query = {"dimensions": [dimension], "context_filter": "scores.day = DATE '2025-06-01'"}
+    if grain:
+        query["time_granularity"] = grain
+    result = verifier.verify_semantic_outputs(
+        [
+            {
+                "name": "Score at period start",
+                "metric": "score_total",
+                "query": query,
+                "reference_sql": (
+                    "SELECT strftime(day, '%Y-%m') AS month, SUM(score) AS total "
+                    "FROM main.activity_scores WHERE day = DATE '2025-06-01' GROUP BY day"
+                ),
+                "reference_column": "total",
+                "dimension_mapping": {"month": mapping},
+            }
+        ]
+    )
+    comparison = result.result["checks"][0]
+    assert comparison["status"] == "passed", comparison
+    assert comparison["reference_groups"] == 1
+
+
+def test_business_verification_binds_the_queried_model_and_invalidates_changes(query_tool):
+    import yaml
+
+    from datus.tools.func_tool.generation_evidence import GenerationEvidence
+    from datus.tools.func_tool.semantic_verification_tools import SemanticVerificationTools
+
+    selected = Path(query_tool.runtime.artifact_metric_binding("score_total")["model_path"])
+    other = yaml.safe_load(selected.read_text())
+    model = other["semantic_model"][0]
+    model["name"] = "other_model"
+    model["metrics"] = [{**model["metrics"][0], "name": "other_total"}]
+    other_path = selected.with_name("other.yaml")
+    other_path.write_text(yaml.safe_dump(other))
+
+    evidence = GenerationEvidence()
+    db = DBFuncTool(agent_config=query_tool.agent_config, read_only=True)
+    verifier = SemanticVerificationTools(db, query_tool, evidence, lambda: selected)
+    check = {
+        "name": "Total score",
+        "metric": "other_total",
+        "reference_sql": "SELECT SUM(score) AS total FROM main.activity_scores",
+        "reference_column": "total",
+    }
+    refused = verifier.verify_semantic_outputs([check]).result["checks"][0]
+    assert refused["status"] == "unverified" and refused["query_status"] == "not_run"
+    assert "not the selected model" in refused["reason"]
+    assert not evidence.business_verification_summary(selected)
+
+    # Standalone callers can compare without selecting a model; the runtime
+    # still supplies the actual file and revision for their recorded result.
+    verifier.artifact_provider = lambda: None
+    compared = verifier.verify_semantic_outputs([check]).result["checks"][0]
+    assert compared["status"] == "passed", compared
+    assert evidence.business_verification_summary(other_path)[0]["status"] == "passed"
+    assert not evidence.business_verification_summary(selected)
+    model["metrics"][0]["expression"]["dialects"][0]["expression"] = "2 * SUM(scores.score)"
+    other_path.write_text(yaml.safe_dump(other))
+    assert evidence.business_verification_summary(other_path)[0]["status"] == "unverified"
+
+
 def test_where_keeps_the_whole_population_ranks_and_context_filter_rescopes_them(query_tool):
     """The same predicate answers two different questions.
 

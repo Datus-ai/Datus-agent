@@ -145,6 +145,7 @@ class FilesystemFuncTool(BaseTool):
         strict: bool = False,
         session_data_dir: Optional[str] = None,
         path_allowlist: Optional[PathAllowlist] = None,
+        path_allowlist_provider: Optional[Callable[[], Optional[PathAllowlist]]] = None,
         mutation_callback: Optional[Callable[..., None]] = None,
         mutation_guard: Optional[Callable[[Path], None]] = None,
         **kwargs,
@@ -170,6 +171,8 @@ class FilesystemFuncTool(BaseTool):
                 grants access to a shared directory mounted next to the
                 workspace — e.g. an Airflow DAGs folder — without turning
                 ``strict`` off.
+            path_allowlist_provider: Optional live allowlist for skills loaded after
+                this tool was created. The node's permission hooks use the same roots.
         """
         super().__init__(**kwargs)
         self.root_path = root_path or os.getcwd()
@@ -180,6 +183,7 @@ class FilesystemFuncTool(BaseTool):
         self._strict = strict
         self._session_data_dir = Path(session_data_dir).expanduser().resolve(strict=False) if session_data_dir else None
         self._path_allowlist = path_allowlist
+        self._path_allowlist_provider = path_allowlist_provider
         self._mutation_callback = mutation_callback
         self._mutation_guard = mutation_guard
 
@@ -211,6 +215,11 @@ class FilesystemFuncTool(BaseTool):
     @property
     def strict(self) -> bool:
         return self._strict
+
+    @property
+    def path_allowlist(self) -> Optional[PathAllowlist]:
+        """Include skill bundles loaded after this tool was constructed."""
+        return self._path_allowlist_provider() if self._path_allowlist_provider else self._path_allowlist
 
     def available_tools(self) -> List[Tool]:
         """Get all available filesystem tools"""
@@ -263,7 +272,7 @@ class FilesystemFuncTool(BaseTool):
             current_node=self._current_node,
             datus_home=self._datus_home,
             session_data_dir=self._session_data_dir,
-            allowlist=self._path_allowlist,
+            allowlist=self.path_allowlist,
         )
 
     def _read_only_reject(self, resolved: ResolvedPath) -> FuncToolResult:
@@ -297,7 +306,7 @@ class FilesystemFuncTool(BaseTool):
             error=strict_mode_rejection_message(
                 resolved.display,
                 root_path=self._root_resolved,
-                allowlist=self._path_allowlist,
+                allowlist=self.path_allowlist,
             ),
         )
 
@@ -701,7 +710,7 @@ class FilesystemFuncTool(BaseTool):
             current_node=self._current_node,
             datus_home=self._datus_home,
             session_data_dir=self._session_data_dir,
-            allowlist=self._path_allowlist,
+            allowlist=self.path_allowlist,
         )
 
         def has_whitelisted_descendant(directory: Path) -> bool:
@@ -768,7 +777,7 @@ class FilesystemFuncTool(BaseTool):
                                 current_node=self._current_node,
                                 datus_home=self._datus_home,
                                 session_data_dir=self._session_data_dir,
-                                allowlist=self._path_allowlist,
+                                allowlist=self.path_allowlist,
                             ).zone
                             if item_zone == PathZone.EXTERNAL:
                                 # Symlink escape from project tree; skip.

@@ -5,17 +5,15 @@
 """
 Semantic Discovery Tools
 
-This module provides read-only discovery tools for semantic-layer generation,
-including table relationships, column usage evidence, and semantic profiling.
+This module profiles SQL history and database values for semantic-model refresh.
 """
 
 import json
-import re
 import time
 from collections import Counter, defaultdict
 from datetime import date, datetime
 from decimal import Decimal
-from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from agents import Tool
 
@@ -32,10 +30,7 @@ logger = get_logger(__name__)
 
 class SemanticDiscoveryTools:
     """
-    Read-only discovery tools for semantic-layer generation.
-
-    These tools analyze database structures and historical query patterns
-    to help generate semantic models.
+    Semantic model profiling for initialization and refresh.
     """
 
     permission_category: str = "semantic_tools"
@@ -49,8 +44,6 @@ class SemanticDiscoveryTools:
         *,
         agent_config: Optional["AgentConfig"] = None,
         sub_agent_name: Optional[str] = None,
-        source_sql_provider: Optional[Callable[[], List[Dict[str, Any]]]] = None,
-        compact_source_inspection: bool = False,
     ):
         """
         Initialize semantic discovery tools.
@@ -64,13 +57,6 @@ class SemanticDiscoveryTools:
         self.agent_config = agent_config if agent_config is not None else getattr(db_tool, "agent_config", None)
         self.sub_agent_name = sub_agent_name if sub_agent_name is not None else getattr(db_tool, "sub_agent_name", None)
         self.enable_semantic_model_profiler = enable_semantic_model_profiler
-        self.source_sql_provider = source_sql_provider
-        self.compact_source_inspection = compact_source_inspection
-        self._semantic_source_cache: Dict[tuple[str, str, str, str], Dict[str, Any]] = {}
-
-    def reset_request_cache(self) -> None:
-        """Clear source metadata retained during one authoring request."""
-        self._semantic_source_cache.clear()
 
     @classmethod
     def _aggregate_classes(cls):
@@ -86,357 +72,9 @@ class SemanticDiscoveryTools:
         from datus.tools.func_tool import trans_to_function_tool
 
         methods_to_convert = []
-        if self.db_tool is not None:
-            methods_to_convert.append(self.inspect_semantic_sources)
-            if self.enable_semantic_model_profiler:
-                methods_to_convert.append(self.profile_semantic_model_evidence)
+        if self.db_tool is not None and self.enable_semantic_model_profiler:
+            methods_to_convert.append(self.profile_semantic_model_evidence)
         return [trans_to_function_tool(bound_method) for bound_method in methods_to_convert]
-
-    # These compatibility methods remain callable by Python integrations while
-    # the LLM tool surface above exposes batched source inspection and optional profiling.
-    def get_multiple_tables_ddl(
-        self,
-        tables: List[str],
-        catalog: Optional[str] = "",
-        database: Optional[str] = "",
-        schema_name: Optional[str] = "",
-    ) -> FuncToolResult:
-        """Return table DDLs for legacy Python callers; not an exposed LLM tool."""
-        try:
-            results = []
-            for table in tables:
-                ddl_result = self.db_tool.get_table_ddl(table, catalog, database, schema_name)
-                if ddl_result.success and ddl_result.result:
-                    results.append({"table_name": table, **ddl_result.result})
-                else:
-                    results.append({"table_name": table, "error": ddl_result.error})
-            return FuncToolResult(result=results)
-        except Exception as exc:
-            return FuncToolResult(success=0, error=str(exc))
-
-    def analyze_table_relationships(
-        self,
-        tables: List[str],
-        catalog: Optional[str] = "",
-        database: Optional[str] = "",
-        schema_name: Optional[str] = "",
-        sample_sql_queries: int = 20,
-    ) -> FuncToolResult:
-        """Return legacy relationship-only evidence; not an exposed LLM tool."""
-        try:
-            relationships = self._extract_foreign_keys_from_ddl(
-                tables,
-                catalog or "",
-                database or "",
-                schema_name or "",
-            )
-            relationships.extend(self._analyze_join_patterns_from_history(tables, sample_sql_queries))
-            if not relationships:
-                relationships.extend(
-                    self._infer_from_column_names(
-                        tables,
-                        catalog or "",
-                        database or "",
-                        schema_name or "",
-                    )
-                )
-            relationships = self._deduplicate_relationships(relationships)
-            return FuncToolResult(
-                result={
-                    "relationships": relationships,
-                    "summary": f"Found {len(relationships)} relationships across {len(tables)} tables",
-                }
-            )
-        except Exception as exc:
-            return FuncToolResult(success=0, error=str(exc))
-
-    def analyze_column_usage_patterns(
-        self,
-        table_name: str,
-        columns: Optional[List[str]] = None,
-        catalog: Optional[str] = "",
-        database: Optional[str] = "",
-        schema_name: Optional[str] = "",
-        sample_sql_queries: int = 50,
-    ) -> FuncToolResult:
-        """Return legacy reference-SQL field usage; not an exposed LLM tool."""
-        try:
-            if not self.agent_config:
-                return FuncToolResult(
-                    success=0,
-                    error="Cannot analyze column patterns without agent_config (no SQL history available)",
-                )
-            from datus.storage.reference_sql.store import ReferenceSqlRAG
-
-            schema_result = self.db_tool.describe_table(table_name, catalog, database, schema_name)
-            if not schema_result.success:
-                return FuncToolResult(success=0, error=f"Failed to get table schema: {schema_result.error}")
-            table_columns = schema_result.result.get("columns", []) if isinstance(schema_result.result, dict) else []
-            all_columns = [
-                str(column.get("name") or "")
-                for column in table_columns
-                if isinstance(column, dict) and column.get("name")
-            ]
-            target_columns = [str(column) for column in (columns if columns else all_columns) if column]
-            sql_rag = ReferenceSqlRAG(self.agent_config, self.sub_agent_name)
-            search_results = sql_rag.search_reference_sql(
-                query_text=f"SELECT FROM {table_name}",
-                top_n=sample_sql_queries,
-            )
-            entries = [
-                {
-                    "name": entry.get("name") or entry.get("summary") or entry.get("filepath") or f"sql_{index + 1}",
-                    **entry,
-                    "sql": str(entry.get("sql") or "").strip(),
-                }
-                for index, entry in enumerate(search_results)
-                if str(entry.get("sql") or "").strip()
-            ]
-            table_evidence, parse_errors = self._semantic_profile_sql_evidence(entries, [table_name], 1)
-            table_profile = self._semantic_profile_table_evidence_for(table_evidence, table_name)
-            patterns = self._column_usage_patterns_from_semantic_profile(
-                table_profile.get("field_usage_statistics", {}),
-                target_columns,
-            )
-            result = {
-                "column_patterns": patterns,
-                "summary": f"Analyzed {len(patterns)} columns from {len(search_results)} SQL queries",
-            }
-            if parse_errors:
-                result["parse_errors"] = parse_errors[:5]
-            return FuncToolResult(result=result)
-        except Exception as exc:
-            logger.exception("Error analyzing column usage patterns")
-            return FuncToolResult(success=0, error=str(exc))
-
-    def inspect_semantic_sources(
-        self,
-        tables: List[str],
-        catalog: Optional[str] = "",
-        database: Optional[str] = "",
-        schema_name: Optional[str] = "",
-    ) -> FuncToolResult:
-        """Inspect all semantic-model source tables in one read-only call.
-
-        Args:
-            tables: Complete list of physical tables involved in the model.
-            catalog: Optional catalog override.
-            database: Optional database override.
-            schema_name: Optional schema override.
-
-        This tool batches schema and relationship discovery. It reads each
-        table's DDL and enriched schema once per request, uses DDL for declared
-        foreign keys, and mines JOIN evidence from the structured SQL supplied
-        with the current request. Every result retains raw DDL so declared keys,
-        composite-column order, and index conditions remain available alongside
-        enriched schema. Compact results omit SQL-usage statistics. It never searches unrelated
-        reference SQL; historical profiling remains a separate opt-in workflow.
-        """
-        try:
-            normalized_tables = self._normalize_semantic_source_tables(tables)
-            inspected_tables = []
-            for table in normalized_tables:
-                cache_key = (
-                    str(catalog or "").strip().casefold(),
-                    str(database or "").strip().casefold(),
-                    str(schema_name or "").strip().casefold(),
-                    self._normalize_identifier(table),
-                )
-                inspected = self._semantic_source_cache.get(cache_key)
-                if inspected is None:
-                    inspected = {"table_name": table}
-                    ddl_result = self.db_tool.get_table_ddl(table, catalog, database, schema_name)
-                    if ddl_result.success and isinstance(ddl_result.result, dict):
-                        inspected["ddl"] = ddl_result.result
-                    else:
-                        inspected["ddl_error"] = ddl_result.error or "DDL unavailable"
-
-                    schema_result = self.db_tool.describe_table(table, catalog, database, schema_name)
-                    if schema_result.success and isinstance(schema_result.result, dict):
-                        inspected["schema"] = schema_result.result
-                    else:
-                        inspected["schema_error"] = schema_result.error or "Schema unavailable"
-                    self._semantic_source_cache[cache_key] = inspected
-                inspected_tables.append(inspected)
-
-            source_entries = self._current_source_sql_entries()
-            sql_evidence = {}
-            if not self.compact_source_inspection:
-                sql_evidence, parse_errors = self._semantic_profile_sql_evidence(
-                    source_entries,
-                    normalized_tables,
-                    max(len(normalized_tables), 1),
-                )
-            else:
-                parse_errors = []
-            relationships = self._extract_foreign_keys_from_inspected_tables(inspected_tables)
-            tables_lower_map = {self._normalize_identifier(table.split(".")[-1]): table for table in normalized_tables}
-            for entry in source_entries:
-                sql_text = str(entry.get("sql") or "")
-                parsed_expressions = None
-                if self.compact_source_inspection:
-                    try:
-                        parsed_expressions = self._parse_sql(sql_text)
-                    except Exception as exc:
-                        parse_errors.append({"source_sql_name": entry.get("name") or "sql", "error": str(exc)})
-                        continue
-                relationships.extend(
-                    self._extract_join_relationships_from_sql(
-                        sql_text,
-                        tables_lower_map,
-                        parsed_expressions=parsed_expressions,
-                    )
-                )
-            relationships = self._deduplicate_relationships(relationships)
-            if not relationships:
-                relationships = self._infer_relationships_from_inspected_tables(inspected_tables)
-
-            public_tables = []
-            for inspected in inspected_tables:
-                public_table = {"table_name": inspected["table_name"]}
-                if inspected.get("ddl") is not None:
-                    public_table["ddl"] = inspected["ddl"]
-                if inspected.get("schema") is not None:
-                    public_table["schema"] = inspected["schema"]
-                else:
-                    public_table["schema_error"] = inspected.get("schema_error") or "Schema unavailable"
-                if inspected.get("ddl_error"):
-                    public_table["ddl_error"] = inspected["ddl_error"]
-                if not self.compact_source_inspection:
-                    table_profile = self._semantic_profile_table_evidence_for(
-                        sql_evidence,
-                        inspected["table_name"],
-                    )
-                    public_table["sql_usage"] = {
-                        "query_count": table_profile.get("query_count", 0),
-                        "field_usage_statistics": table_profile.get("field_usage_statistics", {}),
-                        "aggregate_expressions": table_profile.get("aggregate_expressions", []),
-                        "group_by_expressions": table_profile.get("group_by_expressions", []),
-                        "common_filter_conditions": table_profile.get("common_filter_conditions", []),
-                    }
-                public_tables.append(public_table)
-
-            return FuncToolResult(
-                result={
-                    "tables": public_tables,
-                    "relationships": relationships,
-                    "source_sql_count": len(source_entries),
-                    "parse_errors": parse_errors[:5],
-                    "summary": (
-                        f"Inspected {len(inspected_tables)} table(s) and found "
-                        f"{len(relationships)} relationship candidate(s) from the current request"
-                    ),
-                }
-            )
-        except Exception as e:
-            return FuncToolResult(success=0, error=str(e))
-
-    def _normalize_semantic_source_tables(self, tables: List[str]) -> List[str]:
-        """Return non-empty source table names without case-insensitive duplicates."""
-        normalized = []
-        seen = set()
-        for raw_table in tables or []:
-            table = str(raw_table or "").strip()
-            identity = self._normalize_identifier(table)
-            if not table or not identity or identity in seen:
-                continue
-            seen.add(identity)
-            normalized.append(table)
-        if not normalized:
-            raise ValueError("Provide at least one physical source table to inspect.")
-        return normalized
-
-    def _current_source_sql_entries(self) -> List[Dict[str, Any]]:
-        """Read structured SQL supplied with the current request, when available."""
-        if self.source_sql_provider is None:
-            return []
-        try:
-            entries = self.source_sql_provider() or []
-        except Exception as exc:
-            logger.warning("Failed to read request-local SQL evidence: %s", exc)
-            return []
-        return [
-            {
-                **entry,
-                "name": entry.get("name") or entry.get("source_sql_name") or f"sql_{index + 1}",
-                "sql": str(entry.get("sql") or ""),
-            }
-            for index, entry in enumerate(entries)
-            if isinstance(entry, dict) and str(entry.get("sql") or "").strip()
-        ]
-
-    def _extract_foreign_keys_from_inspected_tables(
-        self,
-        inspected_tables: List[Dict[str, Any]],
-    ) -> List[Dict[str, Any]]:
-        """Extract declared scalar or composite foreign keys from cached DDL."""
-        relationships = []
-        fk_pattern = (
-            r"FOREIGN\s+KEY\s*\(([^)]+)\)\s*REFERENCES\s+"
-            r"([^\s(]+)\s*\(([^)]+)\)"
-        )
-        for inspected in inspected_tables:
-            ddl = inspected.get("ddl")
-            ddl_text = str(ddl.get("definition") or "") if isinstance(ddl, dict) else ""
-            for match in re.finditer(fk_pattern, ddl_text, re.IGNORECASE):
-                source_columns = self._split_constraint_columns(match.group(1))
-                target_columns = self._split_constraint_columns(match.group(3))
-                if not source_columns or len(source_columns) != len(target_columns):
-                    continue
-                relationships.append(
-                    self._relationship_evidence(
-                        source_table=inspected["table_name"],
-                        source_columns=source_columns,
-                        target_table=match.group(2).strip().strip('`"[]'),
-                        target_columns=target_columns,
-                        confidence="high",
-                        evidence="foreign_key",
-                        target_key_status="declared",
-                    )
-                )
-        return self._deduplicate_relationships(relationships)
-
-    def _infer_relationships_from_inspected_tables(
-        self,
-        inspected_tables: List[Dict[str, Any]],
-    ) -> List[Dict[str, Any]]:
-        """Infer low-confidence relationships from cached schema column names."""
-        table_columns = {}
-        tables_lower_map = {}
-        for inspected in inspected_tables:
-            table_name = inspected["table_name"]
-            tables_lower_map[self._normalize_identifier(table_name.split(".")[-1])] = table_name
-            schema = inspected.get("schema")
-            columns = schema.get("columns", []) if isinstance(schema, dict) else []
-            table_columns[table_name] = [column for column in columns if isinstance(column, dict)]
-
-        relationships = []
-        for source_table, columns in table_columns.items():
-            for column in columns:
-                source_column = str(column.get("name") or "")
-                normalized_column = self._normalize_identifier(source_column)
-                if not normalized_column.endswith("_id"):
-                    continue
-                target_table = tables_lower_map.get(normalized_column[:-3])
-                if not target_table:
-                    continue
-                if not any(
-                    self._normalize_identifier(target.get("name")) == "id"
-                    for target in table_columns.get(target_table, [])
-                ):
-                    continue
-                relationships.append(
-                    self._relationship_evidence(
-                        source_table=source_table,
-                        source_columns=[source_column],
-                        target_table=target_table,
-                        target_columns=["id"],
-                        confidence="low",
-                        evidence="column_name",
-                        target_key_status="candidate_unverified",
-                    )
-                )
-        return self._deduplicate_relationships(relationships)
 
     def profile_semantic_model_evidence(
         self,
@@ -522,8 +160,12 @@ class SemanticDiscoveryTools:
                     "yaml_guidance": (
                         "Keep generated YAML concise: use profiling evidence to choose relationship "
                         "candidates, measures, dimensions, and time columns; historical joins do not "
-                        "prove keys. Declare keys only from source DDL and omit relationships whose "
-                        "target has no DDL-declared key; do not query table data to discover keys. "
+                        "prove keys. Declare keys only from source DDL; an ordinary many_to_one "
+                        "relationship requires a DDL-declared target key. Physical datasets and "
+                        "single-table metrics do not require keys. Evaluate supported conformed "
+                        "fact pairings separately under the active cardinality contract; missing "
+                        "keys alone do not justify a query-backed source. Do not query table data "
+                        "to discover keys. "
                         "Include compact distribution notes "
                         "in descriptions when useful, such as observed min/max, percentiles, "
                         "null rate, date span/freshness/duration, low-cardinality distinct counts, "
@@ -598,55 +240,6 @@ class SemanticDiscoveryTools:
             key=lambda item: (-len(item[1]["source_queries"]), item[0]),
         )[: max(max_tables, 1)]
         return {table: self._finalize_semantic_profile_table(stats) for table, stats in sorted_items}, parse_errors
-
-    def _semantic_profile_table_evidence_for(
-        self,
-        table_evidence: Dict[str, Dict[str, Any]],
-        table_name: str,
-    ) -> Dict[str, Any]:
-        normalized = self._normalize_identifier(table_name.split(".")[-1])
-        for candidate, evidence in table_evidence.items():
-            if self._normalize_identifier(candidate.split(".")[-1]) == normalized:
-                return evidence
-        return {}
-
-    def _column_usage_patterns_from_semantic_profile(
-        self,
-        field_usage_statistics: Dict[str, Dict[str, Any]],
-        target_columns: List[str],
-    ) -> Dict[str, Dict[str, Any]]:
-        fields_by_name = {
-            self._normalize_identifier(field_name): field_stats
-            for field_name, field_stats in field_usage_statistics.items()
-        }
-        result: Dict[str, Dict[str, Any]] = {}
-        for column in target_columns:
-            field_stats = fields_by_name.get(self._normalize_identifier(column))
-            if not field_stats:
-                continue
-            operators = list(field_stats.get("operators") or [])
-            functions = list(field_stats.get("functions") or [])
-            common_filters = list(field_stats.get("common_filters") or [])[:3]
-            usage_count = int(field_stats.get("filter_count") or 0)
-            if usage_count <= 0 and not operators and not functions and not common_filters:
-                continue
-
-            desc_parts = []
-            if operators:
-                desc_parts.append("Commonly filtered with " + ", ".join(operators))
-            if functions:
-                desc_parts.append("Function predicates: " + ", ".join(functions))
-            if common_filters:
-                desc_parts.append("Example filters: " + " | ".join(common_filters[:2]))
-
-            result[column] = {
-                "operators": operators,
-                "functions": functions,
-                "common_filters": common_filters,
-                "usage_count": usage_count,
-                "usage_description": ". ".join(desc_parts) if desc_parts else "Used in filter predicates",
-            }
-        return result
 
     def _ensure_semantic_profile_tables(
         self,
@@ -1758,53 +1351,6 @@ class SemanticDiscoveryTools:
                     continue
         return None
 
-    def _extract_foreign_keys_from_ddl(
-        self,
-        tables: List[str],
-        catalog: str,
-        database: str,
-        schema_name: str,
-    ) -> List[Dict[str, Any]]:
-        """Extract foreign-key evidence for legacy relationship-only callers."""
-        inspected_tables = []
-        for table in tables:
-            ddl_result = self.db_tool.get_table_ddl(table, catalog, database, schema_name)
-            inspected = {"table_name": table}
-            if ddl_result.success and isinstance(ddl_result.result, dict):
-                inspected["ddl"] = ddl_result.result
-            inspected_tables.append(inspected)
-        return self._extract_foreign_keys_from_inspected_tables(inspected_tables)
-
-    def _analyze_join_patterns_from_history(
-        self,
-        tables: List[str],
-        sample_size: int,
-    ) -> List[Dict[str, Any]]:
-        """Search indexed reference SQL for legacy relationship-only callers."""
-        if not self.agent_config:
-            return []
-        from datus.storage.reference_sql.store import ReferenceSqlRAG
-
-        sql_rag = ReferenceSqlRAG(self.agent_config, self.sub_agent_name)
-        relationships = []
-        tables_lower_map = {self._normalize_identifier(table.split(".")[-1]): table for table in tables}
-        for table in tables:
-            try:
-                search_results = sql_rag.search_reference_sql(
-                    query_text=f"JOIN {table}",
-                    top_n=sample_size,
-                )
-                for sql_entry in search_results:
-                    relationships.extend(
-                        self._extract_join_relationships_from_sql(
-                            str(sql_entry.get("sql") or ""),
-                            tables_lower_map,
-                        )
-                    )
-            except Exception as exc:
-                logger.warning("Failed to search SQL history for table %s: %s", table, exc)
-        return self._deduplicate_relationships(relationships)
-
     def _load_sql_evidence_entries(
         self,
         sql_queries: Optional[List[str]],
@@ -1814,7 +1360,6 @@ class SemanticDiscoveryTools:
         sample_sql_queries: int,
     ) -> List[Dict[str, Any]]:
         """Normalize direct SQL inputs or load reference SQL entries."""
-        import json
 
         entries: List[Dict[str, Any]] = []
         sql_entries: Optional[List[Dict[str, Any]]] = None
@@ -1925,145 +1470,9 @@ class SemanticDiscoveryTools:
             selects = list(parsed.find_all(exp.Select))
         return selects
 
-    def _extract_join_relationships_from_sql(
-        self,
-        sql_text: str,
-        tables_lower_map: Dict[str, str],
-        *,
-        parsed_expressions: Optional[List[Any]] = None,
-    ) -> List[Dict[str, Any]]:
-        """Extract alias-aware scalar or composite JOIN relationships."""
-        from sqlglot import expressions as exp
-
-        relationships: List[Dict[str, Any]] = []
-        if not sql_text:
-            return relationships
-        if parsed_expressions is None:
-            try:
-                parsed_expressions = self._parse_sql(sql_text)
-            except Exception:
-                return relationships
-
-        for parsed in parsed_expressions:
-            alias_to_table = self._alias_to_table_map(parsed)
-            grouped_pairs: Dict[tuple[str, str], List[tuple[str, str]]] = defaultdict(list)
-
-            def collect_pair(
-                left: Any,
-                right: Any,
-                joined_table: Optional[str],
-                current_alias_to_table: Dict[str, str],
-                current_grouped_pairs: Dict[tuple[str, str], List[tuple[str, str]]],
-            ) -> None:
-                if not isinstance(left, exp.Column) or not isinstance(right, exp.Column):
-                    return
-                left_table = self._resolve_column_table(left, current_alias_to_table, tables_lower_map)
-                right_table = self._resolve_column_table(right, current_alias_to_table, tables_lower_map)
-                if not left_table or not right_table or left_table == right_table:
-                    return
-
-                if joined_table and left_table == joined_table:
-                    source_table, source_column = right_table, right.name
-                    target_table, target_column = left_table, left.name
-                elif joined_table and right_table == joined_table:
-                    source_table, source_column = left_table, left.name
-                    target_table, target_column = right_table, right.name
-                elif (right_table, left_table) in current_grouped_pairs:
-                    source_table, source_column = right_table, right.name
-                    target_table, target_column = left_table, left.name
-                else:
-                    source_table, source_column = left_table, left.name
-                    target_table, target_column = right_table, right.name
-
-                pair = (source_column, target_column)
-                if pair not in current_grouped_pairs[(source_table, target_table)]:
-                    current_grouped_pairs[(source_table, target_table)].append(pair)
-
-            for join in parsed.find_all(exp.Join):
-                on_expression = join.args.get("on")
-                if on_expression is None:
-                    continue
-                joined_table = self._resolve_join_target_table(join, alias_to_table, tables_lower_map)
-                for eq in self._collect_conjunctive_equalities(on_expression):
-                    collect_pair(
-                        eq.left,
-                        eq.right,
-                        joined_table,
-                        alias_to_table,
-                        grouped_pairs,
-                    )
-
-            where_expression = parsed.args.get("where")
-            if where_expression is not None:
-                for eq in self._collect_conjunctive_equalities(where_expression):
-                    collect_pair(
-                        eq.left,
-                        eq.right,
-                        None,
-                        alias_to_table,
-                        grouped_pairs,
-                    )
-
-            for (source_table, target_table), pairs in grouped_pairs.items():
-                relationships.append(
-                    self._relationship_evidence(
-                        source_table=source_table,
-                        source_columns=[pair[0] for pair in pairs],
-                        target_table=target_table,
-                        target_columns=[pair[1] for pair in pairs],
-                        confidence="medium",
-                        evidence="join_pattern",
-                        target_key_status="candidate_unverified",
-                    )
-                )
-        return self._deduplicate_relationships(relationships)
-
-    def _resolve_join_target_table(
-        self,
-        join: Any,
-        alias_to_table: Dict[str, str],
-        tables_lower_map: Dict[str, str],
-    ) -> Optional[str]:
-        from sqlglot import expressions as exp
-
-        target = join.this
-        if not isinstance(target, exp.Table):
-            return None
-        for candidate in (target.alias_or_name, target.name):
-            resolved = alias_to_table.get(self._normalize_identifier(candidate), candidate)
-            canonical = tables_lower_map.get(self._normalize_identifier(resolved))
-            if canonical:
-                return canonical
-        return None
-
-    def _alias_to_table_map(self, parsed: Any) -> Dict[str, str]:
-        """Build alias -> table name mapping for one parsed SQL expression."""
-        from sqlglot import expressions as exp
-
-        mapping: Dict[str, str] = {}
-        for table in parsed.find_all(exp.Table):
-            table_name = table.name
-            alias = table.alias_or_name
-            if table_name:
-                mapping[self._normalize_identifier(table_name)] = table_name
-            if alias:
-                mapping[self._normalize_identifier(alias)] = table_name
-        return mapping
-
-    def _resolve_column_table(
-        self, column: Any, alias_to_table: Dict[str, str], tables_lower_map: Dict[str, str]
-    ) -> Optional[str]:
-        """Resolve a sqlglot Column's table alias to a requested canonical table name."""
-        table_key = self._normalize_identifier(column.table)
-        resolved = alias_to_table.get(table_key, column.table)
-        return tables_lower_map.get(self._normalize_identifier(resolved))
-
     def _normalize_identifier(self, value: str) -> str:
         """Normalize SQL identifiers for comparisons."""
         return (value or "").strip().strip('"`[]').lower()
-
-    def _split_constraint_columns(self, value: str) -> List[str]:
-        return [column.strip().strip('`"[]') for column in str(value or "").split(",") if column.strip().strip('`"[]')]
 
     def _relationship_evidence(
         self,
@@ -2091,61 +1500,3 @@ class SemanticDiscoveryTools:
             "target_key_status": target_key_status,
             "requires_target_key_validation": target_key_status == "candidate_unverified",
         }
-
-    def _infer_from_column_names(
-        self,
-        tables: List[str],
-        catalog: str,
-        database: str,
-        schema_name: str,
-    ) -> List[Dict[str, Any]]:
-        """Infer relationships for legacy relationship-only callers."""
-        inspected_tables = []
-        for table in tables:
-            schema_result = self.db_tool.describe_table(table, catalog, database, schema_name)
-            inspected = {"table_name": table}
-            if schema_result.success and isinstance(schema_result.result, dict):
-                inspected["schema"] = schema_result.result
-            inspected_tables.append(inspected)
-        return self._infer_relationships_from_inspected_tables(inspected_tables)
-
-    def _deduplicate_relationships(self, relationships: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Deduplicate and sort relationships by confidence."""
-        seen = set()
-        deduplicated = []
-
-        # Sort by confidence (high > medium > low)
-        confidence_order = {"high": 0, "medium": 1, "low": 2}
-        sorted_rels = sorted(
-            relationships,
-            key=lambda r: confidence_order.get(r.get("confidence", ""), 3),
-        )
-
-        for rel in sorted_rels:
-            normalized = dict(rel)
-            source_columns = list(
-                normalized.get("source_columns")
-                or ([normalized["source_column"]] if normalized.get("source_column") else [])
-            )
-            target_columns = list(
-                normalized.get("target_columns")
-                or ([normalized["target_column"]] if normalized.get("target_column") else [])
-            )
-            if not source_columns or len(source_columns) != len(target_columns):
-                continue
-            normalized["source_column"] = source_columns[0]
-            normalized["source_columns"] = source_columns
-            normalized["target_column"] = target_columns[0]
-            normalized["target_columns"] = target_columns
-            normalized["key_arity"] = len(source_columns)
-            key = (
-                normalized["source_table"],
-                tuple(source_columns),
-                normalized["target_table"],
-                tuple(target_columns),
-            )
-            if key not in seen:
-                seen.add(key)
-                deduplicated.append(normalized)
-
-        return deduplicated

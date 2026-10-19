@@ -63,8 +63,33 @@ def dosi_validation_text_payload(
         )
 
     if metric_names is None:
-        return dict(load_binding().validate(model_text))
-    return dict(load_binding().validate(model_text, metric_names=metric_names))
+        payload = dict(load_binding().validate(model_text))
+    else:
+        payload = dict(load_binding().validate(model_text, metric_names=metric_names))
+    # Native diagnostics assume an editor maintains the basic-mode expression.
+    # The agent's upsert accepts complete objects and does not generate that SQL.
+    hints = {
+        "derive_expression_mismatch": (
+            "upsert_osi_metrics does not generate expression SQL. Supply a complete expression matching "
+            "the derive expansion, including member filters, NULL handling and arithmetic. "
+            "Read capability-derive.yaml and the authoring skill's complete metric examples. "
+            "A rejected batch writes none of its metrics; repair it before referencing new members."
+        ),
+        "window_in_metric": (
+            "Put ranking/frame semantics in the DATUS window object, not OVER(...) in expression. "
+            "With window.base, supply the base's basic-mode expression. Read capability-window.yaml "
+            "and the authoring skill's complete rank/score examples."
+        ),
+        "not_an_aggregate": (
+            "expression must contain aggregate SQL over dataset.field columns; metric names belong "
+            "in derive.expr. Neither missing/empty SQL nor MAX(metric_name) requests expansion. "
+            "Read the authoring skill's complete compose and post-window score examples."
+        ),
+    }
+    for issue in payload.get("compile_errors") or []:
+        if isinstance(issue, dict) and issue.get("code") in hints:
+            issue["hint"] = hints[issue["code"]]
+    return payload
 
 
 def dosi_validation_payload(document: dict[str, Any]) -> dict[str, Any]:
@@ -77,10 +102,10 @@ def dosi_validation_payload(document: dict[str, Any]) -> dict[str, Any]:
     return dosi_validation_text_payload(model_text)
 
 
-def validate_dosi_document(document: dict[str, Any]) -> None:
-    """Reject a raw OSI document unless every native-Dosi preflight passes."""
+def validate_dosi_document(document: dict[str, Any] | str) -> None:
+    """Validate source text verbatim, or serialize an already parsed OSI document."""
 
-    payload = dosi_validation_payload(document)
+    payload = dosi_validation_text_payload(document) if isinstance(document, str) else dosi_validation_payload(document)
     if payload.get("valid"):
         return
     messages = validation_messages(payload) or ["native Dosi validation failed"]

@@ -1612,7 +1612,7 @@ class TestGetMetric:
 
         assert result.success == 0
         assert "no_such_metric" in result.error
-        assert "list_metrics" in result.error
+        assert "selected model" in result.error
 
     def test_dimension_failure_keeps_the_rest_of_the_detail(self, semantic_tools_with_runtime):
         """Detail a caller can use should survive one failing sub-query."""
@@ -1722,7 +1722,7 @@ class TestGetMetric:
 
         assert result.success == 0
         assert "no_such_metric" in result.error
-        assert "list_metrics" in result.error
+        assert "selected model" in result.error
 
     def test_resolves_the_name_against_the_whole_catalog_not_the_path(self, semantic_tools_with_runtime):
         """Name resolution must scope exactly the way list_metrics scopes it.

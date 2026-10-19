@@ -218,6 +218,7 @@ class FilesystemPolicy:
     # with, otherwise the hook would prompt (or fail) on a path the tool is
     # perfectly willing to write.
     allowlist: Optional[PathAllowlist] = None
+    allowlist_provider: Optional[Callable[[], Optional[PathAllowlist]]] = None
 
 
 class CompositeHooks(AgentHooks):
@@ -740,7 +741,7 @@ class PermissionHooks(AgentHooks):
                 current_node=policy.current_node,
                 datus_home=policy.datus_home,
                 session_data_dir=policy.session_data_dir,
-                allowlist=policy.allowlist,
+                allowlist=policy.allowlist_provider() if policy.allowlist_provider else policy.allowlist,
             )
         except Exception as e:
             logger.debug(f"classify_path failed for {tool_name} path={path_arg!r}: {e}")

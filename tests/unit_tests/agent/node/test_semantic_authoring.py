@@ -64,8 +64,8 @@ def test_validate_dosi_authoring_document_uses_native_validator(monkeypatch):
 def test_dosi_prompt_uses_engine_owned_contract(monkeypatch):
     from datus.tools.semantic_tools.dosi import authoring_spec, engine
 
-    monkeypatch.setattr(authoring_spec, "authoring_spec_text", lambda dialect: f"core dialect: {dialect}")
-    monkeypatch.setattr(authoring_spec, "datus_extension_authoring_spec_text", lambda dialect: "engine contract")
+    monkeypatch.setattr(authoring_spec, "compact_authoring_spec_text", lambda dialect: f"core dialect: {dialect}")
+    monkeypatch.setattr(authoring_spec, "authoring_overview_text", lambda: "engine contract")
     monkeypatch.setattr(engine, "datus_extension_version", lambda: "1.8")
     rendered = semantic_authoring.render_required_authoring_skill(
         "dosi-semantic-authoring", 'extension version: "<datus_extension_version>"', include_osi_core=True
@@ -303,7 +303,6 @@ def test_semantic_authoring_base_configuration_is_neutral():
 
     assert SemanticAuthoringAgenticNode.NODE_NAME == "semantic_authoring"
     assert SemanticAuthoringAgenticNode.INCLUDE_OSI_CORE_SPEC is False
-    assert SemanticAuthoringAgenticNode.COMPACT_SOURCE_INSPECTION is False
 
 
 @pytest.mark.asyncio
@@ -322,12 +321,11 @@ async def test_semantic_authoring_base_resets_request_local_state(monkeypatch):
     node.generation_evidence = SimpleNamespace(reset=lambda: resets.append("evidence"))
     node.osi_target_state = SimpleNamespace(reset=lambda: resets.append("target"))
     node.osi_target_tools = SimpleNamespace(invalidate_inventory=lambda: resets.append("inventory"))
-    node.semantic_discovery_tools = SimpleNamespace(reset_request_cache=lambda: resets.append("discovery"))
 
     await node._before_stream(object())
 
     assert node.result is None
-    assert resets == ["parent", "evidence", "target", "inventory", "discovery"]
+    assert resets == ["parent", "evidence", "target", "inventory"]
 
 
 @pytest.mark.asyncio
