@@ -1577,6 +1577,17 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#database-skills-and-task-references" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Database skills and task references
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#quick-start" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -5272,6 +5283,17 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#database-skills-and-task-references" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Database skills and task references
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#quick-start" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -5725,6 +5747,17 @@
 
 <h1 id="skills">Skills<a class="headerlink" href="#skills" title="Permanent link">&para;</a></h1>
 <p>Skills is a skill discovery and loading system for Datus-agent, following the <a href="https://agentskills.io">agentskills.io</a> specification. It enables modular, on-demand capability expansion through SKILL.md files.</p>
+<h2 id="database-skills-and-task-references">Database skills and task references<a class="headerlink" href="#database-skills-and-task-references" title="Permanent link">&para;</a></h2>
+<p>For nodes with a bound database connector, an installed <code>db-&lt;dialect&gt;-sql</code> skill is injected
+automatically. Its short entrypoint provides query and existing-data semantics. Physical table
+design, writes, imports and other specialized guidance live in linked <code>references/</code> files and
+are read only when the user's task needs them, including SQL-generation-only requests.
+An INSERT or CREATE statement supplied for analysis does not itself request a write or import.</p>
+<p>Injected and manually loaded skills include <code>skill_location</code>, the exact directory used to
+resolve relative references. Loaded skill bundles outside the workspace are readable through
+the node's filesystem tools in strict mode, without granting write access to those bundles.
+System-prompt snapshots fingerprint injected contents, so an updated same-named entrypoint
+rebuilds the snapshot. Reference bodies are not automatically inlined into the prompt.</p>
 <h2 id="quick-start">Quick Start<a class="headerlink" href="#quick-start" title="Permanent link">&para;</a></h2>
 <p>This tutorial demonstrates how to use the <strong>report-generator</strong> skill with the California Schools dataset to generate analysis reports.</p>
 <h3 id="step-1-create-a-skill">Step 1: Create a Skill<a class="headerlink" href="#step-1-create-a-skill" title="Permanent link">&para;</a></h3>
@@ -5876,25 +5909,7 @@
 </span><span id="__span-5-8"><a id="__codelineno-5-8" name="__codelineno-5-8" href="#__codelineno-5-8"></a><span class="w">          </span><span class="nt">permission</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">deny</span>
 </span></code></pre></div>
 <h2 id="using-skills-in-subagents">Using Skills in Subagents<a class="headerlink" href="#using-skills-in-subagents" title="Permanent link">&para;</a></h2>
-<p>By default, the <strong>chat subagent loads all discovered skills</strong> automatically. Other subagents (report generation, SQL generation, metrics, etc.) <strong>do not load any skills</strong> unless explicitly configured in <code>agent.yml</code>.</p>
-<table>
-<thead>
-<tr>
-<th>Subagent Type</th>
-<th>Skills Loaded by Default</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>Chat</td>
-<td>All discovered skills</td>
-</tr>
-<tr>
-<td>All other subagents (report, SQL, metrics, etc.)</td>
-<td>None</td>
-</tr>
-</tbody>
-</table>
+<p>Chat exposes permitted discovered skills for on-demand <code>load_skill</code> calls; it does not inject all skill bodies. Other subagents expose optional skills through their <code>agent.yml</code> configuration or built-in defaults. Database guidance and node-required skills, such as <code>dosi-semantic-authoring</code>, are injected independently of that optional catalog.</p>
 <h3 id="enabling-skills-for-customized-subagents">Enabling Skills for Customized Subagents<a class="headerlink" href="#enabling-skills-for-customized-subagents" title="Permanent link">&para;</a></h3>
 <p>Each subagent in <code>agentic_nodes</code> supports three types of tool extensions that can be mixed together:</p>
 <table>
