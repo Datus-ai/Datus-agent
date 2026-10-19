@@ -137,8 +137,7 @@ def test_yaml_profile_queries_through_dbmanager(trino_config, tmp_path):
         connector = manager.get_conn("trino_contract")
         assert connector.trino_config.http_scheme == trino_config.http_scheme
         assert connector.trino_config.verify == trino_config.verify
-        if trino_config.ca_cert:
-            assert connector.trino_config.ca_cert == trino_config.ca_cert
+        assert getattr(connector.trino_config, "ca_cert", None) == getattr(trino_config, "ca_cert", None)
         tool = DBFuncTool(connector)
         result = tool.read_query("SELECT count(*) AS cnt FROM region")
         assert result.success == 1, result.error
