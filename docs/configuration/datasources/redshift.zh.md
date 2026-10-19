@@ -75,6 +75,8 @@ agent:
 
 设置 `iam: true` 后 `password` 可以省略，IAM 连接需保持 `ssl: true`。在 AWS 托管环境中，应优先使用附加 role，不要把 key 写入 `agent.yml`。Adapter 只暴露布尔字段 `ssl`，profile 中没有 CA bundle 或 hostname 校验字段。
 
+Adapter 不传递 `sslmode`，主机名检查遵循已安装驱动的默认策略。`ssl: true` 并不保证严格的主机名校验，当前 profile 也无法显式选择 `sslmode: verify-full`。
+
 ## 从本机连接
 
 AWS CLI 调用的是 AWS HTTPS API，Adapter 则单独建立数据库 TCP 连接。CLI 调用成功或已配置 HTTP 代理，并不代表数据库网络可达。需要检查 cluster endpoint 的实际数据库端口、VPC 路由、网络 ACL 和安全组。访问公网 endpoint 时，应允许数据库客户端实际使用的公网出口 IP；HTTP 代理的出口地址可能不同。
@@ -91,7 +93,7 @@ aws ssm start-session \
   --parameters "{\"host\":[\"$REDSHIFT_HOST\"],\"portNumber\":[\"$REDSHIFT_REMOTE_PORT\"],\"localPortNumber\":[\"15439\"]}"
 ```
 
-为保留 TLS 主机名校验，datasource profile 的 `host` 仍需填写原始 Redshift endpoint。隧道开启期间，通过本机 DNS 或 hosts 文件将该 endpoint 临时映射到 `127.0.0.1`，并将 profile 的 `port` 改为 `15439`。托管主机会独立解析远端 endpoint，不受本机映射影响。使用完毕后移除映射并关闭 SSM 会话。
+使用隧道时，datasource profile 的 `host` 仍填写原始 Redshift endpoint。隧道开启期间，通过本机 DNS 或 hosts 文件将该 endpoint 临时映射到 `127.0.0.1`，并将 profile 的 `port` 改为 `15439`。这只改变本机路由，TLS 主机名检查仍遵循上文说明的驱动策略。托管主机会独立解析远端 endpoint，不受本机映射影响。使用完毕后移除映射并关闭 SSM 会话。
 
 ## 验证连接
 

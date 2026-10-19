@@ -75,6 +75,8 @@ For both authentication methods, `username` is an existing Redshift **database u
 
 Set `iam: true` to make `password` optional, and keep `ssl: true` for IAM connections. In AWS-hosted environments, prefer an attached role over keys in `agent.yml`. The adapter exposes a boolean `ssl`; it does not expose CA-bundle or hostname-verification fields in the profile.
 
+The adapter does not pass `sslmode`; hostname checks follow the installed driver's default policy. `ssl: true` does not guarantee strict hostname verification, and the current profile cannot explicitly request `sslmode: verify-full`.
+
 ## Connecting from a local machine
 
 The AWS CLI calls AWS HTTPS APIs, while the adapter opens a separate database TCP connection. A successful CLI call or an HTTP proxy does not establish database connectivity. Check the cluster endpoint's actual database port, VPC routes, network ACLs, and security groups. For public endpoints, allow the database client's public egress IP; an HTTP proxy may use a different address.
@@ -91,7 +93,7 @@ aws ssm start-session \
   --parameters "{\"host\":[\"$REDSHIFT_HOST\"],\"portNumber\":[\"$REDSHIFT_REMOTE_PORT\"],\"localPortNumber\":[\"15439\"]}"
 ```
 
-Keep the datasource profile's `host` set to the original Redshift endpoint for TLS hostname verification. While the tunnel is open, temporarily map that endpoint to `127.0.0.1` in local DNS or the hosts file, and set the profile's `port` to `15439`. The managed host resolves the remote endpoint independently of this local override. Remove the override and close the SSM session after use.
+For the tunnel, keep the datasource profile's `host` set to the original Redshift endpoint. While the tunnel is open, temporarily map that endpoint to `127.0.0.1` in local DNS or the hosts file, and set the profile's `port` to `15439`. This changes local routing; TLS hostname checks still follow the driver's policy described above. The managed host resolves the remote endpoint independently of this local override. Remove the override and close the SSM session after use.
 
 ## Verify the connection
 
