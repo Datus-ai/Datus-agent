@@ -3694,7 +3694,7 @@
   <a href="#_4" class="md-nav__link">
     <span class="md-ellipsis">
       
-        验证连接
+        从本机连接
       
     </span>
   </a>
@@ -3705,7 +3705,7 @@
   <a href="#_5" class="md-nav__link">
     <span class="md-ellipsis">
       
-        故障排查
+        验证连接
       
     </span>
   </a>
@@ -3714,6 +3714,17 @@
       
         <li class="md-nav__item">
   <a href="#_6" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        故障排查
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_7" class="md-nav__link">
     <span class="md-ellipsis">
       
         参考
@@ -4971,7 +4982,7 @@
   <a href="#_4" class="md-nav__link">
     <span class="md-ellipsis">
       
-        验证连接
+        从本机连接
       
     </span>
   </a>
@@ -4982,7 +4993,7 @@
   <a href="#_5" class="md-nav__link">
     <span class="md-ellipsis">
       
-        故障排查
+        验证连接
       
     </span>
   </a>
@@ -4991,6 +5002,17 @@
       
         <li class="md-nav__item">
   <a href="#_6" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        故障排查
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_7" class="md-nav__link">
     <span class="md-ellipsis">
       
         参考
@@ -5058,12 +5080,14 @@
 </span><span id="__span-2-9"><a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a><span class="w">        </span><span class="nt">database</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">analytics</span>
 </span><span id="__span-2-10"><a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a><span class="w">        </span><span class="nt">schema</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">public</span>
 </span><span id="__span-2-11"><a id="__codelineno-2-11" name="__codelineno-2-11" href="#__codelineno-2-11"></a><span class="w">        </span><span class="nt">iam</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
-</span><span id="__span-2-12"><a id="__codelineno-2-12" name="__codelineno-2-12" href="#__codelineno-2-12"></a><span class="w">        </span><span class="nt">cluster_identifier</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">analytics-cluster</span>
-</span><span id="__span-2-13"><a id="__codelineno-2-13" name="__codelineno-2-13" href="#__codelineno-2-13"></a><span class="w">        </span><span class="nt">region</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">us-east-1</span>
-</span><span id="__span-2-14"><a id="__codelineno-2-14" name="__codelineno-2-14" href="#__codelineno-2-14"></a><span class="w">        </span><span class="c1"># access_key_id: ${AWS_ACCESS_KEY_ID}</span>
-</span><span id="__span-2-15"><a id="__codelineno-2-15" name="__codelineno-2-15" href="#__codelineno-2-15"></a><span class="w">        </span><span class="c1"># secret_access_key: ${AWS_SECRET_ACCESS_KEY}</span>
+</span><span id="__span-2-12"><a id="__codelineno-2-12" name="__codelineno-2-12" href="#__codelineno-2-12"></a><span class="w">        </span><span class="nt">ssl</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
+</span><span id="__span-2-13"><a id="__codelineno-2-13" name="__codelineno-2-13" href="#__codelineno-2-13"></a><span class="w">        </span><span class="nt">cluster_identifier</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">analytics-cluster</span>
+</span><span id="__span-2-14"><a id="__codelineno-2-14" name="__codelineno-2-14" href="#__codelineno-2-14"></a><span class="w">        </span><span class="nt">region</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">us-east-1</span>
+</span><span id="__span-2-15"><a id="__codelineno-2-15" name="__codelineno-2-15" href="#__codelineno-2-15"></a><span class="w">        </span><span class="c1"># access_key_id: ${AWS_ACCESS_KEY_ID}</span>
+</span><span id="__span-2-16"><a id="__codelineno-2-16" name="__codelineno-2-16" href="#__codelineno-2-16"></a><span class="w">        </span><span class="c1"># secret_access_key: ${AWS_SECRET_ACCESS_KEY}</span>
 </span></code></pre></div>
 <p>运行环境已有 AWS role 或标准 AWS credentials 时，不要再配置静态 access key。</p>
+<p>两种认证方式中的 <code>username</code> 都是已有的 Redshift <strong>数据库用户</strong>。使用 IAM 认证时，Adapter 将其作为驱动的 <code>db_user</code> 参数，用于获取临时数据库凭证。这里应填写数据库用户名，而不是 IAM 用户或 role ARN。<code>db_user</code> 是驱动内部参数，不是 <code>agent.yml</code> 支持的配置字段。</p>
 <h2 id="_3">参数<a class="headerlink" href="#_3" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
@@ -5095,7 +5119,7 @@
 <td>string</td>
 <td style="text-align: right;">是</td>
 <td>—</td>
-<td>数据库用户。</td>
+<td>数据库用户；IAM 认证时也作为 <code>db_user</code> 传给驱动。</td>
 </tr>
 <tr>
 <td><code>password</code></td>
@@ -5116,14 +5140,14 @@
 <td>string</td>
 <td style="text-align: right;">否</td>
 <td>—</td>
-<td>初始 schema；省略时驱动使用 <code>public</code>。</td>
+<td>初始 schema；省略时 Adapter 使用 <code>public</code>。</td>
 </tr>
 <tr>
 <td><code>ssl</code></td>
 <td>boolean</td>
 <td style="text-align: right;">否</td>
 <td><code>true</code></td>
-<td>是否启用 TLS。</td>
+<td>是否启用 TLS；IAM 认证必须启用。</td>
 </tr>
 <tr>
 <td><code>iam</code></td>
@@ -5170,12 +5194,24 @@
 </tbody>
 </table>
 <h2 id="tls">认证与 TLS<a class="headerlink" href="#tls" title="Permanent link">&para;</a></h2>
-<p>设置 <code>iam: true</code> 后 <code>password</code> 可以省略。在 AWS 托管环境中，应优先使用附加 role，不要把 key 写入 <code>agent.yml</code>。Adapter 只暴露布尔字段 <code>ssl</code>，profile 中没有 CA bundle 或 hostname 校验字段。</p>
-<h2 id="_4">验证连接<a class="headerlink" href="#_4" title="Permanent link">&para;</a></h2>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>datus<span class="w"> </span>--config<span class="w"> </span>conf/agent.yml<span class="w"> </span>--datasource<span class="w"> </span>redshift_prod
+<p>设置 <code>iam: true</code> 后 <code>password</code> 可以省略，IAM 连接需保持 <code>ssl: true</code>。在 AWS 托管环境中，应优先使用附加 role，不要把 key 写入 <code>agent.yml</code>。Adapter 只暴露布尔字段 <code>ssl</code>，profile 中没有 CA bundle 或 hostname 校验字段。</p>
+<p>Adapter 不传递 <code>sslmode</code>，主机名检查遵循已安装驱动的默认策略。<code>ssl: true</code> 并不保证严格的主机名校验，当前 profile 也无法显式选择 <code>sslmode: verify-full</code>。</p>
+<h2 id="_4">从本机连接<a class="headerlink" href="#_4" title="Permanent link">&para;</a></h2>
+<p>AWS CLI 调用的是 AWS HTTPS API，Adapter 则单独建立数据库 TCP 连接。CLI 调用成功或已配置 HTTP 代理，并不代表数据库网络可达。需要检查 cluster endpoint 的实际数据库端口、VPC 路由、网络 ACL 和安全组。访问公网 endpoint 时，应允许数据库客户端实际使用的公网出口 IP；HTTP 代理的出口地址可能不同。</p>
+<p>访问私网 endpoint 时，可使用 VPN，或通过已有的 Systems Manager 托管主机转发连接。托管主机需要能解析并访问数据库 endpoint，安全组需允许该主机的安全组或私网 IP 访问数据库端口。本机还需安装 <a href="https://docs.aws.amazon.com/systems-manager/latest/userguide/session-manager-working-with-install-plugin.html">Session Manager plugin</a>。</p>
+<p>使用 SSM 隧道时，将 <code>REDSHIFT_HOST</code> 设为原始 cluster endpoint，<code>REDSHIFT_REGION</code> 设为所在 AWS region，<code>REDSHIFT_SSM_TARGET</code> 设为托管主机的 instance ID。将 <code>REDSHIFT_REMOTE_PORT</code> 设为 cluster 的实际数据库端口（<code>Endpoint.Port</code>，通常为 <code>5439</code>），然后在独立终端运行：</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>aws<span class="w"> </span>ssm<span class="w"> </span>start-session<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="w">  </span>--region<span class="w"> </span><span class="s2">"</span><span class="nv">$REDSHIFT_REGION</span><span class="s2">"</span><span class="w"> </span><span class="se">\</span>
+</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="w">  </span>--target<span class="w"> </span><span class="s2">"</span><span class="nv">$REDSHIFT_SSM_TARGET</span><span class="s2">"</span><span class="w"> </span><span class="se">\</span>
+</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="w">  </span>--document-name<span class="w"> </span>AWS-StartPortForwardingSessionToRemoteHost<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-3-5"><a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="w">  </span>--parameters<span class="w"> </span><span class="s2">"{\"host\":[\"</span><span class="nv">$REDSHIFT_HOST</span><span class="s2">\"],\"portNumber\":[\"</span><span class="nv">$REDSHIFT_REMOTE_PORT</span><span class="s2">\"],\"localPortNumber\":[\"15439\"]}"</span>
+</span></code></pre></div>
+<p>使用隧道时，datasource profile 的 <code>host</code> 仍填写原始 Redshift endpoint。隧道开启期间，通过本机 DNS 或 hosts 文件将该 endpoint 临时映射到 <code>127.0.0.1</code>，并将 profile 的 <code>port</code> 改为 <code>15439</code>。这只改变本机路由，TLS 主机名检查仍遵循上文说明的驱动策略。托管主机会独立解析远端 endpoint，不受本机映射影响。使用完毕后移除映射并关闭 SSM 会话。</p>
+<h2 id="_5">验证连接<a class="headerlink" href="#_5" title="Permanent link">&para;</a></h2>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>datus<span class="w"> </span>--config<span class="w"> </span>conf/agent.yml<span class="w"> </span>--datasource<span class="w"> </span>redshift_prod
 </span></code></pre></div>
 <p>运行 <code>/schemas</code> 和 <code>/tables</code>。IAM profile 还需要确认运行身份有权为指定 cluster 调用 Redshift 临时凭证 API。</p>
-<h2 id="_5">故障排查<a class="headerlink" href="#_5" title="Permanent link">&para;</a></h2>
+<h2 id="_6">故障排查<a class="headerlink" href="#_6" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
 <tr>
@@ -5190,17 +5226,27 @@
 </tr>
 <tr>
 <td>IAM 认证失败</td>
-<td>检查 <code>cluster_identifier</code>、<code>region</code>、运行时 AWS credentials/role 与 IAM policy。</td>
+<td>检查数据库 <code>username</code>、<code>cluster_identifier</code>、<code>region</code>、运行时 AWS credentials/role 与 IAM policy。</td>
 </tr>
 <tr>
-<td>连接超时</td>
-<td>检查 VPC 路由、安全组、endpoint 和 5439 端口。</td>
+<td>IAM 错误提示缺少 <code>db_user</code></td>
+<td>使用包含 <a href="https://github.com/Datus-ai/datus-db-adapters/pull/157">IAM 用户名传递修复</a>的 Adapter 发布版本。数据库用户仍填写在 <code>username</code> 中；在 profile 中添加 <code>db_user</code> 会导致校验失败。</td>
+</tr>
+<tr>
+<td>CLI 调用成功，但数据库连接超时</td>
+<td>单独检查数据库 TCP 连通性：endpoint、实际数据库端口、VPC 路由、安全组以及 VPN 或隧道。</td>
+</tr>
+<tr>
+<td>Python 3.12 下出现 <code>SSLContext</code> / <code>PROTOCOL_TLS</code> 弃用告警</td>
+<td>包括 <code>redshift_connector</code> 2.2.0 在内的驱动版本使用了已弃用的 SSL context 初始化方式。保持 TLS 开启，在<a href="https://github.com/aws/amazon-redshift-python-driver/pull/288">上游修复</a>进入正式发布后使用对应的官方驱动版本。将这些告警作为错误处理时，可能无法建立连接。</td>
 </tr>
 </tbody>
 </table>
-<h2 id="_6">参考<a class="headerlink" href="#_6" title="Permanent link">&para;</a></h2>
+<h2 id="_7">参考<a class="headerlink" href="#_7" title="Permanent link">&para;</a></h2>
 <ul>
 <li><a href="https://docs.aws.amazon.com/redshift/latest/mgmt/configure-jdbc-connection.html">Amazon Redshift 连接指南</a></li>
+<li><a href="https://docs.aws.amazon.com/systems-manager/latest/userguide/session-manager-working-with-sessions-start.html#sessions-remote-port-forwarding">Session Manager 转发到远端主机</a></li>
+<li><a href="https://docs.python.org/3.12/library/ssl.html#ssl.SSLContext">Python SSLContext 弃用说明</a></li>
 </ul>
 
 
