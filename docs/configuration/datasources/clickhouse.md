@@ -5,8 +5,10 @@ The ClickHouse adapter connects through ClickHouse's HTTP(S) interface and expos
 ## Install
 
 ```bash
-pip install "datus-clickhouse>=0.1.4"
+pip install datus-clickhouse
 ```
+
+This installs the published adapter for the HTTP profile below. The HTTPS settings on this page target the upcoming `0.1.4` release; see the release requirements below.
 
 ## Connection profile
 
@@ -42,7 +44,7 @@ agent:
 
 Connect to the HTTP endpoint (`8123` by default), not the native TCP port (`9000` by default). Objects use `database.table`; do not add a `schema` field.
 
-TLS requires `datus-clickhouse>=0.1.4` and its shared dependencies (`datus-sqlalchemy>=0.1.10`, `datus-db-core>=0.1.8`). Existing profiles keep HTTP. For HTTPS:
+TLS requires `datus-clickhouse>=0.1.4` and its shared dependencies (`datus-sqlalchemy>=0.1.10`, `datus-db-core>=0.1.8`). These versions are not yet published on PyPI; use the following HTTPS configuration after they are released. Existing profiles keep HTTP.
 
 ```yaml
 agent:

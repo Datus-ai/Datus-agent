@@ -38,13 +38,24 @@ docker compose down -v
 
 ### ClickHouse HTTPS
 
-Install `datus-clickhouse>=0.1.4` and configure the same HTTPS endpoint and CA used by the adapter TLS tests:
+HTTPS requires `datus-clickhouse>=0.1.4`, `datus-sqlalchemy>=0.1.10`, and `datus-db-core>=0.1.8`. These versions are not yet published. Until release, use an adapter checkout containing [datus-db-adapters#160](https://github.com/Datus-ai/datus-db-adapters/pull/160). After setting up the Agent development environment, install its three packages from the Agent checkout:
+
+```bash
+uv pip install \
+  -e /path/to/datus-db-adapters/datus-db-core \
+  -e /path/to/datus-db-adapters/datus-sqlalchemy \
+  -e /path/to/datus-db-adapters/datus-clickhouse
+```
+
+Once these versions are published, `uv pip install "datus-clickhouse>=0.1.4"` can replace the source installation. Configure the HTTPS endpoint and CA used by the adapter TLS tests, then run:
 
 ```bash
 ADAPTERS_CH=1 CLICKHOUSE_HOST=localhost CLICKHOUSE_PORT=18443 \
   CLICKHOUSE_PROTOCOL=https CLICKHOUSE_VERIFY=true CLICKHOUSE_CA_CERT=/absolute/path/ca.crt \
-  uv run pytest tests/integration/adapters/test_clickhouse.py -v
+  uv run --no-sync pytest tests/integration/adapters/test_clickhouse.py -v
 ```
+
+Keep `--no-sync` after installing the adapter: the Agent lockfile currently pins an older core, and syncing would replace the newer packages required for HTTPS. This matches the nightly workflow's `UV_NO_SYNC=1` setup.
 
 The suite verifies `DBFuncTool` and YAML → `DbConfig` → `DBManager` → adapter registration, including metadata and read-only checks. Supply `CLICKHOUSE_USER/PASSWORD/DATABASE` for the selected test service. Once opted in, connection failures fail the suite.
 

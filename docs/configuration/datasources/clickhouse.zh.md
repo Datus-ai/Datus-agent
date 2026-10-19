@@ -5,8 +5,10 @@ ClickHouse adapter 通过 ClickHouse HTTP(S) 接口连接。ClickHouse database 
 ## 安装
 
 ```bash
-pip install "datus-clickhouse>=0.1.4"
+pip install datus-clickhouse
 ```
+
+该命令安装已发布的 adapter，适用于下方 HTTP 配置。本页 HTTPS 字段面向即将发布的 `0.1.4`，所需版本见后文说明。
 
 ## 连接配置
 
@@ -42,7 +44,7 @@ agent:
 
 应连接 HTTP endpoint（默认 `8123`），不要使用 native TCP 端口（默认 `9000`）。对象使用 `database.table`，不要添加 `schema`。
 
-TLS 需要 `datus-clickhouse>=0.1.4` 及其共享依赖（`datus-sqlalchemy>=0.1.10`、`datus-db-core>=0.1.8`）。旧配置继续使用 HTTP。HTTPS 配置如下：
+TLS 需要 `datus-clickhouse>=0.1.4` 及其共享依赖（`datus-sqlalchemy>=0.1.10`、`datus-db-core>=0.1.8`）。这些版本尚未在 PyPI 发布；请在发布后使用下方 HTTPS 配置。旧配置继续使用 HTTP。
 
 ```yaml
 agent:

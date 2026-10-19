@@ -206,11 +206,11 @@ def test_yaml_profile_queries_through_dbmanager(ch_config, seeded_connector, tmp
         assert connector.config.ca_cert == ch_config.ca_cert
         tool = DBFuncTool(connector)
         result = tool.read_query(f"SELECT count(*) AS cnt FROM {REGION_TABLE}")
-        assert result.success, result.error
+        assert result.success == 1, result.error
         assert result.result["original_rows"] == 1
         assert "3" in result.result["compressed_data"]
         metadata = tool.describe_table(REGION_TABLE)
-        assert metadata.success, metadata.error
+        assert metadata.success == 1, metadata.error
         assert [column["name"] for column in metadata.result["columns"]] == ["r_regionkey", "r_name", "r_comment"]
     finally:
         manager.close()
