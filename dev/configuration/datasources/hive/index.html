@@ -3904,10 +3904,60 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#authentication-and-sessions" class="md-nav__link">
+  <a href="#authentication" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Authentication and sessions
+        Authentication
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Authentication">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#none-ldap-and-custom" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        NONE, LDAP, and CUSTOM
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#kerberos" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Kerberos
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#session-configuration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Session configuration
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#transwarp-inceptor" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Transwarp Inceptor
       
     </span>
   </a>
@@ -4957,10 +5007,60 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#authentication-and-sessions" class="md-nav__link">
+  <a href="#authentication" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Authentication and sessions
+        Authentication
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Authentication">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#none-ldap-and-custom" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        NONE, LDAP, and CUSTOM
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#kerberos" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Kerberos
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#session-configuration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Session configuration
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#transwarp-inceptor" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Transwarp Inceptor
       
     </span>
   </a>
@@ -5026,27 +5126,33 @@
 
 
 <h1 id="hive-datasource">Hive datasource<a class="headerlink" href="#hive-datasource" title="Permanent link">&para;</a></h1>
-<p>The Hive adapter connects to HiveServer2 through PyHive/Thrift. Hive databases are the table namespace, and optional session properties are passed through <code>configuration</code>.</p>
+<p>The Hive adapter connects to the binary HiveServer2 endpoint through PyHive/Thrift, including compatible Transwarp Inceptor endpoints. Hive databases are the table namespace, and optional session properties are passed through <code>configuration</code>.</p>
+<div class="admonition note">
+<p class="admonition-title">Adapter availability</p>
+<p>The Kerberos configuration and Inceptor metadata improvements described below require a <code>datus-hive</code> build containing those changes. The published <code>datus-hive</code> 0.1.3 package does not include <code>kerberos_service_name</code>, the <code>kerberos</code> extra, or the metadata fixes. Install a build containing them before using these features; installing GSSAPI dependencies alone does not add the missing adapter configuration.</p>
+</div>
+<p>The commands below pin a source revision containing the changes in <a href="https://github.com/Datus-ai/datus-db-adapters/pull/158">adapter PR #158</a>. They require Git and Python 3.12 or newer. Both installation variants use the same revision. <code>--force-reinstall</code> replaces an existing PyPI 0.1.3 installation even though the source build currently has the same package version.</p>
 <h2 id="install">Install<a class="headerlink" href="#install" title="Permanent link">&para;</a></h2>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>pip<span class="w"> </span>install<span class="w"> </span>datus-hive
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>pip<span class="w"> </span>install<span class="w"> </span>--force-reinstall<span class="w"> </span><span class="s1">'datus-hive @ git+https://github.com/Datus-ai/datus-db-adapters.git@5dbac1871985f349b917c6876ca6487b709a65b0#subdirectory=datus-hive'</span>
 </span></code></pre></div>
+<p>Install the adapter into the same Python environment as <code>datus</code>. For Kerberos, install its optional GSSAPI dependencies after choosing an adapter build with Kerberos support:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>pip<span class="w"> </span>install<span class="w"> </span>--force-reinstall<span class="w"> </span><span class="s1">'datus-hive[kerberos] @ git+https://github.com/Datus-ai/datus-db-adapters.git@5dbac1871985f349b917c6876ca6487b709a65b0#subdirectory=datus-hive'</span>
+</span></code></pre></div>
+<p>The Kerberos extension needs system Kerberos libraries and development headers to build, plus a C compiler. For example, Debian/Ubuntu builds use <code>libkrb5-dev</code>; install the Kerberos client tools such as <code>kinit</code> and <code>klist</code> as well.</p>
 <h2 id="connection-profile">Connection profile<a class="headerlink" href="#connection-profile" title="Permanent link">&para;</a></h2>
-<div class="language-yaml highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="nt">agent</span><span class="p">:</span>
-</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">  </span><span class="nt">services</span><span class="p">:</span>
-</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="w">    </span><span class="nt">datasources</span><span class="p">:</span>
-</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="w">      </span><span class="nt">hive_warehouse</span><span class="p">:</span>
-</span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="w">        </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">hive</span>
-</span><span id="__span-1-6"><a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="w">        </span><span class="nt">host</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${HIVE_HOST:-127.0.0.1}</span>
-</span><span id="__span-1-7"><a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a><span class="w">        </span><span class="nt">port</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">10000</span>
-</span><span id="__span-1-8"><a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a><span class="w">        </span><span class="nt">username</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${HIVE_USER}</span>
-</span><span id="__span-1-9"><a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a><span class="w">        </span><span class="nt">password</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${HIVE_PASSWORD}</span>
-</span><span id="__span-1-10"><a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a><span class="w">        </span><span class="nt">database</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">default</span>
-</span><span id="__span-1-11"><a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a><span class="w">        </span><span class="nt">auth</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">LDAP</span>
-</span><span id="__span-1-12"><a id="__codelineno-1-12" name="__codelineno-1-12" href="#__codelineno-1-12"></a><span class="w">        </span><span class="nt">configuration</span><span class="p">:</span>
-</span><span id="__span-1-13"><a id="__codelineno-1-13" name="__codelineno-1-13" href="#__codelineno-1-13"></a><span class="w">          </span><span class="nt">hive.execution.engine</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">tez</span>
-</span><span id="__span-1-14"><a id="__codelineno-1-14" name="__codelineno-1-14" href="#__codelineno-1-14"></a><span class="w">          </span><span class="nt">hive.vectorized.execution.enabled</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
-</span><span id="__span-1-15"><a id="__codelineno-1-15" name="__codelineno-1-15" href="#__codelineno-1-15"></a><span class="w">        </span><span class="nt">timeout_seconds</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">30</span>
+<div class="language-yaml highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="nt">agent</span><span class="p">:</span>
+</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="w">  </span><span class="nt">services</span><span class="p">:</span>
+</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="w">    </span><span class="nt">datasources</span><span class="p">:</span>
+</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="w">      </span><span class="nt">hive_warehouse</span><span class="p">:</span>
+</span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="w">        </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">hive</span>
+</span><span id="__span-2-6"><a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="w">        </span><span class="nt">host</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${HIVE_HOST:-127.0.0.1}</span>
+</span><span id="__span-2-7"><a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a><span class="w">        </span><span class="nt">port</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">10000</span>
+</span><span id="__span-2-8"><a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a><span class="w">        </span><span class="nt">username</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">hive</span>
+</span><span id="__span-2-9"><a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a><span class="w">        </span><span class="nt">database</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">default</span>
+</span><span id="__span-2-10"><a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a><span class="w">        </span><span class="nt">auth</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">NONE</span>
+</span><span id="__span-2-11"><a id="__codelineno-2-11" name="__codelineno-2-11" href="#__codelineno-2-11"></a><span class="w">        </span><span class="nt">timeout_seconds</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">30</span>
 </span></code></pre></div>
+<p>This profile is for a server configured with <code>NONE</code> authentication. Choose the matching authentication mode below for a secured server.</p>
 <h2 id="parameters">Parameters<a class="headerlink" href="#parameters" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
@@ -5078,14 +5184,14 @@
 <td>string</td>
 <td style="text-align: right;">yes</td>
 <td>—</td>
-<td>Hive user.</td>
+<td>Hive user. For Kerberos, the authenticated identity comes from the ticket cache.</td>
 </tr>
 <tr>
 <td><code>password</code></td>
 <td>string</td>
 <td style="text-align: right;">no</td>
 <td>empty</td>
-<td>Used by password-based auth.</td>
+<td>Password for <code>LDAP</code> or <code>CUSTOM</code>; omit for <code>NONE</code> and <code>KERBEROS</code>.</td>
 </tr>
 <tr>
 <td><code>database</code></td>
@@ -5098,8 +5204,15 @@
 <td><code>auth</code></td>
 <td>string</td>
 <td style="text-align: right;">no</td>
-<td>driver default</td>
-<td>Supported modes include <code>NONE</code>, <code>LDAP</code>, <code>CUSTOM</code>, and <code>KERBEROS</code>.</td>
+<td><code>None</code> → PyHive <code>NONE</code></td>
+<td>Set explicitly to <code>NONE</code>, <code>LDAP</code>, <code>CUSTOM</code>, or <code>KERBEROS</code>; no automatic authentication detection.</td>
+</tr>
+<tr>
+<td><code>kerberos_service_name</code></td>
+<td>string</td>
+<td style="text-align: right;">for <code>KERBEROS</code></td>
+<td><code>None</code></td>
+<td>Required nonblank service component of the server principal, usually <code>hive</code>. Omit for other modes.</td>
 </tr>
 <tr>
 <td><code>configuration</code></td>
@@ -5117,13 +5230,82 @@
 </tr>
 </tbody>
 </table>
-<h2 id="authentication-and-sessions">Authentication and sessions<a class="headerlink" href="#authentication-and-sessions" title="Permanent link">&para;</a></h2>
-<p>Use <code>LDAP</code> or <code>CUSTOM</code> with a password as required by the HiveServer2 deployment. Kerberos still requires the surrounding Kerberos client/ticket configuration; those settings are not represented by extra datasource fields.</p>
+<h2 id="authentication">Authentication<a class="headerlink" href="#authentication" title="Permanent link">&para;</a></h2>
+<h3 id="none-ldap-and-custom">NONE, LDAP, and CUSTOM<a class="headerlink" href="#none-ldap-and-custom" title="Permanent link">&para;</a></h3>
+<p>Omitting <code>auth</code> uses PyHive's <code>NONE</code> mode, which still uses SASL PLAIN. It does not select LDAP or Kerberos automatically. Supplying a password requires an explicit <code>LDAP</code> or <code>CUSTOM</code> mode.</p>
+<div class="language-yaml highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="nt">agent</span><span class="p">:</span>
+</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="w">  </span><span class="nt">services</span><span class="p">:</span>
+</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="w">    </span><span class="nt">datasources</span><span class="p">:</span>
+</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="w">      </span><span class="nt">hive_ldap</span><span class="p">:</span>
+</span><span id="__span-3-5"><a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="w">        </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">hive</span>
+</span><span id="__span-3-6"><a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="w">        </span><span class="nt">host</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${HIVE_HOST}</span>
+</span><span id="__span-3-7"><a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a><span class="w">        </span><span class="nt">port</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">10000</span>
+</span><span id="__span-3-8"><a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a><span class="w">        </span><span class="nt">database</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">default</span>
+</span><span id="__span-3-9"><a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a><span class="w">        </span><span class="nt">username</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${HIVE_USER}</span>
+</span><span id="__span-3-10"><a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a><span class="w">        </span><span class="nt">password</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${HIVE_PASSWORD}</span>
+</span><span id="__span-3-11"><a id="__codelineno-3-11" name="__codelineno-3-11" href="#__codelineno-3-11"></a><span class="w">        </span><span class="nt">auth</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">LDAP</span>
+</span><span id="__span-3-12"><a id="__codelineno-3-12" name="__codelineno-3-12" href="#__codelineno-3-12"></a><span class="w">      </span><span class="nt">hive_custom</span><span class="p">:</span>
+</span><span id="__span-3-13"><a id="__codelineno-3-13" name="__codelineno-3-13" href="#__codelineno-3-13"></a><span class="w">        </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">hive</span>
+</span><span id="__span-3-14"><a id="__codelineno-3-14" name="__codelineno-3-14" href="#__codelineno-3-14"></a><span class="w">        </span><span class="nt">host</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${HIVE_HOST}</span>
+</span><span id="__span-3-15"><a id="__codelineno-3-15" name="__codelineno-3-15" href="#__codelineno-3-15"></a><span class="w">        </span><span class="nt">port</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">10000</span>
+</span><span id="__span-3-16"><a id="__codelineno-3-16" name="__codelineno-3-16" href="#__codelineno-3-16"></a><span class="w">        </span><span class="nt">database</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">default</span>
+</span><span id="__span-3-17"><a id="__codelineno-3-17" name="__codelineno-3-17" href="#__codelineno-3-17"></a><span class="w">        </span><span class="nt">username</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${HIVE_USER}</span>
+</span><span id="__span-3-18"><a id="__codelineno-3-18" name="__codelineno-3-18" href="#__codelineno-3-18"></a><span class="w">        </span><span class="nt">password</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${HIVE_PASSWORD}</span>
+</span><span id="__span-3-19"><a id="__codelineno-3-19" name="__codelineno-3-19" href="#__codelineno-3-19"></a><span class="w">        </span><span class="nt">auth</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">CUSTOM</span>
+</span></code></pre></div>
+<p>Both modes send a username and password. <code>LDAP</code> asks the server to validate them against its configured directory; <code>CUSTOM</code> invokes the server's configured authentication provider. The server administrator must configure that provider or directory. These datasource settings select the client mode and do not enable authentication on the server.</p>
+<h3 id="kerberos">Kerberos<a class="headerlink" href="#kerberos" title="Permanent link">&para;</a></h3>
+<p>Acquire a ticket before starting Datus. For example, use a keytab and a credential cache dedicated to the Datus process:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="nb">export</span><span class="w"> </span><span class="nv">KRB5_CONFIG</span><span class="o">=</span>/path/to/krb5.conf
+</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="nb">export</span><span class="w"> </span><span class="nv">KRB5CCNAME</span><span class="o">=</span>FILE:/path/to/datus.ccache
+</span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>kinit<span class="w"> </span>-kt<span class="w"> </span>/path/to/alice.keytab<span class="w"> </span>alice@EXAMPLE.COM
+</span><span id="__span-4-4"><a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a>klist
+</span></code></pre></div>
+<p>Start Datus from the same environment with this profile:</p>
+<div class="language-yaml highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="nt">agent</span><span class="p">:</span>
+</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="w">  </span><span class="nt">services</span><span class="p">:</span>
+</span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="w">    </span><span class="nt">datasources</span><span class="p">:</span>
+</span><span id="__span-5-4"><a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="w">      </span><span class="nt">hive_kerberos</span><span class="p">:</span>
+</span><span id="__span-5-5"><a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="w">        </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">hive</span>
+</span><span id="__span-5-6"><a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a><span class="w">        </span><span class="nt">host</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">hs2.example.com</span>
+</span><span id="__span-5-7"><a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a><span class="w">        </span><span class="nt">port</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">10000</span>
+</span><span id="__span-5-8"><a id="__codelineno-5-8" name="__codelineno-5-8" href="#__codelineno-5-8"></a><span class="w">        </span><span class="nt">database</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">default</span>
+</span><span id="__span-5-9"><a id="__codelineno-5-9" name="__codelineno-5-9" href="#__codelineno-5-9"></a><span class="w">        </span><span class="nt">username</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">alice</span>
+</span><span id="__span-5-10"><a id="__codelineno-5-10" name="__codelineno-5-10" href="#__codelineno-5-10"></a><span class="w">        </span><span class="nt">auth</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">KERBEROS</span>
+</span><span id="__span-5-11"><a id="__codelineno-5-11" name="__codelineno-5-11" href="#__codelineno-5-11"></a><span class="w">        </span><span class="nt">kerberos_service_name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">hive</span>
+</span></code></pre></div>
+<p>This example expects the server principal <code>hive/hs2.example.com@EXAMPLE.COM</code>. Set <code>kerberos_service_name</code> to its service component, <code>hive</code>. Use a hostname matching the service principal, with working DNS, realm configuration, KDC connectivity, and synchronized clocks.</p>
+<p>PyHive uses SASL GSSAPI and the current ticket cache to authenticate. The profile's <code>username</code> remains required, but changing it does not change the authenticated ticket identity. Omit <code>password</code>; the adapter rejects it for Kerberos. The application or deployment environment owns ticket acquisition and renewal. The adapter does not run <code>kinit</code>, renew expired tickets, or set process-wide Kerberos configuration. New connections require valid credentials.</p>
+<h2 id="session-configuration">Session configuration<a class="headerlink" href="#session-configuration" title="Permanent link">&para;</a></h2>
 <p><code>configuration</code> is sent as Hive session configuration. YAML booleans become <code>true</code>/<code>false</code> strings, other scalar values are stringified, and <code>null</code> becomes an empty string.</p>
+<p>Add engine-specific options only when supported by the target server. For example, a Hive deployment using Tez might accept:</p>
+<div class="language-yaml highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="nt">configuration</span><span class="p">:</span>
+</span><span id="__span-6-2"><a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="w">  </span><span class="nt">hive.execution.engine</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">tez</span>
+</span><span id="__span-6-3"><a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="w">  </span><span class="nt">hive.vectorized.execution.enabled</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
+</span></code></pre></div>
+<h2 id="transwarp-inceptor">Transwarp Inceptor<a class="headerlink" href="#transwarp-inceptor" title="Permanent link">&para;</a></h2>
+<p>Use <code>type: hive</code> with Inceptor's HiveServer2-compatible binary Thrift endpoint:</p>
+<div class="language-yaml highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="nt">agent</span><span class="p">:</span>
+</span><span id="__span-7-2"><a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="w">  </span><span class="nt">services</span><span class="p">:</span>
+</span><span id="__span-7-3"><a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="w">    </span><span class="nt">datasources</span><span class="p">:</span>
+</span><span id="__span-7-4"><a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a><span class="w">      </span><span class="nt">inceptor_warehouse</span><span class="p">:</span>
+</span><span id="__span-7-5"><a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a><span class="w">        </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">hive</span>
+</span><span id="__span-7-6"><a id="__codelineno-7-6" name="__codelineno-7-6" href="#__codelineno-7-6"></a><span class="w">        </span><span class="nt">host</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${INCEPTOR_HOST}</span>
+</span><span id="__span-7-7"><a id="__codelineno-7-7" name="__codelineno-7-7" href="#__codelineno-7-7"></a><span class="w">        </span><span class="nt">port</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">10000</span>
+</span><span id="__span-7-8"><a id="__codelineno-7-8" name="__codelineno-7-8" href="#__codelineno-7-8"></a><span class="w">        </span><span class="nt">database</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">default</span>
+</span><span id="__span-7-9"><a id="__codelineno-7-9" name="__codelineno-7-9" href="#__codelineno-7-9"></a><span class="w">        </span><span class="nt">username</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${INCEPTOR_USER}</span>
+</span><span id="__span-7-10"><a id="__codelineno-7-10" name="__codelineno-7-10" href="#__codelineno-7-10"></a><span class="w">        </span><span class="nt">password</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${INCEPTOR_PASSWORD}</span>
+</span><span id="__span-7-11"><a id="__codelineno-7-11" name="__codelineno-7-11" href="#__codelineno-7-11"></a><span class="w">        </span><span class="nt">auth</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">LDAP</span>
+</span></code></pre></div>
+<p>Replace the endpoint, port, and authentication mode with those supplied by the Inceptor administrator. The same <code>NONE</code>, <code>LDAP</code>, <code>CUSTOM</code>, and Kerberos client configurations apply when the server enables the corresponding mode. Use the Kerberos profile above for an Inceptor Kerberos endpoint. A vendor JDBC driver is not required for this connection path.</p>
+<p>With the metadata fixes, ordinary views are excluded from table listings and retrieved through view discovery. Column comments are read by field name so Inceptor's additional <code>DESCRIBE</code> fields do not shift the comment value. Database, table, view, column/comment, DDL, and sample-row retrieval were verified with the updated adapter against Apache Hive 4.0.1 and TDH Community Development Edition 2024.5 (Inceptor 8.37.3).</p>
+<p>Table/view discovery requires server support for <code>SHOW VIEWS</code> and metadata-read permissions. A failed inventory is reported to the caller.</p>
+<p>Inceptor validation covered <code>NONE</code>, <code>LDAP</code>, <code>CUSTOM</code>, and client-to-HiveServer2 Kerberos authentication. It did not validate a fully Kerberized TDH/Guardian cluster or all enterprise features. Guardian Token/CAS authentication, HTTP/HTTPS transport, and ZooKeeper service discovery are not exposed by this adapter's profile. Session engine options and SQL features still depend on the target server.</p>
 <h2 id="verify-the-connection">Verify the connection<a class="headerlink" href="#verify-the-connection" title="Permanent link">&para;</a></h2>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>datus<span class="w"> </span>--config<span class="w"> </span>conf/agent.yml<span class="w"> </span>--datasource<span class="w"> </span>hive_warehouse
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>datus<span class="w"> </span>--config<span class="w"> </span>conf/agent.yml<span class="w"> </span>--datasource<span class="w"> </span>hive_warehouse
 </span></code></pre></div>
 <p>Run <code>/databases</code> and <code>/tables</code>, then query a small table to verify HiveServer2 and backing metastore access.</p>
+<p>For a secured profile, replace <code>hive_warehouse</code> with its configured name. Check ordinary views, column comments, DDL, and sample rows on known objects as well. Authentication success and SQL authorization are separate: the authenticated user still needs access to the target databases and objects.</p>
 <h2 id="troubleshooting">Troubleshooting<a class="headerlink" href="#troubleshooting" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
@@ -5142,6 +5324,22 @@
 <td>Match <code>auth</code>, username/password, and the server's HiveServer2 auth mode.</td>
 </tr>
 <tr>
+<td><code>kerberos_service_name</code> is rejected, or installation reports a missing <code>kerberos</code> extra</td>
+<td>The installed adapter build lacks the Kerberos changes. Install a build containing both the field and the optional dependency group.</td>
+</tr>
+<tr>
+<td>No Kerberos credentials or an expired ticket</td>
+<td>Run <code>klist</code> in the Datus process environment, check <code>KRB5CCNAME</code>, and acquire/renew the ticket before opening a new connection.</td>
+</tr>
+<tr>
+<td>Kerberos service principal is not found</td>
+<td>Check <code>host</code>, realm/DNS configuration, and the service component in <code>kerberos_service_name</code>; do not put the complete principal in that field.</td>
+</tr>
+<tr>
+<td>Login succeeds but queries or metadata access are denied</td>
+<td>Check the user's database grants and active roles with the server administrator.</td>
+</tr>
+<tr>
 <td>Session option has no effect</td>
 <td>Use the exact Hive property key under <code>configuration</code> and confirm the server permits overrides.</td>
 </tr>
@@ -5150,6 +5348,8 @@
 <h2 id="reference">Reference<a class="headerlink" href="#reference" title="Permanent link">&para;</a></h2>
 <ul>
 <li><a href="https://cwiki.apache.org/confluence/display/Hive/HiveServer2+Clients">HiveServer2 clients</a></li>
+<li><a href="https://hive.apache.org/docs/latest/admin/setting-up-hiveserver2/">HiveServer2 authentication configuration</a></li>
+<li><a href="https://www.transwarp.cn/doc/inceptor/9.5/quick-start--connect-database">Transwarp Inceptor connection guide</a></li>
 </ul>
 
 
