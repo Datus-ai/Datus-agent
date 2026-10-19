@@ -1577,6 +1577,17 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#skill" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        数据库 Skill 与任务参考文件
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#_1" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -5283,6 +5294,17 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#skill" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        数据库 Skill 与任务参考文件
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#_1" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -5747,6 +5769,9 @@
 
 <h1 id="skills">Skills<a class="headerlink" href="#skills" title="Permanent link">&para;</a></h1>
 <p>Skills 是 Datus-agent 的技能发现和加载系统，遵循 <a href="https://agentskills.io">agentskills.io</a> 规范。它通过 SKILL.md 文件实现模块化、按需扩展的能力。</p>
+<h2 id="skill">数据库 Skill 与任务参考文件<a class="headerlink" href="#skill" title="Permanent link">&para;</a></h2>
+<p>节点绑定数据库连接器后，会自动注入已安装的 <code>db-&lt;dialect&gt;-sql</code> skill。短正文提供查询及理解已有数据所需的语义；物理建表、写入、导入等专项指导放在链接的 <code>references/</code> 文件中，按用户任务需要读取，仅生成 SQL 的任务也可以读取。用于分析的 INSERT 或 CREATE 语句本身不表示用户要求执行写入或导入。</p>
+<p>自动注入和手动加载都会提供 <code>skill_location</code>，用于准确解析相对参考路径。严格模式下，节点的文件工具可读取工作目录外已加载的 skill 包，包目录不会因此获得写权限。系统提示词快照包含实际注入内容的摘要，同名正文更新后会重建；参考文件正文不会自动拼入提示词。</p>
 <h2 id="_1">快速开始<a class="headerlink" href="#_1" title="Permanent link">&para;</a></h2>
 <p>本教程演示如何使用 <strong>report-generator</strong> 技能与加州学校数据集生成分析报告。</p>
 <h3 id="1">步骤 1：创建技能<a class="headerlink" href="#1" title="Permanent link">&para;</a></h3>
@@ -5910,25 +5935,7 @@
 </span><span id="__span-6-8"><a id="__codelineno-6-8" name="__codelineno-6-8" href="#__codelineno-6-8"></a><span class="w">          </span><span class="nt">permission</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">deny</span>
 </span></code></pre></div>
 <h2 id="subagent">在 Subagent 中使用技能<a class="headerlink" href="#subagent" title="Permanent link">&para;</a></h2>
-<p>默认情况下，<strong>聊天 Subagent 会自动加载所有已发现的技能</strong>。其他 Subagent（报告生成、SQL 生成、指标等）<strong>不会加载任何技能</strong>，除非在 <code>agent.yml</code> 中显式配置。</p>
-<table>
-<thead>
-<tr>
-<th>Subagent 类型</th>
-<th>默认加载的技能</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>Chat</td>
-<td>所有已发现的技能</td>
-</tr>
-<tr>
-<td>其他所有 Subagent（报告、SQL、指标等）</td>
-<td>无</td>
-</tr>
-</tbody>
-</table>
+<p>Chat 会展示权限允许的已发现技能，供 <code>load_skill</code> 按需加载，不会注入所有技能正文。其他 Subagent 通过 <code>agent.yml</code> 配置或内置默认值提供可选技能。数据库指导和节点必需的技能（如 <code>dosi-semantic-authoring</code>）会独立注入，不依赖这个可选技能目录。</p>
 <h3 id="subagent_1">为自定义 Subagent 启用技能<a class="headerlink" href="#subagent_1" title="Permanent link">&para;</a></h3>
 <p><code>agentic_nodes</code> 中的每个 Subagent 支持三种工具扩展方式，可以混合使用：</p>
 <table>
