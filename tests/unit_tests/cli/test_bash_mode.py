@@ -484,6 +484,48 @@ def _sql_cli(profile="normal", node=None):
 
 
 class TestRunSqlGate:
+    @pytest.mark.parametrize("status", ["unsupported", "incomplete", "error"])
+    def test_native_analysis_failure_rejects_even_after_permission_approval(self, monkeypatch, status):
+        from datus.cli.bash_mode import run_sql_gate
+        from datus.tools.db_tools import connector_registry
+        from datus.utils.constants import SQLType
+
+        analysis = SimpleNamespace(status=status, sql_type=SQLType.SELECT, diagnostic="outside verified subset")
+        monkeypatch.setattr(
+            connector_registry,
+            "get_sql_analyzer",
+            lambda dialect: (lambda sql: analysis) if dialect == "native-test" else None,
+            raising=False,
+        )
+        cli = _sql_cli()
+        cli.db_connector.dialect = "native-test"
+        cli.agent_config.policy_context = {"member": "test-member"}
+        with (
+            patch("datus.cli.bash_mode._make_input_collector", return_value=lambda a, c: [["y"]]),
+            patch("datus.tools.policy_runtime.PolicyRuntime") as runtime,
+        ):
+            gate = run_sql_gate(cli, "SELECT TOP 1 * FROM private_orders")
+
+        assert gate.approved is False
+        assert gate.error == f"SQL analysis {status}: outside verified subset"
+        runtime.assert_not_called()
+
+    def test_native_read_rejects_policy_rewrite(self, monkeypatch):
+        from datus.cli.bash_mode import run_sql_gate
+        from datus.tools.db_tools import connector_registry
+        from datus.utils.constants import SQLType
+
+        analysis = SimpleNamespace(status="complete", sql_type=SQLType.SELECT)
+        monkeypatch.setattr(connector_registry, "get_sql_analyzer", lambda dialect: lambda sql: analysis, raising=False)
+        runtime = MagicMock()
+        runtime.before_sql_read.return_value = SimpleNamespace(allowed=True, sql="SELECT 1 LIMIT 1")
+        with patch("datus.tools.policy_runtime.PolicyRuntime", return_value=runtime):
+            gate = run_sql_gate(_sql_cli(), "SELECT 1")
+
+        assert gate.approved is False
+        assert "SQL policy rewriting is unsupported" in gate.error
+        runtime.before_sql_read.assert_called_once()
+
     def test_read_auto_allows_without_prompt(self):
         from datus.cli.bash_mode import run_sql_gate
 

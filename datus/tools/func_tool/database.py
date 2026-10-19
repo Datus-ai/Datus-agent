@@ -2833,12 +2833,12 @@ class DBFuncTool:
     @staticmethod
     def _validate_adapter_sql_analysis(sql: str, connector: BaseSqlConnector) -> Optional[FuncToolResult]:
         """Reject unverified adapter SQL before any read/write/DDL dispatch."""
-        analyzer_getter = getattr(connector_registry, "get_sql_analyzer", None)
-        analyzer = analyzer_getter(connector.dialect) if callable(analyzer_getter) else None
-        if analyzer is not None:
-            analysis = analyzer(sql)
-            if analysis.status != "complete":
-                return FuncToolResult(success=0, error=f"SQL analysis {analysis.status}: {analysis.diagnostic}")
+        from datus.utils.sql_utils import validate_adapter_sql_analysis
+
+        try:
+            validate_adapter_sql_analysis(sql, connector.dialect)
+        except ValueError as error:
+            return FuncToolResult(success=0, error=str(error))
         return None
 
     def _validate_read_sql(self, sql: str, connector: BaseSqlConnector) -> tuple[Optional[FuncToolResult], SQLType]:
@@ -3027,7 +3027,10 @@ class DBFuncTool:
                 error="DML statements (INSERT/UPDATE/DELETE) must run through the write path.",
             )
 
-        out_of_scope = self._check_sql_table_scope(cleaned, connector)
+        try:
+            out_of_scope = self._check_sql_table_scope(cleaned, connector)
+        except ValueError as error:
+            return FuncToolResult(success=0, error=str(error))
         if out_of_scope:
             return FuncToolResult(
                 success=0,

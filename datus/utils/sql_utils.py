@@ -23,6 +23,15 @@ def _registry_hook(name: str, dialect: str):
     return getter(dialect) if callable(getter) else None
 
 
+def validate_adapter_sql_analysis(sql: str, dialect: str) -> None:
+    """Reject SQL outside an adapter's verified analysis contract before execution."""
+    analyzer = _registry_hook("get_sql_analyzer", dialect)
+    if analyzer is not None:
+        analysis = analyzer(sql)
+        if analysis.status != "complete":
+            raise ValueError(f"SQL analysis {analysis.status}: {analysis.diagnostic}")
+
+
 def parse_read_dialect(dialect: str = "snowflake") -> str:
     """Map SQL dialect to the appropriate read dialect for sqlglot parsing."""
     db = (dialect or "").strip().lower()

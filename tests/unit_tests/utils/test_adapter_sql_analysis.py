@@ -146,6 +146,22 @@ def test_writable_tool_rejects_incomplete_analysis_before_any_dispatch(
     native_connector.execute_insert.assert_not_called()
 
 
+def test_direct_ddl_returns_failure_for_unresolved_scope(native_connector, monkeypatch):
+    monkeypatch.setattr(
+        connector_registry,
+        "get_sql_analyzer",
+        lambda dialect: lambda sql: Analysis("complete", SQLType.DDL, ('"t"',)),
+    )
+    native_connector.dialect = "sqlite"
+    tool = DBFuncTool(native_connector, read_only=False, scoped_tables=["PRIVATE.t"])
+
+    result = tool.execute_ddl("CREATE TABLE t (id INTEGER)")
+
+    assert result.success == 0
+    assert result.error == "Unresolved database in SQL scope analysis; qualify the table or configure context"
+    native_connector.execute_ddl.assert_not_called()
+
+
 @pytest.mark.parametrize("database", ["", "S"])
 def test_scoped_native_read_requires_resolved_namespace(native_connector, monkeypatch, database):
     # SQLite supplies a real identifier parser without any optional vendor SDK.
@@ -191,12 +207,18 @@ def test_unresolved_namespaces_consider_only_matching_scope_patterns(
         native_connector.execute_query.assert_not_called()
 
 
-def test_limited_analyzer_cannot_execute_policy_generated_sql(native_connector):
+@pytest.mark.parametrize(
+    "require_unmodified,error",
+    [(False, "rewriting is unsupported"), (True, "rewrote the reference SQL")],
+)
+def test_limited_analyzer_cannot_execute_policy_generated_sql(native_connector, require_unmodified, error):
     decision = SimpleNamespace(allowed=True, sql="SELECT 1 LIMIT 1", applied_policies=[])
     with patch("datus.tools.policy_runtime.PolicyRuntime.before_sql_read", return_value=decision):
-        result = DBFuncTool(native_connector, read_only=True).execute_read_enforced("SELECT 1", native_connector)
+        result = DBFuncTool(native_connector, read_only=True).execute_read_enforced(
+            "SELECT 1", native_connector, require_unmodified=require_unmodified
+        )
     assert not result.success
-    assert "rewriting is unsupported" in result.error
+    assert error in result.error
     native_connector.execute_query.assert_not_called()
 
 
