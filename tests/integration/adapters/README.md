@@ -36,6 +36,18 @@ cd /path/to/datus-db-adapters/datus-postgresql
 docker compose down -v
 ```
 
+### ClickHouse HTTPS
+
+Install `datus-clickhouse>=0.1.4` and configure the same HTTPS endpoint and CA used by the adapter TLS tests:
+
+```bash
+ADAPTERS_CH=1 CLICKHOUSE_HOST=localhost CLICKHOUSE_PORT=18443 \
+  CLICKHOUSE_PROTOCOL=https CLICKHOUSE_VERIFY=true CLICKHOUSE_CA_CERT=/absolute/path/ca.crt \
+  uv run pytest tests/integration/adapters/test_clickhouse.py -v
+```
+
+The suite verifies `DBFuncTool` and YAML → `DbConfig` → `DBManager` → adapter registration, including metadata and read-only checks. Supply `CLICKHOUSE_USER/PASSWORD/DATABASE` for the selected test service. Once opted in, connection failures fail the suite.
+
 ### Apache Doris
 
 ```bash
@@ -59,7 +71,7 @@ docker compose down -v
 |---|---|---|---|
 | postgresql | `ADAPTERS_PG=1` | `POSTGRESQL_HOST/PORT/USER/PASSWORD/DATABASE` | `localhost:5432 test_user/test_password/test` |
 | mysql | `ADAPTERS_MYSQL=1` | `MYSQL_HOST/PORT/USER/PASSWORD/DATABASE` | `localhost:3306 test_user/test_password/test` |
-| clickhouse | `ADAPTERS_CH=1` | `CLICKHOUSE_HOST/PORT/USER/PASSWORD/DATABASE` | `localhost:8123 default_user/default_test/default_test` |
+| clickhouse | `ADAPTERS_CH=1` | `CLICKHOUSE_HOST/PORT/USER/PASSWORD/DATABASE`, optional `CLICKHOUSE_PROTOCOL/VERIFY/CA_CERT` | `localhost:8123 default_user/default_test/default_test` |
 | starrocks | `ADAPTERS_SR=1` | `STARROCKS_HOST/PORT/USER/PASSWORD/CATALOG/DATABASE` | `127.0.0.1:9030 root//default_catalog/test` |
 | doris | `ADAPTERS_DORIS=1` | `DORIS_HOST/PORT/USER/PASSWORD/CATALOG/DATABASE` | `127.0.0.1:9030 root//internal/test` |
 | tidb | `ADAPTERS_TIDB=1` | `TIDB_HOST/PORT/USER/PASSWORD/DATABASE` | `127.0.0.1:4000 root//test` |
