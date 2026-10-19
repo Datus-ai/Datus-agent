@@ -3907,10 +3907,38 @@
   <a href="#_4" class="md-nav__link">
     <span class="md-ellipsis">
       
-        认证与会话
+        认证
       
     </span>
   </a>
+  
+    <nav class="md-nav" aria-label="认证">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#noneldap-custom" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        NONE、LDAP 和 CUSTOM
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#kerberos" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Kerberos
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
   
 </li>
       
@@ -3918,7 +3946,18 @@
   <a href="#_5" class="md-nav__link">
     <span class="md-ellipsis">
       
-        验证连接
+        会话配置
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#inceptor" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        星环 Inceptor
       
     </span>
   </a>
@@ -3929,7 +3968,7 @@
   <a href="#_6" class="md-nav__link">
     <span class="md-ellipsis">
       
-        故障排查
+        验证连接
       
     </span>
   </a>
@@ -3938,6 +3977,17 @@
       
         <li class="md-nav__item">
   <a href="#_7" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        故障排查
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_8" class="md-nav__link">
     <span class="md-ellipsis">
       
         参考
@@ -4960,10 +5010,38 @@
   <a href="#_4" class="md-nav__link">
     <span class="md-ellipsis">
       
-        认证与会话
+        认证
       
     </span>
   </a>
+  
+    <nav class="md-nav" aria-label="认证">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#noneldap-custom" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        NONE、LDAP 和 CUSTOM
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#kerberos" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Kerberos
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
   
 </li>
       
@@ -4971,7 +5049,18 @@
   <a href="#_5" class="md-nav__link">
     <span class="md-ellipsis">
       
-        验证连接
+        会话配置
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#inceptor" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        星环 Inceptor
       
     </span>
   </a>
@@ -4982,7 +5071,7 @@
   <a href="#_6" class="md-nav__link">
     <span class="md-ellipsis">
       
-        故障排查
+        验证连接
       
     </span>
   </a>
@@ -4991,6 +5080,17 @@
       
         <li class="md-nav__item">
   <a href="#_7" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        故障排查
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_8" class="md-nav__link">
     <span class="md-ellipsis">
       
         参考
@@ -5026,27 +5126,33 @@
 
 
 <h1 id="hive-datasource">Hive datasource<a class="headerlink" href="#hive-datasource" title="Permanent link">&para;</a></h1>
-<p>Hive adapter 通过 PyHive/Thrift 连接 HiveServer2。Hive database 是表的命名空间，可通过 <code>configuration</code> 传递会话属性。</p>
+<p>Hive adapter 通过 PyHive/Thrift 连接 HiveServer2 的二进制端点，也可连接兼容此接口的星环 Inceptor。Hive database 是表的命名空间，可通过 <code>configuration</code> 传递会话属性。</p>
+<div class="admonition note">
+<p class="admonition-title">Adapter 版本要求</p>
+<p>下文的 Kerberos 配置和 Inceptor 元数据改进需要包含对应改动的 <code>datus-hive</code> 构建。已发布的 <code>datus-hive</code> 0.1.3 不包含 <code>kerberos_service_name</code>、<code>kerberos</code> 可选依赖组和元数据修复。使用这些功能前需安装包含对应改动的构建；仅安装 GSSAPI 依赖无法补上缺少的 Adapter 配置。</p>
+</div>
+<p>下方命令固定到包含 <a href="https://github.com/Datus-ai/datus-db-adapters/pull/158">Adapter PR #158</a> 改动的源码提交，需要 Git 和 Python 3.12 或更高版本。两种安装方式使用同一提交。源码构建目前仍使用 0.1.3 版本号，因此使用 <code>--force-reinstall</code> 替换已经安装的 PyPI 0.1.3 包。</p>
 <h2 id="_1">安装<a class="headerlink" href="#_1" title="Permanent link">&para;</a></h2>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>pip<span class="w"> </span>install<span class="w"> </span>datus-hive
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>pip<span class="w"> </span>install<span class="w"> </span>--force-reinstall<span class="w"> </span><span class="s1">'datus-hive @ git+https://github.com/Datus-ai/datus-db-adapters.git@5dbac1871985f349b917c6876ca6487b709a65b0#subdirectory=datus-hive'</span>
 </span></code></pre></div>
+<p>将 Adapter 安装到运行 <code>datus</code> 的同一 Python 环境。使用 Kerberos 时，先选择支持 Kerberos 的 Adapter 构建，再安装可选的 GSSAPI 依赖：</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>pip<span class="w"> </span>install<span class="w"> </span>--force-reinstall<span class="w"> </span><span class="s1">'datus-hive[kerberos] @ git+https://github.com/Datus-ai/datus-db-adapters.git@5dbac1871985f349b917c6876ca6487b709a65b0#subdirectory=datus-hive'</span>
+</span></code></pre></div>
+<p>Kerberos 扩展构建需要系统 Kerberos 库、开发头文件和 C 编译器。例如 Debian/Ubuntu 使用 <code>libkrb5-dev</code>；还需安装 <code>kinit</code>、<code>klist</code> 等 Kerberos 客户端工具。</p>
 <h2 id="_2">连接配置<a class="headerlink" href="#_2" title="Permanent link">&para;</a></h2>
-<div class="language-yaml highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="nt">agent</span><span class="p">:</span>
-</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">  </span><span class="nt">services</span><span class="p">:</span>
-</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="w">    </span><span class="nt">datasources</span><span class="p">:</span>
-</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="w">      </span><span class="nt">hive_warehouse</span><span class="p">:</span>
-</span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="w">        </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">hive</span>
-</span><span id="__span-1-6"><a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="w">        </span><span class="nt">host</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${HIVE_HOST:-127.0.0.1}</span>
-</span><span id="__span-1-7"><a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a><span class="w">        </span><span class="nt">port</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">10000</span>
-</span><span id="__span-1-8"><a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a><span class="w">        </span><span class="nt">username</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${HIVE_USER}</span>
-</span><span id="__span-1-9"><a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a><span class="w">        </span><span class="nt">password</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${HIVE_PASSWORD}</span>
-</span><span id="__span-1-10"><a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a><span class="w">        </span><span class="nt">database</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">default</span>
-</span><span id="__span-1-11"><a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a><span class="w">        </span><span class="nt">auth</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">LDAP</span>
-</span><span id="__span-1-12"><a id="__codelineno-1-12" name="__codelineno-1-12" href="#__codelineno-1-12"></a><span class="w">        </span><span class="nt">configuration</span><span class="p">:</span>
-</span><span id="__span-1-13"><a id="__codelineno-1-13" name="__codelineno-1-13" href="#__codelineno-1-13"></a><span class="w">          </span><span class="nt">hive.execution.engine</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">tez</span>
-</span><span id="__span-1-14"><a id="__codelineno-1-14" name="__codelineno-1-14" href="#__codelineno-1-14"></a><span class="w">          </span><span class="nt">hive.vectorized.execution.enabled</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
-</span><span id="__span-1-15"><a id="__codelineno-1-15" name="__codelineno-1-15" href="#__codelineno-1-15"></a><span class="w">        </span><span class="nt">timeout_seconds</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">30</span>
+<div class="language-yaml highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="nt">agent</span><span class="p">:</span>
+</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="w">  </span><span class="nt">services</span><span class="p">:</span>
+</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="w">    </span><span class="nt">datasources</span><span class="p">:</span>
+</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="w">      </span><span class="nt">hive_warehouse</span><span class="p">:</span>
+</span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="w">        </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">hive</span>
+</span><span id="__span-2-6"><a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="w">        </span><span class="nt">host</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${HIVE_HOST:-127.0.0.1}</span>
+</span><span id="__span-2-7"><a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a><span class="w">        </span><span class="nt">port</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">10000</span>
+</span><span id="__span-2-8"><a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a><span class="w">        </span><span class="nt">username</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">hive</span>
+</span><span id="__span-2-9"><a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a><span class="w">        </span><span class="nt">database</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">default</span>
+</span><span id="__span-2-10"><a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a><span class="w">        </span><span class="nt">auth</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">NONE</span>
+</span><span id="__span-2-11"><a id="__codelineno-2-11" name="__codelineno-2-11" href="#__codelineno-2-11"></a><span class="w">        </span><span class="nt">timeout_seconds</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">30</span>
 </span></code></pre></div>
+<p>此配置用于服务端采用 <code>NONE</code> 认证的场景。连接启用认证的服务端时，按下文选择匹配的认证模式。</p>
 <h2 id="_3">参数<a class="headerlink" href="#_3" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
@@ -5078,14 +5184,14 @@
 <td>string</td>
 <td style="text-align: right;">是</td>
 <td>—</td>
-<td>Hive 用户。</td>
+<td>Hive 用户。Kerberos 的认证身份来自票据缓存。</td>
 </tr>
 <tr>
 <td><code>password</code></td>
 <td>string</td>
 <td style="text-align: right;">否</td>
 <td>空字符串</td>
-<td>密码认证使用。</td>
+<td><code>LDAP</code> 或 <code>CUSTOM</code> 的密码；<code>NONE</code> 和 <code>KERBEROS</code> 不填写。</td>
 </tr>
 <tr>
 <td><code>database</code></td>
@@ -5098,8 +5204,15 @@
 <td><code>auth</code></td>
 <td>string</td>
 <td style="text-align: right;">否</td>
-<td>驱动默认值</td>
-<td>支持 <code>NONE</code>、<code>LDAP</code>、<code>CUSTOM</code>、<code>KERBEROS</code> 等模式。</td>
+<td><code>None</code> → PyHive <code>NONE</code></td>
+<td>显式选择 <code>NONE</code>、<code>LDAP</code>、<code>CUSTOM</code> 或 <code>KERBEROS</code>，不会自动探测认证方式。</td>
+</tr>
+<tr>
+<td><code>kerberos_service_name</code></td>
+<td>string</td>
+<td style="text-align: right;"><code>KERBEROS</code> 时必填</td>
+<td><code>None</code></td>
+<td>服务端 principal 的 service 部分，通常为 <code>hive</code>，不能为空；其他模式不填写。</td>
 </tr>
 <tr>
 <td><code>configuration</code></td>
@@ -5117,14 +5230,83 @@
 </tr>
 </tbody>
 </table>
-<h2 id="_4">认证与会话<a class="headerlink" href="#_4" title="Permanent link">&para;</a></h2>
-<p>HiveServer2 部署要求密码时使用 <code>LDAP</code> 或 <code>CUSTOM</code>。Kerberos 仍需要外围 Kerberos client/ticket 配置，这些设置不通过额外 datasource 字段表达。</p>
+<h2 id="_4">认证<a class="headerlink" href="#_4" title="Permanent link">&para;</a></h2>
+<h3 id="noneldap-custom">NONE、LDAP 和 CUSTOM<a class="headerlink" href="#noneldap-custom" title="Permanent link">&para;</a></h3>
+<p>不填写 <code>auth</code> 时使用 PyHive 的 <code>NONE</code> 模式，该模式仍使用 SASL PLAIN，不会自动选择 LDAP 或 Kerberos。提供密码时必须显式填写 <code>LDAP</code> 或 <code>CUSTOM</code>。</p>
+<div class="language-yaml highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="nt">agent</span><span class="p">:</span>
+</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="w">  </span><span class="nt">services</span><span class="p">:</span>
+</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="w">    </span><span class="nt">datasources</span><span class="p">:</span>
+</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="w">      </span><span class="nt">hive_ldap</span><span class="p">:</span>
+</span><span id="__span-3-5"><a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="w">        </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">hive</span>
+</span><span id="__span-3-6"><a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="w">        </span><span class="nt">host</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${HIVE_HOST}</span>
+</span><span id="__span-3-7"><a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a><span class="w">        </span><span class="nt">port</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">10000</span>
+</span><span id="__span-3-8"><a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a><span class="w">        </span><span class="nt">database</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">default</span>
+</span><span id="__span-3-9"><a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a><span class="w">        </span><span class="nt">username</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${HIVE_USER}</span>
+</span><span id="__span-3-10"><a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a><span class="w">        </span><span class="nt">password</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${HIVE_PASSWORD}</span>
+</span><span id="__span-3-11"><a id="__codelineno-3-11" name="__codelineno-3-11" href="#__codelineno-3-11"></a><span class="w">        </span><span class="nt">auth</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">LDAP</span>
+</span><span id="__span-3-12"><a id="__codelineno-3-12" name="__codelineno-3-12" href="#__codelineno-3-12"></a><span class="w">      </span><span class="nt">hive_custom</span><span class="p">:</span>
+</span><span id="__span-3-13"><a id="__codelineno-3-13" name="__codelineno-3-13" href="#__codelineno-3-13"></a><span class="w">        </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">hive</span>
+</span><span id="__span-3-14"><a id="__codelineno-3-14" name="__codelineno-3-14" href="#__codelineno-3-14"></a><span class="w">        </span><span class="nt">host</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${HIVE_HOST}</span>
+</span><span id="__span-3-15"><a id="__codelineno-3-15" name="__codelineno-3-15" href="#__codelineno-3-15"></a><span class="w">        </span><span class="nt">port</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">10000</span>
+</span><span id="__span-3-16"><a id="__codelineno-3-16" name="__codelineno-3-16" href="#__codelineno-3-16"></a><span class="w">        </span><span class="nt">database</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">default</span>
+</span><span id="__span-3-17"><a id="__codelineno-3-17" name="__codelineno-3-17" href="#__codelineno-3-17"></a><span class="w">        </span><span class="nt">username</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${HIVE_USER}</span>
+</span><span id="__span-3-18"><a id="__codelineno-3-18" name="__codelineno-3-18" href="#__codelineno-3-18"></a><span class="w">        </span><span class="nt">password</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${HIVE_PASSWORD}</span>
+</span><span id="__span-3-19"><a id="__codelineno-3-19" name="__codelineno-3-19" href="#__codelineno-3-19"></a><span class="w">        </span><span class="nt">auth</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">CUSTOM</span>
+</span></code></pre></div>
+<p>两种模式都发送用户名和密码。<code>LDAP</code> 由服务端连接配置的目录进行验证，<code>CUSTOM</code> 由服务端配置的自定义认证 provider 验证。目录或 provider 需要由服务端管理员配置；数据源配置负责选择客户端认证模式，不会开启服务端认证。</p>
+<h3 id="kerberos">Kerberos<a class="headerlink" href="#kerberos" title="Permanent link">&para;</a></h3>
+<p>启动 Datus 前先获取票据。例如，使用 keytab 和供 Datus 进程单独使用的票据缓存：</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="nb">export</span><span class="w"> </span><span class="nv">KRB5_CONFIG</span><span class="o">=</span>/path/to/krb5.conf
+</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="nb">export</span><span class="w"> </span><span class="nv">KRB5CCNAME</span><span class="o">=</span>FILE:/path/to/datus.ccache
+</span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>kinit<span class="w"> </span>-kt<span class="w"> </span>/path/to/alice.keytab<span class="w"> </span>alice@EXAMPLE.COM
+</span><span id="__span-4-4"><a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a>klist
+</span></code></pre></div>
+<p>在同一环境中启动 Datus，并使用以下配置：</p>
+<div class="language-yaml highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="nt">agent</span><span class="p">:</span>
+</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="w">  </span><span class="nt">services</span><span class="p">:</span>
+</span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="w">    </span><span class="nt">datasources</span><span class="p">:</span>
+</span><span id="__span-5-4"><a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="w">      </span><span class="nt">hive_kerberos</span><span class="p">:</span>
+</span><span id="__span-5-5"><a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="w">        </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">hive</span>
+</span><span id="__span-5-6"><a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a><span class="w">        </span><span class="nt">host</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">hs2.example.com</span>
+</span><span id="__span-5-7"><a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a><span class="w">        </span><span class="nt">port</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">10000</span>
+</span><span id="__span-5-8"><a id="__codelineno-5-8" name="__codelineno-5-8" href="#__codelineno-5-8"></a><span class="w">        </span><span class="nt">database</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">default</span>
+</span><span id="__span-5-9"><a id="__codelineno-5-9" name="__codelineno-5-9" href="#__codelineno-5-9"></a><span class="w">        </span><span class="nt">username</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">alice</span>
+</span><span id="__span-5-10"><a id="__codelineno-5-10" name="__codelineno-5-10" href="#__codelineno-5-10"></a><span class="w">        </span><span class="nt">auth</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">KERBEROS</span>
+</span><span id="__span-5-11"><a id="__codelineno-5-11" name="__codelineno-5-11" href="#__codelineno-5-11"></a><span class="w">        </span><span class="nt">kerberos_service_name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">hive</span>
+</span></code></pre></div>
+<p>此示例对应服务端 principal <code>hive/hs2.example.com@EXAMPLE.COM</code>。<code>kerberos_service_name</code> 填写其中的 service 部分 <code>hive</code>。连接地址应与服务端 principal 的主机名匹配，并确保 DNS、realm 配置、KDC 连通性和时钟同步正常。</p>
+<p>PyHive 使用 SASL GSSAPI 和当前票据缓存完成认证。配置仍需提供 <code>username</code>，但修改该字段不会改变票据对应的认证身份。不要填写 <code>password</code>，Adapter 会拒绝 Kerberos 密码配置。票据获取和续期由应用或部署环境负责；Adapter 不会执行 <code>kinit</code>、续期过期票据或修改进程级 Kerberos 配置。创建新连接时需要有效凭据。</p>
+<h2 id="_5">会话配置<a class="headerlink" href="#_5" title="Permanent link">&para;</a></h2>
 <p><code>configuration</code> 会作为 Hive session configuration 发送。YAML boolean 转为 <code>true</code>/<code>false</code> 字符串，其他 scalar 会字符串化，<code>null</code> 会变成空字符串。</p>
-<h2 id="_5">验证连接<a class="headerlink" href="#_5" title="Permanent link">&para;</a></h2>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>datus<span class="w"> </span>--config<span class="w"> </span>conf/agent.yml<span class="w"> </span>--datasource<span class="w"> </span>hive_warehouse
+<p>只添加目标服务端支持的引擎参数。例如，使用 Tez 的 Hive 部署可能接受以下配置：</p>
+<div class="language-yaml highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="nt">configuration</span><span class="p">:</span>
+</span><span id="__span-6-2"><a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="w">  </span><span class="nt">hive.execution.engine</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">tez</span>
+</span><span id="__span-6-3"><a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="w">  </span><span class="nt">hive.vectorized.execution.enabled</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
+</span></code></pre></div>
+<h2 id="inceptor">星环 Inceptor<a class="headerlink" href="#inceptor" title="Permanent link">&para;</a></h2>
+<p>使用 <code>type: hive</code> 连接 Inceptor 兼容 HiveServer2 的二进制 Thrift 端点：</p>
+<div class="language-yaml highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="nt">agent</span><span class="p">:</span>
+</span><span id="__span-7-2"><a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="w">  </span><span class="nt">services</span><span class="p">:</span>
+</span><span id="__span-7-3"><a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="w">    </span><span class="nt">datasources</span><span class="p">:</span>
+</span><span id="__span-7-4"><a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a><span class="w">      </span><span class="nt">inceptor_warehouse</span><span class="p">:</span>
+</span><span id="__span-7-5"><a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a><span class="w">        </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">hive</span>
+</span><span id="__span-7-6"><a id="__codelineno-7-6" name="__codelineno-7-6" href="#__codelineno-7-6"></a><span class="w">        </span><span class="nt">host</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${INCEPTOR_HOST}</span>
+</span><span id="__span-7-7"><a id="__codelineno-7-7" name="__codelineno-7-7" href="#__codelineno-7-7"></a><span class="w">        </span><span class="nt">port</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">10000</span>
+</span><span id="__span-7-8"><a id="__codelineno-7-8" name="__codelineno-7-8" href="#__codelineno-7-8"></a><span class="w">        </span><span class="nt">database</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">default</span>
+</span><span id="__span-7-9"><a id="__codelineno-7-9" name="__codelineno-7-9" href="#__codelineno-7-9"></a><span class="w">        </span><span class="nt">username</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${INCEPTOR_USER}</span>
+</span><span id="__span-7-10"><a id="__codelineno-7-10" name="__codelineno-7-10" href="#__codelineno-7-10"></a><span class="w">        </span><span class="nt">password</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${INCEPTOR_PASSWORD}</span>
+</span><span id="__span-7-11"><a id="__codelineno-7-11" name="__codelineno-7-11" href="#__codelineno-7-11"></a><span class="w">        </span><span class="nt">auth</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">LDAP</span>
+</span></code></pre></div>
+<p>将地址、端口和认证方式替换为 Inceptor 管理员提供的值。服务端启用对应模式时，可使用相同的 <code>NONE</code>、<code>LDAP</code>、<code>CUSTOM</code> 或 Kerberos 客户端配置。连接 Inceptor Kerberos 端点时，使用上方 Kerberos 示例。此连接路径无需厂商 JDBC 驱动。</p>
+<p>包含元数据修复的 Adapter 会将普通视图排除在表列表之外，通过视图接口单独获取；列注释按字段名读取，避免 Inceptor 的额外 <code>DESCRIBE</code> 字段导致取值错位。更新后的 Adapter 已在 Apache Hive 4.0.1 和 TDH 社区开发版 2024.5（Inceptor 8.37.3）上验证数据库、表、视图、列及注释、DDL 和采样数据获取。</p>
+<p>表/视图发现要求服务端支持 <code>SHOW VIEWS</code>，并授予元数据读取权限；发现查询失败会向调用方报错。</p>
+<p>Inceptor 验证覆盖 <code>NONE</code>、<code>LDAP</code>、<code>CUSTOM</code> 和客户端到 HiveServer2 的 Kerberos 认证，尚未验证完整 TDH/Guardian 集群的 Kerberos 安全配置或全部企业功能。Adapter 配置未暴露 Guardian Token/CAS 认证、HTTP/HTTPS 传输和 ZooKeeper 服务发现能力。会话引擎参数及 SQL 功能仍取决于目标服务端。</p>
+<h2 id="_6">验证连接<a class="headerlink" href="#_6" title="Permanent link">&para;</a></h2>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>datus<span class="w"> </span>--config<span class="w"> </span>conf/agent.yml<span class="w"> </span>--datasource<span class="w"> </span>hive_warehouse
 </span></code></pre></div>
 <p>运行 <code>/databases</code> 和 <code>/tables</code>，再查询一张小表，验证 HiveServer2 与底层 metastore 访问。</p>
-<h2 id="_6">故障排查<a class="headerlink" href="#_6" title="Permanent link">&para;</a></h2>
+<p>验证启用认证的数据源时，将 <code>hive_warehouse</code> 替换为对应配置名，并检查已知对象的普通视图、列注释、DDL 和采样数据。认证成功与 SQL 权限是两回事，登录用户仍需拥有目标数据库及对象的访问权限。</p>
+<h2 id="_7">故障排查<a class="headerlink" href="#_7" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
 <tr>
@@ -5142,14 +5324,32 @@
 <td>让 <code>auth</code>、用户名/密码与服务端 HiveServer2 认证模式一致。</td>
 </tr>
 <tr>
+<td><code>kerberos_service_name</code> 被拒绝，或安装时提示缺少 <code>kerberos</code> extra</td>
+<td>当前 Adapter 构建尚未包含 Kerberos 改动，需安装同时包含该字段和可选依赖组的构建。</td>
+</tr>
+<tr>
+<td>没有 Kerberos 凭据或票据已过期</td>
+<td>在 Datus 进程的环境中运行 <code>klist</code>，检查 <code>KRB5CCNAME</code>，创建新连接前重新获取或续期票据。</td>
+</tr>
+<tr>
+<td>找不到 Kerberos 服务端 principal</td>
+<td>检查 <code>host</code>、realm/DNS 配置和 <code>kerberos_service_name</code> 中的 service 部分，不要将完整 principal 填入此字段。</td>
+</tr>
+<tr>
+<td>登录成功，但查询或元数据访问被拒绝</td>
+<td>请服务端管理员检查用户的数据库授权和当前角色。</td>
+</tr>
+<tr>
 <td>会话选项不生效</td>
 <td>在 <code>configuration</code> 中使用准确 Hive property key，并确认服务端允许覆盖。</td>
 </tr>
 </tbody>
 </table>
-<h2 id="_7">参考<a class="headerlink" href="#_7" title="Permanent link">&para;</a></h2>
+<h2 id="_8">参考<a class="headerlink" href="#_8" title="Permanent link">&para;</a></h2>
 <ul>
 <li><a href="https://cwiki.apache.org/confluence/display/Hive/HiveServer2+Clients">HiveServer2 clients</a></li>
+<li><a href="https://hive.apache.org/docs/latest/admin/setting-up-hiveserver2/">HiveServer2 认证配置</a></li>
+<li><a href="https://www.transwarp.cn/doc/inceptor/9.5/quick-start--connect-database">星环 Inceptor 连接指南</a></li>
 </ul>
 
 
