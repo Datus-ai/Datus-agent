@@ -1,7 +1,11 @@
+import json
 import os
 import re
 import subprocess
+import sys
 from pathlib import Path
+
+import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 WORKFLOW = REPO_ROOT / ".github" / "workflows" / "run-nightly.yml"
@@ -24,6 +28,57 @@ def test_nightly_preserves_checkout_packages_after_locked_sync():
     assert "uv run --no-sync python ci/verify_nightly_adapter_sources.py" in workflow
     assert "uv pip check" in workflow
     assert "uv run --no-sync playwright install --with-deps chromium" in workflow
+
+
+@pytest.mark.parametrize("force", [None, "1", "0"])
+@pytest.mark.parametrize("verify,ca_cert", [("true", "/runner/private-ca.pem"), ("false", None)])
+def test_nightly_clickhouse_profile_matches_selected_endpoint(force, verify, ca_cert):
+    """Forced compose runs use HTTP; explicit external profiles retain TLS settings."""
+    script = NIGHTLY_SCRIPT.read_text(encoding="utf-8")
+    start = script.index('if [ "${NIGHTLY_FORCE_ADAPTER_ENV:-1}" = "1" ]; then')
+    end = script.index("\nfi\n", start) + len("\nfi\n")
+    profile = {
+        "CLICKHOUSE_HOST": "clickhouse.example.com",
+        "CLICKHOUSE_PORT": "18443",
+        "CLICKHOUSE_USER": "tls_user",
+        "CLICKHOUSE_PASSWORD": "test_password",
+        "CLICKHOUSE_DATABASE": "analytics",
+        "CLICKHOUSE_PROTOCOL": "https",
+        "CLICKHOUSE_VERIFY": verify,
+        "CLICKHOUSE_CA_CERT": ca_cert,
+    }
+    environment = {"PATH": os.defpath, **{key: value for key, value in profile.items() if value is not None}}
+    if force is not None:
+        environment["NIGHTLY_FORCE_ADAPTER_ENV"] = force
+    environment["CLICKHOUSE_HTTP_HOST_PORT"] = "38123"
+    harness = f"""set -eu
+{script[start:end]}
+"$1" - <<'PY'
+import json
+import os
+print(json.dumps({{key: os.environ.get(key) for key in {tuple(profile)!r}}}))
+PY
+"""
+    result = subprocess.run(
+        ["bash", "-c", harness, "nightly-profile-test", sys.executable],
+        check=True,
+        capture_output=True,
+        text=True,
+        env=environment,
+    )
+    expected = profile
+    if force != "0":
+        expected = {
+            "CLICKHOUSE_HOST": "127.0.0.1",
+            "CLICKHOUSE_PORT": "38123",
+            "CLICKHOUSE_USER": "default_user",
+            "CLICKHOUSE_PASSWORD": "default_test",
+            "CLICKHOUSE_DATABASE": "default_test",
+            "CLICKHOUSE_PROTOCOL": None,
+            "CLICKHOUSE_VERIFY": None,
+            "CLICKHOUSE_CA_CERT": None,
+        }
+    assert json.loads(result.stdout) == expected
 
 
 def test_nightly_feishu_notification_drains_response_and_has_timeout():

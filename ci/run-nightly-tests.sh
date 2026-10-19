@@ -897,6 +897,8 @@ if [ "${NIGHTLY_FORCE_ADAPTER_ENV:-1}" = "1" ]; then
   export CLICKHOUSE_USER=default_user
   export CLICKHOUSE_PASSWORD=default_test
   export CLICKHOUSE_DATABASE=default_test
+  # Compose uses HTTP; let the adapter's HTTP defaults apply.
+  unset CLICKHOUSE_PROTOCOL CLICKHOUSE_VERIFY CLICKHOUSE_CA_CERT
 
   export STARROCKS_QUERY_HOST_PORT="${STARROCKS_QUERY_HOST_PORT:-29030}"
   export STARROCKS_HTTP_HOST_PORT="${STARROCKS_HTTP_HOST_PORT:-28030}"
