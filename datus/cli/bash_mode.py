@@ -411,10 +411,11 @@ def run_bash_mode_command(cli: "DatusCLI", command: str) -> BashModeRun:
 def _enforce_policy_if_read(cli: "DatusCLI", sql: str) -> str:
     """Apply active policy runtimes to a manual read statement."""
     from datus.utils.constants import SQLType
-    from datus.utils.sql_utils import parse_sql_type
+    from datus.utils.sql_utils import parse_sql_type, validate_adapter_sql_analysis
 
     connector = getattr(cli, "db_connector", None)
     dialect = (getattr(connector, "dialect", "") or "") if connector is not None else ""
+    validate_adapter_sql_analysis(sql, dialect)
     if parse_sql_type(sql, dialect) not in (SQLType.SELECT, SQLType.METADATA_SHOW, SQLType.EXPLAIN):
         return sql
 
@@ -438,6 +439,14 @@ def _enforce_policy_if_read(cli: "DatusCLI", sql: str) -> str:
         )
     rewritten_sql = sql if enforced.sql is None else enforced.sql
     if rewritten_sql != sql:
+        from datus.tools.db_tools import connector_registry
+
+        analyzer_getter = getattr(connector_registry, "get_sql_analyzer", None)
+        if callable(analyzer_getter) and analyzer_getter(dialect) is not None:
+            raise DatusException(
+                ErrorCode.TOOL_INVALID_INPUT,
+                message="SQL policy rewriting is unsupported for this adapter's limited SQL analysis path.",
+            )
         from datus.utils.sql_utils import (
             READ_ONLY_MULTI_STATEMENT,
             READ_ONLY_NON_READ,

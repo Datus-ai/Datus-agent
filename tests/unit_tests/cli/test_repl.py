@@ -786,6 +786,23 @@ class TestSmartDisplayTable:
 
 
 class TestRunManualSql:
+    @pytest.mark.parametrize("status", ["unsupported", "incomplete", "error"])
+    def test_native_analysis_failure_returns_error_before_connector_execution(self, cli, monkeypatch, status):
+        from datus.tools.db_tools import connector_registry
+        from datus.utils.constants import SQLType
+
+        analysis = SimpleNamespace(status=status, sql_type=SQLType.SELECT, diagnostic="outside verified subset")
+        monkeypatch.setattr(connector_registry, "get_sql_analyzer", lambda dialect: lambda sql: analysis, raising=False)
+        cli.db_connector.dialect = "native-test"
+        cli.agent_config.policy_context = {"member": "test-member"}
+
+        payload = cli._run_manual_sql("SELECT TOP 1 * FROM private_orders")
+
+        assert payload["success"] is False
+        assert payload["error"] == f"SQL analysis {status}: outside verified subset"
+        cli.db_connector.execute.assert_not_called()
+        assert cli.last_result is None
+
     def test_no_db_connector_returns_none_and_prints_error(self, cli):
         cli.db_connector = None
         payload = cli._run_manual_sql("SELECT 1")
@@ -999,9 +1016,19 @@ class TestExecuteSqlMode:
         payload = decode_exec_message(cli.chat_commands.execute_chat_command.call_args.args[0])
         assert payload["command"] == rewritten
 
-    def test_successful_read_applies_result_policy_before_payload(self, cli):
+    @pytest.mark.parametrize("native_analysis", [False, True])
+    def test_successful_read_applies_result_policy_before_payload(self, cli, monkeypatch, native_analysis):
         import pyarrow as pa
 
+        if native_analysis:
+            from datus.tools.db_tools import connector_registry
+            from datus.utils.constants import SQLType
+
+            analysis = SimpleNamespace(status="complete", sql_type=SQLType.SELECT)
+            monkeypatch.setattr(
+                connector_registry, "get_sql_analyzer", lambda dialect: lambda sql: analysis, raising=False
+            )
+            cli.db_connector.dialect = "native-test"
         original = pa.table({"email": ["alice@example.com"]})
         masked = pa.table({"email": ["a***@example.com"]})
         mock_result = MagicMock(success=True, sql_return=original, row_count=1)
