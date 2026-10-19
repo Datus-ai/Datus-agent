@@ -5026,10 +5026,11 @@
 
 
 <h1 id="clickhouse-datasource">ClickHouse datasource<a class="headerlink" href="#clickhouse-datasource" title="Permanent link">&para;</a></h1>
-<p>ClickHouse adapter 通过 ClickHouse HTTP 接口连接。ClickHouse database 直接作为命名空间，不再有独立 schema 层。</p>
+<p>ClickHouse adapter 通过 ClickHouse HTTP(S) 接口连接。ClickHouse database 直接作为命名空间，不再有独立 schema 层。</p>
 <h2 id="_1">安装<a class="headerlink" href="#_1" title="Permanent link">&para;</a></h2>
 <div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>pip<span class="w"> </span>install<span class="w"> </span>datus-clickhouse
 </span></code></pre></div>
+<p>该命令安装已发布的 adapter，适用于下方 HTTP 配置。本页 HTTPS 字段面向即将发布的 <code>0.1.4</code>，所需版本见后文说明。</p>
 <h2 id="_2">连接配置<a class="headerlink" href="#_2" title="Permanent link">&para;</a></h2>
 <div class="language-yaml highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="nt">agent</span><span class="p">:</span>
 </span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">  </span><span class="nt">services</span><span class="p">:</span>
@@ -5066,8 +5067,8 @@
 <td><code>port</code></td>
 <td>integer</td>
 <td style="text-align: right;">否</td>
-<td><code>8123</code></td>
-<td>HTTP 接口端口。</td>
+<td><code>8123</code> / <code>8443</code></td>
+<td>省略时按 <code>protocol</code> 选择；显式自定义端口保持不变。</td>
 </tr>
 <tr>
 <td><code>username</code></td>
@@ -5095,15 +5096,52 @@
 <td>integer</td>
 <td style="text-align: right;">否</td>
 <td><code>30</code></td>
-<td>连接超时秒数。</td>
+<td>SQLAlchemy 连接池等待时间，不是查询执行截止时间。</td>
+</tr>
+<tr>
+<td><code>protocol</code></td>
+<td>string</td>
+<td style="text-align: right;">否</td>
+<td><code>http</code></td>
+<td><code>http</code> 或 <code>https</code>；端口号本身不会切换协议。</td>
+</tr>
+<tr>
+<td><code>verify</code></td>
+<td>boolean</td>
+<td style="text-align: right;">否</td>
+<td><code>true</code></td>
+<td>验证 HTTPS 证书链和主机名。</td>
+</tr>
+<tr>
+<td><code>ca_cert</code></td>
+<td>string</td>
+<td style="text-align: right;">否</td>
+<td>—</td>
+<td>验证 HTTPS 使用的 PEM CA bundle 文件路径。</td>
 </tr>
 </tbody>
 </table>
 <h2 id="_4">协议与命名空间<a class="headerlink" href="#_4" title="Permanent link">&para;</a></h2>
 <p>应连接 HTTP endpoint（默认 <code>8123</code>），不要使用 native TCP 端口（默认 <code>9000</code>）。对象使用 <code>database.table</code>，不要添加 <code>schema</code>。</p>
-<p>当前 adapter profile 没有 TLS/HTTPS 开关。不要通过不可信的明文网络传输凭证；应使用外部支持 HTTPS 的代理或加密隧道，或将连接限制在隔离的可信网络内。</p>
+<p>TLS 需要 <code>datus-clickhouse&gt;=0.1.4</code> 及其共享依赖（<code>datus-sqlalchemy&gt;=0.1.10</code>、<code>datus-db-core&gt;=0.1.8</code>）。这些版本尚未在 PyPI 发布；请在发布后使用下方 HTTPS 配置。旧配置继续使用 HTTP。</p>
+<div class="language-yaml highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="nt">agent</span><span class="p">:</span>
+</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="w">  </span><span class="nt">services</span><span class="p">:</span>
+</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="w">    </span><span class="nt">datasources</span><span class="p">:</span>
+</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="w">      </span><span class="nt">clickhouse_prod</span><span class="p">:</span>
+</span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="w">        </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">clickhouse</span>
+</span><span id="__span-2-6"><a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="w">        </span><span class="nt">host</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">clickhouse.example.com</span>
+</span><span id="__span-2-7"><a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a><span class="w">        </span><span class="nt">protocol</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">https</span>
+</span><span id="__span-2-8"><a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a><span class="w">        </span><span class="nt">port</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">8443</span>
+</span><span id="__span-2-9"><a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a><span class="w">        </span><span class="nt">username</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${CLICKHOUSE_USER}</span>
+</span><span id="__span-2-10"><a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a><span class="w">        </span><span class="nt">password</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${CLICKHOUSE_PASSWORD}</span>
+</span><span id="__span-2-11"><a id="__codelineno-2-11" name="__codelineno-2-11" href="#__codelineno-2-11"></a><span class="w">        </span><span class="nt">database</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">analytics</span>
+</span><span id="__span-2-12"><a id="__codelineno-2-12" name="__codelineno-2-12" href="#__codelineno-2-12"></a><span class="w">        </span><span class="nt">verify</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
+</span><span id="__span-2-13"><a id="__codelineno-2-13" name="__codelineno-2-13" href="#__codelineno-2-13"></a><span class="w">        </span><span class="nt">ca_cert</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">/absolute/path/clickhouse-ca.pem</span>
+</span></code></pre></div>
+<p>省略 <code>ca_cert</code> 时使用 Requests 的默认信任配置。自建 CA 应提供可读的 PEM bundle 文件；支持展开 <code>~</code>，相对路径以进程工作目录为基准。上述字段不支持内联 PEM 或客户端证书认证。</p>
+<p>HTTPS 默认校验证书链和主机名。<code>ca_cert</code> 必须与 HTTPS、开启验证一起使用；冲突配置和无效文件在配置校验时失败。错误 CA／主机名会导致连接失败，不会回退重试 HTTP。<code>verify: false</code> 仅用于显式关闭验证进行开发诊断。应使用服务器的 HTTPS 端点（通常为 8443），不要误用 native TLS 端口 9440。</p>
 <h2 id="_5">验证连接<a class="headerlink" href="#_5" title="Permanent link">&para;</a></h2>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>datus<span class="w"> </span>--config<span class="w"> </span>conf/agent.yml<span class="w"> </span>--datasource<span class="w"> </span>clickhouse_prod
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>datus<span class="w"> </span>--config<span class="w"> </span>conf/agent.yml<span class="w"> </span>--datasource<span class="w"> </span>clickhouse_prod
 </span></code></pre></div>
 <p>运行 <code>/databases</code>、<code>/tables</code>，并执行一个小型 <code>SELECT 1</code> 查询。</p>
 <h2 id="_6">故障排查<a class="headerlink" href="#_6" title="Permanent link">&para;</a></h2>
@@ -5122,6 +5160,14 @@
 <tr>
 <td>未知字段 <code>schema</code></td>
 <td>ClickHouse database 就是命名空间，移除 <code>schema</code>。</td>
+</tr>
+<tr>
+<td>证书校验失败</td>
+<td>检查 CA bundle，并使用证书 SAN 中列出的主机名。</td>
+</tr>
+<tr>
+<td>HTTPS 连接明文 HTTP 端口失败</td>
+<td>同时检查 <code>protocol</code> 与 HTTP(S) endpoint 端口。</td>
 </tr>
 <tr>
 <td>认证失败</td>
