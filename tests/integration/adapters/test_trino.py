@@ -143,7 +143,7 @@ def test_yaml_profile_queries_through_dbmanager(trino_config, tmp_path):
         assert result.success == 1, result.error
         assert result.result["original_rows"] == 1
         assert "5" in result.result["compressed_data"]
-        metadata = tool.describe_table("region")
+        metadata = tool.describe_table('"tpch"."tiny"."region"')
         assert metadata.success == 1, metadata.error
         assert [column["name"] for column in metadata.result["columns"]] == ["regionkey", "name", "comment"]
     finally:

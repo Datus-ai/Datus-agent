@@ -1,8 +1,10 @@
 import json
 import os
 import re
+import signal
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -363,16 +365,14 @@ printf 'readiness_status=%s test_exit_code=%s\n' "$readiness_status" "$test_exit
 @pytest.mark.parametrize("failure", [False, True])
 def test_trino_readiness_uses_adapter_and_propagates_failure(tmp_path, failure):
     source = _bash_function_source("wait_for_trino_client_readiness")
+    uv = tmp_path / "uv"
+    uv.write_text(f"#!/bin/sh\nprintf 'uv_args=%s\\n' \"$*\"\nexit {23 if failure else 0}\n")
+    uv.chmod(0o755)
     harness = f"""
 set -u
 set -o pipefail
 test_exit_code=0
 log() {{ :; }}
-uv() {{
-  echo "uv_args=$*"
-  cat
-  return {23 if failure else 0}
-}}
 sleep() {{ SECONDS=1000; }}
 {source}
 wait_for_trino_client_readiness 2
@@ -385,7 +385,7 @@ printf 'status=%s test_exit_code=%s\n' "$status" "$test_exit_code"
         check=True,
         capture_output=True,
         text=True,
-        env={"PATH": os.defpath, "LOG_FILE": str(log_file), "RUNNER_TEMP": str(tmp_path)},
+        env={"PATH": f"{tmp_path}{os.pathsep}{os.defpath}", "LOG_FILE": str(log_file), "RUNNER_TEMP": str(tmp_path)},
     )
     expected = 1 if failure else 0
     assert f"status={expected} test_exit_code={expected}" in result.stdout
@@ -395,3 +395,74 @@ printf 'status=%s test_exit_code=%s\n' "$status" "$test_exit_code"
     source = _bash_function_source("wait_for_compose_client_readiness")
     trino_case = source.split('"Trino Adapter Tests")', 1)[1].split(";;", 1)[0]
     assert "wait_for_trino_client_readiness 300" in trino_case
+
+
+def test_trino_readiness_deadline_stops_stalled_probe_and_child(tmp_path):
+    """A stalled driver cannot outlive the deadline or leave its child running."""
+    uv = tmp_path / "uv"
+    pids = tmp_path / "probe-pids.json"
+    uv.write_text(
+        f"#!{sys.executable}\n"
+        + """
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+import time
+child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+Path(os.environ["TRINO_PROBE_PIDS"]).write_text(json.dumps([os.getpid(), child.pid]))
+time.sleep(30)
+"""
+    )
+    uv.chmod(0o755)
+    source = _bash_function_source("wait_for_trino_client_readiness")
+    harness = f"""
+set -u
+set -o pipefail
+test_exit_code=0
+log() {{ :; }}
+{source}
+wait_for_trino_client_readiness 1
+status=$?
+printf 'status=%s test_exit_code=%s\n' "$status" "$test_exit_code"
+"""
+    started = time.monotonic()
+    process = subprocess.Popen(
+        ["bash", "-c", harness],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        start_new_session=True,
+        env={
+            "PATH": f"{tmp_path}{os.pathsep}{os.defpath}",
+            "LOG_FILE": str(tmp_path / "nightly.log"),
+            "RUNNER_TEMP": str(tmp_path),
+            "TRINO_PROBE_PIDS": str(pids),
+        },
+    )
+    owned_pids = []
+    try:
+        stdout, stderr = process.communicate(timeout=8)
+        assert process.returncode == 0, stderr
+        assert "status=1 test_exit_code=1" in stdout
+        assert "exceeded the remaining deadline" in stdout
+        assert time.monotonic() - started < 5
+        owned_pids = json.loads(pids.read_text())
+        assert len(owned_pids) == 2
+        for pid in owned_pids:
+            state = subprocess.run(["ps", "-o", "stat=", "-p", str(pid)], capture_output=True, text=True)
+            assert not state.stdout.strip() or state.stdout.strip().startswith("Z"), (
+                f"probe process still running: {pid}"
+            )
+    finally:
+        if process.poll() is None:
+            os.killpg(process.pid, signal.SIGKILL)
+            process.communicate()
+        # Also clean up when a regression leaves the separately grouped probe alive.
+        if pids.exists():
+            for pid in json.loads(pids.read_text()):
+                try:
+                    os.kill(pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass

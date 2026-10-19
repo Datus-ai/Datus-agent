@@ -10,6 +10,20 @@ pip install datus-postgresql
 
 下述证书和 AWS 认证字段面向待发布的 `datus-postgresql>=0.1.10`、`datus-sqlalchemy>=0.1.10`、`datus-db-core>=0.1.8`。这些版本尚未发布；发布前需安装对应源码包。较旧公开版本只暴露 `sslmode`，证书仍需通过 libpq 标准文件或环境配置。
 
+发布前可把以下三个兼容源码包安装到 Agent 环境。固定的 adapter 提交包含本页的 TLS／AWS 字段；请把 Python 路径替换为实际运行 Datus 的环境：
+
+```bash
+git clone https://github.com/Datus-ai/datus-db-adapters.git
+git -C datus-db-adapters checkout 66fadf1bffc1710c6b85e4149d6bb08d3458d464
+uv pip install --python /path/to/Datus-agent/.venv/bin/python \
+  -e ./datus-db-adapters/datus-db-core \
+  -e ./datus-db-adapters/datus-sqlalchemy \
+  -e './datus-db-adapters/datus-postgresql[aws]' \
+  'SQLAlchemy==2.0.23'
+```
+
+`aws` extra 安装 IAM／Secrets Manager 所需 SDK，普通密码连接可省略。SQLAlchemy 保持 Agent 固定的 `2.0.23`。源码安装后通过 uv 启动时使用 `uv run --no-sync`，普通同步可能按 Agent 锁文件重新安装旧 core。
+
 ## 连接配置
 
 ```yaml
