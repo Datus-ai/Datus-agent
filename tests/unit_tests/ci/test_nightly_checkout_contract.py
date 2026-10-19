@@ -81,6 +81,55 @@ PY
     assert json.loads(result.stdout) == expected
 
 
+@pytest.mark.parametrize("force", [None, "1", "0"])
+@pytest.mark.parametrize("verify,ca_cert", [("true", "/runner/private-ca.pem"), ("false", None)])
+def test_nightly_trino_profile_matches_selected_endpoint(force, verify, ca_cert):
+    """Forced compose runs use HTTP; explicit external profiles retain TLS settings."""
+    script = NIGHTLY_SCRIPT.read_text(encoding="utf-8")
+    start = script.index('if [ "${NIGHTLY_FORCE_ADAPTER_ENV:-1}" = "1" ]; then')
+    end = script.index("\nfi\n", start) + len("\nfi\n")
+    profile = {
+        "TRINO_HOST": "trino.example.com",
+        "TRINO_PORT": "18443",
+        "TRINO_USER": "tls_user",
+        "TRINO_PASSWORD": "test_password",
+        "TRINO_HTTP_SCHEME": "https",
+        "TRINO_VERIFY": verify,
+        "TRINO_CA_CERT": ca_cert,
+    }
+    environment = {"PATH": os.defpath, **{key: value for key, value in profile.items() if value is not None}}
+    if force is not None:
+        environment["NIGHTLY_FORCE_ADAPTER_ENV"] = force
+    environment["TRINO_HOST_PORT"] = "38123"
+    harness = f"""set -eu
+{script[start:end]}
+"$1" - <<'PY'
+import json
+import os
+print(json.dumps({{key: os.environ.get(key) for key in {tuple(profile)!r}}}))
+PY
+"""
+    result = subprocess.run(
+        ["bash", "-c", harness, "nightly-profile-test", sys.executable],
+        check=True,
+        capture_output=True,
+        text=True,
+        env=environment,
+    )
+    expected = profile
+    if force != "0":
+        expected = {
+            "TRINO_HOST": "127.0.0.1",
+            "TRINO_PORT": "38123",
+            "TRINO_USER": "trino",
+            "TRINO_PASSWORD": "",
+            "TRINO_HTTP_SCHEME": "http",
+            "TRINO_VERIFY": None,
+            "TRINO_CA_CERT": None,
+        }
+    assert json.loads(result.stdout) == expected
+
+
 def test_nightly_feishu_notification_drains_response_and_has_timeout():
     workflow = WORKFLOW.read_text(encoding="utf-8")
     notification = workflow.split("- name: Send Feishu notification", maxsplit=1)[1]
@@ -309,3 +358,40 @@ printf 'readiness_status=%s test_exit_code=%s\n' "$readiness_status" "$test_exit
     assert "readiness_status=23 test_exit_code=23" in result.stdout
     assert "--timeout 17" in result.stdout
     assert "simulated Doris readiness failure" in log_file.read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize("failure", [False, True])
+def test_trino_readiness_uses_adapter_and_propagates_failure(tmp_path, failure):
+    source = _bash_function_source("wait_for_trino_client_readiness")
+    harness = f"""
+set -u
+set -o pipefail
+test_exit_code=0
+log() {{ :; }}
+uv() {{
+  echo "uv_args=$*"
+  cat
+  return {23 if failure else 0}
+}}
+sleep() {{ SECONDS=1000; }}
+{source}
+wait_for_trino_client_readiness 2
+status=$?
+printf 'status=%s test_exit_code=%s\n' "$status" "$test_exit_code"
+"""
+    log_file = tmp_path / "nightly.log"
+    result = subprocess.run(
+        ["bash", "-c", harness],
+        check=True,
+        capture_output=True,
+        text=True,
+        env={"PATH": os.defpath, "LOG_FILE": str(log_file), "RUNNER_TEMP": str(tmp_path)},
+    )
+    expected = 1 if failure else 0
+    assert f"status={expected} test_exit_code={expected}" in result.stdout
+    probe = next(tmp_path.glob("datus-trino-readiness-*.log")).read_text()
+    assert "uv_args=run --no-sync python -" in probe
+    assert "TrinoConnector(config_from_env())" in probe
+    source = _bash_function_source("wait_for_compose_client_readiness")
+    trino_case = source.split('"Trino Adapter Tests")', 1)[1].split(";;", 1)[0]
+    assert "wait_for_trino_client_readiness 300" in trino_case

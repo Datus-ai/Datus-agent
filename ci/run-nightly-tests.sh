@@ -932,6 +932,7 @@ if [ "${NIGHTLY_FORCE_ADAPTER_ENV:-1}" = "1" ]; then
   export TRINO_USER=trino
   export TRINO_PASSWORD=
   export TRINO_HTTP_SCHEME=http
+  unset TRINO_VERIFY TRINO_CA_CERT
 
   export GREENPLUM_HOST_PORT="${GREENPLUM_HOST_PORT:-15434}"
   export GREENPLUM_HOST=localhost
@@ -1455,6 +1456,37 @@ wait_for_doris_client_readiness() {
   return 0
 }
 
+wait_for_trino_client_readiness() {
+  local timeout_seconds="${1:-300}"
+  local deadline=$((SECONDS + timeout_seconds))
+  local probe_output="${RUNNER_TEMP:-${TMPDIR:-/tmp}}/datus-trino-readiness-${GITHUB_RUN_ID:-$$}.log"
+
+  while [ "$SECONDS" -lt "$deadline" ]; do
+    if uv run --no-sync python - <<'PYTRINO' >"$probe_output" 2>&1; then
+from datus_trino import TrinoConnector
+from datus_trino.testing import config_from_env
+
+conn = TrinoConnector(config_from_env())
+try:
+    if not conn.test_connection():
+        raise RuntimeError("Trino readiness query failed")
+finally:
+    conn.close()
+PYTRINO
+      log "Trino client readiness probe succeeded"
+      return 0
+    fi
+    sleep 5
+  done
+
+  echo "Timed out waiting for Trino client readiness" | tee -a "$LOG_FILE" >&2
+  if [ -s "$probe_output" ]; then
+    sed 's/^/  /' "$probe_output" | tee -a "$LOG_FILE"
+  fi
+  test_exit_code=1
+  return 1
+}
+
 wait_for_compose_client_readiness() {
   local group_name="$1"
   local airflow_base
@@ -1490,7 +1522,7 @@ wait_for_compose_client_readiness() {
       wait_for_http_readiness "TiDB" "http://${TIDB_HOST:-127.0.0.1}:${TIDB_STATUS_HOST_PORT:-20080}/status" 300
       ;;
     "Trino Adapter Tests")
-      wait_for_http_readiness "Trino" "http://${TRINO_HOST:-127.0.0.1}:${TRINO_PORT:-8080}/v1/info" 300
+      wait_for_trino_client_readiness 300
       ;;
     "Greenplum Adapter Tests")
       wait_for_tcp_readiness "Greenplum" "${GREENPLUM_HOST:-localhost}" "${GREENPLUM_PORT:-5432}" 300
