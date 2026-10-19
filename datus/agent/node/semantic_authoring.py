@@ -154,8 +154,8 @@ def _dataset_table_references(agent_config: Any, dataset: Dict[str, Any], datase
 
 
 def validate_osi_authoring_document(document: Any) -> Optional[str]:
-    """Validate a Dosi semantic-model document."""
-    if not isinstance(document, dict):
+    """Validate a Dosi document or its unmodified YAML source text."""
+    if not isinstance(document, (dict, str)):
         return "YAML document must be an object"
     from datus.tools.semantic_tools.dosi.authoring import validate_dosi_document
     from datus.tools.semantic_tools.exceptions import SemanticCoreException
@@ -754,29 +754,51 @@ def required_authoring_skills(agent_config: Any, node_name: str) -> str:
     return "dosi-semantic-authoring" if node_name == "semantic_modeling" else ""
 
 
+def prepare_authoring_references(cache_dir: Path) -> Path:
+    """Materialize runtime-owned references without writing to the installed package."""
+    from datus.storage.semantic_model.artifact_file import atomic_write_text
+    from datus.tools.semantic_tools.dosi.authoring_spec import authoring_reference_documents
+
+    documents = authoring_reference_documents()
+    digest = hashlib.sha256(json.dumps(documents, sort_keys=True).encode("utf-8")).hexdigest()
+    reference_dir = (cache_dir / digest).resolve()
+    for filename, content in documents.items():
+        path = reference_dir / filename
+        if not path.exists() or path.read_text(encoding="utf-8") != content:
+            atomic_write_text(path, content)
+    return reference_dir
+
+
 def render_required_authoring_skill(
     skill_name: str,
     content: str,
     *,
     include_osi_core: bool = False,
+    reference_dir: Optional[Path] = None,
 ) -> str:
-    """Append the active native specs to the Dosi authoring skill."""
+    """Append compact core shapes and a complete active capability directory."""
     if skill_name != "dosi-semantic-authoring":
         return content
 
     from datus.tools.semantic_tools.dosi.authoring_spec import (
-        authoring_spec_text,
-        datus_extension_authoring_spec_text,
+        authoring_overview_text,
+        compact_authoring_spec_text,
     )
     from datus.tools.semantic_tools.dosi.engine import datus_extension_version
 
     rendered_skill = content.replace(_DATUS_EXTENSION_VERSION_TOKEN, datus_extension_version())
-    extension_spec = datus_extension_authoring_spec_text("<osi_dialect>")
+    extension_spec = authoring_overview_text()
     sections = [rendered_skill]
+    if reference_dir is not None:
+        sections.append(
+            f"## Authoring reference directory\n\n`{reference_dir}`\n\n"
+            "Use read_file with this absolute directory plus the directory entry's reference filename. "
+            "Full references: osi-core.yaml and datus.yaml. Read linked related_references when using combined capabilities."
+        )
     if include_osi_core:
-        core_spec = authoring_spec_text("<osi_dialect>")
-        sections.append(f"## Active OSI Core authoring specification\n\n```yaml\n{core_spec.rstrip()}\n```")
-    sections.append(f"## Active DATUS extension authoring specification\n\n```yaml\n{extension_spec.rstrip()}\n```")
+        core_spec = compact_authoring_spec_text("<osi_dialect>")
+        sections.append(f"## OSI Core reference shapes\n\n```yaml\n{core_spec.rstrip()}\n```")
+    sections.append(f"## Active DATUS capability directory\n\n```yaml\n{extension_spec.rstrip()}\n```")
     return "\n\n".join(sections)
 
 

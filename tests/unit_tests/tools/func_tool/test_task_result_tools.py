@@ -200,7 +200,8 @@ async def test_invoker_reports_a_malformed_item_instead_of_raising():
     )
 
     assert not result["success"]
-    assert "artifacts[0]" in result["error"]
+    errors = result["result"]["argument_errors"]
+    assert any(e["parameter"].startswith("artifacts.") and e["parameter"].endswith(".0.kind") for e in errors)
     assert tool.submitted is None
 
 
@@ -218,7 +219,8 @@ async def test_invoker_rejects_a_non_string_gap_reason():
     )
 
     assert not result["success"]
-    assert "gap_reasons[0]" in result["error"]
+    errors = result["result"]["argument_errors"]
+    assert any(e["parameter"].startswith("gap_reasons.") and e["parameter"].endswith(".0") for e in errors)
     assert tool.submitted is None
 
 

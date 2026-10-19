@@ -1,6 +1,6 @@
 # Init
 
-`init` is the lightweight way to bootstrap a project workspace. It reads your SQL scripts, docs and database, then writes a concise picture of the project — which tables to use, how they join, which rules apply — so future sessions start with the context a SQL-writing agent needs, without the heavier vector knowledge base.
+`init` is the lightweight way to bootstrap a project workspace. It reads your SQL scripts, docs and database schema, then writes a concise picture of the project — which tables to use, how they join, which rules apply — so future sessions start with the context a SQL-writing agent needs, without the heavier vector knowledge base.
 
 Run it with the `/init` command inside the REPL.
 
@@ -8,7 +8,8 @@ Run it with the `/init` command inside the REPL.
 
 - Statically analyzes the project's SQL (ETL scripts and SQL embedded in Python DAGs) into a persisted table lineage graph with the `upsert_lineage` tool, then reads it with `query_lineage`. Reads joins, filters, mappings, windows and author comments directly from the source SQL. Nothing is executed.
 - Reads the human-written docs in the project (business rules, metric definitions, data dictionaries).
-- Verifies what it found with a few dozen cheap, read-only database queries: which table versions exist and are fresh, table grain, join cardinality, actual code values.
+- Checks the tables and columns it found against the database schema (table lists, column descriptions, DDL for declared keys and partitioning). It never queries table data, so row counts, freshness and actual code values are not measured.
+- Writes only what a source states — DDL, docs, SQL comments, what a script literally does, scheduler config — and cites the source of grain, keys, cardinality and status. Conclusions it would have to infer, such as a grain read off a `GROUP BY` or which table version is current, are not written: init lists them as pending questions at the end of its reply. Conventions generalized from a validated question→SQL corpus are the exception; they are written directly, citing the pairs they come from, for you to review.
 - Writes an `AGENTS.md` project map at the project root: data architecture, core tables, cross-domain rules, and a knowledge index.
 - Writes one `knowledge/<domain>.md` file per business domain: table cards (use for, grain, time, codes, required filters), relationships, lineage, metric definitions, business rules, and known issues such as docs that disagree with the database.
 
@@ -20,7 +21,7 @@ The lineage graph is saved in `lineage/lineage.json`, one file for the whole pro
 
 Under the `normal` permission profile, `upsert_lineage` and `delete_lineage` ask before writing `lineage/lineage.json`; `auto` runs `upsert_lineage` without asking and still asks before `delete_lineage`.
 
-**Breaking change:** `extract_sql_lineage` is replaced by `upsert_lineage`, `delete_lineage` and `query_lineage`. The lineage tools no longer return joins: initialization reads join conditions from the source SQL and verifies cardinality against the database. Parameterized predicates do not prove incremental loading; ROW_NUMBER alone does not prove table grain.
+**Breaking change:** `extract_sql_lineage` is replaced by `upsert_lineage`, `delete_lineage` and `query_lineage`. The lineage tools no longer return joins: initialization reads join conditions from the source SQL and states a cardinality only when the join covers every column of a declared primary or unique key; a cardinality the scripts merely suggest becomes a pending question. Parameterized predicates do not prove incremental loading; ROW_NUMBER alone does not prove table grain.
 
 ## When to use it
 
@@ -60,5 +61,6 @@ Typical flow: run `/init` first for immediate context, then `/build-kb` when you
 
 - Knowledge is stored as markdown files under `knowledge/`, indexed from `AGENTS.md`; only the first 200 lines of `AGENTS.md` are loaded into every session, so details live in the knowledge files.
 - Where docs, SQL and the database disagree, `init` records the conflict under the domain's **Known Issues** instead of silently picking one side.
-- `init` runs only read-only queries (`SELECT` / `SHOW` / `EXPLAIN`).
+- `init` reads only schema metadata (table lists, column descriptions, table DDL); it never runs `SELECT` against table data.
+- Answer the pending questions in the same chat. Confirmed answers are written to the knowledge files or `AGENTS.md`, marked as confirmed by you; rejected ones are dropped. Unanswered questions are not saved anywhere.
 - Generating semantic models, metrics, and reference SQL is the job of [`/build-kb`](build_kb.md).

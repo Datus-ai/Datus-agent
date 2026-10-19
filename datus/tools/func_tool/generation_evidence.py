@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Set
@@ -61,11 +62,15 @@ class GenerationEvidence:
     compiled_artifact_sha256: Dict[str, str] = field(default_factory=dict)
     compiled_metric_names: Set[str] = field(default_factory=set)
     mutated_artifact_paths: Set[str] = field(default_factory=set)
+    business_verifications: Dict[str, Dict[str, Any]] = field(default_factory=dict)
+    run_id: int = field(default=0, compare=False, repr=False)
 
     def reset(self) -> None:
         """Clear evidence before reusing a node for another request."""
+        self.run_id += 1
         self.invalidate_artifact_evidence()
         self.mutated_artifact_paths.clear()
+        self.business_verifications.clear()
 
     def record_artifact_mutation(self, path: str | Path | None = None) -> None:
         """Invalidate stale gates and remember the exact artifact that changed."""
@@ -107,6 +112,43 @@ class GenerationEvidence:
         self.compiled_contract_digest = ""
         self.compiled_artifact_sha256.clear()
         self.compiled_metric_names.clear()
+
+    def record_business_verification(self, path: str | Path, record: Dict[str, Any]) -> None:
+        """Keep the latest result for a business output and query in this run."""
+        if record.get("run_id", self.run_id) != self.run_id:
+            return
+        check = record["check"]
+        identity = {key: check.get(key) for key in ("name", "metric", "query")}
+        key = hashlib.sha256(json.dumps(identity, sort_keys=True, default=str).encode()).hexdigest()
+        self.business_verifications[key] = {
+            **record,
+            "artifact": record.get("artifact") or self._semantic_artifact_state(path),
+        }
+
+    def business_verification_summary(self, path: str | Path) -> List[Dict[str, Any]]:
+        """Report query comparisons, marking results stale after the model changes."""
+        if not path:
+            return []
+        requested_path = str(Path(path).expanduser().resolve())
+        current = self._semantic_artifact_state(requested_path)
+        summary = []
+        for record in self.business_verifications.values():
+            if (record.get("artifact") or {}).get("path") != requested_path:
+                continue
+            if current and record.get("artifact") == current:
+                summary.append(
+                    {key: value for key, value in record.items() if key not in {"artifact", "check", "run_id"}}
+                )
+            else:
+                summary.append(
+                    {
+                        "name": record["name"],
+                        "metric": record["metric"],
+                        "status": "unverified",
+                        "reason": "Model changed after this comparison; rerun the check for the current model",
+                    }
+                )
+        return summary
 
     @property
     def kb_sync_passed(self) -> bool:

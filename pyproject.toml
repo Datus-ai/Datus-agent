@@ -1,7 +1,7 @@
 # Project basic information configuration, required.
 [project]
 name = "datus-agent"
-version = "0.4.2"
+version = "0.4.3"
 description = "AI-powered SQL Agent for data engineering (Compiled Version)"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -59,8 +59,9 @@ dependencies = [
     "litellm==1.100.1",
     "pydantic>=2.11.7,<3.0",
     "lancedb==0.34.0",
-    # This library is required by lancedb
-    "pyarrow>=23.0.1",
+    # PyArrow 26 requires NumPy 2 at import time, while pandas 2.1.4 needs NumPy 1.
+    "pyarrow>=23.0.1,<26; python_version < '3.13'",
+    "pyarrow>=23.0.1; python_version >= '3.13'",
     "rich==14.0.0",
     "prompt_toolkit>=3.0.51",
     "pygments>=2.18.0",

@@ -430,3 +430,235 @@ def test_same_metric_queries_can_be_resaved_sequentially_but_mixed_revisions_fai
         for path in tools.queries_dir.glob("*.metric.json")
     ]
     assert len({recipe.model_revision for recipe in recipes}) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["report", "dashboard"])
+@pytest.mark.parametrize("model_name", [None, "flights.yml", "jeff_shop.yml"])
+async def test_queries_share_model_files_and_bundle_preserves_exact_bytes(environment, kind, model_name):
+    from datus.api.services.report_service import ReportService
+    from datus.utils.metric_artifact_models import resolve_metric_query_snapshot
+
+    env = environment
+    content = b"version: '0.2.0.dev0'\r\nsemantic_model: []\r\n"
+    env.model.write_bytes(content)
+    options = {"params": [], "sample_params": {}} if kind == "dashboard" else {}
+    tools, first = _save(env, kind, **options)
+    assert first.success == 1, first.error
+    save = tools.save_metric_query_template if kind == "dashboard" else tools.save_metric_query
+    second = save(name="total", query={"metric": REF}, goal="Total", hypothesis="Revenue", **options)
+    assert second.success == 1, second.error
+    artifact_dir = tools.queries_dir.parent
+    recipes = [json.loads((tools.queries_dir / f"{name}.metric.json").read_text()) for name in ("sales", "total")]
+    assert all(item["schema_version"] == "1.1" and "model_snapshot" not in item for item in recipes)
+    assert recipes[0]["model_snapshot_path"] == recipes[1]["model_snapshot_path"]
+    revision = hashlib.sha256(content).hexdigest()
+    assert all(item["model_revision"] == revision for item in recipes)
+    assert recipes[0]["model_snapshot_path"] == f"models/{revision[:16]}.yml"
+    assert len(list((artifact_dir / "models").iterdir())) == 1
+    assert (artifact_dir / recipes[0]["model_snapshot_path"]).read_bytes() == content
+    if model_name is not None:
+        renamed = f"models/{model_name}"
+        (artifact_dir / recipes[0]["model_snapshot_path"]).rename(artifact_dir / renamed)
+        for name, item in zip(("sales", "total"), recipes):
+            item["model_snapshot_path"] = renamed
+            (tools.queries_dir / f"{name}.metric.json").write_text(json.dumps(item))
+    assert tools._validate_metric_queries(kind) is None
+    (artifact_dir / "render" / "app.jsx").write_text("export default function App() { return null; }")
+    service = ReportService() if kind == "report" else DashboardService(agent_config=env.config)
+    detail = await service.get_detail(project_files_root=env.root, **{f"{kind}_slug": "demo"})
+    assert detail.success is True, detail.errorMessage
+    files = {item.path: item.content for item in detail.data.files}
+    assert files[recipes[0]["model_snapshot_path"]].encode() == content
+    from datus.agent.node.visual_artifact._artifact_html_renderer import _read_artifact_files
+    from datus.agent.node.visual_artifact.dashboard_html_renderer import _DASHBOARD_ARTIFACT_DIRS
+    from datus.agent.node.visual_artifact.report_html_renderer import _REPORT_ARTIFACT_DIRS
+
+    spec = _REPORT_ARTIFACT_DIRS if kind == "report" else _DASHBOARD_ARTIFACT_DIRS
+    html_files = {item["path"]: item["content"] for item in _read_artifact_files(artifact_dir, spec)}
+    assert html_files[recipes[0]["model_snapshot_path"]].encode() == content
+    assert (
+        json.loads(html_files["queries/sales.metric.json"])["model_snapshot_path"] == recipes[0]["model_snapshot_path"]
+    )
+    for item in recipes:
+        assert (
+            resolve_metric_query_snapshot(MetricQueryFile.model_validate(item), files=files).model_snapshot.encode()
+            == content
+        )
+
+
+@pytest.mark.parametrize("kind", ["report", "dashboard"])
+def test_multiple_models_with_same_basename_remain_distinct(environment, kind, monkeypatch):
+    env = environment
+    options = {"params": [], "sample_params": {}} if kind == "dashboard" else {}
+    tools, saved = _save(env, kind, **options)
+    assert saved.success == 1, saved.error
+    second_model = env.root / "subject" / "semantic_models" / "other" / "shop.yml"
+    second_model.parent.mkdir(parents=True)
+    second_model.write_text("version: '0.2.0.dev0'\nsemantic_model: []\n# Cost model\n")
+    second_ref = {"path": ["Commerce", "Costs"], "name": "cost"}
+    monkeypatch.setattr(
+        env.runtime,
+        "artifact_metric_binding",
+        lambda name: {
+            "model_path": str(second_model),
+            "model_revision": hashlib.sha256(second_model.read_bytes()).hexdigest(),
+            "datasource": "warehouse",
+        },
+    )
+    monkeypatch.setattr(env.semantic, "get_metric", lambda **kwargs: SimpleNamespace(success=1, result=second_ref))
+
+    async def compile_cost(**kwargs):
+        assert kwargs["metrics"] == ["cost"]
+        return QueryResult(metadata={"sql": "SELECT COUNT(*) AS cost FROM orders"})
+
+    monkeypatch.setattr(env.runtime, "query_metrics", compile_cost)
+    save = tools.save_metric_query_template if kind == "dashboard" else tools.save_metric_query
+    result = save(name="cost", query={"metric": second_ref}, goal="Cost", hypothesis="Costs", **options)
+    assert result.success == 1, result.error
+    recipes = [
+        MetricQueryFile.model_validate_json(path.read_text()) for path in tools.queries_dir.glob("*.metric.json")
+    ]
+    assert {item.model_path for item in recipes} == {
+        env.model.relative_to(env.root).as_posix(),
+        second_model.relative_to(env.root).as_posix(),
+    }
+    assert len({item.model_snapshot_path for item in recipes}) == 2
+    assert {(tools.queries_dir.parent / item.model_snapshot_path).read_bytes() for item in recipes} == {
+        env.model.read_bytes(),
+        second_model.read_bytes(),
+    }
+    assert tools._validate_metric_queries(kind) is None
+
+
+@pytest.mark.parametrize("kind", ["report", "dashboard"])
+def test_conflicting_snapshot_fails_without_changing_recipe_or_model(environment, kind):
+    env = environment
+    options = {"params": [], "sample_params": {}} if kind == "dashboard" else {}
+    tools, first = _save(env, kind, **options)
+    assert first.success == 1, first.error
+    recipe_path = tools.queries_dir / "sales.metric.json"
+    original_recipe = recipe_path.read_bytes()
+    previous = MetricQueryFile.model_validate_json(original_recipe)
+    occupied = tools.queries_dir.parent / previous.model_snapshot_path
+    occupied.write_bytes(b"another model occupies this short filename")
+    save = tools.save_metric_query_template if kind == "dashboard" else tools.save_metric_query
+    saved = save(name="sales", query={"metric": REF}, goal="Revenue", hypothesis="Revenue", **options)
+    assert saved.success == 0
+    assert "must match model_revision" in saved.error
+    assert recipe_path.read_bytes() == original_recipe
+    assert occupied.read_bytes() == b"another model occupies this short filename"
+    assert list(occupied.parent.iterdir()) == [occupied]
+
+
+@pytest.mark.parametrize("legacy", [False, True])
+def test_published_execution_uses_saved_model_after_studio_changes(environment, monkeypatch, legacy):
+    from pathlib import Path
+
+    from datus.tools.func_tool.metric_artifact_tools import execute_published_metric_query
+    from datus.tools.semantic_tools.dosi.config import DosiConfig
+    from datus.utils.metric_artifact_models import resolve_metric_query_snapshot
+
+    env = environment
+    tools, saved = _save(env, "dashboard", params=[], sample_params={})
+    assert saved.success == 1, saved.error
+    recipe_path = tools.queries_dir / "sales.metric.json"
+    query = resolve_metric_query_snapshot(
+        MetricQueryFile.model_validate_json(recipe_path.read_text()), artifact_dir=tools.queries_dir.parent
+    )
+    original = env.model.read_bytes()
+    if legacy:
+        query = MetricQueryFile.model_validate(
+            {**query.model_dump(), "schema_version": "1.0", "model_snapshot_path": None}
+        )
+    env.model.write_text("Studio model changed")
+
+    class FrozenRuntime:
+        def __init__(self, config):
+            self.path = Path(config.semantic_model_path)
+            assert self.path.read_bytes() == original
+            assert config.semantic_models_path is None
+
+        def artifact_metric_binding(self, name):
+            assert name == "revenue"
+            return {
+                "model_path": str(self.path),
+                "model_revision": hashlib.sha256(self.path.read_bytes()).hexdigest(),
+                "datasource": "warehouse",
+            }
+
+        async def query_metrics(self, **kwargs):
+            return await env.runtime.query_metrics(**kwargs)
+
+    monkeypatch.setattr("datus.tools.semantic_tools.dosi.DosiRuntime", FrozenRuntime)
+    policy = {"reader": "alice"}
+    result, _ = execute_published_metric_query(
+        query, runtime_config=DosiConfig(), db_tool=env.db, params={}, policy_context=policy
+    )
+    assert result.rows == [{"revenue": 25.0}]
+    assert env.db.execute_read_enforced.call_args.kwargs["policy_context"] == policy
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("problem", ["missing", "tampered"])
+async def test_local_loader_and_final_validation_reject_broken_model_reference(environment, problem):
+    tools, saved = _save(environment, "dashboard", params=[], sample_params={})
+    assert saved.success == 1
+    query = MetricQueryFile.model_validate_json((tools.queries_dir / "sales.metric.json").read_text())
+    model = tools.queries_dir.parent / query.model_snapshot_path
+    if problem == "missing":
+        model.unlink()
+    else:
+        model.write_text("tampered")
+    result = await _load_local_template_pair(environment.root, "demo", "sales")
+    assert not result.success and result.errorCode == "TEMPLATE_CORRUPT"
+    assert "model snapshot" in tools._validate_metric_queries("dashboard")
+
+
+@pytest.mark.parametrize("kind", ["report", "dashboard"])
+def test_different_metrics_cannot_mix_revisions_of_one_model(environment, kind, monkeypatch):
+    from unittest.mock import AsyncMock
+
+    env = environment
+    options = {"params": [], "sample_params": {}} if kind == "dashboard" else {}
+    tools, saved = _save(env, kind, **options)
+    assert saved.success == 1
+    env.model.write_text("version: '0.2.0.dev0'\nsemantic_model: []\n# Updated model\n")
+    other_ref = {"path": ["Commerce"], "name": "cost"}
+    binding = env.runtime.artifact_metric_binding("revenue")
+    monkeypatch.setattr(env.runtime, "artifact_metric_binding", lambda name: binding)
+    monkeypatch.setattr(env.semantic, "get_metric", lambda **kwargs: SimpleNamespace(success=1, result=other_ref))
+    monkeypatch.setattr(
+        env.runtime,
+        "query_metrics",
+        AsyncMock(return_value=QueryResult(metadata={"sql": "SELECT COUNT(*) AS cost FROM orders"})),
+    )
+    save = tools.save_metric_query_template if kind == "dashboard" else tools.save_metric_query
+    result = save(name="cost", query={"metric": other_ref}, goal="Cost", hypothesis="Costs", **options)
+    assert result.success == 1, result.error
+    assert "same model" in tools._validate_metric_queries(kind)
+
+
+@pytest.mark.parametrize("kind", ["report", "dashboard"])
+@pytest.mark.parametrize("operation", ["write", "edit", "delete"])
+def test_model_files_are_tool_managed(environment, kind, operation):
+    from datus.tools.func_tool.dashboard_artifact_tools import DashboardFilesystemFuncTool
+    from datus.tools.func_tool.report_artifact_tools import ReportFilesystemFuncTool
+
+    options = {"params": [], "sample_params": {}} if kind == "dashboard" else {}
+    tools, saved = _save(environment, kind, **options)
+    assert saved.success == 1
+    query = MetricQueryFile.model_validate_json((tools.queries_dir / "sales.metric.json").read_text())
+    path = tools.queries_dir.parent / query.model_snapshot_path
+    original = path.read_bytes()
+    cls = ReportFilesystemFuncTool if kind == "report" else DashboardFilesystemFuncTool
+    fs = cls(root_path=str(environment.root))
+    relative = path.relative_to(environment.root).as_posix()
+    if operation == "write":
+        result = fs.write_file(relative, "changed")
+    elif operation == "edit":
+        result = fs.edit_file(relative, "semantic_model", "changed")
+    else:
+        result = fs.delete_file(relative)
+    assert result.success == 0
+    assert path.read_bytes() == original

@@ -1206,7 +1206,19 @@ class DBFuncTool:
         return excluded
 
     def to_function_tool(self, bound_method: Callable) -> Tool:
-        return trans_to_function_tool(bound_method, excluded_params=self._excluded_tool_params())
+        excluded = self._excluded_tool_params()
+        read_query = bound_method.__name__ == "execute_sql" and self.read_only
+        if read_query:
+            excluded.update({"min_rows", "max_rows"})
+        tool = trans_to_function_tool(bound_method, excluded_params=excluded)
+        if read_query:
+            tool.description = (
+                "Execute one read-only SQL statement (SELECT, SHOW, DESCRIBE or EXPLAIN). "
+                "Accepts SQL text or a readable .sql file containing one statement. "
+                "Returns compressed query rows; success=0 includes the query error. "
+                "Use datasource and database only to select the connection."
+            )
+        return tool
 
     def available_tools(self) -> List[Tool]:
         bound_tools = []
@@ -1430,6 +1442,7 @@ class DBFuncTool:
     ) -> FuncToolResult:
         """
         Return table-like objects (tables, views, materialized views) visible to the connector.
+
         Args:
             catalog: Optional catalog filter.
             database: Optional database filter.
@@ -2552,7 +2565,9 @@ class DBFuncTool:
         except Exception as e:
             return FuncToolResult(success=0, error=str(e))
 
-    def read_query(self, sql: str, datasource: Optional[str] = "", database: Optional[str] = "") -> FuncToolResult:
+    def read_query(
+        self, sql: str, datasource: Optional[str] = "", database: Optional[str] = "", *, compress: bool = True
+    ) -> FuncToolResult:
         """
         Execute a read-only SQL query and return the result rows (optionally compressed).
 
@@ -2568,6 +2583,9 @@ class DBFuncTool:
             datasource: Optional datasource name for multi-datasource scenarios.
             database: Optional physical database to run against. Required to target a specific
                 database of a multi-database datasource (e.g. one file of a sqlite/duckdb glob).
+            compress: Compress rows for presentation. Internal result comparisons use False;
+                read policies still apply, but transformed results cannot serve as a
+                complete calculation reference and are refused.
 
         Returns:
             FuncToolResult with result=self.compressor.compress(rows) when successful. On failure success=0 with the
@@ -2601,9 +2619,12 @@ class DBFuncTool:
                 connector,
                 datasource=datasource,
                 result_format=result_format,
+                require_unmodified=not compress,
             )
             if result.success:
-                return FuncToolResult(result=self.compressor.compress(result.sql_return))
+                return FuncToolResult(
+                    result=self.compressor.compress(result.sql_return) if compress else result.sql_return
+                )
             return FuncToolResult(success=0, error=result.error)
         except Exception as e:
             return FuncToolResult(success=0, error=str(e))
@@ -2616,6 +2637,7 @@ class DBFuncTool:
         datasource: Optional[str] = "",
         result_format: str = "list",
         policy_context: Optional[Dict[str, Any]] = None,
+        require_unmodified: bool = False,
     ) -> ExecuteSQLResult:
         """Run a read-only query through the shared read guardrails.
 
@@ -2664,6 +2686,12 @@ class DBFuncTool:
                 sql_query=sql,
             )
         if enforced_sql != sql:
+            if require_unmodified:
+                return ExecuteSQLResult(
+                    success=False,
+                    error="Read policy rewrote the reference SQL; complete calculation verification is unavailable.",
+                    sql_query=enforced_sql,
+                )
             # A policy rewrite (e.g. an injected LIMIT) must still be a single
             # read-only statement — re-validate so it can't smuggle in DML/DDL.
             validation_error, _ = self._validate_read_sql(enforced_sql, connector)
@@ -2684,6 +2712,14 @@ class DBFuncTool:
                 raise DatusException(
                     ErrorCode.POLICY_DENIED,
                     message=result_decision.reason or "Policy denied the query result",
+                )
+            if require_unmodified and (
+                result_decision.applied_policies or result_decision.result is not result.sql_return
+            ):
+                return ExecuteSQLResult(
+                    success=False,
+                    error="Read policy transformed the reference result; complete calculation verification is unavailable.",
+                    sql_query=enforced_sql,
                 )
             result.sql_return = result_decision.result
             if result_decision.applied_policies:

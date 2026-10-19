@@ -90,9 +90,7 @@ def _load_source_queries(success_story: str) -> tuple[list[SourceQueryEvidence],
         return [], f"Success story CSV is missing required columns: {missing_columns}"
 
     source_queries = [
-        source
-        for index, row in frame.iterrows()
-        if (source := source_query_from_success_story_row(row, index, success_story)) is not None
+        source for _, row in frame.iterrows() if (source := source_query_from_success_story_row(row)) is not None
     ]
     if not source_queries:
         return [], "Success story CSV contains no SQL rows"
@@ -149,7 +147,6 @@ async def _run_semantic_modeling_batch(
         database=database or None,
         db_schema=schema or None,
         semantic_model_file=target_hint or None,
-        source_queries=source_queries,
     )
 
     batch_id = f"batch-{batch_index + 1}"

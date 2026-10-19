@@ -48,6 +48,7 @@ from datus.tools.func_tool.report_artifact_tools import _normalize_value
 from datus.utils.artifact_files import iter_artifact_files
 from datus.utils.exceptions import ErrorCode
 from datus.utils.loggings import get_logger
+from datus.utils.metric_artifact_models import resolve_metric_query_snapshot
 
 logger = get_logger(__name__)
 
@@ -205,6 +206,10 @@ async def _load_local_template_pair(
             metric_text = await asyncio.to_thread(metric_path.read_text, "utf-8")
             try:
                 sql_template = MetricQueryFile.model_validate_json(metric_text)
+                if sql_template.model_snapshot_path is not None:
+                    sql_template = await asyncio.to_thread(
+                        resolve_metric_query_snapshot, sql_template, artifact_dir=dashboard_dir
+                    )
             except ValueError as exc:
                 return Result(success=False, errorCode="TEMPLATE_CORRUPT", errorMessage=str(exc))
         else:
@@ -296,7 +301,7 @@ class DashboardService:
                 logger.warning("Truncated artifact files at %d entries for %s", _MAX_FILES, dashboard_slug)
                 break
             try:
-                content = await asyncio.to_thread(path.read_text, "utf-8")
+                content = (await asyncio.to_thread(path.read_bytes)).decode("utf-8")
             except OSError as exc:
                 logger.exception("Failed reading artifact file %s for %s: %s", path, dashboard_slug, exc)
                 return Result(success=False, errorCode="DASHBOARD_NOT_FOUND", errorMessage=str(exc))

@@ -12,6 +12,7 @@ streaming interactions with tool integration and action history management.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import os
 import uuid
@@ -1172,8 +1173,8 @@ class AgenticNode(Node):
         appears here and a dialect switch rebuilds the snapshot. ``language`` DOES
         appear: it is a per-request field on the Chat API, so a user switching
         the UI language mid-session must not keep replaying a snapshot that
-        pins the old one. Date, memory, and skill contents stay frozen until the
-        snapshot is rebuilt.
+        pins the old one. Date and memory stay frozen until the snapshot is rebuilt. Injected
+        skill contents are fingerprinted so same-named updates rebuild it.
         """
         agent_config = getattr(self, "agent_config", None)
         version = prompt_version
@@ -1210,6 +1211,7 @@ class AgenticNode(Node):
             "model_name": model_id,
             "language": str(language or "").strip(),
             "database_skill": ",".join(self._get_database_skill_candidates()),
+            "injected_skills_sha256": hashlib.sha256(self._required_skill_context().encode()).hexdigest(),
         }
 
     def _system_prompt_template_name(self) -> str:
@@ -2876,8 +2878,8 @@ class AgenticNode(Node):
         del skill_name
         return content
 
-    def _inject_required_skills(self, base_prompt: str) -> str:
-        """Append required-skill content to the system prompt deterministically.
+    def _required_skill_context(self) -> str:
+        """Resolve the exact skill context used for injection and snapshot identity.
 
         Required skills carry specifications the node needs on every run, so
         the host injects them at prompt-build time instead of advertising them
@@ -2895,13 +2897,13 @@ class AgenticNode(Node):
             self._get_database_skill_candidates() if getattr(self, "db_func_tool", None) is not None else []
         )
         if not required_skills and not database_candidates:
-            return base_prompt
+            return ""
 
-        if not self.skill_manager:
+        if not getattr(self, "skill_manager", None):
             from datus.tools.skill_tools.skill_manager import SkillManager
 
             self.skill_manager = SkillManager(
-                permission_manager=self.permission_manager,
+                permission_manager=getattr(self, "permission_manager", None),
                 config_mutable=self._resolve_config_mutable(),
                 agent_config=self.agent_config,
             )
@@ -2914,7 +2916,7 @@ class AgenticNode(Node):
         database_skills = [name for name in database_candidates if self.skill_manager.get_skill(name) is not None]
         skills_to_inject = list(dict.fromkeys([*required_skills, *database_skills]))
         if not skills_to_inject:
-            return base_prompt
+            return ""
 
         required_skill_names = set(required_skills)
         sections = []
@@ -2941,12 +2943,15 @@ class AgenticNode(Node):
                     },
                 )
             content = self._render_required_skill_content(skill_name, content)
+            content = self.skill_manager.format_skill_content(skill_name, content)
             sections.append(f"<required_skill name={xml_quoteattr(skill_name)}>\n{content}\n</required_skill>")
-            logger.info(f"Injected required skill '{skill_name}' into system prompt for '{self.get_node_name()}'")
+            logger.debug("Resolved skill '%s' for '%s'", skill_name, self.get_node_name())
 
-        if not sections:
-            return base_prompt
-        return base_prompt + "\n\n" + "\n\n".join(sections)
+        return "\n\n".join(sections)
+
+    def _inject_required_skills(self, base_prompt: str) -> str:
+        context = self._required_skill_context()
+        return base_prompt + "\n\n" + context if context else base_prompt
 
     @staticmethod
     def _merge_skill_patterns(existing_skills: Any, injected_skills: List[str]) -> str:
@@ -4189,15 +4194,20 @@ class AgenticNode(Node):
             return False
         return bool(self.agent_config.filesystem_strict)
 
-    def _resolve_filesystem_allowlist(self) -> Optional["PathAllowlist"]:
-        """Resolve the configured extra fs roots for this node's tools.
+    def _with_loaded_skill_roots(self, allowlist: Optional["PathAllowlist"] = None) -> Optional["PathAllowlist"]:
+        from datus.tools.func_tool.fs_path_policy import PathAllowlist
 
-        Reads ``agent_config.filesystem_allowlist`` (``agent.filesystem
-        .allow_read`` / ``allow_write``). Returns ``None`` when unset or empty
-        so the tool / policy layers keep their default project-only view.
-        """
+        manager = getattr(self, "skill_manager", None)
+        roots = getattr(manager, "loaded_skill_roots", ()) if manager else ()
+        if not roots:
+            return allowlist or None
+        base = allowlist or PathAllowlist()
+        return PathAllowlist(read=tuple(dict.fromkeys([*base.read, *sorted(roots)])), write=base.write)
+
+    def _resolve_filesystem_allowlist(self) -> Optional["PathAllowlist"]:
+        """Configured roots plus read-only bundles of skills loaded by this node."""
         allowlist = getattr(self.agent_config, "filesystem_allowlist", None) if self.agent_config else None
-        return allowlist or None
+        return self._with_loaded_skill_roots(allowlist)
 
     def _resolve_config_mutable(self) -> bool:
         """Whether the agent may edit the agent config file (agent.yml).
@@ -4246,6 +4256,7 @@ class AgenticNode(Node):
             strict=strict,
             session_data_dir=session_data_dir,
             path_allowlist=path_allowlist,
+            path_allowlist_provider=lambda: self._with_loaded_skill_roots(path_allowlist),
             **kwargs,
         )
 
@@ -4331,6 +4342,7 @@ class AgenticNode(Node):
                 strict=self._resolve_filesystem_strict(),
                 session_data_dir=session_data_dir,
                 allowlist=self._resolve_filesystem_allowlist(),
+                allowlist_provider=self._resolve_filesystem_allowlist,
             )
         except Exception as e:
             logger.debug(f"Failed to build FilesystemPolicy: {e}")

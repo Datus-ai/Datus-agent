@@ -742,6 +742,8 @@ class ExplorerService:
                     type=getattr(d, "type", None),
                     description=getattr(d, "description", None),
                     is_primary_key=getattr(d, "is_primary_key", None),
+                    required=getattr(d, "required", False),
+                    required_reason=getattr(d, "required_reason", None),
                     recommended=d.recommended,
                     recommendation_source=d.recommendation_source,
                 )
@@ -752,6 +754,7 @@ class ExplorerService:
                 data=MetricDimensionsData(
                     metric=metric_name,
                     dimensions=items,
+                    time_axis_required=any(getattr(d, "time_axis_required", False) for d in dimensions or []),
                     **time_capabilities,
                 ),
             )

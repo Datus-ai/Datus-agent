@@ -2,6 +2,20 @@
 
 Skills is a skill discovery and loading system for Datus-agent, following the [agentskills.io](https://agentskills.io) specification. It enables modular, on-demand capability expansion through SKILL.md files.
 
+## Database skills and task references
+
+For nodes with a bound database connector, an installed `db-<dialect>-sql` skill is injected
+automatically. Its short entrypoint provides query and existing-data semantics. Physical table
+design, writes, imports and other specialized guidance live in linked `references/` files and
+are read only when the user's task needs them, including SQL-generation-only requests.
+An INSERT or CREATE statement supplied for analysis does not itself request a write or import.
+
+Injected and manually loaded skills include `skill_location`, the exact directory used to
+resolve relative references. Loaded skill bundles outside the workspace are readable through
+the node's filesystem tools in strict mode, without granting write access to those bundles.
+System-prompt snapshots fingerprint injected contents, so an updated same-named entrypoint
+rebuilds the snapshot. Reference bodies are not automatically inlined into the prompt.
+
 ## Quick Start
 
 This tutorial demonstrates how to use the **report-generator** skill with the California Schools dataset to generate analysis reports.
@@ -164,12 +178,7 @@ agentic_nodes:
 
 ## Using Skills in Subagents
 
-By default, the **chat subagent loads all discovered skills** automatically. Other subagents (report generation, SQL generation, metrics, etc.) **do not load any skills** unless explicitly configured in `agent.yml`.
-
-| Subagent Type | Skills Loaded by Default |
-|---------------|------------------------|
-| Chat | All discovered skills |
-| All other subagents (report, SQL, metrics, etc.) | None |
+Chat exposes permitted discovered skills for on-demand `load_skill` calls; it does not inject all skill bodies. Other subagents expose optional skills through their `agent.yml` configuration or built-in defaults. Database guidance and node-required skills, such as `dosi-semantic-authoring`, are injected independently of that optional catalog.
 
 ### Enabling Skills for Customized Subagents
 

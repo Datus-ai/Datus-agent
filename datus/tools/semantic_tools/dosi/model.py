@@ -160,10 +160,12 @@ def validation_messages(payload: dict[str, Any]) -> list[str]:
     messages: list[str] = []
     for issue in payload.get("issues") or []:
         if isinstance(issue, dict) and issue.get("severity") == "error":
-            messages.append(f"{issue.get('code', 'issue')}: {issue.get('message', '')}")
+            location = f"{issue['location']}: " if issue.get("location") else ""
+            messages.append(f"{location}{issue.get('code', 'issue')}: {issue.get('message', '')}")
     for issue in payload.get("compile_errors") or []:
         if isinstance(issue, dict):
-            message = f"{issue.get('code', 'compile_error')}: {issue.get('message', '')}"
+            location = f"{issue['location']}: " if issue.get("location") else ""
+            message = f"{location}{issue.get('code', 'compile_error')}: {issue.get('message', '')}"
             if issue.get("hint"):
                 message = f"{message} | {issue['hint']}"
             messages.append(message)

@@ -19,6 +19,7 @@ from datus.schemas.metric_artifact_query import MetricQueryFile, MetricQueryRequ
 from datus.tools.func_tool.base import FuncToolResult
 from datus.utils.async_utils import run_async
 from datus.utils.exceptions import DatusException, ErrorCode
+from datus.utils.metric_artifact_models import resolve_metric_query_snapshot
 
 
 def _arrow_column_type(dtype: pa.DataType) -> ColumnSemanticType:
@@ -259,14 +260,21 @@ class MetricArtifactToolsMixin:
         """Check complete tool-produced bundles before declaring render success."""
         try:
             metric_revisions: dict[tuple[tuple[str, ...], str], str] = {}
+            model_revisions: dict[tuple[str, str], str] = {}
             for path in self.queries_dir.glob("*.metric.json"):
                 saved = MetricQueryFile.model_validate_json(path.read_text(encoding="utf-8"))
+                if saved.model_snapshot_path is not None:
+                    resolve_metric_query_snapshot(saved, artifact_dir=self.queries_dir.parent)
                 identity = (tuple(saved.metric.path), saved.metric.name)
                 previous_revision = metric_revisions.setdefault(identity, saved.model_revision)
                 if previous_revision != saved.model_revision:
                     raise ValueError(
                         "one artifact cannot mix model revisions of the same metric; resave all its queries"
                     )
+                model_identity = (saved.datasource, saved.model_path)
+                previous_model_revision = model_revisions.setdefault(model_identity, saved.model_revision)
+                if previous_model_revision != saved.model_revision:
+                    raise ValueError("one artifact cannot mix revisions of the same model; resave its metric queries")
                 name = path.name.removesuffix(".metric.json")
                 if saved.name != name or any(
                     (self.queries_dir / f"{name}{suffix}").exists() for suffix in (".sql", ".sql.j2")
@@ -368,9 +376,21 @@ class MetricArtifactToolsMixin:
                 project_root=self._project_root,
                 params=values,
             )
-            saved = MetricQueryFile(**request.model_dump(), name=name, goal=goal.strip(), **binding)
+            model_content = binding.pop("model_snapshot")
+            suffix = Path(binding["model_path"]).suffix.lower()
+            model_relative = f"models/{binding['model_revision'][:16]}{suffix}"
+            saved = MetricQueryFile(
+                **request.model_dump(),
+                name=name,
+                goal=goal.strip(),
+                **binding,
+                schema_version="1.1",
+                model_snapshot_path=model_relative,
+            )
+            # Validate the captured bytes before publishing a reference to them.
+            resolve_metric_query_snapshot(saved, files={model_relative: model_content})
             files = {
-                f"{name}.metric.json": saved.model_dump_json(indent=2),
+                f"{name}.metric.json": saved.model_dump_json(indent=2, exclude_none=True),
                 f"{name}.brief.json": json.dumps(brief.model_dump(exclude_none=True), ensure_ascii=False, indent=2),
             }
             if kind == "report":
@@ -389,8 +409,17 @@ class MetricArtifactToolsMixin:
                     saved_at=payload.executed_at,
                 )
                 files[f"{name}.params.json"] = meta.model_dump_json(indent=2)
-            if sum(len(value.encode("utf-8")) for value in files.values()) > 20 * 1024 * 1024:
+            if sum(len(value.encode("utf-8")) for value in [*files.values(), model_content]) > 20 * 1024 * 1024:
                 raise ValueError("metric query files exceed the 20 MB limit; aggregate or lower limit")
+            artifact_dir = self.queries_dir.parent
+            model_file = artifact_dir / model_relative
+            if not model_file.resolve().is_relative_to(artifact_dir.resolve()):
+                raise ValueError("metric model snapshot escapes the artifact directory")
+            # Publish the model before its recipe; reuse matching bytes, reject collisions.
+            try:
+                _atomic_write_text(model_file, model_content, overwrite=False)
+            except FileExistsError:
+                resolve_metric_query_snapshot(saved, artifact_dir=artifact_dir)
             for filename, content in files.items():
                 _atomic_write_text(self.queries_dir / filename, content + "\n")
             for suffix in (".sql", ".sql.j2"):

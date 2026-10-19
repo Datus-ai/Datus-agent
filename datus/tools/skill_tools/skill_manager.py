@@ -11,6 +11,7 @@ to provide a unified interface for skill operations.
 
 import fnmatch
 import logging
+from pathlib import Path
 from typing import TYPE_CHECKING, List, Optional, Tuple
 from xml.sax.saxutils import escape as xml_escape
 from xml.sax.saxutils import quoteattr as xml_quoteattr
@@ -77,6 +78,7 @@ class SkillManager:
         self.permission_manager = permission_manager
         self.registry = registry or SkillRegistry(config=self.config, agent_config=agent_config)
         self.config_mutable = bool(config_mutable)
+        self.loaded_skill_roots: set[Path] = set()
 
         # Scan directories on initialization
         self.registry.scan_directories()
@@ -241,7 +243,25 @@ class SkillManager:
             return False, f"Failed to load content for skill '{skill_name}'", None
 
         logger.info(f"Loaded skill '{skill_name}' for node '{node_name}'")
+        self.loaded_skill_roots.add(skill.location.resolve())
         return True, f"Skill '{skill_name}' loaded successfully", content
+
+    def format_skill_content(self, skill_name: str, content: str) -> str:
+        """Locate supporting files consistently for injected and manually loaded skills."""
+        try:
+            skill = self.registry.get_skill(skill_name)
+            location = getattr(skill, "location", None)
+        except Exception:
+            logger.debug("Could not locate skill '%s'", skill_name, exc_info=True)
+            return content
+        if not location:
+            return content
+        location = xml_escape(str(Path(location).resolve()))
+        return (
+            f"<skill_location>{location}</skill_location>\n"
+            "<!-- Resolve references/ and scripts/ relative to skill_location; "
+            "read only the supporting files needed for this task. -->\n\n"
+        ) + content
 
     def generate_available_skills_xml(
         self,

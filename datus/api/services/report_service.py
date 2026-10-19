@@ -143,7 +143,7 @@ class ReportService:
                 logger.warning("Truncated artifact files at %d entries for %s", _MAX_FILES, report_slug)
                 break
             try:
-                content = await asyncio.to_thread(path.read_text, "utf-8")
+                content = (await asyncio.to_thread(path.read_bytes)).decode("utf-8")
             except OSError as exc:
                 logger.exception("Failed reading artifact file %s for %s: %s", path, report_slug, exc)
                 return Result(success=False, errorCode="REPORT_NOT_FOUND", errorMessage=str(exc))

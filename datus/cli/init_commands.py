@@ -11,8 +11,8 @@ dropping a same-named SKILL.md into ``./.datus/skills/init/`` (project-level)
 or ``~/.datus/skills/init/`` (user-level).
 
 ``/init`` is the lightweight pass: it statically analyzes the project's SQL
-into the persisted lineage graph (``upsert_lineage``), reads the human-written docs, verifies findings with
-cheap database probes, and writes the ``AGENTS.md`` project map plus
+into the persisted lineage graph (``upsert_lineage``), reads the human-written docs, checks names
+against the database schema without querying table data, and writes the ``AGENTS.md`` project map plus
 per-domain ``./knowledge/*.md`` files.
 It deliberately stops short of the expensive vector-indexed stores
 (``semantic_models`` / ``metrics`` / ``reference_sql``) — those are built by
@@ -41,7 +41,7 @@ logger = get_logger(__name__)
 
 _INIT_PROMPT = (
     "Initialize this project workspace by following the `init` skill. "
-    'Call `load_skill(skill_name="init")` first and execute its steps in order. '
+    'Call `load_skill(skill_name="init")` first and follow it. '
     "If `AGENTS.md` already exists, update the sections you own in place and confirm "
     "only before replacing the whole file."
     "{user_context}"

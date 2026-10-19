@@ -93,6 +93,137 @@ def _by_item(rows: list[dict[str, str]]) -> dict[tuple[str, str], dict[str, str]
     return {(row["product"], row["item"]): row for row in rows}
 
 
+def test_business_verification_compares_explicit_window_queries_without_changing_scope(query_tool):
+    """Compare real native ranks, keeping post-window and input filtering explicit."""
+    from datus.tools.func_tool.generation_evidence import GenerationEvidence
+    from datus.tools.func_tool.semantic_verification_tools import SemanticVerificationTools
+
+    db = DBFuncTool(agent_config=query_tool.agent_config, read_only=True)
+    artifact = Path(query_tool.agent_config.project_root) / "subject/semantic_models/window_filters/model.yaml"
+    verifier = SemanticVerificationTools(db, query_tool, GenerationEvidence(), lambda: artifact)
+    reference = (
+        "SELECT product,item,MIN(day) unused_day,"
+        "RANK() OVER (PARTITION BY product ORDER BY SUM(score) DESC) r "
+        "FROM main.activity_scores GROUP BY product,item"
+    )
+    selected = "item IN ('b','i')"
+    post_filter = f"SELECT * FROM ({reference}) original WHERE {selected}"
+    pre_filter = reference.replace(" GROUP BY", f" WHERE {selected} GROUP BY")
+    base = {
+        "name": "Item rank",
+        "metric": "item_rank",
+        "reference_column": "r",
+        "dimension_mapping": {"product": "scores.product", "item": "scores.item"},
+    }
+    result = verifier.verify_semantic_outputs(
+        [
+            {
+                **base,
+                "reference_sql": post_filter,
+                "query": {"dimensions": PRODUCT_ITEM, "where": "scores.item IN ('b','i')"},
+            },
+            {
+                **base,
+                "reference_sql": post_filter,
+                "query": {"dimensions": PRODUCT_ITEM, "context_filter": "scores.item IN ('b','i')"},
+            },
+            {
+                **base,
+                "reference_sql": pre_filter,
+                "query": {"dimensions": PRODUCT_ITEM, "context_filter": "scores.item IN ('b','i')"},
+            },
+            {**base, "reference_sql": "DELETE FROM main.activity_scores", "query": {"dimensions": PRODUCT_ITEM}},
+        ]
+    )
+    assert result.success, result.error
+    full_population, changed_population, scoped_population, refused_write = result.result["checks"]
+    assert full_population["status"] == "passed" and full_population["reference_groups"] == 2
+    assert changed_population["status"] == "failed" and changed_population["value_differences"] == 2
+    assert scoped_population["status"] == "passed"
+    assert refused_write["status"] == "unverified" and refused_write["reference_status"] == "failed"
+    assert db.read_query("SELECT COUNT(*) n FROM main.activity_scores", compress=False).result == [{"n": 10}]
+
+
+@pytest.mark.parametrize(
+    "dimension,grain,mapping",
+    [
+        ("metric_time", None, "metric_time"),
+        ("metric_time", "month", "metric_time"),
+        ("scores.day", None, "scores.day"),
+        ("scores.day", "month", "scores.day"),
+        ("scores.day", "month", "day__month"),
+    ],
+)
+def test_business_verification_normalizes_native_time_dimensions(query_tool, dimension, grain, mapping):
+    """A month label and its native date key compare without inventing a query grain."""
+    from datus.tools.func_tool.generation_evidence import GenerationEvidence
+    from datus.tools.func_tool.semantic_verification_tools import SemanticVerificationTools
+
+    db = DBFuncTool(agent_config=query_tool.agent_config, read_only=True)
+    verifier = SemanticVerificationTools(db, query_tool, GenerationEvidence(), lambda: None)
+    query = {"dimensions": [dimension], "context_filter": "scores.day = DATE '2025-06-01'"}
+    if grain:
+        query["time_granularity"] = grain
+    result = verifier.verify_semantic_outputs(
+        [
+            {
+                "name": "Score at period start",
+                "metric": "score_total",
+                "query": query,
+                "reference_sql": (
+                    "SELECT strftime(day, '%Y-%m') AS month, SUM(score) AS total "
+                    "FROM main.activity_scores WHERE day = DATE '2025-06-01' GROUP BY day"
+                ),
+                "reference_column": "total",
+                "dimension_mapping": {"month": mapping},
+            }
+        ]
+    )
+    comparison = result.result["checks"][0]
+    assert comparison["status"] == "passed", comparison
+    assert comparison["reference_groups"] == 1
+
+
+def test_business_verification_binds_the_queried_model_and_invalidates_changes(query_tool):
+    import yaml
+
+    from datus.tools.func_tool.generation_evidence import GenerationEvidence
+    from datus.tools.func_tool.semantic_verification_tools import SemanticVerificationTools
+
+    selected = Path(query_tool.runtime.artifact_metric_binding("score_total")["model_path"])
+    other = yaml.safe_load(selected.read_text())
+    model = other["semantic_model"][0]
+    model["name"] = "other_model"
+    model["metrics"] = [{**model["metrics"][0], "name": "other_total"}]
+    other_path = selected.with_name("other.yaml")
+    other_path.write_text(yaml.safe_dump(other))
+
+    evidence = GenerationEvidence()
+    db = DBFuncTool(agent_config=query_tool.agent_config, read_only=True)
+    verifier = SemanticVerificationTools(db, query_tool, evidence, lambda: selected)
+    check = {
+        "name": "Total score",
+        "metric": "other_total",
+        "reference_sql": "SELECT SUM(score) AS total FROM main.activity_scores",
+        "reference_column": "total",
+    }
+    refused = verifier.verify_semantic_outputs([check]).result["checks"][0]
+    assert refused["status"] == "unverified" and refused["query_status"] == "not_run"
+    assert "not the selected model" in refused["reason"]
+    assert not evidence.business_verification_summary(selected)
+
+    # Standalone callers can compare without selecting a model; the runtime
+    # still supplies the actual file and revision for their recorded result.
+    verifier.artifact_provider = lambda: None
+    compared = verifier.verify_semantic_outputs([check]).result["checks"][0]
+    assert compared["status"] == "passed", compared
+    assert evidence.business_verification_summary(other_path)[0]["status"] == "passed"
+    assert not evidence.business_verification_summary(selected)
+    model["metrics"][0]["expression"]["dialects"][0]["expression"] = "2 * SUM(scores.score)"
+    other_path.write_text(yaml.safe_dump(other))
+    assert evidence.business_verification_summary(other_path)[0]["status"] == "unverified"
+
+
 def test_where_keeps_the_whole_population_ranks_and_context_filter_rescopes_them(query_tool):
     """The same predicate answers two different questions.
 
@@ -206,8 +337,9 @@ def test_metric_artifact_uses_real_engine_and_enforced_connector(query_tool, mon
 
 @pytest.mark.parametrize("product", ["p2", "no_matching_product"])
 @pytest.mark.parametrize("root_model", [False, True])
+@pytest.mark.parametrize("snapshot_format", ["short", "full", "named", "inline"])
 def test_standalone_published_metric_uses_frozen_model_after_studio_model_changes(
-    query_tool, monkeypatch, tmp_path, product, root_model
+    query_tool, monkeypatch, tmp_path, product, root_model, snapshot_format
 ):
     """An artifact-only viewer has no Studio files or subject index."""
     from datus.api.models.base_models import Result
@@ -215,6 +347,7 @@ def test_standalone_published_metric_uses_frozen_model_after_studio_model_change
     from datus.schemas.metric_artifact_query import MetricQueryFile
     from datus.tools.func_tool import DashboardArtifactTools
     from datus.utils.async_utils import run_async
+    from datus.utils.metric_artifact_models import resolve_metric_query_snapshot
 
     ref = {"path": ["Scores"], "name": "score_total"}
     monkeypatch.setattr(
@@ -247,6 +380,16 @@ def test_standalone_published_metric_uses_frozen_model_after_studio_model_change
     )
     assert saved.success == 1, saved.error
     recipe = MetricQueryFile.model_validate_json((tools.queries_dir / "scores.metric.json").read_text(encoding="utf-8"))
+    assert recipe.model_snapshot_path == f"models/{recipe.model_revision[:16]}.yaml"
+    if snapshot_format in ("full", "named"):
+        renamed = f"models/{recipe.model_revision}.yaml" if snapshot_format == "full" else "models/flights.yml"
+        (tools.queries_dir.parent / recipe.model_snapshot_path).rename(tools.queries_dir.parent / renamed)
+        recipe = MetricQueryFile.model_validate({**recipe.model_dump(), "model_snapshot_path": renamed})
+    recipe = resolve_metric_query_snapshot(recipe, artifact_dir=tools.queries_dir.parent)
+    if snapshot_format == "inline":
+        recipe = MetricQueryFile.model_validate(
+            {**recipe.model_dump(), "schema_version": "1.0", "model_snapshot_path": None}
+        )
     if root_model:
         recipe = recipe.model_copy(update={"model_path": "model.yaml"})
     meta = (tools.queries_dir / "scores.params.json").read_text(encoding="utf-8")
@@ -346,3 +489,62 @@ def test_metric_artifact_preserves_native_projection_when_no_rows_match(query_to
         "score_total": "number",
     }
     assert tools._validate_metric_queries("report") is None
+
+
+def test_published_dashboard_keeps_distinct_native_models(query_tool, monkeypatch):
+    """Two model files keep their own calculations after Studio files disappear."""
+    import yaml
+
+    from datus.schemas.metric_artifact_query import MetricQueryFile
+    from datus.tools.func_tool import DashboardArtifactTools
+    from datus.tools.func_tool.metric_artifact_tools import execute_published_metric_query
+    from datus.utils.artifact_files import iter_artifact_files
+    from datus.utils.metric_artifact_models import resolve_metric_query_snapshot
+
+    model_path = Path(query_tool.runtime.artifact_metric_binding("score_total")["model_path"])
+    second = yaml.safe_load(model_path.read_text())
+    model = second["semantic_model"][0]
+    model["name"] = "double_scores"
+    model["metrics"] = [model["metrics"][0]]
+    model["metrics"][0]["name"] = "score_double"
+    model["metrics"][0]["expression"]["dialects"][0]["expression"] = "2 * SUM(scores.score)"
+    second_path = model_path.with_name("double.yaml")
+    second_path.write_text(yaml.safe_dump(second), encoding="utf-8")
+    monkeypatch.setattr(
+        query_tool, "get_metric", lambda name, path: FuncToolResult(success=1, result={"name": name, "path": path})
+    )
+    db_tool = DBFuncTool(agent_config=query_tool.agent_config)
+    tools = DashboardArtifactTools(
+        agent_config=query_tool.agent_config, db_func_tool=db_tool, semantic_tools=query_tool
+    )
+    assert tools.start_new_dashboard("two_models", "Scores", "Distinct models").success == 1
+    for metric in ("score_total", "score_double"):
+        result = tools.save_metric_query_template(
+            name=metric,
+            query={"metric": {"path": ["Scores"], "name": metric}},
+            goal=metric,
+            hypothesis="Each model retains its calculation",
+            params=[],
+            sample_params={},
+        )
+        assert result.success == 1, result.error
+    assert tools._validate_metric_queries("dashboard") is None
+    artifact = tools.queries_dir.parent
+    files = {
+        path.relative_to(artifact).as_posix(): path.read_bytes().decode("utf-8")
+        for path in iter_artifact_files(artifact, "dashboard")
+    }
+    recipes = [
+        MetricQueryFile.model_validate_json(files[f"queries/{metric}.metric.json"])
+        for metric in ("score_total", "score_double")
+    ]
+    assert len({recipe.model_path for recipe in recipes}) == 2
+    assert len({recipe.model_snapshot_path for recipe in recipes}) == 2
+    model_path.unlink()
+    second_path.unlink()
+    for recipe, expected in zip(recipes, (151.0, 302.0)):
+        resolved = resolve_metric_query_snapshot(recipe, files=files)
+        payload, _ = execute_published_metric_query(
+            resolved, runtime_config=query_tool.runtime.config, db_tool=db_tool, params={}, policy_context={}
+        )
+        assert payload.rows == [{recipe.metric.name: expected}]

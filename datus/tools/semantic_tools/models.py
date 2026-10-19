@@ -11,6 +11,8 @@ class DimensionInfo(BaseModel):
     """Information about a dimension."""
 
     name: str = Field(..., description="Dimension name")
+    required: bool = Field(False, description="Whether this metric always requires the dimension in group-by")
+    required_reason: Optional[str] = Field(None, description="Stable requirement reason code, e.g. 'metric_definition'")
     description: Optional[str] = Field(None, description="Dimension description")
     type: Optional[str] = Field(
         None,
@@ -20,6 +22,9 @@ class DimensionInfo(BaseModel):
     is_primary_time: Optional[bool] = Field(
         None,
         description="Whether this is the metric's canonical time dimension",
+    )
+    time_axis_required: bool = Field(
+        False, description="Whether this canonical time axis must be grouped with a time granularity"
     )
     time_granularities: List[str] = Field(
         default_factory=list,

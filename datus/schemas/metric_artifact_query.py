@@ -43,7 +43,7 @@ class MetricQueryRequest(BaseModel):
 
 
 class MetricQueryFile(MetricQueryRequest):
-    schema_version: Literal["1.0"] = "1.0"
+    schema_version: Literal["1.0", "1.1"] = "1.0"
     kind: Literal["metric"] = "metric"
     name: str = Field(pattern=r"^[a-z0-9_]{1,64}$")
     goal: str = Field(min_length=1)
@@ -51,6 +51,7 @@ class MetricQueryFile(MetricQueryRequest):
     model_path: str = Field(min_length=1)
     model_revision: str = Field(pattern=r"^[a-f0-9]{64}$")
     model_snapshot: str | None = None
+    model_snapshot_path: str | None = None
     metric_detail: dict[str, Any]
     metric_tables: list[str] = Field(default_factory=list)
     captured_at: str
@@ -61,6 +62,19 @@ class MetricQueryFile(MetricQueryRequest):
         path = PurePosixPath(self.model_path)
         if path.is_absolute() or ".." in path.parts or "\\" in self.model_path:
             raise ValueError("model_path must be a relative project path without traversal")
+        if self.schema_version == "1.1" and self.model_snapshot_path is None:
+            raise ValueError("schema 1.1 requires model_snapshot_path")
+        if self.model_snapshot_path is not None:
+            snapshot_path = PurePosixPath(self.model_snapshot_path)
+            # The bundle stores model files directly under models/. Their names
+            # are independent of model_revision, which verifies only the bytes.
+            if (
+                snapshot_path.parent != PurePosixPath("models")
+                or snapshot_path.suffix.lower() not in (".yaml", ".yml", ".json")
+                or "\\" in self.model_snapshot_path
+                or snapshot_path.as_posix() != self.model_snapshot_path
+            ):
+                raise ValueError("model_snapshot_path must name a model file directly under models/")
         if (
             self.model_snapshot is not None
             and hashlib.sha256(self.model_snapshot.encode("utf-8")).hexdigest() != self.model_revision

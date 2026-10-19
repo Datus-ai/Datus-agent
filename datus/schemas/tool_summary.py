@@ -673,18 +673,6 @@ def _fmt_generate_sql_summary_id(result: Any) -> str:
     return ""
 
 
-def _fmt_inspect_semantic_sources(result: Any) -> str:
-    if isinstance(result, dict):
-        tables = result.get("tables")
-        relationships = result.get("relationships")
-        if isinstance(tables, list) and isinstance(relationships, list):
-            return f"{len(tables)} tables, {len(relationships)} rels"
-        summary = result.get("summary")
-        if isinstance(summary, str) and summary:
-            return summary
-    return ""
-
-
 def _fmt_profile_semantic_model_evidence(result: Any) -> str:
     if isinstance(result, dict):
         tables = result.get("tables")
@@ -1280,7 +1268,6 @@ def _register_builtins(registry: ToolSummaryRegistry) -> None:
         "publish_semantic_model": _fmt_publish_semantic_model,
         "publish_metrics": _fmt_publish_metrics,
         "generate_sql_summary_id": _fmt_generate_sql_summary_id,
-        "inspect_semantic_sources": _fmt_inspect_semantic_sources,
         "profile_semantic_model_evidence": _fmt_profile_semantic_model_evidence,
         # Scheduler tools
         "submit_sql_job": _fmt_submit_sql_job,

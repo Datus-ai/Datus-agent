@@ -11,11 +11,13 @@ ARTIFACT_DIRS = {
         "render": ((".jsx", ".js", ".css", ".json", ".md"), True),
         "queries": ((".sql", ".json"), False),
         "analysis": ((".md", ".json"), False),
+        "models": ((".yaml", ".yml", ".json"), False),
     },
     "dashboard": {
         "render": ((".jsx", ".js", ".css", ".json", ".md"), True),
         "queries": ((".sql.j2", ".params.json", ".brief.json", ".metric.json"), False),
         "analysis": ((".md", ".json"), False),
+        "models": ((".yaml", ".yml", ".json"), False),
     },
 }
 

@@ -27,6 +27,7 @@ No mocks; we use a real SQLite database wired through ``DBFuncTool`` so
 from __future__ import annotations
 
 import sqlite3
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -34,9 +35,43 @@ import pytest
 
 from datus.tools.func_tool import DBFuncTool, ReportArtifactTools, ReportFilesystemFuncTool
 from datus.tools.func_tool.report_artifact_tools import (
+    _atomic_write_text,
     _infer_column_type,
     _resolve_relative_import,
 )
+
+
+@pytest.mark.parametrize("overwrite", [True, False])
+def test_atomic_write_preserves_existing_file_unless_overwrite_is_enabled(tmp_path, overwrite):
+    target = tmp_path / "model.yml"
+    _atomic_write_text(target, "original\r\n", overwrite=False)
+    if overwrite:
+        _atomic_write_text(target, "replacement\r\n")
+        assert target.read_bytes() == b"replacement\r\n"
+    else:
+        with pytest.raises(FileExistsError):
+            _atomic_write_text(target, "replacement\r\n", overwrite=False)
+        assert target.read_bytes() == b"original\r\n"
+    assert list(tmp_path.iterdir()) == [target]
+
+
+def test_concurrent_exclusive_writes_publish_one_complete_file(tmp_path):
+    target = tmp_path / "model.yml"
+
+    def write(index):
+        content = f"model {index}\r\n" * 1000
+        try:
+            _atomic_write_text(target, content, overwrite=False)
+            return content.encode()
+        except FileExistsError:
+            return None
+
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        results = list(executor.map(write, range(24)))
+    winners = [content for content in results if content is not None]
+    assert winners == [target.read_bytes()]
+    assert list(tmp_path.iterdir()) == [target]
+
 
 # ----------------------------------------------------------------------------- #
 # Fixtures                                                                      #

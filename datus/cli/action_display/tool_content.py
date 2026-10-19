@@ -2472,26 +2472,6 @@ def _build_parse_dates(action: ActionHistory, verbose: bool) -> ToolCallContent:
     return tc
 
 
-def _build_inspect_semantic_sources(action: ActionHistory, verbose: bool) -> ToolCallContent:
-    """inspect_semantic_sources: show combined table and relationship counts."""
-    tc = make_base_content(action)
-    if verbose:
-        tc.args_lines = extract_args_markup(action)
-        if action.output:
-            tc.output_lines = _format_result_only_markup(action.output)
-    else:
-        data = parse_output_data(action.output)
-        if data:
-            result = data.get("result")
-            if isinstance(result, dict):
-                tables = result.get("tables", [])
-                rels = result.get("relationships", [])
-                table_count = len(tables) if isinstance(tables, list) else 0
-                rel_count = len(rels) if isinstance(rels, list) else 0
-                tc.compact_result = f"{table_count} tables, {rel_count} relationships"
-    return tc
-
-
 def _build_profile_semantic_model_evidence(action: ActionHistory, verbose: bool) -> ToolCallContent:
     """profile_semantic_model_evidence: show profiled table count."""
     tc = make_base_content(action)
@@ -2731,7 +2711,6 @@ class ToolCallContentBuilder:
         self._registry["parse_temporal_expressions"] = _build_parse_dates
 
         # Semantic discovery tools
-        self._registry["inspect_semantic_sources"] = _build_inspect_semantic_sources
         self._registry["profile_semantic_model_evidence"] = _build_profile_semantic_model_evidence
 
         # Skill tools
