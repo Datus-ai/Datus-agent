@@ -5,16 +5,18 @@ The Hive adapter connects to the binary HiveServer2 endpoint through PyHive/Thri
 !!! note "Adapter availability"
     The Kerberos configuration and Inceptor metadata improvements described below require a `datus-hive` build containing those changes. The published `datus-hive` 0.1.3 package does not include `kerberos_service_name`, the `kerberos` extra, or the metadata fixes. Install a build containing them before using these features; installing GSSAPI dependencies alone does not add the missing adapter configuration.
 
+The commands below pin a source revision containing the changes in [adapter PR #158](https://github.com/Datus-ai/datus-db-adapters/pull/158). They require Git and Python 3.12 or newer. Both installation variants use the same revision. `--force-reinstall` replaces an existing PyPI 0.1.3 installation even though the source build currently has the same package version.
+
 ## Install
 
 ```bash
-pip install datus-hive
+pip install --force-reinstall 'datus-hive @ git+https://github.com/Datus-ai/datus-db-adapters.git@5dbac1871985f349b917c6876ca6487b709a65b0#subdirectory=datus-hive'
 ```
 
 Install the adapter into the same Python environment as `datus`. For Kerberos, install its optional GSSAPI dependencies after choosing an adapter build with Kerberos support:
 
 ```bash
-pip install 'datus-hive[kerberos]'
+pip install --force-reinstall 'datus-hive[kerberos] @ git+https://github.com/Datus-ai/datus-db-adapters.git@5dbac1871985f349b917c6876ca6487b709a65b0#subdirectory=datus-hive'
 ```
 
 The Kerberos extension needs system Kerberos libraries and development headers to build, plus a C compiler. For example, Debian/Ubuntu builds use `libkrb5-dev`; install the Kerberos client tools such as `kinit` and `klist` as well.
@@ -145,6 +147,8 @@ agent:
 Replace the endpoint, port, and authentication mode with those supplied by the Inceptor administrator. The same `NONE`, `LDAP`, `CUSTOM`, and Kerberos client configurations apply when the server enables the corresponding mode. Use the Kerberos profile above for an Inceptor Kerberos endpoint. A vendor JDBC driver is not required for this connection path.
 
 With the metadata fixes, ordinary views are excluded from table listings and retrieved through view discovery. Column comments are read by field name so Inceptor's additional `DESCRIBE` fields do not shift the comment value. Database, table, view, column/comment, DDL, and sample-row retrieval were verified with the updated adapter against Apache Hive 4.0.1 and TDH Community Development Edition 2024.5 (Inceptor 8.37.3).
+
+Table/view discovery requires server support for `SHOW VIEWS` and metadata-read permissions. A failed inventory is reported to the caller.
 
 Inceptor validation covered `NONE`, `LDAP`, `CUSTOM`, and client-to-HiveServer2 Kerberos authentication. It did not validate a fully Kerberized TDH/Guardian cluster or all enterprise features. Guardian Token/CAS authentication, HTTP/HTTPS transport, and ZooKeeper service discovery are not exposed by this adapter's profile. Session engine options and SQL features still depend on the target server.
 

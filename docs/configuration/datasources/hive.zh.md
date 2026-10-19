@@ -5,16 +5,18 @@ Hive adapter 通过 PyHive/Thrift 连接 HiveServer2 的二进制端点，也可
 !!! note "Adapter 版本要求"
     下文的 Kerberos 配置和 Inceptor 元数据改进需要包含对应改动的 `datus-hive` 构建。已发布的 `datus-hive` 0.1.3 不包含 `kerberos_service_name`、`kerberos` 可选依赖组和元数据修复。使用这些功能前需安装包含对应改动的构建；仅安装 GSSAPI 依赖无法补上缺少的 Adapter 配置。
 
+下方命令固定到包含 [Adapter PR #158](https://github.com/Datus-ai/datus-db-adapters/pull/158) 改动的源码提交，需要 Git 和 Python 3.12 或更高版本。两种安装方式使用同一提交。源码构建目前仍使用 0.1.3 版本号，因此使用 `--force-reinstall` 替换已经安装的 PyPI 0.1.3 包。
+
 ## 安装
 
 ```bash
-pip install datus-hive
+pip install --force-reinstall 'datus-hive @ git+https://github.com/Datus-ai/datus-db-adapters.git@5dbac1871985f349b917c6876ca6487b709a65b0#subdirectory=datus-hive'
 ```
 
 将 Adapter 安装到运行 `datus` 的同一 Python 环境。使用 Kerberos 时，先选择支持 Kerberos 的 Adapter 构建，再安装可选的 GSSAPI 依赖：
 
 ```bash
-pip install 'datus-hive[kerberos]'
+pip install --force-reinstall 'datus-hive[kerberos] @ git+https://github.com/Datus-ai/datus-db-adapters.git@5dbac1871985f349b917c6876ca6487b709a65b0#subdirectory=datus-hive'
 ```
 
 Kerberos 扩展构建需要系统 Kerberos 库、开发头文件和 C 编译器。例如 Debian/Ubuntu 使用 `libkrb5-dev`；还需安装 `kinit`、`klist` 等 Kerberos 客户端工具。
@@ -145,6 +147,8 @@ agent:
 将地址、端口和认证方式替换为 Inceptor 管理员提供的值。服务端启用对应模式时，可使用相同的 `NONE`、`LDAP`、`CUSTOM` 或 Kerberos 客户端配置。连接 Inceptor Kerberos 端点时，使用上方 Kerberos 示例。此连接路径无需厂商 JDBC 驱动。
 
 包含元数据修复的 Adapter 会将普通视图排除在表列表之外，通过视图接口单独获取；列注释按字段名读取，避免 Inceptor 的额外 `DESCRIBE` 字段导致取值错位。更新后的 Adapter 已在 Apache Hive 4.0.1 和 TDH 社区开发版 2024.5（Inceptor 8.37.3）上验证数据库、表、视图、列及注释、DDL 和采样数据获取。
+
+表/视图发现要求服务端支持 `SHOW VIEWS`，并授予元数据读取权限；发现查询失败会向调用方报错。
 
 Inceptor 验证覆盖 `NONE`、`LDAP`、`CUSTOM` 和客户端到 HiveServer2 的 Kerberos 认证，尚未验证完整 TDH/Guardian 集群的 Kerberos 安全配置或全部企业功能。Adapter 配置未暴露 Guardian Token/CAS 认证、HTTP/HTTPS 传输和 ZooKeeper 服务发现能力。会话引擎参数及 SQL 功能仍取决于目标服务端。
 
