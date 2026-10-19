@@ -5026,10 +5026,11 @@
 
 
 <h1 id="clickhouse-datasource">ClickHouse datasource<a class="headerlink" href="#clickhouse-datasource" title="Permanent link">&para;</a></h1>
-<p>The ClickHouse adapter connects through ClickHouse's HTTP interface and exposes databases directly; ClickHouse has no separate schema layer.</p>
+<p>The ClickHouse adapter connects through ClickHouse's HTTP(S) interface and exposes databases directly; ClickHouse has no separate schema layer.</p>
 <h2 id="install">Install<a class="headerlink" href="#install" title="Permanent link">&para;</a></h2>
 <div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>pip<span class="w"> </span>install<span class="w"> </span>datus-clickhouse
 </span></code></pre></div>
+<p>This installs the published adapter for the HTTP profile below. The HTTPS settings on this page target the upcoming <code>0.1.4</code> release; see the release requirements below.</p>
 <h2 id="connection-profile">Connection profile<a class="headerlink" href="#connection-profile" title="Permanent link">&para;</a></h2>
 <div class="language-yaml highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="nt">agent</span><span class="p">:</span>
 </span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">  </span><span class="nt">services</span><span class="p">:</span>
@@ -5066,8 +5067,8 @@
 <td><code>port</code></td>
 <td>integer</td>
 <td style="text-align: right;">no</td>
-<td><code>8123</code></td>
-<td>HTTP interface port.</td>
+<td><code>8123</code> / <code>8443</code></td>
+<td>Default follows <code>protocol</code>; explicit custom ports are preserved.</td>
 </tr>
 <tr>
 <td><code>username</code></td>
@@ -5095,15 +5096,52 @@
 <td>integer</td>
 <td style="text-align: right;">no</td>
 <td><code>30</code></td>
-<td>Connection timeout.</td>
+<td>SQLAlchemy pool wait timeout, not a query deadline.</td>
+</tr>
+<tr>
+<td><code>protocol</code></td>
+<td>string</td>
+<td style="text-align: right;">no</td>
+<td><code>http</code></td>
+<td><code>http</code> or <code>https</code>; a port does not select the protocol.</td>
+</tr>
+<tr>
+<td><code>verify</code></td>
+<td>boolean</td>
+<td style="text-align: right;">no</td>
+<td><code>true</code></td>
+<td>Verify the HTTPS certificate chain and hostname.</td>
+</tr>
+<tr>
+<td><code>ca_cert</code></td>
+<td>string</td>
+<td style="text-align: right;">no</td>
+<td>—</td>
+<td>Readable PEM CA bundle file for verified HTTPS.</td>
 </tr>
 </tbody>
 </table>
 <h2 id="protocol-and-namespace">Protocol and namespace<a class="headerlink" href="#protocol-and-namespace" title="Permanent link">&para;</a></h2>
 <p>Connect to the HTTP endpoint (<code>8123</code> by default), not the native TCP port (<code>9000</code> by default). Objects use <code>database.table</code>; do not add a <code>schema</code> field.</p>
-<p>The adapter profile currently has no TLS/HTTPS flag. Do not send credentials over an untrusted plaintext network: use an HTTPS-capable external proxy or encrypted tunnel, or keep the connection on an isolated trusted network.</p>
+<p>TLS requires <code>datus-clickhouse&gt;=0.1.4</code> and its shared dependencies (<code>datus-sqlalchemy&gt;=0.1.10</code>, <code>datus-db-core&gt;=0.1.8</code>). These versions are not yet published on PyPI; use the following HTTPS configuration after they are released. Existing profiles keep HTTP.</p>
+<div class="language-yaml highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="nt">agent</span><span class="p">:</span>
+</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="w">  </span><span class="nt">services</span><span class="p">:</span>
+</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="w">    </span><span class="nt">datasources</span><span class="p">:</span>
+</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="w">      </span><span class="nt">clickhouse_prod</span><span class="p">:</span>
+</span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="w">        </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">clickhouse</span>
+</span><span id="__span-2-6"><a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="w">        </span><span class="nt">host</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">clickhouse.example.com</span>
+</span><span id="__span-2-7"><a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a><span class="w">        </span><span class="nt">protocol</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">https</span>
+</span><span id="__span-2-8"><a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a><span class="w">        </span><span class="nt">port</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">8443</span>
+</span><span id="__span-2-9"><a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a><span class="w">        </span><span class="nt">username</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${CLICKHOUSE_USER}</span>
+</span><span id="__span-2-10"><a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a><span class="w">        </span><span class="nt">password</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${CLICKHOUSE_PASSWORD}</span>
+</span><span id="__span-2-11"><a id="__codelineno-2-11" name="__codelineno-2-11" href="#__codelineno-2-11"></a><span class="w">        </span><span class="nt">database</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">analytics</span>
+</span><span id="__span-2-12"><a id="__codelineno-2-12" name="__codelineno-2-12" href="#__codelineno-2-12"></a><span class="w">        </span><span class="nt">verify</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
+</span><span id="__span-2-13"><a id="__codelineno-2-13" name="__codelineno-2-13" href="#__codelineno-2-13"></a><span class="w">        </span><span class="nt">ca_cert</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">/absolute/path/clickhouse-ca.pem</span>
+</span></code></pre></div>
+<p>Omit <code>ca_cert</code> to use Requests' default trust configuration. For a private CA, provide a readable PEM bundle file; <code>~</code> expands to the user's home and relative paths resolve from the process working directory. Inline PEM and client certificates are not supported by these settings.</p>
+<p>HTTPS verifies both certificate trust and hostname. <code>ca_cert</code> requires HTTPS with verification enabled; conflicting settings and invalid files fail configuration validation. Wrong CA/hostname errors fail the connection without a fallback retry over HTTP. <code>verify: false</code> explicitly disables verification for development diagnosis. Connect to the server's HTTPS endpoint (commonly 8443), not the native TLS port 9440.</p>
 <h2 id="verify-the-connection">Verify the connection<a class="headerlink" href="#verify-the-connection" title="Permanent link">&para;</a></h2>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>datus<span class="w"> </span>--config<span class="w"> </span>conf/agent.yml<span class="w"> </span>--datasource<span class="w"> </span>clickhouse_prod
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>datus<span class="w"> </span>--config<span class="w"> </span>conf/agent.yml<span class="w"> </span>--datasource<span class="w"> </span>clickhouse_prod
 </span></code></pre></div>
 <p>Run <code>/databases</code>, <code>/tables</code>, and a small <code>SELECT 1</code> query.</p>
 <h2 id="troubleshooting">Troubleshooting<a class="headerlink" href="#troubleshooting" title="Permanent link">&para;</a></h2>
@@ -5122,6 +5160,14 @@
 <tr>
 <td>Unknown field <code>schema</code></td>
 <td>ClickHouse databases serve as the namespace; remove <code>schema</code>.</td>
+</tr>
+<tr>
+<td>Certificate verification fails</td>
+<td>Check the CA bundle and use the hostname listed in the certificate SAN.</td>
+</tr>
+<tr>
+<td>HTTPS handshake fails on an HTTP port</td>
+<td>Set <code>protocol</code> and the HTTP(S) endpoint port together.</td>
 </tr>
 <tr>
 <td>Authentication fails</td>
