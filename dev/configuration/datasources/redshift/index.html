@@ -3691,6 +3691,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#connecting-from-a-local-machine" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Connecting from a local machine
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#verify-the-connection" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -4968,6 +4979,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#connecting-from-a-local-machine" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Connecting from a local machine
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#verify-the-connection" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -5058,12 +5080,14 @@
 </span><span id="__span-2-9"><a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a><span class="w">        </span><span class="nt">database</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">analytics</span>
 </span><span id="__span-2-10"><a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a><span class="w">        </span><span class="nt">schema</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">public</span>
 </span><span id="__span-2-11"><a id="__codelineno-2-11" name="__codelineno-2-11" href="#__codelineno-2-11"></a><span class="w">        </span><span class="nt">iam</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
-</span><span id="__span-2-12"><a id="__codelineno-2-12" name="__codelineno-2-12" href="#__codelineno-2-12"></a><span class="w">        </span><span class="nt">cluster_identifier</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">analytics-cluster</span>
-</span><span id="__span-2-13"><a id="__codelineno-2-13" name="__codelineno-2-13" href="#__codelineno-2-13"></a><span class="w">        </span><span class="nt">region</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">us-east-1</span>
-</span><span id="__span-2-14"><a id="__codelineno-2-14" name="__codelineno-2-14" href="#__codelineno-2-14"></a><span class="w">        </span><span class="c1"># access_key_id: ${AWS_ACCESS_KEY_ID}</span>
-</span><span id="__span-2-15"><a id="__codelineno-2-15" name="__codelineno-2-15" href="#__codelineno-2-15"></a><span class="w">        </span><span class="c1"># secret_access_key: ${AWS_SECRET_ACCESS_KEY}</span>
+</span><span id="__span-2-12"><a id="__codelineno-2-12" name="__codelineno-2-12" href="#__codelineno-2-12"></a><span class="w">        </span><span class="nt">ssl</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
+</span><span id="__span-2-13"><a id="__codelineno-2-13" name="__codelineno-2-13" href="#__codelineno-2-13"></a><span class="w">        </span><span class="nt">cluster_identifier</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">analytics-cluster</span>
+</span><span id="__span-2-14"><a id="__codelineno-2-14" name="__codelineno-2-14" href="#__codelineno-2-14"></a><span class="w">        </span><span class="nt">region</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">us-east-1</span>
+</span><span id="__span-2-15"><a id="__codelineno-2-15" name="__codelineno-2-15" href="#__codelineno-2-15"></a><span class="w">        </span><span class="c1"># access_key_id: ${AWS_ACCESS_KEY_ID}</span>
+</span><span id="__span-2-16"><a id="__codelineno-2-16" name="__codelineno-2-16" href="#__codelineno-2-16"></a><span class="w">        </span><span class="c1"># secret_access_key: ${AWS_SECRET_ACCESS_KEY}</span>
 </span></code></pre></div>
 <p>When the runtime already has an AWS role or standard AWS credentials, omit the static access-key fields.</p>
+<p>For both authentication methods, <code>username</code> is an existing Redshift <strong>database user</strong>. With IAM authentication, the adapter forwards it to the driver's <code>db_user</code> parameter when obtaining temporary database credentials. Configure that database username, rather than an IAM user or role ARN. <code>db_user</code> is an internal driver parameter and is not a supported field in <code>agent.yml</code>.</p>
 <h2 id="parameters">Parameters<a class="headerlink" href="#parameters" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
@@ -5095,7 +5119,7 @@
 <td>string</td>
 <td style="text-align: right;">yes</td>
 <td>—</td>
-<td>Database user.</td>
+<td>Database user; also forwarded as <code>db_user</code> for IAM authentication.</td>
 </tr>
 <tr>
 <td><code>password</code></td>
@@ -5116,14 +5140,14 @@
 <td>string</td>
 <td style="text-align: right;">no</td>
 <td>—</td>
-<td>Initial schema; the driver uses <code>public</code> when omitted.</td>
+<td>Initial schema; the adapter uses <code>public</code> when omitted.</td>
 </tr>
 <tr>
 <td><code>ssl</code></td>
 <td>boolean</td>
 <td style="text-align: right;">no</td>
 <td><code>true</code></td>
-<td>Enables TLS.</td>
+<td>Enables TLS; required for IAM authentication.</td>
 </tr>
 <tr>
 <td><code>iam</code></td>
@@ -5170,9 +5194,21 @@
 </tbody>
 </table>
 <h2 id="authentication-and-tls">Authentication and TLS<a class="headerlink" href="#authentication-and-tls" title="Permanent link">&para;</a></h2>
-<p>Set <code>iam: true</code> to make <code>password</code> optional. In AWS-hosted environments, prefer an attached role over keys in <code>agent.yml</code>. The adapter exposes a boolean <code>ssl</code>; it does not expose CA-bundle or hostname-verification fields in the profile.</p>
+<p>Set <code>iam: true</code> to make <code>password</code> optional, and keep <code>ssl: true</code> for IAM connections. In AWS-hosted environments, prefer an attached role over keys in <code>agent.yml</code>. The adapter exposes a boolean <code>ssl</code>; it does not expose CA-bundle or hostname-verification fields in the profile.</p>
+<p>The adapter does not pass <code>sslmode</code>; hostname checks follow the installed driver's default policy. <code>ssl: true</code> does not guarantee strict hostname verification, and the current profile cannot explicitly request <code>sslmode: verify-full</code>.</p>
+<h2 id="connecting-from-a-local-machine">Connecting from a local machine<a class="headerlink" href="#connecting-from-a-local-machine" title="Permanent link">&para;</a></h2>
+<p>The AWS CLI calls AWS HTTPS APIs, while the adapter opens a separate database TCP connection. A successful CLI call or an HTTP proxy does not establish database connectivity. Check the cluster endpoint's actual database port, VPC routes, network ACLs, and security groups. For public endpoints, allow the database client's public egress IP; an HTTP proxy may use a different address.</p>
+<p>For a private endpoint, use a VPN or an existing Systems Manager managed host that can reach and resolve the database endpoint. Allow the database port from that host's security group or private IP, and install the <a href="https://docs.aws.amazon.com/systems-manager/latest/userguide/session-manager-working-with-install-plugin.html">Session Manager plugin</a> locally.</p>
+<p>For an SSM tunnel, set <code>REDSHIFT_HOST</code> to the original cluster endpoint, <code>REDSHIFT_REGION</code> to its AWS region, and <code>REDSHIFT_SSM_TARGET</code> to the managed host's instance ID. Set <code>REDSHIFT_REMOTE_PORT</code> to the cluster's actual database port (<code>Endpoint.Port</code>, usually <code>5439</code>). Run in a separate terminal:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>aws<span class="w"> </span>ssm<span class="w"> </span>start-session<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="w">  </span>--region<span class="w"> </span><span class="s2">"</span><span class="nv">$REDSHIFT_REGION</span><span class="s2">"</span><span class="w"> </span><span class="se">\</span>
+</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="w">  </span>--target<span class="w"> </span><span class="s2">"</span><span class="nv">$REDSHIFT_SSM_TARGET</span><span class="s2">"</span><span class="w"> </span><span class="se">\</span>
+</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="w">  </span>--document-name<span class="w"> </span>AWS-StartPortForwardingSessionToRemoteHost<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-3-5"><a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="w">  </span>--parameters<span class="w"> </span><span class="s2">"{\"host\":[\"</span><span class="nv">$REDSHIFT_HOST</span><span class="s2">\"],\"portNumber\":[\"</span><span class="nv">$REDSHIFT_REMOTE_PORT</span><span class="s2">\"],\"localPortNumber\":[\"15439\"]}"</span>
+</span></code></pre></div>
+<p>For the tunnel, keep the datasource profile's <code>host</code> set to the original Redshift endpoint. While the tunnel is open, temporarily map that endpoint to <code>127.0.0.1</code> in local DNS or the hosts file, and set the profile's <code>port</code> to <code>15439</code>. This changes local routing; TLS hostname checks still follow the driver's policy described above. The managed host resolves the remote endpoint independently of this local override. Remove the override and close the SSM session after use.</p>
 <h2 id="verify-the-connection">Verify the connection<a class="headerlink" href="#verify-the-connection" title="Permanent link">&para;</a></h2>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>datus<span class="w"> </span>--config<span class="w"> </span>conf/agent.yml<span class="w"> </span>--datasource<span class="w"> </span>redshift_prod
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>datus<span class="w"> </span>--config<span class="w"> </span>conf/agent.yml<span class="w"> </span>--datasource<span class="w"> </span>redshift_prod
 </span></code></pre></div>
 <p>Run <code>/schemas</code> and <code>/tables</code>. For IAM profiles, also confirm the runtime identity can call the Redshift credential APIs for the configured cluster.</p>
 <h2 id="troubleshooting">Troubleshooting<a class="headerlink" href="#troubleshooting" title="Permanent link">&para;</a></h2>
@@ -5190,17 +5226,27 @@
 </tr>
 <tr>
 <td>IAM authentication fails</td>
-<td>Check <code>cluster_identifier</code>, <code>region</code>, runtime AWS credentials/role, and IAM policy.</td>
+<td>Check the database <code>username</code>, <code>cluster_identifier</code>, <code>region</code>, runtime AWS credentials/role, and IAM policy.</td>
 </tr>
 <tr>
-<td>Connection times out</td>
-<td>Confirm VPC routing, security groups, endpoint, and port <code>5439</code>.</td>
+<td>IAM error reports a missing <code>db_user</code></td>
+<td>Use an adapter release containing the <a href="https://github.com/Datus-ai/datus-db-adapters/pull/157">IAM username-forwarding fix</a>. Keep the database user in <code>username</code>; adding <code>db_user</code> to the profile fails validation.</td>
+</tr>
+<tr>
+<td>CLI calls succeed but the database connection times out</td>
+<td>Check database TCP connectivity separately: endpoint, actual database port, VPC routing, security groups, and any VPN or tunnel.</td>
+</tr>
+<tr>
+<td><code>SSLContext</code> / <code>PROTOCOL_TLS</code> deprecation warnings on Python 3.12</td>
+<td>Driver versions including <code>redshift_connector</code> 2.2.0 use deprecated SSL-context initialization. Keep TLS enabled and use an official driver release containing the <a href="https://github.com/aws/amazon-redshift-python-driver/pull/288">upstream fix</a> when available. Treating these warnings as errors can prevent a connection.</td>
 </tr>
 </tbody>
 </table>
 <h2 id="reference">Reference<a class="headerlink" href="#reference" title="Permanent link">&para;</a></h2>
 <ul>
 <li><a href="https://docs.aws.amazon.com/redshift/latest/mgmt/configure-jdbc-connection.html">Amazon Redshift connection guidance</a></li>
+<li><a href="https://docs.aws.amazon.com/systems-manager/latest/userguide/session-manager-working-with-sessions-start.html#sessions-remote-port-forwarding">Session Manager port forwarding to a remote host</a></li>
+<li><a href="https://docs.python.org/3.12/library/ssl.html#ssl.SSLContext">Python SSLContext deprecation notes</a></li>
 </ul>
 
 
