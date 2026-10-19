@@ -148,3 +148,15 @@ def test_yaml_profile_queries_through_dbmanager(trino_config, tmp_path):
         assert [column["name"] for column in metadata.result["columns"]] == ["regionkey", "name", "comment"]
     finally:
         manager.close()
+
+
+@pytest.mark.parametrize("pattern", ["reg%", "reg*", "r?gion"])
+def test_scoped_queries_preserve_trino_namespace_patterns(trino_connector, pattern):
+    tool = DBFuncTool(trino_connector, scoped_tables=[f'"tpch"."tiny".{pattern}'])
+    allowed = tool.read_query('SELECT COUNT(*) AS cnt FROM "tpch"."tiny"."region"')
+    assert allowed.success == 1, allowed.error
+    assert allowed.result["original_rows"] == 1
+    assert "5" in allowed.result["compressed_data"]
+    rejected = tool.read_query('SELECT COUNT(*) AS cnt FROM "tpch"."tiny"."nation"')
+    assert rejected.success == 0
+    assert "outside scoped context" in rejected.error
