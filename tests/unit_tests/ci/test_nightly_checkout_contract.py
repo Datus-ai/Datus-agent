@@ -385,7 +385,11 @@ printf 'status=%s test_exit_code=%s\n' "$status" "$test_exit_code"
         check=True,
         capture_output=True,
         text=True,
-        env={"PATH": f"{tmp_path}{os.pathsep}{os.defpath}", "LOG_FILE": str(log_file), "RUNNER_TEMP": str(tmp_path)},
+        env={
+            "PATH": os.pathsep.join([str(tmp_path), str(Path(sys.executable).parent), os.defpath]),
+            "LOG_FILE": str(log_file),
+            "RUNNER_TEMP": str(tmp_path),
+        },
     )
     expected = 1 if failure else 0
     assert f"status={expected} test_exit_code={expected}" in result.stdout
@@ -435,7 +439,7 @@ printf 'status=%s test_exit_code=%s\n' "$status" "$test_exit_code"
         text=True,
         start_new_session=True,
         env={
-            "PATH": f"{tmp_path}{os.pathsep}{os.defpath}",
+            "PATH": os.pathsep.join([str(tmp_path), str(Path(sys.executable).parent), os.defpath]),
             "LOG_FILE": str(tmp_path / "nightly.log"),
             "RUNNER_TEMP": str(tmp_path),
             "TRINO_PROBE_PIDS": str(pids),
