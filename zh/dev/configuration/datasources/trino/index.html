@@ -5030,6 +5030,7 @@
 <h2 id="_1">安装<a class="headerlink" href="#_1" title="Permanent link">&para;</a></h2>
 <div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>pip<span class="w"> </span>install<span class="w"> </span>datus-trino
 </span></code></pre></div>
+<p>下述 CA bundle 字段面向待发布的 <code>datus-trino&gt;=0.1.4</code>，共享依赖为 <code>datus-sqlalchemy&gt;=0.1.10</code>、<code>datus-db-core&gt;=0.1.8</code>。这些版本尚未发布；发布前需安装包含 CMP-TLS-03 的源码。已有不含 <code>ca_cert</code> 的 HTTPS profile 继续可用。</p>
 <h2 id="_2">连接配置<a class="headerlink" href="#_2" title="Permanent link">&para;</a></h2>
 <div class="language-yaml highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="nt">agent</span><span class="p">:</span>
 </span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">  </span><span class="nt">services</span><span class="p">:</span>
@@ -5112,7 +5113,14 @@
 <td>boolean</td>
 <td style="text-align: right;">否</td>
 <td><code>true</code></td>
-<td>是否校验 HTTPS 证书。</td>
+<td>校验证书链和主机名。</td>
+</tr>
+<tr>
+<td><code>ca_cert</code></td>
+<td>string</td>
+<td style="text-align: right;">否</td>
+<td>—</td>
+<td>可读 PEM CA bundle 文件；要求 HTTPS 且 <code>verify: true</code>，从 0.1.4 提供。</td>
 </tr>
 <tr>
 <td><code>timeout_seconds</code></td>
@@ -5124,7 +5132,8 @@
 </tbody>
 </table>
 <h2 id="tls">TLS 与命名空间<a class="headerlink" href="#tls" title="Permanent link">&para;</a></h2>
-<p>启用 TLS 时设置 <code>http_scheme: https</code>，生产环境应保持 <code>verify: true</code>。当前 adapter 只暴露布尔校验开关，没有自定义 CA bundle 路径。</p>
+<p>启用 TLS 时设置 <code>http_scheme: https</code>，生产环境保持 <code>verify: true</code>。私有 CA 可在上述 profile 中增加 <code>ca_cert: /absolute/path/trino-ca.pem</code>；省略时使用 Python client 的 Requests 信任配置。<code>verify</code> 仍是布尔值，不能填文件路径。</p>
+<p><code>ca_cert</code> 接受可读 PEM bundle 文件：<code>~</code> 展开为用户目录，相对路径基于进程工作目录解析。无效文件、HTTP + CA、<code>verify: false</code> + CA 会在连接前被拒绝。此字段不支持内联 PEM 或客户端证书。<code>verify: false</code> 会关闭证书链和主机名校验，仅用于临时开发排查。HTTPS 失败不会重试 HTTP；端口不会自动选择协议，TLS 应显式设置 <code>port</code> 和 <code>http_scheme</code>。</p>
 <p>Trino profile 必须使用 <code>schema_name</code>；与部分 SQL adapter 不同，它没有为 <code>schema</code> 定义 alias。运行时可以切换 catalog，但仍受 Trino access-control 规则限制。</p>
 <h2 id="_4">验证连接<a class="headerlink" href="#_4" title="Permanent link">&para;</a></h2>
 <div class="language-bash highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>datus<span class="w"> </span>--config<span class="w"> </span>conf/agent.yml<span class="w"> </span>--datasource<span class="w"> </span>trino_prod
@@ -5145,7 +5154,7 @@
 </tr>
 <tr>
 <td>HTTPS 证书失败</td>
-<td>使用系统信任证书或可信代理终止 TLS；生产环境不要使用 <code>verify: false</code>。</td>
+<td>检查 endpoint hostname 和签发 CA；0.1.4 起可通过 <code>ca_cert</code> 提供私有 CA。生产环境保持 <code>verify: true</code>。</td>
 </tr>
 <tr>
 <td>看不到 catalog 或 schema</td>
@@ -5155,6 +5164,8 @@
 </table>
 <h2 id="_6">参考<a class="headerlink" href="#_6" title="Permanent link">&para;</a></h2>
 <ul>
+<li><a href="https://trino.io/docs/current/security/tls.html">Trino TLS 与 HTTPS</a></li>
+<li><a href="https://github.com/trinodb/trino-python-client#ssl">Trino Python client TLS 配置</a></li>
 <li><a href="https://trino.io/docs/current/develop/client-protocol.html">Trino client protocol</a></li>
 </ul>
 
