@@ -42,7 +42,6 @@ agent:
 
     ontology_analyst:
       model: claude
-      ontology_mapping: departures  # 可选：多个 ontology_mappings 时选一个
 
     gen_sql_summary:
       model: deepseek   # 可选：默认使用已配置的模型

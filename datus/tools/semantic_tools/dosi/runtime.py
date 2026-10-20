@@ -40,6 +40,7 @@ from datus.tools.semantic_tools.dosi.errors import (
     raise_mapped,
 )
 from datus.tools.semantic_tools.dosi.model import (
+    document_model_names,
     iter_semantic_models,
     load_document,
     metric_payloads,
@@ -406,7 +407,7 @@ class DosiRuntime:
         dimension_rows = await asyncio.to_thread(engine.dimensions)
         metric_rows = await asyncio.to_thread(engine.metrics)
         dataset_names: List[str] = []
-        if handle.ontology_path:
+        if handle.has_ontology:
             dataset_names = await asyncio.to_thread(lambda: [str(row.get("name")) for row in engine.datasets()])
             concept_time = await asyncio.to_thread(self._concept_time_dimensions, engine, dimensions)
             dimension_rows = [*dimension_rows, *({"name": name, "is_time": True} for name in sorted(concept_time))]
@@ -432,7 +433,7 @@ class DosiRuntime:
             item["field"]: item.get("grain") for item in query["group_by"] if item["field"] in time_fields
         }
         connection = handle.profile_name
-        if handle.ontology_path:
+        if handle.has_ontology:
             query = await asyncio.to_thread(
                 self._order_by_requested_columns,
                 query,
@@ -471,7 +472,7 @@ class DosiRuntime:
                 timeout_secs=float(self.config.timeout_seconds),
             )
             columns, rows = list(result["columns"]), list(result["rows"])
-            if handle.ontology_path:
+            if handle.has_ontology:
                 columns, rows = self._label_requested_columns(result, dataset_names)
             return QueryResult(
                 columns=columns,
@@ -506,7 +507,7 @@ class DosiRuntime:
     def ontology_handles(self) -> List[tuple[str, EngineHandle]]:
         """Model files that load with a paired ontology, in catalog order."""
         handles, _, _ = self._catalog()
-        return [(path, handle) for path, handle in handles if handle.ontology_path]
+        return [(path, handle) for path, handle in handles if handle.has_ontology]
 
     def has_ontology(self) -> bool:
         return bool(self.ontology_handles())
@@ -525,7 +526,7 @@ class DosiRuntime:
             info = info_fn() if callable(info_fn) else None
             infos.append(
                 {
-                    **(dict(info) if isinstance(info, dict) else {"source_path": handle.ontology_path}),
+                    **(dict(info) if isinstance(info, dict) else {"source_path": handle.ontology_source}),
                     "model_file": model_path,
                 }
             )
@@ -1030,11 +1031,7 @@ class DosiRuntime:
 
     @staticmethod
     def _document_model_names(model_path: str) -> List[str]:
-        return [
-            str(model.get("name") or "").strip()
-            for model in iter_semantic_models(load_document(model_path))
-            if str(model.get("name") or "").strip()
-        ]
+        return document_model_names(load_document(model_path))
 
     @classmethod
     def _find_model_paths(cls, model_paths: List[str], semantic_model_name: str) -> tuple[List[str], List[str]]:

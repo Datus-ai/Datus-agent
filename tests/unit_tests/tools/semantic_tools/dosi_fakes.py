@@ -457,11 +457,19 @@ class FakeOntologyEngine(FakeEngine):
         *,
         ontology_path: Optional[str] = None,
         ontology_text: Optional[str] = None,
-        mapping: Optional[str] = None,
+        mapping_path: Optional[str] = None,
+        mapping_text: Optional[str] = None,
     ) -> None:
-        super().__init__(model_path=model_path, model_text=model_text, connections=connections, pool_size=pool_size)
+        # A mapping that carries its model inline is loaded with no model_path.
+        super().__init__(
+            model_path=model_path or mapping_path,
+            model_text=model_text,
+            connections=connections,
+            pool_size=pool_size,
+        )
         self.ontology_path = ontology_path
-        self.mapping = mapping
+        self.mapping_path = mapping_path
+        self.given_model_path = model_path
         self.describe_calls: List[Optional[str]] = []
         self.paths_calls: List[tuple] = []
         self.select_calls: List[Dict[str, Any]] = []
@@ -469,21 +477,22 @@ class FakeOntologyEngine(FakeEngine):
 
     @property
     def has_ontology(self) -> bool:
-        return self.ontology_path is not None
+        return bool(self.ontology_path or self.mapping_path)
 
     def ontology_info(self) -> Optional[Dict[str, Any]]:
-        if not self.ontology_path:
+        if not self.has_ontology:
             return None
-        return {"name": "Aviation", "description": "", "mapping": self.mapping, "source_path": self.ontology_path}
+        mappings = ["aviation_mapping"] if self.mapping_path else []
+        return {"name": "Aviation", "description": "", "mappings": mappings, "source_path": self.ontology_path}
 
     def _require_ontology(self) -> None:
-        if not self.ontology_path:
+        if not self.has_ontology:
             raise QueryError("load an ontology to describe concepts", code="ontology_required")
 
     def describe(self, name: Optional[str] = None) -> Dict[str, Any]:
         self.describe_calls.append(name)
         if name is None:
-            if not self.ontology_path:
+            if not self.has_ontology:
                 return {"model": "m", "datasets": [], "metrics": []}
             return copy.deepcopy(ONTOLOGY_CATALOG)
         self._require_ontology()

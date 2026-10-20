@@ -2594,9 +2594,8 @@ class AgenticNode(Node):
             "adapter_type",
             "subject_tree_prompt_limit",
             "require_final_result_selection",
-            # ontology_analyst: which ontology_mappings entry to load, and how
-            # many concepts the startup catalog may inline in the prompt.
-            "ontology_mapping",
+            # ontology_analyst: how many concepts the startup catalog may
+            # inline in the prompt.
             "concept_catalog_prompt_limit",
             "sql_file_threshold",
             "sql_preview_lines",

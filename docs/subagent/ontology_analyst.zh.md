@@ -14,18 +14,23 @@ OntologyAnalyst 还能返回**明细记录**，例如“列出飞往 JFK 的航�
 ## 前置条件
 
 1. 数据源在 `subject/semantic_models/<datasource>/` 下有可执行的语义模型（与 AskMetrics 相同）。
-2. ontology 文件放在 `subject/semantic_models/ontology/<datasource>/` 下，文件名与它描述的模型文件相同：
+2. ontology 放在 `subject/semantic_models/ontology/<datasource>/` 下，并配一份 Apache Ossie **映射文档**（mapping document），说明它绑定哪个模型：
 
     ```text
     subject/semantic_models/
     ├── aviation/
-    │   └── aviation.yaml            # OSI 语义模型
+    │   └── aviation.yaml            # OSI 语义模型，名为 "aviation"
     └── ontology/
         └── aviation/
-            └── aviation.yaml        # aviation.yaml 对应的 Ossie ontology
+            ├── ontology.yaml        # Ossie ontology
+            └── mapping.yaml         # ontology_ref → ontology.yaml，semantic_model_ref → "aviation"
     ```
 
-    数据源只有一个模型文件和一个 ontology 文件时，文件名可以不同。配不上任何模型文件的 ontology 会被报告出来，不会自动猜测。数据源不能命名为 `ontology`。
+    映射文档的 `semantic_model_ref.name` 决定配对哪个模型文件：语义模型名字相同的那个。`ontology_ref` 通过 `iri`（相对映射文档所在目录）找到 ontology；没写 `iri` 时，按名字在目录里的文件中查找。映射文档也可以把 ontology 和模型都内联在 `document:` 下，这时完全不需要模型文件。
+
+    旧写法仍然可用：一个 ontology 文件在 `ontology_mappings` 里内嵌映射，文件名与它描述的模型文件相同。数据源只有一个模型文件和一个 ontology 文件时，文件名可以不同。
+
+    配不上任何东西的文件、两份映射指向同一个模型，都会被报告出来，不会自动猜测。文件类型按内容区分，与文件名无关。数据源不能命名为 `ontology`。
 
 3. 安装的 `dosi-engine` 需要提供 ontology API（`Engine.describe` / `Engine.paths`）。
 
@@ -125,9 +130,10 @@ datus --datasource aviation
 | 提示信息 | 原因和处理 |
 |---------|-----------|
 | `ontology_analyst is unavailable: no ontology for datasource 'aviation'` | `subject/semantic_models/ontology/aviation/` 不存在或为空；检查目录名与数据源名一致，以及是否在项目根目录启动 |
-| `... pair with no semantic model file` | 数据源有多个模型文件，而 ontology 文件名与任何模型文件都不同；把 ontology 改成与对应模型同名 |
+| `... pair with no semantic model file` | 映射文档的 `semantic_model_ref.name` 对不上任何模型（或两份映射指向同一个模型），或者旧写法的 ontology 没有同名的模型文件；修正映射文档里的名字，或把 ontology 改成与对应模型同名 |
 | `the installed dosi-engine binding cannot describe ontologies` | 安装的 `dosi-engine` 版本过旧，升级到提供 `Engine.describe` / `Engine.paths` 的版本 |
-| `... ontology_mapping_unresolved` | ontology 声明了多个 `ontology_mappings`；在 `agentic_nodes.ontology_analyst.ontology_mapping` 中指定一个 |
+| `... ontology_federation_unsupported` | 旧写法的 ontology 内嵌了多个 `ontology_mappings`；拆成映射文档，每个模型一份 |
+| `... is an Ossie mapping document, and the installed dosi-engine cannot load one` | 安装的 `dosi-engine` 不支持映射文档，请升级 |
 | 主代理不委派给 `ontology_analyst` | 只有当前数据源有 ontology 文件时才会提供；可以用 `/agent ontology_analyst` 或 `@Agent ontology_analyst` 显式指定 |
 
 ## 使用方式
@@ -191,8 +197,6 @@ agent:
     ontology_analyst:
       model: claude
       max_turns: 30
-      # ontology 文件声明了多个 ontology_mappings 时必须指定
-      ontology_mapping: departures
       # 启动时内联到提示词的概念数上限，超过后只列概念名
       concept_catalog_prompt_limit: 60
 ```

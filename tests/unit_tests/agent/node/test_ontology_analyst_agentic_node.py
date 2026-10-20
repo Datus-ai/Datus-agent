@@ -109,13 +109,7 @@ class TestSetup:
             "attribution_analyze",
             "search_metrics",
         ]
-        kwargs = factory.call_args.kwargs
-        assert kwargs["ontology_enabled"] is True
-        assert kwargs["ontology_mapping"] is None
-
-    def test_ontology_mapping_comes_from_agent_yml(self, real_agent_config, mock_llm_create):
-        _, factory, _ = _make_node(real_agent_config, node_config={"ontology_mapping": " departures "})
-        assert factory.call_args.kwargs["ontology_mapping"] == "departures"
+        assert factory.call_args.kwargs["ontology_enabled"] is True
 
     def test_catalog_is_loaded_into_the_prompt(self, real_agent_config, mock_llm_create):
         node, _, runtime = _make_node(real_agent_config)
@@ -199,9 +193,9 @@ class TestStartupErrors:
 
     def test_ontology_load_failure(self, real_agent_config, mock_llm_create):
         runtime = _runtime()
-        runtime.has_ontology.side_effect = RuntimeError("[ontology_mapping_unresolved] pick one with --mapping")
+        runtime.has_ontology.side_effect = RuntimeError("[ontology_ref_unresolved] semantic_model_ref has no iri")
         node, _, _ = _make_node(real_agent_config, runtime=runtime)
-        assert self._missing(node, "ontology_mapping_unresolved") == []
+        assert self._missing(node, "ontology_ref_unresolved") == []
 
     def test_describe_failure(self, real_agent_config, mock_llm_create):
         runtime = _runtime()

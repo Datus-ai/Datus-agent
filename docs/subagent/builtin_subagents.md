@@ -43,7 +43,6 @@ agent:
 
     ontology_analyst:
       model: claude
-      ontology_mapping: departures  # Optional: one of several ontology_mappings
 
     gen_sql_summary:
       model: deepseek   # Optional: defaults to configured model

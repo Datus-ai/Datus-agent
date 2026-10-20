@@ -55,11 +55,7 @@ class OntologyAnalystAgenticNode(AskMetricsAgenticNode):
             logger.warning("OntologyAnalyst unavailable: %s", self.startup_error)
 
     def _semantic_tools_kwargs(self) -> Dict[str, Any]:
-        mapping = self.node_config.get("ontology_mapping")
-        return {
-            "ontology_enabled": True,
-            "ontology_mapping": str(mapping).strip() if mapping else None,
-        }
+        return {"ontology_enabled": True}
 
     def _prepare_ontology(self) -> Optional[str]:
         """Load the ontology catalog; return why the node cannot run, or None."""
@@ -84,7 +80,8 @@ class OntologyAnalystAgenticNode(AskMetricsAgenticNode):
                 names = ", ".join(Path(path).name for path in unpaired)
                 return (
                     f"ontology file(s) {names} under {ontology_dir} pair with no semantic model file; "
-                    "name each ontology after the model file it describes"
+                    "write a mapping document whose semantic_model_ref names the model, "
+                    "or name each ontology after the model file it describes"
                 )
             return (
                 f"no ontology for datasource {datasource!r}. Add one under {ontology_dir}/ "

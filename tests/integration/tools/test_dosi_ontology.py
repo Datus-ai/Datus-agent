@@ -25,7 +25,10 @@ import pytest
 
 from datus.configuration.agent_config import AgentConfig, NodeConfig
 from datus.tools.func_tool.semantic_tools import SemanticTools
-from datus.tools.semantic_tools.dosi.engine import binding_supports_ontology
+from datus.tools.semantic_tools.dosi.engine import (
+    binding_supports_mapping_documents,
+    binding_supports_ontology,
+)
 
 pytestmark = [pytest.mark.acceptance, pytest.mark.nightly]
 
@@ -33,6 +36,9 @@ FIXTURE_ROOT = Path(__file__).parents[2] / "data" / "semantic_models"
 MODEL_PATH = FIXTURE_ROOT / "aviation" / "aviation.yaml"
 SEED_PATH = FIXTURE_ROOT / "aviation" / "seed.sql"
 ONTOLOGY_PATH = FIXTURE_ROOT / "ontology" / "aviation" / "aviation.yaml"
+# The same ontology as an apache/ossie#458 mapping document beside a bare
+# ontology; the mapping names the model by `semantic_model_ref.name`.
+MAPPING_DOCUMENT_DIR = FIXTURE_ROOT / "ontology" / "aviation-mapping-document"
 
 requires_ontology_binding = pytest.mark.skipif(
     not binding_supports_ontology(),
@@ -40,8 +46,21 @@ requires_ontology_binding = pytest.mark.skipif(
 )
 
 
-@pytest.fixture
-def agent_config(tmp_path) -> AgentConfig:
+@pytest.fixture(
+    params=[
+        "embedded",
+        pytest.param(
+            "mapping_document",
+            marks=pytest.mark.skipif(
+                not binding_supports_mapping_documents(),
+                reason="installed dosi-engine binding cannot load mapping documents",
+            ),
+        ),
+    ]
+)
+def agent_config(tmp_path, request) -> AgentConfig:
+    """Every case runs on both layouts: the deprecated ontology embedding its
+    mapping, and a mapping document beside a bare ontology."""
     database = tmp_path / "aviation.duckdb"
     with duckdb.connect(str(database)) as connection:
         connection.execute(SEED_PATH.read_text(encoding="utf-8"))
@@ -66,7 +85,11 @@ def agent_config(tmp_path) -> AgentConfig:
     shutil.copy(MODEL_PATH, config.path_manager.semantic_model_path("aviation") / "aviation.yaml")
     ontology_dir = config.path_manager.ontology_path("aviation")
     ontology_dir.mkdir(parents=True)
-    shutil.copy(ONTOLOGY_PATH, ontology_dir / "aviation.yaml")
+    if request.param == "embedded":
+        shutil.copy(ONTOLOGY_PATH, ontology_dir / "aviation.yaml")
+    else:
+        for name in ("ontology.yaml", "mapping.yaml"):
+            shutil.copy(MAPPING_DOCUMENT_DIR / name, ontology_dir / name)
     return config
 
 
@@ -209,3 +232,58 @@ class TestOntologyAnswers:
 
         assert by_airport("Delay.flight.arrives_at.code") == {"LAX": 3, "JFK": 2, "SFO": 2, "SEA": 1}
         assert by_airport("Delay.flight.departs_from.code") == {"SFO": 6, "LAS": 1, "JFK": 1}
+
+
+# ---------------------------------------------------------------- one-file layout
+
+MINI_INLINE_DIR = FIXTURE_ROOT / "ontology" / "mini-flights-inline"
+
+
+@pytest.fixture
+def inline_tools(tmp_path) -> SemanticTools:
+    """A datasource whose only model is the one inline in a mapping document:
+    `semantic_models/mini/` holds nothing, the ontology dir one file."""
+    database = tmp_path / "mini.duckdb"
+    with duckdb.connect(str(database)) as connection:
+        connection.execute((MINI_INLINE_DIR / "seed.sql").read_text(encoding="utf-8"))
+    config = AgentConfig(
+        nodes={"semantic": NodeConfig(model="mock", input=None)},
+        home=str(tmp_path / "home"),
+        project_name="dosi_inline_mapping",
+        project_root=str(tmp_path / "workspace"),
+        target="mock",
+        models={"mock": {"type": "openai", "api_key": "unused", "model": "unused", "base_url": "http://127.0.0.1:1"}},
+        services={"datasources": {"mini": {"type": "duckdb", "uri": str(database), "default": True}}},
+    )
+    config.current_datasource = "mini"
+    ontology_dir = config.path_manager.ontology_path("mini")
+    ontology_dir.mkdir(parents=True)
+    shutil.copy(MINI_INLINE_DIR / "mapping.yaml", ontology_dir / "mapping.yaml")
+    return _tools(config, ontology_enabled=True)
+
+
+@requires_ontology_binding
+@pytest.mark.skipif(
+    not binding_supports_mapping_documents(),
+    reason="installed dosi-engine binding cannot load mapping documents",
+)
+class TestInlineMapping:
+    def test_the_mapping_alone_is_the_ontology_and_the_model(self, inline_tools):
+        runtime = inline_tools.runtime
+        assert runtime.has_ontology()
+        [info] = runtime.ontology_info()
+        assert info["name"] == "MiniFlights"
+        assert info["mappings"] == ["mini_flights_mapping"]
+
+    def test_its_metrics_answer_by_concept_path(self, inline_tools):
+        result = inline_tools.query_metrics(
+            metrics=["airport_average_departure_delay"], dimensions=["Flight.departs_from.code"]
+        )
+        rows = _rows(inline_tools, result)
+        by_origin = {row["Flight.departs_from.code"]: row["airport_average_departure_delay"] for row in rows}
+        assert {code: float(value) for code, value in by_origin.items()} == {
+            "ATL": 16,
+            "DCA": 20,
+            "ORD": 30,
+            "SFO": 32,
+        }

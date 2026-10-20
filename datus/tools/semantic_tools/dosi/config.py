@@ -41,5 +41,6 @@ class DosiConfig(BaseModel):
     # ontology/<datasource>). Unset means ontologies are not loaded at all,
     # which keeps every non-ontology agent on the plain model.
     ontology_dir: Optional[str] = None
-    # Picks one of several ``ontology_mappings`` in an ontology file.
-    ontology_mapping: Optional[str] = None
+    # An Ossie mapping document (apache/ossie#458) binding the model to its
+    # ontology. Set per engine handle by the registry, like ontology_path.
+    mapping_path: Optional[str] = None

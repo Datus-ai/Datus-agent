@@ -449,7 +449,6 @@ class SemanticTools:
         semantic_model_path_provider: Optional[Callable[[], Optional[str]]] = None,
         semantic_metric_names_provider: Optional[Callable[[], Optional[List[str]]]] = None,
         ontology_enabled: bool = False,
-        ontology_mapping: Optional[str] = None,
     ):
         """
         Initialize semantic function tool.
@@ -470,8 +469,8 @@ class SemanticTools:
             ontology_enabled: Load the datasource's Apache Ossie ontology
                 (``subject/semantic_models/ontology/<datasource>/``) beside its
                 models and expose the ontology tools. Off for every agent that
-                does not ask for it.
-            ontology_mapping: Selects one of several ``ontology_mappings``.
+                does not ask for it. Mapping documents there say which model
+                each ontology binds.
         """
         self.agent_config = agent_config
         self.sub_agent_name = sub_agent_name
@@ -481,7 +480,6 @@ class SemanticTools:
         self._semantic_model_path_provider = semantic_model_path_provider
         self._semantic_metric_names_provider = semantic_metric_names_provider
         self.ontology_enabled = bool(ontology_enabled)
-        self.ontology_mapping = str(ontology_mapping).strip() if ontology_mapping else None
         self._runtime_db_context_static: Dict[str, str] = {}
         self._runtime_db_context_static_set = False
 
@@ -878,10 +876,7 @@ class SemanticTools:
             )
             if self.ontology_enabled:
                 runtime_config = runtime_config.model_copy(
-                    update={
-                        "ontology_dir": str(self.agent_config.path_manager.ontology_path(datasource)),
-                        "ontology_mapping": self.ontology_mapping,
-                    }
+                    update={"ontology_dir": str(self.agent_config.path_manager.ontology_path(datasource))}
                 )
             self._runtime = DosiRuntime(runtime_config)
             self._runtime_context_key = context_key

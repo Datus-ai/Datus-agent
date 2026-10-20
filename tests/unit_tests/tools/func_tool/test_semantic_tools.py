@@ -2360,21 +2360,18 @@ class TestOntologyToolRegistration:
     def test_all_tools_name_lists_ontology_tools(self):
         assert set(SemanticTools.ONTOLOGY_TOOL_NAMES) <= set(SemanticTools.all_tools_name())
 
-    def test_runtime_config_carries_ontology_dir_and_mapping_only_when_enabled(self):
+    def test_runtime_config_carries_ontology_dir_only_when_enabled(self):
         with (
             patch("datus.tools.func_tool.semantic_tools.MetricRAG"),
             patch("datus.tools.func_tool.semantic_tools.DosiRuntime") as runtime,
         ):
             assert SemanticTools(agent_config=_ontology_config()).runtime is runtime.return_value
             plain = runtime.call_args.args[0]
-            enabled_tools = SemanticTools(
-                agent_config=_ontology_config(), ontology_enabled=True, ontology_mapping=" m2 "
-            )
+            enabled_tools = SemanticTools(agent_config=_ontology_config(), ontology_enabled=True)
             assert enabled_tools.runtime is runtime.return_value
             enabled = runtime.call_args.args[0]
-        assert plain.ontology_dir is None and plain.ontology_mapping is None
+        assert plain.ontology_dir is None
         assert enabled.ontology_dir == "/tmp/models/ontology/flights_db"
-        assert enabled.ontology_mapping == "m2"
 
 
 @pytest.fixture

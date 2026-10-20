@@ -14,18 +14,23 @@ OntologyAnalyst can also return **individual records**, such as "list the open P
 ## Prerequisites
 
 1. The datasource has executable semantic models under `subject/semantic_models/<datasource>/`, the same as for AskMetrics.
-2. Each ontology file is placed under `subject/semantic_models/ontology/<datasource>/` and named after the model file it describes:
+2. The ontology goes under `subject/semantic_models/ontology/<datasource>/`, with an Apache Ossie **mapping document** that says which model it binds:
 
     ```text
     subject/semantic_models/
     ├── aviation/
-    │   └── aviation.yaml            # OSI semantic model
+    │   └── aviation.yaml            # OSI semantic model, named "aviation"
     └── ontology/
         └── aviation/
-            └── aviation.yaml        # Ossie ontology for aviation.yaml
+            ├── ontology.yaml        # Ossie ontology
+            └── mapping.yaml         # ontology_ref → ontology.yaml, semantic_model_ref → "aviation"
     ```
 
-    When a datasource has exactly one model file and one ontology file, the names do not have to match. An ontology file that matches no model file is reported, not guessed. No datasource can be named `ontology`.
+    The mapping's `semantic_model_ref.name` picks the model file whose semantic model has that name. Its `ontology_ref` finds the ontology by `iri` (relative to the mapping) or, without one, by name among the files in the directory. A mapping can also carry the ontology and the model inline under `document:`; it then needs no model file at all.
+
+    The older layout still works: one ontology file that embeds its mapping under `ontology_mappings`, named after the model file it describes. When a datasource has exactly one model file and one ontology file, the names do not have to match.
+
+    A file that pairs with nothing, or two mappings onto one model, is reported, not guessed. Files are told apart by their contents, not their names. No datasource can be named `ontology`.
 
 3. The installed `dosi-engine` must expose the ontology API (`Engine.describe` / `Engine.paths`).
 
@@ -125,9 +130,10 @@ Tool calls appear in the conversation. Things to look for:
 | Message | Cause and fix |
 |---------|---------------|
 | `ontology_analyst is unavailable: no ontology for datasource 'aviation'` | `subject/semantic_models/ontology/aviation/` is missing or empty. Check that the directory name matches the datasource name and that Datus was started in the project root |
-| `... pair with no semantic model file` | The datasource has several model files and no model file has the ontology's name. Rename the ontology after the model it describes |
+| `... pair with no semantic model file` | A mapping's `semantic_model_ref.name` matches no model (or two mappings name the same one), or an old-layout ontology has no model file of its name. Fix the name in the mapping, or rename the ontology after the model it describes |
 | `the installed dosi-engine binding cannot describe ontologies` | `dosi-engine` is too old. Upgrade to a build whose `Engine` has `describe` and `paths` |
-| `... ontology_mapping_unresolved` | The ontology declares several `ontology_mappings`. Set `agentic_nodes.ontology_analyst.ontology_mapping` |
+| `... ontology_federation_unsupported` | An old-layout ontology embeds several `ontology_mappings`. Split them into mapping documents, one per model |
+| `... is an Ossie mapping document, and the installed dosi-engine cannot load one` | `dosi-engine` predates mapping documents. Upgrade it |
 | The main agent does not delegate to `ontology_analyst` | It is offered only when the current datasource has an ontology file. Use `/agent ontology_analyst` or `@Agent ontology_analyst` |
 
 ## Usage
@@ -191,8 +197,6 @@ agent:
     ontology_analyst:
       model: claude
       max_turns: 30
-      # Required when an ontology file declares several ontology_mappings.
-      ontology_mapping: departures
       # Concepts inlined into the prompt at startup; above this only names are listed.
       concept_catalog_prompt_limit: 60
 ```
