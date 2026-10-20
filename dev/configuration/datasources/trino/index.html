@@ -5030,6 +5030,7 @@
 <h2 id="install">Install<a class="headerlink" href="#install" title="Permanent link">&para;</a></h2>
 <div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>pip<span class="w"> </span>install<span class="w"> </span>datus-trino
 </span></code></pre></div>
+<p>The CA bundle setting below targets the upcoming <code>datus-trino&gt;=0.1.4</code>, with <code>datus-sqlalchemy&gt;=0.1.10</code> and <code>datus-db-core&gt;=0.1.8</code>. These versions are not yet published; use a source checkout containing CMP-TLS-03 until release. Existing HTTPS profiles without <code>ca_cert</code> remain supported.</p>
 <h2 id="connection-profile">Connection profile<a class="headerlink" href="#connection-profile" title="Permanent link">&para;</a></h2>
 <div class="language-yaml highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="nt">agent</span><span class="p">:</span>
 </span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">  </span><span class="nt">services</span><span class="p">:</span>
@@ -5112,7 +5113,14 @@
 <td>boolean</td>
 <td style="text-align: right;">no</td>
 <td><code>true</code></td>
-<td>Verifies HTTPS certificates.</td>
+<td>Verify the HTTPS certificate chain and hostname.</td>
+</tr>
+<tr>
+<td><code>ca_cert</code></td>
+<td>string</td>
+<td style="text-align: right;">no</td>
+<td>—</td>
+<td>Readable PEM CA bundle file; requires HTTPS and <code>verify: true</code> (from 0.1.4).</td>
 </tr>
 <tr>
 <td><code>timeout_seconds</code></td>
@@ -5124,7 +5132,8 @@
 </tbody>
 </table>
 <h2 id="tls-and-namespaces">TLS and namespaces<a class="headerlink" href="#tls-and-namespaces" title="Permanent link">&para;</a></h2>
-<p>For TLS, set <code>http_scheme: https</code> and keep <code>verify: true</code> in production. The adapter currently exposes a boolean verification switch, not a custom CA bundle path.</p>
+<p>For TLS, set <code>http_scheme: https</code> and keep <code>verify: true</code> in production. For a private CA, add <code>ca_cert: /absolute/path/trino-ca.pem</code> to the profile above. Omit it to use the Python client's Requests trust configuration. <code>verify</code> stays a boolean; do not put a file path in that field.</p>
+<p><code>ca_cert</code> accepts a readable PEM bundle file. <code>~</code> expands to the user's home and relative paths resolve from the process working directory. Invalid files, HTTP plus CA, and <code>verify: false</code> plus CA are rejected before connecting. Inline PEM and client certificates are outside this setting's scope. <code>verify: false</code> disables chain and hostname checks and is intended only for temporary development. HTTPS failures do not retry over HTTP. Ports do not select the protocol; set both <code>port</code> and <code>http_scheme</code> explicitly for TLS.</p>
 <p>Trino profiles must use <code>schema_name</code>; unlike several SQL adapters, this model does not define <code>schema</code> as an alias. Catalogs can be switched at runtime, subject to Trino access-control rules.</p>
 <h2 id="verify-the-connection">Verify the connection<a class="headerlink" href="#verify-the-connection" title="Permanent link">&para;</a></h2>
 <div class="language-bash highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>datus<span class="w"> </span>--config<span class="w"> </span>conf/agent.yml<span class="w"> </span>--datasource<span class="w"> </span>trino_prod
@@ -5145,7 +5154,7 @@
 </tr>
 <tr>
 <td>HTTPS certificate fails</td>
-<td>Use a publicly/system-trusted certificate or terminate TLS at a trusted proxy; avoid <code>verify: false</code> in production.</td>
+<td>Check the endpoint hostname and issuing CA; on 0.1.4+, supply a private CA via <code>ca_cert</code>. Keep <code>verify: true</code> in production.</td>
 </tr>
 <tr>
 <td>Catalog or schema is missing</td>
@@ -5155,6 +5164,8 @@
 </table>
 <h2 id="reference">Reference<a class="headerlink" href="#reference" title="Permanent link">&para;</a></h2>
 <ul>
+<li><a href="https://trino.io/docs/current/security/tls.html">Trino TLS and HTTPS</a></li>
+<li><a href="https://github.com/trinodb/trino-python-client#ssl">Trino Python client TLS configuration</a></li>
 <li><a href="https://trino.io/docs/current/develop/client-protocol.html">Trino client protocol</a></li>
 </ul>
 
