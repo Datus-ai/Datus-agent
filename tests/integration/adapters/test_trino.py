@@ -21,6 +21,7 @@ import os
 from typing import Generator
 
 import pytest
+import yaml
 
 from tests.nightly_requirements import import_required, require_opt_in_env
 
@@ -34,6 +35,8 @@ datus_trino = import_required(
 TrinoConfig = datus_trino.TrinoConfig
 TrinoConnector = datus_trino.TrinoConnector
 
+from datus.configuration.agent_config import DbConfig  # noqa: E402
+from datus.tools.db_tools.db_manager import DBManager  # noqa: E402
 from datus.tools.func_tool.database import DBFuncTool  # noqa: E402
 
 pytestmark = [pytest.mark.integration, pytest.mark.nightly]
@@ -44,6 +47,10 @@ TPCH_TABLE = "region"  # Trino tpch.tiny: columns are unprefixed (regionkey, nam
 
 @pytest.fixture(scope="module")
 def trino_config() -> TrinoConfig:
+    tls = {}
+    for key, variable in (("verify", "TRINO_VERIFY"), ("ca_cert", "TRINO_CA_CERT")):
+        if os.getenv(variable):
+            tls[key] = os.environ[variable]
     return TrinoConfig(
         host=os.getenv("TRINO_HOST", "localhost"),
         port=int(os.getenv("TRINO_PORT", "8080")),
@@ -52,6 +59,7 @@ def trino_config() -> TrinoConfig:
         catalog="tpch",
         schema_name="tiny",
         http_scheme=os.getenv("TRINO_HTTP_SCHEME", "http"),
+        **tls,
     )
 
 
@@ -114,3 +122,41 @@ def test_read_query_rejects_multi_statement(db_tool: DBFuncTool) -> None:
     result = db_tool.read_query("SELECT 1; DELETE FROM region")
     assert result.success == 0, "multi-statement SQL should have been rejected"
     assert "multi-statement" in (result.error or "").lower(), f"unexpected error: {result.error}"
+
+
+def test_yaml_profile_queries_through_dbmanager(trino_config, tmp_path):
+    profile = {
+        "agent": {"services": {"datasources": {"trino_contract": trino_config.model_dump() | {"type": "trino"}}}}
+    }
+    path = tmp_path / "agent.yml"
+    path.write_text(yaml.safe_dump(profile))
+    parsed = yaml.safe_load(path.read_text())["agent"]["services"]["datasources"]["trino_contract"]
+    config = DbConfig.filter_kwargs(DbConfig, parsed)
+    manager = DBManager({"trino_contract": config})
+    try:
+        connector = manager.get_conn("trino_contract")
+        assert connector.trino_config.http_scheme == trino_config.http_scheme
+        assert connector.trino_config.verify == trino_config.verify
+        assert getattr(connector.trino_config, "ca_cert", None) == getattr(trino_config, "ca_cert", None)
+        tool = DBFuncTool(connector)
+        result = tool.read_query("SELECT count(*) AS cnt FROM region")
+        assert result.success == 1, result.error
+        assert result.result["original_rows"] == 1
+        assert "5" in result.result["compressed_data"]
+        metadata = tool.describe_table('"tpch"."tiny"."region"')
+        assert metadata.success == 1, metadata.error
+        assert [column["name"] for column in metadata.result["columns"]] == ["regionkey", "name", "comment"]
+    finally:
+        manager.close()
+
+
+@pytest.mark.parametrize("pattern", ["reg%", "reg*", "r?gion"])
+def test_scoped_queries_preserve_trino_namespace_patterns(trino_connector, pattern):
+    tool = DBFuncTool(trino_connector, scoped_tables=[f'"tpch"."tiny".{pattern}'])
+    allowed = tool.read_query('SELECT COUNT(*) AS cnt FROM "tpch"."tiny"."region"')
+    assert allowed.success == 1, allowed.error
+    assert allowed.result["original_rows"] == 1
+    assert "5" in allowed.result["compressed_data"]
+    rejected = tool.read_query('SELECT COUNT(*) AS cnt FROM "tpch"."tiny"."nation"')
+    assert rejected.success == 0
+    assert "outside scoped context" in rejected.error

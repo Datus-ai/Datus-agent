@@ -3,6 +3,9 @@
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
 import sqlite3
+import threading
+from collections.abc import Callable
+from functools import wraps
 from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional, override
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
@@ -20,6 +23,17 @@ from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
+
+
+def _serialized_connection(method: Callable[..., Any]) -> Callable[..., Any]:
+    """Keep connection creation, cursor use, and closing in one critical section."""
+
+    @wraps(method)
+    def locked(self: "SQLiteConnector", *args: Any, **kwargs: Any) -> Any:
+        with self._connection_lock:
+            return method(self, *args, **kwargs)
+
+    return locked
 
 
 def _read_only_sqlite_uri(db_path: str) -> str:
@@ -52,6 +66,9 @@ class SQLiteConnector(BaseSqlConnector, MigrationTargetMixin):
         self.read_only = config.read_only
         self.check_same_thread = config.check_same_thread
         self.connection: Optional[sqlite3.Connection] = None
+        # CLI health checks, foreground queries, and background schema sync share
+        # this connector. Nested metadata helpers also acquire the same lock.
+        self._connection_lock = threading.RLock()
 
         # Set the context-independent default (``_default_database``), NOT the
         # ContextVar-backed ``database_name`` property. The connector is built
@@ -69,6 +86,7 @@ class SQLiteConnector(BaseSqlConnector, MigrationTargetMixin):
             self._default_database = file_stem_from_uri(self.db_path)
 
     @override
+    @_serialized_connection
     def connect(self):
         """Establish connection to SQLite database."""
         if self.connection:
@@ -95,6 +113,7 @@ class SQLiteConnector(BaseSqlConnector, MigrationTargetMixin):
             ) from e
 
     @override
+    @_serialized_connection
     def close(self):
         """Close the database connection."""
         if self.connection:
@@ -106,6 +125,7 @@ class SQLiteConnector(BaseSqlConnector, MigrationTargetMixin):
                 self.connection = None
 
     @override
+    @_serialized_connection
     def test_connection(self) -> bool:
         """Test the database connection."""
         opened_here = self.connection is None
@@ -169,6 +189,7 @@ class SQLiteConnector(BaseSqlConnector, MigrationTargetMixin):
             )
 
     @override
+    @_serialized_connection
     def execute_insert(self, sql: str) -> ExecuteSQLResult:
         """Execute an INSERT SQL statement."""
         try:
@@ -191,6 +212,7 @@ class SQLiteConnector(BaseSqlConnector, MigrationTargetMixin):
             )
 
     @override
+    @_serialized_connection
     def execute_update(self, sql: str) -> ExecuteSQLResult:
         """Execute an UPDATE SQL statement."""
         try:
@@ -213,6 +235,7 @@ class SQLiteConnector(BaseSqlConnector, MigrationTargetMixin):
             )
 
     @override
+    @_serialized_connection
     def execute_delete(self, sql: str) -> ExecuteSQLResult:
         """Execute a DELETE SQL statement."""
         try:
@@ -235,6 +258,7 @@ class SQLiteConnector(BaseSqlConnector, MigrationTargetMixin):
             )
 
     @override
+    @_serialized_connection
     def execute_ddl(self, sql: str) -> ExecuteSQLResult:
         """Execute a DDL SQL statement."""
         try:
@@ -257,6 +281,7 @@ class SQLiteConnector(BaseSqlConnector, MigrationTargetMixin):
             )
 
     @override
+    @_serialized_connection
     def execute_query(
         self, sql: str, result_format: Literal["csv", "arrow", "pandas", "list"] = "csv"
     ) -> ExecuteSQLResult:
@@ -310,6 +335,7 @@ class SQLiteConnector(BaseSqlConnector, MigrationTargetMixin):
         return self.execute_query(sql, result_format="csv")
 
     @override
+    @_serialized_connection
     def execute_queries(self, queries: List[str]) -> List[Any]:
         """Execute multiple queries."""
         results = []
@@ -341,6 +367,7 @@ class SQLiteConnector(BaseSqlConnector, MigrationTargetMixin):
         )
 
     @override
+    @_serialized_connection
     def get_tables(self, catalog_name: str = "", database_name: str = "", schema_name: str = "") -> List[str]:
         """Get all table names."""
         self.connect()
@@ -349,6 +376,7 @@ class SQLiteConnector(BaseSqlConnector, MigrationTargetMixin):
         return [row[0] for row in cursor.fetchall()]
 
     @override
+    @_serialized_connection
     def get_views(self, catalog_name: str = "", database_name: str = "", schema_name: str = "") -> List[str]:
         """Get all view names."""
         self.connect()
@@ -366,6 +394,7 @@ class SQLiteConnector(BaseSqlConnector, MigrationTargetMixin):
     def do_switch_context(self, catalog_name: str = "", database_name: str = "", schema_name: str = ""):
         """SQLite does not support switch context"""
 
+    @_serialized_connection
     def _get_schema_with_ddl(
         self, database_name: str = "", table_type: str = "table", filter_tables: Optional[List[str]] = None
     ) -> List[Dict[str, str]]:
@@ -425,6 +454,7 @@ class SQLiteConnector(BaseSqlConnector, MigrationTargetMixin):
         )
 
     @override
+    @_serialized_connection
     def get_schema(
         self, catalog_name: str = "", database_name: str = "", schema_name: str = "", table_name: str = ""
     ) -> List[Dict[str, str]]:
@@ -452,6 +482,7 @@ class SQLiteConnector(BaseSqlConnector, MigrationTargetMixin):
             raise self._handle_exception(e, f'PRAGMA table_info("{table_name}")')
 
     @override
+    @_serialized_connection
     def get_sample_rows(
         self,
         tables: Optional[List[str]] = None,
