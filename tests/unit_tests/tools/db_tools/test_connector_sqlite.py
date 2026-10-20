@@ -1,5 +1,7 @@
 import os
 import sqlite3
+import threading
+from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 import structlog
@@ -12,9 +14,9 @@ log = structlog.get_logger()
 
 
 @pytest.fixture
-def db_path():
+def db_path(tmp_path):
     """Fixture to create a temporary test database path"""
-    test_db = "test_database.db"
+    test_db = str(tmp_path / "test_database.db")
     yield test_db
     # Cleanup after tests
     if os.path.exists(test_db):
@@ -40,6 +42,58 @@ def test_connection(sqlite_connector: SQLiteConnector, db_path):
     # Test close
     sqlite_connector.close()
     assert sqlite_connector.connection is None
+
+
+@pytest.mark.parametrize("operation", ["close", "test_connection"])
+def test_sampling_finishes_before_connection_lifecycle_operations(tmp_path, monkeypatch, operation):
+    """A health check or close must not invalidate a sampling cursor."""
+    db_file = tmp_path / "shared.sqlite"
+    with sqlite3.connect(db_file) as database:
+        database.execute("CREATE TABLE items (value INTEGER)")
+        database.execute("INSERT INTO items VALUES (42)")
+
+    query_started = threading.Event()
+    release_query = threading.Event()
+    operation_started = threading.Event()
+    operation_finished = threading.Event()
+
+    class PausedCursor(sqlite3.Cursor):
+        def execute(self, sql, *args, **kwargs):
+            if sql.startswith('SELECT * FROM "items"'):
+                query_started.set()
+                if not release_query.wait(5):
+                    raise TimeoutError("Sampling cursor was not released")
+            return super().execute(sql, *args, **kwargs)
+
+    class PausedConnection(sqlite3.Connection):
+        def cursor(self, *args, **kwargs):
+            return super().cursor(*args, factory=PausedCursor, **kwargs)
+
+    real_connect = sqlite3.connect
+    monkeypatch.setattr(sqlite3, "connect", lambda *a, **kw: real_connect(*a, factory=PausedConnection, **kw))
+    connector = SQLiteConnector(SQLiteConfig(db_path=str(db_file)))
+
+    def change_connection():
+        operation_started.set()
+        result = getattr(connector, operation)()
+        operation_finished.set()
+        return result
+
+    try:
+        with ThreadPoolExecutor(max_workers=2) as workers:
+            sample = workers.submit(connector.get_sample_rows, ["items"])
+            try:
+                assert query_started.wait(5)
+                lifecycle = workers.submit(change_connection)
+                assert operation_started.wait(5)
+                assert not operation_finished.wait(0.1), "Connection operation overtook the active cursor"
+            finally:
+                release_query.set()
+            assert "42" in sample.result(timeout=5)[0]["sample_rows"]
+            assert lifecycle.result(timeout=5) is (True if operation == "test_connection" else None)
+        assert connector.execute_query("SELECT value FROM items", result_format="list").sql_return == [{"value": 42}]
+    finally:
+        connector.close()
 
 
 def test_database_name_visible_across_threads(tmp_path):

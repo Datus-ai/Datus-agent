@@ -36,6 +36,58 @@ cd /path/to/datus-db-adapters/datus-postgresql
 docker compose down -v
 ```
 
+### ClickHouse HTTPS
+
+HTTPS requires `datus-clickhouse>=0.1.4`, `datus-sqlalchemy>=0.1.10`, and `datus-db-core>=0.1.8`. These versions are not yet published. Until release, use an adapter checkout containing [datus-db-adapters#160](https://github.com/Datus-ai/datus-db-adapters/pull/160). After setting up the Agent development environment, install its three packages from the Agent checkout:
+
+```bash
+uv pip install \
+  -e /path/to/datus-db-adapters/datus-db-core \
+  -e /path/to/datus-db-adapters/datus-sqlalchemy \
+  -e /path/to/datus-db-adapters/datus-clickhouse
+```
+
+Once these versions are published, `uv pip install "datus-clickhouse>=0.1.4"` can replace the source installation. Configure the HTTPS endpoint and CA used by the adapter TLS tests, then run:
+
+```bash
+ADAPTERS_CH=1 CLICKHOUSE_HOST=localhost CLICKHOUSE_PORT=18443 \
+  CLICKHOUSE_PROTOCOL=https CLICKHOUSE_VERIFY=true CLICKHOUSE_CA_CERT=/absolute/path/ca.crt \
+  uv run --no-sync pytest tests/integration/adapters/test_clickhouse.py -v
+```
+
+Keep `--no-sync` after installing the adapter: the Agent lockfile currently pins an older core, and syncing would replace the newer packages required for HTTPS. This matches the nightly workflow's `UV_NO_SYNC=1` setup.
+
+The suite verifies `DBFuncTool` and YAML → `DbConfig` → `DBManager` → adapter registration, including metadata and read-only checks. Supply `CLICKHOUSE_USER/PASSWORD/DATABASE` for the selected test service. Once opted in, connection failures fail the suite.
+
+### Trino HTTPS
+
+Private CA profiles require the upcoming `datus-trino>=0.1.4`,
+`datus-sqlalchemy>=0.1.10`, and `datus-db-core>=0.1.8`. These versions are not yet
+published. After setting up the Agent environment, install the three source packages:
+
+```bash
+uv pip install \
+  -e /path/to/datus-db-adapters/datus-db-core \
+  -e /path/to/datus-db-adapters/datus-sqlalchemy \
+  -e /path/to/datus-db-adapters/datus-trino
+```
+
+Once released, `uv pip install "datus-trino>=0.1.4"` replaces the source installation.
+Point to a running HTTPS endpoint with the built-in `tpch.tiny` catalog:
+
+```bash
+ADAPTERS_TRINO=1 TRINO_HOST=localhost TRINO_PORT=18443 TRINO_USER=trino \
+  TRINO_HTTP_SCHEME=https TRINO_VERIFY=true TRINO_CA_CERT=/absolute/path/ca.crt \
+  uv run --no-sync pytest tests/integration/adapters/test_trino.py -v
+```
+
+Keep `--no-sync` after source installation: the Agent lockfile currently pins an
+older core. The suite exercises YAML → `DbConfig.extra` → `DBManager` → registry →
+`DBFuncTool`, including query, metadata and read-only checks. Once opted in, connection
+failures fail the suite. Omit `TRINO_CA_CERT` for a normally trusted endpoint.
+Nightly's default forced Docker profile clears `TRINO_VERIFY` and `TRINO_CA_CERT`
+when selecting HTTP; `NIGHTLY_FORCE_ADAPTER_ENV=0` preserves an external TLS profile.
+
 ### Apache Doris
 
 ```bash
@@ -59,11 +111,11 @@ docker compose down -v
 |---|---|---|---|
 | postgresql | `ADAPTERS_PG=1` | `POSTGRESQL_HOST/PORT/USER/PASSWORD/DATABASE` | `localhost:5432 test_user/test_password/test` |
 | mysql | `ADAPTERS_MYSQL=1` | `MYSQL_HOST/PORT/USER/PASSWORD/DATABASE` | `localhost:3306 test_user/test_password/test` |
-| clickhouse | `ADAPTERS_CH=1` | `CLICKHOUSE_HOST/PORT/USER/PASSWORD/DATABASE` | `localhost:8123 default_user/default_test/default_test` |
+| clickhouse | `ADAPTERS_CH=1` | `CLICKHOUSE_HOST/PORT/USER/PASSWORD/DATABASE`, optional `CLICKHOUSE_PROTOCOL/VERIFY/CA_CERT` | `localhost:8123 default_user/default_test/default_test` |
 | starrocks | `ADAPTERS_SR=1` | `STARROCKS_HOST/PORT/USER/PASSWORD/CATALOG/DATABASE` | `127.0.0.1:9030 root//default_catalog/test` |
 | doris | `ADAPTERS_DORIS=1` | `DORIS_HOST/PORT/USER/PASSWORD/CATALOG/DATABASE` | `127.0.0.1:9030 root//internal/test` |
 | tidb | `ADAPTERS_TIDB=1` | `TIDB_HOST/PORT/USER/PASSWORD/DATABASE` | `127.0.0.1:4000 root//test` |
-| trino | `ADAPTERS_TRINO=1` | `TRINO_HOST/PORT/USER` | `localhost:8080 trino` (uses built-in `tpch.tiny`, no seeding) |
+| trino | `ADAPTERS_TRINO=1` | `TRINO_HOST/PORT/USER/PASSWORD`, optional `TRINO_HTTP_SCHEME/VERIFY/CA_CERT` | `localhost:8080 trino` (uses built-in `tpch.tiny`, no seeding) |
 | greenplum | `ADAPTERS_GP=1` | `GREENPLUM_HOST/PORT/USER/PASSWORD/DATABASE/SCHEMA` | `localhost:15432 gpadmin/pivotal/postgres/public` |
 | gaussdb | `ADAPTERS_GAUSSDB=1` | `GAUSSDB_HOST/PORT/USER/PASSWORD/DATABASE/SCHEMA/DRIVER/SSLMODE/SSLROOTCERT` | `127.0.0.1:25434 datus/Datus@123/postgres/public`; `gaussdb` on Linux, `pg8000` on macOS |
 | hive | `ADAPTERS_HIVE=1` | `HIVE_HOST/PORT/USERNAME/PASSWORD/DATABASE` | `localhost:10000 hive//default` |

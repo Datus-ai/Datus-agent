@@ -897,6 +897,8 @@ if [ "${NIGHTLY_FORCE_ADAPTER_ENV:-1}" = "1" ]; then
   export CLICKHOUSE_USER=default_user
   export CLICKHOUSE_PASSWORD=default_test
   export CLICKHOUSE_DATABASE=default_test
+  # Compose uses HTTP; let the adapter's HTTP defaults apply.
+  unset CLICKHOUSE_PROTOCOL CLICKHOUSE_VERIFY CLICKHOUSE_CA_CERT
 
   export STARROCKS_QUERY_HOST_PORT="${STARROCKS_QUERY_HOST_PORT:-29030}"
   export STARROCKS_HTTP_HOST_PORT="${STARROCKS_HTTP_HOST_PORT:-28030}"
@@ -930,6 +932,7 @@ if [ "${NIGHTLY_FORCE_ADAPTER_ENV:-1}" = "1" ]; then
   export TRINO_USER=trino
   export TRINO_PASSWORD=
   export TRINO_HTTP_SCHEME=http
+  unset TRINO_VERIFY TRINO_CA_CERT
 
   export GREENPLUM_HOST_PORT="${GREENPLUM_HOST_PORT:-15434}"
   export GREENPLUM_HOST=localhost
@@ -1453,6 +1456,63 @@ wait_for_doris_client_readiness() {
   return 0
 }
 
+wait_for_trino_client_readiness() {
+  local timeout_seconds="${1:-300}"
+  local deadline=$((SECONDS + timeout_seconds))
+  local probe_output="${RUNNER_TEMP:-${TMPDIR:-/tmp}}/datus-trino-readiness-${GITHUB_RUN_ID:-$$}.log"
+  local remaining_seconds
+
+  while [ "$SECONDS" -lt "$deadline" ]; do
+    remaining_seconds=$((deadline - SECONDS))
+    if python3 - "$remaining_seconds" <<'PYTRINO' >"$probe_output" 2>&1; then
+import os
+import signal
+import subprocess
+import sys
+
+probe = """
+from datus_trino import TrinoConnector
+from datus_trino.testing import config_from_env
+
+conn = TrinoConnector(config_from_env())
+try:
+    if not conn.test_connection():
+        raise RuntimeError("Trino readiness query failed")
+finally:
+    conn.close()
+"""
+# Bound uv startup, the driver query and cleanup together. A separate process
+# group lets expiry stop both uv and its Python child on Linux and macOS.
+process = subprocess.Popen(["uv", "run", "--no-sync", "python", "-c", probe], start_new_session=True)
+try:
+    status = process.wait(timeout=float(sys.argv[1]))
+except subprocess.TimeoutExpired:
+    try:
+        os.killpg(process.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+    process.wait()
+    print("Trino readiness attempt exceeded the remaining deadline", file=sys.stderr)
+    status = 124
+sys.exit(status)
+PYTRINO
+      log "Trino client readiness probe succeeded"
+      return 0
+    fi
+    remaining_seconds=$((deadline - SECONDS))
+    if [ "$remaining_seconds" -gt 0 ]; then
+      sleep "$((remaining_seconds < 5 ? remaining_seconds : 5))"
+    fi
+  done
+
+  echo "Timed out waiting for Trino client readiness" | tee -a "$LOG_FILE" >&2
+  if [ -s "$probe_output" ]; then
+    sed 's/^/  /' "$probe_output" | tee -a "$LOG_FILE"
+  fi
+  test_exit_code=1
+  return 1
+}
+
 wait_for_compose_client_readiness() {
   local group_name="$1"
   local airflow_base
@@ -1488,7 +1548,7 @@ wait_for_compose_client_readiness() {
       wait_for_http_readiness "TiDB" "http://${TIDB_HOST:-127.0.0.1}:${TIDB_STATUS_HOST_PORT:-20080}/status" 300
       ;;
     "Trino Adapter Tests")
-      wait_for_http_readiness "Trino" "http://${TRINO_HOST:-127.0.0.1}:${TRINO_PORT:-8080}/v1/info" 300
+      wait_for_trino_client_readiness 300
       ;;
     "Greenplum Adapter Tests")
       wait_for_tcp_readiness "Greenplum" "${GREENPLUM_HOST:-localhost}" "${GREENPLUM_PORT:-5432}" 300

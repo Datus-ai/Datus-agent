@@ -577,6 +577,70 @@ class TestDbConfigToConnectionConfigAdapterBranch:
         assert result["sslmode"] == "verify-ca"
         assert result["sslrootcert"] == "/etc/datus/certs/gaussdb-ca.pem"
 
+    @pytest.mark.parametrize("verify", [True, False])
+    def test_clickhouse_https_fields_survive_yaml_and_manager(self, verify, monkeypatch):
+        import yaml
+
+        from datus.configuration.agent_config import DbConfig
+
+        monkeypatch.setenv("CLICKHOUSE_TEST_CA", "/certs/private-ca.pem")
+        profile = yaml.safe_load("""
+        type: clickhouse
+        host: clickhouse.example.com
+        username: analytics
+        protocol: https
+        ca_cert: ${CLICKHOUSE_TEST_CA}
+        """)
+        profile["verify"] = verify
+        if not verify:
+            profile.pop("ca_cert")
+        cfg = DbConfig.filter_kwargs(DbConfig, profile)
+        result = self._make_manager()._db_config_to_connection_config(cfg)
+        expected = {
+            "host": "clickhouse.example.com",
+            "username": "analytics",
+            "timeout_seconds": 30,
+            "protocol": "https",
+            "verify": verify,
+        }
+        if verify:
+            expected["ca_cert"] = "/certs/private-ca.pem"
+        assert result == expected
+
+    @pytest.mark.parametrize("verify", [True, False])
+    def test_trino_tls_fields_survive_yaml_and_manager(self, verify, monkeypatch):
+        import yaml
+
+        from datus.configuration.agent_config import DbConfig
+
+        monkeypatch.setenv("TRINO_TEST_CA", "/certs/trino-ca.pem")
+        profile = yaml.safe_load("""
+        type: trino
+        host: trino.example.com
+        username: analytics
+        catalog: hive
+        schema_name: analytics
+        http_scheme: https
+        ca_cert: ${TRINO_TEST_CA}
+        """)
+        profile["verify"] = verify
+        if not verify:
+            profile.pop("ca_cert")
+        cfg = DbConfig.filter_kwargs(DbConfig, profile)
+        result = self._make_manager()._db_config_to_connection_config(cfg)
+        expected = {
+            "host": "trino.example.com",
+            "username": "analytics",
+            "catalog": "hive",
+            "schema_name": "analytics",
+            "http_scheme": "https",
+            "verify": verify,
+            "timeout_seconds": 30,
+        }
+        if verify:
+            expected["ca_cert"] = "/certs/trino-ca.pem"
+        assert result == expected
+
     def test_adapter_none_values_removed(self):
         """None-valued fields are excluded from the result dict."""
         mgr = self._make_manager()
