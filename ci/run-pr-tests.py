@@ -377,7 +377,10 @@ def _build_pytest_command(
         # Distribute the suite across pytest-xdist workers so the suites stay
         # under TEST_CMD_TIMEOUT; pytest-cov merges per-worker data.
         # By default, use half of the available CPUs; runners may override this.
-        cmd.extend(["-n", PARALLEL_WORKERS])
+        # loadfile/loadscope can requeue completed work as empty units after a
+        # worker crash (pytest-xdist#1378), leaving the session waiting forever.
+        # Preserve the crash as a failure rather than attempting recovery.
+        cmd.extend(["-n", PARALLEL_WORKERS, "--max-worker-restart=0"])
         if dist:
             cmd.extend(["--dist", dist])
 

@@ -43,6 +43,8 @@ def test_tables_command(mock_args, capsys):
         cli.run()
         captured = capsys.readouterr()
         assert "Tables in Database" in captured.out
+        assert cli._bg_loop.is_closed()
+        assert not cli._bg_loop_thread.is_alive()
 
 
 @pytest.mark.acceptance

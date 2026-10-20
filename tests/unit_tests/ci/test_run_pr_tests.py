@@ -300,7 +300,43 @@ def test_parallel_suite_emits_dist_mode_after_workers(tmp_path, monkeypatch):
     )
 
     worker_flag = command.index("-n")
-    assert command[worker_flag : worker_flag + 4] == ["-n", "4", "--dist", "loadfile"]
+    assert command[worker_flag : worker_flag + 5] == ["-n", "4", "--max-worker-restart=0", "--dist", "loadfile"]
+
+
+def test_parallel_suite_writes_failure_report_when_a_worker_crashes(tmp_path, monkeypatch):
+    """Completed file scopes must not strand loadfile's worker recovery queue."""
+    (tmp_path / "pytest.ini").write_text("[pytest]\n")
+    (tmp_path / "test_large.py").write_text(
+        "import time, pytest\n@pytest.mark.parametrize('item', range(80))\ndef test_large(item): time.sleep(0.005)\n"
+    )
+    for index in range(8):
+        (tmp_path / f"test_small_{index}.py").write_text(
+            "import pytest\n@pytest.mark.parametrize('item', range(4))\ndef test_small(item): pass\n"
+        )
+    (tmp_path / "test_crash.py").write_text(
+        "import os, pytest\n"
+        "@pytest.mark.parametrize('item', range(3))\n"
+        "def test_crash(item):\n"
+        "    if item == 1: os._exit(17)\n"
+    )
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(run_pr_tests, "PARALLEL_WORKERS", "2")
+    monkeypatch.setattr(run_pr_tests, "TEST_CMD_TIMEOUT", 15)
+    monkeypatch.setattr(run_pr_tests, "DEFAULT_PYTEST_BASETEMP", str(tmp_path / "pytest-temp"))
+    monkeypatch.setattr(run_pr_tests, "DEFAULT_COVERAGE_DB", str(tmp_path / ".coverage"))
+    monkeypatch.setattr(run_pr_tests, "DEFAULT_COVERAGE_XML", str(tmp_path / "coverage.xml"))
+    junit = tmp_path / "results.xml"
+    log = io.StringIO()
+
+    exit_code = run_pr_tests._run_pytest_suite(
+        [str(tmp_path)], str(junit), log, suite_name="worker crash regression", parallel=True, dist="loadfile"
+    )
+
+    assert exit_code == 1
+    results = run_pr_tests.parse_test_results(str(junit))
+    assert results["failed"] + results["errors"] == 1
+    assert "worker" in results["failures"][0]["text"]
+    assert "TIMEOUT" not in log.getvalue()
 
 
 def test_serial_suite_ignores_dist_mode(tmp_path):

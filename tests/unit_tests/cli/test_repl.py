@@ -18,7 +18,9 @@ DatusCLI is instantiated via a fully mocked __init__ to avoid prompt_toolkit/
 threading side effects.
 """
 
+import asyncio
 import io
+import threading
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -48,6 +50,7 @@ def _make_cli(agent_config, available_subagents=None):
     cli.agent = None
     cli.agent_ready = False
     cli.agent_initializing = False
+    cli._closed = False
     cli.startup_warnings = []
     cli.plan_mode_active = False
     cli.input_mode = InputMode.CHAT
@@ -380,6 +383,120 @@ class TestCmdExitShutsDownBgSync:
 
         assert result == EXIT_SENTINEL
         connector.close.assert_called_once_with()
+
+
+class TestCliBackgroundCleanup:
+    @pytest.fixture
+    def running_cli(self, cli):
+        cli._bg_loop = asyncio.new_event_loop()
+        cli._bg_loop_thread = threading.Thread(target=cli._bg_loop.run_forever, daemon=True)
+        cli._bg_loop_thread.start()
+        cli.bg_sync = MagicMock()
+        try:
+            yield cli
+        finally:
+            cli.close()
+
+    @pytest.mark.parametrize("use_tui", [False, True])
+    @pytest.mark.parametrize("raises", [False, True])
+    def test_run_drains_workers_and_closes_loop_on_every_exit(self, running_cli, use_tui, raises):
+        cli = running_cli
+        entered = threading.Event()
+        release = threading.Event()
+        finished = threading.Event()
+        resource_closed = threading.Event()
+
+        async def background_resource():
+            try:
+                yield
+            finally:
+                await asyncio.to_thread(resource_closed.set)
+
+        resource = background_resource()
+
+        async def open_resource():
+            await anext(resource)
+
+        asyncio.run_coroutine_threadsafe(open_resource(), cli._bg_loop).result(timeout=5)
+
+        def background_work():
+            entered.set()
+            if not release.wait(5):
+                raise TimeoutError("Background worker was not released")
+            finished.set()
+
+        asyncio.run_coroutine_threadsafe(asyncio.to_thread(background_work), cli._bg_loop)
+        assert entered.wait(5)
+        cli.bg_sync.shutdown.side_effect = release.set
+
+        def close_connection():
+            assert finished.is_set(), "Connection closed while a background worker was still using it"
+            assert resource_closed.is_set(), "Connection closed before async resource cleanup finished"
+
+        cli.db_connector.close.side_effect = close_connection
+        cli._use_tui = use_tui
+        cli.tui_app = MagicMock() if use_tui else None
+        cli._run_tui = MagicMock(return_value=0, side_effect=ValueError("UI failed") if raises else None)
+        cli._run_prompt_session = cli._run_tui
+        if raises:
+            with pytest.raises(ValueError, match="UI failed"):
+                cli.run()
+        else:
+            assert cli.run() == 0
+        cli.close()  # Explicit /exit plus run's finally must be idempotent.
+
+        assert finished.is_set()
+        assert not cli._bg_loop_thread.is_alive()
+        assert cli._bg_loop.is_closed()
+        cli.db_connector.close.assert_called_once_with()
+        cli.bg_sync.shutdown.assert_called_once_with()
+
+    def test_initialization_finishing_during_close_does_not_start_more_work(self, running_cli):
+        cli = running_cli
+        entered = threading.Event()
+        release = threading.Event()
+        cli.args = SimpleNamespace(debug=False)
+        cli._pre_load_storage = MagicMock()
+        cli._warm_bang_node = MagicMock()
+
+        def construct_agent(*args):
+            entered.set()
+            if not release.wait(5):
+                raise TimeoutError("Agent constructor was not released")
+            return MagicMock()
+
+        cli.bg_sync.shutdown.side_effect = release.set
+        with patch("datus.agent.agent.Agent", side_effect=construct_agent):
+            cli._async_init_agent()
+            assert entered.wait(5)
+            cli.close()
+
+        assert not cli.agent_ready
+        cli._pre_load_storage.assert_not_called()
+        cli._warm_bang_node.assert_not_called()
+        assert cli._bg_loop.is_closed()
+
+    def test_shutdown_deadline_keeps_connection_open_until_blocking_work_finishes(self, running_cli, monkeypatch):
+        cli = running_cli
+        monkeypatch.setattr("datus.cli.repl._CLI_SHUTDOWN_TIMEOUT", 0.01)
+        entered = threading.Event()
+        release = threading.Event()
+        finished = threading.Event()
+
+        def blocked_work():
+            entered.set()
+            release.wait(5)
+            finished.set()
+
+        asyncio.run_coroutine_threadsafe(asyncio.to_thread(blocked_work), cli._bg_loop)
+        assert entered.wait(5)
+        try:
+            cli.close()
+            cli.db_connector.close.assert_not_called()
+            assert cli._bg_loop.is_closed()
+        finally:
+            release.set()
+            assert finished.wait(5)
 
 
 class TestCommandType:

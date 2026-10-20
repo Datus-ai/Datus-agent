@@ -405,20 +405,9 @@ def test_trino_readiness_deadline_stops_stalled_probe_and_child(tmp_path):
     """A stalled driver cannot outlive the deadline or leave its child running."""
     uv = tmp_path / "uv"
     pids = tmp_path / "probe-pids.json"
-    uv.write_text(
-        f"#!{sys.executable}\n"
-        + """
-import json
-import os
-from pathlib import Path
-import subprocess
-import sys
-import time
-child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
-Path(os.environ["TRINO_PROBE_PIDS"]).write_text(json.dumps([os.getpid(), child.pid]))
-time.sleep(30)
-"""
-    )
+    # Keep probe setup cheap so the one-second budget measures cancellation,
+    # rather than a second interpreter's cold startup under parallel coverage.
+    uv.write_text('#!/bin/sh\nset -eu\nsleep 30 &\nprintf "[%s,%s]" "$$" "$!" > "$TRINO_PROBE_PIDS"\nwait\n')
     uv.chmod(0o755)
     source = _bash_function_source("wait_for_trino_client_readiness")
     harness = f"""
