@@ -178,11 +178,14 @@ class OntologyBinding:
     ``ontology_path`` is the deprecated layout: an ontology embedding its
     mapping and model. ``model_file`` is None when the mapping carries its
     semantic model inline, so the mapping alone is the engine's input.
+    ``references`` are the local files the mapping reaches by relative
+    ``iri``; the engine reads them itself, so they belong to its inputs.
     """
 
     model_file: Optional[str]
     ontology_path: Optional[str] = None
     mapping_path: Optional[str] = None
+    references: tuple[str, ...] = ()
 
 
 def plan_ontologies(model_files: list[str], ontology_files: list[str]) -> tuple[dict[str, OntologyBinding], list[str]]:
@@ -222,11 +225,14 @@ def plan_ontologies(model_files: list[str], ontology_files: list[str]) -> tuple[
         ontology_ref = _ref(document, "ontology_ref")
         model_ref = _ref(document, "semantic_model_ref")
         ontology_path = None
-        for iri in (ontology_ref.get("iri"), model_ref.get("iri")):
-            if isinstance(iri, str) and "://" not in iri:
-                # The engine follows the iri itself; the file it lands on is
-                # this mapping's, not one to pair again by stem.
-                consumed.add(os.path.normpath(os.path.join(os.path.dirname(path), iri)))
+        references = tuple(
+            os.path.normpath(os.path.join(os.path.dirname(path), iri))
+            for iri in (ontology_ref.get("iri"), model_ref.get("iri"))
+            if isinstance(iri, str) and "://" not in iri
+        )
+        # The engine follows the iri itself; the file it lands on is this
+        # mapping's, not one to pair again by stem.
+        consumed.update(references)
         if "document" not in ontology_ref and "iri" not in ontology_ref:
             named = ontologies_by_name.get(str(ontology_ref.get("name") or ""), [])
             if len(named) != 1:
@@ -246,7 +252,9 @@ def plan_ontologies(model_files: list[str], ontology_files: list[str]) -> tuple[
                 continue
         key = model_file or path
         claims.setdefault(key, []).append(path)
-        bindings[key] = OntologyBinding(model_file=model_file, ontology_path=ontology_path, mapping_path=path)
+        bindings[key] = OntologyBinding(
+            model_file=model_file, ontology_path=ontology_path, mapping_path=path, references=references
+        )
         if ontology_path:
             consumed.add(os.path.normpath(ontology_path))
     for key, mappings in claims.items():
@@ -401,7 +409,7 @@ class EngineHandle:
         return _normalize_sqlite_source(str(source))
 
     def _ontology_signature(self) -> Optional[tuple[int, ...]]:
-        """An edited ontology or mapping rebuilds the engine, like an edited model."""
+        """An edited ontology, mapping or file it references rebuilds the engine, like an edited model."""
         signature: list[int] = []
         for path in (self._config.ontology_path, self._config.mapping_path):
             if not path:
@@ -411,6 +419,15 @@ class EngineHandle:
             except OSError as exc:
                 raise SemanticCoreException(f"cannot read ontology {path!r}: {exc}") from exc
             signature += [stat.st_mtime_ns, stat.st_size]
+        for path in self._config.mapping_references:
+            # An iri the engine never follows (the model was found by name)
+            # may name no file; its appearing still rebuilds the engine.
+            try:
+                stat = os.stat(path)
+            except OSError:
+                signature += [-1, -1]
+            else:
+                signature += [stat.st_mtime_ns, stat.st_size]
         return tuple(signature) or None
 
     @property
@@ -422,6 +439,11 @@ class EngineHandle:
     def mapping_path(self) -> Optional[str]:
         """The Ossie mapping document this engine loads, if any."""
         return self._config.mapping_path
+
+    @property
+    def inputs(self) -> tuple[Optional[str], Optional[str], list[str]]:
+        """The ontology-side files this engine was planned with; a change re-creates the handle."""
+        return self._config.ontology_path, self._config.mapping_path, self._config.mapping_references
 
     @property
     def has_ontology(self) -> bool:
@@ -632,11 +654,13 @@ class EngineRegistry:
                         "semantic_model_path": key,
                         "ontology_path": bound.ontology_path if bound else None,
                         "mapping_path": bound.mapping_path if bound else None,
+                        "mapping_references": list(bound.references) if bound else [],
                     }
                     kept = previous.get(key)
-                    if kept is not None and (kept.ontology_path, kept.mapping_path) == (
+                    if kept is not None and kept.inputs == (
                         update["ontology_path"],
                         update["mapping_path"],
+                        update["mapping_references"],
                     ):
                         handles[key] = kept
                     else:

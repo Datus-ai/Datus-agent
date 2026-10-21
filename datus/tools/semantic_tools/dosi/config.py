@@ -44,3 +44,6 @@ class DosiConfig(BaseModel):
     # An Ossie mapping document (apache/ossie#458) binding the model to its
     # ontology. Set per engine handle by the registry, like ontology_path.
     mapping_path: Optional[str] = None
+    # Local files that mapping reaches by relative iri; the engine reads them,
+    # so their edits rebuild it. Set by the registry with mapping_path.
+    mapping_references: list[str] = Field(default_factory=list)

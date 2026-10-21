@@ -289,7 +289,13 @@ class TestMappingDocuments:
         )
         # The mapping finds its ontology by iri; the ontology file is consumed,
         # not paired a second time by stem.
-        assert bindings == {model: OntologyBinding(model_file=model, mapping_path=str(ontology_dir / "mapping.yaml"))}
+        assert bindings == {
+            model: OntologyBinding(
+                model_file=model,
+                mapping_path=str(ontology_dir / "mapping.yaml"),
+                references=(str(ontology_dir / "ontology.yaml"),),
+            )
+        }
         assert unpaired == []
 
     def test_a_mapping_without_iri_finds_its_ontology_by_name(self, tmp_path):
@@ -345,7 +351,9 @@ class TestMappingDocuments:
         (ontology_dir / "mapping.yaml").write_text(mapping)
         files = [str(ontology_dir / f) for f in ("mapping.yaml", "model.yaml", "ontology.yaml")]
         bindings, unpaired = plan_ontologies([str(models_dir / "aviation.yaml")], files)
-        assert bindings == {str(ontology_dir / "mapping.yaml"): OntologyBinding(model_file=None, mapping_path=files[0])}
+        assert bindings == {
+            files[0]: OntologyBinding(model_file=None, mapping_path=files[0], references=(files[2], files[1]))
+        }
         assert unpaired == []
 
     def test_the_engine_gets_the_model_and_the_mapping(self, tmp_path, ontology_binding):
@@ -371,6 +379,36 @@ class TestMappingDocuments:
         # The model is inside the mapping, so the mapping is the only input.
         assert engine.given_model_path is None
         assert engine.mapping_path == mini
+
+    @pytest.mark.parametrize(
+        "mapping_yaml, edited",
+        [
+            pytest.param(MAPPING_YAML, "ontology.yaml", id="ontology_ref"),
+            pytest.param(
+                MAPPING_YAML.replace("{name: aviation}", "{name: beside, iri: ./model.yaml}"),
+                "model.yaml",
+                id="semantic_model_ref",
+            ),
+        ],
+    )
+    def test_editing_a_file_a_mapping_reaches_by_iri_rebuilds_the_engine(
+        self, tmp_path, ontology_binding, mapping_yaml, edited
+    ):
+        # The engine reads the iri target itself, so its edits must invalidate
+        # the engine exactly like an edit to the mapping does.
+        models_dir, ontology_dir = _mapping_layout(tmp_path, mapping_yaml=mapping_yaml)
+        (ontology_dir / "model.yaml").write_text(NAMED_MODEL_YAML.replace("aviation", "beside"))
+        registry = EngineRegistry(DosiConfig(semantic_models_path=str(models_dir), ontology_dir=str(ontology_dir)))
+        handle = dict(registry.snapshot()[1])[
+            str(models_dir / "flights.yaml") if edited == "ontology.yaml" else str(ontology_dir / "mapping.yaml")
+        ]
+        first = handle.get()
+        target = ontology_dir / edited
+        target.write_text(target.read_text() + "# edited\n")
+        stat = target.stat()
+        os.utime(target, ns=(stat.st_atime_ns, stat.st_mtime_ns + 10_000_000))
+        registry.snapshot()
+        assert handle.get() is not first
 
     def test_a_datasource_whose_only_model_is_inline_loads(self, tmp_path, ontology_binding):
         ontology_dir = tmp_path / "semantic_models" / "ontology" / "flights_db"
