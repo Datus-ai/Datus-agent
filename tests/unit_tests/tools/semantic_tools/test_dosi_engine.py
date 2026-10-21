@@ -214,3 +214,24 @@ def test_sqlite_connection_preserves_native_uri(tmp_path):
     )
     connection = EngineHandle(config)._runtime_connections(config)["orders"]
     assert connection == {"type": "sqlite", "uri": str(source), "default": True}
+
+
+def test_athena_connection_preserves_typed_identity_and_result_budgets(tmp_path):
+    model = tmp_path / "model.yaml"
+    model.write_text("version: '0.2.0.dev0'\nsemantic_model: []\n")
+    profile = {
+        "type": "athena",
+        "aws": {"region": "us-east-1", "profile": "test"},
+        "catalog": "AwsDataCatalog",
+        "database": "analytics",
+        "workgroup": "test",
+        "query_timeout_seconds": 30.5,
+        "page_size": 10,
+        "max_rows": 100,
+    }
+    config = DosiConfig(semantic_model_path=str(model), datasource="lake", db_config=profile)
+    connection = EngineHandle(config)._runtime_connections(config)["lake"]
+    assert connection == {**profile, "default": True}
+    assert connection["aws"]["profile"] == "test"
+    assert isinstance(connection["page_size"], int)
+    assert isinstance(connection["query_timeout_seconds"], float)
