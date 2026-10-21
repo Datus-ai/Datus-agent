@@ -13,7 +13,7 @@ OntologyAnalyst can also return **individual records**, such as "list the open P
 
 ## Prerequisites
 
-1. The datasource has executable semantic models under `subject/semantic_models/<datasource>/`, the same as for AskMetrics.
+1. The datasource has executable semantic models under `subject/semantic_models/<datasource>/`, the same as for AskMetrics. The one exception is a mapping that carries its model inline (see below), which needs no model file.
 2. The ontology goes under `subject/semantic_models/ontology/<datasource>/`, with an Apache Ossie **mapping document** that says which model it binds:
 
     ```text
@@ -32,7 +32,7 @@ OntologyAnalyst can also return **individual records**, such as "list the open P
 
     A file that pairs with nothing, or two mappings onto one model, is reported, not guessed. Files are told apart by their contents, not their names. No datasource can be named `ontology`.
 
-3. The installed `dosi-engine` must expose the ontology API (`Engine.describe` / `Engine.paths`).
+3. The installed `dosi-engine` must expose the ontology API (`Engine.describe` / `Engine.paths`). Mapping documents also need a build whose `Engine` accepts `mapping_path` (Datus-ai/osi-engine#303 or later). The older embedded layout works on either.
 
 Only OntologyAnalyst loads the ontology. AskMetrics and every other agent keep working on the plain model.
 
@@ -44,8 +44,10 @@ This walkthrough uses the aviation example shipped in the Datus-agent repository
 
 | File | Contents |
 |------|----------|
-| `tests/data/semantic_models/aviation/aviation.yaml` | OSI semantic model: 9 tables, with delay, alert and passenger metrics |
-| `tests/data/semantic_models/ontology/aviation/aviation.yaml` | Ossie ontology: Flight, Airport, FlightAlert, Delay and other concepts, with their roles and value domains |
+| `tests/data/semantic_models/aviation/aviation.yaml` | OSI semantic model `aviation`: 9 tables, with delay, alert and passenger metrics |
+| `tests/data/semantic_models/ontology/aviation-mapping-document/ontology.yaml` | Ossie ontology: Flight, Airport, FlightAlert, Delay and other concepts, with their roles and value domains |
+| `tests/data/semantic_models/ontology/aviation-mapping-document/mapping.yaml` | Mapping document binding that ontology to the `aviation` model |
+| `tests/data/semantic_models/ontology/aviation/aviation.yaml` | The same ontology in the older embedded layout (ontology and mapping in one file) |
 | `tests/data/semantic_models/aviation/seed.sql` | Seed data: 13 flights with their delays and alerts |
 
 ### 1. Prepare the project and the database
@@ -56,10 +58,11 @@ Datus treats the directory you start it in as the project root, and `subject/` l
 export DATUS_REPO=~/src/Datus-agent
 mkdir -p ~/ontology-demo && cd ~/ontology-demo
 
-# Model and ontology, in the conventional layout
+# Model, ontology and mapping document, in the conventional layout
 mkdir -p subject/semantic_models/aviation subject/semantic_models/ontology/aviation
 cp $DATUS_REPO/tests/data/semantic_models/aviation/aviation.yaml subject/semantic_models/aviation/
-cp $DATUS_REPO/tests/data/semantic_models/ontology/aviation/aviation.yaml subject/semantic_models/ontology/aviation/
+cp $DATUS_REPO/tests/data/semantic_models/ontology/aviation-mapping-document/{ontology,mapping}.yaml \
+   subject/semantic_models/ontology/aviation/
 
 # Build a DuckDB database from the seed (duckdb is installed with Datus)
 python -c "import duckdb, pathlib; duckdb.connect('aviation.duckdb').execute(pathlib.Path('$DATUS_REPO/tests/data/semantic_models/aviation/seed.sql').read_text())"
@@ -72,8 +75,17 @@ The result:
 ├── aviation.duckdb
 └── subject/semantic_models/
     ├── aviation/aviation.yaml
-    └── ontology/aviation/aviation.yaml
+    └── ontology/aviation/
+        ├── ontology.yaml
+        └── mapping.yaml
 ```
+
+`mapping.yaml` names its model with `semantic_model_ref.name: aviation`, which is the `name` inside `aviation.yaml`; the file names do not matter. Its `semantic_model_ref.iri` (`./model.yaml`) is not used here, because Datus hands the engine the matched model file.
+
+To try the older embedded layout instead, put the single file `tests/data/semantic_models/ontology/aviation/aviation.yaml` in `subject/semantic_models/ontology/aviation/` in place of the two files. The answers below are the same.
+
+!!! tip "One-file layout"
+    A mapping document can also carry the ontology and the model inline under `document:`. The datasource then has only `subject/semantic_models/ontology/<datasource>/mapping.yaml` and no model directory. `tests/data/semantic_models/ontology/mini-flights-inline/` is a small example, with its own `seed.sql`.
 
 ### 2. Register the datasource
 

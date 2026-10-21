@@ -13,7 +13,7 @@ OntologyAnalyst 还能返回**明细记录**，例如“列出飞往 JFK 的航�
 
 ## 前置条件
 
-1. 数据源在 `subject/semantic_models/<datasource>/` 下有可执行的语义模型（与 AskMetrics 相同）。
+1. 数据源在 `subject/semantic_models/<datasource>/` 下有可执行的语义模型（与 AskMetrics 相同）。唯一的例外是把模型内联在映射文档里的写法（见下文），这时不需要模型文件。
 2. ontology 放在 `subject/semantic_models/ontology/<datasource>/` 下，并配一份 Apache Ossie **映射文档**（mapping document），说明它绑定哪个模型：
 
     ```text
@@ -32,7 +32,7 @@ OntologyAnalyst 还能返回**明细记录**，例如“列出飞往 JFK 的航�
 
     配不上任何东西的文件、两份映射指向同一个模型，都会被报告出来，不会自动猜测。文件类型按内容区分，与文件名无关。数据源不能命名为 `ontology`。
 
-3. 安装的 `dosi-engine` 需要提供 ontology API（`Engine.describe` / `Engine.paths`）。
+3. 安装的 `dosi-engine` 需要提供 ontology API（`Engine.describe` / `Engine.paths`）。使用映射文档时，还需要 `Engine` 支持 `mapping_path` 参数的版本（Datus-ai/osi-engine#303 及之后）。旧的内嵌写法在两种版本上都能用。
 
 只有 OntologyAnalyst 会加载 ontology，AskMetrics 和其他代理继续使用原模型。
 
@@ -44,8 +44,10 @@ OntologyAnalyst 还能返回**明细记录**，例如“列出飞往 JFK 的航�
 
 | 文件 | 内容 |
 |------|------|
-| `tests/data/semantic_models/aviation/aviation.yaml` | OSI 语义模型：9 张表，以及延误、告警、载客等指标 |
-| `tests/data/semantic_models/ontology/aviation/aviation.yaml` | Ossie ontology：Flight、Airport、FlightAlert、Delay 等概念，以及它们之间的角色和值域 |
+| `tests/data/semantic_models/aviation/aviation.yaml` | OSI 语义模型 `aviation`：9 张表，以及延误、告警、载客等指标 |
+| `tests/data/semantic_models/ontology/aviation-mapping-document/ontology.yaml` | Ossie ontology：Flight、Airport、FlightAlert、Delay 等概念，以及它们之间的角色和值域 |
+| `tests/data/semantic_models/ontology/aviation-mapping-document/mapping.yaml` | 映射文档，把上面的 ontology 绑定到 `aviation` 模型 |
+| `tests/data/semantic_models/ontology/aviation/aviation.yaml` | 同一个 ontology 的旧内嵌写法（ontology 和映射在同一个文件里） |
 | `tests/data/semantic_models/aviation/seed.sql` | 种子数据：13 个航班、延误和告警记录 |
 
 ### 1. 准备项目目录和数据库
@@ -56,10 +58,11 @@ Datus 以启动时的当前目录作为项目根目录，`subject/` 也放在这
 export DATUS_REPO=~/src/Datus-agent
 mkdir -p ~/ontology-demo && cd ~/ontology-demo
 
-# 语义模型和 ontology，按约定的目录放置
+# 语义模型、ontology 和映射文档，按约定的目录放置
 mkdir -p subject/semantic_models/aviation subject/semantic_models/ontology/aviation
 cp $DATUS_REPO/tests/data/semantic_models/aviation/aviation.yaml subject/semantic_models/aviation/
-cp $DATUS_REPO/tests/data/semantic_models/ontology/aviation/aviation.yaml subject/semantic_models/ontology/aviation/
+cp $DATUS_REPO/tests/data/semantic_models/ontology/aviation-mapping-document/{ontology,mapping}.yaml \
+   subject/semantic_models/ontology/aviation/
 
 # 用种子数据生成 DuckDB 数据库（duckdb 随 Datus 一起安装）
 python -c "import duckdb, pathlib; duckdb.connect('aviation.duckdb').execute(pathlib.Path('$DATUS_REPO/tests/data/semantic_models/aviation/seed.sql').read_text())"
@@ -72,8 +75,17 @@ python -c "import duckdb, pathlib; duckdb.connect('aviation.duckdb').execute(pat
 ├── aviation.duckdb
 └── subject/semantic_models/
     ├── aviation/aviation.yaml
-    └── ontology/aviation/aviation.yaml
+    └── ontology/aviation/
+        ├── ontology.yaml
+        └── mapping.yaml
 ```
+
+`mapping.yaml` 用 `semantic_model_ref.name: aviation` 指定模型，对应的是 `aviation.yaml` 里的 `name`，与文件名无关。它的 `semantic_model_ref.iri`（`./model.yaml`）在这里用不到，因为 Datus 会把匹配到的模型文件直接交给引擎。
+
+想试旧的内嵌写法，就把 `tests/data/semantic_models/ontology/aviation/aviation.yaml` 这一个文件放进 `subject/semantic_models/ontology/aviation/`，替代上面两个文件。下面的答案不变。
+
+!!! tip "单文件写法"
+    映射文档也可以把 ontology 和模型都内联在 `document:` 下。这时数据源只有 `subject/semantic_models/ontology/<datasource>/mapping.yaml`，不需要模型目录。`tests/data/semantic_models/ontology/mini-flights-inline/` 是一个小例子，自带 `seed.sql`。
 
 ### 2. 注册数据源
 
