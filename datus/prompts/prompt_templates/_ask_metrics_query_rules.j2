@@ -1,0 +1,43 @@
+## Attribution Playbook
+
+- Treat attribution as descriptive change decomposition; it does not establish causation.
+- Use `get_metric.dimensions` to choose 3-5 low-cardinality categorical candidates. Exclude time dimensions and numeric measures, IDs, or high-cardinality fields unless the user explicitly needs one.
+- `attribution_analyze` uses the same OSI half-open `[start, end)` time-range contract as `query_metrics`.
+- Use equal-length baseline and current windows. If the result contains `unequal_windows`, disclose that values were not normalized before comparing them.
+- Read the observed change from `total_change`. If `strategy` is `unsupported`, disclose `unsupported_reason` and do not give a dimension-attribution conclusion.
+- Read detailed contributions from `per_dimension.<dimension>.values`. Never compare or add contribution percentages across different dimensions. `top_dimension_values` is only a cross-dimension display summary.
+- Do not interpret a dimension whose `non_additive` or `truncated` flag is true. A dimension omitted from `dimension_ranking` because it failed, was non-additive, or was truncated is not a low-scoring dimension.
+- For `mix_shift`, distinguish `mix_effect` from `rate_effect`. For `factor_shapley`, use `factors` to explain factor effects before discussing dimension values.
+- To drill into a top value, reuse its `drill_down.where_sql` as `where` and retain every parent filter from prior drill-down calls.
+- Always disclose attribution `warnings`:
+  - With `non_additive_dimension`, do not interpret that dimension's percentages as an additive decomposition.
+  - With `no_data_*`, `null_total_*`, or `zero_or_no_data_*`, do not give an attribution conclusion; first confirm coverage with `query_metrics`.
+  - With `zero_total_delta` or `zero_total_delta_with_component_changes`, explain structural movement using absolute component deltas, not contribution percentages.
+  - With `high_cardinality_dimension`, attribute a coarser dimension first and use `where` to narrow the follow-up query.
+  - With `dimension_analysis_failed`, disclose the affected dimension and continue with successful dimensions only.
+
+## Period-Over-Period Metric Queries
+
+- For period-over-period questions such as previous period, day-over-day, week-over-week, month-over-month, quarter-over-quarter, or year-over-year, first look for a dedicated catalog metric whose name, description, or metadata already matches the requested fixed comparison.
+- Query the dedicated period-over-period metric directly.
+- Treat the comparison grain and calculation as fixed metric semantics. For example, a monthly YoY metric is not interchangeable with a weekly YoY metric; use the exact dedicated metric that matches the user's requested comparison.
+- If the question asks for the base value and one or more fixed period-over-period values for the same current periods, query all requested catalog metrics together in one `query_metrics` call with the same metric-time dimension and business dimensions.
+- When querying a period-over-period metric, pass the requested current time range and business dimensions/filters. The comparison offset is fixed by the metric; the query grain is not — pass `time_granularity` explicitly, using the business grain documented in the metric's description/AI guidance unless the user requests another.
+- Do not invent helper metrics named like `previous_month_*`, `*_previous_period`, or standalone prior-period values. Use them only if they are already listed as dedicated catalog metrics and directly match the user's requested final output.
+
+## Parameterized Metric Queries
+
+- When `get_metric` returns `params`, the metric takes query-time parameters: bind them through `query_metrics.params` using exactly the declared names and values from each parameter's domain. A description that mentions a placeholder such as "day k" refers to one of these parameters.
+- To report several values of one parameter side by side (day-1, day-7 and day-30 retention), pass a list in one query: `params={"k": [1, 7, 30]}` returns one column per value (`<metric>__k_1`, `<metric>__k_7`, `<metric>__k_30`). Never split them into separate queries. Read which column carries which value from the result's `outputs`; a non-ASCII value gets an opaque column suffix.
+- Use declared defaults when the user does not override them. If the request requires a different business value, bind the user's value rather than guessing.
+- Do not pass `params` to metrics that do not declare them, and do not translate parameter values into an ad hoc SQL `where` clause.
+
+## Window Metric Queries
+
+- When a selected window metric exposes `requires_time_axis: true`, group by the reserved input dimension `metric_time` and pass the requested grain separately as `time_granularity`. Discover the available/native grains from `get_metric.time_granularities`; do not invent a concrete time field. Do not add `metric_time` solely because a metric has window metadata; value-ordered rank, value, or frame metrics may use only the business dimensions requested by the user.
+- A grained time result uses the engine's suffixed output name and that name may be used as an `order_by` key. Never pass the suffixed output name in `dimensions`; Dosi query input remains `metric_time` plus `time_granularity`.
+- For cumulative metrics, use the business query grain requested by the user or documented in metric metadata/AI guidance. A metric `window.reset` value controls the reset boundary; it is not automatically the query grain.
+- For rolling metrics, `periods` counts result buckets. Choose the bucket grain from the user's request or metric guidance and pass that grain separately.
+- Order time-axis window results by their grained time result when chronological output is useful. Order value-oriented window results by the requested business dimension or metric value.
+- Query the complete metric bundle when the catalog exposes the required base metric, helper row-count metric, or paired min/max metric. The query tool may also expand these dependencies automatically.
+

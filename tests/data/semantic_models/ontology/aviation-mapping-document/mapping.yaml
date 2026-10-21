@@ -1,0 +1,189 @@
+# Aviation scenario -- the mapping of the Aviation ontology (ontology.yaml)
+# onto the hand-written core model (model.yaml): an Apache Ossie mapping
+# document (apache/ossie#458), the three-file layout over a COMPLETE model.
+#
+# model.yaml already declares the relationships, primary keys and metrics
+# that lowering would synthesize, and it wins: lowering only adds what it
+# lacks. Both references resolve by `iri` against this file's directory.
+
+version: 0.2.0.dev0
+name: aviation_duckdb
+description: Maps the Aviation ontology onto the aviation semantic model.
+
+ontology_ref:
+  name: Aviation
+  iri: ./ontology.yaml
+semantic_model_ref:
+  name: aviation
+  iri: ./model.yaml
+
+concept_mappings:
+- concept: Airport
+  object_mappings:
+  - referent_mappings:
+    - { relationship: code, expression: airports.airport_code }
+  link_mappings:
+  - object_mapping:
+      referent_mappings:
+      - { relationship: code, expression: airports.airport_code }
+    children:
+    - { object_mapping: { concept: String, expression: airports.name }, relationship: name }
+    - { object_mapping: { concept: CityName, expression: airports.city }, relationship: city }
+    - { object_mapping: { concept: TimezoneName, expression: airports.timezone }, relationship: timezone }
+- concept: Carrier
+  object_mappings:
+  - referent_mappings:
+    - { relationship: id, expression: carriers.carrier_id }
+  link_mappings:
+  - object_mapping:
+      referent_mappings:
+      - { relationship: id, expression: carriers.carrier_id }
+    children:
+    - { object_mapping: { concept: IataCode, expression: carriers.iata_code }, relationship: iata_code }
+    - { object_mapping: { concept: String, expression: carriers.name }, relationship: name }
+- concept: Aircraft
+  object_mappings:
+  - referent_mappings:
+    - { relationship: id, expression: aircraft.aircraft_id }
+  link_mappings:
+  - object_mapping:
+      referent_mappings:
+      - { relationship: id, expression: "aircraft.aircraft_id WHERE ( aircraft.in_service == TRUE )" }
+    relationship: in_service
+  - object_mapping:
+      referent_mappings:
+      - { relationship: id, expression: aircraft.aircraft_id }
+    children:
+    - { object_mapping: { concept: TailNumber, expression: aircraft.tail_number }, relationship: tail_number }
+    - { object_mapping: { concept: String, expression: aircraft.model }, relationship: model }
+- concept: Route
+  object_mappings:
+  - referent_mappings:
+    - { relationship: id, expression: routes.route_id }
+  link_mappings:
+  - object_mapping:
+      referent_mappings:
+      - { relationship: id, expression: routes.route_id }
+    children:
+    - object_mapping:
+        concept: Airport
+        referent_mappings:
+        - { relationship: code, expression: routes.origin_airport_code }
+      relationship: origin
+    - object_mapping:
+        concept: Airport
+        referent_mappings:
+        - { relationship: code, expression: routes.destination_airport_code }
+      relationship: destination
+    - { object_mapping: { concept: NrMiles, expression: routes.distance_miles }, relationship: distance }
+- concept: Flight
+  object_mappings:
+  - referent_mappings:
+    - { relationship: id, expression: flights.flight_id }
+  link_mappings:
+  - object_mapping:
+      referent_mappings:
+      - { relationship: id, expression: flights.flight_id }
+    children:
+    - { object_mapping: { concept: FlightNumber, expression: flights.flight_number }, relationship: number }
+    - object_mapping:
+        concept: Aircraft
+        referent_mappings:
+        - { relationship: id, expression: flights.aircraft_id }
+      relationship: operated_by
+    - object_mapping:
+        concept: Carrier
+        referent_mappings:
+        - { relationship: id, expression: flights.carrier_id }
+      relationship: flown_by
+    - object_mapping:
+        concept: Route
+        referent_mappings:
+        - { relationship: id, expression: flights.route_id }
+      relationship: follows_route
+    - object_mapping:
+        concept: Airport
+        referent_mappings:
+        - { relationship: code, expression: flights.origin_airport_code }
+      relationship: departs_from
+    - object_mapping:
+        concept: Airport
+        referent_mappings:
+        - { relationship: code, expression: flights.destination_airport_code }
+      relationship: arrives_at
+    - { object_mapping: { concept: DateTime, expression: flights.scheduled_departure }, relationship: scheduled_departure }
+    - { object_mapping: { concept: DateTime, expression: flights.actual_departure }, relationship: actual_departure }
+    - { object_mapping: { concept: DateTime, expression: flights.scheduled_arrival }, relationship: scheduled_arrival }
+    - { object_mapping: { concept: DateTime, expression: flights.actual_arrival }, relationship: actual_arrival }
+    - { object_mapping: { concept: PassengerCount, expression: flights.passenger_count }, relationship: passengers }
+    - { object_mapping: { concept: FlightStatus, expression: flights.status }, relationship: status }
+- concept: Delay
+  object_mappings:
+  - referent_mappings:
+    - { relationship: id, expression: delays.delay_id }
+  link_mappings:
+  - object_mapping:
+      referent_mappings:
+      - { relationship: id, expression: delays.delay_id }
+    children:
+    - object_mapping:
+        concept: Flight
+        referent_mappings:
+        - { relationship: id, expression: delays.flight_id }
+      relationship: flight
+    - { object_mapping: { concept: DelayType, expression: delays.delay_type }, relationship: type }
+    - { object_mapping: { concept: NrMinutes, expression: delays.delay_minutes }, relationship: minutes }
+    - { object_mapping: { concept: String, expression: delays.cause_detail }, relationship: cause }
+- concept: FlightAlert
+  object_mappings:
+  - referent_mappings:
+    - { relationship: id, expression: flight_alerts.alert_id }
+  link_mappings:
+  - object_mapping:
+      referent_mappings:
+      - { relationship: id, expression: flight_alerts.alert_id }
+    children:
+    - object_mapping:
+        concept: Flight
+        referent_mappings:
+        - { relationship: id, expression: flight_alerts.flight_id }
+      relationship: flight
+    - { object_mapping: { concept: AlertType, expression: flight_alerts.alert_type }, relationship: type }
+    - { object_mapping: { concept: AlertPriority, expression: flight_alerts.priority }, relationship: priority }
+    - { object_mapping: { concept: AlertStatus, expression: flight_alerts.status }, relationship: status }
+    - { object_mapping: { concept: DateTime, expression: flight_alerts.created_at }, relationship: created_at }
+    - { object_mapping: { concept: DateTime, expression: flight_alerts.resolved_at }, relationship: resolved_at }
+    - { object_mapping: { concept: String, expression: flight_alerts.resolution_comment }, relationship: resolution_comment }
+- concept: FlightSensor
+  object_mappings:
+  - referent_mappings:
+    - { relationship: series, expression: flight_sensors.series_id }
+  link_mappings:
+  - object_mapping:
+      referent_mappings:
+      - { relationship: series, expression: flight_sensors.series_id }
+    children:
+    - { object_mapping: { concept: SensorId, expression: flight_sensors.sensor_id }, relationship: id }
+    - object_mapping:
+        concept: Flight
+        referent_mappings:
+        - { relationship: id, expression: flight_sensors.flight_id }
+      relationship: flight
+    - { object_mapping: { concept: SeriesName, expression: flight_sensors.series_name }, relationship: name }
+    - { object_mapping: { concept: UnitName, expression: flight_sensors.unit }, relationship: unit }
+- concept: SensorReading
+  object_mappings:
+  - referent_mappings:
+    - relationship: sensor
+      referent_mappings:
+      - { relationship: series, expression: sensor_readings.series_id }
+    - { relationship: at, expression: sensor_readings.ts }
+  link_mappings:
+  - object_mapping:
+      referent_mappings:
+      - relationship: sensor
+        referent_mappings:
+        - { relationship: series, expression: sensor_readings.series_id }
+      - { relationship: at, expression: sensor_readings.ts }
+    children:
+    - { object_mapping: { concept: ReadingValue, expression: sensor_readings.value_double }, relationship: value }

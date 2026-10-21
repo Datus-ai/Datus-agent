@@ -25,6 +25,8 @@ agent:
 
 Dosi is built in and needs no engine selection. Agent discovers OSI YAML or JSON files recursively under `subject/semantic_models/<datasource>/`, excluding per-metric fragments. Use `semantic_model_path` to select a specific file for a request. Old `agent.services.semantic_layer` and project `semantic` settings are ignored with a warning.
 
+An Apache Ossie ontology for a datasource lives under `subject/semantic_models/ontology/<datasource>/`, named after the model file it describes. Only the [`ontology_analyst`](../subagent/ontology_analyst.md) subagent loads it, beside its model. No datasource may be named `ontology`.
+
 ## Agent features
 
 Agent uses Dosi to discover semantic models, metrics, and metric-specific dimensions; compile and execute metric queries; validate exact model artifacts; and run native attribution. The `semantic_modeling` workflow uses the native authoring contract and validation. Explorer reads, writes, and deletes metric nodes in OSI YAML files, then synchronizes the affected Knowledge Base entries. The external Dosi CLI, REST server, and MCP server are outside Agent's integration.

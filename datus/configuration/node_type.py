@@ -18,6 +18,7 @@ from datus.schemas.gen_sql_agentic_node_models import GenSQLNodeInput
 from datus.schemas.gen_visual_dashboard_models import GenVisualDashboardNodeInput
 from datus.schemas.gen_visual_report_models import GenVisualReportNodeInput
 from datus.schemas.node_models import ExecuteSQLInput, OutputInput
+from datus.schemas.ontology_analyst_agentic_node_models import OntologyAnalystNodeInput
 from datus.schemas.parallel_node_models import ParallelInput, SelectionInput
 from datus.schemas.schema_linking_node_models import SchemaLinkingInput
 from datus.schemas.semantic_agentic_node_models import SemanticNodeInput
@@ -50,6 +51,7 @@ class NodeType:
     TYPE_SEMANTIC = "semantic"  # For semantic model generation
     TYPE_SQL_SUMMARY = "sql_summary"  # For SQL summary generation
     TYPE_ASK_METRICS = "ask_metrics"  # For fast metric-based question answering
+    TYPE_ONTOLOGY_ANALYST = "ontology_analyst"  # Metric and record questions over an Ossie ontology
     TYPE_GEN_REPORT = "gen_report"  # For generic report generation
     TYPE_GEN_VISUAL_REPORT = "gen_visual_report"  # For structured (manifest + queries) report generation
     TYPE_GEN_VISUAL_DASHBOARD = "gen_visual_dashboard"  # For parameterized dashboard generation
@@ -72,6 +74,7 @@ class NodeType:
         TYPE_SEMANTIC,
         TYPE_SQL_SUMMARY,
         TYPE_ASK_METRICS,
+        TYPE_ONTOLOGY_ANALYST,
         TYPE_GEN_REPORT,
         TYPE_GEN_VISUAL_REPORT,
         TYPE_GEN_VISUAL_DASHBOARD,
@@ -100,6 +103,7 @@ class NodeType:
         TYPE_SEMANTIC: "Semantic model generation with conversational AI",
         TYPE_SQL_SUMMARY: "SQL summary generation with conversational AI",
         TYPE_ASK_METRICS: "Fast metric-based question answering with semantic metrics",
+        TYPE_ONTOLOGY_ANALYST: "Metric and record question answering over an Apache Ossie ontology",
         TYPE_GEN_REPORT: "Generic report generation with semantic and database tools",
         TYPE_GEN_VISUAL_REPORT: ("Visualizable report generation producing render/*.jsx + queries/* artifacts"),
         TYPE_GEN_VISUAL_DASHBOARD: (
@@ -150,6 +154,8 @@ class NodeType:
             input_data_cls = SqlSummaryNodeInput
         elif node_type == NodeType.TYPE_ASK_METRICS:
             input_data_cls = AskMetricsNodeInput
+        elif node_type == NodeType.TYPE_ONTOLOGY_ANALYST:
+            input_data_cls = OntologyAnalystNodeInput
         elif node_type == NodeType.TYPE_GEN_REPORT:
             input_data_cls = GenReportNodeInput
         elif node_type == NodeType.TYPE_GEN_VISUAL_REPORT:

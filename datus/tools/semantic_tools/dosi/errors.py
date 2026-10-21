@@ -117,12 +117,25 @@ def validation_error_from_query_error(
         # a valid candidate; with no request context this stays empty.
         unsupported_dimensions = [d for d in (requested_dimensions or []) if d not in candidates]
 
+    hint = getattr(exc, "hint", None)
+    raw_detail = getattr(exc, "detail", None)
+    raw_detail = dict(raw_detail) if isinstance(raw_detail, dict) else None
+    violations = getattr(exc, "violations", None)
+    if violations:
+        # value_not_in_domain: [{reference, literal, allowed}] per rejected literal.
+        raw_detail = {**(raw_detail or {}), "violations": [dict(v) for v in violations if isinstance(v, dict)]}
     return SemanticValidationError(
         code=code,
         metrics=list(getattr(exc, "metrics", ()) or ()) or list(requested_metrics or []),
         unsupported_dimensions=unsupported_dimensions,
         required_dimensions=(candidates if code in {"no_primary_time_dimension", "time_range_needs_dimension"} else []),
         suggested_retry=suggested_retry,
+        # Kept verbatim so an agent can retry from them: ontology rejections
+        # (value_not_in_domain, invalid_relationship_path) put the allowed
+        # literals and the correctly rooted path here, not in the message.
+        candidates=candidates,
+        hint=str(hint) if hint else None,
+        detail=raw_detail,
         message=_message_with_context(exc),
     )
 
