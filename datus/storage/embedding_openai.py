@@ -30,6 +30,8 @@ class OpenAIEmbeddings(BaseModel, EmbeddingFunction):
 
     name: str = "text-embedding-ada-002"
     dim: Optional[int] = None
+    # None uses the known OpenAI models; custom providers may opt in or out.
+    send_dimensions: Optional[bool] = None
     base_url: Optional[str] = None
     default_headers: Optional[dict] = None
     organization: Optional[str] = None
@@ -78,11 +80,14 @@ class OpenAIEmbeddings(BaseModel, EmbeddingFunction):
             return self.dim or 3072
         elif self.name == "text-embedding-3-small":
             return self.dim or 1536
+        elif self.dim is not None and self.dim > 0:
+            return self.dim
         else:
             raise DatusException(
                 ErrorCode.COMMON_UNSUPPORTED,
                 message=f"Unknown embedding model name '{self.name}'. "
-                f"Supported models: {', '.join(self.model_names())}",
+                "Configure a positive dim_size matching the custom model's output width. "
+                f"Models with inferred dimensions: {', '.join(self.model_names())}",
             )
 
     def generate_embeddings(self, texts: Union[List[str], "np.ndarray"]) -> List["np.array"]:
@@ -98,7 +103,10 @@ class OpenAIEmbeddings(BaseModel, EmbeddingFunction):
                 "input": valid_texts,
                 "model": self.name,
             }
-            if self.name != "text-embedding-ada-002" and self.dim is not None:
+            send_dimensions = self.send_dimensions
+            if send_dimensions is None:
+                send_dimensions = self.name in self.model_names()
+            if self.name != "text-embedding-ada-002" and self.dim is not None and send_dimensions:
                 kwargs["dimensions"] = self.dim
 
             logger.debug(f"Calling OpenAI API: model={self.name}, text_count={len(valid_texts)}")

@@ -73,6 +73,24 @@ database:
   target_model: openai
 ```
 
+### 自定义 OpenAI 兼容嵌入模型
+
+自定义模型名需要通过 `dim_size` 声明输出向量宽度。Datus 默认不向自定义模型发送 API 的可选 `dimensions` 参数：声明向量宽度并不表示提供方支持调整输出维度。
+
+```yaml
+storage:
+  database:
+    registry_name: openai
+    model_name: kinfra-text-embedding-0.6b
+    dim_size: 1024                  # 示例：替换为提供方的真实输出宽度
+    target_model: custom_provider  # 关联包含 API Key 和 base_url 的模型配置
+    send_dimensions: false         # 可选：明确省略 API dimensions 参数
+```
+
+省略 `send_dimensions` 或设为 `null` 时采用自动策略：`text-embedding-3-small` 和 `text-embedding-3-large` 会发送配置的维度，自定义模型名则不发送。只有提供方支持该参数时才设置 `send_dimensions: true`，例如支持调整维度的 Azure 嵌入模型部署别名。设为 `false` 可对 OpenAI v3 模型也省略该参数，此时 `dim_size` 必须匹配原生输出宽度。`text-embedding-ada-002` 始终使用固定的 1536 维，不发送该参数。
+
+自定义模型未配置正数 `dim_size` 时无法推断其宽度。改变模型的输出宽度后，需要按新宽度重建已有向量索引。
+
 ### Sentence-Transformers（本地）
 ```yaml
 database:
