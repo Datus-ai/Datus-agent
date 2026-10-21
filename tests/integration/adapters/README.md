@@ -88,6 +88,36 @@ failures fail the suite. Omit `TRINO_CA_CERT` for a normally trusted endpoint.
 Nightly's default forced Docker profile clears `TRINO_VERIFY` and `TRINO_CA_CERT`
 when selecting HTTP; `NIGHTLY_FORCE_ADAPTER_ENV=0` preserves an external TLS profile.
 
+### Snowflake with AWS Secrets Manager
+
+This cloud test requires `datus-snowflake[aws]>=0.1.10` and `datus-db-core>=0.1.9`.
+Before release, install both packages from the adapter worktree:
+
+```bash
+uv pip install -e '/path/to/datus-db-adapters/datus-db-core[aws]' \
+  -e /path/to/datus-db-adapters/datus-snowflake
+```
+
+Export `SNOWFLAKE_ACCOUNT`, `SNOWFLAKE_USER`, `SNOWFLAKE_WAREHOUSE`,
+`SNOWFLAKE_DATABASE`, `SNOWFLAKE_PRIVATE_KEY_FILE`, optional
+`SNOWFLAKE_PRIVATE_KEY_FILE_PWD`, `SNOWFLAKE_SCHEMA` and `SNOWFLAKE_ROLE`.
+AWS uses its SDK credential chain, `DATUS_SECRET_AWS_REGION` (default `us-east-1`),
+and optional `DATUS_SECRET_AWS_PROFILE`, including assume-role profiles.
+
+```bash
+ADAPTERS_SNOWFLAKE_SECRETS=1 uv run --no-sync pytest \
+  tests/integration/adapters/test_snowflake_secrets.py -v
+```
+
+The AWS identity needs CreateSecret/GetSecretValue/DescribeSecret/DeleteSecret and
+TagResource for temporary test Secrets. This test stores the supplied key in an
+ownership-tagged temporary AWS Secret, exercises YAML → DbConfig → DBManager →
+registry → real Secret read → Snowflake login/reopen and database metadata, then
+verifies Secret deletion. It does not modify the Snowflake user's keys. Full dual-key
+rotation acceptance lives in the adapter's `test_secret_rotation.py`. Once opted in,
+missing configuration and API/login failures fail the test. Keep `--no-sync` after
+the source install so the Agent lockfile does not replace the newer core.
+
 ### Apache Doris
 
 ```bash
