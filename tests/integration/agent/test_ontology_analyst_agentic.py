@@ -86,11 +86,11 @@ async def _ask(node, question: str) -> tuple[str, list]:
         actions.append(action)
         logger.info("Action: role=%s status=%s type=%s", action.role, action.status, action.action_type)
     assert actions[-1].status == ActionStatus.SUCCESS, f"Last action failed: {actions[-1].output}"
-    answer = ""
-    for action in reversed(actions):
-        if action.role == ActionRole.ASSISTANT and action.output:
-            answer = str(action.output)
-            break
+    # Only the final answer: the node result also carries action_history, whose
+    # tool outputs would satisfy `expect` (and trip `forbid`) on their own.
+    final_output = actions[-1].output or {}
+    answer = final_output.get("response") or final_output.get("markdown_report") or ""
+    assert answer, f"No final answer in {final_output}"
     return answer.replace("*", "").replace("`", ""), actions
 
 
