@@ -585,17 +585,20 @@ flow_groups:
           - docs/knowledge_base/metrics.md
           - docs/subagent/semantic_modeling.md
           - docs/subagent/ask_metrics.md
+          - docs/subagent/ontology_analyst.md
           - docs/semantic/dosi_engine.md
         entrypoints:
           - CLI bootstrap
           - Semantic modeling subagent
           - Ask metrics subagent
+          - Ontology analyst subagent
           - Extract-knowledge skill
           - Context search tools
         contracts:
           - Bootstrap and agentic generation persist semantic objects that are available to query-time retrieval.
           - Metrics and semantic models remain separable by kind and datasource scope, and extracted knowledge is captured as markdown via the extract-knowledge skill.
           - Existing metrics can be queried through the metric-first AskMetrics subagent without falling back to raw SQL generation.
+          - A datasource ontology under subject/semantic_models/ontology/<datasource>/ is loaded only for OntologyAnalyst, which refuses to run without one.
           - Semantic authoring uses the built-in Dosi runtime.
           - Runtime database context is propagated into Dosi so validation can use the selected catalog/database/schema without a static datasource database.
         coverage:
@@ -604,6 +607,8 @@ flow_groups:
             nodeids:
               - tests/unit_tests/agent/node/test_semantic_modeling_agentic_node.py
               - tests/unit_tests/agent/node/test_ask_metrics_agentic_node.py
+              - tests/unit_tests/agent/node/test_ontology_analyst_agentic_node.py
+              - tests/unit_tests/tools/semantic_tools/test_dosi_ontology.py
               - tests/unit_tests/tools/func_tool/test_context_search.py
               - tests/unit_tests/configuration/test_agent_config.py::TestDosiDbProfile::test_runtime_context_overlay_uses_generic_aliases
               - tests/unit_tests/tools/func_tool/test_semantic_tools.py::TestRuntimeDbContext::test_runtime_change_rebuilds_dosi_runtime
@@ -612,6 +617,8 @@ flow_groups:
             nodeids:
               - tests/unit_tests/agent/node/test_semantic_modeling_agentic_node.py
               - tests/unit_tests/agent/node/test_ask_metrics_agentic_node.py
+              - tests/unit_tests/agent/node/test_ontology_analyst_agentic_node.py
+              - tests/unit_tests/tools/semantic_tools/test_dosi_ontology.py
               - tests/unit_tests/tools/func_tool/test_context_search.py
               - tests/unit_tests/configuration/test_agent_config.py::TestDosiDbProfile::test_runtime_context_overlay_uses_generic_aliases
               - tests/unit_tests/tools/func_tool/test_semantic_tools.py::TestRuntimeDbContext::test_runtime_change_rebuilds_dosi_runtime
@@ -623,6 +630,7 @@ flow_groups:
               - tests/integration/agent/test_semantic_modeling_agentic.py::test_dosi_authoring_validates_reconciles_and_queries_without_llm
               - tests/integration/agent/test_semantic_modeling_agentic.py::test_semantic_modeling_authors_one_queryable_dosi_model_with_real_llm
               - tests/integration/storage/test_postgresql_semantic_kb.py::test_postgresql_semantic_kb_reconcile_is_idempotent
+              - tests/integration/tools/test_dosi_ontology.py
             notes: >
               The P0 Dosi group owns a deterministic author-validate-reconcile-query test and one
               real-LLM authoring smoke. PostgreSQL semantic projection is verified separately at

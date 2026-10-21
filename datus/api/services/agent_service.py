@@ -95,6 +95,7 @@ _TOOL_CATEGORIES_BY_AGENT_TYPE: dict[str, tuple[str, ...]] = {
         "reference_template_tools",
     ),
     "ask_metrics": _USER_FACING_TOOL_CATEGORIES,
+    "ontology_analyst": _USER_FACING_TOOL_CATEGORIES,
     "ask_report": (
         "db_tools",
         "semantic_tools",
@@ -174,6 +175,19 @@ SUBAGENT_TOOL_REFERENCE: dict[str, dict[str, Any]] = {
             "context_search_tools.list_subject_tree",
         ],
         "tool_types": _build_tool_types("ask_metrics"),
+    },
+    "ontology_analyst": {
+        "default_tools": [
+            "semantic_tools.describe_concept",
+            "semantic_tools.find_concept_paths",
+            "semantic_tools.select_records",
+            "semantic_tools.list_metrics",
+            "semantic_tools.get_metric",
+            "semantic_tools.query_metrics",
+            "semantic_tools.attribution_analyze",
+            "context_search_tools.search_metrics",
+        ],
+        "tool_types": _build_tool_types("ontology_analyst"),
     },
     # ask_report / ask_dashboard: read-only follow-up consultant for a single
     # visual artifact. Default tools cover data exploration (db_tools read
@@ -842,6 +856,7 @@ class AgentService:
     _TYPE_TO_TEMPLATE = {
         "gen_sql": "gen_sql_system",
         "ask_metrics": "ask_metrics_system",
+        "ontology_analyst": "ontology_analyst_system",
         "gen_report": "gen_report_system",
         "ask_report": "ask_report_system",
         "ask_dashboard": "ask_dashboard_system",

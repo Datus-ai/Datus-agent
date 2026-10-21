@@ -149,6 +149,21 @@ class Node(ABC):
                 is_subagent=is_subagent,
                 session_id=session_id,
             )
+        elif node_type == NodeType.TYPE_ONTOLOGY_ANALYST:
+            from datus.agent.node.ontology_analyst_agentic_node import OntologyAnalystAgenticNode
+
+            return OntologyAnalystAgenticNode(
+                node_id,
+                description,
+                node_type,
+                input_data,
+                agent_config,
+                tools,
+                node_name,
+                execution_mode="workflow",
+                is_subagent=is_subagent,
+                session_id=session_id,
+            )
         elif node_type == NodeType.TYPE_GEN_REPORT:
             from datus.agent.node.gen_report_agentic_node import GenReportAgenticNode
 
@@ -482,6 +497,10 @@ class Node(ABC):
                     from datus.schemas.ask_metrics_agentic_node_models import AskMetricsNodeInput
 
                     input_data = AskMetricsNodeInput(**input_data)
+                elif node_dict["type"] == NodeType.TYPE_ONTOLOGY_ANALYST:
+                    from datus.schemas.ontology_analyst_agentic_node_models import OntologyAnalystNodeInput
+
+                    input_data = OntologyAnalystNodeInput(**input_data)
                 elif node_dict["type"] == NodeType.TYPE_GEN_REPORT:
                     from datus.schemas.gen_report_agentic_node_models import GenReportNodeInput
 
@@ -526,6 +545,10 @@ class Node(ABC):
                     from datus.schemas.ask_metrics_agentic_node_models import AskMetricsNodeResult
 
                     result_data = AskMetricsNodeResult(**result_data)
+                elif node_dict["type"] == NodeType.TYPE_ONTOLOGY_ANALYST:
+                    from datus.schemas.ontology_analyst_agentic_node_models import OntologyAnalystNodeResult
+
+                    result_data = OntologyAnalystNodeResult(**result_data)
                 elif node_dict["type"] == NodeType.TYPE_GEN_REPORT:
                     from datus.schemas.gen_report_agentic_node_models import GenReportNodeResult
 

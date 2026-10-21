@@ -84,6 +84,7 @@ PR_ACCEPTANCE_TARGETS = [
     "tests/integration/tools/test_func_tools_db.py",
     "tests/integration/tools/test_dosi_attribution.py",
     "tests/integration/tools/test_dosi_query_filters.py",
+    "tests/integration/tools/test_dosi_ontology.py",
     "tests/integration/tools/test_mcp_acceptance.py",
     "tests/integration/tools/db_tools/test_connector_duckdb.py",
     "tests/unit_tests/storage/test_feedback_store.py",

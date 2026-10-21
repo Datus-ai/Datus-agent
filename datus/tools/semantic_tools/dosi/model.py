@@ -55,6 +55,27 @@ def iter_semantic_models(document: dict[str, Any]) -> Iterator[dict[str, Any]]:
             yield model
 
 
+def document_model_names(document: dict[str, Any]) -> list[str]:
+    """The semantic model names a document carries, whatever its shape.
+
+    The ``semantic_model:`` wrapper, the flat document apache/ossie#383 made
+    standard (``name`` + ``datasets`` at the root), or a mapping document
+    whose ``semantic_model_ref`` carries its model inline.
+    """
+    if not isinstance(document, dict):
+        return []
+    ref = document.get("semantic_model_ref")
+    if isinstance(ref, dict) and isinstance(ref.get("document"), dict):
+        return document_model_names(ref["document"])
+    if "semantic_model" in document:
+        models = [model.get("name") for model in iter_semantic_models(document)]
+    elif "datasets" in document:
+        models = [document.get("name")]
+    else:
+        models = []
+    return [str(name).strip() for name in models if str(name or "").strip()]
+
+
 def iter_named_nodes(
     document: dict[str, Any],
 ) -> Iterator[tuple[str, str, dict[str, Any]]]:

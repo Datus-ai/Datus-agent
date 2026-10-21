@@ -462,6 +462,20 @@ class DatusPathManager:
         path.mkdir(parents=True, exist_ok=True)
         return path
 
+    def ontology_path(self, datasource: str) -> Path:
+        """
+        Apache Ossie ontology directory for a specific datasource.
+
+        Not created on access: its absence means the datasource has no ontology.
+
+        Args:
+            datasource: Datasource name (required).
+
+        Returns:
+            Path: ``{project_root}/subject/semantic_models/ontology/{datasource}``
+        """
+        return self.semantic_models_dir / "ontology" / datasource
+
     def sql_summary_path(self) -> Path:
         """
         SQL summary directory for the current project.

@@ -317,6 +317,15 @@ class SemanticValidationError(BaseModel):
     suggested_retry: Optional[Dict[str, Any]] = Field(
         None, description="Concrete query_metrics kwargs the caller can retry with"
     )
+    candidates: List[str] = Field(
+        default_factory=list,
+        description="Valid alternatives the engine named, e.g. a correctly rooted concept path",
+    )
+    hint: Optional[str] = Field(None, description="Engine retry hint, e.g. the group-by to use instead")
+    detail: Optional[Dict[str, Any]] = Field(
+        None,
+        description="Code-specific engine payload, e.g. value_not_in_domain violations with their allowed values",
+    )
     message: str = Field("", description="Human-readable explanation")
 
 

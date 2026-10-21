@@ -83,6 +83,23 @@ def create_interactive_node(
                 agent_config=agent_config, execution_mode=execution_mode, scope=scope, session_id=session_id
             )
 
+        elif subagent_name == "ontology_analyst" or node_class_type == "ontology_analyst":
+            from datus.agent.node.ontology_analyst_agentic_node import OntologyAnalystAgenticNode
+            from datus.configuration.node_type import NodeType
+
+            return OntologyAnalystAgenticNode(
+                node_id=node_id if node_id is not None else f"{subagent_name}{node_id_suffix}",
+                description=f"Ontology question-answering node for {subagent_name}",
+                node_type=NodeType.TYPE_ONTOLOGY_ANALYST,
+                input_data=None,
+                agent_config=agent_config,
+                tools=None,
+                node_name=subagent_name,
+                scope=scope,
+                execution_mode=execution_mode,
+                session_id=session_id,
+            )
+
         elif subagent_name == "ask_metrics" or node_class_type == "ask_metrics":
             from datus.agent.node.ask_metrics_agentic_node import AskMetricsAgenticNode
             from datus.configuration.node_type import NodeType
@@ -346,6 +363,7 @@ def _build_typed_node_input(
     from datus.agent.node.gen_table_agentic_node import GenTableAgenticNode
     from datus.agent.node.gen_visual_dashboard_agentic_node import GenVisualDashboardAgenticNode
     from datus.agent.node.gen_visual_report_agentic_node import GenVisualReportAgenticNode
+    from datus.agent.node.ontology_analyst_agentic_node import OntologyAnalystAgenticNode
     from datus.agent.node.semantic_modeling_agentic_node import SemanticModelingAgenticNode
     from datus.agent.node.sql_summary_agentic_node import SqlSummaryAgenticNode
 
@@ -382,6 +400,16 @@ def _build_typed_node_input(
         from datus.schemas.gen_report_agentic_node_models import GenReportNodeInput
 
         return GenReportNodeInput(
+            user_message=user_message,
+            catalog=catalog,
+            database=database,
+            db_schema=db_schema,
+        )
+
+    elif isinstance(node, OntologyAnalystAgenticNode):
+        from datus.schemas.ontology_analyst_agentic_node_models import OntologyAnalystNodeInput
+
+        return OntologyAnalystNodeInput(
             user_message=user_message,
             catalog=catalog,
             database=database,

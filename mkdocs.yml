@@ -30,6 +30,7 @@ nav:
       - Customized subagents: subagent/customized_subagent.md
       - Semantic Modeling: subagent/semantic_modeling.md
       - Ask Metrics: subagent/ask_metrics.md
+      - Ontology Analyst: subagent/ontology_analyst.md
       - Generate SQL Summary: subagent/gen_sql_summary.md
       - Table Generation: subagent/gen_table.md
       - Data Pipeline (ETL + Migration): subagent/gen_job.md
@@ -175,6 +176,7 @@ plugins:
             Semantic Modeling: 语义建模
             Generate Metrics: 生成指标
             Ask Metrics: 指标问答
+            Ontology Analyst: Ontology 分析
             Generate Semantic Model: 生成语义模型
             Chatbot: chatbot
             IM Gateway: IM 网关

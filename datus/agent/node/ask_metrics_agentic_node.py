@@ -44,6 +44,10 @@ class AskMetricsAgenticNode(AgenticNode):
     NODE_NAME = "ask_metrics"
     result_class = AskMetricsNodeResult
     SUBJECT_TREE_PROMPT_LIMIT = 100
+    #: Tool calls whose successful result can become the node's final structured answer.
+    RESULT_ACTION_TYPES = ("query_metrics",)
+    #: Prompt template used when the configured one is missing; None disables the fallback.
+    FALLBACK_PROMPT_TEMPLATE: Optional[str] = "ask_metrics_system"
     DEFAULT_TOOLS = (
         "context_search_tools.search_metrics",
         "semantic_tools.list_metrics",
@@ -178,6 +182,7 @@ class AskMetricsAgenticNode(AgenticNode):
                 agent_config=self.agent_config,
                 sub_agent_name=sub_agent_name,
                 runtime_db_context_provider=self._semantic_runtime_db_context,
+                **self._semantic_tools_kwargs(),
             )
         except Exception as exc:  # noqa: BLE001
             self.startup_error = f"Dosi runtime unavailable: {exc}"
@@ -188,6 +193,10 @@ class AskMetricsAgenticNode(AgenticNode):
             self._setup_tool_pattern(pattern)
         if self.require_final_result_selection:
             self._append_tool(trans_to_function_tool(self.select_final_metric_result))
+
+    def _semantic_tools_kwargs(self) -> Dict[str, Any]:
+        """Extra ``SemanticTools`` arguments a specialised metric agent needs."""
+        return {}
 
     def _configured_tool_patterns(self) -> List[str]:
         config_value = self.node_config.get("tools")
@@ -439,7 +448,7 @@ class AskMetricsAgenticNode(AgenticNode):
         if self.startup_error:
             raise DatusException(
                 code=ErrorCode.COMMON_CONFIG_ERROR,
-                message_args={"config_error": f"ask_metrics is unavailable: {self.startup_error}"},
+                message_args={"config_error": f"{self.get_node_name()} is unavailable: {self.startup_error}"},
             )
 
     def _runtime_context_current_date(self) -> str:
@@ -459,6 +468,7 @@ class AskMetricsAgenticNode(AgenticNode):
             "subject_tree_prompt": self.subject_tree_prompt,
             "subject_tree_prompt_limit": self.subject_tree_prompt_limit,
             "require_final_result_selection": self.require_final_result_selection,
+            **self._extra_prompt_context(),
         }
 
         if self.agent_config:
@@ -478,12 +488,19 @@ class AskMetricsAgenticNode(AgenticNode):
         try:
             base_prompt = pm.render_template(template_name=template_name, version=version, **context)
         except FileNotFoundError:
+            if not self.FALLBACK_PROMPT_TEMPLATE or template_name == self.FALLBACK_PROMPT_TEMPLATE:
+                raise
             logger.warning(
-                "Template %r missing, falling back to ask_metrics_system",
+                "Template %r missing, falling back to %s",
                 system_prompt_name,
+                self.FALLBACK_PROMPT_TEMPLATE,
             )
-            base_prompt = pm.render_template(template_name="ask_metrics_system", version=version, **context)
+            base_prompt = pm.render_template(template_name=self.FALLBACK_PROMPT_TEMPLATE, version=version, **context)
         return self._finalize_system_prompt(base_prompt)
+
+    def _extra_prompt_context(self) -> Dict[str, Any]:
+        """Template variables a specialised metric agent adds to the shared context."""
+        return {}
 
     def _build_success_result(self, ctx: StreamRunContext) -> AskMetricsNodeResult:
         response_content = ctx.response_content
@@ -501,7 +518,7 @@ class AskMetricsAgenticNode(AgenticNode):
         if not isinstance(response_content, str):
             response_content = str(response_content) if response_content else ""
 
-        return AskMetricsNodeResult(
+        return self.result_class(
             success=True,
             response=response_content,
             markdown_report=response_content,
@@ -578,7 +595,7 @@ class AskMetricsAgenticNode(AgenticNode):
         for action in actions:
             if not isinstance(action, dict):
                 continue
-            if action.get("action_type") != "query_metrics":
+            if action.get("action_type") not in cls.RESULT_ACTION_TYPES:
                 continue
             if action.get("status") != "success":
                 continue
@@ -620,7 +637,7 @@ class AskMetricsAgenticNode(AgenticNode):
         for action in actions:
             if not isinstance(action, dict):
                 continue
-            if action.get("action_type") != "query_metrics" or action.get("status") != "success":
+            if action.get("action_type") not in cls.RESULT_ACTION_TYPES or action.get("status") != "success":
                 continue
             result = cls._query_result_payload(action)
             if result and cls._query_result_id(result) == result_id:

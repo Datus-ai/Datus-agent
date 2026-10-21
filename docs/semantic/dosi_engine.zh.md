@@ -25,6 +25,8 @@ agent:
 
 Dosi 是内置语义引擎，无需选择。Agent 递归发现 `subject/semantic_models/<datasource>/` 下的 OSI YAML 或 JSON 文件，跳过单独的指标片段。可用 `semantic_model_path` 为单次请求指定文件。旧的 `agent.services.semantic_layer` 和项目级 `semantic` 配置会被忽略并输出警告。
 
+数据源的 Apache Ossie ontology 放在 `subject/semantic_models/ontology/<datasource>/` 下，文件名与它描述的模型文件相同。只有 [`ontology_analyst`](../subagent/ontology_analyst.zh.md) 子代理会把它和模型一起加载。数据源不能命名为 `ontology`。
+
 ## Agent 使用的能力
 
 Agent 使用 Dosi 发现语义模型、指标及指标可用维度，编译和执行指标查询，校验指定模型，以及运行原生归因。`semantic_modeling` 使用引擎的创作规范和校验。Explorer 在 OSI YAML 中读取、修改和删除指标节点，并同步受影响的 Knowledge Base 条目。独立的 Dosi CLI、REST 和 MCP 服务不属于 Agent 集成范围。
