@@ -142,7 +142,7 @@ datus --datasource aviation
 | 提示信息 | 原因和处理 |
 |---------|-----------|
 | `ontology_analyst is unavailable: no ontology for datasource 'aviation'` | `subject/semantic_models/ontology/aviation/` 不存在或为空；检查目录名与数据源名一致，以及是否在项目根目录启动 |
-| `... pair with no semantic model file` | 映射文档的 `semantic_model_ref.name` 对不上任何模型（或两份映射指向同一个模型），或者旧写法的 ontology 没有同名的模型文件；修正映射文档里的名字，或把 ontology 改成与对应模型同名 |
+| `... pair with no semantic model file` | 映射文档的 `semantic_model_ref.name` 对不上任何模型（或两份映射指向同一个模型），旧写法的 ontology 没有同名的模型文件，或者该文件既不是 ontology 也不是映射文档（语义模型应放在 `subject/semantic_models/<datasource>/` 下）；修正映射文档里的名字、把 ontology 改成与对应模型同名，或把该文件移出目录 |
 | `the installed dosi-engine binding cannot describe ontologies` | 安装的 `dosi-engine` 版本过旧，升级到提供 `Engine.describe` / `Engine.paths` 的版本 |
 | `... ontology_federation_unsupported` | 旧写法的 ontology 内嵌了多个 `ontology_mappings`；拆成映射文档，每个模型一份 |
 | `... is an Ossie mapping document, and the installed dosi-engine cannot load one` | 安装的 `dosi-engine` 不支持映射文档，请升级 |

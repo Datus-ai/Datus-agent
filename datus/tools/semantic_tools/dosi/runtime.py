@@ -510,6 +510,7 @@ class DosiRuntime:
         return [(path, handle) for path, handle in handles if handle.has_ontology]
 
     def has_ontology(self) -> bool:
+        """Whether any engine of this datasource loads an ontology."""
         return bool(self.ontology_handles())
 
     def unpaired_ontologies(self) -> List[str]:

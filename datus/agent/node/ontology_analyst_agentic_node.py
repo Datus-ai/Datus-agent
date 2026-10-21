@@ -43,6 +43,10 @@ class OntologyAnalystAgenticNode(AskMetricsAgenticNode):
     )
 
     def setup_tools(self) -> None:
+        """Set up the AskMetrics tools with ontologies enabled, then load the concept catalog.
+
+        A missing or unloadable ontology is recorded as ``startup_error`` rather than raised.
+        """
         self.concept_catalog: Dict[str, Any] = {}
         self.concept_catalog_mode: str = "none"
         self.concept_catalog_count: int = 0
@@ -79,9 +83,10 @@ class OntologyAnalystAgenticNode(AskMetricsAgenticNode):
             if unpaired:
                 names = ", ".join(Path(path).name for path in unpaired)
                 return (
-                    f"ontology file(s) {names} under {ontology_dir} pair with no semantic model file; "
+                    f"file(s) {names} under {ontology_dir} pair with no semantic model file; "
                     "write a mapping document whose semantic_model_ref names the model, "
-                    "or name each ontology after the model file it describes"
+                    "name each ontology after the model file it describes, "
+                    "and keep only ontology and mapping documents in this directory"
                 )
             return (
                 f"no ontology for datasource {datasource!r}. Add one under {ontology_dir}/ "

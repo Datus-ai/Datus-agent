@@ -195,8 +195,10 @@ def plan_ontologies(model_files: list[str], ontology_files: list[str]) -> tuple[
       its ``semantic_model_ref`` names; an inline model makes it its own
       engine. Its ontology is resolved by the engine (inline or ``iri``),
       else here by name among the ontology files.
-    - Ontology files a mapping uses are consumed. The rest pair the old way,
-      by file stem (:func:`pair_ontologies`), as the deprecated layout.
+    - Files a mapping uses (its ontology, and a model it reaches by ``iri``)
+      are consumed. The remaining ontology documents pair the old way, by file
+      stem (:func:`pair_ontologies`), as the deprecated layout; any other
+      leftover file is reported, never paired as an ontology.
     - Anything ambiguous — two mappings onto one model, a name nothing
       carries — is reported unpaired rather than guessed.
     """
@@ -220,11 +222,11 @@ def plan_ontologies(model_files: list[str], ontology_files: list[str]) -> tuple[
         ontology_ref = _ref(document, "ontology_ref")
         model_ref = _ref(document, "semantic_model_ref")
         ontology_path = None
-        iri = ontology_ref.get("iri")
-        if isinstance(iri, str) and "://" not in iri:
-            # The engine follows the iri itself; the file it lands on is
-            # this mapping's, not one to pair again by stem.
-            consumed.add(os.path.normpath(os.path.join(os.path.dirname(path), iri)))
+        for iri in (ontology_ref.get("iri"), model_ref.get("iri")):
+            if isinstance(iri, str) and "://" not in iri:
+                # The engine follows the iri itself; the file it lands on is
+                # this mapping's, not one to pair again by stem.
+                consumed.add(os.path.normpath(os.path.join(os.path.dirname(path), iri)))
         if "document" not in ontology_ref and "iri" not in ontology_ref:
             named = ontologies_by_name.get(str(ontology_ref.get("name") or ""), [])
             if len(named) != 1:
@@ -253,7 +255,9 @@ def plan_ontologies(model_files: list[str], ontology_files: list[str]) -> tuple[
             del bindings[key]
             unpaired.extend(mappings)
 
-    legacy = [p for p, k in kinds.items() if k != "mapping" and os.path.normpath(p) not in consumed]
+    leftover = [p for p, k in kinds.items() if k != "mapping" and os.path.normpath(p) not in consumed]
+    legacy = [p for p in leftover if kinds[p] == "ontology"]
+    unpaired.extend(p for p in leftover if kinds[p] != "ontology")
     pairs, legacy_unpaired = pair_ontologies([m for m in model_files if m not in bindings], legacy)
     for model, ontology in pairs.items():
         bindings[model] = OntologyBinding(model_file=model, ontology_path=ontology)
@@ -411,10 +415,12 @@ class EngineHandle:
 
     @property
     def ontology_path(self) -> Optional[str]:
+        """The ontology file this engine loads, if any (embedded layout, or one a mapping names)."""
         return self._config.ontology_path
 
     @property
     def mapping_path(self) -> Optional[str]:
+        """The Ossie mapping document this engine loads, if any."""
         return self._config.mapping_path
 
     @property

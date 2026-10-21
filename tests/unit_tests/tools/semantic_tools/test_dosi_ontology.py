@@ -315,6 +315,39 @@ class TestMappingDocuments:
         assert bindings == {}
         assert unpaired == sorted([files[0], files[2]])
 
+    @pytest.mark.parametrize(
+        "stray_name, stray_text",
+        [
+            pytest.param("extra_model.yaml", NAMED_MODEL_YAML, id="semantic_model"),
+            pytest.param("notes.yaml", "cases: []\n", id="unrelated_document"),
+            pytest.param("broken.yaml", "ontology: [unclosed\n", id="unparsable"),
+        ],
+    )
+    def test_a_stray_file_never_becomes_an_ontology(self, tmp_path, stray_name, stray_text):
+        # One unbound model and one leftover file would pair regardless of
+        # names; only an ontology document may be paired that way.
+        models_dir, ontology_dir = _layout(tmp_path, ontologies=())
+        ontology_dir.mkdir(parents=True)
+        stray = ontology_dir / stray_name
+        stray.write_text(stray_text)
+        bindings, unpaired = plan_ontologies([str(models_dir / "aviation.yaml")], [str(stray)])
+        assert bindings == {}
+        assert unpaired == [str(stray)]
+
+    def test_a_model_a_mapping_reaches_by_iri_is_consumed(self, tmp_path):
+        # The three-file layout with the model beside the mapping: the engine
+        # follows both iris, and neither target is reported or paired again.
+        models_dir, ontology_dir = _layout(tmp_path, ontologies=())
+        ontology_dir.mkdir(parents=True)
+        (ontology_dir / "ontology.yaml").write_text(ONTOLOGY_YAML)
+        (ontology_dir / "model.yaml").write_text(NAMED_MODEL_YAML.replace("aviation", "beside"))
+        mapping = MAPPING_YAML.replace("{name: aviation}", "{name: beside, iri: ./model.yaml}")
+        (ontology_dir / "mapping.yaml").write_text(mapping)
+        files = [str(ontology_dir / f) for f in ("mapping.yaml", "model.yaml", "ontology.yaml")]
+        bindings, unpaired = plan_ontologies([str(models_dir / "aviation.yaml")], files)
+        assert bindings == {str(ontology_dir / "mapping.yaml"): OntologyBinding(model_file=None, mapping_path=files[0])}
+        assert unpaired == []
+
     def test_the_engine_gets_the_model_and_the_mapping(self, tmp_path, ontology_binding):
         models_dir, ontology_dir = _mapping_layout(tmp_path)
         registry = EngineRegistry(DosiConfig(semantic_models_path=str(models_dir), ontology_dir=str(ontology_dir)))

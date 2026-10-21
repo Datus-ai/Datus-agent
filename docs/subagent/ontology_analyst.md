@@ -142,7 +142,7 @@ Tool calls appear in the conversation. Things to look for:
 | Message | Cause and fix |
 |---------|---------------|
 | `ontology_analyst is unavailable: no ontology for datasource 'aviation'` | `subject/semantic_models/ontology/aviation/` is missing or empty. Check that the directory name matches the datasource name and that Datus was started in the project root |
-| `... pair with no semantic model file` | A mapping's `semantic_model_ref.name` matches no model (or two mappings name the same one), or an old-layout ontology has no model file of its name. Fix the name in the mapping, or rename the ontology after the model it describes |
+| `... pair with no semantic model file` | A mapping's `semantic_model_ref.name` matches no model (or two mappings name the same one), an old-layout ontology has no model file of its name, or the file is neither an ontology nor a mapping document (a semantic model belongs under `subject/semantic_models/<datasource>/`). Fix the name in the mapping, rename the ontology after the model it describes, or move the file out |
 | `the installed dosi-engine binding cannot describe ontologies` | `dosi-engine` is too old. Upgrade to a build whose `Engine` has `describe` and `paths` |
 | `... ontology_federation_unsupported` | An old-layout ontology embeds several `ontology_mappings`. Split them into mapping documents, one per model |
 | `... is an Ossie mapping document, and the installed dosi-engine cannot load one` | `dosi-engine` predates mapping documents. Upgrade it |
