@@ -797,6 +797,7 @@ class AgenticNode(Node):
             return ""
 
         details: List[str] = []
+        namespace_hint = ""
         dialect = ds_ctx.get("current_datasource_dialect")
         if dialect:
             details.append(f"dialect: {dialect}")
@@ -816,6 +817,8 @@ class AgenticNode(Node):
                     compatibility_mode = str(compatibility_mode).strip()
                     if compatibility_mode:
                         details.append(f"compatibility mode: {compatibility_mode}")
+                if isinstance(sql_context, dict) and isinstance(sql_context.get("namespace_hint"), str):
+                    namespace_hint = sql_context["namespace_hint"].strip()
             except Exception as e:
                 # SQL-generation hints must never make an otherwise usable
                 # datasource fail. The adapter may be talking to an older or
@@ -829,6 +832,8 @@ class AgenticNode(Node):
             f"Current datasource: {datasource}{suffix}. This is the authoritative "
             "target for this turn; generate SQL for THIS dialect."
         )
+        if namespace_hint:
+            line += f" {namespace_hint}"
 
         # The uploads catalog is a *second* datasource, and nothing else tells the
         # model it exists: this reminder names only the current one, and no prompt
