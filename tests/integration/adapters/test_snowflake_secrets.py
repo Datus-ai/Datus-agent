@@ -1,23 +1,23 @@
 """Live YAML -> DBManager -> AWS Secret -> native Snowflake login acceptance.
 
 Opt in with ADAPTERS_SNOWFLAKE_SECRETS=1 and install datus-snowflake[aws]>=0.1.10.
-Requires SNOWFLAKE_ACCOUNT, SNOWFLAKE_USER, SNOWFLAKE_WAREHOUSE,
+Requires SNOWFLAKE_ACCOUNT, SNOWFLAKE_USER, SNOWFLAKE_EXPECTED_USER, SNOWFLAKE_WAREHOUSE,
 SNOWFLAKE_PRIVATE_KEY_FILE, SNOWFLAKE_DATABASE and optional
 SNOWFLAKE_PRIVATE_KEY_FILE_PWD, SNOWFLAKE_SCHEMA, SNOWFLAKE_ROLE. AWS uses the SDK chain,
 DATUS_SECRET_AWS_REGION (default us-east-1), and optional DATUS_SECRET_AWS_PROFILE.
-Creates one owned temporary AWS Secret and verifies its deletion. No Snowflake
+Creates one owned temporary AWS Secret and records its asynchronous deletion. No Snowflake
 users or keys are changed by this test. See adapters/README.md.
 """
 
 import json
 import os
-import time
 import uuid
 from pathlib import Path
 
 import pytest
 import yaml
 
+from tests.integration.adapters.snowflake_secret_helpers import delete_owned_secret, identifier_name
 from tests.nightly_requirements import import_required, require_opt_in_env
 
 require_opt_in_env("ADAPTERS_SNOWFLAKE_SECRETS", "tests/integration/adapters/README.md")
@@ -30,10 +30,11 @@ from datus.tools.db_tools.db_manager import DBManager  # noqa: E402
 pytestmark = [pytest.mark.integration, pytest.mark.nightly]
 
 
-def test_secret_profile_connects_from_yaml_and_reopens(tmp_path):
+def test_secret_profile_connects_from_yaml_and_reopens(tmp_path, record_testsuite_property):
     required = (
         "SNOWFLAKE_ACCOUNT",
         "SNOWFLAKE_USER",
+        "SNOWFLAKE_EXPECTED_USER",
         "SNOWFLAKE_WAREHOUSE",
         "SNOWFLAKE_PRIVATE_KEY_FILE",
         "SNOWFLAKE_DATABASE",
@@ -55,7 +56,7 @@ def test_secret_profile_connects_from_yaml_and_reopens(tmp_path):
     arn = client.create_secret(
         Name=f"datus/cmp-secret-01/agent-{run_id}",
         SecretString=json.dumps(payload),
-        Tags=[{"Key": "datus-test-run", "Value": run_id}],
+        Tags=[{"Key": "datus-test-run", "Value": run_id}, {"Key": "purpose", "Value": "cmp-secret-01"}],
     )["ARN"]
     manager = None
     try:
@@ -86,26 +87,20 @@ def test_secret_profile_connects_from_yaml_and_reopens(tmp_path):
             )
             assert result.success is True
             assert result.sql_return == [
-                {"user": os.environ["SNOWFLAKE_USER"], "warehouse": os.environ["SNOWFLAKE_WAREHOUSE"], "text": "数据"}
+                {
+                    "user": os.environ["SNOWFLAKE_EXPECTED_USER"],
+                    "warehouse": identifier_name(os.environ["SNOWFLAKE_WAREHOUSE"]),
+                    "text": "数据",
+                }
             ]
             connector.close()
-        assert os.environ["SNOWFLAKE_DATABASE"] in connector.get_databases()
+        assert identifier_name(os.environ["SNOWFLAKE_DATABASE"]) in connector.get_databases()
     finally:
         try:
             if manager is not None:
                 manager.close()
         finally:
             try:
-                tags = {tag["Key"]: tag["Value"] for tag in client.describe_secret(SecretId=arn)["Tags"]}
-                assert tags == {"datus-test-run": run_id}
-                client.delete_secret(SecretId=arn, ForceDeleteWithoutRecovery=True)
-                for _ in range(60):
-                    try:
-                        client.describe_secret(SecretId=arn)
-                    except client.exceptions.ResourceNotFoundException:
-                        break
-                    time.sleep(0.5)
-                else:
-                    pytest.fail("Owned Agent test Secret still exists after deletion")
+                record_testsuite_property("secret_cleanup", json.dumps(delete_owned_secret(client, arn, run_id)))
             finally:
                 client.close()
