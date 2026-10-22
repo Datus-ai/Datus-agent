@@ -48,6 +48,7 @@ Class-level decorator usage:
 
 import inspect
 from dataclasses import dataclass
+from functools import partial
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 from datus.tools.func_tool.base import FuncToolResult
@@ -199,14 +200,23 @@ def _call_with_plugin_transformers(
     return result if inspect.isawaitable(result) else format_result(result)
 
 
-async def _run_mcp_call(executor: MCPToolExecutor, invoke: Callable, format_result: Callable, kwargs: Dict) -> Any:
-    result = await executor.run(invoke, **kwargs)
-    if isinstance(result, _AsyncToolCall):
-        result = result.method(**result.kwargs)
-    if inspect.isawaitable(result):
-        result = await result
-        return await executor.run(format_result, result)
-    return result
+async def _run_mcp_call(
+    executor: MCPToolExecutor, invoke: Callable, format_result: Callable, kwargs: Dict, resource: Any = None
+) -> Any:
+    run = executor.run if resource is None else partial(executor.run_with_resource, resource)
+    if resource is not None:
+        resource.acquire()
+    try:
+        result = await run(invoke, **kwargs)
+        if isinstance(result, _AsyncToolCall):
+            result = result.method(**result.kwargs)
+        if inspect.isawaitable(result):
+            result = await result
+            return await run(format_result, result)
+        return result
+    finally:
+        if resource is not None:
+            resource.release()
 
 
 def create_dynamic_tool_wrapper(
@@ -260,7 +270,9 @@ def create_dynamic_tool_wrapper(
         )
 
     async def wrapper(**kwargs) -> Dict[str, Any]:
-        return await _run_mcp_call(executor, invoke, format_result, kwargs)
+        context = context_getter()
+        resource = context if callable(getattr(context, "acquire", None)) else None
+        return await _run_mcp_call(executor, invoke, format_result, kwargs, resource)
 
     # Preserve original function metadata for MCP schema generation
     wrapper.__name__ = method_name

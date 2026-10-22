@@ -80,3 +80,20 @@ async def test_shutdown_rejects_further_work():
     for _ in range(2):
         with pytest.raises(RuntimeError, match="shutdown"):
             await executor.run(lambda: None)
+
+
+@pytest.mark.asyncio
+async def test_rejected_job_releases_its_resource():
+    from datus.mcp_server import ToolContext
+
+    executor = MCPToolExecutor(max_workers=1, max_queue_size=0)
+    executor.shutdown()
+    context = ToolContext("test", None, None, {})
+    closed = threading.Event()
+    try:
+        with pytest.raises(RuntimeError, match="shutdown"):
+            await executor.run_with_resource(context, lambda: None)
+        context.retire(lambda ctx: closed.set())
+        assert closed.is_set(), "submission failure leaked the resource pin"
+    finally:
+        executor.shutdown()

@@ -69,6 +69,12 @@ Check that the adapter passes timeouts to the driver: a setting named
 timeout changes belong in the separately versioned database adapter package.
 Shutdown stops accepting work without waiting on the event loop for stuck reads.
 
+Dynamic contexts remain pinned while HTTP/SSE requests or queued/running tools
+use them. LRU eviction retires a context; connector cleanup runs in the background
+only after the last user finishes, including workers whose callers cancelled.
+Shutdown retires the cache without waiting for datasource initialization. Any
+context created after shutdown is cleaned up rather than cached again.
+
 Deploying this fix to an embedding backend requires updating its Datus-agent
 dependency/submodule and rebuilding the backend image.
 
