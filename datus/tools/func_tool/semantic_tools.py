@@ -831,16 +831,14 @@ class SemanticTools:
         raw = db_config_obj.to_dict()
         extra = raw.get("extra")
         db_config = {
-            k: str(v)
-            for k, v in raw.items()
-            if v is not None and v != "" and k not in ("extra", "path_pattern", "default")
+            k: v for k, v in raw.items() if v is not None and v != "" and k not in ("extra", "path_pattern", "default")
         }
         # Preserve connector-specific `extra` fields without overwriting explicit top-level keys
         if isinstance(extra, dict):
             for k, v in extra.items():
                 if v is None or v == "":
                     continue
-                db_config.setdefault(k, str(v))
+                db_config.setdefault(k, v)
         return db_config
 
     @property

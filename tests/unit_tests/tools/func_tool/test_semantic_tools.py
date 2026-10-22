@@ -2188,7 +2188,7 @@ class TestExtractDbConfig:
         assert result is None
 
     def test_extracts_and_filters_db_config(self, semantic_tools):
-        """Should extract db_config, stringify values, and exclude filtered keys."""
+        """Preserve native connection values and exclude Agent-only fields."""
         mock_db_config = Mock()
         mock_db_config.to_dict.return_value = {
             "db_type": "mysql",
@@ -2208,13 +2208,42 @@ class TestExtractDbConfig:
 
         assert result["db_type"] == "mysql"
         assert result["host"] == "localhost"
-        assert result["port"] == "3306"
+        assert result["port"] == 3306
         assert result["role"] == "ANALYST"
         assert result["private_key_file"] == "/tmp/rsa_key.p8"
-        assert result["private_key_file_pwd"] == "1234"
+        assert result["private_key_file_pwd"] == 1234
         assert "extra" not in result
         assert "path_pattern" not in result
         assert result["catalog"] == "skip"
+
+    def test_preserves_hana_tls_options_and_explicit_values(self, semantic_tools):
+        """HANA's native executor must receive booleans, including false."""
+        db_config = Mock()
+        db_config.to_dict.return_value = {
+            "type": "hana",
+            "port": 39041,
+            "encrypt": True,
+            "default": True,
+            "extra": {
+                "encrypt": False,
+                "ssl_validate_certificate": False,
+                "timeout_seconds": 30,
+                "ssl_trust_store": "/tmp/hana-ca.pem",
+                "userkey": None,
+            },
+        }
+        semantic_tools.agent_config.current_db_config.return_value = db_config
+
+        result = semantic_tools._extract_db_config("hana")
+
+        assert result == {
+            "type": "hana",
+            "port": 39041,
+            "encrypt": True,
+            "ssl_validate_certificate": False,
+            "timeout_seconds": 30,
+            "ssl_trust_store": "/tmp/hana-ca.pem",
+        }
 
 
 class TestReloadRuntime:
