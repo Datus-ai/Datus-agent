@@ -23,6 +23,7 @@ def _semantic_tools():
         "list_metrics",
         "get_metric",
         "query_metrics",
+        "query_rows",
         "validate_semantic",
         "attribution_analyze",
     ):
@@ -152,6 +153,7 @@ class TestAskMetricsAgenticNode:
             "list_metrics",
             "get_metric",
             "query_metrics",
+            "query_rows",
             "attribution_analyze",
         ]
         assert node.subject_tree_mode == "full"
@@ -399,6 +401,7 @@ class TestAskMetricsAgenticNode:
             "list_metrics",
             "get_metric",
             "query_metrics",
+            "query_rows",
             "attribution_analyze",
         ]
 
@@ -507,6 +510,73 @@ class TestAskMetricsAgenticNode:
         assert result == {"success": True, "message": "query_metrics result captured"}
         assert workflow.context.sql_contexts[0].sql_return == "rows=21"
         assert workflow.context.sql_contexts[0].row_count == 21
+
+    @pytest.mark.parametrize("require_selection", [False, True])
+    def test_update_context_captures_a_query_rows_result(self, real_agent_config, mock_llm_create, require_selection):
+        node, _, _ = _make_node(
+            real_agent_config,
+            tree={},
+            node_config={"require_final_result_selection": require_selection},
+            node_name="rows_ask_metrics",
+        )
+
+        def query_action(action_type, result_id, rows):
+            return {
+                "action_type": action_type,
+                "status": "success",
+                "output": {
+                    "raw_output": {
+                        "success": 1,
+                        "result": {
+                            "result_id": result_id,
+                            "columns": ["order_id", "customers__name"],
+                            "data": {"original_rows": rows, "compressed_data": f"rows={rows}"},
+                            "metadata": {},
+                        },
+                    }
+                },
+            }
+
+        actions = [
+            query_action("query_metrics", "query_metrics:1", 21),
+            query_action("query_rows", "query_metrics:2", 3),
+        ]
+        if require_selection:
+            actions.append(
+                {
+                    "action_type": "select_final_metric_result",
+                    "status": "success",
+                    "output": {"raw_output": {"success": 1, "result": {"result_id": "query_metrics:2"}}},
+                }
+            )
+        node.result = Mock(action_history=actions)
+        workflow = Mock()
+        workflow.context.sql_contexts = []
+
+        result = node.update_context(workflow)
+
+        assert result["success"] is True
+        assert workflow.context.sql_contexts[0].sql_return == "rows=3"
+        assert workflow.context.sql_contexts[0].row_count == 3
+
+    @pytest.mark.parametrize(
+        "tools, mounted",
+        [(None, True), ("semantic_tools.get_metric,semantic_tools.query_metrics", False)],
+    )
+    def test_query_rows_guidance_renders_only_when_the_tool_is_mounted(
+        self, real_agent_config, mock_llm_create, tools, mounted
+    ):
+        node_config = {"require_final_result_selection": True}
+        if tools:
+            node_config["tools"] = tools
+        node, _, _ = _make_node(real_agent_config, tree={}, node_config=node_config, node_name="rows_ask_metrics")
+
+        prompt = node._get_system_prompt()
+
+        assert ("query_rows" in [tool.name for tool in node.tools]) is mounted
+        assert ("read them with `query_rows` instead" in prompt) is mounted
+        assert ("successful `query_metrics` or `query_rows` result" in prompt) is mounted
+        assert ("query_rows" in prompt) is mounted
 
     def test_update_context_required_selection_fails_without_selection(
         self,
@@ -662,6 +732,7 @@ class TestAskMetricsAgenticNode:
             "list_metrics",
             "get_metric",
             "query_metrics",
+            "query_rows",
             "attribution_analyze",
         ]
 
@@ -802,6 +873,7 @@ class TestAskMetricsAgenticNode:
             "list_metrics",
             "get_metric",
             "query_metrics",
+            "query_rows",
             "attribution_analyze",
             "search_metrics",
         }

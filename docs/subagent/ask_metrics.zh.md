@@ -85,6 +85,7 @@ graph LR
 - 分组、过滤或归因前会先调用 `get_metric`。
 - 分组维度直接使用 `get_metric.dimensions[].name` 返回的名称，包括其中的数据集限定名。
 - `query_metrics` 是查询指标值的主要工具。
+- 答案不是指标值、而是明细行（比如一列 id，或满足条件的记录）时，用 `query_rows` 读取。
 - 变化解释和贡献分析问题使用 `attribution_analyze`。
 - 默认工具面不包含原始 SQL 工具。
 
@@ -97,6 +98,7 @@ graph LR
 | `semantic_tools.list_metrics` | 从 Dosi 列出可执行指标 |
 | `semantic_tools.get_metric` | 描述单个指标：可查询维度、时间轴和粒度 |
 | `semantic_tools.query_metrics` | 查询指标值 |
+| `semantic_tools.query_rows` | 读取一个数据集的明细行，可带上关联数据集的字段 |
 | `semantic_tools.attribution_analyze` | 按候选维度解释指标变化 |
 
 如果 Dosi 无法加载当前模型，AskMetrics 无法回答指标问题。如果上下文搜索不可用，AskMetrics 仍可使用 Dosi 工具，但不会有主题树路由上下文。

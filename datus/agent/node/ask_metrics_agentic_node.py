@@ -45,7 +45,7 @@ class AskMetricsAgenticNode(AgenticNode):
     result_class = AskMetricsNodeResult
     SUBJECT_TREE_PROMPT_LIMIT = 100
     #: Tool calls whose successful result can become the node's final structured answer.
-    RESULT_ACTION_TYPES = ("query_metrics",)
+    RESULT_ACTION_TYPES = ("query_metrics", "query_rows")
     #: Prompt template used when the configured one is missing; None disables the fallback.
     FALLBACK_PROMPT_TEMPLATE: Optional[str] = "ask_metrics_system"
     DEFAULT_TOOLS = (
@@ -53,6 +53,7 @@ class AskMetricsAgenticNode(AgenticNode):
         "semantic_tools.list_metrics",
         "semantic_tools.get_metric",
         "semantic_tools.query_metrics",
+        "semantic_tools.query_rows",
         "semantic_tools.attribution_analyze",
         "context_search_tools.list_subject_tree",
     )
@@ -414,10 +415,10 @@ class AskMetricsAgenticNode(AgenticNode):
 
     def select_final_metric_result(self, result_id: str) -> FuncToolResult:
         """
-        Select the query_metrics result that should be stored as the final structured result.
+        Select the query result that should be stored as the final structured result.
 
         This tool is only exposed when require_final_result_selection is enabled.
-        The result_id must be returned by a successful query_metrics call.
+        The result_id must be returned by a successful query_metrics or query_rows call.
         """
         result_id = str(result_id or "").strip()
         if not result_id:
@@ -427,7 +428,7 @@ class AskMetricsAgenticNode(AgenticNode):
             and hasattr(self.semantic_tools, "get_cached_query_metrics_result")
             and self.semantic_tools.get_cached_query_metrics_result(result_id) is None
         ):
-            return FuncToolResult(success=0, error=f"Unknown query_metrics result_id: {result_id}")
+            return FuncToolResult(success=0, error=f"Unknown query result_id: {result_id}")
 
         self._selected_final_metric_result_id = result_id
         return FuncToolResult(result={"result_id": result_id})
@@ -468,6 +469,7 @@ class AskMetricsAgenticNode(AgenticNode):
             "subject_tree_prompt": self.subject_tree_prompt,
             "subject_tree_prompt_limit": self.subject_tree_prompt_limit,
             "require_final_result_selection": self.require_final_result_selection,
+            "query_rows_available": any(getattr(tool, "name", "") == "query_rows" for tool in self.tools),
             **self._extra_prompt_context(),
         }
 

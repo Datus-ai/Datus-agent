@@ -220,6 +220,7 @@ class TestGlobalToolRegistry:
                     "list_metrics",
                     "get_metric",
                     "query_metrics",
+                    "query_rows",
                     "get_query_metrics_result",
                     "validate_semantic",
                     "attribution_analyze",

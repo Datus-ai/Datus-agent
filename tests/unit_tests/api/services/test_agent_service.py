@@ -329,6 +329,7 @@ class TestConstants:
             "semantic_tools.list_metrics",
             "semantic_tools.get_metric",
             "semantic_tools.query_metrics",
+            "semantic_tools.query_rows",
             "semantic_tools.attribution_analyze",
             "context_search_tools.list_subject_tree",
         ]

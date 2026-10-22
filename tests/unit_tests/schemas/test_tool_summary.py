@@ -451,6 +451,13 @@ class TestSemanticFormatters:
         )
         assert out == "12r × 3c"
 
+    def test_query_rows_rows_and_cols(self):
+        out = _summarize(
+            "query_rows",
+            {"success": 1, "result": {"columns": ["order_id", "customers__name"], "data": {"original_rows": 5}}},
+        )
+        assert out == "5r × 2c"
+
     def test_validate_semantic_valid(self):
         out = _summarize("validate_semantic", {"success": 1, "result": {"valid": True, "issues": []}})
         assert out == "valid"

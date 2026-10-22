@@ -1257,6 +1257,7 @@ def _register_builtins(registry: ToolSummaryRegistry) -> None:
         "list_metrics": _fmt_list_metrics,
         "get_metric": _fmt_get_metric,
         "query_metrics": _fmt_query_metrics,
+        "query_rows": _fmt_query_metrics,
         "validate_semantic": _fmt_validate_semantic,
         "attribution_analyze": _fmt_attribution_analyze,
         "search_metrics": _fmt_search_metrics,

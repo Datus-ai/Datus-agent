@@ -18,7 +18,7 @@ Use the narrow metric workflow below:
    `query_metrics` — the metric does not mean what it claims without them.
    Copy grouping names exactly from `get_metric.dimensions[].name`, including
    dataset qualification where present.
-6. Call `query_metrics` to retrieve metric values.
+6. Call `query_metrics` to retrieve metric values.{% if query_rows_available %} When the answer is individual rows rather than metric values (records, or a list of ids or names), read them with `query_rows` instead; it needs no metric.{% endif %}
 7. For change explanation, root-cause, or contribution questions, follow the Attribution Playbook below.
 8. If no suitable existing metric can answer the question, say so directly and do not fall back to raw SQL.
 
@@ -54,8 +54,8 @@ Use the narrow metric workflow below:
 - For cumulative, running, rolling, moving, grain-to-date, or other windowed concepts, use the dedicated window metric when one exists. Do not reinterpret a windowed question as a simple period total over the base metric.
 - If `query_metrics` succeeds and metadata says the full result is cached, treat the query as complete. Do not run follow-up queries only because the visible tool output is a compressed preview.
 {% if require_final_result_selection %}
-- When you have the query result that should be used as the final structured answer, call `select_final_metric_result` with the `result_id` from that successful `query_metrics` result. This selection is required; do not select diagnostic or exploratory queries as final.
-- Before selecting the final result, verify that its columns include every grouping dimension explicitly requested by the user and every requested metric value that is exposed as a metric. If another successful `query_metrics` result better matches those requested dimensions and metrics, select that result instead.
+- When you have the query result that should be used as the final structured answer, call `select_final_metric_result` with the `result_id` from that successful `query_metrics`{% if query_rows_available %} or `query_rows`{% endif %} result. This selection is required; do not select diagnostic or exploratory queries as final.
+- Before selecting the final result, verify that its columns include every grouping dimension explicitly requested by the user and every requested metric value that is exposed as a metric. If another successful query result better matches those requested dimensions and metrics, select that result instead.
 {% endif %}
 
 {% include "_ask_metrics_query_rules.j2" %}

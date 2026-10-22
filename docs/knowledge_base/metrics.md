@@ -142,6 +142,34 @@ query_metrics(
 
 For example, to include all of January 2024, use `time_start="2024-01-01"` and `time_end="2024-02-01"`.
 
+### Reading individual rows
+
+When the answer is rows rather than metric values, such as a list of ids or the records that match some conditions, `query_rows` reads them from one dataset:
+
+```python
+query_rows(
+    dataset="flight_alerts",
+    fields=["flight_alerts.alert_id", "carriers.iata_code"],
+    where="flight_alerts.status = 'OPEN'",
+)
+```
+
+`dataset` decides what one result row is: one row per row of that dataset. Fields of the datasets it relates to many-to-one (here an alert's flight, then that flight's carrier) are joined in as extra columns and never add rows. A dataset on its one-to-many side cannot be read this way: Dosi refuses with `detail_fanout` and names the dataset to read from instead.
+
+| Parameter | Meaning |
+| --- | --- |
+| `dataset` | The dataset one result row stands for. |
+| `fields` | Fields to return as `dataset.field`; a time field may carry a grain (`orders.created_at:month`). When two relationships reach the same dataset, prefix the field with the relationship to follow. |
+| `where` | Optional row filter without the `WHERE` keyword, with columns written as `dataset.field`; aggregates are not allowed. |
+| `context_filter` | Optional filter that also limits the rows a fixed (level-of-detail) field is computed over. |
+| `time_start`, `time_end` | Optional half-open range on the dataset's primary time field. |
+| `order_by` | Requested fields or result columns; prefix with `-` for descending order. |
+| `limit` | Maximum rows. Without it every matching row is read, up to 10,000, and the result metadata carries `truncated` when that cap was reached. |
+| `distinct` | Drop duplicate result rows, such as an id that repeats once per event. |
+| `params` | Bindings for the parameters of the fixed fields read, one value each. |
+
+A field of `dataset` keeps its name in the result; a field of another dataset is named `<dataset>__<field>`.
+
 ## Creating and updating metrics
 
 Use `semantic_modeling` for normal authoring. It can create required datasets and fields, add or update metrics in the same YAML, validate the complete model, dry-run representative queries when requested, and synchronize both Knowledge Base projections.
