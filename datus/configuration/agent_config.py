@@ -786,7 +786,13 @@ class AgentConfig:
             )
         # Resolve home early so dependent helpers can use a stable path manager.
         self.home = kwargs.get("home", "~/.datus")
-        self.mcp_tool_execution = dict(kwargs.get("mcp_tool_execution") or {})
+        mcp_execution_raw = kwargs.get("mcp_tool_execution")
+        if mcp_execution_raw is not None and not isinstance(mcp_execution_raw, Mapping):
+            logger.warning(
+                "agent.mcp_tool_execution must be a mapping; got %s. Using defaults.",
+                type(mcp_execution_raw).__name__,
+            )
+        self.mcp_tool_execution = dict(mcp_execution_raw) if isinstance(mcp_execution_raw, Mapping) else {}
         # project_name must be computed before _set_path_manager so shard-aware
         # directories (sessions/, data/) bind to the right project.  When the
         # user explicitly sets ``agent.project_name`` in YAML we must validate

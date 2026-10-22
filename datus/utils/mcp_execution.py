@@ -5,6 +5,7 @@
 """Bounded execution of blocking MCP work, independent of asyncio's I/O pool."""
 
 import asyncio
+from collections.abc import Mapping
 from concurrent.futures import Future, ThreadPoolExecutor
 from contextvars import copy_context
 from functools import partial
@@ -25,7 +26,35 @@ class MCPToolExecutor:
     cancellation, avoiding a queue full of cancelled executor work items.
     """
 
+    @classmethod
+    def from_config(cls, raw: Any) -> "MCPToolExecutor":
+        """Parse both MCP startup paths consistently, without truncating fractions."""
+        if not isinstance(raw, Mapping):
+            return cls()
+        unknown = set(raw) - {"max_workers", "max_queue_size"}
+        if unknown:
+            raise DatusException(
+                ErrorCode.COMMON_CONFIG_ERROR,
+                message=f"Unknown agent.mcp_tool_execution key(s): {sorted(unknown, key=str)}",
+            )
+        values = dict(raw)
+        for key, value in values.items():
+            if isinstance(value, str):
+                try:
+                    values[key] = int(value)
+                except ValueError as exc:
+                    raise DatusException(
+                        ErrorCode.COMMON_CONFIG_ERROR,
+                        message=f"agent.mcp_tool_execution.{key} must be an integer",
+                    ) from exc
+        return cls(**values)
+
     def __init__(self, max_workers: int = 8, max_queue_size: int = 16):
+        if any(isinstance(value, bool) or not isinstance(value, int) for value in (max_workers, max_queue_size)):
+            raise DatusException(
+                ErrorCode.COMMON_CONFIG_ERROR,
+                message="MCP max_workers and max_queue_size must be integers",
+            )
         if max_workers < 1 or max_queue_size < 0:
             raise DatusException(
                 ErrorCode.COMMON_CONFIG_ERROR,

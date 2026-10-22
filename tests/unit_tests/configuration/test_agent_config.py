@@ -41,6 +41,35 @@ from datus.utils.exceptions import DatusException, ErrorCode
 pytestmark = pytest.mark.ci
 
 
+class TestMCPExecutionConfig:
+    @pytest.mark.parametrize("raw", [True, 8, "invalid", [1], [("max_workers", 2)]])
+    def test_malformed_mcp_execution_shape_uses_defaults(self, tmp_path, raw):
+        config = AgentConfig(
+            nodes={},
+            home=str(tmp_path),
+            target="mock",
+            models={"mock": {"type": "openai", "api_key": "unused", "model": "unused"}},
+            skip_init_dirs=True,
+            mcp_tool_execution=raw,
+        )
+        assert config.mcp_tool_execution == {}
+
+    def test_valid_mcp_execution_mapping_is_copied(self, tmp_path):
+        from collections import UserDict
+
+        raw = UserDict({"max_workers": "2", "max_queue_size": 0})
+        config = AgentConfig(
+            nodes={},
+            home=str(tmp_path),
+            target="mock",
+            models={"mock": {"type": "openai", "api_key": "unused", "model": "unused"}},
+            skip_init_dirs=True,
+            mcp_tool_execution=raw,
+        )
+        raw["max_workers"] = 9
+        assert config.mcp_tool_execution == {"max_workers": "2", "max_queue_size": 0}
+
+
 # ---------------------------------------------------------------------------
 # resolve_env
 # ---------------------------------------------------------------------------

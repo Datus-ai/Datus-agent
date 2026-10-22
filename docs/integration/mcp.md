@@ -60,6 +60,13 @@ nonnegative. Calls beyond the running-plus-queued limit fail immediately with
 an MCP tool error; clients can retry later. This pool is separate from asyncio's
 default executor, keeping unrelated HTTP work responsive when tools stall.
 
+Integer strings are accepted for both capacity settings. Unknown keys, boolean
+values and fractional values produce configuration errors. Non-mapping
+`mcp_tool_execution` values fall back to the defaults.
+Warm datasource contexts use a non-blocking cache fast path, so lookups do not
+occupy tool workers when the cache lock is available. Cache hits also bypass
+datasource initialization locks.
+
 Cancelling a request does **not** terminate a blocking database driver call or
 release its capacity: submitted work retains its slot until it actually finishes.
 Configure connection and socket/read timeouts in the datasource adapter as well;

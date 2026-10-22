@@ -16,9 +16,11 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from datus.mcp_server import LightweightDynamicMCPServer, ToolContext, ToolContextManager
+from datus.mcp_server import DatusMCPServer, LightweightDynamicMCPServer, ToolContext, ToolContextManager
 from datus.tools.func_tool.base import FuncToolResult
+from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.mcp_decorators import MCPToolConfig, create_dynamic_tool_wrapper
+from datus.utils.mcp_execution import MCPToolExecutor
 
 # =============================================================================
 # Fixtures
@@ -143,6 +145,64 @@ def context_manager(mock_config_manager):
 
 
 class TestToolContextManagerInit:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("mode", ["dynamic", "static"])
+    async def test_startup_applies_quoted_execution_capacity(self, mode):
+        settings = {"max_workers": "1", "max_queue_size": "0"}
+        if mode == "dynamic":
+            manager_config = SimpleNamespace(
+                get=lambda key, default=None: settings if key == "mcp_tool_execution" else default
+            )
+            with patch("datus.mcp_server.configuration_manager", return_value=manager_config):
+                owner = ToolContextManager()
+            executor = owner.tool_executor
+            close = owner.close_all
+        else:
+            with (
+                patch("datus.mcp_server.load_agent_config", return_value=SimpleNamespace(mcp_tool_execution=settings)),
+                patch.object(DatusMCPServer, "_init_tools"),
+                patch.object(DatusMCPServer, "_register_tools"),
+            ):
+                owner = DatusMCPServer("test")
+            executor = owner._tool_executor
+            close = owner.close
+        started = asyncio.Event()
+        release = threading.Event()
+        loop = asyncio.get_running_loop()
+
+        def block():
+            loop.call_soon_threadsafe(started.set)
+            release.wait(2)
+
+        task = asyncio.create_task(executor.run(block))
+        try:
+            await asyncio.wait_for(started.wait(), 2)
+            with pytest.raises(DatusException) as caught:
+                await executor.run(lambda: "excess")
+            assert caught.value.code == ErrorCode.TOOL_EXECUTION_FAILED
+        finally:
+            release.set()
+            await task
+            close()
+            executor.shutdown()
+
+    @pytest.mark.parametrize("mode", ["dynamic", "static"])
+    @pytest.mark.parametrize("execution", [{"workers": 2}, {"max_workers": "invalid"}, {"max_workers": True}])
+    def test_startup_reports_invalid_execution_settings(self, mode, execution):
+        with pytest.raises(DatusException) as caught:
+            if mode == "dynamic":
+                manager_config = SimpleNamespace(
+                    get=lambda key, default=None: execution if key == "mcp_tool_execution" else default
+                )
+                with patch("datus.mcp_server.configuration_manager", return_value=manager_config):
+                    ToolContextManager()
+            else:
+                with patch(
+                    "datus.mcp_server.load_agent_config", return_value=SimpleNamespace(mcp_tool_execution=execution)
+                ):
+                    DatusMCPServer("test")
+        assert caught.value.code == ErrorCode.COMMON_CONFIG_ERROR
+
     def test_available_datasources(self, context_manager):
         datasources = context_manager.available_datasources
         assert "ns1" in datasources
@@ -184,6 +244,47 @@ class TestToolContextManagerInit:
 
 
 class TestToolContextManagerGetOrCreate:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("lookup", ["get", "lease", "worker"])
+    async def test_cached_context_does_not_wait_for_stalled_initialization(self, context_manager, lookup):
+        cached = _make_tool_context("healthy")
+        context_manager._contexts["healthy:"] = cached
+        context_manager.tool_executor.shutdown()
+        context_manager.tool_executor = MCPToolExecutor(max_workers=1, max_queue_size=0)
+        started = asyncio.Event()
+        release = threading.Event()
+        loop = asyncio.get_running_loop()
+
+        def create(datasource, subagent):
+            loop.call_soon_threadsafe(started.set)
+            release.wait(2)
+            return _make_tool_context(datasource)
+
+        async def query_cached():
+            if lookup == "get":
+                return await context_manager.get_or_create_context("healthy")
+            if lookup == "lease":
+                async with context_manager.use_context("healthy") as context:
+                    return context
+            context = await asyncio.to_thread(context_manager._get_or_create_context, "healthy", None, True)
+            context.release()
+            return context
+
+        with patch.object(context_manager, "_create_context", side_effect=create):
+            initialization = asyncio.create_task(context_manager.get_or_create_context("slow"))
+            cached_task = None
+            try:
+                await asyncio.wait_for(started.wait(), 2)
+                cached_task = asyncio.create_task(query_cached())
+                done, _ = await asyncio.wait([cached_task], timeout=0.2)
+                assert cached_task in done, "cached context waited on stalled initialization"
+                assert await cached_task is cached
+            finally:
+                release.set()
+                await initialization
+                if cached_task is not None:
+                    await asyncio.gather(cached_task, return_exceptions=True)
+
     @pytest.mark.asyncio
     async def test_context_initialization_does_not_block_and_survives_cancellation(self, context_manager):
         loop = asyncio.get_running_loop()

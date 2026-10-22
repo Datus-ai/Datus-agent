@@ -7,14 +7,65 @@ import threading
 
 import pytest
 
-from datus.utils.exceptions import DatusException
+from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.mcp_execution import MCPToolExecutor
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        {"workers": 2},
+        {"max_workers": True},
+        {"max_queue_size": False},
+        {"max_workers": "invalid"},
+        {"max_workers": 1.5},
+        {"max_workers": None},
+        {"max_workers": "0"},
+        {"max_queue_size": "-1"},
+        {"max_workers": "1.5"},
+    ],
+)
+def test_malformed_executor_configuration_has_a_config_error(raw):
+    with pytest.raises(DatusException) as caught:
+        MCPToolExecutor.from_config(raw)
+    assert caught.value.code == ErrorCode.COMMON_CONFIG_ERROR
+
+
+@pytest.mark.asyncio
+async def test_quoted_capacity_values_apply_exact_admission_limits():
+    executor = MCPToolExecutor.from_config({"max_workers": "1", "max_queue_size": "0"})
+    started = asyncio.Event()
+    release = threading.Event()
+    loop = asyncio.get_running_loop()
+
+    def block():
+        loop.call_soon_threadsafe(started.set)
+        release.wait(2)
+
+    task = asyncio.create_task(executor.run(block))
+    try:
+        await asyncio.wait_for(started.wait(), 2)
+        with pytest.raises(DatusException) as caught:
+            await executor.run(lambda: "excess")
+        assert caught.value.code == ErrorCode.TOOL_EXECUTION_FAILED
+    finally:
+        release.set()
+        await task
+        executor.shutdown()
 
 
 @pytest.mark.parametrize("workers,queued", [(0, 1), (-1, 1), (1, -1)])
 def test_invalid_capacity_is_rejected(workers, queued):
     with pytest.raises(DatusException, match="MCP max_workers"):
         MCPToolExecutor(max_workers=workers, max_queue_size=queued)
+
+
+@pytest.mark.parametrize("key", ["max_workers", "max_queue_size"])
+@pytest.mark.parametrize("value", [True, 1.5, "2"])
+def test_direct_constructor_rejects_non_integer_capacity(key, value):
+    with pytest.raises(DatusException) as caught:
+        MCPToolExecutor(**{key: value})
+    assert caught.value.code == ErrorCode.COMMON_CONFIG_ERROR
 
 
 @pytest.mark.asyncio

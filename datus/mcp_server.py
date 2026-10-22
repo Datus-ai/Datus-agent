@@ -301,7 +301,7 @@ class ToolContextManager:
         # Load base configuration and read available datasources.
         self._config_manager = configuration_manager(config_path=config_path or "")
         execution_config = self._config_manager.get("mcp_tool_execution", {})
-        self.tool_executor = MCPToolExecutor(**(execution_config if isinstance(execution_config, dict) else {}))
+        self.tool_executor = MCPToolExecutor.from_config(execution_config)
         services = self._config_manager.get("services", {}) or {}
         datasources = services.get("datasources", {}) or {}
         self._available_datasources: Set[str] = set(datasources.keys())
@@ -351,6 +351,9 @@ class ToolContextManager:
         Returns:
             ToolContext with initialized tools
         """
+        cached = self._lookup_cached_context(self._get_cache_key(datasource, subagent), blocking=False)
+        if cached is not None:
+            return cached
         # Initialization loads configuration, opens connectors and initializes
         # stores. Keep it (and LRU connector cleanup) off the request loop too.
         # The worker owns the cache transaction even if the request is cancelled.
@@ -359,35 +362,53 @@ class ToolContextManager:
     @asynccontextmanager
     async def use_context(self, datasource: str, subagent: Optional[str] = None):
         """Atomically acquire a request pin, including cancellation during lookup."""
-        future = self.tool_executor.submit(self._get_or_create_context, datasource, subagent, pin=True)
-        try:
-            context = await self.tool_executor.wait(future)
-        except asyncio.CancelledError:
-            # The worker may finish after its caller has disappeared. Return
-            # the acquired pin then, rather than leaking an abandoned context.
-            def release_abandoned(done):
-                if not done.cancelled() and done.exception() is None:
-                    done.result().release()
+        context = self._lookup_cached_context(self._get_cache_key(datasource, subagent), pin=True, blocking=False)
+        if context is None:
+            future = self.tool_executor.submit(self._get_or_create_context, datasource, subagent, pin=True)
+            try:
+                context = await self.tool_executor.wait(future)
+            except asyncio.CancelledError:
+                # The worker may finish after its caller has disappeared. Return
+                # the acquired pin then, rather than leaking an abandoned context.
+                def release_abandoned(done):
+                    if not done.cancelled() and done.exception() is None:
+                        done.result().release()
 
-            future.add_done_callback(release_abandoned)
-            raise
+                future.add_done_callback(release_abandoned)
+                raise
         try:
             yield context
         finally:
             context.release()
 
+    def _lookup_cached_context(
+        self, cache_key: str, pin: bool = False, *, blocking: bool = True
+    ) -> Optional[ToolContext]:
+        # Event-loop callers must not wait for a worker holding the state lock.
+        if not self._lock.acquire(blocking=blocking):
+            return None
+        try:
+            if self._closed:
+                raise RuntimeError("Tool context manager is closed")
+            context = self._contexts.get(cache_key)
+            if context is not None:
+                self._contexts.move_to_end(cache_key)
+                if pin:
+                    context.acquire()
+            return context
+        finally:
+            self._lock.release()
+
     def _get_or_create_context(self, datasource: str, subagent: Optional[str], pin: bool = False) -> ToolContext:
         cache_key = self._get_cache_key(datasource, subagent)
+        cached = self._lookup_cached_context(cache_key, pin)
+        if cached is not None:
+            return cached
         with self._initialization_lock:
             with self._lock:
-                if self._closed:
-                    raise RuntimeError("Tool context manager is closed")
-                if cache_key in self._contexts:
-                    self._contexts.move_to_end(cache_key)
-                    context = self._contexts[cache_key]
-                    if pin:
-                        context.acquire()
-                    return context
+                cached = self._lookup_cached_context(cache_key, pin)
+                if cached is not None:
+                    return cached
                 self._creating += 1
 
             logger.info(f"Creating ToolContext for {cache_key}")
@@ -1062,7 +1083,7 @@ class DatusMCPServer:
 
         self.agent_config = load_agent_config(**config_kwargs)
         execution_config = self.agent_config.mcp_tool_execution
-        self._tool_executor = MCPToolExecutor(**(execution_config if isinstance(execution_config, dict) else {}))
+        self._tool_executor = MCPToolExecutor.from_config(execution_config)
 
         # Initialize all tools from global registry
         self.tools = {}
