@@ -25,6 +25,15 @@ providers:
       - deepseek-v4-pro
       - deepseek-v4-flash
 
+  atlas:
+    type: openai
+    base_url: https://api.atlascloud.ai/v1
+    api_key_env: ATLASCLOUD_API_KEY
+    default_model: deepseek-ai/deepseek-v4-flash
+    models:
+      - deepseek-ai/deepseek-v4-flash
+      - deepseek-ai/deepseek-v4-pro
+
   claude:
     type: claude
     base_url: https://api.anthropic.com
@@ -244,6 +253,14 @@ model_specs:
   deepseek-r1:
     context_length: 65535
     max_tokens: 65535
+
+  # Atlas Cloud Models
+  deepseek-ai/deepseek-v4-flash:
+    context_length: 1000000
+    max_tokens: 384000
+  deepseek-ai/deepseek-v4-pro:
+    context_length: 1000000
+    max_tokens: 384000
 
   # Moonshot (Kimi) Models
   kimi-k3:
