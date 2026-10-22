@@ -39,6 +39,32 @@ datus-mcp --dynamic --transport http --host 127.0.0.1 --port 8000
 datus-mcp --dynamic --transport sse --host 127.0.0.1 --port 8000
 ```
 
+## 同步工具与容量限制
+
+动态和静态模式均在线程池中执行同步工具、插件参数转换和结果格式化，
+并传递请求的 ContextVars；异步工具在请求的事件循环中等待执行。
+所有工具和数据源共享同一 MCP 服务的线程池，可在 `agent.yml` 配置：
+
+```yaml
+agent:
+  mcp_tool_execution:
+    max_workers: 8
+    max_queue_size: 16
+```
+
+以上为默认值。工作线程数必须为正数，排队数必须非负。
+运行和排队总数达到上限后，新调用立即返回 MCP 工具错误，客户端可稍后重试。
+该线程池独立于 asyncio 默认线程池。
+
+取消请求不会终止已提交的阻塞数据库调用，也不会提前释放容量；
+任务实际结束后才释放名额。还需配置数据源适配器的连接及 socket/read 超时，
+HTTP 或 asyncio 超时本身无法停止 StarRocks/PyMySQL 读取。
+应确认适配器将超时传递给数据库驱动：`timeout_seconds` 可能仅限制连接池等待，
+并不限制 socket 读取。适配器层的超时修复需要在独立发布的数据库适配器包中完成。
+关闭服务时停止接收任务，不在事件循环中等待阻塞读取结束。
+
+嵌入此库的后端需要更新 Datus-agent 依赖或子模块，并重新构建镜像才能交付修复。
+
 ## 客户端集成
 
 ### Claude Code

@@ -79,6 +79,7 @@ from collections import OrderedDict
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
+from threading import RLock
 from typing import Any, Dict, List, Literal, Optional, Set, Union
 
 from mcp.server.fastmcp import FastMCP
@@ -96,6 +97,7 @@ from datus.tools.func_tool.reference_template_tools import ReferenceTemplateTool
 from datus.tools.func_tool.semantic_tools import SemanticTools
 from datus.utils.image_content import mcp_image_tool_content
 from datus.utils.loggings import configure_entrypoint_logging, get_logger
+from datus.utils.mcp_execution import MCPToolExecutor
 from datus.utils.multiprocessing_utils import configure_multiprocessing_start_method
 
 # Re-export for external use
@@ -251,10 +253,12 @@ class ToolContextManager:
         self.config_path = config_path
         self._max_size = max_size if max_size is not None else self.DEFAULT_MAX_SIZE
         self._contexts: OrderedDict[str, ToolContext] = OrderedDict()
-        self._lock = asyncio.Lock()
+        self._lock = RLock()
 
         # Load base configuration and read available datasources.
         self._config_manager = configuration_manager(config_path=config_path or "")
+        execution_config = self._config_manager.get("mcp_tool_execution", {})
+        self.tool_executor = MCPToolExecutor(**(execution_config if isinstance(execution_config, dict) else {}))
         services = self._config_manager.get("services", {}) or {}
         datasources = services.get("datasources", {}) or {}
         self._available_datasources: Set[str] = set(datasources.keys())
@@ -304,9 +308,14 @@ class ToolContextManager:
         Returns:
             ToolContext with initialized tools
         """
-        cache_key = self._get_cache_key(datasource, subagent)
+        # Initialization loads configuration, opens connectors and initializes
+        # stores. Keep it (and LRU connector cleanup) off the request loop too.
+        # The worker owns the cache transaction even if the request is cancelled.
+        return await self.tool_executor.run(self._get_or_create_context, datasource, subagent)
 
-        async with self._lock:
+    def _get_or_create_context(self, datasource: str, subagent: Optional[str]) -> ToolContext:
+        cache_key = self._get_cache_key(datasource, subagent)
+        with self._lock:
             if cache_key in self._contexts:
                 # Cache hit: move to end (most recently used)
                 self._contexts.move_to_end(cache_key)
@@ -363,13 +372,14 @@ class ToolContextManager:
 
     def close_all(self):
         """Close all managed contexts."""
-        for cache_key, context in list(self._contexts.items()):
-            try:
-                context.close()
-                logger.info(f"Closed ToolContext for {cache_key}")
-            except Exception as e:
-                logger.warning(f"Error closing context {cache_key}: {e}")
-        self._contexts.clear()
+        with self._lock:
+            for cache_key, context in list(self._contexts.items()):
+                try:
+                    context.close()
+                    logger.info(f"Closed ToolContext for {cache_key}")
+                except Exception as e:
+                    logger.warning(f"Error closing context {cache_key}: {e}")
+            self._contexts.clear()
 
 
 # Context variable for current request's tool context
@@ -483,6 +493,7 @@ class LightweightDynamicMCPServer:
                 instance_attr=tool_config.name,
                 availability_attr=tool_config.availability_property,
                 format_result=self._format_result,
+                executor=self._context_manager.tool_executor,
             )
 
     @asynccontextmanager
@@ -508,7 +519,8 @@ class LightweightDynamicMCPServer:
                 logger.info("LightweightDynamicMCPServer shutting down")
                 self._started = False
                 self._sse_app = None
-                self._context_manager.close_all()
+                self._context_manager.tool_executor.shutdown()
+                await asyncio.to_thread(self._context_manager.close_all)
         else:
             # HTTP streamable transport: use session manager
             _ = self.mcp.streamable_http_app()
@@ -539,7 +551,11 @@ class LightweightDynamicMCPServer:
                     logger.info("LightweightDynamicMCPServer shutting down")
                     tg.cancel_scope.cancel()
                     self._started = False
-                    self._context_manager.close_all()
+                    self._context_manager.tool_executor.shutdown()
+                    # AnyIO's task group has just been cancelled; cleanup must
+                    # still run without synchronously closing connectors here.
+                    with anyio.CancelScope(shield=True):
+                        await asyncio.to_thread(self._context_manager.close_all)
 
     async def handle_request(
         self,
@@ -937,6 +953,8 @@ class DatusMCPServer:
             config_kwargs["database"] = database_name
 
         self.agent_config = load_agent_config(**config_kwargs)
+        execution_config = self.agent_config.mcp_tool_execution
+        self._tool_executor = MCPToolExecutor(**(execution_config if isinstance(execution_config, dict) else {}))
 
         # Initialize all tools from global registry
         self.tools = {}
@@ -994,6 +1012,7 @@ class DatusMCPServer:
 
         # Clear tool references
         self.tools.clear()
+        self._tool_executor.shutdown()
         logger.info("MCP server resources released")
 
     def __enter__(self):
@@ -1013,7 +1032,7 @@ class DatusMCPServer:
         for tool_config in get_tool_registry():
             tool_instance = self.tools.get(tool_config.name)
             if tool_instance:
-                register_static_tools(self.mcp, tool_instance, self._format_result)
+                register_static_tools(self.mcp, tool_instance, self._format_result, executor=self._tool_executor)
 
     @staticmethod
     def _format_result(result: Union[FuncToolResult, Any]) -> Union[Dict[str, Any], List[Any]]:

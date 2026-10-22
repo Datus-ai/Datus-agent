@@ -9,6 +9,8 @@ All tests are CI-level: zero external dependencies, zero network access.
 All external calls (AgentConfig, tools, FastMCP) are mocked.
 """
 
+import asyncio
+import threading
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -176,6 +178,32 @@ class TestToolContextManagerInit:
 
 
 class TestToolContextManagerGetOrCreate:
+    @pytest.mark.asyncio
+    async def test_context_initialization_does_not_block_and_survives_cancellation(self, context_manager):
+        loop = asyncio.get_running_loop()
+        started = asyncio.Event()
+        release = threading.Event()
+        ctx = _make_tool_context("slow")
+
+        def create(datasource, subagent):
+            loop.call_soon_threadsafe(started.set)
+            release.wait(1)
+            return ctx
+
+        with patch.object(context_manager, "_create_context", side_effect=create) as factory:
+            task = asyncio.create_task(context_manager.get_or_create_context("slow"))
+            try:
+                await asyncio.wait_for(started.wait(), 2)
+                assert not task.done(), "context initialization blocked the event loop"
+                task.cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await task
+            finally:
+                release.set()
+                await asyncio.gather(task, return_exceptions=True)
+            assert await context_manager.get_or_create_context("slow") is ctx
+            assert factory.call_count == 1
+
     @pytest.mark.asyncio
     async def test_creates_context_on_miss(self, context_manager):
         mock_ctx = _make_tool_context("ns1")

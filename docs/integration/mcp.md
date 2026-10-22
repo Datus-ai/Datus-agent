@@ -39,6 +39,39 @@ datus-mcp --dynamic --transport http --host 127.0.0.1 --port 8000
 datus-mcp --dynamic --transport sse --host 127.0.0.1 --port 8000
 ```
 
+## Blocking tools and capacity
+
+Both server modes execute synchronous tools, plugin argument transformers and
+result formatting in a dedicated worker pool. Request ContextVars propagate to
+workers; asynchronous tools are awaited on the request's event loop.
+
+Configure the pool in `agent.yml` (shared across tools and datasources within
+one server):
+
+```yaml
+agent:
+  mcp_tool_execution:
+    max_workers: 8
+    max_queue_size: 16
+```
+
+These are the defaults. `max_workers` must be positive and `max_queue_size`
+nonnegative. Calls beyond the running-plus-queued limit fail immediately with
+an MCP tool error; clients can retry later. This pool is separate from asyncio's
+default executor, keeping unrelated HTTP work responsive when tools stall.
+
+Cancelling a request does **not** terminate a blocking database driver call or
+release its capacity: submitted work retains its slot until it actually finishes.
+Configure connection and socket/read timeouts in the datasource adapter as well;
+an HTTP or asyncio timeout alone cannot stop a stalled StarRocks/PyMySQL read.
+Check that the adapter passes timeouts to the driver: a setting named
+`timeout_seconds` may only cover pool checkout, not socket reads. Adapter-level
+timeout changes belong in the separately versioned database adapter package.
+Shutdown stops accepting work without waiting on the event loop for stuck reads.
+
+Deploying this fix to an embedding backend requires updating its Datus-agent
+dependency/submodule and rebuilding the backend image.
+
 ## Client Integration
 
 ### Claude Code

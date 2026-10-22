@@ -10,10 +10,13 @@ transformers, chaining order, malformed-argument passthrough, and the
 node-level ``apply_tool_transformers`` matching/skipping behavior.
 """
 
+import asyncio
 import dataclasses
 import gc
 import json
 import logging
+import threading
+from contextvars import ContextVar
 from types import SimpleNamespace
 
 import pytest
@@ -47,6 +50,41 @@ def _make_tool(name="execute_sql", record=None):
 
 
 class TestWrapToolWithTransformers:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("stage", ["context", "transformer"])
+    async def test_sync_plugin_work_keeps_event_loop_responsive(self, stage):
+        loop = asyncio.get_running_loop()
+        started = asyncio.Event()
+        release = threading.Event()
+        request_id = ContextVar("middleware_request", default=None)
+        request_id.set("request-1529")
+        record = []
+
+        def block():
+            assert request_id.get() == "request-1529"
+            loop.call_soon_threadsafe(started.set)
+            release.wait(1)
+
+        def context():
+            if stage == "context":
+                block()
+            return {"tenant": "EU"}
+
+        def transform(name, args, ctx):
+            if stage == "transformer":
+                block()
+            return {**args, "tenant": ctx["tenant"]}
+
+        wrapped = wrap_tool_with_transformers(_make_tool(record=record), [transform], context)
+        task = asyncio.create_task(wrapped.on_invoke_tool(None, '{"sql": "SELECT 1"}'))
+        try:
+            await asyncio.wait_for(started.wait(), 2)
+            assert not task.done(), "plugin work blocked the event loop"
+        finally:
+            release.set()
+            await task
+        assert json.loads(record[0])["tenant"] == "EU"
+
     @pytest.mark.asyncio
     async def test_rewrite_reaches_original_tool(self):
         record = []

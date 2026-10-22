@@ -51,6 +51,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 from datus.tools.func_tool.base import FuncToolResult
+from datus.utils.mcp_execution import MCPToolExecutor, default_mcp_executor
 
 # ============================================================================
 # Global Tool Registry
@@ -174,15 +175,38 @@ def _apply_plugin_transformers(instance: Any, method_name: str, kwargs: Dict[str
     )
 
 
-def _call_with_plugin_transformers(instance: Any, method: Callable, method_name: str, kwargs: Dict[str, Any]) -> Any:
+@dataclass
+class _AsyncToolCall:
+    method: Callable
+    kwargs: Dict[str, Any]
+
+
+def _call_with_plugin_transformers(
+    instance: Any, method: Callable, method_name: str, kwargs: Dict[str, Any], format_result: Callable
+) -> Any:
     """Call ``method`` with the arguments the active plugins' transformers leave."""
     from datus.tools.middleware import ToolTransformDenied
 
     try:
         kwargs = _apply_plugin_transformers(instance, method_name, kwargs)
     except ToolTransformDenied as exc:
-        return FuncToolResult(success=0, error=f"Denied by policy: {exc}")
-    return method(**kwargs)
+        return format_result(FuncToolResult(success=0, error=f"Denied by policy: {exc}"))
+    if inspect.iscoroutinefunction(method):
+        # Do not create a coroutine in the worker: a cancelled caller would
+        # leave it unawaited. Creation and execution belong to the caller loop.
+        return _AsyncToolCall(method, kwargs)
+    result = method(**kwargs)
+    return result if inspect.isawaitable(result) else format_result(result)
+
+
+async def _run_mcp_call(executor: MCPToolExecutor, invoke: Callable, format_result: Callable, kwargs: Dict) -> Any:
+    result = await executor.run(invoke, **kwargs)
+    if isinstance(result, _AsyncToolCall):
+        result = result.method(**result.kwargs)
+    if inspect.isawaitable(result):
+        result = await result
+        return await executor.run(format_result, result)
+    return result
 
 
 def create_dynamic_tool_wrapper(
@@ -193,6 +217,7 @@ def create_dynamic_tool_wrapper(
     instance_attr: str,
     availability_attr: str,
     format_result: Callable[[Union[FuncToolResult, Any]], Dict[str, Any]],
+    executor: MCPToolExecutor = default_mcp_executor,
 ) -> Callable:
     """
     Create a wrapper function for dynamic mode (context-based tool lookup).
@@ -216,7 +241,7 @@ def create_dynamic_tool_wrapper(
     params = [p for name, p in sig.parameters.items() if name != "self"]
     new_sig = sig.replace(parameters=params)
 
-    def wrapper(**kwargs) -> Dict[str, Any]:
+    def invoke(**kwargs) -> Any:
         ctx = context_getter()
 
         # Check tool availability
@@ -230,8 +255,12 @@ def create_dynamic_tool_wrapper(
             return {"success": 0, "error": "Feature not available", "result": None}
 
         # Call the actual method
-        result = _call_with_plugin_transformers(instance, getattr(instance, method_name), method_name, kwargs)
-        return format_result(result)
+        return _call_with_plugin_transformers(
+            instance, getattr(instance, method_name), method_name, kwargs, format_result
+        )
+
+    async def wrapper(**kwargs) -> Dict[str, Any]:
+        return await _run_mcp_call(executor, invoke, format_result, kwargs)
 
     # Preserve original function metadata for MCP schema generation
     wrapper.__name__ = method_name
@@ -246,6 +275,7 @@ def create_static_tool_wrapper(
     bound_method: Callable,
     config: MCPToolConfig,
     format_result: Callable[[Union[FuncToolResult, Any]], Dict[str, Any]],
+    executor: MCPToolExecutor = default_mcp_executor,
 ) -> Callable:
     """
     Create a wrapper function for static mode (fixed tool instance).
@@ -261,7 +291,7 @@ def create_static_tool_wrapper(
     """
     sig = inspect.signature(bound_method)
 
-    def wrapper(**kwargs) -> Dict[str, Any]:
+    def invoke(**kwargs) -> Any:
         instance = bound_method.__self__
 
         # Check feature availability
@@ -269,8 +299,10 @@ def create_static_tool_wrapper(
             return {"success": 0, "error": "Feature not available", "result": None}
 
         # Call the actual method
-        result = _call_with_plugin_transformers(instance, bound_method, method_name, kwargs)
-        return format_result(result)
+        return _call_with_plugin_transformers(instance, bound_method, method_name, kwargs, format_result)
+
+    async def wrapper(**kwargs) -> Dict[str, Any]:
+        return await _run_mcp_call(executor, invoke, format_result, kwargs)
 
     # Preserve original function metadata
     wrapper.__name__ = method_name
@@ -287,6 +319,7 @@ def register_dynamic_tools(
     instance_attr: str,
     availability_attr: str,
     format_result: Callable[[Union[FuncToolResult, Any]], Dict[str, Any]],
+    executor: MCPToolExecutor = default_mcp_executor,
 ) -> None:
     """
     Register all @mcp_tool decorated methods from a class for dynamic mode.
@@ -321,6 +354,7 @@ def register_dynamic_tools(
             instance_attr=instance_attr,
             availability_attr=availability_attr,
             format_result=format_result,
+            executor=executor,
         )
         mcp.tool()(wrapper)
 
@@ -330,6 +364,7 @@ def register_static_tools(
     tool_instance: Any,
     format_result: Callable[[Union[FuncToolResult, Any]], Dict[str, Any]],
     skip_unavailable: bool = True,
+    executor: MCPToolExecutor = default_mcp_executor,
 ) -> None:
     """
     Register all @mcp_tool decorated methods from an instance for static mode.
@@ -363,6 +398,7 @@ def register_static_tools(
             bound_method=bound_method,
             config=config,
             format_result=format_result,
+            executor=executor,
         )
         mcp.tool()(wrapper)
 
