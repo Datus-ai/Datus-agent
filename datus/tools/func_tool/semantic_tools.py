@@ -1681,6 +1681,8 @@ class SemanticTools:
             limit: Optional maximum number of rows. Pass it only when the user asks
                 for a number of rows: without it every matching row is read, up to
                 10000, and the result metadata says `truncated` when the cap was hit.
+                A truncated list is not the whole answer: say in the answer that
+                only the first 10000 rows were read.
             distinct: Drop duplicate result rows. A list of ids read off an event
                 table repeats an id once per event; set this to list each once.
             params: Optional bindings for the parameters of the fixed fields read,

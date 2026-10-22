@@ -2565,6 +2565,8 @@ class TestQueryRows:
             "distinct",
             "params",
         }
+        # The agent reads the cap from the result; the limit's description tells it to say so.
+        assert "only the first 10000 rows were read" in schema["properties"]["limit"]["description"]
 
     @staticmethod
     def _result(rows, **metadata):
