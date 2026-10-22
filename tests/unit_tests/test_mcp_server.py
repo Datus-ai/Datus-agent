@@ -11,6 +11,7 @@ All external calls (AgentConfig, tools, FastMCP) are mocked.
 
 import asyncio
 import threading
+from collections import OrderedDict
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -752,6 +753,201 @@ def _build_publication_server(manager):
         server = LightweightDynamicMCPServer()
     assert server._context_manager is manager
     return server
+
+
+class _PublicationCacheContract:
+    """Publication cache order: read, await policy I/O, then publish/evict."""
+
+    def __init__(self, max_size=2):
+        self.contexts = OrderedDict()
+        self.max_size = max_size
+        self.created = []
+
+    async def create(self, datasource, subagent):
+        context = _make_tool_context(datasource, subagent)
+        self.created.append(context)
+        return context
+
+    async def refresh(self, context):
+        pass
+
+    async def get_or_create_context(self, datasource, subagent=None):
+        key = (datasource, subagent)
+        cached = self.contexts.get(key)
+        if cached is not None:
+            self.contexts.move_to_end(key)
+            await self.refresh(cached)
+            return cached
+        context = await self.create(datasource, subagent)
+        await self.refresh(context)
+        self.contexts[key] = context
+        self.contexts.move_to_end(key)
+        while len(self.contexts) > self.max_size:
+            _, evicted = self.contexts.popitem(last=False)
+            evicted.close()
+        return context
+
+    def close_all(self):
+        for context in self.contexts.values():
+            context.close()
+        self.contexts.clear()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("phase", ["create", "refresh"])
+@pytest.mark.parametrize("cancel", [False, True])
+async def test_publication_cached_request_is_independent_of_stalled_lookup(phase, cancel):
+    manager = _PublicationCacheContract()
+    server = _build_publication_server(manager)
+    adapter = server._execution_manager
+    entered, release = asyncio.Event(), asyncio.Event()
+
+    async def request(key):
+        async with adapter.use_context(key) as context:
+            return context
+
+    if phase == "refresh":
+        await request("A")
+    cached_b = await request("B")
+    original = getattr(manager, phase)
+
+    async def stalled(*args):
+        key = args[0].datasource if phase == "refresh" else args[0]
+        if key == "A":
+            entered.set()
+            await release.wait()
+        return await original(*args)
+
+    setattr(manager, phase, stalled)
+    task = asyncio.create_task(request("A"))
+    try:
+        await asyncio.wait_for(entered.wait(), 2)
+        if cancel:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+        assert task.cancelled() is cancel
+        assert await asyncio.wait_for(request("B"), 1) is cached_b
+        assert not release.is_set(), "B only completed after A was released"
+    finally:
+        release.set()
+        await asyncio.gather(task, *tuple(adapter._lookups), return_exceptions=True)
+        adapter.close_all()
+        adapter.tool_executor.shutdown()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("fail_refresh", [False, True])
+async def test_publication_refresh_keeps_evicted_context_alive(fail_refresh):
+    manager = _PublicationCacheContract(max_size=1)
+    server = _build_publication_server(manager)
+    adapter = server._execution_manager
+    entered, release = asyncio.Event(), asyncio.Event()
+    closed = threading.Event()
+    healthy = []
+    async with adapter.use_context("A") as context:
+        context.tools["db_tool"] = SimpleNamespace(connector=SimpleNamespace(close=closed.set))
+
+    async def refresh(current):
+        if current is context:
+            entered.set()
+            await release.wait()
+            healthy.append(not closed.is_set())
+            if fail_refresh:
+                raise ValueError("policy refresh failed")
+
+    manager.refresh = refresh
+
+    async def request_a():
+        async with adapter.use_context("A") as current:
+            assert current is context
+            assert not closed.is_set(), "lookup pin was not transferred to the request"
+
+    task = asyncio.create_task(request_a())
+    try:
+        await asyncio.wait_for(entered.wait(), 2)
+        async with asyncio.timeout(1):
+            async with adapter.use_context("B"):
+                pass
+        # Any premature cleanup must have run before checking the connector.
+        await asyncio.wrap_future(adapter._lifetimes._pool.submit(lambda: None))
+        assert not closed.is_set()
+        release.set()
+        if fail_refresh:
+            with pytest.raises(ValueError, match="policy refresh failed"):
+                await task
+        else:
+            await task
+        assert healthy == [True], "eviction closed a context during policy I/O"
+        assert await asyncio.to_thread(closed.wait, 2), "evicted context retained a lookup pin"
+    finally:
+        release.set()
+        await asyncio.gather(task, *tuple(adapter._lookups), return_exceptions=True)
+        adapter.close_all()
+        adapter.tool_executor.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_publication_same_key_waiters_share_initialization_after_cancellation():
+    manager = _PublicationCacheContract()
+    server = _build_publication_server(manager)
+    adapter = server._execution_manager
+    entered, release = asyncio.Event(), asyncio.Event()
+    waiting = asyncio.Event()
+    original_create = manager.create
+
+    async def create(*args):
+        entered.set()
+        await release.wait()
+        return await original_create(*args)
+
+    manager.create = create
+
+    async def request():
+        async with adapter.use_context("A") as context:
+            return context
+
+    async def waiting_request():
+        waiting.set()
+        return await request()
+
+    first = asyncio.create_task(request())
+    second = None
+    try:
+        await asyncio.wait_for(entered.wait(), 2)
+        first.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await first
+        second = asyncio.create_task(waiting_request())
+        await asyncio.wait_for(waiting.wait(), 2)
+        release.set()
+        context = await asyncio.wait_for(second, 2)
+        assert manager.created == [context], "concurrent cache misses created duplicate connectors"
+    finally:
+        release.set()
+        await asyncio.gather(first, *([second] if second else []), *tuple(adapter._lookups), return_exceptions=True)
+        adapter.close_all()
+        adapter.tool_executor.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_publication_lookup_recreates_a_closed_cache_entry():
+    manager = _PublicationCacheContract(max_size=1)
+    server = _build_publication_server(manager)
+    adapter = server._execution_manager
+    closed = threading.Event()
+    try:
+        async with adapter.use_context("A") as original:
+            original.tools["db_tool"] = SimpleNamespace(connector=SimpleNamespace(close=closed.set))
+        async with adapter.use_context("B"):
+            pass
+        assert await asyncio.to_thread(closed.wait, 2)
+        # Keep a reference to the closed context, as other callers may do.
+        async with adapter.use_context("A") as replacement:
+            assert replacement is not original
+            assert replacement is manager.contexts[("A", None)]
+    finally:
+        adapter.close_all()
+        adapter.tool_executor.shutdown()
 
 
 @pytest.mark.asyncio

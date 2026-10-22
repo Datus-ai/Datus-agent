@@ -89,9 +89,14 @@ connector cleanup in the background; it does not synchronously close active conn
 Embedding backends using the original asynchronous `get_or_create_context()` /
 synchronous `close_all()` manager interface remain supported. The injected
 manager keeps its identity and configuration ownership. A compatibility layer
-serializes its asynchronous lookups on the request loop, pins returned
-`ToolContext` objects, and turns their `close()` calls on eviction into deferred
-cleanup. Pending lookups finish before `close_all()` runs in the cleanup worker.
+serializes lookups only for the same datasource/subagent key; other keys keep
+working while initialization or policy I/O stalls. Previously returned contexts
+are pinned before policy refresh, so concurrent eviction cannot close their
+connectors. Returned contexts retain a request pin, and their `close()` calls on
+eviction defer cleanup until the last user finishes. The manager must start with
+an empty cache, route lookups through this server, and publish new cache entries
+after initialization/policy I/O, without yielding between publication and return.
+Pending lookups finish before `close_all()` runs in the cleanup worker.
 Such managers use the default bounded tool capacity; their async lookup method
 must keep its own blocking initialization off the event loop.
 

@@ -82,6 +82,7 @@ from contextvars import ContextVar
 from dataclasses import dataclass, field
 from threading import RLock
 from typing import Any, Callable, Dict, List, Literal, Optional, Set, Union
+from weakref import WeakValueDictionary
 
 from mcp.server.fastmcp import FastMCP
 
@@ -355,26 +356,58 @@ class _ContextLifetimes:
             self._pool.shutdown(wait=False)
 
 
+@dataclass
+class _LegacyLookupLock:
+    lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    users: int = 0
+
+
 class _LegacyContextManagerAdapter:
-    """Support the original async lookup/close_all publication interface."""
+    """Support publication managers whose cache is owned by this server.
+
+    Managers start empty and publish new entries after asynchronous setup,
+    without yielding between cache insertion and return. Cache hits can await
+    policy refresh: their last returned context is pinned before that await.
+    """
 
     def __init__(self, manager):
         self._manager = manager
         self.tool_executor = MCPToolExecutor()
         self._lifetimes = _ContextLifetimes(manager.close_all)
-        # Legacy caches may await policy refresh between lookup and return.
-        # Serialize those transactions so eviction cannot race pin acquisition.
-        self._lookup_lock = asyncio.Lock()
+        # Keep a non-owning index of returned contexts so a cache hit can be
+        # pinned before the legacy manager awaits policy refresh. Different
+        # keys must not wait for each other's initialization or policy I/O.
+        self._contexts: WeakValueDictionary[tuple[str, Optional[str]], ToolContext] = WeakValueDictionary()
+        self._lookup_locks: Dict[tuple[str, Optional[str]], _LegacyLookupLock] = {}
         self._lookups: Set[asyncio.Task] = set()
 
     async def _acquire_context(self, datasource: str, subagent: Optional[str]) -> ToolContext:
+        key = (datasource, subagent or None)
+        lookup = self._lookup_locks.setdefault(key, _LegacyLookupLock())
+        lookup.users += 1
         try:
-            async with self._lookup_lock:
+            async with lookup.lock:
                 self._lifetimes.check_open()
-                context = await self._manager.get_or_create_context(datasource, subagent)
-                self._lifetimes.track(context, pin=True)
-                return context
+                cached = self._contexts.get(key)
+                if cached is not None:
+                    try:
+                        cached.acquire()
+                    except RuntimeError:
+                        # A completed eviction may still have other references;
+                        # the owning manager will create its replacement.
+                        cached = None
+                try:
+                    context = await self._manager.get_or_create_context(datasource, subagent)
+                    self._lifetimes.track(context, pin=True)
+                    self._contexts[key] = context
+                    return context
+                finally:
+                    if cached is not None:
+                        cached.release()
         finally:
+            lookup.users -= 1
+            if not lookup.users:
+                del self._lookup_locks[key]
             self._lifetimes.end_lookup()
 
     @asynccontextmanager
