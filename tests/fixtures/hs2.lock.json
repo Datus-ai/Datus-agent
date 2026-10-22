@@ -1,6 +1,6 @@
 {
   "version": 1,
   "source_path": "osi-engine/tests/fixtures/hs2",
-  "source_base_commit": "90b7d461f7a9b9017dbb29744d24f5465d8b1513",
+  "source_base_commit": "000b7fc1523d4ee9b48729ae115b20ce1262f786",
   "content_sha256": "60cbe120d23bac64df62480cb34018425e163f58ac8790e394ed79e2b52d5d78"
 }
