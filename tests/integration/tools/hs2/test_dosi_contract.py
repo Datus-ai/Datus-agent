@@ -46,8 +46,8 @@ def hs2_tool(tmp_path_factory):
         config.current_datasource = "hs2_contract"
         model_dir = Path(config.path_manager.semantic_model_path("hs2_contract"))
         model_dir.mkdir(parents=True, exist_ok=True)
-        text = (ROOT / "scenarios/relational/model.yaml").read_text()
-        (model_dir / "model.yaml").write_text(render(text, database))
+        text = (ROOT / "scenarios/relational/model.yaml").read_text(encoding="utf-8")
+        (model_dir / "model.yaml").write_text(render(text, database), encoding="utf-8")
         with patch("datus.tools.func_tool.semantic_tools.MetricRAG"):
             tool = SemanticTools(agent_config=config)
         assert type(tool.runtime).__module__ == "datus.tools.semantic_tools.dosi.runtime"

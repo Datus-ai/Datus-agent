@@ -4,4 +4,6 @@ import os
 
 
 def pytest_ignore_collect(collection_path):
-    return collection_path.name.startswith("test_") and not os.getenv("HS2_TEST_PROFILE")
+    if collection_path.name.startswith("test_") and not os.getenv("HS2_TEST_PROFILE"):
+        return True
+    return None
