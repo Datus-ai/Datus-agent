@@ -829,9 +829,11 @@ class SemanticTools:
         if db_config_obj is None:
             return None
         raw = db_config_obj.to_dict()
+        # HS2 session configuration is a mapping, not a Python repr string.
+        structured = {"configuration"} if str(raw.get("type", "")).lower() == "hive" else set()
         extra = raw.get("extra")
         db_config = {
-            k: str(v)
+            k: v if k in structured else str(v)
             for k, v in raw.items()
             if v is not None and v != "" and k not in ("extra", "path_pattern", "default")
         }
@@ -840,7 +842,7 @@ class SemanticTools:
             for k, v in extra.items():
                 if v is None or v == "":
                     continue
-                db_config.setdefault(k, str(v))
+                db_config.setdefault(k, v if k in structured else str(v))
         return db_config
 
     @property
@@ -871,6 +873,7 @@ class SemanticTools:
             runtime_config = DosiConfig(
                 datasource=datasource,
                 db_config=db_config,
+                timeout_seconds=float((db_config or {}).get("timeout_seconds", 30)),
                 semantic_models_path=str(self.agent_config.path_manager.semantic_model_path(datasource)),
                 semantic_model_path=semantic_model_path or None,
             )

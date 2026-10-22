@@ -1,0 +1,240 @@
+cases:
+- id: null.empty_sum
+  capabilities:
+  - query.nulls
+  targets:
+  - hive
+  - inceptor
+  sql: SELECT SUM(amount) AS total, COUNT(*) AS n FROM {{db}}.orders WHERE order_id=-1
+  expected:
+    columns:
+    - total
+    - n
+    rows:
+    - - null
+      - 0
+    types:
+    - decimal
+    - int
+    ordered: false
+- id: null.not_in
+  capabilities:
+  - query.nulls
+  targets:
+  - hive
+  - inceptor
+  sql: SELECT COUNT(*) AS n FROM {{db}}.orders WHERE customer_id NOT IN (10,NULL)
+  expected:
+    columns:
+    - n
+    rows:
+    - - 0
+    types:
+    - int
+    ordered: false
+- id: join.left_unmatched
+  capabilities:
+  - query.relational
+  targets:
+  - hive
+  - inceptor
+  sql: SELECT o.order_id AS order_id, c.region AS region FROM {{db}}.orders o LEFT JOIN {{db}}.customers c ON o.customer_id=c.customer_id
+    ORDER BY o.order_id
+  expected:
+    columns:
+    - order_id
+    - region
+    rows:
+    - - 1
+      - 北区
+    - - 2
+      - 北区
+    - - 3
+      - 南区
+    - - 4
+      - null
+    types:
+    - int
+    - text
+    ordered: true
+- id: cte.having
+  capabilities:
+  - query.relational
+  targets:
+  - hive
+  - inceptor
+  sql: WITH x AS (SELECT label, SUM(amount) AS total FROM {{db}}.orders GROUP BY label HAVING SUM(amount)>0) SELECT
+    label,total FROM x
+  expected:
+    columns:
+    - label
+    - total
+    rows:
+    - - 中文
+      - '30.50'
+    types:
+    - text
+    - decimal
+    ordered: false
+- id: subquery.exists
+  capabilities:
+  - query.relational
+  targets:
+  - hive
+  - inceptor
+  sql: SELECT COUNT(*) AS n FROM {{db}}.orders o WHERE EXISTS (SELECT 1 FROM {{db}}.customers c WHERE c.customer_id=o.customer_id)
+  expected:
+    columns:
+    - n
+    rows:
+    - - 3
+    types:
+    - int
+    ordered: false
+- id: union.distinct
+  capabilities:
+  - query.relational
+  targets:
+  - hive
+  - inceptor
+  sql: SELECT customer_id FROM {{db}}.orders UNION SELECT customer_id FROM {{db}}.customers
+  expected:
+    columns:
+    - customer_id
+    rows:
+    - - 10
+    - - 20
+    - - null
+    types:
+    - int
+    ordered: false
+- id: window.running
+  capabilities:
+  - query.windows
+  targets:
+  - hive
+  - inceptor
+  sql: SELECT order_id,SUM(amount) OVER (ORDER BY order_id ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS
+    total FROM {{db}}.orders ORDER BY order_id
+  expected:
+    columns:
+    - order_id
+    - total
+    rows:
+    - - 1
+      - '10.50'
+    - - 2
+      - '30.50'
+    - - 3
+      - '30.50'
+    - - 4
+      - '30.50'
+    types:
+    - int
+    - decimal
+    ordered: true
+- id: window.lag
+  capabilities:
+  - query.windows
+  targets:
+  - hive
+  - inceptor
+  sql: SELECT order_id,LAG(label) OVER (ORDER BY order_id) AS previous_label FROM {{db}}.orders ORDER BY order_id
+  expected:
+    columns:
+    - order_id
+    - previous_label
+    rows:
+    - - 1
+      - null
+    - - 2
+      - 中文
+    - - 3
+      - 中文
+    - - 4
+      - English
+    types:
+    - int
+    - text
+    ordered: true
+- id: null.safe_eq
+  capabilities:
+  - query.nulls
+  targets:
+  - hive
+  - inceptor
+  sql: SELECT COUNT(*) AS n FROM {{db}}.orders WHERE label <=> '中文'
+  expected:
+    columns:
+    - n
+    rows:
+    - - 2
+    types:
+    - int
+    ordered: false
+- id: null.safe_negated
+  capabilities:
+  - query.nulls
+  targets:
+  - hive
+  - inceptor
+  sql: SELECT COUNT(*) AS n FROM {{db}}.orders WHERE NOT (label <=> '中文')
+  expected:
+    columns:
+    - n
+    rows:
+    - - 2
+    types:
+    - int
+    ordered: false
+- id: null.safe_null
+  capabilities:
+  - query.nulls
+  targets:
+  - hive
+  - inceptor
+  sql: SELECT COUNT(*) AS n FROM {{db}}.orders WHERE label <=> NULL
+  expected:
+    columns:
+    - n
+    rows:
+    - - 1
+    types:
+    - int
+    ordered: false
+- id: storage.partitioned
+  capabilities:
+  - storage.tables
+  targets:
+  - hive
+  - inceptor
+  sql: SELECT COUNT(*) AS n,SUM(amount) AS total FROM {{db}}.partitioned_orders WHERE p='2024-01'
+  expected:
+    columns:
+    - n
+    - total
+    rows:
+    - - 2
+      - '30.50'
+    types:
+    - int
+    - decimal
+    ordered: false
+- id: storage.external
+  capabilities:
+  - storage.tables
+  targets:
+  - hive
+  - inceptor
+  sql: SELECT COUNT(*) AS n,SUM(amount) AS total FROM {{db}}.external_orders
+  expected:
+    columns:
+    - n
+    - total
+    rows:
+    - - 4
+      - '30.50'
+    types:
+    - int
+    - decimal
+    ordered: false

@@ -7,8 +7,10 @@ dry-run shape, engine lifecycle, and connections wiring."""
 
 from __future__ import annotations
 
+import asyncio
 import os
 import sys
+import threading
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
@@ -791,6 +793,70 @@ async def test_dry_run_returns_sql_contract(make_runtime):
     assert call["dialect"] == "postgres"
     assert call["pretty"] is True
     assert not engine.execute_calls
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("server_type,target", [(None, "hive"), ("hive", "hive"), ("inceptor", "inceptor")])
+async def test_hive_profile_selects_the_same_compile_and_execution_target(
+    make_runtime, fake_binding, server_type, target
+):
+    fake_binding.DIALECTS.extend(["hive", "inceptor"])
+    profile = {"type": "hive", "host": "localhost", "auth": "KERBEROS", "kerberos_service_name": "hive"}
+    if server_type:
+        profile["server_type"] = server_type
+    runtime = make_runtime(db_config=profile, datasource="warehouse", timeout_seconds=2.5)
+    await runtime.query_metrics(metrics=["revenue"], dry_run=True)
+    engine = FakeEngine.instances[-1]
+    assert engine.compile_calls[-1]["dialect"] == target
+    assert engine.connections["warehouse"]["type"] == "hive"
+    assert engine.connections["warehouse"].get("server_type") == server_type
+    await runtime.query_metrics(metrics=["revenue"])
+    assert engine.execute_calls[-1]["connection"] == "warehouse"
+    assert engine.execute_calls[-1]["timeout_secs"] == 2.5
+
+
+@pytest.mark.asyncio
+async def test_hive_profile_rejects_an_old_binding_before_generating_wrong_sql(make_runtime):
+    runtime = make_runtime(db_config={"type": "hive", "server_type": "inceptor"})
+    with pytest.raises(SemanticCoreException, match="does not support inceptor"):
+        await runtime.query_metrics(metrics=["revenue"], dry_run=True)
+
+
+@pytest.mark.asyncio
+async def test_query_cancellation_signals_only_its_native_request(make_runtime, fake_binding, monkeypatch):
+    started, release = threading.Event(), threading.Event()
+    tokens = []
+
+    class Token:
+        def __init__(self):
+            self.cancelled = False
+            tokens.append(self)
+
+        def cancel(self):
+            self.cancelled = True
+
+    original = FakeEngine.execute
+
+    def execute(engine, query, **kwargs):
+        kwargs.pop("cancellation")
+        started.set()
+        assert release.wait(5), "test worker was not released"
+        return original(engine, query, **kwargs)
+
+    fake_binding.CancellationToken = Token
+    monkeypatch.setattr(FakeEngine, "execute", execute)
+    runtime = make_runtime()
+    task = asyncio.create_task(runtime.query_metrics(metrics=["revenue"]))
+    try:
+        assert await asyncio.to_thread(started.wait, 2)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert tokens[0].cancelled
+    finally:
+        release.set()
+    await runtime.query_metrics(metrics=["revenue"])
+    assert len(tokens) == 2 and not tokens[1].cancelled
 
 
 @pytest.mark.asyncio

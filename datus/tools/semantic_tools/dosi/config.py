@@ -17,7 +17,7 @@ class DosiConfig(BaseModel):
     model_config = ConfigDict(extra="allow")
 
     datasource: Optional[str] = None
-    timeout_seconds: int = Field(default=30)
+    timeout_seconds: float = Field(default=30, gt=0)
     service_type: str = "dosi"
     # Path to the OSI semantic model file (.yaml/.yml/.json). Takes precedence
     # over semantic_models_path.
