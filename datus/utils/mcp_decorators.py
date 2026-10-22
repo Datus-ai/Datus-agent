@@ -288,6 +288,7 @@ def create_static_tool_wrapper(
     config: MCPToolConfig,
     format_result: Callable[[Union[FuncToolResult, Any]], Dict[str, Any]],
     executor: MCPToolExecutor = default_mcp_executor,
+    resource: Any = None,
 ) -> Callable:
     """
     Create a wrapper function for static mode (fixed tool instance).
@@ -314,7 +315,7 @@ def create_static_tool_wrapper(
         return _call_with_plugin_transformers(instance, bound_method, method_name, kwargs, format_result)
 
     async def wrapper(**kwargs) -> Dict[str, Any]:
-        return await _run_mcp_call(executor, invoke, format_result, kwargs)
+        return await _run_mcp_call(executor, invoke, format_result, kwargs, resource)
 
     # Preserve original function metadata
     wrapper.__name__ = method_name
@@ -377,6 +378,7 @@ def register_static_tools(
     format_result: Callable[[Union[FuncToolResult, Any]], Dict[str, Any]],
     skip_unavailable: bool = True,
     executor: MCPToolExecutor = default_mcp_executor,
+    resource: Any = None,
 ) -> None:
     """
     Register all @mcp_tool decorated methods from an instance for static mode.
@@ -411,6 +413,7 @@ def register_static_tools(
             config=config,
             format_result=format_result,
             executor=executor,
+            resource=resource,
         )
         mcp.tool()(wrapper)
 

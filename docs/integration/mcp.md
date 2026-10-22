@@ -82,6 +82,19 @@ only after the last user finishes, including workers whose callers cancelled.
 Shutdown retires the cache without waiting for datasource initialization. Any
 context created after shutdown is cleaned up rather than cached again.
 
+Static servers also retain connectors until every submitted tool call finishes,
+even if its request was cancelled. `close()` retires the tools and schedules
+connector cleanup in the background; it does not synchronously close active connections.
+
+Embedding backends using the original asynchronous `get_or_create_context()` /
+synchronous `close_all()` manager interface remain supported. The injected
+manager keeps its identity and configuration ownership. A compatibility layer
+serializes its asynchronous lookups on the request loop, pins returned
+`ToolContext` objects, and turns their `close()` calls on eviction into deferred
+cleanup. Pending lookups finish before `close_all()` runs in the cleanup worker.
+Such managers use the default bounded tool capacity; their async lookup method
+must keep its own blocking initialization off the event loop.
+
 Deploying this fix to an embedding backend requires updating its Datus-agent
 dependency/submodule and rebuilding the backend image.
 

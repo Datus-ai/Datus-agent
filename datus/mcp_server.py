@@ -157,6 +157,7 @@ class ToolContext:
     _retired: bool = field(default=False, init=False, repr=False, compare=False)
     _closing: bool = field(default=False, init=False, repr=False, compare=False)
     _cleanup: Optional[Callable] = field(default=None, init=False, repr=False, compare=False)
+    _deferred_close: Optional[Callable] = field(default=None, init=False, repr=False, compare=False)
 
     def acquire(self) -> None:
         """Pin this context before a request or submitted worker can use it."""
@@ -250,6 +251,13 @@ class ToolContext:
 
     def close(self):
         """Release resources held by this context."""
+        if self._deferred_close is not None:
+            self.retire(self._deferred_close)
+            return
+        self._close_tools()
+
+    def _close_tools(self):
+        """Close connectors after the lifetime owner has released all users."""
         for tool_name, tool_instance in list(self.tools.items()):
             if tool_instance:
                 try:
@@ -260,6 +268,139 @@ class ToolContext:
                 except Exception as e:
                     logger.warning(f"Error closing {tool_name} connector: {e}")
         self.tools.clear()
+
+
+class _ContextLifetimes:
+    """Own deferred cleanup for static tools and legacy injected managers.
+
+    Pending asynchronous lookups keep cleanup alive through shutdown, just as
+    context pins keep it alive until submitted workers actually finish.
+    """
+
+    def __init__(self, finalizer: Optional[Callable] = None):
+        self._lock = RLock()
+        self._contexts: Dict[int, ToolContext] = {}
+        self._pending = 0
+        self._closed = False
+        self._finalizer = finalizer
+        self._finalizer_started = False
+        self._finalizer_done = finalizer is None
+        self._pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="datus-mcp-cleanup")
+
+    def begin_lookup(self) -> None:
+        with self._lock:
+            self.check_open()
+            self._pending += 1
+
+    def check_open(self) -> None:
+        with self._lock:
+            if self._closed:
+                raise RuntimeError("Tool context manager is closed")
+
+    def end_lookup(self) -> None:
+        with self._lock:
+            self._pending -= 1
+            self._finish_if_closed()
+
+    def track(self, context: ToolContext, *, pin: bool = False) -> None:
+        with self._lock:
+            self._contexts[id(context)] = context
+            # Legacy managers call close() on eviction; make that call retire
+            # the context without invalidating a request or detached worker.
+            context._deferred_close = self._schedule_close
+            if self._closed:
+                context.close()
+                raise RuntimeError("Tool context manager is closed")
+            if pin:
+                context.acquire()
+
+    def close(self) -> None:
+        with self._lock:
+            self._closed = True
+            self._finish_if_closed()
+
+    def _schedule_close(self, context: ToolContext) -> None:
+        self._pool.submit(self._close_context, context)
+
+    def _close_context(self, context: ToolContext) -> None:
+        try:
+            context._close_tools()
+        finally:
+            with self._lock:
+                self._contexts.pop(id(context), None)
+                self._finish_if_closed()
+
+    def _run_finalizer(self) -> None:
+        try:
+            self._finalizer()
+        except Exception as exc:
+            logger.warning(f"Error closing injected MCP context manager: {exc}")
+        finally:
+            with self._lock:
+                self._finalizer_done = True
+                self._finish_if_closed()
+
+    def _finish_if_closed(self) -> None:
+        if not self._closed or self._pending:
+            return
+        # A legacy lookup may be refreshing a cached context before returning
+        # it to us for pinning. Keep all known contexts alive until it exits.
+        for context in list(self._contexts.values()):
+            context.close()
+        if not self._finalizer_done and not self._finalizer_started:
+            self._finalizer_started = True
+            # No lookup can still mutate the legacy cache when this runs.
+            self._pool.submit(self._run_finalizer)
+        if not self._contexts and self._finalizer_done:
+            self._pool.shutdown(wait=False)
+
+
+class _LegacyContextManagerAdapter:
+    """Support the original async lookup/close_all publication interface."""
+
+    def __init__(self, manager):
+        self._manager = manager
+        self.tool_executor = MCPToolExecutor()
+        self._lifetimes = _ContextLifetimes(manager.close_all)
+        # Legacy caches may await policy refresh between lookup and return.
+        # Serialize those transactions so eviction cannot race pin acquisition.
+        self._lookup_lock = asyncio.Lock()
+        self._lookups: Set[asyncio.Task] = set()
+
+    async def _acquire_context(self, datasource: str, subagent: Optional[str]) -> ToolContext:
+        try:
+            async with self._lookup_lock:
+                self._lifetimes.check_open()
+                context = await self._manager.get_or_create_context(datasource, subagent)
+                self._lifetimes.track(context, pin=True)
+                return context
+        finally:
+            self._lifetimes.end_lookup()
+
+    @asynccontextmanager
+    async def use_context(self, datasource: str, subagent: Optional[str] = None):
+        self._lifetimes.begin_lookup()
+        task = asyncio.create_task(self._acquire_context(datasource, subagent))
+        self._lookups.add(task)
+        task.add_done_callback(self._lookups.discard)
+        try:
+            context = await asyncio.shield(task)
+        except asyncio.CancelledError:
+            # Let an in-flight publication lookup complete, then release its
+            # abandoned pin (or retrieve its exception) even after shutdown.
+            def release_abandoned(done):
+                if not done.cancelled() and done.exception() is None:
+                    done.result().release()
+
+            task.add_done_callback(release_abandoned)
+            raise
+        try:
+            yield context
+        finally:
+            context.release()
+
+    def close_all(self) -> None:
+        self._lifetimes.close()
 
 
 class ToolContextManager:
@@ -540,6 +681,11 @@ class LightweightDynamicMCPServer:
         """
         self.config_path = config_path
         self._context_manager = ToolContextManager(config_path, max_size=max_cache_size)
+        # Preserve the injected manager's identity: publication backends check
+        # it after construction and own their in-memory configuration/cache.
+        self._request_context_manager = self._context_manager
+        if not callable(getattr(self._context_manager, "use_context", None)):
+            self._request_context_manager = _LegacyContextManagerAdapter(self._context_manager)
 
         # Single shared FastMCP instance
         self.mcp = FastMCP(
@@ -567,6 +713,10 @@ class LightweightDynamicMCPServer:
         # SSE session to context mapping (session_id -> ToolContext)
         # This is used to route /messages/ requests to the correct context
         self._sse_sessions: Dict[str, ToolContext] = {}
+
+    @property
+    def _execution_manager(self):
+        return getattr(self, "_request_context_manager", self._context_manager)
 
     @property
     def available_datasources(self) -> List[str]:
@@ -617,7 +767,7 @@ class LightweightDynamicMCPServer:
                 instance_attr=tool_config.name,
                 availability_attr=tool_config.availability_property,
                 format_result=self._format_result,
-                executor=self._context_manager.tool_executor,
+                executor=self._execution_manager.tool_executor,
             )
 
     @asynccontextmanager
@@ -643,8 +793,8 @@ class LightweightDynamicMCPServer:
                 logger.info("LightweightDynamicMCPServer shutting down")
                 self._started = False
                 self._sse_app = None
-                self._context_manager.close_all()
-                self._context_manager.tool_executor.shutdown()
+                self._execution_manager.close_all()
+                self._execution_manager.tool_executor.shutdown()
         else:
             # HTTP streamable transport: use session manager
             _ = self.mcp.streamable_http_app()
@@ -675,8 +825,8 @@ class LightweightDynamicMCPServer:
                     logger.info("LightweightDynamicMCPServer shutting down")
                     tg.cancel_scope.cancel()
                     self._started = False
-                    self._context_manager.close_all()
-                    self._context_manager.tool_executor.shutdown()
+                    self._execution_manager.close_all()
+                    self._execution_manager.tool_executor.shutdown()
 
     async def handle_request(
         self,
@@ -703,7 +853,7 @@ class LightweightDynamicMCPServer:
         if not self._started:
             raise RuntimeError("Server not started. Use lifespan_context first.")
 
-        async with self._context_manager.use_context(datasource, subagent) as context:
+        async with self._execution_manager.use_context(datasource, subagent) as context:
             await self._handle_context_request(context, scope, receive, send, transport, subpath)
 
     async def _handle_context_request(self, context: ToolContext, scope, receive, send, transport, subpath):
@@ -1088,6 +1238,9 @@ class DatusMCPServer:
         # Initialize all tools from global registry
         self.tools = {}
         self._init_tools()
+        self._tool_context = ToolContext(self.datasource, self.sub_agent, self.agent_config, self.tools)
+        self._context_lifetimes = _ContextLifetimes()
+        self._context_lifetimes.track(self._tool_context)
 
         # Register all MCP tools
         self._register_tools()
@@ -1128,21 +1281,9 @@ class DatusMCPServer:
         especially for HTTP transport modes where the server lifecycle
         is managed manually.
         """
-        # Close all tool instances
-        for tool_name, tool_instance in list(self.tools.items()):
-            if tool_instance:
-                try:
-                    # Close database connectors if available
-                    if hasattr(tool_instance, "connector") and tool_instance.connector:
-                        tool_instance.connector.close()
-                        logger.info(f"{tool_name} connector closed")
-                except Exception as e:
-                    logger.warning(f"Error closing {tool_name} connector: {e}")
-
-        # Clear tool references
-        self.tools.clear()
+        self._context_lifetimes.close()
         self._tool_executor.shutdown()
-        logger.info("MCP server resources released")
+        logger.info("MCP server retired; connector cleanup waits for active tool calls")
 
     def __enter__(self):
         """Context manager entry."""
@@ -1161,7 +1302,13 @@ class DatusMCPServer:
         for tool_config in get_tool_registry():
             tool_instance = self.tools.get(tool_config.name)
             if tool_instance:
-                register_static_tools(self.mcp, tool_instance, self._format_result, executor=self._tool_executor)
+                register_static_tools(
+                    self.mcp,
+                    tool_instance,
+                    self._format_result,
+                    executor=self._tool_executor,
+                    resource=self._tool_context,
+                )
 
     @staticmethod
     def _format_result(result: Union[FuncToolResult, Any]) -> Union[Dict[str, Any], List[Any]]:
