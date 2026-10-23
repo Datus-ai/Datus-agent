@@ -2051,6 +2051,25 @@ class TestValidateSemantic:
 
 
 class TestAttributionAnalyze:
+    def test_execution_failure_preserves_warehouse_cancellation_diagnostics(self, semantic_tools_with_runtime):
+        from datus.tools.semantic_tools.exceptions import SemanticCoreException
+
+        tool, _ = semantic_tools_with_runtime
+        info = [{"query_execution_id": "athena-1", "cancellation_requested": True, "cancellation_confirmed": False}]
+        tool._attribute = AsyncMock(side_effect=SemanticCoreException("warehouse timeout", execution_info=info))
+
+        result = tool.attribution_analyze(
+            metric_name="revenue",
+            candidate_dimensions=["region"],
+            baseline_start="2024-01-01",
+            baseline_end="2024-01-08",
+            current_start="2024-01-08",
+            current_end="2024-01-15",
+        )
+
+        assert result.success == 0
+        assert result.result == {"execution_info": info}
+
     def test_tool_schema_exposes_drilldown_guardrail_parameters(self, semantic_tools_with_runtime):
         tool, _ = semantic_tools_with_runtime
 
@@ -2337,6 +2356,16 @@ class TestQueryMetricsContextFilter:
         assert "context_filter" in properties
         assert "context_filter" not in tool.params_json_schema.get("required", [])
         assert "before aggregation" in properties["context_filter"]["description"]
+
+
+def test_query_metrics_exposes_warehouse_cancellation_diagnostics(semantic_tools, mock_runtime):
+    from datus.tools.semantic_tools.exceptions import SemanticCoreException
+
+    info = [{"query_execution_id": "athena-1", "cancellation_requested": True, "cancellation_confirmed": False}]
+    mock_runtime.query_metrics.side_effect = SemanticCoreException("warehouse timeout", execution_info=info)
+    result = semantic_tools.query_metrics(metrics=["order_count"])
+    assert result.success == 0
+    assert result.result == {"execution_info": info}
 
 
 # ── Ontology tools ─────────────────────────────────────────────────

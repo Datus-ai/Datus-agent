@@ -249,6 +249,8 @@ class AttributionWarning(BaseModel):
 class AttributionResult(BaseModel):
     """Unified attribution result returned by native and generic implementations."""
 
+    execution_info: List[Dict[str, Any]] = Field(default_factory=list)
+
     metric: str
     implementation: Literal["dosi", "generic"]
     strategy: AttributionStrategy

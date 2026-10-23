@@ -8,4 +8,6 @@
 class SemanticCoreException(Exception):
     """Base exception for semantic model and query errors."""
 
-    pass
+    def __init__(self, message: str, *, execution_info: list[dict] | None = None) -> None:
+        super().__init__(message)
+        self.execution_info = execution_info

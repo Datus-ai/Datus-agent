@@ -1549,3 +1549,31 @@ async def test_dimensions_without_native_requirements_remain_optional(make_runti
         not dimension.required and dimension.required_reason is None and not dimension.time_axis_required
         for dimension in dimensions
     )
+
+
+@pytest.mark.asyncio
+async def test_query_metrics_preserves_warehouse_execution_diagnostics(make_runtime, monkeypatch):
+    original = FakeEngine.execute
+    info = [{"query_execution_id": "athena-1", "state": "SUCCEEDED", "scanned_bytes": 123}]
+
+    def execute(self, *args, **kwargs):
+        return {**original(self, *args, **kwargs), "execution_info": info}
+
+    monkeypatch.setattr(FakeEngine, "execute", execute)
+    result = await make_runtime().query_metrics(metrics=["order_count"])
+    assert result.metadata["execution_info"] == info
+
+
+@pytest.mark.asyncio
+async def test_execution_failure_preserves_cancellation_diagnostics(make_runtime, monkeypatch, fake_binding):
+    info = [{"query_execution_id": "athena-1", "cancellation_requested": True, "cancellation_confirmed": False}]
+    error = fake_binding.ExecuteError("deadline exceeded", code="timeout")
+    error.execution_info = info
+
+    def execute(self, *args, **kwargs):
+        raise error
+
+    monkeypatch.setattr(FakeEngine, "execute", execute)
+    with pytest.raises(SemanticCoreException) as caught:
+        await make_runtime().query_metrics(metrics=["order_count"])
+    assert caught.value.execution_info == info

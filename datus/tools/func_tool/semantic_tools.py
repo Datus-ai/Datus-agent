@@ -1628,6 +1628,7 @@ class SemanticTools:
             return FuncToolResult(
                 success=0,
                 error=f"Failed to query metrics: {str(e)}",
+                result={"execution_info": e.execution_info} if getattr(e, "execution_info", None) else None,
             )
 
     @mcp_tool()
@@ -1854,4 +1855,5 @@ class SemanticTools:
             return FuncToolResult(
                 success=0,
                 error=f"Failed to analyze attribution: {str(e)}",
+                result={"execution_info": e.execution_info} if getattr(e, "execution_info", None) else None,
             )
