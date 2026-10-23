@@ -270,7 +270,8 @@ class TestGlobalToolRegistry:
 
 
 class TestDynamicToolWrapper:
-    def test_wrapper_calls_tool_method(self):
+    @pytest.mark.asyncio
+    async def test_wrapper_calls_tool_method(self):
         """Wrapper should call the actual tool method with correct args."""
 
         class FakeTool:
@@ -294,11 +295,12 @@ class TestDynamicToolWrapper:
             format_result=lambda r: r.model_dump() if isinstance(r, FuncToolResult) else r,
         )
 
-        result = wrapper(query="test", top_n=3)
+        result = await wrapper(query="test", top_n=3)
         assert result["success"] == 1
         assert "found:test:3" in str(result["result"])
 
-    def test_wrapper_returns_error_when_unavailable(self):
+    @pytest.mark.asyncio
+    async def test_wrapper_returns_error_when_unavailable(self):
         class FakeTool:
             @mcp_tool()
             def my_method(self, query: str) -> FuncToolResult:
@@ -317,7 +319,7 @@ class TestDynamicToolWrapper:
             format_result=lambda r: r,
         )
 
-        result = wrapper(query="test")
+        result = await wrapper(query="test")
         assert result["success"] == 0
         assert "not available" in result["error"]
 
@@ -348,7 +350,8 @@ class TestDynamicToolWrapper:
         assert "include_views" in param_names
         assert sig.parameters["top_n"].default == 5
 
-    def test_wrapper_checks_feature_availability(self):
+    @pytest.mark.asyncio
+    async def test_wrapper_checks_feature_availability(self):
         class FakeTool:
             has_schema = False
 
@@ -371,7 +374,7 @@ class TestDynamicToolWrapper:
             format_result=lambda r: r,
         )
 
-        result = wrapper(query="test")
+        result = await wrapper(query="test")
         assert result["success"] == 0
         assert "not available" in result["error"].lower()
 
@@ -382,7 +385,8 @@ class TestDynamicToolWrapper:
 
 
 class TestStaticToolWrapper:
-    def test_wrapper_calls_bound_method(self):
+    @pytest.mark.asyncio
+    async def test_wrapper_calls_bound_method(self):
         class FakeTool:
             @mcp_tool()
             def get_info(self) -> FuncToolResult:
@@ -397,7 +401,7 @@ class TestStaticToolWrapper:
             format_result=lambda r: r.model_dump() if isinstance(r, FuncToolResult) else r,
         )
 
-        result = wrapper()
+        result = await wrapper()
         assert result["success"] == 1
         assert result["result"] == "info_data"
 
@@ -541,7 +545,8 @@ class TestPluginTransformersOnMCP:
     policy never applies to it.
     """
 
-    def test_dynamic_wrapper_hands_the_method_the_transformed_args(self, monkeypatch):
+    @pytest.mark.asyncio
+    async def test_dynamic_wrapper_hands_the_method_the_transformed_args(self, monkeypatch):
         seen = {}
 
         def narrow(tool_name, args, context):
@@ -551,7 +556,7 @@ class TestPluginTransformersOnMCP:
         _patch_transformers(monkeypatch, {"semantic_tools.query_metrics": [narrow]})
         instance = _FakeSemanticTools(_PolicyConfig({"row_filter": "x"}))
 
-        result = _dynamic_query_metrics(instance)(metrics=["revenue"], where="")
+        result = await _dynamic_query_metrics(instance)(metrics=["revenue"], where="")
 
         assert result["success"] == 1
         assert instance.calls == [{"metrics": ["revenue"], "where": "region = 'EU'"}]
@@ -562,32 +567,35 @@ class TestPluginTransformersOnMCP:
         assert seen["context"]["node_name"] == "analyst"
         assert seen["context"]["agent_config"] is instance.agent_config
 
-    def test_a_refusing_transformer_denies_the_call(self, monkeypatch):
+    @pytest.mark.asyncio
+    async def test_a_refusing_transformer_denies_the_call(self, monkeypatch):
         def refuse(tool_name, args, context):
             raise ValueError("no datasets resolved for revenue")
 
         _patch_transformers(monkeypatch, {"semantic_tools.*": [refuse]})
         instance = _FakeSemanticTools(_PolicyConfig())
 
-        result = _dynamic_query_metrics(instance)(metrics=["revenue"])
+        result = await _dynamic_query_metrics(instance)(metrics=["revenue"])
 
         assert result["success"] == 0
         assert "Denied by policy" in result["error"]
         assert "no datasets resolved" in result["error"]
         assert instance.calls == [], "a denied call must not reach the tool"
 
-    def test_a_pattern_for_another_category_does_not_match(self, monkeypatch):
+    @pytest.mark.asyncio
+    async def test_a_pattern_for_another_category_does_not_match(self, monkeypatch):
         def narrow(tool_name, args, context):
             return {**args, "where": "narrowed"}
 
         _patch_transformers(monkeypatch, {"db_tools.query_metrics": [narrow]})
         instance = _FakeSemanticTools(_PolicyConfig())
 
-        _dynamic_query_metrics(instance)(metrics=["revenue"], where="as-is")
+        await _dynamic_query_metrics(instance)(metrics=["revenue"], where="as-is")
 
         assert instance.calls == [{"metrics": ["revenue"], "where": "as-is"}]
 
-    def test_static_wrapper_runs_the_same_chain(self, monkeypatch):
+    @pytest.mark.asyncio
+    async def test_static_wrapper_runs_the_same_chain(self, monkeypatch):
         def narrow(tool_name, args, context):
             return {**args, "where": "region = 'EU'"}
 
@@ -600,7 +608,7 @@ class TestPluginTransformersOnMCP:
             format_result=lambda r: r.model_dump() if isinstance(r, FuncToolResult) else r,
         )
 
-        wrapper(metrics=["revenue"])
+        await wrapper(metrics=["revenue"])
 
         assert instance.calls == [{"metrics": ["revenue"], "where": "region = 'EU'"}]
 
