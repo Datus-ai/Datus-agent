@@ -45,6 +45,9 @@ AGENT_TEST_CONFIG_BACKUP="${AGENT_TEST_CONFIG_BACKUP:-${TMPDIR:-/tmp}/datus-agen
 export LOG_FILE NIGHTLY_MANIFEST_FILE NIGHTLY_FAILURE_CLASSIFICATION_FILE PROVIDER_COVERAGE_MANIFEST_FILE NIGHTLY_TRACE_REFERENCES_FILE NIGHTLY_TRACE_SUMMARY_FILE NIGHTLY_PROCESS_DIAGNOSTICS_FILE NIGHTLY_HOME NIGHTLY_PROJECT_ROOT UNIT_TEST_HOME NIGHTLY_PYTEST_BASETEMP NIGHTLY_STARTED_AT EXTERNAL_REPOS_ROOT UV_CACHE_DIR
 
 NIGHTLY_PYTEST_ROOTS=(tests/integration tests/regression)
+# This cloud acceptance has no credentialed nightly group yet. Ignore it before
+# import so strict collection does not require its explicitly opt-in credentials.
+NIGHTLY_OPTIONAL_CLOUD_IGNORES=(--ignore tests/integration/adapters/test_snowflake_secrets.py)
 
 default_repo_root() {
   local explicit_root="$1"
@@ -1789,9 +1792,9 @@ NIGHTLY_DEDICATED_SUITE_DESELECTS=(
   --deselect tests/regression/test_regression_web_e2e.py
 )
 
-run_logged "Main Nightly Tests" run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run pytest -m "nightly and not provider_health and not product_e2e" "${NIGHTLY_PYTEST_ROOTS[@]}" "${NIGHTLY_DEDICATED_SUITE_DESELECTS[@]}" --tb=short --verbose --timeout=300 --timeout-method=thread --reruns 1 --reruns-delay 5 --dist=loadscope -n auto
+run_logged "Main Nightly Tests" run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run pytest -m "nightly and not provider_health and not product_e2e" "${NIGHTLY_PYTEST_ROOTS[@]}" "${NIGHTLY_DEDICATED_SUITE_DESELECTS[@]}" "${NIGHTLY_OPTIONAL_CLOUD_IGNORES[@]}" --tb=short --verbose --timeout=300 --timeout-method=thread --reruns 1 --reruns-delay 5 --dist=loadscope -n auto
 
-run_logged "Product E2E Nightly Tests" run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run pytest -m "nightly and product_e2e and not provider_health" "${NIGHTLY_PYTEST_ROOTS[@]}" "${NIGHTLY_DEDICATED_SUITE_DESELECTS[@]}" --tb=short --verbose --timeout=600 --timeout-method=thread --reruns 1 --reruns-delay 5
+run_logged "Product E2E Nightly Tests" run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run pytest -m "nightly and product_e2e and not provider_health" "${NIGHTLY_PYTEST_ROOTS[@]}" "${NIGHTLY_DEDICATED_SUITE_DESELECTS[@]}" "${NIGHTLY_OPTIONAL_CLOUD_IGNORES[@]}" --tb=short --verbose --timeout=600 --timeout-method=thread --reruns 1 --reruns-delay 5
 
 # Gate deterministic Superset contracts only. Real-model dashboard workflows
 # remain available for explicit evaluation; see ci/cross-repo-harness.md.
@@ -1814,7 +1817,7 @@ run_compose_suite "Hive Adapter Tests" "$HIVE_COMPOSE" "hive-metastore:600" "hiv
 run_compose_suite "Spark Adapter Tests" "$SPARK_COMPOSE" "spark-thrift:900" -- run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run pytest -m nightly tests/integration/adapters/test_spark.py --tb=short --verbose --timeout=300 --timeout-method=thread
 run_compose_suite "GaussDB Adapter Tests" "$GAUSSDB_COMPOSE" "gaussdb:600" -- run_gaussdb_adapter_tests
 
-run_logged_warn_only "Provider Health Tests" run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run pytest -m "nightly and provider_health" "${NIGHTLY_PYTEST_ROOTS[@]}" --tb=short --verbose --timeout=300 --timeout-method=thread --reruns 1 --reruns-delay 5
+run_logged_warn_only "Provider Health Tests" run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run pytest -m "nightly and provider_health" "${NIGHTLY_PYTEST_ROOTS[@]}" "${NIGHTLY_OPTIONAL_CLOUD_IGNORES[@]}" --tb=short --verbose --timeout=300 --timeout-method=thread --reruns 1 --reruns-delay 5
 
 run_logged_unfiltered "Flaky Log Classification" uv run python ci/check_flaky_registry.py --registry ci/flaky-registry.yml --log-file "$LOG_FILE" --warn-only
 
