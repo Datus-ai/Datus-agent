@@ -219,6 +219,7 @@ class TestGlobalToolRegistry:
                 {
                     "list_metrics",
                     "get_metric",
+                    "get_dataset",
                     "query_metrics",
                     "get_query_metrics_result",
                     "validate_semantic",

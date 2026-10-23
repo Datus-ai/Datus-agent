@@ -82,8 +82,9 @@ Key behavior:
 
 - Direct subject-tree matches are preferred over search.
 - `search_metrics` is used only when the subject tree is missing, partial, or ambiguous.
-- `get_metric` is called before grouping, filtering, or attribution.
-- Grouping names come directly from `get_metric.dimensions[].name`, including dataset qualification where present.
+- `get_metric` is called for each metric before it is queried. It states how the metric is computed (`expr`), the datasets it reads and can be grouped by, its parameters, and its time grains.
+- `get_dataset` is called for every dataset a query reads. Dataset and field descriptions hold conventions every query on it follows, such as a snapshot's version day or what a code value means.
+- Grouping and filtering names are `dataset.field`, with the field name `get_dataset` shows.
 - `query_metrics` is the primary tool for metric values.
 - `attribution_analyze` is used for change explanation and contribution questions.
 - Raw SQL tools are not part of the default AskMetrics surface.
@@ -95,7 +96,8 @@ Key behavior:
 | `context_search_tools.search_metrics` | Find candidate metrics when direct subject-tree matching is not enough |
 | `context_search_tools.list_subject_tree` | List metric subject paths when the startup subject tree is too large to inline |
 | `semantic_tools.list_metrics` | Enumerate executable metrics from Dosi |
-| `semantic_tools.get_metric` | Describe one metric: its queryable dimensions, time axis, and grains |
+| `semantic_tools.get_metric` | Describe one metric: how it is computed, the datasets it reads and can be grouped by, its parameters, and its time grains |
+| `semantic_tools.get_dataset` | Describe one dataset: its fields with their definitions, fixed fields, time field, and relationships |
 | `semantic_tools.query_metrics` | Query metric values |
 | `semantic_tools.attribution_analyze` | Explain metric movement across candidate dimensions |
 
