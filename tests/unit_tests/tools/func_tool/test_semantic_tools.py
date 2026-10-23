@@ -2187,6 +2187,26 @@ class TestExtractDbConfig:
         result = semantic_tools._extract_db_config("missing_ns")
         assert result is None
 
+    def test_hive_keeps_session_configuration_and_vendor_selection(self, semantic_tools):
+        profile = Mock()
+        profile.to_dict.return_value = {
+            "type": "hive",
+            "host": "localhost",
+            "port": 10000,
+            "extra": {
+                "server_type": "inceptor",
+                "auth": "KERBEROS",
+                "kerberos_service_name": "hive",
+                "configuration": {"hive.exec.dynamic.partition": "true"},
+            },
+        }
+        semantic_tools.agent_config.current_db_config.return_value = profile
+        result = semantic_tools._extract_db_config("warehouse")
+        assert result["server_type"] == "inceptor"
+        assert result["auth"] == "KERBEROS"
+        assert result["kerberos_service_name"] == "hive"
+        assert result["configuration"] == {"hive.exec.dynamic.partition": "true"}
+
     def test_extracts_and_filters_db_config(self, semantic_tools):
         """Should extract db_config, stringify values, and exclude filtered keys."""
         mock_db_config = Mock()

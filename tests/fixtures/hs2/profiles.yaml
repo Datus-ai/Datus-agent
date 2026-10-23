@@ -1,0 +1,35 @@
+version: 1
+profiles:
+  hive_utc:
+    target: hive
+    version_contains: 4.0.1
+    configuration:
+      hive.local.time.zone: UTC
+    version_sql: SELECT VERSION() AS version
+  hive_non_utc:
+    target: hive
+    version_contains: 4.0.1
+    configuration:
+      hive.local.time.zone: America/New_York
+    version_sql: SELECT VERSION() AS version
+  inceptor_ce_v1:
+    target: inceptor
+    version_contains: 8.37.3
+    configuration:
+      inceptor.udf.v2.enabled: 'false'
+      hive.local.time.zone: UTC
+    version_sql: SELECT * FROM system.version_v
+  inceptor_ce_v2:
+    target: inceptor
+    version_contains: 8.37.3
+    configuration:
+      inceptor.udf.v2.enabled: 'true'
+      hive.local.time.zone: UTC
+    version_sql: SELECT * FROM system.version_v
+  inceptor_ce_v2_non_utc:
+    target: inceptor
+    version_contains: 8.37.3
+    configuration:
+      inceptor.udf.v2.enabled: 'true'
+      hive.local.time.zone: America/New_York
+    version_sql: SELECT * FROM system.version_v

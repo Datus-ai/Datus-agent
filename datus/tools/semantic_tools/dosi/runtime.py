@@ -27,7 +27,7 @@ import yaml
 from datus.tools.semantic_tools.authoring import MetricMutationResult, MetricSource
 from datus.tools.semantic_tools.dosi.authoring import dosi_validation_text_payload
 from datus.tools.semantic_tools.dosi.config import DosiConfig
-from datus.tools.semantic_tools.dosi.dialects import resolve_engine_dialect
+from datus.tools.semantic_tools.dosi.dialects import resolve_engine_dialect, resolve_profile_dialect
 from datus.tools.semantic_tools.dosi.engine import (
     EngineHandle,
     EngineRegistry,
@@ -465,12 +465,7 @@ class DosiRuntime:
                         **({"outputs": compiled["outputs"]} if compiled.get("outputs") is not None else {}),
                     },
                 )
-            result = await asyncio.to_thread(
-                engine.execute,
-                query,
-                connection=connection,
-                timeout_secs=float(self.config.timeout_seconds),
-            )
+            result = await self._execute_query(binding, engine, query, connection)
             columns, rows = list(result["columns"]), list(result["rows"])
             if handle.has_ontology:
                 columns, rows = self._label_requested_columns(result, dataset_names)
@@ -1355,7 +1350,24 @@ class DosiRuntime:
                 )
             return resolved
         db_config = self.config.db_config or {}
-        return resolve_engine_dialect(db_config.get("type"), binding.DIALECTS)
+        try:
+            return resolve_profile_dialect(db_config, binding.DIALECTS)
+        except ValueError as exc:
+            raise SemanticCoreException(str(exc)) from exc
+
+    async def _execute_query(self, binding, engine, query, connection):
+        """Propagate asyncio cancellation into request-local native execution."""
+        token_type = getattr(binding, "CancellationToken", None)
+        token = token_type() if token_type is not None else None
+        kwargs = {"connection": connection, "timeout_secs": float(self.config.timeout_seconds)}
+        if token is not None:
+            kwargs["cancellation"] = token
+        try:
+            return await asyncio.to_thread(engine.execute, query, **kwargs)
+        except asyncio.CancelledError:
+            if token is not None:
+                token.cancel()
+            raise
 
     @staticmethod
     def _query_time_dimensions(dimension_rows: List[Dict[str, Any]], dimensions: List[str]) -> set[str]:
