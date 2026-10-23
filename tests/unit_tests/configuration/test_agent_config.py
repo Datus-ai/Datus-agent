@@ -214,6 +214,45 @@ class TestDbConfigFilterKwargs:
 
 
 class TestDosiDbProfile:
+    @pytest.mark.parametrize("auth", [{"auth_mode": "iam"}, {"secret_ref": "test/database"}])
+    def test_aurora_settings_keep_types_and_are_independent(self, monkeypatch, auth):
+        monkeypatch.setenv("TEST_AWS_REGION", "us-east-1")
+        cfg = DbConfig.filter_kwargs(
+            DbConfig,
+            {
+                "type": "postgresql",
+                "host": "writer.example",
+                "database": "configured_db",
+                "aurora": True,
+                "aws": {"region": "${TEST_AWS_REGION}", "profile": "test"},
+                "ssl_verify_cert": False,
+                "secret_cache_ttl_seconds": 300,
+                **auth,
+            },
+        )
+
+        profile = _db_config_to_dosi_profile(cfg)
+        result = _apply_runtime_db_context_to_dosi_profile(profile, {"database": "runtime_db"})
+
+        assert result["aurora"] is True
+        assert result["ssl_verify_cert"] is False
+        assert result["secret_cache_ttl_seconds"] == 300
+        assert isinstance(result["secret_cache_ttl_seconds"], int)
+        assert result["aws"] == {"region": "us-east-1", "profile": "test"}
+        assert result["database"] == "runtime_db"
+        assert profile["database"] == "configured_db"
+        for key, value in auth.items():
+            assert result[key] == value
+        result["aws"]["region"] = "eu-west-1"
+        assert cfg.extra["aws"]["region"] == "us-east-1"
+
+    def test_explicit_fields_win_over_extra(self):
+        cfg = DbConfig(type="mysql", host="configured", extra={"host": "other", "port": 3306})
+        result = _db_config_to_dosi_profile(cfg)
+        assert result["host"] == "configured"
+        assert result["port"] == 3306
+        assert "extra" not in result
+
     def test_db_config_conversion_preserves_catalog(self):
         cfg = DbConfig(type="trino", host="trino-host", catalog="hive", database="college_exam")
 
