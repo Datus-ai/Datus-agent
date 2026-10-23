@@ -30,6 +30,8 @@ from datus.api.services.chat_task_manager import (
     _should_skip_duplicate_assistant_message,
 )
 
+from datus.tools.proxy.tool_result_channel import ToolResultChannel
+
 
 class TestFillDatabaseContext:
     """Tests for _fill_database_context."""
@@ -848,6 +850,10 @@ class TestChatTaskManagerBehavior:
         class FakeNode:
             session_id = "s-web-proxy"
 
+            def __init__(self):
+                self.tool_channel = ToolResultChannel()
+                self.proxied_tool_names = set()
+
             def get_node_name(self):
                 return "chat"
 
@@ -935,6 +941,11 @@ class TestChatTaskManagerBehavior:
 
         class FakeNode:
             session_id = "s-web-normal"
+
+            def __init__(self):
+                self.tool_channel = ToolResultChannel()
+                self.proxied_tool_names = set()
+
             permission_manager = SimpleNamespace(active_profile="normal")
 
             def get_node_name(self):
