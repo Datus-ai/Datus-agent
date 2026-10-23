@@ -75,8 +75,10 @@ class TestAskMetricsAgentic:
 
         result = node.semantic_tools.list_metrics(limit=50, offset=0)
         assert result.success == 1, f"list_metrics failed: {getattr(result, 'error', None)}"
-        items = (result.result or {}).get("items", []) if isinstance(result.result, dict) else []
-        metric_names = {item.get("name") for item in items}
+        # The catalog page is text: one ``- name -- description`` line per metric.
+        metric_names = {
+            line[2:].split(" -- ", 1)[0] for line in str(result.result or "").splitlines() if line.startswith("- ")
+        }
         assert "school_count" in metric_names, f"Fixture metrics not loaded, got: {sorted(metric_names)}"
 
         queried = node.semantic_tools.query_metrics(metrics=["school_count", "total_enrollment_k12"])

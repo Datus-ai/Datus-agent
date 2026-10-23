@@ -32,6 +32,11 @@ from datus.utils.query_result_text import parse_query_result_text
 pytestmark = [pytest.mark.nightly, pytest.mark.product_e2e]
 
 
+def _catalog_names(page: str) -> set[str]:
+    """Metric names on a ``list_metrics`` page: one ``- name -- description`` line each."""
+    return {line[2:].split(" -- ", 1)[0] for line in page.splitlines() if line.startswith("- ")}
+
+
 def _use_dosi(agent_config, project_root):
     agent_config._project_root = project_root.resolve()
     agent_config.path_manager = DatusPathManager(
@@ -212,7 +217,7 @@ def test_dosi_authoring_validates_reconciles_and_queries_without_llm(
 
     catalog = node.semantic_tools.list_metrics(limit=20, offset=0)
     assert catalog.success == 1, catalog.error
-    assert {item["name"] for item in catalog.result["items"]} == {"revenue"}
+    assert _catalog_names(catalog.result) == {"revenue"}
 
     dry_run = node.semantic_tools.query_metrics(metrics=["revenue"], dry_run=True)
     assert dry_run.success == 1, dry_run.error
@@ -324,4 +329,4 @@ async def test_semantic_modeling_authors_one_queryable_dosi_model_with_real_llm(
     assert model_path.is_file()
     metric_catalog = node.semantic_tools.list_metrics(limit=50, offset=0)
     assert metric_catalog.success == 1, metric_catalog.error
-    assert "school_count" in {item["name"] for item in metric_catalog.result["items"]}
+    assert "school_count" in _catalog_names(metric_catalog.result)
