@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from threading import RLock
 from typing import Any
-from uuid import uuid4
+from uuid import NAMESPACE_URL, uuid5
 
 from datus.storage.semantic_model.artifact_file import atomic_write_text, path_mutation_lock
 from datus.tools.func_tool.base import FuncToolResult, tool_schema
@@ -363,6 +363,13 @@ class SemanticPlanFileTools:
                 continue
         return max(candidates)[1] if candidates else None
 
+    @staticmethod
+    def _model_plan_id(model_name: str) -> str:
+        # The containing project directory provides project isolation. Keeping
+        # the ID independent of absolute mount paths also coordinates workers
+        # that mount the same project at different locations.
+        return uuid5(NAMESPACE_URL, f"datus:semantic-model-plan:{model_name}").hex
+
     def prepare(self, model_name: str, plan_json: dict[str, Any] | str) -> PreparedSemanticPlan | FuncToolResult:
         """Validate and freeze a proposal without changing its on-disk baseline."""
         if not isinstance(model_name, str) or not self._MODEL_NAME.fullmatch(model_name):
@@ -380,7 +387,9 @@ class SemanticPlanFileTools:
             return FuncToolResult(success=0, error=f"plan_json must be valid JSON: {exc}")
 
         with self._write_lock:
-            plan_id = self._plan_ids.get(model_name) or self._existing_plan_id(model_name) or uuid4().hex
+            plan_id = (
+                self._existing_plan_id(model_name) or self._plan_ids.get(model_name) or self._model_plan_id(model_name)
+            )
             relative_path = Path(".datus/semantic-model-plans") / plan_id / "semantic-model-plan.json"
             target = self.project_root / relative_path
             if not target.resolve(strict=False).is_relative_to(self.project_root):
@@ -416,7 +425,19 @@ class SemanticPlanFileTools:
             if not target.resolve(strict=False).is_relative_to(self.project_root):
                 return FuncToolResult(success=0, error="Semantic plan path must stay inside the project workspace")
             try:
-                with _plan_mutation_lock(target):
+                model_lock = (
+                    self.project_root
+                    / ".datus/semantic-model-plans"
+                    / f"{self._model_plan_id(prepared.model_name)}.model"
+                )
+                if not model_lock.resolve(strict=False).is_relative_to(self.project_root):
+                    return FuncToolResult(success=0, error="Semantic plan path must stay inside the project workspace")
+                with _plan_mutation_lock(model_lock), _plan_mutation_lock(target):
+                    accepted_id = self._existing_plan_id(prepared.model_name)
+                    if accepted_id is not None and accepted_id != target.parent.name:
+                        return FuncToolResult(
+                            success=0, error="Plan changed during review. Submit a fresh proposal for review."
+                        )
                     current = target.read_text(encoding="utf-8") if target.exists() else None
                     if current != prepared.old_text:
                         return FuncToolResult(

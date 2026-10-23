@@ -856,6 +856,12 @@ class SubAgentTaskTool:
 
                 apply_proxy_tools(node, self._parent_node.proxy_tool_patterns, channel=self._parent_node.tool_channel)
 
+            from datus.tools.proxy.semantic_plan_review import SemanticPlanReviewContext, apply_semantic_plan_review
+
+            review_context = getattr(self._parent_node, "semantic_plan_review_context", None)
+            if isinstance(review_context, SemanticPlanReviewContext):
+                apply_semantic_plan_review(node, context=review_context)
+
             # Iterate the async generator directly (we're already in async context)
             action_history_manager = ActionHistoryManager()
             final_output = None

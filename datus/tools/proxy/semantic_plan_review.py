@@ -1,28 +1,42 @@
 """Web-only plan review; the server owns both the proposal and its mutation."""
 
 import asyncio
+from dataclasses import dataclass, field
 from typing import Any
 
 from agents import FunctionTool
 
 from datus.tools.func_tool.base import FuncToolResult, parse_tool_args
-from datus.tools.proxy.tool_result_channel import DEFAULT_RESULT_TIMEOUT
+from datus.tools.proxy.tool_result_channel import DEFAULT_RESULT_TIMEOUT, ToolResultChannel
 
 PLAN_WRITER = "write_semantic_model_plan_file"
 
 
-def apply_semantic_plan_review(node: Any) -> None:
+@dataclass
+class SemanticPlanReviewContext:
+    channel: ToolResultChannel
+    proxied_tool_names: set[str]
+    previews: dict[str, dict[str, Any]] = field(default_factory=dict)
+
+
+def apply_semantic_plan_review(node: Any, *, context: SemanticPlanReviewContext | None = None) -> None:
     """Use the existing tool-result channel for Accept/Cancel, never for content.
 
     Called only by the web chat adapter in normal mode. CLI, VS Code and
     auto/dangerous executions retain their ordinary tool/permission path.
     """
+    # Even a parent without a writer must expose its delegated reviews through
+    # the parent session's HTTP routes and SSE converter. Descendants inherit
+    # this context, including through intermediate nodes without a writer.
+    if context is None:
+        context = SemanticPlanReviewContext(node.tool_channel, node.proxied_tool_names)
+    node.semantic_plan_review_context = context
+    previews = context.previews
+    node.tool_review_previews = previews
+
     writer = getattr(node, "semantic_plan_file_tool", None)
     if writer is None:
         return
-
-    previews = {}
-    node.tool_review_previews = previews
 
     async def invoke(tool_ctx, args_str):
         args, _, error = parse_tool_args(args_str, tool_name=PLAN_WRITER)
@@ -36,7 +50,7 @@ def apply_semantic_plan_review(node: Any) -> None:
         call_id = tool_ctx.tool_call_id
         previews[call_id] = prepared.preview()
         try:
-            decision = await node.tool_channel.wait_for(call_id, timeout=DEFAULT_RESULT_TIMEOUT)
+            decision = await context.channel.wait_for(call_id, timeout=DEFAULT_RESULT_TIMEOUT)
             if not isinstance(decision, dict) or decision.get("success") != 1:
                 return FuncToolResult(
                     success=0,
@@ -66,4 +80,5 @@ def apply_semantic_plan_review(node: Any) -> None:
             # PermissionHooks must defer to this web review, as it does for
             # filesystem proxies. Mutate the shared set rather than replace it.
             node.proxied_tool_names.add(PLAN_WRITER)
+            context.proxied_tool_names.add(PLAN_WRITER)
             break

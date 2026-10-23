@@ -546,6 +546,7 @@ async def get_tool_preview(
 async def submit_tool_result(
     request: ToolResultInput,
     svc: ServiceDep,
+    ctx: AppContextDep,
 ) -> Result[ToolResultData]:
     """Receive tool execution result from frontend."""
     task_manager = svc.task_manager
@@ -560,6 +561,9 @@ async def submit_tool_result(
             errorCode="TASK_NOT_FOUND",
             errorMessage="No active task found for this session",
         )
+
+    if getattr(task.node, "scope", None) != ctx.user_id:
+        raise HTTPException(status_code=404, detail="No active task found for this session")
 
     logger.info(f"Received tool_result: session_id={request.session_id}, call_id={request.call_tool_id}")
     delivered = await task.node.tool_channel.publish(request.call_tool_id, request.tool_result.model_dump())
