@@ -142,6 +142,34 @@ query_metrics(
 
 例如，要包含 2024 年 1 月的全部数据，应使用 `time_start="2024-01-01"` 和 `time_end="2024-02-01"`。
 
+### 读取明细行
+
+答案不是指标值、而是明细行时，比如一列 id，或满足某些条件的记录，用 `query_rows` 从一个数据集读取：
+
+```python
+query_rows(
+    dataset="flight_alerts",
+    fields=["flight_alerts.alert_id", "carriers.iata_code"],
+    where="flight_alerts.status = 'OPEN'",
+)
+```
+
+`dataset` 决定结果里的一行是什么：这个数据集的每一行对应结果的一行。它多对一关联到的数据集（这里是告警对应的航班，再到航班的承运人）的字段会作为列补进来，不会多出行。处在一对多那一侧的数据集不能这样读：Dosi 会以 `detail_fanout` 拒绝，并给出应该改用的数据集。
+
+| 参数 | 含义 |
+| --- | --- |
+| `dataset` | 结果中一行所对应的数据集。 |
+| `fields` | 要返回的字段，写成 `dataset.field`；时间字段可以带粒度（`orders.created_at:month`）。有两条关系能到达同一个数据集时，在字段前加上要走的关系名。 |
+| `where` | 可选的行过滤表达式，不包含 `WHERE` 关键字，列名同样写成 `dataset.field`，不能写聚合。 |
+| `context_filter` | 可选过滤表达式，同时限定 fixed（细节层次）字段用哪些行计算。 |
+| `time_start`、`time_end` | 可选的左闭右开时间范围，作用在数据集的主时间字段上。 |
+| `order_by` | 请求的字段或结果列；名称前加 `-` 表示降序。 |
+| `limit` | 最大行数。不传时读取全部匹配行，上限 10,000 行；达到上限时，结果的 metadata 里会带 `truncated`。 |
+| `distinct` | 去掉重复的结果行，比如每个事件都重复一次的 id。 |
+| `params` | 绑定所读 fixed 字段的参数，每个参数一个值。 |
+
+`dataset` 自己的字段在结果里保留原名；其他数据集的字段命名为 `<dataset>__<field>`。
+
 ## 创建和更新指标
 
 日常创作使用 `semantic_modeling`。它可以在同一份 YAML 中补充所需 dataset 和 field、创建或更新 metric、校验完整模型、按需 dry-run 代表性查询，并同步两个 Knowledge Base 投影。

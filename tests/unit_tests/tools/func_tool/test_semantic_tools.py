@@ -7,7 +7,7 @@ import json
 from enum import Enum
 from importlib import import_module
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, Mock, call, patch
+from unittest.mock import AsyncMock, Mock, PropertyMock, call, patch
 
 import pytest
 
@@ -2556,3 +2556,150 @@ class TestSelectRecords:
         assert result.success == 0
         assert result.result["code"] == "value_not_in_domain"
         assert result.result["detail"]["violations"] == violations
+
+
+class TestQueryRows:
+    def test_is_mounted_by_name_only(self, semantic_tools):
+        with patch("datus.tools.func_tool.semantic_tools.trans_to_function_tool") as convert:
+            convert.side_effect = lambda function: SimpleNamespace(name=function.__name__)
+            names = [tool.name for tool in semantic_tools.available_tools()]
+        assert "query_rows" not in names
+        assert "query_rows" in SemanticTools.all_tools_name()
+
+    def test_function_tool_schema(self, semantic_tools):
+        from datus.tools.func_tool.base import trans_to_function_tool
+
+        tool = trans_to_function_tool(semantic_tools.query_rows)
+        schema = tool.params_json_schema
+        assert tool.name == "query_rows"
+        assert schema["required"] == ["dataset", "fields"]
+        assert set(schema["properties"]) == {
+            "dataset",
+            "fields",
+            "where",
+            "context_filter",
+            "time_start",
+            "time_end",
+            "order_by",
+            "limit",
+            "distinct",
+            "params",
+        }
+        # The agent reads the cap from the result; the limit's description tells it to say so.
+        assert "only the first 10000 rows were read" in schema["properties"]["limit"]["description"]
+
+    @staticmethod
+    def _result(rows, **metadata):
+        return QueryResult(
+            columns=["order_id", "customers__name"],
+            data=rows,
+            metadata={"sql": "SELECT ...", "dialect": "duckdb", "row_count": len(rows), **metadata},
+        )
+
+    def test_returns_envelope_and_caches_full_result(self, semantic_tools, mock_runtime):
+        rows = [{"order_id": 1, "customers__name": "Acme"}, {"order_id": 2, "customers__name": "Globex"}]
+        mock_runtime.select_rows = AsyncMock(return_value=self._result(rows))
+        result = semantic_tools.query_rows(
+            dataset=" orders ",
+            fields=["orders.order_id", "customers.name"],
+            where="orders.status = 'paid'",
+            order_by=["-customers.name"],
+        )
+        assert result.success == 1
+        envelope = result.result
+        assert envelope["columns"] == ["order_id", "customers__name"]
+        assert "sql" not in envelope["metadata"]
+        assert "truncated" not in envelope["metadata"]
+        cached = semantic_tools.get_cached_query_metrics_result(envelope["result_id"])
+        assert cached["row_count"] == 2
+        assert "Globex" in cached["csv"]
+        args = mock_runtime.select_rows.await_args
+        assert args.args == ("orders", ["orders.order_id", "customers.name"])
+        assert args.kwargs == {
+            "where": "orders.status = 'paid'",
+            "context_filter": None,
+            "time_start": None,
+            "time_end": None,
+            "order_by": ["-customers.name"],
+            # No limit asked: read up to the engine's cap.
+            "limit": SemanticTools.QUERY_ROWS_MAX_LIMIT,
+            "distinct": False,
+            "params": None,
+        }
+
+    def test_optional_arguments_reach_the_runtime(self, semantic_tools, mock_runtime):
+        mock_runtime.select_rows = AsyncMock(return_value=self._result([]))
+        semantic_tools.query_rows(
+            dataset="orders",
+            fields="orders.customer_id",
+            context_filter="orders.channel = 3",
+            time_start="2026-01-01",
+            time_end="null",
+            limit="20",
+            distinct="true",
+            params={"k": 7},
+        )
+        kwargs = mock_runtime.select_rows.await_args.kwargs
+        assert mock_runtime.select_rows.await_args.args == ("orders", ["orders.customer_id"])
+        assert kwargs["context_filter"] == "orders.channel = 3"
+        assert kwargs["time_start"] == "2026-01-01"
+        assert kwargs["time_end"] is None
+        assert kwargs["limit"] == 20
+        assert kwargs["distinct"] is True
+        assert kwargs["params"] == {"k": 7}
+
+    def test_a_result_that_fills_the_cap_is_marked_truncated(self, semantic_tools, mock_runtime, monkeypatch):
+        monkeypatch.setattr(SemanticTools, "QUERY_ROWS_MAX_LIMIT", 2)
+        rows = [{"order_id": 1, "customers__name": "Acme"}, {"order_id": 2, "customers__name": "Globex"}]
+        mock_runtime.select_rows = AsyncMock(return_value=self._result(rows))
+        result = semantic_tools.query_rows(dataset="orders", fields=["orders.order_id"])
+        assert result.result["metadata"]["truncated"] is True
+        # A larger limit is clamped to the cap, so the same holds.
+        result = semantic_tools.query_rows(dataset="orders", fields=["orders.order_id"], limit=500)
+        assert mock_runtime.select_rows.await_args.kwargs["limit"] == 2
+        assert result.result["metadata"]["truncated"] is True
+
+    def test_an_asked_limit_is_not_truncation(self, semantic_tools, mock_runtime):
+        rows = [{"order_id": 1, "customers__name": "Acme"}, {"order_id": 2, "customers__name": "Globex"}]
+        mock_runtime.select_rows = AsyncMock(return_value=self._result(rows))
+        result = semantic_tools.query_rows(dataset="orders", fields=["orders.order_id"], limit=2)
+        assert "truncated" not in result.result["metadata"]
+
+    @pytest.mark.parametrize(
+        "kwargs, message",
+        [
+            ({"dataset": "", "fields": ["orders.order_id"]}, "requires a dataset"),
+            ({"dataset": "orders", "fields": []}, "requires a dataset"),
+            ({"dataset": "orders", "fields": None}, "requires a dataset"),
+            ({"dataset": "orders", "fields": ["orders.order_id"], "params": ["k"]}, "params must be an object"),
+            ({"dataset": "orders", "fields": ["orders.order_id"], "limit": "ten"}, "whole number"),
+            ({"dataset": "orders", "fields": ["orders.order_id"], "limit": 0}, "at least 1"),
+        ],
+    )
+    def test_rejects_malformed_arguments(self, semantic_tools, mock_runtime, kwargs, message):
+        mock_runtime.select_rows = AsyncMock()
+        result = semantic_tools.query_rows(**kwargs)
+        assert result.success == 0
+        assert message in result.error
+        mock_runtime.select_rows.assert_not_called()
+
+    def test_engine_refusal_is_structured(self, semantic_tools, mock_runtime):
+        mock_runtime.select_rows = AsyncMock(
+            side_effect=_validation_exception(
+                code="detail_fanout",
+                candidates=["orders -[orders_to_customers]-> customers"],
+                hint="query at the finer grain instead: from orders",
+                message='dataset "orders" is reachable from "customers" only against relationship',
+            )
+        )
+        result = semantic_tools.query_rows(dataset="customers", fields=["customers.name", "orders.order_id"])
+        assert result.success == 0
+        assert result.result["code"] == "detail_fanout"
+        assert result.result["hint"] == "query at the finer grain instead: from orders"
+
+    def test_requires_a_runtime(self, semantic_tools):
+        semantic_tools._runtime = None
+        with patch.object(type(semantic_tools), "runtime", new_callable=PropertyMock, return_value=None):
+            result = semantic_tools.query_rows(dataset="orders", fields=["orders.order_id"])
+        assert result.success == 0
+        assert "query_rows requires" in result.error

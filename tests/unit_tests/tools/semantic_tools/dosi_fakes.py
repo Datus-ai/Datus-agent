@@ -125,6 +125,24 @@ EXECUTE_RESULT = {
     "row_count": 1,
 }
 
+# A detail query rooted on ``orders``: its own field keeps its name, the joined
+# ``customers`` field is named ``<dataset>__<field>``.
+DETAIL_SELECT_RESULT = {
+    "dialect": "duckdb",
+    "sql": (
+        "SELECT orders.order_id AS order_id, customers.name AS customers__name FROM main.orders AS orders "
+        "LEFT JOIN main.customers AS customers ON orders.customer_id = customers.customer_id"
+    ),
+    "columns": ["order_id", "customers__name"],
+    "rows": [{"order_id": 1, "customers__name": "Acme"}, {"order_id": 2, "customers__name": "Globex"}],
+    "row_count": 2,
+    "requested_columns": [
+        {"requested": "orders.order_id", "column": "order_id"},
+        {"requested": "customers.name", "column": "customers__name"},
+    ],
+    "warnings": [],
+}
+
 ATTRIBUTE_RESULT = {
     "metric": "revenue",
     "strategy": "term_wise",
@@ -270,6 +288,8 @@ class FakeEngine:
         self.execute_calls: List[Dict[str, Any]] = []
         self.attribute_calls: List[Dict[str, Any]] = []
         self.lineage_calls: List[Dict[str, Any]] = []
+        self.select_calls: List[Dict[str, Any]] = []
+        self.compile_select_calls: List[Dict[str, Any]] = []
         self.fail_with: Optional[Exception] = None
         FakeEngine.instances.append(self)
 
@@ -349,6 +369,25 @@ class FakeEngine:
             **EXECUTE_RESULT,
             "outputs": [{"name": metric, "type": "metric"} for metric in query.get("metrics") or []],
         }
+
+    def compile_select(self, query, dialect=None, connection=None, pretty=False, dws_mode=None):
+        self.compile_select_calls.append({"query": query, "dialect": dialect, "connection": connection})
+        if self.fail_with is not None:
+            raise self.fail_with
+        return {
+            "dialect": dialect or "duckdb",
+            "sql": DETAIL_SELECT_RESULT["sql"],
+            "outputs": [],
+            "requested_columns": copy.deepcopy(DETAIL_SELECT_RESULT["requested_columns"]),
+        }
+
+    def select(self, query, dialect=None, connection=None, timeout_secs=None, db_path=None):
+        self.select_calls.append(
+            {"query": query, "dialect": dialect, "connection": connection, "timeout_secs": timeout_secs}
+        )
+        if self.fail_with is not None:
+            raise self.fail_with
+        return copy.deepcopy(DETAIL_SELECT_RESULT)
 
     def attribute(
         self,

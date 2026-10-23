@@ -419,6 +419,7 @@ class SemanticTools:
             "list_metrics",
             "get_metric",
             "query_metrics",
+            "query_rows",
             "validate_semantic",
             "attribution_analyze",
             *cls.ONTOLOGY_TOOL_NAMES,
@@ -955,6 +956,8 @@ class SemanticTools:
         ]
         if self.ontology_enabled:
             tools.extend(trans_to_function_tool(getattr(self, name)) for name in self.ONTOLOGY_TOOL_NAMES)
+        # query_rows is mounted by name (ask_metrics lists it by default). The
+        # nodes that take every semantic tool already read rows with SQL.
         return tools
 
     # ==================== Ontology tools ====================
@@ -1629,6 +1632,129 @@ class SemanticTools:
                 success=0,
                 error=f"Failed to query metrics: {str(e)}",
             )
+
+    #: The engine's row cap. A call with no limit reads up to it, so a list is
+    #: complete unless it runs past the cap, and then the result says so.
+    QUERY_ROWS_MAX_LIMIT = 10000
+
+    @tool_schema(strict_mode=False)
+    @mcp_tool()
+    def query_rows(
+        self,
+        dataset: str,
+        fields: List[str],
+        where: Optional[str] = None,
+        context_filter: Optional[str] = None,
+        time_start: Optional[str] = None,
+        time_end: Optional[str] = None,
+        order_by: Optional[List[str]] = None,
+        limit: Optional[int] = None,
+        distinct: bool = False,
+        params: Optional[Dict[str, Any]] = None,
+    ) -> FuncToolResult:
+        """
+        Read individual rows (not aggregates): records, or a list of ids or names.
+
+        For counts, sums, averages or rates use query_metrics; never aggregate
+        rows by hand. Joins follow the model's relationships: name the fields
+        you need and the engine joins the datasets they live on.
+
+        Args:
+            dataset: The dataset one result row stands for: the finest one the
+                question touches. Fields of a dataset it relates to many-to-one add
+                columns, never rows. A dataset on its one-to-many side cannot be
+                read from it; the refusal (`detail_fanout`) names the dataset to
+                use instead.
+            fields: Fields to return as `dataset.field`; a time field may carry a
+                grain suffix (`dataset.created_at:month`). When two relationships
+                reach the same dataset, prefix the field with the relationship to
+                follow (`relationship.field`).
+            where: Optional SQL boolean expression over fields, like SQL WHERE, with
+                its columns written as `dataset.field` too. No aggregates.
+            context_filter: Optional SQL boolean expression that filters rows like
+                `where` and also limits the rows a fixed (per-key) field is computed
+                over. It differs from `where` only when the query reads a fixed field.
+            time_start: Optional inclusive start (YYYY-MM-DD) of a half-open range on
+                the dataset's primary time field; the range also bounds the fixed
+                fields read. For a dataset without a primary time field, write the
+                dates in `where`.
+            time_end: Optional exclusive end (YYYY-MM-DD) of that range.
+            order_by: Optional sort keys, each a requested field or a result column;
+                prefix with '-' for descending.
+            limit: Optional maximum number of rows. Pass it only when the user asks
+                for a number of rows: without it every matching row is read, up to
+                10000, and the result metadata says `truncated` when the cap was hit.
+                A truncated list is not the whole answer: say in the answer that
+                only the first 10000 rows were read.
+            distinct: Drop duplicate result rows. A list of ids read off an event
+                table repeats an id once per event; set this to list each once.
+            params: Optional bindings for the parameters of the fixed fields read,
+                one value per parameter.
+
+        Returns:
+            FuncToolResult with `columns` (a field of `dataset` keeps its name, a
+            field of another dataset becomes `<dataset>__<field>`), compressed
+            `data`, the `result_id` of the cached full result, and `metadata`
+            (`row_count`, `warnings`).
+        """
+        dataset = str(dataset or "").strip()
+        fields = _normalize_name_list(fields)
+        order_by = _normalize_name_list(order_by)
+        params = normalize_null(params)
+        limit = normalize_null(limit)
+        if isinstance(distinct, str):
+            distinct = distinct.strip().lower() in {"true", "1", "yes"}
+        if not dataset or not fields:
+            return FuncToolResult(success=0, error="query_rows requires a dataset and at least one field")
+        if params is not None and not isinstance(params, dict):
+            return FuncToolResult(success=0, error="query_rows params must be an object of parameter bindings")
+        try:
+            row_cap = self.QUERY_ROWS_MAX_LIMIT if limit is None else min(int(limit), self.QUERY_ROWS_MAX_LIMIT)
+        except (TypeError, ValueError):
+            return FuncToolResult(success=0, error=f"query_rows limit must be a whole number, got {limit!r}")
+        if row_cap < 1:
+            return FuncToolResult(success=0, error="query_rows limit must be at least 1")
+        runtime, error = self._require_runtime("query_rows")
+        if error:
+            return error
+        try:
+            result = _run_async(
+                runtime.select_rows(
+                    dataset,
+                    fields,
+                    where=normalize_null(where),
+                    context_filter=normalize_null(context_filter),
+                    time_start=normalize_null(time_start),
+                    time_end=normalize_null(time_end),
+                    order_by=order_by or None,
+                    limit=row_cap,
+                    distinct=bool(distinct),
+                    params=params or None,
+                )
+            )
+        except Exception as exc:  # noqa: BLE001 - surfaced as a failed tool call
+            return self._semantic_failure("query_rows", exc)
+
+        # As in query_metrics, the compiled SQL is most of the payload and the
+        # rows it produced are already here.
+        metadata = self._drop_compiled_sql(dict(result.metadata or {}))
+        row_count = self._query_data_row_count(result.data)
+        if row_cap == self.QUERY_ROWS_MAX_LIMIT and row_count >= row_cap:
+            metadata["truncated"] = True
+        cache_key = self._cache_query_metrics_result(result.columns, result.data)
+        if cache_key:
+            metadata["_full_result_cache_key"] = cache_key
+            metadata["_full_result_cached"] = True
+            metadata["_full_result_row_count"] = row_count
+        compressed = self.compressor.compress(result.data, column_priority=list(result.columns))
+        return FuncToolResult(
+            result={
+                "result_id": cache_key,
+                "columns": self._visible_columns(result.columns, compressed),
+                "data": compressed,
+                "metadata": metadata,
+            }
+        )
 
     @mcp_tool()
     def validate_semantic(

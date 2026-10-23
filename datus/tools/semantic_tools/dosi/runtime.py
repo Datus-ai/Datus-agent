@@ -682,10 +682,68 @@ class DosiRuntime:
         limit: Optional[int] = None,
     ) -> QueryResult:
         """Record-level (detail) query rooted on one concept; fields may be concept paths."""
-        binding = await asyncio.to_thread(load_binding)
         _, handle = await asyncio.to_thread(self._first_answer, lambda engine: engine.describe(from_concept))
-        engine = await asyncio.to_thread(handle.get)
-        query: Dict[str, Any] = {"from": from_concept, "fields": list(fields)}
+        query = self._detail_query(from_concept, fields, where=where, order_by=order_by, limit=limit)
+        return await self._run_detail_query(handle, query, list(fields), label_concept_paths=True)
+
+    async def select_rows(
+        self,
+        dataset: str,
+        fields: List[str],
+        *,
+        where: Optional[str] = None,
+        context_filter: Optional[str] = None,
+        time_start: Optional[str] = None,
+        time_end: Optional[str] = None,
+        order_by: Optional[List[str]] = None,
+        limit: Optional[int] = None,
+        distinct: bool = False,
+        params: Optional[Dict[str, Any]] = None,
+    ) -> QueryResult:
+        """Row-level (detail) query rooted on one dataset: one row per row of it,
+        with the fields of the datasets it reaches many-to-one as extra columns."""
+        handle = await asyncio.to_thread(self._handle_for_dataset, dataset)
+        # An order key that repeats a requested field becomes its result column.
+        columns = {field: self._detail_column(field, dataset) for field in fields}
+        order_by = [
+            f"-{columns.get(key[1:], key[1:])}" if key.startswith("-") else columns.get(key, key)
+            for key in order_by or []
+        ]
+        query = self._detail_query(dataset, fields, where=where, order_by=order_by, limit=limit)
+        if context_filter:
+            query["context_filter"] = context_filter
+        if time_start or time_end:
+            query["time_range"] = {"start": time_start, "end": time_end}
+        if distinct:
+            query["distinct"] = True
+        if params:
+            query["params"] = dict(params)
+        return await self._run_detail_query(handle, query, list(fields), label_concept_paths=False)
+
+    @staticmethod
+    def _detail_column(field: str, root: str) -> str:
+        """The result column Dosi names a detail field: the root prefix dropped,
+        each remaining ``.`` turned into ``__``, a grain appended the same way
+        (``orders.order_id`` → ``order_id``, ``customers.name`` → ``customers__name``,
+        ``orders.created_at:month`` → ``created_at__month``)."""
+        reference, _, grain = field.partition(":")
+        parts = reference.split(".")
+        if len(parts) > 1 and parts[0] == root:
+            parts = parts[1:]
+        column = "__".join(parts)
+        return f"{column}__{grain}" if grain else column
+
+    @staticmethod
+    def _detail_query(
+        root: str,
+        fields: List[str],
+        *,
+        where: Optional[str],
+        order_by: Optional[List[str]],
+        limit: Optional[int],
+    ) -> Dict[str, Any]:
+        """The engine's DetailQuery dict for the keys both detail surfaces share."""
+        query: Dict[str, Any] = {"from": root, "fields": list(fields)}
         if where:
             query["where_sql"] = where
         if order_by:
@@ -695,11 +753,29 @@ class DosiRuntime:
             ]
         if limit is not None:
             query["limit"] = int(limit)
+        return query
+
+    async def _run_detail_query(
+        self,
+        handle: EngineHandle,
+        query: Dict[str, Any],
+        fields: List[str],
+        *,
+        label_concept_paths: bool,
+    ) -> QueryResult:
+        """Execute a detail query on ``handle``'s engine.
+
+        ``label_concept_paths`` renames the columns of concept-path fields back
+        to the paths as requested; a dataset query keeps the engine's column
+        names (``field`` on the root, ``<dataset>__<field>`` elsewhere).
+        """
+        binding = await asyncio.to_thread(load_binding)
+        engine = await asyncio.to_thread(handle.get)
         connection = handle.profile_name
         query = await asyncio.to_thread(
             self._order_by_requested_columns,
             query,
-            list(fields),
+            fields,
             engine.compile_select,
             self._dry_run_dialect(binding, connection),
             connection,
@@ -712,7 +788,7 @@ class DosiRuntime:
                 timeout_secs=float(self.config.timeout_seconds),
             )
         except Exception as exc:  # noqa: BLE001 - mapped to typed errors below
-            raise_mapped(exc, binding, requested_dimensions=list(fields))
+            raise_mapped(exc, binding, requested_dimensions=fields)
             raise  # unreachable; raise_mapped always raises
         metadata: Dict[str, Any] = {
             "sql": result["sql"],
@@ -721,6 +797,10 @@ class DosiRuntime:
         }
         if result.get("requested_columns") is not None:
             metadata["requested_columns"] = result["requested_columns"]
+        if result.get("warnings"):
+            metadata["warnings"] = list(result["warnings"])
+        if not label_concept_paths:
+            return QueryResult(columns=list(result["columns"]), data=list(result["rows"]), metadata=metadata)
         dataset_names = await asyncio.to_thread(lambda: [str(row.get("name")) for row in engine.datasets()])
         columns, rows = self._label_requested_columns(result, dataset_names)
         return QueryResult(columns=columns, data=rows, metadata=metadata)
@@ -1171,6 +1251,24 @@ class DosiRuntime:
                 )
             )
         return dict(handles)[model_path]
+
+    def _handle_for_dataset(self, dataset: str) -> EngineHandle:
+        """The model file that declares ``dataset``; the first one when several do."""
+        handles, _, _ = self._catalog()
+        known: List[str] = []
+        for _, handle in handles:
+            names = [str(row.get("name") or "") for row in handle.get().datasets()]
+            if dataset in names:
+                return handle
+            known.extend(name for name in names if name)
+        candidates = sorted(set(known))
+        raise SemanticValidationException(
+            SemanticValidationError(
+                code="unknown_dataset",
+                candidates=candidates,
+                message=f"unknown dataset {dataset!r} | candidates: {', '.join(candidates) or '(none)'}",
+            )
+        )
 
     def _handle_for_metrics(self, metrics: List[str]) -> EngineHandle:
         handles, metric_to_path, model_to_path = self._catalog()

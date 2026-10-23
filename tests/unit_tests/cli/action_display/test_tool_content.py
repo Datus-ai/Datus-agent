@@ -2636,6 +2636,22 @@ class TestSemanticToolHeaders:
         header = self._header("query_metrics", {"metrics": ["a", "b", "c"], "dimensions": ["region"]})
         assert header == '"a" +2 by region'
 
+    def test_query_rows_shows_whose_rows_and_which_fields(self):
+        header = self._header(
+            "query_rows",
+            {
+                "dataset": "logins",
+                "fields": ["logins.player_id", "players.region"],
+                "time_start": "2026-08-01",
+                "time_end": "2026-09-01",
+                "distinct": True,
+                "where": "logins.channel = 3",
+            },
+        )
+        assert header == '"logins": player_id +1 · 2026-08 · distinct'
+        assert self._header("query_rows", {"dataset": "orders", "fields": ["orders.order_id"]}) == '"orders": order_id'
+        assert self._header("query_rows", {"fields": ["orders.order_id"]}) == ""
+
     def test_validate_semantic_hides_the_default_scope(self):
         assert self._header("validate_semantic", {"scope": "all"}) == ""
         assert self._header("validate_semantic", {"scope": "semantic_model"}) == '"semantic_model"'

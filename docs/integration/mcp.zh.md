@@ -278,7 +278,7 @@ MCP 服务注册以下工具。实际可用情况取决于数据源和已配置�
 | --- | --- |
 | **数据库** | `check_datasource_quality`, `describe_table`, `execute_sql`, `get_migration_capabilities`, `import_database_file`, `list_databases`, `list_schemas`, `list_tables`, `load_file_as_table`, `plan_datasource`, `search_table`, `suggest_table_layout`, `validate_ddl` |
 | **上下文搜索** | `get_reference_sql`, `list_subject_tree`, `search_metrics`, `search_reference_sql`, `search_semantic_objects` |
-| **语义模型** | `attribution_analyze`, `get_metric`, `get_query_metrics_result`, `list_metrics`, `query_metrics`, `validate_semantic` |
+| **语义模型** | `attribution_analyze`, `get_metric`, `get_query_metrics_result`, `list_metrics`, `query_metrics`, `query_rows`, `validate_semantic` |
 | **参考模板** | `execute_reference_template`, `get_reference_template`, `render_reference_template`, `search_reference_template` |
 | **日期解析** | `parse_temporal_expressions` |
 | **平台文档** | `get_document`, `list_document_nav`, `search_document` |

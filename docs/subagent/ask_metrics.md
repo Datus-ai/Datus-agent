@@ -85,6 +85,7 @@ Key behavior:
 - `get_metric` is called before grouping, filtering, or attribution.
 - Grouping names come directly from `get_metric.dimensions[].name`, including dataset qualification where present.
 - `query_metrics` is the primary tool for metric values.
+- `query_rows` reads individual rows, such as a list of ids or the records matching some conditions, when the answer is not a metric value.
 - `attribution_analyze` is used for change explanation and contribution questions.
 - Raw SQL tools are not part of the default AskMetrics surface.
 
@@ -97,6 +98,7 @@ Key behavior:
 | `semantic_tools.list_metrics` | Enumerate executable metrics from Dosi |
 | `semantic_tools.get_metric` | Describe one metric: its queryable dimensions, time axis, and grains |
 | `semantic_tools.query_metrics` | Query metric values |
+| `semantic_tools.query_rows` | Read individual rows of one dataset, with fields of the datasets it relates to |
 | `semantic_tools.attribution_analyze` | Explain metric movement across candidate dimensions |
 
 If the Dosi runtime is unavailable, AskMetrics cannot safely answer metric questions. If context search is unavailable, AskMetrics can still query Dosi, but it will not have subject-tree routing context.

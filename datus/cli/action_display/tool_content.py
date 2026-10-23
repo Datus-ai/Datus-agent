@@ -258,6 +258,30 @@ def _args_query_metrics(args: dict) -> str:
     return head
 
 
+def _args_query_rows(args: dict) -> str:
+    """``query_rows(...)``: whose rows, which fields, over which window.
+
+    Like ``query_metrics``, the filters and ordering refine a call the reader
+    can already recognize, and belong in verbose.
+    """
+    dataset = str(args.get("dataset") or "").strip()
+    if not dataset:
+        return ""
+    head = f'"{dataset}"'
+    fields = args.get("fields")
+    if isinstance(fields, str):
+        fields = [fields]
+    names = [_short_dimension(f) for f in (fields or []) if str(f or "").strip()]
+    if names:
+        head = f"{head}: {names[0]}" if len(names) == 1 else f"{head}: {names[0]} +{len(names) - 1}"
+    window = _format_time_window(args.get("time_start"), args.get("time_end"))
+    if window:
+        head = f"{head} · {window}"
+    if args.get("distinct") is True:
+        head = f"{head} · distinct"
+    return head
+
+
 def _args_validate_semantic(args: dict) -> str:
     """``validate_semantic(...)``: only a non-default scope, and the model name."""
     parts: List[str] = []
@@ -561,6 +585,7 @@ _TOOL_ARGS_FORMATTERS: Dict[str, Callable[[dict], str]] = {
     "list_metrics": lambda a: _args_list_metrics(a),
     "get_metric": lambda a: _format_positional(a, "name"),
     "query_metrics": lambda a: _args_query_metrics(a),
+    "query_rows": lambda a: _args_query_rows(a),
     "validate_semantic": lambda a: _args_validate_semantic(a),
     # Semantic discovery tools
     "profile_semantic_model_evidence": lambda a: _format_kw(a, "query_text", "tables", "profile_mode"),
@@ -2676,6 +2701,8 @@ class ToolCallContentBuilder:
         self._registry["list_metrics"] = _build_list_metrics_semantic
         self._registry["get_metric"] = _build_get_metric
         self._registry["query_metrics"] = _build_query_metrics
+        # Same result shape: columns, compressed data, row_count.
+        self._registry["query_rows"] = _build_query_metrics
         self._registry["validate_semantic"] = _build_validate_semantic
         self._registry["attribution_analyze"] = _build_attribution_analyze
 

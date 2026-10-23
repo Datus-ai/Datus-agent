@@ -99,6 +99,7 @@ _NORMAL_RULES = [
     _rule("semantic_tools", "search_*", PermissionLevel.ALLOW),
     _rule("semantic_tools", "get_*", PermissionLevel.ALLOW),
     _rule("semantic_tools", "query_metrics", PermissionLevel.ALLOW),
+    _rule("semantic_tools", "query_rows", PermissionLevel.ALLOW),
     # semantic generation helpers
     _rule("semantic_tools", "check_semantic_object_exists", PermissionLevel.ALLOW),
     _rule("semantic_tools", "end_*_generation", PermissionLevel.ALLOW),

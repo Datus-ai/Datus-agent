@@ -1549,3 +1549,129 @@ async def test_dimensions_without_native_requirements_remain_optional(make_runti
         not dimension.required and dimension.required_reason is None and not dimension.time_axis_required
         for dimension in dimensions
     )
+
+
+@pytest.mark.asyncio
+async def test_select_rows_builds_a_detail_query_rooted_on_the_dataset(make_runtime):
+    runtime = make_runtime()
+    result = await runtime.select_rows(
+        "orders",
+        ["orders.order_id", "customers.name"],
+        where="orders.status = 'paid'",
+        context_filter="customers.region = 'EU'",
+        time_start="2026-01-01",
+        time_end="2026-02-01",
+        order_by=["-customers.name"],
+        limit=50,
+        distinct=True,
+        params={"k": 7},
+    )
+    engine = FakeEngine.instances[-1]
+    [call] = engine.select_calls
+    assert call["query"] == {
+        "from": "orders",
+        "fields": ["orders.order_id", "customers.name"],
+        "where_sql": "orders.status = 'paid'",
+        # Ordered by the requested field, under the column the engine names it.
+        "order_by": [{"key": "customers__name", "desc": True}],
+        "limit": 50,
+        "context_filter": "customers.region = 'EU'",
+        "time_range": {"start": "2026-01-01", "end": "2026-02-01"},
+        "distinct": True,
+        "params": {"k": 7},
+    }
+    # The column name follows from the field itself: no probe compile.
+    assert engine.compile_select_calls == []
+    # A dataset query keeps the engine's column names.
+    assert result.columns == ["order_id", "customers__name"]
+    assert result.data == [{"order_id": 1, "customers__name": "Acme"}, {"order_id": 2, "customers__name": "Globex"}]
+    assert result.metadata["row_count"] == 2
+    assert result.metadata["requested_columns"][1] == {"requested": "customers.name", "column": "customers__name"}
+    assert "warnings" not in result.metadata
+
+
+@pytest.mark.parametrize(
+    "field, column",
+    [
+        ("orders.order_id", "order_id"),
+        ("customers.name", "customers__name"),
+        ("orders.created_at:month", "created_at__month"),
+        ("orders_to_ship_region.region_name", "orders_to_ship_region__region_name"),
+        ("amount", "amount"),
+    ],
+)
+def test_detail_column_follows_the_engine_naming(field, column):
+    from datus.tools.semantic_tools.dosi.runtime import DosiRuntime
+
+    assert DosiRuntime._detail_column(field, "orders") == column
+
+
+@pytest.mark.asyncio
+async def test_select_rows_sends_only_the_keys_it_was_given(make_runtime):
+    await make_runtime().select_rows("orders", ["orders.order_id"], order_by=["order_id"])
+    engine = FakeEngine.instances[-1]
+    assert engine.select_calls[0]["query"] == {
+        "from": "orders",
+        "fields": ["orders.order_id"],
+        "order_by": [{"key": "order_id", "desc": False}],
+    }
+    # ``order_id`` is already a result column: nothing to translate, no probe compile.
+    assert engine.compile_select_calls == []
+
+
+@pytest.mark.asyncio
+async def test_select_rows_passes_engine_warnings_through(make_runtime, monkeypatch):
+    warning = {"code": "where_not_in_lod", "level": "warning", "condition": "x = 1", "hint": "use context_filter"}
+    original_select = FakeEngine.select
+
+    def select_with_warning(engine, query, **kwargs):
+        return {**original_select(engine, query, **kwargs), "warnings": [warning]}
+
+    monkeypatch.setattr(FakeEngine, "select", select_with_warning)
+    result = await make_runtime().select_rows("orders", ["orders.order_id"])
+    assert result.metadata["warnings"] == [warning]
+
+
+@pytest.mark.asyncio
+async def test_select_rows_unknown_dataset_lists_candidates(make_runtime):
+    with pytest.raises(SemanticValidationException) as excinfo:
+        await make_runtime().select_rows("order", ["order.order_id"])
+    payload = excinfo.value.payload
+    assert payload.code == "unknown_dataset"
+    assert payload.candidates == ["customers", "orders"]
+    assert FakeEngine.instances[-1].select_calls == []
+
+
+@pytest.mark.asyncio
+async def test_select_rows_runs_on_the_file_that_declares_the_dataset(tmp_path, monkeypatch):
+    from datus.tools.semantic_tools.dosi.config import DosiConfig
+    from datus.tools.semantic_tools.dosi.runtime import DosiRuntime
+
+    _write_model(tmp_path / "orders.yaml", "orders_model", ["order_count"])
+    _write_model(tmp_path / "users.yml", "users_model", ["active_users"])
+    _install_file_catalog(monkeypatch, {"orders": ["order_count"], "users": ["active_users"]})
+    runtime = DosiRuntime(DosiConfig(semantic_models_path=str(tmp_path)))
+
+    await runtime.select_rows("users", ["users.id"])
+
+    called = [engine for engine in FakeEngine.instances if engine.select_calls]
+    assert [Path(engine.model_path).name for engine in called] == ["users.yml"]
+
+
+@pytest.mark.asyncio
+async def test_select_rows_fanout_refusal_keeps_the_hint(make_runtime, monkeypatch):
+    def refuse(engine, query, **kwargs):
+        raise QueryError(
+            'dataset "orders" is reachable from "customers" only against relationship "orders_to_customers"',
+            code="detail_fanout",
+            candidates=["orders -[orders_to_customers]-> customers"],
+            hint="query at the finer grain instead: from orders",
+        )
+
+    monkeypatch.setattr(FakeEngine, "select", refuse)
+    with pytest.raises(SemanticValidationException) as excinfo:
+        await make_runtime().select_rows("customers", ["customers.name", "orders.order_id"])
+    payload = excinfo.value.payload
+    assert payload.code == "detail_fanout"
+    assert payload.hint == "query at the finer grain instead: from orders"
+    assert payload.candidates == ["orders -[orders_to_customers]-> customers"]
