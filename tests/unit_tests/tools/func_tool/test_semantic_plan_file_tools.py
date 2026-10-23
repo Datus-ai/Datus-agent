@@ -253,3 +253,59 @@ def test_rejects_symlinked_plan_directory_outside_workspace(tmp_path):
 
     assert result.success == 0
     assert not (outside / "sales_model").exists()
+
+
+def test_direct_cli_write_and_later_instance_share_plan_identity(tmp_path):
+    initial = SemanticPlanFileTools(tmp_path).write_semantic_model_plan_file("sales", {"summary": "first"})
+    revised = SemanticPlanFileTools(tmp_path).write_semantic_model_plan_file("sales", {"summary": "second"})
+    assert revised.result["path"] == initial.result["path"]
+    assert revised.result["revision"] == 2
+    assert revised.result["review_status"] == "applied"
+
+
+def _commit_plan_in_worker(root, prepared, started, results):
+    started.set()
+    result = SemanticPlanFileTools(root).commit(prepared)
+    results.put((result.success, result.error))
+
+
+def test_commit_waits_for_another_process_and_rechecks_baseline(tmp_path):
+    import multiprocessing
+
+    from datus.tools.func_tool.semantic_plan_file_tools import fcntl
+
+    if fcntl is None:
+        pytest.skip("Cross-process advisory locks require POSIX")
+
+    writer = SemanticPlanFileTools(tmp_path)
+    saved = writer.write_semantic_model_plan_file("sales", {"summary": "accepted"})
+    prepared = writer.prepare("sales", {"summary": "proposal"})
+    target = tmp_path / saved.result["path"]
+    context = multiprocessing.get_context("spawn")
+    started = context.Event()
+    results = context.Queue()
+    worker = context.Process(target=_commit_plan_in_worker, args=(tmp_path, prepared, started, results))
+    with target.with_name(f".{target.name}.lock").open("a+") as lock_file:
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        worker.start()
+        try:
+            assert started.wait(10)
+            worker.join(0.2)
+            assert worker.is_alive()
+            assert target.read_text() == prepared.old_text
+            target.write_text("concurrent worker content")
+        finally:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+
+    try:
+        success, error = results.get(timeout=10)
+        worker.join(10)
+        assert worker.exitcode == 0
+        assert success == 0
+        assert "changed during review" in error
+        assert target.read_text() == "concurrent worker content"
+    finally:
+        if worker.is_alive():
+            worker.terminate()
+            worker.join(10)
+        results.close()

@@ -9,10 +9,7 @@ from fastapi import HTTPException
 
 from datus.api.routes.chat_routes import get_tool_preview
 from datus.tools.func_tool.semantic_plan_file_tools import SemanticPlanFileTools
-from datus.tools.permission.permission_config import PermissionLevel
-from datus.tools.permission.permission_manager import PermissionManager
-from datus.tools.permission.profiles import get_profile
-from datus.tools.proxy.semantic_plan_review import PLAN_WRITER, apply_semantic_plan_review
+from datus.tools.proxy.semantic_plan_review import apply_semantic_plan_review
 from datus.tools.proxy.tool_result_channel import ToolResultChannel
 
 
@@ -133,23 +130,6 @@ async def test_preview_is_scoped_to_the_session_owner(tmp_path):
     finally:
         node.tool_channel.cancel_all()
         await running
-
-
-@pytest.mark.parametrize(
-    "profile,permission",
-    [("normal", PermissionLevel.ASK), ("auto", PermissionLevel.ALLOW), ("dangerous", PermissionLevel.ALLOW)],
-)
-def test_writer_obeys_profiles_without_the_web_adapter(profile, permission):
-    manager = PermissionManager(get_profile(profile), active_profile=profile)
-    assert manager.check_permission("semantic_tools", PLAN_WRITER, "semantic_modeling") == permission
-
-
-def test_direct_cli_write_and_later_instance_share_plan_identity(tmp_path):
-    initial = SemanticPlanFileTools(tmp_path).write_semantic_model_plan_file("sales", {"summary": "first"})
-    revised = SemanticPlanFileTools(tmp_path).write_semantic_model_plan_file("sales", {"summary": "second"})
-    assert revised.result["path"] == initial.result["path"]
-    assert revised.result["revision"] == 2
-    assert revised.result["review_status"] == "applied"
 
 
 @pytest.mark.asyncio

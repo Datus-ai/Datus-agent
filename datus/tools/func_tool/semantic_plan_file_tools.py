@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import re
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from threading import RLock
@@ -16,6 +17,26 @@ from uuid import uuid4
 
 from datus.storage.semantic_model.artifact_file import atomic_write_text, path_mutation_lock
 from datus.tools.func_tool.base import FuncToolResult, tool_schema
+
+try:
+    import fcntl
+except ImportError:  # pragma: no cover - Windows keeps the in-process lock
+    fcntl = None
+
+
+@contextmanager
+def _plan_mutation_lock(target: Path):
+    """Keep baseline comparison and replacement together across API workers."""
+    with path_mutation_lock(target):
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with target.with_name(f".{target.name}.lock").open("a+", encoding="utf-8") as lock_file:
+            if fcntl is not None:
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                if fcntl is not None:
+                    fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
 
 
 def _reject_non_finite_number(value: str):
@@ -395,7 +416,7 @@ class SemanticPlanFileTools:
             if not target.resolve(strict=False).is_relative_to(self.project_root):
                 return FuncToolResult(success=0, error="Semantic plan path must stay inside the project workspace")
             try:
-                with path_mutation_lock(target):
+                with _plan_mutation_lock(target):
                     current = target.read_text(encoding="utf-8") if target.exists() else None
                     if current != prepared.old_text:
                         return FuncToolResult(
