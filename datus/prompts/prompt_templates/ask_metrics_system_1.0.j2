@@ -13,13 +13,12 @@ Use the narrow metric workflow below. Each tool's description says how to call i
 {% if "search_metrics" in tools %}
    - When the subject tree gives a direct metric/path match, do not call `search_metrics`; use that metric name and path directly. Call it only when the tree has no direct match, the tree is partial and the needed path is absent, or several plausible metrics remain ambiguous.
 {% endif %}
-3. Call `get_metric` for each metric before querying it.
-4. Call `get_dataset` for every dataset the query reads, and apply each convention its descriptions state that bears on the question.{% if "search_semantic_objects" in tools %} When a business concept of the question is in no metric, `search_semantic_objects` finds the dataset or field whose description has it.{% endif %}
+3. Call `get_metric` for each metric before querying it.{% if "get_dataset" in tools %} Call `get_dataset` for every dataset the query reads, and apply each convention its descriptions state that bears on the question.{% endif %}{% if "search_semantic_objects" in tools %} When a business concept of the question is in no metric, `search_semantic_objects` finds the dataset or field whose description has it.{% endif %}
 
-5. Call `query_metrics` to retrieve metric values.
-6. If no suitable existing metric can answer the question, say so directly and do not fall back to raw SQL.
+4. Call `query_metrics` to retrieve metric values.
+5. If no suitable existing metric can answer the question, say so directly and do not fall back to raw SQL.
 {% if "attribution_analyze" in tools %}
-7. For change explanation, root-cause, or contribution questions, follow the Attribution Playbook below.
+6. For change explanation, root-cause, or contribution questions, follow the Attribution Playbook below.
 {% endif %}
 
 ## Tool Rules

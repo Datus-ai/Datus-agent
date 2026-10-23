@@ -657,16 +657,21 @@ class AskMetricsAgenticNode(AgenticNode):
                 and hasattr(self.semantic_tools, "get_cached_query_metrics_result")
             ):
                 cached_result = self.semantic_tools.get_cached_query_metrics_result(parsed.result_id)
+            sql_query = ""
             if isinstance(cached_result, dict) and cached_result.get("csv"):
                 sql_return = cached_result["csv"]
                 row_count = cached_result.get("row_count", parsed.row_count)
+                # The result text leaves the compiled SQL out; the cache keeps it.
+                sql_query = str((cached_result.get("metadata") or {}).get("sql") or "")
             else:
                 sql_return = parsed.csv
                 row_count = parsed.row_count
 
             from datus.schemas.node_models import SQLContext
 
-            workflow.context.sql_contexts.append(SQLContext(sql_query="", sql_return=sql_return, row_count=row_count))
+            workflow.context.sql_contexts.append(
+                SQLContext(sql_query=sql_query, sql_return=sql_return, row_count=row_count)
+            )
             logger.info("Captured query_metrics result: %d columns, %d rows", len(parsed.columns), row_count)
             return {"success": True, "message": "query_metrics result captured"}
 

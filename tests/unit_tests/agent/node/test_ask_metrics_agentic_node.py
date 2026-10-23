@@ -256,8 +256,18 @@ class TestAskMetricsAgenticNode:
 
         prompt = node._get_system_prompt()
 
-        for absent in ("attribution", "Attribution", "search_metrics", "search_semantic_objects", "list_subject_tree"):
+        for absent in (
+            "attribution",
+            "Attribution",
+            "search_metrics",
+            "search_semantic_objects",
+            "list_subject_tree",
+            "get_dataset",
+        ):
             assert absent not in prompt, absent
+        # The steps stay numbered in order when a tool's step is left out.
+        assert "3. Call `get_metric` for each metric before querying it.\n" in prompt
+        assert "4. Call `query_metrics` to retrieve metric values." in prompt
         assert "`query_metrics` is the only tool that may produce metric results." in prompt
         assert "Use them as the routing catalog for direct metric matching." in prompt
 
@@ -914,6 +924,7 @@ class TestUpdateContext:
         node.semantic_tools.get_cached_query_metrics_result.return_value = {
             "csv": "metric_time__month,order_count\n2025-01-01,1\n2025-02-01,2\n",
             "row_count": 21,
+            "metadata": {"sql": "SELECT DATE_TRUNC('month', created_at), COUNT(*) FROM orders GROUP BY 1"},
         }
         workflow = MagicMock()
         workflow.context.sql_contexts = []
@@ -926,6 +937,8 @@ class TestUpdateContext:
         assert "2025-02-01,2" in ctx.sql_return
         assert "omitted" not in ctx.sql_return
         assert ctx.row_count == 21
+        # The text leaves the SQL out; the cached metadata keeps it for the workflow context.
+        assert ctx.sql_query.startswith("SELECT DATE_TRUNC")
 
     def test_captures_zero_row_result(self):
         actions = [_query_action("result_id: query_metrics:1\nrows: 0\n\nmetric_time__month,order_count")]

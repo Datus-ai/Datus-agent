@@ -1,0 +1,5 @@
+$8b355d86-bc2f-4527-8c3d-d1114909087d²‡name ÿÿÿÿÿÿÿÿÿ*string08)subject_node_id ÿÿÿÿÿÿÿÿÿ*int6408%
+created_at ÿÿÿÿÿÿÿÿÿ*string08id ÿÿÿÿÿÿÿÿÿ*string08.semantic_model_name ÿÿÿÿÿÿÿÿÿ*string08&description ÿÿÿÿÿÿÿÿÿ*string082vector ÿÿÿÿÿÿÿÿÿ*fixed_size_list:float:408&metric_type ÿÿÿÿÿÿÿÿÿ*string08'measure_expr ÿÿÿÿÿÿÿÿÿ*string08&base_measures	 ÿÿÿÿÿÿÿÿÿ*list08item
+ 	*string08#
+dimensions ÿÿÿÿÿÿÿÿÿ*list08item *string08!entities ÿÿÿÿÿÿÿÿÿ*list08item *string08'catalog_name ÿÿÿÿÿÿÿÿÿ*string08(database_name ÿÿÿÿÿÿÿÿÿ*string08&schema_name ÿÿÿÿÿÿÿÿÿ*string08sql ÿÿÿÿÿÿÿÿÿ*string08$	yaml_path ÿÿÿÿÿÿÿÿÿ*string08-
+updated_at ÿÿÿÿÿÿÿÿÿ*timestamp:ms:-08uid ÿÿÿÿÿÿÿÿÿ*string08(datasource_id ÿÿÿÿÿÿÿÿÿ*string08&storage_key ÿÿÿÿÿÿÿÿÿ*string08
