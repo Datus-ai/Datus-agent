@@ -83,6 +83,8 @@ PR_ACCEPTANCE_TARGETS = [
     "tests/integration/tools/db_tools/test_data_file_loader_excel.py",
     "tests/integration/tools/test_func_tools_db.py",
     "tests/integration/tools/test_dosi_attribution.py",
+    "tests/integration/tools/test_dosi_catalog_alignment.py",
+    "tests/integration/tools/test_dosi_metric_requirements.py",
     "tests/integration/tools/test_dosi_query_filters.py",
     "tests/integration/tools/test_dosi_ontology.py",
     "tests/integration/tools/test_mcp_acceptance.py",

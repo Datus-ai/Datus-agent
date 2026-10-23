@@ -26,6 +26,7 @@ from datus.configuration.node_type import NodeType
 from datus.schemas.action_history import ActionHistoryManager, ActionRole, ActionStatus
 from datus.schemas.ask_metrics_agentic_node_models import AskMetricsNodeInput
 from datus.utils.loggings import get_logger
+from datus.utils.query_result_text import parse_query_result_text
 
 logger = get_logger(__name__)
 
@@ -80,7 +81,7 @@ class TestAskMetricsAgentic:
 
         queried = node.semantic_tools.query_metrics(metrics=["school_count", "total_enrollment_k12"])
         assert queried.success == 1, f"query_metrics failed: {queried.error}"
-        cached = node.semantic_tools.get_cached_query_metrics_result(queried.result["result_id"])
+        cached = node.semantic_tools.get_cached_query_metrics_result(parse_query_result_text(queried.result).result_id)
         assert cached["columns"] == ["school_count", "total_enrollment_k12"]
         assert cached["row_count"] == 1
         rows = list(csv.DictReader(io.StringIO(cached["csv"])))

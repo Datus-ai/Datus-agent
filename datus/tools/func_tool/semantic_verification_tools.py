@@ -14,6 +14,7 @@ from typing import Any, Callable
 from pydantic import BaseModel, ConfigDict, Field
 
 from datus.tools.func_tool.base import FuncToolResult, tool_schema, trans_to_function_tool
+from datus.utils.query_result_text import parse_query_result_text
 
 
 class MetricQueryCheck(BaseModel):
@@ -298,12 +299,15 @@ class SemanticVerificationTools:
                 result["query_diagnostic"] = response.result
             return
         result["query_status"] = "passed"
-        payload = response.result or {}
-        cache = self.semantic_tools.get_cached_query_metrics_result(payload.get("result_id", ""))
+        # The agent reads the result text; the cached result keeps the rows and
+        # the metadata this check compares by.
+        parsed = parse_query_result_text(response.result)
+        cache = self.semantic_tools.get_cached_query_metrics_result(parsed.result_id or "") if parsed else None
         if cache is None:
             raise ValueError("Complete metric result is unavailable")
         actual = _rows(cache["data"], cache["columns"])
-        bindings = (payload.get("metadata") or {}).get("outputs") or []
+        metadata = cache.get("metadata") or {}
+        bindings = metadata.get("outputs") or []
         metric_columns = list(
             dict.fromkeys(
                 binding.get("column") or binding.get("name")
@@ -316,7 +320,7 @@ class SemanticVerificationTools:
         metric_column = metric_columns[0] if metric_columns else check.metric
         time_bindings = {
             dimension: (self._result_column(dimension, cache["columns"], grain), grain)
-            for dimension, grain in (payload.get("metadata") or {}).get("time_dimensions", {}).items()
+            for dimension, grain in metadata.get("time_dimensions", {}).items()
         }
         dimensions = {
             source: time_bindings[dimension][0]

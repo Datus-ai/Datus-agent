@@ -29,7 +29,7 @@ A concept path starts at a concept and follows properties and links by name: `Fl
 - A row whose joined value is empty or NULL holds facts that match no related record; report it as unmatched instead of dropping it. A metric left blank for a group means no facts for that combination; do not substitute zero.
 - When `query_metrics` metadata contains `join_policy_filtered_rows` greater than 0, disclose how many unmatched fact rows were excluded.
 - Prefer the most specific metric whose name or description matches the requested business concept, including ratio, conditional and windowed metrics, over rebuilding it from a generic metric plus filters.
-- When a result's metadata says the full result is cached, treat it as complete; do not re-query because the visible output is a compressed preview.
+- A result shows its first and last rows when it is long; the full result is cached and used for the final output, so do not re-query because rows are omitted from the preview.
 {% if require_final_result_selection %}
 - When you have the result that should be used as the final structured answer, call `select_final_metric_result` with the `result_id` from that successful `query_metrics` or `select_records` result. This selection is required; do not select diagnostic or exploratory queries as final.
 {% endif %}

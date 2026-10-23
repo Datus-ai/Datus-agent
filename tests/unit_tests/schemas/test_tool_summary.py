@@ -430,6 +430,11 @@ class TestSemanticFormatters:
         )
         assert out == "2/5 metrics+"
 
+    def test_list_metrics_text_page(self):
+        page = "Sales:\n- revenue -- Net revenue\n- gmv\nmore: 2 of 5 metrics shown; call again with offset=2"
+        assert _summarize("list_metrics", {"success": 1, "result": page}) == "2 metrics+"
+        assert _summarize("list_metrics", {"success": 1, "result": "Sales:\n- revenue"}) == "1 metric"
+
     def test_get_metric(self):
         out = _summarize(
             "get_metric",
@@ -447,7 +452,7 @@ class TestSemanticFormatters:
     def test_query_metrics_rows_and_cols(self):
         out = _summarize(
             "query_metrics",
-            {"success": 1, "result": {"columns": ["a", "b", "c"], "data": {"original_rows": 12}}},
+            {"success": 1, "result": "result_id: query_metrics:1\nrows: 12\n\na,b,c\n1,2,3"},
         )
         assert out == "12r × 3c"
 
@@ -951,8 +956,11 @@ def test_failure_path_uniform(tool: str):
         # Semantic fallbacks
         ("validate_semantic", {"valid": False, "issues": []}, "invalid"),
         ("attribution_analyze", {"selected_dimensions": ["region"]}, "selected region"),
+        # Records written before results became text
         ("query_metrics", {"columns": ["a", "b"]}, "2 cols"),
         ("query_metrics", {"data": {"original_rows": 7}}, "7 rows"),
+        ("query_metrics", {"columns": ["a", "b", "c"], "data": {"original_rows": 12}}, "12r × 3c"),
+        ("select_records", "result_id: select_records:1\nrows: 2\n\nid\n1\n2", "2r × 1c"),
         # Generation fallbacks
         ("check_semantic_object_exists", {"exists": True}, "object exists"),
         ("check_semantic_model_exists", {"exists": True}, "table exists"),
@@ -1059,7 +1067,7 @@ _LENGTH_CONTRACT_SAMPLES: list[tuple[str, Any]] = [
     # semantic
     ("list_metrics", {"items": [{"name": "m"} for _ in range(50)], "total": 9999, "has_more": True}),
     ("get_metric", {"name": "m", "dimensions": [{"name": "d"} for _ in range(50)]}),
-    ("query_metrics", {"columns": ["x"] * 50, "data": {"original_rows": 99999}}),
+    ("query_metrics", "rows: 99999\n\n" + ",".join(["x"] * 50)),
     ("validate_semantic", {"valid": False, "issues": list(range(999))}),
     ("search_metrics", [{}] * 99),
     ("search_reference_sql", [{}] * 99),
