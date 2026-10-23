@@ -236,7 +236,9 @@ class TestPromptAndResult:
         assert prompt_manager.render_template.call_count == 1
 
     @staticmethod
-    def _action(action_type, rows, sql):
+    def _action(action_type, rows, value):
+        # Both tools answer with the result text: a result_id line, a rows line, then CSV.
+        csv_rows = "".join(f"\n{value},P1" for _ in range(rows))
         return {
             "action_type": action_type,
             "status": "success",
@@ -244,11 +246,7 @@ class TestPromptAndResult:
             "output": {
                 "raw_output": {
                     "success": 1,
-                    "result": {
-                        "columns": ["alert_id", "priority"],
-                        "data": [["A007", "P1"]] * rows,
-                        "metadata": {"sql": sql},
-                    },
+                    "result": f"result_id: {action_type}:{value}\nrows: {rows}\n\nalert_id,priority{csv_rows}",
                 }
             },
         }
@@ -257,16 +255,14 @@ class TestPromptAndResult:
     def test_update_context_captures_the_last_result_of_either_tool(self, real_agent_config, mock_llm_create, last):
         node, _, _ = _make_node(real_agent_config)
         first = "query_metrics" if last == "select_records" else "select_records"
-        node.result = Mock(
-            action_history=[self._action(first, 5, "SELECT first"), self._action(last, 2, "SELECT last")]
-        )
+        node.result = Mock(action_history=[self._action(first, 5, "A001"), self._action(last, 2, "A007")])
         workflow = Mock()
         workflow.context.sql_contexts = []
 
         assert node.update_context(workflow)["success"] is True
         [captured] = workflow.context.sql_contexts
         assert captured.row_count == 2
-        assert captured.sql_query == "SELECT last"
+        assert captured.sql_return == "alert_id,priority\nA007,P1\nA007,P1"
 
     def test_success_result_uses_ontology_result_class(self, real_agent_config, mock_llm_create):
         from datus.schemas.action_history import ActionHistoryManager

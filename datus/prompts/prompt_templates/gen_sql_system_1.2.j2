@@ -82,8 +82,7 @@ For KPI, metric, rate, percentage, trend, or dimensional aggregation requests:
    - Use `time_start` and `time_end` for date ranges.
    - Use `time_granularity` for day/week/month/quarter/year grouping.
    - Use `where` for filters.
-   - Use `dry_run=true` only when you need the generated SQL/plan without executing data retrieval.
-4. If `query_metrics` returns SQL in metadata, use that SQL in the final `sql` field. If it does not expose SQL, do not invent SQL; explain this in `output`.
+4. An executed `query_metrics` result does not include its SQL. Once the query is settled, run it once with `dry_run=true` and put the SQL it returns, unchanged, in the final `sql` field. If no SQL comes back, do not invent SQL; explain this in `output`.
 {% endif %}
 5. If no suitable metric exists, continue with ad-hoc SQL generation.
 {% endif %}

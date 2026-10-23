@@ -77,7 +77,9 @@ def environment(tmp_path):
 
     runtime = Runtime()
     detail = {**REF, "dimensions": [{"name": "orders.region"}], "description": "Net revenue"}
-    semantic = SimpleNamespace(runtime=runtime, get_metric=lambda **kwargs: SimpleNamespace(success=1, result=detail))
+    semantic = SimpleNamespace(
+        runtime=runtime, metric_record=lambda **kwargs: SimpleNamespace(success=1, result=detail)
+    )
     return SimpleNamespace(
         root=tmp_path,
         model=model,
@@ -373,7 +375,7 @@ def test_pinned_execution_does_not_depend_on_live_subject_index(environment):
     tools, result = _save(env)
     assert result.success == 1, result.error
     saved = MetricQueryFile.model_validate_json((tools.queries_dir / "sales.metric.json").read_text())
-    env.semantic.get_metric = MagicMock(side_effect=AssertionError("published subject index unavailable"))
+    env.semantic.metric_record = MagicMock(side_effect=AssertionError("published subject index unavailable"))
     payload, _ = execute_metric_artifact_query(
         saved,
         semantic_tools=env.semantic,
@@ -506,7 +508,7 @@ def test_multiple_models_with_same_basename_remain_distinct(environment, kind, m
             "datasource": "warehouse",
         },
     )
-    monkeypatch.setattr(env.semantic, "get_metric", lambda **kwargs: SimpleNamespace(success=1, result=second_ref))
+    monkeypatch.setattr(env.semantic, "metric_record", lambda **kwargs: SimpleNamespace(success=1, result=second_ref))
 
     async def compile_cost(**kwargs):
         assert kwargs["metrics"] == ["cost"]
@@ -627,7 +629,7 @@ def test_different_metrics_cannot_mix_revisions_of_one_model(environment, kind, 
     other_ref = {"path": ["Commerce"], "name": "cost"}
     binding = env.runtime.artifact_metric_binding("revenue")
     monkeypatch.setattr(env.runtime, "artifact_metric_binding", lambda name: binding)
-    monkeypatch.setattr(env.semantic, "get_metric", lambda **kwargs: SimpleNamespace(success=1, result=other_ref))
+    monkeypatch.setattr(env.semantic, "metric_record", lambda **kwargs: SimpleNamespace(success=1, result=other_ref))
     monkeypatch.setattr(
         env.runtime,
         "query_metrics",

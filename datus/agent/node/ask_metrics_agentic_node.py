@@ -6,8 +6,6 @@
 
 from __future__ import annotations
 
-import csv
-import io
 import json
 from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional
 
@@ -34,6 +32,7 @@ from datus.tools.func_tool.reference_template_tools import ReferenceTemplateTool
 from datus.tools.func_tool.semantic_tools import SemanticTools
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
+from datus.utils.query_result_text import parse_query_result_text
 
 logger = get_logger(__name__)
 
@@ -52,6 +51,7 @@ class AskMetricsAgenticNode(AgenticNode):
         "context_search_tools.search_metrics",
         "semantic_tools.list_metrics",
         "semantic_tools.get_metric",
+        "semantic_tools.get_dataset",
         "semantic_tools.query_metrics",
         "semantic_tools.attribution_analyze",
         "context_search_tools.list_subject_tree",
@@ -243,6 +243,14 @@ class AskMetricsAgenticNode(AgenticNode):
     def _setup_specific_tool_method(self, category: str, method_name: str) -> None:
         if category == "context_search_tools" and method_name == "list_subject_tree":
             self._add_subject_tree_tool()
+            return
+        if (
+            category == "context_search_tools"
+            and method_name == "search_semantic_objects"
+            and not getattr(self.context_search_tools, "has_semantic_objects", False)
+        ):
+            # No dataset or field synced to search: the tool would only cost
+            # the agent a call.
             return
 
         tool_instance = self._ensure_tool_instance(category)
@@ -468,6 +476,8 @@ class AskMetricsAgenticNode(AgenticNode):
             "subject_tree_prompt": self.subject_tree_prompt,
             "subject_tree_prompt_limit": self.subject_tree_prompt_limit,
             "require_final_result_selection": self.require_final_result_selection,
+            # The prompt names only the tools this node mounts.
+            "tool_names": [getattr(tool, "name", "") for tool in self.tools or []],
             **self._extra_prompt_context(),
         }
 
@@ -546,46 +556,26 @@ class AskMetricsAgenticNode(AgenticNode):
         return {}
 
     @staticmethod
-    def _query_result_payload(action: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    def _query_result_payload(action: Dict[str, Any]) -> Any:
+        """The ``result`` of a successful tool action: the text of an executed
+        query, the dict of a selection; None for a failed one."""
         output = action.get("output", {})
         if not isinstance(output, dict):
             return None
         raw_output = output.get("raw_output", output)
         if not isinstance(raw_output, dict) or not raw_output.get("success"):
             return None
-        result = raw_output.get("result", {})
-        return result if isinstance(result, dict) else None
+        return raw_output.get("result")
 
     @staticmethod
-    def _query_result_columns(result: Dict[str, Any]) -> List[str]:
-        columns = result.get("columns", [])
-        if not isinstance(columns, list):
-            return []
-        return [str(column) for column in columns if str(column)]
-
-    @staticmethod
-    def _query_result_row_count(result: Dict[str, Any]) -> int:
-        data = result.get("data")
-        if isinstance(data, dict):
-            raw_count = data.get("original_rows", 0)
-            try:
-                return int(raw_count)
-            except (TypeError, ValueError):
-                return 0
-        if isinstance(data, list):
-            return len(data)
-        return 0
-
-    @staticmethod
-    def _query_result_id(result: Dict[str, Any]) -> Optional[str]:
-        result_id = result.get("result_id")
+    def _query_result_id(result: Any) -> Optional[str]:
+        if isinstance(result, dict):
+            result_id = result.get("result_id")
+        else:
+            parsed = parse_query_result_text(result)
+            result_id = parsed.result_id if parsed else None
         if isinstance(result_id, str) and result_id.strip():
             return result_id.strip()
-        metadata = result.get("metadata")
-        if isinstance(metadata, dict):
-            cache_key = metadata.get("_full_result_cache_key")
-            if isinstance(cache_key, str) and cache_key.strip():
-                return cache_key.strip()
         return None
 
     @classmethod
@@ -599,12 +589,8 @@ class AskMetricsAgenticNode(AgenticNode):
                 continue
             if action.get("status") != "success":
                 continue
-            result = cls._query_result_payload(action)
-            if not result:
-                continue
-            columns = cls._query_result_columns(result)
-            data = result.get("data")
-            if not columns or data is None:
+            parsed = parse_query_result_text(cls._query_result_payload(action))
+            if parsed is None or not parsed.columns:
                 continue
             selected = action
 
@@ -620,12 +606,9 @@ class AskMetricsAgenticNode(AgenticNode):
                 continue
             if action.get("status") != "success":
                 continue
-            result = cls._query_result_payload(action)
-            if not result:
-                continue
-            result_id = result.get("result_id")
-            if isinstance(result_id, str) and result_id.strip():
-                selected_result_id = result_id.strip()
+            result_id = cls._query_result_id(cls._query_result_payload(action))
+            if result_id:
+                selected_result_id = result_id
         return selected_result_id
 
     @classmethod
@@ -639,8 +622,7 @@ class AskMetricsAgenticNode(AgenticNode):
                 continue
             if action.get("action_type") not in cls.RESULT_ACTION_TYPES or action.get("status") != "success":
                 continue
-            result = cls._query_result_payload(action)
-            if result and cls._query_result_id(result) == result_id:
+            if cls._query_result_id(cls._query_result_payload(action)) == result_id:
                 return action
         return None
 
@@ -664,49 +646,28 @@ class AskMetricsAgenticNode(AgenticNode):
         else:
             action = self._select_last_query_metrics_action(actions)
 
-        if action:
-            result = self._query_result_payload(action) or {}
-
-            columns = result.get("columns", [])
-            data = result.get("data")
-            if not columns or data is None:
-                return super().update_context(workflow)
-
-            metadata = result.get("metadata", {}) or {}
+        parsed = parse_query_result_text(self._query_result_payload(action)) if action else None
+        if parsed is not None and parsed.columns:
+            # The full result the text previews; the preview itself only when
+            # the cache no longer holds it.
             cached_result = None
-            cache_key = metadata.get("_full_result_cache_key")
-            if cache_key and self.semantic_tools and hasattr(self.semantic_tools, "get_cached_query_metrics_result"):
-                cached_result = self.semantic_tools.get_cached_query_metrics_result(cache_key)
-
-            if isinstance(data, dict) and data.get("compressed_data"):
-                row_count = data.get("original_rows", 0)
-                if isinstance(cached_result, dict) and cached_result.get("csv"):
-                    sql_return = cached_result["csv"]
-                    row_count = cached_result.get("row_count", row_count)
-                else:
-                    sql_return = data["compressed_data"]
-            elif isinstance(data, list):
-                buf = io.StringIO()
-                writer = csv.writer(buf)
-                writer.writerow([str(column) for column in columns])
-                writer.writerows(data)
-                sql_return = buf.getvalue()
-                row_count = len(data)
+            if (
+                parsed.result_id
+                and self.semantic_tools
+                and hasattr(self.semantic_tools, "get_cached_query_metrics_result")
+            ):
+                cached_result = self.semantic_tools.get_cached_query_metrics_result(parsed.result_id)
+            if isinstance(cached_result, dict) and cached_result.get("csv"):
+                sql_return = cached_result["csv"]
+                row_count = cached_result.get("row_count", parsed.row_count)
             else:
-                return super().update_context(workflow)
-
-            sql_query = ""
-            for key in ("sql", "compiled_sql", "generated_sql"):
-                if metadata.get(key):
-                    sql_query = metadata[key]
-                    break
+                sql_return = parsed.csv
+                row_count = parsed.row_count
 
             from datus.schemas.node_models import SQLContext
 
-            workflow.context.sql_contexts.append(
-                SQLContext(sql_query=sql_query, sql_return=sql_return, row_count=row_count)
-            )
-            logger.info("Captured query_metrics result: %d columns, %d rows", len(columns), row_count)
+            workflow.context.sql_contexts.append(SQLContext(sql_query="", sql_return=sql_return, row_count=row_count))
+            logger.info("Captured query_metrics result: %d columns, %d rows", len(parsed.columns), row_count)
             return {"success": True, "message": "query_metrics result captured"}
 
         return super().update_context(workflow)

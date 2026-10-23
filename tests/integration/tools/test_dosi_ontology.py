@@ -29,6 +29,7 @@ from datus.tools.semantic_tools.dosi.engine import (
     binding_supports_mapping_documents,
     binding_supports_ontology,
 )
+from datus.utils.query_result_text import parse_query_result_text
 
 pytestmark = [pytest.mark.acceptance, pytest.mark.nightly]
 
@@ -108,8 +109,11 @@ def ontology_tools(agent_config) -> SemanticTools:
 
 
 def _rows(tool: SemanticTools, result) -> list[dict[str, str]]:
+    """The full rows behind a query's result text, from the cache it names."""
     assert result.success == 1, result.error
-    cached = tool.get_cached_query_metrics_result(result.result["result_id"])
+    text = parse_query_result_text(result.result)
+    assert text is not None, result.result
+    cached = tool.get_cached_query_metrics_result(text.result_id)
     return list(csv.DictReader(io.StringIO(cached["csv"])))
 
 
@@ -189,7 +193,7 @@ class TestOntologyAnswers:
                 "AND FlightAlert.flight.arrives_at.code = 'JFK'"
             ),
         )
-        assert result.result["columns"] == [
+        assert parse_query_result_text(result.result).columns == [
             "FlightAlert.id",
             "FlightAlert.flight.number",
             "FlightAlert.flight.arrives_at.name",
