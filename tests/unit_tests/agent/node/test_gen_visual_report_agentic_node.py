@@ -641,3 +641,46 @@ async def test_execute_stream_bound_consultative_turn_ends_normally(real_agent_c
     assert not result.get("error")
     assert result["app_jsx_path"] is None
     assert result["response"] == answer
+
+
+class TestReportDistFromAgentConfig:
+    """End-to-end guard for the ``agentic_nodes.gen_visual_report.report_dist`` key.
+
+    Regression: ``_parse_node_config`` copied a fixed ``direct_attributes``
+    whitelist out of the yml node section, and ``report_dist`` was not in it,
+    so an offline renderer bundle configured in ``agent.yml`` was silently
+    dropped and the report fell back to the unpkg CDN. These tests build the
+    node from a real ``agent_config`` (not a hand-populated ``node_config``)
+    so the whitelist itself is exercised.
+    """
+
+    def test_agent_config_report_dist_reaches_node_config(self, real_agent_config, mock_llm_create):
+        dist = "/opt/web-artifact-render-dist-2.0.0"
+        real_agent_config.agentic_nodes["gen_visual_report"]["report_dist"] = dist
+
+        node = _make_node(real_agent_config)
+
+        assert node.node_config.get("report_dist") == dist
+
+    def test_maybe_compile_html_passes_report_dist_to_renderer(self, real_agent_config, mock_llm_create, monkeypatch):
+        dist = "/opt/web-artifact-render-dist-2.0.0"
+        real_agent_config.agentic_nodes["gen_visual_report"]["report_dist"] = dist
+
+        node = _make_node(real_agent_config)
+        report_slug = "dist_from_yml"
+        _seed_render_on_disk(Path(real_agent_config.project_root), report_slug)
+
+        recorded: dict = {}
+
+        def _fake_render_report_html(*, project_root, report_slug, report_dist=None):
+            recorded["report_dist"] = report_dist
+            return Path(project_root) / "reports" / report_slug / "index.html"
+
+        monkeypatch.setattr(
+            "datus.agent.node.visual_artifact.report_html_renderer.render_report_html",
+            _fake_render_report_html,
+        )
+
+        node._maybe_compile_html(report_slug)
+
+        assert recorded["report_dist"] == Path(dist)
