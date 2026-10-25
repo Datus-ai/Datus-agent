@@ -5,11 +5,14 @@
 """Tests for the permission hooks module."""
 
 import asyncio
+import json
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from datus.cli.execution_state import InteractionBroker
+from datus.tools.func_tool.semantic_plan_file_tools import SemanticPlanFileTools
 from datus.tools.permission import permission_hooks as permission_hooks_module
 from datus.tools.permission.permission_config import (
     PermissionConfig,
@@ -3225,3 +3228,32 @@ class TestPluginCliBashPermission:
         mock_broker.request = AsyncMock(return_value=[["y"]])
         await restarted.on_tool_start(self._ctx("datus hello sync"), MagicMock(), self._tool())
         mock_broker.request.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("non_interactive", [False, True])
+async def test_normal_cli_plan_writer_executes_without_confirmation(tmp_path, mock_broker, non_interactive):
+    """CLI plan writes remain direct in interactive and noninteractive normal mode."""
+    tool = SemanticPlanFileTools(tmp_path).available_tools()[0]
+    registry = ToolRegistry()
+    registry.register_tools("semantic_tools", [tool])
+    hooks = PermissionHooks(
+        broker=mock_broker,
+        permission_manager=PermissionManager(get_profile("normal"), active_profile="normal"),
+        node_name="semantic_modeling",
+        tool_registry=registry,
+        non_interactive=non_interactive,
+    )
+    hooks._request_user_confirmation = AsyncMock(return_value=True)
+    context = SimpleNamespace(tool_call_id="cli-plan")
+
+    await hooks.on_tool_start(context, None, tool)
+    result = await tool.on_invoke_tool(
+        context, json.dumps({"model_name": "sales", "plan_json": {"summary": "CLI plan"}})
+    )
+
+    hooks._request_user_confirmation.assert_not_awaited()
+    assert result["success"] == 1
+    assert result["result"]["review_status"] == "applied"
+    saved = json.loads((tmp_path / result["result"]["path"]).read_text())
+    assert saved["plan"]["summary"] == "CLI plan"

@@ -925,6 +925,9 @@ class ChatTaskManager:
                     )
                 else:
                     apply_proxy_tools(node, ["write_file", "edit_file", "delete_file"])
+                    from datus.tools.proxy.semantic_plan_review import apply_semantic_plan_review
+
+                    apply_semantic_plan_review(node)
             elif effective_source:
                 logger.warning("Unsupported source '%s'; skipping proxy shortcut", effective_source)
 
