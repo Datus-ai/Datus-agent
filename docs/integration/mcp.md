@@ -39,6 +39,70 @@ datus-mcp --dynamic --transport http --host 127.0.0.1 --port 8000
 datus-mcp --dynamic --transport sse --host 127.0.0.1 --port 8000
 ```
 
+## Blocking tools and capacity
+
+Both server modes execute synchronous tools, plugin argument transformers and
+result formatting in a dedicated worker pool. Request ContextVars propagate to
+workers; asynchronous tools are awaited on the request's event loop.
+
+Configure the pool in `agent.yml` (shared across tools and datasources within
+one server):
+
+```yaml
+agent:
+  mcp_tool_execution:
+    max_workers: 8
+    max_queue_size: 16
+```
+
+These are the defaults. `max_workers` must be positive and `max_queue_size`
+nonnegative. Calls beyond the running-plus-queued limit fail immediately with
+an MCP tool error; clients can retry later. This pool is separate from asyncio's
+default executor, keeping unrelated HTTP work responsive when tools stall.
+
+Integer strings are accepted for both capacity settings. Unknown keys, boolean
+values and fractional values produce configuration errors. Non-mapping
+`mcp_tool_execution` values fall back to the defaults.
+Warm datasource contexts use a non-blocking cache fast path, so lookups do not
+occupy tool workers when the cache lock is available. Cache hits also bypass
+datasource initialization locks.
+
+Cancelling a request does **not** terminate a blocking database driver call or
+release its capacity: submitted work retains its slot until it actually finishes.
+Configure connection and socket/read timeouts in the datasource adapter as well;
+an HTTP or asyncio timeout alone cannot stop a stalled StarRocks/PyMySQL read.
+Check that the adapter passes timeouts to the driver: a setting named
+`timeout_seconds` may only cover pool checkout, not socket reads. Adapter-level
+timeout changes belong in the separately versioned database adapter package.
+Shutdown stops accepting work without waiting on the event loop for stuck reads.
+
+Dynamic contexts remain pinned while HTTP/SSE requests or queued/running tools
+use them. LRU eviction retires a context; connector cleanup runs in the background
+only after the last user finishes, including workers whose callers cancelled.
+Shutdown retires the cache without waiting for datasource initialization. Any
+context created after shutdown is cleaned up rather than cached again.
+
+Static servers also retain connectors until every submitted tool call finishes,
+even if its request was cancelled. `close()` retires the tools and schedules
+connector cleanup in the background; it does not synchronously close active connections.
+
+Embedding backends using the original asynchronous `get_or_create_context()` /
+synchronous `close_all()` manager interface remain supported. The injected
+manager keeps its identity and configuration ownership. A compatibility layer
+serializes lookups only for the same datasource/subagent key; other keys keep
+working while initialization or policy I/O stalls. Previously returned contexts
+are pinned before policy refresh, so concurrent eviction cannot close their
+connectors. Returned contexts retain a request pin, and their `close()` calls on
+eviction defer cleanup until the last user finishes. The manager must start with
+an empty cache, route lookups through this server, and publish new cache entries
+after initialization/policy I/O, without yielding between publication and return.
+Pending lookups finish before `close_all()` runs in the cleanup worker.
+Such managers use the default bounded tool capacity; their async lookup method
+must keep its own blocking initialization off the event loop.
+
+Deploying this fix to an embedding backend requires updating its Datus-agent
+dependency/submodule and rebuilding the backend image.
+
 ## Client Integration
 
 ### Claude Code

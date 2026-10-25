@@ -36,6 +36,7 @@ Transformer contract (duck-typed so plugin packages never import ``datus.*``):
 
 from __future__ import annotations
 
+import asyncio
 import dataclasses
 import inspect
 import json
@@ -140,7 +141,7 @@ def wrap_tool_with_transformers(
             return await original.on_invoke_tool(tool_ctx, args_str)
 
         try:
-            context = dict(context_provider()) if context_provider is not None else {}
+            context = dict(await asyncio.to_thread(context_provider)) if context_provider is not None else {}
         except Exception as e:
             logger.warning("Tool middleware context provider failed for '%s': %s", original.name, e)
             context = {}
@@ -148,7 +149,10 @@ def wrap_tool_with_transformers(
         for transformer in transformers:
             transformer_name = getattr(transformer, "__name__", repr(transformer))
             try:
-                result = transformer(original.name, args, context)
+                if inspect.iscoroutinefunction(transformer):
+                    result = transformer(original.name, args, context)
+                else:
+                    result = await asyncio.to_thread(transformer, original.name, args, context)
                 if inspect.isawaitable(result):
                     result = await result
             except Exception as e:
