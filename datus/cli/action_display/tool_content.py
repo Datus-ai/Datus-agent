@@ -22,6 +22,7 @@ from datus.schemas.action_history import ActionHistory, ActionStatus
 from datus.schemas.tool_summary import TOOL_SUMMARY_REGISTRY, search_table_result_counts
 from datus.tools.permission.review_registry import PERMISSION_REVIEW_OUTPUT_KEY
 from datus.utils.loggings import get_logger
+from datus.utils.query_result_text import QueryResultText, omitted_rows, parse_query_result_text
 from datus.utils.tool_archive import is_archived_output, parse_archived_marker
 
 logger = get_logger(__name__)
@@ -1206,7 +1207,7 @@ def _format_csv_preview_markup(csv_text: str, max_rows: int = 10, max_col_width:
 
     data_rows: List[List[str]] = []
     for row in all_rows[1:]:
-        if all(c.strip() == "..." for c in row):
+        if all(c.strip() == "..." for c in row) or (len(row) == 1 and omitted_rows(row[0]) is not None):
             if data_rows:
                 data_rows.append(["..."] * len(header))
             continue
@@ -1941,12 +1942,36 @@ def _build_search_semantic_objects(action: ActionHistory, verbose: bool) -> Tool
     return _build_search_generic(action, verbose, "semantic object", "semantic objects")
 
 
+_METRIC_LIST_MORE = re.compile(r"^more: (\d+)(?: of (\d+))? metrics shown; call again with offset=(\d+)$")
+
+
+def _metric_page_from_text(text: str) -> dict:
+    """A ``list_metrics`` text page read back as the envelope older records hold:
+    one item per ``- name`` line, and the ``more:`` line's total and next offset."""
+    items, total, next_offset = [], None, None
+    for line in text.splitlines():
+        if line.startswith("- "):
+            items.append({"name": line[2:].split(" -- ", 1)[0]})
+        elif match := _METRIC_LIST_MORE.match(line):
+            total = int(match.group(2)) if match.group(2) else None
+            next_offset = int(match.group(3))
+    return {
+        "items": items,
+        "total": total,
+        "has_more": next_offset is not None,
+        "extra": {"next_offset": next_offset} if next_offset is not None else None,
+    }
+
+
 def _metric_envelope(action: ActionHistory) -> Optional[dict]:
-    """The ``FuncToolListResult`` payload ``list_metrics`` returns, if present."""
+    """The page ``list_metrics`` returned: the text it answers with now, read
+    back into the ``FuncToolListResult`` dict that older records hold."""
     data = parse_output_data(action.output)
     result = data.get("result") if data else None
     if isinstance(result, dict) and isinstance(result.get("items"), list):
         return result
+    if isinstance(result, str):
+        return _metric_page_from_text(result)
     return None
 
 
@@ -1954,17 +1979,21 @@ def _build_list_metrics_semantic(action: ActionHistory, verbose: bool) -> ToolCa
     """list_metrics (SemanticTools): the catalog page, and how much is left.
 
     Unlike every other tool sharing the search builder, this one answers with a
-    paginated envelope rather than a bare list — reading it as a list counts no
-    items at all and reports every call, however many metrics it found, as
-    zero.
+    page rather than a bare list — reading it as a list counts no items at all
+    and reports every call, however many metrics it found, as zero.
     """
     tc = make_base_content(action)
     envelope = _metric_envelope(action)
     if verbose:
         tc.args_lines = extract_args_markup(action)
         if action.output:
+            data = parse_output_data(action.output)
+            # The table needs the rows older records carry; text already reads as one.
+            older = data.get("result") if data else None
             tc.output_lines = (
-                _format_list_metrics_markup(envelope) if envelope else _format_result_only_markup(action.output)
+                _format_list_metrics_markup(envelope)
+                if isinstance(older, dict) and envelope
+                else _format_result_only_markup(action.output)
             )
         return tc
 
@@ -2010,6 +2039,16 @@ def _build_get_metric(action: ActionHistory, verbose: bool) -> ToolCallContent:
             )
         return tc
 
+    if isinstance(result, str):
+        # The text get_metric answers with: a ``required:`` line lists the
+        # dimensions a query must group by.
+        required = next(
+            (line[len("required: ") :] for line in result.splitlines() if line.startswith("required: ")), ""
+        )
+        if required:
+            count = len(required.split(", "))
+            tc.compact_result = f"{count} required"
+        return tc
     if not isinstance(result, dict):
         return tc
     dimensions = result.get("dimensions")
@@ -2028,70 +2067,45 @@ def _build_get_metric(action: ActionHistory, verbose: bool) -> ToolCallContent:
     return tc
 
 
-def _query_metrics_shape(result: Mapping[str, Any]) -> str:
-    """``N rows × M cols``, and what the compressor gave up to fit the budget.
+def _query_metrics_shape(result: QueryResultText) -> str:
+    """``N rows × M cols``, and how many of the rows the preview shows.
 
     The old summary reported the row count alone, which is the count the query
     produced — not the count that came back. A result trimmed from 32 rows to
     21 read as a complete 32, so a caller could total a column and be wrong
     without anything having failed.
     """
-    metadata = result.get("metadata")
-    columns = result.get("columns")
-    data = result.get("data")
-
-    rows = metadata.get("row_count") if isinstance(metadata, Mapping) else None
-    if rows is None and isinstance(data, Mapping):
-        rows = data.get("original_rows")
-    parts: List[str] = []
-    if isinstance(rows, int):
-        parts.append(f"{rows} {'row' if rows == 1 else 'rows'}")
-    if isinstance(columns, list):
-        parts.append(f"{len(columns)} {'col' if len(columns) == 1 else 'cols'}")
-    shape = " × ".join(parts)
-
-    if not isinstance(data, Mapping) or not data.get("is_compressed"):
-        return shape or "query completed"
-
-    notes: List[str] = []
-    preview = data.get("compressed_data")
-    if isinstance(preview, str) and preview.strip():
-        shown = len(preview.strip().splitlines()) - 1
-        if isinstance(rows, int) and 0 <= shown < rows:
-            notes.append(f"preview {shown}")
-    dropped = data.get("removed_columns")
-    if isinstance(dropped, list) and dropped:
-        notes.append(f"{len(dropped)} {'col' if len(dropped) == 1 else 'cols'} dropped")
-    if not notes:
-        return shape or "query completed"
-    return f"{shape} · {', '.join(notes)}" if shape else ", ".join(notes)
+    rows, columns = result.row_count, len(result.columns)
+    shape = f"{rows} {'row' if rows == 1 else 'rows'} × {columns} {'col' if columns == 1 else 'cols'}"
+    shown = result.shown_rows
+    return f"{shape} · preview {shown}" if shown < rows else shape
 
 
 def _build_query_metrics(action: ActionHistory, verbose: bool) -> ToolCallContent:
-    """query_metrics: show query result as CSV table."""
+    """query_metrics / select_records: the result's shape; verbose adds what it
+    reports and its rows as a table."""
     tc = make_base_content(action)
     data = parse_output_data(action.output)
-    result = data.get("result") if data else None
+    parsed = parse_query_result_text(data.get("result") if data else None)
 
     if verbose:
         tc.args_lines = extract_args_markup(action)
-        if action.output:
-            preview = result.get("data") or result.get("compressed_data") if isinstance(result, dict) else None
-            if isinstance(preview, Mapping):
-                preview = preview.get("compressed_data")
-            if isinstance(preview, str) and preview:
-                header = _query_metrics_shape(result)
-                dialect = (result.get("metadata") or {}).get("dialect") if isinstance(result, dict) else None
-                if dialect:
-                    header = f"{header} · {dialect}"
-                tc.output_lines = [f"[bold]{_escape_markup(header)}[/bold]", ""]
-                tc.output_lines.extend(_format_csv_preview_markup(preview))
-            else:
-                tc.output_lines = _format_result_only_markup(action.output)
+        if parsed is not None:
+            tc.output_lines = [f"[bold]{_escape_markup(_query_metrics_shape(parsed))}[/bold]"]
+            # The row count is in the shape already; a cap or cut values on that line are not.
+            tc.output_lines.extend(
+                _escape_markup(line)
+                for line in parsed.lines
+                if not line.startswith("result_id: ") and line != f"rows: {parsed.row_count}"
+            )
+            tc.output_lines.append("")
+            tc.output_lines.extend(_format_csv_preview_markup(parsed.csv))
+        elif action.output:
+            tc.output_lines = _format_result_only_markup(action.output)
         return tc
 
-    if isinstance(result, dict):
-        tc.compact_result = _query_metrics_shape(result)
+    if parsed is not None:
+        tc.compact_result = _query_metrics_shape(parsed)
     elif data:
         tc.compact_result = "query completed"
     return tc
@@ -2676,6 +2690,8 @@ class ToolCallContentBuilder:
         self._registry["list_metrics"] = _build_list_metrics_semantic
         self._registry["get_metric"] = _build_get_metric
         self._registry["query_metrics"] = _build_query_metrics
+        # select_records answers with the same result text.
+        self._registry["select_records"] = _build_query_metrics
         self._registry["validate_semantic"] = _build_validate_semantic
         self._registry["attribution_analyze"] = _build_attribution_analyze
 

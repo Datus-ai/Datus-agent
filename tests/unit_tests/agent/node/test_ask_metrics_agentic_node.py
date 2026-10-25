@@ -2,6 +2,7 @@
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
+import inspect
 import json
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
@@ -9,11 +10,24 @@ import pytest
 
 from datus.configuration.node_type import NodeType
 from datus.tools.func_tool.base import FuncToolResult
+from datus.tools.func_tool.semantic_tools import SemanticTools
+from datus.utils.query_result_text import parse_query_result_text
 
 
-def _fake_function_tool(method):
+def _query_action(text, *, action_type="query_metrics", **extra):
+    """A successful query action whose result is the text an executed query returns."""
+    return {
+        "action_type": action_type,
+        "status": "success",
+        "output": {"raw_output": {"success": 1, "result": text}},
+        **extra,
+    }
+
+
+def _fake_function_tool(method, **kwargs):
     tool = Mock()
     tool.name = getattr(method, "__name__", None) or getattr(method, "_mock_name", "tool")
+    tool.excluded_params = kwargs.get("excluded_params")
     return tool
 
 
@@ -22,6 +36,7 @@ def _semantic_tools():
     for name in (
         "list_metrics",
         "get_metric",
+        "get_dataset",
         "query_metrics",
         "validate_semantic",
         "attribution_analyze",
@@ -30,6 +45,7 @@ def _semantic_tools():
     tools.available_tools.return_value = [
         _fake_function_tool(tools.list_metrics),
         _fake_function_tool(tools.get_metric),
+        _fake_function_tool(tools.get_dataset),
         _fake_function_tool(tools.query_metrics),
         _fake_function_tool(tools.validate_semantic),
         _fake_function_tool(tools.attribution_analyze),
@@ -37,11 +53,12 @@ def _semantic_tools():
     return tools
 
 
-def _context_tools(tree):
+def _context_tools(tree, semantic_objects=True):
     tools = Mock()
     tools.list_subject_tree.return_value = FuncToolResult(result=tree)
-    for name in ("search_metrics",):
+    for name in ("search_metrics", "search_semantic_objects"):
         setattr(tools, name, Mock(name=name))
+    tools.has_semantic_objects = semantic_objects
     return tools
 
 
@@ -83,6 +100,7 @@ class TestAskMetricsAgenticNode:
                 {
                     "list_metrics",
                     "get_metric",
+                    "get_dataset",
                     "query_metrics",
                     "validate_semantic",
                     "attribution_analyze",
@@ -126,8 +144,8 @@ class TestAskMetricsAgenticNode:
         result = await query_tool.on_invoke_tool(None, json.dumps(arguments))
 
         assert result["success"] == 1
-        assert result["result"]["columns"] == ["revenue"]
-        assert result["result"]["data"]["original_rows"] == 1
+        assert parse_query_result_text(result["result"]).columns == ["revenue"]
+        assert parse_query_result_text(result["result"]).row_count == 1
         assert runtime.query_metrics.await_count == 1
         assert runtime.query_metrics.call_args.kwargs["metrics"] == ["revenue"]
         assert runtime.query_metrics.call_args.kwargs.get("params") == params
@@ -151,6 +169,7 @@ class TestAskMetricsAgenticNode:
             "search_metrics",
             "list_metrics",
             "get_metric",
+            "get_dataset",
             "query_metrics",
             "attribution_analyze",
         ]
@@ -170,14 +189,14 @@ class TestAskMetricsAgenticNode:
         assert "reference_sql" not in subject_tree_prompt
         assert "knowledge" not in subject_tree_prompt
         assert "reference_template" not in subject_tree_prompt
-        assert "do not call `list_subject_tree`" in prompt
+        # list_subject_tree is mounted only for a partial tree.
+        assert "list_subject_tree" not in prompt
         assert "do not call `search_metrics` for metrics that match these entries directly" in prompt
         assert "When the subject tree gives a direct metric/path match" in prompt
         assert "dedicated catalog metric" in prompt
         assert "## Attribution Playbook" in prompt
         assert "reuse its `drill_down.where_sql`" in prompt
         assert "Read detailed contributions from `per_dimension" in prompt
-        assert "OSI half-open `[start, end)` semantics" in prompt
         assert "`query_metrics.time_end` is inclusive" not in prompt
         assert "If `strategy` is `unsupported`" in prompt
         assert "`non_additive` or `truncated`" in prompt
@@ -185,23 +204,72 @@ class TestAskMetricsAgenticNode:
         assert "`dimension_analysis_failed`" in prompt
         assert "Do not invent helper metrics" in prompt
         assert "do not add a `where` filter that enumerates dimension values" in prompt
-        assert "Query complete metric results by default" in prompt
-        assert "Do not pass `limit` just to preview data" in prompt
-        assert "also pass `order_by`" in prompt
-        assert "full result is cached" in prompt
         assert "Never pass empty JSON values" in prompt
         assert "request those metrics in one `query_metrics(metrics=[...])` call" in prompt
         assert "query all requested catalog metrics together" in prompt
         assert "do not add sibling display/name/label dimensions" in prompt
-        # The field paths must match what get_metric actually returns: both sit
-        # on the result row, and there is no ``extra`` object to read them from.
-        assert "Read `time_dimension` and `time_granularities` from the result" in prompt
+        assert "Call `get_dataset` for every dataset the query reads" in prompt
         assert "extra.time_dimension" not in prompt
         assert "extra.time_granularities" not in prompt
-        assert "Pass every name in `required_dimensions` to" in prompt
         assert "advisory defaults, not an exhaustive allowlist" in prompt
         assert "for Dosi validation" in prompt
         assert node.subject_tree_prompt_limit == 100
+
+    def test_prompt_leaves_tool_usage_to_tool_descriptions(self, real_agent_config, mock_llm_create):
+        """Every tool rule is sent once: what a tool's description states, the
+        system prompt does not repeat."""
+        node, _, _ = _make_node(real_agent_config, tree={"Sales": {"Orders": {"metrics": ["revenue"]}}})
+        prompt = " ".join(node._get_system_prompt().split())
+        # The node mounts mocks here; the descriptions the model reads come from these docstrings.
+        tools = {
+            name: " ".join(inspect.getdoc(getattr(SemanticTools, name)).split())
+            for name in ("get_metric", "get_dataset", "query_metrics")
+        }
+
+        for rule, tool in (
+            ("Do not pass limit just to preview data", "query_metrics"),
+            ("also pass order_by", "query_metrics"),
+            ("full result is cached", "query_metrics"),
+            ("never the same start and end", "query_metrics"),
+            ("never repeated in `where`", "query_metrics"),
+            ("follow its `suggested_retry`", "query_metrics"),
+            ("finest first (the first is", "get_metric"),
+            ("dimensions every query of it must group by", "get_metric"),
+            ("issue several calls in parallel", "get_metric"),
+            ("issue the calls in", "get_dataset"),
+        ):
+            assert rule in tools[tool], rule
+            assert rule.replace("`", "") not in prompt.replace("`", ""), rule
+        assert "## Placing Conditions" not in prompt
+        assert "Pass every name under `required`" not in prompt
+        assert "OSI half-open `[start, end)` semantics" not in prompt
+
+    def test_prompt_names_only_mounted_tools(self, real_agent_config, mock_llm_create):
+        node, _, _ = _make_node(
+            real_agent_config,
+            tree={"Sales": {"Orders": {"metrics": ["revenue"]}}},
+            node_config={
+                "tools": "semantic_tools.list_metrics, semantic_tools.get_metric, semantic_tools.query_metrics"
+            },
+        )
+        assert {tool.name for tool in node.tools} == {"list_metrics", "get_metric", "query_metrics"}
+
+        prompt = node._get_system_prompt()
+
+        for absent in (
+            "attribution",
+            "Attribution",
+            "search_metrics",
+            "search_semantic_objects",
+            "list_subject_tree",
+            "get_dataset",
+        ):
+            assert absent not in prompt, absent
+        # The steps stay numbered in order when a tool's step is left out.
+        assert "3. Call `get_metric` for each metric before querying it.\n" in prompt
+        assert "4. Call `query_metrics` to retrieve metric values." in prompt
+        assert "`query_metrics` is the only tool that may produce metric results." in prompt
+        assert "Use them as the routing catalog for direct metric matching." in prompt
 
     def test_reference_date_is_injected_into_runtime_context(self, real_agent_config, mock_llm_create):
         from datus.schemas.ask_metrics_agentic_node_models import AskMetricsNodeInput
@@ -230,8 +298,8 @@ class TestAskMetricsAgenticNode:
 
         prompt = node._get_system_prompt()
 
-        assert "reserved input dimension `metric_time`" in prompt
-        assert "Never pass the suffixed output name in `dimensions`" in prompt
+        assert "Never pass a suffixed output name such as `metric_time__day` in `dimensions`" in prompt
+        assert "the query input remains `metric_time` plus `time_granularity`" in prompt
         assert "Order time-axis window results by their grained time result" in prompt
         assert "Order value-oriented window results" in prompt
 
@@ -398,6 +466,7 @@ class TestAskMetricsAgenticNode:
             "search_metrics",
             "list_metrics",
             "get_metric",
+            "get_dataset",
             "query_metrics",
             "attribution_analyze",
         ]
@@ -410,30 +479,10 @@ class TestAskMetricsAgenticNode:
         node, _, _ = _make_node(real_agent_config, tree={})
 
         def query_action(rows, *, limit):
-            return {
-                "action_type": "query_metrics",
-                "status": "success",
-                "input": {"arguments": f'{{"limit": {limit}}}'},
-                "output": {
-                    "raw_output": {
-                        "success": 1,
-                        "result": {
-                            "columns": [
-                                "metric_time__month",
-                                "customer_segment",
-                                "order_count",
-                                "previous_month_order_count",
-                                "order_count_mom_delta",
-                            ],
-                            "data": {
-                                "original_rows": rows,
-                                "compressed_data": f"rows={rows}",
-                            },
-                            "metadata": {},
-                        },
-                    }
-                },
-            }
+            return _query_action(
+                f"result_id: query_metrics:{rows}\nrows: {rows}\n\nmetric_time__month,order_count\nrows={rows}",
+                input={"arguments": f'{{"limit": {limit}}}'},
+            )
 
         node.result = Mock(
             action_history=[
@@ -448,7 +497,7 @@ class TestAskMetricsAgenticNode:
 
         assert result == {"success": True, "message": "query_metrics result captured"}
         assert len(workflow.context.sql_contexts) == 1
-        assert workflow.context.sql_contexts[0].sql_return == "rows=3"
+        assert workflow.context.sql_contexts[0].sql_return == "metric_time__month,order_count\nrows=3"
         assert workflow.context.sql_contexts[0].row_count == 3
 
     def test_update_context_required_selection_uses_selected_result_id(
@@ -464,24 +513,7 @@ class TestAskMetricsAgenticNode:
         )
 
         def query_action(result_id, rows):
-            return {
-                "action_type": "query_metrics",
-                "status": "success",
-                "output": {
-                    "raw_output": {
-                        "success": 1,
-                        "result": {
-                            "result_id": result_id,
-                            "columns": ["metric_time__month", "order_count"],
-                            "data": {
-                                "original_rows": rows,
-                                "compressed_data": f"rows={rows}",
-                            },
-                            "metadata": {},
-                        },
-                    }
-                },
-            }
+            return _query_action(f"result_id: {result_id}\nrows: {rows}\n\nmetric_time__month,order_count\nrows={rows}")
 
         node.result = Mock(
             action_history=[
@@ -505,7 +537,7 @@ class TestAskMetricsAgenticNode:
         result = node.update_context(workflow)
 
         assert result == {"success": True, "message": "query_metrics result captured"}
-        assert workflow.context.sql_contexts[0].sql_return == "rows=21"
+        assert workflow.context.sql_contexts[0].sql_return == "metric_time__month,order_count\nrows=21"
         assert workflow.context.sql_contexts[0].row_count == 21
 
     def test_update_context_required_selection_fails_without_selection(
@@ -661,6 +693,7 @@ class TestAskMetricsAgenticNode:
         assert [tool.name for tool in node.tools] == [
             "list_metrics",
             "get_metric",
+            "get_dataset",
             "query_metrics",
             "attribution_analyze",
         ]
@@ -801,10 +834,42 @@ class TestAskMetricsAgenticNode:
         assert {tool.name for tool in node.tools} == {
             "list_metrics",
             "get_metric",
+            "get_dataset",
             "query_metrics",
             "attribution_analyze",
             "search_metrics",
         }
+
+    @pytest.mark.parametrize("synced", [True, False])
+    def test_semantic_object_search_is_mounted_only_with_objects_to_search(
+        self, real_agent_config, mock_llm_create, synced
+    ):
+        from datus.agent.node.ask_metrics_agentic_node import AskMetricsAgenticNode
+
+        real_agent_config.agentic_nodes["ask_metrics"] = {
+            "tools": "context_search_tools.search_metrics,context_search_tools.search_semantic_objects"
+        }
+        semantic_tools = _semantic_tools()
+        context_tools = _context_tools({"Sales": {"metrics": ["revenue"]}}, semantic_objects=synced)
+        with (
+            patch("datus.agent.node.ask_metrics_agentic_node.SemanticTools", return_value=semantic_tools),
+            patch("datus.agent.node.ask_metrics_agentic_node.ContextSearchTools", return_value=context_tools),
+            patch(
+                "datus.agent.node.ask_metrics_agentic_node.trans_to_function_tool",
+                side_effect=_fake_function_tool,
+            ),
+        ):
+            node = AskMetricsAgenticNode(
+                node_id="ask_metrics_test",
+                description="Ask metrics",
+                node_type=NodeType.TYPE_ASK_METRICS,
+                agent_config=real_agent_config,
+                node_name="ask_metrics",
+            )
+
+        names = [tool.name for tool in node.tools]
+        assert "search_metrics" in names
+        assert ("search_semantic_objects" in names) is synced
 
     def test_extract_subject_tree_ignores_non_dict_nodes(self):
         from datus.agent.node.ask_metrics_agentic_node import AskMetricsAgenticNode
@@ -826,31 +891,15 @@ class TestUpdateContext:
         node._selected_final_result_id_from_actions = AskMetricsAgenticNode._selected_final_result_id_from_actions
         node._select_query_metrics_action_by_result_id = AskMetricsAgenticNode._select_query_metrics_action_by_result_id
         node._query_result_payload = AskMetricsAgenticNode._query_result_payload
+        node._query_result_id = AskMetricsAgenticNode._query_result_id
         node.update_context = AskMetricsAgenticNode.update_context.__get__(node)
         return node
 
-    def test_captures_compressed_data(self):
-        actions = [
-            {
-                "action_type": "query_metrics",
-                "status": "success",
-                "output": {
-                    "raw_output": {
-                        "success": 1,
-                        "result": {
-                            "columns": ["metric_time__month", "order_count"],
-                            "data": {
-                                "compressed_data": "index,metric_time__month,order_count\n0,2025-06,100",
-                                "original_rows": 1,
-                                "is_compressed": False,
-                            },
-                            "metadata": {"sql": "SELECT COUNT(*) FROM t"},
-                        },
-                    }
-                },
-            }
-        ]
+    def test_captures_the_preview_when_the_cache_no_longer_holds_the_result(self):
+        actions = [_query_action("result_id: query_metrics:1\nrows: 1\n\nmetric_time__month,order_count\n2025-06,100")]
         node = self._make_node_with_result(actions)
+        node.semantic_tools = MagicMock()
+        node.semantic_tools.get_cached_query_metrics_result.return_value = None
         workflow = MagicMock()
         workflow.context.sql_contexts = []
 
@@ -859,39 +908,23 @@ class TestUpdateContext:
         assert result["success"] is True
         assert len(workflow.context.sql_contexts) == 1
         ctx = workflow.context.sql_contexts[0]
-        assert "order_count" in ctx.sql_return
-        assert ctx.sql_query == "SELECT COUNT(*) FROM t"
+        assert ctx.sql_return == "metric_time__month,order_count\n2025-06,100"
+        assert ctx.sql_query == ""
         assert ctx.row_count == 1
 
-    def test_captures_full_cached_data_before_compressed_preview(self):
+    def test_captures_full_cached_data_before_the_preview(self):
         actions = [
-            {
-                "action_type": "query_metrics",
-                "status": "success",
-                "output": {
-                    "raw_output": {
-                        "success": 1,
-                        "result": {
-                            "columns": ["metric_time__month", "order_count"],
-                            "data": {
-                                "compressed_data": (
-                                    "metric_time__month,order_count\n2025-01-01,1\n...,...\n2025-12-01,12"
-                                ),
-                                "original_rows": 21,
-                                "is_compressed": True,
-                                "compression_type": "rows",
-                            },
-                            "metadata": {"_full_result_cache_key": "query_metrics:1"},
-                        },
-                    }
-                },
-            }
+            _query_action(
+                "result_id: query_metrics:1\nrows: 21\n\nmetric_time__month,order_count\n2025-01-01,1\n"
+                "... 19 rows omitted\n2025-12-01,12"
+            )
         ]
         node = self._make_node_with_result(actions)
         node.semantic_tools = MagicMock()
         node.semantic_tools.get_cached_query_metrics_result.return_value = {
             "csv": "metric_time__month,order_count\n2025-01-01,1\n2025-02-01,2\n",
             "row_count": 21,
+            "metadata": {"sql": "SELECT DATE_TRUNC('month', created_at), COUNT(*) FROM orders GROUP BY 1"},
         }
         workflow = MagicMock()
         workflow.context.sql_contexts = []
@@ -899,58 +932,22 @@ class TestUpdateContext:
         result = node.update_context(workflow)
 
         assert result["success"] is True
+        node.semantic_tools.get_cached_query_metrics_result.assert_called_once_with("query_metrics:1")
         ctx = workflow.context.sql_contexts[0]
         assert "2025-02-01,2" in ctx.sql_return
-        assert "..." not in ctx.sql_return
+        assert "omitted" not in ctx.sql_return
         assert ctx.row_count == 21
-
-    def test_captures_list_data(self):
-        actions = [
-            {
-                "action_type": "query_metrics",
-                "status": "success",
-                "output": {
-                    "raw_output": {
-                        "success": 1,
-                        "result": {
-                            "columns": ["ac_channel", "count"],
-                            "data": [["ch1", 10], ["ch2", 20]],
-                            "metadata": {},
-                        },
-                    }
-                },
-            }
-        ]
-        node = self._make_node_with_result(actions)
-        workflow = MagicMock()
-        workflow.context.sql_contexts = []
-
-        result = node.update_context(workflow)
-
-        assert result["success"] is True
-        ctx = workflow.context.sql_contexts[0]
-        assert "ch1" in ctx.sql_return
-        assert ctx.row_count == 2
-        assert ctx.sql_query == ""
+        # The text leaves the SQL out; the cached metadata keeps it for the workflow context.
+        assert ctx.sql_query.startswith("SELECT DATE_TRUNC")
 
     def test_captures_zero_row_result(self):
-        actions = [
-            {
-                "action_type": "query_metrics",
-                "status": "success",
-                "output": {
-                    "raw_output": {
-                        "success": 1,
-                        "result": {
-                            "columns": ["metric_time__month", "order_count"],
-                            "data": [],
-                            "metadata": {"sql": "SELECT month, count FROM t WHERE 1 = 0"},
-                        },
-                    }
-                },
-            }
-        ]
+        actions = [_query_action("result_id: query_metrics:1\nrows: 0\n\nmetric_time__month,order_count")]
         node = self._make_node_with_result(actions)
+        node.semantic_tools = MagicMock()
+        node.semantic_tools.get_cached_query_metrics_result.return_value = {
+            "csv": "metric_time__month,order_count\r\n",
+            "row_count": 0,
+        }
         workflow = MagicMock()
         workflow.context.sql_contexts = []
 
@@ -961,7 +958,28 @@ class TestUpdateContext:
         ctx = workflow.context.sql_contexts[0]
         assert ctx.sql_return == "metric_time__month,order_count\r\n"
         assert ctx.row_count == 0
-        assert ctx.sql_query == "SELECT month, count FROM t WHERE 1 = 0"
+
+    def test_a_dry_run_result_is_not_captured(self):
+        """A dry run returns compiled SQL, not rows: it is never the answer."""
+        actions = [
+            {
+                "action_type": "query_metrics",
+                "status": "success",
+                "output": {"raw_output": {"success": 1, "result": {"columns": ["sql"], "data": {}, "metadata": {}}}},
+            }
+        ]
+        node = self._make_node_with_result(actions)
+        workflow = MagicMock()
+        workflow.context.sql_contexts = []
+
+        with patch(
+            "datus.agent.node.agentic_node.AgenticNode.update_context",
+            return_value={"success": True, "message": "parent called"},
+        ):
+            result = node.update_context(workflow)
+
+        assert result["message"] == "parent called"
+        assert workflow.context.sql_contexts == []
 
     def test_query_result_helpers_handle_defensive_branches(self):
         from datus.agent.node.ask_metrics_agentic_node import AskMetricsAgenticNode
@@ -974,18 +992,12 @@ class TestUpdateContext:
 
         assert AskMetricsAgenticNode._query_result_payload({"output": "not-dict"}) is None
         assert AskMetricsAgenticNode._query_result_payload({"output": {"raw_output": {"success": 0}}}) is None
-        assert (
-            AskMetricsAgenticNode._query_result_payload({"output": {"raw_output": {"success": 1, "result": []}}})
-            is None
-        )
-        assert AskMetricsAgenticNode._query_result_columns({"columns": "x"}) == []
-        assert AskMetricsAgenticNode._query_result_columns({"columns": ["x", None, ""]}) == ["x", "None"]
-        assert AskMetricsAgenticNode._query_result_row_count({"data": {"original_rows": "bad"}}) == 0
-        assert AskMetricsAgenticNode._query_result_row_count({"data": [["a"], ["b"]]}) == 2
-        assert AskMetricsAgenticNode._query_result_row_count({"data": "not-list"}) == 0
         assert AskMetricsAgenticNode._query_result_id({"result_id": " rid "}) == "rid"
-        assert AskMetricsAgenticNode._query_result_id({"metadata": {"_full_result_cache_key": " cache "}}) == "cache"
-        assert AskMetricsAgenticNode._query_result_id({"metadata": {}}) is None
+        assert AskMetricsAgenticNode._query_result_id({"result_id": None}) is None
+        assert AskMetricsAgenticNode._query_result_id("result_id: rid\nrows: 1\n\nx\n1") == "rid"
+        assert AskMetricsAgenticNode._query_result_id("rows: 1\n\nx\n1") is None
+        assert AskMetricsAgenticNode._query_result_id("not a result") is None
+        assert AskMetricsAgenticNode._query_result_id(None) is None
 
         assert AskMetricsAgenticNode._select_last_query_metrics_action(["bad"]) is None
         assert AskMetricsAgenticNode._selected_final_result_id_from_actions(["bad"]) is None
@@ -1013,36 +1025,11 @@ class TestUpdateContext:
 
     def test_picks_last_successful_call(self):
         actions = [
-            {
-                "action_type": "query_metrics",
-                "status": "success",
-                "output": {
-                    "raw_output": {
-                        "success": 1,
-                        "result": {
-                            "columns": ["x"],
-                            "data": {"compressed_data": "index,x\n0,first", "original_rows": 1},
-                            "metadata": {},
-                        },
-                    }
-                },
-            },
-            {
-                "action_type": "query_metrics",
-                "status": "success",
-                "output": {
-                    "raw_output": {
-                        "success": 1,
-                        "result": {
-                            "columns": ["x"],
-                            "data": {"compressed_data": "index,x\n0,last", "original_rows": 1},
-                            "metadata": {},
-                        },
-                    }
-                },
-            },
+            _query_action("result_id: query_metrics:1\nrows: 1\n\nx\nfirst"),
+            _query_action("result_id: query_metrics:2\nrows: 1\n\nx\nlast"),
         ]
         node = self._make_node_with_result(actions)
+        node.semantic_tools = None
         workflow = MagicMock()
         workflow.context.sql_contexts = []
 

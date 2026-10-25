@@ -56,7 +56,7 @@ def test_dashboard_snapshot_roundtrip_and_render_only_reuse(tmp_path, monkeypatc
     refs = SubjectRefs(metrics=[dict(path=["Sales"], name="revenue")])
     tools = SimpleNamespace(
         runtime=SimpleNamespace(lineage_graph=AsyncMock(return_value=[graph()])),
-        get_metric=Mock(
+        metric_record=Mock(
             return_value=SimpleNamespace(
                 success=1, result={"name": "revenue", "path": ["Sales"], "description": "Net sales \u00e9"}
             )
@@ -83,10 +83,10 @@ def test_dashboard_snapshot_roundtrip_and_render_only_reuse(tmp_path, monkeypatc
         assert bake_metric_snapshots(tmp_path, refs, tools, artifact_kind="dashboard") is None
 
     assert target.read_text(encoding="utf-8") == original
-    tools.get_metric.assert_called_once_with(name="revenue", path=["Sales"])
+    tools.metric_record.assert_called_once_with(name="revenue", path=["Sales"])
     # A changed saved query cannot keep the previous model snapshot on failure.
     (queries / "sales.sql.j2").write_text("SELECT amount FROM shop.archive")
-    tools.get_metric.side_effect = RuntimeError("model offline")
+    tools.metric_record.side_effect = RuntimeError("model offline")
     assert bake_metric_snapshots(tmp_path, refs, tools, artifact_kind="dashboard") is None
     snapshot = json.loads(target.read_text())["metrics"][0]
     assert snapshot["status"] == "unavailable"
@@ -97,7 +97,7 @@ def test_wrong_subject_path_never_captures_same_named_metric(tmp_path):
     (tmp_path / "queries").mkdir()
     tools = SimpleNamespace(
         runtime=None,
-        get_metric=Mock(return_value=SimpleNamespace(success=1, result={"name": "revenue", "path": ["Other"]})),
+        metric_record=Mock(return_value=SimpleNamespace(success=1, result={"name": "revenue", "path": ["Other"]})),
     )
     assert (
         bake_metric_snapshots(
@@ -155,7 +155,7 @@ async def test_snapshot_survives_real_detail_bundle(tmp_path, kind):
     (queries / "external.brief.json").symlink_to(outside)
     tools = SimpleNamespace(
         runtime=None,
-        get_metric=Mock(
+        metric_record=Mock(
             return_value=SimpleNamespace(
                 success=1,
                 result={"name": "revenue", "path": ["Sales"]},
