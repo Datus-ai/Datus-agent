@@ -566,7 +566,7 @@ class TestLoadFileAsTablePermission:
 
 @pytest.mark.parametrize(
     "profile,permission",
-    [("normal", PermissionLevel.ASK), ("auto", PermissionLevel.ALLOW), ("dangerous", PermissionLevel.ALLOW)],
+    [("normal", PermissionLevel.ALLOW), ("auto", PermissionLevel.ALLOW), ("dangerous", PermissionLevel.ALLOW)],
 )
 def test_writer_obeys_profiles_without_the_web_adapter(profile, permission):
     manager = PermissionManager(get_profile(profile), active_profile=profile)

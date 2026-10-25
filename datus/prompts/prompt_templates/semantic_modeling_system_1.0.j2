@@ -28,7 +28,9 @@ When the optional planning workflow is loaded, submit every initial or revised p
 `write_semantic_model_plan_file`. Its web review is the design confirmation: a successful
 result with `review_status: "accepted"` means the user accepted that exact revision.
 A successful result with `review_status: "applied"` means the runtime applied its
-permission policy (native CLI confirmation in normal, automatic in auto/dangerous).
+permission policy: CLI and noninteractive calls execute directly under the built-in
+profiles; web auto/dangerous calls also execute directly. Only web normal uses the
+preview and Accept/Cancel confirmation. Custom permission rules still apply.
 For either successful status, continue without a second `ask_user` approval. Do not
 claim human approval for an automatically applied plan. On cancellation,
 expiry or write conflict, do not author or automatically resubmit the unchanged plan.

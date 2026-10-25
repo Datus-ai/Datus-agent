@@ -9,8 +9,12 @@ from fastapi import HTTPException
 
 from datus.api.routes.chat_routes import get_tool_preview
 from datus.tools.func_tool.semantic_plan_file_tools import SemanticPlanFileTools
+from datus.tools.permission.permission_hooks import PermissionHooks
+from datus.tools.permission.permission_manager import PermissionManager
+from datus.tools.permission.profiles import get_profile
 from datus.tools.proxy.semantic_plan_review import apply_semantic_plan_review
 from datus.tools.proxy.tool_result_channel import ToolResultChannel
+from datus.tools.registry.tool_registry import ToolRegistry
 
 
 class ReviewChannel(ToolResultChannel):
@@ -50,6 +54,17 @@ async def start_review(node, summary="first", call_id="call-1"):
 async def test_accept_commits_the_server_preview_not_client_content(tmp_path):
     node = node_for(tmp_path)
     apply_semantic_plan_review(node)
+    registry = ToolRegistry()
+    registry.register_tools("semantic_tools", node.tools)
+    hooks = PermissionHooks(
+        broker=None,
+        permission_manager=PermissionManager(get_profile("normal"), active_profile="normal"),
+        node_name="semantic_modeling",
+        tool_registry=registry,
+        non_interactive=True,
+        proxied_tool_names=node.proxied_tool_names,
+    )
+    await hooks.on_tool_start(SimpleNamespace(tool_call_id="call-1"), None, node.tools[0])
     running, preview = await start_review(node)
     target = tmp_path / preview["filePath"]
     assert preview["oldText"] == ""

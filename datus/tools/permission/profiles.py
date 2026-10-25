@@ -104,7 +104,6 @@ _NORMAL_RULES = [
     _rule("semantic_tools", "end_*_generation", PermissionLevel.ALLOW),
     _rule("semantic_tools", "generate_*_id", PermissionLevel.ALLOW),
     _rule("semantic_tools", "*", PermissionLevel.ALLOW),
-    _rule("semantic_tools", "write_semantic_model_plan_file", PermissionLevel.ASK),
     # scheduler read + destructive deny
     _rule("scheduler_tools", "list_*", PermissionLevel.ALLOW),
     _rule("scheduler_tools", "get_*", PermissionLevel.ALLOW),
