@@ -77,8 +77,8 @@ def apply_semantic_plan_review(node: Any, *, context: SemanticPlanReviewContext 
                 on_invoke_tool=invoke,
                 strict_json_schema=tool.strict_json_schema,
             )
-            # PermissionHooks must defer to this web review, as it does for
-            # filesystem proxies. Mutate the shared set rather than replace it.
+            # Mark the SSE call for web review; PermissionHooks still checks
+            # server-side plan writes. Mutate the shared set rather than replace it.
             node.proxied_tool_names.add(PLAN_WRITER)
             context.proxied_tool_names.add(PLAN_WRITER)
             break
