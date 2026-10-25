@@ -56,11 +56,6 @@ Use the narrow metric workflow below. Each tool's description says how to call i
 - When the engine's `suggested_retry` splits the question into two queries, no single result can hold every value: select the one with the main requested values and give the other query's values in the answer.
 {% endif %}
 
-## Snapshots and Dates
-
-- A date that qualifies a state (as of a day, the level or balance on a day, the stock on a day) is a snapshot's version day. When the question gives no such date, use the last day of the question's period and say in the answer which day you used.
-- `metric_time` returns calendar dates. When the question asks for another date format, group by the date field whose description gives that format.
-
 {% include "_ask_metrics_query_rules.j2" %}
 ## Subject Tree
 
