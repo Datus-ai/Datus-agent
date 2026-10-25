@@ -5161,8 +5161,9 @@
 <ul>
 <li>优先使用主题树中的直接指标匹配，而不是搜索。</li>
 <li>只有在主题树缺失、不完整或存在歧义时才使用 <code>search_metrics</code>。</li>
-<li>分组、过滤或归因前会先调用 <code>get_metric</code>。</li>
-<li>分组维度直接使用 <code>get_metric.dimensions[].name</code> 返回的名称，包括其中的数据集限定名。</li>
+<li>查询每个指标前先调用 <code>get_metric</code>，看它怎么算（<code>expr</code>）、读哪些数据集、可以按哪些数据集分组、有哪些参数和时间粒度。</li>
+<li>查询用到的每个数据集都先调用 <code>get_dataset</code>。数据集和字段的描述里写着查询它时要遵守的约定，比如快照取哪一天、编码值代表什么。</li>
+<li>分组和过滤的字段写成 <code>dataset.field</code>，字段名用 <code>get_dataset</code> 显示的名字。</li>
 <li><code>query_metrics</code> 是查询指标值的主要工具。</li>
 <li>变化解释和贡献分析问题使用 <code>attribution_analyze</code>。</li>
 <li>默认工具面不包含原始 SQL 工具。</li>
@@ -5190,7 +5191,11 @@
 </tr>
 <tr>
 <td><code>semantic_tools.get_metric</code></td>
-<td>描述单个指标：可查询维度、时间轴和粒度</td>
+<td>描述单个指标：怎么算、读哪些数据集、可按哪些数据集分组、参数和时间粒度</td>
+</tr>
+<tr>
+<td><code>semantic_tools.get_dataset</code></td>
+<td>描述单个数据集：字段及其定义、fixed 字段、时间字段和关联</td>
 </tr>
 <tr>
 <td><code>semantic_tools.query_metrics</code></td>
