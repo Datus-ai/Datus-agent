@@ -5161,8 +5161,9 @@
 <ul>
 <li>Direct subject-tree matches are preferred over search.</li>
 <li><code>search_metrics</code> is used only when the subject tree is missing, partial, or ambiguous.</li>
-<li><code>get_metric</code> is called before grouping, filtering, or attribution.</li>
-<li>Grouping names come directly from <code>get_metric.dimensions[].name</code>, including dataset qualification where present.</li>
+<li><code>get_metric</code> is called for each metric before it is queried. It states how the metric is computed (<code>expr</code>), the datasets it reads and can be grouped by, its parameters, and its time grains.</li>
+<li><code>get_dataset</code> is called for every dataset a query reads. Dataset and field descriptions hold conventions every query on it follows, such as a snapshot's version day or what a code value means.</li>
+<li>Grouping and filtering names are <code>dataset.field</code>, with the field name <code>get_dataset</code> shows.</li>
 <li><code>query_metrics</code> is the primary tool for metric values.</li>
 <li><code>attribution_analyze</code> is used for change explanation and contribution questions.</li>
 <li>Raw SQL tools are not part of the default AskMetrics surface.</li>
@@ -5190,7 +5191,11 @@
 </tr>
 <tr>
 <td><code>semantic_tools.get_metric</code></td>
-<td>Describe one metric: its queryable dimensions, time axis, and grains</td>
+<td>Describe one metric: how it is computed, the datasets it reads and can be grouped by, its parameters, and its time grains</td>
+</tr>
+<tr>
+<td><code>semantic_tools.get_dataset</code></td>
+<td>Describe one dataset: its fields with their definitions, fixed fields, time field, and relationships</td>
 </tr>
 <tr>
 <td><code>semantic_tools.query_metrics</code></td>
