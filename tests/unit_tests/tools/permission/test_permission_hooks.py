@@ -3257,3 +3257,40 @@ async def test_normal_cli_plan_writer_executes_without_confirmation(tmp_path, mo
     assert result["result"]["review_status"] == "applied"
     saved = json.loads((tmp_path / result["result"]["path"]).read_text())
     assert saved["plan"]["summary"] == "CLI plan"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("scope", ["global", "node"])
+@pytest.mark.parametrize("permission", [PermissionLevel.DENY, PermissionLevel.ASK])
+@pytest.mark.parametrize("non_interactive", [False, True])
+async def test_proxied_plan_writer_cannot_bypass_custom_rules(
+    tmp_path, mock_broker, scope, permission, non_interactive
+):
+    """A server-side plan review cannot grant a tool forbidden by its profile."""
+    tool = SemanticPlanFileTools(tmp_path).available_tools()[0]
+    registry = ToolRegistry()
+    registry.register_tools("semantic_tools", [tool])
+    custom = PermissionConfig(rules=[PermissionRule(tool="semantic_tools", pattern=tool.name, permission=permission)])
+    base = get_profile("normal")
+    manager = PermissionManager(
+        base.merge_with(custom) if scope == "global" else base,
+        node_overrides={"semantic_modeling": custom} if scope == "node" else None,
+        active_profile="normal",
+    )
+    hooks = PermissionHooks(
+        broker=mock_broker,
+        permission_manager=manager,
+        node_name="semantic_modeling",
+        tool_registry=registry,
+        non_interactive=non_interactive,
+        proxied_tool_names={tool.name},
+    )
+    hooks._request_user_confirmation = AsyncMock(return_value=False)
+
+    with pytest.raises(PermissionDeniedException):
+        await hooks.on_tool_start(SimpleNamespace(tool_call_id="review"), None, tool)
+
+    if permission == PermissionLevel.ASK and not non_interactive:
+        hooks._request_user_confirmation.assert_awaited_once()
+    else:
+        hooks._request_user_confirmation.assert_not_awaited()

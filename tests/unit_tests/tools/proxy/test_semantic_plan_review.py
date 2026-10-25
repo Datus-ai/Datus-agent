@@ -3,12 +3,14 @@
 import asyncio
 import json
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 from fastapi import HTTPException
 
 from datus.api.routes.chat_routes import get_tool_preview
 from datus.tools.func_tool.semantic_plan_file_tools import SemanticPlanFileTools
+from datus.tools.permission.permission_config import PermissionConfig, PermissionLevel, PermissionRule
 from datus.tools.permission.permission_hooks import PermissionHooks
 from datus.tools.permission.permission_manager import PermissionManager
 from datus.tools.permission.profiles import get_profile
@@ -51,30 +53,50 @@ async def start_review(node, summary="first", call_id="call-1"):
 
 
 @pytest.mark.asyncio
-async def test_accept_commits_the_server_preview_not_client_content(tmp_path):
+@pytest.mark.parametrize("permission", [None, PermissionLevel.ALLOW, PermissionLevel.ASK])
+@pytest.mark.parametrize("accept", [False, True])
+async def test_web_review_still_required_after_permission_check(tmp_path, permission, accept):
     node = node_for(tmp_path)
     apply_semantic_plan_review(node)
     registry = ToolRegistry()
     registry.register_tools("semantic_tools", node.tools)
+    config = get_profile("normal")
+    if permission is not None:
+        config = config.merge_with(
+            PermissionConfig(
+                rules=[PermissionRule(tool="semantic_tools", pattern=node.tools[0].name, permission=permission)]
+            )
+        )
     hooks = PermissionHooks(
         broker=None,
-        permission_manager=PermissionManager(get_profile("normal"), active_profile="normal"),
+        permission_manager=PermissionManager(config, active_profile="normal"),
         node_name="semantic_modeling",
         tool_registry=registry,
-        non_interactive=True,
+        non_interactive=permission != PermissionLevel.ASK,
         proxied_tool_names=node.proxied_tool_names,
     )
+    hooks._request_user_confirmation = AsyncMock(return_value=True)
     await hooks.on_tool_start(SimpleNamespace(tool_call_id="call-1"), None, node.tools[0])
+    if permission == PermissionLevel.ASK:
+        hooks._request_user_confirmation.assert_awaited_once()
+    else:
+        hooks._request_user_confirmation.assert_not_awaited()
     running, preview = await start_review(node)
     target = tmp_path / preview["filePath"]
     assert preview["oldText"] == ""
     assert not target.exists()
 
-    await node.tool_channel.publish("call-1", {"success": 1, "result": {"newText": "malicious browser content"}})
+    await node.tool_channel.publish(
+        "call-1", {"success": int(accept), "result": {"newText": "malicious browser content"}}
+    )
     result = await running
 
-    assert target.read_text() == preview["newText"]
-    assert result["result"]["review_status"] == "accepted"
+    if accept:
+        assert target.read_text() == preview["newText"]
+        assert result["result"]["review_status"] == "accepted"
+    else:
+        assert result["success"] == 0
+        assert not target.exists()
     assert not node.tool_review_previews
 
 
