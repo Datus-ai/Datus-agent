@@ -33,6 +33,7 @@ from datus.tools.func_tool.base import (
 )
 from datus.tools.func_tool.generation_evidence import GenerationEvidence
 from datus.tools.semantic_tools.dosi import DosiConfig, DosiRuntime
+from datus.tools.semantic_tools.dosi.engine import has_model_files
 from datus.tools.semantic_tools.models import (
     AttributionRequest,
     AttributionResult,
@@ -1127,7 +1128,11 @@ class SemanticTools:
                 semantic_models_path=str(self.agent_config.path_manager.semantic_model_path(datasource)),
                 semantic_model_path=semantic_model_path or None,
             )
-            if self.ontology_enabled:
+            # Ontology-aware agents always load the ontology directory. Every
+            # other agent stays on the plain model, unless the datasource has
+            # none: then its models are inline in mapping documents there, and
+            # skipping the directory would leave the datasource without a model.
+            if self.ontology_enabled or not has_model_files(runtime_config):
                 runtime_config = runtime_config.model_copy(
                     update={"ontology_dir": str(self.agent_config.path_manager.ontology_path(datasource))}
                 )

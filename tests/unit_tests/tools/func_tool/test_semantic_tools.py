@@ -2597,18 +2597,48 @@ class TestOntologyToolRegistration:
     def test_all_tools_name_lists_ontology_tools(self):
         assert set(SemanticTools.ONTOLOGY_TOOL_NAMES) <= set(SemanticTools.all_tools_name())
 
-    def test_runtime_config_carries_ontology_dir_only_when_enabled(self):
+    @staticmethod
+    def _layout(tmp_path, *, plain_model: bool):
+        """A datasource's model dir (with or without a plain model) and its ontology dir with an inline mapping."""
+        models_dir = tmp_path / "semantic_models" / "flights_db"
+        ontology_dir = tmp_path / "semantic_models" / "ontology" / "flights_db"
+        models_dir.mkdir(parents=True)
+        ontology_dir.mkdir(parents=True)
+        if plain_model:
+            (models_dir / "flights.yaml").write_text("version: '0.2.0.dev0'\nsemantic_model:\n  - name: flights\n")
+        (ontology_dir / "flights.mapping.yaml").write_text(
+            "version: 0.2.0.dev0\nname: flights_mapping\n"
+            "ontology_ref: {name: Flights, document: {version: 0.2.0.dev0, name: Flights, ontology: []}}\n"
+            "semantic_model_ref: {name: flights, document: {version: 0.2.0.dev0, name: flights, datasets: []}}\n"
+            "concept_mappings: []\n"
+        )
+        config = _ontology_config()
+        config.path_manager.semantic_model_path.return_value = str(models_dir)
+        config.path_manager.ontology_path.return_value = str(ontology_dir)
+        return config, ontology_dir
+
+    def _runtime_config(self, config, **kwargs):
         with (
             patch("datus.tools.func_tool.semantic_tools.MetricRAG"),
             patch("datus.tools.func_tool.semantic_tools.DosiRuntime") as runtime,
         ):
-            assert SemanticTools(agent_config=_ontology_config()).runtime is runtime.return_value
-            plain = runtime.call_args.args[0]
-            enabled_tools = SemanticTools(agent_config=_ontology_config(), ontology_enabled=True)
-            assert enabled_tools.runtime is runtime.return_value
-            enabled = runtime.call_args.args[0]
+            tool = SemanticTools(agent_config=config, **kwargs)
+            assert tool.runtime is runtime.return_value
+            return tool, runtime.call_args.args[0]
+
+    def test_plain_model_datasource_loads_ontology_only_when_enabled(self, tmp_path):
+        config, ontology_dir = self._layout(tmp_path, plain_model=True)
+        _, plain = self._runtime_config(config)
+        _, enabled = self._runtime_config(config, ontology_enabled=True)
         assert plain.ontology_dir is None
-        assert enabled.ontology_dir == "/tmp/models/ontology/flights_db"
+        assert enabled.ontology_dir == str(ontology_dir)
+
+    def test_mapping_only_datasource_loads_its_mappings_without_the_ontology_tools(self, tmp_path):
+        """Without a plain model the inline mappings are the datasource's only models, for every agent."""
+        config, ontology_dir = self._layout(tmp_path, plain_model=False)
+        tool, plain = self._runtime_config(config)
+        assert plain.ontology_dir == str(ontology_dir)
+        assert not set(SemanticTools.ONTOLOGY_TOOL_NAMES) & set(self._names(tool))
 
 
 @pytest.fixture

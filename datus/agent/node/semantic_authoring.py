@@ -60,6 +60,69 @@ def osi_semantic_model_directory(agent_config: Any = None) -> Optional[Path]:
     return _osi_semantic_model_dir(agent_config)
 
 
+def _ontology_dir(agent_config: Any = None) -> Optional[Path]:
+    """Return the active datasource's ontology directory when resolvable."""
+    if agent_config is None:
+        return None
+    datasource = str(getattr(agent_config, "current_datasource", "") or "default").strip() or "default"
+    ontology_path = getattr(getattr(agent_config, "path_manager", None), "ontology_path", None)
+    if not callable(ontology_path):
+        return None
+    try:
+        return Path(ontology_path(datasource)).expanduser()
+    except Exception:
+        return None
+
+
+def inline_mapping_models(agent_config: Any = None) -> list[Dict[str, Any]]:
+    """Ossie mapping documents of the active datasource that carry their semantic model inline.
+
+    Such a model lives inside ``semantic_model_ref.document`` of a file under
+    ``subject/semantic_models/ontology/<datasource>/``, next to the ontology it
+    maps. OSI authoring edits flat model files only, so these models are
+    readable by every agent but not authorable by semantic_modeling.
+    """
+    from datus.tools.semantic_tools.dosi.engine import document_kind
+
+    ontology_dir = _ontology_dir(agent_config)
+    if ontology_dir is None or not ontology_dir.is_dir():
+        return []
+    datasource = str(getattr(agent_config, "current_datasource", "") or "default").strip() or "default"
+    found: list[Dict[str, Any]] = []
+    paths = sorted({*ontology_dir.rglob("*.yml"), *ontology_dir.rglob("*.yaml"), *ontology_dir.rglob("*.json")})
+    for path in paths:
+        try:
+            document = yaml.safe_load(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, yaml.YAMLError):
+            continue
+        if document_kind(document if isinstance(document, dict) else None) != "mapping":
+            continue
+        model_ref = document.get("semantic_model_ref")
+        if not isinstance(model_ref, dict) or not isinstance(model_ref.get("document"), dict):
+            continue
+        relative_path = path.relative_to(ontology_dir).as_posix()
+        found.append(
+            {
+                "semantic_model_name": str(model_ref.get("name") or model_ref["document"].get("name") or ""),
+                "mapping_file": f"subject/semantic_models/ontology/{datasource}/{relative_path}",
+                "absolute_path": str(path.resolve(strict=False)),
+            }
+        )
+    return found
+
+
+def inline_mapping_message(datasource: str, mappings: Iterable[Dict[str, Any]]) -> str:
+    """Guidance returned when semantic_modeling meets models it cannot author."""
+    files = ", ".join(str(mapping.get("mapping_file")) for mapping in mappings) or "<none>"
+    return (
+        f"The semantic model of datasource {datasource!r} is inline in the Ossie mapping document(s) {files}. "
+        "semantic_modeling authors flat OSI model files only and cannot edit inside a mapping document, and it "
+        "must not create a separate model file beside it. Stop without editing any file and return "
+        "status 'blocked' with blocker_code 'semantic_model_inline_in_mapping'; tell the caller that the mapping "
+        "document (ontology, concept_params and metrics in one file) has to be edited directly."
+    )
+
+
 def osi_semantic_models_root(agent_config: Any = None) -> Optional[Path]:
     """Return the semantic-model root shared by every datasource.
 
@@ -183,6 +246,7 @@ def inspect_osi_semantic_model_inventory(agent_config: Any = None) -> Dict[str, 
             "issues": [],
             "discovery_warnings": [],
             "files_scanned": 0,
+            "inline_mapping_models": inline_mapping_models(agent_config),
         }
 
     datasource = str(getattr(agent_config, "current_datasource", "") or "default").strip() or "default"
@@ -425,6 +489,7 @@ def inspect_osi_semantic_model_inventory(agent_config: Any = None) -> Dict[str, 
         "issues": issues,
         "discovery_warnings": discovery_warnings,
         "files_scanned": len(paths),
+        "inline_mapping_models": inline_mapping_models(agent_config),
     }
 
 
@@ -581,6 +646,48 @@ def plan_osi_semantic_model_target(
 ) -> Dict[str, Any]:
     """Resolve a stable Ossie model name and file from authoring intent.
 
+    Reusing or repairing an existing plain model is always allowed. A new model
+    file is refused when the datasource also has a mapping that carries its own
+    model: the new file would become a second engine for the datasource and
+    change which model every non-ontology agent loads.
+    """
+    inventory = inventory if inventory is not None else inspect_osi_semantic_model_inventory(agent_config)
+    target = _resolve_osi_semantic_model_target(
+        agent_config,
+        semantic_model_name=semantic_model_name,
+        business_domain=business_domain,
+        fact_tables=fact_tables,
+        dimension_tables=dimension_tables,
+        inventory=inventory,
+    )
+    inline_mappings = inventory.get("inline_mapping_models") or []
+    if not inline_mappings or target.get("ambiguous") or target.get("exists"):
+        return target
+    datasource = str(getattr(agent_config, "current_datasource", "") or "default").strip() or "default"
+    return {
+        "ambiguous": True,
+        "code": "semantic_model_inline_in_mapping",
+        "matched_by": "inline_mapping",
+        "reason": inline_mapping_message(datasource, inline_mappings),
+        "candidates": [
+            {"semantic_model_name": mapping["semantic_model_name"], "semantic_model_file": mapping["mapping_file"]}
+            for mapping in inline_mappings
+        ],
+        "dimension_tables": target.get("dimension_tables") or [],
+    }
+
+
+def _resolve_osi_semantic_model_target(
+    agent_config: Any = None,
+    semantic_model_name: str = "",
+    business_domain: str = "",
+    fact_tables: Optional[Iterable[str]] = None,
+    dimension_tables: Optional[Iterable[str]] = None,
+    *,
+    inventory: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Resolve the target name and file, reused or new, without the inline-mapping check.
+
     An explicit name always wins. Without one, an existing model containing the
     core fact table is reused to keep its durable name. A new model is named by
     business domain when available, then by the first/core fact table. The
@@ -589,7 +696,6 @@ def plan_osi_semantic_model_target(
     """
     facts = [str(value).strip() for value in (fact_tables or []) if str(value).strip()]
     dimensions = [str(value).strip() for value in (dimension_tables or []) if str(value).strip()]
-    inventory = inventory if inventory is not None else inspect_osi_semantic_model_inventory(agent_config)
     duplicate_models = [issue for issue in inventory["issues"] if issue.get("code") == "duplicate_semantic_model_name"]
     existing_models = inventory["models"]
     named_models = [*existing_models, *inventory["recoverable_models"], *duplicate_models]

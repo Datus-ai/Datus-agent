@@ -571,6 +571,15 @@ async def test_retries_unsupported_outcome_once_before_finalizing(real_agent_con
             "blocked",
             False,
         ),
+        (
+            {
+                "status": "blocked",
+                "blocker_code": "semantic_model_inline_in_mapping",
+                "output": "The model is inline in an Ossie mapping document; edit the mapping directly",
+            },
+            "blocked",
+            False,
+        ),
     ],
 )
 @pytest.mark.asyncio
@@ -593,6 +602,7 @@ async def test_supported_outcome_does_not_retry(
     assert _stream_call_count(mock_llm_create) == 1
     assert actions[-1].output["status"] == expected_status
     assert actions[-1].output["success"] is expected_success
+    assert actions[-1].output["blocker_code"] == payload.get("blocker_code")
     if expected_status == "generated":
         node._finalize_selected_osi_artifact.assert_called_once_with()
     else:

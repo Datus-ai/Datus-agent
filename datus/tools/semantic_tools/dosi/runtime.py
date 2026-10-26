@@ -882,24 +882,40 @@ class DosiRuntime:
                 ],
             )
 
+        inline_mapping_handles = {
+            path: handle for path, handle in handles if handle.inputs[1] and handle.inputs[1] == path
+        }
+
+        def _validate_inline_mapping(handle: EngineHandle) -> dict[str, Any]:
+            # A mapping that carries its model inline is not OSI model text:
+            # loading its engine lowers the ontology and compiles every metric.
+            try:
+                engine = handle.get()
+                loaded_metrics = {str(row.get("name") or "") for row in engine.metrics()}
+            except Exception as exc:  # noqa: BLE001 - reported as the validation issue
+                return {
+                    "valid": False,
+                    "issues": [{"severity": "error", "code": "mapping_load_error", "message": str(exc)}],
+                }
+            # The engine load compiled these; they satisfy the requested-metric
+            # check below but carry no per-metric SQL evidence, so they are kept
+            # out of compiled_metrics.
+            return {"valid": True, "issues": [], "loaded_metric_names": sorted(loaded_metrics - {""})}
+
         def _validate(model_path: str) -> tuple[dict[str, Any], str]:
             with open(model_path, encoding="utf-8") as fh:
                 model_text = fh.read()
-            payload = dosi_validation_text_payload(
-                model_text,
-                metric_names=metric_names,
-            )
+            inline_mapping = inline_mapping_handles.get(model_path)
+            if inline_mapping is not None:
+                payload = _validate_inline_mapping(inline_mapping)
+            else:
+                payload = dosi_validation_text_payload(
+                    model_text,
+                    metric_names=metric_names,
+                )
             if payload.get("valid") and semantic_model_name:
                 document = yaml.safe_load(model_text) or {}
-                names = (
-                    [
-                        str(model.get("name") or "")
-                        for model in document.get("semantic_model", [])
-                        if isinstance(model, dict)
-                    ]
-                    if isinstance(document, dict)
-                    else []
-                )
+                names = document_model_names(document)
                 if semantic_model_name not in names:
                     payload["valid"] = False
                     payload.setdefault("issues", []).append(
@@ -923,6 +939,7 @@ class DosiRuntime:
         contract_digests: set[str] = set()
         compiled_metrics: List[Dict[str, Any]] = []
         compiled_metric_digests: Dict[str, str] = {}
+        loaded_metric_names: set[str] = set()
         artifact_digests: Dict[str, str] = {}
         for model_path in model_paths:
             try:
@@ -945,6 +962,7 @@ class DosiRuntime:
             if payload.get("valid"):
                 compiled_metrics.extend(payload.get("compiled_metrics") or [])
                 compiled_metric_digests.update(payload.get("compiled_metric_digests") or {})
+                loaded_metric_names.update(payload.get("loaded_metric_names") or [])
             prefix = f"[semantic_model_file={Path(model_path).name}] " if qualify else ""
             for issue in payload.get("issues", []):
                 issues.append(
@@ -985,6 +1003,7 @@ class DosiRuntime:
 
         requested_metrics = list(dict.fromkeys(metric_names or []))
         compiled_names = {str(metric.get("name") or "") for metric in compiled_metrics if isinstance(metric, dict)}
+        compiled_names |= loaded_metric_names
         missing_metrics = [name for name in requested_metrics if name not in compiled_names]
         if missing_metrics:
             valid = False

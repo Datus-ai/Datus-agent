@@ -400,6 +400,7 @@ class SemanticModelingAgenticNode(SemanticAuthoringAgenticNode):
                 "semantic_model_required",
                 "semantic_model_selection_required",
                 "semantic_model_target_invalid",
+                "semantic_model_inline_in_mapping",
             }:
                 raise RuntimeError("status='blocked' requires a supported semantic-model blocker_code.")
             if self._target_was_mutated():
