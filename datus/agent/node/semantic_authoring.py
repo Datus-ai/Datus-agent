@@ -646,6 +646,48 @@ def plan_osi_semantic_model_target(
 ) -> Dict[str, Any]:
     """Resolve a stable Ossie model name and file from authoring intent.
 
+    Reusing or repairing an existing plain model is always allowed. A new model
+    file is refused when the datasource also has a mapping that carries its own
+    model: the new file would become a second engine for the datasource and
+    change which model every non-ontology agent loads.
+    """
+    inventory = inventory if inventory is not None else inspect_osi_semantic_model_inventory(agent_config)
+    target = _resolve_osi_semantic_model_target(
+        agent_config,
+        semantic_model_name=semantic_model_name,
+        business_domain=business_domain,
+        fact_tables=fact_tables,
+        dimension_tables=dimension_tables,
+        inventory=inventory,
+    )
+    inline_mappings = inventory.get("inline_mapping_models") or []
+    if not inline_mappings or target.get("ambiguous") or target.get("exists"):
+        return target
+    datasource = str(getattr(agent_config, "current_datasource", "") or "default").strip() or "default"
+    return {
+        "ambiguous": True,
+        "code": "semantic_model_inline_in_mapping",
+        "matched_by": "inline_mapping",
+        "reason": inline_mapping_message(datasource, inline_mappings),
+        "candidates": [
+            {"semantic_model_name": mapping["semantic_model_name"], "semantic_model_file": mapping["mapping_file"]}
+            for mapping in inline_mappings
+        ],
+        "dimension_tables": target.get("dimension_tables") or [],
+    }
+
+
+def _resolve_osi_semantic_model_target(
+    agent_config: Any = None,
+    semantic_model_name: str = "",
+    business_domain: str = "",
+    fact_tables: Optional[Iterable[str]] = None,
+    dimension_tables: Optional[Iterable[str]] = None,
+    *,
+    inventory: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Resolve the target name and file, reused or new, without the inline-mapping check.
+
     An explicit name always wins. Without one, an existing model containing the
     core fact table is reused to keep its durable name. A new model is named by
     business domain when available, then by the first/core fact table. The
@@ -654,28 +696,10 @@ def plan_osi_semantic_model_target(
     """
     facts = [str(value).strip() for value in (fact_tables or []) if str(value).strip()]
     dimensions = [str(value).strip() for value in (dimension_tables or []) if str(value).strip()]
-    inventory = inventory if inventory is not None else inspect_osi_semantic_model_inventory(agent_config)
     duplicate_models = [issue for issue in inventory["issues"] if issue.get("code") == "duplicate_semantic_model_name"]
     existing_models = inventory["models"]
     named_models = [*existing_models, *inventory["recoverable_models"], *duplicate_models]
     datasource = str(getattr(agent_config, "current_datasource", "") or "default").strip() or "default"
-
-    inline_mappings = inventory.get("inline_mapping_models") or []
-    if inline_mappings:
-        # A plain model file beside a mapping that carries its own model would
-        # become a second engine for the datasource and change which model
-        # every non-ontology agent loads; refuse instead of planning one.
-        return {
-            "ambiguous": True,
-            "code": "semantic_model_inline_in_mapping",
-            "matched_by": "inline_mapping",
-            "reason": inline_mapping_message(datasource, inline_mappings),
-            "candidates": [
-                {"semantic_model_name": mapping["semantic_model_name"], "semantic_model_file": mapping["mapping_file"]}
-                for mapping in inline_mappings
-            ],
-            "dimension_tables": dimensions,
-        }
 
     explicit_name = _normalize_model_name(semantic_model_name)
     if explicit_name:

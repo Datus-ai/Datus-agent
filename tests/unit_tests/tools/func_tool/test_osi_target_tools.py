@@ -701,3 +701,23 @@ def test_plan_never_targets_a_new_model_beside_an_inline_mapping(tmp_path, plan_
     assert result.result["code"] == "semantic_model_inline_in_mapping"
     assert state.selected is None
     assert sorted(path.relative_to(tmp_path) for path in tmp_path.rglob("*") if path.is_file()) == before
+
+
+@pytest.mark.parametrize(
+    "plan_kwargs",
+    [{"semantic_model_name": "orders_model"}, {"fact_tables": ["analytics.orders"]}],
+    ids=["explicit_name", "existing_fact_table"],
+)
+def test_plan_reuses_an_existing_plain_model_beside_an_inline_mapping(tmp_path, plan_kwargs):
+    """Only a new file is refused; planning agrees with bind on reusing an existing plain model."""
+    config, model_dir, ontology_dir = _config_with_ontology(tmp_path)
+    _write_mapping(ontology_dir / "northstar.mapping.yaml")
+    _write_model(model_dir / "orders.yml", name="orders_model")
+    state = OsiSemanticModelTargetState()
+
+    result = OsiSemanticModelTargetTools(config, target_state=state).plan_osi_semantic_model_target(**plan_kwargs)
+
+    assert result.success == 1
+    assert result.result["exists"] is True
+    assert result.result["semantic_model_name"] == "orders_model"
+    assert state.selected["absolute_path"] == str((model_dir / "orders.yml").resolve())

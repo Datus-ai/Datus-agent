@@ -759,3 +759,26 @@ class TestValidateInlineMapping:
         result = await self._inline_runtime(tmp_path).validate_semantic(scope="all", semantic_model_name="other")
         assert result.valid is False
         assert any("semantic_model_not_found" in issue.message for issue in result.issues)
+
+
+class TestValidateInlineMappingRequestedMetrics:
+    """``metric_names`` asks whether specific metrics compiled; an inline mapping answers from its loaded engine."""
+
+    @pytest.mark.asyncio
+    async def test_a_metric_the_loaded_engine_carries_is_compiled(self, tmp_path, ontology_binding):
+        runtime = TestValidateInlineMapping._inline_runtime(tmp_path)
+        result = await runtime.validate_semantic(scope="all", metric_names=["order_count"])
+        assert result.valid is True
+        assert result.issues == []
+        # Name-only evidence never stands in for per-metric compiled SQL.
+        assert result.metadata["compiled_metrics"] == []
+
+    @pytest.mark.asyncio
+    async def test_a_metric_the_loaded_engine_lacks_is_reported(self, tmp_path, ontology_binding):
+        runtime = TestValidateInlineMapping._inline_runtime(tmp_path)
+        result = await runtime.validate_semantic(scope="all", metric_names=["no_such_metric"])
+        assert result.valid is False
+        assert any(
+            "compiled_metric_not_found" in issue.message and "no_such_metric" in issue.message
+            for issue in result.issues
+        )
