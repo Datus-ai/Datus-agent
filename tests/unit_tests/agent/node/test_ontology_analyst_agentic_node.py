@@ -182,14 +182,28 @@ class TestStartupErrors:
 
     def test_no_ontology_points_to_ask_metrics(self, real_agent_config, mock_llm_create):
         node, _, runtime = _make_node(real_agent_config, runtime=_runtime(has_ontology=False))
-        expected_dir = str(real_agent_config.path_manager.ontology_path("flights_db"))
-        assert self._missing(node, "no ontology for datasource 'flights_db'", expected_dir, "ask_metrics") == []
+        expected_dir = str(real_agent_config.path_manager.ontology_dir)
+        assert (
+            self._missing(
+                node,
+                "no ontology for datasource 'flights_db'",
+                expected_dir,
+                "subject/semantic_models/flights_db/",
+                "ask_metrics",
+            )
+            == []
+        )
         runtime.describe.assert_not_called()
 
     def test_unpaired_ontology_names_the_file(self, real_agent_config, mock_llm_create):
-        runtime = _runtime(has_ontology=False, unpaired=["/p/subject/semantic_models/ontology/flights_db/hr.yaml"])
+        runtime = _runtime(has_ontology=False, unpaired=["/p/subject/ontology/hr-hr.mapping.yaml"])
         node, _, _ = _make_node(real_agent_config, runtime=runtime)
-        assert self._missing(node, "hr.yaml", "pair with no semantic model file") == []
+        assert (
+            self._missing(
+                node, "hr-hr.mapping.yaml", "bind no semantic model", "../semantic_models/flights_db/<model>.yaml"
+            )
+            == []
+        )
 
     def test_ontology_load_failure(self, real_agent_config, mock_llm_create):
         runtime = _runtime()

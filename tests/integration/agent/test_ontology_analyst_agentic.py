@@ -32,7 +32,8 @@ logger = get_logger(__name__)
 
 FIXTURE_ROOT = Path(__file__).parents[2] / "data" / "semantic_models"
 MODEL_DIR = FIXTURE_ROOT / "aviation"
-ONTOLOGY_DIR = FIXTURE_ROOT / "ontology" / "aviation"
+# The flat project ontology directory; its mapping reaches MODEL_DIR by iri.
+ONTOLOGY_DIR = Path(__file__).parents[2] / "data" / "ontology"
 
 pytestmark = [
     pytest.mark.nightly,
@@ -60,7 +61,7 @@ def ontology_agent_config(tmp_path, monkeypatch):
 
     path_manager = nightly_agent_config.path_manager
     monkeypatch.setattr(path_manager, "semantic_model_path", lambda datasource: MODEL_DIR)
-    monkeypatch.setattr(path_manager, "ontology_path", lambda datasource: ONTOLOGY_DIR)
+    monkeypatch.setattr(type(path_manager), "ontology_dir", property(lambda self: ONTOLOGY_DIR))
     duckdb_config = SimpleNamespace(to_dict=lambda: {"type": "duckdb", "uri": str(database)})
     monkeypatch.setattr(nightly_agent_config, "current_db_config", lambda datasource=None: duckdb_config)
     return nightly_agent_config
