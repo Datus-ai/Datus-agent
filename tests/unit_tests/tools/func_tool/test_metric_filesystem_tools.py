@@ -1831,7 +1831,7 @@ async def test_web_osi_edit_uses_existing_client_executor_and_tracks_actual_cont
     stamp_tool_execution(action, node)
     assert action.input["_proxied"] is True
     assert target.read_text() == original
-    assert state.artifact_snapshot_content == original.encode()
+    assert state.artifact_snapshot_content is None
     assert not evidence.mutated_artifact_paths
     client_args = json.loads(action.input["arguments"])
     # Exactly the existing frontend edit_file replacement contract.
@@ -1848,3 +1848,105 @@ async def test_web_osi_edit_uses_existing_client_executor_and_tracks_actual_cont
     assert state.touched_metric_names == ["revenue"]
     assert str(target) in evidence.mutated_artifact_paths
     assert metric_uid(yaml.safe_load(authored)["semantic_model"][0]["metrics"][0]) == original_uid
+    if finish_edit:
+        assert not fs.rollback_failed_authoring()
+        assert target.read_text() == authored
+    else:
+        assert fs.rollback_failed_authoring()
+        assert target.read_text() == original
+
+
+@pytest.mark.parametrize("change_uid", [False, True])
+def test_web_finish_edit_enforces_host_uid_with_real_validation(tmp_path, change_uid):
+    from datus.tools.func_tool.base import FuncToolResult
+    from datus.tools.semantic_tools.metric_identity import ensure_metric_uid, metric_uid
+
+    metric = _osi_metric("revenue", "SUM(orders.amount)")
+    ensure_metric_uid(metric)
+    old_uid = metric_uid(metric)
+    other_metric = _osi_metric("copied", "SUM(orders.amount)")
+    ensure_metric_uid(other_metric)
+    new_uid = metric_uid(other_metric)
+    document = {
+        "version": "0.2.0.dev0",
+        "semantic_model": [
+            {
+                "name": "sales",
+                "datasets": [
+                    {
+                        "name": "orders",
+                        "source": "orders",
+                        "fields": [
+                            {
+                                "name": "amount",
+                                "expression": {"dialects": [{"dialect": "ANSI_SQL", "expression": "amount"}]},
+                            }
+                        ],
+                    }
+                ],
+                "relationships": [],
+                "metrics": [metric],
+            }
+        ],
+    }
+    target = tmp_path / "sales.yml"
+    original = yaml.safe_dump(document, sort_keys=False)
+    target.write_text(original)
+    state = _bound_state(target)
+    tool = SemanticModelingFilesystemFuncTool(
+        root_path=str(tmp_path),
+        osi_target_state=state,
+        mutation_guard=state.require_selected_path,
+        mutation_callback=lambda path: state.record_selected_write(),
+    )
+    mutation = tool._prepare_client_mutation(
+        "edit_file", {"path": str(target), "old_string": "Definition for revenue", "new_string": "Updated revenue"}
+    )
+    assert not isinstance(mutation, FuncToolResult)
+    # A valid pasted UID is still not the host identity of the existing metric.
+    finished = original.replace("Definition for revenue", "Updated revenue")
+    if change_uid:
+        finished = finished.replace(old_uid, new_uid)
+    assert tool._validate_osi_document(finished) is None
+    target.write_text(finished)
+    result = mutation.complete()
+    if change_uid:
+        assert isinstance(result, FuncToolResult) and result.success == 0
+        assert "identity" in result.error.lower()
+        assert not state.touched_metric_names
+        with pytest.raises(ValueError, match="changed after selection"):
+            tool.ensure_metric_uids(str(target))
+    else:
+        assert result is None
+        assert state.touched_metric_names == ["revenue"]
+        state.require_selected_revision(target)
+        assert metric_uid(yaml.safe_load(target.read_text())["semantic_model"][0]["metrics"][0]) == old_uid
+
+
+def test_pending_web_semantic_edit_preserves_user_save_on_failure(identity_tool):
+    tool, target, state, _ = identity_tool([_osi_metric("revenue", "SUM(orders.amount)")])
+    tool._prepare_client_mutation(
+        "edit_file", {"path": str(target), "old_string": "SUM(orders.amount)", "new_string": "SUM(orders.total)"}
+    )
+    user_content = target.read_text().replace("source: orders", "source: user.saved")
+    target.write_text(user_content)
+    assert not tool.rollback_failed_authoring()
+    assert target.read_text() == user_content
+
+
+def test_pending_web_semantic_edit_does_not_undo_user_save_after_prior_native_write(identity_tool):
+    metric = _osi_metric("revenue", "SUM(orders.amount)")
+    tool, target, state, _ = identity_tool([metric])
+    metric["description"] = "Earlier native authoring"
+    assert tool.upsert_osi_metrics(str(target), [metric]).success == 1
+    assert state.artifact_snapshot_content is not None
+    tool._prepare_client_mutation(
+        "edit_file", {"path": str(target), "old_string": "SUM(orders.amount)", "new_string": "SUM(orders.total)"}
+    )
+    user_content = target.read_text().replace("source: orders", "source: user.saved")
+    target.write_text(user_content)
+    assert not tool.rollback_failed_authoring()
+    assert target.read_text() == user_content
+    state.reset()
+    assert not state.web_client_prepared
+    assert not state.web_client_user_edits

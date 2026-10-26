@@ -157,6 +157,8 @@ class FilesystemFuncTool(BaseTool):
         path_allowlist_provider: Optional[Callable[[], Optional[PathAllowlist]]] = None,
         mutation_callback: Optional[Callable[..., None]] = None,
         mutation_guard: Optional[Callable[[Path], None]] = None,
+        client_mutation_guard: Optional[Callable[[Path], None]] = None,
+        client_mutation_callback: Optional[Callable[[Path, Optional[tuple[bytes, int]], Optional[bytes]], None]] = None,
         **kwargs,
     ):
         """
@@ -182,6 +184,10 @@ class FilesystemFuncTool(BaseTool):
                 ``strict`` off.
             path_allowlist_provider: Optional live allowlist for skills loaded after
                 this tool was created. The node's permission hooks use the same roots.
+            client_mutation_guard: Optional validation-only guard for a pending Web
+                card; unlike the native guard it must not enroll rollback state.
+            client_mutation_callback: Enroll a completed Web mutation using its
+                staged snapshot and expected bytes. Called only after client success.
         """
         super().__init__(**kwargs)
         self.root_path = root_path or os.getcwd()
@@ -195,6 +201,8 @@ class FilesystemFuncTool(BaseTool):
         self._path_allowlist_provider = path_allowlist_provider
         self._mutation_callback = mutation_callback
         self._mutation_guard = mutation_guard
+        self._client_mutation_guard = client_mutation_guard
+        self._client_mutation_callback = client_mutation_callback
 
     def _notify_mutation(self, path: Optional[Path] = None) -> None:
         callback = self._mutation_callback
@@ -212,11 +220,14 @@ class FilesystemFuncTool(BaseTool):
         else:
             callback(path)
 
-    def _mutation_guard_error(self, path: Path) -> Optional[FuncToolResult]:
-        if self._mutation_guard is None:
+    def _mutation_guard_error(
+        self, path: Path, *, guard: Optional[Callable[[Path], None]] = None
+    ) -> Optional[FuncToolResult]:
+        guard = guard or self._mutation_guard
+        if guard is None:
             return None
         try:
-            self._mutation_guard(path)
+            guard(path)
         except Exception as exc:
             return FuncToolResult(success=0, error=str(exc))
         return None
@@ -238,25 +249,38 @@ class FilesystemFuncTool(BaseTool):
         if resolved.read_only:
             return self._read_only_reject(resolved)
         target = resolved.resolved
-        guard_error = self._mutation_guard_error(target)
+        guard_error = self._mutation_guard_error(target, guard=self._client_mutation_guard)
         if guard_error is not None:
             return guard_error
+        # This snapshot remains local to the pending operation. It must not be
+        # enrolled in a node's rollback set until the client actually succeeds.
+        before = (
+            (target.read_bytes(), target.stat().st_mode)
+            if self._client_mutation_callback and target.is_file()
+            else None
+        )
+        expected = arguments["content"].encode("utf-8") if operation == "write_file" else None
         if operation != "write_file":
             if not target.is_file():
                 return FuncToolResult(success=0, error=f"File not found: {resolved.display}")
             if operation == "edit_file":
-                _, error = apply_single_replacement(
-                    target.read_text(encoding="utf-8"), arguments["old_string"], arguments["new_string"]
-                )
+                content = before[0].decode("utf-8") if before is not None else target.read_text(encoding="utf-8")
+                candidate, error = apply_single_replacement(content, arguments["old_string"], arguments["new_string"])
                 if error:
                     return FuncToolResult(success=0, error=error)
+                expected = candidate.encode("utf-8")
 
         def complete() -> Optional[FuncToolResult]:
-            if (operation == "delete_file" and target.exists()) or (
-                operation != "delete_file" and not target.is_file()
-            ):
-                return FuncToolResult(success=0, error=f"Client file operation did not complete: {resolved.display}")
-            self._notify_mutation(target)
+            with path_mutation_lock(target):
+                if (operation == "delete_file" and target.exists()) or (
+                    operation != "delete_file" and not target.is_file()
+                ):
+                    return FuncToolResult(
+                        success=0, error=f"Client file operation did not complete: {resolved.display}"
+                    )
+                if self._client_mutation_callback is not None:
+                    self._client_mutation_callback(target, before, expected)
+                self._notify_mutation(target)
             return None
 
         return ClientFileMutation({**arguments, "path": str(target)}, complete)

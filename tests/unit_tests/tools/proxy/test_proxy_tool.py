@@ -959,6 +959,8 @@ async def test_web_sql_summary_preserves_snapshots_finalization_and_rollback(tmp
         root_path=str(tmp_path),
         mutation_guard=summary._sql_summary_mutation_guard,
         mutation_callback=summary._record_sql_summary_mutation,
+        client_mutation_guard=summary._validate_sql_summary_mutation_path,
+        client_mutation_callback=summary._record_sql_summary_client_mutation,
     )
     summary.tools = fs.available_tools()
     summary.tool_channel = ToolResultChannel()
@@ -972,7 +974,7 @@ async def test_web_sql_summary_preserves_snapshots_finalization_and_rollback(tmp
         status=ActionStatus.PROCESSING,
     )
     await prepare_web_tool_action(action, summary)
-    assert summary._mutation_snapshots[os.path.realpath(target)][0] == original
+    assert not summary._mutation_snapshots
     assert not summary._mutated_files
     client_args = json.loads(action.input["arguments"])
     Path(client_args["path"]).write_text(client_args["content"])
@@ -980,6 +982,7 @@ async def test_web_sql_summary_preserves_snapshots_finalization_and_rollback(tmp
     tool = next(t for t in summary.tools if t.name == "write_file")
     assert (await tool.on_invoke_tool(SimpleNamespace(tool_call_id="summary"), "{}"))["success"] == 1
     assert os.path.realpath(target) in summary._mutated_files
+    assert summary._mutation_snapshots[os.path.realpath(target)][0] == original
     sync = Mock(return_value={"success": True})
     monkeypatch.setattr("datus.storage.reference_sql.artifact_sync.sync_reference_sql_artifact_to_kb", sync)
     summary._finalize_sql_summary_artifact(str(target))
@@ -1062,3 +1065,69 @@ async def test_web_denied_file_never_exposes_an_executable_card(tmp_path):
     stamp_tool_execution(action, node)
     assert action.input["_proxied"] is False
     assert not (tmp_path / "artifact.txt").exists()
+
+
+@pytest.mark.parametrize("existed", [False, True])
+def test_unaccepted_web_summary_never_rolls_back_user_edits(tmp_path, existed):
+    from datus.agent.node.sql_summary_agentic_node import SqlSummaryAgenticNode
+    from datus.tools.func_tool.filesystem_tools import FilesystemFuncTool
+
+    node = SqlSummaryAgenticNode.__new__(SqlSummaryAgenticNode)
+    node.knowledge_base_dir = str(tmp_path / "subject")
+    node._mutation_snapshots = {}
+    node._mutated_files = set()
+    target = tmp_path / "subject/sql_summaries/query.yaml"
+    target.parent.mkdir(parents=True)
+    if existed:
+        target.write_text("sql: SELECT 1\n")
+    fs = FilesystemFuncTool(
+        root_path=str(tmp_path),
+        mutation_guard=node._sql_summary_mutation_guard,
+        mutation_callback=node._record_sql_summary_mutation,
+        client_mutation_guard=node._validate_sql_summary_mutation_path,
+        client_mutation_callback=node._record_sql_summary_client_mutation,
+    )
+    fs._prepare_client_mutation("write_file", {"path": str(target), "content": "sql: SELECT 2\n"})
+    target.write_text("sql: SELECT 'user saved while pending'\n")
+    # Cancel/Stop never calls complete(); later node failure must preserve the
+    # IDE save, whether the file was new or already present.
+    node._rollback_sql_summary_mutations()
+    assert target.read_text() == "sql: SELECT 'user saved while pending'\n"
+    assert not node._mutated_files
+
+
+@pytest.mark.parametrize("operation", ["write_file", "edit_file", "delete_file"])
+def test_web_summary_rollback_only_reverts_its_last_owned_revision(tmp_path, operation):
+    from datus.agent.node.sql_summary_agentic_node import SqlSummaryAgenticNode
+    from datus.tools.func_tool.filesystem_tools import FilesystemFuncTool
+
+    node = SqlSummaryAgenticNode.__new__(SqlSummaryAgenticNode)
+    node.knowledge_base_dir = str(tmp_path / "subject")
+    node._mutation_snapshots = {}
+    node._mutated_files = set()
+    target = tmp_path / "subject/sql_summaries/query.yaml"
+    target.parent.mkdir(parents=True)
+    target.write_text("sql: SELECT 1\n")
+    fs = FilesystemFuncTool(
+        root_path=str(tmp_path),
+        mutation_guard=node._sql_summary_mutation_guard,
+        mutation_callback=node._record_sql_summary_mutation,
+        client_mutation_guard=node._validate_sql_summary_mutation_path,
+        client_mutation_callback=node._record_sql_summary_client_mutation,
+    )
+    args = {"path": str(target)}
+    if operation == "write_file":
+        args["content"] = "sql: SELECT 2\n"
+    elif operation == "edit_file":
+        args.update(old_string="SELECT 1", new_string="SELECT 2")
+    mutation = fs._prepare_client_mutation(operation, args)
+    if operation == "delete_file":
+        target.unlink()
+    else:
+        target.write_text("sql: SELECT 2\n")
+    assert mutation.complete() is None
+    # A later unaccepted card must not take ownership of this subsequent save.
+    fs._prepare_client_mutation("write_file", {"path": str(target), "content": "sql: SELECT 3\n"})
+    target.write_text("sql: SELECT 'new user save'\n")
+    node._rollback_sql_summary_mutations()
+    assert target.read_text() == "sql: SELECT 'new user save'\n"

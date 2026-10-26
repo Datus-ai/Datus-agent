@@ -37,6 +37,8 @@ class OsiSemanticModelTargetState:
     artifact_snapshot_path: str = ""
     artifact_snapshot_content: Optional[bytes] = None
     artifact_snapshot_existed: bool = False
+    web_client_prepared: bool = False
+    web_client_user_edits: bool = False
 
     def clear_target(self) -> None:
         self.selected = None
@@ -53,6 +55,8 @@ class OsiSemanticModelTargetState:
         self.artifact_snapshot_path = ""
         self.artifact_snapshot_content = None
         self.artifact_snapshot_existed = False
+        self.web_client_prepared = False
+        self.web_client_user_edits = False
 
     def _matches_selected_target(self, candidate: Dict[str, Any]) -> bool:
         if self.selected is None:

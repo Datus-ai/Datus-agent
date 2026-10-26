@@ -24,6 +24,7 @@ from datus.agent.node.stream_run_context import StreamRunContext
 from datus.configuration.agent_config import AgentConfig
 from datus.schemas.sql_summary_agentic_node_models import SqlSummaryNodeInput, SqlSummaryNodeResult
 from datus.storage.artifact_path import KIND_TO_SUBDIR, resolve_kb_sandbox_path
+from datus.storage.semantic_model.artifact_file import artifact_revision, path_mutation_lock
 from datus.tools.func_tool.filesystem_tools import FilesystemFuncTool
 from datus.tools.func_tool.generation_tools import GenerationTools
 from datus.utils.exceptions import DatusException, ErrorCode
@@ -79,6 +80,7 @@ class SqlSummaryAgenticNode(AgenticNode):
         # never carries state from a previous request.
         self._mutated_files: set = set()
         self._mutation_snapshots: dict = {}
+        self._web_mutation_revisions: dict[str, Optional[str]] = {}
 
         # Get max_turns from agentic_nodes configuration
         self.max_turns = 50
@@ -164,6 +166,8 @@ class SqlSummaryAgenticNode(AgenticNode):
             self.filesystem_func_tool = self._make_filesystem_tool(
                 mutation_guard=self._sql_summary_mutation_guard,
                 mutation_callback=self._record_sql_summary_mutation,
+                client_mutation_guard=self._validate_sql_summary_mutation_path,
+                client_mutation_callback=self._record_sql_summary_client_mutation,
             )
 
             self.tools.extend(self.filesystem_func_tool.available_tools())
@@ -175,10 +179,8 @@ class SqlSummaryAgenticNode(AgenticNode):
         # finalizer's resolve_kb_sandbox_path always agree on the boundary.
         return os.path.join(self.knowledge_base_dir, KIND_TO_SUBDIR["sql_summary"])
 
-    def _sql_summary_mutation_guard(self, path: Path) -> None:
-        """Reject filesystem mutations outside the sql_summaries sandbox and
-        snapshot the pre-mutation state of each target before its first change
-        so a failed request can be rolled back."""
+    def _validate_sql_summary_mutation_path(self, path: Path) -> None:
+        """Validate the sandbox without enrolling an unapproved write in rollback."""
         sandbox = os.path.realpath(self._sql_summary_sandbox_dir())
         target = os.path.realpath(str(path))
         try:
@@ -189,6 +191,11 @@ class SqlSummaryAgenticNode(AgenticNode):
             raise ValueError(
                 f"File mutations are restricted to subject/sql_summaries/ for this node; got {str(path)!r}"
             )
+
+    def _sql_summary_mutation_guard(self, path: Path) -> None:
+        """Native execution validates and snapshots immediately before mutation."""
+        self._validate_sql_summary_mutation_path(path)
+        target = os.path.realpath(str(path))
         if target not in self._mutation_snapshots:
             if os.path.isfile(target):
                 with open(target, "rb") as fh:
@@ -196,6 +203,23 @@ class SqlSummaryAgenticNode(AgenticNode):
                 self._mutation_snapshots[target] = (content, os.stat(target).st_mode)
             else:
                 self._mutation_snapshots[target] = None
+
+    def _record_sql_summary_client_mutation(
+        self, path: Path, before: Optional[tuple[bytes, int]], expected: Optional[bytes]
+    ) -> None:
+        """Enroll only completed client writes whose final bytes are still ours."""
+        target = os.path.realpath(str(path))
+        current = path.read_bytes() if path.is_file() else None
+        revisions = getattr(self, "_web_mutation_revisions", None)
+        if revisions is None:
+            revisions = self._web_mutation_revisions = {}
+        if current != expected or (target in revisions and revisions[target] is None):
+            # Finish Edit or another writer changed the bytes. Preserve that
+            # user-owned revision, including against an earlier pending rollback.
+            revisions[target] = None
+            return
+        self._mutation_snapshots.setdefault(target, before)
+        revisions[target] = artifact_revision(current) if current is not None else "missing"
 
     def _record_sql_summary_mutation(self, path: Optional[Path] = None) -> None:
         if path is None:
@@ -205,6 +229,7 @@ class SqlSummaryAgenticNode(AgenticNode):
     def _reset_mutation_tracking(self) -> None:
         self._mutated_files.clear()
         self._mutation_snapshots.clear()
+        self._web_mutation_revisions.clear()
 
     async def _before_stream(self, ctx: StreamRunContext) -> None:
         self._reset_mutation_tracking()
@@ -604,14 +629,22 @@ class SqlSummaryAgenticNode(AgenticNode):
         restore the original content and permissions of files it overwrote."""
         for target, snapshot in self._mutation_snapshots.items():
             try:
-                if snapshot is None:
-                    if os.path.exists(target):
-                        os.remove(target)
-                else:
-                    content, mode = snapshot
-                    with open(target, "wb") as fh:
-                        fh.write(content)
-                    os.chmod(target, mode)
+                with path_mutation_lock(Path(target)):
+                    revisions = getattr(self, "_web_mutation_revisions", {})
+                    if target in revisions:
+                        current = Path(target).read_bytes() if os.path.isfile(target) else None
+                        revision = artifact_revision(current) if current is not None else "missing"
+                        if revisions[target] != revision:
+                            logger.info("Preserving externally modified SQL summary %s during rollback", target)
+                            continue
+                    if snapshot is None:
+                        if os.path.exists(target):
+                            os.remove(target)
+                    else:
+                        content, mode = snapshot
+                        with open(target, "wb") as fh:
+                            fh.write(content)
+                        os.chmod(target, mode)
             except Exception as exc:
                 logger.error(f"Failed to roll back SQL summary artifact {target}: {exc}")
 

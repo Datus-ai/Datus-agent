@@ -3,6 +3,7 @@
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
 import copy
+import hashlib
 import json
 import re
 from pathlib import Path
@@ -692,6 +693,15 @@ class MetricFilesystemFuncTool(FilesystemFuncTool):
         target_path = Path(state.artifact_snapshot_path)
         original_content = state.artifact_snapshot_content
         with semantic_artifact_lock(target_path):
+            if state.web_client_prepared:
+                if state.web_client_user_edits:
+                    return False
+                try:
+                    current_revision = hashlib.sha256(target_path.read_bytes()).hexdigest()
+                except OSError:
+                    return False
+                if current_revision != state.artifact_sha256:
+                    return False
             try:
                 if state.artifact_snapshot_existed:
                     restored_content = original_content.decode("utf-8")
@@ -742,7 +752,7 @@ class OsiSemanticModelFilesystemFuncTool(MetricFilesystemFuncTool):
         ]
 
     def _prepare_osi_edit(
-        self, path: str, old_string: str, new_string: str
+        self, path: str, old_string: str, new_string: str, *, capture_snapshot: bool = True
     ) -> tuple[ResolvedPath, str, str, Dict[str, Any], Any] | FuncToolResult:
         """Share complete-document validation and snapshots with the IDE proxy."""
         if not old_string:
@@ -795,7 +805,7 @@ class OsiSemanticModelFilesystemFuncTool(MetricFilesystemFuncTool):
                 result={"written": False, "semantic_model_file": resolved.display},
             )
         try:
-            if self.osi_target_state is not None:
+            if capture_snapshot and self.osi_target_state is not None:
                 self.osi_target_state.record_artifact_snapshot(target_path, content.encode("utf-8"))
         except OSError as exc:
             return FuncToolResult(success=0, error=f"Cannot update {resolved.display}: {exc}")
@@ -848,7 +858,9 @@ class OsiSemanticModelFilesystemFuncTool(MetricFilesystemFuncTool):
             return super()._prepare_client_mutation(operation, arguments)
         target_path = self._classify(arguments["path"]).resolved
         with semantic_artifact_lock(target_path):
-            prepared = self._prepare_osi_edit(**arguments)
+            if self.osi_target_state is not None:
+                self.osi_target_state.web_client_prepared = True
+            prepared = self._prepare_osi_edit(**arguments, capture_snapshot=False)
         if isinstance(prepared, FuncToolResult):
             return prepared
         _, content, new_content, _, original_document = prepared
@@ -860,11 +872,27 @@ class OsiSemanticModelFilesystemFuncTool(MetricFilesystemFuncTool):
             client_arguments.update(old_string=content, new_string=new_content)
 
         def complete() -> Optional[FuncToolResult]:
-            actual = target_path.read_text(encoding="utf-8")
-            error = self._validate_osi_document(actual)
-            if error:
-                return FuncToolResult(success=0, error=f"Invalid OSI semantic model edit: {error}")
-            self._record_osi_edit(target_path, actual, yaml.safe_load(actual), original_document)
+            with semantic_artifact_lock(target_path):
+                actual = target_path.read_text(encoding="utf-8")
+                error = self._validate_osi_document(actual)
+                if error:
+                    return FuncToolResult(success=0, error=f"Invalid OSI semantic model edit: {error}")
+                document = yaml.safe_load(actual)
+                try:
+                    identity_changes = prepare_metric_uids(document, original_document or {})
+                except ValueError as exc:
+                    return FuncToolResult(success=0, error=f"Invalid OSI metric identity: {exc}")
+                if identity_changes:
+                    return FuncToolResult(
+                        success=0,
+                        error="Finish Edit changed a host-managed metric identity; preserve the original UID before retrying.",
+                    )
+                if actual != new_content:
+                    if self.osi_target_state is not None:
+                        self.osi_target_state.web_client_user_edits = True
+                elif self.osi_target_state is not None:
+                    self.osi_target_state.record_artifact_snapshot(target_path, content.encode("utf-8"))
+                self._record_osi_edit(target_path, actual, document, original_document)
             return None
 
         return ClientFileMutation(client_arguments, complete)
