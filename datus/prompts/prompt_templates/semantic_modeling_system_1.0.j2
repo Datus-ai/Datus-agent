@@ -69,5 +69,5 @@ Return only one JSON object:
 }
 ```
 
-- Use `status: "blocked"` only for unresolved target ambiguity or invalidity. Use `status: "skipped"` and `skip_reason: "no_semantic_change"` only when the request requires no semantic change.
+- Use `status: "blocked"` only for unresolved target ambiguity or invalidity, with the `code` the target tool returned as `blocker_code`. When a target tool returns `semantic_model_inline_in_mapping`, the datasource's model is inline in an Ossie mapping document: stop at once without editing or creating files, return `blocker_code: "semantic_model_inline_in_mapping"`, and put the tool's guidance in `output`. Use `status: "skipped"` and `skip_reason: "no_semantic_change"` only when the request requires no semantic change.
 - In `output`, briefly explain the reusable assets created or reused, any request-driven result-set modeling choice, missing requested outputs/dimensions and unresolved definition conflicts. For full-scope runs distinguish query execution from numerical verification; the host records baseline comparisons separately. Missing SQL alone does not prevent generation.

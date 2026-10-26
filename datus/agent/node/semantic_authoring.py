@@ -117,9 +117,9 @@ def inline_mapping_message(datasource: str, mappings: Iterable[Dict[str, Any]]) 
     return (
         f"The semantic model of datasource {datasource!r} is inline in the Ossie mapping document(s) {files}. "
         "semantic_modeling authors flat OSI model files only and cannot edit inside a mapping document, and it "
-        "must not create a separate model file beside it. Stop and report this to the caller: the mapping "
-        "document (ontology, concept_params and metrics in one file) has to be edited directly, then checked "
-        "with validate_semantic."
+        "must not create a separate model file beside it. Stop without editing any file and return "
+        "status 'blocked' with blocker_code 'semantic_model_inline_in_mapping'; tell the caller that the mapping "
+        "document (ontology, concept_params and metrics in one file) has to be edited directly."
     )
 
 

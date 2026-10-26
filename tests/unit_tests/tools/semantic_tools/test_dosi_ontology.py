@@ -708,3 +708,50 @@ class TestRuntimeOntology:
         assert payload.code == "invalid_relationship_path"
         assert payload.candidates == ["Delay.flight.arrives_at.code"]
         assert "Delay.flight.arrives_at.code" in payload.hint
+
+
+# ---------------------------------------------------------------- validating a mapping that carries its model
+
+
+class TestValidateInlineMapping:
+    """A mapping document is not OSI model text; validation must load its engine instead."""
+
+    @staticmethod
+    def _inline_runtime(tmp_path):
+        ontology_dir = tmp_path / "semantic_models" / "ontology" / "flights_db"
+        ontology_dir.mkdir(parents=True)
+        (ontology_dir / "mini.yaml").write_text(INLINE_MAPPING_YAML)
+        return _runtime(tmp_path / "semantic_models" / "flights_db", ontology_dir)
+
+    @pytest.mark.asyncio
+    async def test_a_loadable_inline_mapping_is_valid_without_model_text_validation(
+        self, tmp_path, ontology_binding, monkeypatch
+    ):
+        def reject_model_text(model_text, metric_names=None):
+            raise AssertionError("mapping text must not be validated as an OSI model")
+
+        monkeypatch.setattr(ontology_binding, "validate", reject_model_text)
+        result = await self._inline_runtime(tmp_path).validate_semantic(scope="all")
+        assert result.valid is True
+        assert result.issues == []
+
+    @pytest.mark.asyncio
+    async def test_an_inline_mapping_that_fails_to_load_is_invalid(self, tmp_path, ontology_binding, monkeypatch):
+        class RejectingEngine(FakeOntologyEngine):
+            def __init__(self, **kwargs):
+                raise ontology_binding.ModelError("metric 'orders' references unknown field no_such_column")
+
+        monkeypatch.setattr(ontology_binding, "Engine", RejectingEngine)
+        result = await self._inline_runtime(tmp_path).validate_semantic(scope="all")
+        assert result.valid is False
+        assert any(
+            "mapping_load_error" in issue.message and "no_such_column" in issue.message for issue in result.issues
+        )
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(("name", "valid"), [("mini", True), ("other_model", False)])
+    async def test_the_model_name_is_read_from_the_mapping(self, tmp_path, ontology_binding, name, valid):
+        result = await self._inline_runtime(tmp_path).validate_semantic(scope="all", semantic_model_name=name)
+        assert result.valid is valid
+        if not valid:
+            assert any("semantic_model_not_found" in issue.message for issue in result.issues)

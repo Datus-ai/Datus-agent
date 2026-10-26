@@ -882,24 +882,36 @@ class DosiRuntime:
                 ],
             )
 
+        inline_mapping_handles = {
+            path: handle for path, handle in handles if handle.inputs[1] and handle.inputs[1] == path
+        }
+
+        def _validate_inline_mapping(handle: EngineHandle) -> dict[str, Any]:
+            # A mapping that carries its model inline is not OSI model text:
+            # loading its engine lowers the ontology and compiles every metric.
+            try:
+                handle.get()
+            except Exception as exc:  # noqa: BLE001 - reported as the validation issue
+                return {
+                    "valid": False,
+                    "issues": [{"severity": "error", "code": "mapping_load_error", "message": str(exc)}],
+                }
+            return {"valid": True, "issues": []}
+
         def _validate(model_path: str) -> tuple[dict[str, Any], str]:
             with open(model_path, encoding="utf-8") as fh:
                 model_text = fh.read()
-            payload = dosi_validation_text_payload(
-                model_text,
-                metric_names=metric_names,
-            )
+            inline_mapping = inline_mapping_handles.get(model_path)
+            if inline_mapping is not None:
+                payload = _validate_inline_mapping(inline_mapping)
+            else:
+                payload = dosi_validation_text_payload(
+                    model_text,
+                    metric_names=metric_names,
+                )
             if payload.get("valid") and semantic_model_name:
                 document = yaml.safe_load(model_text) or {}
-                names = (
-                    [
-                        str(model.get("name") or "")
-                        for model in document.get("semantic_model", [])
-                        if isinstance(model, dict)
-                    ]
-                    if isinstance(document, dict)
-                    else []
-                )
+                names = document_model_names(document)
                 if semantic_model_name not in names:
                     payload["valid"] = False
                     payload.setdefault("issues", []).append(
