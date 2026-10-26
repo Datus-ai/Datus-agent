@@ -153,10 +153,24 @@ async def test_stopped_or_expired_review_never_writes(tmp_path, target, reason, 
     assert (await running)["success"] == 0
     assert target.read_text() == BEFORE
     assert not node.tool_review_previews
-    delivered = await node.tool_channel.publish("call", {"success": 1})
-    if reason == "timeout":
-        assert delivered is False
+    await node.tool_channel.publish("call", {"success": 1})
     assert target.read_text() == BEFORE
+
+
+@pytest.mark.asyncio
+async def test_changed_symlink_target_cannot_redirect_acceptance(tmp_path, target):
+    node = node_for(tmp_path)
+    apply_semantic_plan_review(node)
+    running, _ = await start(node)
+    destination = target.with_name("other.yml")
+    destination.write_text("not approved")
+    target.unlink()
+    target.symlink_to(destination)
+    await node.tool_channel.publish("call", {"success": 1})
+    result = await running
+    assert result["success"] == 0
+    assert "path changed" in result["error"]
+    assert destination.read_text() == "not approved"
 
 
 @pytest.mark.asyncio

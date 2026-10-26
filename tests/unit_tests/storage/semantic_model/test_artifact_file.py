@@ -17,17 +17,16 @@ def test_semantic_artifact_lock_does_not_create_files(tmp_path):
 
 
 def _ontology_writer(root, started, finished):
-    from datus.tools.func_tool.filesystem_tools import FilesystemFuncTool
+    from pathlib import Path
 
     started.set()
-    result = FilesystemFuncTool(root_path=root).write_file(
-        "subject/semantic_models/ontology/flights/ontology.yml", "from another worker"
-    )
-    if result.success:
+    target = Path(root) / "subject/semantic_models/ontology/flights/ontology.yml"
+    with semantic_artifact_lock(target):
+        target.write_text("from another worker")
         finished.set()
 
 
-def test_ontology_review_and_native_writer_share_a_reentrant_process_lock(tmp_path):
+def test_ontology_path_lock_is_reentrant_and_coordinates_api_workers(tmp_path):
     import os
 
     import pytest
