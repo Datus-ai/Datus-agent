@@ -519,6 +519,26 @@ class PermissionHooks(AgentHooks):
         if tool_name in self._PLAN_MODE_BYPASS_TOOLS:
             return
 
+        # The Web adapter owns ASK through its immutable Accept/Cancel review.
+        # This is per invocation: ordinary files on a filesystem-dependent
+        # node retain their existing permission and execution path.
+        if getattr(getattr(tool, "on_invoke_tool", None), "_datus_ontology_review", False):
+            from datus.utils.ontology_utils import is_ontology_file_path
+
+            args = self._parse_tool_args(context)
+            if isinstance(args, dict) and isinstance(args.get("path"), str) and is_ontology_file_path(args["path"]):
+                category, pattern_name = self._get_category_and_pattern(tool_name, context)
+                if (
+                    self.permission_manager.check_permission(category, pattern_name, self.node_name)
+                    == PermissionLevel.DENY
+                ):
+                    raise PermissionDeniedException(
+                        "Ontology write denied by permission rules",
+                        tool_category=category,
+                        tool_name=pattern_name,
+                    )
+                return
+
         # External proxies own their permission handling. Semantic plans are
         # written server-side: their separate preview approval must not bypass
         # custom ASK/DENY rules.

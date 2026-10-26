@@ -34,6 +34,10 @@ def apply_semantic_plan_review(node: Any, *, context: SemanticPlanReviewContext 
     previews = context.previews
     node.tool_review_previews = previews
 
+    from datus.tools.proxy.ontology_file_review import apply_ontology_file_review
+
+    apply_ontology_file_review(node, context=context)
+
     writer = getattr(node, "semantic_plan_file_tool", None)
     if writer is None:
         return

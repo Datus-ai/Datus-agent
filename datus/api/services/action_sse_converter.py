@@ -53,7 +53,7 @@ def _extract_function(action: ActionHistory) -> tuple[str, dict]:
 
 
 def _build_tool_call_content(
-    action: ActionHistory, proxied_tool_names: Optional[Set[str]] = None
+    action: ActionHistory, proxied_tool_names: Optional[Set[str]] = None, ontology_review: bool = False
 ) -> List[IMessageContent]:
     """Build content for tool call started event.
 
@@ -72,6 +72,13 @@ def _build_tool_call_content(
     }
     if proxied_tool_names is not None:
         payload_data["proxied"] = function_name in proxied_tool_names
+    if ontology_review and function_name in {"write_file", "edit_file"}:
+        from datus.utils.ontology_utils import is_ontology_file_path
+
+        path = arguments.get("path")
+        if isinstance(path, str) and is_ontology_file_path(path):
+            payload_data["proxied"] = True
+            payload_data["reviewType"] = "ontology"
     return [IMessageContent(type="call-tool", payload=payload_data)]
 
 
@@ -574,6 +581,7 @@ def action_to_sse_event(
     is_update: bool = False,
     include_final_response: bool = False,
     proxied_tool_names: Optional[Set[str]] = None,
+    ontology_review: bool = False,
 ) -> Optional[SSEEvent]:
     """Convert an ActionHistory object to an SSEEvent.
 
@@ -669,7 +677,7 @@ def action_to_sse_event(
         elif action.action_type == SUBAGENT_COMPLETE_ACTION_TYPE:
             contents = _build_subagent_complete_content(action)
         elif role == ActionRole.TOOL and status == ActionStatus.PROCESSING:
-            contents = _build_tool_call_content(action, proxied_tool_names)
+            contents = _build_tool_call_content(action, proxied_tool_names, ontology_review)
         elif role == ActionRole.TOOL:
             contents = _build_tool_result_content(action)
         elif role == ActionRole.INTERACTION and status == ActionStatus.PROCESSING:

@@ -16,6 +16,13 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator, Optional
 
+from datus.utils.ontology_utils import is_ontology_file_path
+
+try:
+    import fcntl
+except ImportError:  # pragma: no cover - Windows retains the thread lock
+    fcntl = None
+
 #: Weak values so the registry does not grow for the life of the process. A sandbox pod that
 #: edits thousands of files would otherwise keep a lock object per path forever. This is safe
 #: because every holder keeps a strong local reference for the duration of the ``with``: an entry
@@ -23,6 +30,7 @@ from typing import Iterator, Optional
 #: fresh lock with no one to exclude.
 _ARTIFACT_LOCKS: "weakref.WeakValueDictionary[str, threading.RLock]" = weakref.WeakValueDictionary()
 _ARTIFACT_LOCKS_GUARD = threading.Lock()
+_HELD_ONTOLOGY_LOCKS = threading.local()
 
 
 def artifact_revision(content: bytes) -> str:
@@ -50,7 +58,24 @@ def path_mutation_lock(target_path: Path) -> Iterator[None]:
             _ARTIFACT_LOCKS[key] = thread_lock
 
     with thread_lock:
-        yield
+        held = getattr(_HELD_ONTOLOGY_LOCKS, "paths", set())
+        if not is_ontology_file_path(target_path) or fcntl is None or key in held:
+            yield
+            return
+        # Filesystem tools and review commits share this lock, including CLI
+        # and auto writers in other API workers. Nesting remains reentrant.
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        lock_path = target_path.with_name(f".{target_path.name}.lock")
+        fd = os.open(lock_path, os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0), 0o600)
+        with os.fdopen(fd, "a+") as lock_file:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+            held.add(key)
+            _HELD_ONTOLOGY_LOCKS.paths = held
+            try:
+                yield
+            finally:
+                held.remove(key)
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
 
 
 #: The original name, kept so semantic-model callers read naturally. Same registry, same lock.

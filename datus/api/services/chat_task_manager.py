@@ -1005,6 +1005,11 @@ class ChatTaskManager:
                         is_update=bool(is_update),
                         include_final_response=_should_include_final_response(action, assistant_response_sent),
                         proxied_tool_names=getattr(node, "proxied_tool_names", None),
+                        ontology_review=(
+                            effective_source == "web"
+                            and active_profile not in ("auto", "dangerous")
+                            and hasattr(node, "semantic_plan_review_context")
+                        ),
                     )
                     if sse:
                         # Per-LLM-call usage event: the converter has no access
