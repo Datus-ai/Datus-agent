@@ -14,6 +14,7 @@ interactive and workflow executions.
 
 import os
 import re
+from contextlib import nullcontext
 from pathlib import Path
 from typing import List, Literal, Optional
 
@@ -629,8 +630,8 @@ class SqlSummaryAgenticNode(AgenticNode):
         restore the original content and permissions of files it overwrote."""
         for target, snapshot in self._mutation_snapshots.items():
             try:
-                with path_mutation_lock(Path(target)):
-                    revisions = getattr(self, "_web_mutation_revisions", {})
+                revisions = getattr(self, "_web_mutation_revisions", {})
+                with path_mutation_lock(Path(target)) if target in revisions else nullcontext():
                     if target in revisions:
                         current = Path(target).read_bytes() if os.path.isfile(target) else None
                         revision = artifact_revision(current) if current is not None else "missing"
