@@ -16,6 +16,7 @@ import os
 import re
 import sqlite3
 import time
+from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
@@ -25,6 +26,20 @@ from datus.cli.init_commands import InitCommands
 from datus.configuration.agent_config import AgentConfig
 from datus.utils.path_manager import reset_path_manager
 from tests.unit_tests.cli.test_chat_commands import MinimalCLI
+
+
+@dataclass
+class LiveInitRun:
+    cli: MinimalCLI
+    chat: ChatCommands
+    nodes: list
+    contexts: list
+    workspace: Path
+    report: dict
+    report_path: Path
+
+
+METRIC_PATTERN = r"\bsum(?:\s*\(\s*(?:[a-z_]+\.)?amount\s*\)|\s+of\s+(?:[a-z_]+\.)?amount\b)"
 
 
 def observe_live_calls(monkeypatch):
@@ -104,7 +119,35 @@ def observe_catalog_io(monkeypatch):
 @pytest.mark.timeout(900)
 @pytest.mark.skipif(os.environ.get("DATUS_RUN_LIVE_INIT") != "1", reason="Explicit live init opt-in required")
 def test_qwen_scoped_init_supplements_existing_documents(tmp_path, monkeypatch, request):
-    _run_qwen_init(tmp_path, monkeypatch, request)
+    run = _run_qwen_init(tmp_path, monkeypatch, request)
+    crm = (run.workspace / "knowledge/crm.md").read_text()
+    before = len(run.nodes)
+    rule = "Booked orders require settled payment before invoicing."
+    (run.workspace / "invoicing.md").write_text(rule + "\n")
+    InitCommands(run.cli).cmd_init(
+        "Only orders in sales. Read existing knowledge/sales.md for context. "
+        "Add the invoicing rule from invoicing.md, summarize it clearly and cite the source. "
+        "Preserve existing purpose, metrics and SQL filters. "
+        "Do not inspect customers or unrelated_events."
+    )
+    second = run.contexts[-1]
+    run.report["second_scope"] = {
+        "status": second.state["status"],
+        "tables": list(second.state["selected_tables"]),
+        "new_sessions": len(run.nodes) - before,
+        "outputs": list(second.state["outputs"]),
+    }
+    run.report_path.write_text(json.dumps(run.report, ensure_ascii=False, indent=2))
+    assert second is not run.contexts[0] and second.state["status"] == "completed_scope", run.report["second_scope"]
+    assert set(second.state["selected_tables"]) == {"orders"}
+    assert len(run.nodes) == before and run.chat.current_node is run.nodes[0]
+    text = (run.workspace / "knowledge/sales.md").read_text()
+    assert "settled" in text.lower() and "invoic" in text.lower() and "invoicing.md" in text
+    assert re.search(METRIC_PATTERN, text.replace("`", ""), re.I) and "booked" in text.lower()
+    assert (run.workspace / "knowledge/crm.md").read_text() == crm
+    assert "knowledge/crm" in (run.workspace / "AGENTS.md").read_text()
+    assert not (run.workspace / ".datus/init").exists()
+    assert getattr(run.chat.current_node, "_init_context", None) is None
 
 
 @pytest.mark.nightly
@@ -112,7 +155,19 @@ def test_qwen_scoped_init_supplements_existing_documents(tmp_path, monkeypatch, 
 @pytest.mark.timeout(1200)
 @pytest.mark.skipif(os.environ.get("DATUS_RUN_LIVE_INIT_SCALE") != "1", reason="Explicit live scale opt-in required")
 def test_qwen_init_large_catalog_in_one_loop(tmp_path, monkeypatch, request):
-    _run_qwen_init(tmp_path, monkeypatch, request, scale=True)
+    run = _run_qwen_init(tmp_path, monkeypatch, request, scale=True)
+    state = run.contexts[0].state
+    assert all(state["tables"][table].get("metadata_status") == "checked" for table in state["selected_tables"]), (
+        "The requested per-table structure checks must actually run"
+    )
+    archives = run.report["archives"]
+    assert any(a["sections"].get("items") == 20000 for a in archives), "Preserve the full table catalog"
+    assert any(a["tokens"] > 262144 for a in archives), "The raw catalog must exceed the configured window"
+    model_calls = run.report["model_calls"]
+    checked_calls = [c for c in model_calls if "capacity_input_tokens" in c]
+    assert checked_calls, "Capture actual request capacity evidence"
+    assert all(c["capacity_input_tokens"] <= c["capacity_input_limit"] for c in checked_calls)
+    assert not any(c.get("error_type") for c in model_calls), "No provider or local model-call errors"
 
 
 def _run_qwen_init(tmp_path, monkeypatch, request, *, scale=False):
@@ -348,68 +403,28 @@ def _run_qwen_init(tmp_path, monkeypatch, request, *, scale=False):
     report_path.write_text(rendered)
     assert state["status"] == "completed_scope", f"Incomplete init: {report}; console: {cli.console.file.getvalue()}"
     assert set(state["selected_tables"]) == set(core_tables)
-    if scale:
-        assert all(state["tables"][table].get("metadata_status") == "checked" for table in core_tables), (
-            "The requested per-table structure checks must actually run"
-        )
     assert len(nodes) == 1 and chat.current_node is nodes[0]
+    knowledge_files = [path for path in (workspace / "knowledge").rglob("*.md") if path.name != "pending-questions.md"]
+    assert knowledge_files, "Publish useful knowledge, not only pending questions"
     if scale:
         # Knowledge organization is model-owned; assess published content even
         # when related domains share a document. Pending questions are not facts.
-        knowledge_files = [
-            path for path in (workspace / "knowledge").rglob("*.md") if path.name != "pending-questions.md"
-        ]
-        assert knowledge_files, "Publish useful knowledge, not only pending questions"
         published = "\n".join(path.read_text() for path in [workspace / "AGENTS.md", *knowledge_files])
         sales = crm = published
     else:
         sales = (workspace / "knowledge/sales.md").read_text()
         crm = (workspace / "knowledge/crm.md").read_text()
     # The knowledge may express the same definition as SQL or concise prose.
-    metric_pattern = r"\bsum(?:\s*\(\s*(?:[a-z_]+\.)?amount\s*\)|\s+of\s+(?:[a-z_]+\.)?amount\b)"
-    assert re.search(metric_pattern, sales.replace("`", ""), re.I), "The revenue formula must be documented"
+    assert re.search(METRIC_PATTERN, sales.replace("`", ""), re.I), "The revenue formula must be documented"
     assert "booked" in sales.lower() and "order_revenue" in sales
     assert "README.md" in sales and "metrics.sql" in sales
     assert "customers" in crm.lower() and "README.md" in crm
-    if scale:
-        assert any(a["sections"].get("items") == catalog_size for a in archives), "Preserve the full table catalog"
-        assert any(a["tokens"] > 262144 for a in archives), "The raw catalog must exceed the configured window"
-        checked_calls = [c for c in model_calls if "capacity_input_tokens" in c]
-        assert checked_calls, "Capture actual request capacity evidence"
-        assert all(c["capacity_input_tokens"] <= c["capacity_input_limit"] for c in checked_calls)
-        assert not any(c.get("error_type") for c in model_calls), "No provider or local model-call errors"
     assert "Keep this user-owned instruction verbatim." in (workspace / "AGENTS.md").read_text()
     assert len((workspace / "AGENTS.md").read_text().splitlines()) <= 200
     transcript = runner.run(nodes[0]._session.get_items())
     tool_names = {item.get("name") for item in transcript if item.get("type") == "function_call"}
     assert not {"execute_sql", "bash", "task", "confirm_plan"} & tool_names
     assert not (workspace / ".datus/init").exists()
-    if not scale:
-        before = len(nodes)
-        rule = "Booked orders require settled payment before invoicing."
-        (workspace / "invoicing.md").write_text(rule + "\n")
-        InitCommands(cli).cmd_init(
-            "Only orders in sales. Read existing knowledge/sales.md for context. "
-            "Add the invoicing rule from invoicing.md, summarize it clearly and cite the source. "
-            "Preserve existing purpose, metrics and SQL filters. "
-            "Do not inspect customers or unrelated_events."
-        )
-        second = contexts[-1]
-        report["second_scope"] = {
-            "status": second.state["status"],
-            "tables": list(second.state["selected_tables"]),
-            "new_sessions": len(nodes) - before,
-            "outputs": list(second.state["outputs"]),
-        }
-        report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2))
-        assert second is not context and second.state["status"] == "completed_scope", report["second_scope"]
-        assert set(second.state["selected_tables"]) == {"orders"}
-        assert len(nodes) == before and chat.current_node is nodes[0]
-        text = (workspace / "knowledge/sales.md").read_text()
-        assert "settled" in text.lower() and "invoic" in text.lower() and "invoicing.md" in text
-        assert re.search(metric_pattern, text.replace("`", ""), re.I) and "booked" in text.lower()
-        assert (workspace / "knowledge/crm.md").read_text() == crm
-        assert "knowledge/crm" in (workspace / "AGENTS.md").read_text()
-        assert not (workspace / ".datus/init").exists()
     assert chat.current_node is nodes[0]
     assert getattr(chat.current_node, "_init_context", None) is None
+    return LiveInitRun(cli, chat, nodes, contexts, workspace, report, report_path)

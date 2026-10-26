@@ -229,7 +229,6 @@ class TestTemplateMethodHappyPath:
         ahm = ActionHistoryManager()
         actions = [a async for a in node.execute_stream(ahm)]
 
-        assert node.result is not None
         assert node.result.response == "hello world"
         assert actions[-1].output["response"] == "hello world"
 
@@ -248,7 +247,6 @@ class TestTemplateMethodHappyPath:
 
         # Fake's _build_success_result returns ctx.response_content directly;
         # thinking-filtered means it stays empty.
-        assert node.result is not None
         assert node.result.response == ""
 
 
@@ -346,7 +344,6 @@ class TestErrorPath:
 
         assert emitted[-1].action_type == "error"
         assert emitted[-1].status == ActionStatus.FAILED
-        assert node.result is not None
         assert node.result.success is False
         assert "model exploded" in (node.result.error or "")
         # Error response is the unified empty string, not a node-specific apology.
