@@ -1937,9 +1937,10 @@ def test_pending_web_semantic_edit_preserves_user_save_on_failure(identity_tool)
 def test_pending_web_semantic_edit_does_not_undo_user_save_after_prior_native_write(identity_tool):
     metric = _osi_metric("revenue", "SUM(orders.amount)")
     tool, target, state, _ = identity_tool([metric])
+    original = target.read_bytes()
     metric["description"] = "Earlier native authoring"
     assert tool.upsert_osi_metrics(str(target), [metric]).success == 1
-    assert state.artifact_snapshot_content is not None
+    assert state.artifact_snapshot_content == original
     tool._prepare_client_mutation(
         "edit_file", {"path": str(target), "old_string": "SUM(orders.amount)", "new_string": "SUM(orders.total)"}
     )
