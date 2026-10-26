@@ -708,3 +708,77 @@ class TestRuntimeOntology:
         assert payload.code == "invalid_relationship_path"
         assert payload.candidates == ["Delay.flight.arrives_at.code"]
         assert "Delay.flight.arrives_at.code" in payload.hint
+
+
+# ---------------------------------------------------------------- validating a mapping that carries its model
+
+
+class TestValidateInlineMapping:
+    """A mapping document is not OSI model text; validation must load its engine instead."""
+
+    @staticmethod
+    def _inline_runtime(tmp_path):
+        ontology_dir = tmp_path / "semantic_models" / "ontology" / "flights_db"
+        ontology_dir.mkdir(parents=True)
+        (ontology_dir / "mini.yaml").write_text(INLINE_MAPPING_YAML)
+        return _runtime(tmp_path / "semantic_models" / "flights_db", ontology_dir)
+
+    @pytest.mark.asyncio
+    async def test_a_loadable_inline_mapping_is_valid_without_model_text_validation(
+        self, tmp_path, ontology_binding, monkeypatch
+    ):
+        def reject_model_text(model_text, metric_names=None):
+            raise AssertionError("mapping text must not be validated as an OSI model")
+
+        monkeypatch.setattr(ontology_binding, "validate", reject_model_text)
+        result = await self._inline_runtime(tmp_path).validate_semantic(scope="all")
+        assert result.valid is True
+        assert result.issues == []
+
+    @pytest.mark.asyncio
+    async def test_an_inline_mapping_that_fails_to_load_is_invalid(self, tmp_path, ontology_binding, monkeypatch):
+        class RejectingEngine(FakeOntologyEngine):
+            def __init__(self, **kwargs):
+                raise ontology_binding.ModelError("metric 'orders' references unknown field no_such_column")
+
+        monkeypatch.setattr(ontology_binding, "Engine", RejectingEngine)
+        result = await self._inline_runtime(tmp_path).validate_semantic(scope="all")
+        assert result.valid is False
+        assert any(
+            "mapping_load_error" in issue.message and "no_such_column" in issue.message for issue in result.issues
+        )
+
+    @pytest.mark.asyncio
+    async def test_the_model_named_by_the_mapping_validates(self, tmp_path, ontology_binding):
+        result = await self._inline_runtime(tmp_path).validate_semantic(scope="all", semantic_model_name="mini")
+        assert result.valid is True
+        assert result.issues == []
+
+    @pytest.mark.asyncio
+    async def test_a_model_name_the_mapping_does_not_carry_is_not_found(self, tmp_path, ontology_binding):
+        result = await self._inline_runtime(tmp_path).validate_semantic(scope="all", semantic_model_name="other")
+        assert result.valid is False
+        assert any("semantic_model_not_found" in issue.message for issue in result.issues)
+
+
+class TestValidateInlineMappingRequestedMetrics:
+    """``metric_names`` asks whether specific metrics compiled; an inline mapping answers from its loaded engine."""
+
+    @pytest.mark.asyncio
+    async def test_a_metric_the_loaded_engine_carries_is_compiled(self, tmp_path, ontology_binding):
+        runtime = TestValidateInlineMapping._inline_runtime(tmp_path)
+        result = await runtime.validate_semantic(scope="all", metric_names=["order_count"])
+        assert result.valid is True
+        assert result.issues == []
+        # Name-only evidence never stands in for per-metric compiled SQL.
+        assert result.metadata["compiled_metrics"] == []
+
+    @pytest.mark.asyncio
+    async def test_a_metric_the_loaded_engine_lacks_is_reported(self, tmp_path, ontology_binding):
+        runtime = TestValidateInlineMapping._inline_runtime(tmp_path)
+        result = await runtime.validate_semantic(scope="all", metric_names=["no_such_metric"])
+        assert result.valid is False
+        assert any(
+            "compiled_metric_not_found" in issue.message and "no_such_metric" in issue.message
+            for issue in result.issues
+        )

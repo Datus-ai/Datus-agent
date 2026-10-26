@@ -134,7 +134,7 @@ def execute_metric_artifact_query(
         # mutable subject-index availability. Compilation validates dimensions.
         detail = saved.metric_detail
     else:
-        detail_result = semantic_tools.get_metric(name=query.metric.name, path=query.metric.path)
+        detail_result = semantic_tools.metric_record(name=query.metric.name, path=query.metric.path)
         detail = detail_result.result
         if (
             not detail_result.success

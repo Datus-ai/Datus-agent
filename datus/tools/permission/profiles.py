@@ -307,6 +307,7 @@ NORMAL = PermissionConfig(
 # posture, so forcing them to switch to ``dangerous`` just to remove one
 # chart is hostile. ASK still gates each call via the broker.
 _AUTO_EXTRA_RULES = [
+    _rule("semantic_tools", "write_semantic_model_plan_file", PermissionLevel.ALLOW),
     # workspace writes — ALLOW promotes the INTERNAL × write decision in
     # ``_handle_filesystem_zone`` so the auto profile no longer falls through
     # to ``default=ASK`` like normal does. EXTERNAL paths are still gated by

@@ -294,7 +294,7 @@ The MCP server registers these tools. Availability depends on the datasource and
 | --- | --- |
 | **Database** | `check_datasource_quality`, `describe_table`, `execute_sql`, `get_migration_capabilities`, `import_database_file`, `list_databases`, `list_schemas`, `list_tables`, `load_file_as_table`, `plan_datasource`, `search_table`, `suggest_table_layout`, `validate_ddl` |
 | **Context Search** | `get_reference_sql`, `list_subject_tree`, `search_metrics`, `search_reference_sql`, `search_semantic_objects` |
-| **Semantic** | `attribution_analyze`, `get_metric`, `get_query_metrics_result`, `list_metrics`, `query_metrics`, `validate_semantic` |
+| **Semantic** | `attribution_analyze`, `get_dataset`, `get_metric`, `get_query_metrics_result`, `list_metrics`, `query_metrics`, `validate_semantic` |
 | **Reference Templates** | `execute_reference_template`, `get_reference_template`, `render_reference_template`, `search_reference_template` |
 | **Date Parsing** | `parse_temporal_expressions` |
 | **Platform Docs** | `get_document`, `list_document_nav`, `search_document` |

@@ -1,8 +1,8 @@
+{% set tools = tool_names or [] %}
+{% if "attribution_analyze" in tools %}
 ## Attribution Playbook
 
-- Treat attribution as descriptive change decomposition; it does not establish causation.
-- Use `get_metric.dimensions` to choose 3-5 low-cardinality categorical candidates. Exclude time dimensions and numeric measures, IDs, or high-cardinality fields unless the user explicitly needs one.
-- `attribution_analyze` uses the same OSI half-open `[start, end)` time-range contract as `query_metrics`.
+- Use the fields of the datasets under `get_metric`'s `dimension_datasets`{% if "get_dataset" in tools %} (see `get_dataset`){% endif %} to choose 3-5 low-cardinality categorical candidates. Exclude time dimensions and numeric measures, IDs, or high-cardinality fields unless the user explicitly needs one.
 - Use equal-length baseline and current windows. If the result contains `unequal_windows`, disclose that values were not normalized before comparing them.
 - Read the observed change from `total_change`. If `strategy` is `unsupported`, disclose `unsupported_reason` and do not give a dimension-attribution conclusion.
 - Read detailed contributions from `per_dimension.<dimension>.values`. Never compare or add contribution percentages across different dimensions. `top_dimension_values` is only a cross-dimension display summary.
@@ -15,6 +15,7 @@
   - With `zero_total_delta` or `zero_total_delta_with_component_changes`, explain structural movement using absolute component deltas, not contribution percentages.
   - With `high_cardinality_dimension`, attribute a coarser dimension first and use `where` to narrow the follow-up query.
   - With `dimension_analysis_failed`, disclose the affected dimension and continue with successful dimensions only.
+{% endif %}
 
 ## Period-Over-Period Metric Queries
 
@@ -27,15 +28,16 @@
 
 ## Parameterized Metric Queries
 
-- When `get_metric` returns `params`, the metric takes query-time parameters: bind them through `query_metrics.params` using exactly the declared names and values from each parameter's domain. A description that mentions a placeholder such as "day k" refers to one of these parameters.
-- To report several values of one parameter side by side (day-1, day-7 and day-30 retention), pass a list in one query: `params={"k": [1, 7, 30]}` returns one column per value (`<metric>__k_1`, `<metric>__k_7`, `<metric>__k_30`). Never split them into separate queries. Read which column carries which value from the result's `outputs`; a non-ASCII value gets an opaque column suffix.
-- Use declared defaults when the user does not override them. If the request requires a different business value, bind the user's value rather than guessing.
-- Do not pass `params` to metrics that do not declare them, and do not translate parameter values into an ad hoc SQL `where` clause.
+- A metric description that mentions a placeholder such as "day k" refers to one of the metric's `params`. Bind values from each parameter's domain; when the question needs a value other than the default, bind the user's value rather than guessing.
+{% if "get_dataset" in tools %}
+- A field you group or filter by takes the parameters of its base too: `get_dataset` shows its `fixed(base, …)`, and `get_metric` on that base lists them.
+{% endif %}
+- Do not pass `params` that neither a metric nor a field the query reads declares, and do not translate parameter values into an ad hoc SQL `where` clause.
 
 ## Window Metric Queries
 
-- When a selected window metric exposes `requires_time_axis: true`, group by the reserved input dimension `metric_time` and pass the requested grain separately as `time_granularity`. Discover the available/native grains from `get_metric.time_granularities`; do not invent a concrete time field. Do not add `metric_time` solely because a metric has window metadata; value-ordered rank, value, or frame metrics may use only the business dimensions requested by the user.
-- A grained time result uses the engine's suffixed output name and that name may be used as an `order_by` key. Never pass the suffixed output name in `dimensions`; Dosi query input remains `metric_time` plus `time_granularity`.
+- For a metric with `requires_time_axis: true`, take the grains from `get_metric`'s `time` line; do not invent a concrete time field. Do not add `metric_time` solely because a metric has window metadata; value-ordered rank, value, or frame metrics may use only the business dimensions requested by the user.
+- Never pass a suffixed output name such as `metric_time__day` in `dimensions`; the query input remains `metric_time` plus `time_granularity`.
 - For cumulative metrics, use the business query grain requested by the user or documented in metric metadata/AI guidance. A metric `window.reset` value controls the reset boundary; it is not automatically the query grain.
 - For rolling metrics, `periods` counts result buckets. Choose the bucket grain from the user's request or metric guidance and pass that grain separately.
 - Order time-axis window results by their grained time result when chronological output is useful. Order value-oriented window results by the requested business dimension or metric value.

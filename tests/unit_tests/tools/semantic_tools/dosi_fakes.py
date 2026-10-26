@@ -233,7 +233,10 @@ class ModelError(OsiError):
 
 
 class QueryError(OsiError):
-    pass
+    def __init__(self, message, *, condition=None, missing_dimensions=(), **kwargs):
+        super().__init__(message, **kwargs)
+        self.condition = condition
+        self.missing_dimensions = list(missing_dimensions)
 
 
 class NotComputableError(OsiError):
@@ -278,6 +281,41 @@ class FakeEngine:
 
     def metrics(self) -> List[Dict[str, Any]]:
         return [dict(r) for r in METRIC_ROWS]
+
+    def metric(self, name: str) -> Dict[str, Any]:
+        """``Engine.metric``: one metric in full, ``expr`` and all."""
+        # From this engine's own catalog, so a test that swaps metrics() is described too.
+        rows = self.metrics()
+        row = next((r for r in rows if r["name"] == name), None)
+        if row is None:
+            raise QueryError(
+                f"no metric named {name!r}",
+                code="unknown_metric",
+                candidates=[r["name"] for r in rows],
+            )
+        return {
+            **dict(row),
+            "expr": f"SUM(orders.{name})",
+            "dimension_datasets": [{"name": "orders"}],
+            "compares_across": None,
+            "time_granularities": ["day", "week", "month", "quarter", "year"],
+            "requires_time_axis": name in self.time_axis_metrics,
+        }
+
+    def dataset(self, name: str) -> Dict[str, Any]:
+        """``Engine.dataset``: one dataset's fields and relationships."""
+        row = next((r for r in DATASET_ROWS if r["name"] == name), None)
+        if row is None:
+            raise QueryError(
+                f"no dataset named {name!r}",
+                code="unknown_dataset",
+                candidates=[r["name"] for r in DATASET_ROWS],
+            )
+        return {
+            "name": name,
+            "source": row.get("source", name),
+            "fields": [{"name": "id"}],
+        }
 
     def dimensions(self, metric: Optional[str] = None) -> List[Dict[str, Any]]:
         self.dimension_calls.append(metric)

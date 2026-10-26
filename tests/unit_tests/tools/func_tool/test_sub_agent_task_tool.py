@@ -3179,3 +3179,73 @@ class TestSubagentInheritsParentDatabase:
         )
 
         node.setup_tools.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_task_delegation_reviews_plans_through_the_parent_session(task_tool, tmp_path):
+    from datus.api.routes.chat_routes import get_tool_preview
+    from datus.tools.func_tool.semantic_plan_file_tools import SemanticPlanFileTools
+    from datus.tools.proxy.semantic_plan_review import apply_semantic_plan_review
+    from datus.tools.proxy.tool_result_channel import ToolResultChannel
+
+    class ReadyChannel(ToolResultChannel):
+        async def wait_for(self, call_id, timeout=None):
+            waiting.set()
+            return await super().wait_for(call_id, timeout)
+
+    waiting = asyncio.Event()
+    parent = SimpleNamespace(
+        tools=[],
+        semantic_plan_file_tool=None,
+        tool_channel=ReadyChannel(),
+        proxied_tool_names=set(),
+        proxy_tool_patterns=[],
+        session_id=None,
+        scope="owner",
+        pending_input_queue=None,
+    )
+    apply_semantic_plan_review(parent)
+    task_tool.set_parent_node(parent)
+    writer = SemanticPlanFileTools(tmp_path)
+    child = MagicMock()
+    child.semantic_plan_file_tool = writer
+    child.tools = writer.available_tools()
+    child.proxied_tool_names = set()
+    child.scope = "owner"
+    child.session_id = "semantic_modeling_session_test"
+    child.session_manager = None
+    observed = []
+
+    async def stream(*_args):
+        observed.append(
+            await child.tools[0].on_invoke_tool(
+                SimpleNamespace(tool_call_id="nested-call"), json.dumps({"model_name": "sales", "plan_json": {}})
+            )
+        )
+        return
+        yield  # pragma: no cover
+
+    child.execute_stream_with_interactions = stream
+    svc = SimpleNamespace(
+        task_manager=SimpleNamespace(get_task=lambda _: SimpleNamespace(node=parent, status="running"))
+    )
+    with (
+        patch.object(task_tool, "_create_node", return_value=child),
+        patch.object(task_tool, "_refresh_node_db_tools"),
+        patch.object(task_tool, "_build_node_input"),
+    ):
+        pending = asyncio.create_task(task_tool._execute_node("semantic_modeling", "plan sales"))
+        try:
+            await asyncio.wait_for(waiting.wait(), 2)
+            preview = await get_tool_preview(svc, SimpleNamespace(user_id="owner"), "parent-session", "nested-call")
+            assert not (tmp_path / preview.data["filePath"]).exists()
+            assert "write_semantic_model_plan_file" in parent.proxied_tool_names
+            assert "write_semantic_model_plan_file" in child.proxied_tool_names
+            await parent.tool_channel.publish("nested-call", {"success": 1})
+            await pending
+            assert observed[0]["result"]["review_status"] == "accepted"
+            assert (tmp_path / preview.data["filePath"]).read_text() == preview.data["newText"]
+            assert not parent.tool_review_previews
+        finally:
+            parent.tool_channel.cancel_all()
+            await pending

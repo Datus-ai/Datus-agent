@@ -141,6 +141,43 @@ def test_registry_rejects_snapshot_when_every_listed_model_disappears(tmp_path, 
         registry.snapshot()
 
 
+@pytest.mark.parametrize(
+    ("layout", "expected"),
+    [
+        ("model_at_top", True),
+        ("model_in_subdirectory", True),
+        ("empty_directory", False),
+        ("missing_directory", False),
+        ("metric_fragments_only", False),
+    ],
+)
+def test_has_model_files_is_true_only_when_a_plain_model_resolves(tmp_path, layout, expected):
+    """A datasource without a plain model file keeps its models inline in mapping documents."""
+    from datus.tools.semantic_tools.dosi.engine import has_model_files
+
+    models_dir = tmp_path / "models"
+    document = "version: '0.2.0.dev0'\nsemantic_model: []\n"
+    if layout != "missing_directory":
+        models_dir.mkdir()
+    if layout == "model_at_top":
+        (models_dir / "orders.yaml").write_text(document)
+    elif layout == "model_in_subdirectory":
+        (models_dir / "sales").mkdir()
+        (models_dir / "sales" / "orders.yml").write_text(document)
+    elif layout == "metric_fragments_only":
+        (models_dir / "metrics").mkdir()
+        (models_dir / "metrics" / "revenue.yml").write_text("metric:\n  name: revenue\n")
+
+    assert has_model_files(DosiConfig(semantic_models_path=str(models_dir))) is expected
+
+
+def test_has_model_files_honours_an_explicit_model_pin(tmp_path):
+    from datus.tools.semantic_tools.dosi.engine import has_model_files
+
+    pinned = tmp_path / "pinned.yaml"
+    assert has_model_files(DosiConfig(semantic_model_path=str(pinned), semantic_models_path=str(tmp_path / "empty")))
+
+
 def test_resolve_model_files_finds_models_in_subdirectories(tmp_path):
     """Datus discovers authored models recursively -- its authoring inventory
     and its YAML-to-KB sync both walk the tree -- so a model it accepts under a

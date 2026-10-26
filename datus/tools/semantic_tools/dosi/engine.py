@@ -105,6 +105,19 @@ def resolve_model_files(config: DosiConfig) -> list[str]:
     )
 
 
+def has_model_files(config: DosiConfig) -> bool:
+    """Whether the configuration resolves to at least one plain OSI model file.
+
+    False for a datasource whose models live only inline in its Ossie mapping
+    documents: such a datasource must load its ontology directory, or it has
+    no model at all.
+    """
+    try:
+        return bool(resolve_model_files(config))
+    except SemanticCoreException:
+        return False
+
+
 def resolve_model_file(config: DosiConfig) -> str:
     """The OSI model file to load: explicit semantic_model_path, else the sole
     model file in semantic_models_path (the Datus directory convention).

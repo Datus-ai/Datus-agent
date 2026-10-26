@@ -60,6 +60,23 @@ from datus.tools.semantic_tools.models import (
 )
 
 
+def _echo(compiled: Dict[str, Any]) -> Dict[str, Any]:
+    """The engine's ``warnings`` — a condition some part of the query could
+    not read, a source the period does not scope — passed through so the
+    caller sees every condition that did not land."""
+    warnings = compiled.get("warnings")
+    return {"warnings": warnings} if warnings else {}
+
+
+def _lod_definition(row: Dict[str, Any]) -> Optional[str]:
+    """A fixed field's declaration as Dosi spells it — ``fixed(base, dims…)`` —
+    rebuilt from the dimension row's ``lod_*`` keys; None for an ordinary field."""
+    mode, base = row.get("lod_mode"), row.get("lod_base")
+    if not mode or not base:
+        return None
+    return f"{mode}({', '.join([str(base), *(str(d) for d in row.get('lod_dims') or [])])})"
+
+
 class DosiRuntime:
     """Agent's model catalog, query, validation, and editor boundary for Dosi."""
 
@@ -110,7 +127,6 @@ class DosiRuntime:
     ) -> List[MetricDefinition]:
         extension_version = await asyncio.to_thread(datus_extension_version)
         handles, _, _ = await asyncio.to_thread(self._catalog)
-        binding = await asyncio.to_thread(load_binding)
         metrics = []
         for model_path, handle in handles:
             engine = await asyncio.to_thread(handle.get)
@@ -118,8 +134,6 @@ class DosiRuntime:
             dataset_rows = await asyncio.to_thread(engine.datasets)
             dimension_rows = await asyncio.to_thread(engine.dimensions)
             payloads = await asyncio.to_thread(self._metric_payloads, model_path)
-            connection = handle.profile_name
-            dialect = self._dry_run_dialect(binding, connection)
             for row in rows:
                 hints = payloads.get(str(row.get("name") or ""), {})
                 metric_path = (
@@ -167,21 +181,11 @@ class DosiRuntime:
                 if effective_time:
                     metadata["time_dimension"] = effective_time
                 if isinstance(window, dict):
-                    requires_time_axis = await asyncio.to_thread(
-                        self._probe_requires_time_axis,
-                        engine,
-                        binding,
-                        str(row.get("name") or ""),
-                        dialect=dialect,
-                        connection=connection,
-                        required_dimensions=list(row.get("required_dimensions") or []),
-                    )
-                    metadata.update(
-                        {
-                            "window": window,
-                            "requires_time_axis": requires_time_axis,
-                        }
-                    )
+                    # Whether a query needs a grouped time axis is a compile
+                    # probe; get_dimensions makes it for the one metric asked
+                    # about (and marks the axis time_axis_required), so the
+                    # catalog listing compiles nothing.
+                    metadata["window"] = window
                 if "fill_nulls_with" in hints:
                     metadata["fill_nulls_with"] = hints["fill_nulls_with"]
                 metrics.append(
@@ -201,6 +205,44 @@ class DosiRuntime:
                     )
                 )
         return metrics[offset : offset + limit]
+
+    async def describe_metric(self, metric_name: str) -> Dict[str, Any]:
+        """One metric in full, as Dosi describes it (``Engine.metric``): its
+        ``expr``, the datasets it can be grouped by, every parameter a query can
+        bind for it, its time grains and whether it needs a grouped time axis."""
+        handle = await asyncio.to_thread(self._handle_for_metric, metric_name)
+        engine = await asyncio.to_thread(handle.get)
+        binding = await asyncio.to_thread(load_binding)
+        try:
+            return await asyncio.to_thread(engine.metric, metric_name)
+        except Exception as exc:  # noqa: BLE001 - mapped to typed errors below
+            raise_mapped(exc, binding, requested_metrics=[metric_name], requested_dimensions=[])
+            raise  # unreachable; raise_mapped always raises
+
+    async def describe_dataset(self, dataset_name: str) -> Dict[str, Any]:
+        """One dataset in full, as Dosi describes it (``Engine.dataset``): its
+        fields with their expressions and fixed-field declarations, keys, time
+        axis and relationships. The dataset is looked up across every model file
+        of the datasource."""
+        handles, _, _ = await asyncio.to_thread(self._catalog)
+        known: List[str] = []
+        for _, handle in handles:
+            engine = await asyncio.to_thread(handle.get)
+            names = [str(row.get("name") or "") for row in await asyncio.to_thread(engine.datasets)]
+            if dataset_name in names:
+                binding = await asyncio.to_thread(load_binding)
+                try:
+                    return await asyncio.to_thread(engine.dataset, dataset_name)
+                except Exception as exc:  # noqa: BLE001 - mapped to typed errors below
+                    raise_mapped(exc, binding, requested_metrics=[], requested_dimensions=[])
+                    raise  # unreachable; raise_mapped always raises
+            known.extend(name for name in names if name)
+        raise SemanticValidationException(
+            SemanticValidationError(
+                code="unknown_dataset",
+                message=(f"unknown dataset {dataset_name!r} | candidates: {', '.join(sorted(known)) or '(none)'}"),
+            )
+        )
 
     async def get_dimensions(
         self,
@@ -231,15 +273,10 @@ class DosiRuntime:
         connection = handle.profile_name
         dialect = self._dry_run_dialect(binding, connection)
 
-        requires_time_axis = await asyncio.to_thread(
-            self._probe_requires_time_axis,
-            engine,
-            binding,
-            metric_name,
-            dialect=dialect,
-            connection=connection,
-            required_dimensions=required_dimensions,
-        )
+        # Dosi states whether a query must group by the time axis, from the
+        # metric's definition over every level it is computed through.
+        description = await asyncio.to_thread(engine.metric, metric_name)
+        requires_time_axis = bool(description.get("requires_time_axis"))
         physical_time_dimension = self._effective_time_dimension(
             metric_row,
             dataset_rows,
@@ -322,6 +359,8 @@ class DosiRuntime:
                 time_granularities=(grains_by_name.get(str(row.get("name") or ""), []) if row.get("is_time") else []),
                 recommended=row.get("is_dimension"),
                 recommendation_source=(str(row.get("source")) if row.get("source") is not None else None),
+                definition=_lod_definition(row),
+                params=row.get("params") or None,
             )
             for row in rows
             if row.get("name")
@@ -463,6 +502,7 @@ class DosiRuntime:
                         "explain": True,
                         "time_dimensions": time_dimensions,
                         **({"outputs": compiled["outputs"]} if compiled.get("outputs") is not None else {}),
+                        **_echo(compiled),
                     },
                 )
             result = await self._execute_query(binding, engine, query, connection)
@@ -483,6 +523,7 @@ class DosiRuntime:
                         if result.get("requested_columns") is not None
                         else {}
                     ),
+                    **_echo(result),
                 },
             )
         except Exception as exc:  # noqa: BLE001 - mapped to typed errors below
@@ -841,24 +882,40 @@ class DosiRuntime:
                 ],
             )
 
+        inline_mapping_handles = {
+            path: handle for path, handle in handles if handle.inputs[1] and handle.inputs[1] == path
+        }
+
+        def _validate_inline_mapping(handle: EngineHandle) -> dict[str, Any]:
+            # A mapping that carries its model inline is not OSI model text:
+            # loading its engine lowers the ontology and compiles every metric.
+            try:
+                engine = handle.get()
+                loaded_metrics = {str(row.get("name") or "") for row in engine.metrics()}
+            except Exception as exc:  # noqa: BLE001 - reported as the validation issue
+                return {
+                    "valid": False,
+                    "issues": [{"severity": "error", "code": "mapping_load_error", "message": str(exc)}],
+                }
+            # The engine load compiled these; they satisfy the requested-metric
+            # check below but carry no per-metric SQL evidence, so they are kept
+            # out of compiled_metrics.
+            return {"valid": True, "issues": [], "loaded_metric_names": sorted(loaded_metrics - {""})}
+
         def _validate(model_path: str) -> tuple[dict[str, Any], str]:
             with open(model_path, encoding="utf-8") as fh:
                 model_text = fh.read()
-            payload = dosi_validation_text_payload(
-                model_text,
-                metric_names=metric_names,
-            )
+            inline_mapping = inline_mapping_handles.get(model_path)
+            if inline_mapping is not None:
+                payload = _validate_inline_mapping(inline_mapping)
+            else:
+                payload = dosi_validation_text_payload(
+                    model_text,
+                    metric_names=metric_names,
+                )
             if payload.get("valid") and semantic_model_name:
                 document = yaml.safe_load(model_text) or {}
-                names = (
-                    [
-                        str(model.get("name") or "")
-                        for model in document.get("semantic_model", [])
-                        if isinstance(model, dict)
-                    ]
-                    if isinstance(document, dict)
-                    else []
-                )
+                names = document_model_names(document)
                 if semantic_model_name not in names:
                     payload["valid"] = False
                     payload.setdefault("issues", []).append(
@@ -882,6 +939,7 @@ class DosiRuntime:
         contract_digests: set[str] = set()
         compiled_metrics: List[Dict[str, Any]] = []
         compiled_metric_digests: Dict[str, str] = {}
+        loaded_metric_names: set[str] = set()
         artifact_digests: Dict[str, str] = {}
         for model_path in model_paths:
             try:
@@ -904,6 +962,7 @@ class DosiRuntime:
             if payload.get("valid"):
                 compiled_metrics.extend(payload.get("compiled_metrics") or [])
                 compiled_metric_digests.update(payload.get("compiled_metric_digests") or {})
+                loaded_metric_names.update(payload.get("loaded_metric_names") or [])
             prefix = f"[semantic_model_file={Path(model_path).name}] " if qualify else ""
             for issue in payload.get("issues", []):
                 issues.append(
@@ -944,6 +1003,7 @@ class DosiRuntime:
 
         requested_metrics = list(dict.fromkeys(metric_names or []))
         compiled_names = {str(metric.get("name") or "") for metric in compiled_metrics if isinstance(metric, dict)}
+        compiled_names |= loaded_metric_names
         missing_metrics = [name for name in requested_metrics if name not in compiled_names]
         if missing_metrics:
             valid = False
@@ -1172,17 +1232,44 @@ class DosiRuntime:
             )
         return dict(handles)[model_path]
 
+    @staticmethod
+    def _field_names_among(names: List[str], handles: tuple[tuple[str, EngineHandle], ...]) -> List[str]:
+        """The names a model knows as a field, spelled ``dataset.field`` or bare.
+
+        Asked when a name is not a metric: a field put in ``metrics`` otherwise
+        comes back as an unknown metric beside the whole metric catalog, which
+        reads as "pick another metric" rather than "this belongs in dimensions".
+        """
+        found: set[str] = set()
+        for _, handle in handles:
+            try:
+                rows = handle.get().dimensions()
+            except Exception:  # noqa: BLE001 - only a hint: the unknown-metric message still stands
+                continue
+            known = {str(row.get("name") or "") for row in rows if isinstance(row, dict)}
+            for name in names:
+                if name in known or any(full.endswith(f".{name}") for full in known):
+                    found.add(name)
+        return [name for name in names if name in found]
+
     def _handle_for_metrics(self, metrics: List[str]) -> EngineHandle:
         handles, metric_to_path, model_to_path = self._catalog()
         unknown = [name for name in dict.fromkeys(metrics) if name not in metric_to_path]
         if unknown:
-            candidates = ", ".join(sorted(metric_to_path))
-            raise SemanticValidationException(
-                SemanticValidationError(
-                    code="unknown_metric",
-                    metrics=unknown,
-                    message=(f"unknown metric(s): {', '.join(unknown)} | candidates: {candidates or '(none)'}"),
+            fields = self._field_names_among(unknown, handles)
+            message = f"unknown metric(s): {', '.join(unknown)}"
+            if fields:
+                one = len(fields) == 1
+                message += (
+                    f" | {', '.join(fields)} {'is a field' if one else 'are fields'}, not "
+                    f"{'a metric' if one else 'metrics'}: group by {'it' if one else 'them'} in `dimensions`, "
+                    f"or use {'it' if one else 'them'} in `where`"
                 )
+            if len(fields) < len(unknown):
+                candidates = ", ".join(sorted(metric_to_path))
+                message += f" | candidates: {candidates or '(none)'}"
+            raise SemanticValidationException(
+                SemanticValidationError(code="unknown_metric", metrics=unknown, message=message)
             )
         if not metrics:
             raise SemanticValidationException(
@@ -1251,49 +1338,6 @@ class DosiRuntime:
                 requested_dimensions=[str(item.get("field") or "") for item in group_by],
             )
         return None
-
-    @classmethod
-    def _probe_requires_time_axis(
-        cls,
-        engine: Any,
-        binding: Any,
-        metric_name: str,
-        *,
-        dialect: Optional[str],
-        connection: Optional[str],
-        required_dimensions: Optional[List[str]] = None,
-    ) -> bool:
-        """Ask the native planner whether a metric needs a grouped time axis."""
-
-        required_group_by = [{"field": name} for name in required_dimensions or []]
-        without_axis = cls._probe_compile(
-            engine,
-            binding,
-            metric_name,
-            required_group_by,
-            dialect=dialect,
-            connection=connection,
-        )
-        if without_axis is None:
-            return False
-        for grain in queryable_grains(None):
-            if (
-                cls._probe_compile(
-                    engine,
-                    binding,
-                    metric_name,
-                    [{"field": "metric_time", "grain": grain}]
-                    + [item for item in required_group_by if item["field"] != "metric_time"],
-                    dialect=dialect,
-                    connection=connection,
-                )
-                is None
-            ):
-                return True
-        return str(getattr(without_axis, "code", "")) in {
-            "no_primary_time_dimension",
-            "unknown_dimension",
-        }
 
     @staticmethod
     def _effective_time_dimension(

@@ -1278,6 +1278,37 @@ class TestBuildListMetricsSemantic:
 
 
 @pytest.mark.ci
+class TestBuildListMetricsText:
+    """list_metrics now answers with text; the envelope tests above are the
+    records written before it did."""
+
+    def _page(self, text):
+        return _make(
+            input_data={"function_name": "list_metrics"},
+            output_data={"raw_output": json.dumps({"success": 1, "result": text})},
+        )
+
+    def test_compact_counts_the_metric_lines(self):
+        page = "Sales:\n- orders -- Order count\n- revenue -- Net revenue\nFinance:\n- margin"
+        assert _build_list_metrics_semantic(self._page(page), verbose=False).compact_result == "3 metrics"
+
+    def test_compact_reports_the_next_page(self):
+        page = "Sales:\n" + "\n".join(f"- m{i}" for i in range(20))
+        page += "\nmore: 20 of 78 metrics shown; call again with offset=60"
+        tc = _build_list_metrics_semantic(self._page(page), verbose=False)
+        assert tc.compact_result == "20/78 metrics · more from 60"
+
+    def test_compact_distinguishes_an_empty_page(self):
+        assert _build_list_metrics_semantic(self._page("no metrics"), verbose=False).compact_result == "no metrics"
+
+    def test_verbose_shows_the_page_as_returned(self):
+        page = "Sales:\n- orders -- Order count"
+        rendered = "\n".join(_build_list_metrics_semantic(self._page(page), verbose=True).output_lines)
+        assert "Sales:" in rendered
+        assert "- orders -- Order count" in rendered
+
+
+@pytest.mark.ci
 class TestBuildGetMetric:
     def test_compact_reads_the_metric_detail_shape(self):
         """get_metric returns one metric's detail dict, never a bare list.
@@ -1368,24 +1399,16 @@ class TestBuildGetMetric:
 
 @pytest.mark.ci
 class TestBuildQueryMetrics:
-    def test_compact_with_metadata_rows(self):
-        a = _make(
-            input_data={"function_name": "query_metrics"},
-            output_data={
-                "raw_output": '{"success": 1, "result": {"columns": ["a"], '
-                '"data": "a\\n1\\n2", "metadata": {"row_count": 2}}}'
-            },
-        )
-        tc = _build_query_metrics(a, verbose=False)
-        assert "2 rows" in tc.compact_result
+    @staticmethod
+    def _action(text, verbose_args=None):
+        input_data = {"function_name": "query_metrics"}
+        if verbose_args is not None:
+            input_data["arguments"] = verbose_args
+        return _make(input_data=input_data, output_data={"raw_output": json.dumps({"success": 1, "result": text})})
 
-    def test_compact_reports_columns_without_a_row_count(self):
-        a = _make(
-            input_data={"function_name": "query_metrics"},
-            output_data={"raw_output": '{"success": 1, "result": {"columns": ["a"], "data": "a\\n1"}}'},
-        )
-        tc = _build_query_metrics(a, verbose=False)
-        assert tc.compact_result == "1 col"
+    def test_compact_reports_rows_and_columns(self):
+        tc = _build_query_metrics(self._action("result_id: query_metrics:1\nrows: 2\n\na\n1\n2"), verbose=False)
+        assert tc.compact_result == "2 rows × 1 col"
 
     def test_compact_discloses_a_truncated_preview(self):
         """The row count is what the query produced, not what came back.
@@ -1393,62 +1416,36 @@ class TestBuildQueryMetrics:
         A result trimmed from 32 rows to 21 read as a complete 32, so a caller
         could total a column and be wrong with nothing having failed.
         """
+        text = "\n".join(
+            ["result_id: query_metrics:1", "rows: 32", "", "m,d,v"]
+            + ["1,2,3"] * 10
+            + ["... 12 rows omitted"]
+            + ["1,2,3"] * 10
+        )
+        tc = _build_query_metrics(self._action(text), verbose=False)
+        assert tc.compact_result == "32 rows × 3 cols · preview 20"
+
+    def test_compact_of_a_dry_run_says_the_query_completed(self):
         a = _make(
             input_data={"function_name": "query_metrics"},
             output_data={
-                "raw_output": json.dumps(
-                    {
-                        "success": 1,
-                        "result": {
-                            "columns": ["m", "d", "v"],
-                            "data": {
-                                "original_rows": 32,
-                                "is_compressed": True,
-                                "removed_columns": [],
-                                "compressed_data": "\n".join(["m,d,v"] + ["1,2,3"] * 21),
-                            },
-                            "metadata": {"row_count": 32},
-                        },
-                    }
-                )
+                "raw_output": '{"success": 1, "result": {"columns": ["sql"], "metadata": {"sql": "SELECT 1"}}}'
             },
         )
         tc = _build_query_metrics(a, verbose=False)
-        assert tc.compact_result == "32 rows × 3 cols · preview 21"
+        assert tc.compact_result == "query completed"
 
-    def test_compact_discloses_dropped_columns(self):
-        a = _make(
-            input_data={"function_name": "query_metrics"},
-            output_data={
-                "raw_output": json.dumps(
-                    {
-                        "success": 1,
-                        "result": {
-                            "columns": ["m", "d"],
-                            "data": {
-                                "original_rows": 4,
-                                "is_compressed": True,
-                                "removed_columns": ["x", "y"],
-                                "compressed_data": "\n".join(["m,d"] + ["1,2"] * 4),
-                            },
-                            "metadata": {"row_count": 4},
-                        },
-                    }
-                )
-            },
+    def test_verbose_shows_the_report_lines_and_rows(self):
+        text = (
+            "result_id: query_metrics:1\nrows: 30\nwarning where_unread: where was not read; hint: move it\n\n"
+            "a,b\n1,2\n... 28 rows omitted\n3,4"
         )
-        tc = _build_query_metrics(a, verbose=False)
-        assert tc.compact_result == "4 rows × 2 cols · 2 cols dropped"
-
-    def test_verbose_csv_preview(self):
-        a = _make(
-            input_data={"function_name": "query_metrics", "arguments": {"metrics": ["revenue"]}},
-            output_data={
-                "raw_output": '{"success": 1, "result": {"columns": ["a", "b"], '
-                '"data": "a,b\\n1,2\\n3,4", "metadata": {}}}'
-            },
-        )
-        tc = _build_query_metrics(a, verbose=True)
+        tc = _build_query_metrics(self._action(text, verbose_args={"metrics": ["revenue"]}), verbose=True)
+        rendered = "\n".join(tc.output_lines)
+        assert "30 rows × 2 cols · preview 2" in rendered
+        assert "warning where_unread: where was not read; hint: move it" in rendered
+        assert "result_id" not in rendered
+        assert "omitted" not in rendered
         assert any("data" in line for line in tc.output_lines)
 
 
