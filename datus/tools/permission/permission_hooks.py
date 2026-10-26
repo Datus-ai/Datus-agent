@@ -343,6 +343,9 @@ class PermissionHooks(AgentHooks):
                 file auto-allows instead of prompting. ``None`` falls back to the
                 current working directory. Also used as the write target for
                 project-level bash allow grants (``.datus/config.yml``).
+            file_review_tool_names: Server-owned file mutations whose ASK decision
+                is collected by the web tool card. Explicit DENY rules and the
+                original tool's mutation policy remain enforced.
             config_mutable: Whether project configuration may be persisted.
                 When ``False`` (for example, the multi-tenant API), permission
                 prompts omit the project-level choice while retaining once and

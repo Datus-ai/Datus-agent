@@ -4473,7 +4473,7 @@ class AgenticNode(Node):
                 fs_policy=self._make_filesystem_policy(),
                 non_interactive=non_interactive,
                 proxied_tool_names=self.proxied_tool_names,
-                file_review_tool_names=self.file_review_tool_names,
+                file_review_tool_names=getattr(self, "file_review_tool_names", None),
                 project_root=getattr(self.agent_config, "project_root", None),
                 config_mutable=self._resolve_config_mutable(),
                 auto_reviewer=create_auto_reviewer(self.agent_config),
