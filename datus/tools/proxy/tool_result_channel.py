@@ -10,7 +10,8 @@ Wait and publish are order-independent: either side can arrive first.
 """
 
 import asyncio
-from dataclasses import dataclass
+from contextvars import Context, copy_context
+from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable, Dict, Optional
 
 from datus.utils.loggings import get_logger
@@ -44,10 +45,11 @@ class ProxiedInvocation:
     name: str
     invoke: Callable[[], Awaitable[dict]]
     task: Optional[asyncio.Task] = None
+    context: Context = field(default_factory=copy_context)
 
     async def execute(self) -> dict:
         if self.task is None:
-            self.task = asyncio.create_task(self.invoke())
+            self.task = asyncio.create_task(self.invoke(), context=self.context.copy())
         # Retrying or disconnecting the HTTP request must not repeat/cancel a write.
         return await asyncio.shield(self.task)
 

@@ -163,3 +163,25 @@ class TestToolResultChannel:
         await task
 
         assert result == "done"
+
+
+@pytest.mark.asyncio
+async def test_web_tool_executor_keeps_the_originating_agent_context():
+    from contextvars import ContextVar
+
+    from datus.tools.proxy.tool_result_channel import ProxiedInvocation
+
+    scope = ContextVar("test_proxy_agent_scope", default="none")
+
+    async def invoke():
+        return {"success": 1, "result": scope.get()}
+
+    token = scope.set("child-agent")
+    try:
+        pending = ProxiedInvocation("edit_file", invoke)
+        scope.set("http-dispatch")
+        result = await pending.execute()
+        assert result["result"] == "child-agent"
+        assert scope.get() == "http-dispatch"
+    finally:
+        scope.reset(token)
