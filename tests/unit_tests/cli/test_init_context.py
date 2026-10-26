@@ -14,6 +14,14 @@ from datus.utils.tool_result_store import ACTIVE_RESULT_STORE, ToolResultStore
 
 
 @pytest.fixture
+def starrocks_capabilities(monkeypatch):
+    """Unit tests declare the adapter contract without requiring its package."""
+    from datus.tools.db_tools import connector_registry
+
+    monkeypatch.setitem(connector_registry._capabilities, "starrocks", {"catalog", "database"})
+
+
+@pytest.fixture
 def run(tmp_path):
     context = InitContext(tmp_path, {"project": "test", "datasource": "db"}, "orders")
     yield context
@@ -150,7 +158,9 @@ async def test_read_can_recover_after_missing_file_is_created(run):
     "table_name",
     ["other.orders", "`other`.`orders`", "other_catalog.allowed.orders", "`other_catalog`.`allowed`.`orders`"],
 )
-async def test_qualified_identifier_cannot_override_bound_namespace(tmp_path, tool_name, table_name):
+async def test_qualified_identifier_cannot_override_bound_namespace(
+    tmp_path, starrocks_capabilities, tool_name, table_name
+):
     run = InitContext(tmp_path, {"dialect": "starrocks", "catalog": "default_catalog", "database": "allowed"}, "")
 
     async def unexpected(context, arguments):
@@ -167,7 +177,7 @@ async def test_qualified_identifier_cannot_override_bound_namespace(tmp_path, to
 
 
 @pytest.mark.asyncio
-async def test_qualified_cache_and_quoted_dotted_table_use_effective_target(tmp_path):
+async def test_qualified_cache_and_quoted_dotted_table_use_effective_target(tmp_path, starrocks_capabilities):
     run = InitContext(tmp_path, {"dialect": "starrocks", "database": "allowed", "catalog": "default_catalog"}, "")
     received = []
 

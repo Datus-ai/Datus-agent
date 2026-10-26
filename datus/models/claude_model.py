@@ -935,6 +935,7 @@ class ClaudeModel(OpenAICompatibleModel):
                             }
                         )
 
+                    request_messages = messages
                     if context_rewriter is not None:
                         from datus.agent.node.context_rewriter import extract_user_text
 
@@ -944,17 +945,23 @@ class ClaudeModel(OpenAICompatibleModel):
                         context_rewriter.set_request_context(
                             instruction, tools, kwargs.get("max_tokens") or self.max_tokens() or 20480
                         )
+                        compactions_before = context_rewriter.compactions
                         rewritten_messages = await context_rewriter.rewrite_native_messages(messages)
                         if rewritten_messages is not None:
-                            messages = rewritten_messages
-                            turn_start_index = 0
-                            persisted_message_index = len(messages)
+                            request_messages = rewritten_messages
+                            if context_rewriter.compactions > compactions_before:
+                                # Only compaction replaces durable history. Tool
+                                # projections belong to this model request; keep
+                                # raw messages and unsaved user turns for storage.
+                                messages = rewritten_messages
+                                turn_start_index = 0
+                                persisted_message_index = len(messages)
                         instruction = context_rewriter.system_instruction
 
                     request_kwargs = dict(
                         model=self.model_name,
                         system=self._build_system_param(instruction),
-                        messages=wrap_prompt_cache(messages),
+                        messages=wrap_prompt_cache(request_messages),
                         tools=tools,
                         max_tokens=kwargs.get("max_tokens") or self.max_tokens() or 20480,
                         # No ``temperature`` — see ``generate`` above.

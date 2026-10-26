@@ -519,6 +519,7 @@ class ChatCommands:
         editable_message = message
         init_resources = ExitStack()
         current_node = None
+        execution_interrupted = False
         try:
             # Manual-execution turns (SQL/bash run from the input bar) carry a
             # marker-encoded payload whose command may legitimately contain
@@ -665,7 +666,6 @@ class ChatCommands:
                 session_manager = current_node.session_manager
                 session_checkpoint = session_manager.checkpoint_turn(current_node.session_id)
                 output_checkpoint = None
-                execution_interrupted = False
 
                 async def run_chat_stream():
                     """Run chat stream — INTERACTION actions flow into incremental_actions."""
@@ -826,8 +826,13 @@ class ChatCommands:
                     # ESC-time latch, rather than the exception path, is the
                     # authoritative rollback decision.
                     rollback_unanswered = bool(getattr(streaming_ctx, "unanswered_rollback_requested", False))
-                    turn_interrupted = execution_interrupted or bool(
-                        getattr(streaming_ctx, "interrupt_requested", False)
+                    execution_interrupted = (
+                        execution_interrupted
+                        or rollback_unanswered
+                        or bool(
+                            getattr(streaming_ctx, "interrupt_requested", False)
+                            or current_node.interrupt_controller.is_interrupted
+                        )
                     )
                     if rollback_unanswered:
                         self._rollback_unanswered_turn(
@@ -842,7 +847,7 @@ class ChatCommands:
                         )
                         current_node.interrupt_controller.reset()
                         return
-                    if turn_interrupted:
+                    if execution_interrupted:
                         # Partial output (and the Interrupted notice) has
                         # already been flushed by the streaming context. Do
                         # not reinterpret the last intermediate/tool action as
@@ -964,9 +969,11 @@ class ChatCommands:
                             interrupt_controller=current_node.interrupt_controller,
                         )
                     except KeyboardInterrupt:
+                        execution_interrupted = True
                         current_node.interrupt_controller.interrupt()
                         logger.info("KeyboardInterrupt caught, execution interrupted gracefully")
                     except ExecutionInterrupted:
+                        execution_interrupted = True
                         current_node._drop_running_turn_usage_on_exit = True
                         if current_node.pending_input_queue is not None:
                             current_node.pending_input_queue.clear()
@@ -1049,7 +1056,7 @@ class ChatCommands:
                 init_context.record_user_updates(pending)
                 init_context.finish_execution(
                     getattr(current_node, "result", None),
-                    interrupted=bool(controller is not None and controller.is_interrupted),
+                    interrupted=execution_interrupted or bool(controller is not None and controller.is_interrupted),
                     plan_mode=plan_mode,
                     pending_input=bool(pending),
                 )

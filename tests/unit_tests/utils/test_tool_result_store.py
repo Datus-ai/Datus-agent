@@ -220,6 +220,18 @@ def test_large_error_preserves_status_and_complete_raw_content(store):
 
 
 @pytest.mark.parametrize("native", [False, True])
+def test_small_block_results_preserve_identity(store, native):
+    blocks = [{"type": "text", "text": "small result"}]
+    items = (
+        [{"role": "user", "content": [{"type": "tool_result", "tool_use_id": "c", "content": blocks}]}]
+        if native
+        else [{"type": "function_call_output", "call_id": "c", "output": blocks}]
+    )
+    assert project_tool_results(items, store) is items
+    assert project_tool_results(items, None) is items
+
+
+@pytest.mark.parametrize("native", [False, True])
 def test_projection_does_not_mutate_action_or_call_arguments(store, native):
     raw = str({"success": 1, "result": [{"name": f"table_{i}"} for i in range(5000)]})
     items = [

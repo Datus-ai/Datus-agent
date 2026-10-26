@@ -64,10 +64,13 @@ def project_tool_results(
                         content = []
                         for index, part in enumerate(raw):
                             if isinstance(part, dict) and part.get("type") == "text":
-                                value = project(f"{block.get('tool_use_id', '')}:{index}", part.get("text", ""))
-                                part = {**part, "text": value if isinstance(value, str) else json_text(value)}
+                                text = part.get("text", "")
+                                value = project(f"{block.get('tool_use_id', '')}:{index}", text)
+                                if value is not text:
+                                    part = {**part, "text": value if isinstance(value, str) else json_text(value)}
                             content.append(part)
-                        updated = {**block, "content": content}
+                        if any(new is not old for new, old in zip(content, raw, strict=True)):
+                            updated = {**block, "content": content}
                         if store is not None:
                             store.release(block.get("tool_use_id", ""))
                 blocks.append(updated)

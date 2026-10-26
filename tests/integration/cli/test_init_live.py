@@ -42,6 +42,15 @@ class LiveInitRun:
 METRIC_PATTERN = r"\bsum(?:\s*\(\s*(?:[a-z_]+\.)?amount\s*\)|\s+of\s+(?:[a-z_]+\.)?amount\b)"
 
 
+def write_live_report(path: Path, report: dict):
+    """Redact provider credentials on every write, including follow-up runs."""
+    rendered = json.dumps(report, ensure_ascii=False, indent=2)
+    for name in ("DASHSCOPE_API_KEY", "QWEN_API_KEY"):
+        if os.environ.get(name):
+            rendered = rendered.replace(json.dumps(os.environ[name], ensure_ascii=False)[1:-1], "[REDACTED]")
+    path.write_text(rendered)
+
+
 def observe_live_calls(monkeypatch):
     """Collect metadata while preserving every real model call and response."""
     from datus.observability.model_call import ModelCall
@@ -137,7 +146,7 @@ def test_qwen_scoped_init_supplements_existing_documents(tmp_path, monkeypatch, 
         "new_sessions": len(run.nodes) - before,
         "outputs": list(second.state["outputs"]),
     }
-    run.report_path.write_text(json.dumps(run.report, ensure_ascii=False, indent=2))
+    write_live_report(run.report_path, run.report)
     assert second is not run.contexts[0] and second.state["status"] == "completed_scope", run.report["second_scope"]
     assert set(second.state["selected_tables"]) == {"orders"}
     assert len(run.nodes) == before and run.chat.current_node is run.nodes[0]
@@ -396,11 +405,7 @@ def _run_qwen_init(tmp_path, monkeypatch, request, *, scale=False):
         ],
     }
     report_path = Path(os.environ.get("DATUS_LIVE_INIT_REPORT", str(tmp_path / "report.json")))
-    rendered = json.dumps(report, ensure_ascii=False, indent=2)
-    for name in ("DASHSCOPE_API_KEY", "QWEN_API_KEY"):
-        if os.environ.get(name):
-            rendered = rendered.replace(os.environ[name], "[REDACTED]")
-    report_path.write_text(rendered)
+    write_live_report(report_path, report)
     assert state["status"] == "completed_scope", f"Incomplete init: {report}; console: {cli.console.file.getvalue()}"
     assert set(state["selected_tables"]) == set(core_tables)
     assert len(nodes) == 1 and chat.current_node is nodes[0]

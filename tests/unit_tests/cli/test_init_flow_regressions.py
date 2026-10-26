@@ -2,7 +2,7 @@
 
 import json
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from agents.exceptions import MaxTurnsExceeded
@@ -150,6 +150,57 @@ def test_failure_does_not_restart_or_leak_init_tools(
     assert "execute_sql" in mock_llm_create.call_history[-1]["tools"]
     assert "report_init_progress" not in mock_llm_create.call_history[-1]["tools"]
     assert '<required_skill name="init">' not in mock_llm_create.call_history[-1]["instruction"]
+
+
+@pytest.mark.parametrize("interactive", [False, True])
+@pytest.mark.parametrize("cancellation", ["exception", "keyboard", "cooperative", "rollback"])
+def test_cancelled_init_cannot_reuse_previous_success(
+    real_agent_config, mock_llm_create, tmp_path, monkeypatch, interactive, cancellation
+):
+    from datus.cli.execution_state import ExecutionInterrupted
+
+    chat = chat_for(real_agent_config, tmp_path)
+    mock_llm_create.reset(responses=[MockLLMResponse(content="Previous successful chat")])
+    chat.execute_chat_command("Hello")
+    node = chat.current_node
+    previous_result = node.result
+    assert previous_result.success is True
+    original_tools = {tool.name for tool in node.tools}
+    run = InitContext(tmp_path, {}, "Schools")
+    run.select_scope(["schools"], [], "", [])
+    run.report_progress("School notes written", ["schools"], True, "", "")
+    display = MagicMock()
+    display.__enter__.return_value = display
+    display.__exit__.return_value = False
+    display.unanswered_rollback_requested = False
+    display.interrupt_requested = False
+    display.has_streamed_response = False
+
+    async def cancelled_stream(*args, **kwargs):
+        if cancellation == "keyboard":
+            raise KeyboardInterrupt()
+        if cancellation == "exception":
+            # Cancellation need not leave the reusable controller interrupted.
+            raise ExecutionInterrupted("cancelled")
+        node.interrupt_controller.interrupt()
+        display.interrupt_requested = True
+        display.unanswered_rollback_requested = cancellation == "rollback"
+        return
+        yield
+
+    monkeypatch.setattr(node, "execute_stream_with_interactions", cancelled_stream)
+    if not interactive:
+        monkeypatch.setattr(chat, "_create_new_node", lambda *args, **kwargs: node)
+    with patch("datus.cli.chat_commands.ActionHistoryDisplay") as display_class:
+        display_class.return_value.display_streaming_actions.return_value = display
+        chat._execute_chat("Initialize schools", interactive=interactive, init_context=run)
+    run.close()
+    assert node.result is previous_result
+    assert run.state["status"] == "partial" and "interrupted" in run.state["stop_reason"].lower()
+    assert run.progress()["completed"] == 1
+    assert {tool.name for tool in node.tools} == original_tools
+    assert getattr(node, "_init_context", None) is None
+    assert node.interrupt_controller.is_interrupted == (not interactive and cancellation != "exception")
 
 
 def test_setup_error_restores_tools_and_current_session(real_agent_config, mock_llm_create, tmp_path):

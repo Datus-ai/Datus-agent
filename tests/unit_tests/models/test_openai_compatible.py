@@ -1306,6 +1306,26 @@ class TestModelSpecsAndTokenLimits:
         model = _make_model(cfg)
         assert model.max_tokens() == 16384
 
+    @pytest.mark.parametrize("name", ["o3", "o4-mini", "deepseek-reasoner", "deepseek-r1"])
+    def test_output_defaults_leave_room_for_requests(self, name):
+        from datus.models.request_capacity import ContextCapacityError
+
+        cfg = _make_model_config(model=name)
+        cfg.tokenizer_ref = "tiktoken:cl100k_base"
+        model = _make_model(cfg)
+        request = {"messages": [{"role": "user", "content": "hello"}]}
+        capacity = model.request_capacity()
+        assert capacity.input_limit() > 0
+        assert model.check_request(request)["max_tokens"] == model.max_tokens()
+        assert model.check_request({**request, "max_tokens": 4096})["max_tokens"] == 4096
+        with pytest.raises(ContextCapacityError, match="CONTEXT_LIMIT_EXCEEDED"):
+            model.check_request({**request, "max_tokens": model.context_length()})
+        cfg.max_tokens = 4096
+        assert model.max_tokens() == 4096 and model.request_capacity().default_output == 4096
+        cfg.max_tokens = model.context_length()
+        with pytest.raises(ContextCapacityError, match="CONTEXT_LIMIT_EXCEEDED"):
+            model.check_request(request)
+
     def test_exact_match_context_length(self):
         cfg = _make_model_config(model="gpt-4o")
         model = _make_model(cfg)

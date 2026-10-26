@@ -3598,10 +3598,13 @@ class TestNativeMidTurnCompaction:
 
         async def _rewrite(messages):
             rewriter_calls.append(copy.deepcopy(messages))
+            if len(rewriter_calls) == 2:
+                rewriter.compactions += 1
             # A fresh list, like the real compactor: the loop appends to it.
             return list(view) if len(rewriter_calls) == 2 else None
 
         rewriter = MagicMock()
+        rewriter.compactions = 0
         rewriter.rewrite_native_messages = _rewrite
         session = MagicMock()
         session.get_items = AsyncMock(return_value=[])
@@ -3632,9 +3635,12 @@ class TestNativeMidTurnCompaction:
 
         async def _rewrite(messages):
             calls["n"] += 1
+            if calls["n"] == 2:
+                rewriter.compactions += 1
             return list(view) if calls["n"] == 2 else None
 
         rewriter = MagicMock()
+        rewriter.compactions = 0
         rewriter.rewrite_native_messages = _rewrite
         session = MagicMock()
         session.get_items = AsyncMock(return_value=[])
@@ -3651,6 +3657,60 @@ class TestNativeMidTurnCompaction:
         assert batches[-1][0]["role"] == "assistant"
         assert "done" in json.dumps(batches[-1][0], default=str)
         assert not any("SUMMARY" in json.dumps(b, default=str) for b in batches)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("block_content", [False, True])
+    async def test_projection_preserves_raw_history_and_each_user_turn(self, tmp_path, block_content):
+        from agents import SQLiteSession
+
+        from datus.agent.node.context_rewriter import MidTurnCompactor
+        from datus.cli.execution_state import PendingInputQueue
+        from datus.utils.tool_archive import ToolArchive
+        from datus.utils.tool_result_store import ACTIVE_RESULT_STORE, ToolResultStore
+        from tests.unit_tests.agent.node.test_context_rewriter import _FakeNode
+
+        raw = "large historical result " * 5000
+        history = [
+            {"role": "assistant", "content": [{"type": "tool_use", "id": "old", "name": "probe_tool", "input": {}}]},
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": "old",
+                        "content": [{"type": "text", "text": raw}] if block_content else raw,
+                    }
+                ],
+            },
+            {"role": "assistant", "content": [{"type": "text", "text": "Previous work saved"}]},
+        ]
+        session = SQLiteSession("native-projection", db_path=str(tmp_path / "session.db"))
+        await session.add_items(history)
+        node = _FakeNode(context_length=200000)
+        store = ToolResultStore(ToolArchive("project", "native-projection", base_dir=tmp_path))
+        node._get_tool_result_store = lambda: store
+        rewriter = MidTurnCompactor(node)
+        queue = PendingInputQueue()
+        token = ACTIVE_RESULT_STORE.set(None)
+        try:
+            seen = await self._run(_make_claude_model(), rewriter, session, queue, "CHECK_REFUNDS")
+            persisted = await session.get_items()
+        finally:
+            ACTIVE_RESULT_STORE.reset(token)
+            session.close()
+
+        assert rewriter.compactions == 0
+        assert all(raw not in json.dumps(view) and "result_id" in json.dumps(view) for view in seen)
+        assert persisted[: len(history)] == history
+        user_texts = [
+            part["text"]
+            for item in persisted
+            if item.get("role") == "user"
+            for part in item["content"]
+            if part.get("type") == "text"
+        ]
+        assert user_texts == ["start", "CHECK_REFUNDS"]
+        assert "tool finished" in json.dumps(persisted) and "done" in json.dumps(persisted)
 
     @pytest.mark.asyncio
     async def test_no_rewriter_leaves_the_loop_unchanged(self):

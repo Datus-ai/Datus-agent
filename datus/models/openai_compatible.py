@@ -1917,8 +1917,8 @@ class OpenAICompatibleModel(LLMBaseModel):
         return specs[best_key][field]
 
     def max_tokens(self) -> Optional[int]:
-        """Max tokens from model specs with prefix matching, or None if unavailable."""
-        return self.model_config.max_tokens or self._lookup_spec("max_tokens")
+        """Configured output limit or a model default that leaves input headroom."""
+        return self.model_config.max_tokens or self._default_output_limit(self._lookup_spec("max_tokens"))
 
     def context_length(self) -> Optional[int]:
         """Context length from model specs with prefix matching, or None if unavailable."""

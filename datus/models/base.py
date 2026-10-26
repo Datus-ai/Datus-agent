@@ -147,14 +147,28 @@ class LLMBaseModel(ABC):  # Changed from BaseModel to LLMBaseModel
         )
         if not supports_limit:
             output_ceiling = max(output_ceiling or 0, info.get("max_output_tokens") or 0) or None
+        context_length = config.context_length or self.context_length() or info.get("max_input_tokens")
         return RequestCapacity(
             model=name,
-            context_length=config.context_length or self.context_length() or info.get("max_input_tokens"),
-            default_output=config.max_tokens or self.max_tokens() or info.get("max_output_tokens"),
+            context_length=context_length,
+            default_output=config.max_tokens
+            or self._default_output_limit(self.max_tokens() or info.get("max_output_tokens"), context_length),
             tokenizer_ref=config.tokenizer_ref,
             supports_output_limit=supports_limit,
             output_ceiling=output_ceiling,
         )
+
+    def _default_output_limit(self, model_limit: Optional[int], context_length: Optional[int] = None) -> Optional[int]:
+        """Leave input headroom when a model's output ceiling fills its window.
+
+        Explicit configuration/request limits are validated unchanged. A model
+        ceiling is only a default, so reserve at most half the context for output.
+        Providers that cannot enforce an output cap must reserve their full limit.
+        """
+        context = context_length or self.model_config.context_length or self.context_length()
+        if model_limit and context and getattr(self, "supports_output_limit", True):
+            return min(model_limit, max(1, (context + 1) // 2))
+        return model_limit
 
     def check_request(self, payload: dict, output_parameter: str = "max_tokens") -> dict:
         """Normalize output parameters and check the effective wire request."""
