@@ -78,7 +78,10 @@ def create_proxy_tool(
                 if invocation.task is None:
                     return {
                         "success": 0,
-                        "error": "The proxied tool was not executed; retry with an updated web client.",
+                        "error": (
+                            "The web client bypassed the pending tool dispatcher; file state is unknown. "
+                            "Inspect the file and update the client before retrying."
+                        ),
                     }
                 actual = await invocation.execute()
                 if not actual.get("success"):

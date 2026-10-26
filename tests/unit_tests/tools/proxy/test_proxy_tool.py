@@ -876,3 +876,22 @@ def test_cli_and_vscode_keep_native_filesystem_and_existing_action_shape(source,
     before = action.model_dump()
     stamp_tool_execution(action, node)
     assert action.model_dump() == before
+
+
+@pytest.mark.asyncio
+async def test_legacy_web_success_report_cannot_claim_native_execution():
+    from unittest.mock import AsyncMock
+
+    original = AsyncMock(return_value={"success": 1})
+    tool = FunctionTool(
+        name="edit_file", description="edit", params_json_schema={"type": "object"}, on_invoke_tool=original
+    )
+    channel = ToolResultChannel()
+    proxy = create_proxy_tool(tool, channel, source="web")
+    running = asyncio.create_task(proxy.on_invoke_tool(SimpleNamespace(tool_call_id="legacy"), "{}"))
+    await asyncio.sleep(0)
+    await channel.publish("legacy", {"success": 1})
+    result = await running
+    assert result["success"] == 0
+    assert "file state is unknown" in result["error"]
+    original.assert_not_awaited()
