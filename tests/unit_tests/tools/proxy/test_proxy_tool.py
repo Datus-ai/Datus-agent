@@ -17,6 +17,7 @@ from datus.tools.proxy.proxy_tool import (
     _parse_patterns,
     apply_proxy_tools,
     create_proxy_tool,
+    prepare_web_tool_action,
 )
 from datus.tools.proxy.tool_result_channel import ToolResultChannel
 from datus.tools.registry.tool_registry import ToolRegistry
@@ -698,7 +699,6 @@ async def test_web_main_and_children_share_existing_proxy_lifecycle(tmp_path, no
     import json
     from unittest.mock import AsyncMock, Mock
 
-    from datus.api.routes.tool_routes import execute_tool
     from datus.api.services.action_sse_converter import _build_tool_call_content
     from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
     from datus.tools.func_tool.filesystem_tools import FilesystemFuncTool
@@ -735,6 +735,7 @@ async def test_web_main_and_children_share_existing_proxy_lifecycle(tmp_path, no
         node_name=node_name,
         tool_registry=node.tool_registry,
         proxied_tool_names=node.proxied_tool_names,
+        web_filesystem_proxy_names=node.web_filesystem_proxy_names,
     )
     await hooks.on_tool_start(ctx, None, tool)
     broker.request.assert_not_called()
@@ -745,31 +746,33 @@ async def test_web_main_and_children_share_existing_proxy_lifecycle(tmp_path, no
         input={"function_name": operation, "arguments": args},
         status=ActionStatus.PROCESSING,
     )
+    await prepare_web_tool_action(action, node)
     stamp_tool_execution(action, node)
     assert _build_tool_call_content(action, set())[0].payload["proxied"] is True
+    guard.assert_called_once()
+    changed.assert_not_called()
     running = asyncio.create_task(tool.on_invoke_tool(ctx, json.dumps(args)))
     await asyncio.sleep(0)
     assert target.read_text() == "before"
-    task = SimpleNamespace(node=node, status="running")
-    svc = SimpleNamespace(task_manager=SimpleNamespace(get_task=lambda _: task))
-    execute_args = (
-        operation,
-        svc,
-        None,
-        {"path": "forged", "content": "untrusted"},
-        SimpleNamespace(user_id="owner"),
-        "session",
-        "call-web",
-    )
-    first, duplicate = await asyncio.gather(execute_tool(*execute_args), execute_tool(*execute_args))
-    assert first.data.success == duplicate.data.success == 1
-    guard.assert_called_once()
-    changed.assert_called_once()
-    assert not running.done()  # The existing tool_result still owns completion/Finish Edit.
+    # The existing IDE executor performs the mutation, then tool_result resumes
+    # the proxy. No Agent tool-dispatch endpoint participates in this lifecycle.
+    import json
+    from pathlib import Path
+
+    client_args = json.loads(action.input["arguments"])
+    target = Path(client_args["path"])
+    if operation == "write_file":
+        target.write_text(client_args["content"])
+    elif operation == "edit_file":
+        target.write_text(target.read_text().replace(client_args["old_string"], client_args["new_string"], 1))
+    else:
+        target.unlink()
+    assert not running.done()  # Finish Edit still owns the final report.
     assert target.exists() == (operation != "delete_file")
     await channel.publish("call-web", {"success": 1, "result": "user finished editing"})
     assert (await running)["result"] == "user finished editing"
-    assert not channel.invocations
+    changed.assert_called_once()
+    guard.assert_called_once()
 
 
 @pytest.mark.asyncio
@@ -791,26 +794,40 @@ async def test_web_cancel_or_stop_never_executes_the_original_tool(stop):
         await channel.publish("cancel", {"success": 0, "error": "user canceled"})
     assert (await running)["success"] == 0
     original.assert_not_awaited()
-    assert not channel.invocations
 
 
 @pytest.mark.asyncio
-async def test_web_proxy_preserves_original_validation_failure():
-    from unittest.mock import AsyncMock
+async def test_web_proxy_preserves_original_validation_failure(tmp_path):
+    from unittest.mock import Mock
 
-    original = AsyncMock(side_effect=ValueError("outside the semantic authoring target"))
-    tool = FunctionTool(
-        name="edit_file", description="edit", params_json_schema={"type": "object"}, on_invoke_tool=original
+    from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
+    from datus.tools.func_tool.filesystem_tools import FilesystemFuncTool
+
+    fs = FilesystemFuncTool(
+        root_path=str(tmp_path), mutation_guard=Mock(side_effect=ValueError("outside the semantic authoring target"))
     )
     channel = ToolResultChannel()
-    proxy = create_proxy_tool(tool, channel, source="web")
-    running = asyncio.create_task(proxy.on_invoke_tool(SimpleNamespace(tool_call_id="blocked"), "{}"))
-    await asyncio.sleep(0)
-    result = await channel.invocations["blocked"].execute()
+    node = SimpleNamespace(
+        tools=fs.available_tools(),
+        tool_registry=ToolRegistry({"write_file": "filesystem_tools"}),
+        tool_channel=channel,
+        agent_config=SimpleNamespace(_client_source="web"),
+    )
+    apply_proxy_tools(node, ["write_file"])
+    action = ActionHistory(
+        action_id="blocked",
+        role=ActionRole.TOOL,
+        action_type="write_file",
+        input={"function_name": "write_file", "arguments": {"path": "forbidden", "content": "after"}},
+        status=ActionStatus.PROCESSING,
+    )
+    await prepare_web_tool_action(action, node)
+    assert action.input["_proxied"] is False
+    tool = next(t for t in node.tools if t.name == "write_file")
+    result = await tool.on_invoke_tool(SimpleNamespace(tool_call_id="blocked"), "{}")
     assert result["success"] == 0
-    # Even an erroneous success report cannot override the actual executor's failure.
-    await channel.publish("blocked", {"success": 1})
-    assert (await running)["success"] == 0
+    assert "outside the semantic authoring target" in result["error"]
+    assert not (tmp_path / "forbidden").exists()
 
 
 @pytest.mark.asyncio
@@ -839,7 +856,6 @@ async def test_nested_web_nodes_reuse_the_parent_result_channel():
         shared = node.tool_channel
     running = asyncio.create_task(nodes[-1].tools[0].on_invoke_tool(SimpleNamespace(tool_call_id="nested"), "{}"))
     await asyncio.sleep(0)
-    assert (await nodes[0].tool_channel.invocations["nested"].execute())["success"] == 1
     await nodes[0].tool_channel.publish("nested", {"success": 1})
     assert (await running)["success"] == 1
 
@@ -879,19 +895,170 @@ def test_cli_and_vscode_keep_native_filesystem_and_existing_action_shape(source,
 
 
 @pytest.mark.asyncio
-async def test_legacy_web_success_report_cannot_claim_native_execution():
-    from unittest.mock import AsyncMock
+@pytest.mark.parametrize("kind", ["report", "dashboard"])
+@pytest.mark.parametrize("operation", ["write_file", "edit_file", "delete_file"])
+async def test_web_artifact_proxies_preserve_native_path_policy(tmp_path, kind, operation):
+    from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
+    from datus.tools.func_tool.dashboard_artifact_tools import DashboardFilesystemFuncTool
+    from datus.tools.func_tool.report_artifact_tools import ReportFilesystemFuncTool
 
-    original = AsyncMock(return_value={"success": 1})
-    tool = FunctionTool(
-        name="edit_file", description="edit", params_json_schema={"type": "object"}, on_invoke_tool=original
-    )
+    cls = ReportFilesystemFuncTool if kind == "report" else DashboardFilesystemFuncTool
+    fs = cls(root_path=str(tmp_path))
     channel = ToolResultChannel()
-    proxy = create_proxy_tool(tool, channel, source="web")
-    running = asyncio.create_task(proxy.on_invoke_tool(SimpleNamespace(tool_call_id="legacy"), "{}"))
-    await asyncio.sleep(0)
-    await channel.publish("legacy", {"success": 1})
-    result = await running
+    node = SimpleNamespace(
+        tools=fs.available_tools(),
+        tool_channel=channel,
+        tool_registry=ToolRegistry({operation: "filesystem_tools"}),
+        agent_config=SimpleNamespace(_client_source="web"),
+        get_node_name=lambda: f"gen_visual_{kind}",
+    )
+    apply_proxy_tools(node, [operation])
+    args = {"path": f"{kind}s/demo/queries/protected.sql"}
+    if operation == "write_file":
+        args["content"] = "SELECT 1"
+    if operation == "edit_file":
+        args.update(old_string="SELECT 1", new_string="SELECT 2")
+    action = ActionHistory(
+        action_id="protected",
+        role=ActionRole.TOOL,
+        action_type=operation,
+        input={"function_name": operation, "arguments": args},
+        status=ActionStatus.PROCESSING,
+    )
+    await prepare_web_tool_action(action, node)
+    assert action.input["_proxied"] is False
+    tool = next(t for t in node.tools if t.name == operation)
+    result = await tool.on_invoke_tool(SimpleNamespace(tool_call_id="protected"), "{}")
     assert result["success"] == 0
-    assert "file state is unknown" in result["error"]
-    original.assert_not_awaited()
+    assert "save_query" in result["error"]
+
+
+@pytest.mark.asyncio
+async def test_web_sql_summary_preserves_snapshots_finalization_and_rollback(tmp_path, monkeypatch):
+    import json
+    import os
+    from pathlib import Path
+    from unittest.mock import Mock
+
+    from datus.agent.node.sql_summary_agentic_node import SqlSummaryAgenticNode
+    from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
+    from datus.tools.func_tool.filesystem_tools import FilesystemFuncTool
+
+    summary = SqlSummaryAgenticNode.__new__(SqlSummaryAgenticNode)
+    summary.configured_node_name = "gen_sql_summary"
+    summary.knowledge_base_dir = str(tmp_path / "subject")
+    summary._mutation_snapshots = {}
+    summary._mutated_files = set()
+    summary.storage_type = "reference_sql"
+    summary.agent_config = SimpleNamespace(_client_source="web")
+    target = tmp_path / "subject/sql_summaries/query.yaml"
+    target.parent.mkdir(parents=True)
+    target.write_text("sql: SELECT 1\n")
+    original = target.read_bytes()
+    fs = FilesystemFuncTool(
+        root_path=str(tmp_path),
+        mutation_guard=summary._sql_summary_mutation_guard,
+        mutation_callback=summary._record_sql_summary_mutation,
+    )
+    summary.tools = fs.available_tools()
+    summary.tool_channel = ToolResultChannel()
+    summary.tool_registry = ToolRegistry({"write_file": "filesystem_tools"})
+    apply_proxy_tools(summary, ["write_file"])
+    action = ActionHistory(
+        action_id="summary",
+        role=ActionRole.TOOL,
+        action_type="write_file",
+        input={"function_name": "write_file", "arguments": {"path": str(target), "content": "sql: SELECT 2\n"}},
+        status=ActionStatus.PROCESSING,
+    )
+    await prepare_web_tool_action(action, summary)
+    assert summary._mutation_snapshots[os.path.realpath(target)][0] == original
+    assert not summary._mutated_files
+    client_args = json.loads(action.input["arguments"])
+    Path(client_args["path"]).write_text(client_args["content"])
+    await summary.tool_channel.publish("summary", {"success": 1})
+    tool = next(t for t in summary.tools if t.name == "write_file")
+    assert (await tool.on_invoke_tool(SimpleNamespace(tool_call_id="summary"), "{}"))["success"] == 1
+    assert os.path.realpath(target) in summary._mutated_files
+    sync = Mock(return_value={"success": True})
+    monkeypatch.setattr("datus.storage.reference_sql.artifact_sync.sync_reference_sql_artifact_to_kb", sync)
+    summary._finalize_sql_summary_artifact(str(target))
+    sync.assert_called_once_with(str(target), summary.agent_config)
+    summary._rollback_sql_summary_mutations()
+    assert target.read_bytes() == original
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stop", [False, True])
+async def test_web_prepared_file_cancel_keeps_file_and_callbacks_unchanged(tmp_path, stop):
+    from unittest.mock import Mock
+
+    from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
+    from datus.tools.func_tool.filesystem_tools import FilesystemFuncTool
+
+    target = tmp_path / "artifact.txt"
+    target.write_text("before")
+    changed = Mock()
+    fs = FilesystemFuncTool(root_path=str(tmp_path), mutation_callback=changed)
+    channel = ToolResultChannel()
+    node = SimpleNamespace(
+        tools=fs.available_tools(),
+        tool_channel=channel,
+        tool_registry=ToolRegistry({"write_file": "filesystem_tools"}),
+        agent_config=SimpleNamespace(_client_source="web"),
+    )
+    apply_proxy_tools(node, ["write_file"])
+    action = ActionHistory(
+        action_id="cancel",
+        role=ActionRole.TOOL,
+        action_type="write_file",
+        input={"function_name": "write_file", "arguments": {"path": str(target), "content": "after"}},
+        status=ActionStatus.PROCESSING,
+    )
+    await prepare_web_tool_action(action, node)
+    tool = next(t for t in node.tools if t.name == "write_file")
+    running = asyncio.create_task(tool.on_invoke_tool(SimpleNamespace(tool_call_id="cancel"), "{}"))
+    await asyncio.sleep(0)
+    if stop:
+        channel.cancel_all("stop")
+    else:
+        await channel.publish("cancel", {"success": 0, "error": "user canceled"})
+    assert (await running)["success"] == 0
+    assert target.read_text() == "before"
+    changed.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_web_denied_file_never_exposes_an_executable_card(tmp_path):
+    from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
+    from datus.tools.func_tool.filesystem_tools import FilesystemFuncTool
+    from datus.tools.permission.permission_config import PermissionConfig, PermissionLevel, PermissionRule
+    from datus.tools.permission.permission_manager import PermissionManager
+
+    fs = FilesystemFuncTool(root_path=str(tmp_path))
+    node = SimpleNamespace(
+        tools=fs.available_tools(),
+        tool_channel=ToolResultChannel(),
+        tool_registry=ToolRegistry({"write_file": "filesystem_tools"}),
+        agent_config=SimpleNamespace(_client_source="web"),
+        get_node_name=lambda: "chat",
+        permission_manager=PermissionManager(
+            global_config=PermissionConfig(
+                rules=[PermissionRule(tool="filesystem_tools", pattern="write_file", permission=PermissionLevel.DENY)]
+            )
+        ),
+    )
+    apply_proxy_tools(node, ["write_file"])
+    action = ActionHistory(
+        action_id="deny",
+        role=ActionRole.TOOL,
+        action_type="write_file",
+        input={"function_name": "write_file", "arguments": {"path": "artifact.txt", "content": "after"}},
+        status=ActionStatus.PROCESSING,
+    )
+    await prepare_web_tool_action(action, node)
+    from datus.tools.proxy.proxy_tool import stamp_tool_execution
+
+    stamp_tool_execution(action, node)
+    assert action.input["_proxied"] is False
+    assert not (tmp_path / "artifact.txt").exists()

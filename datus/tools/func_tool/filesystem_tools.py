@@ -5,6 +5,7 @@
 import inspect
 import os
 import re
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Iterator, List, Optional
 
@@ -44,6 +45,14 @@ _TABULAR_BINARY_EXTENSIONS = frozenset({".xlsx", ".xlsm", ".xls", ".parquet"})
 #: to ``load_file_as_table`` would cost a round trip to learn what can be said
 #: here in one: re-save as .xlsx or .csv.
 _UNREADABLE_TABULAR_EXTENSIONS = frozenset({".xlsb", ".ods"})
+
+
+@dataclass
+class ClientFileMutation:
+    """Validated arguments and bookkeeping for the existing IDE file executor."""
+
+    arguments: dict
+    complete: Callable[[], Optional[FuncToolResult]]
 
 
 class FilesystemConfig:
@@ -211,6 +220,46 @@ class FilesystemFuncTool(BaseTool):
         except Exception as exc:
             return FuncToolResult(success=0, error=str(exc))
         return None
+
+    def _client_mutation_policy_error(self, operation: str, path: str) -> Optional[FuncToolResult]:
+        """Subclass policies applied before exposing an executable file card."""
+        return None
+
+    def _prepare_client_mutation(self, operation: str, arguments: dict) -> ClientFileMutation | FuncToolResult:
+        path = arguments["path"]
+        policy_error = self._client_mutation_policy_error(operation, path)
+        if policy_error is not None:
+            return policy_error
+        resolved = self._classify(path)
+        if resolved.zone == PathZone.HIDDEN:
+            return self._not_found(resolved)
+        if self.strict and resolved.zone == PathZone.EXTERNAL:
+            return self._strict_reject(resolved)
+        if resolved.read_only:
+            return self._read_only_reject(resolved)
+        target = resolved.resolved
+        guard_error = self._mutation_guard_error(target)
+        if guard_error is not None:
+            return guard_error
+        if operation != "write_file":
+            if not target.is_file():
+                return FuncToolResult(success=0, error=f"File not found: {resolved.display}")
+            if operation == "edit_file":
+                _, error = apply_single_replacement(
+                    target.read_text(encoding="utf-8"), arguments["old_string"], arguments["new_string"]
+                )
+                if error:
+                    return FuncToolResult(success=0, error=error)
+
+        def complete() -> Optional[FuncToolResult]:
+            if (operation == "delete_file" and target.exists()) or (
+                operation != "delete_file" and not target.is_file()
+            ):
+                return FuncToolResult(success=0, error=f"Client file operation did not complete: {resolved.display}")
+            self._notify_mutation(target)
+            return None
+
+        return ClientFileMutation({**arguments, "path": str(target)}, complete)
 
     @property
     def strict(self) -> bool:

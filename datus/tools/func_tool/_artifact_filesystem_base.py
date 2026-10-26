@@ -129,31 +129,28 @@ class ArtifactFilesystemFuncTool(FilesystemFuncTool):
             ),
         )
 
+    def _client_mutation_policy_error(self, operation: str, path: str) -> Optional[FuncToolResult]:
+        if self._is_queries_path(path):
+            reason = {
+                "write_file": self._queries_write_reject,
+                "edit_file": self._queries_edit_reject,
+                "delete_file": self._queries_delete_reject,
+            }[operation]()
+            return FuncToolResult(success=0, error=reason)
+        if self._classify_render_path(path) == "render" and Path(path).suffix.lower() not in RENDER_ALLOWED_SUFFIXES:
+            return self._render_extension_reject(path)
+        return None
+
     # ── Overrides ────────────────────────────────────────────────────────
 
-    def write_file(self, path: str, content: str, file_type: str = "") -> FuncToolResult:  # type: ignore[override]
-        if self._is_queries_path(path):
-            return FuncToolResult(success=0, error=self._queries_write_reject())
-        if self._classify_render_path(path) == "render":
-            suffix = Path(path).suffix.lower()
-            if suffix not in RENDER_ALLOWED_SUFFIXES:
-                return self._render_extension_reject(path)
-        return super().write_file(path, content, file_type)
+    def write_file(self, path: str, content: str, file_type: str = "") -> FuncToolResult:
+        error = self._client_mutation_policy_error("write_file", path)
+        return error if error is not None else super().write_file(path, content, file_type)
 
-    def edit_file(self, path: str, old_string: str, new_string: str) -> FuncToolResult:  # type: ignore[override]
-        if self._is_queries_path(path):
-            return FuncToolResult(success=0, error=self._queries_edit_reject())
-        if self._classify_render_path(path) == "render":
-            suffix = Path(path).suffix.lower()
-            if suffix not in RENDER_ALLOWED_SUFFIXES:
-                return self._render_extension_reject(path)
-        return super().edit_file(path, old_string, new_string)
+    def edit_file(self, path: str, old_string: str, new_string: str) -> FuncToolResult:
+        error = self._client_mutation_policy_error("edit_file", path)
+        return error if error is not None else super().edit_file(path, old_string, new_string)
 
-    def delete_file(self, path: str) -> FuncToolResult:  # type: ignore[override]
-        if self._is_queries_path(path):
-            return FuncToolResult(success=0, error=self._queries_delete_reject())
-        if self._classify_render_path(path) == "render":
-            suffix = Path(path).suffix.lower()
-            if suffix not in RENDER_ALLOWED_SUFFIXES:
-                return self._render_extension_reject(path)
-        return super().delete_file(path)
+    def delete_file(self, path: str) -> FuncToolResult:
+        error = self._client_mutation_policy_error("delete_file", path)
+        return error if error is not None else super().delete_file(path)

@@ -13,7 +13,7 @@ import yaml
 from datus.storage.metric.store import normalize_metric_name
 from datus.storage.semantic_model.artifact_file import atomic_write_text, semantic_artifact_lock
 from datus.tools.func_tool.base import FuncToolResult, tool_schema
-from datus.tools.func_tool.filesystem_tools import FilesystemFuncTool
+from datus.tools.func_tool.filesystem_tools import ClientFileMutation, FilesystemFuncTool
 from datus.tools.func_tool.fs_path_policy import PathZone, ResolvedPath
 from datus.tools.semantic_tools.metric_identity import (
     ensure_metric_uid,
@@ -741,8 +741,10 @@ class OsiSemanticModelFilesystemFuncTool(MetricFilesystemFuncTool):
             trans_to_function_tool(self.grep),
         ]
 
-    def edit_file(self, path: str, old_string: str, new_string: str) -> FuncToolResult:  # type: ignore[override]
-        """Edit an existing OSI document only when the complete result is valid."""
+    def _prepare_osi_edit(
+        self, path: str, old_string: str, new_string: str
+    ) -> tuple[ResolvedPath, str, str, Dict[str, Any], Any] | FuncToolResult:
+        """Share complete-document validation and snapshots with the IDE proxy."""
         if not old_string:
             return FuncToolResult(success=0, error="old_string must not be empty")
 
@@ -752,75 +754,120 @@ class OsiSemanticModelFilesystemFuncTool(MetricFilesystemFuncTool):
             return policy_error
         target_path = resolved.resolved
 
-        with semantic_artifact_lock(target_path):
-            guard_error = self._mutation_guard_error(target_path)
-            if guard_error is not None:
-                return guard_error
-            if not target_path.exists():
-                return FuncToolResult(success=0, error=f"File not found: {resolved.display}")
-            if not target_path.is_file():
-                return FuncToolResult(success=0, error=f"Path is not a file: {resolved.display}")
-            try:
-                content = target_path.read_text(encoding="utf-8")
-                new_content, error = apply_single_replacement(content, old_string, new_string)
-                if error is not None:
-                    return FuncToolResult(success=0, error=error)
-                document = yaml.safe_load(new_content)
-            except UnicodeDecodeError:
-                return FuncToolResult(success=0, error=f"Cannot edit binary file: {resolved.display}")
-            except (OSError, yaml.YAMLError) as exc:
-                return FuncToolResult(success=0, error=f"Cannot edit OSI semantic model {resolved.display}: {exc}")
+        guard_error = self._mutation_guard_error(target_path)
+        if guard_error is not None:
+            return guard_error
+        if not target_path.exists():
+            return FuncToolResult(success=0, error=f"File not found: {resolved.display}")
+        if not target_path.is_file():
+            return FuncToolResult(success=0, error=f"Path is not a file: {resolved.display}")
+        try:
+            content = target_path.read_text(encoding="utf-8")
+            new_content, error = apply_single_replacement(content, old_string, new_string)
+            if error is not None:
+                return FuncToolResult(success=0, error=error)
+            document = yaml.safe_load(new_content)
+        except UnicodeDecodeError:
+            return FuncToolResult(success=0, error=f"Cannot edit binary file: {resolved.display}")
+        except (OSError, yaml.YAMLError) as exc:
+            return FuncToolResult(success=0, error=f"Cannot edit OSI semantic model {resolved.display}: {exc}")
 
-            try:
-                original_document = yaml.safe_load(content)
-            except yaml.YAMLError:
-                original_document = None
+        try:
+            original_document = yaml.safe_load(content)
+        except yaml.YAMLError:
+            original_document = None
 
-            if not isinstance(document, dict):
-                return FuncToolResult(success=0, error="OSI semantic model root must be a YAML object")
-            try:
-                identities_changed = prepare_metric_uids(document, original_document or {})
-            except ValueError as exc:
-                return FuncToolResult(success=0, error=f"Invalid OSI metric identity: {exc}")
-            # Validate the edit before any reserialization can hide duplicate keys.
+        if not isinstance(document, dict):
+            return FuncToolResult(success=0, error="OSI semantic model root must be a YAML object")
+        try:
+            identities_changed = prepare_metric_uids(document, original_document or {})
+        except ValueError as exc:
+            return FuncToolResult(success=0, error=f"Invalid OSI metric identity: {exc}")
+        # Validate the edit before any reserialization can hide duplicate keys.
+        validation_error = self._validate_osi_document(new_content)
+        if not validation_error and identities_changed:
+            new_content = yaml.safe_dump(document, allow_unicode=True, sort_keys=False)
             validation_error = self._validate_osi_document(new_content)
-            if not validation_error and identities_changed:
-                new_content = yaml.safe_dump(document, allow_unicode=True, sort_keys=False)
-                validation_error = self._validate_osi_document(new_content)
-            if validation_error:
-                return FuncToolResult(
-                    success=0,
-                    error=f"Invalid OSI semantic model edit: {validation_error}",
-                    result={"written": False, "semantic_model_file": resolved.display},
-                )
+        if validation_error:
+            return FuncToolResult(
+                success=0,
+                error=f"Invalid OSI semantic model edit: {validation_error}",
+                result={"written": False, "semantic_model_file": resolved.display},
+            )
+        try:
+            if self.osi_target_state is not None:
+                self.osi_target_state.record_artifact_snapshot(target_path, content.encode("utf-8"))
+        except OSError as exc:
+            return FuncToolResult(success=0, error=f"Cannot update {resolved.display}: {exc}")
+        return resolved, content, new_content, document, original_document
+
+    def _record_osi_edit(
+        self, target_path: Path, new_content: str, document: Dict[str, Any], original_document: Any
+    ) -> None:
+        self._notify_mutation(target_path)
+        if self.osi_target_state is not None:
+            before_metrics = metric_definitions(original_document)
+            after_metrics = metric_definitions(document)
+            changed_metrics = [
+                (after_metrics.get(key) or before_metrics[key])["name"]
+                for key in sorted(before_metrics.keys() | after_metrics.keys())
+                if before_metrics.get(key) != after_metrics.get(key)
+            ]
+            if changed_metrics:
+                self.osi_target_state.record_metric_touch(target_path, new_content.encode("utf-8"), changed_metrics)
+        if self.osi_target_state is not None and self.osi_target_state.planned is not None:
+            before = self._dataset_definitions(original_document)
+            after = self._dataset_definitions(document)
+            changed = [
+                (after.get(key) or before[key])[0]
+                for key in before.keys() | after.keys()
+                if before.get(key) != after.get(key)
+            ]
+            if changed:
+                self.osi_target_state.record_planned_dataset_touch(changed)
+
+    def edit_file(self, path: str, old_string: str, new_string: str) -> FuncToolResult:
+        """Edit an existing OSI document only when the complete result is valid."""
+        if not old_string:
+            return FuncToolResult(success=0, error="old_string must not be empty")
+        target_path = self._classify(path).resolved
+        with semantic_artifact_lock(target_path):
+            prepared = self._prepare_osi_edit(path, old_string, new_string)
+            if isinstance(prepared, FuncToolResult):
+                return prepared
+            resolved, _, new_content, document, original_document = prepared
             try:
-                if self.osi_target_state is not None:
-                    self.osi_target_state.record_artifact_snapshot(target_path, content.encode("utf-8"))
                 atomic_write_text(target_path, new_content)
             except OSError as exc:
                 return FuncToolResult(success=0, error=f"Cannot update {resolved.display}: {exc}")
-            self._notify_mutation(target_path)
-            if self.osi_target_state is not None:
-                before_metrics = metric_definitions(original_document)
-                after_metrics = metric_definitions(document)
-                changed_metrics = [
-                    (after_metrics.get(key) or before_metrics[key])["name"]
-                    for key in sorted(before_metrics.keys() | after_metrics.keys())
-                    if before_metrics.get(key) != after_metrics.get(key)
-                ]
-                if changed_metrics:
-                    self.osi_target_state.record_metric_touch(target_path, new_content.encode("utf-8"), changed_metrics)
-            if self.osi_target_state is not None and self.osi_target_state.planned is not None:
-                before = self._dataset_definitions(original_document)
-                after = self._dataset_definitions(document)
-                changed = [
-                    (after.get(key) or before[key])[0]
-                    for key in before.keys() | after.keys()
-                    if before.get(key) != after.get(key)
-                ]
-                if changed:
-                    self.osi_target_state.record_planned_dataset_touch(changed)
+            self._record_osi_edit(target_path, new_content, document, original_document)
         return FuncToolResult(result=f"File edited successfully: {resolved.display}")
+
+    def _prepare_client_mutation(self, operation: str, arguments: dict) -> ClientFileMutation | FuncToolResult:
+        if operation != "edit_file":
+            return super()._prepare_client_mutation(operation, arguments)
+        target_path = self._classify(arguments["path"]).resolved
+        with semantic_artifact_lock(target_path):
+            prepared = self._prepare_osi_edit(**arguments)
+        if isinstance(prepared, FuncToolResult):
+            return prepared
+        _, content, new_content, _, original_document = prepared
+        client_arguments = {**arguments, "path": str(target_path)}
+        expected, _ = apply_single_replacement(content, arguments["old_string"], arguments["new_string"])
+        if expected != new_content:
+            # UID preparation can change more than the requested fragment. The
+            # existing IDE edit executor still performs one exact replacement.
+            client_arguments.update(old_string=content, new_string=new_content)
+
+        def complete() -> Optional[FuncToolResult]:
+            actual = target_path.read_text(encoding="utf-8")
+            error = self._validate_osi_document(actual)
+            if error:
+                return FuncToolResult(success=0, error=f"Invalid OSI semantic model edit: {error}")
+            self._record_osi_edit(target_path, actual, yaml.safe_load(actual), original_document)
+            return None
+
+        return ClientFileMutation(client_arguments, complete)
 
     @staticmethod
     def _dataset_definitions(document: Any) -> Dict[str, tuple[str, Dict[str, Any]]]:

@@ -10,9 +10,7 @@ Wait and publish are order-independent: either side can arrive first.
 """
 
 import asyncio
-from contextvars import Context, copy_context
-from dataclasses import dataclass, field
-from typing import Any, Awaitable, Callable, Dict, Optional
+from typing import Any, Dict, Optional
 
 from datus.utils.loggings import get_logger
 
@@ -38,22 +36,6 @@ logger = get_logger(__name__)
 DEFAULT_RESULT_TIMEOUT: float = 600.0
 
 
-@dataclass
-class ProxiedInvocation:
-    """Original node-bound executor for one web-proxied call."""
-
-    name: str
-    invoke: Callable[[], Awaitable[dict]]
-    task: Optional[asyncio.Task] = None
-    context: Context = field(default_factory=copy_context)
-
-    async def execute(self) -> dict:
-        if self.task is None:
-            self.task = asyncio.create_task(self.invoke(), context=self.context.copy())
-        # Retrying or disconnecting the HTTP request must not repeat/cancel a write.
-        return await asyncio.shield(self.task)
-
-
 class ToolResultChannel:
     """Async pub/sub channel for proxy tool call results.
 
@@ -64,7 +46,6 @@ class ToolResultChannel:
     def __init__(self):
         self._futures: Dict[str, asyncio.Future[Any]] = {}
         self._lock = asyncio.Lock()
-        self.invocations: Dict[str, ProxiedInvocation] = {}
 
     def _get_or_create_future(self, call_id: str) -> asyncio.Future[Any]:
         fut = self._futures.get(call_id)
@@ -121,4 +102,3 @@ class ToolResultChannel:
             if not future.done():
                 future.set_exception(RuntimeError(reason))
         self._futures.clear()
-        self.invocations.clear()

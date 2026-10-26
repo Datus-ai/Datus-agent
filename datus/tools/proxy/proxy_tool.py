@@ -20,8 +20,8 @@ from typing import TYPE_CHECKING, Dict, List, Optional, Set, Tuple
 from agents import FunctionTool
 from agents.tool_context import ToolContext
 
-from datus.schemas.action_history import ActionHistory, ActionRole
-from datus.tools.proxy.tool_result_channel import DEFAULT_RESULT_TIMEOUT, ProxiedInvocation, ToolResultChannel
+from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
+from datus.tools.proxy.tool_result_channel import DEFAULT_RESULT_TIMEOUT, ToolResultChannel
 from datus.utils.loggings import get_logger
 
 if TYPE_CHECKING:
@@ -30,12 +30,8 @@ if TYPE_CHECKING:
 logger = get_logger(__name__)
 
 # Node types whose success-path finalizers depend on local filesystem tools (write_file, etc.)
-# CLI/VS Code keep these filesystem tools native. Web can proxy them because
-# the existing /tools dispatcher retains each original node-bound executor.
-# gen_visual_report / gen_visual_dashboard author their render/*.jsx tree
-# server-side and surface it via ``/api/v1/(report|dashboard)/detail``; proxying
-# write_file / edit_file to the browser would round-trip every chunk for no
-# benefit, so the same exclusion applies to them.
+# CLI/VS Code keep these filesystem tools native. Web uses the existing IDE
+# executor with server-side preparation and mutation bookkeeping.
 _FS_DEPENDENT_NODES: Set[str] = {
     "semantic_modeling",
     "gen_sql_summary",
@@ -49,43 +45,24 @@ def create_proxy_tool(
 ) -> FunctionTool:
     """Wrap a FunctionTool so it awaits results from the channel instead of executing."""
 
+    prepared = {}
+
     async def proxy_invoke(tool_ctx: ToolContext, args_str: str) -> dict:
         call_id = tool_ctx.tool_call_id
-        invocation = None
-        if source == "web":
-
-            async def execute() -> dict:
-                # Keep the original tool's validation, callbacks and finalizer state.
-                # Arguments come from this invocation, never from an HTTP payload.
-                try:
-                    value = await original.on_invoke_tool(tool_ctx, args_str)
-                    if isinstance(value, str):
-                        value = json.loads(value)
-                    return value.model_dump() if hasattr(value, "model_dump") else value
-                except Exception as exc:
-                    logger.exception("Proxied tool '%s' failed", original.name)
-                    return {"success": 0, "error": str(exc), "result": None}
-
-            invocation = ProxiedInvocation(original.name, execute)
-            channel.invocations[call_id] = invocation
         started = time.monotonic()
         logger.info(
             f"Proxy tool '{original.name}' awaiting client result, call_id={call_id}, timeout={DEFAULT_RESULT_TIMEOUT}s"
         )
         try:
             result = await channel.wait_for(call_id, timeout=DEFAULT_RESULT_TIMEOUT)
-            if invocation is not None and isinstance(result, dict) and result.get("success") == 1:
-                if invocation.task is None:
-                    return {
-                        "success": 0,
-                        "error": (
-                            "The web client bypassed the pending tool dispatcher; file state is unknown. "
-                            "Inspect the file and update the client before retrying."
-                        ),
-                    }
-                actual = await invocation.execute()
-                if not actual.get("success"):
-                    return actual
+            mutation = prepared.pop(call_id, None)
+            if mutation is not None and isinstance(result, dict) and result.get("success") == 1:
+                try:
+                    failure = await asyncio.to_thread(mutation.complete)
+                except (ValueError, OSError) as exc:
+                    return {"success": 0, "error": str(exc), "result": None}
+                if failure is not None:
+                    return failure.model_dump()
             waited_ms = int((time.monotonic() - started) * 1000)
             logger.info(
                 f"Proxy tool '{original.name}' received client result, call_id={call_id}, waited_ms={waited_ms}"
@@ -116,16 +93,33 @@ def create_proxy_tool(
             logger.warning(f"Proxy tool '{original.name}' error: {e}, call_id={call_id}")
             return {"success": 0, "error": str(e), "result": None}
         finally:
-            if invocation is not None:
-                channel.invocations.pop(call_id, None)
+            prepared.pop(call_id, None)
 
-    return FunctionTool(
+    proxy = FunctionTool(
         name=original.name,
         description=original.description,
         params_json_schema=original.params_json_schema,
         on_invoke_tool=proxy_invoke,
         strict_json_schema=original.strict_json_schema,
     )
+
+    prepare = getattr(original, "_datus_prepare_client_mutation", None)
+    if source == "web" and prepare is not None:
+
+        async def prepare_action(action: ActionHistory) -> None:
+            arguments = action.input.get("arguments", "{}")
+            mutation = await asyncio.to_thread(prepare, arguments)
+            from datus.tools.func_tool.base import FuncToolResult
+
+            if isinstance(mutation, FuncToolResult):
+                action.input = {**action.input, "_proxied": False}
+                await channel.publish(action.action_id, mutation.model_dump())
+            else:
+                prepared[action.action_id] = mutation
+                action.input = {**action.input, "arguments": json.dumps(mutation.arguments)}
+
+        proxy._datus_prepare_proxy_action = prepare_action
+    return proxy
 
 
 def apply_proxy_tools(
@@ -169,6 +163,8 @@ def apply_proxy_tools(
 
     new_tools = []
     proxied_names: Set[str] = set()
+    web_filesystem_names: Set[str] = set()
+    preparations = {}
     for tool in node.tools:
         if isinstance(tool, FunctionTool) and _matches(tool.name, registry, parsed):
             if exclude_categories and registry.get(tool.name) in exclude_categories:
@@ -176,13 +172,27 @@ def apply_proxy_tools(
                 new_tools.append(tool)
             else:
                 logger.info(f"Proxying tool: {tool.name}")
-                new_tools.append(create_proxy_tool(tool, target_channel, source=source))
+                proxy = create_proxy_tool(tool, target_channel, source=source)
+                if source == "web" and registry.get(tool.name) == "filesystem_tools":
+                    web_filesystem_names.add(tool.name)
+                    prepare = getattr(proxy, "_datus_prepare_proxy_action", None)
+                    if prepare is not None:
+                        preparations[tool.name] = prepare
+                new_tools.append(proxy)
                 proxied_names.add(tool.name)
         else:
             new_tools.append(tool)
     node.tools = new_tools
+    if source == "web":
+        node._web_file_preparations = preparations
+    existing_web = getattr(node, "web_filesystem_proxy_names", None)
+    if isinstance(existing_web, set):
+        existing_web.clear()
+        existing_web.update(web_filesystem_names)
+    elif source == "web":
+        node.web_filesystem_proxy_names = web_filesystem_names
     # ``PermissionHooks`` consults this set in ``on_tool_start`` to skip the
-    # ALLOW/ASK/DENY check for proxied tools — the external caller (e.g.
+    # ALLOW/ASK/DENY check for generic external proxies — the caller (e.g.
     # ``print_mode`` stdin protocol) owns secondary confirmation. Mutate in
     # place so existing PermissionHooks instances built earlier still see the
     # latest snapshot via the shared reference held on the node.
@@ -192,6 +202,35 @@ def apply_proxy_tools(
         existing.update(proxied_names)
     else:
         node.proxied_tool_names = proxied_names
+
+
+async def prepare_web_tool_action(action: ActionHistory, node: AgenticNode) -> None:
+    """Prepare a web file call before the existing frontend executor can see it."""
+    if (
+        getattr(getattr(node, "agent_config", None), "_client_source", None) != "web"
+        or action.role != ActionRole.TOOL
+        or action.status != ActionStatus.PROCESSING
+        or not isinstance(action.input, dict)
+        or "_proxied" in action.input
+    ):
+        return
+    name = action.input.get("function_name", "")
+    if name not in getattr(node, "web_filesystem_proxy_names", set()):
+        return
+    from datus.tools.permission.permission_config import PermissionLevel
+
+    manager = getattr(node, "permission_manager", None)
+    if (
+        manager is not None
+        and manager.check_permission("filesystem_tools", name, node.get_node_name()) == PermissionLevel.DENY
+    ):
+        # Tool-start events can precede the SDK's permission hook. Never expose
+        # an executable file card for an operation the hook will reject.
+        action.input = {**action.input, "_proxied": False}
+        return
+    prepare = getattr(node, "_web_file_preparations", {}).get(name)
+    if prepare is not None:
+        await prepare(action)
 
 
 def stamp_tool_execution(action: ActionHistory, node: AgenticNode) -> None:

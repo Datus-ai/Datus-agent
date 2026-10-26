@@ -299,6 +299,7 @@ class PermissionHooks(AgentHooks):
         fs_policy: Optional[FilesystemPolicy] = None,
         non_interactive: bool = False,
         proxied_tool_names: Optional[Set[str]] = None,
+        web_filesystem_proxy_names: Optional[Set[str]] = None,
         project_root: Optional[str] = None,
         config_mutable: bool = True,
         bash_classifier: Optional["BashCommandClassifier"] = None,
@@ -336,6 +337,8 @@ class PermissionHooks(AgentHooks):
                 Passing the same set reference held by the node lets late
                 ``apply_proxy_tools`` invocations be observed without rebuilding
                 the hook.
+            web_filesystem_proxy_names: Web file proxies whose existing frontend
+                confirmation handles ASK. Explicit DENY rules remain authoritative.
             project_root: Workspace root used to resolve a ``.sql`` file
                 reference passed to ``execute_sql``. The SQL permission gate
                 reads the file (same logic as the tool) so a read-only ``.sql``
@@ -365,6 +368,7 @@ class PermissionHooks(AgentHooks):
         self.fs_policy = fs_policy
         self.non_interactive = non_interactive
         self.proxied_tool_names = proxied_tool_names
+        self.web_filesystem_proxy_names = web_filesystem_proxy_names
         self.project_root = project_root
         self.config_mutable = bool(config_mutable)
         self.bash_classifier = bash_classifier
@@ -519,6 +523,8 @@ class PermissionHooks(AgentHooks):
         if tool_name in self._PLAN_MODE_BYPASS_TOOLS:
             return
 
+        web_filesystem_proxy = bool(self.web_filesystem_proxy_names and tool_name in self.web_filesystem_proxy_names)
+
         # External proxies own their permission handling. Semantic plans are
         # written server-side: their separate preview approval must not bypass
         # custom ASK/DENY rules.
@@ -526,6 +532,7 @@ class PermissionHooks(AgentHooks):
             self.proxied_tool_names
             and tool_name in self.proxied_tool_names
             and tool_name != "write_semantic_model_plan_file"
+            and not web_filesystem_proxy
         ):
             logger.debug("Tool '%s' is proxied; skipping permission check", tool_name)
             return
@@ -539,7 +546,7 @@ class PermissionHooks(AgentHooks):
         #   INTERNAL/WHITELIST → bypass, HIDDEN → bypass (tool returns not-found),
         #   EXTERNAL → force ASK with a path-keyed session cache so approving
         #   /Users/foo/secret does not cascade to /Users/foo/other.
-        if self.fs_policy is not None and category == "filesystem_tools":
+        if not web_filesystem_proxy and self.fs_policy is not None and category == "filesystem_tools":
             handled = await self._handle_filesystem_zone(context, tool_name, pattern_name)
             if handled:
                 return
@@ -589,6 +596,11 @@ class PermissionHooks(AgentHooks):
                 tool_category=category,
                 tool_name=pattern_name,
             )
+
+        if web_filesystem_proxy:
+            # Web retains the file tool's own validation and bookkeeping. Its
+            # existing confirmation card owns ASK, but explicit DENY still wins.
+            return
 
         if permission == PermissionLevel.ASK:
             if self.non_interactive:

@@ -203,6 +203,7 @@ class AgenticNode(Node):
         # reference so PermissionHooks can be built before the first proxy call
         # and still observe later updates without rebuilding.
         self.proxied_tool_names: Set[str] = set()
+        self.web_filesystem_proxy_names: Set[str] = set()
 
         # Shared tool_name -> category registry (used by PermissionHooks & proxy_tool)
         from datus.tools.registry.tool_registry import ToolRegistry
@@ -4472,6 +4473,7 @@ class AgenticNode(Node):
                 fs_policy=self._make_filesystem_policy(),
                 non_interactive=non_interactive,
                 proxied_tool_names=self.proxied_tool_names,
+                web_filesystem_proxy_names=getattr(self, "web_filesystem_proxy_names", None),
                 project_root=getattr(self.agent_config, "project_root", None),
                 config_mutable=self._resolve_config_mutable(),
                 auto_reviewer=create_auto_reviewer(self.agent_config),

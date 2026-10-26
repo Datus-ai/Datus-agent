@@ -1786,3 +1786,65 @@ class TestEditFile:
         tool = MetricFilesystemFuncTool(root_path=str(project), current_node="semantic_modeling")
         result = tool.edit_file("notes.txt", "hello", "goodbye")
         assert result.success == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("finish_edit", [False, True])
+async def test_web_osi_edit_uses_existing_client_executor_and_tracks_actual_content(identity_tool, finish_edit):
+    from types import SimpleNamespace
+
+    from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
+    from datus.tools.proxy.proxy_tool import apply_proxy_tools, prepare_web_tool_action, stamp_tool_execution
+    from datus.tools.proxy.tool_result_channel import ToolResultChannel
+    from datus.tools.registry.tool_registry import ToolRegistry
+    from datus.tools.semantic_tools.metric_identity import ensure_metric_uid, metric_uid
+
+    metric = _osi_metric("revenue", "SUM(orders.amount)")
+    ensure_metric_uid(metric)
+    original_uid = metric_uid(metric)
+    fs, target, state, evidence = identity_tool([metric])
+    original = target.read_text()
+    channel = ToolResultChannel()
+    node = SimpleNamespace(
+        tools=fs.available_tools(),
+        tool_channel=channel,
+        tool_registry=ToolRegistry({"edit_file": "filesystem_tools"}),
+        agent_config=SimpleNamespace(_client_source="web"),
+        get_node_name=lambda: "semantic_modeling",
+    )
+    apply_proxy_tools(node, ["edit_file"])
+    args = {
+        "path": str(target),
+        "old_string": original,
+        "new_string": original.replace("SUM(orders.amount)", "SUM(orders.total)").replace(
+            original_uid, "model-supplied-uid"
+        ),
+    }
+    action = ActionHistory(
+        action_id="osi-edit",
+        role=ActionRole.TOOL,
+        action_type="edit_file",
+        input={"function_name": "edit_file", "arguments": args},
+        status=ActionStatus.PROCESSING,
+    )
+    await prepare_web_tool_action(action, node)
+    stamp_tool_execution(action, node)
+    assert action.input["_proxied"] is True
+    assert target.read_text() == original
+    assert state.artifact_snapshot_content == original.encode()
+    assert not evidence.mutated_artifact_paths
+    client_args = json.loads(action.input["arguments"])
+    # Exactly the existing frontend edit_file replacement contract.
+    authored = original.replace(client_args["old_string"], client_args["new_string"], 1)
+    if finish_edit:
+        authored = authored.replace("SUM(orders.total)", "SUM(orders.final_total)")
+    target.write_text(authored)
+    await channel.publish("osi-edit", {"success": 1, "result": "finished editing"})
+    tool = next(t for t in node.tools if t.name == "edit_file")
+    result = await tool.on_invoke_tool(SimpleNamespace(tool_call_id="osi-edit"), json.dumps(args))
+    assert result["success"] == 1
+    assert target.read_text() == authored
+    state.require_selected_revision(target)
+    assert state.touched_metric_names == ["revenue"]
+    assert str(target) in evidence.mutated_artifact_paths
+    assert metric_uid(yaml.safe_load(authored)["semantic_model"][0]["metrics"][0]) == original_uid

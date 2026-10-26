@@ -353,4 +353,22 @@ def trans_to_function_tool(
         on_invoke_tool=async_invoker,  # <--- Assign the async function
         strict_json_schema=strict_mode,
     )
+    owner = getattr(bound_method, "__self__", None)
+    prepare_mutation = getattr(owner, "_prepare_client_mutation", None)
+    if prepare_mutation is not None and bound_method.__name__ in {"write_file", "edit_file", "delete_file"}:
+
+        def prepare_client_mutation(arguments):
+            args, canonical, error = parse_tool_args(arguments, tool_name=bound_method.__name__)
+            if error:
+                return FuncToolResult(success=0, error=error)
+            try:
+                inspect.signature(bound_method).bind(**args)
+                validated = argument_schema.params_pydantic_model.model_validate_json(canonical, strict=True)
+                positional, kwargs = argument_schema.to_call_args(validated)
+                return prepare_mutation(bound_method.__name__, dict(zip(sig_names, positional)) | kwargs)
+            except (ValueError, TypeError, OSError) as exc:
+                return FuncToolResult(success=0, error=str(exc))
+
+        sig_names = list(inspect.signature(bound_method).parameters)
+        final_tool._datus_prepare_client_mutation = prepare_client_mutation
     return final_tool

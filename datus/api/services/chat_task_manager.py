@@ -996,8 +996,9 @@ class ChatTaskManager:
                         and action.action_id in seen_delta_action_ids
                     )
 
-                    from datus.tools.proxy.proxy_tool import stamp_tool_execution
+                    from datus.tools.proxy.proxy_tool import prepare_web_tool_action, stamp_tool_execution
 
+                    await prepare_web_tool_action(action, node)
                     stamp_tool_execution(action, node)
                     sse = action_to_sse_event(
                         action,

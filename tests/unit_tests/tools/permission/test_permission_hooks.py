@@ -3294,3 +3294,48 @@ async def test_proxied_plan_writer_cannot_bypass_custom_rules(
         hooks._request_user_confirmation.assert_awaited_once()
     else:
         hooks._request_user_confirmation.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("source", ["web", "cli", "vscode"])
+@pytest.mark.parametrize("permission", [PermissionLevel.DENY, PermissionLevel.ASK, PermissionLevel.ALLOW])
+async def test_web_file_proxies_enforce_deny_without_a_second_prompt(tmp_path, mock_broker, source, permission):
+    from datus.tools.func_tool.filesystem_tools import FilesystemFuncTool
+    from datus.tools.proxy.proxy_tool import apply_proxy_tools
+    from datus.tools.proxy.tool_result_channel import ToolResultChannel
+
+    fs = FilesystemFuncTool(root_path=str(tmp_path), strict=True)
+    manager = PermissionManager(
+        global_config=PermissionConfig(
+            default_permission=PermissionLevel.ALLOW,
+            rules=[PermissionRule(tool="filesystem_tools", pattern="write_file", permission=permission)],
+        )
+    )
+    node = SimpleNamespace(
+        tools=fs.available_tools(),
+        tool_channel=ToolResultChannel(),
+        tool_registry=ToolRegistry({"write_file": "filesystem_tools"}),
+        proxied_tool_names=set(),
+        web_filesystem_proxy_names=set(),
+        agent_config=SimpleNamespace(_client_source=source),
+        get_node_name=lambda: "chat",
+    )
+    hooks = PermissionHooks(
+        broker=mock_broker,
+        permission_manager=manager,
+        node_name="chat",
+        tool_registry=node.tool_registry,
+        proxied_tool_names=node.proxied_tool_names,
+        web_filesystem_proxy_names=node.web_filesystem_proxy_names,
+        fs_policy=FilesystemPolicy(root_path=tmp_path, current_node="chat"),
+    )
+    # Apply after constructing hooks to exercise the stable set reference.
+    apply_proxy_tools(node, ["write_file"])
+    tool = next(t for t in node.tools if t.name == "write_file")
+    context = SimpleNamespace(tool_arguments=json.dumps({"path": "safe.txt", "content": "text"}))
+    if source == "web" and permission == PermissionLevel.DENY:
+        with pytest.raises(PermissionDeniedException, match="blocked by"):
+            await hooks.on_tool_start(context, None, tool)
+    else:
+        await hooks.on_tool_start(context, None, tool)
+    mock_broker.request.assert_not_called()

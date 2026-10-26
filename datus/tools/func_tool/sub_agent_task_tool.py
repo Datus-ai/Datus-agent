@@ -904,8 +904,9 @@ class SubAgentTaskTool:
                         # intact so child-local accounting (for example,
                         # _extract_total_tokens) can still find depth=0 actions.
                         forwarded_action = action.model_copy()
-                        from datus.tools.proxy.proxy_tool import stamp_tool_execution
+                        from datus.tools.proxy.proxy_tool import prepare_web_tool_action, stamp_tool_execution
 
+                        await prepare_web_tool_action(forwarded_action, node)
                         stamp_tool_execution(forwarded_action, node)
                         forwarded_action.depth = 1
                         if call_id:
