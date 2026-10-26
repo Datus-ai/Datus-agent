@@ -26,6 +26,7 @@ from datus.configuration.agent_config import AgentConfig
 from datus.schemas.sql_summary_agentic_node_models import SqlSummaryNodeInput, SqlSummaryNodeResult
 from datus.storage.artifact_path import KIND_TO_SUBDIR, resolve_kb_sandbox_path
 from datus.storage.semantic_model.artifact_file import artifact_revision, path_mutation_lock
+from datus.tools.func_tool.client_file_mutations import FileSnapshot, MutationOwnership
 from datus.tools.func_tool.filesystem_tools import FilesystemFuncTool
 from datus.tools.func_tool.generation_tools import GenerationTools
 from datus.utils.exceptions import DatusException, ErrorCode
@@ -206,7 +207,7 @@ class SqlSummaryAgenticNode(AgenticNode):
                 self._mutation_snapshots[target] = None
 
     def _record_sql_summary_client_mutation(
-        self, path: Path, before: Optional[tuple[bytes, int]], expected: Optional[bytes]
+        self, path: Path, before: FileSnapshot, ownership: MutationOwnership
     ) -> None:
         """Enroll only completed client writes whose final bytes are still ours."""
         target = os.path.realpath(str(path))
@@ -214,7 +215,9 @@ class SqlSummaryAgenticNode(AgenticNode):
         revisions = getattr(self, "_web_mutation_revisions", None)
         if revisions is None:
             revisions = self._web_mutation_revisions = {}
-        if current != expected or (target in revisions and revisions[target] is None):
+        if ownership == "pending":
+            return
+        if ownership == "external" or (target in revisions and revisions[target] is None):
             # Finish Edit or another writer changed the bytes. Preserve that
             # user-owned revision, including against an earlier pending rollback.
             revisions[target] = None
@@ -231,6 +234,9 @@ class SqlSummaryAgenticNode(AgenticNode):
         self._mutated_files.clear()
         self._mutation_snapshots.clear()
         self._web_mutation_revisions.clear()
+        filesystem = getattr(self, "filesystem_func_tool", None)
+        if filesystem is not None:
+            filesystem._reset_client_mutations()
 
     async def _before_stream(self, ctx: StreamRunContext) -> None:
         self._reset_mutation_tracking()

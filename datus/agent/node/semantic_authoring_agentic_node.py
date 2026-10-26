@@ -128,6 +128,9 @@ class SemanticAuthoringAgenticNode(AgenticNode):
         self.result = None
         self.generation_evidence.reset()
         self.osi_target_state.reset()
+        filesystem = getattr(self, "filesystem_func_tool", None)
+        if filesystem is not None:
+            filesystem._reset_client_mutations()
         if self.osi_target_tools is not None:
             self.osi_target_tools.invalidate_inventory()
 

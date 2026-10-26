@@ -14,6 +14,7 @@ import yaml
 from datus.storage.metric.store import normalize_metric_name
 from datus.storage.semantic_model.artifact_file import atomic_write_text, semantic_artifact_lock
 from datus.tools.func_tool.base import FuncToolResult, tool_schema
+from datus.tools.func_tool.client_file_mutations import ClientMutationHistory
 from datus.tools.func_tool.filesystem_tools import ClientFileMutation, FilesystemFuncTool
 from datus.tools.func_tool.fs_path_policy import PathZone, ResolvedPath
 from datus.tools.semantic_tools.metric_identity import (
@@ -700,7 +701,10 @@ class MetricFilesystemFuncTool(FilesystemFuncTool):
                     current_revision = hashlib.sha256(target_path.read_bytes()).hexdigest()
                 except OSError:
                     return False
-                if current_revision != state.artifact_sha256:
+                history = self._client_mutation_histories.get(target_path)
+                if current_revision != state.artifact_sha256 or (
+                    history is not None and history.classify(target_path.read_bytes()) != "owned"
+                ):
                     return False
             try:
                 if state.artifact_snapshot_existed:
@@ -861,41 +865,73 @@ class OsiSemanticModelFilesystemFuncTool(MetricFilesystemFuncTool):
             if self.osi_target_state is not None:
                 self.osi_target_state.web_client_prepared = True
             prepared = self._prepare_osi_edit(**arguments, capture_snapshot=False)
-        if isinstance(prepared, FuncToolResult):
-            return prepared
-        _, content, new_content, _, original_document = prepared
-        client_arguments = {**arguments, "path": str(target_path)}
-        expected, _ = apply_single_replacement(content, arguments["old_string"], arguments["new_string"])
-        if expected != new_content:
-            # UID preparation can change more than the requested fragment. The
-            # existing IDE edit executor still performs one exact replacement.
-            client_arguments.update(old_string=content, new_string=new_content)
+            if isinstance(prepared, FuncToolResult):
+                return prepared
+            _, content, new_content, _, original_document = prepared
+            client_arguments = {**arguments, "path": str(target_path)}
+            expected, _ = apply_single_replacement(content, arguments["old_string"], arguments["new_string"])
+            if expected != new_content:
+                # UID preparation can change more than the requested fragment. The
+                # existing IDE edit executor still performs one exact replacement.
+                client_arguments.update(old_string=content, new_string=new_content)
 
-        def complete() -> Optional[FuncToolResult]:
-            with semantic_artifact_lock(target_path):
-                actual = target_path.read_text(encoding="utf-8")
-                error = self._validate_osi_document(actual)
-                if error:
-                    return FuncToolResult(success=0, error=f"Invalid OSI semantic model edit: {error}")
-                document = yaml.safe_load(actual)
-                try:
-                    identity_changes = prepare_metric_uids(document, original_document or {})
-                except ValueError as exc:
-                    return FuncToolResult(success=0, error=f"Invalid OSI metric identity: {exc}")
-                if identity_changes:
-                    return FuncToolResult(
-                        success=0,
-                        error="Finish Edit changed a host-managed metric identity; preserve the original UID before retrying.",
-                    )
-                if actual != new_content:
-                    if self.osi_target_state is not None:
-                        self.osi_target_state.web_client_user_edits = True
-                elif self.osi_target_state is not None:
-                    self.osi_target_state.record_artifact_snapshot(target_path, content.encode("utf-8"))
-                self._record_osi_edit(target_path, actual, document, original_document)
-            return None
+            before = (content.encode("utf-8"), target_path.stat().st_mode)
+            history = self._client_mutation_histories.get(target_path)
+            state = self.osi_target_state
+            if history is None:
+                history = ClientMutationHistory(before)
+                if (
+                    state is not None
+                    and state.artifact_snapshot_path
+                    and hashlib.sha256(before[0]).hexdigest() != state.artifact_sha256
+                ):
+                    history.external = True
+                self._client_mutation_histories[target_path] = history
+            elif (
+                not history.records
+                and state is not None
+                and hashlib.sha256(before[0]).hexdigest() == state.artifact_sha256
+            ):
+                # A native, revision-checked authoring tool can advance the same file
+                # between Web batches. Its acknowledged revision remains Agent-owned.
+                history.anchor = before[0]
+            record = history.prepare(before, "edit_file", client_arguments)
+            if state is not None and history.external:
+                state.web_client_user_edits = True
 
-        return ClientFileMutation(client_arguments, complete)
+            def complete() -> Optional[FuncToolResult]:
+                with semantic_artifact_lock(target_path):
+                    actual = target_path.read_text(encoding="utf-8")
+                    error = self._validate_osi_document(actual)
+                    if error:
+                        history.cancel(record)
+                        return FuncToolResult(success=0, error=f"Invalid OSI semantic model edit: {error}")
+                    document = yaml.safe_load(actual)
+                    try:
+                        identity_changes = prepare_metric_uids(document, original_document or {})
+                    except ValueError as exc:
+                        history.cancel(record)
+                        return FuncToolResult(success=0, error=f"Invalid OSI metric identity: {exc}")
+                    if identity_changes:
+                        history.cancel(record)
+                        return FuncToolResult(
+                            success=0,
+                            error="Finish Edit changed a host-managed metric identity; preserve the original UID before retrying.",
+                        )
+                    ownership = history.complete(record, actual.encode("utf-8"))
+                    if ownership == "external":
+                        if state is not None:
+                            state.web_client_user_edits = True
+                    elif ownership == "owned" and state is not None:
+                        state.record_artifact_snapshot(target_path, record.before[0])
+                    self._record_osi_edit(target_path, actual, document, original_document)
+                return None
+
+            def cancel() -> None:
+                with semantic_artifact_lock(target_path):
+                    history.cancel(record)
+
+            return ClientFileMutation(client_arguments, complete, cancel)
 
     @staticmethod
     def _dataset_definitions(document: Any) -> Dict[str, tuple[str, Dict[str, Any]]]:

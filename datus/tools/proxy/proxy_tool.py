@@ -49,6 +49,7 @@ def create_proxy_tool(
 
     async def proxy_invoke(tool_ctx: ToolContext, args_str: str) -> dict:
         call_id = tool_ctx.tool_call_id
+        mutation = None
         started = time.monotonic()
         logger.info(
             f"Proxy tool '{original.name}' awaiting client result, call_id={call_id}, timeout={DEFAULT_RESULT_TIMEOUT}s"
@@ -93,7 +94,9 @@ def create_proxy_tool(
             logger.warning(f"Proxy tool '{original.name}' error: {e}, call_id={call_id}")
             return {"success": 0, "error": str(e), "result": None}
         finally:
-            prepared.pop(call_id, None)
+            remaining = prepared.pop(call_id, None) or mutation
+            if remaining is not None and remaining.cancel is not None:
+                await asyncio.to_thread(remaining.cancel)
 
     proxy = FunctionTool(
         name=original.name,
