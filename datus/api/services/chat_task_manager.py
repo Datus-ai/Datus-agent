@@ -928,6 +928,9 @@ class ChatTaskManager:
                     from datus.tools.proxy.semantic_plan_review import apply_semantic_plan_review
 
                     apply_semantic_plan_review(node)
+                    from datus.tools.proxy.web_file_review import apply_web_file_review
+
+                    apply_web_file_review(node)
             elif effective_source:
                 logger.warning("Unsupported source '%s'; skipping proxy shortcut", effective_source)
 
@@ -996,6 +999,9 @@ class ChatTaskManager:
                         and action.action_id in seen_delta_action_ids
                     )
 
+                    from datus.tools.proxy.web_file_review import stamp_tool_execution
+
+                    stamp_tool_execution(action, node)
                     sse = action_to_sse_event(
                         action,
                         event_id,

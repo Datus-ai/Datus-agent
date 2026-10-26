@@ -4,7 +4,7 @@
 
 from datetime import datetime
 from enum import Enum
-from typing import Any, Callable, List, Optional
+from typing import Any, Callable, List, Literal, Optional
 
 from pydantic import BaseModel, Field
 
@@ -57,6 +57,9 @@ class ActionHistory(BaseModel):
     end_time: Optional[datetime] = Field(default=None, description="End time of the action")
     depth: int = Field(default=0, description="Nesting depth for hierarchical display (0=main, 1=sub-agent)")
     parent_action_id: Optional[str] = Field(default=None, description="Parent action ID for grouping sub-actions")
+    tool_execution: Optional[Literal["client", "server", "server_review"]] = Field(
+        default=None, description="Execution owner stamped by the node that produced this tool call"
+    )
 
     @classmethod
     def create_action(

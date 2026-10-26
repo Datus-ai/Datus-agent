@@ -862,6 +862,12 @@ class SubAgentTaskTool:
             if isinstance(review_context, SemanticPlanReviewContext):
                 apply_semantic_plan_review(node, context=review_context)
 
+            from datus.tools.proxy.web_file_review import WebFileReviewContext, apply_web_file_review
+
+            file_review_context = getattr(self._parent_node, "web_file_review_context", None)
+            if isinstance(file_review_context, WebFileReviewContext):
+                apply_web_file_review(node, context=file_review_context)
+
             # Iterate the async generator directly (we're already in async context)
             action_history_manager = ActionHistoryManager()
             final_output = None
@@ -904,6 +910,9 @@ class SubAgentTaskTool:
                         # intact so child-local accounting (for example,
                         # _extract_total_tokens) can still find depth=0 actions.
                         forwarded_action = action.model_copy()
+                        from datus.tools.proxy.web_file_review import stamp_tool_execution
+
+                        stamp_tool_execution(forwarded_action, node)
                         forwarded_action.depth = 1
                         if call_id:
                             forwarded_action.parent_action_id = call_id

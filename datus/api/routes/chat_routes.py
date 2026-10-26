@@ -34,6 +34,7 @@ from datus.api.models.chat_models import (
     StopChatInput,
     ToolResultData,
     ToolResultInput,
+    ToolReviewInput,
 )
 from datus.api.models.cli_models import (
     ChatHistoryData,
@@ -511,6 +512,26 @@ async def insert_message(
 
 
 # ========== Tool Result ==========
+
+
+@router.post("/tool_review", response_model=Result[dict], summary="Execute Reviewed File Change")
+async def execute_tool_review(request: ToolReviewInput, svc: ServiceDep, ctx: AppContextDep) -> Result[dict]:
+    """Approve by call id only; the owning node retains the arguments and executor."""
+    from datus.tools.proxy.web_file_review import WebFileReviewContext
+
+    # A tool-start frame may reach the browser just before its wrapper starts.
+    for _ in range(100):
+        task = svc.task_manager.get_task(request.session_id)
+        node = task.node if task else None
+        if node is None or getattr(node, "scope", None) != ctx.user_id or task.status != "running":
+            break
+        context = getattr(node, "web_file_review_context", None)
+        if isinstance(context, WebFileReviewContext):
+            review = context.pending.get(request.call_tool_id)
+            if review is not None:
+                return Result[dict](success=True, data=await review.execute())
+        await asyncio.sleep(0.1)
+    raise HTTPException(status_code=404, detail="No pending file review")
 
 
 @router.get("/tool_preview", response_model=Result[dict], summary="Read Pending Tool Preview")

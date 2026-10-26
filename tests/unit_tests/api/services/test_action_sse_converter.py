@@ -165,6 +165,13 @@ class TestBuildToolCallContent:
         contents = _build_tool_call_content(action, proxied_tool_names=set())
         assert contents[0].payload["proxied"] is False
 
+    def test_child_execution_owner_overrides_parent_proxy_names(self):
+        action = _make_action(input={"function_name": "edit_file", "arguments": {}}, depth=1)
+        # The child owns this call; the parent's identically named tool is proxied.
+        action = action.model_copy(update={"tool_execution": "server"})
+        contents = _build_tool_call_content(action, proxied_tool_names={"edit_file"})
+        assert contents[0].payload["proxied"] is False
+
 
 class TestBuildToolResultContent:
     """Tests for _build_tool_result_content."""

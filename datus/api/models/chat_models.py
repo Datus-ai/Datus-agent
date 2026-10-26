@@ -33,6 +33,13 @@ class ToolResultInput(BaseModel):
     )
 
 
+class ToolReviewInput(BaseModel):
+    """Approve execution of a frozen, node-owned pending file operation."""
+
+    session_id: str
+    call_tool_id: str
+
+
 class ResumeChatInput(BaseModel):
     """Input for reconnecting to a running chat task."""
 
