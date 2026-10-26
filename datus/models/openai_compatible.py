@@ -10,7 +10,7 @@ import json
 import os
 import threading
 import time
-from contextlib import nullcontext
+from contextlib import AsyncExitStack, aclosing, nullcontext
 from datetime import date, datetime
 from pathlib import Path
 from typing import Any, AsyncGenerator, Dict, List, Optional, Union
@@ -35,6 +35,7 @@ from datus.models.litellm_adapter import (
 )
 from datus.models.mcp_result_extractors import extract_sql_contexts
 from datus.models.mcp_utils import multiple_mcp_servers
+from datus.models.tool_result_stream import ToolResultStream
 from datus.observability.manager import get_observability_manager
 from datus.observability.model_call import ModelCall
 from datus.observability.tool_calls import observe_tool_hooks
@@ -1228,7 +1229,10 @@ class OpenAICompatibleModel(LLMBaseModel):
 
         async def _stream_operation():
             # Use multiple_mcp_servers context manager with empty dict if no MCP servers
-            async with multiple_mcp_servers(mcp_servers or {}) as connected_servers:
+            async with (
+                multiple_mcp_servers(mcp_servers or {}) as connected_servers,
+                AsyncExitStack() as tool_streams,
+            ):
                 agent_name = kwargs.get("agent_name", "Tools_Agent")
                 agent = self._build_agent(
                     instruction=instruction,
@@ -1239,6 +1243,9 @@ class OpenAICompatibleModel(LLMBaseModel):
                     hooks=hooks,
                     agent_name=agent_name,
                 )
+
+                tool_stream = ToolResultStream(agent.hooks)
+                agent.hooks = tool_stream
 
                 run_config = self._build_run_config(
                     pending_input_queue=pending_input_queue,
@@ -1294,7 +1301,12 @@ class OpenAICompatibleModel(LLMBaseModel):
                         from datus.cli.execution_state import ExecutionInterrupted
 
                         raise ExecutionInterrupted("Interrupted by user")
-                    async for event in _stream_events_with_trace_baggage(result, agent_name):
+                    events = await tool_streams.enter_async_context(
+                        aclosing(
+                            tool_stream.stream_events(_stream_events_with_trace_baggage(result, agent_name), result)
+                        )
+                    )
+                    async for event in events:
                         if interrupt_controller and interrupt_controller.is_interrupted:
                             from datus.cli.execution_state import ExecutionInterrupted
 
@@ -1680,17 +1692,18 @@ class OpenAICompatibleModel(LLMBaseModel):
 
         for attempt in range(max_retries):
             try:
-                async for action in _stream_operation():
-                    # Skip actions that were already yielded in previous retry attempts
-                    # (thinking_delta actions share a stream ID and must not be deduped)
-                    if action.action_type != "thinking_delta" and action.action_id in processed_action_ids:
-                        logger.debug(f"Skipping duplicate action: {action.action_id}")
-                        continue
+                async with aclosing(_stream_operation()) as operation:
+                    async for action in operation:
+                        # Skip actions that were already yielded in previous retry attempts
+                        # (thinking_delta actions share a stream ID and must not be deduped)
+                        if action.action_type != "thinking_delta" and action.action_id in processed_action_ids:
+                            logger.debug(f"Skipping duplicate action: {action.action_id}")
+                            continue
 
-                    # Mark this action as processed (skip transient deltas)
-                    if action.action_type != "thinking_delta":
-                        processed_action_ids.add(action.action_id)
-                    yield action
+                        # Mark this action as processed (skip transient deltas)
+                        if action.action_type != "thinking_delta":
+                            processed_action_ids.add(action.action_id)
+                        yield action
                 # If we successfully complete, break out of retry loop
                 break
 
