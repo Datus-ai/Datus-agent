@@ -234,10 +234,13 @@ def _image_messages(payload: Any) -> list[dict[str, Any]]:
             kind = value.get("type")
             if kind in {"image_url", "input_image"}:
                 url = value.get("image_url")
-                url = url.get("url") if isinstance(url, dict) else url
+                detail = value.get("detail", "auto")
+                if isinstance(url, dict):
+                    detail = url.get("detail", detail)
+                    url = url.get("url")
                 if not isinstance(url, str) or not url.startswith("data:"):
                     raise ValueError("remote images need a provider token count before sending")
-                blocks.append({"type": "image_url", "image_url": {"url": url, "detail": value.get("detail", "auto")}})
+                blocks.append({"type": "image_url", "image_url": {"url": url, "detail": detail}})
                 return
             if kind == "image":
                 source = value.get("source", {})

@@ -39,14 +39,18 @@ def test_catalogued_non_openai_model_uses_explicit_conservative_count():
 
 
 @pytest.mark.parametrize(
-    "model,field,kind",
+    "model,field,kind,detail",
     [
-        ("gpt-4o", "messages", "image_url"),
-        ("gpt-4o", "input", "input_image"),
-        ("claude-sonnet-4-5", "messages", "image"),
+        ("gpt-4o", "messages", "image_url", "auto"),
+        ("gpt-4o", "messages", "image_url", "low"),
+        ("gpt-4o", "messages", "image_url", "high"),
+        ("gpt-4o", "input", "input_image", "auto"),
+        ("gpt-4o", "input", "input_image", "low"),
+        ("gpt-4o", "input", "input_image", "high"),
+        ("claude-sonnet-4-5", "messages", "image", "auto"),
     ],
 )
-def test_inline_image_budget_depends_on_pixels_not_base64_size(model, field, kind):
+def test_inline_image_budget_depends_on_pixels_not_base64_size(model, field, kind, detail):
     import litellm
     from PIL import Image
 
@@ -61,8 +65,8 @@ def test_inline_image_budget_depends_on_pixels_not_base64_size(model, field, kin
         encoded = base64.b64encode(buffer.getvalue()).decode("ascii")
         url = f"data:image/png;base64,{encoded}"
         blocks = {
-            "image_url": {"type": "image_url", "image_url": {"url": url}},
-            "input_image": {"type": "input_image", "image_url": url},
+            "image_url": {"type": "image_url", "image_url": {"url": url, "detail": detail}},
+            "input_image": {"type": "input_image", "image_url": url, "detail": detail},
             "image": {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": encoded}},
         }
         payload = {
@@ -77,7 +81,11 @@ def test_inline_image_budget_depends_on_pixels_not_base64_size(model, field, kin
     original = copy.deepcopy(uncompressed)
     assert len(str(uncompressed)) > 100 * len(str(compressed))
     # Identical pixels have identical image cost even with a much larger encoding.
-    measured = capacity.check(uncompressed)
+    with patch("litellm.token_counter", wraps=litellm.token_counter) as counter:
+        measured = capacity.check(uncompressed)
+    counted_images = [call.kwargs["messages"] for call in counter.call_args_list if "messages" in call.kwargs]
+    assert len(counted_images) == 1
+    assert counted_images[0][0]["content"][0]["image_url"].get("detail", "auto") == detail
     assert measured == capacity.count(compressed)
     assert uncompressed == original
     text_only = copy.deepcopy(uncompressed)
@@ -88,7 +96,7 @@ def test_inline_image_budget_depends_on_pixels_not_base64_size(model, field, kin
     image_cost = litellm.token_counter(
         model=model,
         messages=[
-            {"role": "user", "content": [{"type": "image_url", "image_url": {"url": compressed_url, "detail": "auto"}}]}
+            {"role": "user", "content": [{"type": "image_url", "image_url": {"url": compressed_url, "detail": detail}}]}
         ],
         use_default_image_token_count=False,
     )
