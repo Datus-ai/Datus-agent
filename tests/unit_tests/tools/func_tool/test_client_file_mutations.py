@@ -86,15 +86,16 @@ def test_prepared_edits_preserve_owned_rollback_across_execution_and_report_orde
     original = target.read_bytes()
     mutations = [prepare(tool, target, replacement) for replacement in replacements]
     execution_order = list(reversed(mutations)) if reverse else mutations
+    results = []
     for mutation in execution_order:
         execute(target, mutation)
         if not delayed_results:
-            assert mutation.complete() is None
+            results.append(mutation.complete())
     if delayed_results:
         # Both WebSocket writes have completed; acknowledge them in reverse
         # order to model independently posted tool_result requests.
-        for mutation in reversed(execution_order):
-            assert mutation.complete() is None
+        results = [mutation.complete() for mutation in reversed(execution_order)]
+    assert results == [None] * len(mutations)
     assert all(new in target.read_text() for _, new in replacements)
     rollback()
     assert target.read_bytes() == original
