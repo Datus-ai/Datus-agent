@@ -888,11 +888,9 @@ class ChatTaskManager:
             node.input = node_input
 
             # 5. Replace filesystem tools with proxy if applicable.
-            # ``apply_proxy_tools`` consults ``_FS_DEPENDENT_NODES`` and the
-            # node's ``tool_registry`` to leave filesystem tools un-proxied
-            # for nodes that author server-side artifacts (e.g.
-            # ``gen_visual_report`` writing ``render/*.jsx``). No isinstance
-            # guard is needed here.
+            # CLI/VSCode retain native filesystem exclusions for artifact nodes.
+            # Web keeps node-specific validation and bookkeeping around the
+            # existing IDE file executor; main and delegated nodes share it.
             effective_source = request.source or self._default_source
             if effective_source == "vscode":
                 # VSCode edits the user's *local* filesystem — the client is

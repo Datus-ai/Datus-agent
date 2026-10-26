@@ -203,6 +203,7 @@ class AgenticNode(Node):
         # reference so PermissionHooks can be built before the first proxy call
         # and still observe later updates without rebuilding.
         self.proxied_tool_names: Set[str] = set()
+        # Web file cards own ASK confirmation while explicit DENY remains local.
         self.web_filesystem_proxy_names: Set[str] = set()
 
         # Shared tool_name -> category registry (used by PermissionHooks & proxy_tool)
