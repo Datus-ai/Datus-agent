@@ -209,6 +209,23 @@ def _is_within(path: str, directory: str) -> bool:
         return False
 
 
+def _misdirected(target: str, models_dir: Optional[str]) -> bool:
+    """Whether a model ``iri`` this datasource does not load points where no datasource would bind it.
+
+    Datasources are the directories beside ``models_dir``. A target in another
+    one is that datasource's to bind, and a file of ``models_dir`` this runtime
+    leaves out (a pinned model's sibling) is skipped; a missing file of this
+    datasource, or a target in no datasource's directory, is reported.
+    """
+    if not models_dir:
+        return False
+    models_dir = os.path.normpath(os.path.abspath(models_dir))
+    if _is_within(target, models_dir):
+        return not os.path.isfile(target)
+    root = os.path.dirname(models_dir)
+    return not _is_within(target, root) or os.path.dirname(target) == root
+
+
 def plan_ontologies(
     model_files: list[str], ontology_files: list[str], models_dir: Optional[str] = None
 ) -> tuple[dict[str, OntologyBinding], list[str]]:
@@ -222,9 +239,10 @@ def plan_ontologies(
 
     - A mapping reaches its model by a relative ``semantic_model_ref.iri``.
       It belongs to this datasource when that file is one of
-      ``model_files``; a target elsewhere is another datasource's, and is
-      skipped. A target under ``models_dir`` that does not exist, or a
-      mapping without a local ``iri``, is reported.
+      ``model_files``; a target in another datasource's directory is that
+      datasource's, and is skipped. A missing file under ``models_dir``, a
+      target outside every datasource's directory, or a mapping without a
+      local ``iri``, is reported.
     - A mapping carrying its model inline (``semantic_model_ref.document``)
       belongs to no datasource in particular: it is an engine of its own on
       whichever datasource loads the directory.
@@ -271,7 +289,7 @@ def plan_ontologies(
                 continue
             model_file = models.get(target)
             if model_file is None:
-                if models_dir and _is_within(target, models_dir):
+                if _misdirected(target, models_dir):
                     unpaired.append(path)
                 continue
         if "document" not in ontology_ref and "iri" not in ontology_ref and ontology_path is None:
@@ -430,8 +448,8 @@ class EngineHandle:
                 raise SemanticCoreException(f"cannot read ontology {path!r}: {exc}") from exc
             signature += [stat.st_mtime_ns, stat.st_size]
         for path in self._config.mapping_references:
-            # An iri the engine never follows (the model was found by name)
-            # may name no file; its appearing still rebuilds the engine.
+            # A referenced file may be missing (deleted, or not written yet);
+            # the engine then fails to load, and its appearing rebuilds it.
             try:
                 stat = os.stat(path)
             except OSError:
@@ -633,13 +651,15 @@ class EngineRegistry:
         """Return a stable file signature and matching engine handles."""
         with self._lock:
             ontology_files = resolve_ontology_files(self._config)
+            no_model_files: Optional[SemanticCoreException] = None
             try:
                 model_paths = resolve_model_files(self._config)
-            except SemanticCoreException:
+            except SemanticCoreException as exc:
                 # A datasource whose only model lives inline in a mapping
                 # document has no model files at all.
                 if not ontology_files:
                     raise
+                no_model_files = exc
                 model_paths = []
             entries = [(path, self._file_signature(path)) for path in model_paths]
             files = [path for path, entry_signature in entries if entry_signature is not None]
@@ -679,6 +699,8 @@ class EngineRegistry:
                 self._keys = keys
                 self._signature = signature
             if not self._keys:
+                if no_model_files is not None:
+                    raise no_model_files
                 raise SemanticCoreException("no readable OSI model file resolved for this datasource")
             return self._signature, tuple((key, self._handles[key]) for key in self._keys)
 

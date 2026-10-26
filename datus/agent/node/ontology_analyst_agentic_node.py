@@ -81,20 +81,23 @@ class OntologyAnalystAgenticNode(AskMetricsAgenticNode):
         except Exception as exc:  # noqa: BLE001 - reported as the startup error
             return f"failed to load the ontology for datasource {datasource!r}: {exc}"
         if not has_ontology:
+            missing = (
+                f"no ontology for datasource {datasource!r}: no mapping document under {ontology_dir} names a model "
+                f"under subject/semantic_models/{datasource}/ by semantic_model_ref.iri"
+            )
+            # The directory is project-wide: these files may belong to any
+            # datasource, so they are listed as unbound, not as this one's.
             unpaired = runtime.unpaired_ontologies()
             if unpaired:
                 names = ", ".join(Path(path).name for path in unpaired)
                 return (
-                    f"file(s) {names} under {ontology_dir} bind no semantic model of datasource {datasource!r}; "
+                    f"{missing}. File(s) {names} under {ontology_dir} could not be bound to a semantic model; "
                     "give each mapping document a semantic_model_ref.iri naming its model file by relative path "
-                    f"(../semantic_models/{datasource}/<model>.yaml), reference every ontology from a mapping, "
-                    "and keep only ontology and mapping documents in this directory"
+                    "(../semantic_models/<datasource>/<model>.yaml), reference every ontology from a mapping, "
+                    "and keep only ontology and mapping documents in this directory. "
+                    "Or use ask_metrics for metric questions."
                 )
-            return (
-                f"no ontology for datasource {datasource!r}. Add an ontology and a mapping document whose "
-                f"semantic_model_ref.iri names a model under subject/semantic_models/{datasource}/ to "
-                f"{ontology_dir}/, or use ask_metrics for metric questions."
-            )
+            return f"{missing}. Add an ontology and a mapping document onto one of its models, or use ask_metrics."
 
         from datus.utils.async_utils import run_async
 

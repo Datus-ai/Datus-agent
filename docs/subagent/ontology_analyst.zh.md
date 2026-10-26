@@ -145,7 +145,7 @@ datus --datasource aviation
 | 提示信息 | 原因和处理 |
 |---------|-----------|
 | `ontology_analyst is unavailable: no ontology for datasource 'aviation'` | `subject/ontology/` 里没有映射文档指向 `subject/semantic_models/aviation/` 下的模型；检查各映射的 `semantic_model_ref.iri`、模型目录名与数据源名是否一致，以及是否在项目根目录启动 |
-| `... bind no semantic model of datasource` | 映射文档没有本地 `semantic_model_ref.iri`、`iri` 指向本数据源目录里不存在的模型文件、两份映射指向同一个模型、某个 ontology 没有任何映射引用，或者该文件既不是 ontology 也不是映射文档（语义模型应放在 `subject/semantic_models/<datasource>/` 下）；修正映射、为 ontology 补上映射，或把该文件移出目录 |
+| `... could not be bound to a semantic model` | 出现在 `no ontology for datasource` 之后；`subject/ontology/` 是全项目共享的，列出的文件可能属于任意数据源。映射文档没有本地 `semantic_model_ref.iri`、`iri` 指向本数据源目录里不存在的模型文件或任何 `subject/semantic_models/<datasource>/` 之外的路径、两份映射指向同一个模型、某个 ontology 没有任何映射引用，或者该文件既不是 ontology 也不是映射文档（语义模型应放在 `subject/semantic_models/<datasource>/` 下）；修正映射、为 ontology 补上映射，或把该文件移出目录 |
 | `the installed dosi-engine binding cannot describe ontologies` | 安装的 `dosi-engine` 版本过旧，升级到提供 `Engine.describe` / `Engine.paths` 的版本 |
 | `... is an Ossie mapping document, and the installed dosi-engine cannot load one` | 安装的 `dosi-engine` 不支持映射文档，请升级 |
 | 主代理不委派给 `ontology_analyst` | 只有映射文档绑定了当前数据源的模型时才会提供；可以用 `/agent ontology_analyst` 或 `@Agent ontology_analyst` 显式指定 |

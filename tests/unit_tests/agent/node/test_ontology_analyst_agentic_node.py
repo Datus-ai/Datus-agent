@@ -200,10 +200,17 @@ class TestStartupErrors:
         node, _, _ = _make_node(real_agent_config, runtime=runtime)
         assert (
             self._missing(
-                node, "hr-hr.mapping.yaml", "bind no semantic model", "../semantic_models/flights_db/<model>.yaml"
+                node,
+                "no ontology for datasource 'flights_db'",
+                "hr-hr.mapping.yaml",
+                "could not be bound",
+                "../semantic_models/<datasource>/<model>.yaml",
+                "ask_metrics",
             )
             == []
         )
+        # The directory is project-wide: an unbound file is never pinned on this datasource.
+        assert "of datasource 'flights_db'" not in node.startup_error
 
     def test_ontology_load_failure(self, real_agent_config, mock_llm_create):
         runtime = _runtime()

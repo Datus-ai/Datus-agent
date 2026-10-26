@@ -319,6 +319,36 @@ class TestMappingDocuments:
         assert bindings == {}
         assert unpaired == [str(ontology_dir / "mapping.yaml")]
 
+    @pytest.mark.parametrize(
+        "model_iri",
+        [
+            pytest.param("./flights.yaml", id="beside_the_mapping"),
+            pytest.param("../semantic_model/flights_db/flights.yaml", id="mistyped_root"),
+            pytest.param("../semantic_models/flights.yaml", id="in_no_datasource_directory"),
+        ],
+    )
+    def test_a_model_iri_outside_every_datasource_is_reported(self, tmp_path, model_iri):
+        # No datasource would ever bind it, so skipping it would hide it everywhere.
+        mapping = MAPPING_YAML.replace("../semantic_models/flights_db/flights.yaml", model_iri)
+        models_dir, ontology_dir = _mapping_layout(tmp_path, mapping_yaml=mapping)
+        bindings, unpaired = _plan(models_dir, ontology_dir)
+        assert bindings == {}
+        assert unpaired == [str(ontology_dir / "mapping.yaml")]
+
+    def test_a_pinned_model_skips_mappings_onto_its_siblings(self, tmp_path):
+        models_dir, ontology_dir = _mapping_layout(tmp_path)
+        pinned = models_dir / "pinned.yaml"
+        pinned.write_text(FLAT_MODEL_YAML)
+        config = DosiConfig(
+            semantic_models_path=str(models_dir), semantic_model_path=str(pinned), ontology_dir=str(ontology_dir)
+        )
+        bindings, unpaired = plan_ontologies(
+            resolve_model_files(config), resolve_ontology_files(config), str(models_dir)
+        )
+        # flights.yaml exists in this datasource; the runtime just does not load it.
+        assert bindings == {}
+        assert unpaired == []
+
     def test_one_ontology_spans_several_datasources(self, tmp_path):
         # xxx.ontology.yaml with one mapping per model: each datasource binds
         # only the mapping onto its own model, and is silent about the rest.
@@ -399,6 +429,16 @@ class TestMappingDocuments:
         os.utime(target, ns=(stat.st_atime_ns, stat.st_mtime_ns + 10_000_000))
         registry.snapshot()
         assert handle.get() is not first
+
+    def test_a_datasource_without_models_keeps_the_actionable_error(self, tmp_path, ontology_binding):
+        # Another datasource's ontology in the shared directory must not hide
+        # which directory lacks a model.
+        _, ontology_dir = _layout(tmp_path, datasource="other_db")
+        empty = tmp_path / "subject" / "semantic_models" / "flights_db"
+        empty.mkdir()
+        registry = EngineRegistry(DosiConfig(semantic_models_path=str(empty), ontology_dir=str(ontology_dir)))
+        with pytest.raises(SemanticCoreException, match="no OSI model file .* in .*flights_db"):
+            registry.snapshot()
 
     def test_a_datasource_whose_only_model_is_inline_loads(self, tmp_path, ontology_binding):
         ontology_dir = tmp_path / "subject" / "ontology"
