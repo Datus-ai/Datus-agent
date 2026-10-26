@@ -3249,3 +3249,69 @@ async def test_task_delegation_reviews_plans_through_the_parent_session(task_too
         finally:
             parent.tool_channel.cancel_all()
             await pending
+
+
+@pytest.mark.asyncio
+async def test_task_delegation_reviews_server_files_through_parent_session(task_tool, tmp_path):
+    from datus.api.models.chat_models import ToolReviewInput
+    from datus.api.routes.chat_routes import execute_tool_review
+    from datus.tools.func_tool.filesystem_tools import FilesystemFuncTool
+    from datus.tools.proxy.tool_result_channel import ToolResultChannel
+    from datus.tools.proxy.web_file_review import apply_web_file_review
+    from datus.tools.registry.tool_registry import ToolRegistry
+
+    parent = SimpleNamespace(
+        tools=[],
+        tool_channel=ToolResultChannel(),
+        proxied_tool_names=set(),
+        proxy_tool_patterns=[],
+        session_id=None,
+        scope="owner",
+        pending_input_queue=None,
+    )
+    apply_web_file_review(parent)
+    task_tool.set_parent_node(parent)
+    child = MagicMock()
+    child.tools = FilesystemFuncTool(root_path=str(tmp_path), strict=True).available_tools()
+    child.proxied_tool_names = set()
+    child.file_review_tool_names = set()
+    child.tool_registry = ToolRegistry({t.name: "filesystem_tools" for t in child.tools})
+    child.execution_mode = "interactive"
+    child.session_id = "gen_sql_summary_session_test"
+    child.session_manager = None
+    observed = []
+
+    async def stream(*_args):
+        tool = next(t for t in child.tools if t.name == "write_file")
+        observed.append(
+            await tool.on_invoke_tool(
+                SimpleNamespace(tool_call_id="child-write"),
+                json.dumps({"path": "query.yaml", "content": "sql: SELECT 1"}),
+            )
+        )
+        return
+        yield  # pragma: no cover
+
+    child.execute_stream_with_interactions = stream
+    svc = SimpleNamespace(
+        task_manager=SimpleNamespace(get_task=lambda _: SimpleNamespace(node=parent, status="running"))
+    )
+    with (
+        patch.object(task_tool, "_create_node", return_value=child),
+        patch.object(task_tool, "_refresh_node_db_tools"),
+        patch.object(task_tool, "_build_node_input"),
+    ):
+        running = asyncio.create_task(task_tool._execute_node("gen_sql_summary", "write a SQL summary"))
+        try:
+            result = await execute_tool_review(
+                ToolReviewInput(session_id="parent", call_tool_id="child-write"), svc, SimpleNamespace(user_id="owner")
+            )
+            assert result.data["success"] == 1
+            assert (tmp_path / "query.yaml").read_text() == "sql: SELECT 1"
+            assert not running.done()
+            await parent.tool_channel.publish("child-write", {"success": 1})
+            await running
+            assert observed[0]["success"] == 1
+        finally:
+            parent.tool_channel.cancel_all()
+            await running
