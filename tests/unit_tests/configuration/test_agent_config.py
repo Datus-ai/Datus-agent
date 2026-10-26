@@ -3051,14 +3051,3 @@ class TestCompactConfigMidTurnKeys:
         cfg = CompactConfig.from_dict({"major": {"bogus": 1}, "minor": {"keep_recent_user_turns": 2}})
         assert cfg.minor.keep_recent_user_turns == 2
         assert cfg.minor.keep_recent_tool_results == 5
-
-
-@pytest.mark.parametrize(
-    "raw, expected",
-    [(None, 300), (0, 300), (-1, 300), (True, 300), ("bad", 300), (float("inf"), 300), ("0.25", 0.25), (45, 45)],
-)
-def test_sql_tool_timeout_is_positive_finite_and_configurable(tmp_path, raw, expected):
-    from datus.configuration.agent_config import AgentConfig
-
-    config = AgentConfig(nodes={}, home=str(tmp_path), sql_tool_timeout_seconds=raw)
-    assert config.sql_tool_timeout_seconds == expected

@@ -15,7 +15,7 @@ from datus.observability.config import ObservabilityConfig
 from datus.schemas.base import BaseInput
 from datus.storage.embedding_models import init_embedding_models
 from datus.storage.storage_cfg import check_storage_config, save_storage_config
-from datus.utils.config_utils import coerce_bool, coerce_positive_seconds
+from datus.utils.config_utils import coerce_bool
 from datus.utils.constants import DBType
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
@@ -772,7 +772,6 @@ class AgentConfig:
     logging: LoggingConfig
     observability: ObservabilityConfig
     mcp_tool_execution: Dict[str, int]
-    sql_tool_timeout_seconds: float
 
     def __init__(self, nodes: Dict[str, NodeConfig], **kwargs):
         """
@@ -787,7 +786,6 @@ class AgentConfig:
             )
         # Resolve home early so dependent helpers can use a stable path manager.
         self.home = kwargs.get("home", "~/.datus")
-        self.sql_tool_timeout_seconds = coerce_positive_seconds(kwargs.get("sql_tool_timeout_seconds"), 300.0)
         mcp_execution_raw = kwargs.get("mcp_tool_execution")
         if mcp_execution_raw is not None and not isinstance(mcp_execution_raw, Mapping):
             logger.warning(

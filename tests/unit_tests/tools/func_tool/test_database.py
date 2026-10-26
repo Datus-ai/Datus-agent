@@ -3306,19 +3306,20 @@ class TestHeaderRowNormalisation:
 
 
 @pytest.mark.asyncio
-async def test_registered_sql_timeout_is_structured_and_late_worker_cannot_replace_it():
+async def test_registered_sql_timeout_is_structured_and_late_worker_cannot_replace_it(monkeypatch):
     """Exercise the real sync invoker; timing out must not wait for its worker."""
     import asyncio
     import threading
     from types import SimpleNamespace
 
+    monkeypatch.setattr("datus.tools.func_tool.database.SQL_TOOL_TIMEOUT_SECONDS", 0.03)
     started = threading.Event()
     release = threading.Event()
     finished = threading.Event()
 
     class SlowDatabaseTool(DBFuncTool):
         def __init__(self):
-            self.agent_config = SimpleNamespace(sql_tool_timeout_seconds=0.03, sql_read_only=False)
+            self.agent_config = SimpleNamespace(sql_read_only=False)
             self._read_only = False
 
         def _excluded_tool_params(self):
@@ -3358,7 +3359,7 @@ async def test_registered_sql_preserves_real_failure_and_parent_cancellation():
 
     class AsyncDatabaseTool(DBFuncTool):
         def __init__(self):
-            self.agent_config = SimpleNamespace(sql_tool_timeout_seconds=2, sql_read_only=False)
+            self.agent_config = SimpleNamespace(sql_read_only=False)
             self._read_only = False
             self.wait = False
             self.raise_timeout = False

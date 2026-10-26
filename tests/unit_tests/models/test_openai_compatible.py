@@ -2518,5 +2518,8 @@ async def test_streamed_tool_error_is_yielded_while_sdk_batch_is_pending(monkeyp
         assert completed.output["raw_output"]["error"] == error
         assert not release.is_set()
     finally:
-        release.set()
-        await stream.aclose()
+        try:
+            await stream.aclose()
+            result.cancel.assert_called_once()
+        finally:
+            release.set()

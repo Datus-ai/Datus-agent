@@ -51,7 +51,7 @@ from datus.tools.db_tools.datasource_quality import QualityChecker, summarize
 from datus.tools.db_tools.db_manager import DBManager, db_manager_instance
 from datus.tools.func_tool.base import FuncToolResult, trans_to_function_tool
 from datus.utils.compress_utils import DataCompressor
-from datus.utils.config_utils import coerce_bool, coerce_positive_seconds
+from datus.utils.config_utils import coerce_bool
 from datus.utils.constants import DBType, SQLType
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
@@ -59,6 +59,9 @@ from datus.utils.mcp_decorators import mcp_tool, mcp_tool_class
 from datus.utils.sql_utils import parse_dialect, parse_table_name_parts
 
 logger = get_logger(__name__)
+
+# Bounds SQL tool waits after approval, independently of driver/server deadlines.
+SQL_TOOL_TIMEOUT_SECONDS = 300.0
 
 
 def _parse_profile_text(text: str):
@@ -1231,7 +1234,7 @@ class DBFuncTool:
             excluded.update({"min_rows", "max_rows"})
         tool = trans_to_function_tool(bound_method, excluded_params=excluded)
         if bound_method.__name__ == "execute_sql":
-            timeout = coerce_positive_seconds(getattr(self.agent_config, "sql_tool_timeout_seconds", None), 300.0)
+            timeout = SQL_TOOL_TIMEOUT_SECONDS
             invoke = tool.on_invoke_tool
 
             async def invoke_sql(context, arguments):
