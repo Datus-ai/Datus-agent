@@ -163,8 +163,10 @@ async def test_stopping_review_releases_waiters_without_reexecution(tmp_path, ph
     node = make_node("gen_sql_summary", fs.available_tools())
     apply_web_file_review(node)
     running, review = await start_call(node, "write_file", {"path": "note.txt", "content": "after"})
+    execution = None
     if phase == "editing":
-        assert (await review.execute())["success"] == 1
+        execution = await review.execute()
+    assert (execution or {}).get("success") == (1 if phase == "editing" else None)
     node.tool_channel.cancel_all("stop")
     assert (await running)["success"] == 0
     assert not node.web_file_review_context.pending
