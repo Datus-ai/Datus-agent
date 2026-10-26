@@ -749,9 +749,13 @@ class TestValidateInlineMapping:
         )
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize(("name", "valid"), [("mini", True), ("other_model", False)])
-    async def test_the_model_name_is_read_from_the_mapping(self, tmp_path, ontology_binding, name, valid):
-        result = await self._inline_runtime(tmp_path).validate_semantic(scope="all", semantic_model_name=name)
-        assert result.valid is valid
-        if not valid:
-            assert any("semantic_model_not_found" in issue.message for issue in result.issues)
+    async def test_the_model_named_by_the_mapping_validates(self, tmp_path, ontology_binding):
+        result = await self._inline_runtime(tmp_path).validate_semantic(scope="all", semantic_model_name="mini")
+        assert result.valid is True
+        assert result.issues == []
+
+    @pytest.mark.asyncio
+    async def test_a_model_name_the_mapping_does_not_carry_is_not_found(self, tmp_path, ontology_binding):
+        result = await self._inline_runtime(tmp_path).validate_semantic(scope="all", semantic_model_name="other")
+        assert result.valid is False
+        assert any("semantic_model_not_found" in issue.message for issue in result.issues)
