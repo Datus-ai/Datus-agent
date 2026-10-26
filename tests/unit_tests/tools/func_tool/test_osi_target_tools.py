@@ -596,3 +596,108 @@ def test_bound_revision_must_match_live_file(tmp_path):
 
     with pytest.raises(ValueError, match="changed after selection"):
         tools.target_state.require_current_revision(target)
+
+
+# ---------------------------------------------------------------- models inline in Ossie mapping documents
+
+
+def _config_with_ontology(tmp_path: Path):
+    config, model_dir = _config(tmp_path)
+    ontology_root = tmp_path / "subject" / "semantic_models" / "ontology"
+    config.path_manager.ontology_path = lambda datasource: ontology_root / datasource
+    return config, model_dir, ontology_root / "warehouse"
+
+
+def _write_mapping(path: Path, *, model_name: str = "northstar", inline: bool = True) -> None:
+    """An Ossie mapping document; ``inline`` carries the semantic model in ``semantic_model_ref.document``."""
+    model_ref = (
+        f"{{name: {model_name}, document: {{version: 0.2.0.dev0, name: {model_name}, datasets: []}}}}"
+        if inline
+        else f"{{name: {model_name}}}"
+    )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        "version: 0.2.0.dev0\n"
+        "name: northstar_mapping\n"
+        "ontology_ref: {name: Northstar, document: {version: 0.2.0.dev0, name: Northstar, ontology: []}}\n"
+        f"semantic_model_ref: {model_ref}\n"
+        "concept_mappings: []\n",
+        encoding="utf-8",
+    )
+
+
+def test_list_reports_a_model_inline_in_a_mapping_instead_of_missing(tmp_path):
+    config, _, ontology_dir = _config_with_ontology(tmp_path)
+    _write_mapping(ontology_dir / "domains" / "northstar.mapping.yaml")
+    (ontology_dir / "notes.yaml").write_text("cases: []\n", encoding="utf-8")
+    state = OsiSemanticModelTargetState()
+
+    result = OsiSemanticModelTargetTools(config, target_state=state).list_existing_osi_semantic_models()
+
+    assert result.success == 1
+    assert result.result["status"] == "inline_in_mapping"
+    assert result.result["code"] == "semantic_model_inline_in_mapping"
+    mapping_file = "subject/semantic_models/ontology/warehouse/domains/northstar.mapping.yaml"
+    assert result.result["inline_mapping_models"] == [
+        {"semantic_model_name": "northstar", "mapping_file": mapping_file}
+    ]
+    assert mapping_file in result.result["guidance"]
+    assert "must not create a separate model file" in result.result["guidance"]
+    assert state.selected is None
+
+
+def test_a_mapping_that_names_a_plain_model_leaves_authoring_unchanged(tmp_path):
+    config, model_dir, ontology_dir = _config_with_ontology(tmp_path)
+    _write_model(model_dir / "northstar.yml", name="northstar")
+    _write_mapping(ontology_dir / "northstar.mapping.yaml", inline=False)
+    tools = OsiSemanticModelTargetTools(config)
+
+    listed = tools.list_existing_osi_semantic_models()
+    bound = tools.bind_osi_semantic_model_target(semantic_model_name="northstar")
+
+    assert listed.result["status"] == "found"
+    assert "inline_mapping_models" not in listed.result
+    assert bound.success == 1
+    assert bound.result["status"] == "bound"
+
+
+@pytest.mark.parametrize("selector_kind", ["project_path", "absolute_path", "model_name"])
+def test_bind_names_the_inline_mapping_instead_of_a_wrong_datasource(tmp_path, selector_kind):
+    config, _, ontology_dir = _config_with_ontology(tmp_path)
+    mapping = ontology_dir / "northstar.mapping.yaml"
+    _write_mapping(mapping)
+    selector = {
+        "project_path": {"semantic_model_file": "subject/semantic_models/ontology/warehouse/northstar.mapping.yaml"},
+        "absolute_path": {"semantic_model_file": str(mapping)},
+        "model_name": {"semantic_model_name": "northstar"},
+    }[selector_kind]
+    state = OsiSemanticModelTargetState()
+
+    result = OsiSemanticModelTargetTools(config, target_state=state).bind_osi_semantic_model_target(**selector)
+
+    assert result.success == 0
+    assert result.result["code"] == "semantic_model_inline_in_mapping"
+    assert "active datasource" not in result.error
+    assert state.selected is None
+
+
+@pytest.mark.parametrize(
+    "plan_kwargs",
+    [{"semantic_model_name": "premier"}, {"business_domain": "premier", "fact_tables": ["commerce.fct_orders"]}],
+)
+@pytest.mark.parametrize("plain_model", [False, True])
+def test_plan_never_targets_a_new_model_beside_an_inline_mapping(tmp_path, plan_kwargs, plain_model):
+    """A second model file would become a second engine for the datasource."""
+    config, model_dir, ontology_dir = _config_with_ontology(tmp_path)
+    _write_mapping(ontology_dir / "northstar.mapping.yaml")
+    if plain_model:
+        _write_model(model_dir / "orders.yml", name="orders_model")
+    before = sorted(path.relative_to(tmp_path) for path in tmp_path.rglob("*") if path.is_file())
+    state = OsiSemanticModelTargetState()
+
+    result = OsiSemanticModelTargetTools(config, target_state=state).plan_osi_semantic_model_target(**plan_kwargs)
+
+    assert result.success == 0
+    assert result.result["code"] == "semantic_model_inline_in_mapping"
+    assert state.selected is None
+    assert sorted(path.relative_to(tmp_path) for path in tmp_path.rglob("*") if path.is_file()) == before
