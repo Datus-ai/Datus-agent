@@ -3,6 +3,7 @@
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
 # -*- coding: utf-8 -*-
+import asyncio
 import csv
 import io
 import json
@@ -50,7 +51,7 @@ from datus.tools.db_tools.datasource_quality import QualityChecker, summarize
 from datus.tools.db_tools.db_manager import DBManager, db_manager_instance
 from datus.tools.func_tool.base import FuncToolResult, trans_to_function_tool
 from datus.utils.compress_utils import DataCompressor
-from datus.utils.config_utils import coerce_bool
+from datus.utils.config_utils import coerce_bool, coerce_positive_seconds
 from datus.utils.constants import DBType, SQLType
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
@@ -1229,6 +1230,33 @@ class DBFuncTool:
         if read_query:
             excluded.update({"min_rows", "max_rows"})
         tool = trans_to_function_tool(bound_method, excluded_params=excluded)
+        if bound_method.__name__ == "execute_sql":
+            timeout = coerce_positive_seconds(getattr(self.agent_config, "sql_tool_timeout_seconds", None), 300.0)
+            invoke = tool.on_invoke_tool
+
+            async def invoke_sql(context, arguments):
+                deadline = asyncio.timeout(timeout)
+                try:
+                    async with deadline:
+                        return await invoke(context, arguments)
+                except TimeoutError:
+                    if not deadline.expired():
+                        raise
+                    # Cancelling to_thread stops waiting, not the database
+                    # driver. A mutation may still finish; never imply it is
+                    # safe to repeat, or claim that the server killed it.
+                    if context is not None:
+                        context._datus_tool_status = "timeout"
+                    return FuncToolResult(
+                        success=0,
+                        error=(
+                            f"SQL tool timed out after {timeout:g} seconds. "
+                            "Database execution may still be running. "
+                            "Do not retry write statements without checking their outcome."
+                        ),
+                    ).model_dump(mode="json")
+
+            tool.on_invoke_tool = invoke_sql
         if read_query:
             tool.description = (
                 "Execute one read-only SQL statement (SELECT, SHOW, DESCRIBE or EXPLAIN). "

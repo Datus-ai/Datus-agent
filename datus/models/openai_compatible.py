@@ -35,6 +35,7 @@ from datus.models.litellm_adapter import (
 )
 from datus.models.mcp_result_extractors import extract_sql_contexts
 from datus.models.mcp_utils import multiple_mcp_servers
+from datus.models.tool_result_stream import ToolResultStream
 from datus.observability.manager import get_observability_manager
 from datus.observability.model_call import ModelCall
 from datus.observability.tool_calls import observe_tool_hooks
@@ -1240,6 +1241,9 @@ class OpenAICompatibleModel(LLMBaseModel):
                     agent_name=agent_name,
                 )
 
+                tool_stream = ToolResultStream(agent.hooks)
+                agent.hooks = tool_stream
+
                 run_config = self._build_run_config(
                     pending_input_queue=pending_input_queue,
                     session=session,
@@ -1294,7 +1298,9 @@ class OpenAICompatibleModel(LLMBaseModel):
                         from datus.cli.execution_state import ExecutionInterrupted
 
                         raise ExecutionInterrupted("Interrupted by user")
-                    async for event in _stream_events_with_trace_baggage(result, agent_name):
+                    async for event in tool_stream.stream_events(
+                        _stream_events_with_trace_baggage(result, agent_name), result
+                    ):
                         if interrupt_controller and interrupt_controller.is_interrupted:
                             from datus.cli.execution_state import ExecutionInterrupted
 

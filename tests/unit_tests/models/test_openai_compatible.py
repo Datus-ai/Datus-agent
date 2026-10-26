@@ -2463,3 +2463,60 @@ class TestAgentSamplingParamSuppression:
         settings = self._model_settings("openai", temperature=0.3, top_p=0.8)
         assert settings.temperature == 0.3
         assert settings.top_p == 0.8
+
+
+@pytest.mark.asyncio
+async def test_streamed_tool_error_is_yielded_while_sdk_batch_is_pending(monkeypatch):
+    """A completed tool must not wait for the SDK's batched tool-output event."""
+    import asyncio
+    from types import SimpleNamespace
+
+    from agents import Agent, RunItemStreamEvent, ToolCallItem
+    from openai.types.responses import ResponseFunctionToolCall
+
+    model = _make_model()
+    agent = Agent(name="test")
+    release = asyncio.Event()
+    result = SimpleNamespace(is_complete=False, cancel=MagicMock(), final_output="")
+    raw_call = ResponseFunctionToolCall(
+        type="function_call", name="execute_sql", call_id="sql-fast-error", arguments='{"sql":"SELECT missing"}'
+    )
+    error = "Unknown column 'missing' in 'on clause'"
+
+    async def sdk_events():
+        yield RunItemStreamEvent(name="tool_called", item=ToolCallItem(agent=agent, raw_item=raw_call))
+        await agent.hooks.on_tool_end(
+            SimpleNamespace(tool_call_id=raw_call.call_id),
+            agent,
+            SimpleNamespace(name="execute_sql"),
+            {"success": 0, "error": error, "result": None},
+        )
+        await release.wait()
+        result.is_complete = True
+
+    result.stream_events = sdk_events
+    monkeypatch.setattr(model, "_build_agent", lambda **kwargs: agent)
+    monkeypatch.setattr(model, "_build_run_config", lambda **kwargs: None)
+    monkeypatch.setattr("datus.models.openai_compatible.Runner.run_streamed", lambda *args, **kwargs: result)
+    actions = ActionHistoryManager()
+    stream = model._generate_with_tools_stream_internal(
+        prompt="test",
+        mcp_servers=None,
+        tools=None,
+        output_type=str,
+        strict_json_schema=True,
+        instruction="test",
+        max_turns=1,
+        action_history_manager=actions,
+        session=None,
+    )
+    try:
+        start = await asyncio.wait_for(anext(stream), timeout=1)
+        assert start.status == ActionStatus.PROCESSING
+        completed = await asyncio.wait_for(anext(stream), timeout=1)
+        assert completed.status == ActionStatus.FAILED
+        assert completed.output["raw_output"]["error"] == error
+        assert not release.is_set()
+    finally:
+        release.set()
+        await stream.aclose()

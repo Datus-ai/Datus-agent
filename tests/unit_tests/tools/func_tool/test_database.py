@@ -8,6 +8,7 @@ from unittest.mock import Mock, patch
 
 import pytest
 
+from datus.tools.func_tool.base import FuncToolResult
 from datus.tools.func_tool.database import DBFuncTool
 from datus.utils.exceptions import DatusException
 
@@ -3302,3 +3303,90 @@ class TestHeaderRowNormalisation:
         """Not folded into "unspecified": nothing sends -1 by accident, and
         silently auto-detecting would hide a caller bug."""
         assert self._capture(tmp_path, header_row=-1)["header_row"] == -1
+
+
+@pytest.mark.asyncio
+async def test_registered_sql_timeout_is_structured_and_late_worker_cannot_replace_it():
+    """Exercise the real sync invoker; timing out must not wait for its worker."""
+    import asyncio
+    import threading
+    from types import SimpleNamespace
+
+    started = threading.Event()
+    release = threading.Event()
+    finished = threading.Event()
+
+    class SlowDatabaseTool(DBFuncTool):
+        def __init__(self):
+            self.agent_config = SimpleNamespace(sql_tool_timeout_seconds=0.03, sql_read_only=False)
+            self._read_only = False
+
+        def _excluded_tool_params(self):
+            return set()
+
+        def execute_sql(self, sql: str) -> FuncToolResult:
+            started.set()
+            try:
+                release.wait(timeout=2)
+                return FuncToolResult(result={"rows": [1]})
+            finally:
+                finished.set()
+
+    db = SlowDatabaseTool()
+    tool = db.to_function_tool(db.execute_sql)
+    context = SimpleNamespace()
+    try:
+        result = await asyncio.wait_for(tool.on_invoke_tool(context, '{"sql":"SELECT 1"}'), timeout=1)
+        assert started.is_set()
+        assert not release.is_set()
+        assert result["success"] == 0
+        assert result["result"] is None
+        assert "timed out" in result["error"]
+        assert "0.03 seconds" in result["error"]
+        assert context._datus_tool_status == "timeout"
+        release.set()
+        assert await asyncio.to_thread(finished.wait, 1)
+        assert result["success"] == 0
+    finally:
+        release.set()
+
+
+@pytest.mark.asyncio
+async def test_registered_sql_preserves_real_failure_and_parent_cancellation():
+    import asyncio
+    from types import SimpleNamespace
+
+    class AsyncDatabaseTool(DBFuncTool):
+        def __init__(self):
+            self.agent_config = SimpleNamespace(sql_tool_timeout_seconds=2, sql_read_only=False)
+            self._read_only = False
+            self.wait = False
+            self.raise_timeout = False
+            self.started = asyncio.Event()
+
+        def _excluded_tool_params(self):
+            return set()
+
+        async def execute_sql(self, sql: str) -> FuncToolResult:
+            self.started.set()
+            if self.wait:
+                await asyncio.Event().wait()
+            if self.raise_timeout:
+                raise TimeoutError("driver read timed out")
+            return FuncToolResult(success=0, error="Unknown column 'join_key' in 'on clause'")
+
+    db = AsyncDatabaseTool()
+    tool = db.to_function_tool(db.execute_sql)
+    result = await tool.on_invoke_tool(None, '{"sql":"SELECT missing"}')
+    assert result["success"] == 0
+    assert result["error"] == "Unknown column 'join_key' in 'on clause'"
+    db.raise_timeout = True
+    with pytest.raises(TimeoutError, match="driver read timed out"):
+        await tool.on_invoke_tool(None, '{"sql":"SELECT 1"}')
+    db.wait = True
+    db.started.clear()
+    pending = asyncio.create_task(tool.on_invoke_tool(None, '{"sql":"SELECT 1"}'))
+    await db.started.wait()
+    pending.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await pending

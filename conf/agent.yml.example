@@ -2,6 +2,10 @@ agent:
   home: ~/.datus
   logging:
     level: INFO  # CLI > DATUS_LOG_LEVEL > this value > INFO
+  # Maximum time waiting for one agent SQL tool, after permission approval.
+  # This bounds tool/UI latency, not the lifetime of a blocking database query.
+  # Configure a server/driver statement timeout as well to stop SQL on the DB.
+  sql_tool_timeout_seconds: 300
   # Shared by all tools/datasources in one MCP server. Excess work fails fast.
   mcp_tool_execution:
     max_workers: 8
