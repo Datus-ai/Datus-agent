@@ -59,6 +59,9 @@ def _make_model_config(
     cfg.retry_interval = 0.0
     cfg.strict_json_schema = True
     cfg.save_llm_trace = save_llm_trace
+    cfg.context_length = None
+    cfg.max_tokens = None
+    cfg.tokenizer_ref = None
     return cfg
 
 
@@ -473,8 +476,8 @@ class TestGenerate:
         assert call_kwargs["max_tokens"] == 4096
         assert "max_completion_tokens" not in call_kwargs
 
-    def test_max_tokens_omitted_when_specs_unknown(self):
-        """Omit the field when model_specs has no entry — let provider decide."""
+    def test_max_tokens_falls_back_to_registered_provider_limit(self):
+        """A known provider supplies an explicit budget when local specs omit it."""
         model = _make_model()
         mock_resp = self._mock_litellm_response("ok")
         with (
@@ -483,7 +486,7 @@ class TestGenerate:
         ):
             model.generate("prompt")
         call_kwargs = mock_lit.call_args[1]
-        assert "max_tokens" not in call_kwargs
+        assert call_kwargs["max_tokens"] == 4096
         assert "max_completion_tokens" not in call_kwargs
 
     def test_explicit_kwargs_override_fallback(self):
@@ -1820,6 +1823,8 @@ class TestBuildAgent:
         self, model_name, provider, configured_base_url, expected_retention, expected_cache_key
     ):
         cfg = _make_model_config(model=model_name, model_type=provider, base_url=configured_base_url)
+        cfg.max_tokens = 8192
+        cfg.context_length = 262144
         model = _make_model(cfg)
         model.litellm_adapter.provider = provider
         _, call_args = self._call_build_agent(model)
@@ -1835,13 +1840,13 @@ class TestBuildAgent:
         ms = call_args[1]["model_settings"]
         assert ms.max_tokens == 4096
 
-    def test_max_tokens_omitted_in_model_settings_when_specs_unknown(self):
-        """When spec is unknown, leave ModelSettings.max_tokens at its default (None)."""
+    def test_model_settings_use_registered_provider_limit(self):
+        """The known provider output limit is explicitly sent and budgeted."""
         model = _make_model()
         with patch.object(model, "max_tokens", return_value=None):
             _, call_args = self._call_build_agent(model)
         ms = call_args[1]["model_settings"]
-        assert ms.max_tokens is None
+        assert ms.max_tokens == 4096
 
     def test_thinking_model_gets_reasoning(self):
         model = _make_model()

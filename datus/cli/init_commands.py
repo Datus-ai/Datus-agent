@@ -2,7 +2,7 @@
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
-"""``/init`` slash command — chat shortcut for the bundled ``init`` skill.
+"""Bounded REPL entry point for the bundled ``init`` skill.
 
 The actual project-initialization logic lives in the ``init`` skill bundled
 at ``datus/resources/skills/init/SKILL.md`` and loaded directly from the
@@ -18,18 +18,17 @@ It deliberately stops short of the expensive vector-indexed stores
 (``semantic_models`` / ``metrics`` / ``reference_sql``) — those are built by
 the ``build-kb`` skill behind ``/build-kb`` (see ``build_kb_commands.py``).
 
-Rather than reimplement that flow in Python, ``/init`` injects a
-deterministic chat message that tells the active agent to load and follow
-the ``init`` skill. The standard chat streaming pipeline (action stream,
-Ctrl+O verbose, ESC interrupt, multi-turn refinement) renders the result
-for free.
+The host records current-scope coverage in memory. One ordinary chat run
+follows the skill, using pagination and mid-turn compaction as needed.
 """
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from datus.cli.cli_styles import print_error
+from datus.cli.init_context import InitContext
 from datus.cli.skill_command_utils import render_skill_prompt
 from datus.utils.loggings import get_logger
 
@@ -41,9 +40,10 @@ logger = get_logger(__name__)
 
 _INIT_PROMPT = (
     "Initialize this project workspace by following the `init` skill. "
-    'Call `load_skill(skill_name="init")` first and follow it. '
-    "If `AGENTS.md` already exists, update the sections you own in place and confirm "
-    "only before replacing the whole file."
+    "The complete init skill is supplied in the system instructions for this invocation. "
+    "Read existing AGENTS.md, relevant knowledge and lineage for context. "
+    "If present, read relevant entries in knowledge/pending-questions.md as unconfirmed questions, not facts. "
+    "Update only the current scope and preserve existing knowledge and user content."
     "{user_context}"
 )
 
@@ -70,8 +70,53 @@ class InitCommands:
             )
             return
 
-        chat_commands.execute_chat_command(
-            render_skill_prompt(_INIT_PROMPT, args),
-            plan_mode=getattr(self.cli, "plan_mode_active", False),
-            subagent_name=None,
-        )
+        run = None
+        try:
+            scope = args.strip()
+            config = self.cli.agent_config
+            context = self.cli.cli_context
+            node_config = config.sub_agent_config("chat") or {}
+            root = Path(node_config.get("workspace_root") or config.project_root)
+            binding = {
+                "project": config.project_name,
+                "datasource": config.current_datasource or "",
+                "catalog": getattr(context, "current_catalog", "") or "",
+                "database": getattr(context, "current_db_name", "") or "",
+                "schema_name": getattr(context, "current_schema", "") or "",
+            }
+            if binding["datasource"]:
+                db_config = config.current_db_config()
+                binding["dialect"] = db_config.type
+                for target, field in (("catalog", "catalog"), ("database", "database"), ("schema_name", "schema")):
+                    binding[target] = binding[target] or getattr(db_config, field, "") or ""
+            run = InitContext(root, binding, scope)
+            prompt = render_skill_prompt(_INIT_PROMPT, run.state["scope"])
+            chat_commands.execute_chat_command(
+                prompt,
+                plan_mode=getattr(self.cli, "plan_mode_active", False),
+                subagent_name=None,
+                init_context=run,
+            )
+        except (OSError, ValueError) as exc:
+            print_error(self.console, f"Cannot run init: {exc}", prefix=False)
+        finally:
+            if run is not None:
+                run.close()
+                progress = run.progress()
+                self.console.print(
+                    f"Init: {progress['completed']}/{progress['selected']} selected tables completed "
+                    f"({progress['status']}; current scope).",
+                    markup=False,
+                )
+                self.console.print(
+                    f"Modified files: {len(run.state['outputs'])}. "
+                    f"Uncovered: {run.state.get('uncovered') or 'Database scope outside the selected core tables.'}",
+                    markup=False,
+                )
+                self.console.print(
+                    f"Structure checks succeeded: {progress.get('structure_checked', 0)}. "
+                    "See the reply for findings, unknowns and unfinished work.",
+                    markup=False,
+                )
+                if progress["stop_reason"]:
+                    self.console.print(f"Stopped: {progress['stop_reason']}", markup=False)

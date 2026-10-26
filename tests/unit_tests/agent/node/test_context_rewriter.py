@@ -273,6 +273,7 @@ class _FakeNode:
             first_call=False,
             archive_history=False,
             pending_user_turns=0,
+            output_tokens=None,
         ):
             if first_call and estimate_items_tokens(items) < self.context_length * 0.9:
                 return {"mode": "noop", "success": True}

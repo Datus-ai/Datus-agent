@@ -525,6 +525,7 @@ class ClaudeModel(OpenAICompatibleModel):
         return system_message if system_message else anthropic.NOT_GIVEN
 
     def _anthropic_messages_create(self, **kwargs):
+        kwargs = self.check_request(kwargs)
         with native_model_call(
             model=self.model_name,
             model_impl="anthropic_native",
@@ -538,6 +539,7 @@ class ClaudeModel(OpenAICompatibleModel):
             return response
 
     def _anthropic_messages_stream(self, **kwargs):
+        kwargs = self.check_request(kwargs)
         manager = self._raw_anthropic_messages_stream(**kwargs)
         return self._observe_anthropic_stream(manager, kwargs)
 
@@ -939,7 +941,9 @@ class ClaudeModel(OpenAICompatibleModel):
                         context_rewriter.pending_user_turns = sum(
                             extract_user_text(item) is not None for item in messages[persisted_message_index:]
                         )
-                        context_rewriter.set_request_context(instruction, tools)
+                        context_rewriter.set_request_context(
+                            instruction, tools, kwargs.get("max_tokens") or self.max_tokens() or 20480
+                        )
                         rewritten_messages = await context_rewriter.rewrite_native_messages(messages)
                         if rewritten_messages is not None:
                             messages = rewritten_messages

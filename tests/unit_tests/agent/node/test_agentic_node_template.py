@@ -88,6 +88,9 @@ class FakeAgenticNode(AgenticNode):
         self.execution_mode = execution_mode
         self.input: Optional[FakeInput] = None
         self.tools: List[Any] = []
+        from datus.tools.registry.tool_registry import ToolRegistry
+
+        self.tool_registry = ToolRegistry()
         self.mcp_servers: dict = {}
         self.actions: List[ActionHistory] = []
         self.result: Optional[FakeResult] = None

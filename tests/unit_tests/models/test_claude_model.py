@@ -85,6 +85,9 @@ def _make_model_config(
     cfg.retry_interval = 0.0
     cfg.strict_json_schema = True
     cfg.auth_type = auth_type
+    cfg.context_length = None
+    cfg.max_tokens = None
+    cfg.tokenizer_ref = None
     return cfg
 
 

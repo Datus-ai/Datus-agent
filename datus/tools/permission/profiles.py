@@ -72,6 +72,8 @@ _NORMAL_RULES = [
     # static SQL lineage read. ``upsert_lineage`` / ``delete_lineage`` write the project file
     # lineage/lineage.json (deleting sources, saving inline SQL), so they fall through to ASK.
     _rule("lineage_tools", "query_lineage", PermissionLevel.ALLOW),
+    _rule("tool_result_tools", "read_tool_result", PermissionLevel.ALLOW),
+    _rule("init_tools", "*", PermissionLevel.ALLOW),
     # db read. ``execute_sql`` is the unified SQL entry point; its gating is
     # handled dynamically per statement class in
     # ``PermissionHooks._handle_sql_permission`` driven by each profile's

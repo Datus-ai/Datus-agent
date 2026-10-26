@@ -32,7 +32,6 @@ from datus.agent.node.compact_prompts import (
 )
 from datus.agent.node.context_rewriter import (
     DEFAULT_OUTPUT_RESERVE_TOKENS,
-    MAX_OUTPUT_RESERVE_TOKENS,
     MidTurnCompactor,
     build_assistant_item,
     build_mid_turn_view,
@@ -43,6 +42,7 @@ from datus.agent.node.node import Node
 from datus.cli.execution_state import ExecutionInterrupted, InteractionBroker, InterruptController, PendingInputQueue
 from datus.configuration.agent_config import AgentConfig, CompactConfig
 from datus.models.base import LLMBaseModel
+from datus.models.request_capacity import ContextCapacityError
 from datus.observability.compaction import compact_metrics, compact_started, observe_compaction
 from datus.prompts.prompt_manager import get_prompt_manager
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
@@ -445,7 +445,15 @@ class AgenticNode(Node):
         if current is None:
             return None
         try:
-            return current.context_length()
+            length = current.context_length()
+            if length is None:
+                from datus.models.request_capacity import RequestCapacity
+
+                capacity_getter = getattr(current, "request_capacity", None)
+                capacity = capacity_getter() if callable(capacity_getter) else None
+                if isinstance(capacity, RequestCapacity):
+                    return capacity.context_length
+            return length
         except Exception:
             return None
 
@@ -1276,6 +1284,7 @@ class AgenticNode(Node):
                 # The replayed prompt advertises skill/bash/memory tools whose
                 # mounting is normally a side effect of the (skipped) build.
                 self._ensure_lazy_tools_mounted()
+                self._apply_init_tool_scope()
                 return snapshot["prompt"]
 
         # Cache miss / stale meta: rebuild. Preserve the call shape — several
@@ -1287,6 +1296,7 @@ class AgenticNode(Node):
 
         if sm is not None:
             sm.save_system_prompt_snapshot(session_id, prompt, meta)
+        self._apply_init_tool_scope()
         return prompt
 
     def _get_system_prompt(
@@ -2008,8 +2018,8 @@ class AgenticNode(Node):
         ``items`` is the transcript to dump; when omitted the session is read
         (turn-start / manual compact). Mid-turn callers pass the in-memory
         view the model is being sent. Returns ``None`` when the archive
-        directory is unavailable; the compact still runs but without a
-        recovery pointer.
+        directory is unavailable; major compaction then preserves the current
+        transcript instead of replacing it with an unrecoverable summary.
         """
         archive = self._get_archive()
         if archive is None:
@@ -2023,13 +2033,14 @@ class AgenticNode(Node):
                 logger.warning("session.get_items() failed during history dump: %s", exc)
                 return None
         ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-        path = archive.dir / f"history_{ts}.jsonl"
+        path = archive.dir / f"history_{ts}_{uuid.uuid4().hex}.jsonl"
         from datus.utils.image_content import replace_images
 
         try:
-            with path.open("w", encoding="utf-8") as f:
-                for it in items:
-                    f.write(json.dumps(replace_images(it), ensure_ascii=False, default=str) + "\n")
+            from datus.storage.semantic_model.artifact_file import atomic_write_text
+
+            content = "".join(json.dumps(replace_images(it), ensure_ascii=False, default=str) + "\n" for it in items)
+            atomic_write_text(path, content, mode=0o600)
         except OSError as exc:
             logger.warning("history JSONL dump failed: %s", exc)
             return None
@@ -2070,6 +2081,8 @@ class AgenticNode(Node):
             logger.warning("session.get_items() failed during major compact: %s", exc)
             return {"mode": "major", "reason": reason, "success": False, "summary": "", "summary_token": 0}
         history_jsonl_path = await self._dump_session_history_jsonl(items) if items else None
+        if items and history_jsonl_path is None:
+            return {"mode": "major", "reason": reason, "success": False, "error": "Cannot preserve original history"}
         # A Claude-native session stores Anthropic-format messages; the
         # continuation must be written in the same dialect or the next native
         # replay sends an ``output_text`` block Anthropic does not accept.
@@ -2084,6 +2097,7 @@ class AgenticNode(Node):
         continuation = build_continuation_message(
             summary or "(empty summary)",
             str(history_jsonl_path) if history_jsonl_path else "",
+            self._tool_result_references(items),
         )
         try:
             await self._replace_session_items([build_assistant_item(continuation, item_format)], mode="major")
@@ -2242,23 +2256,16 @@ class AgenticNode(Node):
         """
         sys_prompt = instruction if instruction is not None else self._get_system_prompt()
         prompt = render_major_compact_prompt(node_role=self.get_node_name(), custom_instructions=custom_instructions)
-        result = await self.model.summarize_items(
+        from datus.models.summary_chunks import bounded_summary
+
+        return await bounded_summary(
+            self.model,
             items,
             instruction=sys_prompt,
             prompt=prompt,
             item_format=item_format,
-            max_tokens=4000,
-            temperature=0.3,
             agent_name=self.get_node_name(),
         )
-        if isinstance(result, dict):
-            summary = result.get("content", "") or ""
-            usage = result.get("usage", {})
-        else:
-            summary = getattr(result, "content", "") or ""
-            usage = {}
-        summary_token = int(usage.get("output_tokens", 0) or 0) if isinstance(usage, dict) else 0
-        return str(summary), summary_token
 
     async def _replace_session_items(
         self, items: List[Dict[str, Any]], *, mode: str = "minor", pending_user_turns: int = 0
@@ -2304,7 +2311,7 @@ class AgenticNode(Node):
                 max_tokens = int(getter() or 0)
         except Exception:  # noqa: BLE001 — headroom is a heuristic
             max_tokens = 0
-        return min(max_tokens or DEFAULT_OUTPUT_RESERVE_TOKENS, MAX_OUTPUT_RESERVE_TOKENS)
+        return max_tokens or DEFAULT_OUTPUT_RESERVE_TOKENS
 
     def _invalidate_context_usage(self) -> None:
         """Discard the old measurement without changing cumulative consumption."""
@@ -2351,6 +2358,7 @@ class AgenticNode(Node):
         first_call: bool = False,
         archive_history: bool = False,
         pending_user_turns: int = 0,
+        output_tokens: Optional[int] = None,
     ) -> Dict[str, Any]:
         """Two-stage compaction of the transcript a running turn is about to send.
 
@@ -2375,7 +2383,7 @@ class AgenticNode(Node):
         / ``major``), ``success``, ``items`` (the list to send), and the major
         fields (``summary``, ``summary_token``, ``history_jsonl``,
         ``major_error`` when the summary failed after a successful archive).
-        Never raises.
+        Capacity, archive and session-persistence errors stop preparation.
         """
         self._ensure_compact_state()
         noop: Dict[str, Any] = {"mode": "noop", "reason": reason, "success": True, "items": items}
@@ -2390,7 +2398,7 @@ class AgenticNode(Node):
                 if self._session is None:
                     return noop
                 cfg = self._compact_cfg
-                output_reserve = self._mid_turn_output_reserve()
+                output_reserve = output_tokens if output_tokens is not None else self._mid_turn_output_reserve()
                 tail_start = max(0, min(int(tail_start), len(items)))
                 effective = int(base_tokens or 0) + estimate_items_tokens(items[tail_start:]) + output_reserve
                 ratio = effective / float(context_length) if context_length > 0 else 0.0
@@ -2446,6 +2454,8 @@ class AgenticNode(Node):
                     major_ok = False
                     try:
                         history_jsonl_path = await self._dump_session_history_jsonl(items)
+                        if history_jsonl_path is None:
+                            raise ContextCapacityError("RESULT_ARCHIVE_FAILED", "Cannot preserve original history")
                         summary, summary_token = await self._summarize_items(
                             view,
                             item_format=item_format,
@@ -2455,6 +2465,7 @@ class AgenticNode(Node):
                         continuation = build_continuation_message(
                             summary or "(empty summary)",
                             str(history_jsonl_path) if history_jsonl_path else "",
+                            self._tool_result_references(items),
                         )
                         view = build_mid_turn_view(
                             view,
@@ -2483,7 +2494,7 @@ class AgenticNode(Node):
                     await self._replace_session_items(view, mode=result["mode"], pending_user_turns=pending_user_turns)
                 except Exception as exc:  # noqa: BLE001
                     logger.error("Failed to persist mid-turn compact rewrite: %s", exc)
-                    return {**result, "success": False, "items": items}
+                    raise ContextCapacityError("SESSION_PERSIST_FAILED", "Cannot persist the prepared context") from exc
 
                 result["items"] = view
                 compact_metrics(
@@ -2493,20 +2504,19 @@ class AgenticNode(Node):
                     context_ratio_after=ratio,
                 )
                 return result
-        except Exception:  # noqa: BLE001 — the rewriter must never see an exception from here
+        except ContextCapacityError:
+            raise
+        except Exception:  # noqa: BLE001 — optional compaction failures preserve input
             logger.exception("Mid-turn compact failed unexpectedly")
             return {"mode": "major", "reason": reason, "success": False, "items": items}
 
     def _build_context_rewriter(self, ctx: "StreamRunContext") -> Optional[MidTurnCompactor]:
-        """Create the unified per-request compactor, or ``None`` when disabled.
+        """Create the per-request view, even when soft compaction is disabled.
 
         One instance per ``_stream_once`` call; it also resets itself on the
         SDK ``on_start`` hook so a retried run never inherits a stale overlay.
         """
         self._ensure_compact_state()
-        cfg = self._compact_cfg
-        if not (cfg.major.enabled or cfg.minor.enabled):
-            return None
 
         def refresh_instruction() -> str:
             ctx.system_instruction = self._get_session_system_prompt(
@@ -2522,6 +2532,62 @@ class AgenticNode(Node):
             refresh_instruction=refresh_instruction,
             turn_state=ctx.extras,
         )
+
+    def _get_tool_result_store(self):
+        """Reuse the resolved, writable session archive for indexed result pages."""
+        from datus.utils.tool_result_store import ToolResultStore
+
+        archive = self._get_archive()
+        if archive is None:
+            return None
+        store = getattr(self, "_tool_result_store", None)
+        capacity = self.model.request_capacity()
+        if (
+            not isinstance(store, ToolResultStore)
+            or store.root.parent != archive.dir
+            or getattr(self, "_tool_result_capacity", None) != capacity
+        ):
+            store = ToolResultStore(
+                archive, counter=capacity.count, page_tokens=max(2048, min(8192, capacity.input_limit() // 16))
+            )
+            self._tool_result_store = store
+            self._tool_result_capacity = capacity
+        return store
+
+    def _tool_result_references(self, items: List[Any]) -> list[dict]:
+        from datus.utils.tool_result_store import ToolResultStore
+
+        store = self._get_tool_result_store()
+        return store.recovery_references(items) if isinstance(store, ToolResultStore) else []
+
+    def _ensure_tool_result_reader(self) -> None:
+        from datus.tools.func_tool.tool_result_tools import ToolResultFuncTool
+
+        if not any(getattr(tool, "name", None) == "read_tool_result" for tool in self.tools or []):
+            self.tool_result_func_tool = ToolResultFuncTool(self._get_tool_result_store)
+            self.tools = [*(self.tools or []), *self.tool_result_func_tool.available_tools()]
+            self.tool_registry.register_tools("tool_result_tools", ["read_tool_result"])
+
+    def _apply_init_tool_scope(self) -> None:
+        """Reapply invocation-local restrictions after prompt/tool refreshes."""
+        init_context = getattr(self, "_init_context", None)
+        if init_context is not None:
+            self.tool_registry.register_tools("init_tools", self.init_tools.available_tools())
+            if not getattr(self, "_tool_transformers_applied", False):
+                # A refresh may append tools to an already restricted list.
+                # Apply plugin wrappers before reapplying the init wrapper.
+                self.tools = [getattr(tool, "_init_original_tool", tool) for tool in self.tools or []]
+            names = {tool.name for tool in self.tools or []}
+            self.tools = [
+                *(self.tools or []),
+                *[tool for tool in self.init_tools.available_tools() if tool.name not in names],
+            ]
+            if self.db_func_tool is not None and "get_table_ddl" not in names:
+                self.tools.append(self.db_func_tool.to_function_tool(self.db_func_tool.get_table_ddl))
+            self._ensure_tool_transformers()
+            self.tools = init_context.wrap_tools(self.tools)
+            self.mcp_servers = {}
+            self._builtin_web_tools = None
 
     async def _auto_compact(self) -> bool:
         """Backward-compatible wrapper kept for callers outside this class.
@@ -2896,6 +2962,8 @@ class AgenticNode(Node):
                 fails fast instead.
         """
         required_skills = self._get_required_skills()
+        if getattr(self, "_init_context", None) is not None:
+            required_skills = list(dict.fromkeys([*required_skills, "init"]))
         database_candidates = (
             self._get_database_skill_candidates() if getattr(self, "db_func_tool", None) is not None else []
         )
@@ -3789,6 +3857,8 @@ class AgenticNode(Node):
         # captures ``self.tools``: call arguments evaluate left to right, so
         # deferring to ``hooks=self._compose_run_hooks(ctx)`` would be one
         # argument too late and the first run would execute unwrapped tools.
+        self._ensure_tool_result_reader()
+        self._apply_init_tool_scope()
         self._ensure_tool_transformers()
         self._current_action_history = ctx.action_history_manager
         # Per-run mid-turn compactor. Created before ``_compose_run_hooks`` so
@@ -3797,6 +3867,9 @@ class AgenticNode(Node):
         # per-model-call context rewriter.
         ctx.context_rewriter = self._build_context_rewriter(ctx)
         self._active_context_rewriter = ctx.context_rewriter
+        from datus.utils.tool_result_store import ACTIVE_RESULT_STORE
+
+        result_store_token = ACTIVE_RESULT_STORE.set(None)
         try:
             async for stream_action in self.model.generate_with_tools_stream(
                 prompt=ctx.user_prompt,
@@ -3846,6 +3919,7 @@ class AgenticNode(Node):
 
                 yield action_to_yield
         finally:
+            ACTIVE_RESULT_STORE.reset(result_store_token)
             self._current_action_history = None
             self._active_context_rewriter = None
 

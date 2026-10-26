@@ -13,7 +13,7 @@ import time
 from contextlib import nullcontext
 from datetime import date, datetime
 from pathlib import Path
-from typing import Any, AsyncGenerator, Dict, List, Optional, Union
+from typing import Any, AsyncGenerator, Callable, Dict, List, Optional, Union
 
 import httpx
 import litellm
@@ -669,9 +669,15 @@ class OpenAICompatibleModel(LLMBaseModel):
                 ) as call,
             ):
                 call.bind_span(span)
-                call.request(params)
                 # Use LiteLLM for unified provider support
-                response = litellm.completion(messages=messages, **params)
+                uses_completion = "max_completion_tokens" in params or (
+                    hasattr(self, "_uses_completion_tokens_parameter") and self._uses_completion_tokens_parameter()
+                )
+                effective = self.check_request(
+                    {**params, "messages": messages}, "max_completion_tokens" if uses_completion else "max_tokens"
+                )
+                call.request(effective)
+                response = litellm.completion(**effective)
                 call.response(response)
                 message = response.choices[0].message
                 content = strip_litellm_placeholder(message.content)
@@ -839,6 +845,26 @@ class OpenAICompatibleModel(LLMBaseModel):
         done_action.end_time = datetime.now()
         return done_action
 
+    def summary_capacity_checker(
+        self, instruction: str, prompt: str, item_format: str, output_tokens: int
+    ) -> Callable[[List[Any]], int]:
+        """Include SDK conversion and system-message framing when sizing summaries."""
+        if item_format != "responses":
+            return super().summary_capacity_checker(instruction, prompt, item_format, output_tokens)
+        from datus.models.request_capacity import guard_request
+        from datus.models.summary_chunks import summary_input
+
+        agent = self._build_agent(instruction, str, True, {}, [], max_tokens=output_tokens)
+        capacity = self.request_capacity()
+
+        def check(items: List[Any]) -> int:
+            payload = agent.model.capacity_payload(
+                instruction, summary_input(items, prompt), agent.model_settings, [], None, []
+            )
+            return guard_request(capacity, payload)
+
+        return check
+
     async def generate_with_tools(
         self,
         prompt: Union[str, List[Dict[str, str]]],
@@ -967,6 +993,7 @@ class OpenAICompatibleModel(LLMBaseModel):
         tools: Optional[List[Tool]],
         hooks=None,
         agent_name: str = "default_agent",
+        max_tokens: Optional[int] = None,
     ) -> Agent:
         """Build Agent with consistent configuration for both streaming and non-streaming paths."""
         actual_output_type = output_type
@@ -981,6 +1008,7 @@ class OpenAICompatibleModel(LLMBaseModel):
             )
 
         litellm_model = self.litellm_adapter.get_agents_sdk_model()
+        litellm_model._datus_capacity = self.request_capacity()
 
         # DeepSeek requires "json" keyword in prompt for JSON mode
         final_instruction = instruction
@@ -1011,12 +1039,8 @@ class OpenAICompatibleModel(LLMBaseModel):
         if not suppress_sampling_params and self.model_config.top_p is not None:
             model_settings_kwargs["top_p"] = self.model_config.top_p
 
-        # Apply model_specs.max_tokens as a fallback so streaming/tool calls
-        # don't silently rely on each provider's server-side default. If the
-        # spec is unknown, omit the field and let the provider decide.
-        spec_max_tokens = self.max_tokens()
-        if isinstance(spec_max_tokens, int) and spec_max_tokens > 0:
-            model_settings_kwargs["max_tokens"] = spec_max_tokens
+        # Send the same resolved output cap that the capacity check reserves.
+        model_settings_kwargs["max_tokens"] = self.request_capacity().output_limit(max_tokens)
 
         if self.default_headers:
             model_settings_kwargs["extra_headers"] = self.default_headers
@@ -1104,6 +1128,7 @@ class OpenAICompatibleModel(LLMBaseModel):
                     tools=tools,
                     hooks=hooks,
                     agent_name=agent_name,
+                    max_tokens=kwargs.get("max_completion_tokens", kwargs.get("max_tokens")),
                 )
                 run_config = self._build_run_config(agent_name=agent_name)
 
@@ -1238,6 +1263,7 @@ class OpenAICompatibleModel(LLMBaseModel):
                     tools=tools,
                     hooks=hooks,
                     agent_name=agent_name,
+                    max_tokens=kwargs.get("max_completion_tokens", kwargs.get("max_tokens")),
                 )
 
                 run_config = self._build_run_config(
@@ -1892,11 +1918,11 @@ class OpenAICompatibleModel(LLMBaseModel):
 
     def max_tokens(self) -> Optional[int]:
         """Max tokens from model specs with prefix matching, or None if unavailable."""
-        return self._lookup_spec("max_tokens")
+        return self.model_config.max_tokens or self._lookup_spec("max_tokens")
 
     def context_length(self) -> Optional[int]:
         """Context length from model specs with prefix matching, or None if unavailable."""
-        return self._lookup_spec("context_length")
+        return self.model_config.context_length or self._lookup_spec("context_length")
 
     def token_count(self, prompt: str) -> int:
         """
