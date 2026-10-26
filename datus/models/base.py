@@ -162,12 +162,16 @@ class LLMBaseModel(ABC):  # Changed from BaseModel to LLMBaseModel
         """Leave input headroom when a model's output ceiling fills its window.
 
         Explicit configuration/request limits are validated unchanged. A model
-        ceiling is only a default, so reserve at most half the context for output.
+        ceiling is only a default, so reserve at most half the usable context
+        after the safety margin for output, leaving the other half for input.
         Providers that cannot enforce an output cap must reserve their full limit.
         """
         context = context_length or self.model_config.context_length or self.context_length()
         if model_limit and context and getattr(self, "supports_output_limit", True):
-            return min(model_limit, max(1, (context + 1) // 2))
+            from datus.models.request_capacity import RequestCapacity
+
+            usable = context - RequestCapacity.margin_for(context)
+            return min(model_limit, max(1, usable // 2))
         return model_limit
 
     def check_request(self, payload: dict, output_parameter: str = "max_tokens") -> dict:

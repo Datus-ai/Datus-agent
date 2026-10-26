@@ -1,3 +1,6 @@
+import base64
+import copy
+import io
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -33,6 +36,86 @@ def test_catalogued_non_openai_model_uses_explicit_conservative_count():
     assert capacity.counter_source == "utf8_byte_upper_bound"
     with patch("litellm.token_counter", side_effect=AssertionError("must not select a fallback tokenizer")):
         assert capacity.count({"input": "汉字" * 100}) >= 600
+
+
+@pytest.mark.parametrize(
+    "model,field,kind",
+    [
+        ("gpt-4o", "messages", "image_url"),
+        ("gpt-4o", "input", "input_image"),
+        ("claude-sonnet-4-5", "messages", "image"),
+    ],
+)
+def test_inline_image_budget_depends_on_pixels_not_base64_size(model, field, kind):
+    import litellm
+    from PIL import Image
+
+    from datus.utils.image_content import IMAGE_OMITTED
+
+    capacity = RequestCapacity(model, 8192, 1024)
+    screenshot = Image.new("RGB", (512, 512), "blue")
+
+    def request(compression):
+        buffer = io.BytesIO()
+        screenshot.save(buffer, format="PNG", compress_level=compression)
+        encoded = base64.b64encode(buffer.getvalue()).decode("ascii")
+        url = f"data:image/png;base64,{encoded}"
+        blocks = {
+            "image_url": {"type": "image_url", "image_url": {"url": url}},
+            "input_image": {"type": "input_image", "image_url": url},
+            "image": {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": encoded}},
+        }
+        payload = {
+            "instructions": "Inspect the chart",
+            field: [{"role": "user", "content": [{"type": "text", "text": "Explain"}, blocks[kind]]}],
+            "tools": [{"name": "describe_table", "description": "Read structure"}],
+        }
+        return payload, url
+
+    compressed, compressed_url = request(9)
+    uncompressed, _ = request(0)
+    original = copy.deepcopy(uncompressed)
+    assert len(str(uncompressed)) > 100 * len(str(compressed))
+    # Identical pixels have identical image cost even with a much larger encoding.
+    measured = capacity.check(uncompressed)
+    assert measured == capacity.count(compressed)
+    assert uncompressed == original
+    text_only = copy.deepcopy(uncompressed)
+    text_only[field][0]["content"][1] = {
+        "type": "input_text" if kind == "input_image" else "text",
+        "text": IMAGE_OMITTED,
+    }
+    image_cost = litellm.token_counter(
+        model=model,
+        messages=[
+            {"role": "user", "content": [{"type": "image_url", "image_url": {"url": compressed_url, "detail": "auto"}}]}
+        ],
+        use_default_image_token_count=False,
+    )
+    assert image_cost > 0
+    assert measured == capacity.count(text_only) + image_cost
+    with pytest.raises(ContextCapacityError, match="CONTEXT_LIMIT_EXCEEDED"):
+        capacity.check({**uncompressed, "instructions": "large instructions " * 10000})
+    with pytest.raises(ContextCapacityError, match="CONTEXT_LIMIT_EXCEEDED"):
+        capacity.check({**uncompressed, "tools": [{"name": "large_tool", "description": "schema " * 10000}]})
+
+
+def test_small_context_default_reserves_both_margin_and_input():
+    model = OpenAIModel(ModelConfig(type="openai", model="gpt-4o", api_key="test", context_length=4096))
+    capacity = model.request_capacity()
+    assert capacity.margin == 2048
+    assert model.max_tokens() == capacity.default_output == 1024
+    assert capacity.input_limit() == 1024
+    request = {"messages": [{"role": "user", "content": "hello"}]}
+    assert model.check_request(request)["max_tokens"] == 1024
+    assert model._build_agent("Hello", str, False, {}, []).model_settings.max_tokens == 1024
+    assert model.check_request({**request, "max_tokens": 1500})["max_tokens"] == 1500
+    with pytest.raises(ContextCapacityError, match="CONTEXT_LIMIT_EXCEEDED"):
+        model.check_request({**request, "max_tokens": 2048})
+    model.model_config.max_tokens = 2048
+    assert model.max_tokens() == 2048
+    with pytest.raises(ContextCapacityError, match="CONTEXT_LIMIT_EXCEEDED"):
+        model.check_request(request)
 
 
 def test_known_output_ceiling_is_not_silently_clamped():

@@ -55,7 +55,11 @@ class RequestCapacity:
 
     @property
     def margin(self) -> int:
-        return max(2048, math.ceil((self.context_length or 0) * 0.05))
+        return self.margin_for(self.context_length)
+
+    @staticmethod
+    def margin_for(context_length: int | None) -> int:
+        return max(2048, math.ceil((context_length or 0) * 0.05))
 
     def output_limit(self, explicit: Any = None) -> int:
         value = self.default_output if explicit is None else explicit
@@ -108,7 +112,15 @@ class RequestCapacity:
             raise ContextCapacityError(
                 "CONTEXT_COUNT_UNAVAILABLE", "File inputs need extracted text or a provider token count before sending."
             )
-        text = _json(replace_images(payload))
+        # The shared image walker accepts message/content envelopes, not a
+        # whole API request. Preserve every other request field for text counting.
+        text_view = replace_images(payload)
+        if isinstance(payload, dict):
+            text_view = {
+                key: replace_images(value) if key in {"messages", "input"} else value
+                for key, value in text_view.items()
+            }
+        text = _json(text_view)
         messages = payload.get("messages", payload.get("input", [])) if isinstance(payload, dict) else payload
         framing = 64 * (len(messages) if isinstance(messages, list) else 1) + 256
         counter_model = self._counter_model()

@@ -477,8 +477,9 @@ class TestGenerate:
         assert "max_completion_tokens" not in call_kwargs
 
     def test_max_tokens_falls_back_to_registered_provider_limit(self):
-        """A known provider supplies an explicit budget when local specs omit it."""
+        """A provider fallback leaves half the post-margin window for input."""
         model = _make_model()
+        model.model_config.context_length = 8192
         mock_resp = self._mock_litellm_response("ok")
         with (
             patch.object(model, "max_tokens", return_value=None),
@@ -486,7 +487,7 @@ class TestGenerate:
         ):
             model.generate("prompt")
         call_kwargs = mock_lit.call_args[1]
-        assert call_kwargs["max_tokens"] == 4096
+        assert call_kwargs["max_tokens"] == 3072  # (8192 context - 2048 margin) // 2
         assert "max_completion_tokens" not in call_kwargs
 
     def test_explicit_kwargs_override_fallback(self):
@@ -1853,20 +1854,22 @@ class TestBuildAgent:
         assert bool((ms.extra_args or {}).get("prompt_cache_key")) == expected_cache_key
 
     def test_max_tokens_from_model_specs_applied_to_model_settings(self):
-        """Streaming/tool path: model_specs.max_tokens flows into ModelSettings."""
+        """Streaming/tool path: a model default is bounded by usable context."""
         model = _make_model()
+        model.model_config.context_length = 8192
         with patch.object(model, "max_tokens", return_value=4096):
             _, call_args = self._call_build_agent(model)
         ms = call_args[1]["model_settings"]
-        assert ms.max_tokens == 4096
+        assert ms.max_tokens == 3072  # (8192 context - 2048 margin) // 2
 
     def test_model_settings_use_registered_provider_limit(self):
         """The known provider output limit is explicitly sent and budgeted."""
         model = _make_model()
+        model.model_config.context_length = 8192
         with patch.object(model, "max_tokens", return_value=None):
             _, call_args = self._call_build_agent(model)
         ms = call_args[1]["model_settings"]
-        assert ms.max_tokens == 4096
+        assert ms.max_tokens == 3072  # (8192 context - 2048 margin) // 2
 
     def test_thinking_model_gets_reasoning(self):
         model = _make_model()
