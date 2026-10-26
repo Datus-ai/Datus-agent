@@ -692,7 +692,7 @@ class TestProxiedToolNames:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("node_name", ["chat", *_FS_DEPENDENT_NODES])
+@pytest.mark.parametrize("node_name", ["chat", *sorted(_FS_DEPENDENT_NODES)])
 @pytest.mark.parametrize("operation", ["write_file", "edit_file", "delete_file"])
 async def test_web_main_and_children_share_existing_proxy_lifecycle(tmp_path, node_name, operation):
     import json
