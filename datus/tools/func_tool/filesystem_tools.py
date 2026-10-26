@@ -283,12 +283,9 @@ class FilesystemFuncTool(BaseTool):
 
             def complete() -> Optional[FuncToolResult]:
                 with path_mutation_lock(target):
-                    if (operation == "delete_file" and target.exists()) or (
-                        operation != "delete_file" and not target.is_file()
-                    ):
-                        return FuncToolResult(
-                            success=0, error=f"Client file operation did not complete: {resolved.display}"
-                        )
+                    # The client reports the operation's success, not the current
+                    # file shape. A later queued operation may already have
+                    # deleted or recreated the path before this result arrives.
                     if self._client_mutation_callback is not None:
                         ownership = history.complete(record, target.read_bytes() if target.is_file() else None)
                         self._client_mutation_callback(target, record.before, ownership)

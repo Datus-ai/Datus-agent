@@ -49,6 +49,34 @@ class MetricFilesystemFuncTool(FilesystemFuncTool):
         self.osi_target_state = osi_target_state
         self.generation_evidence = generation_evidence
 
+    def _write_native_artifact(self, path: Path, content: str, before: Optional[bytes]) -> None:
+        """Publish a native write and immediately link its exact predecessor.
+
+        Only histories created by Web preparation participate. With no Web
+        history, native/CLI execution keeps the existing atomic-write path.
+        """
+        history = self._client_mutation_histories.get(path)
+        record = None
+        after = content.encode("utf-8")
+        if history is not None:
+            snapshot = (before, path.stat().st_mode) if before is not None else None
+            record = history.prepare(snapshot, "native", {"before": before, "after": after})
+        try:
+            if self.osi_target_state is not None:
+                snapshot_content = before
+                existed = before is not None
+                if record is not None and not history.external:
+                    snapshot_content = record.before[0] if record.before is not None else None
+                    existed = record.before is not None
+                self.osi_target_state.record_artifact_snapshot(path, snapshot_content or b"", existed=existed)
+            atomic_write_text(path, content)
+        except BaseException:
+            if record is not None:
+                history.cancel(record)
+            raise
+        if record is not None:
+            history.complete(record, after)
+
     def _require_metric_revision(self, path: str | Path) -> None:
         self.osi_target_state.require_current_revision(path)
 
@@ -215,13 +243,7 @@ class MetricFilesystemFuncTool(FilesystemFuncTool):
                     )
                 serialized = yaml.safe_dump(document, allow_unicode=True, sort_keys=False)
                 try:
-                    if self.osi_target_state is not None:
-                        self.osi_target_state.record_artifact_snapshot(
-                            target_path,
-                            original_content,
-                            existed=not creating,
-                        )
-                    atomic_write_text(target_path, serialized)
+                    self._write_native_artifact(target_path, serialized, None if creating else original_content)
                 except OSError as exc:
                     return FuncToolResult(success=0, error=f"Cannot update {resolved.display}: {exc}")
                 self._notify_mutation(target_path)
@@ -332,9 +354,7 @@ class MetricFilesystemFuncTool(FilesystemFuncTool):
                     )
                 serialized = yaml.safe_dump(document, allow_unicode=True, sort_keys=False)
                 try:
-                    if self.osi_target_state is not None:
-                        self.osi_target_state.record_artifact_snapshot(target_path, original_content)
-                    atomic_write_text(target_path, serialized)
+                    self._write_native_artifact(target_path, serialized, original_content)
                 except OSError as exc:
                     return FuncToolResult(success=0, error=f"Cannot update {resolved.display}: {exc}")
                 serialized_content = serialized.encode("utf-8")
@@ -531,9 +551,7 @@ class MetricFilesystemFuncTool(FilesystemFuncTool):
 
                 serialized = yaml.safe_dump(document, allow_unicode=True, sort_keys=False)
                 try:
-                    if self.osi_target_state is not None:
-                        self.osi_target_state.record_artifact_snapshot(target_path, original_content)
-                    atomic_write_text(target_path, serialized)
+                    self._write_native_artifact(target_path, serialized, original_content)
                 except OSError as exc:
                     return FuncToolResult(success=0, error=f"Cannot update {resolved.display}: {exc}")
                 self._notify_mutation(target_path)
@@ -657,8 +675,7 @@ class MetricFilesystemFuncTool(FilesystemFuncTool):
                     )
                 serialized = yaml.safe_dump(document, allow_unicode=True, sort_keys=False)
                 try:
-                    self.osi_target_state.record_artifact_snapshot(target_path, original_content)
-                    atomic_write_text(target_path, serialized)
+                    self._write_native_artifact(target_path, serialized, original_content)
                 except OSError as exc:
                     return FuncToolResult(success=0, error=f"Cannot update {resolved.display}: {exc}")
                 serialized_content = serialized.encode("utf-8")
@@ -756,9 +773,9 @@ class OsiSemanticModelFilesystemFuncTool(MetricFilesystemFuncTool):
         ]
 
     def _prepare_osi_edit(
-        self, path: str, old_string: str, new_string: str, *, capture_snapshot: bool = True
+        self, path: str, old_string: str, new_string: str
     ) -> tuple[ResolvedPath, str, str, Dict[str, Any], Any] | FuncToolResult:
-        """Share complete-document validation and snapshots with the IDE proxy."""
+        """Share complete-document validation with the IDE proxy."""
         if not old_string:
             return FuncToolResult(success=0, error="old_string must not be empty")
 
@@ -808,11 +825,6 @@ class OsiSemanticModelFilesystemFuncTool(MetricFilesystemFuncTool):
                 error=f"Invalid OSI semantic model edit: {validation_error}",
                 result={"written": False, "semantic_model_file": resolved.display},
             )
-        try:
-            if capture_snapshot and self.osi_target_state is not None:
-                self.osi_target_state.record_artifact_snapshot(target_path, content.encode("utf-8"))
-        except OSError as exc:
-            return FuncToolResult(success=0, error=f"Cannot update {resolved.display}: {exc}")
         return resolved, content, new_content, document, original_document
 
     def _record_osi_edit(
@@ -849,9 +861,9 @@ class OsiSemanticModelFilesystemFuncTool(MetricFilesystemFuncTool):
             prepared = self._prepare_osi_edit(path, old_string, new_string)
             if isinstance(prepared, FuncToolResult):
                 return prepared
-            resolved, _, new_content, document, original_document = prepared
+            resolved, original_content, new_content, document, original_document = prepared
             try:
-                atomic_write_text(target_path, new_content)
+                self._write_native_artifact(target_path, new_content, original_content.encode("utf-8"))
             except OSError as exc:
                 return FuncToolResult(success=0, error=f"Cannot update {resolved.display}: {exc}")
             self._record_osi_edit(target_path, new_content, document, original_document)
@@ -864,7 +876,7 @@ class OsiSemanticModelFilesystemFuncTool(MetricFilesystemFuncTool):
         with semantic_artifact_lock(target_path):
             if self.osi_target_state is not None:
                 self.osi_target_state.web_client_prepared = True
-            prepared = self._prepare_osi_edit(**arguments, capture_snapshot=False)
+            prepared = self._prepare_osi_edit(**arguments)
             if isinstance(prepared, FuncToolResult):
                 return prepared
             _, content, new_content, _, original_document = prepared
@@ -887,14 +899,6 @@ class OsiSemanticModelFilesystemFuncTool(MetricFilesystemFuncTool):
                 ):
                     history.external = True
                 self._client_mutation_histories[target_path] = history
-            elif (
-                not history.records
-                and state is not None
-                and hashlib.sha256(before[0]).hexdigest() == state.artifact_sha256
-            ):
-                # A native, revision-checked authoring tool can advance the same file
-                # between Web batches. Its acknowledged revision remains Agent-owned.
-                history.anchor = before[0]
             record = history.prepare(before, "edit_file", client_arguments)
             if state is not None and history.external:
                 state.web_client_user_edits = True
@@ -959,8 +963,7 @@ class SemanticModelingFilesystemFuncTool(OsiSemanticModelFilesystemFuncTool):
             changed = prepare_metric_uids(document)
             if changed:
                 serialized = yaml.safe_dump(document, allow_unicode=True, sort_keys=False)
-                self.osi_target_state.record_artifact_snapshot(target_path, original_content)
-                atomic_write_text(target_path, serialized)
+                self._write_native_artifact(target_path, serialized, original_content)
                 self._notify_mutation(target_path)
                 self.osi_target_state.record_metric_touch(target_path, serialized.encode("utf-8"), changed)
             return {metric["name"]: metric_uid(metric) for metric in metric_definitions(document).values()}

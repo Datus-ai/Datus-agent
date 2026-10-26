@@ -69,11 +69,8 @@ class ClientMutationHistory:
             return "owned"
         if self._reachable(current, include_pending=True):
             return "pending"
-        # A later IDE write can be in flight while an earlier tool_result is
-        # processed. Defer attribution until pending cards settle; do not turn
-        # a transient/unacknowledged revision into a permanent user-edit flag.
-        if any(not record.completed and not record.canceled for record in self.records):
-            return "pending"
+        # An observed gap is irreversible for this request. A later full-file
+        # write must not hide user content that was already observed here.
         self.external = True
         return "external"
 
@@ -102,6 +99,8 @@ class ClientMutationHistory:
     @staticmethod
     def _apply(record: ClientMutationRecord, content: Optional[bytes]) -> tuple[bool, Optional[bytes]]:
         args = record.arguments
+        if record.operation == "native":
+            return (True, args["after"]) if content == args["before"] else (False, None)
         if record.operation == "write_file":
             return True, args["content"].encode("utf-8")
         if content is None:

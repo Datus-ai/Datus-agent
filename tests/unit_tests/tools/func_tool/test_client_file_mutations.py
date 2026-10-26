@@ -172,7 +172,7 @@ def test_canceled_unknown_revision_is_not_adopted_as_owned():
     original = (b"original", 0o600)
     history = ClientMutationHistory(original)
     pending = history.prepare(original, "write_file", {"content": "proposed"})
-    assert history.classify(b"unacknowledged or user content") == "pending"
+    assert history.classify(b"unacknowledged or user content") == "external"
     history.cancel(pending)
     assert history.classify(b"user content") == "external"
 
@@ -234,3 +234,146 @@ def test_new_request_does_not_inherit_previous_external_ownership(authoring_file
     assert third.complete() is None
     assert rollback() is True
     assert target.read_bytes() == user_version
+
+
+def test_observed_gap_cannot_be_reclaimed_by_a_later_full_write():
+    from datus.tools.func_tool.client_file_mutations import ClientMutationHistory
+
+    original = (b"original", 0o600)
+    history = ClientMutationHistory(original)
+    pending = history.prepare(original, "write_file", {"content": "waiting"})
+    user_version = (b"user saved", 0o600)
+    later = history.prepare(user_version, "write_file", {"content": "user saved and rewritten"})
+    assert history.complete(later, b"user saved and rewritten") == "external"
+    history.cancel(pending)
+    assert history.classify(b"user saved and rewritten") == "external"
+
+
+@pytest.mark.parametrize("authoring_file", ["sql_summary"], indirect=True)
+def test_pending_card_does_not_let_later_rewrite_reclaim_an_observed_user_save(authoring_file):
+    tool, target, rollback, replacements = authoring_file
+    first = prepare(tool, target, replacements[0])
+    execute(target, first)
+    assert first.complete() is None
+    pending = prepare(tool, target, replacements[1])
+    user_content = target.read_text() + "# User saved while a card was pending\n"
+    target.write_text(user_content)
+    content = user_content.replace("SELECT 2", "SELECT 3")
+    later = tool._prepare_client_mutation("write_file", {"path": str(target), "content": content})
+    target.write_text(content)
+    assert later.complete() is None
+    pending.cancel()
+    rollback()
+    assert target.read_text() == content
+
+
+@pytest.mark.parametrize("report_reverse", [False, True])
+@pytest.mark.parametrize("authoring_file", ["sql_summary"], indirect=True)
+def test_queued_delete_recreate_accepts_independently_delayed_results(authoring_file, report_reverse):
+    tool, target, rollback, _ = authoring_file
+    original = target.read_bytes()
+    deletion = tool._prepare_client_mutation("delete_file", {"path": str(target)})
+    recreation = tool._prepare_client_mutation("write_file", {"path": str(target), "content": "sql: SELECT 2\n"})
+    target.unlink()
+    target.write_text(recreation.arguments["content"])
+    order = [recreation, deletion] if report_reverse else [deletion, recreation]
+    assert [mutation.complete() for mutation in order] == [None, None]
+    rollback()
+    assert target.read_bytes() == original
+
+
+@pytest.mark.parametrize("native_kind", ["upsert_metric", "delete_metric", "upsert_dataset", "edit_file"])
+@pytest.mark.parametrize("authoring_file", ["semantic"], indirect=True)
+def test_native_semantic_write_after_last_web_result_rolls_back_without_another_card(authoring_file, native_kind):
+    tool, target, rollback, _ = authoring_file
+    original = target.read_bytes()
+    web = prepare(tool, target, ("SUM(orders.amount)", "SUM(orders.total)"))
+    execute(target, web)
+    assert web.complete() is None
+    model = yaml.safe_load(target.read_text())["semantic_model"][0]
+    metric = model["metrics"][0]
+    metric["description"] = "Native authoring after the last Web result"
+    dataset = model["datasets"][0]
+    dataset["source"] = "warehouse.orders"
+    writes = {
+        "upsert_metric": lambda: tool.upsert_osi_metrics(str(target), [metric]),
+        "delete_metric": lambda: tool.delete_osi_metrics(str(target), [metric["name"]]),
+        "upsert_dataset": lambda: tool.upsert_osi_datasets(str(target), [dataset]),
+        "edit_file": lambda: tool.edit_file(str(target), "Definition for revenue", "Native authoring"),
+    }
+    assert writes[native_kind]().success == 1
+    tool.osi_target_state.require_selected_revision(target)
+    assert rollback() is True
+    assert target.read_bytes() == original
+
+
+@pytest.mark.parametrize("authoring_file", ["semantic"], indirect=True)
+def test_native_write_after_delayed_web_results_preserves_the_entire_batch_baseline(authoring_file):
+    tool, target, rollback, replacements = authoring_file
+    original = target.read_bytes()
+    first, second = [prepare(tool, target, replacement) for replacement in replacements]
+    execute(target, first)
+    execute(target, second)
+    assert second.complete() is None  # First Web result has not arrived yet.
+    metric = yaml.safe_load(target.read_text())["semantic_model"][0]["metrics"][0]
+    metric["description"] = "Native change during delayed Web reporting"
+    assert tool.upsert_osi_metrics(str(target), [metric]).success == 1
+    assert first.complete() is None
+    assert rollback() is True
+    assert target.read_bytes() == original
+
+
+@pytest.mark.parametrize("authoring_file", ["semantic"], indirect=True)
+def test_host_uid_preparation_after_web_edit_updates_the_owned_native_revision(authoring_file):
+    tool, target, rollback, _ = authoring_file
+    original = target.read_bytes()
+    document = yaml.safe_load(original)
+    document["semantic_model"][0]["metrics"].append(_osi_metric("order_count", "COUNT(*)"))
+    web = prepare(tool, target, (original.decode(), yaml.safe_dump(document, sort_keys=False)))
+    execute(target, web)
+    assert web.complete() is None
+    identities = tool.ensure_metric_uids(str(target))
+    assert len(identities["order_count"]) == 24
+    assert rollback() is True
+    assert target.read_bytes() == original
+
+
+@pytest.mark.parametrize("authoring_file", ["semantic"], indirect=True)
+def test_native_dataset_deletion_after_web_edit_updates_the_owned_revision(authoring_file):
+    tool, target, rollback, _ = authoring_file
+    original = target.read_bytes()
+    dataset = dict(yaml.safe_load(original)["semantic_model"][0]["datasets"][0])
+    dataset.update(name="auxiliary", source="warehouse.auxiliary")
+    assert tool.upsert_osi_datasets(str(target), [dataset]).success == 1
+    web = prepare(tool, target, ("SUM(orders.amount)", "SUM(orders.total)"))
+    execute(target, web)
+    assert web.complete() is None
+    assert tool.delete_osi_datasets(str(target), ["auxiliary"]).success == 1
+    assert rollback() is True
+    assert target.read_bytes() == original
+
+
+@pytest.mark.parametrize("authoring_file", ["semantic"], indirect=True)
+def test_failed_native_write_keeps_prior_successful_web_mutations_rollback_owned(authoring_file, monkeypatch):
+    from datus.tools.func_tool import metric_filesystem_tools
+
+    tool, target, rollback, replacements = authoring_file
+    original = target.read_bytes()
+    web = prepare(tool, target, replacements[0])
+    execute(target, web)
+    assert web.complete() is None
+    web_content = target.read_bytes()
+    metric = yaml.safe_load(web_content)["semantic_model"][0]["metrics"][0]
+    metric["description"] = "A native proposal that fails to write"
+
+    def fail_write(*args, **kwargs):
+        raise OSError("injected native write failure")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(metric_filesystem_tools, "atomic_write_text", fail_write)
+        failure = tool.upsert_osi_metrics(str(target), [metric])
+    assert failure.success == 0
+    assert "injected native write failure" in failure.error
+    assert target.read_bytes() == web_content
+    assert rollback() is True
+    assert target.read_bytes() == original
