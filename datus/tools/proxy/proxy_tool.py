@@ -12,6 +12,7 @@ results from stdin, enabling external callers to provide tool results.
 from __future__ import annotations
 
 import asyncio
+import json
 import time
 from fnmatch import fnmatch
 from typing import TYPE_CHECKING, Dict, List, Optional, Set, Tuple
@@ -19,7 +20,8 @@ from typing import TYPE_CHECKING, Dict, List, Optional, Set, Tuple
 from agents import FunctionTool
 from agents.tool_context import ToolContext
 
-from datus.tools.proxy.tool_result_channel import DEFAULT_RESULT_TIMEOUT, ToolResultChannel
+from datus.schemas.action_history import ActionHistory, ActionRole
+from datus.tools.proxy.tool_result_channel import DEFAULT_RESULT_TIMEOUT, ProxiedInvocation, ToolResultChannel
 from datus.utils.loggings import get_logger
 
 if TYPE_CHECKING:
@@ -28,7 +30,8 @@ if TYPE_CHECKING:
 logger = get_logger(__name__)
 
 # Node types whose success-path finalizers depend on local filesystem tools (write_file, etc.)
-# Their filesystem_tools must NOT be proxied; other tools are still proxied.
+# CLI/VS Code keep these filesystem tools native. Web can proxy them because
+# the existing /tools dispatcher retains each original node-bound executor.
 # gen_visual_report / gen_visual_dashboard author their render/*.jsx tree
 # server-side and surface it via ``/api/v1/(report|dashboard)/detail``; proxying
 # write_file / edit_file to the browser would round-trip every chunk for no
@@ -41,17 +44,45 @@ _FS_DEPENDENT_NODES: Set[str] = {
 }
 
 
-def create_proxy_tool(original: FunctionTool, channel: ToolResultChannel) -> FunctionTool:
+def create_proxy_tool(
+    original: FunctionTool, channel: ToolResultChannel, *, source: Optional[str] = None
+) -> FunctionTool:
     """Wrap a FunctionTool so it awaits results from the channel instead of executing."""
 
     async def proxy_invoke(tool_ctx: ToolContext, args_str: str) -> dict:
         call_id = tool_ctx.tool_call_id
+        invocation = None
+        if source == "web":
+
+            async def execute() -> dict:
+                # Keep the original tool's validation, callbacks and finalizer state.
+                # Arguments come from this invocation, never from an HTTP payload.
+                try:
+                    value = await original.on_invoke_tool(tool_ctx, args_str)
+                    if isinstance(value, str):
+                        value = json.loads(value)
+                    return value.model_dump() if hasattr(value, "model_dump") else value
+                except Exception as exc:
+                    logger.exception("Proxied tool '%s' failed", original.name)
+                    return {"success": 0, "error": str(exc), "result": None}
+
+            invocation = ProxiedInvocation(original.name, execute)
+            channel.invocations[call_id] = invocation
         started = time.monotonic()
         logger.info(
             f"Proxy tool '{original.name}' awaiting client result, call_id={call_id}, timeout={DEFAULT_RESULT_TIMEOUT}s"
         )
         try:
             result = await channel.wait_for(call_id, timeout=DEFAULT_RESULT_TIMEOUT)
+            if invocation is not None and isinstance(result, dict) and result.get("success") == 1:
+                if invocation.task is None:
+                    return {
+                        "success": 0,
+                        "error": "The proxied tool was not executed; retry with an updated web client.",
+                    }
+                actual = await invocation.execute()
+                if not actual.get("success"):
+                    return actual
             waited_ms = int((time.monotonic() - started) * 1000)
             logger.info(
                 f"Proxy tool '{original.name}' received client result, call_id={call_id}, waited_ms={waited_ms}"
@@ -81,6 +112,9 @@ def create_proxy_tool(original: FunctionTool, channel: ToolResultChannel) -> Fun
         except RuntimeError as e:
             logger.warning(f"Proxy tool '{original.name}' error: {e}, call_id={call_id}")
             return {"success": 0, "error": str(e), "result": None}
+        finally:
+            if invocation is not None:
+                channel.invocations.pop(call_id, None)
 
     return FunctionTool(
         name=original.name,
@@ -105,7 +139,13 @@ def apply_proxy_tools(
                  proxy futures.
     """
     node.proxy_tool_patterns = proxy_patterns
+    # ChatTaskManager already records the resolved client source on the request's
+    # cloned AgentConfig. Subagents inherit it together with the proxy patterns.
+    source = getattr(getattr(node, "agent_config", None), "_client_source", None)
     target_channel = channel or node.tool_channel
+    # Web descendants share the channel exposed by the parent session's API.
+    if source == "web":
+        node.tool_channel = target_channel
     # ``_FS_DEPENDENT_NODES`` exclusion below relies on ``tool_registry`` being
     # populated. In production that population is normally driven by
     # ``_ensure_permission_hooks``, which runs lazily on the first LLM turn —
@@ -121,7 +161,7 @@ def apply_proxy_tools(
     # Auto-detect nodes whose finalizers depend on filesystem tools
     exclude_categories: Optional[Set[str]] = None
     node_name = getattr(node, "get_node_name", lambda: "")()
-    if node_name in _FS_DEPENDENT_NODES:
+    if source != "web" and node_name in _FS_DEPENDENT_NODES:
         exclude_categories = {"filesystem_tools"}
 
     new_tools = []
@@ -133,7 +173,7 @@ def apply_proxy_tools(
                 new_tools.append(tool)
             else:
                 logger.info(f"Proxying tool: {tool.name}")
-                new_tools.append(create_proxy_tool(tool, target_channel))
+                new_tools.append(create_proxy_tool(tool, target_channel, source=source))
                 proxied_names.add(tool.name)
         else:
             new_tools.append(tool)
@@ -149,6 +189,18 @@ def apply_proxy_tools(
         existing.update(proxied_names)
     else:
         node.proxied_tool_names = proxied_names
+
+
+def stamp_tool_execution(action: ActionHistory, node: AgenticNode) -> None:
+    """Preserve the producing node's execution ownership through nested forwarding."""
+    if (
+        getattr(getattr(node, "agent_config", None), "_client_source", None) == "web"
+        and action.role == ActionRole.TOOL
+        and isinstance(action.input, dict)
+        and "_proxied" not in action.input
+    ):
+        name = action.input.get("function_name", "")
+        action.input = {**action.input, "_proxied": name in getattr(node, "proxied_tool_names", set())}
 
 
 # ── Internal helpers ─────────────────────────────────────────────────

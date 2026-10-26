@@ -70,10 +70,8 @@ def _build_tool_call_content(
         "toolName": function_name,
         "toolParams": arguments,
     }
-    if action.tool_execution is not None:
-        payload_data["proxied"] = action.tool_execution == "client"
-        if action.tool_execution == "server_review":
-            payload_data["serverReview"] = True
+    if isinstance(action.input, dict) and isinstance(action.input.get("_proxied"), bool):
+        payload_data["proxied"] = action.input["_proxied"]
     elif proxied_tool_names is not None:
         payload_data["proxied"] = function_name in proxied_tool_names
     return [IMessageContent(type="call-tool", payload=payload_data)]

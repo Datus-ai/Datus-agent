@@ -299,7 +299,6 @@ class PermissionHooks(AgentHooks):
         fs_policy: Optional[FilesystemPolicy] = None,
         non_interactive: bool = False,
         proxied_tool_names: Optional[Set[str]] = None,
-        file_review_tool_names: Optional[Set[str]] = None,
         project_root: Optional[str] = None,
         config_mutable: bool = True,
         bash_classifier: Optional["BashCommandClassifier"] = None,
@@ -343,9 +342,6 @@ class PermissionHooks(AgentHooks):
                 file auto-allows instead of prompting. ``None`` falls back to the
                 current working directory. Also used as the write target for
                 project-level bash allow grants (``.datus/config.yml``).
-            file_review_tool_names: Server-owned file mutations whose ASK decision
-                is collected by the web tool card. Explicit DENY rules and the
-                original tool's mutation policy remain enforced.
             config_mutable: Whether project configuration may be persisted.
                 When ``False`` (for example, the multi-tenant API), permission
                 prompts omit the project-level choice while retaining once and
@@ -369,7 +365,6 @@ class PermissionHooks(AgentHooks):
         self.fs_policy = fs_policy
         self.non_interactive = non_interactive
         self.proxied_tool_names = proxied_tool_names
-        self.file_review_tool_names = file_review_tool_names
         self.project_root = project_root
         self.config_mutable = bool(config_mutable)
         self.bash_classifier = bash_classifier
@@ -537,18 +532,6 @@ class PermissionHooks(AgentHooks):
 
         # Get tool category and pattern name for permission checking
         category, pattern_name = self._get_category_and_pattern(tool_name, context)
-
-        # Web review is the ASK interaction for these server-owned file changes.
-        # The original tool still enforces its path/mutation policy, and explicit
-        # DENY rules must reject before the browser can approve execution.
-        if self.file_review_tool_names and tool_name in self.file_review_tool_names and not self.non_interactive:
-            if self.permission_manager.check_permission(category, pattern_name, self.node_name) == PermissionLevel.DENY:
-                raise PermissionDeniedException(
-                    f"Tool '{tool_name}' is denied by permission rules",
-                    tool_category=category,
-                    tool_name=pattern_name,
-                )
-            return
 
         logger.debug(f"Permission check for tool '{tool_name}': category='{category}', pattern='{pattern_name}'")
 

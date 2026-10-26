@@ -689,3 +689,190 @@ class TestProxiedToolNames:
 
         assert node.proxied_tool_names is held_reference
         assert held_reference == {"read_file"}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("node_name", ["chat", *_FS_DEPENDENT_NODES])
+@pytest.mark.parametrize("operation", ["write_file", "edit_file", "delete_file"])
+async def test_web_main_and_children_share_existing_proxy_lifecycle(tmp_path, node_name, operation):
+    import json
+    from unittest.mock import AsyncMock, Mock
+
+    from datus.api.routes.tool_routes import execute_tool
+    from datus.api.services.action_sse_converter import _build_tool_call_content
+    from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
+    from datus.tools.func_tool.filesystem_tools import FilesystemFuncTool
+    from datus.tools.permission.permission_hooks import PermissionHooks
+    from datus.tools.permission.permission_manager import PermissionManager
+    from datus.tools.permission.profiles import get_profile
+    from datus.tools.proxy.proxy_tool import stamp_tool_execution
+
+    target = tmp_path / "artifact.txt"
+    target.write_text("before")
+    guard, changed = Mock(), Mock()
+    fs = FilesystemFuncTool(root_path=str(tmp_path), strict=True, mutation_guard=guard, mutation_callback=changed)
+    channel = ToolResultChannel()
+    node = SimpleNamespace(
+        tools=fs.available_tools(),
+        tool_channel=ToolResultChannel(),
+        tool_registry=ToolRegistry({t.name: "filesystem_tools" for t in fs.available_tools()}),
+        proxied_tool_names=set(),
+        get_node_name=lambda: node_name,
+        scope="owner",
+        agent_config=SimpleNamespace(_client_source="web"),
+    )
+    apply_proxy_tools(node, ["write_file", "edit_file", "delete_file"], channel=channel)
+    assert node.tool_channel is channel
+    tool = next(t for t in node.tools if t.name == operation)
+    args = {"path": "artifact.txt"}
+    args.update({"content": "after"} if operation == "write_file" else {})
+    args.update({"old_string": "before", "new_string": "after"} if operation == "edit_file" else {})
+    ctx = SimpleNamespace(tool_call_id="call-web", tool_arguments=json.dumps(args))
+    broker = SimpleNamespace(request=AsyncMock())
+    hooks = PermissionHooks(
+        broker=broker,
+        permission_manager=PermissionManager(get_profile("normal")),
+        node_name=node_name,
+        tool_registry=node.tool_registry,
+        proxied_tool_names=node.proxied_tool_names,
+    )
+    await hooks.on_tool_start(ctx, None, tool)
+    broker.request.assert_not_called()
+    action = ActionHistory(
+        action_id="call-web",
+        role=ActionRole.TOOL,
+        action_type="tool_call",
+        input={"function_name": operation, "arguments": args},
+        status=ActionStatus.PROCESSING,
+    )
+    stamp_tool_execution(action, node)
+    assert _build_tool_call_content(action, set())[0].payload["proxied"] is True
+    running = asyncio.create_task(tool.on_invoke_tool(ctx, json.dumps(args)))
+    await asyncio.sleep(0)
+    assert target.read_text() == "before"
+    task = SimpleNamespace(node=node, status="running")
+    svc = SimpleNamespace(task_manager=SimpleNamespace(get_task=lambda _: task))
+    execute_args = (
+        operation,
+        svc,
+        None,
+        {"path": "forged", "content": "untrusted"},
+        SimpleNamespace(user_id="owner"),
+        "session",
+        "call-web",
+    )
+    first, duplicate = await asyncio.gather(execute_tool(*execute_args), execute_tool(*execute_args))
+    assert first.data.success == duplicate.data.success == 1
+    guard.assert_called_once()
+    changed.assert_called_once()
+    assert not running.done()  # The existing tool_result still owns completion/Finish Edit.
+    assert target.exists() == (operation != "delete_file")
+    await channel.publish("call-web", {"success": 1, "result": "user finished editing"})
+    assert (await running)["result"] == "user finished editing"
+    assert not channel.invocations
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stop", [False, True])
+async def test_web_cancel_or_stop_never_executes_the_original_tool(stop):
+    from unittest.mock import AsyncMock
+
+    original = AsyncMock(return_value={"success": 1})
+    tool = FunctionTool(
+        name="write_file", description="write", params_json_schema={"type": "object"}, on_invoke_tool=original
+    )
+    channel = ToolResultChannel()
+    proxy = create_proxy_tool(tool, channel, source="web")
+    running = asyncio.create_task(proxy.on_invoke_tool(SimpleNamespace(tool_call_id="cancel"), "{}"))
+    await asyncio.sleep(0)
+    if stop:
+        channel.cancel_all("stop")
+    else:
+        await channel.publish("cancel", {"success": 0, "error": "user canceled"})
+    assert (await running)["success"] == 0
+    original.assert_not_awaited()
+    assert not channel.invocations
+
+
+@pytest.mark.asyncio
+async def test_web_proxy_preserves_original_validation_failure():
+    from unittest.mock import AsyncMock
+
+    original = AsyncMock(side_effect=ValueError("outside the semantic authoring target"))
+    tool = FunctionTool(
+        name="edit_file", description="edit", params_json_schema={"type": "object"}, on_invoke_tool=original
+    )
+    channel = ToolResultChannel()
+    proxy = create_proxy_tool(tool, channel, source="web")
+    running = asyncio.create_task(proxy.on_invoke_tool(SimpleNamespace(tool_call_id="blocked"), "{}"))
+    await asyncio.sleep(0)
+    result = await channel.invocations["blocked"].execute()
+    assert result["success"] == 0
+    # Even an erroneous success report cannot override the actual executor's failure.
+    await channel.publish("blocked", {"success": 1})
+    assert (await running)["success"] == 0
+
+
+@pytest.mark.asyncio
+async def test_nested_web_nodes_reuse_the_parent_result_channel():
+    from unittest.mock import AsyncMock
+
+    shared = ToolResultChannel()
+    nodes = []
+    for _ in range(3):
+        tool = FunctionTool(
+            name="write_file",
+            description="write",
+            params_json_schema={"type": "object"},
+            on_invoke_tool=AsyncMock(return_value={"success": 1}),
+        )
+        node = SimpleNamespace(
+            tools=[tool],
+            tool_channel=ToolResultChannel(),
+            tool_registry=ToolRegistry({"write_file": "filesystem_tools"}),
+            proxied_tool_names=set(),
+            agent_config=SimpleNamespace(_client_source="web"),
+            get_node_name=lambda: "custom",
+        )
+        apply_proxy_tools(node, ["write_file"], channel=shared)
+        nodes.append(node)
+        shared = node.tool_channel
+    running = asyncio.create_task(nodes[-1].tools[0].on_invoke_tool(SimpleNamespace(tool_call_id="nested"), "{}"))
+    await asyncio.sleep(0)
+    assert (await nodes[0].tool_channel.invocations["nested"].execute())["success"] == 1
+    await nodes[0].tool_channel.publish("nested", {"success": 1})
+    assert (await running)["success"] == 1
+
+
+@pytest.mark.parametrize("source", [None, "cli", "vscode"])
+@pytest.mark.parametrize("node_name", sorted(_FS_DEPENDENT_NODES))
+def test_cli_and_vscode_keep_native_filesystem_and_existing_action_shape(source, node_name):
+    from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
+    from datus.tools.proxy.proxy_tool import stamp_tool_execution
+
+    original = MagicMock()
+    tool = FunctionTool(
+        name="write_file", description="write", params_json_schema={"type": "object"}, on_invoke_tool=original
+    )
+    own_channel, parent_channel = ToolResultChannel(), ToolResultChannel()
+    node = SimpleNamespace(
+        tools=[tool],
+        tool_channel=own_channel,
+        tool_registry=ToolRegistry({"write_file": "filesystem_tools"}),
+        proxied_tool_names=set(),
+        agent_config=SimpleNamespace(_client_source=source),
+        get_node_name=lambda: node_name,
+    )
+    apply_proxy_tools(node, ["filesystem_tools.*"], channel=parent_channel)
+    assert node.tools[0].on_invoke_tool is original
+    assert node.tool_channel is own_channel
+    action = ActionHistory(
+        action_id="cli",
+        role=ActionRole.TOOL,
+        action_type="tool_call",
+        input={"function_name": "write_file", "arguments": {}},
+        status=ActionStatus.PROCESSING,
+    )
+    before = action.model_dump()
+    stamp_tool_execution(action, node)
+    assert action.model_dump() == before

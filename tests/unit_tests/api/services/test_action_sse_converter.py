@@ -168,7 +168,7 @@ class TestBuildToolCallContent:
     def test_child_execution_owner_overrides_parent_proxy_names(self):
         action = _make_action(input={"function_name": "edit_file", "arguments": {}}, depth=1)
         # The child owns this call; the parent's identically named tool is proxied.
-        action = action.model_copy(update={"tool_execution": "server"})
+        action.input = {**action.input, "_proxied": False}
         contents = _build_tool_call_content(action, proxied_tool_names={"edit_file"})
         assert contents[0].payload["proxied"] is False
 
