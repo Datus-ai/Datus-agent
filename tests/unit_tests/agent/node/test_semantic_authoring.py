@@ -395,3 +395,47 @@ def test_semantic_authoring_base_validates_compiled_sql_with_warehouse_explain(r
 
     assert node._warehouse_dry_run_compiled_sql("SELECT 1;") == expected
     assert calls == [("EXPLAIN SELECT 1", "warehouse", "analytics")]
+
+
+def _ontology_config(ontology_dir):
+    return SimpleNamespace(current_datasource="warehouse", path_manager=SimpleNamespace(ontology_dir=ontology_dir))
+
+
+@pytest.mark.parametrize(
+    "config",
+    [None, SimpleNamespace(current_datasource="warehouse", path_manager=SimpleNamespace()), _ontology_config(object())],
+    ids=["no_config", "no_ontology_dir", "ontology_dir_not_a_path"],
+)
+def test_inline_mapping_models_is_empty_when_the_ontology_dir_is_unresolvable(config):
+    assert semantic_authoring.inline_mapping_models(config) == []
+
+
+def test_inline_mapping_models_skips_unreadable_and_non_mapping_files(tmp_path):
+    """A broken or unrelated file beside a mapping never breaks the authoring inventory."""
+    ontology_dir = tmp_path / "subject" / "ontology"
+    ontology_dir.mkdir(parents=True)
+    (ontology_dir / "broken.yaml").write_text("ontology: [\n", encoding="utf-8")
+    (ontology_dir / "notes.json").write_text("[1, 2]", encoding="utf-8")
+    (ontology_dir / "northstar.mapping.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "name": "northstar_mapping",
+                "ontology_ref": {"name": "Northstar", "document": {"name": "Northstar", "ontology": []}},
+                "semantic_model_ref": {"name": "northstar", "document": {"name": "northstar", "datasets": []}},
+                "concept_mappings": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    # The ontology directory is flat: a subdirectory is not part of it.
+    (ontology_dir / "archive").mkdir()
+    (ontology_dir / "archive" / "old.mapping.yaml").write_text(
+        (ontology_dir / "northstar.mapping.yaml").read_text(encoding="utf-8"), encoding="utf-8"
+    )
+
+    found = semantic_authoring.inline_mapping_models(_ontology_config(ontology_dir))
+
+    assert [(m["semantic_model_name"], m["mapping_file"]) for m in found] == [
+        ("northstar", "subject/ontology/northstar.mapping.yaml")
+    ]

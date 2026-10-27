@@ -7,8 +7,10 @@ dry-run shape, engine lifecycle, and connections wiring."""
 
 from __future__ import annotations
 
+import asyncio
 import os
 import sys
+import threading
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
@@ -232,7 +234,9 @@ semantic_model:
     assert running.type == "window"
     assert running.path == ["sales", "revenue"]
     assert running.unit == "USD"
-    assert running.metadata["requires_time_axis"] is True
+    # The listing compiles nothing; get_dimensions answers the time axis.
+    assert "requires_time_axis" not in running.metadata
+    assert FakeEngine.instances[-1].compile_calls == []
     assert running.metadata["window"] == {
         "type": "cumulative",
         "function": "sum",
@@ -306,12 +310,17 @@ semantic_model:
     monkeypatch.setattr(FakeEngine, "metrics", lambda self: [dict(row) for row in rows])
     monkeypatch.setattr(FakeEngine, "time_axis_metrics", {"first_revenue"})
 
-    metrics = {metric.name: metric for metric in await make_runtime().list_metrics()}
+    runtime = make_runtime()
+    metrics = {metric.name: metric for metric in await runtime.list_metrics()}
     assert metrics["order_rank"].metadata["window_family"] == "rank"
     assert metrics["order_rank"].metadata["window_function"] == "rank"
-    assert metrics["order_rank"].metadata["requires_time_axis"] is False
-    assert metrics["first_revenue"].metadata["requires_time_axis"] is True
-    assert metrics["revenue_range"].metadata["requires_time_axis"] is False
+
+    def axis_required(dimensions):
+        return any(d.time_axis_required for d in dimensions)
+
+    assert not axis_required(await runtime.get_dimensions("order_rank"))
+    assert axis_required(await runtime.get_dimensions("first_revenue"))
+    assert not axis_required(await runtime.get_dimensions("revenue_range"))
 
 
 @pytest.mark.asyncio
@@ -533,7 +542,83 @@ async def test_get_dimensions_trusts_native_membership_without_non_time_probes(m
     ]
     engine = FakeEngine.instances[-1]
     assert engine.dimension_calls[-1] == "revenue"
-    assert [call["query"].get("group_by") for call in engine.compile_calls] == [[]]
+    # The time-axis requirement is Dosi's (Engine.metric); no non-time row is compiled to find it.
+    assert engine.compile_calls == []
+
+
+@pytest.mark.asyncio
+async def test_list_metrics_passes_through_what_dosi_gathers_over_the_tree(make_runtime, monkeypatch):
+    """`required_dimensions` is gathered by Dosi over every metric a value is
+    computed from; rebuilding it here would miss what a member's member
+    declares. A level-of-detail metric states its declaration as `derive_expr`."""
+    rows = [
+        {
+            "name": "revenue_share",
+            "kind": "ratio",
+            "datasets": ["orders"],
+            "measures": ["revenue"],
+            "derive_family": "compose",
+            "derive_expr": "revenue / revenue_company_total",
+            "required_dimensions": ["stores.region"],
+        },
+        {
+            "name": "revenue_company_total",
+            "kind": "aggregate",
+            "datasets": ["orders"],
+            "measures": ["revenue"],
+            "derive_family": "lod",
+            "derive_base": "revenue",
+            "derive_expr": "fixed(revenue)",
+            "required_dimensions": [],
+        },
+    ]
+    monkeypatch.setattr(FakeEngine, "metrics", lambda self: [dict(r) for r in rows])
+
+    metrics = {metric.name: metric for metric in await make_runtime().list_metrics()}
+
+    share = metrics["revenue_share"].metadata
+    assert share["required_dimensions"] == ["stores.region"]
+    total = metrics["revenue_company_total"].metadata
+    assert total["derive_family"] == "lod"
+    assert total["derive_expr"] == "fixed(revenue)"
+    assert total["required_dimensions"] == []
+
+
+@pytest.mark.asyncio
+async def test_get_dimensions_states_a_fixed_fields_definition_and_passes_its_params(make_runtime, monkeypatch):
+    params = [{"name": "window_start", "type": "string", "default": "1970-01-01", "declared_on": "days_in_window"}]
+    native_rows = [
+        {
+            "name": "orders.window_days",
+            "is_time": False,
+            "lod_mode": "fixed",
+            "lod_dims": ["orders.user_id"],
+            "lod_base": "days_in_window",
+            "params": params,
+        },
+        {
+            "name": "orders.company_revenue",
+            "is_time": False,
+            "lod_mode": "fixed",
+            "lod_dims": [],
+            "lod_base": "revenue",
+        },
+        {"name": "orders.status", "is_time": False},
+    ]
+
+    def dimensions(self, metric=None):
+        self.dimension_calls.append(metric)
+        return [dict(row) for row in native_rows]
+
+    monkeypatch.setattr(FakeEngine, "dimensions", dimensions)
+
+    window_days, company_revenue, status = await make_runtime().get_dimensions("revenue")
+
+    assert window_days.definition == "fixed(days_in_window, orders.user_id)"
+    assert window_days.params == params
+    assert company_revenue.definition == "fixed(revenue)"
+    assert status.definition is None
+    assert status.params is None
 
 
 @pytest.mark.asyncio
@@ -622,6 +707,103 @@ async def test_window_dimension_discovery_probes_each_grain(make_runtime, monkey
         "week",
         "month",
     ]
+
+
+@pytest.mark.asyncio
+async def test_describe_metric_returns_the_engine_description(make_runtime):
+    detail = await make_runtime().describe_metric("running_revenue")
+
+    assert detail["name"] == "running_revenue"
+    assert detail["expr"] == "SUM(orders.running_revenue)"
+    assert detail["requires_time_axis"] is True
+
+
+@pytest.mark.asyncio
+async def test_describe_metric_unknown_name_is_structured(make_runtime):
+    with pytest.raises(SemanticValidationException) as exc:
+        await make_runtime().describe_metric("revenues")
+    assert exc.value.payload.code == "unknown_metric"
+
+
+@pytest.mark.asyncio
+async def test_describe_dataset_finds_the_dataset_or_lists_the_names(make_runtime):
+    runtime = make_runtime()
+    name = FakeEngine(model_path="x").datasets()[0]["name"]
+
+    detail = await runtime.describe_dataset(name)
+    assert detail["name"] == name
+
+    with pytest.raises(SemanticValidationException) as exc:
+        await runtime.describe_dataset("nope")
+    assert exc.value.payload.code == "unknown_dataset"
+    assert name in exc.value.payload.message
+
+
+def test_where_needs_context_keeps_the_condition(fake_binding):
+    from datus.tools.semantic_tools.dosi.errors import validation_error_from_query_error
+
+    error = fake_binding.QueryError(
+        "the where condition t.c = 1 applies to every metric",
+        code="where_needs_context",
+        condition="t.c = 1",
+        hint="move t.c = 1 to context_filter: it applies to t.customer_value, which can read it",
+    )
+
+    payload = validation_error_from_query_error(error, requested_metrics=["m"])
+
+    assert payload.code == "where_needs_context"
+    assert payload.condition == "t.c = 1"
+    assert "condition: t.c = 1" in payload.message
+    assert "applies to t.customer_value" in payload.message
+
+
+@pytest.mark.parametrize("code", ["lod_dimension_not_grouped", "window_exclude_not_grouped"])
+def test_a_missing_required_dimension_becomes_a_concrete_retry(fake_binding, code):
+    from datus.tools.semantic_tools.dosi.errors import validation_error_from_query_error
+
+    error = fake_binding.QueryError(
+        "exclude(revenue, orders.region) names orders.region, which the query does not group by",
+        code=code,
+        hint='add "orders.region" to group_by',
+        missing_dimensions=["orders.region"],
+    )
+
+    payload = validation_error_from_query_error(
+        error, requested_metrics=["region_share"], requested_dimensions=["orders.channel"]
+    )
+
+    assert payload.required_dimensions == ["orders.region"]
+    assert payload.suggested_retry == {
+        "metrics": ["region_share"],
+        "dimensions": ["orders.channel", "orders.region"],
+    }
+    assert 'add "orders.region" to group_by' in payload.message
+
+
+def test_a_missing_time_axis_is_retried_on_metric_time(fake_binding):
+    from datus.tools.semantic_tools.dosi.errors import validation_error_from_query_error
+
+    error = fake_binding.QueryError(
+        "window metrics order by their time axis orders.created_at, which is not in the group-by with a grain",
+        code="time_axis_not_grouped",
+        candidates=["orders.created_at", "metric_time"],
+        missing_dimensions=["orders.created_at"],
+    )
+
+    payload = validation_error_from_query_error(
+        error,
+        requested_metrics=["revenue_mom"],
+        requested_dimensions=["orders.region"],
+        requested_time_granularity="month",
+    )
+
+    # Datus groups the axis as metric_time at a grain, whichever field the engine names.
+    assert payload.required_dimensions == ["metric_time"]
+    assert payload.suggested_retry == {
+        "metrics": ["revenue_mom"],
+        "dimensions": ["orders.region", "metric_time"],
+        "time_granularity": "month",
+    }
 
 
 @pytest.mark.asyncio
@@ -791,6 +973,70 @@ async def test_dry_run_returns_sql_contract(make_runtime):
     assert call["dialect"] == "postgres"
     assert call["pretty"] is True
     assert not engine.execute_calls
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("server_type,target", [(None, "hive"), ("hive", "hive"), ("inceptor", "inceptor")])
+async def test_hive_profile_selects_the_same_compile_and_execution_target(
+    make_runtime, fake_binding, server_type, target
+):
+    fake_binding.DIALECTS.extend(["hive", "inceptor"])
+    profile = {"type": "hive", "host": "localhost", "auth": "KERBEROS", "kerberos_service_name": "hive"}
+    if server_type:
+        profile["server_type"] = server_type
+    runtime = make_runtime(db_config=profile, datasource="warehouse", timeout_seconds=2.5)
+    await runtime.query_metrics(metrics=["revenue"], dry_run=True)
+    engine = FakeEngine.instances[-1]
+    assert engine.compile_calls[-1]["dialect"] == target
+    assert engine.connections["warehouse"]["type"] == "hive"
+    assert engine.connections["warehouse"].get("server_type") == server_type
+    await runtime.query_metrics(metrics=["revenue"])
+    assert engine.execute_calls[-1]["connection"] == "warehouse"
+    assert engine.execute_calls[-1]["timeout_secs"] == 2.5
+
+
+@pytest.mark.asyncio
+async def test_hive_profile_rejects_an_old_binding_before_generating_wrong_sql(make_runtime):
+    runtime = make_runtime(db_config={"type": "hive", "server_type": "inceptor"})
+    with pytest.raises(SemanticCoreException, match="does not support inceptor"):
+        await runtime.query_metrics(metrics=["revenue"], dry_run=True)
+
+
+@pytest.mark.asyncio
+async def test_query_cancellation_signals_only_its_native_request(make_runtime, fake_binding, monkeypatch):
+    started, release = threading.Event(), threading.Event()
+    tokens = []
+
+    class Token:
+        def __init__(self):
+            self.cancelled = False
+            tokens.append(self)
+
+        def cancel(self):
+            self.cancelled = True
+
+    original = FakeEngine.execute
+
+    def execute(engine, query, **kwargs):
+        kwargs.pop("cancellation")
+        started.set()
+        assert release.wait(5), "test worker was not released"
+        return original(engine, query, **kwargs)
+
+    fake_binding.CancellationToken = Token
+    monkeypatch.setattr(FakeEngine, "execute", execute)
+    runtime = make_runtime()
+    task = asyncio.create_task(runtime.query_metrics(metrics=["revenue"]))
+    try:
+        assert await asyncio.to_thread(started.wait, 2)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert tokens[0].cancelled
+    finally:
+        release.set()
+    await runtime.query_metrics(metrics=["revenue"])
+    assert len(tokens) == 2 and not tokens[1].cancelled
 
 
 @pytest.mark.asyncio
@@ -1131,6 +1377,61 @@ async def test_semantic_models_path_rejects_cross_model_query(tmp_path, monkeypa
     assert exc.value.payload.metrics == ["order_count", "active_users"]
     assert "order_count -> orders_model" in exc.value.payload.message
     assert "active_users -> users_model" in exc.value.payload.message
+
+
+def _orders_and_users_runtime(tmp_path, monkeypatch):
+    from datus.tools.semantic_tools.dosi.config import DosiConfig
+    from datus.tools.semantic_tools.dosi.runtime import DosiRuntime
+
+    _write_model(tmp_path / "orders.yaml", "orders_model", ["order_count", "revenue"])
+    _write_model(tmp_path / "users.yaml", "users_model", ["active_users"])
+    _install_file_catalog(monkeypatch, {"orders": ["order_count", "revenue"], "users": ["active_users"]})
+    return DosiRuntime(DosiConfig(semantic_models_path=str(tmp_path)))
+
+
+@pytest.mark.asyncio
+async def test_a_field_asked_for_as_a_metric_is_named_a_field(tmp_path, monkeypatch):
+    """Beside the whole metric catalog, a field in ``metrics`` read as "pick another metric"."""
+    runtime = _orders_and_users_runtime(tmp_path, monkeypatch)
+
+    with pytest.raises(SemanticValidationException) as exc:
+        await runtime.query_metrics(metrics=["order_count", "orders.status"], dry_run=True)
+
+    payload = exc.value.payload
+    assert (payload.code, payload.metrics) == ("unknown_metric", ["orders.status"])
+    assert "orders.status is a field, not a metric: group by it in `dimensions`" in payload.message
+    assert "candidates" not in payload.message
+
+
+@pytest.mark.asyncio
+async def test_a_model_whose_dimensions_fail_leaves_the_unknown_metric_message(tmp_path, monkeypatch):
+    """The field check is only a hint: a model it cannot read keeps the plain refusal."""
+    runtime = _orders_and_users_runtime(tmp_path, monkeypatch)
+
+    def dimensions(engine, metric=None):
+        raise RuntimeError("model unreadable")
+
+    monkeypatch.setattr(FakeEngine, "dimensions", dimensions)
+
+    with pytest.raises(SemanticValidationException) as exc:
+        await runtime.query_metrics(metrics=["order_count", "orders.status"], dry_run=True)
+
+    message = exc.value.payload.message
+    assert "is a field" not in message
+    assert message.endswith("candidates: active_users, order_count, revenue")
+
+
+@pytest.mark.asyncio
+async def test_an_unknown_name_beside_a_field_keeps_the_metric_candidates(tmp_path, monkeypatch):
+    runtime = _orders_and_users_runtime(tmp_path, monkeypatch)
+
+    with pytest.raises(SemanticValidationException) as exc:
+        await runtime.query_metrics(metrics=["order_count", "status", "nope"], dry_run=True)
+
+    message = exc.value.payload.message
+    assert "status is a field" in message
+    assert "nope" not in message.split("|")[1]
+    assert message.endswith("candidates: active_users, order_count, revenue")
 
 
 @pytest.mark.asyncio
@@ -1483,3 +1784,31 @@ async def test_dimensions_without_native_requirements_remain_optional(make_runti
         not dimension.required and dimension.required_reason is None and not dimension.time_axis_required
         for dimension in dimensions
     )
+
+
+@pytest.mark.asyncio
+async def test_query_metrics_preserves_warehouse_execution_diagnostics(make_runtime, monkeypatch):
+    original = FakeEngine.execute
+    info = [{"query_execution_id": "athena-1", "state": "SUCCEEDED", "scanned_bytes": 123}]
+
+    def execute(self, *args, **kwargs):
+        return {**original(self, *args, **kwargs), "execution_info": info}
+
+    monkeypatch.setattr(FakeEngine, "execute", execute)
+    result = await make_runtime().query_metrics(metrics=["order_count"])
+    assert result.metadata["execution_info"] == info
+
+
+@pytest.mark.asyncio
+async def test_execution_failure_preserves_cancellation_diagnostics(make_runtime, monkeypatch, fake_binding):
+    info = [{"query_execution_id": "athena-1", "cancellation_requested": True, "cancellation_confirmed": False}]
+    error = fake_binding.ExecuteError("deadline exceeded", code="timeout")
+    error.execution_info = info
+
+    def execute(self, *args, **kwargs):
+        raise error
+
+    monkeypatch.setattr(FakeEngine, "execute", execute)
+    with pytest.raises(SemanticCoreException) as caught:
+        await make_runtime().query_metrics(metrics=["order_count"])
+    assert caught.value.execution_info == info

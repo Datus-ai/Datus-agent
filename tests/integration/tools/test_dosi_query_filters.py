@@ -20,6 +20,7 @@ from datus.configuration.agent_config import AgentConfig, NodeConfig
 from datus.tools.func_tool import DBFuncTool, ReportArtifactTools
 from datus.tools.func_tool.base import FuncToolResult
 from datus.tools.func_tool.semantic_tools import SemanticTools
+from datus.utils.query_result_text import parse_query_result_text
 
 pytestmark = [pytest.mark.acceptance, pytest.mark.nightly]
 
@@ -84,7 +85,7 @@ def _rows(tool: SemanticTools, result) -> list[dict[str, str]]:
     compressed preview is not enough, so the test consumes the same contract.
     """
     assert result.success == 1, result.error
-    page = tool.get_query_metrics_result(result.result["result_id"])
+    page = tool.get_query_metrics_result(parse_query_result_text(result.result).result_id)
     assert page.success == 1, page.error
     return list(csv.DictReader(io.StringIO(page.result["csv"])))
 
@@ -294,7 +295,7 @@ def test_metric_artifact_uses_real_engine_and_enforced_connector(query_tool, mon
     ref = {"path": ["Scores"], "name": "score_total"}
     monkeypatch.setattr(
         query_tool,
-        "get_metric",
+        "metric_record",
         lambda **kwargs: FuncToolResult(
             success=1,
             result={**ref, "dimensions": [{"name": item} for item in PRODUCT_ITEM]},
@@ -352,7 +353,7 @@ def test_standalone_published_metric_uses_frozen_model_after_studio_model_change
     ref = {"path": ["Scores"], "name": "score_total"}
     monkeypatch.setattr(
         query_tool,
-        "get_metric",
+        "metric_record",
         lambda **kwargs: FuncToolResult(
             success=1,
             result={**ref, "dimensions": [{"name": "scores.product"}]},
@@ -450,7 +451,7 @@ def test_metric_artifact_preserves_native_projection_when_no_rows_match(query_to
     ref = {"path": ["Scores"], "name": "score_total"}
     monkeypatch.setattr(
         query_tool,
-        "get_metric",
+        "metric_record",
         lambda **kwargs: FuncToolResult(
             success=1, result={**ref, "dimensions": [{"name": item} for item in PRODUCT_ITEM]}
         ),
@@ -459,7 +460,7 @@ def test_metric_artifact_preserves_native_projection_when_no_rows_match(query_to
         metrics=[ref["name"]], dimensions=dimensions, where="scores.product = 'no_matching_product'"
     )
     assert native.success == 1, native.error
-    native_page = query_tool.get_query_metrics_result(native.result["result_id"])
+    native_page = query_tool.get_query_metrics_result(parse_query_result_text(native.result).result_id)
     assert native_page.success == 1, native_page.error
     native_rows = csv.DictReader(io.StringIO(native_page.result["csv"]))
     assert list(native_rows) == []
@@ -511,7 +512,7 @@ def test_published_dashboard_keeps_distinct_native_models(query_tool, monkeypatc
     second_path = model_path.with_name("double.yaml")
     second_path.write_text(yaml.safe_dump(second), encoding="utf-8")
     monkeypatch.setattr(
-        query_tool, "get_metric", lambda name, path: FuncToolResult(success=1, result={"name": name, "path": path})
+        query_tool, "metric_record", lambda name, path: FuncToolResult(success=1, result={"name": name, "path": path})
     )
     db_tool = DBFuncTool(agent_config=query_tool.agent_config)
     tools = DashboardArtifactTools(

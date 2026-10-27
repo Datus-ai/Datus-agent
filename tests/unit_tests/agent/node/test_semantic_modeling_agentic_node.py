@@ -132,6 +132,7 @@ def test_unified_dosi_node_composes_existing_authoring_surfaces(real_agent_confi
         "glob",
         "grep",
         "validate_semantic",
+        "write_semantic_model_plan_file",
     }.issubset(tool_names)
     assert {
         "write_file",
@@ -140,7 +141,6 @@ def test_unified_dosi_node_composes_existing_authoring_surfaces(real_agent_confi
         "import_database_file",
         "bash",
         "task",
-        "write_semantic_model_plan_file",
     }.isdisjoint(tool_names)
     assert node.db_func_tool.read_only is True
     assert node._get_required_skills() == ["dosi-semantic-authoring"]
@@ -160,6 +160,24 @@ def test_unified_dosi_node_composes_existing_authoring_surfaces(real_agent_confi
     assert "## OSI Core reference shapes" in prompt
     assert "## Active DATUS capability directory" in prompt
     assert "ensure_metric_uids" not in tool_names
+
+
+@pytest.mark.parametrize(
+    "tools_config", [None, "semantic_tools.*", "*", "semantic_tools.write_semantic_model_plan_file"]
+)
+def test_plan_file_tool_available_with_default_and_wildcard_configs(real_agent_config, mock_llm_create, tools_config):
+    from datus.agent.node.semantic_modeling_agentic_node import SemanticModelingAgenticNode
+
+    config = real_agent_config.agentic_nodes.setdefault("semantic_modeling", {})
+    if tools_config is None:
+        config.pop("tools", None)
+    else:
+        config["tools"] = tools_config
+
+    node = SemanticModelingAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
+    assert sum(tool.name == "write_semantic_model_plan_file" for tool in node.tools) == 1
+    node._populate_tool_registry()
+    assert node.tool_registry.get("write_semantic_model_plan_file") == "semantic_tools"
 
 
 def test_plan_file_uses_project_root_for_vscode_source(real_agent_config, mock_llm_create, tmp_path, monkeypatch):
@@ -571,6 +589,15 @@ async def test_retries_unsupported_outcome_once_before_finalizing(real_agent_con
             "blocked",
             False,
         ),
+        (
+            {
+                "status": "blocked",
+                "blocker_code": "semantic_model_inline_in_mapping",
+                "output": "The model is inline in an Ossie mapping document; edit the mapping directly",
+            },
+            "blocked",
+            False,
+        ),
     ],
 )
 @pytest.mark.asyncio
@@ -593,6 +620,7 @@ async def test_supported_outcome_does_not_retry(
     assert _stream_call_count(mock_llm_create) == 1
     assert actions[-1].output["status"] == expected_status
     assert actions[-1].output["success"] is expected_success
+    assert actions[-1].output["blocker_code"] == payload.get("blocker_code")
     if expected_status == "generated":
         node._finalize_selected_osi_artifact.assert_called_once_with()
     else:

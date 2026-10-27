@@ -262,6 +262,17 @@ class DatusPathManager:
         return self.subject_dir / "semantic_models"
 
     @property
+    def ontology_dir(self) -> Path:
+        """Apache Ossie ontologies and their mapping documents, shared by every datasource.
+
+        Not created on access: its absence means the project has no ontology.
+
+        Returns:
+            Path: ``{project_root}/subject/ontology``
+        """
+        return self.subject_dir / "ontology"
+
+    @property
     def sql_summaries_dir(self) -> Path:
         """SQL summaries directory: ``{project_root}/subject/sql_summaries``."""
         return self.subject_dir / "sql_summaries"

@@ -3,6 +3,7 @@
 import pytest
 
 from datus.tools.permission.permission_config import PermissionConfig, PermissionLevel
+from datus.tools.permission.permission_manager import PermissionManager
 from datus.tools.permission.profiles import (
     AUTO,
     DANGEROUS,
@@ -561,3 +562,14 @@ class TestLoadFileAsTablePermission:
         """The rule is tool-specific, not a `db_tools` wildcard."""
         assert _resolve(NORMAL, "db_tools", "execute_sql") == PermissionLevel.ASK
         assert _resolve(NORMAL, "db_tools", "transfer_query_result") == PermissionLevel.ASK
+
+
+@pytest.mark.parametrize(
+    "profile,permission",
+    [("normal", PermissionLevel.ALLOW), ("auto", PermissionLevel.ALLOW), ("dangerous", PermissionLevel.ALLOW)],
+)
+def test_writer_obeys_profiles_without_the_web_adapter(profile, permission):
+    manager = PermissionManager(get_profile(profile), active_profile=profile)
+    assert (
+        manager.check_permission("semantic_tools", "write_semantic_model_plan_file", "semantic_modeling") == permission
+    )

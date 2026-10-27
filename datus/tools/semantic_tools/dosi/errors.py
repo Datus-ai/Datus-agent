@@ -53,10 +53,21 @@ def _message_with_context(exc: Any) -> str:
     candidates = list(getattr(exc, "candidates", ()) or ())
     if candidates:
         parts.append(f"candidates: {', '.join(candidates)}")
+    # ``where_needs_context``: the condition to move to context_filter; the
+    # hint names the parts of the query that read it.
+    condition = getattr(exc, "condition", None)
+    if condition:
+        parts.append(f"condition: {condition}")
     hint = getattr(exc, "hint", None)
     if hint:
         parts.append(str(hint))
     return " | ".join(parts)
+
+
+# Refusals whose ``missing_dimensions`` name what the group-by must add.
+_MISSING_DIMENSION_CODES = frozenset(
+    {"lod_dimension_not_grouped", "window_exclude_not_grouped", "time_axis_not_grouped"}
+)
 
 
 def validation_error_from_query_error(
@@ -103,6 +114,21 @@ def validation_error_from_query_error(
             if requested_time_granularity:
                 suggested_retry["time_granularity"] = requested_time_granularity
 
+    # The dimensions a metric's definition names and the query left out: a
+    # keyed exclude or fixed key, a window's partition exclusion, or the time
+    # axis a window orders by. Dosi states its own retry as prose (``hint``);
+    # the arguments that satisfy it are the same query plus what is missing.
+    missing = [str(d) for d in (getattr(exc, "missing_dimensions", ()) or ())]
+    if suggested_retry is None and missing and code in _MISSING_DIMENSION_CODES:
+        dimensions = list(requested_dimensions or [])
+        if code == "time_axis_not_grouped":
+            # Datus groups the time axis as ``metric_time`` at a grain.
+            missing = ["metric_time"]
+        dimensions += [d for d in missing if d not in dimensions]
+        suggested_retry = {"metrics": list(requested_metrics or []), "dimensions": dimensions}
+        if code == "time_axis_not_grouped" and requested_time_granularity:
+            suggested_retry["time_granularity"] = requested_time_granularity
+
     if suggested_retry is None and code == "result_filter_metric_not_selected":
         # ``exc.metrics`` names the metric the filter referenced but the query
         # did not select; ``candidates`` are the selected ones. The fix is to
@@ -117,12 +143,32 @@ def validation_error_from_query_error(
         # a valid candidate; with no request context this stays empty.
         unsupported_dimensions = [d for d in (requested_dimensions or []) if d not in candidates]
 
+    hint = getattr(exc, "hint", None)
+    raw_detail = getattr(exc, "detail", None)
+    raw_detail = dict(raw_detail) if isinstance(raw_detail, dict) else None
+    violations = getattr(exc, "violations", None)
+    if violations:
+        # value_not_in_domain: [{reference, literal, allowed}] per rejected literal.
+        raw_detail = {**(raw_detail or {}), "violations": [dict(v) for v in violations if isinstance(v, dict)]}
     return SemanticValidationError(
         code=code,
+        condition=getattr(exc, "condition", None) or None,
         metrics=list(getattr(exc, "metrics", ()) or ()) or list(requested_metrics or []),
         unsupported_dimensions=unsupported_dimensions,
-        required_dimensions=(candidates if code in {"no_primary_time_dimension", "time_range_needs_dimension"} else []),
+        required_dimensions=(
+            candidates
+            if code in {"no_primary_time_dimension", "time_range_needs_dimension"}
+            else missing
+            if code in _MISSING_DIMENSION_CODES
+            else []
+        ),
         suggested_retry=suggested_retry,
+        # Kept verbatim so an agent can retry from them: ontology rejections
+        # (value_not_in_domain, invalid_relationship_path) put the allowed
+        # literals and the correctly rooted path here, not in the message.
+        candidates=candidates,
+        hint=str(hint) if hint else None,
+        detail=raw_detail,
         message=_message_with_context(exc),
     )
 
@@ -145,5 +191,8 @@ def raise_mapped(exc: Any, binding: Any, **request_context: Any) -> None:
             )
         ) from exc
     if isinstance(exc, binding.OsiError):
-        raise SemanticCoreException(f"Dosi {type(exc).__name__} [{exc.code}]: {_message_with_context(exc)}") from exc
+        raise SemanticCoreException(
+            f"Dosi {type(exc).__name__} [{exc.code}]: {_message_with_context(exc)}",
+            execution_info=getattr(exc, "execution_info", None),
+        ) from exc
     raise exc

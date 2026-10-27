@@ -13,12 +13,25 @@ import pytest
 
 from datus.tools.func_tool.base import FuncToolResult, normalize_null, trans_to_function_tool
 from datus.tools.func_tool.generation_evidence import GenerationEvidence
-from datus.tools.func_tool.semantic_tools import SemanticTools, _run_async
+from datus.tools.func_tool.semantic_tools import SemanticTools, _run_async, render_metric_list
 from datus.tools.semantic_tools.models import (
     AttributionRequest,
     AttributionWindow,
     QueryResult,
 )
+from datus.utils.query_result_text import parse_query_result_text
+
+
+def _text(result):
+    """An executed query's result text, read back."""
+    parsed = parse_query_result_text(result.result)
+    assert parsed is not None, result.result
+    return parsed
+
+
+def _reported(result):
+    """The lines a result reports beside its id and row count."""
+    return [line for line in _text(result).lines if not line.startswith(("result_id: ", "rows: "))]
 
 
 class _Severity(Enum):
@@ -141,7 +154,7 @@ class TestQueryMetricsCompression:
         result = await query_tool.on_invoke_tool(None, json.dumps({"metrics": ["revenue"], "params": params}))
 
         assert result["success"] == 1
-        assert result["result"]["columns"] == ["revenue"]
+        assert parse_query_result_text(result["result"]).columns == ["revenue"]
         assert calls == [(["revenue"], params)]
 
     def test_tool_schema_exposes_dosi_time_range_and_query_arguments(self, semantic_tools):
@@ -155,8 +168,8 @@ class TestQueryMetricsCompression:
         assert "yyyy-mm-dd" in end_description
         assert "path" not in schema["properties"]
 
-    def test_query_metrics_success_with_compression(self, semantic_tools, mock_runtime):
-        """Test that query_metrics returns compressed data on success."""
+    def test_query_metrics_returns_the_result_as_text(self, semantic_tools, mock_runtime):
+        """An executed query reads as text: its id, its row count, then the rows as CSV."""
         query_result = QueryResult(
             columns=["date", "revenue", "orders"],
             data=[
@@ -180,30 +193,14 @@ class TestQueryMetricsCompression:
         assert result.success == 1
         assert result.error is None
 
-        # Verify result structure contains compression metadata
-        result_dict = result.result
-        assert "columns" in result_dict
-        assert "data" in result_dict
-        assert "metadata" in result_dict
-        assert result_dict["result_id"] == result_dict["metadata"]["_full_result_cache_key"]
-
-        # Verify data is now a compressed dict (not raw list)
-        compressed_data = result_dict["data"]
-        assert isinstance(compressed_data, dict)
-        assert "original_rows" in compressed_data
-        assert "original_columns" in compressed_data
-        assert "is_compressed" in compressed_data
-        assert "compressed_data" in compressed_data
-        assert "removed_columns" in compressed_data
-        assert "compression_type" in compressed_data
-
-        # Verify metadata is preserved
-        assert result_dict["columns"] == ["date", "revenue", "orders"]
-        assert result_dict["metadata"]["execution_time"] == 0.5
-        assert result_dict["metadata"]["_full_result_cache_key"]
-        assert result_dict["metadata"]["_full_result_cached"] is True
-        assert result_dict["metadata"]["_full_result_row_count"] == 2
-        assert "complete uncompressed query result is cached" in result_dict["metadata"]["_full_result_note"]
+        result_id = _text(result).result_id
+        assert result.result == (
+            f"result_id: {result_id}\nrows: 2\n\ndate,revenue,orders\n2024-01-01,1000,50\n2024-01-02,1200,60"
+        )
+        cached = semantic_tools.get_cached_query_metrics_result(result_id)
+        assert cached["row_count"] == 2
+        # The text leaves the metadata out; the cached result keeps it for code that checks results.
+        assert cached["metadata"] == {"execution_time": 0.5}
 
     def test_query_metrics_passes_dosi_parameter_bindings(self, semantic_tools):
         calls = {}
@@ -228,8 +225,246 @@ class TestQueryMetricsCompression:
             "params": {"regions": ["APAC", "EMEA"], "threshold": 100},
         }
 
-    def test_query_metrics_small_data_not_compressed(self, semantic_tools):
-        """Test that small data within token threshold is not compressed."""
+    def test_query_metrics_hints_in_list_values_missing_from_a_grouped_field(self, semantic_tools):
+        calls = []
+
+        class _Runtime:
+            service_type = "dosi"
+
+            async def query_metrics(self, **kwargs):
+                calls.append(kwargs)
+                return QueryResult(
+                    columns=["segment", "customers"], data=[{"segment": 1251206313870885120, "customers": 4}]
+                )
+
+        semantic_tools._runtime = _Runtime()
+        result = semantic_tools.query_metrics(
+            metrics=["customers"],
+            dimensions=["matches.segment"],
+            where="matches.segment IN (1251206313870885120, 1281781308570207232)",
+        )
+
+        assert _reported(result) == [
+            "note: "
+            "matches.segment IN (...): 1 of 2 values matched no row in this query: 1281781308570207232. Check "
+            "whether matches.segment holds these values at all before reading their absence as no data."
+        ]
+        assert len(calls) == 1
+
+    def test_query_metrics_checks_an_in_list_on_an_ungrouped_field_by_grouping_it_too(self, semantic_tools):
+        """A list of names checked against a name table that lacks some of them drops those names silently."""
+        calls = []
+
+        class _Runtime:
+            service_type = "dosi"
+
+            async def query_metrics(self, **kwargs):
+                calls.append(kwargs)
+                if "names.name" in kwargs["dimensions"]:
+                    return QueryResult(columns=["name", "customers"], data=[{"name": "bridge", "customers": 3}])
+                return QueryResult(
+                    columns=["metric_time", "segment", "customers"], data=[{"segment": 7, "customers": 3}]
+                )
+
+        semantic_tools._runtime = _Runtime()
+        result = semantic_tools.query_metrics(
+            metrics=["customers"],
+            dimensions=["matches.segment"],
+            time_granularity="day",
+            context_filter="names.name IN ('bridge', 'duel')",
+            limit=10,
+        )
+
+        assert _reported(result) == [
+            "note: "
+            "names.name IN (...): 1 of 2 values matched no row in this query: duel. Check whether names.name "
+            "holds these values at all before reading their absence as no data."
+        ]
+        # Grouped by the listed field alone: at most one row per listed value.
+        assert calls[1]["dimensions"] == ["names.name"]
+        assert calls[1]["time_granularity"] is None
+        assert calls[1]["limit"] is None
+        assert calls[1]["order_by"] is None
+        assert calls[1]["context_filter"] == "names.name IN ('bridge', 'duel')"
+
+    def test_query_metrics_rechecks_a_grouped_in_list_field_when_a_limit_cut_the_result(self, semantic_tools):
+        """A limited result can drop listed values that do have rows; it cannot say which matched none."""
+        calls = []
+
+        class _Runtime:
+            service_type = "dosi"
+
+            async def query_metrics(self, **kwargs):
+                calls.append(kwargs)
+                if kwargs["limit"] is None:
+                    return QueryResult(columns=["name", "customers"], data=[{"name": "bridge"}, {"name": "duel"}])
+                return QueryResult(columns=["name", "customers"], data=[{"name": "bridge", "customers": 3}])
+
+        semantic_tools._runtime = _Runtime()
+        result = semantic_tools.query_metrics(
+            metrics=["customers"],
+            dimensions=["names.name"],
+            where="names.name IN ('bridge', 'duel', 'arena')",
+            order_by=["-customers"],
+            limit=1,
+        )
+
+        assert _reported(result) == [
+            "note: "
+            "names.name IN (...): 1 of 3 values matched no row in this query: arena. Check whether names.name "
+            "holds these values at all before reading their absence as no data."
+        ]
+        assert len(calls) == 2
+        assert calls[1]["dimensions"] == ["names.name"]
+        assert calls[1]["limit"] is None
+
+    def test_query_metrics_skips_the_in_list_check_when_where_filters_on_a_selected_metric(self, semantic_tools):
+        """A condition on a metric filters after aggregation, so a regrouped check would not mean the same."""
+        calls = []
+
+        class _Runtime:
+            service_type = "dosi"
+
+            async def query_metrics(self, **kwargs):
+                calls.append(kwargs)
+                return QueryResult(columns=["customers"], data=[{"customers": 3}])
+
+        semantic_tools._runtime = _Runtime()
+        result = semantic_tools.query_metrics(
+            metrics=["customers"],
+            where="names.name IN ('bridge', 'duel') AND customers > 2",
+        )
+
+        assert result.success == 1
+        assert _reported(result) == []
+        assert len(calls) == 1
+
+    def test_filters_on_metric_matches_a_bare_metric_name_only(self):
+        from datus.tools.func_tool.semantic_tools import _filters_on_metric
+
+        assert _filters_on_metric("customers > 2", ["customers"]) is True
+        assert _filters_on_metric("stats.customers > 2 AND customers_d7 > 0", ["customers"]) is False
+        assert _filters_on_metric(None, ["customers"]) is False
+
+    def test_result_column_for_prefers_the_qualified_name_and_refuses_an_ambiguous_short_one(self):
+        from datus.tools.func_tool.semantic_tools import _result_column_for
+
+        assert _result_column_for("names.name", ["matches.name", "names.name"]) == "names.name"
+        assert _result_column_for("names.name", ["name", "customers"]) == "name"
+        assert _result_column_for("names.name", ["name", "name", "customers"]) is None
+        assert _result_column_for("names.name", ["customers"]) is None
+
+    def test_query_metrics_drops_the_in_list_check_when_the_probe_fails(self, semantic_tools):
+        class _Runtime:
+            service_type = "dosi"
+
+            async def query_metrics(self, **kwargs):
+                if "names.name" in kwargs["dimensions"]:
+                    raise RuntimeError("fan-out")
+                return QueryResult(columns=["customers"], data=[{"customers": 3}])
+
+        semantic_tools._runtime = _Runtime()
+        result = semantic_tools.query_metrics(metrics=["customers"], where="names.name IN ('bridge', 'duel')")
+
+        assert result.success == 1
+        assert _reported(result) == []
+
+    def test_query_metrics_checks_each_in_list_field_once_and_skips_an_unreadable_probe(self, semantic_tools):
+        probes = []
+
+        class _Runtime:
+            service_type = "dosi"
+
+            async def query_metrics(self, **kwargs):
+                if "names.name" in kwargs["dimensions"]:
+                    probes.append(kwargs["dimensions"])
+                    return QueryResult(columns=["something_else"], data=[{"something_else": 1}])
+                return QueryResult(columns=["customers"], data=[{"customers": 3}])
+
+        semantic_tools._runtime = _Runtime()
+        result = semantic_tools.query_metrics(
+            metrics=["customers"],
+            where="names.name IN ('bridge') AND names.name IN ('duel')",
+            context_filter="names.name IN ('arena')",
+        )
+
+        assert result.success == 1
+        assert _reported(result) == []
+        assert len(probes) == 1
+
+    def test_in_list_conditions_reads_only_plain_lists_of_literals(self):
+        from datus.tools.func_tool.semantic_tools import _in_list_conditions
+
+        sql = (
+            "a.mode IN (101, 102) AND b.name in ('it''s', 'x') AND c.id NOT IN (1, 2) "
+            "AND d.id IN (SELECT id FROM t) AND e.code IN (f.code, 'y')"
+        )
+
+        assert _in_list_conditions(sql) == [("a.mode", ["101", "102"]), ("b.name", ["it's", "x"])]
+        assert _in_list_conditions("NOT a.mode IN (101)") == []
+
+    def test_query_metrics_says_how_to_query_a_metric_without_a_time_axis(self, semantic_tools):
+        """The engine lists every time field of the model; the agent needs: no period here, the day in where."""
+        from datus.tools.semantic_tools.dosi.errors import SemanticValidationException
+        from datus.tools.semantic_tools.models import SemanticValidationError
+
+        snapshot = _detail_metric("snapshot_customers", {"base_kind": "aggregate", "datasets": ["customers_snapshot"]})
+
+        class _Runtime:
+            service_type = "dosi"
+
+            async def list_metrics(self, path=None, limit=None, offset=0):
+                return [snapshot] if offset == 0 else []
+
+            async def query_metrics(self, metrics, **kwargs):
+                raise SemanticValidationException(
+                    SemanticValidationError(
+                        code="no_primary_time_dimension",
+                        metrics=["snapshot_customers__k_7"],
+                        required_dimensions=["events.event_hour", "logins.stat_date"],
+                        message='metric "snapshot_customers__k_7" has no primary time dimension '
+                        "| candidates: events.event_hour, logins.stat_date",
+                    )
+                )
+
+        semantic_tools._runtime = _Runtime()
+        result = semantic_tools.query_metrics(
+            metrics=["snapshot_customers"], time_start="2024-01-01", time_end="2024-01-02", params={"k": [7]}
+        )
+
+        assert result.success == 0
+        assert result.error.startswith("snapshot_customers has no time axis: the table (customers_snapshot) it reads")
+        assert "without time_start/time_end" in result.error and "in `where`" in result.error
+        assert "event_hour" not in result.error
+        assert result.result["code"] == "no_primary_time_dimension"
+        assert result.result["required_dimensions"] == []
+
+    def test_the_no_time_axis_advice_stands_without_the_catalog(self, semantic_tools):
+        from datus.tools.semantic_tools.dosi.errors import SemanticValidationException
+        from datus.tools.semantic_tools.models import SemanticValidationError
+
+        class _Runtime:
+            service_type = "dosi"
+
+            async def list_metrics(self, path=None, limit=None, offset=0):
+                raise RuntimeError("catalog unavailable")
+
+            async def query_metrics(self, metrics, **kwargs):
+                raise SemanticValidationException(
+                    SemanticValidationError(
+                        code="no_primary_time_dimension",
+                        metrics=["snapshot_customers"],
+                        message='metric "snapshot_customers" has no primary time dimension',
+                    )
+                )
+
+        semantic_tools._runtime = _Runtime()
+        result = semantic_tools.query_metrics(metrics=["snapshot_customers"], time_start="2024-01-01")
+
+        assert result.success == 0
+        assert result.error.startswith("snapshot_customers has no time axis: the table it reads")
+
+    def test_query_metrics_small_result_shows_every_row(self, semantic_tools):
         query_result = QueryResult(
             columns=["id", "value"],
             data=[
@@ -242,13 +477,12 @@ class TestQueryMetricsCompression:
         with patch("datus.tools.func_tool.semantic_tools._run_async", return_value=query_result):
             result = semantic_tools.query_metrics(metrics=["value"])
 
-        compressed_data = result.result["data"]
-        assert compressed_data["original_rows"] == 2
-        assert compressed_data["is_compressed"] is False
-        assert compressed_data["compression_type"] == "none"
+        assert _text(result).row_count == 2
+        assert _text(result).csv == "id,value\n1,100\n2,200"
 
-    def test_query_metrics_large_data_row_compressed(self, semantic_tools):
-        """Test that data exceeding 20 rows triggers row compression."""
+    def test_query_metrics_long_result_shows_its_first_and_last_rows(self, semantic_tools):
+        """Past 20 rows the preview shows ten at each end around the count left out;
+        the cache keeps every row."""
         rows = [{"id": i, "value": i * 100} for i in range(50)]
         query_result = QueryResult(
             columns=["id", "value"],
@@ -259,16 +493,16 @@ class TestQueryMetricsCompression:
         with patch("datus.tools.func_tool.semantic_tools._run_async", return_value=query_result):
             result = semantic_tools.query_metrics(metrics=["value"])
 
-        compressed_data = result.result["data"]
-        assert compressed_data["original_rows"] == 50
-        assert compressed_data["is_compressed"] is True
-        assert compressed_data["compression_type"] in ("rows", "rows_and_columns")
+        assert _text(result).row_count == 50
+        assert _text(result).csv.splitlines() == (
+            ["id,value"]
+            + [f"{i},{i * 100}" for i in range(10)]
+            + ["... 30 rows omitted"]
+            + [f"{i},{i * 100}" for i in range(40, 50)]
+        )
 
-        cache_key = result.result["metadata"]["_full_result_cache_key"]
-        assert result.result["result_id"] == cache_key
-        cached_result = semantic_tools.get_cached_query_metrics_result(cache_key)
+        cached_result = semantic_tools.get_cached_query_metrics_result(_text(result).result_id)
         assert cached_result["row_count"] == 50
-        assert result.result["metadata"]["_full_result_row_count"] == 50
         assert "10,1000" in cached_result["csv"]
         assert "49,4900" in cached_result["csv"]
         assert "..." not in cached_result["csv"]
@@ -281,7 +515,7 @@ class TestQueryMetricsCompression:
 
     def test_get_query_metrics_result_pages_the_full_rows(self, semantic_tools):
         """The rows the compressed preview left out are reachable, a page at a time."""
-        result_id = self._query_fifty_rows(semantic_tools).result["result_id"]
+        result_id = _text(self._query_fifty_rows(semantic_tools)).result_id
 
         first = semantic_tools.get_query_metrics_result(result_id, offset=0, limit=20)
         last = semantic_tools.get_query_metrics_result(result_id, offset=40, limit=20)
@@ -297,6 +531,17 @@ class TestQueryMetricsCompression:
         assert last.result["has_more"] is False
         assert last.result["csv"].splitlines()[-1] == "49,4900"
 
+    def test_query_metrics_exposes_execution_info_in_text_and_page(self, semantic_tools):
+        info = [{"query_execution_id": "athena-1", "state": "SUCCEEDED", "scanned_bytes": 123}]
+        query_result = QueryResult(columns=["value"], data=[{"value": 1}], metadata={"execution_info": info})
+        with patch("datus.tools.func_tool.semantic_tools._run_async", return_value=query_result):
+            result = semantic_tools.query_metrics(metrics=["value"])
+
+        line = next(line for line in _text(result).lines if line.startswith("execution_info: "))
+        assert json.loads(line.removeprefix("execution_info: ")) == info
+        page = semantic_tools.get_query_metrics_result(_text(result).result_id)
+        assert page.result["execution_info"] == info
+
     def test_get_query_metrics_result_serves_a_cell_past_the_csv_field_limit(self, semantic_tools):
         """``csv.reader`` refuses a field over ``csv.field_size_limit()`` (128 KiB by
         default); a page must not depend on re-reading the cached CSV."""
@@ -306,7 +551,7 @@ class TestQueryMetricsCompression:
         rows = [{"id": 0, "note": "small"}, {"id": 1, "note": big}]
         query_result = QueryResult(columns=["id", "note"], data=rows, metadata={})
         with patch("datus.tools.func_tool.semantic_tools._run_async", return_value=query_result):
-            result_id = semantic_tools.query_metrics(metrics=["note"]).result["result_id"]
+            result_id = _text(semantic_tools.query_metrics(metrics=["note"])).result_id
 
         page = semantic_tools.get_query_metrics_result(result_id, offset=1, limit=1)
 
@@ -316,7 +561,7 @@ class TestQueryMetricsCompression:
 
     def test_get_query_metrics_result_serializes_only_the_page(self, semantic_tools):
         """The rows before ``offset`` are sliced away, not parsed and discarded."""
-        result_id = self._query_fifty_rows(semantic_tools).result["result_id"]
+        result_id = _text(self._query_fifty_rows(semantic_tools)).result_id
         seen = []
         real = SemanticTools._query_data_to_csv
 
@@ -348,7 +593,7 @@ class TestQueryMetricsCompression:
         """A row cap does not bound a page's size; ``returned``/``has_more`` must
         describe the rows that actually fit, so paging on from them loses none."""
         semantic_tools.MAX_QUERY_METRICS_RESULT_PAGE_CHARS = 80
-        result_id = self._query_fifty_rows(semantic_tools).result["result_id"]
+        result_id = _text(self._query_fifty_rows(semantic_tools)).result_id
 
         rows, offset = [], 0
         while True:
@@ -375,7 +620,7 @@ class TestQueryMetricsCompression:
 
     def test_get_query_metrics_result_caps_the_page(self, semantic_tools):
         semantic_tools.MAX_QUERY_METRICS_RESULT_PAGE = 5
-        result_id = self._query_fifty_rows(semantic_tools).result["result_id"]
+        result_id = _text(self._query_fifty_rows(semantic_tools)).result_id
 
         page = semantic_tools.get_query_metrics_result(result_id, limit=1000)
 
@@ -449,21 +694,15 @@ class TestQueryMetricsCompression:
         with patch.object(semantic_tools, "_query_data_to_csv", return_value=""):
             assert semantic_tools._cache_query_metrics_result(["x"], [{"x": 1}]) is None
 
-    def test_query_metrics_empty_data(self, semantic_tools):
-        """Test query_metrics with empty result set."""
-        query_result = QueryResult(
-            columns=[],
-            data=[],
-            metadata={},
-        )
+    def test_query_metrics_empty_result_keeps_its_header(self, semantic_tools):
+        """No rows, but the columns the query would have returned are still named."""
+        query_result = QueryResult(columns=["region", "value"], data=[], metadata={})
 
         with patch("datus.tools.func_tool.semantic_tools._run_async", return_value=query_result):
             result = semantic_tools.query_metrics(metrics=["value"])
 
-        compressed_data = result.result["data"]
-        assert compressed_data["original_rows"] == 0
-        assert compressed_data["is_compressed"] is False
-        assert compressed_data["compression_type"] == "none"
+        assert _text(result).row_count == 0
+        assert _text(result).csv == "region,value"
 
     @pytest.mark.parametrize("metrics", [[], ["null", "", None], ""])
     def test_query_metrics_rejects_empty_metrics_before_runtime_call(self, semantic_tools, mock_runtime, metrics):
@@ -616,42 +855,73 @@ class TestQueryMetricsCompression:
         assert result.success == 0
         assert "Connection timeout" in result.error
 
-    def test_query_metrics_preserves_columns_and_metadata(self, semantic_tools):
-        """Test that columns and metadata are preserved unchanged after compression."""
+    def test_query_metrics_result_reports_warnings_and_parameter_columns(self, semantic_tools):
+        """An executed result reports the engine's warnings and the columns a
+        parameter binding names; the SQL and dialect stay out."""
+        warning = {"level": "warning", "code": "where_unread", "message": "where was not read", "hint": "move it"}
+        bound = {"column": "active__k_h1", "metric": "active", "params": {"k": "1-7"}}
         query_result = QueryResult(
-            columns=["metric_time__day", "revenue", "cost"],
-            data=[{"metric_time__day": "2024-01-01", "revenue": 500, "cost": 200}],
-            metadata={"sql": "SELECT ...", "row_count": 1},
+            columns=["metric_time__day", "revenue", "active__k_h1"],
+            data=[{"metric_time__day": "2024-01-01", "revenue": 500, "active__k_h1": 3}],
+            metadata={
+                "sql": "SELECT " + "x, " * 5000 + "1",
+                "dialect": "duckdb",
+                "row_count": 1,
+                "outputs": [{"column": "revenue", "metric": "revenue"}, bound],
+                "warnings": [warning],
+            },
         )
 
         with patch("datus.tools.func_tool.semantic_tools._run_async", return_value=query_result):
-            result = semantic_tools.query_metrics(
-                metrics=["revenue", "cost"],
-                dimensions=["metric_time__day"],
-            )
+            result = semantic_tools.query_metrics(metrics=["revenue", "active"], dimensions=["metric_time__day"])
 
-        assert result.result["columns"] == ["metric_time__day", "revenue", "cost"]
-        assert result.result["metadata"]["row_count"] == 1
-        assert result.result["metadata"]["_full_result_cache_key"]
+        assert _text(result).columns == ["metric_time__day", "revenue", "active__k_h1"]
+        assert _reported(result) == [
+            "warning where_unread: where was not read; hint: move it",
+            "column active__k_h1: active with k=1-7",
+        ]
+        assert "SELECT" not in result.result and "duckdb" not in result.result
 
-    def test_query_metrics_drops_the_compiled_sql_body(self, semantic_tools):
-        """A non-dry-run result does not carry the compiled SQL.
+    def test_query_metrics_result_lines_carry_what_a_warning_message_leaves_out(self, semantic_tools):
+        warnings = [
+            {"level": "info", "code": "filter_landed", "message": "region = 'N' filters orders", "part": "orders"},
+            {"level": "warning", "code": "where_unread", "message": "a condition was not read", "part": "visits"},
+            "plain text warning",
+        ]
+        outputs = [{"column": "share__k_h1", "metric": "share", "params": {"k": [1, 7], "region": "北区"}}]
+        query_result = QueryResult(
+            columns=["share__k_h1"],
+            data=[{"share__k_h1": 0.5}],
+            metadata={"warnings": warnings, "outputs": outputs},
+        )
 
-        The SQL dominates the payload while the rows it produced sit beside it,
-        and nothing outside dry-run publish evidence reads it.
-        """
+        with patch("datus.tools.func_tool.semantic_tools._run_async", return_value=query_result):
+            result = semantic_tools.query_metrics(metrics=["share"])
+
+        assert _reported(result) == [
+            "info filter_landed: region = 'N' filters orders",
+            "warning where_unread: a condition was not read (part: visits)",
+            "warning: plain text warning",
+            "column share__k_h1: share with k=[1, 7], region=北区",
+        ]
+
+    def test_query_metrics_result_with_nothing_to_report_has_no_report_lines(self, semantic_tools):
         query_result = QueryResult(
             columns=["revenue"],
             data=[{"revenue": 500}],
-            metadata={"sql": "SELECT " + "x, " * 5000 + "1", "row_count": 1},
+            metadata={
+                "sql": "SELECT " + "x, " * 5000 + "1",
+                "dialect": "duckdb",
+                "row_count": 1,
+                "outputs": [{"column": "revenue", "metric": "revenue"}],
+                "warnings": [],
+            },
         )
 
         with patch("datus.tools.func_tool.semantic_tools._run_async", return_value=query_result):
             result = semantic_tools.query_metrics(metrics=["revenue"])
 
-        metadata = result.result["metadata"]
-        assert "sql" not in metadata
-        assert metadata["row_count"] == 1
+        assert _text(result).lines == [f"result_id: {_text(result).result_id}", "rows: 1"]
 
     def test_query_metrics_dry_run_keeps_the_compiled_sql_body(self, semantic_tools):
         """dry_run exists to return the SQL, and publish evidence hashes it."""
@@ -663,63 +933,40 @@ class TestQueryMetricsCompression:
         assert result.result["metadata"]["sql"] == "SELECT 1"
         assert "sql_sha256" not in result.result["metadata"]
 
-    def test_query_metrics_columns_match_the_rows_after_column_compression(self, semantic_tools):
-        """``columns`` describes what ``data`` holds, never the pre-compression set.
+    def test_query_metrics_keeps_every_column_over_the_budget(self, semantic_tools):
+        """Every column of a metric result was asked for; the budget cuts rows instead.
 
-        Reporting a dropped column would send the caller looking for a column
-        that is not in the payload. Driven with a deliberately tiny budget so
-        column compression is guaranteed to fire regardless of the production
-        budget.
+        Driven with a deliberately tiny budget so the sample is over it whatever
+        the production budget.
         """
-        from datus.utils.compress_utils import DataCompressor
-
-        semantic_tools.compressor = DataCompressor(model_name="gpt-4o", token_threshold=32)
+        semantic_tools.compressor.max_tolerable_tokens = 200
         columns = [f"metric_{index}" for index in range(12)]
         query_result = QueryResult(
             columns=columns,
-            data=[{name: 987654321 + index for index, name in enumerate(columns)} for _ in range(5)],
+            data=[{name: 987654321 + index for index, name in enumerate(columns)} for _ in range(30)],
             metadata={},
         )
 
         with patch("datus.tools.func_tool.semantic_tools._run_async", return_value=query_result):
             result = semantic_tools.query_metrics(metrics=columns)
 
-        compressed = result.result["data"]
-        removed = set(compressed["removed_columns"])
-        assert removed, "expected this payload to exceed the budget and drop columns"
-        assert result.result["columns"] == [name for name in columns if name not in removed]
-        assert not removed & set(result.result["columns"])
+        assert _text(result).columns == columns
+        assert _text(result).shown_rows < 20, "expected fewer rows than the default ten at each end"
+        assert f"... {30 - _text(result).shown_rows} rows omitted" in _text(result).csv
 
-    def test_query_metrics_gives_up_the_last_requested_metric_first(self, semantic_tools):
-        """Columns are dropped from the far end of the request, not the middle.
-
-        Result column order follows runtime compilation, so dropping from the
-        middle discards whichever metric happens to land there — in practice the
-        one asked for first. The caller's own ordering is the only statement of
-        importance available.
-        """
-        from datus.utils.compress_utils import DataCompressor
-
-        semantic_tools.compressor = DataCompressor(model_name="gpt-4o", token_threshold=32)
-        requested = [f"metric_{index}" for index in range(8)]
-        # The runtime emits them in an unrelated order.
-        emitted = requested[4:] + requested[:4]
+    def test_query_metrics_cuts_long_values_once_one_row_at_each_end_is_over(self, semantic_tools):
+        semantic_tools.compressor.max_tolerable_tokens = 120
         query_result = QueryResult(
-            columns=emitted,
-            data=[{name: 987654321 for name in emitted} for _ in range(4)],
-            metadata={},
+            columns=["id", "bitmap"], data=[{"id": i, "bitmap": "01" * 400} for i in range(5)], metadata={}
         )
 
         with patch("datus.tools.func_tool.semantic_tools._run_async", return_value=query_result):
-            result = semantic_tools.query_metrics(metrics=requested)
+            result = semantic_tools.query_metrics(metrics=["bitmap"])
 
-        removed = result.result["data"]["removed_columns"]
-        assert removed, "expected this payload to exceed the budget and drop columns"
-        # Whatever survives, the first-requested metric outlives the last one.
-        assert requested[0] not in removed
-        assert requested[-1] in removed
-        # Drops proceed from the end of the request backwards.
-        assert removed == requested[: -len(removed) - 1 : -1]
+        rows_line = _text(result).lines[1]
+        assert rows_line.startswith("rows: 5; text values longer than ")
+        assert _text(result).csv.splitlines()[1].endswith("…")
+        assert _text(result).csv.splitlines()[2] == "... 3 rows omitted"
 
     def test_query_metrics_budget_keeps_a_wide_metric_row_intact(self, semantic_tools):
         """The production budget must not drop metric columns from a normal query.
@@ -738,8 +985,8 @@ class TestQueryMetricsCompression:
         with patch("datus.tools.func_tool.semantic_tools._run_async", return_value=query_result):
             result = semantic_tools.query_metrics(metrics=columns[3:], dimensions=columns[:3])
 
-        assert result.result["data"]["removed_columns"] == []
-        assert result.result["columns"] == columns
+        assert _text(result).columns == columns
+        assert _text(result).shown_rows == 20
 
     def test_query_metrics_dry_run_records_compiled_sql(self, semantic_tools):
         evidence = GenerationEvidence()
@@ -786,17 +1033,17 @@ class TestQueryMetricsCompression:
         )
 
         with patch("datus.tools.func_tool.semantic_tools._run_async", return_value=query_result):
-            result = semantic_tools.query_metrics(metrics=["revenue"])
+            result = semantic_tools.query_metrics(metrics=["revenue"], dry_run=True)
 
         assert result.success == 1
         meta = result.result["metadata"]
-        # Non-serializable entries are dropped; serializable ones pass through.
+        # A dry run keeps its metadata: non-serializable entries are dropped,
+        # serializable ones pass through.
         assert "dataflow_plan" not in meta
-        assert "sql" not in meta
+        assert meta["sql"] == "SELECT 1"
         assert meta["count"] == 42
 
-    def test_query_metrics_compressed_data_contains_original_columns(self, semantic_tools):
-        """Test that compressed result includes original column names."""
+    def test_query_metrics_csv_header_names_every_column(self, semantic_tools):
         query_result = QueryResult(
             columns=["date", "revenue", "orders", "customers"],
             data=[
@@ -808,8 +1055,7 @@ class TestQueryMetricsCompression:
         with patch("datus.tools.func_tool.semantic_tools._run_async", return_value=query_result):
             result = semantic_tools.query_metrics(metrics=["revenue"])
 
-        compressed_data = result.result["data"]
-        assert set(compressed_data["original_columns"]) == {"date", "revenue", "orders", "customers"}
+        assert _text(result).columns == ["date", "revenue", "orders", "customers"]
 
     def test_query_metrics_passes_dosi_parameters(self, semantic_tools, mock_runtime):
         """Test that Dosi query parameters reach the runtime."""
@@ -845,33 +1091,6 @@ class TestQueryMetricsCompression:
             assert result.success == 1
             assert result.result["data"]["original_rows"] == 1
             assert result.result["data"]["original_columns"] == ["x"]
-
-    def test_query_metrics_preserves_join_filtered_rows_metadata(self, semantic_tools):
-        """Runtime-reported unmatched-row counts must reach the tool result metadata.
-
-        The ask_metrics prompt instructs the model to disclose
-        `join_policy_filtered_rows` to the user; this protects that contract.
-        """
-        query_result = QueryResult(
-            columns=["x"],
-            data=[{"x": 1}],
-            metadata={"join_policy": "match_only", "join_policy_filtered_rows": 3},
-        )
-
-        class Runtime:
-            def get_dimensions(self, metric_name, path=None):
-                return []
-
-            def query_metrics(self, metrics, **kwargs):
-                return query_result
-
-        semantic_tools._runtime = Runtime()
-        with patch("datus.tools.func_tool.semantic_tools._run_async", return_value=query_result):
-            result = semantic_tools.query_metrics(metrics=["order_count"])
-
-        assert result.success == 1
-        assert result.result["metadata"]["join_policy"] == "match_only"
-        assert result.result["metadata"]["join_policy_filtered_rows"] == 3
 
     def test_metric_datasets_maps_names_from_catalog_metadata(self, semantic_tools):
         """The runtime reports which datasets each metric reads."""
@@ -1070,7 +1289,14 @@ class TestAvailableTools:
             with patch("datus.tools.func_tool.semantic_tools.trans_to_function_tool") as convert:
                 convert.side_effect = lambda function: SimpleNamespace(name=function.__name__)
                 names = [registered.name for registered in tool.available_tools()]
-        assert names == ["list_metrics", "get_metric", "query_metrics", "validate_semantic", "attribution_analyze"]
+        assert names == [
+            "list_metrics",
+            "get_metric",
+            "get_dataset",
+            "query_metrics",
+            "validate_semantic",
+            "attribution_analyze",
+        ]
         runtime.assert_not_called()
 
     def test_configured_runtime_load_failure_is_reported_when_tool_runs(self):
@@ -1180,27 +1406,11 @@ class TestListMetrics:
             result = tool.list_metrics()
 
         assert result.success == 1
-        envelope = result.result
-        # A summary row: identity and derivation only. ``measures`` (compiled
-        # internal names), the runtime's always-empty ``dimensions``, and unset
-        # unit/format stay out — get_metric carries the per-metric detail.
-        assert envelope["items"] == [
-            {
-                "name": "orders",
-                "description": "Order count",
-                "kind": "aggregate",
-                "time_dimension": "orders.ordered_at",
-                # The knowledge-base path wins over the runtime's own ``path``.
-                "path": ["Commerce", "Orders"],
-            }
-        ]
-        assert envelope["total"] is None
-        assert envelope["has_more"] is False
-        assert envelope["extra"] is None
+        # One line per metric under its path: the knowledge-base path wins over
+        # the runtime's own, and kind, time axis, measures and the always-empty
+        # dimensions stay out — get_metric carries the per-metric detail.
+        assert result.result == "Commerce / Orders:\n- orders -- Order count"
         mock_runtime.list_metrics.assert_called_once_with(path=None, limit=200, offset=0)
-        # Contract: list_metrics MUST NOT carry compressor artefacts anymore.
-        assert "compressed_data" not in envelope
-        assert "original_rows" not in envelope
 
     @pytest.mark.parametrize(
         "limit, offset, expected_limit, expected_offset",
@@ -1243,12 +1453,9 @@ class TestListMetrics:
         assert type(kwargs["limit"]) is int
         assert type(kwargs["offset"]) is int
 
-    def test_summary_row_carries_the_dependency_edges(self, semantic_tools_with_runtime):
-        """derive_expr / derive_base are what make a composite metric decomposable.
-
-        Without them a caller sees that a metric is derived but not from what, so
-        it cannot walk from a total down to the inputs that moved it.
-        """
+    def test_how_a_metric_derives_is_left_to_get_metric(self, semantic_tools_with_runtime):
+        """The listing picks metrics; get_metric's ``expr`` says how each is
+        computed, so the derivation keys a runtime publishes stay out of it."""
         tool, _ = semantic_tools_with_runtime
         tool.metric_rag.search_all_metrics.return_value = []
         composed = Mock()
@@ -1279,13 +1486,7 @@ class TestListMetrics:
         with patch("datus.tools.func_tool.semantic_tools._run_async", return_value=[composed, ranked]):
             result = tool.list_metrics()
 
-        items = {item["name"]: item for item in result.result["items"]}
-        assert items["area_score"]["derive_expr"] == "kp_tel * 0.1 + sla_score * 0.1"
-        assert items["area_score"]["derive_family"] == "compose"
-        assert "derive_base" not in items["area_score"]
-        assert items["store_issue_num_rn"]["derive_base"] == "store_issue_num"
-        assert items["store_issue_num_rn"]["derive_family"] == "window"
-        assert "derive_expr" not in items["store_issue_num_rn"]
+        assert result.result == "- area_score -- Weighted total\n- store_issue_num_rn -- Rank"
 
     def test_filters_path_with_kb_and_does_not_pass_path_to_runtime(self, semantic_tools_with_runtime):
         tool, mock_runtime = semantic_tools_with_runtime
@@ -1315,14 +1516,8 @@ class TestListMetrics:
             result = tool.list_metrics(path=["Finance"], limit=10, offset=0)
 
         assert result.success == 1
-        envelope = result.result
-        assert [(row["name"], row["path"]) for row in envelope["items"]] == [
-            ("m1", ["Finance"]),
-            ("m3", ["Finance", "Revenue"]),
-        ]
-        assert envelope["total"] == 2
-        assert envelope["has_more"] is False
-        assert envelope["extra"] is None
+        # The whole filtered list fits the page: no ``more:`` line.
+        assert result.result == "Finance:\n- m1\nFinance / Revenue:\n- m3"
         mock_runtime.list_metrics.assert_called_once_with(path=None, limit=100, offset=0)
         tool.metric_rag.search_all_metrics.assert_called_once_with(select_fields=["name"])
 
@@ -1346,10 +1541,7 @@ class TestListMetrics:
             result = tool.list_metrics(path=["Metrics", "flights"], limit=1, offset=1)
 
         assert result.success == 1
-        assert [row["name"] for row in result.result["items"]] == ["m3"]
-        assert result.result["total"] == 3
-        assert result.result["has_more"] is True
-        assert result.result["extra"] == {"next_offset": 2}
+        assert result.result == ("Metrics / flights:\n- m3\nmore: 1 of 3 metrics shown; call again with offset=2")
         assert mock_runtime.list_metrics.call_args_list == [
             call(path=None, limit=1, offset=0),
             call(path=None, limit=1, offset=1),
@@ -1365,7 +1557,7 @@ class TestListMetrics:
         result = tool.list_metrics(path=["Metrics", "missing"])
 
         assert result.success == 1
-        assert result.result == {"items": [], "total": 0, "has_more": False, "extra": None}
+        assert result.result == "no metrics"
         mock_runtime.list_metrics.assert_not_called()
 
     def test_path_query_excludes_kb_metric_missing_from_runtime(self, semantic_tools_with_runtime):
@@ -1383,10 +1575,7 @@ class TestListMetrics:
             result = tool.list_metrics(path=["Metrics", "flights"])
 
         assert result.success == 1
-        assert [(row["name"], row["path"]) for row in result.result["items"]] == [
-            ("flight_count", ["Metrics", "flights"])
-        ]
-        assert result.result["total"] == 1
+        assert result.result == "Metrics / flights:\n- flight_count -- Flights"
 
     @pytest.mark.parametrize("extra_page,expected_success", [([], 1), ([SimpleNamespace(name="m2")], 0)])
     def test_path_query_handles_catalog_page_cap(self, semantic_tools_with_runtime, extra_page, expected_success):
@@ -1402,8 +1591,7 @@ class TestListMetrics:
 
         assert result.success == expected_success
         if expected_success:
-            assert result.result["items"] == []
-            assert result.result["total"] == 0
+            assert result.result == "no metrics"
         else:
             assert "error_code=400001" in result.error
             assert "cannot apply the knowledge-base subject path safely" in result.error
@@ -1418,7 +1606,7 @@ class TestListMetrics:
         assert result.success == 1
         mock_runtime.list_metrics.assert_called_once_with(path=None, limit=50, offset=0)
 
-    def test_ignores_non_dict_metric_metadata(self, semantic_tools_with_runtime):
+    def test_runtime_path_does_not_stand_in_for_the_kb_path(self, semantic_tools_with_runtime):
         tool, _ = semantic_tools_with_runtime
         tool.metric_rag.search_all_metrics.return_value = []
         mock_metric = Mock()
@@ -1436,14 +1624,9 @@ class TestListMetrics:
             result = tool.list_metrics()
 
         assert result.success == 1
-        item = result.result["items"][0]
-        # Unusable metadata degrades to the runtime's own ``type`` rather than
-        # failing the listing.
-        assert item["kind"] == "count"
-        assert not any(key.startswith("derive_") for key in item)
         # The KB knows no path for this metric, so the runtime's own path must
-        # not leak in as a substitute.
-        assert item.get("path") is None
+        # not leak in as a substitute: the metric is listed under no path.
+        assert result.result == "- orders"
 
     def test_no_path_keeps_runtime_available_when_kb_read_fails(self, semantic_tools_with_runtime):
         tool, mock_runtime = semantic_tools_with_runtime
@@ -1454,8 +1637,7 @@ class TestListMetrics:
             result = tool.list_metrics()
 
         assert result.success == 1
-        assert result.result["items"][0]["name"] == "orders"
-        assert result.result["items"][0].get("path") is None
+        assert result.result == "- orders -- Order count"
         mock_runtime.list_metrics.assert_called_once_with(path=None, limit=200, offset=0)
 
     def test_path_query_fails_when_kb_read_fails(self, semantic_tools_with_runtime):
@@ -1478,6 +1660,24 @@ class TestListMetrics:
         assert "runtime error" in result.error
 
 
+def test_render_metric_list_puts_each_metric_on_one_line():
+    rows = [
+        {"name": "revenue", "description": "Net revenue,\n  after refunds", "unit": "USD", "path": ["Sales"]},
+        {"name": "orders", "description": "Orders", "path": ["Sales"]},
+        {"name": "margin", "path": ["Finance"]},
+    ]
+    # A runtime page has no total, only the offset to call again with.
+    assert render_metric_list(rows, total=None, has_more=True, next_offset=3) == (
+        "Sales:\n"
+        "- revenue -- Net revenue, after refunds [unit USD]\n"
+        "- orders -- Orders\n"
+        "Finance:\n"
+        "- margin\n"
+        "more: 3 metrics shown; call again with offset=3"
+    )
+    assert render_metric_list([], total=0, has_more=False, next_offset=None) == "no metrics"
+
+
 def _detail_metric(name, metadata, measures=("m",)):
     metric = Mock()
     metric.name = name
@@ -1491,37 +1691,154 @@ def _detail_metric(name, metadata, measures=("m",)):
     return metric
 
 
-class TestGetMetric:
-    RANKED = {
-        "base_kind": "ratio",
-        "derive_family": "window",
-        "derive_base": "store_issue_num",
-        "time_dimension": "cell.month_key",
-        "window": {
-            "base": "store_issue_num",
-            "rank": {
-                "function": "rank",
-                "order": {"by": "value", "direction": "asc"},
-                "partition": {"mode": "query_dimensions_except", "exclude": ["cell.brand"]},
-            },
+# What Dosi's Engine.metric / Engine.dataset return, trimmed to the keys the
+# renderers read.
+RETURNING_METRIC = {
+    "name": "returning_customers",
+    "description": "点击玩家中在对比窗口内又点过活动按钮的人数",
+    "kind": "aggregate",
+    "expr": "clicking_customers FILTER (WHERE visits.customer_rows_in_compare_window > 0)",
+    "datasets": ["visits"],
+    "dimension_datasets": [{"name": "visits"}, {"name": "customers", "fields": ["region", "level"]}],
+    "compares_across": None,
+    "window": None,
+    "params": [
+        {
+            "name": "compare_start",
+            "type": "string",
+            "default": "19700101",
+            "description": "对比窗口的第一天（YYYYMMDD，含）",
+            "slots": ["filter.literal"],
+            "declared_on": "click_rows_in_compare_window",
         },
-        "datasets": ["repair"],
-    }
+        {"name": "k", "type": "int", "default": 7, "allowed": [1, 7, 30]},
+        {"name": "days", "type": "int", "default": 3, "min": 1, "max": 30},
+    ],
+    "required_dimensions": [],
+    "requires_time_axis": False,
+    "time_granularities": ["day", "week", "month", "quarter", "year"],
+}
 
-    @staticmethod
-    def _wire(metrics, dimensions=("cell.brand", "cell.area"), dimension_rows=None):
-        """Route the two runtime coroutines this tool awaits, in call order."""
-        dimension_rows = dimension_rows if dimension_rows is not None else [{"name": name} for name in dimensions]
+VISITS_DATASET = {
+    "name": "visits",
+    "source": "db.fact_visits",
+    "description": "活动按钮点击日志",
+    "primary_time_dimension": "event_hour",
+    "primary_key": ["event_id"],
+    "fields": [
+        {"name": "tdbank_imp_date", "description": "小时分区"},
+        {
+            "name": "event_hour",
+            "expr": "tdbank_imp_date",
+            "reads": ["tdbank_imp_date"],
+            "is_time": True,
+            "time_format": "%Y%m%d%H",
+        },
+        {"name": "event_day", "expr": "SUBSTR(tdbank_imp_date,\n  1, 8)", "reads": ["tdbank_imp_date"]},
+        {"name": "tier", "expr": "CASE " + "WHEN x > 1 THEN 'a' " * 20 + "END", "reads": ["x"]},
+        {"name": "uid", "is_dimension": False},
+        {"name": "day_text", "time_format": "%Y%m%d"},
+        {
+            "name": "customer_spend",
+            "description": "玩家付费",
+            "expr": "fixed(pay_amount, customer_id)",
+            "datasets": ["pay"],
+            "time_axis": "pay.pay_date",
+        },
+    ],
+    "relationships": [
+        {"to": "customers", "columns": [["customer_id", "customer_id"]], "cardinality": "many_to_one"},
+        {
+            "name": "visit_amount",
+            "to": "pay",
+            "columns": [["customer_id", "customer_id"]],
+            "cardinality": "many_to_many",
+        },
+    ],
+}
 
-        def dispatch(coro):
-            # ``list_metrics`` is awaited once for the catalog, then
-            # ``get_dimensions`` once for the resolved metric.
-            dispatch.calls += 1
-            return metrics if dispatch.calls == 1 else dimension_rows
 
-        dispatch.calls = 0
-        return patch("datus.tools.func_tool.semantic_tools._run_async", side_effect=dispatch)
+class TestRenderMetricDetail:
+    def test_one_line_per_fact(self):
+        from datus.tools.func_tool.semantic_tools import render_metric_detail
 
+        text = render_metric_detail(RETURNING_METRIC, ["砺刃使者", "活动与抽奖"])
+
+        assert text.splitlines() == [
+            "description: 点击玩家中在对比窗口内又点过活动按钮的人数",
+            "path: 砺刃使者 / 活动与抽奖",
+            "expr: clicking_customers FILTER (WHERE visits.customer_rows_in_compare_window > 0)",
+            "datasets: visits",
+            "dimension_datasets: visits, customers(region, level)",
+            "params:",
+            "- compare_start string = 19700101 -- 对比窗口的第一天（YYYYMMDD，含）"
+            " [declared_on click_rows_in_compare_window]",
+            "- k int = 7 [one of: 1, 7, 30]",
+            "- days int = 3 [1..30]",
+            "time: metric_time (day, week, month, quarter, year)",
+        ]
+
+    def test_states_what_a_query_must_add_and_a_snapshot(self):
+        from datus.tools.func_tool.semantic_tools import render_metric_detail
+
+        detail = {
+            **RETURNING_METRIC,
+            "kind": "ratio",
+            "params": None,
+            "required_dimensions": ["scores.item"],
+            "requires_time_axis": True,
+            "time_granularities": [],
+            "window": {
+                "family": "rank",
+                "function": "rank",
+                "order": {"by": "value", "direction": "desc"},
+                "partition": {"mode": "query_dimensions_except", "exclude": ["scores.item"]},
+            },
+            "compares_across": ["scores.item"],
+        }
+
+        lines = render_metric_detail(detail).splitlines()
+
+        assert "kind: ratio" in lines
+        assert (
+            "window: rank, rank, order by value desc, partition query_dimensions_except excluding scores.item" in lines
+        )
+        assert "compares_across: scores.item" in lines
+        assert "required: scores.item" in lines
+        assert "requires_time_axis: true" in lines
+        assert lines[-1] == "time: none"
+        assert not any(line.startswith(("path:", "params")) for line in lines)
+
+
+class TestRenderDatasetDetail:
+    def test_fields_markers_and_relationships(self):
+        from datus.tools.func_tool.semantic_tools import render_dataset_detail
+
+        lines = render_dataset_detail(VISITS_DATASET).splitlines()
+
+        assert lines == [
+            "活动按钮点击日志 | source: db.fact_visits | time: event_hour | pk: event_id",
+            "- tdbank_imp_date -- 小时分区",
+            "- tdbank_imp_date AS event_hour [time %Y%m%d%H]",
+            "- SUBSTR(tdbank_imp_date, 1, 8) AS event_day",
+            "- tier [from x]",
+            "- uid [not a dimension]",
+            "- day_text [format %Y%m%d]",
+            "- fixed(pay_amount, customer_id) AS customer_spend [reads pay; time_axis pay.pay_date] -- 玩家付费",
+            "relationships:",
+            "- many_to_one customers on customer_id=customer_id",
+            "- visit_amount: many_to_many pay on customer_id=customer_id",
+        ]
+
+    def test_a_bare_dataset_has_no_header(self):
+        from datus.tools.func_tool.semantic_tools import render_dataset_detail
+
+        text = render_dataset_detail({"name": "t", "source": "t", "fields": [{"name": "a"}]})
+
+        assert text == "- a"
+
+
+class TestGetMetric:
     @pytest.mark.parametrize("name", ["", "   ", None, "null"])
     def test_rejects_a_missing_name(self, semantic_tools_with_runtime, name):
         tool, _ = semantic_tools_with_runtime
@@ -1531,216 +1848,134 @@ class TestGetMetric:
         assert result.success == 0
         assert "requires a metric name" in result.error
 
-    def test_returns_detail_and_queryable_dimensions(self, semantic_tools_with_runtime):
-        tool, _ = semantic_tools_with_runtime
-        metric = _detail_metric("store_issue_num_rn", self.RANKED)
+    def test_renders_the_engine_description_with_the_kb_path(self, semantic_tools_with_runtime):
+        tool, mock_runtime = semantic_tools_with_runtime
 
-        with self._wire([metric]):
-            result = tool.get_metric(name="store_issue_num_rn")
+        with (
+            patch("datus.tools.func_tool.semantic_tools._run_async", return_value=RETURNING_METRIC),
+            patch.object(tool, "_metric_subject_paths", return_value={"returning_customers": ["A", "B"]}),
+        ):
+            result = tool.get_metric(name="returning_customers")
 
         assert result.success == 1
-        item = result.result
-        assert item["derive_base"] == "store_issue_num"
-        assert item["window"]["rank"]["order"]["direction"] == "asc"
-        assert item["datasets"] == ["repair"]
-        assert [dimension["name"] for dimension in item["dimensions"]] == ["cell.brand", "cell.area"]
+        assert result.result.startswith("description: ")
+        assert "path: A / B" in result.result
+        assert "dimension_datasets: visits, customers(region, level)" in result.result
+        mock_runtime.describe_metric.assert_called_once_with("returning_customers")
 
-    def test_omits_compiled_measure_names(self, semantic_tools_with_runtime):
-        """Compiled measure names are unusable as tool arguments and dominate
-        the row, so they stay out of the detail exactly as they stay out of the
-        summary."""
+    def test_unknown_name_points_at_list_metrics(self, semantic_tools_with_runtime):
+        from datus.tools.semantic_tools.dosi.errors import SemanticValidationException
+        from datus.tools.semantic_tools.models import SemanticValidationError
+
         tool, _ = semantic_tools_with_runtime
-        metric = _detail_metric("area_score", {"base_kind": "expression"}, measures=["a_very_long_compiled_name"] * 21)
+        error = SemanticValidationException(SemanticValidationError(code="unknown_metric", message="unknown"))
 
-        with self._wire([metric]):
-            result = tool.get_metric(name="area_score")
-
-        assert "measures" not in result.result
-
-    def test_passes_through_the_dimensions_the_runtime_says_are_required(self, semantic_tools_with_runtime):
-        """The requirement is the runtime's answer, carried verbatim.
-
-        Which dimensions a metric needs before its partitions mean anything can
-        depend on metrics the runtime never published — a composite inherits the
-        requirement from its inputs. Deriving it here from the partition rule
-        would report "no requirement" for exactly those metrics, so the field is
-        passed through and never reconstructed.
-        """
-        tool, _ = semantic_tools_with_runtime
-        metric = _detail_metric(
-            "area_score",
-            {"base_kind": "expression", "derive_family": "compose", "required_dimensions": ["cell.brand", "cell.area"]},
-        )
-
-        with self._wire([metric]):
-            result = tool.get_metric(name="area_score")
-
-        assert result.result["required_dimensions"] == ["cell.brand", "cell.area"]
-
-    def test_keeps_the_field_absent_when_the_runtime_reports_nothing(self, semantic_tools_with_runtime):
-        """A metric whose window excludes a dimension but that publishes no
-        requirement must not grow one here: absence means the runtime did not
-        say, and inventing an answer from the rule is what got it wrong."""
-        tool, _ = semantic_tools_with_runtime
-        metric = _detail_metric("store_issue_num_rn", self.RANKED)
-
-        with self._wire([metric]):
-            result = tool.get_metric(name="store_issue_num_rn")
-
-        assert "required_dimensions" not in result.result
-
-    def test_passes_through_the_declared_parameters(self, semantic_tools_with_runtime):
-        """Without the declaration the agent cannot tell that "day k" in a
-        description is a bindable parameter, nor which values it takes."""
-        tool, _ = semantic_tools_with_runtime
-        params = [{"name": "k", "type": "int", "default": 1, "allowed": [1, 2, 6, 13, 29]}]
-        engine_params = [{**params[0], "slots": ["filter.literal"]}]
-        metric = _detail_metric("retained_players", {"base_kind": "aggregate", "params": engine_params})
-
-        with self._wire([metric]):
-            result = tool.get_metric(name="retained_players")
-
-        # `slots` is where the engine substitutes the value: an internal, not a binding hint.
-        assert result.result["params"] == params
-
-    def test_unknown_name_fails_with_the_name(self, semantic_tools_with_runtime):
-        tool, _ = semantic_tools_with_runtime
-        metric = _detail_metric("kpi_issues", {"base_kind": "aggregate"})
-
-        with self._wire([metric]):
+        with patch("datus.tools.func_tool.semantic_tools._run_async", side_effect=error):
             result = tool.get_metric(name="no_such_metric")
 
         assert result.success == 0
         assert "no_such_metric" in result.error
         assert "selected model" in result.error
 
-    def test_dimension_failure_keeps_the_rest_of_the_detail(self, semantic_tools_with_runtime):
-        """Detail a caller can use should survive one failing sub-query."""
-        tool, _ = semantic_tools_with_runtime
-        metric = _detail_metric("kpi_issues", {"base_kind": "aggregate"})
-
-        def dispatch(coro):
-            dispatch.calls += 1
-            if dispatch.calls == 1:
-                return [metric]
-            raise RuntimeError("planner unavailable")
-
-        dispatch.calls = 0
-        with patch("datus.tools.func_tool.semantic_tools._run_async", side_effect=dispatch):
-            result = tool.get_metric(name="kpi_issues")
-
-        assert result.success == 1
-        assert result.result["kind"] == "aggregate"
-        assert "planner unavailable" in result.result["dimensions_error"]
-        assert "dimensions" not in result.result
-
-    def test_catalog_failure_is_reported(self, semantic_tools_with_runtime):
+    def test_a_runtime_failure_is_reported(self, semantic_tools_with_runtime):
         tool, _ = semantic_tools_with_runtime
 
-        with patch("datus.tools.func_tool.semantic_tools._run_async", side_effect=Exception("catalog down")):
-            result = tool.get_metric(name="kpi_issues")
-
-        assert result.success == 0
-        assert "catalog down" in result.error
-
-    def test_promotes_the_time_axis_off_the_dimension_rows(self, semantic_tools_with_runtime):
-        """The time contract is one answer per metric, not per dimension.
-
-        The runtime reports it on whichever dimension is the primary time axis;
-        repeating it on every row would restate the same answer N times.
-        """
-        tool, _ = semantic_tools_with_runtime
-        metric = _detail_metric("event_total", {"base_kind": "aggregate"})
-        dimensions = [
-            {
-                "name": "event_month",
-                "type": "time",
-                "is_primary_time": True,
-                "time_granularities": ["month", "quarter", "year"],
-                "recommended": True,
-                "recommendation_source": "inferred:time",
-            },
-            {
-                "name": "event_id",
-                "type": "categorical",
-                "recommended": False,
-                "recommendation_source": "inferred:primary_key",
-            },
-        ]
-
-        with self._wire([metric], dimension_rows=dimensions):
-            result = tool.get_metric(name="event_total")
-
-        assert result.success == 1
-        assert result.result["time_dimension"] == "event_month"
-        assert result.result["time_granularities"] == ["month", "quarter", "year"]
-        for row in result.result["dimensions"]:
-            assert "is_primary_time" not in row
-            assert "time_granularities" not in row
-        # The grouping recommendation is per dimension, so unlike the time axis
-        # it stays on the row instead of being promoted to the metric.
-        assert result.result["dimensions"][0]["recommended"] is True
-        assert result.result["dimensions"][0]["recommendation_source"] == "inferred:time"
-        assert result.result["dimensions"][1]["recommended"] is False
-        assert result.result["dimensions"][1]["recommendation_source"] == "inferred:primary_key"
-
-    def test_describes_a_metric_that_only_a_later_catalog_page_holds(self, semantic_tools_with_runtime):
-        """Every name list_metrics can hand out, get_metric has to accept.
-
-        list_metrics pages the catalog, so it will report names past the first
-        page. Resolving those against a single bounded read answers "unknown
-        metric" for a metric the caller was just told exists.
-        """
-        tool, _ = semantic_tools_with_runtime
-        wanted = _detail_metric("revenue", {"base_kind": "aggregate"})
-        pages = [
-            [_detail_metric(f"filler_{index}", {"base_kind": "aggregate"}) for index in range(3)],
-            [wanted],
-            [],
-        ]
-        dimension_rows = [{"name": "cell.brand"}]
-
-        def dispatch(coro):
-            if pages:
-                return pages.pop(0)
-            return dimension_rows
-
-        with patch("datus.tools.func_tool.semantic_tools._run_async", side_effect=dispatch):
+        with patch("datus.tools.func_tool.semantic_tools._run_async", side_effect=RuntimeError("boom")):
             result = tool.get_metric(name="revenue")
 
-        assert result.success == 1
-        assert result.result["name"] == "revenue"
+        assert result.success == 0
+        assert "boom" in result.error
 
-    def test_unknown_name_fails_once_the_catalog_runs_out(self, semantic_tools_with_runtime):
-        """Paging to the end of the catalog is an unknown metric, not a failure
-        to read it: the caller needs to fix the name, not retry."""
+    def test_a_kb_path_failure_keeps_the_detail(self, semantic_tools_with_runtime):
         tool, _ = semantic_tools_with_runtime
-        pages = [[_detail_metric("revenue", {"base_kind": "aggregate"})], []]
 
-        with patch("datus.tools.func_tool.semantic_tools._run_async", side_effect=lambda coro: pages.pop(0)):
-            result = tool.get_metric(name="no_such_metric")
+        with (
+            patch("datus.tools.func_tool.semantic_tools._run_async", return_value=RETURNING_METRIC),
+            patch.object(tool, "_metric_subject_paths", side_effect=RuntimeError("kb down")),
+        ):
+            result = tool.get_metric(name="returning_customers")
+
+        assert result.success == 1
+        assert "path:" not in result.result
+
+
+class TestMetricRecord:
+    """The structured record metric artifacts and insight snapshots store."""
+
+    def test_keeps_the_description_path_and_dimensions(self, semantic_tools_with_runtime):
+        from datus.tools.semantic_tools.models import DimensionInfo
+
+        tool, _ = semantic_tools_with_runtime
+        detail = {"name": "revenue", "expr": "SUM(orders.amount)", "measures": ["orders_amount_sum"], "path": ["x"]}
+        dimensions = [DimensionInfo(name="orders.region", description="Sales region")]
+
+        with (
+            patch("datus.tools.func_tool.semantic_tools._run_async", side_effect=[detail, dimensions]),
+            patch.object(tool, "_metric_subject_paths", return_value={"revenue": ["Sales", "Orders"]}),
+        ):
+            result = tool.metric_record(name="revenue", path=["Sales", "Orders"])
+
+        assert result.success == 1
+        record = result.result
+        # The knowledge base owns the path; compiled measure names stay out.
+        assert record["path"] == ["Sales", "Orders"]
+        assert "measures" not in record
+        assert record["expr"] == "SUM(orders.amount)"
+        assert record["dimensions"] == [
+            {key: value for key, value in dimensions[0].model_dump().items() if value is not None}
+        ]
+
+    def test_a_kb_path_failure_leaves_the_path_out(self, semantic_tools_with_runtime):
+        tool, _ = semantic_tools_with_runtime
+
+        with (
+            patch("datus.tools.func_tool.semantic_tools._run_async", side_effect=[{"name": "revenue"}, []]),
+            patch.object(tool, "_metric_subject_paths", side_effect=RuntimeError("kb down")),
+        ):
+            result = tool.metric_record(name="revenue")
+
+        assert result.result == {"name": "revenue", "dimensions": []}
+
+    def test_a_runtime_failure_is_a_failed_result(self, semantic_tools_with_runtime):
+        tool, _ = semantic_tools_with_runtime
+
+        with patch("datus.tools.func_tool.semantic_tools._run_async", side_effect=RuntimeError("engine down")):
+            result = tool.metric_record(name="revenue")
 
         assert result.success == 0
-        assert "no_such_metric" in result.error
-        assert "selected model" in result.error
+        assert "engine down" in result.error
 
-    def test_resolves_the_name_against_the_whole_catalog_not_the_path(self, semantic_tools_with_runtime):
-        """Name resolution must scope exactly the way list_metrics scopes it.
 
-        list_metrics filters by knowledge-base subject path and asks the runtime
-        for its unfiltered catalog. Narrowing the runtime read by path here would
-        make get_metric reject names list_metrics had just handed out under that
-        same path.
-        """
+class TestGetDataset:
+    def test_renders_the_engine_description(self, semantic_tools_with_runtime):
         tool, mock_runtime = semantic_tools_with_runtime
-        metric = _detail_metric("revenue", {"base_kind": "aggregate"})
 
-        with self._wire([metric]):
-            result = tool.get_metric(name="revenue", path=["Finance"])
+        with patch("datus.tools.func_tool.semantic_tools._run_async", return_value=VISITS_DATASET):
+            result = tool.get_dataset(name="visits")
 
         assert result.success == 1
-        assert mock_runtime.list_metrics.call_args.kwargs["path"] is None
-        mock_runtime.get_dimensions.assert_called_once_with(metric_name="revenue", path=["Finance"])
+        assert "- fixed(pay_amount, customer_id) AS customer_spend" in result.result
+        mock_runtime.describe_dataset.assert_called_once_with("visits")
+
+    def test_unknown_name_returns_the_candidates(self, semantic_tools_with_runtime):
+        from datus.tools.semantic_tools.dosi.errors import SemanticValidationException
+        from datus.tools.semantic_tools.models import SemanticValidationError
+
+        tool, _ = semantic_tools_with_runtime
+        error = SemanticValidationException(
+            SemanticValidationError(code="unknown_dataset", message="unknown dataset 'x' | candidates: visits")
+        )
+
+        with patch("datus.tools.func_tool.semantic_tools._run_async", side_effect=error):
+            result = tool.get_dataset(name="x")
+
+        assert result.success == 0
+        assert "candidates: visits" in result.error
+
+    def test_rejects_a_missing_name(self, semantic_tools_with_runtime):
+        tool, _ = semantic_tools_with_runtime
+
+        assert tool.get_dataset(name="").success == 0
 
 
 class TestValidateSemantic:
@@ -2051,6 +2286,25 @@ class TestValidateSemantic:
 
 
 class TestAttributionAnalyze:
+    def test_execution_failure_preserves_warehouse_cancellation_diagnostics(self, semantic_tools_with_runtime):
+        from datus.tools.semantic_tools.exceptions import SemanticCoreException
+
+        tool, _ = semantic_tools_with_runtime
+        info = [{"query_execution_id": "athena-1", "cancellation_requested": True, "cancellation_confirmed": False}]
+        tool._attribute = AsyncMock(side_effect=SemanticCoreException("warehouse timeout", execution_info=info))
+
+        result = tool.attribution_analyze(
+            metric_name="revenue",
+            candidate_dimensions=["region"],
+            baseline_start="2024-01-01",
+            baseline_end="2024-01-08",
+            current_start="2024-01-08",
+            current_end="2024-01-15",
+        )
+
+        assert result.success == 0
+        assert result.result == {"execution_info": info}
+
     def test_tool_schema_exposes_drilldown_guardrail_parameters(self, semantic_tools_with_runtime):
         tool, _ = semantic_tools_with_runtime
 
@@ -2187,8 +2441,28 @@ class TestExtractDbConfig:
         result = semantic_tools._extract_db_config("missing_ns")
         assert result is None
 
+    def test_hive_keeps_session_configuration_and_vendor_selection(self, semantic_tools):
+        profile = Mock()
+        profile.to_dict.return_value = {
+            "type": "hive",
+            "host": "localhost",
+            "port": 10000,
+            "extra": {
+                "server_type": "inceptor",
+                "auth": "KERBEROS",
+                "kerberos_service_name": "hive",
+                "configuration": {"hive.exec.dynamic.partition": "true"},
+            },
+        }
+        semantic_tools.agent_config.current_db_config.return_value = profile
+        result = semantic_tools._extract_db_config("warehouse")
+        assert result["server_type"] == "inceptor"
+        assert result["auth"] == "KERBEROS"
+        assert result["kerberos_service_name"] == "hive"
+        assert result["configuration"] == {"hive.exec.dynamic.partition": "true"}
+
     def test_extracts_and_filters_db_config(self, semantic_tools):
-        """Should extract db_config, stringify values, and exclude filtered keys."""
+        """Preserve native connection values and exclude Agent-only fields."""
         mock_db_config = Mock()
         mock_db_config.to_dict.return_value = {
             "db_type": "mysql",
@@ -2208,13 +2482,42 @@ class TestExtractDbConfig:
 
         assert result["db_type"] == "mysql"
         assert result["host"] == "localhost"
-        assert result["port"] == "3306"
+        assert result["port"] == 3306
         assert result["role"] == "ANALYST"
         assert result["private_key_file"] == "/tmp/rsa_key.p8"
-        assert result["private_key_file_pwd"] == "1234"
+        assert result["private_key_file_pwd"] == 1234
         assert "extra" not in result
         assert "path_pattern" not in result
         assert result["catalog"] == "skip"
+
+    def test_preserves_hana_tls_options_and_explicit_values(self, semantic_tools):
+        """HANA's native executor must receive booleans, including false."""
+        db_config = Mock()
+        db_config.to_dict.return_value = {
+            "type": "hana",
+            "port": 39041,
+            "encrypt": True,
+            "default": True,
+            "extra": {
+                "encrypt": False,
+                "ssl_validate_certificate": False,
+                "timeout_seconds": 30,
+                "ssl_trust_store": "/tmp/hana-ca.pem",
+                "userkey": None,
+            },
+        }
+        semantic_tools.agent_config.current_db_config.return_value = db_config
+
+        result = semantic_tools._extract_db_config("hana")
+
+        assert result == {
+            "type": "hana",
+            "port": 39041,
+            "encrypt": True,
+            "ssl_validate_certificate": False,
+            "timeout_seconds": 30,
+            "ssl_trust_store": "/tmp/hana-ca.pem",
+        }
 
 
 class TestReloadRuntime:
@@ -2246,13 +2549,12 @@ class TestCompressorModelName:
             tool = SemanticTools(agent_config=config)
             assert tool.compressor.model_name == "deepseek/deepseek-chat"
 
-    def test_list_metrics_returns_envelope_without_compressor(self, semantic_tools_with_runtime):
-        """list_metrics returns the canonical FuncToolListResult envelope.
+    def test_list_metrics_returns_text_without_compressor(self, semantic_tools_with_runtime):
+        """list_metrics answers with its own text page.
 
         Regression: list_metrics used to wrap rows in DataCompressor output
-        (``{original_rows, compressed_data, ...}``) regardless of size.
-        After the envelope migration it returns ``{items, total, has_more,
-        extra}`` with NO compressor artefacts — list_* never compresses.
+        (``{original_rows, compressed_data, ...}``) regardless of size; list_*
+        never compresses.
         """
         tool, _ = semantic_tools_with_runtime
         mock_metric = Mock()
@@ -2270,13 +2572,7 @@ class TestCompressorModelName:
             result = tool.list_metrics()
 
         assert result.success == 1
-        envelope = result.result
-        assert set(envelope.keys()) == {"items", "total", "has_more", "extra"}
-        assert envelope["items"][0]["name"] == "orders"
-        # No compressor residue leaks through.
-        assert "original_rows" not in envelope
-        assert "compressed_data" not in envelope
-        assert "compression_type" not in envelope
+        assert result.result == "- orders"
 
 
 @pytest.mark.usefixtures("mock_runtime")
@@ -2317,3 +2613,308 @@ class TestQueryMetricsContextFilter:
         assert "context_filter" in properties
         assert "context_filter" not in tool.params_json_schema.get("required", [])
         assert "before aggregation" in properties["context_filter"]["description"]
+
+
+def test_query_metrics_exposes_warehouse_cancellation_diagnostics(semantic_tools, mock_runtime):
+    from datus.tools.semantic_tools.exceptions import SemanticCoreException
+
+    info = [{"query_execution_id": "athena-1", "cancellation_requested": True, "cancellation_confirmed": False}]
+    mock_runtime.query_metrics.side_effect = SemanticCoreException("warehouse timeout", execution_info=info)
+    result = semantic_tools.query_metrics(metrics=["order_count"])
+    assert result.success == 0
+    assert result.result == {"execution_info": info}
+
+
+# ── Ontology tools ─────────────────────────────────────────────────
+
+
+def _ontology_config(tmp_path=None):
+    config = Mock()
+    config.active_model.return_value.model = "gpt-4o"
+    config.current_datasource = "flights_db"
+    config.current_db_config.return_value = None
+    config.runtime_db_context.return_value = {}
+    config.path_manager.semantic_model_path.return_value = "/tmp/models/flights_db"
+    config.path_manager.ontology_dir = "/tmp/subject/ontology"
+    return config
+
+
+def _validation_exception(**fields):
+    from datus.tools.semantic_tools.dosi.errors import SemanticValidationException
+    from datus.tools.semantic_tools.models import SemanticValidationError
+
+    return SemanticValidationException(SemanticValidationError(**fields))
+
+
+class TestOntologyToolRegistration:
+    def _names(self, tool):
+        with patch("datus.tools.func_tool.semantic_tools.trans_to_function_tool") as convert:
+            convert.side_effect = lambda function: SimpleNamespace(name=function.__name__)
+            return [registered.name for registered in tool.available_tools()]
+
+    def test_ontology_tools_hidden_by_default(self):
+        with patch("datus.tools.func_tool.semantic_tools.MetricRAG"):
+            tool = SemanticTools(agent_config=_ontology_config())
+        assert not set(SemanticTools.ONTOLOGY_TOOL_NAMES) & set(self._names(tool))
+
+    def test_ontology_tools_exposed_when_enabled(self):
+        with patch("datus.tools.func_tool.semantic_tools.MetricRAG"):
+            tool = SemanticTools(agent_config=_ontology_config(), ontology_enabled=True)
+        names = self._names(tool)
+        assert names[-3:] == ["describe_concept", "find_concept_paths", "select_records"]
+
+    def test_all_tools_name_lists_ontology_tools(self):
+        assert set(SemanticTools.ONTOLOGY_TOOL_NAMES) <= set(SemanticTools.all_tools_name())
+
+    @staticmethod
+    def _layout(tmp_path, *, plain_model: bool):
+        """A datasource's model dir (with or without a plain model) and the project ontology dir with an inline mapping."""
+        models_dir = tmp_path / "subject" / "semantic_models" / "flights_db"
+        ontology_dir = tmp_path / "subject" / "ontology"
+        models_dir.mkdir(parents=True)
+        ontology_dir.mkdir(parents=True)
+        if plain_model:
+            (models_dir / "flights.yaml").write_text("version: '0.2.0.dev0'\nsemantic_model:\n  - name: flights\n")
+        (ontology_dir / "flights.mapping.yaml").write_text(
+            "version: 0.2.0.dev0\nname: flights_mapping\n"
+            "ontology_ref: {name: Flights, document: {version: 0.2.0.dev0, name: Flights, ontology: []}}\n"
+            "semantic_model_ref: {name: flights, document: {version: 0.2.0.dev0, name: flights, datasets: []}}\n"
+            "concept_mappings: []\n"
+        )
+        config = _ontology_config()
+        config.path_manager.semantic_model_path.return_value = str(models_dir)
+        config.path_manager.ontology_dir = ontology_dir
+        return config, ontology_dir
+
+    def _runtime_config(self, config, **kwargs):
+        with (
+            patch("datus.tools.func_tool.semantic_tools.MetricRAG"),
+            patch("datus.tools.func_tool.semantic_tools.DosiRuntime") as runtime,
+        ):
+            tool = SemanticTools(agent_config=config, **kwargs)
+            assert tool.runtime is runtime.return_value
+            return tool, runtime.call_args.args[0]
+
+    def test_plain_model_datasource_loads_ontology_only_when_enabled(self, tmp_path):
+        config, ontology_dir = self._layout(tmp_path, plain_model=True)
+        _, plain = self._runtime_config(config)
+        _, enabled = self._runtime_config(config, ontology_enabled=True)
+        assert plain.ontology_dir is None
+        assert enabled.ontology_dir == str(ontology_dir)
+
+    def test_mapping_only_datasource_loads_its_mappings_without_the_ontology_tools(self, tmp_path):
+        """Without a plain model the inline mappings are the datasource's only models, for every agent."""
+        config, ontology_dir = self._layout(tmp_path, plain_model=False)
+        tool, plain = self._runtime_config(config)
+        assert plain.ontology_dir == str(ontology_dir)
+        assert not set(SemanticTools.ONTOLOGY_TOOL_NAMES) & set(self._names(tool))
+
+
+@pytest.fixture
+def ontology_tools():
+    with patch("datus.tools.func_tool.semantic_tools.MetricRAG"):
+        tool = SemanticTools(agent_config=_ontology_config(), ontology_enabled=True)
+    runtime = Mock()
+    tool._runtime = runtime
+    return tool, runtime
+
+
+class TestDescribeConcept:
+    def test_catalog(self, ontology_tools):
+        tool, runtime = ontology_tools
+        runtime.describe = AsyncMock(return_value={"concepts": [{"name": "Flight"}]})
+        result = tool.describe_concept()
+        assert result.success == 1
+        assert result.result == {"concepts": [{"name": "Flight"}]}
+        runtime.describe.assert_awaited_once_with(None)
+
+    @pytest.mark.parametrize("placeholder", ["", "null", "None"])
+    def test_null_placeholders_mean_catalog(self, ontology_tools, placeholder):
+        tool, runtime = ontology_tools
+        runtime.describe = AsyncMock(return_value={})
+        tool.describe_concept(placeholder)
+        assert runtime.describe.await_args.args[0] in (None, "")
+
+    def test_concept(self, ontology_tools):
+        tool, runtime = ontology_tools
+        runtime.describe = AsyncMock(return_value={"concept": "FlightAlert"})
+        assert tool.describe_concept("FlightAlert").result == {"concept": "FlightAlert"}
+        runtime.describe.assert_awaited_once_with("FlightAlert")
+
+    def test_unknown_concept_returns_structured_candidates(self, ontology_tools):
+        tool, runtime = ontology_tools
+        runtime.describe = AsyncMock(
+            side_effect=_validation_exception(
+                code="unknown_concept", candidates=["Flight", "FlightAlert"], message="unknown concept 'Flght'"
+            )
+        )
+        result = tool.describe_concept("Flght")
+        assert result.success == 0
+        assert result.result["code"] == "unknown_concept"
+        assert result.result["candidates"] == ["Flight", "FlightAlert"]
+
+    def test_infrastructure_failure_is_a_plain_failure(self, ontology_tools):
+        tool, runtime = ontology_tools
+        runtime.describe = AsyncMock(side_effect=RuntimeError("no ontology is loaded"))
+        result = tool.describe_concept()
+        assert result.success == 0
+        assert "no ontology is loaded" in result.error
+        assert result.result is None
+
+    def test_runtime_unavailable(self):
+        with (
+            patch("datus.tools.func_tool.semantic_tools.MetricRAG"),
+            patch("datus.tools.func_tool.semantic_tools.DosiRuntime", side_effect=RuntimeError("bad yaml")),
+        ):
+            tool = SemanticTools(agent_config=_ontology_config(), ontology_enabled=True)
+            result = tool.describe_concept()
+        assert result.success == 0
+        assert "describe_concept requires" in result.error and "bad yaml" in result.error
+
+
+class TestFindConceptPaths:
+    def test_paths(self, ontology_tools):
+        tool, runtime = ontology_tools
+        payload = {"paths": [{"path": "Flight.arrives_at"}], "equivalences": [], "max_hops": 3}
+        runtime.concept_paths = AsyncMock(return_value=payload)
+        result = tool.find_concept_paths(" Flight ", "Airport")
+        assert result.result == payload
+        runtime.concept_paths.assert_awaited_once_with("Flight", "Airport")
+
+    @pytest.mark.parametrize("source,target", [("", "Airport"), ("Flight", ""), (None, None)])
+    def test_requires_both_concepts(self, ontology_tools, source, target):
+        tool, runtime = ontology_tools
+        runtime.concept_paths = AsyncMock()
+        result = tool.find_concept_paths(source, target)
+        assert result.success == 0
+        runtime.concept_paths.assert_not_called()
+
+    def test_invalid_path_is_structured(self, ontology_tools):
+        tool, runtime = ontology_tools
+        runtime.concept_paths = AsyncMock(
+            side_effect=_validation_exception(code="invalid_concept_path", message="no path from Flight to Moon")
+        )
+        result = tool.find_concept_paths("Flight", "Moon")
+        assert result.success == 0
+        assert result.result["code"] == "invalid_concept_path"
+
+
+class TestSelectRecords:
+    @staticmethod
+    def _result(rows):
+        from datus.tools.semantic_tools.models import QueryResult
+
+        return QueryResult(
+            columns=["alert_id", "priority"],
+            data=rows,
+            metadata={
+                "sql": "SELECT ...",
+                "row_count": len(rows),
+                "requested_columns": [{"requested": "FlightAlert.id", "column": "alert_id"}],
+            },
+        )
+
+    def test_returns_the_result_text_and_caches_the_full_result(self, ontology_tools):
+        tool, runtime = ontology_tools
+        rows = [{"alert_id": "A007", "priority": "P1"}, {"alert_id": "A011", "priority": "P1"}]
+        runtime.select = AsyncMock(return_value=self._result(rows))
+        result = tool.select_records(
+            from_concept="FlightAlert",
+            fields=["FlightAlert.id", "FlightAlert.priority"],
+            where="FlightAlert.status = 'OPEN'",
+        )
+        assert result.success == 1
+        text = _text(result)
+        assert text.columns == ["alert_id", "priority"]
+        assert text.csv.splitlines()[1:] == ["A007,P1", "A011,P1"]
+        # Nothing to report beside the rows: the SQL and column map stay out of the text.
+        assert _reported(result) == []
+        cached = tool.get_cached_query_metrics_result(text.result_id)
+        assert cached["row_count"] == 2
+        assert "A011" in cached["csv"]
+        kwargs = runtime.select.await_args.kwargs
+        assert kwargs["limit"] == SemanticTools.SELECT_RECORDS_DEFAULT_LIMIT
+        assert kwargs["where"] == "FlightAlert.status = 'OPEN'"
+
+    def test_exposes_execution_info_in_text_and_page(self, ontology_tools):
+        tool, runtime = ontology_tools
+        info = [{"statement_id": "redshift-1", "state": "FINISHED"}]
+        query_result = self._result([{"alert_id": "A007", "priority": "P1"}])
+        query_result.metadata["execution_info"] = info
+        runtime.select = AsyncMock(return_value=query_result)
+
+        result = tool.select_records(from_concept="FlightAlert", fields=["FlightAlert.id"])
+
+        line = next(line for line in _text(result).lines if line.startswith("execution_info: "))
+        assert json.loads(line.removeprefix("execution_info: ")) == info
+        assert tool.get_query_metrics_result(_text(result).result_id).result["execution_info"] == info
+
+    def test_execution_failure_exposes_diagnostics(self, ontology_tools):
+        from datus.tools.semantic_tools.exceptions import SemanticCoreException
+
+        tool, runtime = ontology_tools
+        info = [{"query_execution_id": "athena-1", "cancellation_confirmed": False}]
+        runtime.select = AsyncMock(side_effect=SemanticCoreException("warehouse timeout", execution_info=info))
+
+        result = tool.select_records(from_concept="FlightAlert", fields=["FlightAlert.id"])
+
+        assert result.success == 0
+        assert result.result == {"execution_info": info}
+
+    def test_a_full_default_page_says_there_may_be_more(self, ontology_tools, monkeypatch):
+        tool, runtime = ontology_tools
+        monkeypatch.setattr(SemanticTools, "SELECT_RECORDS_DEFAULT_LIMIT", 2)
+        rows = [{"alert_id": "A007", "priority": "P1"}, {"alert_id": "A011", "priority": "P1"}]
+        runtime.select = AsyncMock(return_value=self._result(rows))
+
+        result = tool.select_records(from_concept="FlightAlert", fields=["FlightAlert.id"])
+
+        assert _text(result).lines[1] == "rows: 2 (reached the 2-row cap; there may be more)"
+
+    def test_a_limit_the_caller_asked_for_is_not_a_cap(self, ontology_tools):
+        tool, runtime = ontology_tools
+        rows = [{"alert_id": "A007", "priority": "P1"}, {"alert_id": "A011", "priority": "P1"}]
+        runtime.select = AsyncMock(return_value=self._result(rows))
+
+        result = tool.select_records(from_concept="FlightAlert", fields=["FlightAlert.id"], limit=2)
+
+        assert _text(result).lines[1] == "rows: 2"
+
+    def test_explicit_limit_and_order(self, ontology_tools):
+        tool, runtime = ontology_tools
+        runtime.select = AsyncMock(return_value=self._result([]))
+        tool.select_records(
+            from_concept="FlightAlert", fields="FlightAlert.id", order_by=["-FlightAlert.id"], limit="5"
+        )
+        kwargs = runtime.select.await_args.kwargs
+        assert kwargs["fields"] == ["FlightAlert.id"]
+        assert kwargs["order_by"] == ["-FlightAlert.id"]
+        assert kwargs["limit"] == 5
+
+    @pytest.mark.parametrize(
+        "from_concept,fields", [("", ["FlightAlert.id"]), ("FlightAlert", []), ("FlightAlert", None)]
+    )
+    def test_requires_concept_and_fields(self, ontology_tools, from_concept, fields):
+        tool, runtime = ontology_tools
+        runtime.select = AsyncMock()
+        result = tool.select_records(from_concept=from_concept, fields=fields)
+        assert result.success == 0
+        runtime.select.assert_not_called()
+
+    def test_value_not_in_domain_returns_allowed_values(self, ontology_tools):
+        tool, runtime = ontology_tools
+        violations = [{"reference": "FlightAlert.status", "literal": "unresolved", "allowed": ["OPEN", "RESOLVED"]}]
+        runtime.select = AsyncMock(
+            side_effect=_validation_exception(
+                code="value_not_in_domain",
+                candidates=["OPEN", "RESOLVED"],
+                detail={"violations": violations},
+                message='"unresolved" is not a value of FlightAlert.status',
+            )
+        )
+        result = tool.select_records(
+            from_concept="FlightAlert", fields=["FlightAlert.id"], where="FlightAlert.status = 'unresolved'"
+        )
+        assert result.success == 0
+        assert result.result["code"] == "value_not_in_domain"
+        assert result.result["detail"]["violations"] == violations

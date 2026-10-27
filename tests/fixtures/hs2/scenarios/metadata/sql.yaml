@@ -1,0 +1,69 @@
+cases:
+- id: metadata.view_rows
+  capabilities:
+  - metadata.system
+  targets:
+  - hive
+  - inceptor
+  sql: SELECT COUNT(*) AS n FROM {{db}}.orders_view
+  expected:
+    columns:
+    - n
+    rows:
+    - - 4
+    types:
+    - int
+    ordered: false
+- id: metadata.system_count
+  capabilities:
+  - metadata.system
+  targets:
+  - inceptor
+  sql: SELECT COUNT(*) AS n FROM system.columns_v WHERE database_name='{{db_name}}' AND table_name='orders'
+  expected:
+    columns:
+    - n
+    rows:
+    - - 5
+    types:
+    - int
+    ordered: false
+- id: metadata.system_names
+  capabilities:
+  - metadata.system
+  targets:
+  - inceptor
+  sql: SELECT column_name FROM system.columns_v WHERE database_name='{{db_name}}' AND table_name='orders'
+  expected:
+    columns:
+    - column_name
+    rows:
+    - - amount
+    - - customer_id
+    - - label
+    - - order_date
+    - - order_id
+    types:
+    - text
+    ordered: false
+- id: metadata.system_minmax
+  capabilities:
+  - metadata.system
+  targets:
+  - inceptor
+  sql: SELECT MIN(column_name) AS lo,MAX(column_name) AS hi,COUNT(DISTINCT column_name) AS n FROM system.columns_v
+    WHERE database_name='{{db_name}}' AND table_name='orders'
+  expected:
+    columns:
+    - lo
+    - hi
+    - n
+    rows:
+    - - amount
+      - order_id
+      - 5
+    types:
+    - text
+    - text
+    - int
+    ordered: false

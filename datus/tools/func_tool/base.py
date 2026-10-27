@@ -31,10 +31,39 @@ def normalize_null(value):
     return value
 
 
+def normalize_tool_args(arguments: dict, params_schema: dict) -> dict:
+    """Decode stringified arrays/booleans only for unambiguous declared types.
+
+    Leave strings, open objects, ambiguous unions and nested values untouched.
+    Normalization does not replace the tool's strict argument validation.
+    """
+    normalized = dict(arguments)
+    for name, schema in params_schema.get("properties", {}).items():
+        value = arguments.get(name)
+        if not isinstance(value, str):
+            continue
+        variants = schema.get("anyOf", [schema])
+        types = [variant.get("type") for variant in variants]
+        if any(not isinstance(kind, str) for kind in types):
+            continue
+        kinds = set(types) - {"null"}
+        if kinds == {"boolean"} and value.casefold() in {"true", "false"}:
+            normalized[name] = value.casefold() == "true"
+        elif kinds == {"array"}:
+            try:
+                decoded = json.loads(value)
+            except (ValueError, RecursionError):
+                continue
+            if isinstance(decoded, list):
+                normalized[name] = decoded
+    return normalized
+
+
 def parse_tool_args(
     args_str: Any,
     *,
     tool_name: str = "unknown",
+    params_schema: Optional[dict] = None,
 ) -> tuple[dict, str, Optional[str]]:
     """Parse tool arguments, repairing malformed JSON objects when possible.
 
@@ -103,6 +132,11 @@ def parse_tool_args(
     canonical_json = (
         args_str if isinstance(args_str, str) else json.dumps(parsed, ensure_ascii=False, separators=(",", ":"))
     )
+    if params_schema is not None:
+        normalized = normalize_tool_args(parsed, params_schema)
+        if normalized != parsed:
+            parsed = normalized
+            canonical_json = json.dumps(parsed, ensure_ascii=False, separators=(",", ":"))
     return parsed, canonical_json, None
 
 
@@ -245,6 +279,7 @@ def trans_to_function_tool(
             args_dict, canonical_json, error = parse_tool_args(
                 args_str,
                 tool_name=method_to_call.__name__,
+                params_schema=corrected_schema,
             )
             write_back_tool_args(tool_ctx, canonical_json)
             if error:
@@ -339,7 +374,13 @@ def trans_to_function_tool(
                 # on the per-session tool instance, so it is visible in the thread.
                 result = await asyncio.to_thread(method_to_call, *positional, **kwargs)
             if isinstance(result, FuncToolResult):
-                return result.model_dump(mode="json")
+                result = result.model_dump(mode="json")
+            from datus.utils.tool_result_store import ACTIVE_RESULT_STORE
+
+            store = ACTIVE_RESULT_STORE.get()
+            call_id = getattr(tool_ctx, "tool_call_id", None)
+            if store is not None and isinstance(call_id, str):
+                store.register(call_id, result)
             return result
 
         return final_invoker

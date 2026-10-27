@@ -1,0 +1,148 @@
+version: 1
+capabilities:
+  types.standard:
+    priority: P0
+    source: https://www.transwarp.cn/doc/tdh-community-edition/2024.5/TDH-CE-Developer-Guide--appendix--data-type
+    scope: query
+    required_cases:
+    - standard.typed_orc
+    - standard.unicode_formats
+    - standard.numeric_families
+    - standard.binary
+  types.vendor:
+    priority: P0
+    source: https://www.transwarp.cn/doc/tdh-community-edition/2024.5/TDH-CE-Developer-Guide--appendix--data-type
+    scope: query
+    required_cases:
+    - vendor.stored_values
+    - vendor.varchar2_formats
+    - vendor.interval_ym
+    - vendor.interval_ds
+    - vendor.geo
+    - vendor.json
+    - vendor.blob
+    - vendor.clob
+  types.exact_numeric:
+    priority: P0
+    source: https://www.transwarp.cn/doc/tdh-community-edition/2024.5/TDH-CE-Developer-Guide--appendix--data-type
+    scope: query
+    required_cases:
+    - numeric.rounding
+    - numeric.int64
+  dates.modes:
+    priority: P0
+    source: https://www.transwarp.cn/doc/tdh-community-edition/2024.5/TDH-CE-Developer-Guide--inceptor-sql-reference--functions-and-operators--functions-and-operators-overview
+    scope: query
+    required_cases:
+    - date.to_date_mode
+    - date.formatted_day_difference
+    - date.null_input
+  dates.storage:
+    priority: P0
+    source: https://www.transwarp.cn/doc/tdh-community-edition/2024.5/TDH-CE-Developer-Guide--appendix--data-type
+    scope: query
+    required_cases:
+    - date.stored_orc_midnight
+    - date.stored_date_format
+  query.nulls:
+    priority: P0
+    source: https://hive.apache.org/docs/latest/language/languagemanual-udf/
+    scope: query
+    required_cases:
+    - null.empty_sum
+    - null.not_in
+    - null.safe_negated
+    - metrics.null_negated
+    - metrics.null_distinct
+  query.relational:
+    priority: P1
+    source: https://hive.apache.org/docs/latest/language/languagemanual/
+    scope: query
+    required_cases:
+    - join.left_unmatched
+    - cte.having
+    - subquery.exists
+    - union.distinct
+  query.windows:
+    priority: P1
+    source: https://www.transwarp.cn/doc/tdh-community-edition/2024.5/TDH-CE-Developer-Guide--inceptor-sql-reference--functions-and-operators--functions-and-operators-overview
+    scope: query
+    required_cases:
+    - window.running
+    - window.lag
+  metadata.system:
+    priority: P1
+    source: https://www.transwarp.cn/doc/tdh-community-edition/2024.5/TDH-CE-Developer-Guide--appendix--system-table
+    scope: query
+    required_cases:
+    - metadata.view_rows
+    - metadata.system_names
+    - metadata.system_minmax
+  query.errors:
+    priority: P1
+    source: https://github.com/apache/hive/blob/rel/release-4.0.1/service-rpc/if/TCLIService.thrift
+    scope: query
+    required_cases:
+    - errors.missing_column
+    - errors.missing_table
+    - errors.syntax
+    - errors.recovery
+  metrics.core:
+    priority: P0
+    source: https://github.com/Datus-ai/osi-engine
+    scope: query
+    required_cases:
+    - metrics.totals
+    - metrics.label_groups
+  metrics.dates:
+    priority: P0
+    source: https://www.transwarp.cn/doc/tdh-community-edition/2024.5/TDH-CE-Developer-Guide--inceptor-sql-reference--functions-and-operators--functions-and-operators-overview
+    scope: query
+    required_cases:
+    - metrics.date_boundaries
+    - metrics.day_bucket
+    - metrics.calendar_buckets
+    - metrics.date_column_difference
+  metrics.joins:
+    priority: P1
+    source: https://github.com/Datus-ai/osi-engine
+    scope: query
+    required_cases:
+    - metrics.join_unmatched
+    - metrics.multidataset
+  metrics.windows:
+    priority: P1
+    source: https://github.com/Datus-ai/osi-engine
+    scope: query
+    required_cases:
+    - metrics.running_revenue
+    - metrics.rolling_revenue
+    - metrics.previous_revenue
+  storage.tables:
+    priority: P1
+    source: https://www.transwarp.cn/doc/tdh-community-edition/2024.5/TDH-CE-Developer-Guide--appendix--table-stored-format
+    scope: query
+    required_cases:
+    - storage.partitioned
+    - storage.external
+    - metrics.external_source
+limitations:
+- id: ce_json_non_ascii
+  target: inceptor
+  reason: CE 2024.5 may replace non-ASCII JSON before HS2 serialization; plain string Unicode remains required.
+- id: cursor
+  target: inceptor
+  reason: Stored procedures and cursor results are outside this query suite; Rust must reject CURSOR explicitly.
+- id: physical_identifiers
+  target: inceptor
+  reason: CE 2024.5 rejects physical names containing spaces/hyphens; quoted result aliases are required.
+- id: ce_orc_empty_string
+  target: inceptor
+  reason: Observed CE 8.37.3 ORC STRING empty values return NULL; wire decoder tests independently require empty
+    and NULL to remain distinct.
+- id: ce_time_24_cast
+  target: inceptor
+  reason: CE 8.37.3 CAST of 24:00:00 returns NULL despite the CE data type manual listing that boundary.
+- id: ce_varchar_cast_spaces
+  target: inceptor
+  reason: Observed CE 8.37.3 scalar VARCHAR cast trims trailing spaces; CHAR padding remains separately asserted.

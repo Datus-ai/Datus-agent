@@ -124,6 +124,7 @@ class GenMetricsNodeResult(SemanticNodeResult):
             "semantic_model_required",
             "semantic_model_selection_required",
             "semantic_model_target_invalid",
+            "semantic_model_inline_in_mapping",
         ]
     ] = Field(default=None, description="Actionable prerequisite when status is blocked")
     skip_reason: Optional[Literal["not_a_metric"]] = Field(
@@ -148,6 +149,7 @@ class SemanticModelingNodeResult(SemanticNodeResult):
             "semantic_model_required",
             "semantic_model_selection_required",
             "semantic_model_target_invalid",
+            "semantic_model_inline_in_mapping",
         ]
     ] = Field(default=None, description="Actionable target prerequisite when status is blocked")
     skip_reason: Optional[Literal["no_semantic_change"]] = Field(

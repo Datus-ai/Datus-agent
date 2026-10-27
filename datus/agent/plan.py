@@ -190,6 +190,16 @@ def _create_single_node(
             db_schema=sql_task.schema_name or None,
             reference_date=sql_task.current_date or None,
         )
+    elif normalized_type == NodeType.TYPE_ONTOLOGY_ANALYST:
+        from datus.schemas.ontology_analyst_agentic_node_models import OntologyAnalystNodeInput
+
+        input_data = OntologyAnalystNodeInput(
+            user_message=sql_task.task or "",
+            catalog=sql_task.catalog_name or None,
+            database=sql_task.database_name or None,
+            db_schema=sql_task.schema_name or None,
+            reference_date=sql_task.current_date or None,
+        )
 
     node = Node.new_instance(
         node_id=node_id,
@@ -199,7 +209,13 @@ def _create_single_node(
         agent_config=agent_config,
         node_name=(
             node_type
-            if normalized_type in (NodeType.TYPE_GEN_SQL, NodeType.TYPE_ASK_METRICS, NodeType.TYPE_SEMANTIC)
+            if normalized_type
+            in (
+                NodeType.TYPE_GEN_SQL,
+                NodeType.TYPE_ASK_METRICS,
+                NodeType.TYPE_ONTOLOGY_ANALYST,
+                NodeType.TYPE_SEMANTIC,
+            )
             else None
         ),
     )

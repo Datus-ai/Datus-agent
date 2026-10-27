@@ -66,6 +66,64 @@ class TestTransToFunctionTool:
             trans_to_function_tool(ParameterTool().query)
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("encoded", [False, True])
+    async def test_declared_array_and_boolean_arguments_execute_and_replay_canonically(self, encoded):
+        class MetadataTool:
+            def inspect(self, tables: list[str], include_views: Optional[bool] = None) -> FuncToolResult:
+                return FuncToolResult(result={"tables": tables, "include_views": include_views})
+
+        expected = {"tables": ["orders", "customers"], "include_views": False}
+        arguments = {k: json.dumps(v) for k, v in expected.items()} if encoded else expected
+        raw = json.dumps(arguments)
+        context = SimpleNamespace(tool_arguments=raw, tool_call={"arguments": raw})
+        result = await trans_to_function_tool(MetadataTool().inspect).on_invoke_tool(context, raw)
+        assert result["success"] == 1 and result["result"] == expected
+        assert json.loads(context.tool_arguments) == expected
+        assert context.tool_call["arguments"] == context.tool_arguments
+
+    @pytest.mark.asyncio
+    async def test_text_and_ambiguous_argument_types_preserve_their_values(self):
+        class TextTool:
+            @tool_schema(strict_mode=False)
+            def inspect(
+                self, text: str, choice: str | list[str], flag: str | bool, payload: dict[str, Any]
+            ) -> FuncToolResult:
+                return FuncToolResult(result={"text": text, "choice": choice, "flag": flag, "payload": payload})
+
+        arguments = {
+            "text": "SELECT 'false', '[1, 2]'",
+            "choice": '["orders"]',
+            "flag": "false",
+            "payload": {"tables": '["orders"]', "enabled": "false"},
+        }
+        result = await trans_to_function_tool(TextTool().inspect).on_invoke_tool(None, json.dumps(arguments))
+        assert result["success"] == 1 and result["result"] == arguments
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "arguments",
+        [
+            {"tables": "orders", "enabled": "true"},
+            {"tables": '{"name":"orders"}', "enabled": "true"},
+            {"tables": "[123]", "enabled": "true"},
+            {"tables": '["orders"]', "enabled": "yes"},
+            {"tables": '["orders"]', "enabled": 1},
+        ],
+    )
+    async def test_encoded_arguments_still_require_strict_validation(self, arguments):
+        class MetadataTool:
+            called = False
+
+            def inspect(self, tables: list[str], enabled: bool) -> FuncToolResult:
+                self.called = True
+                return FuncToolResult(result=tables)
+
+        instance = MetadataTool()
+        result = await trans_to_function_tool(instance.inspect).on_invoke_tool(None, json.dumps(arguments))
+        assert result["success"] == 0 and result["result"]["argument_errors"]
+        assert instance.called is False
+
+    @pytest.mark.asyncio
     @pytest.mark.parametrize("value", [[123], "one-id"])
     async def test_wrong_array_types_return_parameter_locations_without_execution(self, value):
         class EvidenceTool:

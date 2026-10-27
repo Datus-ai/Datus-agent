@@ -2,6 +2,10 @@ agent:
   home: ~/.datus
   logging:
     level: INFO  # CLI > DATUS_LOG_LEVEL > this value > INFO
+  # Shared by all tools/datasources in one MCP server. Excess work fails fast.
+  mcp_tool_execution:
+    max_workers: 8
+    max_queue_size: 16
   # Storage layout (refactored):
   #   * ~/.datus/sessions/{project_name}/        — sessions sharded per project
   #   * ~/.datus/data/                           — storage-backend root; each

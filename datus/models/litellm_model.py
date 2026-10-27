@@ -5,9 +5,12 @@
 """Datus compatibility transport for LiteLLM Chat Completions models."""
 
 from collections.abc import AsyncIterator
+from copy import deepcopy
 from typing import Any
 
 import litellm
+from agents.models.chatcmpl_converter import Converter
+from agents.util._json import _to_dump_compatible
 
 from datus.models.observed_model import ObservedLitellmModel
 from datus.models.reasoning_replay import REASONING_ENDPOINT_KEY, is_kimi_model, reasoning_endpoint_identity
@@ -147,10 +150,63 @@ class DatusLitellmModel(ObservedLitellmModel):
             _stamp_reasoning_event(event, endpoint_identity)
             yield event
 
-    async def _fetch_response(self, system_instructions: Any, input: Any, *args: Any, **kwargs: Any) -> Any:
+    async def _fetch_response(
+        self,
+        system_instructions: Any,
+        input: Any,
+        model_settings: Any,
+        tools: Any,
+        output_schema: Any,
+        handoffs: Any,
+        span: Any,
+        tracing: Any,
+        *args: Any,
+        **kwargs: Any,
+    ) -> Any:
         if is_kimi_model(self.model):
             input = normalize_kimi_tool_replay_items(input)
-        return await super()._fetch_response(system_instructions, tool_images_as_user_input(input), *args, **kwargs)
+        input = tool_images_as_user_input(input)
+        if capacity := getattr(self, "_datus_capacity", None):
+            from datus.models.request_capacity import guard_request
+
+            guard_request(
+                capacity,
+                self.capacity_payload(system_instructions, input, model_settings, tools, output_schema, handoffs),
+            )
+        return await super()._fetch_response(
+            system_instructions, input, model_settings, tools, output_schema, handoffs, span, tracing, *args, **kwargs
+        )
+
+    def capacity_payload(
+        self, system_instructions: Any, input: Any, model_settings: Any, tools: Any, output_schema: Any, handoffs: Any
+    ) -> dict:
+        """Prepare the same countable request for planning and final validation."""
+        messages = Converter.items_to_messages(
+            deepcopy(input),
+            base_url=self.base_url,
+            preserve_thinking_blocks=bool(model_settings.reasoning and model_settings.reasoning.effort),
+            preserve_tool_output_all_content=True,
+            model=self.model,
+            should_replay_reasoning_content=self.should_replay_reasoning_content,
+        )
+        if any(name in self.model.lower() for name in ("anthropic", "claude", "gemini")):
+            messages = self._fix_tool_message_ordering(messages)
+        if "gemini" in self.model.lower():
+            messages = self._convert_gemini_extra_content_to_provider_specific_fields(messages)
+        if system_instructions:
+            messages.insert(0, {"role": "system", "content": system_instructions})
+        return {
+            "messages": _to_dump_compatible(messages),
+            "tools": _to_dump_compatible(
+                [Converter.tool_to_openai(tool) for tool in tools]
+                + [Converter.convert_handoff_tool(handoff) for handoff in handoffs]
+            ),
+            "response_format": Converter.convert_response_format(output_schema),
+            "tool_choice": Converter.convert_tool_choice(model_settings.tool_choice),
+            "max_tokens": model_settings.max_tokens,
+            "extra_args": model_settings.extra_args,
+            "extra_body": model_settings.extra_body,
+        }
 
     def _convert_gemini_extra_content_to_provider_specific_fields(self, messages: list[Any]) -> list[Any]:
         # An image returned by a tool is transported as user content, but does

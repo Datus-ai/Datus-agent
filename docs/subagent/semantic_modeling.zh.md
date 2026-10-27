@@ -161,7 +161,7 @@ datus --datasource duckdb_demo
 
 键声明只以源 DDL 为准：物理主键写入 `primary_key`，唯一约束或覆盖整表的普通列唯一索引写入 `unique_keys`，保留复合键的列顺序。语义建模不会扫描表数据来发现或验证键。缺少键证据时，省略该键以及要求目标键唯一的普通 `many_to_one` 关系，物理来源仍可使用。原生 `many_to_many` 事实配对按当前 DATUS 规则分别聚合后合并，不要求目标行唯一。若某个输出仍无法忠实表达，说明该输出的限制，同时保留独立的物理 dataset 和指标。把 JOIN 移入 SQL 不会证明数据唯一。最终模型仍执行 `validate_semantic` 校验。
 
-`write_semantic_model_plan_file` 仅用于保存供人工审阅的计划图，不修改模型。需要计划文件的工作流在节点现有 `tools` 配置中显式列出 `semantic_tools.write_semantic_model_plan_file` 才会挂载它；仅配置类别或通配符不会启用，普通建模不需要计划文件。工具说明给出了完整计划对象格式，该格式与 OSI 模型对象不同。
+`write_semantic_model_plan_file` 默认可用于保存供审阅的计划图，不修改模型；普通建模不需要计划文件。启用计划工作流时按其指引使用该工具，权限规则仍然适用。工具说明给出了完整计划对象格式，该格式与 OSI 模型对象不同。
 
 ## 生成文件的位置和组织方式
 

@@ -10,7 +10,17 @@ correspondingly small: argument validation, missing-chat fallback, and the
 exact prompt + plan_mode propagation handed to ``execute_chat_command``.
 """
 
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
+
+import pytest
+
+_INIT_TEST_ROOT = None
+
+
+@pytest.fixture(autouse=True)
+def init_workspace(tmp_path, monkeypatch):
+    monkeypatch.setitem(globals(), "_INIT_TEST_ROOT", tmp_path)
 
 
 def _build_cli(*, plan_mode: bool = False, with_chat: bool = True):
@@ -18,6 +28,13 @@ def _build_cli(*, plan_mode: bool = False, with_chat: bool = True):
     cli = MagicMock()
     cli.console = MagicMock()
     cli.plan_mode_active = plan_mode
+    cli.agent_config = SimpleNamespace(
+        project_root=_INIT_TEST_ROOT,
+        project_name="test",
+        current_datasource="",
+        sub_agent_config=lambda _: {},
+    )
+    cli.cli_context = SimpleNamespace(current_catalog="", current_db_name="", current_schema="")
     if with_chat:
         cli.chat_commands = MagicMock()
     else:
@@ -42,7 +59,8 @@ class TestCmdInitArgumentHandling:
         cli.chat_commands.execute_chat_command.assert_called_once()
         args, _ = cli.chat_commands.execute_chat_command.call_args
         # No placeholder leaks; identical to the empty-args render.
-        assert args[0] == render_skill_prompt(_INIT_PROMPT, "")
+        assert args[0].startswith(render_skill_prompt(_INIT_PROMPT, ""))
+        assert cli.chat_commands.execute_chat_command.call_args.kwargs["init_context"].state["scope"] == ""
         assert "{user_context}" not in args[0]
 
     def test_argument_appended_as_context_block(self):
@@ -77,7 +95,7 @@ class TestCmdInitChatDispatch:
         cli.chat_commands.execute_chat_command.assert_called_once()
         args, kwargs = cli.chat_commands.execute_chat_command.call_args
         # First positional argument is the chat message.
-        assert args[0] == render_skill_prompt(_INIT_PROMPT, "")
+        assert args[0].startswith(render_skill_prompt(_INIT_PROMPT, ""))
         # Skill must be referenced explicitly so the model picks the right one.
         assert "`init` skill" in args[0]
         assert "AGENTS.md" in args[0]
