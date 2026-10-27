@@ -60,8 +60,11 @@ async def test_clarification_preserves_work_and_retains_user_answer(run, cancel,
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("work", ["empty", "metadata", "files", "partial", "complete"])
-async def test_normal_return_reports_execution_independently_of_business_completion(run, work):
+@pytest.mark.parametrize(
+    ("work", "expected_statuses"),
+    [("empty", []), ("metadata", []), ("files", []), ("partial", ["pending"]), ("complete", ["completed"])],
+)
+async def test_normal_return_reports_execution_independently_of_business_completion(run, work, expected_statuses):
     plan = PlanTool(None)
     if work == "metadata":
         await run.invoke("describe_table", describe, None, '{"table_name":"orders"}')
@@ -76,8 +79,7 @@ async def test_normal_return_reports_execution_independently_of_business_complet
     # The same neutral outcome applies to file work, unfinished work and even
     # an empty reply. Business completion belongs to the model's final report.
     assert run.state["status"] == "returned" and run.state["stop_reason"] == ""
-    if work == "partial":
-        assert plan.todo_list().result["items"][0]["status"] == "pending"
+    assert [item["status"] for item in plan.todo_list().result["items"]] == expected_statuses
 
 
 @pytest.mark.parametrize("reason", ["budget", "error", "interrupt", "pending", "no_result"])
