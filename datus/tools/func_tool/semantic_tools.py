@@ -1080,20 +1080,16 @@ class SemanticTools:
         if db_config_obj is None:
             return None
         raw = db_config_obj.to_dict()
-        # HS2 session configuration is a mapping, not a Python repr string.
-        structured = {"configuration"} if str(raw.get("type", "")).lower() == "hive" else set()
         extra = raw.get("extra")
         db_config = {
-            k: v if k in structured else str(v)
-            for k, v in raw.items()
-            if v is not None and v != "" and k not in ("extra", "path_pattern", "default")
+            k: v for k, v in raw.items() if v is not None and v != "" and k not in ("extra", "path_pattern", "default")
         }
         # Preserve connector-specific `extra` fields without overwriting explicit top-level keys
         if isinstance(extra, dict):
             for k, v in extra.items():
                 if v is None or v == "":
                     continue
-                db_config.setdefault(k, v if k in structured else str(v))
+                db_config.setdefault(k, v)
         return db_config
 
     @property
