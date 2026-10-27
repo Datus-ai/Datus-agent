@@ -325,10 +325,14 @@ class TestMappingDocuments:
             pytest.param("./flights.yaml", id="beside_the_mapping"),
             pytest.param("../semantic_model/flights_db/flights.yaml", id="mistyped_root"),
             pytest.param("../semantic_models/flights.yaml", id="in_no_datasource_directory"),
+            pytest.param("../semantic_models/fligts_db/flights.yaml", id="misspelled_datasource"),
+            pytest.param("{models_dir}/flights.yaml", id="absolute_path_to_a_loaded_model"),
         ],
     )
     def test_a_model_iri_outside_every_datasource_is_reported(self, tmp_path, model_iri):
         # No datasource would ever bind it, so skipping it would hide it everywhere.
+        models_dir = tmp_path / "subject" / "semantic_models" / "flights_db"
+        model_iri = model_iri.format(models_dir=models_dir)
         mapping = MAPPING_YAML.replace("../semantic_models/flights_db/flights.yaml", model_iri)
         models_dir, ontology_dir = _mapping_layout(tmp_path, mapping_yaml=mapping)
         bindings, unpaired = _plan(models_dir, ontology_dir)

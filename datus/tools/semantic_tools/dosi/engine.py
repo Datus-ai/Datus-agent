@@ -194,9 +194,13 @@ class OntologyBinding:
 
 
 def _local_iri(base_file: str, ref: dict[str, Any]) -> Optional[str]:
-    """The file a relative ``iri`` names, resolved against ``base_file``'s directory."""
+    """The file a relative ``iri`` names, resolved against ``base_file``'s directory.
+
+    An absolute path is not one: the binding would then depend on where the
+    project lives, not on where the mapping sits beside the models.
+    """
     iri = ref.get("iri")
-    if not isinstance(iri, str) or not iri or "://" in iri:
+    if not isinstance(iri, str) or not iri or "://" in iri or os.path.isabs(iri):
         return None
     return os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(base_file)), iri))
 
@@ -212,10 +216,11 @@ def _is_within(path: str, directory: str) -> bool:
 def _misdirected(target: str, models_dir: Optional[str]) -> bool:
     """Whether a model ``iri`` this datasource does not load points where no datasource would bind it.
 
-    Datasources are the directories beside ``models_dir``. A target in another
-    one is that datasource's to bind, and a file of ``models_dir`` this runtime
-    leaves out (a pinned model's sibling) is skipped; a missing file of this
-    datasource, or a target in no datasource's directory, is reported.
+    Datasources are the existing directories beside ``models_dir``. A target in
+    another one is that datasource's to bind, and a file of ``models_dir`` this
+    runtime leaves out (a pinned model's sibling) is skipped; a missing file of
+    this datasource, or a target in no existing datasource's directory (a
+    misspelled one included), is reported.
     """
     if not models_dir:
         return False
@@ -223,7 +228,9 @@ def _misdirected(target: str, models_dir: Optional[str]) -> bool:
     if _is_within(target, models_dir):
         return not os.path.isfile(target)
     root = os.path.dirname(models_dir)
-    return not _is_within(target, root) or os.path.dirname(target) == root
+    if target == root or not _is_within(target, root):
+        return True
+    return not os.path.isdir(os.path.join(root, os.path.relpath(target, root).split(os.sep)[0]))
 
 
 def plan_ontologies(
