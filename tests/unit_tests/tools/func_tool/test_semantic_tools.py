@@ -11,6 +11,7 @@ from unittest.mock import AsyncMock, Mock, call, patch
 
 import pytest
 
+from datus.configuration.agent_config import DbConfig
 from datus.tools.func_tool.base import FuncToolResult, normalize_null, trans_to_function_tool
 from datus.tools.func_tool.generation_evidence import GenerationEvidence
 from datus.tools.func_tool.semantic_tools import SemanticTools, _run_async, render_metric_list
@@ -1317,6 +1318,38 @@ class TestAvailableTools:
 
 
 class TestRuntimeDbContext:
+    @pytest.mark.parametrize("db_type", ["mysql", "postgresql"])
+    @pytest.mark.parametrize("auth", [{"auth_mode": "iam"}, {"secret_ref": "test/database"}])
+    def test_runtime_preserves_aurora_profile(self, semantic_tools, db_type, auth):
+        db_config = DbConfig.filter_kwargs(
+            DbConfig,
+            {
+                "type": db_type,
+                "host": "writer.example",
+                "database": "configured_db",
+                "aurora": True,
+                "aws": {"region": "us-east-1", "profile": "test"},
+                "secret_cache_ttl_seconds": 300,
+                **auth,
+            },
+        )
+        semantic_tools.agent_config.current_db_config.return_value = db_config
+        semantic_tools.set_runtime_db_context({"database": "runtime_db"})
+
+        with patch("datus.tools.func_tool.semantic_tools.DosiRuntime") as runtime:
+            assert semantic_tools.runtime is runtime.return_value
+
+        profile = runtime.call_args.args[0].db_config
+        assert profile["type"] == db_type
+        assert profile["aurora"] is True
+        assert profile["aws"] == {"region": "us-east-1", "profile": "test"}
+        assert profile["secret_cache_ttl_seconds"] == 300
+        assert isinstance(profile["secret_cache_ttl_seconds"], int)
+        assert profile["database"] == "runtime_db"
+        for key, value in auth.items():
+            assert profile[key] == value
+        assert db_config.database == "configured_db"
+
     def test_normalize_runtime_context_handles_empty_and_aliases(self):
         assert SemanticTools._normalize_runtime_db_context(None) == {}
         assert SemanticTools._normalize_runtime_db_context({"database_name": " runtime_db "}) == {
