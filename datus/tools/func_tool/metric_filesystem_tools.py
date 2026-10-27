@@ -14,7 +14,7 @@ import yaml
 from datus.storage.metric.store import normalize_metric_name
 from datus.storage.semantic_model.artifact_file import atomic_write_text, semantic_artifact_lock
 from datus.tools.func_tool.base import FuncToolResult, tool_schema
-from datus.tools.func_tool.client_file_mutations import ClientMutationHistory
+from datus.tools.func_tool.client_file_mutations import ClientMutationHistory, ClientMutationRecord
 from datus.tools.func_tool.filesystem_tools import ClientFileMutation, FilesystemFuncTool
 from datus.tools.func_tool.fs_path_policy import PathZone, ResolvedPath
 from datus.tools.semantic_tools.metric_identity import (
@@ -869,6 +869,31 @@ class OsiSemanticModelFilesystemFuncTool(MetricFilesystemFuncTool):
             self._record_osi_edit(target_path, new_content, document, original_document)
         return FuncToolResult(result=f"File edited successfully: {resolved.display}")
 
+    @staticmethod
+    def _client_identity_baseline(
+        original_document: Any, history: ClientMutationHistory, record: ClientMutationRecord
+    ) -> Dict[str, Any]:
+        """Advance a waiting card's identities using successful native deltas only."""
+        identities = metric_definitions(original_document)
+        for native in history.records[history.records.index(record) + 1 :]:
+            if native.operation != "native" or not native.completed or native.canceled:
+                continue
+            before = metric_definitions(yaml.safe_load(native.arguments["before"] or b""))
+            after = metric_definitions(yaml.safe_load(native.arguments["after"]))
+            trusted_uids = {metric_uid(metric) for metric in identities.values()}
+            before_uids = {metric_uid(metric) for metric in before.values()}
+            for name in before.keys() - after.keys():
+                identities.pop(name, None)
+            for name, metric in after.items():
+                if name not in before or metric_uid(before[name]) != metric_uid(metric):
+                    uid = metric_uid(metric)
+                    # A native rename may carry a UID already changed by the
+                    # user. Only a known identity or a newly issued UID is trusted.
+                    if uid and uid in before_uids and uid not in trusted_uids:
+                        continue
+                    identities[name] = metric
+        return {"semantic_model": [{"metrics": list(identities.values())}]}
+
     def _prepare_client_mutation(self, operation: str, arguments: dict) -> ClientFileMutation | FuncToolResult:
         if operation != "edit_file":
             return super()._prepare_client_mutation(operation, arguments)
@@ -912,7 +937,8 @@ class OsiSemanticModelFilesystemFuncTool(MetricFilesystemFuncTool):
                         return FuncToolResult(success=0, error=f"Invalid OSI semantic model edit: {error}")
                     document = yaml.safe_load(actual)
                     try:
-                        identity_changes = prepare_metric_uids(document, original_document or {})
+                        identity_baseline = self._client_identity_baseline(original_document, history, record)
+                        identity_changes = prepare_metric_uids(document, identity_baseline)
                     except ValueError as exc:
                         history.cancel(record)
                         return FuncToolResult(success=0, error=f"Invalid OSI metric identity: {exc}")

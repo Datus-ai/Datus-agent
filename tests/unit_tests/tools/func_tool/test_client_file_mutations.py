@@ -11,7 +11,7 @@ import yaml
 
 from datus.agent.node.sql_summary_agentic_node import SqlSummaryAgenticNode
 from datus.tools.func_tool.filesystem_tools import FilesystemFuncTool
-from datus.tools.semantic_tools.metric_identity import ensure_metric_uid
+from datus.tools.semantic_tools.metric_identity import ensure_metric_uid, metric_definitions, metric_uid
 from tests.unit_tests.tools.func_tool.test_metric_filesystem_tools import (
     _osi_metric,
 )
@@ -377,3 +377,79 @@ def test_failed_native_write_keeps_prior_successful_web_mutations_rollback_owned
     assert target.read_bytes() == web_content
     assert rollback() is True
     assert target.read_bytes() == original
+
+
+@pytest.mark.parametrize("native_kind", ["add", "recreate", "prepare_legacy", "rename_added"])
+@pytest.mark.parametrize("finish_edit", [False, True])
+@pytest.mark.parametrize("authoring_file", ["semantic"], indirect=True)
+def test_pending_web_edit_accepts_native_metric_identities(authoring_file, native_kind, finish_edit):
+    tool, target, rollback, replacements = authoring_file
+    if native_kind == "prepare_legacy":
+        document = yaml.safe_load(target.read_bytes())
+        document["semantic_model"][0]["metrics"].append(_osi_metric("order_count", "COUNT(*)"))
+        target.write_text(yaml.safe_dump(document, sort_keys=False))
+        tool.osi_target_state.record_selected_write()
+    original = target.read_bytes()
+    web = prepare(tool, target, replacements[0])
+    native_results = []
+    if native_kind == "prepare_legacy":
+        tool.ensure_metric_uids(str(target))
+    else:
+        name = "revenue" if native_kind == "recreate" else "order_count"
+        if native_kind == "recreate":
+            native_results.append(tool.delete_osi_metrics(str(target), [name]))
+        metric = _osi_metric(name, "SUM(orders.amount)" if native_kind == "recreate" else "COUNT(*)")
+        native_results.append(tool.upsert_osi_metrics(str(target), [metric]))
+        if native_kind == "rename_added":
+            native_results.append(tool.edit_file(str(target), "name: order_count\n", "name: total_count\n"))
+    assert all(result.success == 1 for result in native_results)
+    native_identities = {
+        name: metric_uid(metric) for name, metric in metric_definitions(yaml.safe_load(target.read_bytes())).items()
+    }
+    tool.osi_target_state.require_selected_revision(target)
+    execute(target, web)
+    if finish_edit:
+        target.write_text(target.read_text() + "# User note saved in Accept & Edit\n")
+    assert web.complete() is None
+    assert replacements[0][1] in target.read_text()
+    assert {
+        name: metric_uid(metric) for name, metric in metric_definitions(yaml.safe_load(target.read_bytes())).items()
+    } == native_identities
+    if finish_edit:
+        assert rollback() is False
+        assert "# User note saved in Accept & Edit" in target.read_text()
+    else:
+        assert rollback() is True
+        assert target.read_bytes() == original
+
+
+@pytest.mark.parametrize("tampered_name", ["revenue", "order_count"])
+@pytest.mark.parametrize("later_native_write", [None, "unrelated", "rename"])
+@pytest.mark.parametrize("authoring_file", ["semantic"], indirect=True)
+def test_pending_web_edit_rejects_uid_replacement_despite_native_writes(
+    authoring_file, tampered_name, later_native_write
+):
+    tool, target, _, replacements = authoring_file
+    web = prepare(tool, target, replacements[0])
+    assert tool.upsert_osi_metrics(str(target), [_osi_metric("order_count", "COUNT(*)")]).success == 1
+    execute(target, web)
+    document = yaml.safe_load(target.read_bytes())
+    metric = metric_definitions(document)[tampered_name]
+    original_uid = metric_uid(metric)
+    replacement = _osi_metric("replacement", "COUNT(*)")
+    ensure_metric_uid(replacement)
+    target.write_text(target.read_text().replace(original_uid, metric_uid(replacement)))
+    if later_native_write:
+        # A native write preserving an unrelated, already-tampered UID must not
+        # promote that UID into the card's authoritative identity baseline.
+        tool.osi_target_state.record_selected_write()
+        if later_native_write == "rename":
+            assert (
+                tool.edit_file(str(target), f"name: {tampered_name}\n", f"name: renamed_{tampered_name}\n").success == 1
+            )
+        else:
+            assert tool.upsert_osi_metrics(str(target), [_osi_metric("third_metric", "COUNT(*)")]).success == 1
+    assert tool._validate_osi_document(target.read_text()) is None
+    result = web.complete()
+    assert result.success == 0
+    assert "host-managed metric identity" in result.error
