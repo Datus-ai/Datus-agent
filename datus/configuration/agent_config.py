@@ -2912,14 +2912,14 @@ def resolve_env(value: str) -> str:
     return re.sub(pattern, replace_env, value)
 
 
-def _db_config_to_dosi_profile(db_config: Optional[DbConfig]) -> Optional[Dict[str, str]]:
+def _db_config_to_dosi_profile(db_config: Optional[DbConfig]) -> Optional[Dict[str, Any]]:
     if not db_config:
         return None
 
     raw = db_config.to_dict()
     extra = raw.get("extra")
     dosi_db_config = {
-        key: str(value)
+        key: value
         for key, value in raw.items()
         if value is not None and value != "" and key not in ("extra", "path_pattern", "default")
     }
@@ -2928,7 +2928,7 @@ def _db_config_to_dosi_profile(db_config: Optional[DbConfig]) -> Optional[Dict[s
         for key, value in extra.items():
             if value is None or value == "":
                 continue
-            dosi_db_config.setdefault(key, str(value))
+            dosi_db_config.setdefault(key, value)
     return dosi_db_config
 
 
@@ -2950,9 +2950,9 @@ _RUNTIME_DB_CONTEXT_ALIASES = {
 
 
 def _apply_runtime_db_context_to_dosi_profile(
-    db_config: Optional[Dict[str, str]],
+    db_config: Optional[Dict[str, Any]],
     runtime_db_context: Optional[Mapping[str, Any]],
-) -> Optional[Dict[str, str]]:
+) -> Optional[Dict[str, Any]]:
     result = dict(db_config or {})
 
     for canonical_key, aliases in _RUNTIME_DB_CONTEXT_ALIASES.items():

@@ -774,7 +774,8 @@ class SemanticTools:
 
         Returns:
             result = {"result_id", "columns", "csv" (header plus this page's rows),
-            "row_count" (rows in the whole result), "offset", "returned", "has_more"}
+            "row_count" (rows in the whole result), "offset", "returned", "has_more"},
+            with "execution_info" when the warehouse provides diagnostics.
         """
         result_id = str(result_id or "").strip()
         cached = self.get_cached_query_metrics_result(result_id)
@@ -805,6 +806,11 @@ class SemanticTools:
                 "offset": offset,
                 "returned": returned,
                 "has_more": offset + returned < cached["row_count"],
+                **(
+                    {"execution_info": cached["metadata"]["execution_info"]}
+                    if cached["metadata"].get("execution_info")
+                    else {}
+                ),
             }
         )
 
@@ -834,6 +840,7 @@ class SemanticTools:
         warnings: Optional[List[Any]] = None,
         notes: Optional[List[str]] = None,
         outputs: Optional[List[Any]] = None,
+        execution_info: Optional[List[Dict[str, Any]]] = None,
         row_cap: Optional[int] = None,
     ) -> str:
         """An executed result as the agent reads it (``datus.utils.query_result_text``
@@ -849,6 +856,8 @@ class SemanticTools:
             rows += f"; text values longer than {cut} characters are cut and end in …"
         lines = [f"result_id: {result_id}"] if result_id else []
         lines.append(rows)
+        if execution_info:
+            lines.append(f"execution_info: {json.dumps(execution_info, ensure_ascii=False)}")
         lines.extend(_render_query_warning(warning) for warning in warnings or [])
         lines.extend(f"note: {_one_line(note)}" for note in notes or [])
         lines.extend(
@@ -1227,7 +1236,10 @@ class SemanticTools:
                 result=data,
             )
         logger.warning(f"{tool_name} failed: {exc}")
-        return FuncToolResult(success=0, error=f"{tool_name} failed: {exc}")
+        info = getattr(exc, "execution_info", None)
+        return FuncToolResult(
+            success=0, error=f"{tool_name} failed: {exc}", result={"execution_info": info} if info else None
+        )
 
     def describe_concept(self, name: Optional[str] = None) -> FuncToolResult:
         """
@@ -1351,11 +1363,13 @@ class SemanticTools:
         except Exception as exc:  # noqa: BLE001 - surfaced as a failed tool call
             return self._semantic_failure("select_records", exc)
 
+        metadata = result.metadata or {}
         return FuncToolResult(
             result=self._render_query_result(
-                self._cache_query_metrics_result(result.columns, result.data),
+                self._cache_query_metrics_result(result.columns, result.data, metadata),
                 list(result.columns),
                 result.data,
+                execution_info=metadata.get("execution_info"),
                 # Only the default page, not a limit the caller asked for.
                 row_cap=self.SELECT_RECORDS_DEFAULT_LIMIT if limit is None else None,
             )
@@ -1887,6 +1901,7 @@ class SemanticTools:
                         warnings=metadata.get("warnings"),
                         notes=self._query_hints(runtime, runtime_query_kwargs, result),
                         outputs=metadata.get("outputs"),
+                        execution_info=metadata.get("execution_info"),
                     )
                 )
 
@@ -1963,6 +1978,7 @@ class SemanticTools:
             return FuncToolResult(
                 success=0,
                 error=f"Failed to query metrics: {str(e)}",
+                result={"execution_info": e.execution_info} if getattr(e, "execution_info", None) else None,
             )
 
     def _query_hints(
@@ -2301,4 +2317,5 @@ class SemanticTools:
             return FuncToolResult(
                 success=0,
                 error=f"Failed to analyze attribution: {str(e)}",
+                result={"execution_info": e.execution_info} if getattr(e, "execution_info", None) else None,
             )

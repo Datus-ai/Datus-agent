@@ -516,6 +516,7 @@ class DosiRuntime:
                     "sql": result["sql"],
                     "dialect": result["dialect"],
                     "row_count": result["row_count"],
+                    **({"execution_info": result["execution_info"]} if result.get("execution_info") else {}),
                     "time_dimensions": time_dimensions,
                     **({"outputs": result["outputs"]} if result.get("outputs") is not None else {}),
                     **(
@@ -760,6 +761,8 @@ class DosiRuntime:
             "dialect": result["dialect"],
             "row_count": result["row_count"],
         }
+        if result.get("execution_info"):
+            metadata["execution_info"] = result["execution_info"]
         if result.get("requested_columns") is not None:
             metadata["requested_columns"] = result["requested_columns"]
         dataset_names = await asyncio.to_thread(lambda: [str(row.get("name")) for row in engine.datasets()])

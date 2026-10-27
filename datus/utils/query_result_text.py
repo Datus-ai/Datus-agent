@@ -10,6 +10,7 @@ line per fact, a blank line, then the rows as CSV::
 
     result_id: query_metrics:…
     rows: 71
+    execution_info: [{...}]
     warning <code>: <message>; hint: <hint>
     note: <…>
     column <name>: <metric> with <param>=<value>
