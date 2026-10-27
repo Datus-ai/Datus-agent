@@ -593,6 +593,34 @@ class TestRuntimeOntology:
         assert result.metadata["row_count"] == 2
         assert result.metadata["requested_columns"][0] == {"requested": "FlightAlert.id", "column": "alert_id"}
 
+    @pytest.mark.asyncio
+    async def test_select_preserves_execution_diagnostics(self, tmp_path, ontology_binding, monkeypatch):
+        info = [{"query_execution_id": "athena-1", "state": "SUCCEEDED"}]
+        original = FakeOntologyEngine.select
+
+        def select(self, *args, **kwargs):
+            return {**original(self, *args, **kwargs), "execution_info": info}
+
+        monkeypatch.setattr(FakeOntologyEngine, "select", select)
+        runtime = _runtime(*_layout(tmp_path))
+        result = await runtime.select(from_concept="FlightAlert", fields=["FlightAlert.id"])
+        assert result.metadata["execution_info"] == info
+
+    @pytest.mark.asyncio
+    async def test_select_failure_preserves_execution_diagnostics(self, tmp_path, ontology_binding, monkeypatch):
+        info = [{"statement_id": "redshift-1", "cancellation_confirmed": False}]
+        error = ontology_binding.ExecuteError("deadline exceeded", code="timeout")
+        error.execution_info = info
+
+        def select(self, *args, **kwargs):
+            raise error
+
+        monkeypatch.setattr(FakeOntologyEngine, "select", select)
+        runtime = _runtime(*_layout(tmp_path))
+        with pytest.raises(SemanticCoreException) as caught:
+            await runtime.select(from_concept="FlightAlert", fields=["FlightAlert.id"])
+        assert caught.value.execution_info == info
+
     @pytest.mark.parametrize(
         "result, expected_columns, expected_rows",
         [

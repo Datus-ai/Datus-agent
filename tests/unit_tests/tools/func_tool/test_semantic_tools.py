@@ -531,6 +531,17 @@ class TestQueryMetricsCompression:
         assert last.result["has_more"] is False
         assert last.result["csv"].splitlines()[-1] == "49,4900"
 
+    def test_query_metrics_exposes_execution_info_in_text_and_page(self, semantic_tools):
+        info = [{"query_execution_id": "athena-1", "state": "SUCCEEDED", "scanned_bytes": 123}]
+        query_result = QueryResult(columns=["value"], data=[{"value": 1}], metadata={"execution_info": info})
+        with patch("datus.tools.func_tool.semantic_tools._run_async", return_value=query_result):
+            result = semantic_tools.query_metrics(metrics=["value"])
+
+        line = next(line for line in _text(result).lines if line.startswith("execution_info: "))
+        assert json.loads(line.removeprefix("execution_info: ")) == info
+        page = semantic_tools.get_query_metrics_result(_text(result).result_id)
+        assert page.result["execution_info"] == info
+
     def test_get_query_metrics_result_serves_a_cell_past_the_csv_field_limit(self, semantic_tools):
         """``csv.reader`` refuses a field over ``csv.field_size_limit()`` (128 KiB by
         default); a page must not depend on re-reading the cached CSV."""
@@ -2795,6 +2806,31 @@ class TestSelectRecords:
         kwargs = runtime.select.await_args.kwargs
         assert kwargs["limit"] == SemanticTools.SELECT_RECORDS_DEFAULT_LIMIT
         assert kwargs["where"] == "FlightAlert.status = 'OPEN'"
+
+    def test_exposes_execution_info_in_text_and_page(self, ontology_tools):
+        tool, runtime = ontology_tools
+        info = [{"statement_id": "redshift-1", "state": "FINISHED"}]
+        query_result = self._result([{"alert_id": "A007", "priority": "P1"}])
+        query_result.metadata["execution_info"] = info
+        runtime.select = AsyncMock(return_value=query_result)
+
+        result = tool.select_records(from_concept="FlightAlert", fields=["FlightAlert.id"])
+
+        line = next(line for line in _text(result).lines if line.startswith("execution_info: "))
+        assert json.loads(line.removeprefix("execution_info: ")) == info
+        assert tool.get_query_metrics_result(_text(result).result_id).result["execution_info"] == info
+
+    def test_execution_failure_exposes_diagnostics(self, ontology_tools):
+        from datus.tools.semantic_tools.exceptions import SemanticCoreException
+
+        tool, runtime = ontology_tools
+        info = [{"query_execution_id": "athena-1", "cancellation_confirmed": False}]
+        runtime.select = AsyncMock(side_effect=SemanticCoreException("warehouse timeout", execution_info=info))
+
+        result = tool.select_records(from_concept="FlightAlert", fields=["FlightAlert.id"])
+
+        assert result.success == 0
+        assert result.result == {"execution_info": info}
 
     def test_a_full_default_page_says_there_may_be_more(self, ontology_tools, monkeypatch):
         tool, runtime = ontology_tools

@@ -761,6 +761,8 @@ class DosiRuntime:
             "dialect": result["dialect"],
             "row_count": result["row_count"],
         }
+        if result.get("execution_info"):
+            metadata["execution_info"] = result["execution_info"]
         if result.get("requested_columns") is not None:
             metadata["requested_columns"] = result["requested_columns"]
         dataset_names = await asyncio.to_thread(lambda: [str(row.get("name")) for row in engine.datasets()])
