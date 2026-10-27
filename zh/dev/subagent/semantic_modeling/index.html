@@ -5363,7 +5363,7 @@
 <p>每次只编辑一个语义模型。如果现有模型都不合适，则按业务域创建新模型。dataset 默认直接绑定完整名称的物理表或视图；物理 dataset 和独立的单表指标不要求主键或唯一键。用户提供的 SQL 是需要保留的计算口径证据，不规定 dataset 必须采用 SQL。只有某项具体行集转换无法由原生 field、relationship、metric 等能力忠实表达，或用户明确指定 query-backed 来源时，才使用范围最小的 SQL dataset；可独立表达的输入继续使用物理 dataset。</p>
 <p>最终结果会报告 <code>generated</code>、<code>skipped</code> 或 <code>blocked</code>。blocked 表示目标模型缺失、不明确或无效。计算证据不足会在对应输出中说明，本身不会阻止其他独立建模工作。</p>
 <p>键声明只以源 DDL 为准：物理主键写入 <code>primary_key</code>，唯一约束或覆盖整表的普通列唯一索引写入 <code>unique_keys</code>，保留复合键的列顺序。语义建模不会扫描表数据来发现或验证键。缺少键证据时，省略该键以及要求目标键唯一的普通 <code>many_to_one</code> 关系，物理来源仍可使用。原生 <code>many_to_many</code> 事实配对按当前 DATUS 规则分别聚合后合并，不要求目标行唯一。若某个输出仍无法忠实表达，说明该输出的限制，同时保留独立的物理 dataset 和指标。把 JOIN 移入 SQL 不会证明数据唯一。最终模型仍执行 <code>validate_semantic</code> 校验。</p>
-<p><code>write_semantic_model_plan_file</code> 仅用于保存供人工审阅的计划图，不修改模型。需要计划文件的工作流在节点现有 <code>tools</code> 配置中显式列出 <code>semantic_tools.write_semantic_model_plan_file</code> 才会挂载它；仅配置类别或通配符不会启用，普通建模不需要计划文件。工具说明给出了完整计划对象格式，该格式与 OSI 模型对象不同。</p>
+<p><code>write_semantic_model_plan_file</code> 默认可用于保存供审阅的计划图，不修改模型；普通建模不需要计划文件。启用计划工作流时按其指引使用该工具，权限规则仍然适用。工具说明给出了完整计划对象格式，该格式与 OSI 模型对象不同。</p>
 <h2 id="_6">生成文件的位置和组织方式<a class="headerlink" href="#_6" title="Permanent link">&para;</a></h2>
 <p>新文件写入当前项目和 datasource 对应的目录：</p>
 <div class="language-text highlight"><pre><span></span><code><span id="__span-9-1"><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a>subject/semantic_models/&lt;datasource&gt;/&lt;semantic_model&gt;.yml

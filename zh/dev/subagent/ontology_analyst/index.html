@@ -5289,25 +5289,30 @@
 <ol>
 <li>数据源在 <code>subject/semantic_models/&lt;datasource&gt;/</code> 下有可执行的语义模型（与 AskMetrics 相同）。唯一的例外是把模型内联在映射文档里的写法（见下文），这时不需要模型文件。</li>
 <li>
-<p>ontology 放在 <code>subject/semantic_models/ontology/&lt;datasource&gt;/</code> 下，并配一份 Apache Ossie <strong>映射文档</strong>（mapping document），说明它绑定哪个模型：</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>subject/semantic_models/
-</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>├── aviation/
-</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>│   └── aviation.yaml            # OSI 语义模型，名为 "aviation"
-</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>└── ontology/
-</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>    └── aviation/
-</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>        ├── ontology.yaml        # Ossie ontology
-</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>        └── mapping.yaml         # ontology_ref → ontology.yaml，semantic_model_ref → "aviation"
+<p>ontology 统一放在项目级的 <code>subject/ontology/</code> 目录（与 <code>semantic_models/</code> 同级），并配上 Apache Ossie <strong>映射文档</strong>（mapping document），把每个 ontology 绑定到语义模型：</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>subject/
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>├── semantic_models/
+</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>│   ├── aviation/
+</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>│   │   └── aviation.yaml                  # OSI 语义模型
+</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>│   └── airline_ops/
+</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>│       └── crews.yaml
+</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>└── ontology/
+</span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>    ├── aviation.ontology.yaml             # Ossie ontology
+</span><span id="__span-0-9"><a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>    ├── aviation-aviation.mapping.yaml     # → ../semantic_models/aviation/aviation.yaml
+</span><span id="__span-0-10"><a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a>    └── aviation-crews.mapping.yaml        # → ../semantic_models/airline_ops/crews.yaml
 </span></code></pre></div>
-<p>映射文档的 <code>semantic_model_ref.name</code> 决定配对哪个模型文件：语义模型名字相同的那个。<code>ontology_ref</code> 通过 <code>iri</code>（相对映射文档所在目录）找到 ontology；没写 <code>iri</code> 时，按名字在目录里的文件中查找。映射文档也可以把 ontology 和模型都内联在 <code>document:</code> 下，这时完全不需要模型文件。</p>
-<p>旧写法仍然可用：一个 ontology 文件在 <code>ontology_mappings</code> 里内嵌映射，文件名与它描述的模型文件相同。数据源只有一个模型文件和一个 ontology 文件时，文件名可以不同。</p>
-<p>配不上任何东西的文件、两份映射指向同一个模型，都会被报告出来，不会自动猜测。文件类型按内容区分，与文件名无关。数据源不能命名为 <code>ontology</code>。</p>
+<p>ontology 不属于某一个数据源：一个 ontology 可以有多份映射文档，每份映射到一个语义模型文件，这些模型可以分属不同的数据源。因此 <code>subject/ontology/</code> 只有一层，子目录不会被读取。</p>
+<p>每份映射文档用 <code>semantic_model_ref.iri</code>（相对映射文档所在目录的路径）指定模型。这个路径落在哪个数据源的模型目录里，就由哪个数据源加载这份映射，其他数据源忽略它。<code>ontology_ref</code> 通过 <code>iri</code>（相对映射文档所在目录）找到 ontology；没写 <code>iri</code> 时，按名字在目录里的 ontology 文档中查找。</p>
+<p><code>&lt;ontology&gt;.ontology.yaml</code> / <code>&lt;ontology&gt;-&lt;model&gt;.mapping.yaml</code> 的文件名只是方便阅读的约定。Datus 按内容区分文件、沿引用查找，从不依赖文件名。</p>
+<p>映射文档也可以把模型内联在 <code>semantic_model_ref.document</code> 下。这样的映射是一份自包含的文档，不属于任何特定数据源：每个数据源都会加载它，并在该数据源的连接上执行。</p>
+<p>没有本地模型 <code>iri</code> 的映射、<code>iri</code> 指向本数据源目录里不存在的模型文件、两份映射指向同一个模型、没有任何映射引用的 ontology，以及目录里的其他文件，都会被报告出来，不会自动猜测。</p>
 </li>
 <li>
-<p>安装的 <code>dosi-engine</code> 需要提供 ontology API（<code>Engine.describe</code> / <code>Engine.paths</code>）。使用映射文档时，还需要 <code>Engine</code> 支持 <code>mapping_path</code> 参数的版本（<a class="magiclink magiclink-github magiclink-issue" href="https://github.com/Datus-ai/osi-engine/issues/303" title="GitHub Issue: Datus-ai/osi-engine #303">osi-engine#303</a> 及之后）。旧的内嵌写法在两种版本上都能用。</p>
+<p>安装的 <code>dosi-engine</code> 需要提供 ontology API（<code>Engine.describe</code> / <code>Engine.paths</code>），并能加载映射文档（<code>Engine</code> 支持 <code>mapping_path</code> 参数，<a class="magiclink magiclink-github magiclink-issue" href="https://github.com/Datus-ai/osi-engine/issues/303" title="GitHub Issue: Datus-ai/osi-engine #303">osi-engine#303</a> 及之后）。</p>
 </li>
 </ol>
 <p>只有 OntologyAnalyst 会加载 ontology，AskMetrics 和其他代理继续使用原模型。</p>
-<p>缺少任何前置条件时，OntologyAnalyst 会在第一轮拒绝执行，说明缺了什么，并引导使用 <code>ask_metrics</code>；它不会在没有提示的情况下退化成普通指标问答。只有当前数据源的 ontology 目录里至少有一个文件时，主代理才会提供 <code>ontology_analyst</code> 作为可委派的子代理。</p>
+<p>缺少任何前置条件时，OntologyAnalyst 会在第一轮拒绝执行，说明缺了什么，并引导使用 <code>ask_metrics</code>；它不会在没有提示的情况下退化成普通指标问答。只有 <code>subject/ontology/</code> 里有映射文档绑定了当前数据源的模型（或内联了模型）时，主代理才会提供 <code>ontology_analyst</code> 作为可委派的子代理。</p>
 <h2 id="_3">快速上手：航空示例<a class="headerlink" href="#_3" title="Permanent link">&para;</a></h2>
 <p>本节用 Datus-agent 仓库自带的航空示例（Dosi aviation 场景）完整体验一遍。数据很小，每个答案都可以手工核对：</p>
 <table>
@@ -5323,16 +5328,12 @@
 <td>OSI 语义模型 <code>aviation</code>：9 张表，以及延误、告警、载客等指标</td>
 </tr>
 <tr>
-<td><code>tests/data/semantic_models/ontology/aviation-mapping-document/ontology.yaml</code></td>
+<td><code>tests/data/ontology/aviation.ontology.yaml</code></td>
 <td>Ossie ontology：Flight、Airport、FlightAlert、Delay 等概念，以及它们之间的角色和值域</td>
 </tr>
 <tr>
-<td><code>tests/data/semantic_models/ontology/aviation-mapping-document/mapping.yaml</code></td>
-<td>映射文档，把上面的 ontology 绑定到 <code>aviation</code> 模型</td>
-</tr>
-<tr>
-<td><code>tests/data/semantic_models/ontology/aviation/aviation.yaml</code></td>
-<td>同一个 ontology 的旧内嵌写法（ontology 和映射在同一个文件里）</td>
+<td><code>tests/data/ontology/aviation-aviation.mapping.yaml</code></td>
+<td>映射文档，把上面的 ontology 绑定到 <code>semantic_models/aviation/aviation.yaml</code></td>
 </tr>
 <tr>
 <td><code>tests/data/semantic_models/aviation/seed.sql</code></td>
@@ -5346,28 +5347,26 @@
 </span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>mkdir<span class="w"> </span>-p<span class="w"> </span>~/ontology-demo<span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span><span class="nb">cd</span><span class="w"> </span>~/ontology-demo
 </span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>
 </span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="c1"># 语义模型、ontology 和映射文档，按约定的目录放置</span>
-</span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a>mkdir<span class="w"> </span>-p<span class="w"> </span>subject/semantic_models/aviation<span class="w"> </span>subject/semantic_models/ontology/aviation
+</span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a>mkdir<span class="w"> </span>-p<span class="w"> </span>subject/semantic_models/aviation<span class="w"> </span>subject/ontology
 </span><span id="__span-1-6"><a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a>cp<span class="w"> </span><span class="nv">$DATUS_REPO</span>/tests/data/semantic_models/aviation/aviation.yaml<span class="w"> </span>subject/semantic_models/aviation/
-</span><span id="__span-1-7"><a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a>cp<span class="w"> </span><span class="nv">$DATUS_REPO</span>/tests/data/semantic_models/ontology/aviation-mapping-document/<span class="o">{</span>ontology,mapping<span class="o">}</span>.yaml<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-1-8"><a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a><span class="w">   </span>subject/semantic_models/ontology/aviation/
-</span><span id="__span-1-9"><a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a>
-</span><span id="__span-1-10"><a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a><span class="c1"># 用种子数据生成 DuckDB 数据库（duckdb 随 Datus 一起安装）</span>
-</span><span id="__span-1-11"><a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a>python<span class="w"> </span>-c<span class="w"> </span><span class="s2">"import duckdb, pathlib; duckdb.connect('aviation.duckdb').execute(pathlib.Path('</span><span class="nv">$DATUS_REPO</span><span class="s2">/tests/data/semantic_models/aviation/seed.sql').read_text())"</span>
+</span><span id="__span-1-7"><a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a>cp<span class="w"> </span><span class="nv">$DATUS_REPO</span>/tests/data/ontology/aviation<span class="o">{</span>.ontology,-aviation.mapping<span class="o">}</span>.yaml<span class="w"> </span>subject/ontology/
+</span><span id="__span-1-8"><a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a>
+</span><span id="__span-1-9"><a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a><span class="c1"># 用种子数据生成 DuckDB 数据库（duckdb 随 Datus 一起安装）</span>
+</span><span id="__span-1-10"><a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a>python<span class="w"> </span>-c<span class="w"> </span><span class="s2">"import duckdb, pathlib; duckdb.connect('aviation.duckdb').execute(pathlib.Path('</span><span class="nv">$DATUS_REPO</span><span class="s2">/tests/data/semantic_models/aviation/seed.sql').read_text())"</span>
 </span></code></pre></div>
 <p>完成后的目录结构：</p>
 <div class="language-text highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>~/ontology-demo/
 </span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>├── aviation.duckdb
-</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>└── subject/semantic_models/
-</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>    ├── aviation/aviation.yaml
-</span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>    └── ontology/aviation/
-</span><span id="__span-2-6"><a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a>        ├── ontology.yaml
-</span><span id="__span-2-7"><a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a>        └── mapping.yaml
+</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>└── subject/
+</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>    ├── semantic_models/aviation/aviation.yaml
+</span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>    └── ontology/
+</span><span id="__span-2-6"><a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a>        ├── aviation.ontology.yaml
+</span><span id="__span-2-7"><a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a>        └── aviation-aviation.mapping.yaml
 </span></code></pre></div>
-<p><code>mapping.yaml</code> 用 <code>semantic_model_ref.name: aviation</code> 指定模型，对应的是 <code>aviation.yaml</code> 里的 <code>name</code>，与文件名无关。它的 <code>semantic_model_ref.iri</code>（<code>./model.yaml</code>）在这里用不到，因为 Datus 会把匹配到的模型文件直接交给引擎。</p>
-<p>想试旧的内嵌写法，就把 <code>tests/data/semantic_models/ontology/aviation/aviation.yaml</code> 这一个文件放进 <code>subject/semantic_models/ontology/aviation/</code>，替代上面两个文件。下面的答案不变。</p>
+<p><code>aviation-aviation.mapping.yaml</code> 通过 <code>semantic_model_ref.iri: ../semantic_models/aviation/aviation.yaml</code> 找到模型，因此归属 <code>aviation</code> 数据源；通过 <code>ontology_ref.iri: ./aviation.ontology.yaml</code> 找到 ontology。</p>
 <div class="admonition tip">
 <p class="admonition-title">单文件写法</p>
-<p>映射文档也可以把 ontology 和模型都内联在 <code>document:</code> 下。这时数据源只有 <code>subject/semantic_models/ontology/&lt;datasource&gt;/mapping.yaml</code>，不需要模型目录。<code>tests/data/semantic_models/ontology/mini-flights-inline/</code> 是一个小例子，自带 <code>seed.sql</code>。</p>
+<p>映射文档也可以把 ontology 和模型都内联在 <code>document:</code> 下。这时不需要模型目录，每个数据源都会加载它。<code>tests/data/ontology_inline/</code> 是一个小例子，自带 <code>seed.sql</code>。</p>
 </div>
 <h3 id="2">2. 注册数据源<a class="headerlink" href="#2" title="Permanent link">&para;</a></h3>
 <p>在 <code>agent.yml</code>（默认位于 <code>~/.datus/conf/agent.yml</code>）中添加数据源。<strong>数据源名必须与目录名 <code>aviation</code> 一致</strong>：</p>
@@ -5448,19 +5447,15 @@
 <tbody>
 <tr>
 <td><code>ontology_analyst is unavailable: no ontology for datasource 'aviation'</code></td>
-<td><code>subject/semantic_models/ontology/aviation/</code> 不存在或为空；检查目录名与数据源名一致，以及是否在项目根目录启动</td>
+<td><code>subject/ontology/</code> 里没有映射文档指向 <code>subject/semantic_models/aviation/</code> 下的模型；检查各映射的 <code>semantic_model_ref.iri</code>、模型目录名与数据源名是否一致，以及是否在项目根目录启动</td>
 </tr>
 <tr>
-<td><code>... pair with no semantic model file</code></td>
-<td>映射文档的 <code>semantic_model_ref.name</code> 对不上任何模型（或两份映射指向同一个模型），旧写法的 ontology 没有同名的模型文件，或者该文件既不是 ontology 也不是映射文档（语义模型应放在 <code>subject/semantic_models/&lt;datasource&gt;/</code> 下）；修正映射文档里的名字、把 ontology 改成与对应模型同名，或把该文件移出目录</td>
+<td><code>... could not be bound to a semantic model</code></td>
+<td>出现在 <code>no ontology for datasource</code> 之后；<code>subject/ontology/</code> 是全项目共享的，列出的文件可能属于任意数据源。映射文档没有本地 <code>semantic_model_ref.iri</code>、<code>iri</code> 指向本数据源目录里不存在的模型文件或任何 <code>subject/semantic_models/&lt;datasource&gt;/</code> 之外的路径、两份映射指向同一个模型、某个 ontology 没有任何映射引用，或者该文件既不是 ontology 也不是映射文档（语义模型应放在 <code>subject/semantic_models/&lt;datasource&gt;/</code> 下）；修正映射、为 ontology 补上映射，或把该文件移出目录</td>
 </tr>
 <tr>
 <td><code>the installed dosi-engine binding cannot describe ontologies</code></td>
 <td>安装的 <code>dosi-engine</code> 版本过旧，升级到提供 <code>Engine.describe</code> / <code>Engine.paths</code> 的版本</td>
-</tr>
-<tr>
-<td><code>... ontology_federation_unsupported</code></td>
-<td>旧写法的 ontology 内嵌了多个 <code>ontology_mappings</code>；拆成映射文档，每个模型一份</td>
 </tr>
 <tr>
 <td><code>... is an Ossie mapping document, and the installed dosi-engine cannot load one</code></td>
@@ -5468,7 +5463,7 @@
 </tr>
 <tr>
 <td>主代理不委派给 <code>ontology_analyst</code></td>
-<td>只有当前数据源有 ontology 文件时才会提供；可以用 <code>/agent ontology_analyst</code> 或 <code>@Agent ontology_analyst</code> 显式指定</td>
+<td>只有映射文档绑定了当前数据源的模型时才会提供；可以用 <code>/agent ontology_analyst</code> 或 <code>@Agent ontology_analyst</code> 显式指定</td>
 </tr>
 </tbody>
 </table>
