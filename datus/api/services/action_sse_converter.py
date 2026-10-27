@@ -18,7 +18,13 @@ from datus.api.models.cli_models import (
     SSEUsageData,
     SSEUsageDelta,
 )
-from datus.schemas.action_history import SUBAGENT_COMPLETE_ACTION_TYPE, ActionHistory, ActionRole, ActionStatus
+from datus.schemas.action_history import (
+    SUBAGENT_COMPLETE_ACTION_TYPE,
+    TOOL_PREVIEW_ACTION_TYPE,
+    ActionHistory,
+    ActionRole,
+    ActionStatus,
+)
 from datus.utils.json_utils import llm_result2json
 from datus.utils.loggings import get_logger
 from datus.utils.time_utils import now_utc_iso, to_utc_iso
@@ -53,7 +59,9 @@ def _extract_function(action: ActionHistory) -> tuple[str, dict]:
 
 
 def _build_tool_call_content(
-    action: ActionHistory, proxied_tool_names: Optional[Set[str]] = None
+    action: ActionHistory,
+    proxied_tool_names: Optional[Set[str]] = None,
+    tool_previews: Optional[Dict[str, dict]] = None,
 ) -> List[IMessageContent]:
     """Build content for tool call started event.
 
@@ -72,6 +80,11 @@ def _build_tool_call_content(
     }
     if proxied_tool_names is not None:
         payload_data["proxied"] = function_name in proxied_tool_names
+    preview = (tool_previews or {}).get(action.action_id)
+    if action.action_type == TOOL_PREVIEW_ACTION_TYPE and isinstance(action.output, dict):
+        preview = action.output.get("preview")
+    if preview is not None:
+        payload_data["preview"] = preview
     return [IMessageContent(type="call-tool", payload=payload_data)]
 
 
@@ -574,6 +587,7 @@ def action_to_sse_event(
     is_update: bool = False,
     include_final_response: bool = False,
     proxied_tool_names: Optional[Set[str]] = None,
+    tool_previews: Optional[Dict[str, dict]] = None,
 ) -> Optional[SSEEvent]:
     """Convert an ActionHistory object to an SSEEvent.
 
@@ -669,7 +683,9 @@ def action_to_sse_event(
         elif action.action_type == SUBAGENT_COMPLETE_ACTION_TYPE:
             contents = _build_subagent_complete_content(action)
         elif role == ActionRole.TOOL and status == ActionStatus.PROCESSING:
-            contents = _build_tool_call_content(action, proxied_tool_names)
+            contents = _build_tool_call_content(action, proxied_tool_names, tool_previews)
+            if action.action_type == TOOL_PREVIEW_ACTION_TYPE:
+                sse_type = SSEDataType.UPDATE_MESSAGE
         elif role == ActionRole.TOOL:
             contents = _build_tool_result_content(action)
         elif role == ActionRole.INTERACTION and status == ActionStatus.PROCESSING:

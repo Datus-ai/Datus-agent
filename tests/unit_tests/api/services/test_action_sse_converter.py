@@ -121,6 +121,31 @@ class TestExtractFunction:
 class TestBuildToolCallContent:
     """Tests for _build_tool_call_content."""
 
+    def test_tool_start_carries_an_already_prepared_snapshot_for_early_preview_delivery(self):
+        snapshot = {
+            "filePath": ".datus/semantic-model-plans/s/semantic-model-plan.json",
+            "oldText": "",
+            "newText": "{}",
+        }
+        action = _make_action(
+            action_id="fast-call",
+            role=ActionRole.TOOL,
+            status=ActionStatus.PROCESSING,
+            input={"function_name": "write_semantic_model_plan_file", "arguments": {"model_name": "sales"}},
+        )
+        event = action_to_sse_event(
+            action,
+            1,
+            action.action_id,
+            proxied_tool_names={"write_semantic_model_plan_file"},
+            tool_previews={"fast-call": snapshot, "other-call": {"newText": "unrelated"}},
+        )
+        assert event.data.type == SSEDataType.CREATE_MESSAGE
+        assert event.data.payload.content[0].payload["preview"] == snapshot
+        action.action_id = "not-prepared"
+        event = action_to_sse_event(action, 2, action.action_id, tool_previews={"fast-call": snapshot})
+        assert "preview" not in event.data.payload.content[0].payload
+
     def test_builds_call_tool_content(self):
         """Produces IMessageContent with type='call-tool' and correct payload."""
         action = _make_action(

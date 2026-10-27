@@ -6,9 +6,11 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
-from fastapi import HTTPException
 
-from datus.api.routes.chat_routes import get_tool_preview
+from datus.api.models.cli_models import SSEDataType
+from datus.api.services.action_sse_converter import action_to_sse_event
+from datus.schemas.action_bus import ActionBus
+from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
 from datus.tools.func_tool.semantic_plan_file_tools import SemanticPlanFileTools
 from datus.tools.permission.permission_config import PermissionConfig, PermissionLevel, PermissionRule
 from datus.tools.permission.permission_hooks import PermissionHooks
@@ -32,6 +34,7 @@ class ReviewChannel(ToolResultChannel):
 def node_for(root):
     writer = SemanticPlanFileTools(root)
     return SimpleNamespace(
+        action_bus=ActionBus(),
         semantic_plan_file_tool=writer,
         tools=writer.available_tools(),
         tool_channel=ReviewChannel(),
@@ -149,27 +152,6 @@ async def test_stop_discards_pending_proposal_without_a_write(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_preview_is_scoped_to_the_session_owner(tmp_path):
-    node = node_for(tmp_path)
-    apply_semantic_plan_review(node)
-    running, preview = await start_review(node)
-    task = SimpleNamespace(node=node, status="running")
-    svc = SimpleNamespace(
-        task_manager=SimpleNamespace(get_task=lambda session_id: task if session_id == "session" else None)
-    )
-    try:
-        result = await get_tool_preview(svc, SimpleNamespace(user_id="owner"), "session", "call-1")
-        assert result.data == preview
-        for user, session in [("stranger", "session"), ("owner", "unknown")]:
-            with pytest.raises(HTTPException) as error:
-                await get_tool_preview(svc, SimpleNamespace(user_id=user), session, "call-1")
-            assert error.value.status_code == 404
-    finally:
-        node.tool_channel.cancel_all()
-        await running
-
-
-@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "arguments",
     [
@@ -201,10 +183,60 @@ async def test_expired_review_and_late_accept_never_write(tmp_path, monkeypatch)
 
 
 @pytest.mark.asyncio
-async def test_finished_task_has_no_reviewable_call(tmp_path):
+@pytest.mark.parametrize("accept", [False, True])
+async def test_prepared_snapshot_streams_on_the_same_card_before_a_decision(tmp_path, accept):
     node = node_for(tmp_path)
-    task = SimpleNamespace(node=node, status="completed")
-    svc = SimpleNamespace(task_manager=SimpleNamespace(get_task=lambda _: task))
-    with pytest.raises(HTTPException) as error:
-        await get_tool_preview(svc, SimpleNamespace(user_id="owner"), "session", "missing")
-    assert error.value.status_code == 404
+    apply_semantic_plan_review(node)
+    args = {"model_name": "sales", "plan_json": {"summary": "review through SSE"}}
+
+    async def primary():
+        yield ActionHistory(
+            action_id="stream-call",
+            action_type="tool_call",
+            role=ActionRole.TOOL,
+            status=ActionStatus.PROCESSING,
+            input={"function_name": node.tools[0].name, "arguments": args},
+        )
+        result = await node.tools[0].on_invoke_tool(SimpleNamespace(tool_call_id="stream-call"), json.dumps(args))
+        yield ActionHistory(
+            action_id="complete_stream-call",
+            action_type="tool_result",
+            role=ActionRole.TOOL,
+            status=ActionStatus.SUCCESS if accept else ActionStatus.FAILED,
+            input={"function_name": node.tools[0].name, "arguments": args},
+            output=result,
+        )
+
+    events = []
+    existed_before_decision = []
+    async for action in node.action_bus.merge(primary()):
+        event = action_to_sse_event(
+            action,
+            len(events),
+            action.action_id,
+            proxied_tool_names=node.proxied_tool_names,
+            tool_previews=node.tool_review_previews,
+        )
+        events.append(event)
+        if event.data.type == SSEDataType.UPDATE_MESSAGE:
+            preview = event.data.payload.content[0].payload["preview"]
+            existed_before_decision.append((tmp_path / preview["filePath"]).exists())
+            await node.tool_channel.publish("stream-call", {"success": int(accept)})
+
+    assert [event.data.type for event in events] == [
+        SSEDataType.CREATE_MESSAGE,
+        SSEDataType.UPDATE_MESSAGE,
+        SSEDataType.CREATE_MESSAGE,
+    ]
+    update = events[1]
+    part = update.data.payload.content[0]
+    preview = part.payload["preview"]
+    assert update.data.payload.message_id == "stream-call"
+    assert part.payload["callToolId"] == "stream-call"
+    assert part.payload["proxied"] is True
+    assert preview["oldText"] == ""
+    assert json.loads(preview["newText"])["plan"]["summary"] == "review through SSE"
+    assert existed_before_decision == [False]
+    written = {path.name: path.read_text() for path in tmp_path.rglob("semantic-model-plan.json")}
+    assert written == ({"semantic-model-plan.json": preview["newText"]} if accept else {})
+    assert not node.tool_review_previews

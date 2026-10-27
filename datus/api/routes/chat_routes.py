@@ -238,9 +238,12 @@ async def stream_chat_feedback(
 async def resume_chat(
     request: ResumeChatInput,
     svc: ServiceDep,
+    ctx: AppContextDep,
 ):
     task_manager = svc.task_manager
     task = task_manager.get_task(request.session_id)
+    if task is not None and task.user_id != ctx.user_id:
+        raise HTTPException(status_code=404, detail="Task not found")
     if task is None:
         return Result[dict](
             success=False,
@@ -511,30 +514,6 @@ async def insert_message(
 
 
 # ========== Tool Result ==========
-
-
-@router.get("/tool_preview", response_model=Result[dict], summary="Read Pending Tool Preview")
-async def get_tool_preview(
-    svc: ServiceDep,
-    ctx: AppContextDep,
-    session_id: str = Query(...),
-    call_tool_id: str = Query(...),
-) -> Result[dict]:
-    """Read server-prepared content; accepting never trusts browser-supplied JSON."""
-    # The call frame can reach the browser just before the tool invocation has
-    # frozen its content. Bound this race rather than exposing an empty diff.
-    for _ in range(100):
-        task = svc.task_manager.get_task(session_id)
-        node = task.node if task else None
-        if node is None or getattr(node, "scope", None) != ctx.user_id:
-            raise HTTPException(status_code=404, detail="No pending tool preview")
-        preview = getattr(node, "tool_review_previews", {}).get(call_tool_id)
-        if preview is not None:
-            return Result[dict](success=True, data=preview)
-        if task.status != "running":
-            break
-        await asyncio.sleep(0.1)
-    raise HTTPException(status_code=404, detail="No pending tool preview")
 
 
 @router.post(
