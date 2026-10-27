@@ -693,7 +693,7 @@ class TestProxiedToolNames:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("node_name", ["chat", *sorted(_FS_DEPENDENT_NODES)])
+@pytest.mark.parametrize("node_name", ["chat", "semantic_modeling", "gen_sql_summary"])
 @pytest.mark.parametrize("operation", ["write_file", "edit_file", "delete_file"])
 async def test_web_main_and_children_share_existing_proxy_lifecycle(tmp_path, node_name, operation):
     import json
@@ -897,10 +897,13 @@ def test_cli_and_vscode_keep_native_filesystem_and_existing_action_shape(source,
 @pytest.mark.asyncio
 @pytest.mark.parametrize("kind", ["report", "dashboard"])
 @pytest.mark.parametrize("operation", ["write_file", "edit_file", "delete_file"])
-async def test_web_artifact_proxies_preserve_native_path_policy(tmp_path, kind, operation):
+async def test_web_native_artifacts_preserve_path_policy(tmp_path, kind, operation):
+    import json
+
     from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
     from datus.tools.func_tool.dashboard_artifact_tools import DashboardFilesystemFuncTool
     from datus.tools.func_tool.report_artifact_tools import ReportFilesystemFuncTool
+    from datus.tools.proxy.proxy_tool import stamp_tool_execution
 
     cls = ReportFilesystemFuncTool if kind == "report" else DashboardFilesystemFuncTool
     fs = cls(root_path=str(tmp_path))
@@ -926,11 +929,89 @@ async def test_web_artifact_proxies_preserve_native_path_policy(tmp_path, kind, 
         status=ActionStatus.PROCESSING,
     )
     await prepare_web_tool_action(action, node)
+    stamp_tool_execution(action, node)
     assert action.input["_proxied"] is False
     tool = next(t for t in node.tools if t.name == operation)
-    result = await tool.on_invoke_tool(SimpleNamespace(tool_call_id="protected"), "{}")
+    result = await tool.on_invoke_tool(SimpleNamespace(tool_call_id="protected"), json.dumps(args))
     assert result["success"] == 0
     assert "save_query" in result["error"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["report", "dashboard"])
+@pytest.mark.parametrize("operation", ["write_file", "edit_file", "delete_file"])
+@pytest.mark.parametrize(
+    "relative_path,before,after",
+    [
+        ("render/app.jsx", "export default () => 'before';", "export default () => 'after';"),
+        ("manifest.json", '{"name":"before"}', '{"name":"after"}'),
+        ("analysis/notes.sql", "SELECT 1", "SELECT 2"),
+    ],
+)
+async def test_web_visual_subagents_execute_files_natively_without_client_confirmation(
+    tmp_path, kind, operation, relative_path, before, after
+):
+    import json
+    from unittest.mock import AsyncMock
+
+    from datus.api.services.action_sse_converter import _build_tool_call_content
+    from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
+    from datus.tools.func_tool.dashboard_artifact_tools import DashboardFilesystemFuncTool
+    from datus.tools.func_tool.report_artifact_tools import ReportFilesystemFuncTool
+    from datus.tools.permission.permission_hooks import FilesystemPolicy, PermissionHooks
+    from datus.tools.permission.permission_manager import PermissionManager
+    from datus.tools.permission.profiles import get_profile
+    from datus.tools.proxy.proxy_tool import stamp_tool_execution
+
+    node_name = f"gen_visual_{kind}"
+    cls = ReportFilesystemFuncTool if kind == "report" else DashboardFilesystemFuncTool
+    fs = cls(root_path=str(tmp_path), strict=True, current_node=node_name)
+    channel = ToolResultChannel()
+    node = SimpleNamespace(
+        tools=fs.available_tools(),
+        tool_channel=channel,
+        tool_registry=ToolRegistry({t.name: "filesystem_tools" for t in fs.available_tools()}),
+        agent_config=SimpleNamespace(_client_source="web"),
+        get_node_name=lambda: node_name,
+        scope="owner",
+    )
+    apply_proxy_tools(node, ["write_file", "edit_file", "delete_file"])
+    target = tmp_path / f"{kind}s/demo/{relative_path}"
+    target.parent.mkdir(parents=True)
+    target.write_text(before)
+    args = {"path": str(target)}
+    args.update({"content": after} if operation == "write_file" else {})
+    args.update({"old_string": before, "new_string": after} if operation == "edit_file" else {})
+    action = ActionHistory(
+        action_id="native-artifact",
+        role=ActionRole.TOOL,
+        action_type=operation,
+        input={"function_name": operation, "arguments": args},
+        status=ActionStatus.PROCESSING,
+    )
+    await prepare_web_tool_action(action, node)
+    stamp_tool_execution(action, node)
+    # Even when the parent proxies file writes, this producing node owns them;
+    # the frontend receives a display-only card and cannot execute it twice.
+    assert _build_tool_call_content(action, {operation})[0].payload["proxied"] is False
+    broker = SimpleNamespace(request=AsyncMock())
+    hooks = PermissionHooks(
+        broker=broker,
+        permission_manager=PermissionManager(get_profile("normal")),
+        node_name=node_name,
+        tool_registry=node.tool_registry,
+        proxied_tool_names=node.proxied_tool_names,
+        web_filesystem_proxy_names=node.web_filesystem_proxy_names,
+        fs_policy=FilesystemPolicy(root_path=tmp_path, current_node=node_name, strict=True),
+    )
+    tool = next(t for t in node.tools if t.name == operation)
+    ctx = SimpleNamespace(tool_call_id="native-artifact", tool_arguments=json.dumps(args))
+    await hooks.on_tool_start(ctx, None, tool)
+    broker.request.assert_not_called()
+    result = await asyncio.wait_for(tool.on_invoke_tool(ctx, json.dumps(args)), timeout=1)
+    assert result["success"] == 1
+    assert target.exists() == (operation != "delete_file")
+    assert (target.read_text() if target.exists() else None) == (None if operation == "delete_file" else after)
 
 
 @pytest.mark.asyncio

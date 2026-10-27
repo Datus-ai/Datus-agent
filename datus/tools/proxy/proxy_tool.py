@@ -30,8 +30,8 @@ if TYPE_CHECKING:
 logger = get_logger(__name__)
 
 # Node types whose success-path finalizers depend on local filesystem tools (write_file, etc.)
-# CLI/VS Code keep these filesystem tools native. Web uses the existing IDE
-# executor with server-side preparation and mutation bookkeeping.
+# CLI/VS Code keep these filesystem tools native. Web uses the IDE executor
+# for semantic models and SQL summaries; visual artifacts remain server-owned.
 _FS_DEPENDENT_NODES: Set[str] = {
     "semantic_modeling",
     "gen_sql_summary",
@@ -161,7 +161,9 @@ def apply_proxy_tools(
     # Auto-detect nodes whose finalizers depend on filesystem tools
     exclude_categories: Optional[Set[str]] = None
     node_name = getattr(node, "get_node_name", lambda: "")()
-    if source != "web" and node_name in _FS_DEPENDENT_NODES:
+    if node_name in _FS_DEPENDENT_NODES and (
+        source != "web" or node_name in {"gen_visual_report", "gen_visual_dashboard"}
+    ):
         exclude_categories = {"filesystem_tools"}
 
     new_tools = []

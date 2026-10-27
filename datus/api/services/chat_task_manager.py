@@ -889,8 +889,8 @@ class ChatTaskManager:
 
             # 5. Replace filesystem tools with proxy if applicable.
             # CLI/VSCode retain native filesystem exclusions for artifact nodes.
-            # Web keeps node-specific validation and bookkeeping around the
-            # existing IDE file executor; main and delegated nodes share it.
+            # Web uses the existing IDE executor for reviewed file changes;
+            # visual artifact nodes retain their native filesystem exclusion.
             effective_source = request.source or self._default_source
             if effective_source == "vscode":
                 # VSCode edits the user's *local* filesystem — the client is
