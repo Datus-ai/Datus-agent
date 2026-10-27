@@ -1,12 +1,12 @@
 ---
 name: init
-description: Lightweight project initialization — optionally scoped to specific files / tables / datasources / domains. Reads the project's SQL (through the persisted table lineage graph, upsert_lineage / query_lineage), human-written docs and the database schema without querying table data, then writes an AGENTS.md project map and per-domain ./knowledge/*.md files holding only statements a source confirms; inferred conclusions are returned as pending questions and written only after the user confirms them. Stops short of the vector-indexed stores (semantic_models / metrics / reference_sql). Single confirmation-free pass.
+description: Lightweight initialization of a project's core scope, optionally limited to files, tables or domains. Reads SQL and persisted lineage, human docs and live schema without querying table data. Writes confirmed knowledge to AGENTS.md and knowledge/*.md; unconfirmed inferences are kept separately in knowledge/pending-questions.md. Each call handles its current scope using existing documents and one ordinary chat loop. Reuses an existing metadata KB without bootstrapping one; semantic models, metrics and reference SQL belong to build-kb.
 tags:
   - init
   - workspace
   - project
   - lineage
-version: 4.13.1
+version: 4.26.0
 user_invocable: true
 ---
 
@@ -31,8 +31,9 @@ The downstream agent cannot scan tables and rarely re-reads every script, so the
 
 ## Evidence
 
-- **Confirmed statements only.** Project files hold only what a source states directly: DDL and schema declarations, doc sections, SQL comments, what a script literally does (tables read and written, joins, filters, mappings, formulas), lineage, scheduler config, and what the user confirmed. A conclusion drawn from those sources is an inference: a grain read off a `GROUP BY` or `ROW_NUMBER`, a cardinality read off join syntax, a cadence read off names or parameters, a table judged current without a doc naming it, a layer meaning read off a prefix, a rule generalized from repeated SQL. Inferences go to the pending questions of your final reply, never into a file.
+- **Confirmed statements only.** Established knowledge holds only what a source states directly: DDL and schema declarations, doc sections, SQL comments, what a script literally does (tables read and written, joins, filters, mappings, formulas), lineage, scheduler config, and what the user confirmed. A conclusion drawn from those sources is an inference: a grain read off a `GROUP BY` or `ROW_NUMBER`, a cardinality read off join syntax, a cadence read off names or parameters, a table judged current without a doc naming it, a layer meaning read off a prefix, a rule generalized from repeated SQL. Keep inferences as explicitly unconfirmed questions in `knowledge/pending-questions.md`, never as established facts in domain knowledge or AGENTS.md.
 - **Cite** grain, keys, cardinality, status and time as `(DDL)`, `(doc: <name> §<section>)`, `(<file>:<line>)` or `(confirmed by user, <YYYY-MM-DD>)`. Never invent a table, column, code value or number.
+- **Preserve definitions.** Record metric expressions, filters and join predicates with their source locations. Keep each definition within its evidenced scope; possible risks are not confirmed business rules.
 - **Where inference hides:**
   - Grain comes only from a declared primary or unique key or a doc. A key that allows duplicates, a sort key or a distribution key does not make rows unique.
   - Write `N:1` only when the join equates every column of a declared primary or unique key on the "one" side; a join on part of a composite key can still fan out.
@@ -43,101 +44,52 @@ The downstream agent cannot scan tables and rarely re-reads every script, so the
 
 ## Limits
 
-- **No table data.** Use schema metadata only: `list_tables`, `describe_table`, and `execute_sql` only for the dialect's statement that returns a table's DDL. No `SELECT` against a table, not even with `LIMIT` or a partition filter, not even to settle a conflict. Do not delegate to subagents: their tools can query table data.
-- **No questions during the run.** Do not call `ask_user`, except before replacing an existing `AGENTS.md` wholesale; otherwise edit the sections you own in place.
-- **Scope.** Hints after `/init` arrive as "Additional context from the user" and name files, datasources, tables or domains. With hints, read and write only in scope and keep every other section verbatim. Without hints, cover the whole project on the active datasource.
+- **No table data.** Use schema metadata only: `list_tables`, `describe_table`, and `get_table_ddl` when a specific important claim needs more evidence. No business-row queries, samples or counts. The bounded REPL run exposes metadata-only DB tools; general SQL, shell, MCP and delegation tools are not part of it.
+- **Clarify scope when needed.** If many tables are visible and project docs, SQL, existing metadata and user hints do not establish a useful business scope, use `ask_user`. Ask for a schema, business domain or explicit table list. Wait for the answer; if cancelled, stop and preserve progress. You may also ask during analysis when an answer is needed to proceed. Do not guess core tables from names or fill a table-count quota. Save other unresolved business questions in the pending-question file during analysis and summarize important ones in the final reply. Update only the sections you own in existing output files.
+- **Scope.** Hints after `/init` arrive as "Additional context from the user" and name files, datasources, tables or domains. With hints, read and write only in scope and keep every other section verbatim. Without hints, select core tables from docs, SQL outputs and related lineage on the active datasource. Prioritize important business questions. Core-scope completion never means exhaustive database coverage. Do not generalize facts from representative tables to unchecked tables.
 - **Lightweight.** Do not build semantic models, metrics or reference SQL (`/build-kb` owns them): no `semantic_modeling`, no `gen_sql_summary`, no generation manifest.
+- **Existing metadata only.** If `search_table` is available, use it to find a few candidates; empty search is not proof of absence. Otherwise follow docs, SQL and scoped table lists. Never bootstrap metadata as an init prerequisite. Verify important structural claims against the live database.
+
+## Current-Scope Execution
+
+When the host provides `<init_context>`, complete this invocation within the current ordinary chat loop. Move through useful business topics at your discretion. Pagination and automatic mid-turn compaction let the same run continue; compaction does not reset `max_turns` or start another session. Each later `/init` supplements the existing documents. There is no init task ID, persistent queue or resume state.
+
+- **Explore scope**: read existing knowledge, relevant pending questions, project docs, SQL and optional metadata search. Pending questions are not evidence. For a large database without reliable scope clues, use `ask_user` for a schema, domain or table list. For overly broad work, clarify the useful area first. Continue here after the answer; preserve existing progress and apply later user corrections.
+- **Plan work with existing todos**: use `todo_list`, `todo_read`, `todo_write` and `todo_update` for business topics and next steps. These tools do not activate plan mode or require plan approval. Preserve unrelated existing todos. Adjust the work as you learn; use meaningful tasks rather than one item per table. Todos are the work plan, not a database coverage registry.
+- **Analyze progressively**: decide which related tables, metadata searches, source reads and SQL lineage updates are useful. A dependency lookup does not imply that its business knowledge has been initialized. Use live metadata to check important structural claims, and read DDL only when useful. Match each claim to evidence for those exact tables: shared purpose, grain, names or SQL do not establish identical columns or keys. Before writing "verified" or "identical", check the supporting evidence; otherwise narrow the claim and mark remaining structures unverified.
+- **Resolve questions with tools first**: within the chosen scope, use metadata and project sources to resolve structural questions before asking the user or saving pending questions. An unchecked schema is a next lookup. Continue useful feasible checks, without exhaustive checks that add no value. Keep genuine business ambiguities or unavailable information for user confirmation. Never query business rows to fill a knowledge gap.
+- **Keep progress in todos and the final reply**: update work steps as you finish them and keep remaining work clear. Metadata success alone does not mean knowledge is complete. File-only work needs no table list. In the final reply, explain the current scope, actual outcomes and unfinished work. Normal return or completed todos do not certify business content or full-database coverage.
+- **Large or interrupted work**: read archived results through `read_tool_result`, search and read long files in bounded sections, and continue the current task after automatic compaction. Recover current goals, latest user corrections, recorded outcomes and next steps from the conversation summary, todos, relevant knowledge and retained user clarifications; do not reload entire archived results. Tools retain their own timeouts and the run retains its configured `max_turns`. When interrupted, budget-exhausted or unable to recover capacity, stop and report the concrete reason and remaining work. Never restart in a fresh chat to reset the budget. Explicit user-selected plan mode remains read-only; ordinary todo use does not enable it.
+
+Copy archive identifiers, sections and pagination cursors exactly from tool results or the runtime's retained references. A preview, captured count or archived full result does not establish that you inspected every record. Describe the claims actually checked and keep unfinished lookups visible in progress and the final reply.
+
+Before finishing, read back the written files and keep the verified scope consistent across the overview, details, progress and final reply.
+
+Without `<init_context>`, perform the same scoped exploration and editing through the available ordinary tools.
 
 ## Where to Look
 
 Read the highest-value sources first and let what you learn decide what to read next:
 
 1. Human docs and instruction files: `README`, an existing `AGENTS.md`, business rules, metric definitions, data dictionaries.
-2. The SQL. `upsert_lineage(paths=[<in-scope SQL globs>], prune_missing=True)` builds the lineage graph; `query_lineage()` without tables returns the whole table graph, and with tables the statements around them. The scripts that build the most downstream tables define the published metrics. SQL comments are where authors explain their filters and workarounds.
+2. The SQL. `upsert_lineage(paths=[<in-scope SQL globs>], prune_missing=True)` builds the lineage graph; use `query_lineage(tables=[<relevant tables>])` for related statements. Read source SQL for formulas and filters. Published output scripts are useful starting points; graph degree alone does not establish business authority. SQL comments explain filters and workarounds.
 3. Scheduler or pipeline config.
 4. The database schema: check that every table and column you write exists, and read declared keys and partitioning.
 
-When the script headers pose business questions answered by the SQL below them, the scripts are a **question→SQL corpus**: they define the project's business vocabulary (see the glossary rule below).
+When the script headers pose business questions answered by the SQL below them, the scripts are a **question→SQL corpus**: use their explicit terms and column mappings as sourced examples, without generalizing beyond those examples.
 
 ## Output
 
-**`./knowledge/<domain>.md`**: one file per business domain. Prefer a few wide domains; shared dimension tables go into `common`. Keep a file to about 400 lines and split a larger domain; extend an existing file for the same domain instead of starting a parallel one. Suggested layout, sections only when they have content, adapted to the project:
+Maintain these public artifacts using the existing file tools:
 
-```markdown
-# <Domain Title>
+- `knowledge/<domain>.md`: useful table guidance, relationships, business definitions, source references and known issues. Use additional detail files when needed; preserve the project's existing organization.
+- `knowledge/<domain>-index.md`: optional navigation and overview when a domain has several detail files. Small domains can link directly from `AGENTS.md`.
+- `AGENTS.md`: concise project context and knowledge navigation, within 200 lines, preserving human content and links to other domains. When the pending-question file exists, link it within this navigation and explicitly state that it is unconfirmed material, not facts to use for answers, SQL or KB generation.
+- `knowledge/pending-questions.md`: a shared Markdown list of unresolved business questions or information the available tools cannot establish, grouped by domain. Resolve questions answerable by metadata or project files before adding them here; report deferred lookups as unfinished work rather than user questions. For each question name the affected tables and source references, and explain what needs confirmation. Read before editing; combine duplicates and preserve unrelated questions and human text. Use search and bounded reads when it grows. Create it only when questions exist; do not overwrite an existing list with an empty file. No question IDs or structured submission are required.
+- `lineage/lineage.json`: shared SQL lineage, updated only through the lineage tools. Prefer querying relevant named tables to keep exploration focused.
 
-> **Domain:** <what this file covers and what it does not>. Sources: <script dirs / doc names>.
+Do not create `.datus/init/` task metadata. The ordinary file tools handle edits; there is no init-specific renderer, content validator or multi-file transaction. After interruption, later scoped calls read the existing files and supplement unfinished documentation.
 
-## Tables
+Reply with the current scope, files changed, checked tables, important unknowns, source differences and unfinished areas. Do not claim full-database completion. End with at most 10 consequential pending questions, each citing its evidence and the statement that would be written if confirmed. The file retains every unresolved question. Proposed interpretations in that file are not confirmed definitions and must not be used as defaults for SQL, answers or vector-KB generation.
 
-### <table_name>
-- **Use for:** <purpose a doc states, or the facts that show it>. **Status** (only when a doc or the user states it): authoritative, or legacy — use <other>
-- **Grain:** one row per <entity × time>; key `(<cols>)` (<source>)
-- **Time:** <partition / date column> (DDL); <load mode as stated, or the literal load statement with `<file>:<line>`>; snapshot semantics
-- **Dimensions:** non-obvious codes `<col>`: <value>=<label>, …
-- **Measures:** `<col>` — <meaning>, <additivity>, <unit>
-- **Filters:** <predicates docs require or the relevant SQL applies, with their scope and exceptions>
-
-## Relationships
-| Left | Right | Keys | Cardinality | Note |
-|---|---|---|---|---|
-
-## Lineage
-| Table | Upstream | Built by | Downstream |
-|---|---|---|---|
-
-## Metric Definitions
-- **<metric>** = <formula in columns>; source `<table>`; filters <…>; precomputed in `<table>.<column>`
-
-## <Business Rule Topic>
-- <one atomic fact per bullet>
-
-## Known Issues
-- <gap / bug / conflict> — <what to do about it>
-```
-
-- Write each definition itself, never "see `<file>`": the downstream agent may not have the source files.
-- **Metrics.** Take the business name and intent from docs and the exact computation from the script that publishes it, with `<table>.<column>`. Cover every metric the docs define and every metric a published table computes. Copy each formula exactly, with every branch, condition and threshold.
-- **Glossary.** For a question→SQL corpus, write every term the headers and SQL define with its exact definition (predicate, code list, table or date convention), one bullet per term, deduplicated across files, under a glossary topic per domain. Also record per-question-type conventions, citing the pairs they come from: which table answers which kind of question, the output grain, default filters.
-- Lineage tables list core tables only; the complete graph stays in `lineage/lineage.json`.
-
-**`./AGENTS.md`**: the project map. Only its first 200 lines are injected into every session, so keep it within 200 lines and leave details to the knowledge files. Suggested sections, each only when it has real content:
-
-```markdown
-# <Project> — <one-line goal, only when README or a doc states it>
-
-## Data Architecture
-- Datasource `<name>` (<dialect>), database `<db>`; layers and naming as a doc states them; main flows
-
-## Directory Map
-| Path | Contents |
-
-## Core Tables
-| Table | Layer | Grain | Use for | Details |
-
-## Global Rules
-- <few cross-domain rules, each stated by a doc or confirmed by the user>
-
-## SQL Conventions
-- <only for a question→SQL corpus>
-
-## Knowledge
-- [<Domain>](knowledge/<domain>.md) — <the tables, metrics and code tables it holds>
-```
-
-- **SQL Conventions** come only from validated `(question, SQL)` pairs, never from ETL scripts. Each is *"when the question says ⟨phrasing⟩ → ⟨output shape⟩"*, schema-free, checked for counter-examples, and cites its pairs. These and the glossary's per-question-type conventions are the one exception to *Confirmed statements only*: write them directly; the user reviews them in the file.
-- Do not write `## Semantic Models` / `## Metrics` / `## Reference SQL`; `/build-kb` owns them.
-
-**memory** (`add_memory`): only durable preferences about how the agent should work; usually nothing during init.
-
-## Done When
-
-- Every table you wrote exists in `list_tables`, or is listed as missing under Known Issues.
-- Every core table has a card with at least **Use for**.
-- `AGENTS.md` is within 200 lines, has no empty sections or placeholders, and every `knowledge/...` link in it resolves.
-- Nothing inferred was written: every grain, key, cardinality, status, cadence and snapshot claim cites its source.
-- For a question→SQL corpus, every term the headers define appears with its exact definition.
-
-Then reply briefly: the files written and the number of core tables, relationships, rules and known issues. End with **Pending questions**: at most 10 inferred conclusions, most consequential first, each with its evidence (`<file>:<line>`, doc section, lineage facts) and the exact line you would write if it is confirmed; say how many more you left out. They live only in this reply.
-
-When the user later confirms, corrects or rejects pending questions in this conversation, write each confirmed or corrected item into the matching knowledge file or `AGENTS.md` section with `(confirmed by user, <YYYY-MM-DD>)`, and drop the rejected ones.
+When the user later confirms or corrects a pending interpretation, read the matching entry, update the relevant knowledge with user attribution, then remove that entry or mark it resolved. Discard rejected interpretations and preserve unrelated pending questions. A new source may resolve a question only when it directly establishes the fact; an inference remains unconfirmed.

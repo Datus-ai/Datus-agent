@@ -117,17 +117,31 @@ def _build_core_cli() -> DatusCLI:
     return cli
 
 
-def test_cli_slash_commands_route_through_shared_repl_dispatch() -> None:
+def test_cli_slash_commands_route_through_shared_repl_dispatch(tmp_path) -> None:
     cli = _build_core_cli()
+    cli.agent_config.project_root = tmp_path
+    cli.agent_config.project_name = "core_acceptance"
+    cli.agent_config.sub_agent_config.return_value = {}
+    cli.agent_config.current_db_config.return_value = SimpleNamespace(
+        type="duckdb",
+        catalog="",
+        database="",
+        schema="",
+        to_dict=lambda: {"type": "duckdb"},
+    )
+    cli.cli_context.current_catalog = ""
+    cli.cli_context.current_db_name = ""
+    cli.cli_context.current_schema = ""
 
     cmd_type, cmd, args = DatusCLI._parse_command(cli, "/init")
     assert (cmd_type, cmd, args) == (CommandType.SLASH, "/init", "")
     DatusCLI._execute_slash_command(cli, cmd, args)
-    cli.chat_commands.execute_chat_command.assert_called_once_with(
-        render_skill_prompt(_INIT_PROMPT, ""),
-        plan_mode=True,
-        subagent_name=None,
-    )
+    cli.chat_commands.execute_chat_command.assert_called_once()
+    call = cli.chat_commands.execute_chat_command.call_args
+    assert call.args[0].startswith(render_skill_prompt(_INIT_PROMPT, ""))
+    assert call.kwargs["plan_mode"] is True
+    assert call.kwargs["subagent_name"] is None
+    assert call.kwargs["init_context"].root == tmp_path.resolve()
 
     cmd_type, cmd, args = DatusCLI._parse_command(cli, "/model openai/gpt-5.5")
     assert (cmd_type, cmd, args) == (CommandType.SLASH, "/model", "openai/gpt-5.5")

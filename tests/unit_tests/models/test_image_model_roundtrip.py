@@ -104,7 +104,16 @@ def make_model(route, fake, monkeypatch):
         )
         monkeypatch.setattr(model.litellm_adapter, "get_agents_sdk_model", lambda: fake)
     else:
-        model = OpenAIModel(ModelConfig(type="openai", model="gpt-test", api_key="test-key", retry_interval=0))
+        model = OpenAIModel(
+            ModelConfig(
+                type="openai",
+                model="gpt-test",
+                api_key="test-key",
+                retry_interval=0,
+                context_length=262144,
+                max_tokens=8192,
+            )
+        )
         monkeypatch.setattr(model.litellm_adapter, "get_agents_sdk_model", lambda: fake)
     monkeypatch.setattr(model, "_build_run_config", lambda **kwargs: RunConfig(tracing_disabled=True))
     return model

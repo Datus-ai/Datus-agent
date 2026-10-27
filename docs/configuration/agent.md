@@ -140,6 +140,52 @@ agent:
     api_key: "sk-your-actual-key-here"
     ```
 
+
+### Context capacity and large tool results
+
+Each model request reserves its maximum output and a safety margin of
+`max(2048, ceil(context_length * 0.05))`. Known models resolve their limits from
+model specifications or the provider catalogue. For a private deployment, set:
+
+```yaml
+agent:
+  models:
+    warehouse_llm:
+      type: openai
+      base_url: https://llm.example.com/v1
+      api_key: ${LLM_API_KEY}
+      model: warehouse-model
+      context_length: 262144
+      max_tokens: 8192
+      tokenizer_ref: /opt/model/tokenizer.json
+```
+
+`context_length` and `max_tokens` must be positive integers. A per-call output
+limit overrides the configured default. `tokenizer_ref` accepts a local Hugging
+Face tokenizer JSON, a Hugging Face tokenizer reference, or `tiktoken:<encoding>`
+when that encoding matches the deployment. Unknown model aliases must specify
+capacity and tokenizer metadata; they no longer silently disable capacity checks.
+Local counting includes serialized messages, instructions, tools and output
+schemas, plus framing allowance; a deployment with different templates or
+routing limits can still reject a request and should be configured accordingly.
+Catalogued non-OpenAI models without an explicit tokenizer reserve UTF-8 bytes
+for text, which can trigger compaction earlier; configuring the deployment
+tokenizer makes better use of the window. Output caps above a known maximum
+are rejected explicitly.
+Remote image URLs and opaque file inputs require extracted content or a provider
+token count; counting only their URL or file ID cannot establish request capacity.
+
+Large tool results are preserved in the session archive; the model receives a
+bounded view and can continue with `read_tool_result`. Original Python tool
+returns and action/UI results retain their existing formats. Source truncation
+and analysis completeness are separate from archive pagination. Disabling
+`agent.compact` does not disable result bounding or the final send check.
+
+The Codex subscription transport has no output-limit field in its wire protocol.
+It retains that protocol and reserves the known model output ceiling, including
+provider catalogue metadata, rather than pretending a smaller requested cap is
+enforced. Standard API transports send the resolved output limit explicitly.
+
 ### Private or self-signed certificates {#private-or-self-signed-certificates}
 
 When pointing Datus at an internal LLM gateway or staging endpoint whose TLS

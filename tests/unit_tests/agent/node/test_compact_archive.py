@@ -223,20 +223,17 @@ class TestMaybeTruncateItem:
         assert second is first
         assert before == after
 
-    def test_archive_failure_falls_back_to_inline_marker(self, archive, monkeypatch):
-        # Force the underlying write to raise → caller degrades to an inline
-        # marker pointing at ``<unavailable>``. Information is lost but the
-        # session can continue.
+    def test_archive_failure_preserves_full_result(self, archive, monkeypatch):
+        from datus.models.request_capacity import ContextCapacityError
+
         def raise_oserror(*args, **kwargs):
             raise OSError("disk full")
 
         monkeypatch.setattr(archive, "archive", raise_oserror)
         item = {"type": "function_call_output", "output": "x" * 5000, "call_id": "c1"}
-        out = maybe_truncate_item(item, archive, threshold=1000, idx=8)
-        assert out["output"].startswith(ARCHIVED_MARKER)
-        assert "<unavailable" in out["output"]
-        # New dict so the rest of the compact pass continues.
-        assert out is not item
+        with pytest.raises(ContextCapacityError, match="RESULT_ARCHIVE_FAILED"):
+            maybe_truncate_item(item, archive, threshold=1000, idx=8)
+        assert item["output"] == "x" * 5000
 
 
 class TestArchiveOldToolOutputs:

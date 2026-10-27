@@ -26,6 +26,7 @@ from datus.models.base import LLMBaseModel
 from datus.models.mcp_result_extractors import extract_sql_contexts
 from datus.models.mcp_utils import multiple_mcp_servers
 from datus.models.observed_model import ObservedResponsesModel
+from datus.models.request_capacity import ContextCapacityError
 from datus.observability.manager import get_observability_manager
 from datus.observability.model_call import current_model_call, native_model_call
 from datus.observability.tool_calls import observe_tool_hooks
@@ -135,6 +136,10 @@ class CodexModel(LLMBaseModel):
     - A different base URL (chatgpt.com/backend-api/codex)
     """
 
+    # The subscription protocol has no output-limit field. Reserve the known
+    # model ceiling without introducing unsupported wire parameters.
+    supports_output_limit = False
+
     def __init__(self, model_config: ModelConfig, **kwargs):
         super().__init__(model_config)
         self.model_name = model_config.model
@@ -217,7 +222,9 @@ class CodexModel(LLMBaseModel):
     def _get_responses_model(self) -> _CodexResponsesModel:
         """Create a _CodexResponsesModel for use with the Agent SDK."""
         async_client = self._get_async_client()
-        return _CodexResponsesModel(model=self.model_name, openai_client=async_client)
+        model = _CodexResponsesModel(model=self.model_name, openai_client=async_client)
+        model._datus_capacity = self.request_capacity()
+        return model
 
     def _refresh_client_token(self):
         """Refresh the token on existing clients."""
@@ -373,6 +380,7 @@ class CodexModel(LLMBaseModel):
         return [{"role": "user", "content": str(prompt)}]
 
     def _generate_direct_response(self, create_kwargs, *, json_output=False, retry_of=None):
+        create_kwargs = self.check_request(create_kwargs, "max_output_tokens")
         client = self._get_client()
         with native_model_call(
             model=self.model_name,
@@ -421,6 +429,8 @@ class CodexModel(LLMBaseModel):
 
         try:
             return self._generate_direct_response(create_kwargs)
+        except ContextCapacityError:
+            raise
         except Exception as e:
             from openai import AuthenticationError
 
@@ -485,6 +495,8 @@ class CodexModel(LLMBaseModel):
 
         try:
             return self._generate_direct_response(create_kwargs, json_output=True)
+        except ContextCapacityError:
+            raise
         except json.JSONDecodeError as e:
             raise DatusException(
                 ErrorCode.MODEL_INVALID_RESPONSE,
@@ -566,6 +578,8 @@ class CodexModel(LLMBaseModel):
 
             try:
                 result = await _run_streamed_to_completion(agent, prompt)
+            except ContextCapacityError:
+                raise
             except MaxTurnsExceeded as e:
                 raise DatusException(ErrorCode.MODEL_MAX_TURNS_EXCEEDED, message_args={"max_turns": max_turns}) from e
             except Exception as e:
@@ -872,6 +886,8 @@ class CodexModel(LLMBaseModel):
                                 action_history_manager.add_action(action)
                                 yield action
 
+            except ContextCapacityError:
+                raise
             except MaxTurnsExceeded as e:
                 raise DatusException(ErrorCode.MODEL_MAX_TURNS_EXCEEDED, message_args={"max_turns": max_turns}) from e
             except Exception as e:
@@ -1069,10 +1085,10 @@ class CodexModel(LLMBaseModel):
 
     def max_tokens(self) -> Optional[int]:
         """Return the max output tokens for the current model."""
-        value = self._lookup_spec("max_tokens")
+        value = self.model_config.max_tokens or self._lookup_spec("max_tokens")
         return value if value is not None else _CODEX_DEFAULT_MAX_TOKENS
 
     def context_length(self) -> Optional[int]:
         """Return the context length for the current model."""
-        value = self._lookup_spec("context_length")
+        value = self.model_config.context_length or self._lookup_spec("context_length")
         return value if value is not None else _CODEX_DEFAULT_CONTEXT_LENGTH

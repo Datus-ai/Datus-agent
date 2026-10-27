@@ -59,6 +59,9 @@ def _make_model_config(
     cfg.retry_interval = 0.0
     cfg.strict_json_schema = True
     cfg.save_llm_trace = save_llm_trace
+    cfg.context_length = None
+    cfg.max_tokens = None
+    cfg.tokenizer_ref = None
     return cfg
 
 
@@ -473,9 +476,10 @@ class TestGenerate:
         assert call_kwargs["max_tokens"] == 4096
         assert "max_completion_tokens" not in call_kwargs
 
-    def test_max_tokens_omitted_when_specs_unknown(self):
-        """Omit the field when model_specs has no entry — let provider decide."""
+    def test_max_tokens_falls_back_to_registered_provider_limit(self):
+        """A provider fallback leaves half the post-margin window for input."""
         model = _make_model()
+        model.model_config.context_length = 8192
         mock_resp = self._mock_litellm_response("ok")
         with (
             patch.object(model, "max_tokens", return_value=None),
@@ -483,7 +487,7 @@ class TestGenerate:
         ):
             model.generate("prompt")
         call_kwargs = mock_lit.call_args[1]
-        assert "max_tokens" not in call_kwargs
+        assert call_kwargs["max_tokens"] == 3072  # (8192 context - 2048 margin) // 2
         assert "max_completion_tokens" not in call_kwargs
 
     def test_explicit_kwargs_override_fallback(self):
@@ -1303,6 +1307,26 @@ class TestModelSpecsAndTokenLimits:
         model = _make_model(cfg)
         assert model.max_tokens() == 16384
 
+    @pytest.mark.parametrize("name", ["o3", "o4-mini", "deepseek-reasoner", "deepseek-r1"])
+    def test_output_defaults_leave_room_for_requests(self, name):
+        from datus.models.request_capacity import ContextCapacityError
+
+        cfg = _make_model_config(model=name)
+        cfg.tokenizer_ref = "tiktoken:cl100k_base"
+        model = _make_model(cfg)
+        request = {"messages": [{"role": "user", "content": "hello"}]}
+        capacity = model.request_capacity()
+        assert capacity.input_limit() > 0
+        assert model.check_request(request)["max_tokens"] == model.max_tokens()
+        assert model.check_request({**request, "max_tokens": 4096})["max_tokens"] == 4096
+        with pytest.raises(ContextCapacityError, match="CONTEXT_LIMIT_EXCEEDED"):
+            model.check_request({**request, "max_tokens": model.context_length()})
+        cfg.max_tokens = 4096
+        assert model.max_tokens() == 4096 and model.request_capacity().default_output == 4096
+        cfg.max_tokens = model.context_length()
+        with pytest.raises(ContextCapacityError, match="CONTEXT_LIMIT_EXCEEDED"):
+            model.check_request(request)
+
     def test_exact_match_context_length(self):
         cfg = _make_model_config(model="gpt-4o")
         model = _make_model(cfg)
@@ -1820,6 +1844,8 @@ class TestBuildAgent:
         self, model_name, provider, configured_base_url, expected_retention, expected_cache_key
     ):
         cfg = _make_model_config(model=model_name, model_type=provider, base_url=configured_base_url)
+        cfg.max_tokens = 8192
+        cfg.context_length = 262144
         model = _make_model(cfg)
         model.litellm_adapter.provider = provider
         _, call_args = self._call_build_agent(model)
@@ -1828,20 +1854,22 @@ class TestBuildAgent:
         assert bool((ms.extra_args or {}).get("prompt_cache_key")) == expected_cache_key
 
     def test_max_tokens_from_model_specs_applied_to_model_settings(self):
-        """Streaming/tool path: model_specs.max_tokens flows into ModelSettings."""
+        """Streaming/tool path: a model default is bounded by usable context."""
         model = _make_model()
+        model.model_config.context_length = 8192
         with patch.object(model, "max_tokens", return_value=4096):
             _, call_args = self._call_build_agent(model)
         ms = call_args[1]["model_settings"]
-        assert ms.max_tokens == 4096
+        assert ms.max_tokens == 3072  # (8192 context - 2048 margin) // 2
 
-    def test_max_tokens_omitted_in_model_settings_when_specs_unknown(self):
-        """When spec is unknown, leave ModelSettings.max_tokens at its default (None)."""
+    def test_model_settings_use_registered_provider_limit(self):
+        """The known provider output limit is explicitly sent and budgeted."""
         model = _make_model()
+        model.model_config.context_length = 8192
         with patch.object(model, "max_tokens", return_value=None):
             _, call_args = self._call_build_agent(model)
         ms = call_args[1]["model_settings"]
-        assert ms.max_tokens is None
+        assert ms.max_tokens == 3072  # (8192 context - 2048 margin) // 2
 
     def test_thinking_model_gets_reasoning(self):
         model = _make_model()

@@ -75,7 +75,9 @@ def render_major_compact_prompt(
     )
 
 
-def build_continuation_message(summary: str, history_jsonl_path: str) -> str:
+def build_continuation_message(
+    summary: str, history_jsonl_path: str, result_references: Optional[list[dict]] = None
+) -> str:
     """Append the JSONL recovery pointer to the LLM summary.
 
     The pointer is appended verbatim rather than asked of the LLM so that
@@ -84,6 +86,18 @@ def build_continuation_message(summary: str, history_jsonl_path: str) -> str:
     a plain markdown string suitable for an ``output_text`` assistant block.
     """
     body = summary.strip()
+    if result_references:
+        from datus.utils.tool_result_store import RESULT_REFERENCES_CLOSE, RESULT_REFERENCES_OPEN, json_text
+
+        body += (
+            "\n\nExact recent tool-result references retained by the runtime. Copy identifiers and cursors verbatim; "
+            "use read_tool_result to continue, or the history below for older results.\n"
+            + RESULT_REFERENCES_OPEN
+            + "\n"
+            + json_text(result_references)
+            + "\n"
+            + RESULT_REFERENCES_CLOSE
+        )
     if history_jsonl_path:
         return f"{body}\n\n---\nFull session history (every item, JSONL): `read_file({history_jsonl_path!r})`"
     return body

@@ -228,7 +228,9 @@ class ToolArchive:
         path = self.dir / fname
         # Idempotent write: if the same content lands here (same idx + hash)
         # we just overwrite — the bytes are identical.
-        path.write_text(content, encoding="utf-8")
+        from datus.storage.semantic_model.artifact_file import atomic_write_text
+
+        atomic_write_text(path, content, mode=0o600)
         preview_n = (
             self.preview_chars * _ERROR_PREVIEW_MULTIPLIER
             if kind == "output" and is_error_output(content)
