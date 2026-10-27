@@ -102,21 +102,10 @@ class InitCommands:
         finally:
             if run is not None:
                 run.close()
-                progress = run.progress()
                 self.console.print(
-                    f"Init: {progress['completed']}/{progress['selected']} selected tables completed "
-                    f"({progress['status']}; current scope).",
+                    f"Init execution: {run.state['status']}. Modified files: {len(run.state['outputs'])}. "
+                    "See the reply and todos for findings and unfinished work.",
                     markup=False,
                 )
-                self.console.print(
-                    f"Modified files: {len(run.state['outputs'])}. "
-                    f"Uncovered: {run.state.get('uncovered') or 'Database scope outside the selected core tables.'}",
-                    markup=False,
-                )
-                self.console.print(
-                    f"Structure checks succeeded: {progress.get('structure_checked', 0)}. "
-                    "See the reply for findings, unknowns and unfinished work.",
-                    markup=False,
-                )
-                if progress["stop_reason"]:
-                    self.console.print(f"Stopped: {progress['stop_reason']}", markup=False)
+                if run.state["stop_reason"]:
+                    self.console.print(f"Stopped: {run.state['stop_reason']}", markup=False)

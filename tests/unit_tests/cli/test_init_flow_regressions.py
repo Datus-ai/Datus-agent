@@ -20,13 +20,6 @@ def chat_for(config, tmp_path):
     return chat
 
 
-def report(tables, complete=False, **kwargs):
-    return MockToolCall(
-        "report_init_progress",
-        {"summary": "Knowledge reviewed", "completed_tables": tables, "scope_complete": complete, **kwargs},
-    )
-
-
 def test_topics_todos_and_followup_use_the_existing_chat(real_agent_config, mock_llm_create, tmp_path):
     chat = chat_for(real_agent_config, tmp_path)
     (tmp_path / "README.md").write_text("School directory and meal program guidance")
@@ -48,10 +41,8 @@ def test_topics_todos_and_followup_use_the_existing_chat(real_agent_config, mock
                 )
             },
         ),
-        MockToolCall("plan_init_scope", {"tables": ["schools", "frpm"], "source_paths": ["README.md"]}),
         MockToolCall("describe_table", {"table_name": "schools"}),
         MockToolCall("write_file", {"path": "knowledge/schools.md", "content": "School guidance (README.md)"}),
-        report(["schools"], remaining="Meal program", next_step="Read frpm schema"),
         MockToolCall("todo_update", {"todo_id": 1, "status": "completed"}),
         MockToolCall("describe_table", {"table_name": "frpm"}),
         MockToolCall("write_file", {"path": "knowledge/meal.md", "content": "Meal program guidance (README.md)"}),
@@ -59,7 +50,6 @@ def test_topics_todos_and_followup_use_the_existing_chat(real_agent_config, mock
             "write_file", {"path": "knowledge/pending-questions.md", "content": "Confirm meal-program semantics"}
         ),
         MockToolCall("todo_update", {"todo_id": 2, "status": "completed"}),
-        report(["frpm"], True, remaining="None - both selected topics are documented"),
     ]
     mock_llm_create.reset(
         responses=[MockLLMResponse(content="Both topics documented; confirm meal semantics", tool_calls=calls)]
@@ -68,7 +58,8 @@ def test_topics_todos_and_followup_use_the_existing_chat(real_agent_config, mock
     chat.execute_chat_command("Initialize these topics", init_context=run)
     run.close()
     assert chat.current_node is node and node.session_id == session_id
-    assert run.progress()["completed"] == 2 and run.state["status"] == "completed_scope"
+    assert run.state["status"] == "returned"
+    assert node.plan_tool.todo_list().result["completed"] == 2
     assert all(item["output"]["success"] == 1 for item in mock_llm_create.tool_results)
     assert (tmp_path / "knowledge/schools.md").exists() and (tmp_path / "knowledge/meal.md").exists()
     init_tools = set(mock_llm_create.call_history[-1]["tools"])
@@ -119,8 +110,8 @@ def test_failure_does_not_restart_or_leak_init_tools(
     node, calls = chat.current_node, []
     original_tools = {t.name for t in node.tools}
     run = InitContext(tmp_path, {}, "Two topics")
-    run.select_scope(["schools", "frpm"], [], "", [])
-    run.report_progress("First topic documented", ["schools"], False, "frpm", "Inspect frpm")
+    node.plan_tool.todo_write(json.dumps([{"title": "Meal program", "content": "Inspect frpm"}]))
+    (tmp_path / "AGENTS.md").write_text("Existing school guidance")
     original = type(mock_llm_create).generate_with_tools_stream
 
     async def fail(self, *args, **kwargs):
@@ -140,15 +131,15 @@ def test_failure_does_not_restart_or_leak_init_tools(
     chat.execute_chat_command("Init", init_context=run)
     run.close()
     assert len(calls) == 1 and chat.current_node is node
-    assert run.state["status"] == "partial" and run.state["stop_reason"]
-    assert run.progress()["completed"] == 1 and run.progress()["pending"] == 1
+    assert run.state["status"] == "stopped" and run.state["stop_reason"]
+    assert node.plan_tool.todo_list().result["items"][0]["status"] == "pending"
+    assert (tmp_path / "AGENTS.md").read_text() == "Existing school guidance"
     assert {t.name for t in node.tools} == original_tools
     assert getattr(node, "_init_context", None) is None
     monkeypatch.setattr(type(mock_llm_create), "generate_with_tools_stream", original)
     mock_llm_create.reset(responses=[MockLLMResponse(content="Ordinary chat resumed")])
     chat.execute_chat_command("Continue normal chat")
     assert "execute_sql" in mock_llm_create.call_history[-1]["tools"]
-    assert "report_init_progress" not in mock_llm_create.call_history[-1]["tools"]
     assert '<required_skill name="init">' not in mock_llm_create.call_history[-1]["instruction"]
 
 
@@ -167,8 +158,7 @@ def test_cancelled_init_cannot_reuse_previous_success(
     assert previous_result.success is True
     original_tools = {tool.name for tool in node.tools}
     run = InitContext(tmp_path, {}, "Schools")
-    run.select_scope(["schools"], [], "", [])
-    run.report_progress("School notes written", ["schools"], True, "", "")
+    (tmp_path / "AGENTS.md").write_text("School notes written")
     display = MagicMock()
     display.__enter__.return_value = display
     display.__exit__.return_value = False
@@ -196,8 +186,8 @@ def test_cancelled_init_cannot_reuse_previous_success(
         chat._execute_chat("Initialize schools", interactive=interactive, init_context=run)
     run.close()
     assert node.result is previous_result
-    assert run.state["status"] == "partial" and "interrupted" in run.state["stop_reason"].lower()
-    assert run.progress()["completed"] == 1
+    assert run.state["status"] == "stopped" and "interrupted" in run.state["stop_reason"].lower()
+    assert (tmp_path / "AGENTS.md").read_text() == "School notes written"
     assert {tool.name for tool in node.tools} == original_tools
     assert getattr(node, "_init_context", None) is None
     assert node.interrupt_controller.is_interrupted == (not interactive and cancellation != "exception")
@@ -228,7 +218,7 @@ def test_refresh_reapplies_limits_and_cleanup_restores_surface(real_agent_config
                 node.setup_tools()
                 node._get_session_system_prompt()
                 assert not {"execute_sql", "bash", "task", "confirm_plan"} & {t.name for t in node.tools}
-                assert {"report_init_progress", "todo_write"} <= {t.name for t in node.tools}
+                assert {"todo_list", "todo_read", "todo_write", "todo_update"} <= {t.name for t in node.tools}
                 assert node.mcp_servers == {} and getattr(node, "_builtin_web_tools", None) is None
             raise RuntimeError("after refresh")
     assert (
@@ -238,7 +228,7 @@ def test_refresh_reapplies_limits_and_cleanup_restores_surface(real_agent_config
     )
     assert getattr(node, "_init_context", None) is None
     run.finish_execution(SimpleNamespace(success=False, error="after refresh"))
-    assert run.state["status"] == "partial"
+    assert run.state["status"] == "stopped"
 
 
 def test_late_user_input_is_retained_without_resetting_the_run(
@@ -247,7 +237,7 @@ def test_late_user_input_is_retained_without_resetting_the_run(
     chat = chat_for(real_agent_config, tmp_path)
     node = chat.get_or_create_node()
     original = type(mock_llm_create).generate_with_tools_stream
-    mock_llm_create.reset(responses=[MockLLMResponse(content="Docs reviewed", tool_calls=[report([], True)])])
+    mock_llm_create.reset(responses=[MockLLMResponse(content="Docs reviewed")])
     correction = "Also preserve the finance team's manual annotations"
 
     async def late_input(self, *args, **kwargs):
@@ -259,7 +249,7 @@ def test_late_user_input_is_retained_without_resetting_the_run(
     run = InitContext(tmp_path, {}, "Review project docs")
     chat.execute_chat_command("init", init_context=run)
     run.close()
-    assert run.state["status"] == "partial" and "unprocessed" in run.state["stop_reason"]
+    assert run.state["status"] == "stopped" and "unprocessed" in run.state["stop_reason"]
     assert len(mock_llm_create.call_history) == 1
     assert node.pending_input_queue.snapshot() == [correction]
     assert run.user_context()[-1]["text"] == correction
@@ -303,5 +293,4 @@ async def test_plugin_refresh_keeps_metadata_guard_callable(real_agent_config, m
             tool = next(t for t in node.tools if t.name == "describe_table")
             result = await asyncio.wait_for(tool.on_invoke_tool(None, json.dumps({"table_name": table})), timeout=1)
             assert result["success"] == 1
-        assert run.progress()["structure_checked"] == 2 and run.progress()["selected"] == 0
     assert calls == ["orders", "customers"]

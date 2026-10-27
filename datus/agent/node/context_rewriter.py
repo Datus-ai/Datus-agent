@@ -372,7 +372,9 @@ class MidTurnCompactor(AgentHooks):
         if self._init_instruction:
             self._system_instruction = self._system_instruction.replace(self._init_instruction, "")
         init_context = getattr(self._node, "_init_context", None)
-        self._init_instruction = init_context.prompt_context() if init_context is not None else ""
+        self._init_instruction = (
+            init_context.prompt_context(self._node._get_tool_result_store()) if init_context is not None else ""
+        )
         self._system_instruction += self._init_instruction
         if any(isinstance(tool, dict) and tool.get("name") == "read_tool_result" for tool in self._request_tools):
             if TOOL_RESULT_READ_INSTRUCTIONS not in self._system_instruction:

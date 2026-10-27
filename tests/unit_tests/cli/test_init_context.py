@@ -9,7 +9,6 @@ from agents import FunctionTool
 
 from datus.cli.init_context import InitContext
 from datus.tools.func_tool.base import FuncToolResult, trans_to_function_tool
-from datus.tools.func_tool.init_tools import InitTools
 from datus.utils.tool_result_store import ACTIVE_RESULT_STORE, ToolResultStore
 
 
@@ -86,11 +85,11 @@ def test_each_invocation_uses_current_scope_and_existing_documents(tmp_path):
     legacy.parent.mkdir(parents=True)
     legacy.write_text("not json")
     first = InitContext(tmp_path, {}, "orders")
-    first.state["tables"]["orders"] = {"table": "orders", "status": "completed"}
+    first.record_user_updates(["Orders only"])
     first.close()
     second = InitContext(tmp_path, {}, "customers")
     try:
-        assert second.state["scope"] == "customers" and second.state["tables"] == {}
+        assert second.state["scope"] == "customers" and second.user_context() == []
         assert second.calls == 0 and second._cache == {}
         assert (tmp_path / "AGENTS.md").read_text() == "# Project\nExisting user knowledge."
         assert legacy.read_text() == "not json"
@@ -98,13 +97,7 @@ def test_each_invocation_uses_current_scope_and_existing_documents(tmp_path):
         second.close()
 
 
-def test_bounded_status_and_project_paths(run):
-    run.state["tables"] = {f"table_{i}": {"table": f"table_{i}", "status": "pending"} for i in range(30000)}
-    run.state["selected_tables"] = list(run.state["tables"])
-    view = run.progress()
-    assert view["selected"] == 30000 and len(view["items"]) == 10 and view["has_more"]
-    assert len(json.dumps(view)) < 3000
-    assert not run.progress(29995)["has_more"]
+def test_project_paths(run):
     with pytest.raises(ValueError, match="inside"):
         run._path("../outside.sql")
     with pytest.raises(ValueError, match="only"):
@@ -121,14 +114,13 @@ async def test_parallel_duplicate_calls_use_one_database_call(run):
 
 
 @pytest.mark.asyncio
-async def test_failed_metadata_remains_unchecked_and_namespace_is_bound(run):
+async def test_failed_metadata_is_retried_and_namespace_is_bound(run):
     async def failure(context, arguments):
         return {"success": 0, "error": "unavailable"}
 
     for _ in range(3):
         result = await run.invoke("describe_table", failure, None, '{"table_name":"orders"}')
     assert result["error"] == "unavailable" and run.calls == 3
-    assert run.progress()["metadata_failed"] == 1 and run.progress()["selected"] == 0
     assert (await run.invoke("describe_table", failure, None, '{"table_name":"orders","datasource":"other"}'))[
         "success"
     ] == 0
@@ -171,7 +163,7 @@ async def test_qualified_identifier_cannot_override_bound_namespace(
             tool_name, unexpected, None, json.dumps({"table_name": table_name, "database": "allowed"})
         )
         assert result["success"] == 0 and "database context" in result["error"]
-        assert run.calls == 0 and not run.state["tables"]
+        assert run.calls == 0
     finally:
         run.close()
 
@@ -199,41 +191,22 @@ async def test_qualified_cache_and_quoted_dotted_table_use_effective_target(tmp_
 
 
 @pytest.mark.asyncio
-async def test_literal_dot_in_table_name_does_not_merge_schema_coverage(tmp_path):
+async def test_literal_dot_and_qualified_name_use_distinct_metadata_cache(tmp_path):
     run = InitContext(tmp_path, {"dialect": "duckdb", "database": "allowed"}, "")
+    received = []
 
     async def describe(context, arguments):
-        return {"success": 1, "result": {"columns": [{"name": "id"}]}}
+        received.append(json.loads(arguments)["table_name"])
+        return {"success": 1, "result": {"columns": [{"name": str(len(received))}]}}
 
     try:
         literal = await run.invoke("describe_table", describe, None, json.dumps({"table_name": '"other.orders"'}))
         qualified = await run.invoke("describe_table", describe, None, json.dumps({"table_name": "other.orders"}))
         assert literal["success"] == qualified["success"] == 1
-        assert literal["init_table_key"] == '"other.orders"'
-        assert qualified["init_table_key"] == "other.orders"
-        assert len(run.state["tables"]) == 2 and run.progress()["selected"] == 0
+        assert literal["result"] != qualified["result"]
+        assert received == ['"other.orders"', "other.orders"]
     finally:
         run.close()
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("encoded", [False, True])
-async def test_status_tools_validate_real_function_arguments(run, encoded):
-    tools = {t.name: t for t in run.wrap_tools(InitTools(run).available_tools())}
-    tables = ["orders"]
-    result = await tools["plan_init_scope"].on_invoke_tool(
-        None,
-        json.dumps(
-            {
-                "tables": json.dumps(tables) if encoded else tables,
-                "source_paths": "[]" if encoded else [],
-                "uncovered": "Other domains",
-            }
-        ),
-    )
-    assert result["success"] == 1
-    status = await tools["get_init_status"].on_invoke_tool(None, "{}")
-    assert status["result"]["pending"] == 1
 
 
 @pytest.mark.asyncio
@@ -254,13 +227,13 @@ async def test_metadata_cache_uses_shared_canonical_arguments(run):
 
 
 @pytest.mark.asyncio
-async def test_same_table_names_in_different_schemas_have_distinct_metadata(run):
+async def test_same_table_names_in_different_schemas_both_query_live_metadata(run):
     async def describe(context, arguments):
         return {"success": 1, "result": {"columns": [{"name": "id"}]}}
 
     a = await run.invoke("describe_table", describe, None, '{"table_name":"orders","schema_name":"a"}')
     b = await run.invoke("describe_table", describe, None, '{"table_name":"orders","schema_name":"b"}')
-    assert a["init_table_key"] == "a.orders" and b["init_table_key"] == "b.orders"
+    assert a["success"] == b["success"] == 1
     assert run.calls == 2
 
 
@@ -293,7 +266,7 @@ async def test_interruption_preserves_published_documents(run):
     with pytest.raises(asyncio.CancelledError):
         await task
     run.close()
-    assert run.state["status"] == "partial"
+    assert run.state["status"] == "stopped"
     assert target.read_text() == "# Previously published knowledge\n"
 
 
@@ -304,7 +277,7 @@ async def test_tool_owned_timeout_stops_further_exploration(run):
 
     result = await run.invoke("describe_table", timeout, None, '{"table_name":"orders"}')
     assert result["success"] == 0 and "timed out" in result["error"]
-    assert run.state["tables"]["orders"]["metadata_status"] == "failed"
+    assert "timed out" in run.state["stop_reason"]
 
 
 @pytest.mark.asyncio

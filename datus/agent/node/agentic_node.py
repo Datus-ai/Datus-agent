@@ -2572,16 +2572,11 @@ class AgenticNode(Node):
         """Reapply invocation-local restrictions after prompt/tool refreshes."""
         init_context = getattr(self, "_init_context", None)
         if init_context is not None:
-            self.tool_registry.register_tools("init_tools", self.init_tools.available_tools())
             if not getattr(self, "_tool_transformers_applied", False):
                 # A refresh may append tools to an already restricted list.
                 # Apply plugin wrappers before reapplying the init wrapper.
                 self.tools = [getattr(tool, "_init_original_tool", tool) for tool in self.tools or []]
             names = {tool.name for tool in self.tools or []}
-            self.tools = [
-                *(self.tools or []),
-                *[tool for tool in self.init_tools.available_tools() if tool.name not in names],
-            ]
             if self.db_func_tool is not None and "get_table_ddl" not in names:
                 self.tools.append(self.db_func_tool.to_function_tool(self.db_func_tool.get_table_ddl))
             self._ensure_tool_transformers()

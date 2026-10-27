@@ -17,6 +17,7 @@ import re
 import sqlite3
 import time
 from dataclasses import dataclass
+from functools import wraps
 from pathlib import Path
 
 import pytest
@@ -37,6 +38,7 @@ class LiveInitRun:
     workspace: Path
     report: dict
     report_path: Path
+    metadata_checks: list
 
 
 METRIC_PATTERN = r"\bsum(?:\s*\(\s*(?:[a-z_]+\.)?amount\s*\)|\s+of\s+(?:[a-z_]+\.)?amount\b)"
@@ -87,6 +89,33 @@ def observe_live_calls(monkeypatch):
     return model_calls
 
 
+def observe_metadata_checks(monkeypatch):
+    """Record actual live metadata results independently of model progress reports."""
+    from datus.tools.func_tool.database import DBFuncTool
+
+    checks = []
+    for name in ("describe_table", "get_table_ddl"):
+        original = getattr(DBFuncTool, name)
+
+        def instrument(method, tool_name):
+            @wraps(method)
+            def observed(self, *args, **kwargs):
+                result = method(self, *args, **kwargs)
+                checks.append(
+                    {
+                        "tool": tool_name,
+                        "table": kwargs.get("table_name", args[0] if args else ""),
+                        "success": result.success == 1,
+                    }
+                )
+                return result
+
+            return observed
+
+        monkeypatch.setattr(DBFuncTool, name, instrument(original, name))
+    return checks
+
+
 def observe_catalog_io(monkeypatch):
     """Time real catalog reads and result archival without replacing their behavior."""
     from datus.tools.db_tools.sqlite_connector import SQLiteConnector
@@ -131,6 +160,7 @@ def test_qwen_scoped_init_supplements_existing_documents(tmp_path, monkeypatch, 
     run = _run_qwen_init(tmp_path, monkeypatch, request)
     crm = (run.workspace / "knowledge/crm.md").read_text()
     before = len(run.nodes)
+    before_checks = len(run.metadata_checks)
     rule = "Booked orders require settled payment before invoicing."
     (run.workspace / "invoicing.md").write_text(rule + "\n")
     InitCommands(run.cli).cmd_init(
@@ -142,13 +172,13 @@ def test_qwen_scoped_init_supplements_existing_documents(tmp_path, monkeypatch, 
     second = run.contexts[-1]
     run.report["second_scope"] = {
         "status": second.state["status"],
-        "tables": list(second.state["selected_tables"]),
+        "metadata_checks": run.metadata_checks[before_checks:],
         "new_sessions": len(run.nodes) - before,
         "outputs": list(second.state["outputs"]),
     }
     write_live_report(run.report_path, run.report)
-    assert second is not run.contexts[0] and second.state["status"] == "completed_scope", run.report["second_scope"]
-    assert set(second.state["selected_tables"]) == {"orders"}
+    assert second is not run.contexts[0] and second.state["status"] == "returned", run.report["second_scope"]
+    assert all(c["table"].split(".")[-1] == "orders" for c in run.metadata_checks[before_checks:])
     assert len(run.nodes) == before and run.chat.current_node is run.nodes[0]
     text = (run.workspace / "knowledge/sales.md").read_text()
     assert "settled" in text.lower() and "invoic" in text.lower() and "invoicing.md" in text
@@ -165,10 +195,8 @@ def test_qwen_scoped_init_supplements_existing_documents(tmp_path, monkeypatch, 
 @pytest.mark.skipif(os.environ.get("DATUS_RUN_LIVE_INIT_SCALE") != "1", reason="Explicit live scale opt-in required")
 def test_qwen_init_large_catalog_in_one_loop(tmp_path, monkeypatch, request):
     run = _run_qwen_init(tmp_path, monkeypatch, request, scale=True)
-    state = run.contexts[0].state
-    assert all(state["tables"][table].get("metadata_status") == "checked" for table in state["selected_tables"]), (
-        "The requested per-table structure checks must actually run"
-    )
+    checked = {c["table"].split(".")[-1] for c in run.metadata_checks if c["success"]}
+    assert set(run.report["requested_tables"]) <= checked, "The requested per-table structure checks must actually run"
     archives = run.report["archives"]
     assert any(a["sections"].get("items") == 20000 for a in archives), "Preserve the full table catalog"
     assert any(a["tokens"] > 262144 for a in archives), "The raw catalog must exceed the configured window"
@@ -301,6 +329,7 @@ def _run_qwen_init(tmp_path, monkeypatch, request, *, scale=False):
     )
     model_calls = observe_live_calls(monkeypatch)
     catalog_io = observe_catalog_io(monkeypatch)
+    metadata_checks = observe_metadata_checks(monkeypatch)
     runner = asyncio.Runner()
 
     def cleanup():
@@ -380,11 +409,12 @@ def _run_qwen_init(tmp_path, monkeypatch, request, *, scale=False):
         "wide_table_columns": 506 if scale else None,
         "elapsed_seconds": round(time.monotonic() - started, 2),
         "status": state["status"],
-        "selected": list(state["selected_tables"]),
+        "requested_tables": core_tables,
         "sessions": [n.session_id for n in nodes],
         "outputs": list(state["outputs"]),
         "stop_reason": state.get("stop_reason"),
-        "progress": context.progress(),
+        "metadata_checks": metadata_checks,
+        "todos": nodes[0].plan_tool.todo_list().model_dump() if nodes else None,
         "catalog_io": catalog_io,
         "model_calls": model_calls,
         "archives": archives,
@@ -406,8 +436,7 @@ def _run_qwen_init(tmp_path, monkeypatch, request, *, scale=False):
     }
     report_path = Path(os.environ.get("DATUS_LIVE_INIT_REPORT", str(tmp_path / "report.json")))
     write_live_report(report_path, report)
-    assert state["status"] == "completed_scope", f"Incomplete init: {report}; console: {cli.console.file.getvalue()}"
-    assert set(state["selected_tables"]) == set(core_tables)
+    assert state["status"] == "returned", f"Init execution stopped: {report}; console: {cli.console.file.getvalue()}"
     assert len(nodes) == 1 and chat.current_node is nodes[0]
     knowledge_files = [path for path in (workspace / "knowledge").rglob("*.md") if path.name != "pending-questions.md"]
     assert knowledge_files, "Publish useful knowledge, not only pending questions"
@@ -432,4 +461,4 @@ def _run_qwen_init(tmp_path, monkeypatch, request, *, scale=False):
     assert not (workspace / ".datus/init").exists()
     assert chat.current_node is nodes[0]
     assert getattr(chat.current_node, "_init_context", None) is None
-    return LiveInitRun(cli, chat, nodes, contexts, workspace, report, report_path)
+    return LiveInitRun(cli, chat, nodes, contexts, workspace, report, report_path, metadata_checks)

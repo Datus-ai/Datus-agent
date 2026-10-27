@@ -1,4 +1,4 @@
-"""Coverage is independent from todo steps, metadata observations and runtime outcome."""
+"""Ordinary todos own work progress; init only reports execution outcomes."""
 
 import json
 from types import SimpleNamespace
@@ -6,6 +6,8 @@ from types import SimpleNamespace
 import pytest
 
 from datus.cli.init_context import InitContext
+from datus.tools.func_tool.plan_tools import PlanTool
+from datus.utils.tool_result_store import ToolResultStore
 
 
 @pytest.fixture
@@ -19,106 +21,96 @@ async def describe(context, arguments):
     return {"success": 1, "result": {"columns": [{"name": "id"}]}}
 
 
-def finish(run, success=True, **kwargs):
-    run.finish_execution(SimpleNamespace(success=success, error="budget exhausted" if not success else None), **kwargs)
-    return run.progress()
-
-
 @pytest.mark.asyncio
-async def test_dependency_queries_and_cache_never_expand_selected_coverage(run):
-    run.select_scope(["orders"], [], "Other domains", [])
+async def test_metadata_and_dependencies_do_not_change_todo_progress(run):
+    plan = PlanTool(None)
+    plan.todo_write(json.dumps([{"title": "Order guidance", "content": "Document orders and relevant joins"}]))
     for name in ["orders", "customers", "customers"]:
         await run.invoke("describe_table", describe, None, json.dumps({"table_name": name}))
-    assert run.progress()["selected"] == 1
-    assert run.progress()["completed"] == 0
-    assert run.progress()["structure_checked"] == 2
+    assert plan.todo_list().result["items"][0]["status"] == "pending"
     assert run.calls == 2
-    run.report_progress("Orders documented", ["orders"], True, "", "")
+    plan.todo_update(1, "completed")
     await run.invoke("describe_table", describe, None, '{"table_name":"orders"}')
-    assert finish(run)["status"] == "completed_scope"
-    assert run.state["tables"]["orders"]["status"] == "completed"
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("already_observed", [False, True])
-async def test_completion_can_precede_metadata_and_namespace_qualification(run, already_observed):
-    if already_observed:
-        await run.invoke("describe_table", describe, None, '{"table_name":"sales.orders"}')
-    run.report_progress("Existing order docs confirmed", ["orders"], True, "", "")
-    await run.invoke("describe_table", describe, None, '{"table_name":"orders","schema_name":"sales"}')
-    assert run.progress()["selected"] == 1
-    assert run.state["tables"]["sales.orders"]["status"] == "completed"
-    run.report_progress("Reviewed", ["orders"], True, "", "")
-    assert run.state["selected_tables"] == ["sales.orders"]
-    assert finish(run)["status"] == "completed_scope"
+    assert plan.todo_list().result["items"][0]["status"] == "completed"
+    run.finish_execution(SimpleNamespace(success=True))
+    assert run.state["status"] == "returned"
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("cancel", [False, True])
-async def test_mid_run_clarification_preserves_completed_work_and_scope(run, cancel):
-    run.select_scope(["orders", "refunds"], ["README.md"], "", [])
-    run.report_progress("Orders done", ["orders"], False, "Refund rules", "Read refund docs")
+async def test_clarification_preserves_work_and_retains_user_answer(run, cancel, tmp_path):
+    plan = PlanTool(None)
+    plan.todo_write(json.dumps([{"title": "Order guidance", "content": "Document orders"}]))
+    plan.todo_update(1, "completed")
+    (run.root / "AGENTS.md").write_text("Existing order guidance")
 
     async def answer(context, args):
         return {"success": 1, "result": [] if cancel else [{"question": "Scope?", "answer": "Only booked refunds"}]}
 
     await run.invoke("ask_user", answer, None, '{"questions":[{"question":"Scope?"}]}')
-    assert run.progress()["selected"] == 2 and run.progress()["completed"] == 1
-    assert run.state["sources"] == ["README.md"]
+    assert plan.todo_list().result["completed"] == 1
+    assert (run.root / "AGENTS.md").read_text() == "Existing order guidance"
+    run.finish_execution(SimpleNamespace(success=True))
     if cancel:
-        assert finish(run)["status"] == "partial"
-        assert "cancelled" in run.state["stop_reason"]
+        assert run.state["status"] == "stopped" and "cancelled" in run.state["stop_reason"]
     else:
-        assert "Only booked refunds" in run.prompt_context()
-        run.select_scope([], [], "Refunds deferred", ["refunds"])
-        assert run.progress()["selected"] == 1 and run.progress()["completed"] == 1
+        store = ToolResultStore(SimpleNamespace(dir=tmp_path / "archive"))
+        assert "Only booked refunds" in run.prompt_context(store)
+        assert run.state["status"] == "returned"
 
 
-@pytest.mark.parametrize(
-    "kind", ["empty", "empty_plan", "metadata", "files", "partial", "complete", "error", "interrupt", "plan_mode"]
-)
 @pytest.mark.asyncio
-async def test_outcome_requires_explicit_coverage_report_and_successful_run(run, kind):
-    if kind == "empty_plan":
-        run.select_scope([], [], "", [])
-    elif kind == "metadata":
-        run.select_scope(["orders"], [], "", [])
+@pytest.mark.parametrize("work", ["empty", "metadata", "files", "partial", "complete"])
+async def test_normal_return_reports_execution_independently_of_business_completion(run, work):
+    plan = PlanTool(None)
+    if work == "metadata":
         await run.invoke("describe_table", describe, None, '{"table_name":"orders"}')
-    elif kind == "files":
-        run.report_progress("Reviewed and updated project conventions in AGENTS.md", [], True, "", "")
-    elif kind not in {"empty", "empty_plan", "metadata"}:
-        run.select_scope(["orders", "refunds"], [], "", [])
-        run.report_progress(
-            "Knowledge updated", ["orders"] if kind == "partial" else ["orders", "refunds"], True, "", ""
-        )
-    status = finish(run, success=kind != "error", interrupted=kind == "interrupt", plan_mode=kind == "plan_mode")
-    assert status["status"] == ("completed_scope" if kind in {"files", "complete"} else "partial")
-    assert status["coverage"] == "selected"
+    if work == "files":
+        (run.root / "AGENTS.md").write_text("Updated project conventions")
+    if work in {"partial", "complete"}:
+        plan.todo_write(json.dumps([{"title": "Review docs", "content": "Review project guidance"}]))
+        if work == "complete":
+            plan.todo_update(1, "completed")
+    run.finish_execution(SimpleNamespace(success=True))
+    run.close()
+    # The same neutral outcome applies to file work, unfinished work and even
+    # an empty reply. Business completion belongs to the model's final report.
+    assert run.state["status"] == "returned" and run.state["stop_reason"] == ""
+    if work == "partial":
+        assert plan.todo_list().result["items"][0]["status"] == "pending"
 
 
-def test_large_coverage_is_queryable_without_injecting_every_table(run):
-    names = [f"orders_{n:05}" for n in range(20000)]
-    run.select_scope(names, [], "Other domains", [])
-    run.report_progress("Reviewed first topic", names[:3], False, "More topics remain", "Read todo list")
-    run.record_user_updates(["Preserve existing finance notes", "Use booked status only"])
-    reminder = run.prompt_context()
-    assert len(reminder) < 4000 and names[-1] not in reminder
-    assert "Use booked status only" in reminder and "Read todo list" in reminder
-    last = run.progress(19990, 10)
-    assert len(last["selected_items"]) == 10 and not last["selected_has_more"]
-    assert last["selected_items"][-1]["table"] == names[-1]
-    assert run.progress()["user_context"][0]["text"] == "Preserve existing finance notes"
+@pytest.mark.parametrize("reason", ["budget", "error", "interrupt", "pending", "no_result"])
+def test_execution_failure_overrides_finished_todos_and_preserves_files(run, reason):
+    plan = PlanTool(None)
+    plan.todo_write(json.dumps([{"title": "Review docs", "content": "Review project guidance"}]))
+    plan.todo_update(1, "completed")
+    (run.root / "AGENTS.md").write_text("Published guidance")
+    result = SimpleNamespace(success=reason not in {"budget", "error"}, error=reason)
+    run.finish_execution(
+        None if reason == "no_result" else result,
+        interrupted=reason == "interrupt",
+        pending_input=reason == "pending",
+    )
+    run.close()
+    assert run.state["status"] == "stopped" and run.state["stop_reason"]
+    assert plan.todo_list().result["completed"] == 1
+    assert (run.root / "AGENTS.md").read_text() == "Published guidance"
 
 
-@pytest.mark.parametrize("tables", [[], ["orders"]])
-@pytest.mark.parametrize("scope_complete", [False, True])
-def test_explicit_completion_is_independent_of_handoff_wording(run, tables, scope_complete):
-    remaining = "None - all selected work has been documented."
-    run.select_scope(tables, ["README.md"], "Other domains", [])
-    run.report_progress("Updated project guidance with source references", tables, scope_complete, remaining, "")
-
-    progress = finish(run)
-
-    assert progress["status"] == ("completed_scope" if scope_complete else "partial")
-    assert progress["remaining"] == remaining
-    assert progress["completed"] == len(tables)
+def test_large_user_clarifications_are_bounded_and_recoverable(run, tmp_path):
+    store = ToolResultStore(SimpleNamespace(dir=tmp_path / "archive"))
+    updates = [f"Correction {i}: " + "Preserve the documented rule. " * 30 for i in range(100)]
+    run.record_user_updates(updates)
+    reminder = run.prompt_context(store)
+    assert len(reminder.encode()) < 20000
+    context = json.loads(reminder.split("<init_context>\n", 1)[1].split("\n</init_context>", 1)[0])
+    page = context["user_clarifications"]
+    restored = []
+    while True:
+        restored.extend(page["result"]["items"])
+        if not page["result"]["has_more"]:
+            break
+        extra = page["result"]["extra"]
+        page = store.read(extra["result_id"], extra["section"], extra["next_cursor"])
+    assert [item["text"] for item in restored] == list(reversed(updates))

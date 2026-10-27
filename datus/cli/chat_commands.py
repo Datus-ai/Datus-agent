@@ -1057,7 +1057,6 @@ class ChatCommands:
                 init_context.finish_execution(
                     getattr(current_node, "result", None),
                     interrupted=execution_interrupted or bool(controller is not None and controller.is_interrupted),
-                    plan_mode=plan_mode,
                     pending_input=bool(pending),
                 )
             # Drop the in-progress reference so a later sidebar reflow does

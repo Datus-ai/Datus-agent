@@ -14,7 +14,6 @@ from datus.cli.init_context import InitContext
 from datus.configuration.agent_config import ModelConfig
 from datus.models.openai_model import OpenAIModel
 from datus.tools.func_tool.base import FuncToolResult, trans_to_function_tool
-from datus.tools.func_tool.init_tools import InitTools
 from tests.unit_tests.cli.test_chat_commands import _make_chat_commands
 from tests.unit_tests.models.conftest import RecordingScriptedModel
 
@@ -54,7 +53,7 @@ async def test_same_sdk_run_compacts_repeatedly_and_preserves_task(
     # and all SDK model-input filters execute their production implementations.
     node.model.summarize_items = AsyncMock(
         return_value={
-            "content": "Earlier sources read. Continue the selected scope using progress, todos and pending questions.",
+            "content": "Earlier sources read. Continue the current goal using todos and pending questions.",
             "usage": {"output_tokens": 20},
         }
     )
@@ -78,33 +77,45 @@ async def test_same_sdk_run_compacts_repeatedly_and_preserves_task(
             run.record_user_updates([correction])
         return FuncToolResult(result={"content": (tmp_path / path).read_text()})
 
+    def ask_user(questions: list[str]) -> FuncToolResult:
+        """Clarify the current task with the user."""
+        return FuncToolResult(result=[{"question": "Customer scope?", "answer": "Keep customer guidance separate"}])
+
     steps = [
-        ("plan_init_scope", {"tables": ["orders", "customers"]}),
+        (
+            "todo_write",
+            {
+                "todos_json": json.dumps(
+                    [
+                        {"title": "Orders", "content": "Document order guidance"},
+                        {
+                            "title": "Customers",
+                            "content": "Read customer sources and preserve unknown business meaning",
+                        },
+                    ]
+                )
+            },
+        ),
         ("read_file", {"path": "topic0.md"}),
-        (
-            "report_init_progress",
-            {
-                "summary": "Orders documented",
-                "completed_tables": ["orders"],
-                "remaining": "Customer guidance",
-                "next_step": "Read customer sources",
-            },
-        ),
-        *[("read_file", {"path": f"topic{i}.md"}) for i in range(1, 11)],
-        ("read_file", {"path": "knowledge/pending-questions.md"}),
-        (
-            "report_init_progress",
-            {
-                "summary": "Both domains documented; customer meaning remains unconfirmed",
-                "completed_tables": ["customers"],
-                "scope_complete": True,
-            },
-        ),
+        ("todo_update", {"todo_id": 1, "status": "completed"}),
+        ("ask_user", {"questions": ["Customer scope?"]}),
     ]
+    for i in range(1, 11):
+        steps.append(("read_file", {"path": f"topic{i}.md"}))
+        if i % 3 == 0:
+            steps.extend([("todo_list", {}), ("todo_read", {"todo_id": 2})])
+    steps.extend(
+        [
+            ("read_file", {"path": "knowledge/pending-questions.md"}),
+            ("todo_update", {"todo_id": 2, "status": "completed"}),
+        ]
+    )
     scripted = InitScript(steps)
-    max_turns = 12 if exhaust_budget else 20
+    max_turns = 12 if exhaust_budget else 30
     with run.activate(node):
-        tools = run.wrap_tools([trans_to_function_tool(read_file), *InitTools(run).available_tools()])
+        tools = run.wrap_tools(
+            [trans_to_function_tool(read_file), trans_to_function_tool(ask_user), *node.plan_tool.available_tools()]
+        )
         rewriter = MidTurnCompactor(node, refresh_instruction=lambda: node._inject_required_skills("Ordinary chat"))
         config = node.model._build_run_config(pending_input_queue=queue, session=session, context_rewriter=rewriter)
         config.tracing_disabled = True
@@ -133,8 +144,10 @@ async def test_same_sdk_run_compacts_repeatedly_and_preserves_task(
         assert all("Initialize orders and customers" in text for text in scripted.instructions)
         assert "Use booked status only" in scripted.instructions[-1]
         assert '<required_skill name="init">' in scripted.instructions[-1]
-        assert "Orders documented" in scripted.instructions[10]
-        assert "Read customer sources" in scripted.instructions[10]
+        assert "Keep customer guidance separate" in scripted.instructions[-1]
+        todo_views = [json.dumps(items) for items in scripted.inputs if '"name": "todo_list"' in json.dumps(items)]
+        assert any("completed" in text and "pending" in text for text in todo_views)
+        assert any("Read customer sources" in json.dumps(items) for items in scripted.inputs)
         capacity = node.model.request_capacity()
         for instruction, items in zip(scripted.instructions, scripted.inputs):
             capacity.check(
@@ -149,10 +162,12 @@ async def test_same_sdk_run_compacts_repeatedly_and_preserves_task(
     run.close()
     if exhaust_budget:
         assert scripted.turn == max_turns
-        assert run.state["status"] == "partial" and run.progress()["pending"] == 1
+        assert run.state["status"] == "stopped"
+        assert node.plan_tool.todo_list().result["completed"] == 1
         assert "turn" in run.state["stop_reason"].lower()
     else:
-        assert run.state["status"] == "completed_scope" and run.progress()["completed"] == 2
+        assert run.state["status"] == "returned"
+        assert node.plan_tool.todo_list().result["completed"] == 2
         assert "knowledge/pending-questions.md" in read_paths
         assert any("what is a customer account?" in json.dumps(items) for items in scripted.inputs[-2:])
         persisted = json.dumps(await session.get_items(), default=str)
