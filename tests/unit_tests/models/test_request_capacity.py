@@ -86,9 +86,9 @@ def test_catalogue_specs_precede_defaults_for_both_sdk_and_request_budget(
 def test_unknown_model_counts_complete_utf8_request_without_guessing_a_tokenizer():
     capacity = RequestCapacity("private-deployment", 128000, 8192)
     payload = {
-        "instructions": "核对订单结构",
-        "messages": [{"role": "user", "content": "SELECT 订单编号 FROM 订单"}],
-        "tools": [{"name": "describe_table", "description": "读取表结构"}],
+        "instructions": "Verify the order schema",
+        "messages": [{"role": "user", "content": "SELECT amount FROM orders WHERE currency = '\N{EURO SIGN}'"}],
+        "tools": [{"name": "describe_table", "description": "Read the table schema"}],
     }
     with patch("litellm.token_counter", side_effect=AssertionError("must not guess an alias tokenizer")):
         serialized_bytes = len(json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
@@ -120,7 +120,7 @@ async def test_custom_model_without_new_settings_reaches_transport_and_retains_c
         assert send.await_args.kwargs["max_tokens"] == DEFAULT_MAX_TOKENS
         send.reset_mock()
         with pytest.raises(ContextCapacityError, match="CONTEXT_LIMIT_EXCEEDED"):
-            await model.generate_with_tools("字" * DEFAULT_CONTEXT_LENGTH, max_turns=1)
+            await model.generate_with_tools("\N{EURO SIGN}" * DEFAULT_CONTEXT_LENGTH, max_turns=1)
         send.assert_not_awaited()
 
 
@@ -128,7 +128,7 @@ def test_catalogued_non_openai_model_uses_explicit_conservative_count():
     capacity = RequestCapacity("claude-sonnet-4-5", 200000, 8192)
     assert capacity.counter_source == "utf8_byte_upper_bound"
     with patch("litellm.token_counter", side_effect=AssertionError("must not select a fallback tokenizer")):
-        assert capacity.count({"input": "汉字" * 100}) >= 600
+        assert capacity.count({"input": "\N{EURO SIGN}" * 200}) >= 600
 
 
 @pytest.mark.parametrize(

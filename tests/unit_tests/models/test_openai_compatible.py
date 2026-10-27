@@ -2245,8 +2245,8 @@ class TestBuildRunConfigInputFilter:
 
         model = _make_model()
         queue = PendingInputQueue()
-        queue.push("追加 1")
-        queue.push("追加 2")
+        queue.push("Follow-up 1")
+        queue.push("Follow-up 2")
         session = MagicMock()
         session.add_items = AsyncMock()
         broker = InteractionBroker()
@@ -2259,7 +2259,7 @@ class TestBuildRunConfigInputFilter:
 
         # Original message preserved; two structured user items appended.
         assert len(result.input) == 3
-        for injected, expected in zip(result.input[1:], ["追加 1", "追加 2"]):
+        for injected, expected in zip(result.input[1:], ["Follow-up 1", "Follow-up 2"]):
             assert injected["type"] == "message"
             assert injected["role"] == "user"
             assert injected["content"][0]["type"] == "input_text"
@@ -2275,7 +2275,7 @@ class TestBuildRunConfigInputFilter:
         # Broker emission: each drained item becomes a USER user_insert
         # ActionHistory in the broker's output queue, in original order.
         emitted = [broker._output_queue.get_nowait() for _ in range(2)]
-        assert [a.messages for a in emitted] == ["追加 1", "追加 2"]
+        assert [a.messages for a in emitted] == ["Follow-up 1", "Follow-up 2"]
         for action in emitted:
             assert action.role == ActionRole.USER
             assert action.action_type == "user_insert"
