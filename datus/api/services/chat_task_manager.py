@@ -1005,6 +1005,10 @@ class ChatTaskManager:
                         is_update=bool(is_update),
                         include_final_response=_should_include_final_response(action, assistant_response_sent),
                         proxied_tool_names=getattr(node, "proxied_tool_names", None),
+                        # A fast prepare can beat the original tool-start frame.
+                        # Include its snapshot there too so UPDATE-before-CREATE
+                        # delivery never strands a pending confirmation.
+                        tool_previews=getattr(node, "tool_review_previews", None),
                     )
                     if sse:
                         # Per-LLM-call usage event: the converter has no access

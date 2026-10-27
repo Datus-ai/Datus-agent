@@ -6,6 +6,7 @@ from typing import Any
 
 from agents import FunctionTool
 
+from datus.schemas.action_history import TOOL_PREVIEW_ACTION_TYPE, ActionHistory, ActionRole, ActionStatus
 from datus.tools.func_tool.base import FuncToolResult, parse_tool_args
 from datus.tools.proxy.tool_result_channel import DEFAULT_RESULT_TIMEOUT, ToolResultChannel
 
@@ -50,6 +51,16 @@ def apply_semantic_plan_review(node: Any, *, context: SemanticPlanReviewContext 
         call_id = tool_ctx.tool_call_id
         previews[call_id] = prepared.preview()
         try:
+            node.action_bus.put(
+                ActionHistory(
+                    action_id=call_id,
+                    action_type=TOOL_PREVIEW_ACTION_TYPE,
+                    role=ActionRole.TOOL,
+                    status=ActionStatus.PROCESSING,
+                    input={"function_name": PLAN_WRITER, "arguments": args},
+                    output={"preview": prepared.preview()},
+                )
+            )
             decision = await context.channel.wait_for(call_id, timeout=DEFAULT_RESULT_TIMEOUT)
             if not isinstance(decision, dict) or decision.get("success") != 1:
                 return FuncToolResult(

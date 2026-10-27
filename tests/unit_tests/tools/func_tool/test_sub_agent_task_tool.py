@@ -3183,7 +3183,6 @@ class TestSubagentInheritsParentDatabase:
 
 @pytest.mark.asyncio
 async def test_task_delegation_reviews_plans_through_the_parent_session(task_tool, tmp_path):
-    from datus.api.routes.chat_routes import get_tool_preview
     from datus.tools.func_tool.semantic_plan_file_tools import SemanticPlanFileTools
     from datus.tools.proxy.semantic_plan_review import apply_semantic_plan_review
     from datus.tools.proxy.tool_result_channel import ToolResultChannel
@@ -3226,9 +3225,6 @@ async def test_task_delegation_reviews_plans_through_the_parent_session(task_too
         yield  # pragma: no cover
 
     child.execute_stream_with_interactions = stream
-    svc = SimpleNamespace(
-        task_manager=SimpleNamespace(get_task=lambda _: SimpleNamespace(node=parent, status="running"))
-    )
     with (
         patch.object(task_tool, "_create_node", return_value=child),
         patch.object(task_tool, "_refresh_node_db_tools"),
@@ -3237,14 +3233,16 @@ async def test_task_delegation_reviews_plans_through_the_parent_session(task_too
         pending = asyncio.create_task(task_tool._execute_node("semantic_modeling", "plan sales"))
         try:
             await asyncio.wait_for(waiting.wait(), 2)
-            preview = await get_tool_preview(svc, SimpleNamespace(user_id="owner"), "parent-session", "nested-call")
-            assert not (tmp_path / preview.data["filePath"]).exists()
+            preview = parent.tool_review_previews["nested-call"]
+            child.action_bus.put.assert_called_once()
+            assert child.action_bus.put.call_args.args[0].output["preview"] == preview
+            assert not (tmp_path / preview["filePath"]).exists()
             assert "write_semantic_model_plan_file" in parent.proxied_tool_names
             assert "write_semantic_model_plan_file" in child.proxied_tool_names
             await parent.tool_channel.publish("nested-call", {"success": 1})
             await pending
             assert observed[0]["result"]["review_status"] == "accepted"
-            assert (tmp_path / preview.data["filePath"]).read_text() == preview.data["newText"]
+            assert (tmp_path / preview["filePath"]).read_text() == preview["newText"]
             assert not parent.tool_review_previews
         finally:
             parent.tool_channel.cancel_all()

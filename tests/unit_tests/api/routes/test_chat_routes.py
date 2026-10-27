@@ -834,6 +834,7 @@ async def test_http_tool_result_requires_the_session_owner(tmp_path, decision):
 
     writer = SemanticPlanFileTools(tmp_path)
     node = SimpleNamespace(
+        action_bus=MagicMock(),
         semantic_plan_file_tool=writer,
         tools=writer.available_tools(),
         tool_channel=ToolResultChannel(),
@@ -858,8 +859,11 @@ async def test_http_tool_result_requires_the_session_owner(tmp_path, decision):
     try:
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             query = {"session_id": "s1", "call_tool_id": "plan-call"}
-            preview = await client.get("/api/v1/chat/tool_preview", params=query, headers={"x-user": "owner"})
-            assert preview.status_code == 200
+            for _ in range(100):
+                if "plan-call" in node.tool_review_previews:
+                    break
+                await asyncio.sleep(0.01)
+            preview = node.tool_review_previews["plan-call"]
             payload = {**query, "tool_result": {"success": decision}}
             for _ in range(2):
                 rejected = await client.post("/api/v1/chat/tool_result", json=payload, headers={"x-user": "peer"})
@@ -872,7 +876,7 @@ async def test_http_tool_result_requires_the_session_owner(tmp_path, decision):
             assert accepted.status_code == 200
             result = await pending
             assert result["result"]["review_status"] == "accepted"
-            assert (tmp_path / preview.json()["data"]["filePath"]).read_text() == preview.json()["data"]["newText"]
+            assert (tmp_path / preview["filePath"]).read_text() == preview["newText"]
     finally:
         node.tool_channel.cancel_all()
         pending.cancel()
