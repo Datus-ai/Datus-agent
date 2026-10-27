@@ -3830,6 +3830,73 @@ class TestClaudeSummarizeItems:
         assert base.await_args.kwargs["item_format"] == "responses"
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("oauth", [False, True])
+    @pytest.mark.parametrize("transport", ["sync", "stream"])
+    async def test_chunked_native_summary_fits_the_actual_transport(self, oauth, transport):
+        from contextlib import asynccontextmanager
+
+        from datus.models.summary_chunks import bounded_summary
+
+        model = _make_claude_model()
+        model.model_config.context_length = 8192
+        model.model_config.max_tokens = 1024
+        model._is_oauth_token = oauth
+        model.use_native_api = True
+        response = _make_response([_make_text_block("short summary")], input_tokens=50, output_tokens=7)
+        sent = []
+
+        def create(**kwargs):
+            sent.append(kwargs)
+            return response
+
+        @asynccontextmanager
+        async def stream(**kwargs):
+            sent.append(kwargs)
+            yield SimpleNamespace(get_final_message=AsyncMock(return_value=response), current_message_snapshot=response)
+
+        if transport == "stream":
+            model.async_anthropic_client = MagicMock()
+        items = [{"role": "user", "content": [{"type": "text", "text": "project rule " * 600}]}]
+        original = copy.deepcopy(items)
+        # Replace only the external transports: real summary planning, chunking,
+        # request construction and the mandatory transport guard all execute.
+        with (
+            patch.object(model, "_raw_anthropic_messages_create", side_effect=create),
+            patch.object(model, "_raw_anthropic_messages_stream", side_effect=stream),
+        ):
+            text, used = await bounded_summary(
+                model,
+                items,
+                instruction="Keep current goals",
+                prompt="Summarize",
+                item_format="anthropic",
+                agent_name="test",
+            )
+        assert text == "short summary" and used == len(sent) * 7
+        assert 2 < len(sent) <= 8
+        assert all(request["max_tokens"] == 4000 for request in sent)
+        assert items == original
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("oauth", [False, True])
+    async def test_native_summary_preflight_counts_tool_stubs_and_system_framing(self, oauth):
+        from datus.models.request_capacity import guard_request
+
+        model = _make_claude_model()
+        model._is_oauth_token = oauth
+        items = self._transcript()
+        expected = model.summary_capacity_checker("sys", "SUMMARIZE", "anthropic", 4000)(items)
+        with patch.object(
+            model, "_raw_anthropic_messages_create", return_value=_make_response([_make_text_block("summary")])
+        ) as send:
+            result = await model.summarize_items(items, instruction="sys", prompt="SUMMARIZE", item_format="anthropic")
+        assert result["content"] == "summary"
+        request = send.call_args.kwargs
+        assert [tool["name"] for tool in request["tools"]] == ["execute_sql"]
+        assert request["tool_choice"] == {"type": "none"}
+        assert expected == guard_request(model.request_capacity(), request)
+
+    @pytest.mark.asyncio
     async def test_oauth_only_model_cannot_summarize_responses_transcripts(self):
         from datus.utils.exceptions import DatusException
 

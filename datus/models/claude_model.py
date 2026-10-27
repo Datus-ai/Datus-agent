@@ -21,7 +21,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, AsyncGenerator, Dict, List, Optional, Union
+from typing import Any, AsyncGenerator, Callable, Dict, List, Optional, Union
 
 import anthropic
 import httpx
@@ -2016,6 +2016,45 @@ class ClaudeModel(OpenAICompatibleModel):
                 self._diagnose_oauth_401(e)
             raise
 
+    def summary_capacity_checker(
+        self, instruction: str, prompt: str, item_format: str, output_tokens: int
+    ) -> Callable[[List[Any]], int]:
+        """Size native summary chunks using the same request as the transport."""
+        if item_format != "anthropic":
+            return super().summary_capacity_checker(instruction, prompt, item_format, output_tokens)
+        from datus.models.request_capacity import guard_request
+
+        capacity = self.request_capacity()
+        return lambda items: guard_request(
+            capacity, self._native_summary_request(items, instruction, prompt, output_tokens)
+        )
+
+    def _native_summary_request(
+        self, items: List[Dict[str, Any]], instruction: str, prompt: str, max_tokens: int
+    ) -> Dict[str, Any]:
+        """Share OAuth identity, cache framing and transcript stubs with preflight."""
+        messages: List[Dict[str, Any]] = [dict(m) for m in items if isinstance(m, dict)]
+        prompt_block = {"type": "text", "text": prompt}
+        if messages and messages[-1].get("role") == "user" and isinstance(messages[-1].get("content"), list):
+            # Keep strict user/assistant alternation: fold the prompt into the
+            # trailing user message instead of adding a second user turn.
+            messages[-1] = {**messages[-1], "content": [*messages[-1]["content"], prompt_block]}
+        else:
+            messages.append({"role": "user", "content": [prompt_block]})
+
+        request_kwargs: Dict[str, Any] = dict(
+            model=self.model_name,
+            system=self._build_system_param(instruction),
+            messages=wrap_prompt_cache(messages),
+            max_tokens=max_tokens,
+        )
+        tool_stubs = self._tool_stubs_for_transcript(messages)
+        if tool_stubs:
+            request_kwargs["tools"] = tool_stubs
+            request_kwargs["tool_choice"] = {"type": "none"}
+
+        return request_kwargs
+
     @observe_model_phase("compact_summary")
     async def summarize_items(
         self,
@@ -2060,25 +2099,7 @@ class ClaudeModel(OpenAICompatibleModel):
                 **kwargs,
             )
 
-        messages: List[Dict[str, Any]] = [dict(m) for m in items if isinstance(m, dict)]
-        prompt_block = {"type": "text", "text": prompt}
-        if messages and messages[-1].get("role") == "user" and isinstance(messages[-1].get("content"), list):
-            # Keep strict user/assistant alternation: fold the prompt into the
-            # trailing user message instead of adding a second user turn.
-            messages[-1] = {**messages[-1], "content": [*messages[-1]["content"], prompt_block]}
-        else:
-            messages.append({"role": "user", "content": [prompt_block]})
-
-        request_kwargs: Dict[str, Any] = dict(
-            model=self.model_name,
-            system=self._build_system_param(instruction),
-            messages=wrap_prompt_cache(messages),
-            max_tokens=max_tokens,
-        )
-        tool_stubs = self._tool_stubs_for_transcript(messages)
-        if tool_stubs:
-            request_kwargs["tools"] = tool_stubs
-            request_kwargs["tool_choice"] = {"type": "none"}
+        request_kwargs = self._native_summary_request(items, instruction, prompt, max_tokens)
 
         if self.async_anthropic_client is not None:
             async with self._anthropic_messages_stream(**request_kwargs) as stream:
