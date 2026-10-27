@@ -91,14 +91,11 @@ when selecting HTTP; `NIGHTLY_FORCE_ADAPTER_ENV=0` preserves an external TLS pro
 ### Snowflake with AWS Secrets Manager
 
 This cloud test requires `datus-snowflake[aws]>=0.1.11` and `datus-db-core>=0.1.10`.
-Version 0.1.11 is not published yet. Until release, install both packages from an adapter worktree containing the Secrets Manager implementation:
+Install the published packages into the Agent environment:
 
 ```bash
-uv pip install -e '/path/to/datus-db-adapters/datus-db-core[aws]' \
-  -e /path/to/datus-db-adapters/datus-snowflake
+uv pip install 'datus-snowflake[aws]>=0.1.11'
 ```
-
-After release, install the published packages into the Agent environment with `uv pip install 'datus-snowflake[aws]>=0.1.11'`.
 
 Export `SNOWFLAKE_ACCOUNT`, `SNOWFLAKE_USER`, `SNOWFLAKE_EXPECTED_USER`, `SNOWFLAKE_WAREHOUSE`,
 `SNOWFLAKE_DATABASE`, `SNOWFLAKE_PRIVATE_KEY_FILE`, optional

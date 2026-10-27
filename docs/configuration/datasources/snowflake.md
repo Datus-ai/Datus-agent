@@ -68,14 +68,7 @@ For a local key file, replace `private_key` with `private_key_file` and add `pri
 
 ## AWS Secrets Manager credentials
 
-This requires `datus-snowflake` 0.1.11 or later and its optional AWS dependency. Version 0.1.11 is not published yet. Until release, install from a source checkout containing the Secrets Manager implementation:
-
-```bash
-pip install '/path/to/datus-db-adapters/datus-db-core[aws]' \
-  /path/to/datus-db-adapters/datus-snowflake
-```
-
-After release, install the published package:
+This requires `datus-snowflake` 0.1.11 or later and its optional AWS dependency:
 
 ```bash
 pip install 'datus-snowflake[aws]>=0.1.11'
