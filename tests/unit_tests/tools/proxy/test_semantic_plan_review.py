@@ -208,6 +208,7 @@ async def test_prepared_snapshot_streams_on_the_same_card_before_a_decision(tmp_
         )
 
     events = []
+    existed_before_decision = []
     async for action in node.action_bus.merge(primary()):
         event = action_to_sse_event(
             action,
@@ -218,15 +219,8 @@ async def test_prepared_snapshot_streams_on_the_same_card_before_a_decision(tmp_
         )
         events.append(event)
         if event.data.type == SSEDataType.UPDATE_MESSAGE:
-            part = event.data.payload.content[0]
-            assert event.data.payload.message_id == "stream-call"
-            assert part.payload["callToolId"] == "stream-call"
-            assert part.payload["proxied"] is True
-            preview = part.payload["preview"]
-            assert preview["oldText"] == ""
-            assert json.loads(preview["newText"])["plan"]["summary"] == "review through SSE"
-            target = tmp_path / preview["filePath"]
-            assert not target.exists()
+            preview = event.data.payload.content[0].payload["preview"]
+            existed_before_decision.append((tmp_path / preview["filePath"]).exists())
             await node.tool_channel.publish("stream-call", {"success": int(accept)})
 
     assert [event.data.type for event in events] == [
@@ -234,7 +228,15 @@ async def test_prepared_snapshot_streams_on_the_same_card_before_a_decision(tmp_
         SSEDataType.UPDATE_MESSAGE,
         SSEDataType.CREATE_MESSAGE,
     ]
-    assert target.exists() is accept
-    if accept:
-        assert target.read_text() == preview["newText"]
+    update = events[1]
+    part = update.data.payload.content[0]
+    preview = part.payload["preview"]
+    assert update.data.payload.message_id == "stream-call"
+    assert part.payload["callToolId"] == "stream-call"
+    assert part.payload["proxied"] is True
+    assert preview["oldText"] == ""
+    assert json.loads(preview["newText"])["plan"]["summary"] == "review through SSE"
+    assert existed_before_decision == [False]
+    written = {path.name: path.read_text() for path in tmp_path.rglob("semantic-model-plan.json")}
+    assert written == ({"semantic-model-plan.json": preview["newText"]} if accept else {})
     assert not node.tool_review_previews
