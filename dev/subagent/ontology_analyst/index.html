@@ -5289,25 +5289,30 @@
 <ol>
 <li>The datasource has executable semantic models under <code>subject/semantic_models/&lt;datasource&gt;/</code>, the same as for AskMetrics. The one exception is a mapping that carries its model inline (see below), which needs no model file.</li>
 <li>
-<p>The ontology goes under <code>subject/semantic_models/ontology/&lt;datasource&gt;/</code>, with an Apache Ossie <strong>mapping document</strong> that says which model it binds:</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>subject/semantic_models/
-</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>├── aviation/
-</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>│   └── aviation.yaml            # OSI semantic model, named "aviation"
-</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>└── ontology/
-</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>    └── aviation/
-</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>        ├── ontology.yaml        # Ossie ontology
-</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>        └── mapping.yaml         # ontology_ref → ontology.yaml, semantic_model_ref → "aviation"
+<p>Ontologies go in the project-wide <code>subject/ontology/</code> directory, next to <code>semantic_models/</code>, together with Apache Ossie <strong>mapping documents</strong> that bind each ontology to semantic models:</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>subject/
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>├── semantic_models/
+</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>│   ├── aviation/
+</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>│   │   └── aviation.yaml                  # OSI semantic model
+</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>│   └── airline_ops/
+</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>│       └── crews.yaml
+</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>└── ontology/
+</span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>    ├── aviation.ontology.yaml             # Ossie ontology
+</span><span id="__span-0-9"><a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>    ├── aviation-aviation.mapping.yaml     # → ../semantic_models/aviation/aviation.yaml
+</span><span id="__span-0-10"><a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a>    └── aviation-crews.mapping.yaml        # → ../semantic_models/airline_ops/crews.yaml
 </span></code></pre></div>
-<p>The mapping's <code>semantic_model_ref.name</code> picks the model file whose semantic model has that name. Its <code>ontology_ref</code> finds the ontology by <code>iri</code> (relative to the mapping) or, without one, by name among the files in the directory. A mapping can also carry the ontology and the model inline under <code>document:</code>; it then needs no model file at all.</p>
-<p>The older layout still works: one ontology file that embeds its mapping under <code>ontology_mappings</code>, named after the model file it describes. When a datasource has exactly one model file and one ontology file, the names do not have to match.</p>
-<p>A file that pairs with nothing, or two mappings onto one model, is reported, not guessed. Files are told apart by their contents, not their names. No datasource can be named <code>ontology</code>.</p>
+<p>An ontology is not tied to one datasource: it may have several mapping documents, each mapping it onto one semantic model file, and those models may belong to different datasources. <code>subject/ontology/</code> is therefore flat; subdirectories are not read.</p>
+<p>Each mapping names its model by <code>semantic_model_ref.iri</code>, a path relative to the mapping file. The datasource whose model directory that path lands in loads the mapping; other datasources ignore it. Its <code>ontology_ref</code> finds the ontology by <code>iri</code> (relative to the mapping) or, without one, by name among the ontology documents in the directory.</p>
+<p>The <code>&lt;ontology&gt;.ontology.yaml</code> / <code>&lt;ontology&gt;-&lt;model&gt;.mapping.yaml</code> names are only a convention for readers. Datus tells files apart by their contents and follows the references, never the file names.</p>
+<p>A mapping can also carry its model inline under <code>semantic_model_ref.document</code>. Such a mapping is a self-contained document that belongs to no datasource in particular: every datasource loads it, executed on that datasource's connection.</p>
+<p>A mapping without a local model <code>iri</code>, one whose <code>iri</code> names a model file missing from the datasource's directory, two mappings onto one model, an ontology no mapping uses, and any other file in the directory are reported, not guessed.</p>
 </li>
 <li>
-<p>The installed <code>dosi-engine</code> must expose the ontology API (<code>Engine.describe</code> / <code>Engine.paths</code>). Mapping documents also need a build whose <code>Engine</code> accepts <code>mapping_path</code> (<a class="magiclink magiclink-github magiclink-issue" href="https://github.com/Datus-ai/osi-engine/issues/303" title="GitHub Issue: Datus-ai/osi-engine #303">osi-engine#303</a> or later). The older embedded layout works on either.</p>
+<p>The installed <code>dosi-engine</code> must expose the ontology API (<code>Engine.describe</code> / <code>Engine.paths</code>) and load mapping documents (<code>Engine</code> accepts <code>mapping_path</code>, <a class="magiclink magiclink-github magiclink-issue" href="https://github.com/Datus-ai/osi-engine/issues/303" title="GitHub Issue: Datus-ai/osi-engine #303">osi-engine#303</a> or later).</p>
 </li>
 </ol>
 <p>Only OntologyAnalyst loads the ontology. AskMetrics and every other agent keep working on the plain model.</p>
-<p>If any prerequisite is missing, OntologyAnalyst refuses on its first turn, says what is missing, and points to <code>ask_metrics</code>. It never falls back to a plain-metric answer without saying so. The main agent offers <code>ontology_analyst</code> for delegation only when the current datasource has an ontology directory with at least one file in it.</p>
+<p>If any prerequisite is missing, OntologyAnalyst refuses on its first turn, says what is missing, and points to <code>ask_metrics</code>. It never falls back to a plain-metric answer without saying so. The main agent offers <code>ontology_analyst</code> for delegation only when a mapping document in <code>subject/ontology/</code> binds a model of the current datasource (or carries its model inline).</p>
 <h2 id="quick-start-the-aviation-example">Quick Start: the Aviation Example<a class="headerlink" href="#quick-start-the-aviation-example" title="Permanent link">&para;</a></h2>
 <p>This walkthrough uses the aviation example shipped in the Datus-agent repository (the Dosi aviation scenario). The data is small, so you can check every answer by hand:</p>
 <table>
@@ -5323,16 +5328,12 @@
 <td>OSI semantic model <code>aviation</code>: 9 tables, with delay, alert and passenger metrics</td>
 </tr>
 <tr>
-<td><code>tests/data/semantic_models/ontology/aviation-mapping-document/ontology.yaml</code></td>
+<td><code>tests/data/ontology/aviation.ontology.yaml</code></td>
 <td>Ossie ontology: Flight, Airport, FlightAlert, Delay and other concepts, with their roles and value domains</td>
 </tr>
 <tr>
-<td><code>tests/data/semantic_models/ontology/aviation-mapping-document/mapping.yaml</code></td>
-<td>Mapping document binding that ontology to the <code>aviation</code> model</td>
-</tr>
-<tr>
-<td><code>tests/data/semantic_models/ontology/aviation/aviation.yaml</code></td>
-<td>The same ontology in the older embedded layout (ontology and mapping in one file)</td>
+<td><code>tests/data/ontology/aviation-aviation.mapping.yaml</code></td>
+<td>Mapping document binding that ontology to <code>semantic_models/aviation/aviation.yaml</code></td>
 </tr>
 <tr>
 <td><code>tests/data/semantic_models/aviation/seed.sql</code></td>
@@ -5346,28 +5347,26 @@
 </span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>mkdir<span class="w"> </span>-p<span class="w"> </span>~/ontology-demo<span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span><span class="nb">cd</span><span class="w"> </span>~/ontology-demo
 </span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>
 </span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="c1"># Model, ontology and mapping document, in the conventional layout</span>
-</span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a>mkdir<span class="w"> </span>-p<span class="w"> </span>subject/semantic_models/aviation<span class="w"> </span>subject/semantic_models/ontology/aviation
+</span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a>mkdir<span class="w"> </span>-p<span class="w"> </span>subject/semantic_models/aviation<span class="w"> </span>subject/ontology
 </span><span id="__span-1-6"><a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a>cp<span class="w"> </span><span class="nv">$DATUS_REPO</span>/tests/data/semantic_models/aviation/aviation.yaml<span class="w"> </span>subject/semantic_models/aviation/
-</span><span id="__span-1-7"><a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a>cp<span class="w"> </span><span class="nv">$DATUS_REPO</span>/tests/data/semantic_models/ontology/aviation-mapping-document/<span class="o">{</span>ontology,mapping<span class="o">}</span>.yaml<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-1-8"><a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a><span class="w">   </span>subject/semantic_models/ontology/aviation/
-</span><span id="__span-1-9"><a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a>
-</span><span id="__span-1-10"><a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a><span class="c1"># Build a DuckDB database from the seed (duckdb is installed with Datus)</span>
-</span><span id="__span-1-11"><a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a>python<span class="w"> </span>-c<span class="w"> </span><span class="s2">"import duckdb, pathlib; duckdb.connect('aviation.duckdb').execute(pathlib.Path('</span><span class="nv">$DATUS_REPO</span><span class="s2">/tests/data/semantic_models/aviation/seed.sql').read_text())"</span>
+</span><span id="__span-1-7"><a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a>cp<span class="w"> </span><span class="nv">$DATUS_REPO</span>/tests/data/ontology/aviation<span class="o">{</span>.ontology,-aviation.mapping<span class="o">}</span>.yaml<span class="w"> </span>subject/ontology/
+</span><span id="__span-1-8"><a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a>
+</span><span id="__span-1-9"><a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a><span class="c1"># Build a DuckDB database from the seed (duckdb is installed with Datus)</span>
+</span><span id="__span-1-10"><a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a>python<span class="w"> </span>-c<span class="w"> </span><span class="s2">"import duckdb, pathlib; duckdb.connect('aviation.duckdb').execute(pathlib.Path('</span><span class="nv">$DATUS_REPO</span><span class="s2">/tests/data/semantic_models/aviation/seed.sql').read_text())"</span>
 </span></code></pre></div>
 <p>The result:</p>
 <div class="language-text highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>~/ontology-demo/
 </span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>├── aviation.duckdb
-</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>└── subject/semantic_models/
-</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>    ├── aviation/aviation.yaml
-</span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>    └── ontology/aviation/
-</span><span id="__span-2-6"><a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a>        ├── ontology.yaml
-</span><span id="__span-2-7"><a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a>        └── mapping.yaml
+</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>└── subject/
+</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>    ├── semantic_models/aviation/aviation.yaml
+</span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>    └── ontology/
+</span><span id="__span-2-6"><a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a>        ├── aviation.ontology.yaml
+</span><span id="__span-2-7"><a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a>        └── aviation-aviation.mapping.yaml
 </span></code></pre></div>
-<p><code>mapping.yaml</code> names its model with <code>semantic_model_ref.name: aviation</code>, which is the <code>name</code> inside <code>aviation.yaml</code>; the file names do not matter. Its <code>semantic_model_ref.iri</code> (<code>./model.yaml</code>) is not used here, because Datus hands the engine the matched model file.</p>
-<p>To try the older embedded layout instead, put the single file <code>tests/data/semantic_models/ontology/aviation/aviation.yaml</code> in <code>subject/semantic_models/ontology/aviation/</code> in place of the two files. The answers below are the same.</p>
+<p><code>aviation-aviation.mapping.yaml</code> reaches its model by <code>semantic_model_ref.iri: ../semantic_models/aviation/aviation.yaml</code>, so it belongs to the <code>aviation</code> datasource, and its ontology by <code>ontology_ref.iri: ./aviation.ontology.yaml</code>.</p>
 <div class="admonition tip">
 <p class="admonition-title">One-file layout</p>
-<p>A mapping document can also carry the ontology and the model inline under <code>document:</code>. The datasource then has only <code>subject/semantic_models/ontology/&lt;datasource&gt;/mapping.yaml</code> and no model directory. <code>tests/data/semantic_models/ontology/mini-flights-inline/</code> is a small example, with its own <code>seed.sql</code>.</p>
+<p>A mapping document can also carry the ontology and the model inline under <code>document:</code>. It then needs no model directory, and every datasource loads it. <code>tests/data/ontology_inline/</code> is a small example, with its own <code>seed.sql</code>.</p>
 </div>
 <h3 id="2-register-the-datasource">2. Register the datasource<a class="headerlink" href="#2-register-the-datasource" title="Permanent link">&para;</a></h3>
 <p>Add the datasource to <code>agent.yml</code> (by default <code>~/.datus/conf/agent.yml</code>). <strong>The datasource name must match the directory name <code>aviation</code>:</strong></p>
@@ -5448,19 +5447,15 @@
 <tbody>
 <tr>
 <td><code>ontology_analyst is unavailable: no ontology for datasource 'aviation'</code></td>
-<td><code>subject/semantic_models/ontology/aviation/</code> is missing or empty. Check that the directory name matches the datasource name and that Datus was started in the project root</td>
+<td>No mapping in <code>subject/ontology/</code> names a model under <code>subject/semantic_models/aviation/</code>. Check each mapping's <code>semantic_model_ref.iri</code>, that the model directory name matches the datasource name, and that Datus was started in the project root</td>
 </tr>
 <tr>
-<td><code>... pair with no semantic model file</code></td>
-<td>A mapping's <code>semantic_model_ref.name</code> matches no model (or two mappings name the same one), an old-layout ontology has no model file of its name, or the file is neither an ontology nor a mapping document (a semantic model belongs under <code>subject/semantic_models/&lt;datasource&gt;/</code>). Fix the name in the mapping, rename the ontology after the model it describes, or move the file out</td>
+<td><code>... could not be bound to a semantic model</code></td>
+<td>Listed after <code>no ontology for datasource</code>. <code>subject/ontology/</code> is project-wide, so a listed file may belong to any datasource. A mapping has no local <code>semantic_model_ref.iri</code>, its <code>iri</code> names a model file missing from this datasource's directory or a path outside every <code>subject/semantic_models/&lt;datasource&gt;/</code>, two mappings name the same model, an ontology is used by no mapping, or the file is neither an ontology nor a mapping document (a semantic model belongs under <code>subject/semantic_models/&lt;datasource&gt;/</code>). Fix the mapping, add one for the ontology, or move the file out</td>
 </tr>
 <tr>
 <td><code>the installed dosi-engine binding cannot describe ontologies</code></td>
 <td><code>dosi-engine</code> is too old. Upgrade to a build whose <code>Engine</code> has <code>describe</code> and <code>paths</code></td>
-</tr>
-<tr>
-<td><code>... ontology_federation_unsupported</code></td>
-<td>An old-layout ontology embeds several <code>ontology_mappings</code>. Split them into mapping documents, one per model</td>
 </tr>
 <tr>
 <td><code>... is an Ossie mapping document, and the installed dosi-engine cannot load one</code></td>
@@ -5468,7 +5463,7 @@
 </tr>
 <tr>
 <td>The main agent does not delegate to <code>ontology_analyst</code></td>
-<td>It is offered only when the current datasource has an ontology file. Use <code>/agent ontology_analyst</code> or <code>@Agent ontology_analyst</code></td>
+<td>It is offered only when a mapping binds a model of the current datasource. Use <code>/agent ontology_analyst</code> or <code>@Agent ontology_analyst</code></td>
 </tr>
 </tbody>
 </table>
