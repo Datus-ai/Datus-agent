@@ -61,6 +61,15 @@ def test_summary_capacity_supports_models_without_output_spec_lookup():
     assert capacity.check({"messages": [{"role": "user", "content": "Summarize the saved facts"}]}, output=4000) > 0
 
 
+def test_model_without_spec_lookup_or_capacity_settings_uses_default_budget():
+    model = _StubModel(lambda *_args, **_kwargs: "ok")
+    capacity = model.request_capacity()
+    assert capacity.context_length == 262144
+    assert capacity.default_output == 8192
+    assert capacity.counter_source == "utf8_byte_upper_bound"
+    assert model.check_request({"messages": [{"role": "user", "content": "hello"}]})["max_tokens"] == 8192
+
+
 class TestTestConnection:
     def test_returns_ok_on_successful_generate(self):
         model = _StubModel(lambda _p, **_k: "pong")

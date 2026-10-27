@@ -144,8 +144,19 @@ agent:
 ### Context capacity and large tool results
 
 Each model request reserves its maximum output and a safety margin of
-`max(2048, ceil(context_length * 0.05))`. Known models resolve their limits from
-model specifications or the provider catalogue. For a private deployment, set:
+`max(2048, ceil(context_length * 0.05))`. All three settings below are optional;
+existing configurations do not need new fields:
+
+| Setting | When omitted |
+| --- | --- |
+| `context_length` | Use existing model specifications or the provider catalogue; fall back to a `262144` (256K) token budget if unknown |
+| `max_tokens` | Use the model's output specification; fall back to `8192` if unknown. Transports with an output cap also leave room for input and the safety margin, so small windows may get a lower default |
+| `tokenizer_ref` | Use LiteLLM counting for known OpenAI models; otherwise reserve UTF-8 bytes, including for private aliases, without downloading a tokenizer |
+
+The fallback window is a local budget assumption, not automatic detection of
+server capacity. Private deployments can override any of these settings. Set
+the actual limit for a smaller window; a larger configured window or a matching
+tokenizer can improve capacity utilization:
 
 ```yaml
 agent:
@@ -163,15 +174,14 @@ agent:
 `context_length` and `max_tokens` must be positive integers. A per-call output
 limit overrides the configured default. `tokenizer_ref` accepts a local Hugging
 Face tokenizer JSON, a Hugging Face tokenizer reference, or `tiktoken:<encoding>`
-when that encoding matches the deployment. Unknown model aliases must specify
-capacity and tokenizer metadata; they no longer silently disable capacity checks.
+when that encoding matches the deployment. Local files must be readable by the
+Datus process. Omitted settings use defaults; explicitly invalid values or a
+tokenizer that cannot be loaded still produce an error.
 Local counting includes serialized messages, instructions, tools and output
 schemas, plus framing allowance; a deployment with different templates or
 routing limits can still reject a request and should be configured accordingly.
-Catalogued non-OpenAI models without an explicit tokenizer reserve UTF-8 bytes
-for text, which can trigger compaction earlier; configuring the deployment
-tokenizer makes better use of the window. Output caps above a known maximum
-are rejected explicitly.
+UTF-8 byte estimates can trigger compaction earlier and are not measured provider
+token usage. Output caps above a known maximum are rejected explicitly.
 Remote image URLs and opaque file inputs require extracted content or a provider
 token count; counting only their URL or file ID cannot establish request capacity.
 
