@@ -1344,15 +1344,15 @@ class TestModelSpecsAndTokenLimits:
         # Should match "kimi-k3" prefix
         assert model.context_length() == 1000000
 
-    def test_unknown_model_returns_none_for_max_tokens(self):
+    def test_unknown_model_has_default_max_tokens(self):
         cfg = _make_model_config(model="unknown-model-xyz")
         model = _make_model(cfg)
-        assert model.max_tokens() is None
+        assert model.max_tokens() == 8192
 
-    def test_unknown_model_returns_none_for_context_length(self):
+    def test_unknown_model_has_default_context_length(self):
         cfg = _make_model_config(model="unknown-model-xyz")
         model = _make_model(cfg)
-        assert model.context_length() is None
+        assert model.context_length() == 262144
 
     def test_deepseek_chat_specs(self):
         cfg = _make_model_config(model="deepseek-chat")
@@ -1392,8 +1392,8 @@ class TestModelSpecsOpenRouterCacheMerge:
             cfg = _make_model_config(model="brand-new-model")
             model = _make_model(cfg)
             assert model.context_length() == 777000
-            # Cache entries have no max_tokens — must not crash, must return None.
-            assert model.max_tokens() is None
+            # Cache entries have no output limit, so use the default budget.
+            assert model.max_tokens() == 8192
         assert "brand-new-model" in oc._MODEL_SPECS_CACHE
         assert oc._MODEL_SPECS_CACHE["brand-new-model"]["context_length"] == 777000
 
@@ -1426,7 +1426,7 @@ class TestModelSpecsOpenRouterCacheMerge:
         ):
             cfg = _make_model_config(model="only-id-no-ctx")
             model = _make_model(cfg)
-            assert model.context_length() is None
+            assert model.context_length() == 262144
 
     def test_lookup_uses_longest_prefix_match(self):
         """A short generic prefix must not preempt a more specific one on the same slug."""

@@ -37,17 +37,23 @@ class InitScript(RecordingScriptedModel):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("exhaust_budget", [False, True])
+@pytest.mark.parametrize("custom_model", [False, True], ids=["known-model", "custom-model-defaults"])
 async def test_same_sdk_run_compacts_repeatedly_and_preserves_task(
-    real_agent_config, mock_llm_create, tmp_path, exhaust_budget
+    real_agent_config, mock_llm_create, tmp_path, exhaust_budget, custom_model
 ):
     chat = _make_chat_commands(real_agent_config)
     node = chat.get_or_create_node()
     session = node._get_or_create_session()
     session_id = node.session_id
-    node.model = OpenAIModel(
-        ModelConfig(type="openai", model="gpt-4o", api_key="test", context_length=16384, max_tokens=1024)
+    config = (
+        ModelConfig(type="openai", model="private-deployment", api_key="test")
+        if custom_model
+        else ModelConfig(type="openai", model="gpt-4o", api_key="test", context_length=16384, max_tokens=1024)
     )
-    node._compact_cfg.major.token_threshold = 0.65
+    node.model = OpenAIModel(config)
+    # Trigger multiple rewrites with bounded fixtures even when the model uses
+    # the larger fallback window. Capacity defaults themselves stay unchanged.
+    node._compact_cfg.major.token_threshold = 15360 / node.model.context_length() if custom_model else 0.65
     node._compact_cfg.minor.enabled = False
     # Only the summary model is stubbed; splitting, archival, session rewrite
     # and all SDK model-input filters execute their production implementations.
@@ -124,7 +130,7 @@ async def test_same_sdk_run_compacts_repeatedly_and_preserves_task(
             model=scripted,
             instructions=node._inject_required_skills("Follow the current init scope"),
             tools=tools,
-            model_settings=ModelSettings(max_tokens=1024),
+            model_settings=ModelSettings(max_tokens=node.model.max_tokens()),
             hooks=rewriter,
         )
         result = Runner.run_streamed(

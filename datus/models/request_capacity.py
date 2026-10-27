@@ -18,6 +18,11 @@ from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
 
+# Budget assumptions for models without published specifications, not detected
+# server limits. Explicit deployment settings and known model specs take priority.
+DEFAULT_CONTEXT_LENGTH = 262144
+DEFAULT_MAX_TOKENS = 8192
+
 
 class ContextCapacityError(DatusException):
     """A terminal preparation error: retrying the same request cannot fix it."""
@@ -101,7 +106,7 @@ class RequestCapacity:
     def count(self, payload: Any) -> int:
         """Count the complete serialized input, including schemas and framing.
 
-        Unlike the chars/4 soft trigger, an unknown tokenizer is an error. The
+        Without a known tokenizer, reserve one token per UTF-8 byte. The
         serialized representation deliberately includes field names and a
         per-message framing allowance. Images are accounted for separately by
         the matched provider counter, never by tokenizing their base64 bytes.
@@ -134,13 +139,10 @@ class RequestCapacity:
                 )
                 count = len(encoded.ids) if hasattr(encoded, "ids") else len(encoded)
             else:
-                # Unknown aliases need a deployment tokenizer. For catalogued
-                # non-OpenAI models, reserve UTF-8 bytes rather than silently
-                # using LiteLLM's generic OpenAI tokenizer. This is deliberately
+                # For unknown aliases and non-OpenAI models, reserve UTF-8 bytes
+                # rather than using LiteLLM's generic OpenAI tokenizer. This is
                 # conservative for byte-level provider tokenizers; configure
                 # tokenizer_ref to use the deployment's actual encoding.
-                if counter_model is None:
-                    raise ValueError("model has no registered tokenizer; configure tokenizer_ref")
                 count = (
                     litellm.token_counter(model=counter_model, text=text)
                     if self.counter_source == "litellm_serialized_request"

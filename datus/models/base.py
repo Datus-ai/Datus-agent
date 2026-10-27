@@ -131,7 +131,7 @@ class LLMBaseModel(ABC):  # Changed from BaseModel to LLMBaseModel
 
     def request_capacity(self):
         """Resolve immutable capacity metadata without changing a cached model."""
-        from datus.models.request_capacity import RequestCapacity
+        from datus.models.request_capacity import DEFAULT_CONTEXT_LENGTH, DEFAULT_MAX_TOKENS, RequestCapacity
 
         config = self.model_config
         adapter = getattr(self, "litellm_adapter", None)
@@ -147,12 +147,16 @@ class LLMBaseModel(ABC):  # Changed from BaseModel to LLMBaseModel
         )
         if not supports_limit:
             output_ceiling = max(output_ceiling or 0, info.get("max_output_tokens") or 0) or None
-        context_length = config.context_length or self.context_length() or info.get("max_input_tokens")
+        context_length = (
+            config.context_length or self.context_length() or info.get("max_input_tokens") or DEFAULT_CONTEXT_LENGTH
+        )
         return RequestCapacity(
             model=name,
             context_length=context_length,
             default_output=config.max_tokens
-            or self._default_output_limit(self.max_tokens() or info.get("max_output_tokens"), context_length),
+            or self._default_output_limit(
+                self.max_tokens() or info.get("max_output_tokens") or DEFAULT_MAX_TOKENS, context_length
+            ),
             tokenizer_ref=config.tokenizer_ref,
             supports_output_limit=supports_limit,
             output_ceiling=output_ceiling,

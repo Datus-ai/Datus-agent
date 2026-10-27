@@ -1,6 +1,8 @@
 import base64
 import copy
 import io
+import json
+from itertools import product
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -9,7 +11,13 @@ from agents.models.interface import ModelTracing
 
 from datus.configuration.agent_config import ModelConfig, load_model_config
 from datus.models.openai_model import OpenAIModel
-from datus.models.request_capacity import ContextCapacityError, RequestCapacity, guard_request
+from datus.models.request_capacity import (
+    DEFAULT_CONTEXT_LENGTH,
+    DEFAULT_MAX_TOKENS,
+    ContextCapacityError,
+    RequestCapacity,
+    guard_request,
+)
 
 
 def test_budget_uses_actual_output_and_complete_request():
@@ -23,12 +31,97 @@ def test_budget_uses_actual_output_and_complete_request():
     assert error.value.budget["max_output_tokens"] == 1024
 
 
-def test_unknown_context_and_unknown_tokenizer_are_explicit():
+def test_unresolved_capacity_is_invalid_but_unknown_tokenizers_have_a_default():
     with pytest.raises(ContextCapacityError, match="CONTEXT_SPEC_MISSING"):
         RequestCapacity("unknown", None, 100).check({"input": "hello"})
-    with pytest.raises(ContextCapacityError, match="CONTEXT_COUNT_UNAVAILABLE"):
-        RequestCapacity("unknown-proxy-name", 262144, 100).check({"input": "hello"})
+    assert RequestCapacity("unknown-proxy-name", 262144, 100).check({"input": "hello"}) > 0
     assert RequestCapacity("unknown-proxy-name", 262144, 100, "tiktoken:o200k_base").check({"input": "hello"}) > 0
+
+
+@pytest.mark.parametrize("context,output,tokenizer", product([None, 4096], [None, 512], [None, "tiktoken:o200k_base"]))
+def test_custom_model_capacity_settings_are_independently_optional(context, output, tokenizer):
+    config = {
+        "type": "openai",
+        "model": "private-deployment",
+        "api_key": "test",
+        "base_url": "https://proxy.example/v1",
+    }
+    config.update(
+        {k: v for k, v in {"context_length": context, "max_tokens": output, "tokenizer_ref": tokenizer}.items() if v}
+    )
+    model = OpenAIModel(load_model_config(config))
+    capacity = model.request_capacity()
+    expected_context = context or DEFAULT_CONTEXT_LENGTH
+    expected_output = output or (1024 if context == 4096 else DEFAULT_MAX_TOKENS)
+    assert model.context_length() == capacity.context_length == expected_context
+    assert model.max_tokens() == capacity.default_output == expected_output
+    assert capacity.counter_source == (tokenizer or "utf8_byte_upper_bound")
+    # Resolving defaults must not persist them as explicit user overrides.
+    assert model.model_config.context_length == context
+    assert model.model_config.max_tokens == output
+    assert model.model_config.tokenizer_ref == tokenizer
+    request = {"messages": [{"role": "user", "content": "Describe the order schema"}]}
+    assert model.check_request(request)["max_tokens"] == expected_output
+    assert model._build_agent("Follow the task", str, False, {}, []).model_settings.max_tokens == expected_output
+    assert model.check_request({**request, "max_tokens": 256})["max_tokens"] == 256
+
+
+@pytest.mark.parametrize("context,output,expected_output", [(65536, 12000, 12000), (4096, 8192, 1024)])
+def test_catalogue_specs_precede_defaults_for_both_sdk_and_request_budget(
+    monkeypatch, context, output, expected_output
+):
+    import litellm
+
+    monkeypatch.setitem(
+        litellm.model_cost, "catalogued-deployment", {"max_input_tokens": context, "max_output_tokens": output}
+    )
+    model = OpenAIModel(ModelConfig(type="openai", model="catalogued-deployment", api_key="test"))
+    capacity = model.request_capacity()
+    assert model.context_length() == capacity.context_length == context
+    assert model.max_tokens() == capacity.default_output == expected_output
+    assert model._build_agent("", str, False, {}, []).model_settings.max_tokens == expected_output
+    model.check_request({"messages": [{"role": "user", "content": "hello"}]})
+
+
+def test_unknown_model_counts_complete_utf8_request_without_guessing_a_tokenizer():
+    capacity = RequestCapacity("private-deployment", 128000, 8192)
+    payload = {
+        "instructions": "核对订单结构",
+        "messages": [{"role": "user", "content": "SELECT 订单编号 FROM 订单"}],
+        "tools": [{"name": "describe_table", "description": "读取表结构"}],
+    }
+    with patch("litellm.token_counter", side_effect=AssertionError("must not guess an alias tokenizer")):
+        serialized_bytes = len(json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
+        assert capacity.count(payload) == serialized_bytes + 64 + 256
+
+
+def test_explicit_broken_tokenizer_does_not_silently_fall_back():
+    capacity = RequestCapacity("private-deployment", 128000, 8192, "/missing/tokenizer.json")
+    with patch("datus.models.request_capacity._tokenizer", side_effect=OSError("Cannot read tokenizer")):
+        with pytest.raises(ContextCapacityError, match="Cannot read tokenizer"):
+            capacity.check({"input": "hello"})
+
+
+@pytest.mark.asyncio
+async def test_custom_model_without_new_settings_reaches_transport_and_retains_capacity_guard():
+    import litellm
+
+    model = OpenAIModel(
+        ModelConfig(type="openai", model="private-deployment", api_key="test", base_url="https://proxy.example/v1")
+    )
+    response = litellm.ModelResponse(
+        model="private-deployment",
+        choices=[{"index": 0, "finish_reason": "stop", "message": {"role": "assistant", "content": "done"}}],
+        usage={"prompt_tokens": 10, "completion_tokens": 2, "total_tokens": 12},
+    )
+    with patch("litellm.acompletion", new_callable=AsyncMock, return_value=response) as send:
+        result = await model.generate_with_tools("Inspect the schema", max_turns=1)
+        assert result["content"] == "done"
+        assert send.await_args.kwargs["max_tokens"] == DEFAULT_MAX_TOKENS
+        send.reset_mock()
+        with pytest.raises(ContextCapacityError, match="CONTEXT_LIMIT_EXCEEDED"):
+            await model.generate_with_tools("字" * DEFAULT_CONTEXT_LENGTH, max_turns=1)
+        send.assert_not_awaited()
 
 
 def test_catalogued_non_openai_model_uses_explicit_conservative_count():

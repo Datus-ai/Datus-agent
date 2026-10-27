@@ -35,6 +35,7 @@ from datus.models.litellm_adapter import (
 )
 from datus.models.mcp_result_extractors import extract_sql_contexts
 from datus.models.mcp_utils import multiple_mcp_servers
+from datus.models.request_capacity import DEFAULT_CONTEXT_LENGTH, DEFAULT_MAX_TOKENS
 from datus.models.tool_result_stream import ToolResultStream
 from datus.observability.manager import get_observability_manager
 from datus.observability.model_call import ModelCall
@@ -1906,14 +1907,14 @@ class OpenAICompatibleModel(LLMBaseModel):
         return _load_model_specs()
 
     def _lookup_spec(self, field: str) -> Optional[int]:
-        """Look up ``field`` in ``model_specs`` with exact-then-longest-prefix matching.
+        """Look up ``field`` in model specs, then the LiteLLM catalogue.
 
         Longest-prefix is important when specs declare both a generic family key
         (e.g. ``gpt-5``) and a more specific variant (e.g. ``gpt-5.3-codex``): the
         generic key would otherwise bleed into unrelated slugs that happen to
-        share a short prefix. Returns None when the field is missing —
-        OpenRouter-cache-only entries do not carry ``max_tokens``, so callers
-        must tolerate absence.
+        share a short prefix. The catalogue fills missing fields, including
+        output limits absent from OpenRouter-cache-only entries. Returns None
+        when neither source knows the field.
         """
         specs = self.model_specs
         exact = specs.get(self.model_name)
@@ -1925,17 +1926,23 @@ class OpenAICompatibleModel(LLMBaseModel):
                 continue
             if self.model_name.startswith(spec_model) and (best_key is None or len(spec_model) > len(best_key)):
                 best_key = spec_model
-        if best_key is None:
-            return None
-        return specs[best_key][field]
+        if best_key is not None:
+            return specs[best_key][field]
+        info = litellm.model_cost.get(
+            self.litellm_adapter.litellm_model_name, litellm.model_cost.get(self.model_name, {})
+        )
+        value = info.get({"context_length": "max_input_tokens", "max_tokens": "max_output_tokens"}.get(field))
+        return value if isinstance(value, int) and value > 0 else None
 
     def max_tokens(self) -> Optional[int]:
         """Configured output limit or a model default that leaves input headroom."""
-        return self.model_config.max_tokens or self._default_output_limit(self._lookup_spec("max_tokens"))
+        return self.model_config.max_tokens or self._default_output_limit(
+            self._lookup_spec("max_tokens") or DEFAULT_MAX_TOKENS
+        )
 
     def context_length(self) -> Optional[int]:
-        """Context length from model specs with prefix matching, or None if unavailable."""
-        return self.model_config.context_length or self._lookup_spec("context_length")
+        """Configured window, known model specification, or the default budget."""
+        return self.model_config.context_length or self._lookup_spec("context_length") or DEFAULT_CONTEXT_LENGTH
 
     def token_count(self, prompt: str) -> int:
         """
