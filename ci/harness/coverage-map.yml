@@ -598,7 +598,7 @@ flow_groups:
           - Bootstrap and agentic generation persist semantic objects that are available to query-time retrieval.
           - Metrics and semantic models remain separable by kind and datasource scope, and extracted knowledge is captured as markdown via the extract-knowledge skill.
           - Existing metrics can be queried through the metric-first AskMetrics subagent without falling back to raw SQL generation.
-          - A datasource ontology under subject/semantic_models/ontology/<datasource>/ is loaded only for OntologyAnalyst, which refuses to run without one.
+          - Ontologies under subject/ontology/ reach a datasource through mapping documents whose semantic_model_ref.iri names one of its model files; they are loaded only for OntologyAnalyst, which refuses to run without one.
           - Semantic authoring uses the built-in Dosi runtime.
           - Runtime database context is propagated into Dosi so validation can use the selected catalog/database/schema without a static datasource database.
         coverage:

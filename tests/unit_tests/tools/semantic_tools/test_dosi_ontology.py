@@ -2,7 +2,7 @@
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
-"""Ontology support in the embedded Dosi runtime: discovery, pairing, loading and the ontology calls."""
+"""Ontology support in the embedded Dosi runtime: discovery, mapping plans, loading and the ontology calls."""
 
 import os
 import sys
@@ -14,8 +14,8 @@ from datus.tools.semantic_tools.dosi.engine import (
     EngineRegistry,
     OntologyBinding,
     binding_supports_ontology,
+    datasource_has_ontology,
     document_kind,
-    pair_ontologies,
     plan_ontologies,
     resolve_model_files,
     resolve_ontology_files,
@@ -54,16 +54,35 @@ def legacy_binding(monkeypatch):
     FakeEngine.instances.clear()
 
 
-def _layout(tmp_path, models=("aviation",), ontologies=("aviation",)):
-    models_dir = tmp_path / "semantic_models" / "flights_db"
-    ontology_dir = tmp_path / "semantic_models" / "ontology" / "flights_db"
-    models_dir.mkdir(parents=True)
+def _mapping_yaml(ontology_file, model_relpath, name="aviation_mapping", ontology_name="Aviation"):
+    """A mapping document reaching its ontology and its model by relative iri."""
+    return (
+        "version: 0.2.0.dev0\n"
+        f"name: {name}\n"
+        f"ontology_ref: {{name: {ontology_name}, iri: ./{ontology_file}}}\n"
+        f"semantic_model_ref: {{name: model, iri: ../semantic_models/{model_relpath}}}\n"
+        "concept_mappings: []\n"
+    )
+
+
+def _layout(tmp_path, models=("aviation",), ontologies=("aviation",), datasource="flights_db"):
+    """Models grouped by datasource; ontologies and mappings in one flat project-wide directory.
+
+    Each stem in ``ontologies`` gets ``<stem>.ontology.yaml`` and the mapping
+    ``<stem>-<stem>.mapping.yaml`` onto ``semantic_models/<datasource>/<stem>.yaml``.
+    """
+    models_dir = tmp_path / "subject" / "semantic_models" / datasource
+    ontology_dir = tmp_path / "subject" / "ontology"
+    models_dir.mkdir(parents=True, exist_ok=True)
     for stem in models:
         (models_dir / f"{stem}.yaml").write_text(MODEL_YAML)
     if ontologies:
-        ontology_dir.mkdir(parents=True)
+        ontology_dir.mkdir(parents=True, exist_ok=True)
         for stem in ontologies:
-            (ontology_dir / f"{stem}.yaml").write_text(ONTOLOGY_YAML)
+            (ontology_dir / f"{stem}.ontology.yaml").write_text(ONTOLOGY_YAML)
+            (ontology_dir / f"{stem}-{stem}.mapping.yaml").write_text(
+                _mapping_yaml(f"{stem}.ontology.yaml", f"{datasource}/{stem}.yaml")
+            )
     return models_dir, ontology_dir
 
 
@@ -98,54 +117,28 @@ class TestOntologyDiscovery:
     def test_unset_dir_means_no_ontology(self):
         assert resolve_ontology_files(DosiConfig()) == []
 
-    def test_finds_every_ontology_suffix_recursively(self, tmp_path):
-        for rel in ("a.yaml", "b.yml", "nested/c.json"):
+    def test_finds_every_suffix_in_the_flat_directory(self, tmp_path):
+        for rel in ("a.yaml", "b.yml", "c.json", "nested/d.yaml"):
             path = tmp_path / rel
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text("{}")
         (tmp_path / "notes.txt").write_text("not an ontology")
         found = resolve_ontology_files(DosiConfig(ontology_dir=str(tmp_path)))
-        assert [os.path.relpath(path, tmp_path) for path in found] == [
-            "a.yaml",
-            "b.yml",
-            os.path.join("nested", "c.json"),
-        ]
+        assert [os.path.relpath(path, tmp_path) for path in found] == ["a.yaml", "b.yml", "c.json"]
 
-    def test_datasource_named_ontology_is_rejected(self, tmp_path):
-        reserved = tmp_path / "semantic_models" / "ontology"
-        reserved.mkdir(parents=True)
-        (reserved / "m.yaml").write_text(MODEL_YAML)
-        with pytest.raises(SemanticCoreException, match="reserved for ontology files"):
-            resolve_model_files(DosiConfig(semantic_models_path=str(reserved)))
+    def test_datasource_has_ontology_only_through_a_mapping_onto_its_models(self, tmp_path):
+        flights_dir, ontology_dir = _layout(tmp_path)
+        retail_dir, _ = _layout(tmp_path, models=("orders",), ontologies=(), datasource="retail_db")
+        assert datasource_has_ontology(str(flights_dir), str(ontology_dir)) is True
+        assert datasource_has_ontology(str(retail_dir), str(ontology_dir)) is False
+        assert datasource_has_ontology(str(retail_dir), str(tmp_path / "absent")) is False
 
-
-class TestPairOntologies:
-    def test_single_model_and_single_ontology_pair_regardless_of_names(self):
-        assert pair_ontologies(["/m/sales.yaml"], ["/o/whatever.yaml"]) == ({"/m/sales.yaml": "/o/whatever.yaml"}, [])
-
-    def test_pairs_by_file_stem_across_suffixes(self):
-        pairs, unpaired = pair_ontologies(
-            ["/m/aviation.yaml", "/m/retail.yml"],
-            ["/o/retail.json", "/o/aviation.yml"],
-        )
-        assert pairs == {"/m/aviation.yaml": "/o/aviation.yml", "/m/retail.yml": "/o/retail.json"}
-        assert unpaired == []
-
-    def test_unmatched_ontology_is_reported_not_guessed(self):
-        pairs, unpaired = pair_ontologies(["/m/aviation.yaml", "/m/retail.yaml"], ["/o/hr.yaml"])
-        assert pairs == {}
-        assert unpaired == ["/o/hr.yaml"]
-
-    def test_two_ontologies_claiming_one_model_leave_it_unpaired(self):
-        pairs, unpaired = pair_ontologies(
-            ["/m/aviation.yaml", "/m/retail.yaml"],
-            ["/o/a/aviation.yaml", "/o/b/aviation.yaml"],
-        )
-        assert pairs == {}
-        assert sorted(unpaired) == ["/o/a/aviation.yaml", "/o/b/aviation.yaml"]
-
-    def test_no_ontologies(self):
-        assert pair_ontologies(["/m/aviation.yaml"], []) == ({}, [])
+    def test_an_inline_mapping_gives_every_datasource_an_ontology(self, tmp_path):
+        retail_dir, ontology_dir = _layout(tmp_path, models=("orders",), ontologies=(), datasource="retail_db")
+        ontology_dir.mkdir(parents=True)
+        (ontology_dir / "mini.mapping.yaml").write_text(INLINE_MAPPING_YAML)
+        assert datasource_has_ontology(str(retail_dir), str(ontology_dir)) is True
+        assert datasource_has_ontology(str(tmp_path / "subject" / "semantic_models" / "empty"), str(ontology_dir))
 
 
 class TestBindingCapability:
@@ -167,13 +160,14 @@ class TestBindingCapability:
 
 
 class TestEngineLoading:
-    def test_paired_model_loads_with_its_ontology(self, tmp_path, ontology_binding):
+    def test_mapped_model_loads_with_its_mapping(self, tmp_path, ontology_binding):
         models_dir, ontology_dir = _layout(tmp_path)
         registry = EngineRegistry(DosiConfig(semantic_models_path=str(models_dir), ontology_dir=str(ontology_dir)))
         _, handles = registry.snapshot()
         engine = handles[0][1].get()
-        assert engine.ontology_path == str(ontology_dir / "aviation.yaml")
-        assert engine.mapping_path is None
+        assert engine.given_model_path == str(models_dir / "aviation.yaml")
+        assert engine.mapping_path == str(ontology_dir / "aviation-aviation.mapping.yaml")
+        assert engine.ontology_path is None
 
     def test_ontologies_are_not_loaded_unless_requested(self, tmp_path, ontology_binding):
         models_dir, _ = _layout(tmp_path)
@@ -194,19 +188,18 @@ class TestEngineLoading:
         registry = EngineRegistry(DosiConfig(semantic_models_path=str(models_dir), ontology_dir=str(ontology_dir)))
         handle = registry.snapshot()[1][0][1]
         first = handle.get()
-        ontology_file = ontology_dir / "aviation.yaml"
+        ontology_file = ontology_dir / "aviation.ontology.yaml"
         ontology_file.write_text(ONTOLOGY_YAML + "# edited\n")
         stat = ontology_file.stat()
         os.utime(ontology_file, ns=(stat.st_atime_ns, stat.st_mtime_ns + 10_000_000))
         assert handle.get() is not first
 
-    def test_adding_an_ontology_repairs_handles(self, tmp_path, ontology_binding):
+    def test_adding_a_mapping_rebinds_handles(self, tmp_path, ontology_binding):
         models_dir, ontology_dir = _layout(tmp_path, ontologies=())
         registry = EngineRegistry(DosiConfig(semantic_models_path=str(models_dir), ontology_dir=str(ontology_dir)))
-        assert registry.snapshot()[1][0][1].ontology_path is None
-        ontology_dir.mkdir(parents=True)
-        (ontology_dir / "aviation.yaml").write_text(ONTOLOGY_YAML)
-        assert registry.snapshot()[1][0][1].ontology_path == str(ontology_dir / "aviation.yaml")
+        assert registry.snapshot()[1][0][1].has_ontology is False
+        _layout(tmp_path, models=())
+        assert registry.snapshot()[1][0][1].mapping_path == str(ontology_dir / "aviation-aviation.mapping.yaml")
 
     def test_ontology_lowering_notes_do_not_reach_the_terminal(self, tmp_path, ontology_binding, monkeypatch):
         import warnings
@@ -223,10 +216,10 @@ class TestEngineLoading:
         with warnings.catch_warnings(record=True) as escaped:
             warnings.simplefilter("always")
             engine = registry.snapshot()[1][0][1].get()
-        assert engine.ontology_path == str(ontology_dir / "aviation.yaml")
+        assert engine.mapping_path == str(ontology_dir / "aviation-aviation.mapping.yaml")
         assert [str(w.message) for w in escaped] == []
 
-    def test_ontology_load_failure_names_the_ontology_and_code(self, tmp_path, ontology_binding, monkeypatch):
+    def test_ontology_load_failure_names_the_mapping_and_code(self, tmp_path, ontology_binding, monkeypatch):
         models_dir, ontology_dir = _layout(tmp_path)
 
         class RejectingEngine(FakeOntologyEngine):
@@ -235,19 +228,17 @@ class TestEngineLoading:
 
         monkeypatch.setattr(ontology_binding, "Engine", RejectingEngine)
         registry = EngineRegistry(DosiConfig(semantic_models_path=str(models_dir), ontology_dir=str(ontology_dir)))
-        with pytest.raises(SemanticCoreException, match=r"with ontology .*aviation\.yaml.*ontology_mapping_unresolved"):
+        with pytest.raises(
+            SemanticCoreException,
+            match=r"with ontology .*aviation-aviation\.mapping\.yaml.*ontology_mapping_unresolved",
+        ):
             registry.snapshot()[1][0][1].get()
 
 
 # ---------------------------------------------------------------- mapping documents
 
 
-MAPPING_YAML = """version: 0.2.0.dev0
-name: aviation_mapping
-ontology_ref: {name: Aviation, iri: ./ontology.yaml}
-semantic_model_ref: {name: aviation}
-concept_mappings: []
-"""
+MAPPING_YAML = _mapping_yaml("ontology.yaml", "flights_db/flights.yaml")
 NAMED_MODEL_YAML = "version: '0.2.0.dev0'\nsemantic_model:\n  - name: aviation\n    datasets: []\n"
 FLAT_MODEL_YAML = "version: 0.2.0.dev0\nname: aviation\ndatasets: []\n"
 INLINE_MAPPING_YAML = """version: 0.2.0.dev0
@@ -259,15 +250,20 @@ concept_mappings: []
 
 
 def _mapping_layout(tmp_path, model_yaml=NAMED_MODEL_YAML, mapping_yaml=MAPPING_YAML):
-    """apache/ossie#458: the ontology and a mapping document in the ontology dir."""
-    models_dir = tmp_path / "semantic_models" / "flights_db"
-    ontology_dir = tmp_path / "semantic_models" / "ontology" / "flights_db"
+    """apache/ossie#458: the ontology and a mapping document in the project ontology dir."""
+    models_dir = tmp_path / "subject" / "semantic_models" / "flights_db"
+    ontology_dir = tmp_path / "subject" / "ontology"
     models_dir.mkdir(parents=True)
     ontology_dir.mkdir(parents=True)
     (models_dir / "flights.yaml").write_text(model_yaml)
     (ontology_dir / "ontology.yaml").write_text(ONTOLOGY_YAML)
     (ontology_dir / "mapping.yaml").write_text(mapping_yaml)
     return models_dir, ontology_dir
+
+
+def _plan(models_dir, ontology_dir):
+    config = DosiConfig(semantic_models_path=str(models_dir), ontology_dir=str(ontology_dir))
+    return plan_ontologies(resolve_model_files(config), resolve_ontology_files(config), str(models_dir))
 
 
 class TestMappingDocuments:
@@ -281,45 +277,104 @@ class TestMappingDocuments:
         assert document_kind({"cases": []}) == "other"
 
     @pytest.mark.parametrize("model_yaml", [NAMED_MODEL_YAML, FLAT_MODEL_YAML])
-    def test_a_mapping_binds_the_model_its_ref_names(self, tmp_path, model_yaml):
+    def test_a_mapping_binds_the_model_its_iri_names(self, tmp_path, model_yaml):
         models_dir, ontology_dir = _mapping_layout(tmp_path, model_yaml=model_yaml)
         model = str(models_dir / "flights.yaml")
-        bindings, unpaired = plan_ontologies(
-            [model], [str(ontology_dir / f) for f in ("mapping.yaml", "ontology.yaml")]
-        )
-        # The mapping finds its ontology by iri; the ontology file is consumed,
-        # not paired a second time by stem.
+        bindings, unpaired = _plan(models_dir, ontology_dir)
+        # Both iris are the engine's inputs; the ontology file is consumed.
         assert bindings == {
             model: OntologyBinding(
                 model_file=model,
                 mapping_path=str(ontology_dir / "mapping.yaml"),
-                references=(str(ontology_dir / "ontology.yaml"),),
+                references=(str(ontology_dir / "ontology.yaml"), model),
             )
         }
         assert unpaired == []
 
-    def test_a_mapping_without_iri_finds_its_ontology_by_name(self, tmp_path):
+    def test_the_model_name_never_selects_the_file(self, tmp_path):
+        # semantic_model_ref.name says "model"; the file says "aviation". Only the iri counts.
+        models_dir, ontology_dir = _mapping_layout(tmp_path)
+        bindings, _ = _plan(models_dir, ontology_dir)
+        assert list(bindings) == [str(models_dir / "flights.yaml")]
+
+    def test_a_mapping_without_ontology_iri_finds_its_ontology_by_name(self, tmp_path):
         mapping = MAPPING_YAML.replace("{name: Aviation, iri: ./ontology.yaml}", "{name: Aviation}")
         models_dir, ontology_dir = _mapping_layout(tmp_path, mapping_yaml=mapping)
-        model = str(models_dir / "flights.yaml")
-        bindings, _ = plan_ontologies([model], [str(ontology_dir / f) for f in ("mapping.yaml", "ontology.yaml")])
-        assert bindings[model].ontology_path == str(ontology_dir / "ontology.yaml")
+        bindings, unpaired = _plan(models_dir, ontology_dir)
+        assert bindings[str(models_dir / "flights.yaml")].ontology_path == str(ontology_dir / "ontology.yaml")
+        assert unpaired == []
 
-    def test_a_mapping_naming_no_model_is_reported(self, tmp_path):
-        models_dir, ontology_dir = _mapping_layout(
-            tmp_path, mapping_yaml=MAPPING_YAML.replace("{name: aviation}", "{name: retail}")
-        )
-        bindings, unpaired = plan_ontologies([str(models_dir / "flights.yaml")], [str(ontology_dir / "mapping.yaml")])
+    @pytest.mark.parametrize(
+        "model_ref",
+        [
+            pytest.param("{name: aviation}", id="name_only"),
+            pytest.param("{name: aviation, iri: 'https://example.com/m.yaml'}", id="remote_iri"),
+            pytest.param("{name: aviation, iri: ../semantic_models/flights_db/absent.yaml}", id="missing_file"),
+        ],
+    )
+    def test_a_mapping_without_a_model_file_of_this_datasource_is_reported(self, tmp_path, model_ref):
+        mapping = MAPPING_YAML.replace("{name: model, iri: ../semantic_models/flights_db/flights.yaml}", model_ref)
+        models_dir, ontology_dir = _mapping_layout(tmp_path, mapping_yaml=mapping)
+        bindings, unpaired = _plan(models_dir, ontology_dir)
         assert bindings == {}
         assert unpaired == [str(ontology_dir / "mapping.yaml")]
+
+    @pytest.mark.parametrize(
+        "model_iri",
+        [
+            pytest.param("./flights.yaml", id="beside_the_mapping"),
+            pytest.param("../semantic_model/flights_db/flights.yaml", id="mistyped_root"),
+            pytest.param("../semantic_models/flights.yaml", id="in_no_datasource_directory"),
+            pytest.param("../semantic_models/fligts_db/flights.yaml", id="misspelled_datasource"),
+            pytest.param("{models_dir}/flights.yaml", id="absolute_path_to_a_loaded_model"),
+        ],
+    )
+    def test_a_model_iri_outside_every_datasource_is_reported(self, tmp_path, model_iri):
+        # No datasource would ever bind it, so skipping it would hide it everywhere.
+        models_dir = tmp_path / "subject" / "semantic_models" / "flights_db"
+        model_iri = model_iri.format(models_dir=models_dir)
+        mapping = MAPPING_YAML.replace("../semantic_models/flights_db/flights.yaml", model_iri)
+        models_dir, ontology_dir = _mapping_layout(tmp_path, mapping_yaml=mapping)
+        bindings, unpaired = _plan(models_dir, ontology_dir)
+        assert bindings == {}
+        assert unpaired == [str(ontology_dir / "mapping.yaml")]
+
+    def test_a_pinned_model_skips_mappings_onto_its_siblings(self, tmp_path):
+        models_dir, ontology_dir = _mapping_layout(tmp_path)
+        pinned = models_dir / "pinned.yaml"
+        pinned.write_text(FLAT_MODEL_YAML)
+        config = DosiConfig(
+            semantic_models_path=str(models_dir), semantic_model_path=str(pinned), ontology_dir=str(ontology_dir)
+        )
+        bindings, unpaired = plan_ontologies(
+            resolve_model_files(config), resolve_ontology_files(config), str(models_dir)
+        )
+        # flights.yaml exists in this datasource; the runtime just does not load it.
+        assert bindings == {}
+        assert unpaired == []
+
+    def test_one_ontology_spans_several_datasources(self, tmp_path):
+        # xxx.ontology.yaml with one mapping per model: each datasource binds
+        # only the mapping onto its own model, and is silent about the rest.
+        flights_dir, ontology_dir = _mapping_layout(tmp_path)
+        retail_dir = tmp_path / "subject" / "semantic_models" / "retail_db"
+        retail_dir.mkdir()
+        (retail_dir / "orders.yaml").write_text(FLAT_MODEL_YAML)
+        (ontology_dir / "retail.mapping.yaml").write_text(
+            _mapping_yaml("ontology.yaml", "retail_db/orders.yaml", name="retail")
+        )
+        flights_bindings, flights_unpaired = _plan(flights_dir, ontology_dir)
+        retail_bindings, retail_unpaired = _plan(retail_dir, ontology_dir)
+        assert {b.mapping_path for b in flights_bindings.values()} == {str(ontology_dir / "mapping.yaml")}
+        assert {b.mapping_path for b in retail_bindings.values()} == {str(ontology_dir / "retail.mapping.yaml")}
+        assert flights_unpaired == retail_unpaired == []
 
     def test_two_mappings_onto_one_model_are_both_reported(self, tmp_path):
         models_dir, ontology_dir = _mapping_layout(tmp_path)
         (ontology_dir / "second.yaml").write_text(MAPPING_YAML.replace("aviation_mapping", "second"))
-        files = [str(ontology_dir / f) for f in ("mapping.yaml", "ontology.yaml", "second.yaml")]
-        bindings, unpaired = plan_ontologies([str(models_dir / "flights.yaml")], files)
+        bindings, unpaired = _plan(models_dir, ontology_dir)
         assert bindings == {}
-        assert unpaired == sorted([files[0], files[2]])
+        assert unpaired == [str(ontology_dir / "mapping.yaml"), str(ontology_dir / "second.yaml")]
 
     @pytest.mark.parametrize(
         "stray_name, stray_text",
@@ -327,34 +382,19 @@ class TestMappingDocuments:
             pytest.param("extra_model.yaml", NAMED_MODEL_YAML, id="semantic_model"),
             pytest.param("notes.yaml", "cases: []\n", id="unrelated_document"),
             pytest.param("broken.yaml", "ontology: [unclosed\n", id="unparsable"),
+            pytest.param("aviation.yaml", ONTOLOGY_YAML, id="ontology_no_mapping_uses"),
         ],
     )
-    def test_a_stray_file_never_becomes_an_ontology(self, tmp_path, stray_name, stray_text):
-        # One unbound model and one leftover file would pair regardless of
-        # names; only an ontology document may be paired that way.
+    def test_a_file_no_mapping_uses_is_reported(self, tmp_path, stray_name, stray_text):
+        # One model and one ontology named after it no longer pair: only a
+        # mapping binds an ontology to a model.
         models_dir, ontology_dir = _layout(tmp_path, ontologies=())
         ontology_dir.mkdir(parents=True)
         stray = ontology_dir / stray_name
         stray.write_text(stray_text)
-        bindings, unpaired = plan_ontologies([str(models_dir / "aviation.yaml")], [str(stray)])
+        bindings, unpaired = _plan(models_dir, ontology_dir)
         assert bindings == {}
         assert unpaired == [str(stray)]
-
-    def test_a_model_a_mapping_reaches_by_iri_is_consumed(self, tmp_path):
-        # The three-file layout with the model beside the mapping: the engine
-        # follows both iris, and neither target is reported or paired again.
-        models_dir, ontology_dir = _layout(tmp_path, ontologies=())
-        ontology_dir.mkdir(parents=True)
-        (ontology_dir / "ontology.yaml").write_text(ONTOLOGY_YAML)
-        (ontology_dir / "model.yaml").write_text(NAMED_MODEL_YAML.replace("aviation", "beside"))
-        mapping = MAPPING_YAML.replace("{name: aviation}", "{name: beside, iri: ./model.yaml}")
-        (ontology_dir / "mapping.yaml").write_text(mapping)
-        files = [str(ontology_dir / f) for f in ("mapping.yaml", "model.yaml", "ontology.yaml")]
-        bindings, unpaired = plan_ontologies([str(models_dir / "aviation.yaml")], files)
-        assert bindings == {
-            files[0]: OntologyBinding(model_file=None, mapping_path=files[0], references=(files[2], files[1]))
-        }
-        assert unpaired == []
 
     def test_the_engine_gets_the_model_and_the_mapping(self, tmp_path, ontology_binding):
         models_dir, ontology_dir = _mapping_layout(tmp_path)
@@ -380,41 +420,35 @@ class TestMappingDocuments:
         assert engine.given_model_path is None
         assert engine.mapping_path == mini
 
-    @pytest.mark.parametrize(
-        "mapping_yaml, edited",
-        [
-            pytest.param(MAPPING_YAML, "ontology.yaml", id="ontology_ref"),
-            pytest.param(
-                MAPPING_YAML.replace("{name: aviation}", "{name: beside, iri: ./model.yaml}"),
-                "model.yaml",
-                id="semantic_model_ref",
-            ),
-        ],
-    )
-    def test_editing_a_file_a_mapping_reaches_by_iri_rebuilds_the_engine(
-        self, tmp_path, ontology_binding, mapping_yaml, edited
-    ):
+    def test_editing_the_ontology_a_mapping_reaches_by_iri_rebuilds_the_engine(self, tmp_path, ontology_binding):
         # The engine reads the iri target itself, so its edits must invalidate
         # the engine exactly like an edit to the mapping does.
-        models_dir, ontology_dir = _mapping_layout(tmp_path, mapping_yaml=mapping_yaml)
-        (ontology_dir / "model.yaml").write_text(NAMED_MODEL_YAML.replace("aviation", "beside"))
+        models_dir, ontology_dir = _mapping_layout(tmp_path)
         registry = EngineRegistry(DosiConfig(semantic_models_path=str(models_dir), ontology_dir=str(ontology_dir)))
-        handle = dict(registry.snapshot()[1])[
-            str(models_dir / "flights.yaml") if edited == "ontology.yaml" else str(ontology_dir / "mapping.yaml")
-        ]
+        handle = dict(registry.snapshot()[1])[str(models_dir / "flights.yaml")]
         first = handle.get()
-        target = ontology_dir / edited
+        target = ontology_dir / "ontology.yaml"
         target.write_text(target.read_text() + "# edited\n")
         stat = target.stat()
         os.utime(target, ns=(stat.st_atime_ns, stat.st_mtime_ns + 10_000_000))
         registry.snapshot()
         assert handle.get() is not first
 
+    def test_a_datasource_without_models_keeps_the_actionable_error(self, tmp_path, ontology_binding):
+        # Another datasource's ontology in the shared directory must not hide
+        # which directory lacks a model.
+        _, ontology_dir = _layout(tmp_path, datasource="other_db")
+        empty = tmp_path / "subject" / "semantic_models" / "flights_db"
+        empty.mkdir()
+        registry = EngineRegistry(DosiConfig(semantic_models_path=str(empty), ontology_dir=str(ontology_dir)))
+        with pytest.raises(SemanticCoreException, match="no OSI model file .* in .*flights_db"):
+            registry.snapshot()
+
     def test_a_datasource_whose_only_model_is_inline_loads(self, tmp_path, ontology_binding):
-        ontology_dir = tmp_path / "semantic_models" / "ontology" / "flights_db"
+        ontology_dir = tmp_path / "subject" / "ontology"
         ontology_dir.mkdir(parents=True)
         (ontology_dir / "mini.yaml").write_text(INLINE_MAPPING_YAML)
-        runtime = _runtime(tmp_path / "semantic_models" / "flights_db", ontology_dir)
+        runtime = _runtime(tmp_path / "subject" / "semantic_models" / "flights_db", ontology_dir)
         assert runtime.has_ontology() is True
         [info] = runtime.ontology_info()
         assert info["mappings"] == ["aviation_mapping"]
@@ -455,7 +489,8 @@ class TestRuntimeOntology:
         _distinct_metrics_per_model(monkeypatch)
         runtime = _runtime(*_layout(tmp_path, models=("aviation", "retail"), ontologies=("hr",)))
         assert runtime.has_ontology() is False
-        assert [os.path.basename(path) for path in runtime.unpaired_ontologies()] == ["hr.yaml"]
+        # The mapping names a model this datasource lacks; its ontology is still used.
+        assert [os.path.basename(path) for path in runtime.unpaired_ontologies()] == ["hr-hr.mapping.yaml"]
 
     @pytest.mark.asyncio
     async def test_describe_catalog_is_the_engine_payload(self, tmp_path, ontology_binding):
@@ -718,10 +753,10 @@ class TestValidateInlineMapping:
 
     @staticmethod
     def _inline_runtime(tmp_path):
-        ontology_dir = tmp_path / "semantic_models" / "ontology" / "flights_db"
+        ontology_dir = tmp_path / "subject" / "ontology"
         ontology_dir.mkdir(parents=True)
         (ontology_dir / "mini.yaml").write_text(INLINE_MAPPING_YAML)
-        return _runtime(tmp_path / "semantic_models" / "flights_db", ontology_dir)
+        return _runtime(tmp_path / "subject" / "semantic_models" / "flights_db", ontology_dir)
 
     @pytest.mark.asyncio
     async def test_a_loadable_inline_mapping_is_valid_without_model_text_validation(

@@ -637,9 +637,9 @@ class SemanticTools:
                 request-local semantic model selected for authoring or validation.
             semantic_metric_names_provider: Optional callback returning the
                 present touched metrics that require compiled publish evidence.
-            ontology_enabled: Load the datasource's Apache Ossie ontology
-                (``subject/semantic_models/ontology/<datasource>/``) beside its
-                models and expose the ontology tools. Off for every agent that
+            ontology_enabled: Load the project's Apache Ossie ontologies
+                (``subject/ontology/``) through the mapping documents that
+                bind them to this datasource's models and expose the ontology tools. Off for every agent that
                 does not ask for it. Mapping documents there say which model
                 each ontology binds.
         """
@@ -1130,11 +1130,11 @@ class SemanticTools:
             )
             # Ontology-aware agents always load the ontology directory. Every
             # other agent stays on the plain model, unless the datasource has
-            # none: then its models are inline in mapping documents there, and
-            # skipping the directory would leave the datasource without a model.
+            # none: then its only models are inline in mapping documents there,
+            # and skipping the directory would leave it without a model.
             if self.ontology_enabled or not has_model_files(runtime_config):
                 runtime_config = runtime_config.model_copy(
-                    update={"ontology_dir": str(self.agent_config.path_manager.ontology_path(datasource))}
+                    update={"ontology_dir": str(self.agent_config.path_manager.ontology_dir)}
                 )
             self._runtime = DosiRuntime(runtime_config)
             self._runtime_context_key = context_key

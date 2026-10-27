@@ -61,35 +61,34 @@ def osi_semantic_model_directory(agent_config: Any = None) -> Optional[Path]:
 
 
 def _ontology_dir(agent_config: Any = None) -> Optional[Path]:
-    """Return the active datasource's ontology directory when resolvable."""
-    if agent_config is None:
-        return None
-    datasource = str(getattr(agent_config, "current_datasource", "") or "default").strip() or "default"
-    ontology_path = getattr(getattr(agent_config, "path_manager", None), "ontology_path", None)
-    if not callable(ontology_path):
+    """Return the project's ontology directory when resolvable."""
+    ontology_dir = getattr(getattr(agent_config, "path_manager", None), "ontology_dir", None)
+    if ontology_dir is None:
         return None
     try:
-        return Path(ontology_path(datasource)).expanduser()
-    except Exception:
+        return Path(ontology_dir).expanduser()
+    except TypeError:
         return None
 
 
 def inline_mapping_models(agent_config: Any = None) -> list[Dict[str, Any]]:
-    """Ossie mapping documents of the active datasource that carry their semantic model inline.
+    """Ossie mapping documents that carry their semantic model inline.
 
     Such a model lives inside ``semantic_model_ref.document`` of a file under
-    ``subject/semantic_models/ontology/<datasource>/``, next to the ontology it
-    maps. OSI authoring edits flat model files only, so these models are
-    readable by every agent but not authorable by semantic_modeling.
+    ``subject/ontology/``, next to the ontology it maps. It is a document of
+    its own, tied to no datasource, so every datasource loads it. OSI
+    authoring edits flat model files only, so these models are readable by
+    every agent but not authorable by semantic_modeling.
     """
     from datus.tools.semantic_tools.dosi.engine import document_kind
 
     ontology_dir = _ontology_dir(agent_config)
     if ontology_dir is None or not ontology_dir.is_dir():
         return []
-    datasource = str(getattr(agent_config, "current_datasource", "") or "default").strip() or "default"
     found: list[Dict[str, Any]] = []
-    paths = sorted({*ontology_dir.rglob("*.yml"), *ontology_dir.rglob("*.yaml"), *ontology_dir.rglob("*.json")})
+    paths = sorted(
+        path for pattern in ("*.yml", "*.yaml", "*.json") for path in ontology_dir.glob(pattern) if path.is_file()
+    )
     for path in paths:
         try:
             document = yaml.safe_load(path.read_text(encoding="utf-8"))
@@ -100,11 +99,10 @@ def inline_mapping_models(agent_config: Any = None) -> list[Dict[str, Any]]:
         model_ref = document.get("semantic_model_ref")
         if not isinstance(model_ref, dict) or not isinstance(model_ref.get("document"), dict):
             continue
-        relative_path = path.relative_to(ontology_dir).as_posix()
         found.append(
             {
                 "semantic_model_name": str(model_ref.get("name") or model_ref["document"].get("name") or ""),
-                "mapping_file": f"subject/semantic_models/ontology/{datasource}/{relative_path}",
+                "mapping_file": f"subject/ontology/{path.name}",
                 "absolute_path": str(path.resolve(strict=False)),
             }
         )

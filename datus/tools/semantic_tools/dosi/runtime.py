@@ -550,7 +550,7 @@ class DosiRuntime:
         return bool(self.ontology_handles())
 
     def unpaired_ontologies(self) -> List[str]:
-        """Ontology files present for the datasource that pair with no model file."""
+        """Files in the ontology directory that bind no model of this datasource and no mapping uses."""
         self._catalog()
         return self._registry.unpaired_ontologies()
 

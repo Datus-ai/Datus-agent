@@ -2566,7 +2566,7 @@ def _ontology_config(tmp_path=None):
     config.current_db_config.return_value = None
     config.runtime_db_context.return_value = {}
     config.path_manager.semantic_model_path.return_value = "/tmp/models/flights_db"
-    config.path_manager.ontology_path.return_value = "/tmp/models/ontology/flights_db"
+    config.path_manager.ontology_dir = "/tmp/subject/ontology"
     return config
 
 
@@ -2599,9 +2599,9 @@ class TestOntologyToolRegistration:
 
     @staticmethod
     def _layout(tmp_path, *, plain_model: bool):
-        """A datasource's model dir (with or without a plain model) and its ontology dir with an inline mapping."""
-        models_dir = tmp_path / "semantic_models" / "flights_db"
-        ontology_dir = tmp_path / "semantic_models" / "ontology" / "flights_db"
+        """A datasource's model dir (with or without a plain model) and the project ontology dir with an inline mapping."""
+        models_dir = tmp_path / "subject" / "semantic_models" / "flights_db"
+        ontology_dir = tmp_path / "subject" / "ontology"
         models_dir.mkdir(parents=True)
         ontology_dir.mkdir(parents=True)
         if plain_model:
@@ -2614,7 +2614,7 @@ class TestOntologyToolRegistration:
         )
         config = _ontology_config()
         config.path_manager.semantic_model_path.return_value = str(models_dir)
-        config.path_manager.ontology_path.return_value = str(ontology_dir)
+        config.path_manager.ontology_dir = ontology_dir
         return config, ontology_dir
 
     def _runtime_config(self, config, **kwargs):

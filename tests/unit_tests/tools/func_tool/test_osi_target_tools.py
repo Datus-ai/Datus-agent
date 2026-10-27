@@ -603,9 +603,9 @@ def test_bound_revision_must_match_live_file(tmp_path):
 
 def _config_with_ontology(tmp_path: Path):
     config, model_dir = _config(tmp_path)
-    ontology_root = tmp_path / "subject" / "semantic_models" / "ontology"
-    config.path_manager.ontology_path = lambda datasource: ontology_root / datasource
-    return config, model_dir, ontology_root / "warehouse"
+    ontology_dir = tmp_path / "subject" / "ontology"
+    config.path_manager.ontology_dir = ontology_dir
+    return config, model_dir, ontology_dir
 
 
 def _write_mapping(path: Path, *, model_name: str = "northstar", inline: bool = True) -> None:
@@ -628,7 +628,7 @@ def _write_mapping(path: Path, *, model_name: str = "northstar", inline: bool = 
 
 def test_list_reports_a_model_inline_in_a_mapping_instead_of_missing(tmp_path):
     config, _, ontology_dir = _config_with_ontology(tmp_path)
-    _write_mapping(ontology_dir / "domains" / "northstar.mapping.yaml")
+    _write_mapping(ontology_dir / "northstar.mapping.yaml")
     (ontology_dir / "notes.yaml").write_text("cases: []\n", encoding="utf-8")
     state = OsiSemanticModelTargetState()
 
@@ -637,7 +637,7 @@ def test_list_reports_a_model_inline_in_a_mapping_instead_of_missing(tmp_path):
     assert result.success == 1
     assert result.result["status"] == "inline_in_mapping"
     assert result.result["code"] == "semantic_model_inline_in_mapping"
-    mapping_file = "subject/semantic_models/ontology/warehouse/domains/northstar.mapping.yaml"
+    mapping_file = "subject/ontology/northstar.mapping.yaml"
     assert result.result["inline_mapping_models"] == [
         {"semantic_model_name": "northstar", "mapping_file": mapping_file}
     ]
@@ -667,7 +667,7 @@ def test_bind_names_the_inline_mapping_instead_of_a_wrong_datasource(tmp_path, s
     mapping = ontology_dir / "northstar.mapping.yaml"
     _write_mapping(mapping)
     selector = {
-        "project_path": {"semantic_model_file": "subject/semantic_models/ontology/warehouse/northstar.mapping.yaml"},
+        "project_path": {"semantic_model_file": "subject/ontology/northstar.mapping.yaml"},
         "absolute_path": {"semantic_model_file": str(mapping)},
         "model_name": {"semantic_model_name": "northstar"},
     }[selector_kind]

@@ -1,10 +1,14 @@
-# Aviation scenario -- the mapping of the Aviation ontology (ontology.yaml)
-# onto the hand-written core model (model.yaml): an Apache Ossie mapping
-# document (apache/ossie#458), the three-file layout over a COMPLETE model.
+# Aviation scenario -- the mapping of the Aviation ontology
+# (aviation.ontology.yaml) onto the hand-written core model of the aviation
+# datasource: an Apache Ossie mapping document (apache/ossie#458), laid out
+# the way a Datus project keeps it. Ontologies and mappings share the flat
+# subject/ontology/ directory; models live under
+# subject/semantic_models/<datasource>/, and both references resolve by `iri`
+# against this file's directory.
 #
-# model.yaml already declares the relationships, primary keys and metrics
+# The model already declares the relationships, primary keys and metrics
 # that lowering would synthesize, and it wins: lowering only adds what it
-# lacks. Both references resolve by `iri` against this file's directory.
+# lacks.
 
 version: 0.2.0.dev0
 name: aviation_duckdb
@@ -12,10 +16,10 @@ description: Maps the Aviation ontology onto the aviation semantic model.
 
 ontology_ref:
   name: Aviation
-  iri: ./ontology.yaml
+  iri: ./aviation.ontology.yaml
 semantic_model_ref:
   name: aviation
-  iri: ./model.yaml
+  iri: ../semantic_models/aviation/aviation.yaml
 
 concept_mappings:
 - concept: Airport
