@@ -1,0 +1,27 @@
+steps:
+- kind: ddl
+  sql: CREATE TABLE {{db}}.orders (order_id INT, label STRING, order_date DATE, amount DECIMAL(18,2), customer_id
+    INT) STORED AS ORC
+- kind: insert
+  sql: INSERT INTO {{db}}.orders SELECT 1, CAST('中文' AS STRING), CAST('2024-01-15' AS DATE), CAST('10.50' AS DECIMAL(18,2)),
+    10 UNION ALL SELECT 2, CAST('中文' AS STRING), CAST('2024-01-20' AS DATE), CAST('20.00' AS DECIMAL(18,2)), 10
+    UNION ALL SELECT 3, CAST('English' AS STRING), CAST('2024-02-02' AS DATE), CAST('0' AS DECIMAL(18,2)), 20 UNION
+    ALL SELECT 4, CAST(NULL AS STRING), CAST('2024-02-29' AS DATE), CAST(NULL AS DECIMAL(18,2)), CAST(NULL AS INT)
+- kind: ddl
+  sql: CREATE TABLE {{db}}.customers (customer_id INT, region STRING) STORED AS ORC
+- kind: insert
+  sql: INSERT INTO {{db}}.customers SELECT 10, '北区' UNION ALL SELECT 20, '南区'
+- kind: ddl
+  sql: CREATE TABLE {{db}}.clock (id INT, started_at TIMESTAMP, ended_at TIMESTAMP) STORED AS ORC
+- kind: insert
+  sql: INSERT INTO {{db}}.clock SELECT 1, CAST('2023-12-31 23:59:00' AS TIMESTAMP), CAST('2024-01-01 00:01:00' AS
+    TIMESTAMP) UNION ALL SELECT 2, CAST('2024-02-29 12:20:00' AS TIMESTAMP), CAST('2024-02-29 12:40:00' AS TIMESTAMP)
+    UNION ALL SELECT 3, CAST(NULL AS TIMESTAMP), CAST('2024-03-01 00:00:00' AS TIMESTAMP)
+- kind: ddl
+  sql: CREATE TABLE {{db}}.partitioned_orders (order_id INT,amount DECIMAL(18,2)) PARTITIONED BY (p STRING) STORED
+    AS ORC
+- kind: insert
+  sql: INSERT INTO {{db}}.partitioned_orders PARTITION (p='2024-01') SELECT order_id,amount FROM {{db}}.orders WHERE
+    order_id<=2
+- kind: external_alias
+  sql: CREATE EXTERNAL TABLE {{db}}.external_orders LIKE {{db}}.orders LOCATION '{{orders_location}}'

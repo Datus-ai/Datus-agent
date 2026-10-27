@@ -14,29 +14,36 @@ OntologyAnalyst can also return **individual records**, such as "list the open P
 ## Prerequisites
 
 1. The datasource has executable semantic models under `subject/semantic_models/<datasource>/`, the same as for AskMetrics. The one exception is a mapping that carries its model inline (see below), which needs no model file.
-2. The ontology goes under `subject/semantic_models/ontology/<datasource>/`, with an Apache Ossie **mapping document** that says which model it binds:
+2. Ontologies go in the project-wide `subject/ontology/` directory, next to `semantic_models/`, together with Apache Ossie **mapping documents** that bind each ontology to semantic models:
 
     ```text
-    subject/semantic_models/
-    ├── aviation/
-    │   └── aviation.yaml            # OSI semantic model, named "aviation"
+    subject/
+    ├── semantic_models/
+    │   ├── aviation/
+    │   │   └── aviation.yaml                  # OSI semantic model
+    │   └── airline_ops/
+    │       └── crews.yaml
     └── ontology/
-        └── aviation/
-            ├── ontology.yaml        # Ossie ontology
-            └── mapping.yaml         # ontology_ref → ontology.yaml, semantic_model_ref → "aviation"
+        ├── aviation.ontology.yaml             # Ossie ontology
+        ├── aviation-aviation.mapping.yaml     # → ../semantic_models/aviation/aviation.yaml
+        └── aviation-crews.mapping.yaml        # → ../semantic_models/airline_ops/crews.yaml
     ```
 
-    The mapping's `semantic_model_ref.name` picks the model file whose semantic model has that name. Its `ontology_ref` finds the ontology by `iri` (relative to the mapping) or, without one, by name among the files in the directory. A mapping can also carry the ontology and the model inline under `document:`; it then needs no model file at all.
+    An ontology is not tied to one datasource: it may have several mapping documents, each mapping it onto one semantic model file, and those models may belong to different datasources. `subject/ontology/` is therefore flat; subdirectories are not read.
 
-    The older layout still works: one ontology file that embeds its mapping under `ontology_mappings`, named after the model file it describes. When a datasource has exactly one model file and one ontology file, the names do not have to match.
+    Each mapping names its model by `semantic_model_ref.iri`, a path relative to the mapping file. The datasource whose model directory that path lands in loads the mapping; other datasources ignore it. Its `ontology_ref` finds the ontology by `iri` (relative to the mapping) or, without one, by name among the ontology documents in the directory.
 
-    A file that pairs with nothing, or two mappings onto one model, is reported, not guessed. Files are told apart by their contents, not their names. No datasource can be named `ontology`.
+    The `<ontology>.ontology.yaml` / `<ontology>-<model>.mapping.yaml` names are only a convention for readers. Datus tells files apart by their contents and follows the references, never the file names.
 
-3. The installed `dosi-engine` must expose the ontology API (`Engine.describe` / `Engine.paths`). Mapping documents also need a build whose `Engine` accepts `mapping_path` (Datus-ai/osi-engine#303 or later). The older embedded layout works on either.
+    A mapping can also carry its model inline under `semantic_model_ref.document`. Such a mapping is a self-contained document that belongs to no datasource in particular: every datasource loads it, executed on that datasource's connection.
+
+    A mapping without a local model `iri`, one whose `iri` names a model file missing from the datasource's directory, two mappings onto one model, an ontology no mapping uses, and any other file in the directory are reported, not guessed.
+
+3. The installed `dosi-engine` must expose the ontology API (`Engine.describe` / `Engine.paths`) and load mapping documents (`Engine` accepts `mapping_path`, Datus-ai/osi-engine#303 or later).
 
 Only OntologyAnalyst loads the ontology. AskMetrics and every other agent keep working on the plain model.
 
-If any prerequisite is missing, OntologyAnalyst refuses on its first turn, says what is missing, and points to `ask_metrics`. It never falls back to a plain-metric answer without saying so. The main agent offers `ontology_analyst` for delegation only when the current datasource has an ontology directory with at least one file in it.
+If any prerequisite is missing, OntologyAnalyst refuses on its first turn, says what is missing, and points to `ask_metrics`. It never falls back to a plain-metric answer without saying so. The main agent offers `ontology_analyst` for delegation only when a mapping document in `subject/ontology/` binds a model of the current datasource (or carries its model inline).
 
 ## Quick Start: the Aviation Example
 
@@ -45,9 +52,8 @@ This walkthrough uses the aviation example shipped in the Datus-agent repository
 | File | Contents |
 |------|----------|
 | `tests/data/semantic_models/aviation/aviation.yaml` | OSI semantic model `aviation`: 9 tables, with delay, alert and passenger metrics |
-| `tests/data/semantic_models/ontology/aviation-mapping-document/ontology.yaml` | Ossie ontology: Flight, Airport, FlightAlert, Delay and other concepts, with their roles and value domains |
-| `tests/data/semantic_models/ontology/aviation-mapping-document/mapping.yaml` | Mapping document binding that ontology to the `aviation` model |
-| `tests/data/semantic_models/ontology/aviation/aviation.yaml` | The same ontology in the older embedded layout (ontology and mapping in one file) |
+| `tests/data/ontology/aviation.ontology.yaml` | Ossie ontology: Flight, Airport, FlightAlert, Delay and other concepts, with their roles and value domains |
+| `tests/data/ontology/aviation-aviation.mapping.yaml` | Mapping document binding that ontology to `semantic_models/aviation/aviation.yaml` |
 | `tests/data/semantic_models/aviation/seed.sql` | Seed data: 13 flights with their delays and alerts |
 
 ### 1. Prepare the project and the database
@@ -59,10 +65,9 @@ export DATUS_REPO=~/src/Datus-agent
 mkdir -p ~/ontology-demo && cd ~/ontology-demo
 
 # Model, ontology and mapping document, in the conventional layout
-mkdir -p subject/semantic_models/aviation subject/semantic_models/ontology/aviation
+mkdir -p subject/semantic_models/aviation subject/ontology
 cp $DATUS_REPO/tests/data/semantic_models/aviation/aviation.yaml subject/semantic_models/aviation/
-cp $DATUS_REPO/tests/data/semantic_models/ontology/aviation-mapping-document/{ontology,mapping}.yaml \
-   subject/semantic_models/ontology/aviation/
+cp $DATUS_REPO/tests/data/ontology/aviation{.ontology,-aviation.mapping}.yaml subject/ontology/
 
 # Build a DuckDB database from the seed (duckdb is installed with Datus)
 python -c "import duckdb, pathlib; duckdb.connect('aviation.duckdb').execute(pathlib.Path('$DATUS_REPO/tests/data/semantic_models/aviation/seed.sql').read_text())"
@@ -73,19 +78,17 @@ The result:
 ```text
 ~/ontology-demo/
 ├── aviation.duckdb
-└── subject/semantic_models/
-    ├── aviation/aviation.yaml
-    └── ontology/aviation/
-        ├── ontology.yaml
-        └── mapping.yaml
+└── subject/
+    ├── semantic_models/aviation/aviation.yaml
+    └── ontology/
+        ├── aviation.ontology.yaml
+        └── aviation-aviation.mapping.yaml
 ```
 
-`mapping.yaml` names its model with `semantic_model_ref.name: aviation`, which is the `name` inside `aviation.yaml`; the file names do not matter. Its `semantic_model_ref.iri` (`./model.yaml`) is not used here, because Datus hands the engine the matched model file.
-
-To try the older embedded layout instead, put the single file `tests/data/semantic_models/ontology/aviation/aviation.yaml` in `subject/semantic_models/ontology/aviation/` in place of the two files. The answers below are the same.
+`aviation-aviation.mapping.yaml` reaches its model by `semantic_model_ref.iri: ../semantic_models/aviation/aviation.yaml`, so it belongs to the `aviation` datasource, and its ontology by `ontology_ref.iri: ./aviation.ontology.yaml`.
 
 !!! tip "One-file layout"
-    A mapping document can also carry the ontology and the model inline under `document:`. The datasource then has only `subject/semantic_models/ontology/<datasource>/mapping.yaml` and no model directory. `tests/data/semantic_models/ontology/mini-flights-inline/` is a small example, with its own `seed.sql`.
+    A mapping document can also carry the ontology and the model inline under `document:`. It then needs no model directory, and every datasource loads it. `tests/data/ontology_inline/` is a small example, with its own `seed.sql`.
 
 ### 2. Register the datasource
 
@@ -141,12 +144,11 @@ Tool calls appear in the conversation. Things to look for:
 
 | Message | Cause and fix |
 |---------|---------------|
-| `ontology_analyst is unavailable: no ontology for datasource 'aviation'` | `subject/semantic_models/ontology/aviation/` is missing or empty. Check that the directory name matches the datasource name and that Datus was started in the project root |
-| `... pair with no semantic model file` | A mapping's `semantic_model_ref.name` matches no model (or two mappings name the same one), an old-layout ontology has no model file of its name, or the file is neither an ontology nor a mapping document (a semantic model belongs under `subject/semantic_models/<datasource>/`). Fix the name in the mapping, rename the ontology after the model it describes, or move the file out |
+| `ontology_analyst is unavailable: no ontology for datasource 'aviation'` | No mapping in `subject/ontology/` names a model under `subject/semantic_models/aviation/`. Check each mapping's `semantic_model_ref.iri`, that the model directory name matches the datasource name, and that Datus was started in the project root |
+| `... could not be bound to a semantic model` | Listed after `no ontology for datasource`. `subject/ontology/` is project-wide, so a listed file may belong to any datasource. A mapping has no local `semantic_model_ref.iri`, its `iri` names a model file missing from this datasource's directory or a path outside every `subject/semantic_models/<datasource>/`, two mappings name the same model, an ontology is used by no mapping, or the file is neither an ontology nor a mapping document (a semantic model belongs under `subject/semantic_models/<datasource>/`). Fix the mapping, add one for the ontology, or move the file out |
 | `the installed dosi-engine binding cannot describe ontologies` | `dosi-engine` is too old. Upgrade to a build whose `Engine` has `describe` and `paths` |
-| `... ontology_federation_unsupported` | An old-layout ontology embeds several `ontology_mappings`. Split them into mapping documents, one per model |
 | `... is an Ossie mapping document, and the installed dosi-engine cannot load one` | `dosi-engine` predates mapping documents. Upgrade it |
-| The main agent does not delegate to `ontology_analyst` | It is offered only when the current datasource has an ontology file. Use `/agent ontology_analyst` or `@Agent ontology_analyst` |
+| The main agent does not delegate to `ontology_analyst` | It is offered only when a mapping binds a model of the current datasource. Use `/agent ontology_analyst` or `@Agent ontology_analyst` |
 
 ## Usage
 

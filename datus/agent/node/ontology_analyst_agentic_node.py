@@ -21,9 +21,11 @@ logger = get_logger(__name__)
 class OntologyAnalystAgenticNode(AskMetricsAgenticNode):
     """AskMetrics plus the datasource's ontology: concepts, roles, value domains and record queries.
 
-    The ontology lives at ``subject/semantic_models/ontology/<datasource>/`` and
-    is loaded beside the model it shares a file stem with. Without one the node
-    refuses to run and points to ``ask_metrics``; it never degrades silently.
+    Ontologies live in ``subject/ontology/`` beside the mapping documents that
+    bind them to semantic models; each mapping reaches its model under
+    ``subject/semantic_models/<datasource>/`` by ``semantic_model_ref.iri``.
+    Without a mapping onto this datasource the node refuses to run and points
+    to ``ask_metrics``; it never degrades silently.
     """
 
     NODE_NAME = "ontology_analyst"
@@ -73,25 +75,29 @@ class OntologyAnalystAgenticNode(AskMetricsAgenticNode):
             return self.semantic_tools._runtime_unavailable_message()
 
         datasource = getattr(runtime, "datasource", None) or ""
-        ontology_dir = self._ontology_dir(datasource)
+        ontology_dir = self._ontology_dir()
         try:
             has_ontology = runtime.has_ontology()
         except Exception as exc:  # noqa: BLE001 - reported as the startup error
             return f"failed to load the ontology for datasource {datasource!r}: {exc}"
         if not has_ontology:
+            missing = (
+                f"no ontology for datasource {datasource!r}: no mapping document under {ontology_dir} names a model "
+                f"under subject/semantic_models/{datasource}/ by semantic_model_ref.iri"
+            )
+            # The directory is project-wide: these files may belong to any
+            # datasource, so they are listed as unbound, not as this one's.
             unpaired = runtime.unpaired_ontologies()
             if unpaired:
                 names = ", ".join(Path(path).name for path in unpaired)
                 return (
-                    f"file(s) {names} under {ontology_dir} pair with no semantic model file; "
-                    "write a mapping document whose semantic_model_ref names the model, "
-                    "name each ontology after the model file it describes, "
-                    "and keep only ontology and mapping documents in this directory"
+                    f"{missing}. File(s) {names} under {ontology_dir} could not be bound to a semantic model; "
+                    "give each mapping document a semantic_model_ref.iri naming its model file by relative path "
+                    "(../semantic_models/<datasource>/<model>.yaml), reference every ontology from a mapping, "
+                    "and keep only ontology and mapping documents in this directory. "
+                    "Or use ask_metrics for metric questions."
                 )
-            return (
-                f"no ontology for datasource {datasource!r}. Add one under {ontology_dir}/ "
-                "or use ask_metrics for metric questions."
-            )
+            return f"{missing}. Add an ontology and a mapping document onto one of its models, or use ask_metrics."
 
         from datus.utils.async_utils import run_async
 
@@ -102,11 +108,11 @@ class OntologyAnalystAgenticNode(AskMetricsAgenticNode):
         self._set_concept_catalog(catalog if isinstance(catalog, dict) else {})
         return None
 
-    def _ontology_dir(self, datasource: str) -> str:
+    def _ontology_dir(self) -> str:
         path_manager = getattr(self.agent_config, "path_manager", None)
-        if path_manager is None or not datasource:
-            return "subject/semantic_models/ontology/<datasource>"
-        return str(path_manager.ontology_path(datasource))
+        if path_manager is None:
+            return "subject/ontology"
+        return str(path_manager.ontology_dir)
 
     @staticmethod
     def _catalog_concepts(catalog: Dict[str, Any]) -> List[Dict[str, Any]]:

@@ -1,0 +1,403 @@
+cases:
+- id: standard.typed_orc
+  capabilities:
+  - types.standard
+  targets:
+  - hive
+  - inceptor
+  sql: SELECT id, label, nullable_text, day_value, ts_value, amount, flag FROM {{db}}.typed_values ORDER BY id
+  expected:
+    columns:
+    - id
+    - label
+    - nullable_text
+    - day_value
+    - ts_value
+    - amount
+    - flag
+    rows:
+    - - 1
+      - 中文
+      - null
+      - '2024-02-29'
+      - '2024-02-29 12:34:56.123'
+      - '1234567890123456789012345678.1234567890'
+      - true
+    - - 2
+      - ''
+      - present
+      - '2024-03-01'
+      - '2024-03-01 00:00:00'
+      - '-0.0000000001'
+      - false
+    types:
+    - int
+    - text
+    - text
+    - date
+    - timestamp
+    - decimal
+    - bool
+    ordered: true
+  expected_by_profile:
+    inceptor_ce_v1: &id001
+      columns:
+      - id
+      - label
+      - nullable_text
+      - day_value
+      - ts_value
+      - amount
+      - flag
+      rows:
+      - - 1
+        - 中文
+        - null
+        - '2024-02-29'
+        - '2024-02-29 12:34:56.123'
+        - '1234567890123456789012345678.1234567890'
+        - true
+      - - 2
+        - null
+        - present
+        - '2024-03-01'
+        - '2024-03-01 00:00:00'
+        - '-0.0000000001'
+        - false
+      types:
+      - int
+      - text
+      - text
+      - date
+      - timestamp
+      - decimal
+      - bool
+      ordered: true
+    inceptor_ce_v2: *id001
+    inceptor_ce_v2_non_utc: *id001
+- id: standard.unicode_formats
+  capabilities:
+  - types.standard
+  targets:
+  - hive
+  - inceptor
+  sql: 'SELECT CAST(''中文,引号"和换行
+
+    第二行'' AS STRING) AS label'
+  expected:
+    columns:
+    - label
+    rows:
+    - - '中文,引号"和换行
+
+        第二行'
+    types:
+    - text
+    ordered: false
+  formats:
+  - list
+  - csv
+  - pandas
+  - arrow
+- id: numeric.rounding
+  capabilities:
+  - types.exact_numeric
+  targets:
+  - hive
+  - inceptor
+  sql: SELECT CAST('123.456' AS DECIMAL(5,2)) AS rounded, CAST('1234' AS DECIMAL(5,2)) AS overflowed
+  expected:
+    columns:
+    - rounded
+    - overflowed
+    rows:
+    - - '123.46'
+      - null
+    types:
+    - decimal
+    - decimal
+    ordered: false
+- id: numeric.int64
+  capabilities:
+  - types.exact_numeric
+  targets:
+  - hive
+  - inceptor
+  sql: SELECT CAST(9007199254740993 AS BIGINT) AS n
+  expected:
+    columns:
+    - n
+    rows:
+    - - 9007199254740993
+    types:
+    - int
+    ordered: false
+- id: standard.char_padding
+  capabilities:
+  - types.standard
+  targets:
+  - hive
+  - inceptor
+  sql: SELECT CAST('a' AS CHAR(4)) AS padded, CAST('a ' AS VARCHAR(4)) AS varying_value
+  expected:
+    columns:
+    - padded
+    - varying_value
+    rows:
+    - - 'a   '
+      - 'a '
+    types:
+    - text
+    - text
+    ordered: false
+  expected_by_profile:
+    inceptor_ce_v1: &id002
+      columns:
+      - padded
+      - varying_value
+      rows:
+      - - 'a   '
+        - a
+      types:
+      - text
+      - text
+      ordered: false
+    inceptor_ce_v2: *id002
+    inceptor_ce_v2_non_utc: *id002
+- id: standard.binary
+  capabilities:
+  - types.standard
+  targets:
+  - hive
+  - inceptor
+  sql: SELECT UNHEX('00FF41') AS payload
+  expected:
+    columns:
+    - payload
+    rows:
+    - - base64:AP9B
+    types:
+    - binary
+    ordered: false
+- id: standard.complex
+  capabilities:
+  - types.standard
+  targets:
+  - hive
+  - inceptor
+  sql: SELECT SIZE(ARRAY(1,2)) AS array_size, NAMED_STRUCT('x',1).x AS struct_value, MAP('k',2)['k'] AS map_value
+  expected:
+    columns:
+    - array_size
+    - struct_value
+    - map_value
+    rows:
+    - - 2
+      - 1
+      - 2
+    types:
+    - int
+    - int
+    - int
+    ordered: false
+- id: vendor.stored_values
+  capabilities:
+  - types.vendor
+  targets:
+  - inceptor
+  sql: SELECT id, label, fixed_value, time_value FROM {{db}}.vendor_values ORDER BY id
+  expected:
+    columns:
+    - id
+    - label
+    - fixed_value
+    - time_value
+    rows:
+    - - 1
+      - 中文
+      - 'fixed   '
+      - '10:07:05'
+    - - 2
+      - null
+      - null
+      - null
+    types:
+    - int
+    - text
+    - text
+    - time
+    ordered: true
+- id: vendor.varchar2_formats
+  capabilities:
+  - types.vendor
+  targets:
+  - inceptor
+  sql: SELECT CAST('中文' AS VARCHAR2(20)) AS label
+  expected:
+    columns:
+    - label
+    rows:
+    - - 中文
+    types:
+    - text
+    ordered: false
+  formats:
+  - list
+  - csv
+  - pandas
+  - arrow
+- id: vendor.interval_ym
+  capabilities:
+  - types.vendor
+  targets:
+  - inceptor
+  sql: SELECT INTERVAL '-1-2' YEAR TO MONTH AS value
+  expected:
+    columns:
+    - value
+    rows:
+    - - -1-2
+    types:
+    - text
+    ordered: false
+- id: vendor.interval_ds
+  capabilities:
+  - types.vendor
+  targets:
+  - inceptor
+  sql: SELECT INTERVAL '2 03:04:05.006' DAY TO SECOND AS value
+  expected:
+    columns:
+    - value
+    rows:
+    - - 2 03:04:05.006000000
+    types:
+    - text
+    ordered: false
+- id: vendor.time_boundary
+  capabilities:
+  - types.vendor
+  targets:
+  - inceptor
+  sql: SELECT CAST('24:00:00' AS TIME) AS value
+  expected:
+    columns:
+    - value
+    rows:
+    - - '24:00:00'
+    types:
+    - text
+    ordered: false
+  expected_by_profile:
+    inceptor_ce_v1: &id003
+      columns:
+      - value
+      rows:
+      - - null
+      types:
+      - text
+      ordered: false
+    inceptor_ce_v2: *id003
+    inceptor_ce_v2_non_utc: *id003
+- id: vendor.geo
+  capabilities:
+  - types.vendor
+  targets:
+  - inceptor
+  sql: SELECT CAST('POINT (1 2)' AS GEO) AS value
+  expected:
+    columns:
+    - value
+    rows:
+    - - POINT (1 2)
+    types:
+    - text
+    ordered: false
+- id: vendor.json
+  capabilities:
+  - types.vendor
+  targets:
+  - inceptor
+  sql: SELECT JSON_PARSE('{"nested":[1,null,"json"]}') AS value
+  expected:
+    columns:
+    - value
+    rows:
+    - - nested:
+        - 1
+        - null
+        - json
+    types:
+    - json
+    ordered: false
+- id: standard.numeric_families
+  capabilities:
+  - types.standard
+  targets:
+  - hive
+  - inceptor
+  sql: SELECT CAST(-128 AS TINYINT) AS tiny_value, CAST(32767 AS SMALLINT) AS small_value, CAST(-2147483648 AS INT)
+    AS int_value, CAST(1.25 AS FLOAT) AS float_value, CAST(1.5 AS DOUBLE) AS double_value
+  expected:
+    columns:
+    - tiny_value
+    - small_value
+    - int_value
+    - float_value
+    - double_value
+    rows:
+    - - -128
+      - 32767
+      - -2147483648
+      - '1.25'
+      - '1.5'
+    types:
+    - int
+    - int
+    - int
+    - decimal
+    - decimal
+    ordered: false
+- id: standard.long_unicode
+  capabilities:
+  - types.standard
+  targets:
+  - hive
+  - inceptor
+  sql: SELECT REPEAT('中文',128) AS label
+  expected:
+    columns:
+    - label
+    rows:
+    - - 中文中文中文中文中文中文中文中文中文中文中文中文中文中文中文中文中文中文中文中文中文中文中文中文中文中文中文中文中文中文中文中文中文中文中文中文中文中文中文中文中文中文中文中文中文中文中文中文中文中文中文中文中文中文中文中文中文中文中文中文中文中文中文中文中文中文中文中文中文中文中文中文中文中文中文中文中文中文中文中文中文中文中文中文中文中文中文中文中文中文中文中文中文中文中文中文中文中文中文中文中文中文中文中文中文中文中文中文中文中文中文中文中文中文中文中文中文中文中文中文中文中文中文中文中文中文中文中文
+    types:
+    - text
+    ordered: false
+- id: vendor.clob
+  capabilities:
+  - types.vendor
+  targets:
+  - inceptor
+  sql: SELECT CAST('中文' AS CLOB) AS label
+  expected:
+    columns:
+    - label
+    rows:
+    - - 中文
+    types:
+    - text
+    ordered: false
+- id: vendor.blob
+  capabilities:
+  - types.vendor
+  targets:
+  - inceptor
+  sql: SELECT CAST('abc' AS BLOB) AS payload
+  expected:
+    columns:
+    - payload
+    rows:
+    - - base64:YWJj
+    types:
+    - binary
+    ordered: false

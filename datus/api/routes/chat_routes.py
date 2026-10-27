@@ -238,9 +238,12 @@ async def stream_chat_feedback(
 async def resume_chat(
     request: ResumeChatInput,
     svc: ServiceDep,
+    ctx: AppContextDep,
 ):
     task_manager = svc.task_manager
     task = task_manager.get_task(request.session_id)
+    if task is not None and task.user_id != ctx.user_id:
+        raise HTTPException(status_code=404, detail="Task not found")
     if task is None:
         return Result[dict](
             success=False,
@@ -522,6 +525,7 @@ async def insert_message(
 async def submit_tool_result(
     request: ToolResultInput,
     svc: ServiceDep,
+    ctx: AppContextDep,
 ) -> Result[ToolResultData]:
     """Receive tool execution result from frontend."""
     task_manager = svc.task_manager
@@ -536,6 +540,9 @@ async def submit_tool_result(
             errorCode="TASK_NOT_FOUND",
             errorMessage="No active task found for this session",
         )
+
+    if getattr(task.node, "scope", None) != ctx.user_id:
+        raise HTTPException(status_code=404, detail="No active task found for this session")
 
     logger.info(f"Received tool_result: session_id={request.session_id}, call_id={request.call_tool_id}")
     delivered = await task.node.tool_channel.publish(request.call_tool_id, request.tool_result.model_dump())

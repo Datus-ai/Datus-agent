@@ -430,6 +430,17 @@ class ModelConfig:
     #   str   -> path to a CA bundle (PEM) to additionally trust (e.g. a private gateway CA)
     # When set, takes priority over the SSL_VERIFY / SSL_CERT_FILE environment variables.
     ssl_verify: Optional[Union[bool, str]] = None
+    context_length: Optional[int] = None
+    max_tokens: Optional[int] = None
+    tokenizer_ref: Optional[str] = None
+
+    def __post_init__(self) -> None:
+        for name in ("context_length", "max_tokens"):
+            value = getattr(self, name)
+            if value is not None and (isinstance(value, bool) or not isinstance(value, int) or value <= 0):
+                raise ValueError(f"{name} must be a positive integer")
+        if self.tokenizer_ref is not None and (not isinstance(self.tokenizer_ref, str) or not self.tokenizer_ref):
+            raise ValueError("tokenizer_ref must be a non-empty tokenizer path or reference")
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -771,6 +782,7 @@ class AgentConfig:
     knowledge_base: Dict[str, Any]
     logging: LoggingConfig
     observability: ObservabilityConfig
+    mcp_tool_execution: Dict[str, int]
 
     def __init__(self, nodes: Dict[str, NodeConfig], **kwargs):
         """
@@ -785,6 +797,13 @@ class AgentConfig:
             )
         # Resolve home early so dependent helpers can use a stable path manager.
         self.home = kwargs.get("home", "~/.datus")
+        mcp_execution_raw = kwargs.get("mcp_tool_execution")
+        if mcp_execution_raw is not None and not isinstance(mcp_execution_raw, Mapping):
+            logger.warning(
+                "agent.mcp_tool_execution must be a mapping; got %s. Using defaults.",
+                type(mcp_execution_raw).__name__,
+            )
+        self.mcp_tool_execution = dict(mcp_execution_raw) if isinstance(mcp_execution_raw, Mapping) else {}
         # project_name must be computed before _set_path_manager so shard-aware
         # directories (sessions/, data/) bind to the right project.  When the
         # user explicitly sets ``agent.project_name`` in YAML we must validate
@@ -3079,6 +3098,9 @@ def load_model_config(data: dict) -> ModelConfig:
         auth_type=data.get("auth_type", "api_key"),
         use_native_api=data.get("use_native_api", False),
         ssl_verify=_load_ssl_verify(data),
+        context_length=data.get("context_length"),
+        max_tokens=data.get("max_tokens"),
+        tokenizer_ref=data.get("tokenizer_ref"),
     )
 
 

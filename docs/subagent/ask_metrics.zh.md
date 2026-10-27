@@ -82,8 +82,9 @@ graph LR
 
 - 优先使用主题树中的直接指标匹配，而不是搜索。
 - 只有在主题树缺失、不完整或存在歧义时才使用 `search_metrics`。
-- 分组、过滤或归因前会先调用 `get_metric`。
-- 分组维度直接使用 `get_metric.dimensions[].name` 返回的名称，包括其中的数据集限定名。
+- 查询每个指标前先调用 `get_metric`，看它怎么算（`expr`）、读哪些数据集、可以按哪些数据集分组、有哪些参数和时间粒度。
+- 查询用到的每个数据集都先调用 `get_dataset`。数据集和字段的描述里写着查询它时要遵守的约定，比如快照取哪一天、编码值代表什么。
+- 分组和过滤的字段写成 `dataset.field`，字段名用 `get_dataset` 显示的名字。
 - `query_metrics` 是查询指标值的主要工具。
 - 变化解释和贡献分析问题使用 `attribution_analyze`。
 - 默认工具面不包含原始 SQL 工具。
@@ -95,7 +96,8 @@ graph LR
 | `context_search_tools.search_metrics` | 当主题树无法直接匹配时搜索候选指标 |
 | `context_search_tools.list_subject_tree` | 当启动时主题树过大、只能内联部分内容时列出指标主题路径 |
 | `semantic_tools.list_metrics` | 从 Dosi 列出可执行指标 |
-| `semantic_tools.get_metric` | 描述单个指标：可查询维度、时间轴和粒度 |
+| `semantic_tools.get_metric` | 描述单个指标：怎么算、读哪些数据集、可按哪些数据集分组、参数和时间粒度 |
+| `semantic_tools.get_dataset` | 描述单个数据集：字段及其定义、fixed 字段、时间字段和关联 |
 | `semantic_tools.query_metrics` | 查询指标值 |
 | `semantic_tools.attribution_analyze` | 按候选维度解释指标变化 |
 

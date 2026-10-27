@@ -161,7 +161,7 @@ The result reports `generated`, `skipped`, or `blocked`. A blocked result identi
 
 Key declarations come only from source DDL: physical primary keys become `primary_key`, and unique constraints or whole-table unique indexes on plain columns become `unique_keys`, preserving composite-column order. Semantic modeling does not scan table data to discover or verify keys. Missing key evidence leaves the key and an ordinary `many_to_one` relationship requiring that target key undeclared; it does not prevent using a physical source. Supported `many_to_many` fact pairings follow the active DATUS contract, aggregate each fact separately, and do not assert target-row uniqueness. If a particular output still cannot be represented faithfully, its limitation is reported while independent physical datasets and metrics are retained. Moving a JOIN into SQL does not prove uniqueness. The final model still undergoes `validate_semantic` validation.
 
-The optional `write_semantic_model_plan_file` tool writes a review graph without changing the semantic model. Enable it only for a planning workflow by including `semantic_tools.write_semantic_model_plan_file` explicitly in the node's existing `tools` configuration. A category wildcard alone does not expose it; ordinary authoring needs no plan file. Its tool specification defines the plan object format, which differs from OSI model objects.
+The `write_semantic_model_plan_file` tool is available by default to write a review graph without changing the semantic model. Use it as directed by a planning workflow; ordinary authoring needs no plan file. Permission rules still apply. Its tool specification defines the plan object format, which differs from OSI model objects.
 
 ## Generated files and organization
 

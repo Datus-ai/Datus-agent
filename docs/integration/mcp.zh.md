@@ -39,6 +39,54 @@ datus-mcp --dynamic --transport http --host 127.0.0.1 --port 8000
 datus-mcp --dynamic --transport sse --host 127.0.0.1 --port 8000
 ```
 
+## 同步工具与容量限制
+
+动态和静态模式均在线程池中执行同步工具、插件参数转换和结果格式化，
+并传递请求的 ContextVars；异步工具在请求的事件循环中等待执行。
+所有工具和数据源共享同一 MCP 服务的线程池，可在 `agent.yml` 配置：
+
+```yaml
+agent:
+  mcp_tool_execution:
+    max_workers: 8
+    max_queue_size: 16
+```
+
+以上为默认值。工作线程数必须为正数，排队数必须非负。
+运行和排队总数达到上限后，新调用立即返回 MCP 工具错误，客户端可稍后重试。
+该线程池独立于 asyncio 默认线程池。
+
+容量参数接受整数字符串；未知字段、布尔值和小数会产生配置错误。
+`mcp_tool_execution` 不是映射时使用默认配置。
+已缓存的数据源上下文在缓存锁可用时直接获取，不占用工具线程，
+也不等待其他数据源的初始化锁。
+
+取消请求不会终止已提交的阻塞数据库调用，也不会提前释放容量；
+任务实际结束后才释放名额。还需配置数据源适配器的连接及 socket/read 超时，
+HTTP 或 asyncio 超时本身无法停止 StarRocks/PyMySQL 读取。
+应确认适配器将超时传递给数据库驱动：`timeout_seconds` 可能仅限制连接池等待，
+并不限制 socket 读取。适配器层的超时修复需要在独立发布的数据库适配器包中完成。
+关闭服务时停止接收任务，不在事件循环中等待阻塞读取结束。
+
+HTTP/SSE 请求以及排队或运行中的工具会持有动态上下文引用。LRU 淘汰只标记上下文
+待清理，最后一个使用者结束后才在后台关闭连接；调用者取消但线程仍在运行时也会保留引用。
+关闭服务不等待数据源初始化完成；关闭后才完成初始化的上下文会被清理，不会重新进入缓存。
+
+静态服务器也会保留连接，直到所有已提交的工具调用真正结束，包括请求已取消的调用。
+`close()` 标记工具待清理，并在后台关闭连接，不会同步关闭仍在使用的连接。
+
+嵌入后端仍可使用原有的异步 `get_or_create_context()` 和同步 `close_all()` manager 接口。
+注入对象的身份及配置管理方式保持兼容。兼容层只串行处理同一数据源/子代理键的查询；
+某个键的初始化或权限 I/O 卡住时，其他键仍可正常处理请求。
+此前返回的上下文会在权限刷新前获得引用保护，避免并发淘汰提前关闭连接。
+返回的 `ToolContext` 会继续由请求持有，淘汰时的 `close()` 延迟到最后一个使用者结束后清理。
+manager 应从空缓存启动，所有查询通过此服务器执行，并在初始化及权限 I/O 完成后写入新缓存项，
+写入到返回之间不得再次让出事件循环。
+尚未完成的查询结束后，才在清理线程执行 `close_all()`。
+此类 manager 使用默认的有界工具线程池；其异步查询方法仍需自行将阻塞初始化移出事件循环。
+
+嵌入此库的后端需要更新 Datus-agent 依赖或子模块，并重新构建镜像才能交付修复。
+
 ## 客户端集成
 
 ### Claude Code
@@ -230,7 +278,7 @@ MCP 服务注册以下工具。实际可用情况取决于数据源和已配置�
 | --- | --- |
 | **数据库** | `check_datasource_quality`, `describe_table`, `execute_sql`, `get_migration_capabilities`, `import_database_file`, `list_databases`, `list_schemas`, `list_tables`, `load_file_as_table`, `plan_datasource`, `search_table`, `suggest_table_layout`, `validate_ddl` |
 | **上下文搜索** | `get_reference_sql`, `list_subject_tree`, `search_metrics`, `search_reference_sql`, `search_semantic_objects` |
-| **语义模型** | `attribution_analyze`, `get_metric`, `get_query_metrics_result`, `list_metrics`, `query_metrics`, `validate_semantic` |
+| **语义模型** | `attribution_analyze`, `get_dataset`, `get_metric`, `get_query_metrics_result`, `list_metrics`, `query_metrics`, `validate_semantic` |
 | **参考模板** | `execute_reference_template`, `get_reference_template`, `render_reference_template`, `search_reference_template` |
 | **日期解析** | `parse_temporal_expressions` |
 | **平台文档** | `get_document`, `list_document_nav`, `search_document` |

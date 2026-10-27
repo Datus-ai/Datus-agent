@@ -51,6 +51,25 @@ class _StubModel(LLMBaseModel):
         return None
 
 
+def test_summary_capacity_supports_models_without_output_spec_lookup():
+    model = _StubModel(lambda *_args, **_kwargs: "ok")
+    model.model_config.context_length = 128000
+    model.model_config.tokenizer_ref = "tiktoken:cl100k_base"
+    # Some model implementations only expose config + context_length. An
+    # explicit summary output limit must work without a vendor max_tokens API.
+    capacity = model.request_capacity()
+    assert capacity.check({"messages": [{"role": "user", "content": "Summarize the saved facts"}]}, output=4000) > 0
+
+
+def test_model_without_spec_lookup_or_capacity_settings_uses_default_budget():
+    model = _StubModel(lambda *_args, **_kwargs: "ok")
+    capacity = model.request_capacity()
+    assert capacity.context_length == 262144
+    assert capacity.default_output == 8192
+    assert capacity.counter_source == "utf8_byte_upper_bound"
+    assert model.check_request({"messages": [{"role": "user", "content": "hello"}]})["max_tokens"] == 8192
+
+
 class TestTestConnection:
     def test_returns_ok_on_successful_generate(self):
         model = _StubModel(lambda _p, **_k: "pong")
@@ -422,6 +441,7 @@ class _CompactingFakeNode:
         first_call=False,
         archive_history=False,
         pending_user_turns=0,
+        output_tokens=None,
     ):
         from datus.agent.node.context_rewriter import build_mid_turn_view, estimate_items_tokens
 

@@ -1824,7 +1824,22 @@ class TestOntologyAnalystOffering:
         config.current_datasource = datasource
         config.agentic_nodes = {}
         config.path_manager = DatusPathManager(datus_home=tmp_path / "home", project_root=tmp_path / "project")
-        return SubAgentTaskTool(agent_config=config), config.path_manager.ontology_path(datasource)
+        models_dir = config.path_manager.semantic_models_dir / datasource
+        models_dir.mkdir(parents=True, exist_ok=True)
+        (models_dir / "aviation.yaml").write_text("version: 0.2.0.dev0\nname: aviation\ndatasets: []\n")
+        return SubAgentTaskTool(agent_config=config), config.path_manager.ontology_dir
+
+    @staticmethod
+    def _write_group(ontology_dir, datasource, mapping_name="aviation-aviation.mapping.yaml"):
+        """aviation.ontology.yaml plus a mapping onto ``semantic_models/<datasource>/aviation.yaml``."""
+        ontology_dir.mkdir(parents=True, exist_ok=True)
+        (ontology_dir / "aviation.ontology.yaml").write_text("version: 0.2.0.dev0\nname: Aviation\nontology: []\n")
+        (ontology_dir / mapping_name).write_text(
+            "version: 0.2.0.dev0\nname: m\n"
+            "ontology_ref: {name: Aviation, iri: ./aviation.ontology.yaml}\n"
+            f"semantic_model_ref: {{name: aviation, iri: ../semantic_models/{datasource}/aviation.yaml}}\n"
+            "concept_mappings: []\n"
+        )
 
     def test_not_offered_without_ontology_dir(self, tmp_path):
         tool, _ = self._tool(tmp_path)
@@ -1832,28 +1847,34 @@ class TestOntologyAnalystOffering:
         assert "ontology_analyst" not in types
         assert "- ontology_analyst:" not in tool._build_task_description()
 
-    def test_not_offered_for_empty_ontology_dir(self, tmp_path):
+    def test_not_offered_without_a_mapping(self, tmp_path):
         tool, ontology_dir = self._tool(tmp_path)
         ontology_dir.mkdir(parents=True)
         (ontology_dir / "README.txt").write_text("not an ontology")
+        # An ontology alone binds no model: a mapping does.
+        (ontology_dir / "aviation.yaml").write_text("version: 0.2.0.dev0\nname: Aviation\nontology: []\n")
         assert "ontology_analyst" not in tool._get_available_types()
 
-    @pytest.mark.parametrize("filename", ["aviation.yaml", "aviation.yml", "nested/aviation.json"])
-    def test_offered_when_datasource_has_ontology(self, tmp_path, filename):
+    def test_offered_when_a_mapping_binds_a_model_of_the_datasource(self, tmp_path):
         tool, ontology_dir = self._tool(tmp_path)
-        target = ontology_dir / filename
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text("ontology: []\n")
+        self._write_group(ontology_dir, "flights_db")
         types = tool._get_available_types()
         assert "ontology_analyst" in types
         assert BUILTIN_SUBAGENT_DESCRIPTIONS["ontology_analyst"] in tool._build_task_description()
 
-    def test_other_datasource_ontology_does_not_count(self, tmp_path):
+    def test_a_mapping_onto_another_datasource_does_not_count(self, tmp_path):
         tool, _ = self._tool(tmp_path, datasource="flights_db")
-        _, other_dir = self._tool(tmp_path, datasource="other_db")
-        other_dir.mkdir(parents=True)
-        (other_dir / "o.yaml").write_text("ontology: []\n")
+        _, ontology_dir = self._tool(tmp_path, datasource="other_db")
+        self._write_group(ontology_dir, "other_db")
         assert "ontology_analyst" not in tool._get_available_types()
+
+    def test_one_ontology_mapped_onto_two_datasources_is_offered_for_both(self, tmp_path):
+        flights, ontology_dir = self._tool(tmp_path, datasource="flights_db")
+        other, _ = self._tool(tmp_path, datasource="other_db")
+        self._write_group(ontology_dir, "flights_db", "aviation-flights.mapping.yaml")
+        self._write_group(ontology_dir, "other_db", "aviation-other.mapping.yaml")
+        assert "ontology_analyst" in flights._get_available_types()
+        assert "ontology_analyst" in other._get_available_types()
 
 
 # ── Built-in subagent: _resolve_node_type ──────────────────────────
@@ -3179,3 +3200,71 @@ class TestSubagentInheritsParentDatabase:
         )
 
         node.setup_tools.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_task_delegation_reviews_plans_through_the_parent_session(task_tool, tmp_path):
+    from datus.tools.func_tool.semantic_plan_file_tools import SemanticPlanFileTools
+    from datus.tools.proxy.semantic_plan_review import apply_semantic_plan_review
+    from datus.tools.proxy.tool_result_channel import ToolResultChannel
+
+    class ReadyChannel(ToolResultChannel):
+        async def wait_for(self, call_id, timeout=None):
+            waiting.set()
+            return await super().wait_for(call_id, timeout)
+
+    waiting = asyncio.Event()
+    parent = SimpleNamespace(
+        tools=[],
+        semantic_plan_file_tool=None,
+        tool_channel=ReadyChannel(),
+        proxied_tool_names=set(),
+        proxy_tool_patterns=[],
+        session_id=None,
+        scope="owner",
+        pending_input_queue=None,
+    )
+    apply_semantic_plan_review(parent)
+    task_tool.set_parent_node(parent)
+    writer = SemanticPlanFileTools(tmp_path)
+    child = MagicMock()
+    child.semantic_plan_file_tool = writer
+    child.tools = writer.available_tools()
+    child.proxied_tool_names = set()
+    child.scope = "owner"
+    child.session_id = "semantic_modeling_session_test"
+    child.session_manager = None
+    observed = []
+
+    async def stream(*_args):
+        observed.append(
+            await child.tools[0].on_invoke_tool(
+                SimpleNamespace(tool_call_id="nested-call"), json.dumps({"model_name": "sales", "plan_json": {}})
+            )
+        )
+        return
+        yield  # pragma: no cover
+
+    child.execute_stream_with_interactions = stream
+    with (
+        patch.object(task_tool, "_create_node", return_value=child),
+        patch.object(task_tool, "_refresh_node_db_tools"),
+        patch.object(task_tool, "_build_node_input"),
+    ):
+        pending = asyncio.create_task(task_tool._execute_node("semantic_modeling", "plan sales"))
+        try:
+            await asyncio.wait_for(waiting.wait(), 2)
+            preview = parent.tool_review_previews["nested-call"]
+            child.action_bus.put.assert_called_once()
+            assert child.action_bus.put.call_args.args[0].output["preview"] == preview
+            assert not (tmp_path / preview["filePath"]).exists()
+            assert "write_semantic_model_plan_file" in parent.proxied_tool_names
+            assert "write_semantic_model_plan_file" in child.proxied_tool_names
+            await parent.tool_channel.publish("nested-call", {"success": 1})
+            await pending
+            assert observed[0]["result"]["review_status"] == "accepted"
+            assert (tmp_path / preview["filePath"]).read_text() == preview["newText"]
+            assert not parent.tool_review_previews
+        finally:
+            parent.tool_channel.cancel_all()
+            await pending

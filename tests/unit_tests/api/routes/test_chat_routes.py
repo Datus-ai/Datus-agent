@@ -777,6 +777,7 @@ def _tool_result_input(call_id="call_1", session_id="sess1"):
 def _task_with_channel(channel):
     task = MagicMock()
     task.node.tool_channel = channel
+    task.node.scope = "owner"
     return task
 
 
@@ -786,7 +787,7 @@ class TestSubmitToolResult:
         channel = ToolResultChannel()
         svc = _mock_svc(task=_task_with_channel(channel))
 
-        result = await submit_tool_result(_tool_result_input(), svc)
+        result = await submit_tool_result(_tool_result_input(), svc, MagicMock(user_id="owner"))
 
         assert result.success is True
         assert result.data.status == "received"
@@ -801,7 +802,7 @@ class TestSubmitToolResult:
         await channel.publish("call_1", {"success": 1})
         svc = _mock_svc(task=_task_with_channel(channel))
 
-        result = await submit_tool_result(_tool_result_input(), svc)
+        result = await submit_tool_result(_tool_result_input(), svc, MagicMock(user_id="owner"))
 
         assert result.success is True
         assert result.data.status == "ignored"
@@ -810,7 +811,104 @@ class TestSubmitToolResult:
     async def test_unknown_task_returns_not_found(self):
         svc = _mock_svc(task=None)
 
-        result = await submit_tool_result(_tool_result_input(), svc)
+        result = await submit_tool_result(_tool_result_input(), svc, MagicMock(user_id="owner"))
 
         assert result.success is False
         assert result.errorCode == "TASK_NOT_FOUND"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("decision", [0, 1])
+async def test_http_tool_result_requires_the_session_owner(tmp_path, decision):
+    """An authenticated project peer cannot accept or cancel another user's review."""
+    import asyncio
+    from types import SimpleNamespace
+
+    from fastapi import FastAPI, Request
+    from httpx import ASGITransport, AsyncClient
+
+    from datus.api.deps import get_app_context, get_datus_service
+    from datus.api.routes.chat_routes import router
+    from datus.tools.func_tool.semantic_plan_file_tools import SemanticPlanFileTools
+    from datus.tools.proxy.semantic_plan_review import apply_semantic_plan_review
+
+    writer = SemanticPlanFileTools(tmp_path)
+    node = SimpleNamespace(
+        action_bus=MagicMock(),
+        semantic_plan_file_tool=writer,
+        tools=writer.available_tools(),
+        tool_channel=ToolResultChannel(),
+        proxied_tool_names=set(),
+        scope="owner",
+    )
+    apply_semantic_plan_review(node)
+    svc = _mock_svc(SimpleNamespace(node=node, status="running"))
+    app = FastAPI()
+    app.include_router(router)
+    app.dependency_overrides[get_datus_service] = lambda: svc
+
+    def context(request: Request):
+        return SimpleNamespace(user_id=request.headers["x-user"])
+
+    app.dependency_overrides[get_app_context] = context
+    pending = asyncio.create_task(
+        node.tools[0].on_invoke_tool(
+            SimpleNamespace(tool_call_id="plan-call"), json.dumps({"model_name": "sales", "plan_json": {}})
+        )
+    )
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            query = {"session_id": "s1", "call_tool_id": "plan-call"}
+            for _ in range(100):
+                if "plan-call" in node.tool_review_previews:
+                    break
+                await asyncio.sleep(0.01)
+            preview = node.tool_review_previews["plan-call"]
+            payload = {**query, "tool_result": {"success": decision}}
+            for _ in range(2):
+                rejected = await client.post("/api/v1/chat/tool_result", json=payload, headers={"x-user": "peer"})
+                assert rejected.status_code == 404
+                assert not pending.done()
+                assert not list(tmp_path.rglob("semantic-model-plan.json"))
+            accepted = await client.post(
+                "/api/v1/chat/tool_result", json={**query, "tool_result": {"success": 1}}, headers={"x-user": "owner"}
+            )
+            assert accepted.status_code == 200
+            result = await pending
+            assert result["result"]["review_status"] == "accepted"
+            assert (tmp_path / preview["filePath"]).read_text() == preview["newText"]
+    finally:
+        node.tool_channel.cancel_all()
+        pending.cancel()
+        await asyncio.gather(pending, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("user,status", [("owner", 200), ("peer", 404)])
+async def test_resume_stream_is_scoped_to_the_task_owner(user, status):
+    from types import SimpleNamespace
+
+    from fastapi import FastAPI, Request
+    from httpx import ASGITransport, AsyncClient
+
+    from datus.api.deps import get_app_context, get_datus_service
+    from datus.api.routes.chat_routes import router
+    from datus.api.services.chat_task_manager import ChatTask, ChatTaskManager
+
+    task = ChatTask("review-session", None, user_id="owner")
+    task.status = "completed"
+    manager = ChatTaskManager()
+    manager._completed_tasks[task.session_id] = task
+    app = FastAPI()
+    app.include_router(router)
+    app.dependency_overrides[get_datus_service] = lambda: SimpleNamespace(task_manager=manager)
+
+    def context(request: Request):
+        return SimpleNamespace(user_id=request.headers["x-user"])
+
+    app.dependency_overrides[get_app_context] = context
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.post(
+            "/api/v1/chat/resume", json={"session_id": task.session_id}, headers={"x-user": user}
+        )
+    assert response.status_code == status

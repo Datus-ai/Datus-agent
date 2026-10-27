@@ -96,7 +96,7 @@ def bake_metric_snapshots(artifact_dir: Path, refs, semantic_tools, *, artifact_
             detail = None
             if semantic_tools is not None:
                 try:
-                    result = semantic_tools.get_metric(name=ref.name, path=ref.path)
+                    result = semantic_tools.metric_record(name=ref.name, path=ref.path)
                     if result.success and isinstance(result.result, dict):
                         candidate = result.result
                         if candidate.get("name") == ref.name and candidate.get("path") == ref.path:

@@ -140,6 +140,62 @@ agent:
     api_key: "sk-your-actual-key-here"
     ```
 
+
+### Context capacity and large tool results
+
+Each model request reserves its maximum output and a safety margin of
+`max(2048, ceil(context_length * 0.05))`. All three settings below are optional;
+existing configurations do not need new fields:
+
+| Setting | When omitted |
+| --- | --- |
+| `context_length` | Use existing model specifications or the provider catalogue; fall back to a `262144` (256K) token budget if unknown |
+| `max_tokens` | Use the model's output specification; fall back to `8192` if unknown. Transports with an output cap also leave room for input and the safety margin, so small windows may get a lower default |
+| `tokenizer_ref` | Use LiteLLM counting for known OpenAI models; otherwise reserve UTF-8 bytes, including for private aliases, without downloading a tokenizer |
+
+The fallback window is a local budget assumption, not automatic detection of
+server capacity. Private deployments can override any of these settings. Set
+the actual limit for a smaller window; a larger configured window or a matching
+tokenizer can improve capacity utilization:
+
+```yaml
+agent:
+  models:
+    warehouse_llm:
+      type: openai
+      base_url: https://llm.example.com/v1
+      api_key: ${LLM_API_KEY}
+      model: warehouse-model
+      context_length: 262144
+      max_tokens: 8192
+      tokenizer_ref: /opt/model/tokenizer.json
+```
+
+`context_length` and `max_tokens` must be positive integers. A per-call output
+limit overrides the configured default. `tokenizer_ref` accepts a local Hugging
+Face tokenizer JSON, a Hugging Face tokenizer reference, or `tiktoken:<encoding>`
+when that encoding matches the deployment. Local files must be readable by the
+Datus process. Omitted settings use defaults; explicitly invalid values or a
+tokenizer that cannot be loaded still produce an error.
+Local counting includes serialized messages, instructions, tools and output
+schemas, plus framing allowance; a deployment with different templates or
+routing limits can still reject a request and should be configured accordingly.
+UTF-8 byte estimates can trigger compaction earlier and are not measured provider
+token usage. Output caps above a known maximum are rejected explicitly.
+Remote image URLs and opaque file inputs require extracted content or a provider
+token count; counting only their URL or file ID cannot establish request capacity.
+
+Large tool results are preserved in the session archive; the model receives a
+bounded view and can continue with `read_tool_result`. Original Python tool
+returns and action/UI results retain their existing formats. Source truncation
+and analysis completeness are separate from archive pagination. Disabling
+`agent.compact` does not disable result bounding or the final send check.
+
+The Codex subscription transport has no output-limit field in its wire protocol.
+It retains that protocol and reserves the known model output ceiling, including
+provider catalogue metadata, rather than pretending a smaller requested cap is
+enforced. Standard API transports send the resolved output limit explicitly.
+
 ### Private or self-signed certificates {#private-or-self-signed-certificates}
 
 When pointing Datus at an internal LLM gateway or staging endpoint whose TLS

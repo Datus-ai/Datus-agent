@@ -182,14 +182,35 @@ class TestStartupErrors:
 
     def test_no_ontology_points_to_ask_metrics(self, real_agent_config, mock_llm_create):
         node, _, runtime = _make_node(real_agent_config, runtime=_runtime(has_ontology=False))
-        expected_dir = str(real_agent_config.path_manager.ontology_path("flights_db"))
-        assert self._missing(node, "no ontology for datasource 'flights_db'", expected_dir, "ask_metrics") == []
+        expected_dir = str(real_agent_config.path_manager.ontology_dir)
+        assert (
+            self._missing(
+                node,
+                "no ontology for datasource 'flights_db'",
+                expected_dir,
+                "subject/semantic_models/flights_db/",
+                "ask_metrics",
+            )
+            == []
+        )
         runtime.describe.assert_not_called()
 
     def test_unpaired_ontology_names_the_file(self, real_agent_config, mock_llm_create):
-        runtime = _runtime(has_ontology=False, unpaired=["/p/subject/semantic_models/ontology/flights_db/hr.yaml"])
+        runtime = _runtime(has_ontology=False, unpaired=["/p/subject/ontology/hr-hr.mapping.yaml"])
         node, _, _ = _make_node(real_agent_config, runtime=runtime)
-        assert self._missing(node, "hr.yaml", "pair with no semantic model file") == []
+        assert (
+            self._missing(
+                node,
+                "no ontology for datasource 'flights_db'",
+                "hr-hr.mapping.yaml",
+                "could not be bound",
+                "../semantic_models/<datasource>/<model>.yaml",
+                "ask_metrics",
+            )
+            == []
+        )
+        # The directory is project-wide: an unbound file is never pinned on this datasource.
+        assert "of datasource 'flights_db'" not in node.startup_error
 
     def test_ontology_load_failure(self, real_agent_config, mock_llm_create):
         runtime = _runtime()
@@ -236,7 +257,9 @@ class TestPromptAndResult:
         assert prompt_manager.render_template.call_count == 1
 
     @staticmethod
-    def _action(action_type, rows, sql):
+    def _action(action_type, rows, value):
+        # Both tools answer with the result text: a result_id line, a rows line, then CSV.
+        csv_rows = "".join(f"\n{value},P1" for _ in range(rows))
         return {
             "action_type": action_type,
             "status": "success",
@@ -244,11 +267,7 @@ class TestPromptAndResult:
             "output": {
                 "raw_output": {
                     "success": 1,
-                    "result": {
-                        "columns": ["alert_id", "priority"],
-                        "data": [["A007", "P1"]] * rows,
-                        "metadata": {"sql": sql},
-                    },
+                    "result": f"result_id: {action_type}:{value}\nrows: {rows}\n\nalert_id,priority{csv_rows}",
                 }
             },
         }
@@ -257,16 +276,14 @@ class TestPromptAndResult:
     def test_update_context_captures_the_last_result_of_either_tool(self, real_agent_config, mock_llm_create, last):
         node, _, _ = _make_node(real_agent_config)
         first = "query_metrics" if last == "select_records" else "select_records"
-        node.result = Mock(
-            action_history=[self._action(first, 5, "SELECT first"), self._action(last, 2, "SELECT last")]
-        )
+        node.result = Mock(action_history=[self._action(first, 5, "A001"), self._action(last, 2, "A007")])
         workflow = Mock()
         workflow.context.sql_contexts = []
 
         assert node.update_context(workflow)["success"] is True
         [captured] = workflow.context.sql_contexts
         assert captured.row_count == 2
-        assert captured.sql_query == "SELECT last"
+        assert captured.sql_return == "alert_id,priority\nA007,P1\nA007,P1"
 
     def test_success_result_uses_ontology_result_class(self, real_agent_config, mock_llm_create):
         from datus.schemas.action_history import ActionHistoryManager

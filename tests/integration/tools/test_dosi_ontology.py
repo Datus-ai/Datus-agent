@@ -29,16 +29,17 @@ from datus.tools.semantic_tools.dosi.engine import (
     binding_supports_mapping_documents,
     binding_supports_ontology,
 )
+from datus.utils.query_result_text import parse_query_result_text
 
 pytestmark = [pytest.mark.acceptance, pytest.mark.nightly]
 
 FIXTURE_ROOT = Path(__file__).parents[2] / "data" / "semantic_models"
 MODEL_PATH = FIXTURE_ROOT / "aviation" / "aviation.yaml"
 SEED_PATH = FIXTURE_ROOT / "aviation" / "seed.sql"
-ONTOLOGY_PATH = FIXTURE_ROOT / "ontology" / "aviation" / "aviation.yaml"
-# The same ontology as an apache/ossie#458 mapping document beside a bare
-# ontology; the mapping names the model by `semantic_model_ref.name`.
-MAPPING_DOCUMENT_DIR = FIXTURE_ROOT / "ontology" / "aviation-mapping-document"
+# The project layout: a flat ontology directory beside semantic_models/,
+# holding the ontology and an apache/ossie#458 mapping document whose
+# semantic_model_ref.iri names ../semantic_models/aviation/aviation.yaml.
+ONTOLOGY_DIR = Path(__file__).parents[2] / "data" / "ontology"
 
 requires_ontology_binding = pytest.mark.skipif(
     not binding_supports_ontology(),
@@ -46,21 +47,11 @@ requires_ontology_binding = pytest.mark.skipif(
 )
 
 
-@pytest.fixture(
-    params=[
-        "embedded",
-        pytest.param(
-            "mapping_document",
-            marks=pytest.mark.skipif(
-                not binding_supports_mapping_documents(),
-                reason="installed dosi-engine binding cannot load mapping documents",
-            ),
-        ),
-    ]
-)
-def agent_config(tmp_path, request) -> AgentConfig:
-    """Every case runs on both layouts: the deprecated ontology embedding its
-    mapping, and a mapping document beside a bare ontology."""
+@pytest.fixture
+def agent_config(tmp_path) -> AgentConfig:
+    """The aviation datasource with its model, and the project ontology directory mapping onto it."""
+    if not binding_supports_mapping_documents():
+        pytest.skip("installed dosi-engine binding cannot load mapping documents")
     database = tmp_path / "aviation.duckdb"
     with duckdb.connect(str(database)) as connection:
         connection.execute(SEED_PATH.read_text(encoding="utf-8"))
@@ -83,13 +74,7 @@ def agent_config(tmp_path, request) -> AgentConfig:
     )
     config.current_datasource = "aviation"
     shutil.copy(MODEL_PATH, config.path_manager.semantic_model_path("aviation") / "aviation.yaml")
-    ontology_dir = config.path_manager.ontology_path("aviation")
-    ontology_dir.mkdir(parents=True)
-    if request.param == "embedded":
-        shutil.copy(ONTOLOGY_PATH, ontology_dir / "aviation.yaml")
-    else:
-        for name in ("ontology.yaml", "mapping.yaml"):
-            shutil.copy(MAPPING_DOCUMENT_DIR / name, ontology_dir / name)
+    shutil.copytree(ONTOLOGY_DIR, config.path_manager.ontology_dir)
     return config
 
 
@@ -108,8 +93,11 @@ def ontology_tools(agent_config) -> SemanticTools:
 
 
 def _rows(tool: SemanticTools, result) -> list[dict[str, str]]:
+    """The full rows behind a query's result text, from the cache it names."""
     assert result.success == 1, result.error
-    cached = tool.get_cached_query_metrics_result(result.result["result_id"])
+    text = parse_query_result_text(result.result)
+    assert text is not None, result.result
+    cached = tool.get_cached_query_metrics_result(text.result_id)
     return list(csv.DictReader(io.StringIO(cached["csv"])))
 
 
@@ -189,7 +177,7 @@ class TestOntologyAnswers:
                 "AND FlightAlert.flight.arrives_at.code = 'JFK'"
             ),
         )
-        assert result.result["columns"] == [
+        assert parse_query_result_text(result.result).columns == [
             "FlightAlert.id",
             "FlightAlert.flight.number",
             "FlightAlert.flight.arrives_at.name",
@@ -236,7 +224,7 @@ class TestOntologyAnswers:
 
 # ---------------------------------------------------------------- one-file layout
 
-MINI_INLINE_DIR = FIXTURE_ROOT / "ontology" / "mini-flights-inline"
+MINI_INLINE_DIR = Path(__file__).parents[2] / "data" / "ontology_inline"
 
 
 @pytest.fixture
@@ -256,9 +244,9 @@ def inline_tools(tmp_path) -> SemanticTools:
         services={"datasources": {"mini": {"type": "duckdb", "uri": str(database), "default": True}}},
     )
     config.current_datasource = "mini"
-    ontology_dir = config.path_manager.ontology_path("mini")
+    ontology_dir = config.path_manager.ontology_dir
     ontology_dir.mkdir(parents=True)
-    shutil.copy(MINI_INLINE_DIR / "mapping.yaml", ontology_dir / "mapping.yaml")
+    shutil.copy(MINI_INLINE_DIR / "mini-flights.mapping.yaml", ontology_dir / "mini-flights.mapping.yaml")
     return _tools(config, ontology_enabled=True)
 
 

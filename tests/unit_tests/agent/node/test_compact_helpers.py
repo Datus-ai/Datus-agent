@@ -22,6 +22,7 @@ from datus.agent.node.agentic_node import AgenticNode
 from datus.agent.node.compact_archive import ToolArchive
 from datus.agent.node.context_rewriter import estimate_items_tokens
 from datus.configuration.agent_config import CompactConfig
+from datus.models.request_capacity import RequestCapacity
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
 from datus.schemas.token_usage import TokenUsage
 
@@ -571,6 +572,7 @@ class TestCompactMidTurn:
         model = MagicMock()
         model.context_length.return_value = context_length
         model.max_tokens.return_value = max_tokens
+        model.request_capacity.return_value = RequestCapacity("gpt-4o", context_length or 0, max_tokens)
         model.summarize_items = AsyncMock(
             return_value={"content": "## Summary\nprogress", "usage": {"output_tokens": 12}}
         )
@@ -740,14 +742,16 @@ class TestCompactMidTurn:
         node._session.replace_items.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_persistence_failure_returns_the_original_items(self, tmp_path):
+    async def test_persistence_failure_preserves_items_and_stops_preparation(self, tmp_path):
         node = self._node(tmp_path)
         node._session.replace_items = AsyncMock(side_effect=RuntimeError("disk"))
         items = self._items(4, size=3000)
-        result = await node.compact_mid_turn(items, item_format="responses", base_tokens=950, tail_start=len(items))
+        from datus.models.request_capacity import ContextCapacityError
 
-        assert result["success"] is False
-        assert result["items"] is items
+        before = repr(items)
+        with pytest.raises(ContextCapacityError, match="SESSION_PERSIST_FAILED"):
+            await node.compact_mid_turn(items, item_format="responses", base_tokens=950, tail_start=len(items))
+        assert repr(items) == before
         assert node.mid_turn_rewrite_checkpoint is None
         node._session_manager.delete_system_prompt_snapshot.assert_not_called()
 
@@ -844,6 +848,7 @@ class TestOccupancyAfterSessionRewrite:
         node = _build_node(tmp_path)
         model = MagicMock()
         model.context_length.return_value = cls.WINDOW
+        model.request_capacity.return_value = RequestCapacity("gpt-4o", cls.WINDOW, cls.TURN_OUTPUT)
         model.summarize_items = AsyncMock(return_value={"content": "## Summary\nrecap", "usage": {"output_tokens": 40}})
         node._pinned_model = model
         node._session = MagicMock(replace_items=AsyncMock())
@@ -1124,3 +1129,45 @@ async def test_cancelled_rewrite_finishes_bookkeeping_before_esc_rollback(tmp_pa
     assert await node._session.get_items() == rewritten
     node._session.close()
     original_session.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("item_format", ["responses", "anthropic"])
+@pytest.mark.parametrize("mid_turn", [False, True])
+async def test_compaction_retains_exact_archive_cursor_and_persists_it(tmp_path, item_format, mid_turn):
+    from datus.agent.node.context_rewriter import build_user_item
+    from datus.utils.tool_result_store import json_text
+
+    node = TestMeasuredContextContracts._node(tmp_path)
+    store = node._get_tool_result_store()
+    rows = [{"name": f"column_{i}", "comment": "a sourced field definition"} for i in range(5000)]
+    preview = store.project("columns", {"success": 1, "result": {"columns": rows}})
+    extra = preview["result"]["extra"]
+    page = store.read(extra["result_id"], "columns", extra["next_cursor"])
+    ref = {key: page["result"]["extra"][key] for key in ("result_id", "section", "cursor", "next_cursor")}
+    node._pinned_model.summarize_items.return_value = {"content": "Continue " + ref["result_id"][:8]}
+    request = build_user_item("Continue checking the current source", item_format)
+    if item_format == "responses":
+        items = [request, {"type": "function_call_output", "call_id": "c", "output": json_text(page)}]
+    else:
+        items = [
+            request,
+            {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "c", "content": json_text(page)}]},
+        ]
+    await node._session.add_items(items)
+    try:
+        for _ in range(2):
+            if mid_turn:
+                result = await node.compact_mid_turn(
+                    items, item_format=item_format, base_tokens=200000, tail_start=len(items)
+                )
+            else:
+                result = await node.compact(mode="major")
+            assert result["success"] and result["mode"] == "major"
+            items = await node._session.get_items()
+            assert store.recovery_references(items) == [ref]
+        resumed = store.read(ref["result_id"], ref["section"], ref["next_cursor"])
+        start = len(preview["result"]["items"]) + len(page["result"]["items"])
+        assert resumed["result"]["items"] == rows[start : start + len(resumed["result"]["items"])]
+    finally:
+        node._session.close()

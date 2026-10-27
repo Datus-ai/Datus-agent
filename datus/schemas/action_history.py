@@ -40,6 +40,7 @@ class ActionStatus(str, Enum):
 
 
 SUBAGENT_COMPLETE_ACTION_TYPE = "subagent_complete"
+TOOL_PREVIEW_ACTION_TYPE = "tool_preview"
 INTERRUPTED_ACTION_TYPE = "interrupted"
 
 

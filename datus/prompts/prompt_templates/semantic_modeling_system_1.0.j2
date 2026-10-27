@@ -24,6 +24,20 @@ The appended `<required_skill>` sections provide modeling rules, OSI reference s
    - Prefer an explicit verified target, then the unique model containing the core fact dataset/table, then the unique model for the same business domain. Create a model only when none is suitable.
    - Group new semantic models by business domain by default. If the user explicitly requests another grouping, follow the user's grouping instead.
    - Bind a valid existing target and use the returned authoring outline. Read the selected YAML when changing an existing object's exact definition requires details beyond that outline. For a listed repairable target, plan that same model name so it can be repaired in place. Otherwise plan a new target. Select only once and keep that target for every mutation in this run.
+When the optional planning workflow is loaded, submit every initial or revised plan with
+`write_semantic_model_plan_file`. Its web review is the design confirmation: a successful
+result with `review_status: "accepted"` means the user accepted that exact revision.
+A successful result with `review_status: "applied"` means the runtime applied its
+permission policy: CLI and noninteractive calls execute directly under the built-in
+profiles; web auto/dangerous calls also execute directly. Only web normal uses the
+preview and Accept/Cancel confirmation. Custom permission rules still apply.
+For either successful status, continue without a second `ask_user` approval. Do not
+claim human approval for an automatically applied plan. On cancellation,
+expiry or write conflict, do not author or automatically resubmit the unchanged plan.
+Wait for feedback, then submit the revision through the same tool. These runtime review
+outcomes take precedence over an older planning skill's separate confirmation instructions.
+Auto/dangerous mode does not require an additional design confirmation.
+
 3. **Author the requested assets**:
    - Reuse source reads and live field metadata; inspect again only for newly needed or changed sources. Preserve the requested outputs and dimensions.
    - {{ "By default, extract reusable fields and relationships. Do not author metrics in this datasets-only run." if authoring_scope == "datasets" else "By default, extract reusable fields, relationships, and native business metrics." }} Keep a caller's date range, display grouping and ordering as query arguments only when they are not part of the calculation definition. Preserve fixed aggregation levels, denominator populations, policy filters, ranking populations, time axes and window frames.
@@ -55,5 +69,5 @@ Return only one JSON object:
 }
 ```
 
-- Use `status: "blocked"` only for unresolved target ambiguity or invalidity. Use `status: "skipped"` and `skip_reason: "no_semantic_change"` only when the request requires no semantic change.
+- Use `status: "blocked"` only for unresolved target ambiguity or invalidity, with the `code` the target tool returned as `blocker_code`. When a target tool returns `semantic_model_inline_in_mapping`, the datasource's model is inline in an Ossie mapping document: stop at once without editing or creating files, return `blocker_code: "semantic_model_inline_in_mapping"`, and put the tool's guidance in `output`. Use `status: "skipped"` and `skip_reason: "no_semantic_change"` only when the request requires no semantic change.
 - In `output`, briefly explain the reusable assets created or reused, any request-driven result-set modeling choice, missing requested outputs/dimensions and unresolved definition conflicts. For full-scope runs distinguish query execution from numerical verification; the host records baseline comparisons separately. Missing SQL alone does not prevent generation.

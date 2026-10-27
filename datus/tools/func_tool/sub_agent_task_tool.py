@@ -856,6 +856,12 @@ class SubAgentTaskTool:
 
                 apply_proxy_tools(node, self._parent_node.proxy_tool_patterns, channel=self._parent_node.tool_channel)
 
+            from datus.tools.proxy.semantic_plan_review import SemanticPlanReviewContext, apply_semantic_plan_review
+
+            review_context = getattr(self._parent_node, "semantic_plan_review_context", None)
+            if isinstance(review_context, SemanticPlanReviewContext):
+                apply_semantic_plan_review(node, context=review_context)
+
             # Iterate the async generator directly (we're already in async context)
             action_history_manager = ActionHistoryManager()
             final_output = None
@@ -1493,15 +1499,16 @@ class SubAgentTaskTool:
         return [t for t in self._discover_all_types() if t != self._parent_node_name]
 
     def _current_datasource_has_ontology(self) -> bool:
-        """Whether ``subject/semantic_models/ontology/<datasource>/`` holds any ontology file."""
+        """Whether a mapping under ``subject/ontology/`` binds a model of the current datasource."""
         path_manager = getattr(self.agent_config, "path_manager", None)
         datasource = getattr(self.agent_config, "current_datasource", None)
         if path_manager is None or not isinstance(datasource, str) or not datasource:
             return False
         try:
-            ontology_dir = path_manager.ontology_path(datasource)
-            return ontology_dir.is_dir() and any(
-                path.suffix.lower() in {".yaml", ".yml", ".json"} for path in ontology_dir.rglob("*")
+            from datus.tools.semantic_tools.dosi.engine import datasource_has_ontology
+
+            return datasource_has_ontology(
+                str(path_manager.semantic_models_dir / datasource), str(path_manager.ontology_dir)
             )
         except Exception as e:  # noqa: BLE001 - discovery must not break the task tool
             logger.debug(f"Ontology discovery failed for {datasource!r}: {e}")

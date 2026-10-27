@@ -41,6 +41,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, List, Tuple
 
+from datus.models.request_capacity import ContextCapacityError
 from datus.utils.image_content import contains_images, replace_images
 
 # Re-exported for backwards compatibility with existing import sites
@@ -99,40 +100,18 @@ def maybe_truncate_item(
             marker = archive.archive(out_text, idx, "output")
         except OSError as exc:
             logger.warning("compact archive write failed (idx=%s, kind=output): %s", idx, exc)
-            preview_n = (
-                archive.preview_chars * _ERROR_PREVIEW_MULTIPLIER
-                if is_error_output(out_text)
-                else archive.preview_chars
-            )
-            return _inline_truncated(item, out_text, preview_n)
+            raise ContextCapacityError("RESULT_ARCHIVE_FAILED", "Cannot preserve complete tool output") from exc
         return {**item, "output": marker}
     return item
 
 
-def _inline_truncated(item: Dict[str, Any], text: str, preview_n: int) -> Dict[str, Any]:
-    """Degrade gracefully when the disk archive write fails.
-
-    Drops back to an inline preview-only placeholder in ``output`` so the rest
-    of the compact pass can still proceed. Information is lost on this branch,
-    but only when the disk itself is broken — the alternative (raising) would
-    crash a session over a transient ENOSPC. The placeholder still carries
-    :data:`ARCHIVED_MARKER` so a later pass treats it as already-handled.
-    """
-    preview = make_single_line_preview(text, preview_n)
-    marker = build_archived_marker("<unavailable: archive write failed>", preview)
-    return {**item, "output": marker}
-
-
 def _archive_text(archive: ToolArchive, text: str, idx: int) -> str:
-    """Write ``text`` to the archive and return the marker (inline fallback on I/O error)."""
+    """Write ``text`` durably before returning an archive marker."""
     try:
         return archive.archive(text, idx, "output")
     except OSError as exc:
         logger.warning("compact archive write failed (idx=%s, kind=output): %s", idx, exc)
-        preview_n = (
-            archive.preview_chars * _ERROR_PREVIEW_MULTIPLIER if is_error_output(text) else archive.preview_chars
-        )
-        return build_archived_marker("<unavailable: archive write failed>", make_single_line_preview(text, preview_n))
+        raise ContextCapacityError("RESULT_ARCHIVE_FAILED", "Cannot preserve complete tool output") from exc
 
 
 def _worth_archiving(text: str, archive: ToolArchive, threshold: int) -> bool:

@@ -1,0 +1,127 @@
+cases:
+- id: date.orc_time_discarded
+  capabilities:
+  - dates.storage
+  targets:
+  - hive
+  sql: SELECT CAST(started_at AS DATE) AS day_value FROM {{db}}.clock WHERE id=1
+  expected:
+    columns:
+    - day_value
+    rows:
+    - - '2023-12-31'
+    types:
+    - date
+    ordered: false
+- id: date.to_date_mode
+  capabilities:
+  - dates.modes
+  targets:
+  - hive
+  - inceptor
+  sql: SELECT TO_DATE(started_at) AS converted FROM {{db}}.clock WHERE id=1
+  expected:
+    columns:
+    - converted
+    rows:
+    - - '2023-12-31'
+    types:
+    - text
+    ordered: false
+  expected_by_profile:
+    inceptor_ce_v2:
+      columns:
+      - converted
+      rows:
+      - - '2023-12-31 23:59:00'
+      types:
+      - text
+      ordered: false
+    inceptor_ce_v2_non_utc:
+      columns:
+      - converted
+      rows:
+      - - '2023-12-31 23:59:00'
+      types:
+      - text
+      ordered: false
+- id: date.formatted_day_difference
+  capabilities:
+  - dates.modes
+  targets:
+  - hive
+  - inceptor
+  sql: SELECT DATEDIFF(DATE_FORMAT(ended_at,'yyyy-MM-dd'), DATE_FORMAT(started_at,'yyyy-MM-dd')) AS days FROM {{db}}.clock
+    WHERE id=1
+  expected:
+    columns:
+    - days
+    rows:
+    - - 1
+    types:
+    - int
+    ordered: false
+- id: date.null_input
+  capabilities:
+  - dates.modes
+  targets:
+  - hive
+  - inceptor
+  sql: SELECT TO_DATE(started_at) AS converted FROM {{db}}.clock WHERE id=3
+  expected:
+    columns:
+    - converted
+    rows:
+    - - null
+    types:
+    - text
+    ordered: false
+- id: date.leap_day
+  capabilities:
+  - dates.modes
+  targets:
+  - hive
+  - inceptor
+  sql: SELECT DAY(DATE_ADD(CAST('2024-02-28' AS DATE),1)) AS day_value, MONTH(ADD_MONTHS(CAST('2024-01-31' AS DATE),1))
+    AS month_value
+  expected:
+    columns:
+    - day_value
+    - month_value
+    rows:
+    - - 29
+      - 2
+    types:
+    - int
+    - int
+    ordered: false
+- id: date.stored_orc_midnight
+  capabilities:
+  - dates.storage
+  targets:
+  - hive
+  - inceptor
+  sql: SELECT d FROM {{db}}.stored_dates
+  expected:
+    columns:
+    - d
+    rows:
+    - - '2023-12-31'
+    types:
+    - date
+    ordered: false
+- id: date.stored_date_format
+  capabilities:
+  - dates.storage
+  targets:
+  - hive
+  - inceptor
+  sql: SELECT DATE_FORMAT(CAST(d AS TIMESTAMP),'yyyy-MM-01') AS month_value FROM {{db}}.stored_dates
+  expected:
+    columns:
+    - month_value
+    rows:
+    - - '2023-12-01'
+    types:
+    - text
+    ordered: false

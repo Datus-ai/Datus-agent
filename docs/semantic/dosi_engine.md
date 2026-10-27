@@ -25,7 +25,7 @@ agent:
 
 Dosi is built in and needs no engine selection. Agent discovers OSI YAML or JSON files recursively under `subject/semantic_models/<datasource>/`, excluding per-metric fragments. Use `semantic_model_path` to select a specific file for a request. Old `agent.services.semantic_layer` and project `semantic` settings are ignored with a warning.
 
-An Apache Ossie ontology for a datasource lives under `subject/semantic_models/ontology/<datasource>/`, named after the model file it describes. Only the [`ontology_analyst`](../subagent/ontology_analyst.md) subagent loads it, beside its model. No datasource may be named `ontology`.
+Apache Ossie ontologies live in the flat, project-wide `subject/ontology/` directory, with the mapping documents that bind each one to semantic model files. A mapping names its model by a relative `semantic_model_ref.iri`, so one ontology can map onto models of several datasources; a datasource loads the mappings whose model is in its own directory. Only the [`ontology_analyst`](../subagent/ontology_analyst.md) subagent loads them, unless a datasource has no model file and its only models are inline in mapping documents.
 
 ## Agent features
 

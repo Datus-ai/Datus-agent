@@ -7,8 +7,8 @@
 #   python validation/validate.py fixtures/aviation/ontology.yaml \
 #       --schema ontology/ontology.json          (run inside an apache/ossie checkout)
 #
-# This file is the ontology only. mapping.yaml maps it onto model.yaml; load
-# the three with `dosi --mapping fixtures/aviation/mapping.yaml`.
+# This file is the ontology only. aviation-aviation.mapping.yaml maps it onto
+# ../semantic_models/aviation/aviation.yaml.
 #
 # Translation decisions worth knowing:
 #   * Palantir one-to-many links (Flight.has_delay, has_alert, has_sensor) are

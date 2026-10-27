@@ -41,6 +41,20 @@ class DimensionInfo(BaseModel):
         None,
         description="How the grouping recommendation was declared or inferred",
     )
+    definition: Optional[str] = Field(
+        None,
+        description=(
+            "A fixed field's declaration, e.g. 'fixed(order_count, users.user_id)': a "
+            "per-entity value read from rows of its own; absent for an ordinary field"
+        ),
+    )
+    params: Optional[List[Dict[str, Any]]] = Field(
+        None,
+        description=(
+            "Query-time parameters the fixed fields this dimension is or reads take "
+            "from their base metrics, each naming the metric that declares it (declared_on)"
+        ),
+    )
 
 
 class SemanticModelInfo(BaseModel):
@@ -326,6 +340,7 @@ class SemanticValidationError(BaseModel):
         None,
         description="Code-specific engine payload, e.g. value_not_in_domain violations with their allowed values",
     )
+    condition: Optional[str] = Field(None, description="The query condition the error is about, as SQL")
     message: str = Field("", description="Human-readable explanation")
 
 

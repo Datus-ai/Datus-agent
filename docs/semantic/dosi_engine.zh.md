@@ -25,7 +25,7 @@ agent:
 
 Dosi 是内置语义引擎，无需选择。Agent 递归发现 `subject/semantic_models/<datasource>/` 下的 OSI YAML 或 JSON 文件，跳过单独的指标片段。可用 `semantic_model_path` 为单次请求指定文件。旧的 `agent.services.semantic_layer` 和项目级 `semantic` 配置会被忽略并输出警告。
 
-数据源的 Apache Ossie ontology 放在 `subject/semantic_models/ontology/<datasource>/` 下，文件名与它描述的模型文件相同。只有 [`ontology_analyst`](../subagent/ontology_analyst.zh.md) 子代理会把它和模型一起加载。数据源不能命名为 `ontology`。
+Apache Ossie ontology 放在项目级、只有一层的 `subject/ontology/` 目录，与把它们绑定到语义模型文件的映射文档放在一起。映射文档用相对路径 `semantic_model_ref.iri` 指定模型，所以一个 ontology 可以映射到多个数据源的模型；每个数据源只加载模型位于自己目录下的那些映射。只有 [`ontology_analyst`](../subagent/ontology_analyst.zh.md) 子代理会加载它们，除非某个数据源没有模型文件、模型全部内联在映射文档里。
 
 ## Agent 使用的能力
 
