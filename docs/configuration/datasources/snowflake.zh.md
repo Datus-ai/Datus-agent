@@ -68,10 +68,17 @@ agent:
 
 ## AWS Secrets Manager 凭据
 
-需要 `datus-snowflake` 0.1.10 或更高版本，并安装可选 AWS 依赖：
+需要 `datus-snowflake` 0.1.11 或更高版本，并安装可选 AWS 依赖。0.1.11 尚未发布；发布前请从包含 Secrets Manager 实现的源码 checkout 安装：
 
 ```bash
-pip install 'datus-snowflake[aws]>=0.1.10'
+pip install '/path/to/datus-db-adapters/datus-db-core[aws]' \
+  /path/to/datus-db-adapters/datus-snowflake
+```
+
+发布后可安装正式版本：
+
+```bash
+pip install 'datus-snowflake[aws]>=0.1.11'
 ```
 
 Secret 的 `SecretString` 可以保存 JSON，例如 `{"sf_user":"READER","sf_key":"<PEM 私钥>","sf_passphrase":"<私钥口令>"}`，再配置顶层键名映射：

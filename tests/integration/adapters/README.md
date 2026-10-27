@@ -90,13 +90,15 @@ when selecting HTTP; `NIGHTLY_FORCE_ADAPTER_ENV=0` preserves an external TLS pro
 
 ### Snowflake with AWS Secrets Manager
 
-This cloud test requires `datus-snowflake[aws]>=0.1.10` and `datus-db-core>=0.1.9`.
-Before release, install both packages from the adapter worktree:
+This cloud test requires `datus-snowflake[aws]>=0.1.11` and `datus-db-core>=0.1.10`.
+Version 0.1.11 is not published yet. Until release, install both packages from an adapter worktree containing the Secrets Manager implementation:
 
 ```bash
 uv pip install -e '/path/to/datus-db-adapters/datus-db-core[aws]' \
   -e /path/to/datus-db-adapters/datus-snowflake
 ```
+
+After release, install the published packages into the Agent environment with `uv pip install 'datus-snowflake[aws]>=0.1.11'`.
 
 Export `SNOWFLAKE_ACCOUNT`, `SNOWFLAKE_USER`, `SNOWFLAKE_EXPECTED_USER`, `SNOWFLAKE_WAREHOUSE`,
 `SNOWFLAKE_DATABASE`, `SNOWFLAKE_PRIVATE_KEY_FILE`, optional
@@ -124,7 +126,7 @@ timestamp; it does not impose a deadline on physical removal. It does not modify
 Snowflake user's keys. Full dual-key
 rotation acceptance lives in the adapter's `test_secret_rotation.py`. Once opted in,
 missing configuration and API/login failures fail the test. Keep `--no-sync` after
-the source install so the Agent lockfile does not replace the newer core.
+installing the packages so the Agent lockfile does not replace the newer core.
 The standard Main/Product E2E/Provider Health nightly collections explicitly ignore
 this module until a dedicated credentialed cloud suite is configured; run it directly
 with the opt-in command above. Explicit strict runs still reject missing opt-in or dependencies.

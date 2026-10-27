@@ -1,6 +1,6 @@
 """Live YAML -> DBManager -> AWS Secret -> native Snowflake login acceptance.
 
-Opt in with ADAPTERS_SNOWFLAKE_SECRETS=1 and install datus-snowflake[aws]>=0.1.10.
+Opt in with ADAPTERS_SNOWFLAKE_SECRETS=1 and install datus-snowflake[aws]>=0.1.11.
 Requires SNOWFLAKE_ACCOUNT, SNOWFLAKE_USER, SNOWFLAKE_EXPECTED_USER, SNOWFLAKE_WAREHOUSE,
 SNOWFLAKE_PRIVATE_KEY_FILE, SNOWFLAKE_DATABASE and optional
 SNOWFLAKE_PRIVATE_KEY_FILE_PWD, SNOWFLAKE_SCHEMA, SNOWFLAKE_ROLE. AWS uses the SDK chain,
@@ -21,8 +21,8 @@ from tests.integration.adapters.snowflake_secret_helpers import delete_owned_sec
 from tests.nightly_requirements import import_required, require_opt_in_env
 
 require_opt_in_env("ADAPTERS_SNOWFLAKE_SECRETS", "tests/integration/adapters/README.md")
-import_required("datus_snowflake", reason="Install datus-snowflake[aws]>=0.1.10")
-boto3 = import_required("boto3", reason="Install datus-snowflake[aws]>=0.1.10")
+import_required("datus_snowflake", reason="Install datus-snowflake[aws]>=0.1.11")
+boto3 = import_required("boto3", reason="Install datus-snowflake[aws]>=0.1.11")
 
 from datus.configuration.agent_config import DbConfig  # noqa: E402
 from datus.tools.db_tools.db_manager import DBManager  # noqa: E402
