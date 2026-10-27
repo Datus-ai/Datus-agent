@@ -238,9 +238,12 @@ async def stream_chat_feedback(
 async def resume_chat(
     request: ResumeChatInput,
     svc: ServiceDep,
+    ctx: AppContextDep,
 ):
     task_manager = svc.task_manager
     task = task_manager.get_task(request.session_id)
+    if task is not None and task.user_id != ctx.user_id:
+        raise HTTPException(status_code=404, detail="Task not found")
     if task is None:
         return Result[dict](
             success=False,

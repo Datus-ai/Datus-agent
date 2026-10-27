@@ -881,3 +881,34 @@ async def test_http_tool_result_requires_the_session_owner(tmp_path, decision):
         node.tool_channel.cancel_all()
         pending.cancel()
         await asyncio.gather(pending, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("user,status", [("owner", 200), ("peer", 404)])
+async def test_resume_stream_is_scoped_to_the_task_owner(user, status):
+    from types import SimpleNamespace
+
+    from fastapi import FastAPI, Request
+    from httpx import ASGITransport, AsyncClient
+
+    from datus.api.deps import get_app_context, get_datus_service
+    from datus.api.routes.chat_routes import router
+    from datus.api.services.chat_task_manager import ChatTask, ChatTaskManager
+
+    task = ChatTask("review-session", None, user_id="owner")
+    task.status = "completed"
+    manager = ChatTaskManager()
+    manager._completed_tasks[task.session_id] = task
+    app = FastAPI()
+    app.include_router(router)
+    app.dependency_overrides[get_datus_service] = lambda: SimpleNamespace(task_manager=manager)
+
+    def context(request: Request):
+        return SimpleNamespace(user_id=request.headers["x-user"])
+
+    app.dependency_overrides[get_app_context] = context
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.post(
+            "/api/v1/chat/resume", json={"session_id": task.session_id}, headers={"x-user": user}
+        )
+    assert response.status_code == status

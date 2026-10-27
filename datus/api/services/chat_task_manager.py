@@ -339,8 +339,9 @@ def _fill_database_context(
 class ChatTask:
     """Represents a single running agentic loop."""
 
-    def __init__(self, session_id: str, asyncio_task: asyncio.Task):
+    def __init__(self, session_id: str, asyncio_task: asyncio.Task, user_id: Optional[str] = None):
         self.session_id = session_id
+        self.user_id = user_id
         self.asyncio_task = asyncio_task
         self.node: Optional[AgenticNode] = None
         self.events: list[SSEEvent] = []
@@ -597,7 +598,7 @@ class ChatTaskManager:
             raise ValueError(f"A task is already running for session {session_id}")
 
         # Placeholder — asyncio_task set immediately after
-        task = ChatTask(session_id=session_id, asyncio_task=None)  # type: ignore[arg-type]
+        task = ChatTask(session_id=session_id, asyncio_task=None, user_id=user_id)  # type: ignore[arg-type]
         task.register_message_contents(
             request.message,
             [part.model_dump(mode="json") for part in request.messages]
