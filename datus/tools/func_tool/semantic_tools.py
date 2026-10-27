@@ -23,7 +23,7 @@ from typing import Any, Callable, Dict, List, Literal, Mapping, Optional, Tuple
 from agents import Tool
 from pydantic import BaseModel
 
-from datus.configuration.agent_config import AgentConfig
+from datus.configuration.agent_config import AgentConfig, _db_config_to_dosi_profile
 from datus.storage.metric.store import MetricRAG, normalize_metric_name
 from datus.tools.func_tool.base import (
     FuncToolResult,
@@ -1086,20 +1086,7 @@ class SemanticTools:
             db_config_obj = self.agent_config.current_db_config(datasource)
         except Exception:
             return None
-        if db_config_obj is None:
-            return None
-        raw = db_config_obj.to_dict()
-        extra = raw.get("extra")
-        db_config = {
-            k: v for k, v in raw.items() if v is not None and v != "" and k not in ("extra", "path_pattern", "default")
-        }
-        # Preserve connector-specific `extra` fields without overwriting explicit top-level keys
-        if isinstance(extra, dict):
-            for k, v in extra.items():
-                if v is None or v == "":
-                    continue
-                db_config.setdefault(k, v)
-        return db_config
+        return _db_config_to_dosi_profile(db_config_obj)
 
     @property
     def runtime(self) -> Optional[DosiRuntime]:
