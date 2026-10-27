@@ -11,6 +11,7 @@ from datus.tools.func_tool import DBFuncTool
 from datus.tools.func_tool.generation_evidence import GenerationEvidence
 from datus.tools.func_tool.semantic_tools import SemanticTools
 from datus.tools.func_tool.semantic_verification_tools import SemanticVerificationTools
+from datus.utils.query_result_text import parse_query_result_text
 
 pytestmark = [pytest.mark.integration, pytest.mark.nightly]
 
@@ -65,9 +66,12 @@ def test_hana_derived_metric_bindings_and_business_verification(tmp_path, monkey
 
     queried = semantic.query_metrics(metrics=["average_order"], dimensions=["sales.region"], order_by=["region"])
     assert queried.success, queried.error
-    cached = semantic.get_cached_query_metrics_result(queried.result["result_id"])
+    parsed = parse_query_result_text(queried.result)
+    assert parsed and parsed.result_id
+    cached = semantic.get_cached_query_metrics_result(parsed.result_id)
+    assert cached is not None
     assert cached["columns"] == ["region", "average_order"]
-    assert queried.result["metadata"]["outputs"][0]["column"] == "average_order"
+    assert cached["metadata"]["outputs"][0]["column"] == "average_order"
 
     db = DBFuncTool(agent_config=config, read_only=True)
     verifier = SemanticVerificationTools(db, semantic, GenerationEvidence(), lambda: artifact)
