@@ -3399,6 +3399,12 @@
       
         
       
+        
+      
+        
+      
+        
+      
     
     
     
@@ -3702,6 +3708,34 @@
   
   
     <li class="md-nav__item">
+      <a href="aurora/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Amazon Aurora
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="greenplum/" class="md-nav__link">
         
   
@@ -3738,6 +3772,34 @@
     
   
     Amazon Redshift
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="athena/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Amazon Athena
   
 
     
@@ -4102,6 +4164,34 @@
     
   
     Oracle
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="hana/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    SAP HANA
   
 
     
@@ -5090,6 +5180,12 @@
 <td>database → schema → table</td>
 </tr>
 <tr>
+<td><a href="aurora/">Amazon Aurora</a></td>
+<td><code>mysql</code> / <code>postgresql</code></td>
+<td><code>datus-mysql</code> / <code>datus-postgresql</code></td>
+<td>与所选引擎相同</td>
+</tr>
+<tr>
 <td><a href="greenplum/">Greenplum</a></td>
 <td><code>greenplum</code></td>
 <td><code>datus-greenplum</code></td>
@@ -5100,6 +5196,12 @@
 <td><code>redshift</code></td>
 <td><code>datus-redshift</code></td>
 <td>database → schema → table</td>
+</tr>
+<tr>
+<td><a href="athena/">Amazon Athena</a></td>
+<td><code>athena</code></td>
+<td><code>datus-athena</code></td>
+<td>catalog → database → table</td>
 </tr>
 <tr>
 <td><a href="snowflake/">Snowflake</a></td>
@@ -5180,6 +5282,12 @@
 <td>schema → table</td>
 </tr>
 <tr>
+<td><a href="hana/">SAP HANA</a></td>
+<td><code>hana</code></td>
+<td><code>datus-hana</code></td>
+<td>schema → table；tenant 是连接目标</td>
+</tr>
+<tr>
 <td><a href="gaussdb/">GaussDB / openGauss</a></td>
 <td><code>gaussdb</code></td>
 <td><code>datus-gaussdb</code></td>
@@ -5193,6 +5301,7 @@
 </tr>
 </tbody>
 </table>
+<p>Athena 和 HANA 当前需要使用各自页面的源码安装命令。请先安装再添加 datasource；自动安装无法获取尚未发布的 adapter。Aurora 复用 MySQL 或 PostgreSQL 的类型与安装包。</p>
 <h2 id="profile">通用 profile 字段<a class="headerlink" href="#profile" title="Permanent link">&para;</a></h2>
 <p>各 datasource 子页面只列该类型专用的连接字段。下面两个 profile 字段由 Datus 自身处理，适用于全部 datasource：</p>
 <table>
