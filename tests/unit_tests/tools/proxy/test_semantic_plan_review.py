@@ -258,6 +258,7 @@ async def test_feedback_is_a_review_outcome_and_never_commits(tmp_path):
     running, revised = await start_review(node, "revised", "call-2")
     assert revised["oldText"] == ""
     assert revised["previousText"] == preview["newText"]
+    assert json.loads(revised["newText"])["plan"]["revision"] > json.loads(preview["newText"])["plan"]["revision"]
     assert revised["newText"] != preview["newText"]
     await node.tool_channel.publish("call-2", {"success": 1})
     assert (await running)["success"] == 1
