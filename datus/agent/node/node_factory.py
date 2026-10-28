@@ -290,9 +290,11 @@ def create_interactive_node(
             )
 
         else:
-            configured_agentic_node_names = _configured_agentic_node_names(agent_config)
-            if subagent_name not in SYS_SUB_AGENTS and subagent_name not in configured_agentic_node_names:
-                available_names = ", ".join(sorted(_visible_subagent_names(agent_config)))
+            # A configured agent scoped to another datasource is not available here,
+            # so recognize only the names visible for the current datasource.
+            visible_names = _visible_subagent_names(agent_config)
+            if subagent_name not in SYS_SUB_AGENTS and subagent_name not in visible_names:
+                available_names = ", ".join(sorted(visible_names))
                 logger.warning(
                     "Unknown subagent %r; falling back to gen_sql. Available subagents: %s",
                     subagent_name,

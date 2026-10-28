@@ -102,7 +102,7 @@ class TestSubagentValidationHelpers:
 
         names = _visible_subagent_names(config)
 
-        assert "gen_metrics" in names
+        assert "ask_metrics" in names
         assert "feedback" not in names
         assert "chat" not in names
         assert "warehouse_agent" in names
@@ -396,7 +396,7 @@ class TestUnknownSubagentWarning:
         mock_init.assert_called_once()
         warning_messages = self._unknown_subagent_warnings(caplog)
         assert len(warning_messages) == 1
-        assert "gen_metrics" in warning_messages[0]
+        assert "ask_metrics" in warning_messages[0]
         assert "my_custom" in warning_messages[0]
 
     @patch("datus.agent.node.gen_sql_agentic_node.GenSQLAgenticNode.__init__", return_value=None)
@@ -419,6 +419,21 @@ class TestUnknownSubagentWarning:
         assert "warehouse_agent" in warning_messages[0]
         assert "sales_agent" not in warning_messages[0]
         assert "feedback" not in warning_messages[0]
+
+    @patch("datus.agent.node.gen_sql_agentic_node.GenSQLAgenticNode.__init__", return_value=None)
+    def test_agent_scoped_to_another_datasource_is_reported_unknown(self, mock_init, caplog):
+        config = _mock_agent_config(
+            current_datasource="warehouse",
+            agentic_nodes={"sales_agent": {"scoped_context": {"datasource": "sales"}}},
+        )
+
+        with caplog.at_level(logging.WARNING, logger=self.LOGGER_NAME):
+            create_interactive_node("sales_agent", config)
+
+        mock_init.assert_called_once()
+        warning_messages = self._unknown_subagent_warnings(caplog)
+        assert len(warning_messages) == 1
+        assert "'sales_agent'" in warning_messages[0]
 
 
 # ---------------------------------------------------------------------------
