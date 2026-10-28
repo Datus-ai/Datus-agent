@@ -92,3 +92,19 @@ def test_acceptance_targets_collect_harness_marked_tests():
         "The acceptance suite collects zero tests from them; mark the acceptance-worthy "
         "tests or drop the entry from ci/run-pr-tests.py."
     )
+
+
+def test_fixed_coverage_claims_reference_selected_files():
+    from ci.harness.test_plan import load_map
+
+    targets = set(run_pr_tests.PR_ACCEPTANCE_TARGETS)
+    missing = []
+    for group in load_map()["flow_groups"].values():
+        for flow in group["flows"]:
+            for layer in ("pr_acceptance", "merge_queue"):
+                claim = flow.get("coverage", {}).get(layer, {})
+                if claim.get("status") == "covered":
+                    for nodeid in claim.get("nodeids", []):
+                        if nodeid.split("::", 1)[0] not in targets:
+                            missing.append(f"{flow['id']}.{layer}: {nodeid}")
+    assert missing == [], f"Fixed coverage claims not selected by the gate: {missing}"

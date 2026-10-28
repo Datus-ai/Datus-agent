@@ -186,6 +186,7 @@ def _revenue_metric() -> dict:
     }
 
 
+@pytest.mark.acceptance
 def test_dosi_authoring_validates_reconciles_and_queries_without_llm(
     tmp_path,
     monkeypatch,

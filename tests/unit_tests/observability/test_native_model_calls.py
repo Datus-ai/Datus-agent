@@ -15,6 +15,8 @@ from datus.configuration.agent_config import ModelConfig
 from datus.models.claude_model import ClaudeModel
 from datus.models.codex_model import CodexModel
 
+pytestmark = pytest.mark.component
+
 
 @pytest.fixture
 def native_exporter(exported_calls, monkeypatch):

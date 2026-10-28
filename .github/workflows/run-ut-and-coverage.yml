@@ -122,6 +122,14 @@ jobs:
           BASE_REF="${BASE_REF#refs/heads/}"
           python3 ci/run-pr-tests.py "$BASE_REF"
 
+      - name: Plan affected real-model product validation
+        if: always()
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.ref || github.event.merge_group.base_ref || github.ref_name }}
+        run: |
+          BASE_REF="${BASE_REF#refs/heads/}"
+          python3 ci/plan-product-tests.py --base-ref "origin/${BASE_REF}"
+
       - name: Cleanup pytest temp
         if: always()
         env:
@@ -170,6 +178,9 @@ jobs:
             ci/coverage-comment.json
             ci/diff-cover-report.md
             ci/test-report.md
+            ci/product-test-plan.json
+            ci/gate-coverage.json
+            ci/test-results-*.execution.json
           if-no-files-found: error
           retention-days: 7
 

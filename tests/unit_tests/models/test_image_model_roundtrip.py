@@ -36,6 +36,8 @@ from datus.schemas.action_history import ActionHistoryManager
 from datus.tools.func_tool.filesystem_tools import FilesystemFuncTool
 from datus.utils.image_content import contains_images
 
+pytestmark = pytest.mark.component
+
 
 class ImageSequenceModel(Model):
     def __init__(self):

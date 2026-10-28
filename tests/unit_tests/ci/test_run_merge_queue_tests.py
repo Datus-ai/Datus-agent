@@ -43,6 +43,16 @@ def test_acceptance_unit_targets_filters_integration_targets(run_merge_queue_tes
     ]
 
 
+def test_merge_group_expands_fixed_suites_with_shared_impact_selection(run_merge_queue_tests):
+    fixed = run_merge_queue_tests.suite_definitions()
+    changed = ["datus/models/base.py", "datus/validation/hook.py"]
+    suites = run_merge_queue_tests.suite_definitions(changed)
+    for name, suite in fixed.items():
+        assert suites[name] == suite
+    targets = set(suites["impacted-unit"]["targets"])
+    assert {"tests/unit_tests/models/", "tests/unit_tests/observability/", "tests/unit_tests/validation/"} <= targets
+
+
 def test_build_pytest_command_includes_marker_junit_and_extra_args(tmp_path, run_merge_queue_tests):
     junit_xml = tmp_path / "results.xml"
 
@@ -75,6 +85,21 @@ def test_run_suite_fails_loudly_on_missing_target(tmp_path, monkeypatch, run_mer
     assert result["exit_code"] == 1
     assert result["missing"] == ["tests/unit_tests/gone.py"]
     assert result["targets"] == []
+
+
+@pytest.mark.parametrize("name,expected", [("impacted-unit", 0), ("acceptance-unit", 5)])
+def test_empty_collection_is_allowed_only_for_additional_tests(
+    name, expected, tmp_path, monkeypatch, run_merge_queue_tests
+):
+    monkeypatch.setattr(run_merge_queue_tests, "run_command", lambda *args, **kwargs: 5)
+    monkeypatch.setattr(run_merge_queue_tests, "PYTEST_BASETEMP", tmp_path / "pytest-temp")
+    suite = {
+        "targets": ["tests/unit_tests/models/test_request_capacity.py"],
+        "mark_expr": "not component",
+        "junit_xml": run_merge_queue_tests.OUT_DIR / "test-results-empty.xml",
+        "extra_args": [],
+    }
+    assert run_merge_queue_tests.run_suite(name, suite, timeout=10)["exit_code"] == expected
 
 
 def test_main_runs_selected_suite_and_writes_report(tmp_path, monkeypatch, run_merge_queue_tests):

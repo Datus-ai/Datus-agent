@@ -37,10 +37,11 @@ def test_select_impacted_unit_tests_includes_changed_unit_tests_and_dedupes():
         ]
     )
 
-    assert impacted == [
+    assert set(impacted) == {
+        "tests/unit_tests/agent/node/",
         "tests/unit_tests/tools/",
         "tests/unit_tests/ci/",
-    ]
+    }
 
 
 def test_select_impacted_unit_tests_collapses_parent_directory_over_child_files():
@@ -54,7 +55,7 @@ def test_select_impacted_unit_tests_collapses_parent_directory_over_child_files(
         ]
     )
 
-    assert impacted == ["tests/unit_tests/storage/"]
+    assert set(impacted) == {"tests/unit_tests/agent/node/", "tests/unit_tests/tools/", "tests/unit_tests/storage/"}
 
 
 def test_select_impacted_unit_tests_maps_db_tools_to_db_tools_tests():
@@ -65,7 +66,7 @@ def test_select_impacted_unit_tests_maps_db_tools_to_db_tools_tests():
         ]
     )
 
-    assert impacted == ["tests/unit_tests/tools/db_tools/"]
+    assert set(impacted) == {"tests/unit_tests/agent/node/", "tests/unit_tests/tools/"}
 
 
 def test_select_impacted_unit_tests_maps_prompt_and_resource_paths_without_full_suite():
@@ -76,13 +77,15 @@ def test_select_impacted_unit_tests_maps_prompt_and_resource_paths_without_full_
         ]
     )
 
-    assert impacted == [
+    assert set(impacted) == {
+        "tests/unit_tests/agent/",
+        "tests/unit_tests/models/",
         "tests/unit_tests/prompts/",
         "tests/unit_tests/tools/skill_tools/",
-    ]
+    }
 
 
-def test_select_impacted_unit_tests_prefers_specific_subpackage_mappings():
+def test_select_impacted_unit_tests_includes_consumers_and_specific_subpackages():
     impacted = run_pr_tests.select_impacted_unit_tests(
         [
             "datus/agent/node/gen_sql_agentic_node.py",
@@ -95,15 +98,16 @@ def test_select_impacted_unit_tests_prefers_specific_subpackage_mappings():
         ]
     )
 
-    assert impacted == [
-        "tests/unit_tests/agent/node/",
-        "tests/unit_tests/api/services/",
+    assert set(impacted) == {
+        "tests/unit_tests/agent/",
+        "tests/unit_tests/models/",
+        "tests/unit_tests/api/",
+        "tests/unit_tests/cli/",
+        "tests/unit_tests/tools/",
         "tests/unit_tests/storage/metric/",
         "tests/unit_tests/storage/semantic_model/",
-        "tests/unit_tests/tools/func_tool/",
-        "tests/unit_tests/tools/skill_tools/",
         "tests/unit_tests/validation/",
-    ]
+    }
 
 
 def test_select_impacted_unit_tests_maps_non_python_files_to_parent_directory():
@@ -228,6 +232,7 @@ def test_run_tests_treats_empty_impacted_collection_as_success(tmp_path, monkeyp
     monkeypatch.setattr(run_pr_tests, "DEFAULT_COVERAGE_DB", str(tmp_path / ".coverage"))
     monkeypatch.setattr(run_pr_tests, "resolve_impacted_unit_tests", lambda base_ref: ["tests/unit_tests/"])
     monkeypatch.setattr(run_pr_tests, "merge_junit_results", lambda junit_xml_paths: None)
+    monkeypatch.setattr(run_pr_tests, "verify_gate", lambda *args: 0)
 
     exit_codes = iter([0, 5])
     monkeypatch.setattr(
@@ -382,6 +387,7 @@ def test_run_tests_runs_acceptance_parallel_with_per_file_distribution(tmp_path,
     monkeypatch.setattr(run_pr_tests, "DEFAULT_COVERAGE_DB", str(tmp_path / ".coverage"))
     monkeypatch.setattr(run_pr_tests, "resolve_impacted_unit_tests", lambda base_ref: ["tests/unit_tests/"])
     monkeypatch.setattr(run_pr_tests, "merge_junit_results", lambda junit_xml_paths: None)
+    monkeypatch.setattr(run_pr_tests, "verify_gate", lambda *args: 0)
 
     suite_calls = []
 

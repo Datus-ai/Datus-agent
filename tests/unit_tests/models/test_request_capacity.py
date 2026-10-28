@@ -19,6 +19,8 @@ from datus.models.request_capacity import (
     guard_request,
 )
 
+pytestmark = pytest.mark.component
+
 
 def test_budget_uses_actual_output_and_complete_request():
     capacity = RequestCapacity("gpt-4o", 262144, 8192)
