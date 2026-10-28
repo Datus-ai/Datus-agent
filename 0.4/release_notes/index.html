@@ -1114,6 +1114,8 @@
       
         
       
+        
+      
     
     
     
@@ -1284,6 +1286,34 @@
     
   
     Ask Metrics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../subagent/ontology_analyst/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Ontology Analyst
   
 
     
@@ -3358,6 +3388,12 @@
       
         
       
+        
+      
+        
+      
+        
+      
     
     
     
@@ -3548,6 +3584,34 @@
   
   
     <li class="md-nav__item">
+      <a href="../configuration/datasources/aurora/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Amazon Aurora
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../configuration/datasources/greenplum/" class="md-nav__link">
         
   
@@ -3584,6 +3648,34 @@
     
   
     Amazon Redshift
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../configuration/datasources/athena/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Amazon Athena
   
 
     
@@ -3948,6 +4040,34 @@
     
   
     Oracle
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../configuration/datasources/hana/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    SAP HANA
   
 
     
@@ -4814,6 +4934,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#044" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        0.4.4
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#043" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -5202,6 +5333,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#044" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        0.4.4
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#043" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -5560,7 +5702,7 @@
 
 
   
-    <a href="https://github.com/Datus-ai/Datus-agent/edit/v0.4.3/docs/release_notes.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+    <a href="https://github.com/Datus-ai/Datus-agent/edit/v0.4.4/docs/release_notes.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
       
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
     </a>
@@ -5570,6 +5712,31 @@
 
 <h1 id="release-notes">Release notes<a class="headerlink" href="#release-notes" title="Permanent link">&para;</a></h1>
 <h2 id="04">0.4<a class="headerlink" href="#04" title="Permanent link">&para;</a></h2>
+<h3 id="044">0.4.4<a class="headerlink" href="#044" title="Permanent link">&para;</a></h3>
+<p><strong>New Features</strong></p>
+<ul>
+<li><strong>OntologyAnalyst Subagent for Ontology Q&amp;A</strong> - Uses Apache Ossie ontologies and mappings to understand business concepts, relationship roles, allowed enumeration values, and grouping paths, supporting both metric aggregation and detail-record queries. It uses project-level <code>subject/ontology/</code> and binds models for different datasources through the mapping's <code>semantic_model_ref.iri</code>. Datasources with only inline-model mappings can also serve standard semantic queries; the modeling Agent explicitly blocks creating a separate model that would overwrite them. (<a href="https://github.com/Datus-ai/Datus-agent/pull/1524">Agent #1524</a>, <a href="https://github.com/Datus-ai/Datus-agent/pull/1538">#1538</a>, <a href="https://github.com/Datus-ai/Datus-agent/pull/1539">#1539</a>) Docs: <a href="https://docs.datus.ai/dev/subagent/ontology_analyst/">OntologyAnalyst</a>.</li>
+<li><strong>AWS Athena Database Adapter</strong> - Uses the official boto3 SDK to query Athena and read Glue Catalog metadata. Supports Workgroup-managed query results, pagination, cancellation, execution diagnostics, and list/CSV/pandas/Arrow output. (<a href="https://github.com/Datus-ai/datus-db-adapters/pull/154">DB #154</a>, <a href="https://github.com/Datus-ai/Datus-agent/pull/1554">Agent #1554</a>) Docs: <a href="https://docs.datus.ai/dev/configuration/datasources/athena/">Athena Connection Guide</a>; <a href="https://github.com/Datus-ai/datus-db-adapters/blob/main/datus-athena/README.md">Repository Guide</a>.</li>
+<li><strong>SAP HANA Connectivity and Agent Workflows</strong> - Uses the official <code>hdbcli</code> driver with password or user-store authentication, encryption and certificate verification by default, metadata, transactions, and multiple result formats. The Agent uses adapter-provided SQL analysis for read-only and table-scope checks and supports initialization with only a schema configured. Also adds common Dosi HANA scalar functions and precise Decimal result handling. (<a href="https://github.com/Datus-ai/Datus-agent/pull/1518">Agent #1518</a>, <a href="https://github.com/Datus-ai/datus-db-adapters/pull/156">DB #156</a>, <a href="https://github.com/Datus-ai/datus-db-adapters/pull/164">#164</a>, <a href="https://github.com/Datus-ai/Datus-agent/pull/1554">Agent #1554</a>) Docs: <a href="https://docs.datus.ai/dev/configuration/datasources/hana/">HANA Connection Guide</a>; <a href="https://github.com/Datus-ai/datus-db-adapters/blob/main/datus-hana/README.md">Repository Guide</a>.</li>
+<li><strong>Aurora Authentication and Connection Lifecycle Support in the MySQL/PostgreSQL Adapters</strong> - Keeps the existing datasource types and supports password, IAM, and Secrets Manager authentication. Refreshes IAM tokens for new physical connections, updates connection pools when the Secret version changes, and checks for Aurora writer endpoint role changes. IAM requires CA and hostname verification; application SQL and transactions are not automatically replayed. (<a href="https://github.com/Datus-ai/datus-db-adapters/pull/155">DB #155</a>, <a href="https://github.com/Datus-ai/Datus-agent/pull/1554">Agent #1554</a>) Docs: <a href="https://docs.datus.ai/dev/configuration/datasources/aurora/">Aurora Connection Guide</a>; <a href="https://github.com/Datus-ai/datus-db-adapters/blob/main/docs/aurora.md">Repository Guide</a>.</li>
+</ul>
+<p><strong>Enhancements</strong></p>
+<ul>
+<li><strong>Continue Large-Catalog Initialization and Long Tool Results in One Session</strong> - <code>/init</code> uses the standard agentic loop, reads full archived results through pagination as needed, and compacts context within a turn. Capacity checks include complete messages, tool schemas, output reserves, and a safety margin. Private models can optionally configure capacity and a tokenizer, while omitted settings still allow startup. DDL lookup for specified tables restricts metadata queries directly, reducing repeated full-catalog scans. Initialization still reads only metadata and records unconfirmed business interpretations separately. (<a href="https://github.com/Datus-ai/Datus-agent/pull/1540">Agent #1540</a>, <a href="https://github.com/Datus-ai/Datus-agent/pull/1546">#1546</a>, <a href="https://github.com/Datus-ai/Datus-agent/pull/1548">#1548</a>, <a href="https://github.com/Datus-ai/datus-db-adapters/pull/176">DB #176</a>) Docs: <a href="https://docs.datus.ai/dev/skills/init/">Init</a>, <a href="https://docs.datus.ai/dev/configuration/agent/">Capacity Configuration</a>.</li>
+<li><strong>Semantic Modeling Based on Original Business Materials and Real Results</strong> - Reads SQL, documents, and engine references through existing file tools. Explicit read-only reference SQL compares complete metric groups and values, rejecting validation evidence from stale or incorrect models. Accepts structured dataset/metric arguments and detects duplicate YAML keys. Database skills retain essential query guidance while moving detailed DDL, writes, loading, and procedure instructions into on-demand references, reducing persistent context. (<a href="https://github.com/Datus-ai/Datus-agent/pull/1517">Agent #1517</a>, <a href="https://github.com/Datus-ai/datus-db-adapters/pull/153">DB #153</a>) Docs: <a href="https://docs.datus.ai/dev/subagent/semantic_modeling/">Semantic Modeling</a>, <a href="https://docs.datus.ai/dev/skills/introduction/">Skills</a>.</li>
+<li><strong>Richer Metric Explanations and More Compact AskMetrics Results</strong> - Adds <code>get_dataset</code> and exposes expressions, fixed-grain values, relationships, windows, parameters, required grouping, and time requirements. The preview API returns required dimensions and their reasons. Execution results use a text header and CSV rows, preserving warnings, the full cache, and paginated reading; compiled SQL is available through dry run. The bundled Dosi upgrade also adds cross-fact LOD and composite metrics and fixes filtered count, integer division, Decimal, and some time-bucket window calculations. (<a href="https://github.com/Datus-ai/Datus-agent/pull/1515">Agent #1515</a>, <a href="https://github.com/Datus-ai/Datus-agent/pull/1533">#1533</a>, <a href="https://github.com/Datus-ai/Datus-agent/pull/1534">#1534</a>) Docs: <a href="https://docs.datus.ai/dev/knowledge_base/metrics/">Metrics</a>, <a href="https://docs.datus.ai/dev/subagent/ask_metrics/">AskMetrics</a>.</li>
+<li><strong>Hive/Inceptor Authentication, Metadata, and Result Protocols</strong> - Supports the Kerberos service name and GSSAPI installation, correctly distinguishes tables from views, and reads column comments. <code>server_type: inceptor</code> enables separate result decoding for VARCHAR2, TIME, JSON, GEO, interval, and CURSOR types. The shared SQLAlchemy execution layer preserves SQL literals such as colons and percent signs inside JSON. The Agent can route native Dosi HiveServer2 metric execution by profile and forward timeouts and available cancellation tokens; this path requires a native engine build with the corresponding capabilities. (<a href="https://github.com/Datus-ai/Datus-agent/pull/1519">Agent #1519</a>, <a href="https://github.com/Datus-ai/Datus-agent/pull/1527">#1527</a>, <a href="https://github.com/Datus-ai/Datus-agent/pull/1531">#1531</a>, <a href="https://github.com/Datus-ai/datus-db-adapters/pull/158">DB #158</a>, <a href="https://github.com/Datus-ai/datus-db-adapters/pull/163">#163</a>, <a href="https://github.com/Datus-ai/datus-db-adapters/pull/167">#167</a>) Docs: <a href="https://docs.datus.ai/dev/configuration/datasources/hive/">Hive/Inceptor</a>.</li>
+<li><strong>ClickHouse, Trino, and PostgreSQL TLS Configuration</strong> - ClickHouse explicitly selects HTTPS and supports certificate verification and PEM CAs. Trino supports private CAs and validates combinations of protocol and verification settings. Agent configuration preserves TLS settings, and the PostgreSQL guide adds certificate, IAM/Secrets Manager, and <code>verify-full</code> configuration. (<a href="https://github.com/Datus-ai/Datus-agent/pull/1521">Agent #1521</a>, <a href="https://github.com/Datus-ai/Datus-agent/pull/1522">#1522</a>, <a href="https://github.com/Datus-ai/datus-db-adapters/pull/160">DB #160</a>, <a href="https://github.com/Datus-ai/datus-db-adapters/pull/161">#161</a>) Docs: <a href="https://docs.datus.ai/dev/configuration/datasources/clickhouse/">ClickHouse</a>, <a href="https://docs.datus.ai/dev/configuration/datasources/trino/">Trino</a>, <a href="https://docs.datus.ai/dev/configuration/datasources/postgresql/">PostgreSQL</a>.</li>
+<li><strong>Snowflake Credentials from AWS Secrets Manager</strong> - Supports password and key-pair authentication, JSON field mapping or raw SecretString, and credential caching for up to 300 seconds. New physical logins obtain current credentials; cache expiry does not interrupt existing sessions or transactions. Corrects package versions and the minimum core dependency, and constrains the Snowflake SDK to <code>&lt;5</code> and PyArrow to <code>&lt;26</code> to prevent import failures from incompatible combinations. This Secret capability belongs to the Python database adapter; these Agent changes do not imply support for the same credential configuration in native Dosi Snowflake. (<a href="https://github.com/Datus-ai/Datus-agent/pull/1525">Agent #1525</a>, <a href="https://github.com/Datus-ai/datus-db-adapters/pull/162">DB #162</a>, <a href="https://github.com/Datus-ai/datus-db-adapters/pull/178">#178</a>, <a href="https://github.com/Datus-ai/datus-db-adapters/pull/151">#151</a>) Docs: <a href="https://docs.datus.ai/dev/configuration/datasources/snowflake/">Snowflake</a>.</li>
+<li><strong>Redshift IAM Username Handling and Local Connection Guidance</strong> - Passes the configured username as the driver's required <code>db_user</code>. Documents IAM TLS requirements, SSM connections that preserve the original hostname, and the separate scope of driver SSL warnings. (<a href="https://github.com/Datus-ai/Datus-agent/pull/1520">Agent #1520</a>, <a href="https://github.com/Datus-ai/datus-db-adapters/pull/157">DB #157</a>) Docs: <a href="https://docs.datus.ai/dev/configuration/datasources/redshift/">Redshift</a>.</li>
+<li><strong>Preserve Dosi Profile Types and Execution Diagnostics</strong> - Shared configuration conversion preserves native boolean, integer, and nested AWS option types and provides adapter namespace guidance to the Agent. Metric and attribution tools retain optional engine <code>execution_info</code>, including query IDs, terminal state, scan statistics, and cancellation diagnostics. This passthrough remains compatible with backends that provide no diagnostics. Native Athena/Aurora execution still depends on the installed Dosi build and cannot be inferred from configuration passthrough alone. (<a href="https://github.com/Datus-ai/Datus-agent/pull/1523">Agent #1523</a>, <a href="https://github.com/Datus-ai/Datus-agent/pull/1526">#1526</a>, <a href="https://github.com/Datus-ai/Datus-agent/pull/1528">#1528</a>)</li>
+<li><strong>Bounded MaxCompute Partition Sampling</strong> - Prefers the latest populated partition from a bounded partition list, avoiding unpartitioned queries when full-table scans are disabled. Uses only size information already returned by the partition list, avoiding large numbers of extra metadata requests caused by PyODPS lazy loading. Adds <code>ignore_table_patterns</code> to exclude matching objects before fetching DDL. (<a href="https://github.com/Datus-ai/datus-db-adapters/pull/146">DB #146</a>, <a href="https://github.com/Datus-ai/datus-db-adapters/pull/159">#159</a>)</li>
+</ul>
+<p><strong>Bug Fixes</strong></p>
+<ul>
+<li><strong>Bound Database Waits and Show SQL Errors Promptly</strong> - Multiple database adapters propagate timeouts to the actual driver, network I/O, or server execution boundary and invalidate connections after a timeout. Also corrects timeout classification for Doris server-side cancellation. The Agent displays completed SQL errors without waiting for all parallel sibling tools, and approved <code>execute_sql</code> calls have a fixed 300-second wait limit. This Agent limit bounds tool/UI waiting; a synchronous driver or remote SQL may still be running, so it does not establish that retrying is safe. (<a href="https://github.com/Datus-ai/Datus-agent/pull/1541">Agent #1541</a>, <a href="https://github.com/Datus-ai/datus-db-adapters/pull/166">DB #166</a>, <a href="https://github.com/Datus-ai/datus-db-adapters/pull/170">#170</a>) Docs: <a href="https://github.com/Datus-ai/datus-db-adapters/blob/main/docs/adapter-timeouts.md">Repository Timeout Guide</a> (updated by <a class="magiclink magiclink-github magiclink-issue" href="https://github.com/Datus-ai/Datus-agent/issues/170" title="GitHub Issue: Datus-ai/Datus-agent #170">#170</a> in this group; the corresponding online page is not yet published). User documentation for the Agent's 300-second limit is missing.</li>
+<li><strong>Synchronous MCP Tools No Longer Block the Event Loop</strong> - Moves synchronous tools and conversion work to a bounded executor while preserving request context. Health checks and other requests can continue during slow queries. Queue overload is rejected immediately; caller cancellation continues to account for capacity occupied by the real task, and connection cleanup waits for users of the connection to finish. Defaults to 8 workers and 16 queued tasks, both configurable. (<a href="https://github.com/Datus-ai/Datus-agent/pull/1530">Agent #1530</a>) Docs: <a href="https://docs.datus.ai/dev/integration/mcp/">MCP</a>.</li>
+</ul>
 <h3 id="043">0.4.3<a class="headerlink" href="#043" title="Permanent link">&para;</a></h3>
 <p><strong>New Features</strong></p>
 <ul>

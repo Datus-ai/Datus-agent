@@ -14,7 +14,7 @@
         <link rel="prev" href="../semantic_modeling/">
       
       
-        <link rel="next" href="../gen_sql_summary/">
+        <link rel="next" href="../ontology_analyst/">
       
       
         
@@ -1123,6 +1123,8 @@
       
         
       
+        
+      
     
     
     
@@ -1453,6 +1455,34 @@
   
 </nav>
       
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../ontology_analyst/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Ontology Analyst
+  
+
+    
+  </span>
+  
+  
+
+      </a>
     </li>
   
 
@@ -3519,6 +3549,12 @@
       
         
       
+        
+      
+        
+      
+        
+      
     
     
     
@@ -3709,6 +3745,34 @@
   
   
     <li class="md-nav__item">
+      <a href="../../configuration/datasources/aurora/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Amazon Aurora
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../configuration/datasources/greenplum/" class="md-nav__link">
         
   
@@ -3745,6 +3809,34 @@
     
   
     Amazon Redshift
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../configuration/datasources/athena/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Amazon Athena
   
 
     
@@ -4109,6 +4201,34 @@
     
   
     Oracle
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../configuration/datasources/hana/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    SAP HANA
   
 
     
@@ -5071,7 +5191,7 @@
 
 
   
-    <a href="https://github.com/Datus-ai/Datus-agent/edit/v0.4.3/docs/subagent/ask_metrics.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+    <a href="https://github.com/Datus-ai/Datus-agent/edit/v0.4.4/docs/subagent/ask_metrics.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
       
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
     </a>
@@ -5131,8 +5251,9 @@
 <ul>
 <li>Direct subject-tree matches are preferred over search.</li>
 <li><code>search_metrics</code> is used only when the subject tree is missing, partial, or ambiguous.</li>
-<li><code>get_metric</code> is called before grouping, filtering, or attribution.</li>
-<li>Grouping names come directly from <code>get_metric.dimensions[].name</code>, including dataset qualification where present.</li>
+<li><code>get_metric</code> is called for each metric before it is queried. It states how the metric is computed (<code>expr</code>), the datasets it reads and can be grouped by, its parameters, and its time grains.</li>
+<li><code>get_dataset</code> is called for every dataset a query reads. Dataset and field descriptions hold conventions every query on it follows, such as a snapshot's version day or what a code value means.</li>
+<li>Grouping and filtering names are <code>dataset.field</code>, with the field name <code>get_dataset</code> shows.</li>
 <li><code>query_metrics</code> is the primary tool for metric values.</li>
 <li><code>attribution_analyze</code> is used for change explanation and contribution questions.</li>
 <li>Raw SQL tools are not part of the default AskMetrics surface.</li>
@@ -5160,7 +5281,11 @@
 </tr>
 <tr>
 <td><code>semantic_tools.get_metric</code></td>
-<td>Describe one metric: its queryable dimensions, time axis, and grains</td>
+<td>Describe one metric: how it is computed, the datasets it reads and can be grouped by, its parameters, and its time grains</td>
+</tr>
+<tr>
+<td><code>semantic_tools.get_dataset</code></td>
+<td>Describe one dataset: its fields with their definitions, fixed fields, time field, and relationships</td>
 </tr>
 <tr>
 <td><code>semantic_tools.query_metrics</code></td>
@@ -5286,13 +5411,13 @@
         
         
           
-          <a href="../gen_sql_summary/" class="md-footer__link md-footer__link--next" aria-label="Next: Generate SQL Summary">
+          <a href="../ontology_analyst/" class="md-footer__link md-footer__link--next" aria-label="Next: Ontology Analyst">
             <div class="md-footer__title">
               <span class="md-footer__direction">
                 Next
               </span>
               <div class="md-ellipsis">
-                Generate SQL Summary
+                Ontology Analyst
               </div>
             </div>
             <div class="md-footer__button md-icon">

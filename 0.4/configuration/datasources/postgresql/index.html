@@ -14,7 +14,7 @@
         <link rel="prev" href="../mysql/">
       
       
-        <link rel="next" href="../greenplum/">
+        <link rel="next" href="../aurora/">
       
       
         
@@ -1121,6 +1121,8 @@
       
         
       
+        
+      
     
     
     
@@ -1291,6 +1293,34 @@
     
   
     Ask Metrics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../subagent/ontology_analyst/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Ontology Analyst
   
 
     
@@ -3369,6 +3399,12 @@
       
         
       
+        
+      
+        
+      
+        
+      
     
     
     
@@ -3632,6 +3668,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="TLS and namespaces">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#aws-authentication" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        AWS authentication
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -3683,6 +3736,34 @@
   
   
     <li class="md-nav__item">
+      <a href="../aurora/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Amazon Aurora
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../greenplum/" class="md-nav__link">
         
   
@@ -3719,6 +3800,34 @@
     
   
     Amazon Redshift
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../athena/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Amazon Athena
   
 
     
@@ -4083,6 +4192,34 @@
     
   
     Oracle
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../hana/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    SAP HANA
   
 
     
@@ -4965,6 +5102,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="TLS and namespaces">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#aws-authentication" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        AWS authentication
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -5017,7 +5171,7 @@
 
 
   
-    <a href="https://github.com/Datus-ai/Datus-agent/edit/v0.4.3/docs/configuration/datasources/postgresql.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+    <a href="https://github.com/Datus-ai/Datus-agent/edit/v0.4.4/docs/configuration/datasources/postgresql.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
       
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
     </a>
@@ -5028,8 +5182,10 @@
 <h1 id="postgresql-datasource">PostgreSQL datasource<a class="headerlink" href="#postgresql-datasource" title="Permanent link">&para;</a></h1>
 <p>The PostgreSQL adapter connects through the PostgreSQL wire protocol with psycopg2. Datus preserves the native <code>database → schema → table</code> hierarchy and can discover tables, views, and materialized views.</p>
 <h2 id="install">Install<a class="headerlink" href="#install" title="Permanent link">&para;</a></h2>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>pip<span class="w"> </span>install<span class="w"> </span>datus-postgresql
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>pip<span class="w"> </span>install<span class="w"> </span>--upgrade<span class="w"> </span><span class="s1">'datus-postgresql&gt;=0.1.11'</span><span class="w"> </span><span class="se">\</span>
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="w">  </span><span class="s1">'datus-sqlalchemy&gt;=0.1.12'</span><span class="w"> </span><span class="s1">'datus-db-core&gt;=0.1.10'</span><span class="w"> </span><span class="s1">'SQLAlchemy==2.0.23'</span>
 </span></code></pre></div>
+<p>These published versions include the certificate and AWS authentication fields below. For IAM or Secrets Manager, install the optional <code>aws</code> extra as shown in the <a href="../aurora/#install">Aurora guide</a>. Older adapters may expose only <code>sslmode</code> and rely on libpq certificate files/environment. Install into the Agent environment, restart after upgrading shared packages, and use <code>uv run --no-sync</code> when launching from a checkout after installation.</p>
 <h2 id="connection-profile">Connection profile<a class="headerlink" href="#connection-profile" title="Permanent link">&para;</a></h2>
 <div class="language-yaml highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="nt">agent</span><span class="p">:</span>
 </span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">  </span><span class="nt">services</span><span class="p">:</span>
@@ -5107,19 +5263,109 @@
 <td><code>disable</code>, <code>allow</code>, <code>prefer</code>, <code>require</code>, <code>verify-ca</code>, or <code>verify-full</code>.</td>
 </tr>
 <tr>
+<td><code>sslrootcert</code></td>
+<td>string</td>
+<td style="text-align: right;">no</td>
+<td>—</td>
+<td>CA bundle file path passed to libpq. Required for Aurora/IAM.</td>
+</tr>
+<tr>
+<td><code>sslcert</code> / <code>sslkey</code></td>
+<td>string</td>
+<td style="text-align: right;">no</td>
+<td>—</td>
+<td>Client certificate and private key file paths; supply both together for mutual TLS.</td>
+</tr>
+<tr>
+<td><code>aurora</code></td>
+<td>boolean</td>
+<td style="text-align: right;">no</td>
+<td><code>false</code></td>
+<td>Require a CA and <code>verify-full</code> for an Aurora endpoint.</td>
+</tr>
+<tr>
+<td><code>auth_mode</code></td>
+<td>string</td>
+<td style="text-align: right;">no</td>
+<td><code>password</code></td>
+<td><code>password</code> or AWS RDS <code>iam</code>.</td>
+</tr>
+<tr>
+<td><code>aws</code></td>
+<td>object</td>
+<td style="text-align: right;">no</td>
+<td>—</td>
+<td>SDK identity options: <code>region</code>, <code>profile</code>, <code>ca_bundle</code> (AWS API trust only).</td>
+</tr>
+<tr>
+<td><code>secret_ref</code></td>
+<td>string</td>
+<td style="text-align: right;">no</td>
+<td>—</td>
+<td>Secrets Manager name/ARN; mutually exclusive with inline password and IAM.</td>
+</tr>
+<tr>
+<td><code>secret_cache_ttl_seconds</code></td>
+<td>integer</td>
+<td style="text-align: right;">no</td>
+<td><code>300</code></td>
+<td>Secret refresh interval, 1–86400 seconds.</td>
+</tr>
+<tr>
+<td><code>connect_timeout_seconds</code></td>
+<td>integer</td>
+<td style="text-align: right;">no</td>
+<td>—</td>
+<td>Optional positive DBAPI connection timeout.</td>
+</tr>
+<tr>
 <td><code>timeout_seconds</code></td>
 <td>integer</td>
 <td style="text-align: right;">no</td>
 <td><code>30</code></td>
-<td>Connection and pool timeout.</td>
+<td>Pool, socket-operation, and default query deadline.</td>
+</tr>
+<tr>
+<td><code>read_timeout_seconds</code></td>
+<td>integer</td>
+<td style="text-align: right;">no</td>
+<td>—</td>
+<td>Positive connection-checkout deadline override.</td>
+</tr>
+<tr>
+<td><code>query_timeout_seconds</code></td>
+<td>integer</td>
+<td style="text-align: right;">no</td>
+<td>—</td>
+<td>Positive server statement-timeout override.</td>
 </tr>
 </tbody>
 </table>
 <h2 id="tls-and-namespaces">TLS and namespaces<a class="headerlink" href="#tls-and-namespaces" title="Permanent link">&para;</a></h2>
-<p><code>sslmode</code> is passed to psycopg2/libpq. The adapter default is <code>prefer</code>; the credentialed baseline above uses <code>verify-full</code> to encrypt the connection, validate the CA chain, and verify that <code>host</code> matches the server certificate. The profile does not expose an <code>sslrootcert</code> field, so configure a trusted CA through libpq's standard certificate locations or environment and use a matching hostname. Do not add unsupported certificate keys to the datasource profile.</p>
+<p><code>sslmode</code> is passed to psycopg2/libpq. The adapter default remains <code>prefer</code> for existing profiles; this can fall back to plaintext and does not provide verified server identity. New production profiles should explicitly select <code>verify-full</code>, use a certificate-matching hostname, and configure the issuing CA. On 0.1.10+, add:</p>
+<div class="language-yaml highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="nt">sslrootcert</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">/absolute/path/postgresql-ca.pem</span>
+</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="c1"># For mutual TLS, supply both client files:</span>
+</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="c1"># sslcert: /absolute/path/client.crt</span>
+</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="c1"># sslkey: /absolute/path/client.key</span>
+</span></code></pre></div>
+<p>These fields accept file paths, not inline PEM. Without <code>sslrootcert</code>, ordinary PostgreSQL can use libpq's standard CA location/environment. Moving an old <code>prefer</code> profile to <code>verify-full</code> requires a trusted CA and matching hostname first; changing the adapter version alone does not migrate its policy.</p>
+<h3 id="aws-authentication">AWS authentication<a class="headerlink" href="#aws-authentication" title="Permanent link">&para;</a></h3>
+<p>Install the <code>aws</code> extra with the compatible published packages listed in the <a href="../aurora/#install">Aurora guide</a>. Keep database TLS trust in <code>sslrootcert</code>; <code>aws.ca_bundle</code> only affects AWS HTTPS APIs. Use the SDK credential chain or an AWS shared profile, including SDK-managed role refresh; do not paste temporary AWS credentials into the datasource. Full Aurora MySQL/PostgreSQL profiles, IAM prerequisites, Secret rotation, and failover behavior are documented in <a href="../aurora/">Amazon Aurora</a>.</p>
+<p>For RDS/Aurora IAM, omit <code>password</code> and <code>secret_ref</code> and add:</p>
+<div class="language-yaml highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="nt">aurora</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span><span class="w"> </span><span class="c1"># Only for Aurora endpoints</span>
+</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="nt">auth_mode</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">iam</span>
+</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="nt">aws</span><span class="p">:</span>
+</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="w">  </span><span class="nt">region</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">us-east-1</span>
+</span><span id="__span-3-5"><a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="w">  </span><span class="nt">profile</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">analytics</span>
+</span><span id="__span-3-6"><a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="nt">sslmode</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">verify-full</span>
+</span><span id="__span-3-7"><a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a><span class="nt">sslrootcert</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">/absolute/path/rds-ca-bundle.pem</span>
+</span><span id="__span-3-8"><a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a><span class="nt">connect_timeout_seconds</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">10</span>
+</span></code></pre></div>
+<p>Both <code>aurora: true</code> and <code>auth_mode: iam</code> require an explicit CA path. When omitted, <code>sslmode</code> becomes <code>verify-full</code>; explicitly selecting another mode is rejected. IAM tokens are generated for new physical connections. Password authentication can instead use <code>secret_ref</code> with <code>auth_mode: password</code>: the Secret must contain a JSON <code>password</code> string, and any <code>username</code> must match the configured role. Secret refresh follows the TTL and changed versions dispose old pools before new checkouts. Enable the matching server-side IAM login and AWS permissions separately.</p>
+<p><a href="../gaussdb/">GaussDB</a> and <a href="../dws/">DWS</a> use separate adapters and certificate constraints. Follow their datasource pages; the PostgreSQL <code>verify-full</code> template does not establish hostname verification for those products.</p>
 <p>The configured <code>database</code> is the initial PostgreSQL database and <code>schema</code> defaults to <code>public</code>. Datus filters system databases/schemas during normal discovery. Access to additional databases still depends on network reachability and role permissions.</p>
 <h2 id="verify-the-connection">Verify the connection<a class="headerlink" href="#verify-the-connection" title="Permanent link">&para;</a></h2>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>datus<span class="w"> </span>--config<span class="w"> </span>conf/agent.yml<span class="w"> </span>--datasource<span class="w"> </span>warehouse_pg
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>datus<span class="w"> </span>--config<span class="w"> </span>conf/agent.yml<span class="w"> </span>--datasource<span class="w"> </span>warehouse_pg
 </span></code></pre></div>
 <p>Run <code>/databases</code>, <code>/schemas</code>, and <code>/tables</code>. This distinguishes a working login from missing catalog grants.</p>
 <h2 id="troubleshooting">Troubleshooting<a class="headerlink" href="#troubleshooting" title="Permanent link">&para;</a></h2>
@@ -5141,7 +5387,7 @@
 </tr>
 <tr>
 <td>Certificate verification fails</td>
-<td>Use a valid <code>sslmode</code> and configure libpq's trusted CA through its standard environment/files; the adapter profile has no <code>sslrootcert</code> key.</td>
+<td>On 0.1.10+, set <code>sslrootcert</code> to the issuing CA file and match <code>host</code> to the certificate. Older packages use libpq's standard files/environment.</td>
 </tr>
 <tr>
 <td>Relation not found</td>
@@ -5199,13 +5445,13 @@
         
         
           
-          <a href="../greenplum/" class="md-footer__link md-footer__link--next" aria-label="Next: Greenplum">
+          <a href="../aurora/" class="md-footer__link md-footer__link--next" aria-label="Next: Amazon Aurora">
             <div class="md-footer__title">
               <span class="md-footer__direction">
                 Next
               </span>
               <div class="md-ellipsis">
-                Greenplum
+                Amazon Aurora
               </div>
             </div>
             <div class="md-footer__button md-icon">

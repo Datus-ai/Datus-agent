@@ -1121,6 +1121,8 @@
       
         
       
+        
+      
     
     
     
@@ -1291,6 +1293,34 @@
     
   
     Ask Metrics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../subagent/ontology_analyst/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Ontology Analyst
   
 
     
@@ -3365,6 +3395,12 @@
       
         
       
+        
+      
+        
+      
+        
+      
     
     
     
@@ -3555,6 +3591,34 @@
   
   
     <li class="md-nav__item">
+      <a href="../../configuration/datasources/aurora/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Amazon Aurora
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../configuration/datasources/greenplum/" class="md-nav__link">
         
   
@@ -3591,6 +3655,34 @@
     
   
     Amazon Redshift
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../configuration/datasources/athena/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Amazon Athena
   
 
     
@@ -3955,6 +4047,34 @@
     
   
     Oracle
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../configuration/datasources/hana/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    SAP HANA
   
 
     
@@ -4925,7 +5045,7 @@
 
 
   
-    <a href="https://github.com/Datus-ai/Datus-agent/edit/v0.4.3/docs/semantic/dosi_engine.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+    <a href="https://github.com/Datus-ai/Datus-agent/edit/v0.4.4/docs/semantic/dosi_engine.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
       
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
     </a>
@@ -4949,6 +5069,7 @@
 </span><span id="__span-1-6"><a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="w">        </span><span class="nt">uri</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">/absolute/path/to/warehouse.db</span>
 </span></code></pre></div>
 <p>Dosi is built in and needs no engine selection. Agent discovers OSI YAML or JSON files recursively under <code>subject/semantic_models/&lt;datasource&gt;/</code>, excluding per-metric fragments. Use <code>semantic_model_path</code> to select a specific file for a request. Old <code>agent.services.semantic_layer</code> and project <code>semantic</code> settings are ignored with a warning.</p>
+<p>Apache Ossie ontologies live in the flat, project-wide <code>subject/ontology/</code> directory, with the mapping documents that bind each one to semantic model files. A mapping names its model by a relative <code>semantic_model_ref.iri</code>, so one ontology can map onto models of several datasources; a datasource loads the mappings whose model is in its own directory. Only the <a href="../../subagent/ontology_analyst/"><code>ontology_analyst</code></a> subagent loads them, unless a datasource has no model file and its only models are inline in mapping documents.</p>
 <h2 id="agent-features">Agent features<a class="headerlink" href="#agent-features" title="Permanent link">&para;</a></h2>
 <p>Agent uses Dosi to discover semantic models, metrics, and metric-specific dimensions; compile and execute metric queries; validate exact model artifacts; and run native attribution. The <code>semantic_modeling</code> workflow uses the native authoring contract and validation. Explorer reads, writes, and deletes metric nodes in OSI YAML files, then synchronizes the affected Knowledge Base entries. The external Dosi CLI, REST server, and MCP server are outside Agent's integration.</p>
 <p>Each model file has its own engine instance. The runtime refreshes it after the model file changes. Dosi handles SQL dialects and query planning; Agent supplies the active datasource connection and keeps subject paths in its Knowledge Base.</p>
