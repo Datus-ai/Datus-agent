@@ -320,6 +320,9 @@ def test_parallel_suite_writes_failure_report_when_a_worker_crashes(tmp_path, mo
         "    if item == 1: os._exit(17)\n"
     )
     monkeypatch.chdir(tmp_path)
+    # The synthetic nested pytest owns its temp directory and plugins. Nightly's
+    # outer --basetemp can be a parent of tmp_path and is invalid in this cwd.
+    monkeypatch.delenv("PYTEST_ADDOPTS", raising=False)
     monkeypatch.setattr(run_pr_tests, "PARALLEL_WORKERS", "2")
     monkeypatch.setattr(run_pr_tests, "TEST_CMD_TIMEOUT", 15)
     monkeypatch.setattr(run_pr_tests, "DEFAULT_PYTEST_BASETEMP", str(tmp_path / "pytest-temp"))
@@ -332,7 +335,7 @@ def test_parallel_suite_writes_failure_report_when_a_worker_crashes(tmp_path, mo
         [str(tmp_path)], str(junit), log, suite_name="worker crash regression", parallel=True, dist="loadfile"
     )
 
-    assert exit_code == 1
+    assert exit_code == 1, log.getvalue()
     results = run_pr_tests.parse_test_results(str(junit))
     assert results["failed"] + results["errors"] == 1
     assert "worker" in results["failures"][0]["text"]

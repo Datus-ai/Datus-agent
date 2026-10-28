@@ -95,6 +95,31 @@ def test_unknown_model_counts_complete_utf8_request_without_guessing_a_tokenizer
         assert capacity.count(payload) == serialized_bytes + 64 + 256
 
 
+def test_tool_schema_with_type_parameter_is_counted_as_text():
+    capacity = RequestCapacity("deepseek/deepseek-v4-flash", 262144, 8192)
+    request = {
+        "messages": [{"role": "user", "content": "hello"}],
+        "tools": [
+            {
+                "type": "function",
+                "function": {
+                    "name": "search",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "type": {"type": "string", "description": "kind of result"},
+                            "example": {"type": "image_url", "image_url": {"url": "https://example.com/example.png"}},
+                        },
+                    },
+                },
+            }
+        ],
+    }
+    assert capacity.check(request) > capacity.check({"messages": request["messages"]})
+    with pytest.raises(ContextCapacityError, match="CONTEXT_LIMIT_EXCEEDED"):
+        capacity.check({**request, "tools": request["tools"] * 10000})
+
+
 def test_explicit_broken_tokenizer_does_not_silently_fall_back():
     capacity = RequestCapacity("private-deployment", 128000, 8192, "/missing/tokenizer.json")
     with patch("datus.models.request_capacity._tokenizer", side_effect=OSError("Cannot read tokenizer")):
@@ -122,6 +147,30 @@ async def test_custom_model_without_new_settings_reaches_transport_and_retains_c
         with pytest.raises(ContextCapacityError, match="CONTEXT_LIMIT_EXCEEDED"):
             await model.generate_with_tools("\N{EURO SIGN}" * DEFAULT_CONTEXT_LENGTH, max_turns=1)
         send.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_real_tool_with_type_parameter_reaches_transport():
+    import litellm
+    from agents import function_tool
+
+    @function_tool
+    def search(type: str) -> str:
+        """Search for a type of result."""
+        return type
+
+    model = OpenAIModel(
+        ModelConfig(type="openai", model="private-deployment", api_key="test", base_url="https://proxy.example/v1")
+    )
+    response = litellm.ModelResponse(
+        model="private-deployment",
+        choices=[{"index": 0, "finish_reason": "stop", "message": {"role": "assistant", "content": "done"}}],
+        usage={"prompt_tokens": 10, "completion_tokens": 2, "total_tokens": 12},
+    )
+    with patch("litellm.acompletion", new_callable=AsyncMock, return_value=response) as send:
+        result = await model.generate_with_tools("hello", tools=[search], max_turns=1)
+    assert result["content"] == "done"
+    assert send.await_args.kwargs["tools"][0]["function"]["parameters"]["properties"]["type"]["type"] == "string"
 
 
 def test_catalogued_non_openai_model_uses_explicit_conservative_count():
@@ -201,6 +250,29 @@ def test_inline_image_budget_depends_on_pixels_not_base64_size(model, field, kin
         capacity.check({**uncompressed, "tools": [{"name": "large_tool", "description": "schema " * 10000}]})
 
 
+@pytest.mark.parametrize("kind", ["function_call_output", "tool_result"])
+def test_image_in_tool_result_is_counted(kind):
+    from PIL import Image
+
+    from datus.utils.image_content import IMAGE_OMITTED
+
+    buffer = io.BytesIO()
+    Image.new("RGB", (32, 32), "blue").save(buffer, format="PNG")
+    url = f"data:image/png;base64,{base64.b64encode(buffer.getvalue()).decode('ascii')}"
+    image = {"type": "image_url", "image_url": {"url": url}}
+    if kind == "function_call_output":
+        item = {"type": kind, "call_id": "call-1", "output": [image]}
+        text_item = {**item, "output": [{"type": "text", "text": IMAGE_OMITTED}]}
+    else:
+        item = {"role": "user", "content": [{"type": kind, "tool_use_id": "call-1", "content": [image]}]}
+        text_item = {
+            "role": "user",
+            "content": [{"type": kind, "tool_use_id": "call-1", "content": [{"type": "text", "text": IMAGE_OMITTED}]}],
+        }
+    capacity = RequestCapacity("gpt-4o", 8192, 1024)
+    assert capacity.count({"input": [item]}) > capacity.count({"input": [text_item]})
+
+
 def test_small_context_default_reserves_both_margin_and_input():
     model = OpenAIModel(ModelConfig(type="openai", model="gpt-4o", api_key="test", context_length=4096))
     capacity = model.request_capacity()
@@ -232,6 +304,7 @@ def test_known_output_ceiling_is_not_silently_clamped():
         {"type": "input_file", "file_id": "file-123"},
         {"type": "document", "source": {"type": "base64", "media_type": "application/pdf", "data": "abc"}},
         {"type": "image_url", "image_url": {"url": "https://example.com/image.png"}},
+        {"type": "input_image", "file_id": "file-123"},
     ],
 )
 def test_opaque_media_is_not_counted_as_a_short_identifier(block):

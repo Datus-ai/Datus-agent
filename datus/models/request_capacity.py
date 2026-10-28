@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from datus.utils.exceptions import DatusException, ErrorCode
-from datus.utils.image_content import replace_images
+from datus.utils.image_content import image_blocks, replace_images
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
@@ -227,35 +227,31 @@ def guard_request(capacity: RequestCapacity, payload: dict[str, Any]) -> int:
 
 def _image_messages(payload: Any) -> list[dict[str, Any]]:
     blocks: list[dict[str, Any]] = []
-
-    def visit(value: Any) -> None:
-        if isinstance(value, list):
-            for item in value:
-                visit(item)
-        elif isinstance(value, dict):
-            kind = value.get("type")
-            if kind in {"image_url", "input_image"}:
-                url = value.get("image_url")
-                detail = value.get("detail", "auto")
-                if isinstance(url, dict):
-                    detail = url.get("detail", detail)
-                    url = url.get("url")
-                if not isinstance(url, str) or not url.startswith("data:"):
-                    raise ValueError("remote images need a provider token count before sending")
-                blocks.append({"type": "image_url", "image_url": {"url": url, "detail": detail}})
-                return
-            if kind == "image":
-                source = value.get("source", {})
-                if source.get("type") != "base64":
-                    raise ValueError("remote images need a provider token count before sending")
-                blocks.append(
-                    {"type": "image_url", "image_url": {"url": f"data:{source['media_type']};base64,{source['data']}"}}
-                )
-                return
-            for item in value.values():
-                visit(item)
-
-    visit(payload)
+    # Inspect the same message envelopes as replace_images; tool schemas and
+    # business dictionaries are counted as text, not traversed as content.
+    content = (
+        [payload[key] for key in ("messages", "input") if key in payload]
+        if isinstance(payload, dict) and ("messages" in payload or "input" in payload)
+        else payload
+    )
+    for block in image_blocks(content):
+        kind = block["type"]
+        if kind in ("image_url", "input_image") or "image_url" in block or "file_id" in block:
+            url = block.get("image_url")
+            detail = block.get("detail", "auto")
+            if isinstance(url, dict):
+                detail = url.get("detail", detail)
+                url = url.get("url")
+            if not isinstance(url, str) or not url.startswith("data:"):
+                raise ValueError("remote images need a provider token count before sending")
+            blocks.append({"type": "image_url", "image_url": {"url": url, "detail": detail}})
+        else:
+            source = block.get("source", {})
+            if source.get("type") != "base64":
+                raise ValueError("remote images need a provider token count before sending")
+            blocks.append(
+                {"type": "image_url", "image_url": {"url": f"data:{source['media_type']};base64,{source['data']}"}}
+            )
     return [{"role": "user", "content": blocks}] if blocks else []
 
 
