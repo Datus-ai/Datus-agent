@@ -136,6 +136,11 @@ async def test_mcp_http_registration_read_only_call_and_error_envelope(mcp_url):
         assert subject_tree["error"] is None
         assert isinstance(subject_tree["result"], dict)
 
+        query = parse_tool_result(await session.call_tool("execute_sql", {"sql": "SELECT 42 AS answer"}))
+        assert query["success"] == 1, query["error"]
+        assert query["error"] is None
+        assert "42" in json.dumps(query["result"])
+
         invalid_query = parse_tool_result(
             await session.call_tool("execute_sql", {"sql": "SELECT * FROM nonexistent_mcp_acceptance_table"})
         )

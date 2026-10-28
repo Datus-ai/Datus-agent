@@ -117,8 +117,7 @@ def test_insert_round_trip(duckdb_memory_connector: DuckdbConnector):
     drop_sql = f"DROP TABLE IF EXISTS {table_name}"
 
     create_result = duckdb_memory_connector.execute_ddl(create_sql)
-    if not create_result.success:
-        pytest.skip(f"Unable to create test table for INSERT: {create_result.error}")
+    assert create_result.success, create_result.error
 
     try:
         # Insert two rows
@@ -157,8 +156,7 @@ def test_update_round_trip(duckdb_memory_connector: DuckdbConnector):
     drop_sql = f"DROP TABLE IF EXISTS {table_name}"
 
     create_result = duckdb_memory_connector.execute_ddl(create_sql)
-    if not create_result.success:
-        pytest.skip(f"Unable to create test table for UPDATE: {create_result.error}")
+    assert create_result.success, create_result.error
 
     try:
         duckdb_memory_connector.execute_insert(f"INSERT INTO {table_name} (id, name) VALUES (1, 'Alice'), (2, 'Bob')")
@@ -198,8 +196,7 @@ def test_delete_round_trip(duckdb_memory_connector: DuckdbConnector):
     drop_sql = f"DROP TABLE IF EXISTS {table_name}"
 
     create_result = duckdb_memory_connector.execute_ddl(create_sql)
-    if not create_result.success:
-        pytest.skip(f"Unable to create test table for DELETE: {create_result.error}")
+    assert create_result.success, create_result.error
 
     try:
         duckdb_memory_connector.execute_insert(f"INSERT INTO {table_name} (id, name) VALUES (1, 'Alice'), (2, 'Bob')")
