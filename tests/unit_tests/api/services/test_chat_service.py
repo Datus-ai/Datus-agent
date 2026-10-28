@@ -1124,7 +1124,7 @@ def test_interrupted_review_history_preserves_user_text_and_frozen_tool_card(cha
     ]
     manager.save_message_contents(sid, {"review": {"tool_call_id": "review", "parts": parts}})
     history = chat_svc.get_history(sid, user_id="review_owner")
-    assert history.success
+    assert history.success is True
     assert [m.role for m in history.data.messages] == ["user", "assistant", "assistant"]
     assert history.data.messages[0].content[0].payload["content"] == "Plan the order metrics"
     assert history.data.messages[1].content[0].payload["preview"] == preview
