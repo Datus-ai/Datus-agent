@@ -1089,3 +1089,43 @@ class TestChatServiceStreamChat:
                 if stream2 is not None:
                     await stream2.aclose()
                 await tm.shutdown()
+
+
+def test_interrupted_review_history_preserves_user_text_and_frozen_tool_card(chat_svc):
+    manager = SessionManager(session_dir=chat_svc._session_dir, scope="review_owner")
+    sid = "chat_review_interrupted"
+    asyncio.run(manager.get_session(sid).add_items([{"role": "user", "content": "Plan the order metrics"}]))
+    preview = {
+        "filePath": ".datus/semantic-model-plans/sales/semantic-model-plan.json",
+        "oldText": "",
+        "newText": "frozen cancelled proposal",
+    }
+    parts = [
+        {
+            "type": "call-tool",
+            "payload": {
+                "callToolId": "review",
+                "toolName": "write_semantic_model_plan_file",
+                "toolParams": {"model_name": "sales"},
+                "preview": preview,
+                "proxied": True,
+            },
+        },
+        {
+            "type": "call-tool-result",
+            "payload": {
+                "callToolId": "review",
+                "toolName": "write_semantic_model_plan_file",
+                "duration": 1,
+                "shortDesc": "",
+                "result": {"success": 1, "result": {"review_status": "cancelled"}},
+            },
+        },
+    ]
+    manager.save_message_contents(sid, {"review": {"tool_call_id": "review", "parts": parts}})
+    history = chat_svc.get_history(sid, user_id="review_owner")
+    assert history.success
+    assert [m.role for m in history.data.messages] == ["user", "assistant", "assistant"]
+    assert history.data.messages[0].content[0].payload["content"] == "Plan the order metrics"
+    assert history.data.messages[1].content[0].payload["preview"] == preview
+    assert history.data.messages[2].content[0].payload["result"]["result"]["review_status"] == "cancelled"

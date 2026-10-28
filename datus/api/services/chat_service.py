@@ -470,17 +470,31 @@ class ChatService:
                         from datus.cli.manual_exec import exec_to_markdown
 
                         content = exec_to_markdown(content)
+                        parts = msg.get("message_contents") or []
+                        user_parts = [
+                            part for part in parts if part.get("type") not in ("call-tool", "call-tool-result")
+                        ]
+                        interrupted_reviews = [
+                            part for part in parts if part.get("type") in ("call-tool", "call-tool-result")
+                        ]
                         sse_messages.append(
                             SSEMessagePayload(
                                 message_id=str(uuid.uuid4()),
                                 role="user",
-                                content=[IMessageContent(**part) for part in msg["message_contents"]]
-                                if msg.get("message_contents")
+                                content=[IMessageContent(**part) for part in user_parts]
+                                if user_parts
                                 else [IMessageContent(type="markdown", payload={"content": content})],
                                 at_context=at_context,
                             )
                         )
                         event_id += 1
+                        for part in interrupted_reviews:
+                            sse_messages.append(
+                                SSEMessagePayload(
+                                    message_id=str(uuid.uuid4()), role="assistant", content=[IMessageContent(**part)]
+                                )
+                            )
+                            event_id += 1
                 elif role == "assistant":
                     if "actions" in msg:
                         payloads, event_id = _actions_to_payloads(

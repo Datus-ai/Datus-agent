@@ -1470,6 +1470,7 @@ class SessionManager:
             tools = {record["tool_call_id"]: record for record in records if record.get("tool_call_id")}
             result_rows: Dict[str, int] = {}
             persisted: Dict[int, list] = {}
+            last_user_message_id = None
             for message_id, raw in rows:
                 message = json.loads(raw)
                 if message.get("type") in ("function_call", "function_call_output") and message.get("call_id"):
@@ -1486,6 +1487,7 @@ class SessionManager:
                             result_rows[block.get("tool_use_id") or block["id"]] = message_id
                 if message.get("role") != "user":
                     continue
+                last_user_message_id = message_id
                 text = extract_user_input(message.get("content", "")).strip()
                 for index, record in enumerate(pending):
                     if record["text"].strip() == text:
@@ -1500,6 +1502,14 @@ class SessionManager:
                     owner = tools[owner].get("parent_action_id")
                 if owner in result_rows:
                     persisted.setdefault(result_rows[owner], []).extend(record["parts"])
+                elif last_user_message_id is not None and any(
+                    part.get("type") == "call-tool" and part.get("payload", {}).get("preview")
+                    for part in record["parts"]
+                ):
+                    # The SDK may not save a pending tool call before interruption.
+                    # Anchor its display-only review to this turn's user message;
+                    # history replays it as an assistant card, never as user input.
+                    persisted.setdefault(last_user_message_id, []).extend(record["parts"])
             conn.executemany(
                 "INSERT OR REPLACE INTO chat_message_contents VALUES (?, ?, ?)",
                 [
