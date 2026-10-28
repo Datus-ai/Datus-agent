@@ -37,6 +37,7 @@ ONTOLOGY_DIR = Path(__file__).parents[2] / "data" / "ontology"
 
 pytestmark = [
     pytest.mark.nightly,
+    pytest.mark.product_e2e,
     pytest.mark.skipif(
         not binding_supports_ontology(),
         reason="installed dosi-engine binding has no Engine.describe/paths",

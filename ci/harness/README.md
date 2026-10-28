@@ -43,6 +43,12 @@ gh workflow run run-nightly.yml --ref main \
 The comparison selects product targets and required service groups. In this mode
 the derived group filter takes precedence over `nightly_group_filter`, selected
 tests cannot silently skip, and scoped init is explicitly enabled when selected.
+The base fetch restores shallow history before computing the merge-base diff.
+Each executed pytest group writes a report under a fresh
+`ci/product-execution.*` directory. The final verification checks every planned
+file/nodeid against successful test outcomes across product and dedicated groups;
+deselected or unexecuted targets fail even when other product tests pass.
+Reports and `ci/product-execution-coverage.json` are uploaded with Nightly artifacts.
 Without `product_test_base_ref`, normal Nightly scope is unchanged. Real LLMs
 are not required in every merge-group run.
 
@@ -65,7 +71,9 @@ Live core defaults to `deepseek/deepseek-v4-flash` with `DEEPSEEK_API_KEY`.
 - Catalog navigation uses actual keyboard input. MCP checks a successful SQL
   response as well as registration and error envelopes.
 - DuckDB setup failure fails the DML round-trip cases instead of skipping them.
-- Version parsing moved to unit tests. The duplicate single-directory document
+- Version parsing is consolidated in `tests/unit_tests/storage/document/test_doc_init.py`.
+  Existing cases cover duplicate scenarios; pre-release and non-version inputs
+  have explicit regression checks. The duplicate single-directory document
   workflow was removed; pipeline and multi-directory acceptance remain.
 - The permanently skipped plan-confirmation simulation and stale quarantine
   entry were replaced by the production-loop HTTP acceptance test. Other plan

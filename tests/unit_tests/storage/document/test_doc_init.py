@@ -146,6 +146,12 @@ class TestDetectVersionsFromPaths:
         result = _detect_versions_from_paths(["v1.0.0"])
         assert result == {"1.0.0"}
 
+    def test_pre_release_version_paths(self):
+        assert _detect_versions_from_paths(["1.0.0-beta", "1.0.0-rc1", "1.0.0"]) == {"1.0.0-beta", "1.0.0-rc1", "1.0.0"}
+
+    def test_only_non_version_paths(self):
+        assert _detect_versions_from_paths(["docs", "README.md", "CHANGELOG.md"]) == set()
+
 
 # ---------------------------------------------------------------------------
 # _detect_versions_from_file_paths

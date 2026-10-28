@@ -79,6 +79,9 @@ jobs:
         env:
           PRODUCT_BASE: ${{ inputs.product_test_base_ref }}
         run: |
+          if [ "$(git rev-parse --is-shallow-repository)" = "true" ]; then
+            git fetch --no-tags --unshallow origin
+          fi
           git fetch --no-tags origin "$PRODUCT_BASE"
           echo "PRODUCT_TEST_BASE_REF=$(git rev-parse FETCH_HEAD)" >> "$GITHUB_ENV"
 
@@ -608,6 +611,8 @@ jobs:
             test_output_nightly_*.log
             nightly-manifest.json
             ci/product-test-plan.json
+            ci/product-execution.*/
+            ci/product-execution-coverage.json
             nightly-failure-classification.json
             provider-coverage-manifest.json
             nightly-trace-references.jsonl

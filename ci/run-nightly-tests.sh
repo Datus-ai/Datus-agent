@@ -973,6 +973,9 @@ run_logged_unfiltered() {
   local started_at
   started_at="$(utc_now)"
   collect_pytest_suite "$group_name" "$@"
+  if [ -n "${PRODUCT_EXECUTION_DIR:-}" ] && command_contains_pytest "$@"; then
+    set -- "$@" -p ci.pytest_gate_plugin --gate-report "${PRODUCT_EXECUTION_DIR}/${group_name//[^A-Za-z0-9_-]/_}.json"
+  fi
   local trace_expected=0
   if nightly_trace_expected_for_group "$group_name"; then
     trace_expected=1
@@ -1687,6 +1690,7 @@ run_compose_suite() {
 # silently deselected from the broad product group.
 PRODUCT_E2E_ROOTS=("${NIGHTLY_PYTEST_ROOTS[@]}")
 PRODUCT_REQUIRED_ARGS=()
+PRODUCT_EXECUTION_DIR=""
 DASHBOARD_MARK_EXPR="nightly and not product_e2e"
 if [ -n "${PRODUCT_TEST_BASE_REF:-}" ]; then
   uv run python ci/plan-product-tests.py --base-ref "$PRODUCT_TEST_BASE_REF" --output ci/product-test-plan.json || exit 1
@@ -1695,6 +1699,7 @@ if [ -n "${PRODUCT_TEST_BASE_REF:-}" ]; then
     echo "ERROR: No real-model product cases selected for the requested comparison."
     exit 1
   fi
+  PRODUCT_EXECUTION_DIR=$(mktemp -d "${REPO_ROOT}/ci/product-execution.XXXXXX") || exit 1
   NIGHTLY_GROUP_FILTER=$(uv run python -c 'import json,re; p=json.load(open("ci/product-test-plan.json")); print("^("+"|".join(re.escape(g) for g in ["Product E2E Nightly Tests", *p["nightly_groups"]])+")$")')
   PRODUCT_REQUIRED_ARGS=(-p ci.pytest_fail_on_skip_plugin --fail-on-skip)
   if [[ " ${PRODUCT_E2E_ROOTS[*]} " == *"test_init_live.py::test_qwen_scoped_init_supplements_existing_documents"* ]]; then
@@ -1844,6 +1849,10 @@ run_compose_suite "GaussDB Adapter Tests" "$GAUSSDB_COMPOSE" "gaussdb:600" -- ru
 run_logged_warn_only "Provider Health Tests" run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run pytest -m "nightly and provider_health" "${NIGHTLY_PYTEST_ROOTS[@]}" "${NIGHTLY_OPTIONAL_CLOUD_IGNORES[@]}" --tb=short --verbose --timeout=300 --timeout-method=thread --reruns 1 --reruns-delay 5
 
 run_logged_unfiltered "Flaky Log Classification" uv run python ci/check_flaky_registry.py --registry ci/flaky-registry.yml --log-file "$LOG_FILE" --warn-only
+
+if [ -n "${PRODUCT_EXECUTION_DIR:-}" ]; then
+  run_logged_unfiltered "Product Execution Evidence" uv run python ci/plan-product-tests.py --verify-execution "$PRODUCT_EXECUTION_DIR"
+fi
 
 manifest_finalize
 provider_coverage_finalize

@@ -6,8 +6,9 @@ import subprocess
 import sys
 
 import pytest
+import yaml
 
-from ci.harness.test_plan import ROOT, check_execution, impact_plan
+from ci.harness.test_plan import ROOT, check_execution, check_product_execution, impact_plan
 
 pytestmark = pytest.mark.acceptance
 
@@ -149,3 +150,118 @@ def test_pytest_report_distinguishes_collected_from_executed(tmp_path):
     data = json.loads(report.read_text())
     assert set(data["collected"]) == {"test_sample.py::test_passes", "test_sample.py::test_skipped"}
     assert data["outcomes"] == {"test_sample.py::test_passes": "passed", "test_sample.py::test_skipped": "skipped"}
+
+
+@pytest.mark.parametrize("shallow", [True, False])
+def test_nightly_base_fetch_finds_the_feature_merge_base(tmp_path, monkeypatch, shallow):
+    from ci.harness import test_plan
+
+    source = tmp_path / "source"
+    source.mkdir()
+
+    def git(*args, cwd=source):
+        return subprocess.check_output(["git", *args], cwd=cwd, text=True, stderr=subprocess.PIPE).strip()
+
+    git("init", "-b", "main")
+    git("config", "user.name", "Test")
+    git("config", "user.email", "test@example.invalid")
+    git("config", "commit.gpgsign", "false")
+    (source / "base.txt").write_text("common ancestor")
+    git("add", ".")
+    git("commit", "-m", "base")
+    git("checkout", "-b", "feature")
+    (source / "feature.txt").write_text("feature")
+    git("add", ".")
+    git("commit", "-m", "feature")
+    git("checkout", "main")
+    (source / "main.txt").write_text("main advanced")
+    git("add", ".")
+    git("commit", "-m", "main advanced")
+    checkout = tmp_path / "checkout"
+    depth_args = ["--depth", "1"] if shallow else []
+    git("clone", *depth_args, "--branch", "feature", source.as_uri(), str(checkout))
+    workflow = yaml.safe_load((ROOT / ".github/workflows/run-nightly.yml").read_text())
+    step = next(s for s in workflow["jobs"]["run-nightly"]["steps"] if s.get("name") == "Fetch product validation base")
+    output = tmp_path / "github-env"
+    result = subprocess.run(
+        ["bash", "-eu", "-c", step["run"]],
+        cwd=checkout,
+        env={**os.environ, "PRODUCT_BASE": "main", "GITHUB_ENV": str(output)},
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    base = output.read_text().strip().split("=", 1)[1]
+    assert base == git("rev-parse", "main", cwd=source)
+    monkeypatch.setattr(test_plan, "ROOT", checkout)
+    assert test_plan.changed_files(base) == ["feature.txt"]
+
+
+@pytest.mark.parametrize("product_marker", [False, True])
+def test_each_planned_target_must_survive_marker_selection(tmp_path, product_marker):
+    (tmp_path / "pytest.ini").write_text("[pytest]\nmarkers =\n nightly: nightly\n product_e2e: product\n")
+    report_dir = tmp_path / "reports"
+    report_dir.mkdir()
+    core = tmp_path / "test_core.py"
+    ontology = tmp_path / "test_ontology.py"
+    core.write_text("import pytest\npytestmark=[pytest.mark.nightly,pytest.mark.product_e2e]\ndef test_core(): pass\n")
+    mark = ",pytest.mark.product_e2e" if product_marker else ""
+    ontology.write_text(f"import pytest\npytestmark=[pytest.mark.nightly{mark}]\ndef test_ontology(): pass\n")
+    env = {**os.environ, "PYTHONPATH": str(ROOT), "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1"}
+    env.pop("PYTEST_ADDOPTS", None)
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            str(core),
+            str(ontology),
+            "-m",
+            "nightly and product_e2e",
+            "-p",
+            "ci.pytest_gate_plugin",
+            "--gate-report",
+            str(report_dir / "product.json"),
+            "-q",
+        ],
+        cwd=tmp_path,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    plan = tmp_path / "plan.json"
+    plan.write_text(json.dumps({"live_targets": ["test_core.py", "test_ontology.py"]}))
+    verified = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "ci/plan-product-tests.py"),
+            "--verify-execution",
+            str(report_dir),
+            "--plan",
+            str(plan),
+            "--output",
+            str(tmp_path / "coverage.json"),
+        ],
+        cwd=tmp_path,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert verified.returncode == (0 if product_marker else 1), verified.stdout + verified.stderr
+    data = json.loads((tmp_path / "coverage.json").read_text())
+    assert data["status"] == ("success" if product_marker else "failure")
+
+
+def test_dedicated_groups_provide_execution_evidence_for_their_targets(tmp_path):
+    plan = {"live_targets": ["test_core.py", "test_scheduler.py::test_schedule"]}
+    reports = []
+    for group, nodeid in [("product", "test_core.py::test_chat"), ("airflow", "test_scheduler.py::test_schedule")]:
+        path = tmp_path / f"{group}.json"
+        path.write_text(json.dumps({"collected": [nodeid], "outcomes": {nodeid: "passed"}, "exit_code": 0}))
+        reports.append(path)
+    assert check_product_execution(plan, reports[:1])["status"] == "failure"
+    assert check_product_execution(plan, reports)["status"] == "success"

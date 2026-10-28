@@ -111,3 +111,14 @@ def verify_gate(reports: list[Path], layer: str, output: Path) -> int:
     for error in result["errors"]:
         print(f"[gate-coverage] {error}", flush=True)
     return int(bool(result["errors"]))
+
+
+def check_product_execution(plan: dict, reports: list[Path]) -> dict:
+    """Every planned file/nodeid must contribute successfully executed tests."""
+    if not plan.get("live_targets"):
+        return {"status": "failure", "errors": ["The product plan has no live targets"], "evidence": {}}
+    return check_execution(
+        reports,
+        "product_e2e",
+        {"execution": {"core_nodeids": plan["live_targets"]}, "flow_groups": {}},
+    )

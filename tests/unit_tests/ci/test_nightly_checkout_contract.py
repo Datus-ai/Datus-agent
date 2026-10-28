@@ -22,6 +22,52 @@ def _bash_function_source(name: str) -> str:
     return script[start:end]
 
 
+def test_targeted_group_records_executed_pytest_results(tmp_path):
+    source = tmp_path / "test_product.py"
+    source.write_text("def test_product(): assert 2 + 2 == 4\n")
+    (tmp_path / "pytest.ini").write_text("[pytest]\n")
+    reports = tmp_path / "reports"
+    reports.mkdir()
+    env = {
+        **os.environ,
+        "REPO_ROOT": str(REPO_ROOT),
+        "PRODUCT_EXECUTION_DIR": str(reports),
+        "NIGHTLY_PYTEST_BASETEMP": str(tmp_path / "collection"),
+        "LOG_FILE": str(tmp_path / "nightly.log"),
+        "NIGHTLY_TRACE_REFERENCES_FILE": str(tmp_path / "traces.jsonl"),
+        "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1",
+    }
+    env.pop("PYTEST_ADDOPTS", None)
+    harness = "\n".join(
+        [
+            "set -uo pipefail",
+            "test_exit_code=0",
+            "log() { :; }",
+            "utc_now() { echo now; }",
+            "nightly_trace_expected_for_group() { return 1; }",
+            "manifest_record_collection() { :; }",
+            "manifest_record_suite() { :; }",
+            _bash_function_source("command_contains_pytest"),
+            _bash_function_source("collect_pytest_suite"),
+            _bash_function_source("run_logged_unfiltered"),
+            'run_logged_unfiltered "P0 Dosi Semantic Modeling E2E" "$1" -m pytest "$2" -q',
+            'exit "$test_exit_code"',
+        ]
+    )
+    result = subprocess.run(
+        ["bash", "-c", harness, "product-group", sys.executable, str(source)],
+        cwd=tmp_path,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    report = json.loads((reports / "P0_Dosi_Semantic_Modeling_E2E.json").read_text())
+    assert report["collected"] == ["test_product.py::test_product"]
+    assert report["outcomes"] == {"test_product.py::test_product": "passed"}
+
+
 def test_nightly_preserves_checkout_packages_after_locked_sync():
     workflow = WORKFLOW.read_text(encoding="utf-8")
 
