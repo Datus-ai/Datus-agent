@@ -80,6 +80,7 @@ PR_ACCEPTANCE_TARGETS = [
     "tests/unit_tests/cli/test_interactive_init.py",
     "tests/unit_tests/cli/web/test_chatbot.py",
     "tests/unit_tests/ci/test_harness_alignment.py",
+    "tests/unit_tests/ci/test_run_merge_queue_tests.py",
     "tests/unit_tests/ci/harness/test_test_plan.py",
     "tests/unit_tests/ci/test_prepare_ci_bird.py",
     "tests/integration/api/test_api.py",

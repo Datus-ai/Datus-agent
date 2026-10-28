@@ -30,6 +30,11 @@ unexecuted core cases. A test merely existing in the repository is insufficient.
 Flow claims marked `partial` retain references outside the fixed gate and are
 not claims of complete execution. Full claims are checked against runtime evidence.
 
+The fixed gate also exercises a runner self-test under a synthetic merge-group
+event with xdist and the outer temp-root environment variable. Nested runners
+receive a child cleanup namespace, and explicit `--suite` runs do not perform
+unrequested Git diff selection. The regression verifies parent-owned files survive.
+
 The normal PR job publishes `ci/product-test-plan.json`; it does **not** execute
 credentialed models. To evaluate an authorized branch using the existing trusted
 Nightly environment after these workflow changes are available:

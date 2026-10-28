@@ -191,8 +191,12 @@ def build_pytest_command(
 
 def run_command(command: Sequence[str], *, suite_name: str, timeout: int) -> int:
     log(f"Running {suite_name}: {' '.join(command)}")
+    env = os.environ.copy()
+    # Match the PR runner: a runner invoked inside pytest must only clean its
+    # own child namespace, never the active outer pytest/xdist directories.
+    env[PYTEST_BASETEMP_ENV] = str(suite_pytest_basetemp(suite_name) / "_nested-runners")
     try:
-        completed = subprocess.run(list(command), cwd=REPO_ROOT, text=True, timeout=timeout)
+        completed = subprocess.run(list(command), cwd=REPO_ROOT, env=env, text=True, timeout=timeout)
     except subprocess.TimeoutExpired:
         log(f"{suite_name} timed out after {timeout}s")
         return 1
@@ -295,7 +299,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         changed = (
             changed_files(args.base_ref)
-            if args.base_ref or os.environ.get("GITHUB_EVENT_NAME") == "merge_group"
+            if not args.suite and (args.base_ref or os.environ.get("GITHUB_EVENT_NAME") == "merge_group")
             else None
         )
         suites = suite_definitions(changed)

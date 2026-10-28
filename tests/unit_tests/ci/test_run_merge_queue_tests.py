@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import importlib.util
+import json
+import os
 from pathlib import Path
 
 import pytest
@@ -100,6 +102,41 @@ def test_empty_collection_is_allowed_only_for_additional_tests(
         "extra_args": [],
     }
     assert run_merge_queue_tests.run_suite(name, suite, timeout=10)["exit_code"] == expected
+
+
+@pytest.mark.component
+def test_nested_runner_preserves_outer_pytest_temp_in_a_merge_group(tmp_path, monkeypatch, run_merge_queue_tests):
+    """Run the real runner self-test with the same inherited env as merge queue."""
+    outer = tmp_path / "outer-runner"
+    outer.mkdir()
+    sentinel = outer / "parent-owned.txt"
+    sentinel.write_text("outer runner remains active")
+    event = tmp_path / "merge-group.json"
+    event.write_text(json.dumps({"merge_group": {"base_sha": "HEAD"}}))
+    monkeypatch.setenv("GITHUB_EVENT_NAME", "merge_group")
+    monkeypatch.setenv("GITHUB_EVENT_PATH", str(event))
+    monkeypatch.setenv(run_merge_queue_tests.PYTEST_BASETEMP_ENV, str(outer))
+    monkeypatch.delenv("PYTEST_ADDOPTS", raising=False)
+    monkeypatch.setattr(run_merge_queue_tests, "PYTEST_BASETEMP", outer)
+    suite = "impacted-unit"
+    command = [
+        run_merge_queue_tests.sys.executable,
+        "-m",
+        "pytest",
+        "tests/unit_tests/ci/test_run_merge_queue_tests.py::test_main_runs_selected_suite_and_writes_report",
+        f"--basetemp={run_merge_queue_tests.suite_pytest_basetemp(suite)}",
+        "-n",
+        "2",
+        "--dist=loadfile",
+        "-q",
+        "--no-showlocals",
+        "-o",
+        "log_cli=false",
+    ]
+    result = run_merge_queue_tests.run_command(command, suite_name=suite, timeout=60)
+    assert result == 0
+    assert sentinel.read_text() == "outer runner remains active"
+    assert os.environ[run_merge_queue_tests.PYTEST_BASETEMP_ENV] == str(outer)
 
 
 def test_main_runs_selected_suite_and_writes_report(tmp_path, monkeypatch, run_merge_queue_tests):
