@@ -3,7 +3,7 @@
 
 import json
 from types import SimpleNamespace
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 import anthropic
 import httpx
@@ -103,21 +103,19 @@ def test_codex_direct_requests_and_auth_retry_keep_each_raw_id(native_exporter, 
 
 
 def _claude(client, async_client=None):
-    model = ClaudeModel.__new__(ClaudeModel)
-    model.model_name = "claude-test"
-    model.model_config = ModelConfig(
+    config = ModelConfig(
         type="claude",
         api_key="test",
         model="claude-test",
         context_length=32768,
         max_tokens=100,
         tokenizer_ref="tiktoken:o200k_base",
+        use_native_api=True,
     )
-    model.use_native_api = True
-    model._is_oauth_token = False
+    with patch.object(ClaudeModel, "_init_anthropic_client"):
+        model = ClaudeModel(config)
     model.anthropic_client = client
     model.async_anthropic_client = async_client
-    model.max_tokens = lambda: 100
     return model
 
 
