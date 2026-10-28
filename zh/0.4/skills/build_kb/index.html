@@ -1121,6 +1121,8 @@
       
         
       
+        
+      
     
     
     
@@ -1291,6 +1293,34 @@
     
   
     指标问答
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../subagent/ontology_analyst/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Ontology 分析
   
 
     
@@ -3521,6 +3551,12 @@
       
         
       
+        
+      
+        
+      
+        
+      
     
     
     
@@ -3711,6 +3747,34 @@
   
   
     <li class="md-nav__item">
+      <a href="../../configuration/datasources/aurora/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Amazon Aurora
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../configuration/datasources/greenplum/" class="md-nav__link">
         
   
@@ -3747,6 +3811,34 @@
     
   
     Amazon Redshift
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../configuration/datasources/athena/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Amazon Athena
   
 
     
@@ -4111,6 +4203,34 @@
     
   
     Oracle
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../configuration/datasources/hana/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    SAP HANA
   
 
     
@@ -5073,7 +5193,7 @@
 
 
   
-    <a href="https://github.com/Datus-ai/Datus-agent/edit/v0.4.3/docs/skills/build_kb.zh.md" title="编辑此页" class="md-content__button md-icon" rel="edit">
+    <a href="https://github.com/Datus-ai/Datus-agent/edit/v0.4.4/docs/skills/build_kb.zh.md" title="编辑此页" class="md-content__button md-icon" rel="edit">
       
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
     </a>
@@ -5084,6 +5204,7 @@
 <h1 id="build-kb">Build KB<a class="headerlink" href="#build-kb" title="Permanent link">&para;</a></h1>
 <p><code>build-kb</code> 构建项目的向量索引知识库——语义模型、指标和参考 SQL——让你可以对数据进行语义检索。它是 <a href="../init/"><code>init</code></a> 的重量级对应步骤。</p>
 <p>在 REPL 中使用 <code>/build-kb</code> 命令运行。</p>
+<p><code>knowledge/pending-questions.md</code> 保存 init 留下的未确认问题，不作为生成输入，也不能当作已确认的业务定义。相关解释需先通过原始资料或用户明确确认来核实。</p>
 <h2 id="_1">功能作用<a class="headerlink" href="#_1" title="Permanent link">&para;</a></h2>
 <ul>
 <li>扫描已配置的数据源（表、schema、关系）。</li>

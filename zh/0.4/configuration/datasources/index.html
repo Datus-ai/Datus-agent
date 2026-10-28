@@ -1121,6 +1121,8 @@
       
         
       
+        
+      
     
     
     
@@ -1291,6 +1293,34 @@
     
   
     指标问答
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../subagent/ontology_analyst/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Ontology 分析
   
 
     
@@ -3369,6 +3399,12 @@
       
         
       
+        
+      
+        
+      
+        
+      
     
     
     
@@ -3672,6 +3708,34 @@
   
   
     <li class="md-nav__item">
+      <a href="aurora/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Amazon Aurora
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="greenplum/" class="md-nav__link">
         
   
@@ -3708,6 +3772,34 @@
     
   
     Amazon Redshift
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="athena/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Amazon Athena
   
 
     
@@ -4072,6 +4164,34 @@
     
   
     Oracle
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="hana/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    SAP HANA
   
 
     
@@ -4995,7 +5115,7 @@
 
 
   
-    <a href="https://github.com/Datus-ai/Datus-agent/edit/v0.4.3/docs/configuration/datasources.zh.md" title="编辑此页" class="md-content__button md-icon" rel="edit">
+    <a href="https://github.com/Datus-ai/Datus-agent/edit/v0.4.4/docs/configuration/datasources.zh.md" title="编辑此页" class="md-content__button md-icon" rel="edit">
       
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
     </a>
@@ -5060,6 +5180,12 @@
 <td>database → schema → table</td>
 </tr>
 <tr>
+<td><a href="aurora/">Amazon Aurora</a></td>
+<td><code>mysql</code> / <code>postgresql</code></td>
+<td><code>datus-mysql</code> / <code>datus-postgresql</code></td>
+<td>与所选引擎相同</td>
+</tr>
+<tr>
 <td><a href="greenplum/">Greenplum</a></td>
 <td><code>greenplum</code></td>
 <td><code>datus-greenplum</code></td>
@@ -5070,6 +5196,12 @@
 <td><code>redshift</code></td>
 <td><code>datus-redshift</code></td>
 <td>database → schema → table</td>
+</tr>
+<tr>
+<td><a href="athena/">Amazon Athena</a></td>
+<td><code>athena</code></td>
+<td><code>datus-athena</code></td>
+<td>catalog → database → table</td>
 </tr>
 <tr>
 <td><a href="snowflake/">Snowflake</a></td>
@@ -5114,7 +5246,7 @@
 <td>catalog → schema → table</td>
 </tr>
 <tr>
-<td><a href="hive/">Hive</a></td>
+<td><a href="hive/">Hive / 星环 Inceptor</a></td>
 <td><code>hive</code></td>
 <td><code>datus-hive</code></td>
 <td>database → table</td>
@@ -5150,6 +5282,12 @@
 <td>schema → table</td>
 </tr>
 <tr>
+<td><a href="hana/">SAP HANA</a></td>
+<td><code>hana</code></td>
+<td><code>datus-hana</code></td>
+<td>schema → table；tenant 是连接目标</td>
+</tr>
+<tr>
 <td><a href="gaussdb/">GaussDB / openGauss</a></td>
 <td><code>gaussdb</code></td>
 <td><code>datus-gaussdb</code></td>
@@ -5163,6 +5301,7 @@
 </tr>
 </tbody>
 </table>
+<p>Athena 和 HANA 当前需要使用各自页面的源码安装命令。请先安装再添加 datasource；自动安装无法获取尚未发布的 adapter。Aurora 复用 MySQL 或 PostgreSQL 的类型与安装包。</p>
 <h2 id="profile">通用 profile 字段<a class="headerlink" href="#profile" title="Permanent link">&para;</a></h2>
 <p>各 datasource 子页面只列该类型专用的连接字段。下面两个 profile 字段由 Datus 自身处理，适用于全部 datasource：</p>
 <table>

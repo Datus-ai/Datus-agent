@@ -1121,6 +1121,8 @@
       
         
       
+        
+      
     
     
     
@@ -1291,6 +1293,34 @@
     
   
     指标问答
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../subagent/ontology_analyst/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Ontology 分析
   
 
     
@@ -3369,6 +3399,12 @@
       
         
       
+        
+      
+        
+      
+        
+      
     
     
     
@@ -3683,6 +3719,34 @@
   
   
     <li class="md-nav__item">
+      <a href="../aurora/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Amazon Aurora
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../greenplum/" class="md-nav__link">
         
   
@@ -3719,6 +3783,34 @@
     
   
     Amazon Redshift
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../athena/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Amazon Athena
   
 
     
@@ -4083,6 +4175,34 @@
     
   
     Oracle
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../hana/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    SAP HANA
   
 
     
@@ -5017,7 +5137,7 @@
 
 
   
-    <a href="https://github.com/Datus-ai/Datus-agent/edit/v0.4.3/docs/configuration/datasources/mysql.zh.md" title="编辑此页" class="md-content__button md-icon" rel="edit">
+    <a href="https://github.com/Datus-ai/Datus-agent/edit/v0.4.4/docs/configuration/datasources/mysql.zh.md" title="编辑此页" class="md-content__button md-icon" rel="edit">
       
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
     </a>
@@ -5028,8 +5148,10 @@
 <h1 id="mysql-datasource">MySQL datasource<a class="headerlink" href="#mysql-datasource" title="Permanent link">&para;</a></h1>
 <p>MySQL adapter 通过 PyMySQL 连接数据库。MySQL database 对应 Datus database，不再有独立的 schema 层。</p>
 <h2 id="_1">安装<a class="headerlink" href="#_1" title="Permanent link">&para;</a></h2>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>pip<span class="w"> </span>install<span class="w"> </span>datus-mysql
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>pip<span class="w"> </span>install<span class="w"> </span>--upgrade<span class="w"> </span><span class="s1">'datus-mysql&gt;=0.1.10'</span><span class="w"> </span><span class="se">\</span>
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="w">  </span><span class="s1">'datus-sqlalchemy&gt;=0.1.12'</span><span class="w"> </span><span class="s1">'datus-db-core&gt;=0.1.10'</span><span class="w"> </span><span class="s1">'SQLAlchemy==2.0.23'</span>
 </span></code></pre></div>
+<p>这些已发布版本包含下述 TLS 和 AWS 认证字段。Aurora 密码、IAM 和 Secrets Manager 配置见 <a href="../aurora/">Aurora 指南</a>；IAM 和 Secrets Manager 需要 adapter 的可选 <code>aws</code> extra。请安装到 Agent 环境，升级共享包后重启 Datus。</p>
 <h2 id="_2">连接配置<a class="headerlink" href="#_2" title="Permanent link">&para;</a></h2>
 <div class="language-yaml highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="nt">agent</span><span class="p">:</span>
 </span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">  </span><span class="nt">services</span><span class="p">:</span>
@@ -5111,15 +5233,97 @@
 <td>integer</td>
 <td style="text-align: right;">否</td>
 <td><code>30</code></td>
-<td>连接超时秒数。</td>
+<td>连接池等待及驱动默认建连/读/写超时。</td>
+</tr>
+<tr>
+<td><code>connect_timeout_seconds</code></td>
+<td>integer</td>
+<td style="text-align: right;">否</td>
+<td>—</td>
+<td>正整数建连超时覆盖值。</td>
+</tr>
+<tr>
+<td><code>read_timeout_seconds</code> / <code>write_timeout_seconds</code></td>
+<td>integer</td>
+<td style="text-align: right;">否</td>
+<td>—</td>
+<td>正整数 socket 读/写超时覆盖值。</td>
+</tr>
+<tr>
+<td><code>query_timeout_seconds</code></td>
+<td>integer</td>
+<td style="text-align: right;">否</td>
+<td>—</td>
+<td>可选的正整数服务端 SELECT 截止时间，省略时保留服务端设置。</td>
+</tr>
+<tr>
+<td><code>ssl_ca</code></td>
+<td>string</td>
+<td style="text-align: right;">否</td>
+<td>—</td>
+<td>数据库 CA 文件；Aurora/IAM 必填。</td>
+</tr>
+<tr>
+<td><code>ssl_cert</code> / <code>ssl_key</code></td>
+<td>string</td>
+<td style="text-align: right;">否</td>
+<td>—</td>
+<td>客户端证书和私钥，必须成对提供。</td>
+</tr>
+<tr>
+<td><code>ssl_verify_cert</code> / <code>ssl_verify_identity</code></td>
+<td>boolean</td>
+<td style="text-align: right;">否</td>
+<td>未设置</td>
+<td>证书和主机名校验；启用时必须提供 <code>ssl_ca</code>。Aurora/IAM 开启两项并拒绝显式 <code>false</code>。</td>
+</tr>
+<tr>
+<td><code>aurora</code></td>
+<td>boolean</td>
+<td style="text-align: right;">否</td>
+<td><code>false</code></td>
+<td>强制 TLS 验证，并检查可识别的 Aurora cluster writer endpoint。</td>
+</tr>
+<tr>
+<td><code>auth_mode</code></td>
+<td>string</td>
+<td style="text-align: right;">否</td>
+<td><code>password</code></td>
+<td><code>password</code> 或 AWS RDS <code>iam</code>。</td>
+</tr>
+<tr>
+<td><code>aws</code></td>
+<td>object</td>
+<td style="text-align: right;">否</td>
+<td>SDK 默认值</td>
+<td><code>region</code>、<code>profile</code> 和 AWS HTTPS <code>ca_bundle</code>。</td>
+</tr>
+<tr>
+<td><code>secret_ref</code></td>
+<td>string</td>
+<td style="text-align: right;">否</td>
+<td>—</td>
+<td>密码模式使用的 Secrets Manager 名称/ARN，不能同时提供内联密码或 IAM。</td>
+</tr>
+<tr>
+<td><code>secret_cache_ttl_seconds</code></td>
+<td>integer</td>
+<td style="text-align: right;">否</td>
+<td><code>300</code></td>
+<td>Secret 缓存时间，1–86400 秒。</td>
 </tr>
 </tbody>
 </table>
 <h2 id="_4">命名空间与认证<a class="headerlink" href="#_4" title="Permanent link">&para;</a></h2>
-<p>对象使用 <code>database.table</code>。Adapter 要求提供用户名；如果服务端允许，密码可以为空。当前 profile schema 没有暴露 MySQL TLS 证书字段，<code>ssl_ca</code> 等未知字段会被拒绝。</p>
+<p>对象使用 <code>database.table</code>。Adapter 要求提供用户名；普通密码认证在服务端允许时可使用空密码。需要验证 TLS 时，在 datasource 下增加：</p>
+<div class="language-yaml highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="nt">ssl_ca</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">/absolute/path/mysql-ca.pem</span>
+</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="nt">ssl_verify_cert</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
+</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="nt">ssl_verify_identity</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
+</span></code></pre></div>
+<p>mTLS 另需同时提供 <code>ssl_cert</code> 和 <code>ssl_key</code>。MySQL 使用文件路径，<code>aws.ca_bundle</code> 独立配置 AWS API 信任。<a href="../aurora/">Aurora</a> 使用同一个 <code>mysql</code> 类型并设置 <code>aurora: true</code>，支持密码、IAM 或 Secret 密码认证。IAM 不能同时提供 <code>password</code> 或 <code>secret_ref</code>。</p>
 <p>元数据发现需要当前用户拥有目标 database 的访问权限。如果 Datus 不应修改数据，请在数据库侧为该账号只授予只读 SQL 权限。</p>
 <h2 id="_5">验证连接<a class="headerlink" href="#_5" title="Permanent link">&para;</a></h2>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>datus<span class="w"> </span>--config<span class="w"> </span>conf/agent.yml<span class="w"> </span>--datasource<span class="w"> </span>mysql_prod
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>datus<span class="w"> </span>--config<span class="w"> </span>conf/agent.yml<span class="w"> </span>--datasource<span class="w"> </span>mysql_prod
 </span></code></pre></div>
 <p>运行 <code>/databases</code> 和 <code>/tables</code>，同时验证连接与元数据权限。</p>
 <h2 id="_6">故障排查<a class="headerlink" href="#_6" title="Permanent link">&para;</a></h2>

@@ -1121,6 +1121,8 @@
       
         
       
+        
+      
     
     
     
@@ -1291,6 +1293,34 @@
     
   
     指标问答
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../subagent/ontology_analyst/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Ontology 分析
   
 
     
@@ -3365,6 +3395,12 @@
       
         
       
+        
+      
+        
+      
+        
+      
     
     
     
@@ -3555,6 +3591,34 @@
   
   
     <li class="md-nav__item">
+      <a href="../../configuration/datasources/aurora/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Amazon Aurora
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../configuration/datasources/greenplum/" class="md-nav__link">
         
   
@@ -3591,6 +3655,34 @@
     
   
     Amazon Redshift
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../configuration/datasources/athena/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Amazon Athena
   
 
     
@@ -3955,6 +4047,34 @@
     
   
     Oracle
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../configuration/datasources/hana/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    SAP HANA
   
 
     
@@ -4505,6 +4625,17 @@
   <a href="#_2" class="md-nav__link">
     <span class="md-ellipsis">
       
+        同步工具与容量限制
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_3" class="md-nav__link">
+    <span class="md-ellipsis">
+      
         客户端集成
       
     </span>
@@ -4563,7 +4694,7 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#_3" class="md-nav__link">
+  <a href="#_4" class="md-nav__link">
     <span class="md-ellipsis">
       
         可用工具
@@ -4574,7 +4705,7 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#_4" class="md-nav__link">
+  <a href="#_5" class="md-nav__link">
     <span class="md-ellipsis">
       
         命令行参数
@@ -4953,6 +5084,17 @@
   <a href="#_2" class="md-nav__link">
     <span class="md-ellipsis">
       
+        同步工具与容量限制
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_3" class="md-nav__link">
+    <span class="md-ellipsis">
+      
         客户端集成
       
     </span>
@@ -5011,7 +5153,7 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#_3" class="md-nav__link">
+  <a href="#_4" class="md-nav__link">
     <span class="md-ellipsis">
       
         可用工具
@@ -5022,7 +5164,7 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#_4" class="md-nav__link">
+  <a href="#_5" class="md-nav__link">
     <span class="md-ellipsis">
       
         命令行参数
@@ -5049,7 +5191,7 @@
 
 
   
-    <a href="https://github.com/Datus-ai/Datus-agent/edit/v0.4.3/docs/integration/mcp.zh.md" title="编辑此页" class="md-content__button md-icon" rel="edit">
+    <a href="https://github.com/Datus-ai/Datus-agent/edit/v0.4.4/docs/integration/mcp.zh.md" title="编辑此页" class="md-content__button md-icon" rel="edit">
       
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
     </a>
@@ -5093,55 +5235,92 @@ Claude Desktop、Claude Code 及其他 MCP 兼容客户端集成。</p>
 </span><span id="__span-1-11"><a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a>datus-mcp<span class="w"> </span>--dynamic<span class="w"> </span>--transport<span class="w"> </span>http<span class="w"> </span>--host<span class="w"> </span><span class="m">127</span>.0.0.1<span class="w"> </span>--port<span class="w"> </span><span class="m">8000</span>
 </span><span id="__span-1-12"><a id="__codelineno-1-12" name="__codelineno-1-12" href="#__codelineno-1-12"></a>datus-mcp<span class="w"> </span>--dynamic<span class="w"> </span>--transport<span class="w"> </span>sse<span class="w"> </span>--host<span class="w"> </span><span class="m">127</span>.0.0.1<span class="w"> </span>--port<span class="w"> </span><span class="m">8000</span>
 </span></code></pre></div>
-<h2 id="_2">客户端集成<a class="headerlink" href="#_2" title="Permanent link">&para;</a></h2>
+<h2 id="_2">同步工具与容量限制<a class="headerlink" href="#_2" title="Permanent link">&para;</a></h2>
+<p>动态和静态模式均在线程池中执行同步工具、插件参数转换和结果格式化，
+并传递请求的 ContextVars；异步工具在请求的事件循环中等待执行。
+所有工具和数据源共享同一 MCP 服务的线程池，可在 <code>agent.yml</code> 配置：</p>
+<div class="language-yaml highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="nt">agent</span><span class="p">:</span>
+</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="w">  </span><span class="nt">mcp_tool_execution</span><span class="p">:</span>
+</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="w">    </span><span class="nt">max_workers</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">8</span>
+</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="w">    </span><span class="nt">max_queue_size</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">16</span>
+</span></code></pre></div>
+<p>以上为默认值。工作线程数必须为正数，排队数必须非负。
+运行和排队总数达到上限后，新调用立即返回 MCP 工具错误，客户端可稍后重试。
+该线程池独立于 asyncio 默认线程池。</p>
+<p>容量参数接受整数字符串；未知字段、布尔值和小数会产生配置错误。
+<code>mcp_tool_execution</code> 不是映射时使用默认配置。
+已缓存的数据源上下文在缓存锁可用时直接获取，不占用工具线程，
+也不等待其他数据源的初始化锁。</p>
+<p>取消请求不会终止已提交的阻塞数据库调用，也不会提前释放容量；
+任务实际结束后才释放名额。还需配置数据源适配器的连接及 socket/read 超时，
+HTTP 或 asyncio 超时本身无法停止 StarRocks/PyMySQL 读取。
+应确认适配器将超时传递给数据库驱动：<code>timeout_seconds</code> 可能仅限制连接池等待，
+并不限制 socket 读取。适配器层的超时修复需要在独立发布的数据库适配器包中完成。
+关闭服务时停止接收任务，不在事件循环中等待阻塞读取结束。</p>
+<p>HTTP/SSE 请求以及排队或运行中的工具会持有动态上下文引用。LRU 淘汰只标记上下文
+待清理，最后一个使用者结束后才在后台关闭连接；调用者取消但线程仍在运行时也会保留引用。
+关闭服务不等待数据源初始化完成；关闭后才完成初始化的上下文会被清理，不会重新进入缓存。</p>
+<p>静态服务器也会保留连接，直到所有已提交的工具调用真正结束，包括请求已取消的调用。
+<code>close()</code> 标记工具待清理，并在后台关闭连接，不会同步关闭仍在使用的连接。</p>
+<p>嵌入后端仍可使用原有的异步 <code>get_or_create_context()</code> 和同步 <code>close_all()</code> manager 接口。
+注入对象的身份及配置管理方式保持兼容。兼容层只串行处理同一数据源/子代理键的查询；
+某个键的初始化或权限 I/O 卡住时，其他键仍可正常处理请求。
+此前返回的上下文会在权限刷新前获得引用保护，避免并发淘汰提前关闭连接。
+返回的 <code>ToolContext</code> 会继续由请求持有，淘汰时的 <code>close()</code> 延迟到最后一个使用者结束后清理。
+manager 应从空缓存启动，所有查询通过此服务器执行，并在初始化及权限 I/O 完成后写入新缓存项，
+写入到返回之间不得再次让出事件循环。
+尚未完成的查询结束后，才在清理线程执行 <code>close_all()</code>。
+此类 manager 使用默认的有界工具线程池；其异步查询方法仍需自行将阻塞初始化移出事件循环。</p>
+<p>嵌入此库的后端需要更新 Datus-agent 依赖或子模块，并重新构建镜像才能交付修复。</p>
+<h2 id="_3">客户端集成<a class="headerlink" href="#_3" title="Permanent link">&para;</a></h2>
 <h3 id="claude-code">Claude Code<a class="headerlink" href="#claude-code" title="Permanent link">&para;</a></h3>
 <p>启动 Datus MCP 服务后，将其添加到 Claude Code：</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="c1"># 启动服务（SSE 模式）</span>
-</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>datus-mcp<span class="w"> </span>--dynamic<span class="w"> </span>--transport<span class="w"> </span>sse<span class="w"> </span>--port<span class="w"> </span><span class="m">8000</span>
-</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>
-</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="c1"># 添加到 Claude Code</span>
-</span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>claude<span class="w"> </span>mcp<span class="w"> </span>add<span class="w"> </span>--transport<span class="w"> </span>sse<span class="w"> </span>datus<span class="w"> </span>http://127.0.0.1:8000/sse/&lt;your<span class="w"> </span>datasource&gt;
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="c1"># 启动服务（SSE 模式）</span>
+</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>datus-mcp<span class="w"> </span>--dynamic<span class="w"> </span>--transport<span class="w"> </span>sse<span class="w"> </span>--port<span class="w"> </span><span class="m">8000</span>
+</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>
+</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="c1"># 添加到 Claude Code</span>
+</span><span id="__span-3-5"><a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a>claude<span class="w"> </span>mcp<span class="w"> </span>add<span class="w"> </span>--transport<span class="w"> </span>sse<span class="w"> </span>datus<span class="w"> </span>http://127.0.0.1:8000/sse/&lt;your<span class="w"> </span>datasource&gt;
 </span></code></pre></div>
 <h3 id="claude-desktop">Claude Desktop<a class="headerlink" href="#claude-desktop" title="Permanent link">&para;</a></h3>
 <p>Claude Desktop 需要通过 <a href="https://www.npmjs.com/package/mcp-remote">mcp-remote</a> 连接远程 MCP 服务。</p>
 <p>启动 Datus MCP 服务后，使用以下脚本配置 Claude Desktop：</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="c1"># Claude Desktop 可能无法直接找到 npx，因此需要解析完整路径</span>
-</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="nv">NODE_BIN_DIR</span><span class="o">=</span><span class="k">$(</span>dirname<span class="w"> </span><span class="k">$(</span>which<span class="w"> </span>node<span class="k">))</span>
-</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="nv">NPX_PATH</span><span class="o">=</span><span class="k">$(</span>which<span class="w"> </span>npx<span class="k">)</span>
-</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>
-</span><span id="__span-3-5"><a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a>cat<span class="w"> </span>&gt;<span class="w"> </span>~/Library/Application<span class="se">\ </span>Support/Claude/claude_desktop_config.json<span class="w"> </span><span class="s">&lt;&lt; EOF</span>
-</span><span id="__span-3-6"><a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="s">{</span>
-</span><span id="__span-3-7"><a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a><span class="s">  "mcpServers": {</span>
-</span><span id="__span-3-8"><a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a><span class="s">    "datus-agent": {</span>
-</span><span id="__span-3-9"><a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a><span class="s">      "command": "$NPX_PATH",</span>
-</span><span id="__span-3-10"><a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a><span class="s">      "args": [</span>
-</span><span id="__span-3-11"><a id="__codelineno-3-11" name="__codelineno-3-11" href="#__codelineno-3-11"></a><span class="s">        "mcp-remote@latest",</span>
-</span><span id="__span-3-12"><a id="__codelineno-3-12" name="__codelineno-3-12" href="#__codelineno-3-12"></a><span class="s">        "http://127.0.0.1:8000/sse/&lt;your datasource&gt;",</span>
-</span><span id="__span-3-13"><a id="__codelineno-3-13" name="__codelineno-3-13" href="#__codelineno-3-13"></a><span class="s">        "--transport",</span>
-</span><span id="__span-3-14"><a id="__codelineno-3-14" name="__codelineno-3-14" href="#__codelineno-3-14"></a><span class="s">        "sse-only"</span>
-</span><span id="__span-3-15"><a id="__codelineno-3-15" name="__codelineno-3-15" href="#__codelineno-3-15"></a><span class="s">      ],</span>
-</span><span id="__span-3-16"><a id="__codelineno-3-16" name="__codelineno-3-16" href="#__codelineno-3-16"></a><span class="s">      "env": {</span>
-</span><span id="__span-3-17"><a id="__codelineno-3-17" name="__codelineno-3-17" href="#__codelineno-3-17"></a><span class="s">        "PATH": "$NODE_BIN_DIR:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin"</span>
-</span><span id="__span-3-18"><a id="__codelineno-3-18" name="__codelineno-3-18" href="#__codelineno-3-18"></a><span class="s">      }</span>
-</span><span id="__span-3-19"><a id="__codelineno-3-19" name="__codelineno-3-19" href="#__codelineno-3-19"></a><span class="s">    }</span>
-</span><span id="__span-3-20"><a id="__codelineno-3-20" name="__codelineno-3-20" href="#__codelineno-3-20"></a><span class="s">  }</span>
-</span><span id="__span-3-21"><a id="__codelineno-3-21" name="__codelineno-3-21" href="#__codelineno-3-21"></a><span class="s">}</span>
-</span><span id="__span-3-22"><a id="__codelineno-3-22" name="__codelineno-3-22" href="#__codelineno-3-22"></a><span class="s">EOF</span>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="c1"># Claude Desktop 可能无法直接找到 npx，因此需要解析完整路径</span>
+</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="nv">NODE_BIN_DIR</span><span class="o">=</span><span class="k">$(</span>dirname<span class="w"> </span><span class="k">$(</span>which<span class="w"> </span>node<span class="k">))</span>
+</span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="nv">NPX_PATH</span><span class="o">=</span><span class="k">$(</span>which<span class="w"> </span>npx<span class="k">)</span>
+</span><span id="__span-4-4"><a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a>
+</span><span id="__span-4-5"><a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a>cat<span class="w"> </span>&gt;<span class="w"> </span>~/Library/Application<span class="se">\ </span>Support/Claude/claude_desktop_config.json<span class="w"> </span><span class="s">&lt;&lt; EOF</span>
+</span><span id="__span-4-6"><a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a><span class="s">{</span>
+</span><span id="__span-4-7"><a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a><span class="s">  "mcpServers": {</span>
+</span><span id="__span-4-8"><a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a><span class="s">    "datus-agent": {</span>
+</span><span id="__span-4-9"><a id="__codelineno-4-9" name="__codelineno-4-9" href="#__codelineno-4-9"></a><span class="s">      "command": "$NPX_PATH",</span>
+</span><span id="__span-4-10"><a id="__codelineno-4-10" name="__codelineno-4-10" href="#__codelineno-4-10"></a><span class="s">      "args": [</span>
+</span><span id="__span-4-11"><a id="__codelineno-4-11" name="__codelineno-4-11" href="#__codelineno-4-11"></a><span class="s">        "mcp-remote@latest",</span>
+</span><span id="__span-4-12"><a id="__codelineno-4-12" name="__codelineno-4-12" href="#__codelineno-4-12"></a><span class="s">        "http://127.0.0.1:8000/sse/&lt;your datasource&gt;",</span>
+</span><span id="__span-4-13"><a id="__codelineno-4-13" name="__codelineno-4-13" href="#__codelineno-4-13"></a><span class="s">        "--transport",</span>
+</span><span id="__span-4-14"><a id="__codelineno-4-14" name="__codelineno-4-14" href="#__codelineno-4-14"></a><span class="s">        "sse-only"</span>
+</span><span id="__span-4-15"><a id="__codelineno-4-15" name="__codelineno-4-15" href="#__codelineno-4-15"></a><span class="s">      ],</span>
+</span><span id="__span-4-16"><a id="__codelineno-4-16" name="__codelineno-4-16" href="#__codelineno-4-16"></a><span class="s">      "env": {</span>
+</span><span id="__span-4-17"><a id="__codelineno-4-17" name="__codelineno-4-17" href="#__codelineno-4-17"></a><span class="s">        "PATH": "$NODE_BIN_DIR:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin"</span>
+</span><span id="__span-4-18"><a id="__codelineno-4-18" name="__codelineno-4-18" href="#__codelineno-4-18"></a><span class="s">      }</span>
+</span><span id="__span-4-19"><a id="__codelineno-4-19" name="__codelineno-4-19" href="#__codelineno-4-19"></a><span class="s">    }</span>
+</span><span id="__span-4-20"><a id="__codelineno-4-20" name="__codelineno-4-20" href="#__codelineno-4-20"></a><span class="s">  }</span>
+</span><span id="__span-4-21"><a id="__codelineno-4-21" name="__codelineno-4-21" href="#__codelineno-4-21"></a><span class="s">}</span>
+</span><span id="__span-4-22"><a id="__codelineno-4-22" name="__codelineno-4-22" href="#__codelineno-4-22"></a><span class="s">EOF</span>
 </span></code></pre></div>
 <p>或者手动将以下内容添加到 <code>claude_desktop_config.json</code>：</p>
-<div class="language-json highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="p">{</span>
-</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="w">  </span><span class="nt">"mcpServers"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
-</span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="w">    </span><span class="nt">"datus-agent"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
-</span><span id="__span-4-4"><a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="w">      </span><span class="nt">"command"</span><span class="p">:</span><span class="w"> </span><span class="s2">"npx"</span><span class="p">,</span>
-</span><span id="__span-4-5"><a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a><span class="w">      </span><span class="nt">"args"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
-</span><span id="__span-4-6"><a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a><span class="w">        </span><span class="s2">"mcp-remote@latest"</span><span class="p">,</span>
-</span><span id="__span-4-7"><a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a><span class="w">        </span><span class="s2">"http://127.0.0.1:8000/sse/&lt;your datasource&gt;"</span><span class="p">,</span>
-</span><span id="__span-4-8"><a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a><span class="w">        </span><span class="s2">"--transport"</span><span class="p">,</span>
-</span><span id="__span-4-9"><a id="__codelineno-4-9" name="__codelineno-4-9" href="#__codelineno-4-9"></a><span class="w">        </span><span class="s2">"sse-only"</span>
-</span><span id="__span-4-10"><a id="__codelineno-4-10" name="__codelineno-4-10" href="#__codelineno-4-10"></a><span class="w">      </span><span class="p">]</span>
-</span><span id="__span-4-11"><a id="__codelineno-4-11" name="__codelineno-4-11" href="#__codelineno-4-11"></a><span class="w">    </span><span class="p">}</span>
-</span><span id="__span-4-12"><a id="__codelineno-4-12" name="__codelineno-4-12" href="#__codelineno-4-12"></a><span class="w">  </span><span class="p">}</span>
-</span><span id="__span-4-13"><a id="__codelineno-4-13" name="__codelineno-4-13" href="#__codelineno-4-13"></a><span class="p">}</span>
+<div class="language-json highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="p">{</span>
+</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="w">  </span><span class="nt">"mcpServers"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+</span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="w">    </span><span class="nt">"datus-agent"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+</span><span id="__span-5-4"><a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="w">      </span><span class="nt">"command"</span><span class="p">:</span><span class="w"> </span><span class="s2">"npx"</span><span class="p">,</span>
+</span><span id="__span-5-5"><a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="w">      </span><span class="nt">"args"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
+</span><span id="__span-5-6"><a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a><span class="w">        </span><span class="s2">"mcp-remote@latest"</span><span class="p">,</span>
+</span><span id="__span-5-7"><a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a><span class="w">        </span><span class="s2">"http://127.0.0.1:8000/sse/&lt;your datasource&gt;"</span><span class="p">,</span>
+</span><span id="__span-5-8"><a id="__codelineno-5-8" name="__codelineno-5-8" href="#__codelineno-5-8"></a><span class="w">        </span><span class="s2">"--transport"</span><span class="p">,</span>
+</span><span id="__span-5-9"><a id="__codelineno-5-9" name="__codelineno-5-9" href="#__codelineno-5-9"></a><span class="w">        </span><span class="s2">"sse-only"</span>
+</span><span id="__span-5-10"><a id="__codelineno-5-10" name="__codelineno-5-10" href="#__codelineno-5-10"></a><span class="w">      </span><span class="p">]</span>
+</span><span id="__span-5-11"><a id="__codelineno-5-11" name="__codelineno-5-11" href="#__codelineno-5-11"></a><span class="w">    </span><span class="p">}</span>
+</span><span id="__span-5-12"><a id="__codelineno-5-12" name="__codelineno-5-12" href="#__codelineno-5-12"></a><span class="w">  </span><span class="p">}</span>
+</span><span id="__span-5-13"><a id="__codelineno-5-13" name="__codelineno-5-13" href="#__codelineno-5-13"></a><span class="p">}</span>
 </span></code></pre></div>
 <div class="admonition tip">
 <p class="admonition-title">Tip</p>
@@ -5152,76 +5331,76 @@ Claude Desktop、Claude Code 及其他 MCP 兼容客户端集成。</p>
 <ul>
 <li><strong>使用 uvx：</strong></li>
 </ul>
-<div class="language-json highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="p">{</span>
-</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="w">  </span><span class="nt">"mcpServers"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
-</span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="w">    </span><span class="nt">"datus"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
-</span><span id="__span-5-4"><a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="w">      </span><span class="nt">"command"</span><span class="p">:</span><span class="w"> </span><span class="s2">"uvx"</span><span class="p">,</span>
-</span><span id="__span-5-5"><a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="w">      </span><span class="nt">"args"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
-</span><span id="__span-5-6"><a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a><span class="w">        </span><span class="s2">"--from"</span><span class="p">,</span>
-</span><span id="__span-5-7"><a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a><span class="w">        </span><span class="s2">"datus-agent"</span><span class="p">,</span>
-</span><span id="__span-5-8"><a id="__codelineno-5-8" name="__codelineno-5-8" href="#__codelineno-5-8"></a><span class="w">        </span><span class="s2">"datus-mcp"</span><span class="p">,</span>
-</span><span id="__span-5-9"><a id="__codelineno-5-9" name="__codelineno-5-9" href="#__codelineno-5-9"></a><span class="w">        </span><span class="s2">"--datasource"</span><span class="p">,</span>
-</span><span id="__span-5-10"><a id="__codelineno-5-10" name="__codelineno-5-10" href="#__codelineno-5-10"></a><span class="w">        </span><span class="s2">"&lt;your datasource&gt;"</span><span class="p">,</span>
-</span><span id="__span-5-11"><a id="__codelineno-5-11" name="__codelineno-5-11" href="#__codelineno-5-11"></a><span class="w">        </span><span class="s2">"--transport"</span><span class="p">,</span>
-</span><span id="__span-5-12"><a id="__codelineno-5-12" name="__codelineno-5-12" href="#__codelineno-5-12"></a><span class="w">        </span><span class="s2">"stdio"</span>
-</span><span id="__span-5-13"><a id="__codelineno-5-13" name="__codelineno-5-13" href="#__codelineno-5-13"></a><span class="w">      </span><span class="p">]</span>
-</span><span id="__span-5-14"><a id="__codelineno-5-14" name="__codelineno-5-14" href="#__codelineno-5-14"></a><span class="w">    </span><span class="p">}</span>
-</span><span id="__span-5-15"><a id="__codelineno-5-15" name="__codelineno-5-15" href="#__codelineno-5-15"></a><span class="w">  </span><span class="p">}</span>
-</span><span id="__span-5-16"><a id="__codelineno-5-16" name="__codelineno-5-16" href="#__codelineno-5-16"></a><span class="p">}</span>
+<div class="language-json highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="p">{</span>
+</span><span id="__span-6-2"><a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="w">  </span><span class="nt">"mcpServers"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+</span><span id="__span-6-3"><a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="w">    </span><span class="nt">"datus"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+</span><span id="__span-6-4"><a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="w">      </span><span class="nt">"command"</span><span class="p">:</span><span class="w"> </span><span class="s2">"uvx"</span><span class="p">,</span>
+</span><span id="__span-6-5"><a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a><span class="w">      </span><span class="nt">"args"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
+</span><span id="__span-6-6"><a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a><span class="w">        </span><span class="s2">"--from"</span><span class="p">,</span>
+</span><span id="__span-6-7"><a id="__codelineno-6-7" name="__codelineno-6-7" href="#__codelineno-6-7"></a><span class="w">        </span><span class="s2">"datus-agent"</span><span class="p">,</span>
+</span><span id="__span-6-8"><a id="__codelineno-6-8" name="__codelineno-6-8" href="#__codelineno-6-8"></a><span class="w">        </span><span class="s2">"datus-mcp"</span><span class="p">,</span>
+</span><span id="__span-6-9"><a id="__codelineno-6-9" name="__codelineno-6-9" href="#__codelineno-6-9"></a><span class="w">        </span><span class="s2">"--datasource"</span><span class="p">,</span>
+</span><span id="__span-6-10"><a id="__codelineno-6-10" name="__codelineno-6-10" href="#__codelineno-6-10"></a><span class="w">        </span><span class="s2">"&lt;your datasource&gt;"</span><span class="p">,</span>
+</span><span id="__span-6-11"><a id="__codelineno-6-11" name="__codelineno-6-11" href="#__codelineno-6-11"></a><span class="w">        </span><span class="s2">"--transport"</span><span class="p">,</span>
+</span><span id="__span-6-12"><a id="__codelineno-6-12" name="__codelineno-6-12" href="#__codelineno-6-12"></a><span class="w">        </span><span class="s2">"stdio"</span>
+</span><span id="__span-6-13"><a id="__codelineno-6-13" name="__codelineno-6-13" href="#__codelineno-6-13"></a><span class="w">      </span><span class="p">]</span>
+</span><span id="__span-6-14"><a id="__codelineno-6-14" name="__codelineno-6-14" href="#__codelineno-6-14"></a><span class="w">    </span><span class="p">}</span>
+</span><span id="__span-6-15"><a id="__codelineno-6-15" name="__codelineno-6-15" href="#__codelineno-6-15"></a><span class="w">  </span><span class="p">}</span>
+</span><span id="__span-6-16"><a id="__codelineno-6-16" name="__codelineno-6-16" href="#__codelineno-6-16"></a><span class="p">}</span>
 </span></code></pre></div>
 <ul>
 <li><strong>直接使用 python：</strong></li>
 </ul>
-<div class="language-json highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="p">{</span>
-</span><span id="__span-6-2"><a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="w">  </span><span class="nt">"mcpServers"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
-</span><span id="__span-6-3"><a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="w">    </span><span class="nt">"datus"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
-</span><span id="__span-6-4"><a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="w">      </span><span class="nt">"command"</span><span class="p">:</span><span class="w"> </span><span class="s2">"python"</span><span class="p">,</span>
-</span><span id="__span-6-5"><a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a><span class="w">      </span><span class="nt">"args"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
-</span><span id="__span-6-6"><a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a><span class="w">        </span><span class="s2">"-m"</span><span class="p">,</span>
-</span><span id="__span-6-7"><a id="__codelineno-6-7" name="__codelineno-6-7" href="#__codelineno-6-7"></a><span class="w">        </span><span class="s2">"datus.mcp_server"</span><span class="p">,</span>
-</span><span id="__span-6-8"><a id="__codelineno-6-8" name="__codelineno-6-8" href="#__codelineno-6-8"></a><span class="w">        </span><span class="s2">"--datasource"</span><span class="p">,</span>
-</span><span id="__span-6-9"><a id="__codelineno-6-9" name="__codelineno-6-9" href="#__codelineno-6-9"></a><span class="w">        </span><span class="s2">"&lt;your datasource&gt;"</span><span class="p">,</span>
-</span><span id="__span-6-10"><a id="__codelineno-6-10" name="__codelineno-6-10" href="#__codelineno-6-10"></a><span class="w">        </span><span class="s2">"--transport"</span><span class="p">,</span>
-</span><span id="__span-6-11"><a id="__codelineno-6-11" name="__codelineno-6-11" href="#__codelineno-6-11"></a><span class="w">        </span><span class="s2">"stdio"</span>
-</span><span id="__span-6-12"><a id="__codelineno-6-12" name="__codelineno-6-12" href="#__codelineno-6-12"></a><span class="w">      </span><span class="p">]</span>
-</span><span id="__span-6-13"><a id="__codelineno-6-13" name="__codelineno-6-13" href="#__codelineno-6-13"></a><span class="w">    </span><span class="p">}</span>
-</span><span id="__span-6-14"><a id="__codelineno-6-14" name="__codelineno-6-14" href="#__codelineno-6-14"></a><span class="w">  </span><span class="p">}</span>
-</span><span id="__span-6-15"><a id="__codelineno-6-15" name="__codelineno-6-15" href="#__codelineno-6-15"></a><span class="p">}</span>
+<div class="language-json highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="p">{</span>
+</span><span id="__span-7-2"><a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="w">  </span><span class="nt">"mcpServers"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+</span><span id="__span-7-3"><a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="w">    </span><span class="nt">"datus"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+</span><span id="__span-7-4"><a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a><span class="w">      </span><span class="nt">"command"</span><span class="p">:</span><span class="w"> </span><span class="s2">"python"</span><span class="p">,</span>
+</span><span id="__span-7-5"><a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a><span class="w">      </span><span class="nt">"args"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
+</span><span id="__span-7-6"><a id="__codelineno-7-6" name="__codelineno-7-6" href="#__codelineno-7-6"></a><span class="w">        </span><span class="s2">"-m"</span><span class="p">,</span>
+</span><span id="__span-7-7"><a id="__codelineno-7-7" name="__codelineno-7-7" href="#__codelineno-7-7"></a><span class="w">        </span><span class="s2">"datus.mcp_server"</span><span class="p">,</span>
+</span><span id="__span-7-8"><a id="__codelineno-7-8" name="__codelineno-7-8" href="#__codelineno-7-8"></a><span class="w">        </span><span class="s2">"--datasource"</span><span class="p">,</span>
+</span><span id="__span-7-9"><a id="__codelineno-7-9" name="__codelineno-7-9" href="#__codelineno-7-9"></a><span class="w">        </span><span class="s2">"&lt;your datasource&gt;"</span><span class="p">,</span>
+</span><span id="__span-7-10"><a id="__codelineno-7-10" name="__codelineno-7-10" href="#__codelineno-7-10"></a><span class="w">        </span><span class="s2">"--transport"</span><span class="p">,</span>
+</span><span id="__span-7-11"><a id="__codelineno-7-11" name="__codelineno-7-11" href="#__codelineno-7-11"></a><span class="w">        </span><span class="s2">"stdio"</span>
+</span><span id="__span-7-12"><a id="__codelineno-7-12" name="__codelineno-7-12" href="#__codelineno-7-12"></a><span class="w">      </span><span class="p">]</span>
+</span><span id="__span-7-13"><a id="__codelineno-7-13" name="__codelineno-7-13" href="#__codelineno-7-13"></a><span class="w">    </span><span class="p">}</span>
+</span><span id="__span-7-14"><a id="__codelineno-7-14" name="__codelineno-7-14" href="#__codelineno-7-14"></a><span class="w">  </span><span class="p">}</span>
+</span><span id="__span-7-15"><a id="__codelineno-7-15" name="__codelineno-7-15" href="#__codelineno-7-15"></a><span class="p">}</span>
 </span></code></pre></div>
 <p>支持 HTTP/SSE 传输的 MCP 客户端：</p>
 <ul>
 <li>
 <p><strong>SSE：</strong>
-<div class="language-json highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="p">{</span>
-</span><span id="__span-7-2"><a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="w">  </span><span class="nt">"mcpServers"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
-</span><span id="__span-7-3"><a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="w">    </span><span class="nt">"DatusServer"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
-</span><span id="__span-7-4"><a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a><span class="w">      </span><span class="nt">"url"</span><span class="p">:</span><span class="w"> </span><span class="s2">"http://127.0.0.1:8000/sse/&lt;your datasource&gt;"</span><span class="p">,</span>
-</span><span id="__span-7-5"><a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a><span class="w">      </span><span class="nt">"transport"</span><span class="p">:</span><span class="w"> </span><span class="s2">"sse"</span>
-</span><span id="__span-7-6"><a id="__codelineno-7-6" name="__codelineno-7-6" href="#__codelineno-7-6"></a><span class="w">    </span><span class="p">}</span>
-</span><span id="__span-7-7"><a id="__codelineno-7-7" name="__codelineno-7-7" href="#__codelineno-7-7"></a><span class="w">  </span><span class="p">}</span>
-</span><span id="__span-7-8"><a id="__codelineno-7-8" name="__codelineno-7-8" href="#__codelineno-7-8"></a><span class="p">}</span>
-</span></code></pre></div></p>
-</li>
-<li>
-<p><strong>Streamable HTTP：</strong>
 <div class="language-json highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="p">{</span>
 </span><span id="__span-8-2"><a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="w">  </span><span class="nt">"mcpServers"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
 </span><span id="__span-8-3"><a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a><span class="w">    </span><span class="nt">"DatusServer"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
-</span><span id="__span-8-4"><a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a><span class="w">      </span><span class="nt">"url"</span><span class="p">:</span><span class="w"> </span><span class="s2">"http://127.0.0.1:8000/mcp/&lt;your datasource&gt;"</span><span class="p">,</span>
-</span><span id="__span-8-5"><a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a><span class="w">      </span><span class="nt">"transport"</span><span class="p">:</span><span class="w"> </span><span class="s2">"http"</span>
+</span><span id="__span-8-4"><a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a><span class="w">      </span><span class="nt">"url"</span><span class="p">:</span><span class="w"> </span><span class="s2">"http://127.0.0.1:8000/sse/&lt;your datasource&gt;"</span><span class="p">,</span>
+</span><span id="__span-8-5"><a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a><span class="w">      </span><span class="nt">"transport"</span><span class="p">:</span><span class="w"> </span><span class="s2">"sse"</span>
 </span><span id="__span-8-6"><a id="__codelineno-8-6" name="__codelineno-8-6" href="#__codelineno-8-6"></a><span class="w">    </span><span class="p">}</span>
 </span><span id="__span-8-7"><a id="__codelineno-8-7" name="__codelineno-8-7" href="#__codelineno-8-7"></a><span class="w">  </span><span class="p">}</span>
 </span><span id="__span-8-8"><a id="__codelineno-8-8" name="__codelineno-8-8" href="#__codelineno-8-8"></a><span class="p">}</span>
 </span></code></pre></div></p>
 </li>
+<li>
+<p><strong>Streamable HTTP：</strong>
+<div class="language-json highlight"><pre><span></span><code><span id="__span-9-1"><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="p">{</span>
+</span><span id="__span-9-2"><a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a><span class="w">  </span><span class="nt">"mcpServers"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+</span><span id="__span-9-3"><a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a><span class="w">    </span><span class="nt">"DatusServer"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+</span><span id="__span-9-4"><a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a><span class="w">      </span><span class="nt">"url"</span><span class="p">:</span><span class="w"> </span><span class="s2">"http://127.0.0.1:8000/mcp/&lt;your datasource&gt;"</span><span class="p">,</span>
+</span><span id="__span-9-5"><a id="__codelineno-9-5" name="__codelineno-9-5" href="#__codelineno-9-5"></a><span class="w">      </span><span class="nt">"transport"</span><span class="p">:</span><span class="w"> </span><span class="s2">"http"</span>
+</span><span id="__span-9-6"><a id="__codelineno-9-6" name="__codelineno-9-6" href="#__codelineno-9-6"></a><span class="w">    </span><span class="p">}</span>
+</span><span id="__span-9-7"><a id="__codelineno-9-7" name="__codelineno-9-7" href="#__codelineno-9-7"></a><span class="w">  </span><span class="p">}</span>
+</span><span id="__span-9-8"><a id="__codelineno-9-8" name="__codelineno-9-8" href="#__codelineno-9-8"></a><span class="p">}</span>
+</span></code></pre></div></p>
+</li>
 </ul>
 <h2 id="http">HTTP 服务模式<a class="headerlink" href="#http" title="Permanent link">&para;</a></h2>
 <p><strong>静态模式（单数据源）：</strong></p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-9-1"><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="c1"># Streamable HTTP（默认，双向通信）</span>
-</span><span id="__span-9-2"><a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a>datus-mcp<span class="w"> </span>--datasource<span class="w"> </span>&lt;your<span class="w"> </span>datasource&gt;<span class="w"> </span>--transport<span class="w"> </span>http<span class="w"> </span>--host<span class="w"> </span><span class="m">0</span>.0.0.0<span class="w"> </span>--port<span class="w"> </span><span class="m">8000</span>
-</span><span id="__span-9-3"><a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a>
-</span><span id="__span-9-4"><a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a><span class="c1"># SSE 模式（适用于 Web 客户端）</span>
-</span><span id="__span-9-5"><a id="__codelineno-9-5" name="__codelineno-9-5" href="#__codelineno-9-5"></a>datus-mcp<span class="w"> </span>--datasource<span class="w"> </span>&lt;your<span class="w"> </span>datasource&gt;<span class="w"> </span>--transport<span class="w"> </span>sse<span class="w"> </span>--port<span class="w"> </span><span class="m">8000</span>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-10-1"><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="c1"># Streamable HTTP（默认，双向通信）</span>
+</span><span id="__span-10-2"><a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a>datus-mcp<span class="w"> </span>--datasource<span class="w"> </span>&lt;your<span class="w"> </span>datasource&gt;<span class="w"> </span>--transport<span class="w"> </span>http<span class="w"> </span>--host<span class="w"> </span><span class="m">0</span>.0.0.0<span class="w"> </span>--port<span class="w"> </span><span class="m">8000</span>
+</span><span id="__span-10-3"><a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a>
+</span><span id="__span-10-4"><a id="__codelineno-10-4" name="__codelineno-10-4" href="#__codelineno-10-4"></a><span class="c1"># SSE 模式（适用于 Web 客户端）</span>
+</span><span id="__span-10-5"><a id="__codelineno-10-5" name="__codelineno-10-5" href="#__codelineno-10-5"></a>datus-mcp<span class="w"> </span>--datasource<span class="w"> </span>&lt;your<span class="w"> </span>datasource&gt;<span class="w"> </span>--transport<span class="w"> </span>sse<span class="w"> </span>--port<span class="w"> </span><span class="m">8000</span>
 </span></code></pre></div>
 <p>连接地址：</p>
 <ul>
@@ -5230,11 +5409,11 @@ Claude Desktop、Claude Code 及其他 MCP 兼容客户端集成。</p>
 </ul>
 <p><strong>动态模式（多数据源）：</strong></p>
 <p>启动单个服务即可通过 URL 路径访问所有已配置的数据源：</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-10-1"><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="c1"># 以 SSE 模式启动动态服务</span>
-</span><span id="__span-10-2"><a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a>datus-mcp<span class="w"> </span>--dynamic<span class="w"> </span>--host<span class="w"> </span><span class="m">0</span>.0.0.0<span class="w"> </span>--port<span class="w"> </span><span class="m">8000</span><span class="w"> </span>--transport<span class="w"> </span>sse
-</span><span id="__span-10-3"><a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a>
-</span><span id="__span-10-4"><a id="__codelineno-10-4" name="__codelineno-10-4" href="#__codelineno-10-4"></a><span class="c1"># 以 HTTP Stream 模式启动动态服务</span>
-</span><span id="__span-10-5"><a id="__codelineno-10-5" name="__codelineno-10-5" href="#__codelineno-10-5"></a>datus-mcp<span class="w"> </span>--dynamic<span class="w"> </span>--host<span class="w"> </span><span class="m">0</span>.0.0.0<span class="w"> </span>--port<span class="w"> </span><span class="m">8000</span><span class="w"> </span>--transport<span class="w"> </span>http
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-11-1"><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="c1"># 以 SSE 模式启动动态服务</span>
+</span><span id="__span-11-2"><a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a>datus-mcp<span class="w"> </span>--dynamic<span class="w"> </span>--host<span class="w"> </span><span class="m">0</span>.0.0.0<span class="w"> </span>--port<span class="w"> </span><span class="m">8000</span><span class="w"> </span>--transport<span class="w"> </span>sse
+</span><span id="__span-11-3"><a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a>
+</span><span id="__span-11-4"><a id="__codelineno-11-4" name="__codelineno-11-4" href="#__codelineno-11-4"></a><span class="c1"># 以 HTTP Stream 模式启动动态服务</span>
+</span><span id="__span-11-5"><a id="__codelineno-11-5" name="__codelineno-11-5" href="#__codelineno-11-5"></a>datus-mcp<span class="w"> </span>--dynamic<span class="w"> </span>--host<span class="w"> </span><span class="m">0</span>.0.0.0<span class="w"> </span>--port<span class="w"> </span><span class="m">8000</span><span class="w"> </span>--transport<span class="w"> </span>http
 </span></code></pre></div>
 <p>连接指定数据源：</p>
 <ul>
@@ -5253,7 +5432,7 @@ Claude Desktop、Claude Code 及其他 MCP 兼容客户端集成。</p>
 <li><code>http://localhost:8000/</code> - 服务信息及可用数据源</li>
 <li><code>http://localhost:8000/health</code> - 健康检查</li>
 </ul>
-<h2 id="_3">可用工具<a class="headerlink" href="#_3" title="Permanent link">&para;</a></h2>
+<h2 id="_4">可用工具<a class="headerlink" href="#_4" title="Permanent link">&para;</a></h2>
 <p>MCP 服务注册以下工具。实际可用情况取决于数据源和已配置的能力；请以当前连接的 <code>tools/list</code> 为准。</p>
 <table>
 <thead>
@@ -5273,7 +5452,7 @@ Claude Desktop、Claude Code 及其他 MCP 兼容客户端集成。</p>
 </tr>
 <tr>
 <td><strong>语义模型</strong></td>
-<td><code>attribution_analyze</code>, <code>get_metric</code>, <code>get_query_metrics_result</code>, <code>list_metrics</code>, <code>query_metrics</code>, <code>validate_semantic</code></td>
+<td><code>attribution_analyze</code>, <code>get_dataset</code>, <code>get_metric</code>, <code>get_query_metrics_result</code>, <code>list_metrics</code>, <code>query_metrics</code>, <code>validate_semantic</code></td>
 </tr>
 <tr>
 <td><strong>参考模板</strong></td>
@@ -5293,28 +5472,28 @@ Claude Desktop、Claude Code 及其他 MCP 兼容客户端集成。</p>
 </tr>
 </tbody>
 </table>
-<h2 id="_4">命令行参数<a class="headerlink" href="#_4" title="Permanent link">&para;</a></h2>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-11-1"><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a>datus-mcp<span class="w"> </span>--help
-</span><span id="__span-11-2"><a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a>
-</span><span id="__span-11-3"><a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a>模式选择（互斥，必选其一）：
-</span><span id="__span-11-4"><a id="__codelineno-11-4" name="__codelineno-11-4" href="#__codelineno-11-4"></a><span class="w">  </span>--dynamic<span class="w">            </span>动态模式：通过<span class="w"> </span>/mcp/<span class="o">{</span>datasource<span class="o">}</span><span class="w"> </span>URL<span class="w"> </span>支持所有数据源
-</span><span id="__span-11-5"><a id="__codelineno-11-5" name="__codelineno-11-5" href="#__codelineno-11-5"></a><span class="w">  </span>--datasource,<span class="w"> </span>-n<span class="w">      </span>静态模式：指定单个数据源
-</span><span id="__span-11-6"><a id="__codelineno-11-6" name="__codelineno-11-6" href="#__codelineno-11-6"></a>
-</span><span id="__span-11-7"><a id="__codelineno-11-7" name="__codelineno-11-7" href="#__codelineno-11-7"></a>静态模式选项：
-</span><span id="__span-11-8"><a id="__codelineno-11-8" name="__codelineno-11-8" href="#__codelineno-11-8"></a><span class="w">  </span>--sub-agent,<span class="w"> </span>-s<span class="w">      </span>Sub-agent<span class="w"> </span>名称，用于限定上下文范围
-</span><span id="__span-11-9"><a id="__codelineno-11-9" name="__codelineno-11-9" href="#__codelineno-11-9"></a><span class="w">  </span>--config,<span class="w"> </span>-c<span class="w">         </span>agent<span class="w"> </span>配置文件路径
-</span><span id="__span-11-10"><a id="__codelineno-11-10" name="__codelineno-11-10" href="#__codelineno-11-10"></a><span class="w">  </span>--transport,<span class="w"> </span>-t<span class="w">      </span>传输方式：http（默认）、sse、stdio
-</span><span id="__span-11-11"><a id="__codelineno-11-11" name="__codelineno-11-11" href="#__codelineno-11-11"></a>
-</span><span id="__span-11-12"><a id="__codelineno-11-12" name="__codelineno-11-12" href="#__codelineno-11-12"></a>动态模式选项：
-</span><span id="__span-11-13"><a id="__codelineno-11-13" name="__codelineno-11-13" href="#__codelineno-11-13"></a><span class="w">  </span>--transport,<span class="w"> </span>-t<span class="w">      </span>传输方式：http（默认）、sse
-</span><span id="__span-11-14"><a id="__codelineno-11-14" name="__codelineno-11-14" href="#__codelineno-11-14"></a><span class="w">                       </span>http:<span class="w"> </span>通过<span class="w"> </span>/mcp/<span class="o">{</span>datasource<span class="o">}</span><span class="w"> </span>URL<span class="w"> </span>访问
-</span><span id="__span-11-15"><a id="__codelineno-11-15" name="__codelineno-11-15" href="#__codelineno-11-15"></a><span class="w">                       </span>sse:<span class="w"> </span>通过<span class="w"> </span>/sse/<span class="o">{</span>datasource<span class="o">}</span><span class="w"> </span>URL<span class="w"> </span>访问
-</span><span id="__span-11-16"><a id="__codelineno-11-16" name="__codelineno-11-16" href="#__codelineno-11-16"></a>
-</span><span id="__span-11-17"><a id="__codelineno-11-17" name="__codelineno-11-17" href="#__codelineno-11-17"></a>通用选项：
-</span><span id="__span-11-18"><a id="__codelineno-11-18" name="__codelineno-11-18" href="#__codelineno-11-18"></a><span class="w">  </span>--config,<span class="w"> </span>-c<span class="w">         </span>Agent<span class="w"> </span>配置文件路径
-</span><span id="__span-11-19"><a id="__codelineno-11-19" name="__codelineno-11-19" href="#__codelineno-11-19"></a><span class="w">  </span>--host<span class="w">               </span>HTTP<span class="w"> </span>传输绑定地址（默认：0.0.0.0）
-</span><span id="__span-11-20"><a id="__codelineno-11-20" name="__codelineno-11-20" href="#__codelineno-11-20"></a><span class="w">  </span>--port,<span class="w"> </span>-p<span class="w">           </span>HTTP<span class="w"> </span>传输绑定端口（默认：8000）
-</span><span id="__span-11-21"><a id="__codelineno-11-21" name="__codelineno-11-21" href="#__codelineno-11-21"></a><span class="w">  </span>--debug<span class="w">              </span>启用调试日志
+<h2 id="_5">命令行参数<a class="headerlink" href="#_5" title="Permanent link">&para;</a></h2>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-12-1"><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a>datus-mcp<span class="w"> </span>--help
+</span><span id="__span-12-2"><a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a>
+</span><span id="__span-12-3"><a id="__codelineno-12-3" name="__codelineno-12-3" href="#__codelineno-12-3"></a>模式选择（互斥，必选其一）：
+</span><span id="__span-12-4"><a id="__codelineno-12-4" name="__codelineno-12-4" href="#__codelineno-12-4"></a><span class="w">  </span>--dynamic<span class="w">            </span>动态模式：通过<span class="w"> </span>/mcp/<span class="o">{</span>datasource<span class="o">}</span><span class="w"> </span>URL<span class="w"> </span>支持所有数据源
+</span><span id="__span-12-5"><a id="__codelineno-12-5" name="__codelineno-12-5" href="#__codelineno-12-5"></a><span class="w">  </span>--datasource,<span class="w"> </span>-n<span class="w">      </span>静态模式：指定单个数据源
+</span><span id="__span-12-6"><a id="__codelineno-12-6" name="__codelineno-12-6" href="#__codelineno-12-6"></a>
+</span><span id="__span-12-7"><a id="__codelineno-12-7" name="__codelineno-12-7" href="#__codelineno-12-7"></a>静态模式选项：
+</span><span id="__span-12-8"><a id="__codelineno-12-8" name="__codelineno-12-8" href="#__codelineno-12-8"></a><span class="w">  </span>--sub-agent,<span class="w"> </span>-s<span class="w">      </span>Sub-agent<span class="w"> </span>名称，用于限定上下文范围
+</span><span id="__span-12-9"><a id="__codelineno-12-9" name="__codelineno-12-9" href="#__codelineno-12-9"></a><span class="w">  </span>--config,<span class="w"> </span>-c<span class="w">         </span>agent<span class="w"> </span>配置文件路径
+</span><span id="__span-12-10"><a id="__codelineno-12-10" name="__codelineno-12-10" href="#__codelineno-12-10"></a><span class="w">  </span>--transport,<span class="w"> </span>-t<span class="w">      </span>传输方式：http（默认）、sse、stdio
+</span><span id="__span-12-11"><a id="__codelineno-12-11" name="__codelineno-12-11" href="#__codelineno-12-11"></a>
+</span><span id="__span-12-12"><a id="__codelineno-12-12" name="__codelineno-12-12" href="#__codelineno-12-12"></a>动态模式选项：
+</span><span id="__span-12-13"><a id="__codelineno-12-13" name="__codelineno-12-13" href="#__codelineno-12-13"></a><span class="w">  </span>--transport,<span class="w"> </span>-t<span class="w">      </span>传输方式：http（默认）、sse
+</span><span id="__span-12-14"><a id="__codelineno-12-14" name="__codelineno-12-14" href="#__codelineno-12-14"></a><span class="w">                       </span>http:<span class="w"> </span>通过<span class="w"> </span>/mcp/<span class="o">{</span>datasource<span class="o">}</span><span class="w"> </span>URL<span class="w"> </span>访问
+</span><span id="__span-12-15"><a id="__codelineno-12-15" name="__codelineno-12-15" href="#__codelineno-12-15"></a><span class="w">                       </span>sse:<span class="w"> </span>通过<span class="w"> </span>/sse/<span class="o">{</span>datasource<span class="o">}</span><span class="w"> </span>URL<span class="w"> </span>访问
+</span><span id="__span-12-16"><a id="__codelineno-12-16" name="__codelineno-12-16" href="#__codelineno-12-16"></a>
+</span><span id="__span-12-17"><a id="__codelineno-12-17" name="__codelineno-12-17" href="#__codelineno-12-17"></a>通用选项：
+</span><span id="__span-12-18"><a id="__codelineno-12-18" name="__codelineno-12-18" href="#__codelineno-12-18"></a><span class="w">  </span>--config,<span class="w"> </span>-c<span class="w">         </span>Agent<span class="w"> </span>配置文件路径
+</span><span id="__span-12-19"><a id="__codelineno-12-19" name="__codelineno-12-19" href="#__codelineno-12-19"></a><span class="w">  </span>--host<span class="w">               </span>HTTP<span class="w"> </span>传输绑定地址（默认：0.0.0.0）
+</span><span id="__span-12-20"><a id="__codelineno-12-20" name="__codelineno-12-20" href="#__codelineno-12-20"></a><span class="w">  </span>--port,<span class="w"> </span>-p<span class="w">           </span>HTTP<span class="w"> </span>传输绑定端口（默认：8000）
+</span><span id="__span-12-21"><a id="__codelineno-12-21" name="__codelineno-12-21" href="#__codelineno-12-21"></a><span class="w">  </span>--debug<span class="w">              </span>启用调试日志
 </span></code></pre></div>
 
 

@@ -14,7 +14,7 @@
         <link rel="prev" href="../mysql/">
       
       
-        <link rel="next" href="../greenplum/">
+        <link rel="next" href="../aurora/">
       
       
         
@@ -1121,6 +1121,8 @@
       
         
       
+        
+      
     
     
     
@@ -1291,6 +1293,34 @@
     
   
     指标问答
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../subagent/ontology_analyst/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Ontology 分析
   
 
     
@@ -3369,6 +3399,12 @@
       
         
       
+        
+      
+        
+      
+        
+      
     
     
     
@@ -3632,6 +3668,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="TLS 与命名空间">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#aws" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        AWS 认证
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -3683,6 +3736,34 @@
   
   
     <li class="md-nav__item">
+      <a href="../aurora/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Amazon Aurora
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../greenplum/" class="md-nav__link">
         
   
@@ -3719,6 +3800,34 @@
     
   
     Amazon Redshift
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../athena/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Amazon Athena
   
 
     
@@ -4083,6 +4192,34 @@
     
   
     Oracle
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../hana/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    SAP HANA
   
 
     
@@ -4965,6 +5102,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="TLS 与命名空间">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#aws" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        AWS 认证
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -5017,7 +5171,7 @@
 
 
   
-    <a href="https://github.com/Datus-ai/Datus-agent/edit/v0.4.3/docs/configuration/datasources/postgresql.zh.md" title="编辑此页" class="md-content__button md-icon" rel="edit">
+    <a href="https://github.com/Datus-ai/Datus-agent/edit/v0.4.4/docs/configuration/datasources/postgresql.zh.md" title="编辑此页" class="md-content__button md-icon" rel="edit">
       
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
     </a>
@@ -5028,8 +5182,10 @@
 <h1 id="postgresql-datasource">PostgreSQL datasource<a class="headerlink" href="#postgresql-datasource" title="Permanent link">&para;</a></h1>
 <p>PostgreSQL adapter 通过 PostgreSQL wire protocol 与 psycopg2 连接，保留原生 <code>database → schema → table</code> 层级，并支持发现 table、view 和 materialized view。</p>
 <h2 id="_1">安装<a class="headerlink" href="#_1" title="Permanent link">&para;</a></h2>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>pip<span class="w"> </span>install<span class="w"> </span>datus-postgresql
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>pip<span class="w"> </span>install<span class="w"> </span>--upgrade<span class="w"> </span><span class="s1">'datus-postgresql&gt;=0.1.11'</span><span class="w"> </span><span class="se">\</span>
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="w">  </span><span class="s1">'datus-sqlalchemy&gt;=0.1.12'</span><span class="w"> </span><span class="s1">'datus-db-core&gt;=0.1.10'</span><span class="w"> </span><span class="s1">'SQLAlchemy==2.0.23'</span>
 </span></code></pre></div>
+<p>这些已发布版本包含下述证书和 AWS 认证字段。IAM 或 Secrets Manager 需要安装可选 <code>aws</code> extra，命令见 <a href="../aurora/#install">Aurora 指南</a>。较旧 adapter 可能只暴露 <code>sslmode</code>，证书仍需通过 libpq 标准文件或环境配置。请安装到 Agent 环境，升级共享包后重启；安装后从源码 checkout 通过 uv 启动时使用 <code>uv run --no-sync</code>。</p>
 <h2 id="_2">连接配置<a class="headerlink" href="#_2" title="Permanent link">&para;</a></h2>
 <div class="language-yaml highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="nt">agent</span><span class="p">:</span>
 </span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">  </span><span class="nt">services</span><span class="p">:</span>
@@ -5107,19 +5263,109 @@
 <td><code>disable</code>、<code>allow</code>、<code>prefer</code>、<code>require</code>、<code>verify-ca</code> 或 <code>verify-full</code>。</td>
 </tr>
 <tr>
+<td><code>sslrootcert</code></td>
+<td>string</td>
+<td style="text-align: right;">否</td>
+<td>—</td>
+<td>传给 libpq 的 CA bundle 文件路径；Aurora/IAM 必填。</td>
+</tr>
+<tr>
+<td><code>sslcert</code> / <code>sslkey</code></td>
+<td>string</td>
+<td style="text-align: right;">否</td>
+<td>—</td>
+<td>mTLS 客户端证书和私钥文件路径，必须成对提供。</td>
+</tr>
+<tr>
+<td><code>aurora</code></td>
+<td>boolean</td>
+<td style="text-align: right;">否</td>
+<td><code>false</code></td>
+<td>对 Aurora endpoint 强制 CA 和 <code>verify-full</code>。</td>
+</tr>
+<tr>
+<td><code>auth_mode</code></td>
+<td>string</td>
+<td style="text-align: right;">否</td>
+<td><code>password</code></td>
+<td><code>password</code> 或 AWS RDS <code>iam</code>。</td>
+</tr>
+<tr>
+<td><code>aws</code></td>
+<td>object</td>
+<td style="text-align: right;">否</td>
+<td>—</td>
+<td>SDK 身份设置：<code>region</code>、<code>profile</code>、<code>ca_bundle</code>（仅 AWS API 信任）。</td>
+</tr>
+<tr>
+<td><code>secret_ref</code></td>
+<td>string</td>
+<td style="text-align: right;">否</td>
+<td>—</td>
+<td>Secrets Manager 名称/ARN；不能与内联密码或 IAM 同用。</td>
+</tr>
+<tr>
+<td><code>secret_cache_ttl_seconds</code></td>
+<td>integer</td>
+<td style="text-align: right;">否</td>
+<td><code>300</code></td>
+<td>Secret 刷新周期，1–86400 秒。</td>
+</tr>
+<tr>
+<td><code>connect_timeout_seconds</code></td>
+<td>integer</td>
+<td style="text-align: right;">否</td>
+<td>—</td>
+<td>可选正整数 DBAPI 建连超时。</td>
+</tr>
+<tr>
 <td><code>timeout_seconds</code></td>
 <td>integer</td>
 <td style="text-align: right;">否</td>
 <td><code>30</code></td>
-<td>连接与连接池超时秒数。</td>
+<td>连接池、socket 操作和默认查询截止时间。</td>
+</tr>
+<tr>
+<td><code>read_timeout_seconds</code></td>
+<td>integer</td>
+<td style="text-align: right;">否</td>
+<td>—</td>
+<td>正整数连接借出截止时间覆盖值。</td>
+</tr>
+<tr>
+<td><code>query_timeout_seconds</code></td>
+<td>integer</td>
+<td style="text-align: right;">否</td>
+<td>—</td>
+<td>正整数服务端 statement timeout 覆盖值。</td>
 </tr>
 </tbody>
 </table>
 <h2 id="tls">TLS 与命名空间<a class="headerlink" href="#tls" title="Permanent link">&para;</a></h2>
-<p><code>sslmode</code> 会传给 psycopg2/libpq。Adapter 默认值是 <code>prefer</code>；上面的含凭据基础示例使用 <code>verify-full</code>，会加密连接、校验 CA 证书链，并验证 <code>host</code> 与服务端证书匹配。当前 profile 没有 <code>sslrootcert</code> 字段，因此必须通过 libpq 标准证书目录或环境配置可信 CA，并使用与证书匹配的 hostname。不要在 datasource 中加入 adapter 不支持的证书字段。</p>
+<p><code>sslmode</code> 会传给 psycopg2/libpq。已有 profile 的 adapter 默认值仍为 <code>prefer</code>，可能回退明文，且不提供服务端身份验证。新生产配置应显式选择 <code>verify-full</code>，使用与证书匹配的 hostname，并配置签发 CA。0.1.10 起可增加：</p>
+<div class="language-yaml highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="nt">sslrootcert</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">/absolute/path/postgresql-ca.pem</span>
+</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="c1"># mTLS 必须同时提供以下两个客户端文件：</span>
+</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="c1"># sslcert: /absolute/path/client.crt</span>
+</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="c1"># sslkey: /absolute/path/client.key</span>
+</span></code></pre></div>
+<p>这些字段接受文件路径，不接受内联 PEM。普通 PostgreSQL 省略 <code>sslrootcert</code> 时仍可使用 libpq 标准 CA 文件或环境。旧 <code>prefer</code> profile 迁移前应先准备可信 CA 和匹配 hostname；仅升级 adapter 不会改变它的连接策略。</p>
+<h3 id="aws">AWS 认证<a class="headerlink" href="#aws" title="Permanent link">&para;</a></h3>
+<p>请按 <a href="../aurora/#install">Aurora 指南</a>安装带 <code>aws</code> extra 的兼容已发布包。数据库 TLS 信任使用 <code>sslrootcert</code>；<code>aws.ca_bundle</code> 只影响 AWS HTTPS API。使用 SDK 凭据链或 AWS shared profile，包括由 SDK 自动刷新的 role；不要把临时 AWS 凭据粘贴到 datasource。完整 Aurora MySQL/PostgreSQL 配置、IAM 前提、Secret 轮换和故障切换行为见 <a href="../aurora/">Amazon Aurora</a>。</p>
+<p>RDS/Aurora IAM 配置应省略 <code>password</code> 与 <code>secret_ref</code>，并增加：</p>
+<div class="language-yaml highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="nt">aurora</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span><span class="w"> </span><span class="c1"># 仅 Aurora endpoint 设置</span>
+</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="nt">auth_mode</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">iam</span>
+</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="nt">aws</span><span class="p">:</span>
+</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="w">  </span><span class="nt">region</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">us-east-1</span>
+</span><span id="__span-3-5"><a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="w">  </span><span class="nt">profile</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">analytics</span>
+</span><span id="__span-3-6"><a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="nt">sslmode</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">verify-full</span>
+</span><span id="__span-3-7"><a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a><span class="nt">sslrootcert</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">/absolute/path/rds-ca-bundle.pem</span>
+</span><span id="__span-3-8"><a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a><span class="nt">connect_timeout_seconds</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">10</span>
+</span></code></pre></div>
+<p><code>aurora: true</code> 和 <code>auth_mode: iam</code> 都要求显式 CA 路径；省略 <code>sslmode</code> 时自动使用 <code>verify-full</code>，显式选择其他模式会报错。IAM token 按新物理连接生成。密码认证也可用 <code>auth_mode: password</code> + <code>secret_ref</code>：Secret 必须包含 JSON 字符串 <code>password</code>，若含 <code>username</code> 必须与配置一致。Secret 按 TTL 刷新，版本变化会释放旧连接池后再建连。数据库 IAM 登录和 AWS 权限仍需单独启用。</p>
+<p><a href="../gaussdb/">GaussDB</a>／<a href="../dws/">DWS</a> 有独立 adapter 和证书限制，应参照各自 datasource 页面；不能用 PostgreSQL 的 <code>verify-full</code> 模板代替这些产品的主机名验证。</p>
 <p><code>database</code> 是初始 PostgreSQL database，<code>schema</code> 默认是 <code>public</code>。常规发现会过滤系统 database/schema；访问其他 database 仍取决于网络连通性和 role 权限。</p>
 <h2 id="_4">验证连接<a class="headerlink" href="#_4" title="Permanent link">&para;</a></h2>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>datus<span class="w"> </span>--config<span class="w"> </span>conf/agent.yml<span class="w"> </span>--datasource<span class="w"> </span>warehouse_pg
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>datus<span class="w"> </span>--config<span class="w"> </span>conf/agent.yml<span class="w"> </span>--datasource<span class="w"> </span>warehouse_pg
 </span></code></pre></div>
 <p>运行 <code>/databases</code>、<code>/schemas</code> 和 <code>/tables</code>，可以区分“登录成功”和“缺少 catalog 权限”。</p>
 <h2 id="_5">故障排查<a class="headerlink" href="#_5" title="Permanent link">&para;</a></h2>
@@ -5141,7 +5387,7 @@
 </tr>
 <tr>
 <td>证书校验失败</td>
-<td>使用合法 <code>sslmode</code>，并通过 libpq 标准环境/文件配置可信 CA；adapter profile 没有 <code>sslrootcert</code> 字段。</td>
+<td>0.1.10 起可通过 <code>sslrootcert</code> 提供签发 CA 文件，并让 <code>host</code> 匹配证书；旧包使用 libpq 标准文件/环境。</td>
 </tr>
 <tr>
 <td>找不到 relation</td>
@@ -5199,13 +5445,13 @@
         
         
           
-          <a href="../greenplum/" class="md-footer__link md-footer__link--next" aria-label="下一页: Greenplum">
+          <a href="../aurora/" class="md-footer__link md-footer__link--next" aria-label="下一页: Amazon Aurora">
             <div class="md-footer__title">
               <span class="md-footer__direction">
                 下一页
               </span>
               <div class="md-ellipsis">
-                Greenplum
+                Amazon Aurora
               </div>
             </div>
             <div class="md-footer__button md-icon">
