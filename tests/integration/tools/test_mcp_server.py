@@ -15,7 +15,7 @@ with MCP SDK clients. Covers:
 
 Datasources tested:
   - ssb_sqlite: SQLite database with SSB benchmark tables
-  - duckdb: DuckDB database with MetricFlow demo tables
+  - duckdb: DuckDB database with demo tables
 """
 
 import asyncio
@@ -46,11 +46,11 @@ CONFIG_PATH = str(Path(__file__).resolve().parents[3] / "tests" / "conf" / "agen
 STATIC_EXPECTED_TOOLS = {
     "list_tables",
     "describe_table",
-    "read_query",
+    "execute_sql",
     "list_databases",
     "list_subject_tree",
 }
-DYNAMIC_EXPECTED_TOOLS = {"list_tables", "describe_table", "read_query"}
+DYNAMIC_EXPECTED_TOOLS = {"list_tables", "describe_table", "execute_sql"}
 
 
 # =============================================================================
@@ -177,7 +177,7 @@ async def mcp_stdio_session(server_params: StdioServerParameters):
 def parse_tool_result(result) -> dict:
     """Parse a CallToolResult into a dict with success/error/result keys."""
     assert not result.isError, f"Tool call returned error: {result}"
-    assert len(result.content) > 0, "Tool call returned empty content"
+    assert result.content[0].type == "text"
     data = json.loads(result.content[0].text)
     return data
 
@@ -222,15 +222,15 @@ class StaticModeTestBase:
             result = await session.call_tool("describe_table", {"table_name": "customer"})
             data = parse_tool_result(result)
             assert data["success"] == 1, f"describe_table failed: {data.get('error')}"
-            assert data["result"] is not None
+            assert "c_custkey" in {col["name"] for col in data["result"]["columns"]}
 
     async def test_read_query(self):
-        """Verify read_query executes SQL and returns results."""
+        """Verify execute_sql executes SQL and returns results."""
         async with self._session() as session:
-            result = await session.call_tool("read_query", {"sql": "SELECT COUNT(*) AS cnt FROM customer"})
+            result = await session.call_tool("execute_sql", {"sql": "SELECT COUNT(*) AS cnt FROM customer"})
             data = parse_tool_result(result)
-            assert data["success"] == 1, f"read_query failed: {data.get('error')}"
-            assert data["result"] is not None
+            assert data["success"] == 1, f"execute_sql failed: {data.get('error')}"
+            assert data["result"]["original_columns"] == ["cnt"]
 
     async def test_list_databases(self):
         """Verify list_databases returns database info."""
@@ -294,7 +294,7 @@ class DynamicModeTestBase:
             assert "customer" in tables_text
 
     async def test_list_tables_duckdb(self):
-        """Verify list_tables on duckdb returns MetricFlow demo tables."""
+        """Verify list_tables on duckdb returns demo tables."""
         async with self._duckdb_session() as session:
             result = await session.call_tool("list_tables", {})
             data = parse_tool_result(result)
@@ -308,25 +308,25 @@ class DynamicModeTestBase:
             result = await session.call_tool("describe_table", {"table_name": "supplier"})
             data = parse_tool_result(result)
             assert data["success"] == 1, f"describe_table ssb failed: {data.get('error')}"
-            assert data["result"] is not None
+            assert "s_suppkey" in {col["name"] for col in data["result"]["columns"]}
 
     async def test_read_query_ssb(self):
-        """Verify read_query on ssb_sqlite executes SQL."""
+        """Verify execute_sql on ssb_sqlite executes SQL."""
         async with self._ssb_session() as session:
-            result = await session.call_tool("read_query", {"sql": "SELECT COUNT(*) AS cnt FROM supplier"})
+            result = await session.call_tool("execute_sql", {"sql": "SELECT COUNT(*) AS cnt FROM supplier"})
             data = parse_tool_result(result)
-            assert data["success"] == 1, f"read_query ssb failed: {data.get('error')}"
-            assert data["result"] is not None
+            assert data["success"] == 1, f"execute_sql ssb failed: {data.get('error')}"
+            assert data["result"]["original_columns"] == ["cnt"]
 
     async def test_read_query_duckdb(self):
-        """Verify read_query on duckdb executes SQL."""
+        """Verify execute_sql on duckdb executes SQL."""
         async with self._duckdb_session() as session:
             result = await session.call_tool(
-                "read_query", {"sql": "SELECT COUNT(*) AS cnt FROM mf_demo.mf_demo_customers"}
+                "execute_sql", {"sql": "SELECT COUNT(*) AS cnt FROM mf_demo.mf_demo_customers"}
             )
             data = parse_tool_result(result)
-            assert data["success"] == 1, f"read_query duckdb failed: {data.get('error')}"
-            assert data["result"] is not None
+            assert data["success"] == 1, f"execute_sql duckdb failed: {data.get('error')}"
+            assert data["result"]["original_columns"] == ["cnt"]
 
     async def test_multi_datasource_isolation(self):
         """Verify that ssb_sqlite and duckdb return different table sets."""
@@ -533,17 +533,16 @@ class TestMCPClient:
             data = parse_tool_result(result)
 
             assert data["success"] == 1, f"list_subject_tree should succeed, got error: {data.get('error')}"
-            assert data["result"] is not None, "list_subject_tree should return a result"
+            assert isinstance(data["result"], dict)
 
     async def test_error_handling_invalid_sql(self):
-        """N10-07a: read_query with invalid SQL returns proper error via MCP."""
+        """N10-07a: execute_sql with invalid SQL returns proper error via MCP."""
         async with mcp_http_session(self.url) as session:
-            result = await session.call_tool("read_query", {"sql": "SELECT * FROM nonexistent_xyz_table"})
+            result = await session.call_tool("execute_sql", {"sql": "SELECT * FROM nonexistent_xyz_table"})
             data = parse_tool_result(result)
 
-            assert data["success"] == 0, "read_query with invalid table should return success=0"
-            assert data.get("error") is not None, "Should have error message"
-            assert len(data["error"]) > 0, "Error message should not be empty"
+            assert data["success"] == 0, "execute_sql with invalid table should return success=0"
+            assert "nonexistent_xyz_table" in data["error"]
 
     async def test_error_handling_nonexistent_table_describe(self):
         """N10-07b: describe_table for nonexistent table returns a clear failure."""
@@ -557,11 +556,10 @@ class TestMCPClient:
     async def test_large_result_set(self):
         """N10-08: Large query result is properly handled (compressed/truncated)."""
         async with mcp_http_session(self.url) as session:
-            result = await session.call_tool("read_query", {"sql": "SELECT * FROM lineorder LIMIT 500"})
+            result = await session.call_tool("execute_sql", {"sql": "SELECT * FROM lineorder LIMIT 500"})
             data = parse_tool_result(result)
 
-            assert data["success"] == 1, f"read_query should succeed, got error: {data.get('error')}"
-            assert data["result"] is not None, "Should have result data"
+            assert data["success"] == 1, f"execute_sql should succeed, got error: {data.get('error')}"
             # Result should contain data in some form
             result_str = str(data["result"])
             assert len(result_str) > 100, f"Large result should have substantial content, got len={len(result_str)}"
@@ -573,7 +571,7 @@ class TestMCPClient:
             results = await asyncio.gather(
                 session.call_tool("list_tables", {}),
                 session.call_tool("describe_table", {"table_name": "customer"}),
-                session.call_tool("read_query", {"sql": "SELECT COUNT(*) as cnt FROM supplier"}),
+                session.call_tool("execute_sql", {"sql": "SELECT COUNT(*) as cnt FROM supplier"}),
             )
 
             assert len(results) == 3, f"Should have 3 results, got {len(results)}"
@@ -582,7 +580,12 @@ class TestMCPClient:
             for i, result in enumerate(results):
                 data = parse_tool_result(result)
                 assert data["success"] == 1, f"Concurrent call {i} should succeed, got error: {data.get('error')}"
-                assert data["result"] is not None, f"Concurrent call {i} should have result"
+                if i == 0:
+                    assert "lineorder" in str(data["result"]).lower()
+                elif i == 1:
+                    assert "c_custkey" in {col["name"] for col in data["result"]["columns"]}
+                else:
+                    assert data["result"]["original_columns"] == ["cnt"]
 
 
 # =============================================================================
@@ -605,12 +608,10 @@ class TestMCPToolRegistration:
     async def test_list_tools(self, server):
         """Test that tools are registered with FastMCP."""
         tools = await server.mcp.list_tools()
-        assert len(tools) > 0
-
         tool_names = [t.name for t in tools]
         assert "list_tables" in tool_names
         assert "describe_table" in tool_names
-        assert "read_query" in tool_names
+        assert "execute_sql" in tool_names
 
     @pytest.mark.asyncio
     async def test_list_subject_tree_tool(self, server):
@@ -635,11 +636,96 @@ class TestMCPToolExecution:
     async def test_call_list_tables(self, server):
         """Test calling list_tables tool."""
         result = await server.mcp.call_tool("list_tables", {})
-        assert result is not None
-        assert len(result) > 0
+        assert result[0][0].type == "text"
 
     @pytest.mark.asyncio
     async def test_call_list_subject_tree(self, server):
         """Test calling list_subject_tree tool."""
         result = await server.mcp.call_tool("list_subject_tree", {})
-        assert result is not None
+        assert result[0][0].type == "text"
+
+
+@pytest.mark.nightly
+class TestMCPServerHonorsSqlReadOnly:
+    """``agent.sql_read_only`` over the MCP tool surface.
+
+    This is the path the switch exists for: the MCP server builds its tools with
+    ``create_static``/``create_dynamic``, which pass an ``AgentConfig`` but never
+    a ``read_only`` flag, and its tool instances never see ``PermissionHooks`` at
+    all. Any client holding an API key reaches ``execute_sql`` directly, so the
+    deployment posture has to be enforced by the tool itself.
+    """
+
+    @pytest.fixture
+    def server(self):
+        server = create_server(datasource="ssb_sqlite", config_path=CONFIG_PATH)
+        yield server
+        server.close()
+
+    @staticmethod
+    async def _call_execute_sql(server, sql):
+        """In-process FastMCP dispatch returns ``(content_blocks, structured)``;
+        take the structured payload. ``parse_tool_result`` above is for
+        ``ClientSession`` results and does not apply here."""
+        _, structured = await server.mcp.call_tool("execute_sql", {"sql": sql})
+        return structured
+
+    @pytest.mark.asyncio
+    async def test_static_tools_report_read_only_when_the_config_is_hardened(self, server):
+        """The factories pass no ``read_only``, so the tool has to take it from
+        the config — otherwise anything asking whether this MCP tool is
+        read-only would be told it is writable."""
+        assert server.db_tool.read_only is False
+
+        server.agent_config.harden_sql_read_only()
+
+        assert server.db_tool.read_only is True
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "sql",
+        [
+            "INSERT INTO customer (c_custkey) VALUES (999999)",
+            "UPDATE customer SET c_name = 'x'",
+            "DELETE FROM customer",
+            "DROP TABLE customer",
+            "CREATE TABLE mcp_readonly_probe (id INT)",
+        ],
+    )
+    async def test_execute_sql_over_mcp_refuses_writes(self, server, sql):
+        server.agent_config.harden_sql_read_only()
+
+        payload = await self._call_execute_sql(server, sql)
+
+        assert payload["success"] == 0
+        assert "read-only" in str(payload.get("error", "")).lower()
+
+    @pytest.mark.asyncio
+    async def test_execute_sql_over_mcp_refuses_a_write_smuggled_behind_a_read(self, server):
+        """``parse_sql_type`` classifies only the FIRST statement, so this
+        routes to the read path — where the shared statement-shape check
+        refuses it for being multi-statement rather than for being a write.
+        Different message, same outcome: the DROP never runs."""
+        server.agent_config.harden_sql_read_only()
+
+        payload = await self._call_execute_sql(server, "SELECT 1; DROP TABLE customer")
+
+        assert payload["success"] == 0
+        assert "multi-statement" in str(payload.get("error", "")).lower()
+
+        survived = await self._call_execute_sql(server, "SELECT COUNT(*) AS cnt FROM customer")
+        assert survived["success"] == 1
+
+    @pytest.mark.asyncio
+    async def test_execute_sql_over_mcp_still_reads(self, server):
+        """The gate must not cost the server its actual job."""
+        server.agent_config.harden_sql_read_only()
+
+        payload = await self._call_execute_sql(server, "SELECT COUNT(*) AS cnt FROM customer")
+
+        assert payload["success"] == 1
+
+    @pytest.mark.asyncio
+    async def test_writes_are_not_blocked_by_default(self, server):
+        """The switch is opt-in; an unhardened server keeps its behaviour."""
+        assert server.db_tool.read_only is False

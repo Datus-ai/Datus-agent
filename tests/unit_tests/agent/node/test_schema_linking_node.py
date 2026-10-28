@@ -37,7 +37,7 @@ def _make_agent_config(rag_path="/tmp/nonexistent_rag"):
     return cfg
 
 
-def _make_workflow(table_schemas=None, table_values=None, reflection_round=0):
+def _make_workflow(table_schemas=None, table_values=None):
     wf = MagicMock()
     wf.task.task = "Show total sales"
     wf.task.database_type = "sqlite"
@@ -46,7 +46,6 @@ def _make_workflow(table_schemas=None, table_values=None, reflection_round=0):
     wf.task.subject_path = []
     wf.context.table_schemas = table_schemas or []
     wf.context.table_values = table_values or []
-    wf.reflection_round = reflection_round
     return wf
 
 
@@ -126,25 +125,15 @@ class TestSetupInputSchemaLinking:
         assert node._table_schemas == [existing_schema]
         assert node._table_values == [existing_value]
 
-    def test_setup_input_reflection_escalates_rate(self):
-        """reflection_round escalates matching_rate."""
+    @pytest.mark.parametrize("matching_rate", ["fast", "medium", "slow", "from_llm"])
+    def test_setup_input_uses_configured_rate(self, matching_rate):
         cfg = _make_agent_config()
-        cfg.schema_linking_rate = "fast"
+        cfg.schema_linking_rate = matching_rate
         node = _make_node(agent_config=cfg)
-        wf = _make_workflow(reflection_round=1)  # fast -> medium
+        wf = _make_workflow()
         node.setup_input(wf)
 
-        assert node.input.matching_rate == "medium"
-
-    def test_setup_input_reflection_caps_at_from_llm(self):
-        """reflection_round beyond bounds caps at 'from_llm'."""
-        cfg = _make_agent_config()
-        cfg.schema_linking_rate = "slow"
-        node = _make_node(agent_config=cfg)
-        wf = _make_workflow(reflection_round=5)  # slow + 5 -> from_llm (capped)
-        node.setup_input(wf)
-
-        assert node.input.matching_rate == "from_llm"
+        assert node.input.matching_rate == matching_rate
 
 
 # ---------------------------------------------------------------------------

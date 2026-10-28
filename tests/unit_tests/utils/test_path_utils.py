@@ -100,6 +100,23 @@ class TestGetFilesFromGlobPattern:
             result = get_files_from_glob_pattern(pattern)
         assert result == []
 
+    def test_results_sorted_by_path_deterministically(self):
+        """Matches come back in a stable (sorted) order, not raw filesystem order.
+
+        A glob datasource's default database is ``files[0]`` (DBManager._resolve_db_config),
+        so an unsorted order makes the default non-deterministic across machines — which is
+        how a benchmark runner ended up defaulting to the wrong database. Create files out of
+        alphabetical order to prove the sort is applied rather than relying on OS ordering.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            for name in ("european_football_2.sqlite", "california_schools.sqlite", "card_games.sqlite"):
+                Path(tmpdir, name).write_text("data")
+
+            pattern = os.path.join(tmpdir, "*.sqlite")
+            names = [entry["name"] for entry in get_files_from_glob_pattern(pattern)]
+
+        assert names == ["california_schools", "card_games", "european_football_2"]
+
     def test_wildcard_directory_uses_parent_as_datasource(self):
         """When the directory part contains wildcards, datasource is parent dir name."""
         with tempfile.TemporaryDirectory() as tmpdir:

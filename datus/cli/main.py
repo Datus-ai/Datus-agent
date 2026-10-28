@@ -11,10 +11,12 @@ Main entry point for the CLI application.
 import argparse
 
 from datus import __version__
+from datus.configuration.logging_config import add_logging_arguments
 from datus.utils.async_utils import setup_windows_policy
 from datus.utils.constants import DBType
 from datus.utils.exceptions import DatusException, ErrorCode
-from datus.utils.loggings import configure_logging, get_logger
+from datus.utils.loggings import configure_entrypoint_logging, get_logger
+from datus.utils.multiprocessing_utils import configure_multiprocessing_start_method
 
 logger = get_logger(__name__)
 
@@ -27,7 +29,8 @@ class ArgumentParser:
             epilog=(
                 "subcommands:\n"
                 "  upgrade            Upgrade datus-agent and installed datus-* packages to the latest release\n"
-                "  upgrade --check    Report the latest version without installing"
+                "  upgrade --check    Report the latest version without installing\n"
+                "  package            Pack this project into a self-contained zip (interactive; -y for defaults)"
             ),
         )
         self._setup_arguments()
@@ -63,7 +66,7 @@ class ArgumentParser:
             type=str,
             help="Path to configuration file (default: ./conf/agent.yml > {agent.home}/conf/agent.yml)",
         )
-        self.parser.add_argument("--debug", action="store_true", help="Enable debug logging")
+        add_logging_arguments(self.parser)
         self.parser.add_argument("--no_color", dest="no_color", action="store_true", help="Disable colored output")
         # storage_path parameter deprecated - data path is now fixed at {agent.home}/data
 
@@ -222,6 +225,34 @@ class ArgumentParser:
             ),
         )
 
+        self.parser.add_argument(
+            "--permission-mode",
+            dest="permission_mode",
+            type=str,
+            choices=["normal", "auto", "dangerous"],
+            default=None,
+            help=(
+                "Override permissions.profile from agent.yml for this run (REPL and --print). "
+                "In --print mode the run uses the configured profile by default (bash and other "
+                "tools only auto-run when an allow rule matches); pass 'dangerous' to restore "
+                "the legacy allow-everything print-mode behavior."
+            ),
+        )
+
+        self.parser.add_argument(
+            "--execution-mode",
+            dest="execution_mode",
+            type=str,
+            choices=["interactive", "workflow"],
+            default=None,
+            help=(
+                "--print only. 'workflow' (default): headless — ASK permissions fail fast with "
+                "PERMISSION_DENIED. 'interactive': permission/interaction prompts are streamed "
+                "as MessagePayload JSON on stdout and answers are read from stdin, so a driving "
+                "program can approve or deny each request."
+            ),
+        )
+
     def parse_args(self):
         return self.parser.parse_args()
 
@@ -233,7 +264,7 @@ class Application:
     def run(self):
         args = self.arg_parser.parse_args()
 
-        configure_logging(args.debug, console_output=False)
+        configure_entrypoint_logging(args, console_output=False)
 
         # REPL-only: ensure ./.datus/config.yml exists before anything touches
         # agent config. Must run before _resolve_default_datasource so the
@@ -256,6 +287,9 @@ class Application:
 
         if getattr(args, "plan_mode", False) and args.print_mode is None:
             self.arg_parser.parser.error("--plan-mode requires --print mode (use Shift+Tab in the REPL)")
+
+        if getattr(args, "execution_mode", None) and args.print_mode is None:
+            self.arg_parser.parser.error("--execution-mode requires --print mode (the REPL is always interactive)")
 
         if args.print_mode is not None:
             from datus.cli.print_mode import PrintModeRunner
@@ -525,10 +559,222 @@ class Application:
         run_web_interface(args)
 
 
+# Subcommand tokens owned by built-in handlers in ``main()``. An installed
+# adapter/plugin must never shadow these via the ``datus.cli_commands`` /
+# ``datus.plugins`` entry-point groups. Kept in one place so the reserved set
+# is easy to extend.
+_RESERVED_SUBCOMMANDS = frozenset({"upgrade", "skill", "plugin", "package"})
+
+
+def _coerce_exit_code(rc: object, name: str) -> int:
+    """Map a handler's return value onto a process exit code.
+
+    The documented contract is ``int | None`` (``None`` meaning success), but
+    legacy handlers cannot be assumed compliant — a non-int return after an
+    otherwise successful run must not crash the CLI. ``True``/``False`` map to
+    success/failure (``int(True)`` would read success as exit code 1).
+    """
+    if rc is None or rc is True:
+        return 0
+    if rc is False:
+        return 1
+    if isinstance(rc, int):
+        return rc
+    logger.warning("Command '%s' returned non-int %r; treating as success.", name, rc)
+    return 0
+
+
+def _dispatch_external_command(argv: "list[str]") -> "int | None":
+    """Dispatch ``datus <name> ...`` to a ``datus.cli_commands`` entry point.
+
+    Adapter packages register a console handler under the
+    ``datus.cli_commands`` group — ``hello = datus_hello.cli:main`` — so
+    installing the adapter adds a ``datus hello ...`` subcommand without any
+    change to datus-agent.
+
+    Runs before argparse (the main parser declares only optional flags, so an
+    unknown positional would otherwise error out). Returns the handler's exit
+    code, or ``None`` when no entry point matches so the caller falls through to
+    the REPL / argparse path. The handler contract is ``main(argv: list[str]) ->
+    int | None``; it receives the arguments *after* the subcommand name.
+    """
+    import sys
+
+    if not argv or argv[0].startswith("-") or argv[0] in _RESERVED_SUBCOMMANDS:
+        return None
+
+    name = argv[0]
+    from datus.plugins.registry import entry_points_for_group
+
+    candidates = entry_points_for_group("datus.cli_commands", name=name)
+    if not candidates:
+        return None
+    if len(candidates) > 1:
+        logger.warning("Multiple datus.cli_commands entry points named %r; using the first.", name)
+
+    try:
+        handler = candidates[0].load()
+    except Exception as exc:  # noqa: BLE001 - a broken adapter must not crash the CLI
+        logger.error("Failed to load '%s' command from adapter: %s", name, exc)
+        return 1
+
+    try:
+        rc = handler(argv[1:])
+    except Exception as exc:  # noqa: BLE001 - a broken adapter must not crash the CLI
+        logger.error("Adapter command '%s' failed: %s", name, exc)
+        print(f"datus {name}: {exc}", file=sys.stderr)
+        return 1
+    return _coerce_exit_code(rc, name)
+
+
+def _split_plugin_globals(args: "list[str]") -> "tuple[str | None, str | None, list[str]]":
+    """Consume leading datus globals ``--profile`` / ``--config`` for a plugin.
+
+    Only options appearing *before* the first non-option token are treated as
+    datus globals; everything from the first command token onward belongs to
+    the plugin. Returns ``(profile, config, remaining_args)``.
+
+    The permission layer mirrors the ``--profile`` part of this stripping
+    (``bash_rules._normalize_datus_plugin_argv``) so plugin-declared rules
+    match profile-qualified invocations — keep the two in sync.
+    """
+    from datus.plugins.runtime_context import split_plugin_globals
+
+    return split_plugin_globals(args)
+
+
+def _dispatch_plugin_command(argv: "list[str]") -> "int | None":
+    """Dispatch ``datus <plugin> ...`` to a ``datus.plugins`` manifest plugin.
+
+    A plugin package registers its package name under the ``datus.plugins``
+    group (``hello = datus_plugin_hello``) and declares a ``cli`` code ref in
+    its bundled ``datus-plugin.yml``. datus strips its own leading
+    ``--profile`` / ``--config`` globals, resolves the active profile from
+    ``agent.plugins.<name>.<profile>`` (env-expanded), and calls the declared
+    entry as ``main(rest, profile)``.
+
+    Runs before :func:`_dispatch_external_command` (the legacy
+    ``datus.cli_commands`` path). Returns the plugin's exit code, or ``None``
+    when no plugin claims the token so the caller falls through.
+    """
+    if not argv or argv[0].startswith("-") or argv[0] in _RESERVED_SUBCOMMANDS:
+        return None
+
+    name = argv[0]
+    from rich.console import Console
+
+    from datus.cli.cli_styles import print_error
+    from datus.plugins import store
+    from datus.plugins.registry import load_plugin_manifest, plugin_entry_point_exists, resolve_code_ref
+
+    # Route plugin dispatch errors through the shared CLI styling on an
+    # stderr-backed Console (so stdout stays reserved for the plugin's output).
+    err_console = Console(stderr=True)
+
+    profile_name, config_path, rest = _split_plugin_globals(argv[1:])
+    runtime_context = None
+    try:
+        from datus.plugins.runtime_context import has_plugin_config_global, load_runtime_context_from_env
+
+        runtime_context = load_runtime_context_from_env(expected_plugin=name)
+        if runtime_context is not None and has_plugin_config_global(argv[1:]):
+            raise ValueError(
+                "`--config` is unavailable for managed plugin commands; the AuthProvider AgentConfig is authoritative"
+            )
+    except Exception as exc:  # noqa: BLE001 - malformed runtime data must fail closed
+        logger.error("Failed to decode runtime config for plugin '%s': %s", name, exc)
+        print_error(err_console, f"datus {name}: {exc}")
+        return 3
+
+    # A managed plugin lives in its own ``~/.datus/plugins/{name}/`` directory;
+    # append it to ``sys.path`` so the entry-point probe can see it. Plugins
+    # mounted through ``agent.plugin_paths`` live elsewhere, so when no managed
+    # directory claims the token the configured paths are injected instead.
+    # Both are path-only — they do NOT import the plugin package (reading the
+    # manifest never executes plugin code, and the ``cli`` ref is imported only
+    # after every gate below has passed), so the ``plugins_enabled`` master
+    # switch is still honoured before any third-party module-level code runs.
+    if runtime_context is not None and runtime_context.plugin_path:
+        store.activate_paths([runtime_context.plugin_path])
+    elif runtime_context is not None:
+        # A site-packages plugin is already visible to this interpreter.
+        pass
+    elif store.plugin_dir(name).is_dir():
+        store.activate_name(name)
+    else:
+        from datus.configuration.agent_config_loader import get_plugin_paths
+
+        store.activate_paths(get_plugin_paths(config_path or ""))
+
+    # Metadata-only probe: with ``plugins_enabled: false`` the plugin package
+    # must not even be imported, so the master switch is checked before
+    # ``resolve_code_ref`` runs the plugin's module-level code.
+    if not plugin_entry_point_exists(name):
+        if runtime_context is not None:
+            print_error(err_console, f"datus {name}: runtime plugin `{name}` is not installed or discoverable")
+            return 3
+        return None
+
+    try:
+        if runtime_context is not None:
+            profile = runtime_context.profile
+        else:
+            from datus.configuration.agent_config_loader import load_agent_config
+
+            kwargs = {"config": config_path} if config_path else {}
+            agent_config = load_agent_config(**kwargs)
+            if not getattr(agent_config, "plugins_enabled", True):
+                print_error(err_console, f"datus {name}: plugins are disabled (`agent.plugins_enabled: false`)")
+                return 3
+            # Respect per-project activation: a plugin the project's
+            # ``plugins:`` whitelist does not enable is inactive.
+            if hasattr(agent_config, "plugin_active") and not agent_config.plugin_active(name):
+                print_error(
+                    err_console,
+                    f"datus {name}: plugin `{name}` is not active for this project. "
+                    f"Enable it with `datus plugin enable {name}` or via `/plugins`.",
+                )
+                return 3
+            profile = agent_config.get_plugin_profile(name, profile_name)
+    except Exception as exc:  # noqa: BLE001 - surface a clean error, do not crash
+        logger.error("Failed to resolve config for plugin '%s': %s", name, exc)
+        print_error(err_console, f"datus {name}: {exc}")
+        return 3
+
+    manifest = load_plugin_manifest(name)
+    if manifest is None:
+        if runtime_context is not None:
+            print_error(err_console, f"datus {name}: runtime plugin `{name}` has no valid manifest")
+            return 3
+        # Entry point exists but the manifest is missing/rejected (already
+        # warned about); fall through so a same-named ``datus.cli_commands``
+        # handler still gets its chance.
+        return None
+
+    if not manifest.cli:
+        print_error(err_console, f"datus {name}: plugin declares no CLI command in its manifest")
+        return 2
+
+    func = resolve_code_ref(manifest.cli, name)
+    if not callable(func):
+        print_error(err_console, f"datus {name}: plugin CLI entry `{manifest.cli}` could not be loaded")
+        return 1
+
+    try:
+        rc = func(rest, profile)
+    except Exception as exc:  # noqa: BLE001 - a broken plugin must not crash the CLI
+        logger.error("Plugin '%s' failed: %s", name, exc)
+        print_error(err_console, f"datus {name}: {exc}")
+        return 1
+    return _coerce_exit_code(rc, name)
+
+
 def main():
     """Entry point for console scripts"""
     import signal
     import sys
+
+    configure_multiprocessing_start_method()
 
     # Intercept 'upgrade' subcommand: self-upgrade datus-agent and the installed
     # datus-* adapter packages. Handled before the REPL is built so it works even
@@ -536,8 +782,25 @@ def main():
     if len(sys.argv) > 1 and sys.argv[1] == "upgrade":
         from datus.cli.upgrade_cli import run_upgrade_command
 
-        configure_logging(False, console_output=False)
+        configure_entrypoint_logging(argparse.Namespace(), console_output=False)
         sys.exit(run_upgrade_command(sys.argv[2:]))
+
+    # Intercept 'plugin' management subcommand (install/uninstall/list/info/
+    # enable/disable). Handled before the REPL and never gated by a plugin's
+    # own ``enabled`` flag, so a disabled plugin can still be re-enabled.
+    if len(sys.argv) > 1 and sys.argv[1] == "plugin":
+        from datus.cli.plugin_cli import run_plugin_command
+
+        configure_entrypoint_logging(argparse.Namespace(), console_output=False)
+        sys.exit(run_plugin_command(sys.argv[2:]))
+
+    # Intercept 'package' — export the current project as a self-contained
+    # zip. Interactive wizard; handled before the REPL like plugin/upgrade.
+    if len(sys.argv) > 1 and sys.argv[1] == "package":
+        from datus.cli.package_cli import run_package_command
+
+        configure_entrypoint_logging(argparse.Namespace(), console_output=False)
+        sys.exit(run_package_command(sys.argv[2:]))
 
     # Intercept 'skill' subcommand and delegate to datus.main's skill handler
     if len(sys.argv) > 1 and sys.argv[1] == "skill":
@@ -545,10 +808,22 @@ def main():
 
         parser = create_main_parser()
         args = parser.parse_args()
-        configure_logging(getattr(args, "debug", False), console_output=False)
+        configure_entrypoint_logging(args, console_output=False)
         from datus.cli.skill_cli import run_skill_command
 
         sys.exit(run_skill_command(args))
+
+    # Intercept plugin subcommands (``datus hello ...``) registered under the
+    # ``datus.plugins`` entry-point group, then legacy adapter subcommands under
+    # ``datus.cli_commands`` (``datus mwaa ...``). Plugins win when both claim a
+    # name. Falls through to the REPL when nothing claims the token.
+    if len(sys.argv) > 1 and not sys.argv[1].startswith("-") and sys.argv[1] not in _RESERVED_SUBCOMMANDS:
+        configure_entrypoint_logging(argparse.Namespace(), console_output=False)
+        rc = _dispatch_plugin_command(sys.argv[1:])
+        if rc is None:
+            rc = _dispatch_external_command(sys.argv[1:])
+        if rc is not None:
+            sys.exit(rc)
 
     app = Application()
     try:

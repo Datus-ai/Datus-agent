@@ -107,6 +107,16 @@ class TestOpenAIModel:
         assert "temperature" in call_kwargs
         assert call_kwargs["temperature"] == 0.5
 
+    def test_generate_defers_thinking_default_to_model_config(self):
+        node = self._make(model_name="kimi-k3")
+        node.model_config.enable_thinking = True
+        with patch(
+            "datus.models.openai_compatible.OpenAICompatibleModel.generate", return_value="reasoning"
+        ) as mock_gen:
+            node.generate("prompt")
+
+        assert mock_gen.call_args.args[1] is None
+
     def test_generate_sets_temperature_1_for_gpt5(self):
         node = self._make(model_name="gpt-5-turbo")
         with patch(

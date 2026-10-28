@@ -17,7 +17,7 @@ Send a chat message and stream the response as Server-Sent Events.
 |------------------|----------|-------|
 | `message`        | string   | Required. User message |
 | `session_id`     | string?  | Reuse to continue an existing session |
-| `subagent_id`    | string?  | Built-in name (`gen_metrics`, `gen_semantic_model`, …) or custom subagent id |
+| `subagent_id`    | string?  | Built-in name (`semantic_modeling`, `gen_sql`, …) or custom subagent id. `semantic_modeling` uses built-in Dosi; unknown subagent names return 404. |
 | `model`          | string?  | Per-request model override in `provider/model_id` form (e.g. `openai/gpt-4.1`, `custom/my-model`). Highest priority over server-side `target` and any session default. |
 | `plan_mode`      | bool     | Enable plan mode |
 | `catalog`/`database`/`db_schema` | string? | Database context |
@@ -59,6 +59,8 @@ Summarize and compress a session's conversation history.
 **Response**: `Result[CompactSessionData]` containing `success`, `new_token_count`, `tokens_saved`,
 `compression_ratio`.
 
+The three compaction metrics are `null` until a reliable comparable measurement is available. Summary output tokens are not a measurement of the rewritten request.
+
 ### `GET /api/v1/chat/sessions`
 
 List chat sessions for the current user.
@@ -67,10 +69,17 @@ List chat sessions for the current user.
 
 | Param | Type | Notes |
 |-------|------|-------|
-| `subagent_id` | string? | Filter by subagent. Pass `chat` for the default chat agent, or any builtin/custom subagent id. Omit to return every session for the user. |
+| `subagent_id` | string? | Filter by subagent. Pass `chat` for the default chat agent, or any built-in/custom subagent id. Omit to return sessions for every agent. |
+| `offset` | int | Number of sessions to skip. Defaults to `0`; must be `>= 0`. |
+| `limit` | int? | Page size; must be `>= 1`. Omit to use the server default (`api.default_session_page_size`, default `50`). Values above `api.max_session_page_size` (default `200`) are clamped down rather than rejected. |
 
-**Response**: `Result[ChatSessionData]` with an array of `{ session_id, user_query, created_at, last_updated,
-total_turns, token_count, last_sql_queries, is_active }`.
+The response is always paginated — omitting `limit` yields the default page, not the full list. Only the
+requested page is opened as SQLite, so the dominant per-session cost no longer scales with the user's total
+session count; enumerating the session directory and stat-ing each file for the mtime sort still does, at a
+far lower cost per session. Use `total_count` (the unpaginated total) with `offset` to page through the rest.
+
+**Response**: `Result[ChatSessionData]` with `total_count` and an array of `{ session_id, user_query,
+created_at, last_updated, total_turns, token_count, last_sql_queries, is_active }`.
 
 ### `DELETE /api/v1/chat/sessions/{session_id}`
 

@@ -2,6 +2,7 @@
 # Licensed under the Apache License, Version 2.0.
 """Unit tests for DateParsingTools - CI level, zero external dependencies."""
 
+from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 import pytest
@@ -10,7 +11,7 @@ import pytest
 @pytest.fixture
 def mock_agent_config():
     config = Mock()
-    config.nodes = {}
+    config.date_parsing_language = "en"
     return config
 
 
@@ -31,16 +32,15 @@ def date_parsing_tools(mock_agent_config, mock_model):
 
 
 class TestGetLanguageSetting:
-    def test_returns_en_when_no_nodes(self, mock_agent_config, mock_model):
+    def test_returns_en_from_config(self, mock_agent_config, mock_model):
         with patch("datus.tools.func_tool.date_parsing_tools.DateParserTool"):
             from datus.tools.func_tool.date_parsing_tools import DateParsingTools
 
             tool = DateParsingTools(agent_config=mock_agent_config, model=mock_model)
         assert tool._get_language_setting() == "en"
 
-    def test_returns_en_when_no_date_parser_key(self, mock_model):
-        config = Mock()
-        config.nodes = {"other_node": Mock()}
+    def test_returns_en_when_setting_is_absent(self, mock_model):
+        config = SimpleNamespace()
         with patch("datus.tools.func_tool.date_parsing_tools.DateParserTool"):
             from datus.tools.func_tool.date_parsing_tools import DateParsingTools
 
@@ -48,11 +48,7 @@ class TestGetLanguageSetting:
         assert tool._get_language_setting() == "en"
 
     def test_returns_language_from_config(self, mock_model):
-        config = Mock()
-        date_parser_cfg = Mock()
-        date_parser_cfg.input = Mock()
-        date_parser_cfg.input.language = "zh"
-        config.nodes = {"date_parser": date_parser_cfg}
+        config = SimpleNamespace(date_parsing_language="zh")
         with patch("datus.tools.func_tool.date_parsing_tools.DateParserTool"):
             from datus.tools.func_tool.date_parsing_tools import DateParsingTools
 

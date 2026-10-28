@@ -4,7 +4,7 @@ API routes for Explorer endpoints.
 
 from fastapi import APIRouter
 
-from datus.api.deps import ServiceDep
+from datus.api.deps import AppContextDep, ServiceDep, SubAgentDep
 from datus.api.models.base_models import Result
 from datus.api.models.explorer_models import (
     CreateDirectoryInput,
@@ -15,6 +15,8 @@ from datus.api.models.explorer_models import (
     MetricInfo,
     MetricPreviewData,
     MetricPreviewInput,
+    ReconcileSubjectData,
+    ReconcileSubjectInput,
     ReferenceSQLInfo,
     ReferenceSQLInput,
     RenameSubjectInput,
@@ -36,9 +38,10 @@ router = APIRouter(prefix="/api/v1", tags=["explorer"])
 )
 async def get_subject_list(
     svc: ServiceDep,
+    sub_agent: SubAgentDep,
 ) -> Result[SubjectListData]:
     """Get subject tree."""
-    return await svc.explorer.get_subject_list()
+    return await svc.explorer_for(sub_agent).get_subject_list()
 
 
 @router.post(
@@ -84,6 +87,23 @@ async def delete_subject(
 
 
 @router.post(
+    "/subject/reconcile",
+    response_model=Result[ReconcileSubjectData],
+    summary="Reconcile Subject Tree",
+    description=(
+        "Re-project changed semantic YAML into the subject tree and drop metrics, datasets and emptied "
+        "directories left by deleted files"
+    ),
+)
+async def reconcile_subject(
+    request: ReconcileSubjectInput,
+    svc: ServiceDep,
+) -> Result[ReconcileSubjectData]:
+    """Reconcile subject tree with semantic YAML."""
+    return await svc.explorer.reconcile_subject(request)
+
+
+@router.post(
     "/subject/metric",
     response_model=Result[MetricInfo],
     summary="Get Metric",
@@ -92,9 +112,10 @@ async def delete_subject(
 async def get_metric(
     request: SubjectPathInput,
     svc: ServiceDep,
+    sub_agent: SubAgentDep,
 ) -> Result[MetricInfo]:
     """Get metric info."""
-    return await svc.explorer.get_metric(request.subject_path)
+    return await svc.explorer_for(sub_agent).get_metric(request.subject_path)
 
 
 @router.post(
@@ -106,9 +127,10 @@ async def get_metric(
 async def get_metric_dimensions(
     request: SubjectPathInput,
     svc: ServiceDep,
+    sub_agent: SubAgentDep,
 ) -> Result[MetricDimensionsData]:
     """List a metric's queryable dimensions."""
-    return await svc.explorer.get_metric_dimensions(request.subject_path)
+    return await svc.explorer_for(sub_agent).get_metric_dimensions(request)
 
 
 @router.post(
@@ -120,9 +142,14 @@ async def get_metric_dimensions(
 async def preview_metric(
     request: MetricPreviewInput,
     svc: ServiceDep,
+    sub_agent: SubAgentDep,
+    ctx: AppContextDep,
 ) -> Result[MetricPreviewData]:
     """Compile a saved metric to SQL for preview."""
-    return await svc.explorer.preview_metric(request)
+    # The compiled SQL is handed straight to the result panel, which runs it —
+    # so a metric row policy has to narrow it here, while the datasets it
+    # matches on are still known. Nothing downstream can put it back.
+    return await svc.explorer_for(sub_agent).preview_metric(request, policy_context=ctx.policy_context)
 
 
 @router.post(
@@ -134,9 +161,10 @@ async def preview_metric(
 async def get_reference_sql(
     request: SubjectPathInput,
     svc: ServiceDep,
+    sub_agent: SubAgentDep,
 ) -> Result[ReferenceSQLInfo]:
     """Get reference SQL."""
-    return await svc.explorer.get_reference_sql(request.subject_path)
+    return await svc.explorer_for(sub_agent).get_reference_sql(request.subject_path)
 
 
 @router.post(

@@ -36,8 +36,8 @@ class SelectionNode(Node):
                 # Get the actual result object from the child node result
                 child_result = selected_data["result"]
 
-                # Check if it's a SQL generation result. GenSQLNodeResult uses
-                # `sql`; older reasoning/fix-style results may use `sql_query`.
+                # Check if it is a SQL-producing result. GenSQLNodeResult uses
+                # `sql`; fix-style results may use `sql_query`.
                 sql_query = getattr(child_result, "sql", None) or getattr(child_result, "sql_query", None)
                 if sql_query:
                     from datus.schemas.node_models import SQLContext
@@ -67,45 +67,8 @@ class SelectionNode(Node):
         logger.info(f"SelectionNode.setup_input: parallel_results available = {parallel_results is not None}")
 
         if not parallel_results:
-            # If no parallel results, look for any completed reasoning node
-            reasoning_node = None
-            # Check all nodes for a reasoning node that has completed successfully
-            for i, node_id in enumerate(workflow.node_order):
-                node = workflow.nodes.get(node_id)
-                logger.info(
-                    f"SelectionNode.setup_input: checking node at index {i}: node_id={node_id}, "
-                    f"node_type={node.type if node else None}, status={node.status if node else None}"
-                )
-                if (
-                    node
-                    and node.type == "reasoning"
-                    and node.status == "completed"
-                    and node.result
-                    and node.result.success
-                ):
-                    reasoning_node = node
-                    logger.info(f"Found completed reasoning node: {node_id}")
-                    break
-
-            if reasoning_node:
-                logger.info(f"No parallel results found, using reasoning node {reasoning_node.id} result as candidate")
-                # Create a single candidate result from the reasoning node
-                reasoning_result = {
-                    "reasoning_node": {
-                        "success": True,
-                        "result": reasoning_node.result,
-                        "node_id": reasoning_node.id,
-                        "node_type": reasoning_node.type,
-                    }
-                }
-                parallel_results = reasoning_result
-                logger.info(
-                    f"SelectionNode.setup_input: created reasoning_result candidate with {len(parallel_results)} "
-                    f"entries"
-                )
-            else:
-                logger.error("SelectionNode.setup_input: No completed reasoning node found with successful result")
-                return {"success": False, "message": "No parallel results available in workflow context"}
+            logger.error("SelectionNode.setup_input: No parallel results available")
+            return {"success": False, "message": "No parallel results available in workflow context"}
 
         # Create or update the SelectionInput with parallel results
         from datus.schemas.parallel_node_models import SelectionInput

@@ -17,7 +17,7 @@ Chat 相关接口驱动 Agent 的对话循环。流式接口以 Server-Sent Even
 |------------------|----------|------|
 | `message`        | string   | 必填,用户消息 |
 | `session_id`     | string?  | 复用以延续已有会话 |
-| `subagent_id`    | string?  | 内置 subagent 名(`gen_metrics`、`gen_semantic_model` 等)或自定义 id |
+| `subagent_id`    | string?  | 内置 subagent 名（如 `semantic_modeling`、`gen_sql`）或自定义 id；`semantic_modeling` 使用内置 Dosi；未知的 subagent 名称会返回 404。 |
 | `model`          | string?  | 单次请求级 model 覆盖,格式 `provider/model_id`(如 `openai/gpt-4.1`、`custom/my-model`)。优先级高于服务端 `target` 与会话默认值。 |
 | `plan_mode`      | bool     | 是否启用 plan 模式 |
 | `catalog`/`database`/`db_schema` | string? | 数据库上下文 |
@@ -58,6 +58,8 @@ Chat 相关接口驱动 Agent 的对话循环。流式接口以 Server-Sent Even
 
 **响应**:`Result[CompactSessionData]`,含 `success`、`new_token_count`、`tokens_saved`、`compression_ratio`。
 
+压缩后尚无可靠的同口径统计，因此这三个压缩指标返回 `null`；摘要的输出 token 数不能代表改写后的请求大小。
+
 ### `GET /api/v1/chat/sessions`
 
 列出当前用户的会话。
@@ -66,10 +68,16 @@ Chat 相关接口驱动 Agent 的对话循环。流式接口以 Server-Sent Even
 
 | 参数 | 类型 | 说明 |
 |------|------|------|
-| `subagent_id` | string? | 按 subagent 过滤。传 `chat` 表示默认 chat agent,或传任意内置/自定义 subagent id;省略则返回该用户全部会话。 |
+| `subagent_id` | string? | 按 subagent 过滤。传 `chat` 表示默认 chat agent,或传任意内置/自定义 subagent id;省略则返回该用户所有 agent 的会话。 |
+| `offset` | int | 跳过的会话数,默认 `0`,必须 `>= 0`。 |
+| `limit` | int? | 每页数量,必须 `>= 1`。省略时使用服务端默认值(`api.default_session_page_size`,默认 `50`)。超过 `api.max_session_page_size`(默认 `200`)的取值会被截断到上限,而非报错。 |
 
-**响应**:`Result[ChatSessionData]`,数组元素为 `{ session_id, user_query, created_at, last_updated,
-total_turns, token_count, last_sql_queries, is_active }`。
+该接口始终分页:省略 `limit` 返回的是默认页,而非全部会话。只有所请求的那一页会被以 SQLite 打开,因此占主导的
+单会话开销不再随用户的历史会话总数增长;但枚举会话目录、以及为按 mtime 排序而对每个文件执行 stat,其耗时仍与
+会话总数相关,只是单会话成本远低于前者。可结合 `total_count`(未分页的总数)与 `offset` 翻页获取其余会话。
+
+**响应**:`Result[ChatSessionData]`,含 `total_count`,数组元素为 `{ session_id, user_query, created_at,
+last_updated, total_turns, token_count, last_sql_queries, is_active }`。
 
 ### `DELETE /api/v1/chat/sessions/{session_id}`
 

@@ -69,6 +69,87 @@ def _make_socket_request(payload: dict, envelope_id: str = "env-1") -> SimpleNam
     )
 
 
+def _fake_slack_sdk_modules(fake_web, fake_socket_client=None):
+    """Fake slack_sdk modules for sys.modules so start()'s in-function imports
+    resolve without the optional slack_sdk package installed (CI runs without it)."""
+    async_client_mod = MagicMock()
+    async_client_mod.AsyncWebClient = MagicMock(return_value=fake_web)
+    aiohttp_mod = MagicMock()
+    aiohttp_mod.SocketModeClient = MagicMock(return_value=fake_socket_client or MagicMock())
+    return {
+        "slack_sdk": MagicMock(),
+        "slack_sdk.web": MagicMock(),
+        "slack_sdk.web.async_client": async_client_mod,
+        "slack_sdk.socket_mode": MagicMock(),
+        "slack_sdk.socket_mode.aiohttp": aiohttp_mod,
+    }
+
+
+class TestSlackIsConfigured:
+    """Slack needs both app_token and bot_token to be considered configured."""
+
+    def test_configured_with_both_tokens(self):
+        assert _make_slack_adapter().is_configured() is True
+
+    def test_not_configured_when_a_token_is_missing(self):
+        bridge = MagicMock()
+        for cfg in ({"app_token": "x"}, {"bot_token": "x"}, {}):
+            adapter = SlackAdapter(channel_id="c", config=cfg, bridge=bridge)
+            assert adapter.is_configured() is False
+
+    @pytest.mark.asyncio
+    async def test_start_skips_when_unconfigured(self):
+        # Missing tokens → start() returns early without opening a socket (no
+        # invalid_auth loop), even when called directly.
+        adapter = SlackAdapter(channel_id="c", config={}, bridge=MagicMock())
+        await adapter.start()
+        assert adapter._socket_client is None
+
+    @pytest.mark.asyncio
+    async def test_start_aborts_when_credentials_invalid(self):
+        # Non-empty but invalid tokens: the credential pre-flight raises → start()
+        # aborts instead of entering slack_sdk's invalid_auth reconnect loop.
+        adapter = SlackAdapter(
+            channel_id="c",
+            config={"app_token": "xapp-bad", "bot_token": "xoxb-bad"},
+            bridge=MagicMock(),
+        )
+        fake_web = MagicMock()
+        fake_web.auth_test = AsyncMock(side_effect=Exception("invalid_auth"))
+        fake_web.apps_connections_open = AsyncMock()
+        with patch.dict("sys.modules", _fake_slack_sdk_modules(fake_web)):
+            await adapter.start()
+        assert adapter._socket_client is None
+        assert adapter._web_client is None
+        fake_web.apps_connections_open.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_start_succeeds_with_valid_credentials(self):
+        # Both credentials pass the pre-flight → the Socket Mode client is opened.
+        adapter = SlackAdapter(
+            channel_id="c",
+            config={"app_token": "xapp-ok", "bot_token": "xoxb-ok"},
+            bridge=MagicMock(),
+        )
+        fake_web = MagicMock()
+        fake_web.auth_test = AsyncMock(return_value=SimpleNamespace(data={"user_id": "U_BOT"}))
+        fake_web.apps_connections_open = AsyncMock()
+        fake_socket = MagicMock()
+        fake_socket.connect = AsyncMock()
+        fake_socket.socket_mode_request_listeners = []
+        with patch.dict("sys.modules", _fake_slack_sdk_modules(fake_web, fake_socket)):
+            await adapter.start()
+        try:
+            fake_web.auth_test.assert_awaited_once()
+            fake_web.apps_connections_open.assert_awaited_once_with(app_token="xapp-ok")
+            assert adapter._bot_user_id == "U_BOT"
+            assert adapter._socket_client is fake_socket
+            assert adapter._web_client is fake_web
+        finally:
+            if adapter._listen_task:
+                adapter._listen_task.cancel()
+
+
 # ---------------------------------------------------------------------------
 # Tests: Bot mention detection
 # ---------------------------------------------------------------------------

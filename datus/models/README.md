@@ -67,7 +67,7 @@ Currently, only Claude uses a separate implementation; all other models inherit 
 **`mcp_result_extractors.py`** - MCP result processing
 - `extract_sql_contexts()`: Extracts SQL execution results from MCP agent runs
 - Database-specific function mapping (Snowflake, SQLite, StarRocks, DuckDB)
-- Reflection and reasoning content extraction
+- Assistant analysis extraction after SQL tool calls
 
 ## Key Interface Methods
 ### `generate(prompt, enable_thinking=False, **kwargs) -> str`

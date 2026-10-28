@@ -17,7 +17,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, Query
 
-from datus.api.deps import ServiceDep
+from datus.api.deps import AppContextDep, ServiceDep
 from datus.api.models.base_models import Result
 from datus.api.models.dashboard_models import (
     DashboardDetail,
@@ -68,12 +68,14 @@ async def get_dashboard_detail(
 async def run_dashboard_query(
     body: DashboardQueryRequest,
     svc: ServiceDep,
+    ctx: AppContextDep,
 ) -> Result[SqlQueryResultEnvelope]:
     return await svc.dashboard.run_query(
         project_files_root=_project_files_root(svc),
         dashboard_slug=body.dashboard_slug,
         query_slug=body.query_slug,
         params=body.params,
+        policy_context=ctx.policy_context,
         published_version=body.published_version,
         # Agent-only deployment: no Postgres-backed version snapshots, so no loader.
         published_template_loader=None,

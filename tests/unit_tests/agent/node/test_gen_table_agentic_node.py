@@ -56,12 +56,16 @@ class TestGenTableAgenticNodeInit:
         node = GenTableAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
         assert node.id == "gen_table_node"
 
-    def test_setup_tools_includes_ddl(self, real_agent_config, mock_llm_create):
+    def test_setup_tools_includes_execute_sql(self, real_agent_config, mock_llm_create):
         from datus.agent.node.gen_table_agentic_node import GenTableAgenticNode
 
         node = GenTableAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
         tool_names = [tool.name for tool in node.tools]
-        assert "execute_ddl" in tool_names
+        # Unified SQL tool (covers CREATE TABLE / CTAS); legacy split tools are internal.
+        assert "execute_sql" in tool_names
+        # None of the legacy split tools may leak onto the LLM surface.
+        for legacy in ("execute_ddl", "read_query", "execute_write"):
+            assert legacy not in tool_names, f"legacy SQL tool {legacy!r} should not be exposed"
 
     def test_setup_tools_includes_standard_db_tools(self, real_agent_config, mock_llm_create):
         from datus.agent.node.gen_table_agentic_node import GenTableAgenticNode
@@ -70,7 +74,7 @@ class TestGenTableAgenticNodeInit:
         tool_names = [tool.name for tool in node.tools]
         assert "list_tables" in tool_names
         assert "describe_table" in tool_names
-        assert "read_query" in tool_names
+        assert "execute_sql" in tool_names
 
     def test_setup_tools_includes_filesystem_tools(self, real_agent_config, mock_llm_create):
         """gen_table node should include filesystem tools for SQL artifact handling."""
@@ -107,15 +111,14 @@ class TestGenTableAgenticNodeInit:
         assert node.execution_mode == "workflow"
 
     def test_tool_registry_buckets_db_and_filesystem(self, real_agent_config, mock_llm_create):
-        """DB helpers (incl. ``execute_ddl``) land in ``db_tools`` and FS tools
+        """DB helpers (incl. ``execute_sql``) land in ``db_tools`` and FS tools
         in ``filesystem_tools`` so profile rules gate them correctly."""
         from datus.agent.node.gen_table_agentic_node import GenTableAgenticNode
 
         node = GenTableAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
         node._populate_tool_registry()
         registry = node.tool_registry.to_dict()
-        assert registry.get("execute_ddl") == "db_tools"
-        assert registry.get("read_query") == "db_tools"
+        assert registry.get("execute_sql") == "db_tools"
         assert registry.get("write_file") == "filesystem_tools"
 
     def test_interactive_mode(self, real_agent_config, mock_llm_create):
@@ -297,7 +300,7 @@ class TestGenTableWritePathAcceptance:
             responses=[
                 build_tool_then_response(
                     tool_calls=[
-                        MockToolCall("execute_ddl", {"sql": ctas_sql}),
+                        MockToolCall("execute_sql", {"sql": ctas_sql}),
                     ],
                     content="Created school_count_summary.",
                 )
@@ -312,7 +315,7 @@ class TestGenTableWritePathAcceptance:
         async for action in node.execute_stream(action_manager):
             actions.append(action)
 
-        tool_results = [item for item in mock_llm_create.tool_results if item["tool"] == "execute_ddl"]
+        tool_results = [item for item in mock_llm_create.tool_results if item["tool"] == "execute_sql"]
         assert len(tool_results) == 1
         assert tool_results[0]["executed"] is True
         assert "school_count_summary" in str(tool_results[0]["output"])
@@ -341,14 +344,14 @@ class TestPrepareTemplateContextGenTable:
         assert "mcp_tools" in context
         assert "has_ask_user_tool" in context
 
-    def test_template_context_shows_ddl_tool(self, real_agent_config, mock_llm_create):
+    def test_template_context_shows_execute_sql_tool(self, real_agent_config, mock_llm_create):
         from datus.agent.node.gen_table_agentic_node import GenTableAgenticNode
 
         node = GenTableAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
         user_input = SemanticNodeInput(user_message="Create table")
         context = node._prepare_template_context(user_input)
 
-        assert "execute_ddl" in context["native_tools"]
+        assert "execute_sql" in context["native_tools"]
 
     def test_workflow_prompt_uses_non_interactive_authorization(self, real_agent_config, mock_llm_create):
         from datus.agent.node.gen_table_agentic_node import GenTableAgenticNode

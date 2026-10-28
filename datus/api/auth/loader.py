@@ -1,14 +1,14 @@
 """Dynamic AuthProvider loader.
 
 Resolves an ``AuthProvider`` implementation declared in ``agent.yml`` under the
-``api.auth_provider`` section. Falls back to :class:`NoAuthProvider` when no
-provider is configured.
+``api.auth_provider`` section. Falls back to :class:`HeaderContextProvider`
+when no provider is configured.
 """
 
 import importlib
 from typing import Any, Dict, Optional
 
-from datus.api.auth.no_auth_provider import NoAuthProvider
+from datus.api.auth.header_context_provider import HeaderContextProvider
 from datus.api.auth.provider import AuthProvider
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
@@ -21,17 +21,16 @@ def load_auth_provider(api_config: Optional[Dict[str, Any]], datasource: str) ->
 
     Args:
         api_config: The ``api`` section dict from agent.yml (may be ``None``).
-        datasource: Default datasource passed to ``NoAuthProvider`` when no custom
-            provider is declared.
+        datasource: Default datasource retained for the loader contract.
 
     Returns:
         An ``AuthProvider`` instance — either the custom one declared in config
-        or the default :class:`NoAuthProvider`.
+        or the default :class:`HeaderContextProvider`.
     """
     spec = (api_config or {}).get("auth_provider") or {}
     class_path = spec.get("class")
     if not class_path:
-        return NoAuthProvider()
+        return HeaderContextProvider()
 
     normalized = class_path.replace(":", ".")
     module_name, _, class_name = normalized.rpartition(".")

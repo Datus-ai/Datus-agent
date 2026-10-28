@@ -9,7 +9,6 @@ Quick validation script for Datus SKILL.md files.
 Validates:
 - YAML frontmatter parses correctly
 - Required fields (name, description) are present
-- allowed_commands patterns are well-formed
 - Directory structure is correct
 
 Usage:
@@ -28,7 +27,6 @@ except ImportError:
 
 FRONTMATTER_PATTERN = re.compile(r"^---\s*\n(.*?)\n---\s*\n", re.DOTALL)
 REQUIRED_FIELDS = ["name", "description"]
-VALID_COMMAND_PATTERN = re.compile(r"^[a-zA-Z0-9_]+:.+$")
 VALID_NAME_PATTERN = re.compile(r"^[a-z][a-z0-9-]*$")
 
 
@@ -88,21 +86,6 @@ def validate_skill(skill_path: str) -> list:
     if description and len(description) > 500:
         issues.append("WARNING: Description is very long (>500 chars). Keep it concise but comprehensive.")
 
-    # Validate allowed_commands patterns
-    allowed_commands = metadata.get("allowed_commands", [])
-    if allowed_commands:
-        if not isinstance(allowed_commands, list):
-            issues.append("ERROR: 'allowed_commands' must be a list")
-        else:
-            for cmd in allowed_commands:
-                if not isinstance(cmd, str):
-                    issues.append(f"ERROR: allowed_commands entry must be a string, got: {type(cmd).__name__}")
-                elif not VALID_COMMAND_PATTERN.match(cmd):
-                    issues.append(
-                        f"WARNING: allowed_commands pattern '{cmd}' doesn't match expected format 'prefix:glob_pattern' "
-                        f"(e.g., 'python:scripts/*.py')"
-                    )
-
     # Validate context field
     context = metadata.get("context")
     if context and context != "fork":
@@ -125,15 +108,6 @@ def validate_skill(skill_path: str) -> list:
             issues.append(
                 f"WARNING: SKILL.md body is {line_count} lines. Consider moving detailed content to references/."
             )
-
-    # Check directory structure
-    skill_dir = path.parent
-    scripts_dir = skill_dir / "scripts"
-    if allowed_commands and not scripts_dir.exists():
-        issues.append(
-            "WARNING: 'allowed_commands' is configured but no 'scripts/' directory found. "
-            "Create it to store executable scripts."
-        )
 
     return issues
 

@@ -35,9 +35,11 @@ async def data_visualization(
     result = await asyncio.to_thread(
         svc.visualization.generate,
         csv_data=request.csv_data,
+        total_rows=request.total_rows,
         chart_type=request.chart_type,
         sql=request.sql,
         user_question=request.user_question,
+        language=request.language,
     )
 
     if not result["success"]:

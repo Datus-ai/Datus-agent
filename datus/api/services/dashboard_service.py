@@ -42,9 +42,13 @@ from datus.schemas.gen_visual_dashboard_models import (
     TemplateParamDecl,
 )
 from datus.schemas.gen_visual_report_models import QueryColumnMeta
+from datus.schemas.metric_artifact_query import MetricQueryFile
 from datus.tools.func_tool.dashboard_artifact_tools import render_dashboard_template
 from datus.tools.func_tool.report_artifact_tools import _normalize_value
+from datus.utils.artifact_files import iter_artifact_files
+from datus.utils.exceptions import ErrorCode
 from datus.utils.loggings import get_logger
+from datus.utils.metric_artifact_models import resolve_metric_query_snapshot
 
 logger = get_logger(__name__)
 
@@ -54,20 +58,10 @@ _MAX_QUERY_ROWS = 100_000
 _MAX_BUNDLE_BYTES: int = 25 * 1024 * 1024
 _MAX_FILES: int = 200
 
-# Dashboard-specific allowlist for the bundle walker. ``queries/`` carries
-# Jinja2 templates + params metadata (vs. report's pre-executed SQL + JSON
-# result pairs). See ``Datus-saas/docs/gen-dashboard-artifact.md`` for the
-# on-disk contract.
-_DASHBOARD_ARTIFACT_DIRS: Dict[str, Tuple[Tuple[str, ...], bool]] = {
-    "render": ((".jsx", ".js", ".css", ".json", ".md"), True),
-    "queries": ((".sql.j2", ".params.json"), False),
-    "analysis": ((".md", ".json"), False),
-}
-
 _ISO_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 
-PublishedTemplateLoader = Callable[[int], Awaitable[Result[Tuple[str, str]]]]
+PublishedTemplateLoader = Callable[[int], Awaitable[Result[Tuple[str | MetricQueryFile, str]]]]
 
 
 def _resolve_dashboard_dir(project_files_root: Path, dashboard_slug: str) -> Optional[Path]:
@@ -90,45 +84,7 @@ def _resolve_dashboard_dir(project_files_root: Path, dashboard_slug: str) -> Opt
 
 
 def _iter_artifact_files(artifact_dir: Path) -> List[Path]:
-    """Walk ``artifact_dir`` and return allowed files sorted by slug-relative path.
-
-    Honours the per-prefix allowlist; files under any other directory or
-    whose name doesn't end in one of the listed suffix patterns are
-    silently dropped so a stray scratch file doesn't trip detail.
-    ``endswith``-based matching also supports compound suffixes like
-    ``.sql.j2`` / ``.params.json``.
-
-    Each candidate is resolved before being kept so a symlink under
-    ``render/`` / ``queries/`` cannot exfiltrate a file from outside the
-    artifact directory into the inline bundle — the LLM controls these
-    paths and a stray ``ln -s /etc/passwd render/foo.jsx`` would
-    otherwise survive the ``is_file()`` probe (which follows symlinks).
-    """
-    artifact_dir_resolved = artifact_dir.resolve()
-    found: List[Path] = []
-    for sub, (allowed_suffixes, recursive) in _DASHBOARD_ARTIFACT_DIRS.items():
-        root = artifact_dir / sub
-        if not root.is_dir():
-            continue
-        iterator = root.rglob("*") if recursive else root.iterdir()
-        for path in iterator:
-            if not path.is_file():
-                continue
-            name_lower = path.name.lower()
-            if not any(name_lower.endswith(suffix) for suffix in allowed_suffixes):
-                continue
-            resolved = path.resolve()
-            if not resolved.is_file():
-                continue
-            try:
-                resolved.relative_to(artifact_dir_resolved)
-            except ValueError:
-                # Symlink (or other indirection) escapes the artifact root —
-                # drop silently rather than leak content from outside.
-                continue
-            found.append(path)
-    found.sort(key=lambda p: p.relative_to(artifact_dir).as_posix())
-    return found
+    return iter_artifact_files(artifact_dir, "dashboard")
 
 
 def _coerce_param_value(decl: TemplateParamDecl, raw: Any) -> Any:
@@ -210,7 +166,7 @@ def _validate_params(decls: List[TemplateParamDecl], supplied: Dict[str, Any]) -
 
 async def _load_local_template_pair(
     project_files_root: Path, dashboard_slug: str, query_slug: str
-) -> Result[Tuple[str, str]]:
+) -> Result[Tuple[str | MetricQueryFile, str]]:
     """Read the on-disk ``queries/<query_slug>.{sql.j2,params.json}`` pair
     under ``dashboards/<dashboard_slug>/``.
 
@@ -228,9 +184,10 @@ async def _load_local_template_pair(
 
     sql_path = dashboard_dir / "queries" / f"{query_slug}.sql.j2"
     meta_path = dashboard_dir / "queries" / f"{query_slug}.params.json"
+    metric_path = dashboard_dir / "queries" / f"{query_slug}.metric.json"
 
     def _stat() -> bool:
-        return sql_path.is_file() and meta_path.is_file()
+        return (sql_path.is_file() or metric_path.is_file()) and meta_path.is_file()
 
     exists = await asyncio.to_thread(_stat)
     if not exists:
@@ -240,9 +197,25 @@ async def _load_local_template_pair(
             errorMessage=f"queries/{query_slug}.sql.j2 + .params.json not found",
         )
     try:
-        sql_template = await asyncio.to_thread(sql_path.read_text, "utf-8")
+        if metric_path.is_file():
+            if sql_path.is_file():
+                raise ValueError("query has both SQL and metric sources")
+            for path in (metric_path, meta_path):
+                if not path.resolve().is_relative_to(dashboard_dir):
+                    raise ValueError("metric query sidecar escapes the dashboard directory")
+            metric_text = await asyncio.to_thread(metric_path.read_text, "utf-8")
+            try:
+                sql_template = MetricQueryFile.model_validate_json(metric_text)
+                if sql_template.model_snapshot_path is not None:
+                    sql_template = await asyncio.to_thread(
+                        resolve_metric_query_snapshot, sql_template, artifact_dir=dashboard_dir
+                    )
+            except ValueError as exc:
+                return Result(success=False, errorCode="TEMPLATE_CORRUPT", errorMessage=str(exc))
+        else:
+            sql_template = await asyncio.to_thread(sql_path.read_text, "utf-8")
         meta_text = await asyncio.to_thread(meta_path.read_text, "utf-8")
-    except OSError as exc:
+    except (OSError, ValueError) as exc:
         logger.exception("Failed reading template files for %s/%s: %s", dashboard_slug, query_slug, exc)
         return Result(success=False, errorCode="TEMPLATE_NOT_FOUND", errorMessage=str(exc))
     return Result(success=True, data=(sql_template, meta_text))
@@ -328,7 +301,7 @@ class DashboardService:
                 logger.warning("Truncated artifact files at %d entries for %s", _MAX_FILES, dashboard_slug)
                 break
             try:
-                content = await asyncio.to_thread(path.read_text, "utf-8")
+                content = (await asyncio.to_thread(path.read_bytes)).decode("utf-8")
             except OSError as exc:
                 logger.exception("Failed reading artifact file %s for %s: %s", path, dashboard_slug, exc)
                 return Result(success=False, errorCode="DASHBOARD_NOT_FOUND", errorMessage=str(exc))
@@ -396,6 +369,67 @@ class DashboardService:
 
     # -- run_query -----------------------------------------------------------
 
+    async def _run_metric_query(self, query, meta, params, project_root, policy_context, published=False):
+        from datus.tools import func_tool as func_tool_mod
+        from datus.tools.func_tool.metric_artifact_tools import (
+            execute_metric_artifact_query,
+            execute_published_metric_query,
+        )
+        from datus.tools.func_tool.semantic_tools import SemanticTools
+
+        if (
+            query.name != meta.slug
+            or query.datasource != meta.datasource
+            or query.parameter_names() != {p.name for p in meta.params}
+        ):
+            return Result(
+                success=False,
+                errorCode="TEMPLATE_CORRUPT",
+                errorMessage="metric recipe does not match its parameter metadata",
+            )
+        try:
+
+            def execute():
+                db_tool = func_tool_mod.DBFuncTool(
+                    agent_config=self.agent_config, sub_agent_name="gen_visual_dashboard"
+                )
+                semantic_tools = SemanticTools(
+                    agent_config=self.agent_config,
+                    sub_agent_name="gen_visual_dashboard",
+                    runtime_db_context_provider=lambda: {"datasource": query.datasource},
+                )
+                if published:
+                    return execute_published_metric_query(
+                        query,
+                        runtime_config=semantic_tools.runtime.config,
+                        db_tool=db_tool,
+                        params=params,
+                        policy_context=policy_context,
+                    )
+                return execute_metric_artifact_query(
+                    query,
+                    semantic_tools=semantic_tools,
+                    db_tool=db_tool,
+                    project_root=Path(self.agent_config.project_root),
+                    params=params,
+                    policy_context=policy_context,
+                    saved=query,
+                )
+
+            payload, _ = await asyncio.to_thread(execute)
+            return Result(success=True, data=SqlQueryResultEnvelope(**payload.model_dump()))
+        except Exception as exc:
+            if getattr(exc, "code", None) in {ErrorCode.POLICY_DENIED, ErrorCode.POLICY_DENIED.code}:
+                code = "POLICY_DENIED"
+            elif "METRIC_MODEL_SNAPSHOT_MISSING" in str(exc):
+                code = "METRIC_MODEL_SNAPSHOT_MISSING"
+            elif "METRIC_MODEL_CHANGED" in str(exc):
+                code = "METRIC_MODEL_CHANGED"
+            else:
+                code = "METRIC_QUERY_FAILED"
+                logger.exception("Unexpected metric query execution failure", query_name=query.name)
+            return Result(success=False, errorCode=code, errorMessage=str(exc))
+
     async def run_query(
         self,
         *,
@@ -403,6 +437,7 @@ class DashboardService:
         dashboard_slug: str,
         query_slug: str,
         params: Dict[str, Any],
+        policy_context: Optional[Dict[str, Any]] = None,
         published_version: Optional[int] = None,
         published_template_loader: Optional[PublishedTemplateLoader] = None,
     ) -> Result[SqlQueryResultEnvelope]:
@@ -479,6 +514,16 @@ class DashboardService:
                 errorMessage=str(exc),
             )
 
+        if isinstance(sql_template, MetricQueryFile):
+            return await self._run_metric_query(
+                sql_template,
+                meta,
+                coerced,
+                project_files_root,
+                policy_context,
+                published=published_version is not None,
+            )
+
         try:
             rendered_sql = render_dashboard_template(sql_template, meta.params, coerced)
         except ValueError as exc:
@@ -509,7 +554,17 @@ class DashboardService:
             )
 
         try:
-            exec_result = await asyncio.to_thread(connector.execute_query, rendered_sql, result_format="list")
+            # Enforced-read path (SQL policy + multi-statement rejection). View-time
+            # re-execution runs with live user params on every dashboard open, so an
+            # unbounded rendered statement here is the highest-blast-radius surface.
+            exec_result = await asyncio.to_thread(
+                db_tool.execute_read_enforced,
+                rendered_sql,
+                connector,
+                datasource=meta.datasource or "",
+                result_format="list",
+                policy_context=policy_context,
+            )
         except Exception as exc:
             logger.exception("Query execution crashed for %s/%s: %s", dashboard_slug, query_slug, exc)
             return Result(
@@ -519,10 +574,18 @@ class DashboardService:
             )
 
         if not getattr(exec_result, "success", False):
+            error_text = getattr(exec_result, "error", None) or "unknown error"
+            # A policy refusal is not a failed query: the caller may not see
+            # these rows, which is a different thing to say and a different
+            # thing for a viewer to render. Passed through unwrapped — it is
+            # already a sentence addressed to whoever is reading it, and
+            # "query failed:" in front of it helps nobody.
+            if getattr(exec_result, "error_code", None) == ErrorCode.POLICY_DENIED.code:
+                return Result(success=False, errorCode="POLICY_DENIED", errorMessage=error_text)
             return Result(
                 success=False,
                 errorCode="QUERY_EXECUTION_FAILED",
-                errorMessage=f"query failed: {getattr(exec_result, 'error', 'unknown error')}",
+                errorMessage=f"query failed: {error_text}",
             )
 
         rows_raw = getattr(exec_result, "sql_return", None) or []

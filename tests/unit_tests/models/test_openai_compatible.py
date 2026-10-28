@@ -13,9 +13,13 @@ from contextlib import contextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from agents import Usage
 from agents.exceptions import ModelBehaviorError
+from agents.usage import InputTokensDetails
 from openai import APIConnectionError, APIError, APITimeoutError, RateLimitError
+from opentelemetry.sdk.trace import TracerProvider
 
+from datus.models.litellm_adapter import LiteLLMAdapter
 from datus.models.openai_compatible import (
     OpenAICompatibleModel,
     _agents_trace_baggage,
@@ -55,6 +59,9 @@ def _make_model_config(
     cfg.retry_interval = 0.0
     cfg.strict_json_schema = True
     cfg.save_llm_trace = save_llm_trace
+    cfg.context_length = None
+    cfg.max_tokens = None
+    cfg.tokenizer_ref = None
     return cfg
 
 
@@ -83,20 +90,12 @@ def _make_model(model_config=None):
         return model
 
 
-class _FakeObservabilitySpan:
-    def __init__(self):
-        self.attributes = {}
-
-    def set_attribute(self, key, value):
-        self.attributes[key] = value
-
-
 class _FakeObservabilityManager:
     def __init__(self, enabled_fields=None):
         self.enabled_fields = set(enabled_fields or [])
         self.span_calls = []
         self.trace_baggage_calls = []
-        self.span_obj = _FakeObservabilitySpan()
+        self.span_obj = None
 
     def content_enabled(self, field_name):
         return field_name in self.enabled_fields
@@ -107,7 +106,13 @@ class _FakeObservabilityManager:
     @contextmanager
     def span(self, name, attributes=None):
         self.span_calls.append((name, attributes or {}))
-        yield self.span_obj
+        provider = TracerProvider()
+        try:
+            with provider.get_tracer(__name__).start_as_current_span(name, attributes=attributes or {}) as span:
+                self.span_obj = span
+                yield span
+        finally:
+            provider.shutdown()
 
     @contextmanager
     def trace_baggage(self, name, attributes=None):
@@ -132,6 +137,20 @@ class TestClassifyOpenAICompatibleError:
         err.__str__ = lambda self: "401 unauthorized"
         code, retryable = classify_openai_compatible_error(err)
         assert code == ErrorCode.MODEL_AUTHENTICATION_ERROR
+        assert retryable is False
+
+    def test_ssl_cert_error_detected_and_not_retryable(self):
+        # The litellm SSL message contains "internal" (InternalServerError) and would
+        # otherwise be misclassified as retryable MODEL_API_ERROR — SSL must win first.
+        err = MagicMock(spec=APIError)
+        err.__str__ = lambda self: (
+            "litellm.InternalServerError: AnthropicException - Cannot connect to host "
+            "ai.staging.example:443 ssl:True [SSLCertVerificationError: [SSL: "
+            "CERTIFICATE_VERIFY_FAILED] certificate verify failed: self-signed certificate "
+            "in certificate chain]"
+        )
+        code, retryable = classify_openai_compatible_error(err)
+        assert code == ErrorCode.MODEL_SSL_CERT_ERROR
         assert retryable is False
 
     def test_403_returns_permission_error(self):
@@ -382,9 +401,9 @@ class TestGenerate:
     # ------------------------------------------------------------------
 
     def test_top_p_suppressed_when_litellm_provider_is_claude_default_path(self):
-        """No kwargs, no model_config — the non-reasoning default would
-        normally set ``top_p=1.0``. Provider routing to Claude must
-        veto that and leave ``top_p`` absent from the payload."""
+        """No kwargs, no model_config — the non-reasoning defaults would
+        normally set ``top_p=1.0`` and ``temperature=0.7``. Provider routing to
+        Claude must veto both and leave them absent from the payload."""
         model = _make_model()
         model.litellm_adapter.provider = "claude"
         mock_resp = self._mock_litellm_response("ok")
@@ -392,8 +411,10 @@ class TestGenerate:
             model.generate("prompt")
         call_kwargs = mock_lit.call_args[1]
         assert "top_p" not in call_kwargs
-        # ``temperature`` is fine alone — Anthropic only complains when both are set.
-        assert call_kwargs.get("temperature") == 0.7
+        # ``temperature`` used to be sent alone (Anthropic only rejected the
+        # pair), but the claude-*-5 family rejects it outright, so neither
+        # sampling knob goes to Anthropic any more.
+        assert "temperature" not in call_kwargs
 
     def test_top_p_suppressed_when_provider_is_claude_kwargs_value(self):
         """An explicit non-None ``top_p`` in kwargs still loses to the
@@ -455,9 +476,10 @@ class TestGenerate:
         assert call_kwargs["max_tokens"] == 4096
         assert "max_completion_tokens" not in call_kwargs
 
-    def test_max_tokens_omitted_when_specs_unknown(self):
-        """Omit the field when model_specs has no entry — let provider decide."""
+    def test_max_tokens_falls_back_to_registered_provider_limit(self):
+        """A provider fallback leaves half the post-margin window for input."""
         model = _make_model()
+        model.model_config.context_length = 8192
         mock_resp = self._mock_litellm_response("ok")
         with (
             patch.object(model, "max_tokens", return_value=None),
@@ -465,7 +487,7 @@ class TestGenerate:
         ):
             model.generate("prompt")
         call_kwargs = mock_lit.call_args[1]
-        assert "max_tokens" not in call_kwargs
+        assert call_kwargs["max_tokens"] == 3072  # (8192 context - 2048 margin) // 2
         assert "max_completion_tokens" not in call_kwargs
 
     def test_explicit_kwargs_override_fallback(self):
@@ -526,10 +548,12 @@ class TestGenerate:
         mock_resp = self._mock_litellm_response("")
         mock_resp.choices[0].message.content = ""
         mock_resp.choices[0].message.reasoning_content = "step by step reasoning"
+        mock_resp._response_headers = {"x-request-id": "raw-model-request"}
         observability = _FakeObservabilityManager({"prompts", "responses", "reasoning"})
 
         with (
             patch("datus.models.openai_compatible.get_observability_manager", return_value=observability),
+            patch("datus.observability.model_call.get_observability_manager", return_value=observability),
             patch("datus.models.openai_compatible.litellm.completion", return_value=mock_resp),
         ):
             result = model.generate("Explain", enable_thinking=True)
@@ -537,32 +561,52 @@ class TestGenerate:
         assert result == "step by step reasoning"
         span_name, start_attrs = observability.span_calls[0]
         assert span_name == "llm.generate"
-        assert start_attrs["gen_ai.request.model"] == "gpt-4"
+        assert start_attrs["llm.model_name"] == "gpt-4"
+        assert start_attrs["llm.provider"] == "openai"
+        assert start_attrs["llm.system"] == "openai"
         assert start_attrs["datus.model.litellm_name"] == "openai/gpt-4"
-        assert "Explain" in start_attrs["datus.llm.prompt"]
-        assert observability.span_obj.attributes["datus.llm.response"] == "step by step reasoning"
+        assert start_attrs["openinference.span.kind"] == "LLM"
+        assert start_attrs["input.mime_type"] == "application/json"
+        assert json.loads(start_attrs["input.value"]) == [{"role": "user", "content": "Explain"}]
+        assert observability.span_obj.attributes["output.value"] == "step by step reasoning"
+        assert observability.span_obj.attributes["output.mime_type"] == "text/plain"
         assert observability.span_obj.attributes["datus.llm.reasoning"] == "step by step reasoning"
-        assert observability.span_obj.attributes["gen_ai.usage.input_tokens"] == 10
-        assert observability.span_obj.attributes["gen_ai.usage.output_tokens"] == 5
-        assert observability.span_obj.attributes["gen_ai.usage.total_tokens"] == 15
+        assert observability.span_obj.attributes["llm.token_count.prompt"] == 10
+        assert observability.span_obj.attributes["llm.token_count.completion"] == 5
+        assert observability.span_obj.attributes["llm.token_count.total"] == 15
+        assert observability.span_obj.attributes["llm.finish_reason"] == "stop"
+        assert observability.span_obj.attributes["llm.model_name"] == "gpt-4"
+        assert not any(key.startswith("gen_ai.") for key in start_attrs)
+        assert not any(key.startswith("gen_ai.") for key in observability.span_obj.attributes)
+        assert observability.span_obj.attributes["datus.llm.remote_correlation_id"] == "raw-model-request"
+        assert observability.span_obj.attributes["datus.llm.remote_correlation_source"] == "header:x-request-id"
+        assert observability.span_obj.attributes["datus.llm.status"] == "success"
 
     def test_observability_span_omits_content_when_capture_disabled(self):
         model = _make_model()
         mock_resp = self._mock_litellm_response("secret answer")
+        mock_resp._response_headers = {"x-request-id": "raw-model-request"}
         observability = _FakeObservabilityManager()
 
         with (
             patch("datus.models.openai_compatible.get_observability_manager", return_value=observability),
+            patch("datus.observability.model_call.get_observability_manager", return_value=observability),
             patch("datus.models.openai_compatible.litellm.completion", return_value=mock_resp),
         ):
             result = model.generate("secret prompt")
 
         assert result == "secret answer"
         _, start_attrs = observability.span_calls[0]
-        assert "datus.llm.prompt" not in start_attrs
-        assert "datus.llm.response" not in observability.span_obj.attributes
-        assert observability.span_obj.attributes["gen_ai.response.finish_reason"] == "stop"
-        assert observability.span_obj.attributes["gen_ai.response.model"] == "gpt-4"
+        assert "input.value" not in start_attrs
+        assert "output.value" not in observability.span_obj.attributes
+        assert "secret" not in json.dumps(dict(observability.span_obj.attributes))
+        assert observability.span_obj.attributes["llm.finish_reason"] == "stop"
+        assert observability.span_obj.attributes["llm.model_name"] == "gpt-4"
+        assert not any(key.startswith("gen_ai.") for key in start_attrs)
+        assert not any(key.startswith("gen_ai.") for key in observability.span_obj.attributes)
+        assert observability.span_obj.attributes["datus.llm.remote_correlation_id"] == "raw-model-request"
+        assert observability.span_obj.attributes["datus.llm.remote_correlation_status"] == "captured"
+        assert observability.span_obj.attributes["datus.llm.status"] == "success"
 
 
 # ---------------------------------------------------------------------------
@@ -596,6 +640,27 @@ class TestGenerateWithJsonOutput:
             model.generate_with_json_output("prompt")
         call_kwargs = mock_gen.call_args[1]
         assert call_kwargs.get("response_format") == {"type": "json_object"}
+
+    def test_output_schema_is_not_forwarded_as_litellm_parameter(self):
+        model = _make_model()
+        with patch.object(model, "generate", return_value="{}") as mock_gen:
+            model.generate_with_json_output("prompt", output_schema={"type": "object"})
+        assert "output_schema" not in mock_gen.call_args.kwargs
+
+    def test_timeout_reaches_the_provider_request(self):
+        """A caller-supplied transport timeout must bound the actual request.
+
+        ``LLMAutoReviewer`` relies on this to cap a review: cancelling the
+        awaiting task cannot stop a blocking request already in flight.
+        """
+        model = _make_model()
+        resp = MagicMock()
+        resp.choices = [MagicMock()]
+        resp.choices[0].message.content = "{}"
+        resp.usage = None
+        with patch("datus.models.openai_compatible.litellm.completion", return_value=resp) as mock_lit:
+            model.generate_with_json_output("prompt", output_schema={"type": "object"}, timeout=7)
+        assert mock_lit.call_args[1]["timeout"] == 7
 
     def test_enable_thinking_passed_through(self):
         model = _make_model()
@@ -1219,10 +1284,48 @@ class TestDetectToolFailure:
 
 
 class TestModelSpecsAndTokenLimits:
+    @pytest.fixture(autouse=True)
+    def _yaml_specs_only(self):
+        """Resolve specs from providers.yml alone.
+
+        ``_load_model_specs`` also merges exact IDs from the user's OpenRouter
+        cache file, so a developer cache could turn a prefix-match assertion
+        into an exact match. Wipe the module-level cache and hide the file.
+        """
+        import datus.models.openai_compatible as oc
+
+        original = oc._MODEL_SPECS_CACHE
+        oc._MODEL_SPECS_CACHE = None
+        try:
+            with patch("datus.cli.provider_model_catalog.load_cached_model_details", return_value={}):
+                yield
+        finally:
+            oc._MODEL_SPECS_CACHE = original
+
     def test_exact_match_max_tokens(self):
         cfg = _make_model_config(model="gpt-4o")
         model = _make_model(cfg)
         assert model.max_tokens() == 16384
+
+    @pytest.mark.parametrize("name", ["o3", "o4-mini", "deepseek-reasoner", "deepseek-r1"])
+    def test_output_defaults_leave_room_for_requests(self, name):
+        from datus.models.request_capacity import ContextCapacityError
+
+        cfg = _make_model_config(model=name)
+        cfg.tokenizer_ref = "tiktoken:cl100k_base"
+        model = _make_model(cfg)
+        request = {"messages": [{"role": "user", "content": "hello"}]}
+        capacity = model.request_capacity()
+        assert capacity.input_limit() > 0
+        assert model.check_request(request)["max_tokens"] == model.max_tokens()
+        assert model.check_request({**request, "max_tokens": 4096})["max_tokens"] == 4096
+        with pytest.raises(ContextCapacityError, match="CONTEXT_LIMIT_EXCEEDED"):
+            model.check_request({**request, "max_tokens": model.context_length()})
+        cfg.max_tokens = 4096
+        assert model.max_tokens() == 4096 and model.request_capacity().default_output == 4096
+        cfg.max_tokens = model.context_length()
+        with pytest.raises(ContextCapacityError, match="CONTEXT_LIMIT_EXCEEDED"):
+            model.check_request(request)
 
     def test_exact_match_context_length(self):
         cfg = _make_model_config(model="gpt-4o")
@@ -1236,20 +1339,20 @@ class TestModelSpecsAndTokenLimits:
         assert model.max_tokens() == 16384
 
     def test_prefix_match_context_length(self):
-        cfg = _make_model_config(model="kimi-k2-0711-preview")
+        cfg = _make_model_config(model="kimi-k3-0716-preview")
         model = _make_model(cfg)
-        # Should match "kimi-k2" prefix
-        assert model.context_length() == 256000
+        # Should match "kimi-k3" prefix
+        assert model.context_length() == 1000000
 
-    def test_unknown_model_returns_none_for_max_tokens(self):
+    def test_unknown_model_has_default_max_tokens(self):
         cfg = _make_model_config(model="unknown-model-xyz")
         model = _make_model(cfg)
-        assert model.max_tokens() is None
+        assert model.max_tokens() == 8192
 
-    def test_unknown_model_returns_none_for_context_length(self):
+    def test_unknown_model_has_default_context_length(self):
         cfg = _make_model_config(model="unknown-model-xyz")
         model = _make_model(cfg)
-        assert model.context_length() is None
+        assert model.context_length() == 262144
 
     def test_deepseek_chat_specs(self):
         cfg = _make_model_config(model="deepseek-chat")
@@ -1289,8 +1392,8 @@ class TestModelSpecsOpenRouterCacheMerge:
             cfg = _make_model_config(model="brand-new-model")
             model = _make_model(cfg)
             assert model.context_length() == 777000
-            # Cache entries have no max_tokens — must not crash, must return None.
-            assert model.max_tokens() is None
+            # Cache entries have no output limit, so use the default budget.
+            assert model.max_tokens() == 8192
         assert "brand-new-model" in oc._MODEL_SPECS_CACHE
         assert oc._MODEL_SPECS_CACHE["brand-new-model"]["context_length"] == 777000
 
@@ -1323,7 +1426,7 @@ class TestModelSpecsOpenRouterCacheMerge:
         ):
             cfg = _make_model_config(model="only-id-no-ctx")
             model = _make_model(cfg)
-            assert model.context_length() is None
+            assert model.context_length() == 262144
 
     def test_lookup_uses_longest_prefix_match(self):
         """A short generic prefix must not preempt a more specific one on the same slug."""
@@ -1710,21 +1813,63 @@ class TestBuildAgent:
         ms = call_args[1]["model_settings"]
         assert ms.extra_headers == {"X-Custom": "value"}
 
+    @pytest.mark.parametrize("provider", ["claude", "anthropic"])
+    def test_anthropic_providers_enable_litellm_prompt_caching(self, provider):
+        cfg = _make_model_config(model="claude-sonnet-4-6", model_type=provider)
+        model = _make_model(cfg)
+        model.litellm_adapter.provider = provider
+        _, call_args = self._call_build_agent(model)
+        ms = call_args[1]["model_settings"]
+        assert ms.extra_args["enable_prompt_caching"] is True
+
+    # ``configured_base_url`` rather than ``base_url``: the pytest-base-url plugin (pulled in by
+    # pytest-playwright in the nightly environment) owns a session-scoped ``base_url`` fixture, and a
+    # parametrized argument of the same name collides with it.
+    @pytest.mark.parametrize(
+        "model_name,provider,configured_base_url,expected_retention,expected_cache_key",
+        [
+            ("gpt-6-astra", "openai", None, "24h", True),
+            ("gpt-6-astra", "openai", "https://api.openai.com/v1", "24h", True),
+            ("gpt-6-astra-2026-09-01", "openai", None, "24h", True),
+            ("gpt-5.5", "openai", None, "24h", True),
+            ("gpt-4o", "openai", None, None, True),
+            ("gpt-7-test", "openai", None, None, True),
+            ("gpt-7-test", "openai", "https://api.openai.com/v1", None, True),
+            ("future-model", "openai", None, None, True),
+            ("gpt-6-astra", "openai", "https://proxy.example.com/v1", None, False),
+            ("openai/gpt-6-astra", "openrouter", None, None, False),
+        ],
+    )
+    def test_prompt_cache_settings(
+        self, model_name, provider, configured_base_url, expected_retention, expected_cache_key
+    ):
+        cfg = _make_model_config(model=model_name, model_type=provider, base_url=configured_base_url)
+        cfg.max_tokens = 8192
+        cfg.context_length = 262144
+        model = _make_model(cfg)
+        model.litellm_adapter.provider = provider
+        _, call_args = self._call_build_agent(model)
+        ms = call_args[1]["model_settings"]
+        assert ms.prompt_cache_retention == expected_retention
+        assert bool((ms.extra_args or {}).get("prompt_cache_key")) == expected_cache_key
+
     def test_max_tokens_from_model_specs_applied_to_model_settings(self):
-        """Streaming/tool path: model_specs.max_tokens flows into ModelSettings."""
+        """Streaming/tool path: a model default is bounded by usable context."""
         model = _make_model()
+        model.model_config.context_length = 8192
         with patch.object(model, "max_tokens", return_value=4096):
             _, call_args = self._call_build_agent(model)
         ms = call_args[1]["model_settings"]
-        assert ms.max_tokens == 4096
+        assert ms.max_tokens == 3072  # (8192 context - 2048 margin) // 2
 
-    def test_max_tokens_omitted_in_model_settings_when_specs_unknown(self):
-        """When spec is unknown, leave ModelSettings.max_tokens at its default (None)."""
+    def test_model_settings_use_registered_provider_limit(self):
+        """The known provider output limit is explicitly sent and budgeted."""
         model = _make_model()
+        model.model_config.context_length = 8192
         with patch.object(model, "max_tokens", return_value=None):
             _, call_args = self._call_build_agent(model)
         ms = call_args[1]["model_settings"]
-        assert ms.max_tokens is None
+        assert ms.max_tokens == 3072  # (8192 context - 2048 margin) // 2
 
     def test_thinking_model_gets_reasoning(self):
         model = _make_model()
@@ -1771,121 +1916,6 @@ class TestBuildAgent:
             _, call_args = self._call_build_agent(model)
         assert call_args[1]["model_settings"].reasoning.effort == "medium"
 
-    @pytest.mark.parametrize(
-        "provider,model_name",
-        [
-            ("deepseek", "deepseek-v4-pro"),
-            ("deepseek", "deepseek-reasoner"),
-            ("deepseek", "deepseek-v5-future"),  # unknown: deny-list negative → permissive
-            ("kimi", "kimi-k2-thinking"),
-            ("kimi", "kimi-k2.6"),
-            ("kimi", "kimi-k2.5"),
-        ],
-    )
-    def test_reasoning_injected_for_thinking_models_despite_litellm_false(self, provider, model_name):
-        """LiteLLM's catalog lags behind DeepSeek V4 / Kimi K2.x. Unknown DeepSeek
-        or Kimi models are *permissively* allowed so future releases automatically
-        work — only explicit deny-list entries are skipped."""
-        cfg = _make_model_config(model=model_name, model_type=provider)
-        model = _make_model(cfg)
-        model.litellm_adapter.provider = provider
-        model.litellm_adapter.reasoning_effort_level = "high"
-        with patch("datus.models.openai_compatible.litellm.supports_reasoning", return_value=False):
-            _, call_args = self._call_build_agent(model)
-        assert call_args[1]["model_settings"].reasoning.effort == "high"
-
-    @pytest.mark.parametrize(
-        "provider,model_name",
-        [
-            ("deepseek", "deepseek-chat"),
-            ("kimi", "kimi-k2"),  # bare k2, non-thinking family
-            ("kimi", "moonshot-v1-8k"),
-            ("kimi", "moonshot-v1-128k"),
-        ],
-    )
-    def test_reasoning_skipped_for_deny_listed_model(self, caplog, provider, model_name):
-        """Datus-maintained non-thinking deny-list forces a skip regardless of
-        LiteLLM's verdict, so users see an explicit warning instead of silent
-        drop_params downgrade."""
-        cfg = _make_model_config(model=model_name, model_type=provider)
-        model = _make_model(cfg)
-        model.litellm_adapter.provider = provider
-        model.litellm_adapter.reasoning_effort_level = "high"
-        with patch("datus.models.openai_compatible.litellm.supports_reasoning", return_value=False):
-            with caplog.at_level("WARNING"):
-                _, call_args = self._call_build_agent(model)
-        assert call_args[1]["model_settings"].reasoning is None
-        assert any("Skipping reasoning" in r.message for r in caplog.records)
-
-    def test_reasoning_skipped_for_non_reasoning_openai_model_when_litellm_false(self, caplog):
-        """OpenAI models outside the reasoning families (gpt-4.1 etc.) are
-        skipped when LiteLLM reports False — the deny-list is scoped to
-        DeepSeek/Kimi, so for other providers we trust LiteLLM's verdict."""
-        model = _make_model()
-        model.litellm_adapter.provider = "openai"
-        model.litellm_adapter.reasoning_effort_level = "high"
-        # _model_supports_reasoning is permissive on LiteLLM False — the
-        # remaining skip-path for OpenAI would require LiteLLM raising or
-        # returning False plus the deny-list match (none for OpenAI). Confirm
-        # the permissive outcome: reasoning IS injected.
-        with patch("datus.models.openai_compatible.litellm.supports_reasoning", return_value=False):
-            _, call_args = self._call_build_agent(model)
-        assert call_args[1]["model_settings"].reasoning.effort == "high"
-
-    @pytest.mark.parametrize("model_name", ["deepseek-v4-pro", "deepseek-reasoner"])
-    def test_deepseek_extra_body_carries_thinking_and_reasoning_effort(self, model_name):
-        """DeepSeek's transformation pops ``reasoning_effort`` during param
-        mapping, so Datus re-injects it via ``extra_body`` alongside the
-        ``thinking`` flag. DeepSeek's docs require both to control depth."""
-        cfg = _make_model_config(model=model_name, model_type="deepseek")
-        model = _make_model(cfg)
-        model.litellm_adapter.provider = "deepseek"
-        model.litellm_adapter.reasoning_effort_level = "high"
-        with patch("datus.models.openai_compatible.litellm.supports_reasoning", return_value=False):
-            _, call_args = self._call_build_agent(model)
-        ms = call_args[1]["model_settings"]
-        assert ms.extra_args["extra_body"] == {
-            "thinking": {"type": "enabled"},
-            "reasoning_effort": "high",
-        }
-
-    @pytest.mark.parametrize("model_name", ["kimi-k2.6", "kimi-k2.5", "kimi-k2-thinking"])
-    def test_kimi_extra_body_only_carries_thinking(self, model_name):
-        """Moonshot's API does not accept ``reasoning_effort``; sending it
-        would be rejected. Only ``thinking.type=enabled`` goes in extra_body."""
-        cfg = _make_model_config(model=model_name, model_type="kimi")
-        model = _make_model(cfg)
-        model.litellm_adapter.provider = "kimi"
-        model.litellm_adapter.reasoning_effort_level = "high"
-        with patch("datus.models.openai_compatible.litellm.supports_reasoning", return_value=False):
-            _, call_args = self._call_build_agent(model)
-        ms = call_args[1]["model_settings"]
-        assert ms.extra_args["extra_body"] == {"thinking": {"type": "enabled"}}
-        assert "reasoning_effort" not in ms.extra_args["extra_body"]
-
-    def test_extra_body_thinking_not_added_for_openai(self):
-        """OpenAI's reasoning_effort is handled natively by the SDK/Responses
-        API; no native thinking payload should be injected."""
-        model = _make_model()
-        model.litellm_adapter.provider = "openai"
-        model.litellm_adapter.reasoning_effort_level = "high"
-        _, call_args = self._call_build_agent(model)
-        ms = call_args[1]["model_settings"]
-        # extra_args may be unset (None/empty) or set (e.g. prompt_cache_key);
-        # either way, extra_body must never appear for native-reasoning OpenAI.
-        assert "extra_body" not in (ms.extra_args or {})
-
-    def test_extra_body_thinking_not_added_for_deny_listed_deepseek_chat(self):
-        cfg = _make_model_config(model="deepseek-chat", model_type="deepseek")
-        model = _make_model(cfg)
-        model.litellm_adapter.provider = "deepseek"
-        model.litellm_adapter.reasoning_effort_level = "high"
-        _, call_args = self._call_build_agent(model)
-        ms = call_args[1]["model_settings"]
-        # Gate skipped injection entirely; extra_body must never appear regardless
-        # of whether extra_args was populated by other settings.
-        assert "extra_body" not in (ms.extra_args or {})
-
     def test_temperature_and_top_p_from_config(self):
         cfg = _make_model_config(temperature=0.5, top_p=0.9)
         model = _make_model(cfg)
@@ -1915,6 +1945,91 @@ class TestBuildAgent:
 
 
 class TestExtractUsageInfo:
+    def test_uses_sdk_aggregated_cache_write_tokens(self):
+        model = _make_model()
+        usage = Usage(
+            requests=1,
+            input_tokens=100,
+            output_tokens=10,
+            total_tokens=110,
+            input_tokens_details=InputTokensDetails(cached_tokens=11, cache_write_tokens=13),
+        )
+        usage.add(
+            Usage(
+                requests=1,
+                input_tokens=200,
+                output_tokens=20,
+                total_tokens=220,
+                input_tokens_details=InputTokensDetails(cached_tokens=17, cache_write_tokens=19),
+            )
+        )
+
+        info = model._extract_usage_info(usage)
+
+        assert info["cache_write_tokens"] == 32
+        assert info["cached_tokens"] == 28
+
+    def test_uses_cache_write_tokens_for_official_anthropic(self):
+        model = _make_model(_make_model_config(model_type="claude"))
+        model.litellm_adapter.provider = "claude"
+        usage = Usage(
+            input_tokens=100,
+            output_tokens=10,
+            total_tokens=110,
+            input_tokens_details=InputTokensDetails(cached_tokens=11, cache_write_tokens=13),
+        )
+
+        assert model._extract_usage_info(usage)["cache_write_tokens"] == 13
+
+    @pytest.mark.parametrize("configured_base_url", [None, "https://api.anthropic.com"])
+    def test_uses_cache_write_tokens_when_openai_config_auto_routes_to_anthropic(self, configured_base_url):
+        config = _make_model_config(
+            model="claude-sonnet-4-6",
+            model_type="openai",
+            base_url=configured_base_url,
+        )
+        model = _make_model(config)
+        model.litellm_adapter = LiteLLMAdapter(
+            provider=config.type,
+            model=config.model,
+            api_key=config.api_key,
+            base_url=config.base_url,
+        )
+        usage = Usage(
+            input_tokens=100,
+            output_tokens=10,
+            total_tokens=110,
+            input_tokens_details=InputTokensDetails(cached_tokens=11, cache_write_tokens=13),
+        )
+
+        assert model.litellm_adapter.provider == "claude"
+        assert model._extract_usage_info(usage)["cache_write_tokens"] == 13
+
+    @pytest.mark.parametrize(
+        ("model_type", "configured_base_url"),
+        [
+            ("glm", "https://open.bigmodel.cn/api/paas/v4"),
+            ("kimi", "https://api.moonshot.cn/v1"),
+            ("deepseek", "https://api.deepseek.com"),
+            ("openai", "https://openrouter.ai/api/v1"),
+            ("claude", "https://api.kimi.com/coding"),
+        ],
+    )
+    def test_ignores_cache_write_tokens_from_other_compatible_providers(self, model_type, configured_base_url):
+        model = _make_model(_make_model_config(model_type=model_type, base_url=configured_base_url))
+        model.litellm_adapter.provider = model_type
+        usage = Usage(
+            input_tokens=100,
+            output_tokens=10,
+            total_tokens=110,
+            input_tokens_details=InputTokensDetails(cached_tokens=11, cache_write_tokens=13),
+        )
+
+        info = model._extract_usage_info(usage)
+
+        assert info["cache_write_tokens"] == 0
+        assert info["cached_tokens"] == 11
+
     def test_normal_usage(self):
         model = _make_model()
         usage = MagicMock()
@@ -1924,6 +2039,7 @@ class TestExtractUsageInfo:
         usage.total_tokens = 150
         usage.input_tokens_details = MagicMock()
         usage.input_tokens_details.cached_tokens = 20
+        usage.input_tokens_details.cache_write_tokens = 30
         usage.output_tokens_details = MagicMock()
         usage.output_tokens_details.reasoning_tokens = 10
         usage.request_usage_entries = None
@@ -1936,9 +2052,10 @@ class TestExtractUsageInfo:
         assert info["output_tokens"] == 50
         assert info["total_tokens"] == 150
         assert info["cached_tokens"] == 20
+        assert info["cache_write_tokens"] == 30
         assert info["reasoning_tokens"] == 10
         assert info["cache_hit_rate"] == round(20 / 100, 3)
-        assert info["context_usage_ratio"] == round(150 / 128000, 3)
+        assert info["context_usage_ratio"] == 0
         assert info["last_call_input_tokens"] == 0
 
     def test_zero_input_tokens_no_division_error(self):
@@ -1956,6 +2073,7 @@ class TestExtractUsageInfo:
 
         assert info["cache_hit_rate"] == 0
         assert info["cached_tokens"] == 0
+        assert info["cache_write_tokens"] == 0
         assert info["reasoning_tokens"] == 0
 
     def test_missing_details_attributes(self):
@@ -1970,6 +2088,7 @@ class TestExtractUsageInfo:
             info = model._extract_usage_info(usage)
 
         assert info["cached_tokens"] == 0
+        assert info["cache_write_tokens"] == 0
         assert info["reasoning_tokens"] == 0
 
     def test_unknown_model_context_length_none(self):
@@ -2078,7 +2197,6 @@ class TestBuildRunConfigInputFilter:
         with trace_context(ctx, replace=True):
             rc = model._build_run_config(pending_input_queue=None, agent_name="gen_sql")
 
-        assert rc is not None
         assert rc.workflow_name == "benchmark/baisheng/semantic_model/task-1/gen_sql"
         assert rc.group_id == "benchmark:semantic_model_20260520_054027"
         assert rc.trace_metadata["task_id"] == "1"
@@ -2127,8 +2245,8 @@ class TestBuildRunConfigInputFilter:
 
         model = _make_model()
         queue = PendingInputQueue()
-        queue.push("追加 1")
-        queue.push("追加 2")
+        queue.push("Follow-up 1")
+        queue.push("Follow-up 2")
         session = MagicMock()
         session.add_items = AsyncMock()
         broker = InteractionBroker()
@@ -2141,7 +2259,7 @@ class TestBuildRunConfigInputFilter:
 
         # Original message preserved; two structured user items appended.
         assert len(result.input) == 3
-        for injected, expected in zip(result.input[1:], ["追加 1", "追加 2"]):
+        for injected, expected in zip(result.input[1:], ["Follow-up 1", "Follow-up 2"]):
             assert injected["type"] == "message"
             assert injected["role"] == "user"
             assert injected["content"][0]["type"] == "input_text"
@@ -2157,7 +2275,7 @@ class TestBuildRunConfigInputFilter:
         # Broker emission: each drained item becomes a USER user_insert
         # ActionHistory in the broker's output queue, in original order.
         emitted = [broker._output_queue.get_nowait() for _ in range(2)]
-        assert [a.messages for a in emitted] == ["追加 1", "追加 2"]
+        assert [a.messages for a in emitted] == ["Follow-up 1", "Follow-up 2"]
         for action in emitted:
             assert action.role == ActionRole.USER
             assert action.action_type == "user_insert"
@@ -2243,3 +2361,193 @@ class TestBuildRunConfigInputFilter:
         result = await rc.call_model_input_filter(data)
 
         assert result is data.model_data
+
+
+class TestClaudeTemperatureSuppression:
+    """``temperature`` is never sent to Anthropic, for the whole Claude family.
+
+    Regression: the claude-*-5 family rejects the request outright with
+    "`temperature` is deprecated for this model.", so the non-reasoning default
+    of 0.7 made those models unusable for EVERY call — plain generation and
+    structured output alike. The gate is the routed provider rather than a
+    per-model flag so a newly released Claude model works on day one instead of
+    400ing until the catalog catches up.
+    """
+
+    @staticmethod
+    def _mock_resp(content="ok"):
+        resp = MagicMock()
+        resp.choices = [MagicMock()]
+        resp.choices[0].message.content = content
+        resp.choices[0].message.reasoning_content = None
+        resp.choices[0].finish_reason = "stop"
+        resp.model = "m"
+        resp.usage = MagicMock()
+        resp.usage.prompt_tokens = 1
+        resp.usage.completion_tokens = 1
+        resp.usage.total_tokens = 2
+        return resp
+
+    def _generate_kwargs(self, provider, model_config=None, **gen_kwargs):
+        model = _make_model(model_config)
+        model.litellm_adapter.provider = provider
+        with patch("datus.models.openai_compatible.litellm.completion", return_value=self._mock_resp()) as mock_lit:
+            model.generate("prompt", **gen_kwargs)
+        return mock_lit.call_args[1]
+
+    def test_default_is_suppressed_for_claude(self):
+        assert "temperature" not in self._generate_kwargs("claude")
+
+    def test_explicit_kwarg_is_suppressed_for_claude(self):
+        """No caller-supplied value can make the request valid, so kwargs lose."""
+        assert "temperature" not in self._generate_kwargs("claude", temperature=0.5)
+
+    def test_model_config_value_is_suppressed_for_claude(self):
+        kwargs = self._generate_kwargs("claude", _make_model_config(temperature=0.3))
+        assert "temperature" not in kwargs
+
+    @pytest.mark.parametrize(
+        "model_name", ["claude-sonnet-5", "claude-opus-5", "claude-sonnet-4-6", "claude-3-7-sonnet"]
+    )
+    def test_suppressed_for_every_claude_model(self, model_name):
+        """4.x rejects temperature alongside top_p, 5.x rejects it outright —
+        the whole family is treated the same."""
+        kwargs = self._generate_kwargs("claude", _make_model_config(model=model_name))
+        assert "temperature" not in kwargs
+
+    def test_other_providers_keep_the_default(self):
+        """Suppression must not bleed into OpenAI/DeepSeek/Kimi/..."""
+        assert self._generate_kwargs("openai")["temperature"] == 0.7
+
+    def test_other_providers_keep_an_explicit_value(self):
+        assert self._generate_kwargs("deepseek", temperature=0.5)["temperature"] == 0.5
+
+    def test_anthropic_routed_provider_is_suppressed_too(self):
+        """``anthropic`` is the documented alias of ``claude`` in
+        :class:`LLMProvider`; a request routed under that spelling reaches the
+        same endpoint and must lose the same knob."""
+        kwargs = self._generate_kwargs("anthropic", _make_model_config(temperature=0.3))
+        assert "temperature" not in kwargs
+        assert "top_p" not in kwargs
+
+    def test_claude_5_models_are_selectable_from_the_catalog(self):
+        """The fix is unreachable through ``/model`` if the catalog omits them."""
+        import yaml
+
+        from datus.utils.resource_utils import read_data_file_text
+
+        catalog = yaml.safe_load(read_data_file_text("conf/providers.yml"))
+        models = catalog["providers"]["claude"]["models"]
+        assert "claude-sonnet-5" in models
+        assert "claude-opus-5" in models
+
+
+class TestAgentSamplingParamSuppression:
+    """The Agents-SDK path drops the same knobs the completion path drops.
+
+    Regression: the suppression lived only in ``generate``, so a configured
+    ``temperature``/``top_p`` still reached Anthropic through ``ModelSettings``
+    on every tool call and streaming request — a claude-*-5 tool call 400ed on
+    a parameter the completion path had already learned to drop.
+    """
+
+    def _model_settings(self, provider, **config_kwargs):
+        model = _make_model(_make_model_config(**config_kwargs))
+        model.litellm_adapter.provider = provider
+        with patch("datus.models.openai_compatible.Agent") as MockAgent:
+            MockAgent.return_value = MagicMock()
+            model._build_agent(
+                instruction="test",
+                output_type=str,
+                strict_json_schema=True,
+                connected_servers={},
+                tools=None,
+            )
+        return MockAgent.call_args[1]["model_settings"]
+
+    def test_configured_temperature_is_suppressed_for_claude(self):
+        assert self._model_settings("claude", temperature=0.3).temperature is None
+
+    def test_configured_top_p_is_suppressed_for_claude(self):
+        assert self._model_settings("claude", top_p=0.8).top_p is None
+
+    def test_both_knobs_suppressed_together_for_claude(self):
+        settings = self._model_settings("claude", temperature=0.3, top_p=0.8)
+        assert settings.temperature is None
+        assert settings.top_p is None
+
+    def test_suppressed_for_anthropic_routed_provider(self):
+        settings = self._model_settings("anthropic", temperature=0.3, top_p=0.8)
+        assert settings.temperature is None
+        assert settings.top_p is None
+
+    @pytest.mark.parametrize("model_name", ["claude-sonnet-5", "claude-opus-5", "claude-sonnet-4-6"])
+    def test_suppressed_for_every_claude_model(self, model_name):
+        settings = self._model_settings("claude", model=model_name, temperature=0.3)
+        assert settings.temperature is None
+
+    def test_other_providers_keep_both_knobs(self):
+        """Suppression must not bleed into OpenAI/DeepSeek/Kimi/..."""
+        settings = self._model_settings("openai", temperature=0.3, top_p=0.8)
+        assert settings.temperature == 0.3
+        assert settings.top_p == 0.8
+
+
+@pytest.mark.asyncio
+async def test_streamed_tool_error_is_yielded_while_sdk_batch_is_pending(monkeypatch):
+    """A completed tool must not wait for the SDK's batched tool-output event."""
+    import asyncio
+    from types import SimpleNamespace
+
+    from agents import Agent, RunItemStreamEvent, ToolCallItem
+    from openai.types.responses import ResponseFunctionToolCall
+
+    model = _make_model()
+    agent = Agent(name="test")
+    release = asyncio.Event()
+    result = SimpleNamespace(is_complete=False, cancel=MagicMock(), final_output="")
+    raw_call = ResponseFunctionToolCall(
+        type="function_call", name="execute_sql", call_id="sql-fast-error", arguments='{"sql":"SELECT missing"}'
+    )
+    error = "Unknown column 'missing' in 'on clause'"
+
+    async def sdk_events():
+        yield RunItemStreamEvent(name="tool_called", item=ToolCallItem(agent=agent, raw_item=raw_call))
+        await agent.hooks.on_tool_end(
+            SimpleNamespace(tool_call_id=raw_call.call_id),
+            agent,
+            SimpleNamespace(name="execute_sql"),
+            {"success": 0, "error": error, "result": None},
+        )
+        await release.wait()
+        result.is_complete = True
+
+    result.stream_events = sdk_events
+    monkeypatch.setattr(model, "_build_agent", lambda **kwargs: agent)
+    monkeypatch.setattr(model, "_build_run_config", lambda **kwargs: None)
+    monkeypatch.setattr("datus.models.openai_compatible.Runner.run_streamed", lambda *args, **kwargs: result)
+    actions = ActionHistoryManager()
+    stream = model._generate_with_tools_stream_internal(
+        prompt="test",
+        mcp_servers=None,
+        tools=None,
+        output_type=str,
+        strict_json_schema=True,
+        instruction="test",
+        max_turns=1,
+        action_history_manager=actions,
+        session=None,
+    )
+    try:
+        start = await asyncio.wait_for(anext(stream), timeout=1)
+        assert start.status == ActionStatus.PROCESSING
+        completed = await asyncio.wait_for(anext(stream), timeout=1)
+        assert completed.status == ActionStatus.FAILED
+        assert completed.output["raw_output"]["error"] == error
+        assert not release.is_set()
+    finally:
+        try:
+            await stream.aclose()
+            result.cancel.assert_called_once()
+        finally:
+            release.set()

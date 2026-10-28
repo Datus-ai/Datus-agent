@@ -1,8 +1,9 @@
 """Pre / post hooks around the streaming chat endpoint.
 
 The chat route invokes ``ChatHooks.pre_chat`` *before* spinning up the
-agentic loop, and ``ChatHooks.post_chat`` after the loop completes (or
-errors). The hook is optional — if no host has called ``set_chat_hooks``,
+agentic loop, and ``ChatHooks.post_chat`` once the turn is over — completed,
+failed, or stopped by the user — reported by the chat task itself, so a
+client that disconnects mid-turn is still settled. The hook is optional — if no host has called ``set_chat_hooks``,
 the route runs in passthrough mode.
 
 Design notes:
@@ -50,11 +51,15 @@ class ChatPreCheckOutcome:
 
 @dataclass
 class ChatPostUsageContext:
-    """Payload passed to :meth:`ChatHooks.post_chat` after the stream ends.
+    """Payload passed to :meth:`ChatHooks.post_chat` once a turn is over.
 
     ``usage`` mirrors the fields of ``SSEEndData`` (input_tokens,
-    output_tokens, total_tokens, cached_tokens, requests, ...). When the
-    agent fails before reaching the end event this dict is empty.
+    output_tokens, total_tokens, cached_tokens, requests, ...). For a
+    ``completed`` turn it is the ``end`` event's usage; for an ``error`` or
+    ``cancelled`` turn it is what the agent had consumed when it stopped (the
+    last LLM call in flight may be missing), and empty if it never called the
+    model. A turn that never started — rejected before the chat task was
+    created — is not reported.
     """
 
     user_id: Optional[str]
@@ -63,6 +68,11 @@ class ChatPostUsageContext:
     usage: Dict[str, Any]
     error: Optional[str] = None
     pre_check_extra: Dict[str, Any] = field(default_factory=dict)
+    status: str = "completed"
+    """``completed`` | ``error`` | ``cancelled`` (``/chat/stop``, or a shutdown)."""
+    turn_id: Optional[str] = None
+    """The chat task's own per-turn id. Unlike a trace id, which a client can
+    reuse across turns, it is unique — the key to use for idempotent billing."""
 
 
 @runtime_checkable
@@ -89,7 +99,7 @@ class ChatHooks(Protocol):
         stream_request: StreamChatInput,
         ctx: ChatPostUsageContext,
     ) -> None:
-        """Report usage / billing after the agentic loop finishes.
+        """Report usage / billing once the turn is over, however it ended.
 
         Called as a fire-and-forget background task. Implementations must
         handle their own retries and logging — exceptions raised here are

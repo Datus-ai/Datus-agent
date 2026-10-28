@@ -3,7 +3,6 @@
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
 import argparse
-import asyncio
 import csv
 import os
 import shutil
@@ -19,18 +18,24 @@ from datus.models.base import LLMBaseModel
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager
 from datus.schemas.batch_events import BatchEvent, BatchStage
 from datus.schemas.node_models import SqlTask
+from datus.storage.kb_retrieval import KbSearchMode, metadata_fts_enabled, resolve_kb_search_mode
 from datus.storage.metric.metric_init import init_semantic_yaml_metrics, init_success_story_metrics
 from datus.storage.metric.store import MetricRAG
-from datus.storage.schema_metadata import SchemaWithValueRAG
+from datus.storage.schema_metadata import SchemaWithValueRAG, create_metadata_rag
 from datus.storage.schema_metadata.benchmark_init import init_snowflake_schema
 from datus.storage.schema_metadata.benchmark_init_bird import init_dev_schema
 from datus.storage.schema_metadata.local_init import init_local_schema
+from datus.storage.semantic_dataset.store import SemanticDatasetRAG
 from datus.storage.semantic_model.semantic_model_init import (
     init_semantic_yaml_semantic_model,
     init_success_story_semantic_model,
+    refresh_success_story_semantic_model_profile,
+    sync_semantic_yaml_tree,
 )
-from datus.storage.semantic_model.store import SemanticModelRAG
+from datus.storage.semantic_model.semantic_modeling_init import init_success_story_semantic_modeling
 from datus.tools.db_tools.db_manager import DBManager, db_manager_instance
+from datus.utils.benchmark_artifacts import allocate_benchmark_attempt, finalize_benchmark_attempt
+from datus.utils.benchmark_trajectory import write_benchmark_trajectory
 from datus.utils.benchmark_utils import load_benchmark_tasks
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.json_utils import to_str
@@ -185,6 +190,106 @@ class Agent:
         """
         runner = self.create_workflow_runner(check_db=check_db, run_id=run_id)
         return runner.run(sql_task=sql_task, check_storage=check_storage)
+
+    def _write_benchmark_trajectory(self, attempt, workflow, exception=None):
+        """Write the native v1 trajectory; return its path or None on failure."""
+        try:
+            return write_benchmark_trajectory(
+                attempt,
+                workflow=workflow,
+                agent_config=self.global_config,
+                exception=exception,
+            )
+        except Exception:
+            logger.exception("Failed to write benchmark trajectory for task %s", attempt.task_id)
+            return None
+
+    def _run_benchmark_task(
+        self,
+        sql_task: SqlTask,
+        *,
+        run_id: str,
+        check_storage: bool = False,
+        check_db: bool = True,
+    ) -> dict:
+        """Run one benchmark task and always finalize its versioned manifest."""
+        datasource = sql_task.datasource or self.global_config.current_datasource
+        save_run_root = self.global_config.save_run_dir(datasource, run_id)
+        trajectory_run_root = self.global_config.trajectory_run_dir(datasource, run_id)
+        attempt = allocate_benchmark_attempt(
+            save_run_root,
+            trajectory_run_root,
+            run_id=run_id,
+            task_id=sql_task.id,
+        )
+        benchmark_task = sql_task.model_copy(
+            update={
+                "output_dir": str(attempt.output_dir),
+                "artifact_profile": "benchmark_v1",
+                "datasource": datasource,
+            }
+        )
+        runner = self.create_workflow_runner(check_db=check_db, run_id=run_id)
+
+        try:
+            result = runner.run(sql_task=benchmark_task, check_storage=check_storage)
+        except Exception as exc:
+            trajectory_path = self._write_benchmark_trajectory(attempt, runner.workflow, exception=exc)
+            try:
+                finalize_benchmark_attempt(
+                    attempt,
+                    task=benchmark_task,
+                    workflow=runner.workflow,
+                    trajectory_path=trajectory_path,
+                    agent_config=self.global_config,
+                    exception=exc,
+                    trajectory_profile="native_v1",
+                )
+            except Exception:
+                logger.exception("Failed to finalize benchmark failure manifest for task %s", benchmark_task.id)
+            raise
+
+        try:
+            trajectory_path = write_benchmark_trajectory(
+                attempt,
+                workflow=runner.workflow,
+                agent_config=self.global_config,
+            )
+        except Exception as exc:
+            # A completed native_v1 manifest must reference its trajectory, so a
+            # persistence failure fails the attempt instead of dropping the link.
+            try:
+                finalize_benchmark_attempt(
+                    attempt,
+                    task=benchmark_task,
+                    workflow=runner.workflow,
+                    trajectory_path=None,
+                    agent_config=self.global_config,
+                    exception=exc,
+                    trajectory_profile="native_v1",
+                )
+            except Exception:
+                logger.exception("Failed to finalize benchmark failure manifest for task %s", benchmark_task.id)
+            raise DatusException(
+                ErrorCode.COMMON_UNKNOWN,
+                message=f"benchmark trajectory persistence failed for task {benchmark_task.id}",
+            ) from exc
+
+        manifest_path = finalize_benchmark_attempt(
+            attempt,
+            task=benchmark_task,
+            workflow=runner.workflow,
+            trajectory_path=trajectory_path,
+            agent_config=self.global_config,
+            trajectory_profile="native_v1",
+        )
+        logger.info(
+            "Benchmark task %s attempt %s manifest saved to %s",
+            benchmark_task.id,
+            attempt.attempt_id,
+            manifest_path,
+        )
+        return result
 
     async def run_stream(
         self,
@@ -395,6 +500,36 @@ class Agent:
         selected_components = self.args.components
 
         kb_update_strategy = self.args.kb_update_strategy
+        semantic_components = {"semantic_modeling", "semantic_model", "metrics"}
+        requested_semantic_components = [
+            component for component in selected_components if component in semantic_components
+        ]
+        uses_semantic_yaml = bool(getattr(self.args, "semantic_yaml", None))
+        uses_legacy_import = uses_semantic_yaml and "semantic_modeling" not in selected_components
+        if "semantic_modeling" in selected_components and uses_semantic_yaml:
+            return {
+                "status": "failed",
+                "message": ("semantic_modeling authors from --success_story; --semantic_yaml is not supported"),
+            }
+        semantic_authoring_requested = (
+            bool(requested_semantic_components)
+            and not uses_legacy_import
+            and (kb_update_strategy not in {"check", "refresh-profile", "sync-yaml"})
+        )
+        semantic_authoring_scope = (
+            "full" if {"semantic_modeling", "metrics"}.intersection(requested_semantic_components) else "datasets"
+        )
+        semantic_execution_component = requested_semantic_components[0] if semantic_authoring_requested else None
+        semantic_execution_result = None
+        for semantic_only_strategy in ("refresh-profile", "sync-yaml"):
+            if kb_update_strategy == semantic_only_strategy and set(selected_components) != {"semantic_model"}:
+                return {
+                    "status": "failed",
+                    "message": (
+                        f"kb_update_strategy={semantic_only_strategy} is only supported with "
+                        "--components semantic_model"
+                    ),
+                }
         benchmark_platform = self.args.benchmark
         pool_size = 4 if not self.args.pool_size else self.args.pool_size
         dir_path = self.global_config.rag_storage_path()
@@ -410,26 +545,46 @@ class Agent:
             # db_name = component_dirs[component]``
             # Initialize corresponding stores
             if component == "metadata":
+                use_fts_metadata = metadata_fts_enabled(self.global_config)
+                search_mode = resolve_kb_search_mode(self.global_config)
+                needs_database_storage = not use_fts_metadata
                 if kb_update_strategy == "check":
                     if not os.path.exists(dir_path):
                         raise ValueError("metadata is not built, please run bootstrap_kb with overwrite strategy first")
                     else:
-                        self.global_config.check_init_storage_config("database")
+                        if needs_database_storage:
+                            self.global_config.check_init_storage_config("database")
 
-                        self.metadata_store = SchemaWithValueRAG(self.global_config)
-                        return {
+                        self.metadata_store = (
+                            create_metadata_rag(self.global_config)
+                            if use_fts_metadata
+                            else SchemaWithValueRAG(self.global_config)
+                        )
+                        if use_fts_metadata:
+                            self.metadata_store.check_ready()
+                        result = {
                             "status": "success",
                             "message": f"current metadata is already built, "
                             f"dir_path={dir_path},"
+                            f"search_mode={search_mode}, "
                             f"schema_size={self.metadata_store.get_schema_size()}, "
                             f"value_size={self.metadata_store.get_value_size()}",
                         }
+                        results[component] = result
+                        continue
 
-                if kb_update_strategy == "overwrite":
-                    self.global_config.save_storage_config("database")
-                else:
-                    self.global_config.check_init_storage_config("database")
-                self.metadata_store = SchemaWithValueRAG(self.global_config)
+                if needs_database_storage:
+                    if kb_update_strategy == "overwrite":
+                        self.global_config.save_storage_config("database")
+                    else:
+                        self.global_config.check_init_storage_config("database")
+                self.metadata_store = (
+                    create_metadata_rag(self.global_config)
+                    if use_fts_metadata
+                    else SchemaWithValueRAG(self.global_config)
+                )
+                if use_fts_metadata and kb_update_strategy == "incremental":
+                    self.metadata_store.check_ready()
                 if kb_update_strategy == "overwrite":
                     self.metadata_store.truncate()
 
@@ -479,16 +634,143 @@ class Agent:
                 result = {
                     "status": "success",
                     "message": f"metadata bootstrap completed, "
+                    f"search_mode={search_mode}, "
                     f"schema_size={self.metadata_store.get_schema_size()}, "
                     f"value_size={self.metadata_store.get_value_size()}",
                 }
-                return result
+                results[component] = result
+                continue
+
+            elif component in semantic_components and semantic_authoring_requested:
+                if semantic_execution_result is not None:
+                    shared_result = dict(semantic_execution_result or {})
+                    shared_details = dict(shared_result.get("details") or {})
+                    shared_details.update(
+                        {
+                            "authoring_scope": semantic_authoring_scope,
+                            "shared_execution": semantic_execution_component,
+                        }
+                    )
+                    shared_result["details"] = shared_details
+                    results[component] = shared_result
+                    continue
+                helper_kwargs = {
+                    "emit": self._emit_metrics_event,
+                    "build_mode": kb_update_strategy,
+                    "batch_size": getattr(self.args, "metrics_batch_size", 5),
+                }
+                if semantic_authoring_scope != "full":
+                    helper_kwargs["authoring_scope"] = semantic_authoring_scope
+                successful, error_message, details = init_success_story_semantic_modeling(
+                    self.global_config,
+                    self.args.success_story,
+                    subject_tree,
+                    **helper_kwargs,
+                )
+                if successful:
+                    details = details or {}
+                    result = {
+                        "status": "success",
+                        "message": (
+                            "semantic_modeling bootstrap completed, "
+                            f"semantic_dataset_count={details.get('semantic_dataset_count', 0)}, "
+                            f"metrics_count={details.get('metrics_count', 0)}, "
+                            f"sql_entries_covered={details.get('sql_entries_covered', 0)}, "
+                            f"authoring_scope={semantic_authoring_scope}"
+                        ),
+                        "details": details,
+                    }
+                else:
+                    result = {"status": "failed", "message": error_message, "details": details}
+                semantic_execution_result = result
+                results[component] = result
+                continue
+
+            elif component == "semantic_modeling":
+                # Import modes were rejected before dispatch; only check reaches this branch.
+                successful, error_message, details = init_success_story_semantic_modeling(
+                    self.global_config,
+                    self.args.success_story,
+                    subject_tree,
+                    emit=self._emit_metrics_event,
+                    build_mode=kb_update_strategy,
+                    batch_size=getattr(self.args, "metrics_batch_size", 5),
+                )
+                result = (
+                    {
+                        "status": "success",
+                        "message": (
+                            "semantic_modeling check completed, "
+                            f"semantic_dataset_count={(details or {}).get('semantic_dataset_count', 0)}, "
+                            f"metrics_count={(details or {}).get('metrics_count', 0)}"
+                        ),
+                        "details": details or {},
+                    }
+                    if successful
+                    else {"status": "failed", "message": error_message, "details": details}
+                )
+                results[component] = result
+                continue
 
             elif component == "semantic_model":
+                if kb_update_strategy == "check":
+                    result = {
+                        "status": "success",
+                        "message": (
+                            "semantic_model check completed, "
+                            f"semantic_dataset_count={SemanticDatasetRAG(self.global_config).get_size()}"
+                        ),
+                    }
+                    results[component] = result
+                    continue
+
+                if kb_update_strategy == "sync-yaml":
+                    # Plain YAML -> KB refresh: no LLM, no warehouse access.
+                    # Doubles as the rebuild path after a storage format change,
+                    # since sync_osi_to_db replaces one artifact at a time.
+                    self.global_config.check_init_storage_config("semantic_model")
+                    successful, message, synced = sync_semantic_yaml_tree(
+                        self.global_config,
+                        self.args.semantic_yaml or "",
+                    )
+                    results[component] = (
+                        {
+                            "status": "success",
+                            "message": (
+                                f"{message}, semantic_dataset_count={SemanticDatasetRAG(self.global_config).get_size()}"
+                            ),
+                        }
+                        if successful
+                        else {"status": "failed", "message": message, "synced": synced}
+                    )
+                    continue
+
+                if kb_update_strategy == "refresh-profile":
+                    self.global_config.check_init_storage_config("semantic_model")
+                    dataset_rag = SemanticDatasetRAG(self.global_config)
+                    successful, error_message, changed = refresh_success_story_semantic_model_profile(
+                        self.global_config,
+                        self.args.semantic_yaml,
+                        self.args.success_story,
+                    )
+                    if successful:
+                        result = {
+                            "status": "success",
+                            "message": (
+                                "semantic_model profile refresh completed, "
+                                f"changed_description_count={changed}, "
+                                f"semantic_dataset_count={dataset_rag.get_size()}"
+                            ),
+                            "error": error_message,
+                        }
+                    else:
+                        result = {"status": "failed", "message": error_message}
+                    results[component] = result
+                    continue
+
                 if kb_update_strategy == "overwrite":
-                    # Only clear semantic_models/{datasource} directory when NOT using --from_adapter
-                    # because MetricFlow adapter needs to read YAML files from this directory
-                    if not (hasattr(self.args, "from_adapter") and self.args.from_adapter):
+                    # Explicit YAML imports need their source files intact.
+                    if not uses_semantic_yaml:
                         semantic_yaml_dir = self.global_config.path_manager.semantic_model_path(
                             self.global_config.current_datasource
                         )
@@ -503,100 +785,88 @@ class Agent:
                     self.global_config.save_storage_config("semantic_model")
                 else:
                     self.global_config.check_init_storage_config("semantic_model")
-                temp_rag = SemanticModelRAG(self.global_config)
-                if kb_update_strategy == "overwrite":
-                    temp_rag.truncate()
+                dataset_rag = SemanticDatasetRAG(self.global_config)
+                if kb_update_strategy == "overwrite" and uses_semantic_yaml:
+                    dataset_rag.truncate()
 
                 # Initialize semantic model
-                if hasattr(self.args, "from_adapter") and self.args.from_adapter:
-                    # Pull from semantic adapter
-                    from datus.storage.semantic_model.adapter_init import init_from_adapter
-
-                    successful, error_message = asyncio.run(
-                        init_from_adapter(self.global_config, self.args.from_adapter)
-                    )
-                elif hasattr(self.args, "semantic_yaml") and self.args.semantic_yaml:
+                if uses_semantic_yaml:
                     successful, error_message = init_semantic_yaml_semantic_model(
                         self.args.semantic_yaml, self.global_config
                     )
-                else:
+                else:  # pragma: no cover - success-story authoring is routed above
                     successful, error_message = init_success_story_semantic_model(
-                        self.global_config, self.args.success_story
+                        self.global_config, self.args.success_story, build_mode=kb_update_strategy
                     )
 
                 if successful:
                     result = {
                         "status": "success",
-                        "message": f"semantic_model bootstrap completed, semantic_object_count={temp_rag.get_size()}",
+                        "message": f"semantic_model bootstrap completed, semantic_dataset_count={dataset_rag.get_size()}",
                         "error": error_message,
                     }
                 else:
                     result = {"status": "failed", "message": error_message}
-                return result
+                results[component] = result
+                continue
 
             elif component == "metrics":
+                if kb_update_strategy == "check":
+                    self.metrics_store = MetricRAG(self.global_config)
+                    result = {
+                        "status": "success",
+                        "message": f"metrics check completed, metrics_count={self.metrics_store.get_metrics_size()}",
+                    }
+                    results[component] = result
+                    continue
+
                 if kb_update_strategy == "overwrite":
-                    # Only clear semantic_models/{datasource} directory when NOT using --from_adapter
-                    # because MetricFlow adapter needs to read YAML files from this directory
-                    if not (hasattr(self.args, "from_adapter") and self.args.from_adapter):
-                        semantic_yaml_dir = self.global_config.path_manager.semantic_model_path(
-                            self.global_config.current_datasource
-                        )
-                        force = self._force_delete
-                        if semantic_yaml_dir.exists() and not safe_rmtree(
-                            semantic_yaml_dir, "semantic YAML directory", force=force
-                        ):
-                            return {
-                                "status": "cancelled",
-                                "message": "User cancelled deletion of semantic YAML directory",
-                            }
                     self.global_config.save_storage_config("metric")  # Keep compatibility
                 else:
                     self.global_config.check_init_storage_config("metric")
                 self.metrics_store = MetricRAG(self.global_config)
-                if kb_update_strategy == "overwrite":
-                    self.metrics_store.truncate()
                 self._reset_metrics_stream_state()
 
                 # Initialize metrics
-                if hasattr(self.args, "from_adapter") and self.args.from_adapter:
-                    # Pull from semantic adapter
-                    from datus.storage.metric.adapter_init import init_from_adapter
-
-                    successful, error_message = asyncio.run(
-                        init_from_adapter(self.global_config, self.args.from_adapter, subject_path=subject_tree)
-                    )
-                elif hasattr(self.args, "semantic_yaml") and self.args.semantic_yaml:
+                if uses_semantic_yaml:
                     successful, error_message = init_semantic_yaml_metrics(self.args.semantic_yaml, self.global_config)
-                else:
+                else:  # pragma: no cover - success-story authoring is routed above
                     successful, error_message, _ = init_success_story_metrics(
                         self.global_config,
                         self.args.success_story,
                         subject_tree,
                         emit=self._emit_metrics_event,
+                        build_mode=kb_update_strategy,
                         batch_size=getattr(self.args, "metrics_batch_size", 5),
                     )
 
                 if successful:
                     self.metrics_store = MetricRAG(self.global_config)
                     result = {
-                        "status": "success",
+                        "status": "partial" if error_message else "success",
                         "message": f"metrics bootstrap completed, "
                         f"metrics_count={self.metrics_store.get_metrics_size()}",
                         "error": error_message,
                     }
                 else:
                     result = {"status": "failed", "message": error_message}
-                return result
+                results[component] = result
+                continue
             elif component == "reference_sql":
-                if kb_update_strategy == "overwrite":
-                    # Also clear the sql_summaries directory (YAML files)
+                from_summaries = bool(getattr(self.args, "from_summaries", False))
+                if kb_update_strategy == "overwrite" and not from_summaries:
+                    # Also clear the sql_summaries directory (YAML files).
+                    # NEVER under --from_summaries: those YAML files are the
+                    # input this run is about to re-index, so wiping them
+                    # first would delete the corpus and index nothing.
                     sql_summary_dir = self.global_config.path_manager.sql_summary_path()
                     force = self._force_delete
                     if sql_summary_dir.exists() and not safe_rmtree(
                         sql_summary_dir, "SQL summary directory", force=force
                     ):
                         return {"status": "cancelled", "message": "User cancelled deletion of SQL summary directory"}
+                    self.global_config.save_storage_config("reference_sql")
+                elif kb_update_strategy == "overwrite":
                     self.global_config.save_storage_config("reference_sql")
                 else:
                     self.global_config.check_init_storage_config("reference_sql")
@@ -606,6 +876,18 @@ class Agent:
                 from datus.storage.reference_sql.reference_sql_init import init_reference_sql
 
                 self.reference_sql_store = ReferenceSqlRAG(self.global_config)
+                if from_summaries:
+                    # Re-index the committed summary YAML verbatim — no LLM.
+                    from datus.storage.reference_sql.reference_sql_init import init_reference_sql_from_summaries
+
+                    results[component] = init_reference_sql_from_summaries(
+                        self.reference_sql_store,
+                        self.global_config,
+                        summaries_dir=getattr(self.args, "summaries_dir", "") or "",
+                        build_mode=kb_update_strategy,
+                    )
+                    continue
+
                 if kb_update_strategy == "overwrite":
                     self.reference_sql_store.truncate()
                 self._reset_reference_sql_stream_state()
@@ -619,7 +901,8 @@ class Agent:
                     subject_tree=subject_tree,
                     emit=self._emit_reference_sql_event,
                 )
-                return result
+                results[component] = result
+                continue
             elif component == "reference_template":
                 if kb_update_strategy == "overwrite":
                     self.global_config.save_storage_config("reference_template")
@@ -643,7 +926,8 @@ class Agent:
                     subject_tree=subject_tree,
                     emit=self._emit_reference_template_event,
                 )
-                return result
+                results[component] = result
+                continue
             results[component] = True
 
         # Initialize success story storage (always created)
@@ -653,11 +937,37 @@ class Agent:
         results["success_story"] = True
 
         logger.info(f"Knowledge base components initialized successfully: {', '.join(selected_components)}")
-        return {
-            "status": "success",
-            "message": "Knowledge base initialized",
-            "components": results,
+        component_results = {key: value for key, value in results.items() if key != "success_story"}
+        if len(component_results) == 1:
+            return next(iter(component_results.values()))
+        failed = {
+            key: value
+            for key, value in component_results.items()
+            if isinstance(value, dict) and value.get("status") not in {"success", "partial", "skipped"}
         }
+        partial = any(
+            isinstance(value, dict) and value.get("status") == "partial" for value in component_results.values()
+        )
+        overall_status = "failed" if failed else ("partial" if partial else "success")
+        messages = {
+            "success": "Knowledge base initialized",
+            "partial": "Knowledge base initialized with partial results",
+            "failed": "Knowledge base initialization failed",
+        }
+        return {
+            "status": overall_status,
+            "message": messages[overall_status],
+            "components": component_results,
+        }
+
+    @staticmethod
+    def _ensure_benchmark_run_id(run_id: Optional[str]) -> str:
+        """Return the provided run id, or generate the shared timestamp-based one."""
+        if run_id:
+            return run_id
+        from datetime import datetime
+
+        return datetime.now().strftime("%Y%m%d_%H%M%S")
 
     def benchmark(self, run_id: Optional[str] = None):
         logger.info("Benchmarking begins")
@@ -670,12 +980,7 @@ class Agent:
         target_task_ids = getattr(self.args, "benchmark_task_ids", [])
         target_task_ids = set(target_task_ids) if target_task_ids else None
 
-        if not run_id:
-            from datetime import datetime
-
-            # Generate a shared run_id for this benchmark run
-            run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
-
+        run_id = self._ensure_benchmark_run_id(run_id)
         logger.info(f"Benchmark run_id: {run_id}")
         import time
 
@@ -684,7 +989,8 @@ class Agent:
             self.global_config.check_init_storage_config("metric")
             result = self.benchmark_semantic_layer(benchmark_path, target_task_ids, run_id=run_id)
         else:
-            self.global_config.check_init_storage_config("database")
+            if resolve_kb_search_mode(self.global_config) == KbSearchMode.VECTOR:
+                self.global_config.check_init_storage_config("database")
             self.global_config.check_init_storage_config("metric")
             result = self.do_benchmark(benchmark_platform, target_task_ids, run_id=run_id)
         end = time.perf_counter()
@@ -698,6 +1004,9 @@ class Agent:
     def do_benchmark(
         self, benchmark_platform: str, target_task_ids: Optional[Set[str]] = None, run_id: Optional[str] = None
     ):
+        # One shared run id per benchmark run: every task's attempt allocation and
+        # trace context must see the same non-empty identifier.
+        run_id = self._ensure_benchmark_run_id(run_id)
         db_manager = self.db_manager
         default_datasource = self.global_config.current_datasource
         self.check_db()
@@ -728,12 +1037,9 @@ class Agent:
             )
             use_tables = None if not benchmark_config.use_tables_key else task_item.get(benchmark_config.use_tables_key)
 
-            # Use hierarchical save directory structure
-            output_dir = self.global_config.get_save_run_dir(run_id) if run_id else self.global_config.output_dir
-
             trace_ctx = build_benchmark_trace_context(
                 benchmark=benchmark_platform,
-                run_id=run_id or "",
+                run_id=run_id,
                 task_id=task_id,
                 workflow=getattr(self.args, "workflow", None),
                 context_type=getattr(self.args, "context_type", None),
@@ -745,7 +1051,7 @@ class Agent:
                 },
             )
             with trace_context(trace_ctx, replace=True):
-                result = self.run(
+                result = self._run_benchmark_task(
                     SqlTask(
                         id=task_id,
                         datasource=task_datasource,
@@ -754,7 +1060,6 @@ class Agent:
                         catalog_name=sql_context["catalog_name"],
                         database_name=sql_context["database_name"],
                         schema_name=sql_context["schema_name"],
-                        output_dir=output_dir,
                         current_date=self.args.current_date,
                         tables=use_tables,
                         external_knowledge=(
@@ -764,11 +1069,10 @@ class Agent:
                         ),
                         schema_linking_type="full",
                     ),
-                    check_storage=False,
                     check_db=False,
                     run_id=run_id,
                 )
-            logger.info(f"Finish benchmark with {task_id}, file saved in {output_dir}/{task_id}.csv.")
+            logger.info("Finish benchmark with %s", task_id)
             return task_id, result
 
         max_workers = getattr(self.args, "max_workers", 1) or 1
@@ -804,6 +1108,8 @@ class Agent:
     def benchmark_semantic_layer(
         self, benchmark_path: str, target_task_ids: Optional[Set[str]] = None, run_id: Optional[str] = None
     ):
+        # One shared run id per benchmark run: attempt allocation rejects empty ids.
+        run_id = self._ensure_benchmark_run_id(run_id)
         task_file = self.args.testing_set
         self._check_benchmark_file(task_file)
 
@@ -835,11 +1141,8 @@ class Agent:
 
             combined_ext_knowledge = task.get("external_knowledge", "") or ""
 
-            # Use hierarchical save directory structure
-            output_dir = self.global_config.get_save_run_dir(run_id) if run_id else self.global_config.output_dir
-
             subject_path = None
-            self.run(
+            self._run_benchmark_task(
                 SqlTask(
                     id=task_id,
                     database_type=current_db_config.type,
@@ -847,14 +1150,13 @@ class Agent:
                     database_name=current_db_config.database,
                     schema_name=current_db_config.schema,
                     subject_path=subject_path,
-                    output_dir=output_dir,
                     external_knowledge=combined_ext_knowledge,
                     current_date=self.args.current_date,
                 ),
                 run_id=run_id,
             )
 
-            logger.info(f"Finish benchmark with {task_id}, file saved in {output_dir}/{task_id}.csv.")
+            logger.info("Finish benchmark with %s", task_id)
 
         return {"status": "success", "message": "Benchmark tasks executed successfully"}
 

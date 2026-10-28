@@ -11,13 +11,15 @@ results from stdin, enabling external callers to provide tool results.
 
 from __future__ import annotations
 
+import asyncio
+import time
 from fnmatch import fnmatch
 from typing import TYPE_CHECKING, Dict, List, Optional, Set, Tuple
 
 from agents import FunctionTool
 from agents.tool_context import ToolContext
 
-from datus.tools.proxy.tool_result_channel import ToolResultChannel
+from datus.tools.proxy.tool_result_channel import DEFAULT_RESULT_TIMEOUT, ToolResultChannel
 from datus.utils.loggings import get_logger
 
 if TYPE_CHECKING:
@@ -25,15 +27,14 @@ if TYPE_CHECKING:
 
 logger = get_logger(__name__)
 
-# Node types whose GenerationHooks depend on local filesystem tools (write_file, etc.)
+# Node types whose success-path finalizers depend on local filesystem tools (write_file, etc.)
 # Their filesystem_tools must NOT be proxied; other tools are still proxied.
 # gen_visual_report / gen_visual_dashboard author their render/*.jsx tree
 # server-side and surface it via ``/api/v1/(report|dashboard)/detail``; proxying
 # write_file / edit_file to the browser would round-trip every chunk for no
 # benefit, so the same exclusion applies to them.
 _FS_DEPENDENT_NODES: Set[str] = {
-    "gen_semantic_model",
-    "gen_metrics",
+    "semantic_modeling",
     "gen_sql_summary",
     "gen_visual_report",
     "gen_visual_dashboard",
@@ -45,9 +46,38 @@ def create_proxy_tool(original: FunctionTool, channel: ToolResultChannel) -> Fun
 
     async def proxy_invoke(tool_ctx: ToolContext, args_str: str) -> dict:
         call_id = tool_ctx.tool_call_id
-        logger.debug(f"Proxy tool '{original.name}' waiting for result, call_id={call_id}")
+        started = time.monotonic()
+        logger.info(
+            f"Proxy tool '{original.name}' awaiting client result, call_id={call_id}, timeout={DEFAULT_RESULT_TIMEOUT}s"
+        )
         try:
-            return await channel.wait_for(call_id)
+            result = await channel.wait_for(call_id, timeout=DEFAULT_RESULT_TIMEOUT)
+            waited_ms = int((time.monotonic() - started) * 1000)
+            logger.info(
+                f"Proxy tool '{original.name}' received client result, call_id={call_id}, waited_ms={waited_ms}"
+            )
+            return result
+        except asyncio.TimeoutError:
+            tool_ctx._datus_tool_status = "proxy_timeout"
+            waited_ms = int((time.monotonic() - started) * 1000)
+            logger.warning(
+                f"Proxy tool '{original.name}' timed out after {DEFAULT_RESULT_TIMEOUT}s "
+                f"waiting for client result, call_id={call_id}, waited_ms={waited_ms}"
+            )
+            return {
+                "success": 0,
+                "error": (
+                    f"'{original.name}' expired: no result came back from the client within "
+                    f"{int(DEFAULT_RESULT_TIMEOUT)}s, and this call can no longer be completed — "
+                    "a confirmation pressed on that card now is dropped. Whether the client "
+                    "actually performed it is UNKNOWN: it may have run and reported too late, or "
+                    "the user may accept the card after this and it runs without reaching us. "
+                    "Check the real state (read the file, list the directory) before concluding "
+                    "anything or repeating the work. If it is still needed, issue a fresh call, "
+                    "and tell the user what they have to confirm."
+                ),
+                "result": None,
+            }
         except RuntimeError as e:
             logger.warning(f"Proxy tool '{original.name}' error: {e}, call_id={call_id}")
             return {"success": 0, "error": str(e), "result": None}
@@ -88,7 +118,7 @@ def apply_proxy_tools(
     parsed = _parse_patterns(proxy_patterns)
     registry = node.tool_registry.to_dict()
 
-    # Auto-detect nodes whose GenerationHooks depend on filesystem tools
+    # Auto-detect nodes whose finalizers depend on filesystem tools
     exclude_categories: Optional[Set[str]] = None
     node_name = getattr(node, "get_node_name", lambda: "")()
     if node_name in _FS_DEPENDENT_NODES:
@@ -124,12 +154,15 @@ def apply_proxy_tools(
 # ── Internal helpers ─────────────────────────────────────────────────
 
 
-def _parse_patterns(patterns: List[str]) -> List[Tuple[Optional[str], str]]:
+def parse_tool_patterns(patterns: List[str]) -> List[Tuple[Optional[str], str]]:
     """Parse ``"category.method_glob"`` patterns into ``(category, method_glob)`` tuples.
 
     - ``"filesystem_tools.*"``  → ``("filesystem_tools", "*")``
     - ``"read_file"``           → ``(None, "read_file")``
     - ``"*"``                   → ``(None, "*")``
+
+    Public API shared with the tool middleware so both the proxy and the
+    transformer layers speak one pattern syntax.
     """
     result: List[Tuple[Optional[str], str]] = []
     for p in patterns:
@@ -141,8 +174,11 @@ def _parse_patterns(patterns: List[str]) -> List[Tuple[Optional[str], str]]:
     return result
 
 
-def _matches(tool_name: str, registry: Dict[str, str], patterns: List[Tuple[Optional[str], str]]) -> bool:
-    """Check if a tool name matches any of the parsed patterns."""
+def tool_name_matches(tool_name: str, registry: Dict[str, str], patterns: List[Tuple[Optional[str], str]]) -> bool:
+    """Check if a tool name matches any of the parsed patterns.
+
+    Public API shared with the tool middleware (see :func:`parse_tool_patterns`).
+    """
     category = registry.get(tool_name)
 
     for pat_cat, pat_method in patterns:
@@ -156,3 +192,10 @@ def _matches(tool_name: str, registry: Dict[str, str], patterns: List[Tuple[Opti
                 return True
 
     return False
+
+
+# Backward-compatible private aliases: existing in-module call sites and the
+# proxy unit tests reference these names. New callers should use the public
+# ``parse_tool_patterns`` / ``tool_name_matches`` above.
+_parse_patterns = parse_tool_patterns
+_matches = tool_name_matches

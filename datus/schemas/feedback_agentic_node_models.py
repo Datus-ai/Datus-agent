@@ -14,10 +14,11 @@ from typing import Optional
 
 from pydantic import Field
 
-from datus.schemas.base import BaseInput, BaseResult
+from datus.schemas.at_context import AtContextInput
+from datus.schemas.base import BaseResult
 
 
-class FeedbackNodeInput(BaseInput):
+class FeedbackNodeInput(AtContextInput):
     """Input model for feedback node."""
 
     user_message: str = Field(..., description="Feedback instruction (e.g., 'analyze and archive')")

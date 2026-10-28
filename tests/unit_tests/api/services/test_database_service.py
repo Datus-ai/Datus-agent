@@ -1,11 +1,224 @@
 """Tests for datus.api.services.database_service — datasource management."""
 
+import threading
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
+from itertools import chain, repeat
+from pathlib import Path
+from types import SimpleNamespace
+from typing import Iterator, NoReturn
+from unittest.mock import MagicMock, patch
+
 import pytest
+import yaml
 
 from datus.api.models.base_models import Result
 from datus.api.models.database_models import ListDatabasesInput
+from datus.api.models.table_models import (
+    SaveSemanticModelInput,
+    ValidateSemanticModelData,
+    ValidateSemanticModelInput,
+)
+from datus.api.services import database_service
 from datus.api.services.database_service import DatasourceService
+from datus.storage.semantic_model.artifact_file import artifact_revision, semantic_artifact_lock
 from datus.tools.db_tools.db_manager import DBManager
+from datus.tools.func_tool.metric_filesystem_tools import MetricFilesystemFuncTool
+from datus.tools.func_tool.osi_target_tools import OsiSemanticModelTargetState
+
+
+def _service(*, models_root: Path | None = None) -> DatasourceService:
+    svc = DatasourceService.__new__(DatasourceService)
+    svc.agent_config = SimpleNamespace(
+        home="/datus-home",
+        current_datasource="warehouse",
+        path_manager=SimpleNamespace(semantic_models_dir=models_root),
+    )
+    return svc
+
+
+def _write_model(
+    models_root: Path,
+    content: str,
+    *,
+    datasource: str = "warehouse",
+    name: str = "orders.yml",
+) -> tuple[Path, str]:
+    """Create one artifact and return ``(absolute path, API selector)``."""
+
+    target = models_root / datasource / name
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(content)
+    return target, f"subject/semantic_models/{datasource}/{name}"
+
+
+def _osi_yaml(*, metric_name: str = "") -> str:
+    metrics = f"\n    metrics:\n      - name: {metric_name}" if metric_name else "\n    metrics: []"
+    return (
+        "version: 1.0.0\n"
+        "semantic_model:\n"
+        "  - name: orders\n"
+        "    datasets:\n"
+        "      - name: orders\n"
+        "        source: orders"
+        f"{metrics}\n"
+    )
+
+
+def _flat_osi_yaml(*, metric_name: str = "") -> str:
+    model = {
+        "version": "0.2.0.dev0",
+        "name": "orders",
+        "datasets": [
+            {
+                "name": "orders",
+                "source": "main.orders",
+                "fields": [
+                    {
+                        "name": "id",
+                        "expression": {"dialects": [{"dialect": "ANSI_SQL", "expression": "id"}]},
+                    }
+                ],
+            }
+        ],
+    }
+    if metric_name:
+        model["metrics"] = [
+            {
+                "name": metric_name,
+                "expression": {"dialects": [{"dialect": "ANSI_SQL", "expression": "COUNT(orders.id)"}]},
+            }
+        ]
+    return yaml.safe_dump(model, sort_keys=False)
+
+
+class TestFlatSemanticModelApi:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("metric_name", ["", "order_count"])
+    async def test_validate_flat_model_with_native_dosi(self, tmp_path, metric_name):
+        """A document accepted by Dosi must not be rejected for lacking a wrapper."""
+        svc = _service(models_root=tmp_path)
+        content = _flat_osi_yaml(metric_name=metric_name)
+        target, selector = _write_model(tmp_path, content)
+
+        result = await svc.validate_semantic_model(
+            ValidateSemanticModelInput(semantic_model_file=selector, semantic_model_name="orders", yaml=content)
+        )
+
+        assert result.success is True
+        assert result.data == ValidateSemanticModelData(valid=True, invalid_message=None)
+        assert target.read_text() == content
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("metric_name", ["", "order_count"])
+    async def test_save_flat_model_preserves_format_and_validation_scope(self, tmp_path, metric_name):
+        svc = _service(models_root=tmp_path)
+        original = _flat_osi_yaml()
+        target, selector = _write_model(tmp_path, original)
+        content = _flat_osi_yaml(metric_name=metric_name) + "description: Updated model\n"
+        svc._full_osi_validation = MagicMock(return_value=(True, {"valid": True, "issues": []}, ""))
+
+        with patch("datus.tools.func_tool.generation_tools.GenerationTools") as tools_cls:
+            tools_cls.return_value.sync_osi_to_db.return_value = {"success": True}
+            result = await svc.save_semantic_model(
+                SaveSemanticModelInput(
+                    semantic_model_file=selector,
+                    semantic_model_name="orders",
+                    yaml=content,
+                    expected_revision=artifact_revision(original.encode()),
+                )
+            )
+
+        assert result.success is True
+        assert result.data.status == "synced"
+        assert result.data.semantic_model_name == "orders"
+        assert result.data.revision == artifact_revision(content.encode())
+        assert target.read_text() == content
+        svc._full_osi_validation.assert_called_once_with(
+            svc.agent_config, semantic_model_name="orders", has_metrics=bool(metric_name)
+        )
+        tools_cls.return_value.sync_osi_to_db.assert_called_once_with(
+            str(target), include_semantic_objects=True, include_metrics=True
+        )
+
+    def test_get_flat_model_returns_declared_name_and_revision(self, tmp_path):
+        svc = _service(models_root=tmp_path)
+        content = _flat_osi_yaml()
+        _, selector = _write_model(tmp_path, content)
+
+        result = svc.get_semantic_model(selector)
+
+        assert result.success is True
+        assert result.data.semantic_model_name == "orders"
+        assert result.data.yaml == content
+        assert result.data.revision == artifact_revision(content.encode())
+
+    @pytest.mark.asyncio
+    async def test_save_flat_model_rejects_target_name_mismatch_without_writing(self, tmp_path):
+        svc = _service(models_root=tmp_path)
+        original = _flat_osi_yaml()
+        target, selector = _write_model(tmp_path, original)
+
+        result = await svc.save_semantic_model(
+            SaveSemanticModelInput(
+                semantic_model_file=selector,
+                semantic_model_name="another_model",
+                yaml=original + "description: Must not be written\n",
+            )
+        )
+
+        assert result.success is False
+        assert result.data.status == "validation_failed"
+        assert result.data.yaml_saved is False
+        assert "requested target is 'another_model'" in result.errorMessage
+        assert target.read_text() == original
+
+    @pytest.mark.asyncio
+    async def test_validate_flat_model_preserves_native_validation_errors(self, tmp_path):
+        svc = _service(models_root=tmp_path)
+        _, selector = _write_model(tmp_path, _flat_osi_yaml())
+        content = _flat_osi_yaml(metric_name="order_count").replace("COUNT(orders.id)", "COUNT(missing.id)")
+
+        result = await svc.validate_semantic_model(
+            ValidateSemanticModelInput(semantic_model_file=selector, yaml=content)
+        )
+
+        assert result.success is True
+        assert result.data.valid is False
+        assert "missing" in "; ".join(result.data.invalid_message)
+
+    @pytest.mark.asyncio
+    async def test_validate_flat_model_rejects_duplicate_keys_in_original_source(self, tmp_path):
+        svc = _service(models_root=tmp_path)
+        _, selector = _write_model(tmp_path, _flat_osi_yaml())
+        content = _flat_osi_yaml() + "name: overwritten_name\n"
+
+        result = await svc.validate_semantic_model(
+            ValidateSemanticModelInput(semantic_model_file=selector, yaml=content)
+        )
+
+        assert result.success is True
+        assert result.data.valid is False
+        assert "duplicate" in "; ".join(result.data.invalid_message).lower()
+
+    @pytest.mark.parametrize(
+        "content",
+        [
+            "[]",
+            "name: not_a_model",
+            "semantic_model: []",
+            "semantic_model: [{name: first}, {name: second}]",
+            "semantic_model: [{datasets: []}]",
+            "datasets: []",
+            "semantic_model: [",
+        ],
+    )
+    def test_candidate_identity_requires_one_named_model(self, content):
+        name, has_metrics, error = DatasourceService._osi_candidate_identity(content)
+
+        assert name is None
+        assert has_metrics is False
+        assert error
 
 
 class TestDatasourceServiceInit:
@@ -32,14 +245,13 @@ class TestDatasourceServiceInit:
         svc = DatasourceService(agent_config=real_agent_config)
         assert isinstance(svc.db_manager, DBManager)
 
-    def test_init_without_datasource_defers_semantic_rag(self, real_agent_config):
-        """Init does not open datasource-scoped semantic storage before datasource selection."""
+    def test_init_without_datasource(self, real_agent_config):
+        """Init tolerates a config with no datasource selected."""
         real_agent_config.current_datasource = ""
 
         svc = DatasourceService(agent_config=real_agent_config)
 
         assert svc.current_datasource == ""
-        assert svc.semantic_rag is None
 
 
 class TestDatabaseServiceGetDatabaseType:
@@ -59,32 +271,359 @@ class TestDatabaseServiceGetDatabaseType:
         assert ds_id == svc.current_db_name
 
 
-class TestGetSemanticModel:
-    """Tests for get_semantic_model and validate_semantic_model."""
+class TestSemanticLayerServiceBranches:
+    @pytest.mark.asyncio
+    async def test_validate_semantic_model_with_dosi_validator(self, tmp_path):
+        svc = _service(models_root=tmp_path)
+        _yaml_file, selector = _write_model(tmp_path, _osi_yaml())
+        svc._validate_dosi_semantic_yaml = MagicMock(return_value=(False, ["native Dosi validation failed"]))
+        request = ValidateSemanticModelInput(
+            semantic_model_file=selector,
+            yaml=_osi_yaml(),
+        )
 
-    def test_get_semantic_model_nonexistent(self, real_agent_config):
-        """get_semantic_model for nonexistent table returns empty result."""
-        svc = DatasourceService(agent_config=real_agent_config)
-        result = svc.get_semantic_model("nonexistent_table_xyz")
-        # Should return success=True with no data, or success=False
-        assert isinstance(result, Result)
+        result = await svc.validate_semantic_model(request)
 
-    def test_get_semantic_model_for_known_table(self, real_agent_config):
-        """get_semantic_model for known table (may return empty if no semantic model built)."""
-        svc = DatasourceService(agent_config=real_agent_config)
-        result = svc.get_semantic_model("schools")
-        # The table exists but may not have a semantic model file
-        assert isinstance(result, Result)
+        assert result.success is True
+        assert result.data == ValidateSemanticModelData(
+            valid=False,
+            invalid_message=["native Dosi validation failed"],
+        )
+        svc._validate_dosi_semantic_yaml.assert_called_once_with(request.yaml)
 
     @pytest.mark.asyncio
-    async def test_validate_semantic_model_nonexistent(self, real_agent_config):
-        """validate_semantic_model for nonexistent table returns error."""
-        from datus.api.models.table_models import SemanticModelInput
+    async def test_validate_semantic_model_rejects_unknown_file(self, tmp_path):
+        svc = _service(models_root=tmp_path)
 
-        svc = DatasourceService(agent_config=real_agent_config)
-        request = SemanticModelInput(table="nonexistent_xyz", yaml="metric:\n  name: test\n")
-        result = await svc.validate_semantic_model(request)
+        result = await svc.validate_semantic_model(
+            ValidateSemanticModelInput(
+                semantic_model_file="subject/semantic_models/warehouse/ghost.yml",
+                yaml=_osi_yaml(),
+            )
+        )
+
         assert result.success is False
+        assert result.errorCode == "INVALID_PARAMETERS"
+        assert "not found" in result.errorMessage
+
+    @pytest.mark.asyncio
+    async def test_save_semantic_model_uses_osi_sync_tool(self, tmp_path):
+        svc = _service(models_root=tmp_path)
+        yaml_file, selector = _write_model(
+            tmp_path,
+            "version: 1.0.0\nsemantic_model:\n  - name: orders\n    datasets: []\n",
+        )
+        svc._validate_dosi_semantic_yaml = MagicMock(return_value=(True, []))
+        svc._full_osi_validation = MagicMock(return_value=(True, {"valid": True, "issues": []}, ""))
+        request = SaveSemanticModelInput(
+            semantic_model_file=selector,
+            yaml=(
+                "version: 1.0.0\nsemantic_model:\n  - name: orders\n    datasets:\n"
+                "      - name: orders\n        source: orders\n    metrics: []\n"
+            ),
+        )
+
+        with patch("datus.tools.func_tool.generation_tools.GenerationTools") as tools_cls:
+            tools_cls.return_value.sync_osi_to_db.return_value = {
+                "success": True,
+                "semantic_objects": 1,
+                "metric_names": [],
+            }
+            result = await svc.save_semantic_model(request)
+
+        assert result.success is True
+        assert yaml_file.read_text(encoding="utf-8") == request.yaml
+        assert result.data.status == "synced"
+        assert result.data.revision == artifact_revision(request.yaml.encode())
+        tools_cls.assert_called_once_with(agent_config=svc.agent_config)
+        tools_cls.return_value.sync_osi_to_db.assert_called_once_with(
+            str(yaml_file),
+            include_semantic_objects=True,
+            include_metrics=True,
+        )
+
+    @pytest.mark.asyncio
+    async def test_save_semantic_model_rejects_stale_revision(self, tmp_path):
+        svc = _service(models_root=tmp_path)
+        original = _osi_yaml()
+        yaml_file, selector = _write_model(tmp_path, original)
+
+        result = await svc.save_semantic_model(
+            SaveSemanticModelInput(
+                semantic_model_file=selector,
+                yaml=_osi_yaml(metric_name="order_count"),
+                expected_revision="sha256:stale",
+            )
+        )
+
+        assert result.success is False
+        assert result.errorCode == "SEMANTIC_MODEL_REVISION_CONFLICT"
+        assert result.data.status == "conflict"
+        assert result.data.revision == artifact_revision(original.encode())
+        assert yaml_file.read_text() == original
+
+    def test_api_save_serializes_against_agent_metric_mutation(self, tmp_path):
+        svc = _service(models_root=tmp_path)
+        original = _osi_yaml()
+        updated = _osi_yaml(metric_name="api_metric")
+        yaml_file, selector = _write_model(tmp_path, original)
+        svc._validate_dosi_semantic_yaml = MagicMock(return_value=(True, []))
+
+        validation_started = threading.Event()
+        release_validation = threading.Event()
+
+        def validate_live_candidate(*_args, **_kwargs):
+            validation_started.set()
+            assert release_validation.wait(timeout=5)
+            return True, {"valid": True, "issues": []}, ""
+
+        svc._full_osi_validation = MagicMock(side_effect=validate_live_candidate)
+        target_state = OsiSemanticModelTargetState()
+        target_state.select(
+            {
+                "semantic_model_name": "orders",
+                "semantic_model_file": "subject/semantic_models/warehouse/orders.yml",
+                "absolute_path": str(yaml_file.resolve()),
+                "artifact_sha256": artifact_revision(original.encode()).removeprefix("sha256:"),
+            },
+            mode="bound",
+        )
+        agent_tool = MetricFilesystemFuncTool(
+            root_path=str(yaml_file.parent),
+            current_node="semantic_modeling",
+            osi_target_state=target_state,
+        )
+        agent_lock_attempted = threading.Event()
+
+        @contextmanager
+        def observed_agent_lock(path):
+            agent_lock_attempted.set()
+            with semantic_artifact_lock(path):
+                yield
+
+        def mutate_from_agent():
+            return agent_tool.upsert_osi_metrics("orders.yml", '[{"name":"agent_metric"}]')
+
+        with (
+            patch(
+                "datus.tools.func_tool.metric_filesystem_tools.semantic_artifact_lock",
+                observed_agent_lock,
+            ),
+            patch("datus.tools.func_tool.generation_tools.GenerationTools") as tools_cls,
+        ):
+            tools_cls.return_value.sync_osi_to_db.return_value = {"success": True}
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                api_future = executor.submit(
+                    svc._save_semantic_model_sync,
+                    SaveSemanticModelInput(
+                        semantic_model_file=selector,
+                        yaml=updated,
+                        expected_revision=artifact_revision(original.encode()),
+                    ),
+                )
+                assert validation_started.wait(timeout=5)
+                agent_future = executor.submit(mutate_from_agent)
+                assert agent_lock_attempted.wait(timeout=5)
+                try:
+                    assert not agent_future.done()
+                finally:
+                    release_validation.set()
+                api_result = api_future.result(timeout=5)
+                agent_result = agent_future.result(timeout=5)
+
+        assert api_result.success is True
+        assert agent_result.success == 0
+        assert "changed after selection" in agent_result.error
+        assert yaml_file.read_text() == updated
+
+    @pytest.mark.asyncio
+    async def test_save_semantic_model_restores_yaml_after_full_validation_failure(self, tmp_path):
+        svc = _service(models_root=tmp_path)
+        original = _osi_yaml()
+        yaml_file, selector = _write_model(tmp_path, original)
+        svc._validate_dosi_semantic_yaml = MagicMock(return_value=(True, []))
+        svc._full_osi_validation = MagicMock(
+            return_value=(False, {"valid": False, "issues": [{"message": "bad metric"}]}, "bad metric")
+        )
+
+        result = await svc.save_semantic_model(
+            SaveSemanticModelInput(semantic_model_file=selector, yaml=_osi_yaml(metric_name="bad_metric"))
+        )
+
+        assert result.success is False
+        assert result.errorCode == "SEMANTIC_MODEL_INVALID"
+        assert result.data.yaml_saved is False
+        assert yaml_file.read_text() == original
+
+    @pytest.mark.asyncio
+    async def test_save_semantic_model_restores_yaml_when_full_validation_raises(self, tmp_path):
+        svc = _service(models_root=tmp_path)
+        original = _osi_yaml()
+        yaml_file, selector = _write_model(tmp_path, original)
+        svc._validate_dosi_semantic_yaml = MagicMock(return_value=(True, []))
+        svc._full_osi_validation = MagicMock(side_effect=RuntimeError("validator unavailable"))
+
+        result = await svc.save_semantic_model(
+            SaveSemanticModelInput(semantic_model_file=selector, yaml=_osi_yaml(metric_name="order_count"))
+        )
+
+        assert result.success is False
+        assert result.errorCode == "INTERNAL_COMMAND_ERROR"
+        assert result.data.retryable is True
+        assert result.data.yaml_saved is False
+        assert yaml_file.read_text() == original
+
+    @pytest.mark.asyncio
+    async def test_save_semantic_model_keeps_valid_yaml_when_sync_fails(self, tmp_path):
+        svc = _service(models_root=tmp_path)
+        yaml_file, selector = _write_model(tmp_path, _osi_yaml())
+        svc._validate_dosi_semantic_yaml = MagicMock(return_value=(True, []))
+        svc._full_osi_validation = MagicMock(return_value=(True, {"valid": True, "issues": []}, ""))
+        updated = _osi_yaml(metric_name="order_count")
+
+        with patch("datus.tools.func_tool.generation_tools.GenerationTools") as tools_cls:
+            tools_cls.return_value.sync_osi_to_db.return_value = {"success": False, "error": "storage down"}
+            result = await svc.save_semantic_model(SaveSemanticModelInput(semantic_model_file=selector, yaml=updated))
+
+        assert result.success is False
+        assert result.errorCode == "SEMANTIC_MODEL_SYNC_FAILED"
+        assert result.data.status == "saved_not_synced"
+        assert result.data.retryable is True
+        assert result.data.revision == artifact_revision(updated.encode())
+        assert yaml_file.read_text() == updated
+
+    @pytest.mark.asyncio
+    async def test_save_semantic_model_unchanged_yaml_still_repairs_kb(self, tmp_path):
+        svc = _service(models_root=tmp_path)
+        content = _osi_yaml()
+        _yaml_file, selector = _write_model(tmp_path, content)
+        svc._validate_dosi_semantic_yaml = MagicMock(return_value=(True, []))
+        svc._full_osi_validation = MagicMock(return_value=(True, {"valid": True, "issues": []}, ""))
+
+        with patch("datus.tools.func_tool.generation_tools.GenerationTools") as tools_cls:
+            tools_cls.return_value.sync_osi_to_db.return_value = {"success": True}
+            result = await svc.save_semantic_model(
+                SaveSemanticModelInput(
+                    semantic_model_file=selector,
+                    yaml=content,
+                    expected_revision=artifact_revision(content.encode()),
+                )
+            )
+
+        assert result.success is True
+        tools_cls.return_value.sync_osi_to_db.assert_called_once()
+
+
+class TestGetSemanticModel:
+    """Tests for the file-addressed get_semantic_model."""
+
+    def test_get_semantic_model_returns_stable_file_identity_and_revision(self, tmp_path):
+        svc = _service(models_root=tmp_path)
+        content = _osi_yaml()
+        _yaml_file, selector = _write_model(tmp_path, content)
+
+        result = svc.get_semantic_model(selector)
+
+        assert result.success is True
+        assert result.data.yaml == content
+        assert result.data.semantic_model_name == "orders"
+        assert result.data.semantic_model_file == "subject/semantic_models/warehouse/orders.yml"
+        assert result.data.revision == artifact_revision(content.encode())
+
+    def test_get_semantic_model_reaches_a_non_active_datasource(self, tmp_path):
+        """Resolution spans the whole tree, not just the first configured datasource."""
+        svc = _service(models_root=tmp_path)
+        content = _osi_yaml()
+        _yaml_file, selector = _write_model(tmp_path, content, datasource="lakehouse")
+
+        result = svc.get_semantic_model(selector)
+
+        assert result.success is True
+        assert result.data.semantic_model_file == "subject/semantic_models/lakehouse/orders.yml"
+
+    @pytest.mark.asyncio
+    async def test_save_semantic_model_rejects_a_non_active_datasource(self, tmp_path):
+        """Reads span every datasource; writes must stay on the active one.
+
+        The validators and the knowledge-base sync are all scoped to
+        ``current_datasource``, so saving another datasource's artifact would
+        file its rows under the wrong datasource.
+        """
+        svc = _service(models_root=tmp_path)
+        _yaml_file, selector = _write_model(tmp_path, _osi_yaml(), datasource="lakehouse")
+
+        result = await svc.save_semantic_model(SaveSemanticModelInput(semantic_model_file=selector, yaml=_osi_yaml()))
+
+        assert result.success is False
+        assert result.errorCode == "INVALID_PARAMETERS"
+        assert "lakehouse" in result.errorMessage
+        assert "warehouse" in result.errorMessage
+
+    @pytest.mark.asyncio
+    async def test_validate_semantic_model_rejects_a_non_active_datasource(self, tmp_path):
+        svc = _service(models_root=tmp_path)
+        _yaml_file, selector = _write_model(tmp_path, _osi_yaml(), datasource="lakehouse")
+
+        result = await svc.validate_semantic_model(
+            ValidateSemanticModelInput(semantic_model_file=selector, yaml=_osi_yaml())
+        )
+
+        assert result.success is False
+        assert result.errorCode == "INVALID_PARAMETERS"
+
+    def test_get_semantic_model_accepts_a_selector_without_the_subject_prefix(self, tmp_path):
+        svc = _service(models_root=tmp_path)
+        _yaml_file, _selector = _write_model(tmp_path, _osi_yaml())
+
+        result = svc.get_semantic_model("warehouse/orders.yml")
+
+        assert result.success is True
+        assert result.data.semantic_model_file == "subject/semantic_models/warehouse/orders.yml"
+
+    def test_get_semantic_model_rejects_unknown_file(self, tmp_path):
+        svc = _service(models_root=tmp_path)
+
+        result = svc.get_semantic_model("subject/semantic_models/warehouse/ghost.yml")
+
+        assert result.success is False
+        assert result.errorCode == "INVALID_PARAMETERS"
+        assert isinstance(result, Result)
+
+    def test_get_semantic_model_rejects_absolute_path(self, tmp_path):
+        svc = _service(models_root=tmp_path)
+        yaml_file, _selector = _write_model(tmp_path, _osi_yaml())
+
+        result = svc.get_semantic_model(str(yaml_file))
+
+        assert result.success is False
+        assert result.errorCode == "INVALID_PARAMETERS"
+        assert "project-relative" in result.errorMessage
+
+    def test_get_semantic_model_rejects_non_yaml_suffix(self, tmp_path):
+        svc = _service(models_root=tmp_path)
+        (tmp_path / "warehouse").mkdir(parents=True, exist_ok=True)
+        (tmp_path / "warehouse" / "orders.txt").write_text("nope")
+
+        result = svc.get_semantic_model("subject/semantic_models/warehouse/orders.txt")
+
+        assert result.success is False
+        assert ".yml" in result.errorMessage
+
+    @pytest.mark.asyncio
+    async def test_save_semantic_model_rejects_file_escape(self, tmp_path):
+        svc = _service(models_root=tmp_path)
+
+        result = await svc.save_semantic_model(
+            SaveSemanticModelInput(
+                yaml=_osi_yaml(),
+                semantic_model_file="../outside.yml",
+                semantic_model_name="orders",
+            )
+        )
+
+        assert result.success is False
+        assert result.errorCode == "INVALID_PARAMETERS"
+        assert "escapes" in result.errorMessage
 
 
 class TestListDatabases:
@@ -162,6 +701,384 @@ class TestListDatabases:
         result = svc.list_databases(request)
         assert result.data.current_database == "california_schools"
 
+    def test_list_databases_stamps_the_datasource(self, real_agent_config):
+        """Every row names the datasource it came from.
+
+        A client rendering several bound datasources in one tree cannot file the
+        rows without it — and cannot address a table afterwards.
+        """
+        svc = DatasourceService(agent_config=real_agent_config)
+        result = svc.list_databases(ListDatabasesInput())
+        assert result.data.current_datasource == real_agent_config.current_datasource
+        assert {db.datasource for db in result.data.databases} == {real_agent_config.current_datasource}
+
+    def test_list_databases_rejects_an_unknown_datasource(self, real_agent_config):
+        """An undeclared name is an error, not a silent fall-back.
+
+        Falling back to the current datasource would file another warehouse's
+        databases under the requested one in the caller's tree.
+        """
+        svc = DatasourceService(agent_config=real_agent_config)
+        result = svc.list_databases(ListDatabasesInput(datasource_id="not_bound"))
+        assert result.success is False
+        assert "not_bound" in result.errorMessage
+
+
+class TestPerDatasourceResolution:
+    """Table metadata addressed at a datasource other than the current one."""
+
+    def test_connector_for_defaults_to_current(self, real_agent_config):
+        svc = DatasourceService(agent_config=real_agent_config)
+        connector, database = svc._connector_for()
+        assert connector is svc.current_db_connector
+        assert database == svc.current_db_name
+
+    def test_connector_for_rejects_unknown_datasource(self, real_agent_config):
+        from datus.utils.exceptions import DatusException
+
+        svc = DatasourceService(agent_config=real_agent_config)
+        with pytest.raises(DatusException, match="datasource"):
+            svc._connector_for("not_bound")
+
+    def test_connector_for_normalizes_an_unreachable_datasource(self, real_agent_config):
+        """Declared but unreachable raises DatusException from the db manager.
+
+        Every caller here turns ValueError into a clean error Result, so leaving
+        DatusException to escape loses that — and catching DatusException in the
+        callers would swallow unrelated ones from deeper in the stack.
+        """
+        from datus.utils.exceptions import DatusException, ErrorCode
+
+        svc = DatasourceService(agent_config=real_agent_config)
+        current = real_agent_config.current_datasource
+        real_agent_config.services.datasources["broken"] = real_agent_config.services.datasources[current]
+
+        with patch.object(
+            svc.db_manager,
+            "first_conn_with_name",
+            side_effect=DatusException(ErrorCode.COMMON_UNSUPPORTED, message_args={}),
+        ):
+            # Re-raised as-is: it is already the structured type the boundary maps.
+            with pytest.raises(DatusException):
+                svc._connector_for("broken")
+
+        # Nothing unusable was remembered for the next request.
+        assert "broken" not in svc._datasource_connectors
+
+    def test_connector_for_rejects_a_null_connector(self, real_agent_config):
+        """Symmetric with the current-datasource branch, which already does."""
+        svc = DatasourceService(agent_config=real_agent_config)
+        current = real_agent_config.current_datasource
+        real_agent_config.services.datasources["empty"] = real_agent_config.services.datasources[current]
+
+        from datus.utils.exceptions import DatusException
+
+        with patch.object(svc.db_manager, "first_conn_with_name", return_value=("db", None)):
+            with pytest.raises(DatusException, match="no usable connection"):
+                svc._connector_for("empty")
+
+        assert "empty" not in svc._datasource_connectors
+
+    def test_connector_for_opens_and_remembers_another_datasource(self, real_agent_config):
+        """The happy path for a non-current datasource: opened on first use, then
+        reused — DBManager hands back a fresh wrapper per call, and the column
+        cache keys off the name rather than the object."""
+        svc = DatasourceService(agent_config=real_agent_config)
+        current = real_agent_config.current_datasource
+        real_agent_config.services.datasources["second"] = real_agent_config.services.datasources[current]
+        connector = MagicMock(database_name="")
+
+        with patch.object(svc.db_manager, "first_conn_with_name", return_value=("second_db", connector)) as opened:
+            first = svc._connector_for("second")
+            again = svc._connector_for("second")
+
+        assert first == (connector, "second_db")
+        assert again is first
+        assert opened.call_count == 1
+
+    def test_connector_for_rejects_a_current_datasource_with_no_connection(self, real_agent_config):
+        from datus.utils.exceptions import DatusException
+
+        svc = DatasourceService(agent_config=real_agent_config)
+        svc.current_db_connector = None
+
+        with pytest.raises(DatusException, match="no usable connection"):
+            svc._connector_for(real_agent_config.current_datasource)
+
+    def test_connector_for_wraps_an_unstructured_failure(self, real_agent_config):
+        """A plain exception from the db manager still reaches the caller as the
+        structured database error, so the boundary maps one type, and the
+        original message survives inside it."""
+        from datus.utils.exceptions import DatusException
+
+        svc = DatasourceService(agent_config=real_agent_config)
+        current = real_agent_config.current_datasource
+        real_agent_config.services.datasources["second"] = real_agent_config.services.datasources[current]
+
+        with patch.object(svc.db_manager, "first_conn_with_name", side_effect=ValueError("bad uri")):
+            with pytest.raises(DatusException, match="bad uri"):
+                svc._connector_for("second")
+
+    def test_connector_for_rejects_when_nothing_is_configured(self, real_agent_config):
+        svc = DatasourceService(agent_config=real_agent_config)
+        svc.current_datasource = ""
+
+        from datus.utils.exceptions import DatusException
+
+        with pytest.raises(DatusException, match="no datasource configured"):
+            svc._connector_for(None)
+
+    def test_table_detail_reports_an_unknown_datasource(self, real_agent_config):
+        svc = DatasourceService(agent_config=real_agent_config)
+        result = svc.get_table_schema("frpm", datasource="not_bound")
+        assert result.success is False
+        assert "not_bound" in result.errorMessage
+
+    def test_column_cache_is_keyed_by_datasource(self, real_agent_config):
+        """Two bound warehouses commonly hold a same-named table.
+
+        Without the datasource in the key, the second one would be served the
+        first one's columns from cache — wrong answers, no error anywhere.
+        """
+        svc = DatasourceService(agent_config=real_agent_config)
+        detail = svc.get_table_schema("frpm")
+        assert detail.success is True
+
+        current = real_agent_config.current_datasource
+        keys = list(svc._columns_cache)
+        assert keys and all(k.startswith(f"{current}\t") for k in keys)
+
+        # A second datasource asking for the same table name must miss.
+        # `datasource_configs` is a property that copies, so the registration has
+        # to go through `services.datasources` — otherwise `_connector_for`
+        # rejects "other" as unknown and this would pass for the wrong reason.
+        svc.agent_config.services.datasources["other"] = svc.agent_config.services.datasources[current]
+        svc._datasource_connectors["other"] = (svc.current_db_connector, "california_schools")
+        assert svc._connector_for("other")[0] is svc.current_db_connector
+        assert svc._cached_columns("frpm", "other") is None
+        # The current datasource still hits, with the columns it actually cached.
+        assert [c.name for c in svc._cached_columns("frpm", current) or []] == [
+            c.name for c in detail.data.table.columns
+        ]
+
+
+class _FakeServerConnector:
+    """No-schema (server-style) connector that distinguishes its configured
+    database from every database reachable on the instance.
+
+    ``get_databases`` mimics ``SHOW DATABASES`` (the whole server); a scoped
+    listing must NOT call it when a database is configured.
+    """
+
+    dialect = "starrocks"
+    catalog_name = "default_catalog"
+    connection_string = "mysql+pymysql://u:p@host:9030/benchmark"
+
+    def __init__(self, database_name: str):
+        self.database_name = database_name
+        self.get_databases_calls = 0
+
+    def test_connection(self) -> bool:  # audit-noqa: zero_assert_test — connector API stub, not a test
+        return True
+
+    def get_databases(self, catalog_name: str = "", include_sys: bool = False):
+        self.get_databases_calls += 1
+        return ["benchmark", "ga4", "olist", "fund_poc"]
+
+    def get_tables(self, catalog_name: str = "", database_name: str = "", schema_name: str = ""):
+        return ["t2", "t1"]
+
+
+@pytest.fixture
+def _no_schema_dialect(monkeypatch):
+    """Force the server-style (no per-database schema) code path."""
+    from datus_db_core import connector_registry
+
+    monkeypatch.setattr(connector_registry, "support_schema", lambda dialect: False)
+
+
+class TestGetConnectionInfoScoping:
+    """A datasource is a connection profile scoped to its configured database;
+    listing must not leak every database on the server."""
+
+    def test_configured_database_is_listed_without_enumerating_server(self, real_agent_config, _no_schema_dialect):
+        """With a configured database, only that database is returned and the
+        server-wide ``get_databases`` enumeration is never invoked."""
+        svc = DatasourceService(agent_config=real_agent_config)
+        connector = _FakeServerConnector(database_name="benchmark")
+
+        infos = svc._get_connection_info(connector, "benchmark", ListDatabasesInput())
+
+        assert [i.name for i in infos] == ["benchmark"]
+        assert connector.get_databases_calls == 0
+        assert infos[0].current is True
+        # tables are surfaced (and sorted) for the scoped database
+        assert infos[0].tables == ["t1", "t2"]
+
+    def test_falls_back_to_server_enumeration_when_unconfigured(self, real_agent_config, _no_schema_dialect):
+        """Only when no database is configured do we enumerate the server so the
+        connection's reachable databases stay browsable."""
+        svc = DatasourceService(agent_config=real_agent_config)
+        connector = _FakeServerConnector(database_name="")
+
+        infos = svc._get_connection_info(connector, "ds", ListDatabasesInput())
+
+        assert connector.get_databases_calls == 1
+        assert [i.name for i in infos] == ["benchmark", "ga4", "olist", "fund_poc"]
+
+    def test_request_database_name_filter_takes_precedence(self, real_agent_config, _no_schema_dialect):
+        """An explicit database_name filter wins over the configured database and
+        still avoids the server-wide enumeration."""
+        svc = DatasourceService(agent_config=real_agent_config)
+        connector = _FakeServerConnector(database_name="benchmark")
+
+        infos = svc._get_connection_info(connector, "benchmark", ListDatabasesInput(database_name="ga4"))
+
+        assert [i.name for i in infos] == ["ga4"]
+        assert connector.get_databases_calls == 0
+
+
+class _FakeSchemaConnector:
+    """Schema-capable connector whose per-database and per-schema listings can
+    each be made to fail independently."""
+
+    dialect = "postgresql"
+    catalog_name = None
+    connection_string = "postgresql://u:p@host:5432/warehouse"
+
+    def __init__(self, database_name: str, failing_schemas_db: str = "", failing_tables_schema: str = ""):
+        self.database_name = database_name
+        self._failing_schemas_db = failing_schemas_db
+        self._failing_tables_schema = failing_tables_schema
+
+    def get_effective_capabilities(self) -> set[str]:
+        return {"database", "schema"}
+
+    def test_connection(self) -> bool:  # audit-noqa: zero_assert_test — connector API stub, not a test
+        return True
+
+    def get_databases(self, catalog_name: str = "", include_sys: bool = False) -> list[str]:
+        return ["warehouse", "staging"]
+
+    def get_schemas(self, catalog_name: str = "", database_name: str = "", include_sys: bool = False) -> list[str]:
+        if database_name == self._failing_schemas_db:
+            raise RuntimeError("schema enumeration timed out")
+        return ["public", "reporting"]
+
+    def get_tables(self, catalog_name: str = "", database_name: str = "", schema_name: str = "") -> list[str]:
+        if schema_name == self._failing_tables_schema:
+            raise RuntimeError("table enumeration timed out")
+        return ["t2", "t1"]
+
+
+class TestGetConnectionInfoListingFailure:
+    """A reachable database whose objects cannot be listed is not a disconnected one."""
+
+    def test_table_listing_failure_stays_connected_and_reports_the_error(self, real_agent_config, _no_schema_dialect):
+        """Reporting ``disconnected`` hid the real cause and contradicted the agent,
+        which keeps querying the same database successfully."""
+        svc = DatasourceService(agent_config=real_agent_config)
+        connector = _FakeServerConnector(database_name="benchmark")
+
+        def _raise(catalog_name: str = "", database_name: str = "", schema_name: str = "") -> NoReturn:
+            raise RuntimeError("THRIFT_EAGAIN (timed out)")
+
+        connector.get_tables = _raise
+
+        infos = svc._get_connection_info(connector, "benchmark", ListDatabasesInput())
+
+        assert [i.name for i in infos] == ["benchmark"]
+        assert infos[0].connection_status == "connected"
+        assert infos[0].schema_name is None
+        assert infos[0].tables is None
+        assert infos[0].tables_count is None
+        assert "THRIFT_EAGAIN" in infos[0].error
+
+    def test_database_enumeration_failure_reports_the_error(self, real_agent_config, _no_schema_dialect):
+        """Without a configured database there is nothing left to iterate, so the
+        datasource is reported once — connected, with the reason attached."""
+        svc = DatasourceService(agent_config=real_agent_config)
+        connector = _FakeServerConnector(database_name="")
+
+        def _raise(catalog_name: str = "", include_sys: bool = False) -> NoReturn:
+            raise RuntimeError("SHOW DATABASES timed out")
+
+        connector.get_databases = _raise
+
+        infos = svc._get_connection_info(connector, "ds", ListDatabasesInput())
+
+        assert len(infos) == 1
+        assert infos[0].connection_status == "connected"
+        assert infos[0].schema_name is None
+        assert infos[0].tables is None
+        assert infos[0].tables_count is None
+        assert "SHOW DATABASES timed out" in infos[0].error
+
+    def test_schema_resolution_failure_does_not_abort_sibling_databases(self, real_agent_config):
+        """One database that cannot resolve its schemas must not cost the others
+        their listing."""
+        svc = DatasourceService(agent_config=real_agent_config)
+        connector = _FakeSchemaConnector(database_name="", failing_schemas_db="staging")
+
+        infos = svc._get_connection_info(connector, "ds", ListDatabasesInput())
+
+        failed = [i for i in infos if i.name == "staging"]
+        assert len(failed) == 1
+        assert failed[0].connection_status == "connected"
+        assert failed[0].schema_name is None
+        assert failed[0].tables is None
+        assert failed[0].tables_count is None
+        assert "schema enumeration timed out" in failed[0].error
+
+        healthy = [i for i in infos if i.name == "warehouse"]
+        assert [i.schema_name for i in healthy] == ["public", "reporting"]
+        assert all(i.connection_status == "connected" and i.error is None for i in healthy)
+        assert all(i.tables == ["t1", "t2"] and i.tables_count == 2 for i in healthy)
+
+    def test_table_fetch_failure_is_scoped_to_its_schema(self, real_agent_config):
+        """A failing schema is reported with its own name; sibling schemas still list."""
+        svc = DatasourceService(agent_config=real_agent_config)
+        connector = _FakeSchemaConnector(database_name="warehouse", failing_tables_schema="reporting")
+
+        infos = svc._get_connection_info(connector, "ds", ListDatabasesInput())
+
+        assert [i.name for i in infos] == ["warehouse", "warehouse"]
+        assert [i.schema_name for i in infos] == ["public", "reporting"]
+
+        assert infos[0].error is None
+        assert infos[0].tables == ["t1", "t2"]
+        assert infos[0].tables_count == 2
+
+        assert infos[1].connection_status == "connected"
+        assert infos[1].tables is None
+        assert infos[1].tables_count is None
+        assert "table enumeration timed out" in infos[1].error
+
+    def test_requested_schema_filter_is_honoured_when_its_tables_fail(self, real_agent_config):
+        """An explicit schema_name skips resolution, so the filter is what fails."""
+        svc = DatasourceService(agent_config=real_agent_config)
+        connector = _FakeSchemaConnector(database_name="warehouse", failing_tables_schema="reporting")
+
+        infos = svc._get_connection_info(connector, "ds", ListDatabasesInput(schema_name="reporting"))
+
+        assert len(infos) == 1
+        assert infos[0].name == "warehouse"
+        assert infos[0].schema_name == "reporting"
+        assert infos[0].connection_status == "connected"
+        assert infos[0].tables is None
+        assert "table enumeration timed out" in infos[0].error
+
+    def test_failed_connection_test_is_still_disconnected(self, real_agent_config, _no_schema_dialect):
+        """The disconnected status stays reserved for an unusable connection."""
+        svc = DatasourceService(agent_config=real_agent_config)
+        connector = _FakeServerConnector(database_name="benchmark")
+        connector.test_connection = lambda: False
+
+        infos = svc._get_connection_info(connector, "benchmark", ListDatabasesInput())
+
+        assert infos[0].connection_status == "disconnected"
+        assert infos[0].error is None
+
 
 class TestGetTableSchema:
     """Tests for get_table_schema with real SQLite connection."""
@@ -182,8 +1099,442 @@ class TestGetTableSchema:
             assert col.name != ""
             assert col.type != ""
 
+    def test_get_table_schema_uses_connector_nullable_contract(self, real_agent_config):
+        svc = DatasourceService(agent_config=real_agent_config)
+        svc.current_db_connector.get_schema = MagicMock(
+            return_value=[
+                {
+                    "name": "id",
+                    "type": "BIGINT",
+                    "nullable": False,
+                    "default_value": None,
+                    "pk": False,
+                }
+            ]
+        )
+
+        result = svc.get_table_schema("orders")
+
+        assert result.success is True
+        assert result.data.table.columns[0].nullable is False
+
     def test_get_table_schema_nonexistent_table(self, real_agent_config):
         """Nonexistent table returns failure."""
         svc = DatasourceService(agent_config=real_agent_config)
         result = svc.get_table_schema("totally_fake_table_xyz")
         assert result.success is False
+
+    def test_get_table_schema_caches_columns(self, real_agent_config):
+        """Second lookup is served from cache without re-hitting the connector."""
+        svc = DatasourceService(agent_config=real_agent_config)
+        spy = MagicMock(wraps=svc.current_db_connector.get_schema)
+        svc.current_db_connector.get_schema = spy
+
+        first = svc.get_table_schema("schools")
+        second = svc.get_table_schema("schools")
+
+        assert first.success is True and second.success is True
+        assert [c.name for c in second.data.table.columns] == [c.name for c in first.data.table.columns]
+        assert spy.call_count == 1
+
+
+class TestGetTablesColumns:
+    """Tests for the batch get_tables_columns (autocomplete prefetch)."""
+
+    def test_returns_columns_for_known_tables(self, real_agent_config):
+        svc = DatasourceService(agent_config=real_agent_config)
+        result = svc.get_tables_columns(["schools"])
+        assert result.success is True
+        assert [t.table for t in result.data.tables] == ["schools"]
+        col = result.data.tables[0].columns[0]
+        assert col.name != "" and col.type != ""
+        # Slim shape: no default_value in the prefetch payload.
+        assert not hasattr(col, "default_value")
+
+    def test_omits_unresolved_tables(self, real_agent_config):
+        """A bad name is skipped rather than failing the whole batch."""
+        svc = DatasourceService(agent_config=real_agent_config)
+        result = svc.get_tables_columns(["schools", "totally_fake_table_xyz"])
+        assert result.success is True
+        assert [t.table for t in result.data.tables] == ["schools"]
+
+    def test_populates_shared_cache(self, real_agent_config):
+        """Columns fetched by the batch are reused by a later single-table detail."""
+        svc = DatasourceService(agent_config=real_agent_config)
+        spy = MagicMock(wraps=svc.current_db_connector.get_schema)
+        svc.current_db_connector.get_schema = spy
+
+        svc.get_tables_columns(["schools"])
+        detail = svc.get_table_schema("schools")
+
+        assert detail.success is True
+        assert spy.call_count == 1
+
+    def test_over_limit_returns_validation_error(self, real_agent_config):
+        svc = DatasourceService(agent_config=real_agent_config)
+        svc.agent_config.api_config = {"max_prefetch_tables": 1}
+        result = svc.get_tables_columns(["schools", "frpm"])
+        assert result.success is False
+        assert result.errorCode == "INVALID_PARAMETERS"
+
+    @pytest.mark.parametrize(
+        "limit",
+        [
+            "not-a-number",
+            None,
+            0,
+            -5,
+            float("inf"),  # YAML `.inf` — what an operator writes for "no limit"
+            "inf",
+            0.5,  # truncates to 0, so falls back for being non-positive
+            True,  # YAML `true`/`yes`/`on`; bool is an int subclass, so -> 1
+        ],
+        ids=["text", "null", "zero", "negative", "inf", "inf-text", "fraction", "yaml-true"],
+    )
+    def test_a_bad_limit_falls_back_instead_of_breaking(self, real_agent_config, limit):
+        """A typo in agent.yml must not take the endpoint down.
+
+        Two tables on purpose: several of these values coerce to a bound of 1,
+        which a single-table batch could not tell apart from the real default.
+        """
+        svc = DatasourceService(agent_config=real_agent_config)
+        svc.agent_config.api_config = {"max_prefetch_tables": limit}
+        result = svc.get_tables_columns(["schools", "frpm"])
+        assert result.success is True
+        assert [t.table for t in result.data.tables] == ["schools", "frpm"]
+
+    @pytest.mark.parametrize(
+        "budget",
+        [float("inf"), "inf", "not-a-number", None, 0, -1],
+        ids=["inf", "inf-text", "text", "null", "zero", "negative"],
+    )
+    def test_a_bad_budget_falls_back_to_a_real_deadline(self, real_agent_config, budget):
+        """Infinity is the dangerous one: it passes `> 0` and removes the deadline."""
+        svc = DatasourceService(agent_config=real_agent_config)
+        svc.agent_config.api_config = {"prefetch_budget_seconds": budget}
+
+        # The default budget is finite, so a clock jump past it stops the batch.
+        clock = chain([0.0], repeat(1e9))
+        with _fake_monotonic(lambda: next(clock)):
+            result = svc.get_tables_columns(["schools"])
+
+        assert result.success is True
+        assert result.data.tables == []
+
+
+@contextmanager
+def _fake_monotonic(reading) -> Iterator[None]:
+    """Drive database_service's clock without touching the stdlib one.
+
+    The module does ``import time``, so ``database_service.time`` *is* the
+    stdlib module — patching ``...database_service.time.monotonic`` swaps it
+    process-wide, and every other caller in the window (another thread, a
+    library timer) then reads the fake. Rebinding the module-level name instead
+    keeps the fake local to this module.
+    """
+    stand_in = SimpleNamespace(monotonic=reading)
+    with patch.object(database_service, "time", stand_in):
+        yield
+
+
+class TestGetTablesColumnsBounds:
+    """A prefetch batch must yield to the rest of the service, not compete.
+
+    Columns cost one serial round-trip per table behind the connector lock, so
+    an unbounded batch on a slow source holds that lock — and a to_thread
+    worker — for minutes, starving interactive metadata reads.
+    """
+
+    def test_stops_once_the_budget_is_spent(self, real_agent_config):
+        svc = DatasourceService(agent_config=real_agent_config)
+        svc.agent_config.api_config = {"prefetch_budget_seconds": 5}
+        spy = MagicMock(wraps=svc.current_db_connector.get_schema)
+        svc.current_db_connector.get_schema = spy
+
+        # A fake clock rather than a tiny budget: a real one relies on two
+        # consecutive monotonic() readings differing, which they do not on a
+        # platform whose clock resolution is coarse (~15.6ms on Windows).
+        clock = chain([0.0], repeat(1e9))
+        with _fake_monotonic(lambda: next(clock)):
+            result = svc.get_tables_columns(["schools", "frpm"])
+
+        # An exhausted budget omits tables rather than failing the batch.
+        assert result.success is True
+        assert result.data.tables == []
+        assert spy.call_count == 0
+
+    def test_omitted_tables_stay_fetchable(self, real_agent_config):
+        """What a bound leaves out, the client can still ask for one at a time."""
+        svc = DatasourceService(agent_config=real_agent_config)
+        svc.agent_config.api_config = {"prefetch_budget_seconds": 5}
+
+        clock = chain([0.0], repeat(1e9))
+        with _fake_monotonic(lambda: next(clock)):
+            assert svc.get_tables_columns(["schools"]).data.tables == []
+
+        detail = svc.get_table_schema("schools")
+
+        assert detail.success is True
+        assert detail.data.table.columns
+
+    def test_budget_spent_mid_batch_returns_the_partial_result(self, real_agent_config):
+        """The clock runs out after the first table; the second is omitted."""
+        svc = DatasourceService(agent_config=real_agent_config)
+        svc.agent_config.api_config = {"prefetch_budget_seconds": 5}
+        # deadline = 0 + 5; then: first check 1 (under), second check 99 (over).
+        # Trailing repeat so an extra reading — another thread, or a future
+        # version of the method taking one more — degrades the assertion rather
+        # than raising StopIteration from inside the code under test.
+        clock = chain([0.0, 1.0], repeat(99.0))
+        with _fake_monotonic(lambda: next(clock)):
+            result = svc.get_tables_columns(["schools", "frpm"])
+
+        assert result.success is True
+        assert [t.table for t in result.data.tables] == ["schools"]
+
+    def test_a_second_batch_does_not_queue_behind_the_first(self, real_agent_config):
+        """A batch that cannot take the gate returns instead of pinning a worker."""
+        svc = DatasourceService(agent_config=real_agent_config)
+        spy = MagicMock(wraps=svc.current_db_connector.get_schema)
+        svc.current_db_connector.get_schema = spy
+
+        svc._prefetch_gate_for(real_agent_config.current_datasource).acquire()
+        try:
+            result = svc.get_tables_columns(["schools"])
+        finally:
+            svc._prefetch_gate_for(real_agent_config.current_datasource).release()
+
+        assert result.success is True
+        assert result.data.tables == []
+        assert spy.call_count == 0
+
+    def test_cache_hits_are_served_while_the_gate_is_held(self, real_agent_config):
+        """Warm tables cost nothing, so no bound should withhold them."""
+        svc = DatasourceService(agent_config=real_agent_config)
+        svc.get_tables_columns(["schools"])
+
+        svc._prefetch_gate_for(real_agent_config.current_datasource).acquire()
+        try:
+            result = svc.get_tables_columns(["schools", "frpm"])
+        finally:
+            svc._prefetch_gate_for(real_agent_config.current_datasource).release()
+
+        # schools is cached; frpm would need the source, so it is omitted.
+        assert [t.table for t in result.data.tables] == ["schools"]
+        assert result.data.tables[0].columns
+
+    def test_a_busy_datasource_does_not_gate_another(self, real_agent_config):
+        """The gate is per datasource, not per service.
+
+        Each datasource has its own connector and its own cache entries, so a
+        prefetch running against one must not withhold another's — on this code
+        path a single `list_tables` runs for seconds, and one global gate made
+        expanding two datasources' trees queue for no reason.
+        """
+        svc = DatasourceService(agent_config=real_agent_config)
+        current = real_agent_config.current_datasource
+        real_agent_config.services.datasources["second"] = real_agent_config.services.datasources[current]
+
+        held = svc._prefetch_gate_for(current)
+        held.acquire()
+        try:
+            other = svc._prefetch_gate_for("second")
+            assert other is not held
+            assert other.acquire(blocking=False) is True
+            other.release()
+        finally:
+            held.release()
+
+    def test_schema_locks_are_per_datasource(self, real_agent_config):
+        """Same reasoning for the connector lock the batch serializes on."""
+        svc = DatasourceService(agent_config=real_agent_config)
+        current = real_agent_config.current_datasource
+
+        first = svc._schema_lock_for(current)
+        assert first is svc._schema_lock_for(current)
+        assert first is not svc._schema_lock_for("second")
+
+    def test_locks_tolerate_an_instance_built_without_init(self):
+        """The contract the lazy init exists for.
+
+        Parts of this suite build the service via ``__new__`` to skip its heavy
+        constructor, and cli_service was broken exactly this way once — the
+        accessors have to stand up a dict on first use rather than assume one.
+        """
+        svc = DatasourceService.__new__(DatasourceService)
+
+        lock = svc._schema_lock_for("prod")
+        gate = svc._prefetch_gate_for("prod")
+
+        assert lock is svc._schema_lock_for("prod")
+        assert gate is svc._prefetch_gate_for("prod")
+        assert lock is not svc._schema_lock_for("lake")
+
+    def test_the_gate_is_released_for_the_next_batch(self, real_agent_config):
+        svc = DatasourceService(agent_config=real_agent_config)
+
+        first = svc.get_tables_columns(["schools"])
+        second = svc.get_tables_columns(["frpm"])
+
+        assert [t.table for t in first.data.tables] == ["schools"]
+        assert [t.table for t in second.data.tables] == ["frpm"]
+
+    def test_the_gate_is_released_when_a_table_blows_up(self, real_agent_config):
+        """An exception mid-batch must not leave the gate held forever."""
+        svc = DatasourceService(agent_config=real_agent_config)
+        with patch.object(svc, "get_table_schema", side_effect=RuntimeError("boom")):
+            with pytest.raises(RuntimeError):
+                svc.get_tables_columns(["schools"])
+
+        assert svc.get_tables_columns(["schools"]).data.tables
+
+
+class TestSchemaOnlyDialectCatalog:
+    """A dialect whose only namespace is the schema (Oracle) must still list.
+
+    Such a connector reports no database and an empty ``get_databases()`` by
+    design, which used to leave ``databases: []`` — the datasource vanished from
+    the catalog while its tables were perfectly listable.
+    """
+
+    @staticmethod
+    def _connector(
+        schemas: list[str],
+        tables: dict[str, list[str]],
+        *,
+        default_schema: str = "APP",
+        fail_on: str | None = None,
+    ) -> MagicMock:
+        connector = MagicMock()
+        connector.dialect = "oracle"
+        connector.connection_string = "oracle+oracledb://user:pw@host:1521/?service_name=FREEPDB1"
+        connector.database_name = ""
+        connector.schema_name = default_schema
+        connector.catalog_name = None
+        connector.test_connection.return_value = True
+        connector.get_databases.return_value = []
+        connector.get_schemas.return_value = schemas
+
+        def _tables(catalog_name: str = "", database_name: str = "", schema_name: str = "") -> list[str]:
+            if fail_on and schema_name == fail_on:
+                raise RuntimeError("ORA-00942: table or view does not exist")
+            return list(tables.get(schema_name, []))
+
+        connector.get_tables.side_effect = _tables
+        return connector
+
+    @staticmethod
+    @contextmanager
+    def _namespaces(*supported: str) -> Iterator[None]:
+        with patch(
+            "datus.api.services.database_service.supports_namespace",
+            side_effect=lambda namespace, **_: namespace in supported,
+        ):
+            yield
+
+    def test_schemas_become_the_catalog_roots(self, real_agent_config):
+        svc = DatasourceService(agent_config=real_agent_config)
+        connector = self._connector(["APP", "REPORTING"], {"APP": ["ORDERS", "CUSTOMERS"], "REPORTING": ["KPI"]})
+
+        with self._namespaces("schema"):
+            infos = svc._get_connection_info(connector, "oracle_ds", ListDatabasesInput())
+
+        assert [i.name for i in infos] == ["APP", "REPORTING"]
+        # Already the root — nesting it under itself would print the name twice.
+        assert all(i.schema_name is None for i in infos)
+        assert infos[0].tables == ["CUSTOMERS", "ORDERS"]
+        assert infos[0].tables_count == 2
+        assert [i.current for i in infos] == [True, False]
+        assert all(i.connection_status == "connected" for i in infos)
+
+    def test_one_unreadable_schema_does_not_hide_the_others(self, real_agent_config):
+        svc = DatasourceService(agent_config=real_agent_config)
+        connector = self._connector(["APP", "LOCKED"], {"APP": ["ORDERS"]}, fail_on="LOCKED")
+
+        with self._namespaces("schema"):
+            infos = svc._get_connection_info(connector, "oracle_ds", ListDatabasesInput())
+
+        assert [i.name for i in infos] == ["APP", "LOCKED"]
+        assert infos[0].tables == ["ORDERS"]
+        # Reachable but unlistable: reported with its reason, not as disconnected.
+        assert infos[1].connection_status == "connected"
+        assert "ORA-00942" in infos[1].error
+        assert infos[1].tables_count is None
+
+    def test_a_failing_default_schema_still_reads_as_current(self, real_agent_config):
+        """The root is a schema here, so `current` cannot come from database_name."""
+        svc = DatasourceService(agent_config=real_agent_config)
+        connector = self._connector(["APP", "REPORTING"], {"REPORTING": ["KPI"]}, fail_on="APP")
+
+        with self._namespaces("schema"):
+            infos = svc._get_connection_info(connector, "oracle_ds", ListDatabasesInput())
+
+        failed = next(i for i in infos if i.name == "APP")
+        assert failed.error
+        assert failed.current is True
+        assert next(i for i in infos if i.name == "REPORTING").current is False
+
+    def test_unlistable_schemas_report_the_connector_schema_as_current(self, real_agent_config):
+        svc = DatasourceService(agent_config=real_agent_config)
+        connector = self._connector([], {})
+        connector.get_schemas.side_effect = RuntimeError("ORA-01031: insufficient privileges")
+
+        with self._namespaces("schema"):
+            infos = svc._get_connection_info(connector, "oracle_ds", ListDatabasesInput())
+
+        assert [(i.name, i.current) for i in infos] == [("APP", True)]
+        assert "ORA-01031" in infos[0].error
+
+    def test_requested_schema_narrows_the_listing(self, real_agent_config):
+        svc = DatasourceService(agent_config=real_agent_config)
+        connector = self._connector(["APP", "REPORTING"], {"REPORTING": ["KPI"]})
+
+        with self._namespaces("schema"):
+            infos = svc._get_connection_info(connector, "oracle_ds", ListDatabasesInput(schema_name="REPORTING"))
+
+        assert [i.name for i in infos] == ["REPORTING"]
+        connector.get_schemas.assert_not_called()
+
+    def test_dialect_with_a_database_level_keeps_the_nested_shape(self, real_agent_config):
+        """Regression: the fallback must not flatten PostgreSQL-shaped catalogs."""
+        svc = DatasourceService(agent_config=real_agent_config)
+        connector = self._connector(["public"], {"public": ["orders"]}, default_schema="public")
+        connector.dialect = "postgresql"
+        connector.database_name = "shop"
+
+        with self._namespaces("database", "schema"):
+            infos = svc._get_connection_info(connector, "pg_ds", ListDatabasesInput())
+
+        assert [(i.name, i.schema_name) for i in infos] == [("shop", "public")]
+
+
+@pytest.mark.asyncio
+async def test_prepare_rejects_other_datasource_without_mutating_file(tmp_path):
+    from datus.api.models.table_models import PrepareMetricDefinitionsInput
+
+    target, selector = _write_model(tmp_path, _osi_yaml(), datasource="other")
+    before = target.read_bytes()
+    result = await _service(models_root=tmp_path).prepare_metric_definitions(
+        PrepareMetricDefinitionsInput(semantic_model_file=selector, yaml=_osi_yaml(), changed_metrics=[])
+    )
+    assert result.success is False
+    assert "switch the active datasource" in result.errorMessage
+    assert target.read_bytes() == before
+
+
+@pytest.mark.asyncio
+async def test_prepare_returns_native_diagnostics_without_writing(tmp_path):
+    from datus.api.models.table_models import PrepareMetricDefinitionsInput
+
+    target, selector = _write_model(tmp_path, _osi_yaml())
+    before = target.read_bytes()
+    result = await _service(models_root=tmp_path).prepare_metric_definitions(
+        PrepareMetricDefinitionsInput(
+            semantic_model_file=selector, yaml=_osi_yaml(metric_name="bad"), changed_metrics=["bad"]
+        )
+    )
+    assert result.success is True
+    assert result.data.valid is False
+    assert result.data.patches == []
+    assert result.data.validation["issues"]
+    assert target.read_bytes() == before

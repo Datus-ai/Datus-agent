@@ -39,7 +39,6 @@ def _write_release_repo(tmp_path: Path, *, version: str = "0.2.6") -> Path:
             version = "{version}"
             dependencies = [
                 "datus-db-core>=0.1.3",
-                "datus-semantic-core>=0.2.0",
                 "datus-bi-core>=0.1.2",
                 "datus-scheduler-core>=0.1.1",
             ]
@@ -51,7 +50,6 @@ def _write_release_repo(tmp_path: Path, *, version: str = "0.2.6") -> Path:
         dedent(
             """
             datus-db-core>=0.1.3
-            datus-semantic-core>=0.2.0
             datus-bi-core>=0.1.2
             datus-scheduler-core>=0.1.1
             """
@@ -112,6 +110,136 @@ def test_console_script_versions_reports_missing_command(check_release_readiness
     assert errors == ["datus --version failed to execute: missing datus"]
 
 
+def _rewrite_dependency(repo_root: Path, filename: str, old: str, new: str) -> None:
+    """Restate one dependency in either file, in that file's own syntax."""
+    path = repo_root / filename
+    if filename == "pyproject.toml":
+        # A marker embeds double quotes, so quote those entries as TOML literal
+        # strings instead — otherwise the array stops parsing mid-value.
+        quote = "'" if '"' in new else '"'
+        old, new = f'"{old}"', f"{quote}{new}{quote}"
+    path.write_text(path.read_text(encoding="utf-8").replace(old, new), encoding="utf-8")
+
+
+def test_requirements_match_pyproject_accepts_identical_lists(tmp_path, check_release_readiness):
+    repo_root = _write_release_repo(tmp_path)
+
+    assert check_release_readiness.check_requirements_match_pyproject(repo_root) == []
+
+
+@pytest.mark.parametrize(
+    ("field", "pyproject_form", "requirements_form", "expected_fragments"),
+    [
+        # The drift this check was added for: a pin left behind in one file.
+        ("version", "datus-db-core>=0.9.9", "datus-db-core>=0.1.3", (">=0.9.9", ">=0.1.3")),
+        # Extras decide what else gets installed — `openai-agents[litellm]` is
+        # what pulls in litellm — while leaving the specifier identical.
+        ("extras", "datus-db-core[extra]>=0.1.3", "datus-db-core>=0.1.3", ("['extra']", "[]")),
+        # A marker decides whether the dependency is installed at all.
+        (
+            "marker",
+            'datus-db-core>=0.1.3; python_version < "3.12"',
+            'datus-db-core>=0.1.3; python_version >= "3.12"',
+            ('python_version < "3.12"', 'python_version >= "3.12"'),
+        ),
+        # A direct reference decides where it is installed from.
+        (
+            "URL",
+            "datus-db-core@ https://example.invalid/a.whl",
+            "datus-db-core@ https://example.invalid/b.whl",
+            ("a.whl", "b.whl"),
+        ),
+    ],
+)
+def test_requirements_match_pyproject_rejects_every_kind_of_divergence(
+    tmp_path, check_release_readiness, field, pyproject_form, requirements_form, expected_fragments
+):
+    """Any field that changes what pip installs must be compared, not just the version.
+
+    Asserts the invariant rather than the wording: exactly one error, naming the
+    package, the field, and what each file declares — enough to act on.
+    """
+    repo_root = _write_release_repo(tmp_path)
+    _rewrite_dependency(repo_root, "pyproject.toml", "datus-db-core>=0.1.3", pyproject_form)
+    _rewrite_dependency(repo_root, "requirements.txt", "datus-db-core>=0.1.3", requirements_form)
+
+    (error,) = check_release_readiness.check_requirements_match_pyproject(repo_root)
+
+    assert "datus-db-core" in error
+    assert field in error
+    assert "pyproject.toml" in error and "requirements.txt" in error
+    for fragment in expected_fragments:
+        assert fragment in error
+
+
+def _add_split_pin(repo_root: Path, pyproject_pin: str, requirements_pin: str) -> None:
+    """Pin one package twice, per Python version, as pandas is."""
+    pyproject = repo_root / "pyproject.toml"
+    pyproject.write_text(
+        pyproject.read_text(encoding="utf-8").replace(
+            '"datus-db-core>=0.1.3",',
+            '"datus-db-core>=0.1.3",\n'
+            f"    'pandas{pyproject_pin}; python_version < \"3.13\"',\n"
+            "    'pandas>=2.3.3,<3; python_version >= \"3.13\"',",
+        ),
+        encoding="utf-8",
+    )
+    requirements = repo_root / "requirements.txt"
+    requirements.write_text(
+        requirements.read_text(encoding="utf-8")
+        + f'\npandas{requirements_pin}; python_version < "3.13"'
+        + '\npandas>=2.3.3,<3; python_version >= "3.13"\n',
+        encoding="utf-8",
+    )
+
+
+def test_requirements_match_pyproject_compares_each_per_environment_pin(tmp_path, check_release_readiness):
+    """Both lines of a split pin are compared, not just whichever parsed last.
+
+    The drift is on the first line on purpose: keyed by name alone, the second
+    line replaced it and the check passed.
+    """
+    (tmp_path / "same").mkdir()
+    repo_root = _write_release_repo(tmp_path / "same")
+    _add_split_pin(repo_root, "==2.1.4", "==2.1.4")
+
+    assert check_release_readiness.check_requirements_match_pyproject(repo_root) == []
+
+    (tmp_path / "drifted").mkdir()
+    repo_root = _write_release_repo(tmp_path / "drifted")
+    _add_split_pin(repo_root, "==2.1.4", "==2.1.3")
+
+    (error,) = check_release_readiness.check_requirements_match_pyproject(repo_root)
+
+    assert "pandas" in error
+    assert "==2.1.4" in error and "==2.1.3" in error
+
+
+def test_parse_dependency_list_rejects_a_repeated_pin(check_release_readiness):
+    """Two lines with the same name and marker would otherwise shadow one another."""
+    with pytest.raises(ValueError, match="pandas"):
+        check_release_readiness.parse_dependency_list(["pandas==2.1.4", "pandas==2.3.3"])
+
+
+def test_requirements_match_pyproject_reports_dependencies_missing_from_either_side(tmp_path, check_release_readiness):
+    repo_root = _write_release_repo(tmp_path)
+    requirements = (repo_root / "requirements.txt").read_text(encoding="utf-8")
+    (repo_root / "requirements.txt").write_text(
+        requirements.replace("datus-bi-core>=0.1.2\n", "") + "\nleftover-package>=1.0\n",
+        encoding="utf-8",
+    )
+
+    errors = check_release_readiness.check_requirements_match_pyproject(repo_root)
+
+    # Both directions are reported, each naming the file it is missing from —
+    # a one-way check would let a dependency added to only pyproject slip past.
+    assert len(errors) == 2
+    dropped = next(error for error in errors if "datus-bi-core" in error)
+    assert "missing from requirements.txt" in dropped
+    stale = next(error for error in errors if "leftover-package" in error)
+    assert "missing from pyproject.toml" in stale
+
+
 def test_adapter_dependency_consistency_accepts_matching_lower_bounds(tmp_path, check_release_readiness):
     repo_root = _write_release_repo(tmp_path)
 
@@ -120,7 +248,6 @@ def test_adapter_dependency_consistency_accepts_matching_lower_bounds(tmp_path, 
     assert errors == []
     assert {check.name: check.pyproject_lower_bound for check in checks} == {
         "datus-db-core": Version("0.1.3"),
-        "datus-semantic-core": Version("0.2.0"),
         "datus-bi-core": Version("0.1.2"),
         "datus-scheduler-core": Version("0.1.1"),
     }
@@ -132,7 +259,6 @@ def test_adapter_dependency_consistency_rejects_mismatched_requirements_lower_bo
         dedent(
             """
             datus-db-core>=0.1.2
-            datus-semantic-core>=0.2.0
             datus-bi-core>=0.1.2
             datus-scheduler-core>=0.1.1
             """
@@ -164,7 +290,6 @@ def test_adapter_latest_check_rejects_stale_lower_bound(tmp_path, check_release_
         checks,
         lambda package_name: {
             "datus-db-core": Version("0.1.4"),
-            "datus-semantic-core": Version("0.2.0"),
             "datus-bi-core": Version("0.1.2"),
             "datus-scheduler-core": Version("0.1.1"),
         }[package_name],

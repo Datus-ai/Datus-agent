@@ -81,7 +81,6 @@ def serialize_services_section(services_config) -> dict:
 
     return {
         "datasources": datasources_section,
-        "semantic_layer": dict(services_config.semantic_layer),
         "bi_platforms": dict(services_config.bi_platforms),
         "schedulers": dict(services_config.schedulers),
     }

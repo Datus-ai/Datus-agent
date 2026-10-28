@@ -22,7 +22,7 @@ from rich.text import Text
 
 from datus.cli._render_utils import format_io_tokens
 from datus.cli.cli_styles import ACTION_ROLE_COLOR_NAMES, CODE_THEME, render_user_scrollback_text
-from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
+from datus.schemas.action_history import INTERRUPTED_ACTION_TYPE, ActionHistory, ActionRole, ActionStatus
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
@@ -46,6 +46,31 @@ def _truncate_middle(text: str, max_len: int = 120) -> str:
         return text
     keep = (max_len - 5) // 2  # 5 chars for " ... "
     return text[:keep] + " ... " + text[-keep:]
+
+
+def resolve_assistant_body(action: ActionHistory) -> str:
+    """Return the user-facing body carried by an ASSISTANT action's ``output``.
+
+    ``raw_output`` is what the model layer writes for streamed assistant text;
+    ``response`` is what node result models (e.g. ``ChatNodeResult.response``)
+    carry on the terminal ``<node>_response`` wrapper action — that wrapper's own
+    ``messages`` is only a boilerplate summary ("chat interaction completed
+    successfully"). Returns ``""`` when no body is present, so callers rendering
+    a wrapper can tell "no body" apart from that boilerplate — unlike
+    :func:`_get_assistant_content`, which falls back to ``messages``.
+    """
+    from datus.utils.text_utils import strip_litellm_placeholder
+
+    if not isinstance(action.output, dict):
+        return ""
+    for key in ("raw_output", "response"):
+        value = action.output.get(key)
+        if not isinstance(value, str):
+            continue
+        body = strip_litellm_placeholder(value)
+        if body.strip():
+            return body
+    return ""
 
 
 def _get_assistant_content(action: ActionHistory) -> str:
@@ -227,7 +252,6 @@ class ActionContentGenerator(BaseActionContentGenerator):
     def _generate_rich_panel_content(self, actions: List[ActionHistory]):
         """Generate rich Panel + Table content for non-truncated display"""
         from rich.console import Group
-        from rich.panel import Panel
 
         content_elements = []
 
@@ -531,6 +555,11 @@ class ActionRenderer:
             result: List[Text] = [
                 Text.from_markup(f"[dim]  \u23bf  \U0001f527 {label} - {tc.status_mark}{tc.duration_str}[/dim]")
             ]
+            # A reviewed sub-agent call carries the same verdict row as a
+            # main-agent one: without it a subagent could run a gated bash/SQL
+            # action and show only the result, hiding that a review happened.
+            if tc.review_line:
+                result.append(Text.from_markup(f"[dim]          {rich_escape(tc.review_line)}[/dim]"))
             if verbose:
                 for line in tc.args_lines:
                     result.append(Text.from_markup(f"[dim]          {line}[/dim]"))
@@ -761,6 +790,29 @@ class ActionRenderer:
 
     def render_main_action(self, action: ActionHistory, verbose: bool) -> List[RenderableType]:
         """Render a depth=0 completed action directly as Rich objects."""
+        # In-memory replay marker added when a response-started turn is
+        # interrupted.  It is deliberately not persisted as a model action,
+        # but must survive Ctrl+O/sidebar full-screen transcript rebuilds.
+        if action.action_type == INTERRUPTED_ACTION_TYPE:
+            return [Text.from_markup("[yellow]Interrupted[/yellow]")]
+
+        # Manual SQL/bash execution (input-bar sql>/bash> mode): render the
+        # terminal frame as the styled execution block.
+        if action.action_type == "manual_exec":
+            from datus.cli.action_display.tool_content import format_review_line
+            from datus.cli.manual_exec import render_exec_block
+            from datus.tools.permission.review_registry import PERMISSION_REVIEW_OUTPUT_KEY
+
+            output = action.output if isinstance(action.output, dict) else {}
+            payload = output.get("payload")
+            if not payload:
+                return []
+            # ``bash_mode`` stamps the verdict onto this action's output; render
+            # it inside the block so a manually run command shows what
+            # authorised it, exactly like an agent-run tool call does.
+            review_line = format_review_line(output.get(PERMISSION_REVIEW_OUTPUT_KEY), verbose=verbose)
+            return [render_exec_block(payload, review_line=review_line)]
+
         # Task tool -> render as subagent
         if action.role == ActionRole.TOOL:
             fn = action.input.get("function_name", "") if action.input else ""
@@ -778,11 +830,19 @@ class ActionRenderer:
                 return [render_assistant_response_markdown(content)]
             return []
 
-        # USER -> styled Text
+        # USER -> styled Text. A marker-encoded manual-execution record is
+        # suppressed here during the LIVE model turn: the execution was already
+        # rendered live as the streamed ``manual_exec`` frame, so re-drawing the
+        # block would double it. On ``/resume`` and Ctrl+O reprint the block is
+        # drawn via ``render_user_header`` instead (no live frame there).
         if action.role == ActionRole.USER:
             msg = action.messages or ""
             if msg.startswith("User: "):
                 msg = msg[6:]
+            from datus.cli.manual_exec import is_exec_message
+
+            if is_exec_message(msg):
+                return []
             return [render_user_scrollback_text(msg)]
 
         # TOOL / WORKFLOW / SYSTEM -> generate Rich Text directly
@@ -809,6 +869,9 @@ class ActionRenderer:
             result: List[Union[Text, Markdown, Syntax]] = [
                 Text.from_markup(f"\u23fa \U0001f527 {rich_escape(tc.label)} - {tc.status_mark}{tc.duration_str}")
             ]
+            if tc.review_line:
+                # Verbose carries the untruncated rationale.
+                result.append(Text.from_markup(f"    [dim]{rich_escape(tc.review_line)}[/dim]"))
             for line in tc.args_lines:
                 result.append(Text.from_markup(f"    {line}"))
             if tc.args_lines and tc.output_lines:
@@ -818,19 +881,42 @@ class ActionRenderer:
             result.append(Text(""))
             return result
         else:
-            status_dot = "[green]\u23fa[/green]" if action.status == ActionStatus.SUCCESS else "[red]\u23fa[/red]"
+            # Drive the dot/mark off ``tc.status_mark`` rather than
+            # ``action.status``: a tool that returns ``FuncToolResult(success=0)``
+            # without raising leaves ``action.status == SUCCESS``, but the
+            # per-tool builder flips ``status_mark`` to \u2717 for that failure shape.
+            # Recomputing from ``action.status`` here would mislabel a rejected
+            # call (e.g. an unsupported execute_sql statement) with a green \u2713.
+            failed = action.status != ActionStatus.SUCCESS or tc.status_mark == "\u2717"
+            status_dot = "[red]\u23fa[/red]" if failed else "[green]\u23fa[/green]"
             header = f"\U0001f527 {rich_escape(tc.label)}({rich_escape(tc.args_summary)})"
-            if action.status == ActionStatus.SUCCESS:
-                mark = "[green]\u2713[/green]"
-            else:
-                mark = "[red]\u00d7[/red]"
-            result_text = tc.compact_result or tc.output_preview
+            mark = "[red]\u00d7[/red]" if failed else "[green]\u2713[/green]"
             dur = tc.duration_str.strip()  # "(<0.1s)" or "(12.4s)"
             dur_suffix = f" \u00b7 [dim]{dur.strip('()')}[/dim]" if dur else ""
+
+            # The AI permission review (when the call was reviewed) gets its own
+            # row above the result, so the verdict that authorised the run reads
+            # in the same block as what the run produced.
+            review_rows = [f"  \u2514\u2500 [dim]{rich_escape(tc.review_line)}[/dim]"] if tc.review_line else []
+
+            # Multi-line compact result (e.g. bash showing the first few output
+            # lines). Continuation rows align under the first line's content; an
+            # overflow row folds the remainder claude-style.
+            if tc.compact_result_lines:
+                first, *rest = tc.compact_result_lines
+                body_lines = review_rows + [f"  \u2514\u2500 {mark} {rich_escape(first)}{dur_suffix}"]
+                body_lines.extend(f"     {rich_escape(line)}" for line in rest)
+                if tc.compact_result_overflow > 0:
+                    body_lines.append(f"     [dim]\u2026 +{tc.compact_result_overflow} lines (ctrl+o to expand)[/dim]")
+                body = "\n".join(body_lines)
+                return [Text.from_markup(f"{status_dot} {header}\n{body}")]
+
+            result_text = tc.compact_result or tc.output_preview
             if result_text:
                 body = f"  \u2514\u2500 {mark} {rich_escape(result_text)}{dur_suffix}"
             else:
                 body = f"  \u2514\u2500 {mark}{dur_suffix}"
+            body = "\n".join(review_rows + [body])
             return [Text.from_markup(f"{status_dot} {header}\n{body}")]
 
     @staticmethod
@@ -888,28 +974,86 @@ class ActionRenderer:
     def render_processing(self, action: ActionHistory, frame: str) -> Text:
         """Render the static running indicator for a PROCESSING tool.
 
-        Output: ``{frame} 🔧 {function_name}({first_arg_summary})`` at depth=0
-        (no dim — matches the completed top-level tool header colour), and
-        ``  ⎿  {frame} 🔧 …`` inside a subagent group (depth>0) with
-        ``[dim]`` so it aligns with the other ``⎿`` tool rows under the
-        ``⏺`` header. Falls back to ``{frame} 🔧 {label}...`` when no
-        arguments were sent.
+        Output: ``{frame} 🔧 {function_name}({first_arg_summary}) · running {Ns}``
+        at depth=0 (no dim — matches the completed top-level tool header colour),
+        and ``  ⎿  {frame} 🔧 … · running {Ns}`` inside a subagent group
+        (depth>0) with ``[dim]`` so it aligns with the other ``⎿`` tool rows
+        under the ``⏺`` header. Falls back to ``{frame} 🔧 {label}...`` for the
+        args part when none were sent. The elapsed time recomputes on every
+        repaint, so it ticks up while the tool runs.
         """
-        from datus.cli.action_display.tool_content import extract_args
+        from datus.cli.action_display.tool_content import (
+            extract_args,
+            format_running_duration,
+            tool_specific_args_summary,
+        )
+
+        # Manual SQL/bash execution: blink ``sql> <cmd> · running Ns`` (the
+        # mode-coloured command line) instead of the generic tool frame.
+        if action.action_type == "manual_exec":
+            from datus.cli.manual_exec import mode_prompt
+
+            data = action.input or {}
+            prompt, prompt_style = mode_prompt(data.get("kind", ""))
+            command = _truncate_middle(str(data.get("command", "")), max_len=80)
+            running = format_running_duration(action.start_time)
+            line = Text(f"{frame} ", style="")
+            line.append(prompt, style=prompt_style)
+            line.append(command)
+            line.append(f" · running {running}", style="dim")
+            return line
 
         function_name = action.input.get("function_name", "") if action.input else ""
         label = function_name or action.messages or ""
-        args_lines = extract_args(action)
-        suffix = f"({_truncate_middle(args_lines[0], max_len=80)})" if args_lines else "..."
-        body = f"{frame} \U0001f527 {rich_escape(label)}{rich_escape(suffix)}"
+        # Prefer the per-tool summary (e.g. bare ``"sleep 5"`` for bash)
+        # so the running frame matches the completed header; fall back to the
+        # generic ``key: value`` first-arg preview.
+        tool_summary = tool_specific_args_summary(action)
+        if tool_summary:
+            suffix = f"({_truncate_middle(tool_summary, max_len=80)})"
+        else:
+            args_lines = extract_args(action)
+            suffix = f"({_truncate_middle(args_lines[0], max_len=80)})" if args_lines else "..."
+        running = f" \u00b7 running {format_running_duration(action.start_time)}"
+        body = f"{frame} \U0001f527 {rich_escape(label)}{rich_escape(suffix)}{running}"
         if action.depth > 0:
             return Text.from_markup(f"[dim]  \u23bf  {body}[/dim]")
         return Text.from_markup(body)
 
+    def render_running_tool(self, action: ActionHistory, frame: str, verbose: bool) -> List[RenderableType]:
+        """Render a still-running tool as permanent (non-Live) output.
+
+        The blinking frame lives in the pinned region, which is torn down
+        whenever the screen is rebuilt (Ctrl+O verbose snapshot). Re-emitting
+        the running tool here keeps an in-flight call visible instead of
+        letting it vanish from the transcript until it completes.
+
+        Verbose mode appends the same argument block
+        :meth:`_render_main_tool` prints for a completed call; the output
+        block is necessarily absent because the tool has not returned yet.
+        """
+        from datus.cli.action_display.tool_content import extract_args_markup
+
+        result: List[RenderableType] = [self.render_processing(action, frame)]
+        if verbose:
+            result.extend(Text.from_markup(f"    {line}") for line in extract_args_markup(action))
+        result.append(Text(""))
+        return result
+
     # -- utility renderables ------------------------------------------------
 
-    def render_user_header(self, message: str) -> Panel:
-        """Render a restored/reprinted user message header."""
+    def render_user_header(self, message: str) -> RenderableType:
+        """Render a restored/reprinted user message header.
+
+        A marker-encoded manual-execution record renders as its styled
+        SQL/bash block (identical to the live turn); everything else uses the
+        standard user-scrollback panel.
+        """
+        from datus.cli.manual_exec import decode_exec_message, render_exec_block
+
+        payload = decode_exec_message(message)
+        if payload is not None:
+            return render_exec_block(payload)
         return render_user_scrollback_text(message)
 
     def render_separator(self) -> Text:

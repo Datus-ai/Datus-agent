@@ -19,6 +19,7 @@ The ONLY allowed mock: LLMBaseModel.create_model -> returns MockLLMModel
 
 import os
 import shutil
+import sys
 from unittest.mock import patch
 
 import pytest
@@ -63,6 +64,69 @@ from datus.configuration.agent_config import AgentConfig, NodeConfig  # noqa: E4
 from tests.unit_tests.mock_llm_model import MockLLMModel  # noqa: E402
 
 
+@pytest.fixture
+def isolated_logging(monkeypatch):
+    """Keep entrypoint logging tests from replacing the test runner's handlers."""
+    import logging
+
+    import structlog
+
+    from datus.utils import loggings
+
+    config = structlog.get_config()
+    loggers = [logging.getLogger()] + [
+        item for item in logging.Logger.manager.loggerDict.values() if isinstance(item, logging.Logger)
+    ]
+    saved = {item: (list(item.handlers), item.level, item.propagate) for item in loggers}
+    handlers = {handler: handler.level for item in loggers for handler in item.handlers}
+    # configure_logging closes its previous manager. Preserve the host manager
+    # by removing it from the test's scope before configuring a temporary one.
+    monkeypatch.setattr(loggings, "_log_manager", None)
+    monkeypatch.setattr(loggings, "_log_redact_config", loggings._log_redact_config)
+    monkeypatch.setattr(loggings, "fileno", loggings.fileno)
+    try:
+        yield
+    finally:
+        current = [logging.getLogger()] + [
+            item for item in logging.Logger.manager.loggerDict.values() if isinstance(item, logging.Logger)
+        ]
+        for item in current:
+            for handler in item.handlers:
+                if handler not in handlers:
+                    handler.close()
+            previous_handlers, level, propagate = saved.get(item, ([], logging.NOTSET, True))
+            item.handlers = previous_handlers
+            item.setLevel(level)
+            item.propagate = propagate
+        if loggings._log_manager is not None:
+            loggings._log_manager.file_handler.close()
+            loggings._log_manager.console_handler.close()
+        for handler, level in handlers.items():
+            handler.setLevel(level)
+        structlog.configure(**config)
+        # ``configure_logging`` enables structlog's first-use cache. A logger
+        # first used inside one of these tests otherwise keeps the temporary
+        # processors after the global config above is restored, so later tests
+        # cannot capture its events. Module-level loggers are lazy proxies;
+        # removing their instance-level ``bind`` closure makes them resolve the
+        # restored configuration on their next use.
+        from structlog._config import BoundLoggerLazyProxy
+
+        seen: set[int] = set()
+        for module in tuple(sys.modules.values()):
+            namespace = getattr(module, "__dict__", None)
+            if not isinstance(namespace, dict):
+                continue
+            for value in tuple(namespace.values()):
+                # ``isinstance`` is unsafe here because some SDK lazy proxies
+                # implement ``__class__`` by importing optional dependencies.
+                # Structlog creates this concrete proxy type, so an exact type
+                # check avoids evaluating arbitrary module globals.
+                if type(value) is BoundLoggerLazyProxy and id(value) not in seen:
+                    seen.add(id(value))
+                    vars(value).pop("bind", None)
+
+
 @pytest.fixture(autouse=True)
 def _isolate_project_cwd(monkeypatch, tmp_path):
     """Run every unit test in a per-test isolated working directory.
@@ -88,6 +152,21 @@ def _isolate_project_cwd(monkeypatch, tmp_path):
     ``Path(__file__).resolve().parents[...]``, so they're unaffected.
     """
     monkeypatch.chdir(tmp_path)
+
+
+@pytest.fixture(autouse=True)
+def _reset_plugin_registry_cache():
+    """Invalidate the process-level plugin class cache around every test.
+
+    ``datus.plugins.registry`` memoizes loaded entry-point classes for the
+    process lifetime; tests that monkeypatch ``importlib.metadata.entry_points``
+    would otherwise see stale plugins from a previous test.
+    """
+    from datus.plugins.registry import invalidate_plugin_cache
+
+    invalidate_plugin_cache()
+    yield
+    invalidate_plugin_cache()
 
 
 @pytest.fixture(autouse=True, scope="session")
@@ -196,7 +275,14 @@ def _copy_california_schools_db(dest_path: str) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _create_real_agent_config(tmp_path, db_path: str, *, read_only_db: bool) -> AgentConfig:
+def _create_real_agent_config(
+    tmp_path,
+    db_path: str,
+    *,
+    read_only_db: bool,
+    project_name: str | None = None,
+    storage_config: dict | None = None,
+) -> AgentConfig:
     """Create a fully real AgentConfig backed by a real SQLite database.
 
     Includes:
@@ -205,7 +291,7 @@ def _create_real_agent_config(tmp_path, db_path: str, *, read_only_db: bool) -> 
     - models with a mock OpenAI config
     - datasource "test_ns" with california_schools.sqlite ("california_schools")
     - agentic_nodes config for chat, gen_sql, compare,
-      gen_sql_summary, gen_metrics, gen_semantic_model, gen_report
+      gen_sql_summary, gen_report
     """
     # Create workspace subdirectory for filesystem tools
     os.makedirs(os.path.join(str(tmp_path), "workspace"), exist_ok=True)
@@ -234,16 +320,25 @@ def _create_real_agent_config(tmp_path, db_path: str, *, read_only_db: bool) -> 
             "datasources": {
                 "california_schools": datasource_config,
             },
-            "semantic_layer": {},
             "bi_platforms": {},
             "schedulers": {},
         },
         "project_root": str(tmp_path / "workspace"),
-        "storage": {},
+        "storage": storage_config or {},
         "agentic_nodes": {
+            "semantic_modeling": {
+                "system_prompt": "semantic_modeling",
+                "max_turns": 5,
+            },
             "chat": {
                 "system_prompt": "chat",
-                "tools": "db_tools.*,context_search_tools.*",
+                # No `tools`: a chat node is full-featured by default, which is
+                # what the tests below assert. The key used to sit here carrying
+                # "db_tools.*,context_search_tools.*", but ChatAgenticNode
+                # ignored it entirely, so it described a narrowing that never
+                # happened. Now that the node honours the field, leaving the
+                # dead value in place would silently strip filesystem, bash,
+                # skills and date parsing from every chat node in the suite.
                 "max_turns": 5,
             },
             "gen_sql": {
@@ -258,15 +353,6 @@ def _create_real_agent_config(tmp_path, db_path: str, *, read_only_db: bool) -> 
             },
             "gen_sql_summary": {
                 "system_prompt": "gen_sql_summary",
-                "max_turns": 5,
-            },
-            "gen_metrics": {
-                "system_prompt": "gen_metrics",
-                "max_turns": 5,
-            },
-            "gen_semantic_model": {
-                "system_prompt": "gen_semantic_model",
-                "tools": "db_tools.*",
                 "max_turns": 5,
             },
             "gen_report": {
@@ -298,6 +384,8 @@ def _create_real_agent_config(tmp_path, db_path: str, *, read_only_db: bool) -> 
             },
         },
     }
+    if project_name is not None:
+        config_kwargs["project_name"] = project_name
 
     nodes: dict[str, NodeConfig] = {}
     agent_config = AgentConfig(nodes=nodes, **config_kwargs)
@@ -308,12 +396,26 @@ def _create_real_agent_config(tmp_path, db_path: str, *, read_only_db: bool) -> 
 
 
 @pytest.fixture
-def real_agent_config(tmp_path, reset_global_singletons):
+def agent_storage_config():
+    """Use the production default storage configuration unless a suite overrides it."""
+    return {}
+
+
+@pytest.fixture
+def agent_project_name():
+    """Let AgentConfig derive its normal project name unless a suite overrides it."""
+    return None
+
+
+@pytest.fixture
+def real_agent_config(tmp_path, reset_global_singletons, agent_project_name, agent_storage_config):
     """Create a fully real AgentConfig backed by a shared read-only SQLite database."""
     agent_config = _create_real_agent_config(
         tmp_path,
         CALIFORNIA_SCHOOLS_DB,
         read_only_db=True,
+        project_name=agent_project_name,
+        storage_config=agent_storage_config,
     )
 
     yield agent_config
@@ -323,7 +425,7 @@ def real_agent_config(tmp_path, reset_global_singletons):
 
 
 @pytest.fixture
-def mutable_real_agent_config(tmp_path, reset_global_singletons):
+def mutable_real_agent_config(tmp_path, reset_global_singletons, agent_project_name, agent_storage_config):
     """Create a real AgentConfig with a per-test mutable SQLite database copy."""
     db_path = os.path.join(str(tmp_path), "california_schools.sqlite")
     _copy_california_schools_db(db_path)
@@ -332,6 +434,8 @@ def mutable_real_agent_config(tmp_path, reset_global_singletons):
         tmp_path,
         db_path,
         read_only_db=False,
+        project_name=agent_project_name,
+        storage_config=agent_storage_config,
     )
 
 

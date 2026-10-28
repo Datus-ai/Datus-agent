@@ -114,11 +114,20 @@ def update_dependency_lower_bounds(path: Path, bounds: dict[str, Version], *, qu
     return False
 
 
-def latest_adapter_bounds(timeout: float, allow_prerelease: bool) -> dict[str, Version]:
+def latest_package_bounds(
+    package_names: tuple[str, ...],
+    *,
+    timeout: float,
+    allow_prerelease: bool,
+) -> dict[str, Version]:
     return {
         package_name: fetch_latest_pypi_version(package_name, timeout=timeout, allow_prerelease=allow_prerelease)
-        for package_name in ADAPTER_CORE_PACKAGES
+        for package_name in package_names
     }
+
+
+def latest_adapter_bounds(timeout: float, allow_prerelease: bool) -> dict[str, Version]:
+    return latest_package_bounds(ADAPTER_CORE_PACKAGES, timeout=timeout, allow_prerelease=allow_prerelease)
 
 
 def prepare_release(
@@ -143,7 +152,6 @@ def prepare_release(
             changed.append(pyproject_path)
         if update_dependency_lower_bounds(requirements_path, bounds, quoted=False):
             changed.append(requirements_path)
-
     return sorted(set(changed))
 
 

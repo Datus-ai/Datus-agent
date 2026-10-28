@@ -8,15 +8,19 @@ from datus.configuration.agent_config import AgentConfig
 from datus.tools.permission.permission_config import PermissionLevel
 
 
-def _make_config(permissions_raw):
+def _make_config(permissions_raw, plugins_enabled=False):
     """Build a bare AgentConfig exercising only ``_init_permissions_config``.
 
     Real AgentConfig.__init__ requires substantial YAML; for these tests we
     instantiate with ``__new__`` and call the helper directly. If the
     project adds a richer fixture helper later, prefer that.
+
+    ``plugins_enabled`` defaults to False so assertions stay hermetic on
+    machines that happen to have real datus plugins installed.
     """
     cfg = AgentConfig.__new__(AgentConfig)
     cfg.active_profile_name = "normal"  # pre-seed so loader can overwrite
+    cfg.plugins_enabled = plugins_enabled
     cfg.permissions_config = cfg._init_permissions_config(permissions_raw or {})
     return cfg
 
@@ -24,8 +28,9 @@ def _make_config(permissions_raw):
 def test_missing_permissions_yields_normal_profile():
     cfg = _make_config(None)
     assert cfg.active_profile_name == "normal"
-    # Normal profile has explicit read allows
-    assert any(r.tool == "db_tools" and r.pattern == "read_query" for r in cfg.permissions_config.rules)
+    # Normal profile has explicit read allows (execute_sql reads are gated by
+    # the hook, not a static rule; verify_sql remains an explicit ALLOW).
+    assert any(r.tool == "db_tools" and r.pattern == "verify_sql" for r in cfg.permissions_config.rules)
 
 
 def test_empty_permissions_yields_normal_profile():
@@ -59,21 +64,25 @@ def test_user_rules_layered_on_profile_base():
         {
             "profile": "auto",
             "rules": [
-                {"tool": "db_tools", "pattern": "execute_ddl", "permission": "deny"},
+                {"tool": "db_tools", "pattern": "transfer_query_result", "permission": "deny"},
             ],
         }
     )
     rules = cfg.permissions_config.rules
-    # The Auto base has execute_ddl ASK; user rule must appear after it.
+    # The Auto base has transfer_query_result ASK; user rule must appear after it.
     auto_idx = next(
         i
         for i, r in enumerate(rules)
-        if r.tool == "db_tools" and r.pattern == "execute_ddl" and PermissionLevel(r.permission) == PermissionLevel.ASK
+        if r.tool == "db_tools"
+        and r.pattern == "transfer_query_result"
+        and PermissionLevel(r.permission) == PermissionLevel.ASK
     )
     user_idx = next(
         i
         for i, r in enumerate(rules)
-        if r.tool == "db_tools" and r.pattern == "execute_ddl" and PermissionLevel(r.permission) == PermissionLevel.DENY
+        if r.tool == "db_tools"
+        and r.pattern == "transfer_query_result"
+        and PermissionLevel(r.permission) == PermissionLevel.DENY
     )
     assert user_idx > auto_idx, "user rule must be appended after profile base"
 
@@ -161,6 +170,34 @@ def test_malformed_user_rules_falls_back_to_base(caplog):
     )
 
 
+def test_user_sql_statements_layered_on_profile_base():
+    cfg = _make_config({"profile": "normal", "sql_statements": {"write": "allow"}})
+    rules = cfg.permissions_config.sql_statements
+    assert rules.level_for_class("write") == PermissionLevel.ALLOW
+    # Unset classes keep the normal profile posture.
+    assert rules.level_for_class("destructive") == PermissionLevel.ASK
+
+
+def test_profile_sql_statements_present_without_user_override():
+    cfg = _make_config({"profile": "auto"})
+    rules = cfg.permissions_config.sql_statements
+    assert rules.level_for_class("write") == PermissionLevel.ALLOW
+    assert rules.level_for_class("destructive") == PermissionLevel.ASK
+
+
+def test_malformed_sql_statements_falls_back_to_base(caplog):
+    """An invalid sql_statements level must not crash startup — fall back to
+    the profile base (fail closed) with a warning."""
+    import logging
+
+    with caplog.at_level(logging.WARNING, logger="datus.configuration.agent_config"):
+        cfg = _make_config({"profile": "auto", "sql_statements": {"destructive": "yolo"}})
+    # Fell back to base normal (the loader's fail-closed target).
+    assert cfg.permissions_config.default_permission == PermissionLevel.ASK
+    assert cfg.permissions_config.sql_statements.level_for_class("write") == PermissionLevel.ASK
+    assert any("permissions" in rec.message for rec in caplog.records)
+
+
 def test_non_mapping_permissions_falls_back_to_normal(caplog):
     """A list/scalar in ``permissions`` must not crash the loader.
 
@@ -192,3 +229,77 @@ def test_non_string_profile_field_falls_back_to_normal(caplog):
         "Invalid permissions.profile" in rec.message or "Falling back to 'normal'" in rec.message
         for rec in caplog.records
     )
+
+
+# ---------------------------------------------------------------------------
+# Plugin-declared CLI bash rules
+# ---------------------------------------------------------------------------
+
+
+def _hello_rules_map(active_names=None):
+    from datus.tools.permission.bash_rules import BashCommandRules
+
+    return {"normal": BashCommandRules(allow=["datus hello greet:*"])}
+
+
+def test_plugin_rules_collected_and_merged_when_enabled(monkeypatch):
+    from datus.plugins import registry
+
+    monkeypatch.setattr(registry, "collect_plugin_cli_permissions", _hello_rules_map)
+    cfg = _make_config({}, plugins_enabled=True)
+
+    assert set(cfg.plugin_bash_rules) == {"normal"}
+    assert "datus hello greet:*" in cfg.permissions_config.bash_commands.allow
+
+
+def test_plugin_rules_not_collected_when_disabled(monkeypatch):
+    from datus.plugins import registry
+
+    called = []
+
+    def spy(active_names=None):
+        called.append(True)
+        return _hello_rules_map()
+
+    monkeypatch.setattr(registry, "collect_plugin_cli_permissions", spy)
+    cfg = _make_config({}, plugins_enabled=False)
+
+    assert called == []
+    assert cfg.plugin_bash_rules == {}
+    assert all("datus hello" not in p for p in cfg.permissions_config.bash_commands.allow)
+
+
+def test_plugin_collection_failure_does_not_block_config(monkeypatch, caplog):
+    import logging
+
+    from datus.plugins import registry
+
+    def boom(active_names=None):
+        raise RuntimeError("collector exploded")
+
+    monkeypatch.setattr(registry, "collect_plugin_cli_permissions", boom)
+    with caplog.at_level(logging.WARNING):
+        cfg = _make_config({}, plugins_enabled=True)
+
+    assert cfg.plugin_bash_rules == {}
+    # The failure is contained: config falls back to the clean base profile
+    # rather than being left partial/corrupted or carrying phantom plugin rules.
+    assert all("datus hello" not in p for p in cfg.permissions_config.bash_commands.allow)
+    assert "Plugin CLI permission collection failed" in caplog.text
+
+
+def test_plugin_rules_inactive_profile_not_merged(monkeypatch):
+    from datus.plugins import registry
+    from datus.tools.permission.bash_rules import BashCommandRules
+
+    monkeypatch.setattr(
+        registry,
+        "collect_plugin_cli_permissions",
+        lambda active_names=None: {"auto": BashCommandRules(allow=["datus hello greet:*"])},
+    )
+    cfg = _make_config({}, plugins_enabled=True)  # active profile: normal
+
+    # The auto-only declaration is stored for runtime switches but not merged
+    # into the normal effective config.
+    assert set(cfg.plugin_bash_rules) == {"auto"}
+    assert all("datus hello" not in p for p in cfg.permissions_config.bash_commands.allow)

@@ -106,3 +106,34 @@ def get_app_context(request: Request) -> AppContext:
 
 ServiceDep = Annotated[DatusService, Depends(get_datus_service)]
 AppContextDep = Annotated[AppContext, Depends(get_app_context)]
+
+
+def get_scoped_sub_agent(request: Request, svc: ServiceDep) -> Optional[str]:
+    """The request's sub-agent name, validated against the configuration.
+
+    Returns ``None`` for an unscoped request — the single-tenant default.
+
+    A name that is not a configured ``agentic_nodes`` key is refused with 400
+    rather than passed on, because a service built from an unrecognised name has
+    no scope filter at all: the read would succeed and return everything. That
+    turns a caller's identifier mistake into a scope bypass. Rejecting here
+    stops it before any route body runs, so nothing unscoped is ever built or
+    cached.
+
+    Taking ``svc`` as a dependency rather than reading ``request.state`` also
+    fixes the ordering hazard by construction: FastAPI resolves ``ServiceDep``
+    first because this depends on it, so a route can declare its parameters in
+    any order.
+    """
+    sub_agent_name = get_app_context(request).sub_agent_name
+    if sub_agent_name is None:
+        return None
+    if not svc.has_sub_agent(sub_agent_name):
+        # Deliberately does not name the configured sub-agents: on a deployment
+        # that publishes one of them to a consumer, listing the rest is its own
+        # disclosure.
+        raise HTTPException(status_code=400, detail=f"Unknown sub-agent: {sub_agent_name}")
+    return sub_agent_name
+
+
+SubAgentDep = Annotated[Optional[str], Depends(get_scoped_sub_agent)]

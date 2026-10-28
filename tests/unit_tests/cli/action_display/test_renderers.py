@@ -4,6 +4,7 @@
 
 """Unit tests for datus/cli/action_display/renderers.py (ActionRenderer)."""
 
+import json
 import uuid
 from datetime import datetime, timedelta
 from io import StringIO
@@ -19,6 +20,7 @@ from datus.cli.action_display.renderers import (
     _get_assistant_content,
     is_task_anchor_input,
     parse_task_tool_input,
+    resolve_assistant_body,
 )
 from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
 from datus.utils.text_utils import LITELLM_EMPTY_PLACEHOLDER
@@ -488,6 +490,33 @@ class TestRenderMainAction:
         text = _plain(result)
         assert "list_tables" in text
 
+    def test_bash_multiline_result_folds_extra_lines(self):
+        """bash compact result renders first 3 lines + a '… +N lines' overflow row."""
+        out = "\\n".join(f"line{i}" for i in range(10))
+        action = _make_action(
+            ActionRole.TOOL,
+            ActionStatus.SUCCESS,
+            input_data={"function_name": "bash", "arguments": {"command": "ls"}},
+            output_data={"raw_output": f'{{"success": 1, "result": "{out}"}}'},
+        )
+        result = _renderer().render_main_action(action, verbose=False)
+        text = _plain(result)
+        assert "line0" in text and "line1" in text and "line2" in text
+        assert "line3" not in text  # folded
+        assert "… +7 lines" in text
+
+    def test_single_line_tool_returns_one_text(self):
+        """Regression: tools without multi-line compact fields render exactly one line block."""
+        action = _make_action(
+            ActionRole.TOOL,
+            ActionStatus.SUCCESS,
+            input_data={"function_name": "list_tables"},
+            output_data={"raw_output": '{"success": 1, "result": ["a", "b"]}'},
+        )
+        result = _renderer().render_main_action(action, verbose=False)
+        # No overflow / continuation rows for a plain single-line result.
+        assert "… +" not in _plain(result)
+
     def test_task_tool_renders_as_subagent(self):
         """TOOL(task) action renders as subagent summary."""
         action = _make_action(
@@ -540,13 +569,58 @@ class TestRenderMainAction:
         panel = result[0]
         assert isinstance(panel, Panel)
         assert str(panel.border_style) == "green"
-        assert str(panel.style) == "on #eeeeee"
+        # No background fill: the block must inherit the terminal background so
+        # it reads correctly on both dark and light schemes.
+        assert str(panel.style) == "none"
         inner = panel.renderable
         assert isinstance(inner, Text)
         assert inner.plain.startswith("> ")
         assert "my question" in inner.plain
-        assert str(inner.spans[0].style) == "green bold on #eeeeee"
-        assert str(inner.spans[1].style) == "on #eeeeee"
+        assert str(inner.spans[0].style) == "green bold"
+        assert all("on " not in str(span.style) for span in inner.spans)
+
+    def test_user_action_exec_message_is_suppressed_live(self):
+        """During the live model turn, a marker-encoded manual-execution USER
+        message renders NOTHING — the execution was already shown live as the
+        streamed ``manual_exec`` frame, so re-drawing it would double it. (The
+        block is drawn via ``render_user_header`` on resume / Ctrl+O instead.)"""
+        from datus.cli.manual_exec import build_sql_payload, encode_exec_message
+
+        message = encode_exec_message(build_sql_payload("SELECT id FROM t", ["id"], [{"id": 7}], 1, 0.03))
+        action = _make_action(ActionRole.USER, ActionStatus.SUCCESS, messages=f"User: {message}")
+        assert _renderer().render_main_action(action, verbose=False) == []
+
+    def test_manual_exec_terminal_renders_block(self):
+        """The streamed ``manual_exec`` terminal action renders the styled block
+        from its stored payload (live execution frame's resolved state)."""
+        from datus.cli.manual_exec import build_bash_payload
+
+        payload = build_bash_payload("git status", True, "On branch main", None, 0.05)
+        action = _make_action(
+            ActionRole.TOOL,
+            ActionStatus.SUCCESS,
+            action_type="manual_exec",
+            input_data={"kind": "bash", "command": "git status"},
+            output_data={"payload": payload},
+        )
+        text = _plain(_renderer().render_main_action(action, verbose=False))
+        assert "bash>" in text
+        assert "On branch main" in text
+        assert "datus-exec" not in text
+
+    def test_manual_exec_processing_renders_running_frame(self):
+        """The PROCESSING ``manual_exec`` frame shows the mode command line +
+        a ticking ``running`` indicator (the live blink)."""
+        action = _make_action(
+            ActionRole.TOOL,
+            ActionStatus.PROCESSING,
+            action_type="manual_exec",
+            input_data={"kind": "sql", "command": "SELECT 1"},
+        )
+        text = _renderer().render_processing(action, frame="○").plain
+        assert "sql>" in text
+        assert "SELECT 1" in text
+        assert "running" in text
 
 
 # ── render_task_tool_as_subagent ──────────────────────────────────
@@ -652,6 +726,30 @@ class TestRenderProcessing:
         assert "list_tables" in result.plain
         assert result.plain.startswith("\u25cb ")
 
+    def test_processing_shows_running_elapsed(self):
+        """PROCESSING frame appends a `· running Ns` elapsed suffix (all tools)."""
+        action = _make_action(
+            ActionRole.TOOL,
+            ActionStatus.PROCESSING,
+            input_data={"function_name": "bash", "arguments": {"command": "sleep 5"}},
+            start_time=datetime.now() - timedelta(seconds=3),
+        )
+        result = _renderer().render_processing(action, "○")
+        assert "running 3s" in result.plain
+
+    def test_processing_depth_gt_zero_dim_and_elbow(self):
+        """Sub-agent (depth>0) PROCESSING frame keeps the ⎿ elbow and running suffix."""
+        action = _make_action(
+            ActionRole.TOOL,
+            ActionStatus.PROCESSING,
+            depth=1,
+            input_data={"function_name": "bash", "arguments": {"command": "ls"}},
+            start_time=datetime.now() - timedelta(seconds=1),
+        )
+        result = _renderer().render_processing(action, "○")
+        assert "⎿" in result.plain
+        assert "running 1s" in result.plain
+
     def test_processing_includes_first_argument(self):
         """PROCESSING frame includes the first argument as `(key: value)` summary."""
         action = _make_action(
@@ -675,7 +773,9 @@ class TestRenderProcessing:
             input_data={"function_name": "list_tables"},
         )
         result = _renderer().render_processing(action, "\u25cb")
-        assert result.plain.endswith("list_tables...")
+        # Args fall back to "..."; a running-duration suffix now trails the frame.
+        assert "list_tables..." in result.plain
+        assert "running" in result.plain
 
     def test_processing_truncates_long_argument_value(self):
         """Long argument values get middle-truncated at 80 chars."""
@@ -691,8 +791,9 @@ class TestRenderProcessing:
         result = _renderer().render_processing(action, "\u25cb")
         # Truncation helper inserts " ... " separator in the middle.
         assert " ... " in result.plain
-        # Key label remains visible.
-        assert "sql:" in result.plain
+        # Value is shown positionally (matching the completed header), no key prefix.
+        assert "SELECT" in result.plain
+        assert "sql:" not in result.plain
 
     def test_processing_indents_inside_subagent(self):
         """PROCESSING row inside a subagent (depth>0) gets the `  ⎿  ` prefix."""
@@ -732,13 +833,28 @@ class TestUtilityRenderables:
         panel = _renderer().render_user_header("What is revenue?")
         assert isinstance(panel, Panel)
         assert str(panel.border_style) == "green"
-        assert str(panel.style) == "on #eeeeee"
+        assert str(panel.style) == "none"
         inner = panel.renderable
         assert isinstance(inner, Text)
         assert inner.plain.startswith("> ")
         assert "What is revenue?" in inner.plain
-        assert str(inner.spans[0].style) == "green bold on #eeeeee"
-        assert str(inner.spans[1].style) == "on #eeeeee"
+        assert str(inner.spans[0].style) == "green bold"
+        assert all("on " not in str(span.style) for span in inner.spans)
+
+    def test_user_header_exec_message_renders_styled_block(self):
+        """On resume, a manual-execution record renders as its bash/sql block
+        (identical to the live turn), never as a plain green user panel."""
+        from datus.cli.manual_exec import build_bash_payload, encode_exec_message
+
+        message = encode_exec_message(build_bash_payload("git status", True, "On branch main", None, 0.05))
+        renderable = _renderer().render_user_header(message)
+        console = Console(file=StringIO(), width=200, no_color=True)
+        console.print(renderable)
+        text = console.file.getvalue()
+        assert "bash>" in text
+        assert "git status" in text
+        assert "On branch main" in text
+        assert "datus-exec" not in text
 
     def test_separator(self):
         text = _renderer().render_separator()
@@ -851,6 +967,29 @@ class TestVerboseMarkupRendering:
         text = _plain(result)
         assert "SELECT SUM(revenue) FROM sales" in text
         assert "sql" in text
+
+    def test_tool_reported_failure_renders_cross_not_check(self):
+        """A tool that returns FuncToolResult(success=0) WITHOUT raising leaves
+        ``action.status == SUCCESS``; the compact ``└─`` line must still show ✗
+        (driven by the per-tool builder's status_mark), not a green ✓.
+
+        Regression: an unsupported/denied execute_sql statement showed ``✓``.
+        """
+        now = datetime.now()
+        action = _make_action(
+            ActionRole.TOOL,
+            ActionStatus.SUCCESS,  # no exception bubbled up
+            action_type="execute_sql",
+            messages="execute_sql",
+            input_data={"function_name": "execute_sql", "arguments": {"sql": "CREATE DATABASE x"}},
+            output_data={"success": 0, "error": "boom", "result": None},
+            start_time=now,
+            end_time=now + timedelta(seconds=0.1),
+        )
+        result = _renderer()._render_main_tool(action, verbose=False)
+        text = _plain(result)
+        assert "✗" in text or "×" in text
+        assert "✓" not in text
 
     def test_args_key_bold(self):
         """Argument keys are rendered with bold markup."""
@@ -1155,3 +1294,293 @@ class TestGetAssistantContentPlaceholderFiltering:
             output_data={"raw_output": "SELECT * FROM users"},
         )
         assert _get_assistant_content(action) == "SELECT * FROM users"
+
+
+@pytest.mark.ci
+class TestResolveAssistantBody:
+    """``resolve_assistant_body`` never falls back to boilerplate ``messages``."""
+
+    def test_prefers_raw_output_over_response(self):
+        action = _make_action(
+            ActionRole.ASSISTANT,
+            ActionStatus.SUCCESS,
+            messages="boilerplate",
+            output_data={"raw_output": "streamed text", "response": "node result"},
+        )
+        assert resolve_assistant_body(action) == "streamed text"
+
+    def test_falls_back_to_response_key(self):
+        """Node wrapper results (``ChatNodeResult``) carry no ``raw_output``."""
+        action = _make_action(
+            ActionRole.ASSISTANT,
+            ActionStatus.SUCCESS,
+            action_type="chat_response",
+            messages="chat interaction completed successfully",
+            output_data={"success": True, "response": "The orders table has 42 rows."},
+        )
+        assert resolve_assistant_body(action) == "The orders table has 42 rows."
+
+    def test_returns_empty_when_no_body_keys(self):
+        action = _make_action(
+            ActionRole.ASSISTANT,
+            ActionStatus.SUCCESS,
+            action_type="chat_response",
+            messages="chat interaction completed successfully",
+            output_data={"success": True, "response": "   ", "tokens_used": 12},
+        )
+        assert resolve_assistant_body(action) == ""
+
+    def test_returns_empty_when_output_not_dict(self):
+        action = _make_action(ActionRole.ASSISTANT, ActionStatus.SUCCESS, messages="only messages")
+        action.output = "string output"
+        assert resolve_assistant_body(action) == ""
+
+    def test_skips_non_string_body_values(self):
+        """Structured tool-shaped payloads are not renderable markdown bodies."""
+        action = _make_action(
+            ActionRole.ASSISTANT,
+            ActionStatus.SUCCESS,
+            output_data={"raw_output": {"success": True, "result": "x"}, "response": "plain text"},
+        )
+        assert resolve_assistant_body(action) == "plain text"
+
+    def test_strips_litellm_placeholder_body(self):
+        action = _make_action(
+            ActionRole.ASSISTANT,
+            ActionStatus.SUCCESS,
+            messages="boilerplate",
+            output_data={"raw_output": LITELLM_EMPTY_PLACEHOLDER, "response": "real body"},
+        )
+        assert resolve_assistant_body(action) == "real body"
+
+
+class TestPermissionReviewRow:
+    """The AI review row sits above the result, in both compact and verbose."""
+
+    @staticmethod
+    def _action(review, result="added 42 packages"):
+        now = datetime.now()
+        return _make_action(
+            ActionRole.TOOL,
+            ActionStatus.SUCCESS,
+            action_type="bash",
+            messages="bash",
+            input_data={"function_name": "bash", "arguments": {"command": "npm ci"}},
+            output_data={
+                "raw_output": json.dumps({"success": 1, "result": result}),
+                "permission_review": review,
+            },
+            start_time=now,
+            end_time=now + timedelta(seconds=2.3),
+        )
+
+    def test_compact_shows_verdict_above_the_result(self):
+        action = self._action({"decision": "allow", "risk_level": "low", "confidence": 0.92, "rationale": "reversible"})
+        text = _plain(_renderer()._render_main_tool(action, verbose=False))
+
+        assert "AI review ✓ passed" in text
+        assert "reversible" in text
+        assert text.index("AI review") < text.index("added 42 packages")
+
+    def test_compact_flagged_run_names_the_override(self):
+        action = self._action(
+            {"outcome": "user_approved", "decision": "ask", "risk_level": "high", "rationale": "irreversible"}
+        )
+        text = _plain(_renderer()._render_main_tool(action, verbose=False))
+
+        assert "AI review ✗ flagged" in text
+        assert "user approved" in text
+
+    def test_unreviewed_call_renders_no_review_row(self):
+        now = datetime.now()
+        action = _make_action(
+            ActionRole.TOOL,
+            ActionStatus.SUCCESS,
+            action_type="bash",
+            messages="bash",
+            input_data={"function_name": "bash", "arguments": {"command": "npm ci"}},
+            output_data={"raw_output": json.dumps({"success": 1, "result": "ok"})},
+            start_time=now,
+            end_time=now + timedelta(seconds=0.1),
+        )
+        assert "AI review" not in _plain(_renderer()._render_main_tool(action, verbose=False))
+
+    def test_verbose_shows_the_untruncated_rationale(self):
+        rationale = "y" * 300
+        action = self._action({"decision": "allow", "risk_level": "low", "rationale": rationale})
+        text = _plain(_renderer()._render_main_tool(action, verbose=True))
+
+        assert rationale in text.replace("\n", "")
+
+    def test_multiline_output_keeps_its_own_rows(self):
+        """The review row must not be counted as one of the output lines."""
+        action = self._action({"decision": "allow", "rationale": "safe"}, result="\n".join(f"l{i}" for i in range(8)))
+        text = _plain(_renderer()._render_main_tool(action, verbose=False))
+
+        assert "AI review" in text
+        # Three output rows plus the folded remainder, unchanged by the review row.
+        assert "l0" in text and "l2" in text
+        assert "+5 lines" in text
+
+
+class TestSubagentPermissionReviewRow:
+    """A reviewed sub-agent tool call shows the same verdict as a main-agent one.
+
+    Regression: the row was only wired into ``_render_main_tool``, so a
+    subagent could run a gated bash/SQL action and display just its result —
+    the reader could not tell a review had happened or what it concluded.
+    """
+
+    @staticmethod
+    def _bash_action(review):
+        now = datetime.now()
+        return _make_action(
+            ActionRole.TOOL,
+            ActionStatus.SUCCESS,
+            depth=1,
+            action_type="bash",
+            messages="bash",
+            input_data={"function_name": "bash", "arguments": {"command": "npm ci"}},
+            output_data={
+                "raw_output": json.dumps({"success": 1, "result": "added 42 packages"}),
+                "permission_review": review,
+            },
+            start_time=now,
+            end_time=now + timedelta(seconds=2.3),
+        )
+
+    @staticmethod
+    def _sql_action(review):
+        now = datetime.now()
+        return _make_action(
+            ActionRole.TOOL,
+            ActionStatus.SUCCESS,
+            depth=1,
+            action_type="execute_sql",
+            messages="execute_sql",
+            input_data={"function_name": "execute_sql", "arguments": {"sql": "DELETE FROM staging WHERE id = 1"}},
+            output_data={"success": 1, "result": "1 row affected", "permission_review": review},
+            start_time=now,
+            end_time=now + timedelta(seconds=0.4),
+        )
+
+    def test_compact_bash_shows_the_verdict(self):
+        action = self._bash_action(
+            {"decision": "allow", "risk_level": "low", "confidence": 0.92, "rationale": "reinstalls declared deps"}
+        )
+        text = _plain(_renderer().render_subagent_action(action, verbose=False))
+
+        assert "AI review ✓ passed" in text
+        assert "reinstalls declared deps" in text
+
+    def test_compact_bash_puts_the_verdict_above_the_result(self):
+        action = self._bash_action({"decision": "allow", "rationale": "reversible"})
+        text = _plain(_renderer().render_subagent_action(action, verbose=False))
+
+        assert text.index("AI review") < text.index("added 42 packages")
+
+    def test_compact_sql_shows_the_verdict(self):
+        action = self._sql_action({"decision": "ask", "risk_level": "medium", "rationale": "predicate-bounded delete"})
+        text = _plain(_renderer().render_subagent_action(action, verbose=False))
+
+        assert "AI review ✗ flagged" in text
+        assert "predicate-bounded delete" in text
+
+    def test_verbose_bash_shows_the_untruncated_rationale(self):
+        rationale = "z" * 300
+        action = self._bash_action({"decision": "allow", "risk_level": "low", "rationale": rationale})
+        text = _plain(_renderer().render_subagent_action(action, verbose=True))
+
+        assert rationale in text.replace("\n", "")
+
+    def test_verbose_sql_shows_the_verdict(self):
+        action = self._sql_action({"decision": "allow", "risk_level": "low", "rationale": "bounded"})
+        text = _plain(_renderer().render_subagent_action(action, verbose=True))
+
+        assert "AI review ✓ passed" in text
+
+    def test_unreviewed_subagent_call_renders_no_review_row(self):
+        now = datetime.now()
+        action = _make_action(
+            ActionRole.TOOL,
+            ActionStatus.SUCCESS,
+            depth=1,
+            action_type="bash",
+            messages="bash",
+            input_data={"function_name": "bash", "arguments": {"command": "npm ci"}},
+            output_data={"raw_output": json.dumps({"success": 1, "result": "ok"})},
+            start_time=now,
+            end_time=now + timedelta(seconds=0.1),
+        )
+        assert "AI review" not in _plain(_renderer().render_subagent_action(action, verbose=False))
+
+
+class TestManualExecPermissionReviewRow:
+    """The manually run bash>/sql> block shows what authorised the command.
+
+    Regression: ``bash_mode`` stamped the verdict onto the action's output and
+    the renderer read only ``output["payload"]``, dropping it.
+    """
+
+    @staticmethod
+    def _action(review):
+        payload = {
+            "kind": "bash",
+            "command": "npm ci",
+            "success": True,
+            "output": "added 42 packages",
+            "meta": "exit 0 in 2.30s",
+        }
+        output_data = {"payload": payload}
+        if review is not None:
+            output_data["permission_review"] = review
+        return _make_action(
+            ActionRole.TOOL,
+            ActionStatus.SUCCESS,
+            action_type="manual_exec",
+            messages="bash> npm ci",
+            input_data={"kind": "bash", "command": "npm ci"},
+            output_data=output_data,
+        )
+
+    def test_block_shows_the_verdict(self):
+        action = self._action(
+            {"decision": "allow", "risk_level": "low", "confidence": 0.92, "rationale": "reinstalls declared deps"}
+        )
+        text = _plain(_renderer().render_main_action(action, verbose=False))
+
+        assert "AI review ✓ passed" in text
+        assert "reinstalls declared deps" in text
+        # Still the full execution block, not a bare review line.
+        assert "npm ci" in text and "added 42 packages" in text
+
+    def test_block_names_a_user_override(self):
+        action = self._action({"outcome": "user_approved", "decision": "ask", "risk_level": "high", "rationale": "rm"})
+        text = _plain(_renderer().render_main_action(action, verbose=False))
+
+        assert "AI review ✗ flagged" in text
+        assert "user approved" in text
+
+    def test_verbose_block_shows_the_untruncated_rationale(self):
+        rationale = "w" * 300
+        action = self._action({"decision": "allow", "risk_level": "low", "rationale": rationale})
+        text = _plain(_renderer().render_main_action(action, verbose=True))
+
+        assert rationale in text.replace("\n", "").replace(" ", "")
+
+    def test_unreviewed_block_is_unchanged(self):
+        text = _plain(_renderer().render_main_action(self._action(None), verbose=False))
+
+        assert "AI review" not in text
+        assert "added 42 packages" in text
+
+    def test_payloadless_action_renders_nothing(self):
+        action = _make_action(
+            ActionRole.TOOL,
+            ActionStatus.FAILED,
+            action_type="manual_exec",
+            messages="bash> npm ci",
+            input_data={"kind": "bash", "command": "npm ci"},
+            output_data={"payload": None, "permission_review": {"decision": "ask", "rationale": "denied"}},
+        )
+        assert _renderer().render_main_action(action, verbose=False) == []

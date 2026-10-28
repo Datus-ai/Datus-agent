@@ -138,51 +138,83 @@ class PlanModeState:
         # Legacy flat layout — read the plan-mode keys at top level.
         return cls.from_dict(data)
 
-    def save(self, path: Path) -> None:
-        """Write the plan-mode section under the nested ``plan_mode`` key.
+    def to_json(self) -> str:
+        """Serialize for the session database's metadata row.
 
-        Merges into the file via :func:`_save_section` so sibling sections
-        (e.g. ``context_state``) survive, while the legacy flat layout and
-        retired sections are dropped.
+        The three fields are always written together, so they travel as one
+        JSON value rather than three rows that could land out of step.
         """
-        _save_section(path, "plan_mode", asdict(self))
+        return json.dumps(asdict(self), ensure_ascii=False)
+
+    @classmethod
+    def from_json(cls, payload: Optional[str]) -> Optional["PlanModeState"]:
+        """Parse a stored payload; ``None`` means "nothing recorded".
+
+        Distinct from :meth:`from_dict`, which defaults a malformed field but
+        still returns a state. Here the caller needs to tell "no plan-mode row"
+        from "plan mode is off", because only the former should fall through to
+        the legacy JSON file.
+        """
+        if not payload:
+            return None
+        try:
+            data = json.loads(payload)
+        except (TypeError, json.JSONDecodeError) as exc:
+            logger.warning("Ignoring unreadable plan-mode payload: %s", exc)
+            return None
+        return cls.from_dict(data) if isinstance(data, dict) else None
 
 
 @dataclass
 class ContextState:
-    """Most recent LLM call's context-window occupancy, for resume.
+    """Context-window occupancy measured on the last model call.
 
-    Persisted separately from the SQLite usage tables: ``turn_usage`` has no
-    per-call occupancy column, and ``running_turn_usage`` is cleared at turn
-    end (to avoid double-counting cumulative totals). This section is never
-    cleared, so a freshly resumed process can render the context-window bar
-    before the next LLM call repopulates it.
+    Persisted separately from the usage tables: ``turn_usage`` records billed
+    consumption, which occupancy is not (cache reads cost little but fill the
+    window just the same), and ``running_turn_usage`` is cleared at turn end to
+    avoid double-counting cumulative totals.
 
-    ``last_call_input_tokens`` is the real context-window usage of the last
-    call (input + cache_read + cache_creation); ``context_length`` is the
-    model's maximum context (the bar's denominator).
+    Zero means "no measurement": a history rewrite invalidates the reading
+    until another model response arrives, and a session that has not called the
+    model yet has nothing to report. Both cases render as an empty bar and hold
+    compaction off, which is the intended behaviour for an unknown occupancy.
+
+    The denominator is not stored — ``AgenticNode.context_length`` resolves the
+    active model's window on every access.
     """
 
     last_call_input_tokens: int = 0
-    context_length: int = 0
+
+    def __post_init__(self) -> None:
+        """Keep a negative occupancy unrepresentable.
+
+        ``save_context_state`` takes a caller-supplied state and writes the
+        number through verbatim; a negative value would surface as a negative
+        occupancy in the status bar and a negative ratio in the compaction
+        gate. Clamping here means no call site has to remember to.
+        """
+        if self.last_call_input_tokens < 0:
+            self.last_call_input_tokens = 0
 
     @classmethod
     def from_dict(cls, data: Optional[Dict[str, Any]]) -> "ContextState":
-        """Build from a dict, coercing non-int fields to the safe default."""
+        """Build from a dict, coercing anything unusable to zero.
+
+        A pre-migration payload carrying ``valid: false`` reads as zero. Those
+        records were written when an explicit flag was the only way to mark a
+        reading stale, and their token count may be a text estimate rather than
+        a measurement. Nothing writes that flag any more.
+        """
         if not isinstance(data, dict):
             return cls()
-
-        def _as_int(value: Any) -> int:
-            # ``bool`` is an ``int`` subclass but is never a valid token count;
-            # reject it (and any non-int) so corrupted payloads fall back to 0.
-            if isinstance(value, bool) or not isinstance(value, int):
-                return 0
-            return max(0, value)
-
-        return cls(
-            last_call_input_tokens=_as_int(data.get("last_call_input_tokens", 0)),
-            context_length=_as_int(data.get("context_length", 0)),
-        )
+        if data.get("valid") is False:
+            return cls()
+        value = data.get("last_call_input_tokens", 0)
+        # ``bool`` is an ``int`` subclass but is never a valid token count;
+        # reject it (and any non-int) so corrupted payloads fall back to 0.
+        if isinstance(value, bool) or not isinstance(value, int):
+            return cls()
+        return cls(max(0, value))
 
     @classmethod
     def load(cls, path: Path) -> "ContextState":
@@ -199,3 +231,19 @@ class ContextState:
     def clear(cls, path: Path) -> None:
         """Remove the persisted context-state mirror (session reset/delete)."""
         _remove_section(path, "context_state")
+
+
+def read_context_state(node: Any) -> ContextState:
+    """Read one node's measured occupancy without consulting billing history.
+
+    ``running_turn_usage.session_total_tokens`` is already zeroed by
+    :class:`~datus.schemas.token_usage.TokenUsage` whenever that snapshot is
+    marked invalid, so a stale reading never reaches here as a live one.
+    """
+    state = getattr(node, "_context_state", None)
+    if isinstance(state, ContextState):
+        return state
+    running = getattr(node, "running_turn_usage", None)
+    if running is not None:
+        return ContextState.from_dict({"last_call_input_tokens": getattr(running, "session_total_tokens", 0)})
+    return ContextState.from_dict({"last_call_input_tokens": getattr(node, "_restored_context_used", 0)})

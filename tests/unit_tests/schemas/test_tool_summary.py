@@ -8,9 +8,9 @@ These tests pin the wording produced by every registered formatter so a
 future formatter regression is caught before it reaches the CLI compact
 line or the SSE ``shortDesc`` payload.
 
-Contract: every non-filesystem summary must be ≤ ``SUMMARY_TEXT_MAX_CHARS``
-(19) characters; filesystem tools (``read_file``, ``write_file``,
-``edit_file``, ``glob``, ``grep``) bypass the clip and return verbatim.
+Contract: summaries are normally ≤ ``SUMMARY_TEXT_MAX_CHARS`` (19)
+characters. Tools whose compact summaries require complete identifiers,
+including filesystem tools and attribution analysis, bypass the clip.
 """
 
 from __future__ import annotations
@@ -21,10 +21,11 @@ from typing import Any
 import pytest
 
 from datus.schemas.tool_summary import (
-    FS_TOOLS_NO_CLIP,
     SUMMARY_TEXT_MAX_CHARS,
+    SUMMARY_TOOLS_NO_CLIP,
     TOOL_SUMMARY_REGISTRY,
     ToolSummaryRegistry,
+    detect_tool_failure,
     format_failure,
     format_generic_result,
     format_list_envelope,
@@ -72,6 +73,44 @@ class TestPublicHelpers:
     def test_looks_like_failure_default_false(self):
         assert looks_like_failure({"success": 1}) is False
         assert looks_like_failure({}) is False
+
+    def test_detect_tool_failure_dict_payload(self):
+        assert detect_tool_failure({"success": 0, "error": "boom"}) is True
+        assert detect_tool_failure({"success": False}) is True
+        assert detect_tool_failure({"error": "connection refused"}) is True
+        assert detect_tool_failure({"success": 1, "result": [1, 2]}) is False
+        assert detect_tool_failure({"success": 1, "error": "  "}) is False
+
+    def test_detect_tool_failure_json_string_payload(self):
+        # Claude-native path stores raw_output as a JSON string.
+        assert detect_tool_failure(json.dumps({"success": 0, "error": "x"})) is True
+        assert detect_tool_failure(json.dumps({"success": 1})) is False
+
+    def test_detect_tool_failure_non_json_string_is_not_failure(self):
+        # A Python repr (single quotes) or plain text is not JSON-parseable and
+        # must NOT be misread — return False rather than raising.
+        assert detect_tool_failure("{'success': 0}") is False
+        assert detect_tool_failure("ok") is False
+        assert detect_tool_failure("") is False
+
+    def test_detect_tool_failure_other_types(self):
+        assert detect_tool_failure(None) is False
+        assert detect_tool_failure([{"success": 0}]) is False
+
+    def test_detect_tool_failure_real_functoolresult_contract(self):
+        """Contract test: the exact payload model backends receive from a
+        FuncToolResult (its model_dump) must be detected. This locks the
+        producer (func_tool) ↔ consumer (detect_tool_failure) shape so a
+        rejected write never renders a green ✓."""
+        from datus.tools.func_tool.base import FuncToolResult
+
+        failed = FuncToolResult(success=0, error="File type not allowed: x.sh").model_dump(mode="json")
+        ok = FuncToolResult(success=1, result="File written successfully").model_dump(mode="json")
+        assert detect_tool_failure(failed) is True
+        assert detect_tool_failure(ok) is False
+        # Claude-native serializes the same payload as a JSON string.
+        assert detect_tool_failure(json.dumps(failed)) is True
+        assert detect_tool_failure(json.dumps(ok)) is False
 
     def test_format_failure_with_message(self):
         # Error text is clipped to SUMMARY_ERROR_MAX_CHARS (19).
@@ -284,8 +323,10 @@ class TestDatabaseFormatters:
             {
                 "success": 1,
                 "result": {
-                    "metadata": [{"table_name": "orders"}, {"table_name": "customers"}],
-                    "sample_data": {"original_rows": 5},
+                    "metadata": [
+                        {"table_name": "orders", "sample_rows": [{"id": i} for i in range(3)]},
+                        {"table_name": "customers", "sample_rows": [{"id": i} for i in range(2)]},
+                    ],
                 },
             },
         )
@@ -294,12 +335,27 @@ class TestDatabaseFormatters:
     def test_search_table_no_samples(self):
         out = _summarize(
             "search_table",
-            {"success": 1, "result": {"metadata": [{"name": "t"}], "sample_data": []}},
+            {"success": 1, "result": {"metadata": [{"table_name": "t"}]}},
         )
         assert out == "1 tbl"
 
+    def test_search_table_with_inline_sample_rows(self):
+        out = _summarize(
+            "search_table",
+            {
+                "success": 1,
+                "result": {
+                    "metadata": [
+                        {"table_name": "orders", "sample_rows": [{"id": 1}, {"id": 2}]},
+                        {"table_name": "customers", "sample_rows": [{"id": 3}]},
+                    ]
+                },
+            },
+        )
+        assert out == "2 tbls, 3 rows"
+
     def test_search_table_empty(self):
-        out = _summarize("search_table", {"success": 1, "result": {"metadata": [], "sample_data": []}})
+        out = _summarize("search_table", {"success": 1, "result": {"metadata": []}})
         assert out == "no matches"
 
 
@@ -374,17 +430,29 @@ class TestSemanticFormatters:
         )
         assert out == "2/5 metrics+"
 
-    def test_get_dimensions(self):
+    def test_list_metrics_text_page(self):
+        page = "Sales:\n- revenue -- Net revenue\n- gmv\nmore: 2 of 5 metrics shown; call again with offset=2"
+        assert _summarize("list_metrics", {"success": 1, "result": page}) == "2 metrics+"
+        assert _summarize("list_metrics", {"success": 1, "result": "Sales:\n- revenue"}) == "1 metric"
+
+    def test_get_metric(self):
         out = _summarize(
-            "get_dimensions",
-            {"success": 1, "result": {"items": [{"name": "region"}], "total": 1, "has_more": False}},
+            "get_metric",
+            {"success": 1, "result": {"name": "revenue", "dimensions": [{"name": "region"}]}},
         )
         assert out == "1 dimension"
+
+    def test_get_metric_without_resolvable_dimensions(self):
+        out = _summarize(
+            "get_metric",
+            {"success": 1, "result": {"name": "revenue", "dimensions_error": "planner unavailable"}},
+        )
+        assert out == "no dims"
 
     def test_query_metrics_rows_and_cols(self):
         out = _summarize(
             "query_metrics",
-            {"success": 1, "result": {"columns": ["a", "b", "c"], "data": {"original_rows": 12}}},
+            {"success": 1, "result": "result_id: query_metrics:1\nrows: 12\n\na,b,c\n1,2,3"},
         )
         assert out == "12r × 3c"
 
@@ -402,9 +470,58 @@ class TestSemanticFormatters:
     def test_attribution_analyze(self):
         out = _summarize(
             "attribution_analyze",
-            {"success": 1, "result": {"dimension_ranking": list(range(8)), "selected_dimensions": list(range(3))}},
+            {
+                "success": 1,
+                "result": {
+                    "implementation": "dosi",
+                    "strategy": "factor_shapley",
+                    "dimension_ranking": list(range(8)),
+                    "selected_dimensions": ["region", "platform", "channel"],
+                    "warnings": [{"code": "unequal_windows"}],
+                },
+            },
         )
-        assert out == "sel 3/8 dims"
+        assert out == "dosi factor_shapley; selected region,platform,channel; warnings unequal_windows"
+        assert len(out) > SUMMARY_TEXT_MAX_CHARS
+
+    def test_attribution_analyze_partial_dimensions(self):
+        out = _summarize(
+            "attribution_analyze",
+            {
+                "success": 1,
+                "result": {
+                    "implementation": "generic",
+                    "strategy": "term_wise",
+                    "per_dimension": {
+                        "channel": {"values": [], "non_additive": False},
+                        "product": {"truncated": True},
+                        "region": {"values": [], "non_additive": True},
+                    },
+                    "warnings": [
+                        {"code": "dimension_analysis_failed", "dimension": "organization"},
+                        {"code": "high_cardinality_dimension", "dimension": "product"},
+                    ],
+                },
+            },
+        )
+
+        assert out == "generic term_wise, 1/4 dimensions usable, 1 failed, 1 non-additive, 1 truncated, 2 warnings"
+
+    def test_attribution_analyze_totals_only(self):
+        out = _summarize(
+            "attribution_analyze",
+            {
+                "success": 1,
+                "result": {
+                    "implementation": "generic",
+                    "strategy": "unsupported",
+                    "unsupported_reason": {"code": "dimensions_required"},
+                    "per_dimension": {},
+                },
+            },
+        )
+
+        assert out == "generic unsupported; dimensions_required"
 
 
 class TestGenerationFormatters:
@@ -422,16 +539,16 @@ class TestGenerationFormatters:
         )
         assert out == "metric not found"
 
-    def test_end_semantic_model_generation(self):
+    def test_publish_semantic_model(self):
         out = _summarize(
-            "end_semantic_model_generation",
+            "publish_semantic_model",
             {"success": 1, "result": {"semantic_model_files": ["a.yml", "b.yml"]}},
         )
         assert out == "2 semantic files"
 
-    def test_end_metric_generation(self):
+    def test_publish_metrics(self):
         out = _summarize(
-            "end_metric_generation",
+            "publish_metrics",
             {"success": 1, "result": {"metric_file": "m.yml", "sync": {"success": True}}},
         )
         assert out == "metric synced"
@@ -440,48 +557,18 @@ class TestGenerationFormatters:
         out = _summarize("generate_sql_summary_id", {"success": 1, "result": "abc12345"})
         assert out == "id: abc12345"
 
-    def test_analyze_table_relationships_falls_back_to_summary_when_no_count(self):
-        # ``relationships=[]`` is empty, so the formatter falls back to
-        # the inline ``summary`` field, which is then clipped at exit.
+    def test_profile_semantic_model_evidence(self):
         out = _summarize(
-            "analyze_table_relationships",
-            {"success": 1, "result": {"relationships": [], "summary": "Found 4 relationships across 3 tables"}},
-        )
-        assert out == "Found 4 relationsh…"
-        assert len(out) == SUMMARY_TEXT_MAX_CHARS
-
-    def test_get_multiple_tables_ddl(self):
-        out = _summarize(
-            "get_multiple_tables_ddl",
-            {"success": 1, "result": [{"table_name": "a"}, {"table_name": "b"}]},
-        )
-        assert out == "DDL of 2 tables"
-
-    def test_analyze_metric_candidates_from_history(self):
-        out = _summarize(
-            "analyze_metric_candidates_from_history",
+            "profile_semantic_model_evidence",
             {
                 "success": 1,
                 "result": {
-                    "metric_candidates": [{"name": "paid_arppu"}, {"name": "gross_margin_rate"}],
-                    "base_measures": [{"name": "paid_amount"}],
+                    "data_profiled": True,
+                    "tables": {"orders": {}, "customers": {}},
                 },
             },
         )
-        assert out == "2 metric cands"
-
-    def test_analyze_metric_candidates_from_history_with_derived_datasource(self):
-        out = _summarize(
-            "analyze_metric_candidates_from_history",
-            {
-                "success": 1,
-                "result": {
-                    "metric_candidates": [{"name": "time_count"}],
-                    "query_classification": "metric_plus_derived_datasource",
-                },
-            },
-        )
-        assert out == "1 metric cand + da…"
+        assert out == "2 tables profiled…"
 
 
 class TestSchedulerFormatters:
@@ -616,6 +703,22 @@ class TestFilesystemFormatters:
     def test_edit_file(self):
         out = _summarize("edit_file", {"success": 1, "result": "File edited successfully: /tmp/y.py"})
         assert out == "edited /tmp/y.py"
+
+    def test_delete_file(self):
+        out = _summarize("delete_file", {"success": 1, "result": "File deleted successfully: /tmp/z.txt"})
+        assert out == "deleted /tmp/z.txt"
+
+    def test_delete_file_unrecognized_string_falls_through(self):
+        # No success marker -> the formatter returns the (truncated) raw string.
+        from datus.schemas.tool_summary import _fmt_delete_file
+
+        assert _fmt_delete_file("scratch removed") == "scratch removed"
+
+    def test_delete_file_non_string_result_empty(self):
+        # Non-string result -> formatter yields "" so the generic path takes over.
+        from datus.schemas.tool_summary import _fmt_delete_file
+
+        assert _fmt_delete_file({"deleted": True}) == ""
 
     def test_glob(self):
         out = _summarize(
@@ -852,21 +955,22 @@ def test_failure_path_uniform(tool: str):
         ("list_databases", ["mydb"], "1 db"),
         # Semantic fallbacks
         ("validate_semantic", {"valid": False, "issues": []}, "invalid"),
-        ("attribution_analyze", {"selected_dimensions": [1]}, "sel 1 dim"),
+        ("attribution_analyze", {"selected_dimensions": ["region"]}, "selected region"),
+        # Records written before results became text
         ("query_metrics", {"columns": ["a", "b"]}, "2 cols"),
         ("query_metrics", {"data": {"original_rows": 7}}, "7 rows"),
+        ("query_metrics", {"columns": ["a", "b", "c"], "data": {"original_rows": 12}}, "12r × 3c"),
+        ("select_records", "result_id: select_records:1\nrows: 2\n\nid\n1\n2", "2r × 1c"),
         # Generation fallbacks
         ("check_semantic_object_exists", {"exists": True}, "object exists"),
         ("check_semantic_model_exists", {"exists": True}, "table exists"),
         ("check_semantic_model_exists", {"exists": False}, "table not found"),
-        ("end_metric_generation", {"metric_file": "m.yml"}, "metric generated"),
-        ("analyze_table_relationships", {"relationships": [{}, {}, {}]}, "3 rels"),
+        ("publish_metrics", {"metric_file": "m.yml"}, "metric generated"),
         (
-            "analyze_column_usage_patterns",
-            {"summary": "Analyzed 5 columns from 10 SQLs"},
-            "Analyzed 5 columns…",
+            "profile_semantic_model_evidence",
+            {"data_profiled": False, "tables": {"orders": {}}},
+            "1 table profiled",
         ),
-        ("analyze_column_usage_patterns", {"column_patterns": {"a": {}, "b": {}}}, "2 cols analyzed"),
         # Scheduler fallbacks
         ("submit_sql_job", {"job_id": "j"}, "+job j"),
         ("submit_sparksql_job", {"job_id": "j2"}, "+spark j2"),
@@ -902,8 +1006,20 @@ def test_failure_path_uniform(tool: str):
         ("list_document_nav", {"total_docs": 5}, "5 docs"),
         ("get_document", {"chunks": [1, 2, 3]}, "3 chunks"),
         ("search_document", {"docs": [1]}, "1 doc match"),
-        ("web_search_document", [1, 2, 3], "3 web results"),
-        ("web_search_document", {"docs": [1, 2]}, "2 web results"),
+        # Canonical web_search schema (query/results keys) → labelled summary.
+        (
+            "web_search",
+            {"query": "q", "result_count": 1, "results": [{"title": "T", "url": "https://u", "snippet": "s"}]},
+            "1 web result: T",
+        ),
+        # web_search / web_fetch legacy fallbacks (bare list / docs shape, no
+        # canonical query/results keys).
+        ("web_search", [1, 2, 3], "3 web results"),
+        ("web_search", {"docs": [1, 2]}, "2 web results"),
+        # Canonical web_fetch schema → "<label> (N chars)" (web tools bypass the
+        # 19-char clip, like filesystem tools).
+        ("web_fetch", {"content": "abcde"}, "fetched (5 chars)"),
+        ("web_fetch", {"content": "abcde", "truncated": True}, "fetched (5 chars) (truncated)"),
     ],
 )
 def test_per_tool_fallback_branches(tool: str, payload: Any, expected: str):
@@ -925,7 +1041,10 @@ _LENGTH_CONTRACT_SAMPLES: list[tuple[str, Any]] = [
     ("table_overview", [{"name": str(i)} for i in range(50)]),
     ("list_databases", [str(i) for i in range(99)]),
     ("list_schemas", [str(i) for i in range(99)]),
-    ("search_table", {"metadata": [{"name": str(i)} for i in range(20)], "sample_data": {"original_rows": 999}}),
+    (
+        "search_table",
+        {"metadata": [{"name": str(i), "sample_rows": [{} for _ in range(50)]} for i in range(20)]},
+    ),
     ("transfer_query_result", {"row_count": 99999, "target_table": "very_long_target_table_name"}),
     # bi
     ("list_dashboards", {"items": [{"title": "x"} for _ in range(99)], "total": 999, "has_more": True}),
@@ -947,22 +1066,19 @@ _LENGTH_CONTRACT_SAMPLES: list[tuple[str, Any]] = [
     ("write_query", {"rows_written": 99999, "table_name": "schema.very_long_table"}),
     # semantic
     ("list_metrics", {"items": [{"name": "m"} for _ in range(50)], "total": 9999, "has_more": True}),
-    ("get_dimensions", {"items": [{"name": "d"} for _ in range(50)], "total": 9999}),
-    ("query_metrics", {"columns": ["x"] * 50, "data": {"original_rows": 99999}}),
+    ("get_metric", {"name": "m", "dimensions": [{"name": "d"} for _ in range(50)]}),
+    ("query_metrics", "rows: 99999\n\n" + ",".join(["x"] * 50)),
     ("validate_semantic", {"valid": False, "issues": list(range(999))}),
-    ("attribution_analyze", {"dimension_ranking": list(range(99)), "selected_dimensions": list(range(99))}),
     ("search_metrics", [{}] * 99),
     ("search_reference_sql", [{}] * 99),
     ("search_semantic_objects", [{}] * 99),
     # generation
     ("check_semantic_object_exists", {"exists": True, "kind": "long_kind_name"}),
     ("check_semantic_model_exists", {"exists": False}),
-    ("end_semantic_model_generation", {"semantic_model_files": ["a"] * 99}),
-    ("end_metric_generation", {"sync": {"success": True}}),
+    ("publish_semantic_model", {"semantic_model_files": ["a"] * 99}),
+    ("publish_metrics", {"sync": {"success": True}}),
     ("generate_sql_summary_id", "very_long_summary_id_12345"),
-    ("analyze_table_relationships", {"relationships": [{}] * 99, "summary": "x" * 100}),
-    ("analyze_column_usage_patterns", {"column_patterns": {str(i): {} for i in range(99)}}),
-    ("get_multiple_tables_ddl", [{}] * 99),
+    ("profile_semantic_model_evidence", {"data_profiled": True, "tables": {str(i): {} for i in range(99)}}),
     # scheduler
     ("submit_sql_job", {"job_id": "very_long_job_id_here"}),
     ("submit_sparksql_job", {"job_id": "very_long_spark_id_here"}),
@@ -1007,15 +1123,16 @@ _LENGTH_CONTRACT_SAMPLES: list[tuple[str, Any]] = [
     ("list_document_nav", {"platform": "snowflake", "total_docs": 99999}),
     ("get_document", {"platform": "snowflake", "chunk_count": 99999}),
     ("search_document", {"docs": [{}] * 999}),
-    ("web_search_document", [{}] * 999),
+    # web_search / web_fetch are intentionally exempt (in FS_TOOLS_NO_CLIP) so
+    # their result titles / page label stay visible — not part of this contract.
 ]
 
 
 @pytest.mark.parametrize("tool, result", _LENGTH_CONTRACT_SAMPLES)
 def test_summary_length_contract_under_20(tool: str, result: Any):
-    """Every non-fs tool summary must be ≤ SUMMARY_TEXT_MAX_CHARS (19) characters."""
+    """Every normally clipped tool summary must be at most 19 characters."""
     out = TOOL_SUMMARY_REGISTRY.summarize_dict({"success": 1, "result": result}, tool)
-    assert tool not in FS_TOOLS_NO_CLIP, "fs tools are not part of this contract"
+    assert tool not in SUMMARY_TOOLS_NO_CLIP, "unclipped tools are not part of this contract"
     assert len(out) <= SUMMARY_TEXT_MAX_CHARS, f"{tool}: {out!r} ({len(out)} chars)"
 
 

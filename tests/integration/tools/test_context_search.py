@@ -27,25 +27,6 @@ class TestContextSearchTools:
         first = result.result[0]
         assert "name" in first, "Each metric should have a 'name' field"
 
-    def test_get_metrics(self, ctx_tools):
-        """N11-13b: get_metrics retrieves specific metric details."""
-        assert ctx_tools.has_metrics is True, "bird_school should have metrics data"
-
-        # First search to get a valid subject_path and name
-        search_result = ctx_tools.search_metrics("school")
-        assert search_result.success == 1 and len(search_result.result) > 0, "Need search results to test get_metrics"
-
-        first = search_result.result[0]
-        subject_path = first.get("subject_path", [])
-        name = first.get("name", "")
-
-        assert subject_path and name, f"Search result should have subject_path and name, got: {first}"
-
-        get_result = ctx_tools.get_metrics(subject_path=subject_path, name=name)
-
-        assert get_result.success == 1, f"get_metrics should succeed, got error: {get_result.error}"
-        assert get_result.result is not None, "Should return metric details"
-
     def test_search_reference_sql(self, ctx_tools):
         """N11-14: search_reference_sql returns list of SQL queries."""
         assert ctx_tools.has_reference_sql is True, "bird_school should have reference SQL data"

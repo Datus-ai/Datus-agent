@@ -2,35 +2,27 @@
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
-"""``/bootstrap-bi`` slash-command driver.
+"""``/bootstrap-bi`` compatibility shortcut for ``dashboard-bootstrap``.
 
-Mirrors :class:`bootstrap_commands.BootstrapCommands`:
+Dashboard bootstrap orchestration lives in the bundled
+``dashboard-bootstrap`` skill. The slash command only injects a deterministic
+request into the standard chat pipeline, so plugin discovery, selection,
+confirmation, export, and Knowledge Base construction remain skill/LLM driven.
 
-1. Run :class:`BootstrapBiPicker` (multi-stage TUI + BI adapter IO) to
-   produce a :class:`BootstrapBiPlan`.
-2. Build a unified streaming pipeline (one ``actions`` list, one
-   :class:`InlineStreamingContext`).
-3. Drive the four ``stream_bi_*`` async generators in order, threading
-   :class:`BiBuildState` through them so the metrics stream can be
-   gated on the semantic-model validation result.
-4. Build the final :class:`ScopedContext` and persist the two
-   sub-agent yaml files via :func:`stream_bi_save_subagents`.
+The legacy ``_run_plan`` helpers remain temporarily for API compatibility and
+targeted migration tests, but the user-facing command no longer invokes them.
 """
 
 from __future__ import annotations
 
-import asyncio
-import os
 from typing import TYPE_CHECKING, List, Optional
 
 from rich.console import Console
 
-from datus.cli.action_display import ActionHistoryDisplay
-from datus.cli.bootstrap_bi_picker import BootstrapBiPicker, BootstrapBiPlan
+from datus.cli.bootstrap_bi_picker import BootstrapBiPlan
 from datus.cli.bootstrap_bi_streams import (
     BiBuildState,
     stream_bi_metadata,
-    stream_bi_metrics,
     stream_bi_reference_sql,
     stream_bi_semantic_model,
 )
@@ -41,19 +33,29 @@ from datus.cli.bootstrap_bi_subagents import (
     stream_bi_save_subagents,
 )
 from datus.cli.bootstrap_subagent import message_action
+from datus.cli.cli_styles import print_error
+from datus.cli.skill_command_utils import render_skill_prompt
 from datus.configuration.agent_config import AgentConfig
 from datus.configuration.agent_config_loader import configuration_manager
 from datus.schemas.action_history import ActionHistory, ActionStatus
 from datus.schemas.agent_models import ScopedContext
 from datus.utils.constants import SYS_SUB_AGENTS
-from datus.utils.loggings import get_logger
 from datus.utils.sub_agent_manager import SubAgentManager
 from datus.utils.traceable_utils import optional_traceable
 
 if TYPE_CHECKING:
     from datus.cli.repl import DatusCLI
 
-logger = get_logger(__name__)
+_DASHBOARD_BOOTSTRAP_PROMPT = (
+    "Bootstrap reference SQL and metrics from a BI dashboard by following the "
+    "`dashboard-bootstrap` skill. "
+    'Call `load_skill(skill_name="dashboard-bootstrap")` first and execute its steps in order. '
+    "Use the selected BI plugin for dashboard discovery and SQL export, and use the builtin "
+    "agents named by the skill to build context. Do not use the legacy bootstrap picker, "
+    "or legacy BI streams. Let the skill decide whether its optional final subagent step is "
+    "available."
+    "{user_context}"
+)
 
 
 class BootstrapBiCommands:
@@ -77,41 +79,21 @@ class BootstrapBiCommands:
 
     @optional_traceable(name="bootstrap_bi")
     def cmd(self, args: str = "") -> None:
-        try:
-            plan = BootstrapBiPicker(self.agent_config, self.console, cli=self.cli).run()
-        except (KeyboardInterrupt, EOFError):
-            self.console.print("\n[yellow]Cancelled.[/]")
-            return
-        except Exception as exc:
-            logger.error("Failed to drive bootstrap-bi picker", exc_info=True)
-            self.console.print(f"[bold red]Error:[/] {exc}")
-            return
-
-        if plan is None:
-            self.console.print("\n[yellow]Cancelled.[/]")
+        """Delegate ``/bootstrap-bi`` to the skill-aware chat pipeline."""
+        chat_commands = getattr(self.cli, "chat_commands", None) if self.cli else None
+        if chat_commands is None:
+            print_error(
+                self.console,
+                "Chat is not initialized — /bootstrap-bi relies on the chat pipeline.",
+                prefix=False,
+            )
             return
 
-        actions: List[ActionHistory] = []
-        live_state = getattr(self.cli, "live_state", None) if self.cli else None
-        display = ActionHistoryDisplay(self.console, live_state=live_state)
-        ctx = display.display_streaming_actions(actions=actions)
-
-        original_console = self.console
-        silent = Console(file=open(os.devnull, "w"), force_terminal=False, log_path=False)
-        try:
-            with ctx:
-                self.console = silent
-                asyncio.run(self._run_plan(plan, actions))
-        finally:
-            self.console = original_console
-            try:
-                silent.file.close()
-            except Exception:
-                pass
-            try:
-                plan.adapter.close()
-            except Exception:
-                pass
+        chat_commands.execute_chat_command(
+            render_skill_prompt(_DASHBOARD_BOOTSTRAP_PROMPT, args),
+            plan_mode=getattr(self.cli, "plan_mode_active", False),
+            subagent_name=None,
+        )
 
     async def _run_plan(self, plan: BootstrapBiPlan, actions: List[ActionHistory]) -> None:
         # Header context.
@@ -173,7 +155,7 @@ class BootstrapBiCommands:
             ):
                 actions.append(action)
 
-        # 3. Semantic model (gates metrics).
+        # 3. Unified semantic model and metric authoring.
         if plan.assembled.metric_sqls:
             async for action in stream_bi_semantic_model(
                 self.agent_config,
@@ -184,25 +166,16 @@ class BootstrapBiCommands:
             ):
                 actions.append(action)
 
-            # 4. Metrics — only if validation passed.
-            if state.semantic_ok:
-                async for action in stream_bi_metrics(
-                    self.agent_config,
-                    sqls=plan.assembled.metric_sqls,
-                    platform=plan.options.platform,
-                    dashboard_name=plan.dashboard.name or "",
-                    state=state,
-                ):
-                    actions.append(action)
-            else:
+            if not state.semantic_ok:
                 actions.append(
                     message_action(
-                        "Skipping metrics generation due to semantic model failure",
+                        "Unified semantic modeling failed; generated metrics are unavailable.",
                         status=ActionStatus.FAILED,
                     )
                 )
+                return
 
-        # 5. Build ScopedContext and persist the two sub-agent yamls.
+        # 4. Build ScopedContext and persist the two sub-agent yamls.
         scoped = self._build_scoped_context(state)
         if scoped is None:
             actions.append(

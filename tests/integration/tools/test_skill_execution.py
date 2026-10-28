@@ -14,9 +14,8 @@ This file complements the existing tests/integration/tools/test_skill.py (which
 it does not modify):
 - ``TestLocalSkillDiscoveryAndExecutionGate`` is deterministic: it builds a
   ChatAgenticNode wired with a SkillFuncTool and verifies the node actually
-  exposes the local skill-execution tools (``load_skill`` /
-  ``skill_execute_command``) and that permission filtering narrows the visible
-  skill set by pattern.
+  exposes the local skill-execution tool (``load_skill``) and that permission
+  filtering narrows the visible skill set by pattern.
 - ``TestRealLLMSkillExecution`` is a real-LLM run: the agent is told to load a
   local skill and execute one of its commands, and we assert the run reaches a
   terminal status with the skill actually invoked.
@@ -46,17 +45,14 @@ class TestLocalSkillDiscoveryAndExecutionGate:
     via the shared ``agent_config`` fixture — no marketplace, no network.
     """
 
-    def test_skill_func_tool_exposes_execution_tools(self, agent_config):
-        """A node wired with SkillFuncTool exposes the local execution tools."""
+    def test_skill_func_tool_exposes_load_skill(self, agent_config):
+        """A node wired with SkillFuncTool exposes the load_skill tool."""
         perm_manager = PermissionManager(global_config=agent_config.permissions_config)
         manager = SkillManager(config=agent_config.skills_config, permission_manager=perm_manager)
         func_tool = SkillFuncTool(manager=manager, node_name="school_all")
 
         tool_names = {t.name for t in func_tool.available_tools()}
         assert "load_skill" in tool_names, f"SkillFuncTool must expose load_skill, got: {sorted(tool_names)}"
-        assert "skill_execute_command" in tool_names, (
-            f"SkillFuncTool must expose skill_execute_command, got: {sorted(tool_names)}"
-        )
 
     def test_permission_filtering_narrows_visible_skills(self, agent_config):
         """The sql-* pattern only surfaces sql-* skills, never report/admin ones."""
@@ -90,9 +86,8 @@ class TestRealLLMSkillExecution:
     """
 
     QUESTION = (
-        "Use load_skill to load the 'report-generator' skill, then use "
-        "skill_execute_command to run one of its commands to produce a short "
-        "report containing the text 'Alameda'. Keep it simple."
+        "Use load_skill to load the 'report-generator' skill, then follow its "
+        "instructions to produce a short report. Keep it simple."
     )
 
     @pytest.mark.asyncio
@@ -129,8 +124,7 @@ class TestRealLLMSkillExecution:
         assert len(all_actions) >= 2, f"Expected at least 2 actions, got {len(all_actions)}"
 
         action_types = [a.action_type for a in all_actions]
-        action_messages = " ".join(a.messages for a in all_actions)
-        has_load_skill = "load_skill" in action_types or "load_skill" in action_messages
+        has_load_skill = "load_skill" in action_types
         assert has_load_skill, f"Agent should invoke load_skill for a local skill. Action types: {action_types}"
 
         final_action = all_actions[-1]

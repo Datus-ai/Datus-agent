@@ -7,6 +7,7 @@
 from typing import Callable, Dict, Optional
 
 from datus.gateway.models import Verbose
+from datus.schemas.tool_summary import search_table_result_counts
 
 # Maximum length for any single value in full-mode output
 _MAX_VALUE_LEN = 2000
@@ -23,6 +24,7 @@ class ToolOutputFormatter:
         self._register_builtins()
 
     def _register_builtins(self):
+        self._registry["execute_sql"] = self._format_execute_sql_result
         self._registry["read_query"] = self._format_read_query_result
         self._registry["describe_table"] = self._format_describe_table_result
         self._registry["search_table"] = self._format_search_table_result
@@ -69,6 +71,21 @@ class ToolOutputFormatter:
         return _format_result_default(result)
 
     @staticmethod
+    def _format_execute_sql_result(result) -> str:
+        """Format a unified ``execute_sql`` result by payload shape.
+
+        ``execute_sql`` covers reads, writes, and DDL. Only read payloads carry
+        a row set; write/DDL payloads carry a ``message`` / ``row_count`` and
+        would be misformatted as ``rows: 0`` by the read formatter, so fall back
+        to the default formatter for those shapes.
+        """
+        if isinstance(result, dict) and not any(
+            key in result for key in ("rows", "data", "columns", "compressed_data", "original_rows")
+        ):
+            return _format_result_default(result)
+        return ToolOutputFormatter._format_read_query_result(result)
+
+    @staticmethod
     def _format_read_query_result(result) -> str:
         if not isinstance(result, dict):
             return _format_result_default(result)
@@ -96,10 +113,7 @@ class ToolOutputFormatter:
     def _format_search_table_result(result) -> str:
         if not isinstance(result, dict):
             return _format_result_default(result)
-        metadata = result.get("metadata", [])
-        sample_data = result.get("sample_data", result.get("samples", []))
-        meta_count = len(metadata) if isinstance(metadata, list) else 0
-        sample_count = len(sample_data) if isinstance(sample_data, list) else 0
+        meta_count, sample_count = search_table_result_counts(result)
         return f"> metadata: {meta_count}, sample rows: {sample_count}"
 
 

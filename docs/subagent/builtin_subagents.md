@@ -4,21 +4,27 @@
 
 The **Builtin Subagent** are specialized AI assistants integrated within the Datus Agent system. Each subagent focuses on a specific aspect of data engineering automation — analyzing SQL, generating semantic models, and converting queries into reusable metrics — together forming a closed-loop workflow from raw SQL to knowledge-aware data products.
 
-This document covers thirteen core subagents:
+This document covers the core subagents:
 
 1. **[gen_sql_summary](#gen_sql_summary)** — Summarizes and classifies SQL queries
-2. **[gen_semantic_model](#gen_semantic_model)** — Generates MetricFlow semantic models
-3. **[gen_metrics](#gen_metrics)** — Generates MetricFlow metric definitions
-4. **[ask_metrics](ask_metrics.md)** — Answers KPI, trend, grouped metric, and attribution questions from existing semantic metrics
+2. **[semantic_modeling](semantic_modeling.md)** — Authors Dosi semantic models and metrics
+3. **[ask_metrics](ask_metrics.md)** — Answers KPI, trend, grouped metric, and attribution questions from existing semantic metrics
+4. **[ontology_analyst](ontology_analyst.md)** — Answers metric and record questions over a datasource's Apache Ossie ontology (concepts, roles, value domains)
 5. **[explore](#explore)** — Read-only data exploration and context gathering
 6. **[gen_sql](#gen_sql)** — Specialized SQL generation with deep expertise
 7. **[gen_report](#gen_report)** — Flexible report generation with configurable tools
 8. **[gen_table](gen_table.md)** — Database table creation via CTAS or natural language
 9. **[gen_job](gen_job.md)** — Data pipeline execution (single-database ETL AND cross-database migration with reconciliation)
 10. **[gen_skill](#gen_skill)** — Skill creation and optimization
-11. **[gen_dashboard](#gen_dashboard)** — BI dashboard CRUD for Superset and Grafana
-12. **[gen_visual_report](gen_visual_report.md)** — Self-contained visual report under `reports/<slug>/`
-13. **[scheduler](#scheduler)** — Airflow job lifecycle management
+11. **[gen_visual_report](gen_visual_report.md)** — Self-contained visual report under `reports/<slug>/`
+
+Airflow scheduling and external BI authoring are handled directly by the main
+agent through installed plugins. They are not built-in or custom subagents.
+
+In the REPL, describe the task directly and the main agent will route it to the
+appropriate subagent. To select one explicitly for a single message, append
+`@Agent <name>` to the request; `/agent <name>` switches the current agent for
+subsequent messages. The legacy `/<subagent> <message>` form is not supported.
 
 ## Configuration
 
@@ -27,17 +33,16 @@ Builtin subagents work out of the box with minimal configuration. Most settings 
 ```yaml
 agent:
   agentic_nodes:
-    gen_semantic_model:
-      model: claude     # Optional: defaults to configured model
-      max_turns: 30     # Optional: defaults to 30
-
-    gen_metrics:
+    semantic_modeling:
       model: claude     # Optional: defaults to configured model
       max_turns: 30     # Optional: defaults to 30
 
     ask_metrics:
       model: claude     # Optional: defaults to configured model
       max_turns: 12     # Optional: defaults to 12
+
+    ontology_analyst:
+      model: claude
 
     gen_sql_summary:
       model: deepseek   # Optional: defaults to configured model
@@ -65,19 +70,10 @@ agent:
     gen_skill:
       max_turns: 30     # Optional: defaults to 30
 
-    gen_dashboard:
-      model: claude     # Optional: defaults to configured model
-      max_turns: 30     # Optional: defaults to 30
-      bi_platform: superset  # Optional: explicit platform (auto-detected when only one BI platform is configured)
-
     gen_visual_report:
       model: claude            # Optional: defaults to configured model
       max_turns: 30            # Optional: defaults to 30
       report_dist: ~/report_dist  # Optional: local dist path for offline HTML compilation
-
-    scheduler:
-      model: claude     # Optional: defaults to configured model
-      max_turns: 30     # Optional: defaults to 30
 ```
 
 **Optional configuration parameters:**
@@ -88,7 +84,7 @@ agent:
 **Built-in configurations** (no setup needed):
 - **Tools**: Automatically configured based on subagent type
 - **Hooks**: Workflow-specific validation and Knowledge Base sync
-- **MCP Servers**: MetricFlow validation (for gen_semantic_model and gen_metrics)
+- **Dosi tools**: Dosi validation and query tools for `semantic_modeling`
 - **System Prompts**: Built-in templates; latest versions are used unless `prompt_version` is set
 - **Workspace**: `~/.datus/data/{datasource}/` with subagent-specific subdirectories
 
@@ -111,10 +107,10 @@ A **SQL summary** is a structured YAML document that captures:
 
 ### Quick Start
 
-Launch the SQL summary generation subagent:
+Describe the request directly, or identify the SQL summary generation subagent at the end of the message:
 
-```bash
-/gen_sql_summary Analyze this SQL: SELECT SUM(revenue) FROM sales GROUP BY region. (You can also add some description on this SQL)
+```text
+Analyze this SQL: SELECT SUM(revenue) FROM sales GROUP BY region. You can also add a description. @Agent gen_sql_summary
 ```
 
 ### Generation Workflow
@@ -151,13 +147,13 @@ In interactive mode, after the YAML file is written successfully, the generation
 Subject tree allows organizing SQL summaries by domain and layers. In CLI mode, include it in your question:
 
 **Example with subject_tree:**
-```bash
-/gen_sql_summary Analyze this SQL: SELECT SUM(revenue) FROM sales, subject_tree: sales/reporting/revenue_analysis
+```text
+Analyze this SQL: SELECT SUM(revenue) FROM sales, subject_tree: sales/reporting/revenue_analysis. @Agent gen_sql_summary
 ```
 
 **Example without subject_tree:**
-```bash
-/gen_sql_summary Analyze this SQL: SELECT SUM(revenue) FROM sales
+```text
+Analyze this SQL: SELECT SUM(revenue) FROM sales. @Agent gen_sql_summary
 ```
 
 When not provided, the agent suggests categories based on existing subject trees and similar queries in the Knowledge Base.
@@ -201,352 +197,9 @@ tags: "revenue, region, aggregation"       # Comma-separated tags
 
 ---
 
-## gen_semantic_model
+## Semantic modeling
 
-### Overview
-
-The semantic model generation feature helps you create MetricFlow semantic models from database tables through an AI-powered assistant. The assistant analyzes your table structure and generates comprehensive YAML configuration files that define metrics, dimensions, and relationships.
-
-### What is a Semantic Model?
-
-A semantic model is a YAML configuration that defines:
-
-- **Measures**: Metrics and aggregations (SUM, COUNT, AVERAGE, etc.)
-- **Dimensions**: Categorical and time-based attributes
-- **Identifiers**: Primary and foreign keys for relationships
-- **Data Source**: Connection to your database table
-
-### Quick Start
-
-Start Datus CLI with `datus --datasource <datasource>`, and begin with a subagent command:
-
-```bash
-/gen_semantic_model generate a semantic model for table <table_name>
-```
-
-### How It Works
-
-#### Interactive Generation
-
-When you request a semantic model, the AI assistant:
-
-1. Retrieves your table's DDL (structure)
-2. Checks if a semantic model already exists
-3. Generates a comprehensive YAML file
-4. Validates the configuration using MetricFlow
-5. Syncs it to the Knowledge Base after validation passes
-
-#### Generation Workflow
-
-```mermaid
-graph LR
-    A[User Request] --> B[DDL Analysis]
-    B --> C[YAML Generation]
-    C --> D[Validation]
-    D --> E[Knowledge Base Sync]
-```
-
-### Validation and Sync
-
-The agent calls `validate_semantic()` before publishing. If validation fails, it edits the YAML and retries. In interactive mode, once validation passes, `end_semantic_model_generation` triggers automatic Knowledge Base sync; in workflow/API mode, use the explicit semantic sync step or tool.
-
-### Semantic Model Structure
-
-#### Basic Template
-
-```yaml
-data_source:
-  name: table_name                    # Required: lowercase with underscores
-  description: "Table description"
-
-  sql_table: schema.table_name        # For databases with schemas
-  # OR
-  sql_query: |                        # For custom queries
-    SELECT * FROM table_name
-
-  measures:
-    - name: total_amount              # Required
-      agg: SUM                        # Required: SUM|COUNT|AVERAGE|etc.
-      expr: amount_column             # Column or SQL expression
-      create_metric: true             # Auto-create queryable metric
-      description: "Total transaction amount"
-
-  dimensions:
-    - name: created_date
-      type: TIME                      # Required: TIME|CATEGORICAL
-      type_params:
-        is_primary: true              # One primary time dimension required
-        time_granularity: DAY         # Required for TIME: DAY|WEEK|MONTH|etc.
-
-    - name: status
-      type: CATEGORICAL
-      description: "Order status"
-
-  identifiers:
-    - name: order_id
-      type: PRIMARY                   # PRIMARY|FOREIGN|UNIQUE|NATURAL
-      expr: order_id
-
-    - name: customer
-      type: FOREIGN
-      expr: customer_id
-```
-
-### Summary
-
-The semantic model generation feature provides:
-
-- ✅ Automated YAML generation from table DDL
-- ✅ Built-in tools, hooks, and MCP server integration
-- ✅ Interactive validation and error fixing
-- ✅ Validation-gated Knowledge Base sync
-- ✅ Interactive auto-sync and workflow/API explicit sync
-- ✅ Duplicate prevention
-- ✅ MetricFlow compatibility
-
----
-
-## gen_metrics
-
-### Overview
-
-The metrics generation feature helps you convert SQL queries into reusable MetricFlow metric definitions. Using an AI assistant, you can analyze SQL business logic and automatically generate standardized YAML metric configurations that can be queried consistently across your organization.
-
-### What is a Metric?
-
-A **metric** is a reusable business calculation built on top of semantic models. Metrics provide:
-
-- **Consistent Business Logic**: One definition, used everywhere
-- **Type Safety**: Validated structure and measure references
-- **Metadata**: Display names, formats, business context
-- **Composability**: Build complex metrics from simpler ones
-
-**Example**: Instead of writing `SELECT SUM(revenue) / COUNT(DISTINCT customer_id)` repeatedly, define an `avg_customer_revenue` metric once.
-
-### Quick Start
-
-Start Datus CLI with `datus --datasource <datasource>`, and use the metrics generation subagent:
-
-```bash
-/gen_metrics Generate a metric from this SQL: SELECT SUM(amount) FROM transactions, the corresponding question is total amount of all transactions
-```
-
-### How It Works
-
-#### Generation Workflow
-
-```mermaid
-graph LR
-    A[User provides SQL and question] --> B[Agent analyzes logic]
-    B --> C[Finds semantic model]
-    C --> D[Reads measures]
-    D --> E[Checks for duplicates]
-    E --> F[Generates metric YAML]
-    F --> G[Writes metric to metrics file]
-    G --> H[Validates]
-    H --> I[Dry-run SQL]
-    I --> J[Syncs to Knowledge Base]
-```
-
-#### Important Limitations
-
-> **⚠️ Single Table Queries Only**
->
-> The current version **only supports generating metrics from single-table SQL queries**. Multi-table JOINs are not supported.
-
-**Supported:**
-```sql
-SELECT SUM(revenue) FROM transactions WHERE status = 'completed'
-SELECT COUNT(DISTINCT customer_id) / COUNT(*) FROM orders
-```
-
-**Not Supported:**
-```sql
-SELECT SUM(o.amount)
-FROM orders o
-JOIN customers c ON o.customer_id = c.id  -- ❌ JOIN not supported
-```
-
-### Validation and Sync
-
-Before publishing, the agent validates the YAML with `validate_semantic()` and compiles SQL with `query_metrics(..., dry_run=True)`. In interactive mode, after both checks pass, `end_metric_generation` triggers automatic Knowledge Base sync; in workflow/API mode, use the explicit metric sync step or tool.
-
-### Subject Tree Categorization
-
-Subject tree allows organizing metrics by domain and layers. In CLI mode, include it in your question:
-
-**Example with subject_tree:**
-```bash
-/gen_metrics Generate a metric from this SQL: SELECT SUM(amount) FROM transactions, subject_tree: finance/revenue/transactions
-```
-
-**Example without subject_tree:**
-```bash
-/gen_metrics Generate a metric from this SQL: SELECT SUM(amount) FROM transactions
-```
-
-When not provided, the agent operates in learning mode and suggests categories based on existing metrics in the Knowledge Base.
-
-### Usage Examples
-
-#### Example 1: Simple Aggregation
-
-**User Input:**
-```bash
-/gen_metrics Generate a metric for total order count
-```
-
-**Agent Actions:**
-1. Finds `orders.yml` semantic model
-2. Reads file to discover `order_count` measure
-3. Generates MEASURE_PROXY metric:
-
-```yaml
----
-metric:
-  name: total_orders
-  description: Total number of orders
-  type: measure_proxy
-  type_params:
-    measure: order_count
-  locked_metadata:
-    display_name: "Total Orders"
-    increase_is_good: true
-```
-
-#### Example 2: Conversion Rate
-
-**User Input:**
-```bash
-/gen_metrics Create a metric from this SQL:
-SELECT
-  COUNT(DISTINCT CASE WHEN status = 'completed' THEN order_id END) /
-  COUNT(DISTINCT order_id) AS completion_rate
-FROM orders
-```
-
-**Agent Actions:**
-1. Analyzes SQL logic (ratio with conditional counting)
-2. Finds `orders.yml` and reads measures
-3. Generates RATIO metric with constraint:
-
-```yaml
----
-metric:
-  name: order_completion_rate
-  description: Percentage of orders that reached completed status
-  type: ratio
-  type_params:
-    numerator:
-      name: order_count
-      constraint: status = 'completed'
-    denominator: order_count
-  locked_metadata:
-    display_name: "Order Completion Rate"
-    value_format: ".2%"
-    increase_is_good: true
-```
-
-#### Example 3: Complex Calculation
-
-**User Input:**
-```bash
-/gen_metrics Generate average basket size metric:
-SELECT SUM(total_amount) / COUNT(DISTINCT order_id)
-FROM order_items
-```
-
-**Agent Actions:**
-1. Locates `order_items.yml`
-2. Identifies this as a RATIO (average)
-3. Generates metric:
-
-```yaml
----
-metric:
-  name: avg_basket_size
-  description: Average order value (basket size)
-  type: ratio
-  type_params:
-    numerator: total_amount
-    denominator: order_count
-  locked_metadata:
-    display_name: "Average Basket Size"
-    value_format: "$$,.2f"
-    unit: "dollars"
-    increase_is_good: true
-```
-
-### How Metrics Are Stored
-
-#### File Organization
-
-Metrics are stored in dedicated files, separate from their semantic models:
-
-- **Semantic Model**: `{table_name}.yml` — `data_source` definition (measures, dimensions, identifiers)
-- **Metrics**: `metrics/{table_name}_metrics.yml` — one or more metric definitions, separated by the YAML document separator `---`
-
-**Semantic Model File** (`transactions.yml`):
-```yaml
-data_source:
-  name: transactions
-  sql_table: transactions
-  measures:
-    - name: revenue
-      agg: SUM
-      expr: amount
-  dimensions:
-    - name: transaction_date
-      type: TIME
-```
-
-**Metrics File** (`metrics/transactions_metrics.yml`):
-```yaml
-metric:
-  name: total_revenue
-  type: measure_proxy
-  type_params:
-    measure: revenue
-
----
-metric:
-  name: avg_transaction_value
-  type: ratio
-  type_params:
-    numerator: revenue
-    denominator: transaction_count
-```
-
-**Why separate files?**
-- Clear separation between schema definitions and business metrics
-- Metrics can be maintained independently from the underlying semantic model
-- MetricFlow validates all YAML documents under the semantic model directory together
-
-See [gen_metrics](gen_metrics.md) for full details.
-
-#### Knowledge Base Storage
-
-After validation and dry-run SQL succeed, the metric is synced to the Knowledge Base with:
-
-1. **Metadata**: Name, description, type, domain/layer classification
-2. **LLM Text**: Natural language representation for semantic search
-3. **References**: Associated semantic model name
-4. **Timestamp**: Creation date
-
-### Summary
-
-The metrics generation feature provides:
-
-- ✅ **SQL-to-Metric Conversion**: Analyze SQL queries and generate MetricFlow metrics
-- ✅ **Intelligent Type Detection**: Automatically selects the right metric type
-- ✅ **Duplicate Prevention**: Checks for existing metrics before generation
-- ✅ **Subject Tree Support**: Organize by domain/layer1/layer2 with predefined or learned categories
-- ✅ **Validation**: MetricFlow validation ensures correctness
-- ✅ **Publish Gate**: Syncs only after semantic validation and dry-run SQL succeed
-- ✅ **Knowledge Base Integration**: Semantic search for metric discovery
-- ✅ **File Management**: Maintains dedicated per-table metrics files under `metrics/`
-
----
+Dosi semantic models and metrics are authored through [`semantic_modeling`](semantic_modeling.md).
 
 ## explore
 
@@ -580,7 +233,7 @@ agent:
 | Tool Category | Tools | Purpose |
 |---------------|-------|---------|
 | Database | `list_databases`, `list_schemas`, `list_tables`, `search_table`, `describe_table`, `read_query` | Schema discovery and data sampling (read-only) |
-| Context Search | `search_metrics`, `search_reference_sql`, `search_knowledge`, `search_semantic_objects`, `list_subject_tree`, `get_metrics`, `get_reference_sql`, `get_knowledge` | Knowledge base retrieval |
+| Context Search | `search_metrics`, `search_reference_sql`, `search_semantic_objects`, `list_subject_tree`, `get_reference_sql` | Knowledge base retrieval |
 | Filesystem | `read_file`, `glob`, `grep` | Read-only file browsing |
 | Date Parsing | `get_current_date`, `parse_temporal_expressions` | Date context |
 
@@ -596,10 +249,10 @@ The explore subagent returns a concise, structured summary optimized for consump
 
 ### Usage
 
-The explore subagent is typically invoked automatically by the chat agent via `task(type="explore")`, but can also be launched manually:
+The explore subagent is typically invoked automatically by the chat agent via `task(type="explore")`. To select it explicitly for one message, append `@Agent explore`:
 
-```bash
-/explore Discover tables related to customer revenue and find relevant metrics
+```text
+Discover tables related to customer revenue and find relevant metrics. @Agent explore
 ```
 
 ---
@@ -664,10 +317,10 @@ The gen_sql subagent returns results in one of two formats:
 
 ### Usage
 
-The gen_sql subagent is typically invoked automatically by the chat agent via `task(type="gen_sql")` for complex queries, but can also be launched manually:
+The gen_sql subagent is typically invoked automatically by the chat agent via `task(type="gen_sql")` for complex queries. To select it explicitly for one message, append `@Agent gen_sql`:
 
-```bash
-/gen_sql Generate a query to calculate customer lifetime value with cohort analysis
+```text
+Generate a query to calculate customer lifetime value with cohort analysis. @Agent gen_sql
 ```
 
 ---
@@ -733,10 +386,10 @@ The gen_report subagent returns results as a structured report:
 
 ### Usage
 
-The gen_report subagent can be launched manually or invoked by the chat agent via `task(type="gen_report")`:
+The gen_report subagent can be selected explicitly for one message with `@Agent gen_report`, or invoked automatically by the chat agent via `task(type="gen_report")`:
 
-```bash
-/gen_report Analyze the revenue trend for the last quarter and provide insights
+```text
+Analyze the revenue trend for the last quarter and provide insights. @Agent gen_report
 ```
 
 ### Custom Report Subagents
@@ -752,7 +405,7 @@ agent:
       max_turns: 30
 ```
 
-Then use it via `/attribution_report Analyze the conversion attribution for campaign X`.
+Then ask `Analyze the conversion attribution for campaign X. @Agent attribution_report`.
 
 ---
 
@@ -792,236 +445,26 @@ agent:
 
 ### Usage
 
-Launch it directly:
+Select it explicitly for one message:
 
-```bash
-/gen_skill Create a skill that validates daily revenue dashboards before publishing
+```text
+Create a skill that validates daily revenue dashboards before publishing. @Agent gen_skill
 ```
 
 Or let the chat agent delegate via `task(type="gen_skill")`.
 
 ---
 
-## gen_dashboard
+## Plugin-backed Platform Operations
 
-### Overview
+Airflow scheduling and external BI authoring (for example Superset) run in the
+main agent through installed plugins and their bundled skills. They are not
+available through the `task()` tool, slash commands, the agent API, or custom
+aliases.
 
-The gen_dashboard subagent creates, updates, and manages BI dashboards on Superset and Grafana. It is invoked by the chat agent via `task(type="gen_dashboard")` and uses BI tools from `BIFuncTool` to build dashboard assets on existing serving tables or SQL datasets.
-
-### Key Features
-
-- **Multi-platform**: Supports Apache Superset and Grafana; platform is explicit via `bi_platform` or auto-detected from `agent.services.bi_platforms`
-- **Dynamic tool exposure**: Tools are exposed based on adapter Mixin capabilities — only operations the platform actually supports appear as LLM tools
-- **Existing serving data only**: data preparation is handled separately by `gen_job` / `scheduler`; gen_dashboard builds BI dataset / chart / dashboard assets
-- **Skill-guided workflows**: Platform skills (`superset-dashboard`, `grafana-dashboard`) provide step-by-step workflow guidance; `bi-validation` runs automatically after creation
-
-### Configuration
-
-```yaml
-agent:
-  services:
-    datasources:
-      serving_pg:
-        type: postgresql
-        host: 127.0.0.1
-        port: 5433
-        database: superset_examples
-        schema: bi_public
-        username: "${SERVING_WRITE_USER}"
-        password: "${SERVING_WRITE_PASSWORD}"
-
-    bi_platforms:
-      superset:
-        type: superset
-        api_base_url: "http://localhost:8088"
-        username: "${SUPERSET_USER}"
-        password: "${SUPERSET_PASSWORD}"
-        dataset_db:
-          datasource_ref: serving_pg
-          bi_database_name: examples
-
-  agentic_nodes:
-    gen_dashboard:
-      model: claude           # Optional: defaults to configured model
-      max_turns: 30           # Optional: defaults to 30
-      bi_platform: superset   # Optional: auto-detected when only one BI platform is configured
-```
-
-**Requirements:**
-- `agent.services.bi_platforms` section in `agent.yml` with platform credentials
-- `datus-bi-superset` or `datus-bi-grafana` package installed
-
-### How It Works
-
-```mermaid
-graph LR
-    A[task gen_dashboard] --> C[GenDashboardAgenticNode]
-    C --> D[BIFuncTool.available_tools]
-    D --> E[LLM Function Calling]
-    E -->|Superset| F[list_bi_databases → create_dataset → create_chart → create_dashboard → add_chart_to_dashboard]
-    E -->|Grafana| G[create_dashboard → create_chart]
-    F --> H[ValidationHook.on_end]
-    G --> H
-```
-
-### Available Tools
-
-Tools are exposed dynamically based on which Mixins the platform adapter implements:
-
-| Tool | Required Capability | Description |
-|------|--------------------|----|
-| `list_dashboards` | All adapters | List and search dashboards |
-| `get_dashboard` | All adapters | Get dashboard details |
-| `list_charts` | All adapters | List charts in a dashboard |
-| `get_chart` | All adapters | Get details for a specific chart or panel |
-| `get_chart_data` | Supported adapters | Get chart query result rows for numeric validation |
-| `list_datasets` | All adapters | List datasets/datasources |
-| `create_dashboard` | `DashboardWriteMixin` | Create a new dashboard |
-| `update_dashboard` | `DashboardWriteMixin` | Update dashboard title/description |
-| `delete_dashboard` | `DashboardWriteMixin` | Delete a dashboard |
-| `create_chart` | `ChartWriteMixin` | Create a chart or panel |
-| `update_chart` | `ChartWriteMixin` | Update chart configuration |
-| `add_chart_to_dashboard` | `ChartWriteMixin` | Add chart to a dashboard |
-| `delete_chart` | `ChartWriteMixin` | Delete a chart |
-| `create_dataset` | `DatasetWriteMixin` | Register a dataset |
-| `list_bi_databases` | `DatasetWriteMixin` | List BI platform database connections |
-| `delete_dataset` | `DatasetWriteMixin` | Delete a dataset |
-| `get_bi_serving_target` | `dataset_db` configured | Return serving DB contract for orchestrator hand-off |
-
-### Output Format
-
-```json
-{
-  "response": "Created sales dashboard with 3 revenue trend charts.",
-  "dashboard_result": {
-    "dashboard_id": 42,
-    "url": "http://localhost:8088/superset/dashboard/42/"
-  },
-  "tokens_used": 3210
-}
-```
-
-### Usage
-
-The gen_dashboard subagent is invoked automatically by the chat agent via `task(type="gen_dashboard")`, or launched manually:
-
-```bash
-/gen_dashboard Create a sales dashboard with revenue trends by region
-```
-
-You can also create a custom subagent using the `gen_dashboard` node class:
-
-```yaml
-agent:
-  agentic_nodes:
-    sales_dashboard:
-      node_class: gen_dashboard
-      bi_platform: superset
-      max_turns: 30
-```
-
----
-
-## scheduler
-
-### Overview
-
-The scheduler subagent submits, monitors, updates, and troubleshoots scheduled jobs on Apache Airflow. It is invoked by the chat agent via `task(type="scheduler")` and provides the full Airflow job lifecycle through LLM function calling.
-
-### Key Features
-
-- **Full job lifecycle**: Submit, trigger, pause, resume, update, and delete Airflow DAG jobs
-- **SQL and SparkSQL support**: Submit both SQL and SparkSQL job types
-- **SQL file management**: Create or update job SQL files with filesystem tools before submission
-- **Monitoring**: List job runs, fetch run logs, and troubleshoot failures
-- **Connection discovery**: List available Airflow connections for job configuration
-
-### Configuration
-
-```yaml
-agent:
-  services:
-    schedulers:
-      airflow_prod:
-        type: airflow
-        api_base_url: "${AIRFLOW_URL}"
-        username: "${AIRFLOW_USER}"
-        password: "${AIRFLOW_PASSWORD}"
-        dags_folder: "${AIRFLOW_DAGS_DIR}"
-
-  agentic_nodes:
-    scheduler:
-      model: claude                  # Optional: defaults to configured model
-      max_turns: 30                  # Optional: defaults to 30
-      scheduler_service: airflow_prod
-```
-
-**Requirements:**
-- `agent.services.schedulers` section in `agent.yml` with Airflow credentials
-- `datus-scheduler-airflow` package installed (`datus-scheduler-core` is pulled in transitively)
-
-### How It Works
-
-```mermaid
-graph LR
-    A[chat agent] -->|task type=scheduler| B[SchedulerAgenticNode]
-    B --> C[LLM Function Calling]
-    C --> D[write_file / edit_file]
-    D --> E[submit_sql_job / submit_sparksql_job]
-    C --> F[trigger_scheduler_job]
-    C --> G[pause_job / resume_job]
-    C --> H[list_job_runs / get_run_log]
-```
-
-### Available Tools
-
-| Tool | Description |
-|------|-------------|
-| `submit_sql_job` | Submit a scheduled SQL job from a `.sql` file with cron expression |
-| `submit_sparksql_job` | Submit a scheduled SparkSQL job from a `.sql` file |
-| `read_file` / `write_file` / `edit_file` | Read, create, or update SQL files used by scheduled jobs |
-| `trigger_scheduler_job` | Manually trigger an existing job run |
-| `pause_job` | Pause a scheduled job |
-| `resume_job` | Resume a paused job |
-| `delete_job` | Delete a scheduled job |
-| `update_job` | Update job schedule or configuration |
-| `get_scheduler_job` | Get job details and current status |
-| `list_scheduler_jobs` | List all scheduled jobs |
-| `list_scheduler_connections` | List available Airflow connections |
-| `list_job_runs` | List recent runs for a job |
-| `get_run_log` | Fetch logs for a specific job run |
-
-### Output Format
-
-```json
-{
-  "response": "Submitted daily SQL job 'daily_revenue' scheduled at 8:00 AM every day.",
-  "scheduler_result": {
-    "job_id": "daily_revenue_dag",
-    "status": "active",
-    "schedule": "0 8 * * *"
-  },
-  "tokens_used": 1580
-}
-```
-
-### Usage
-
-The scheduler subagent is invoked automatically by the chat agent via `task(type="scheduler")`, or launched manually:
-
-```bash
-/scheduler Submit /opt/sql/daily_revenue.sql as a daily job at 8am using the postgres_prod connection
-```
-
-You can also create a custom subagent using the `scheduler` node class:
-
-```yaml
-agent:
-  agentic_nodes:
-    etl_scheduler:
-      node_class: scheduler
-      max_turns: 30
-```
+The legacy node implementations remain in the codebase temporarily for
+compatibility only. See [BI Dashboard Node (Legacy)](gen_dashboard.md) and
+[Scheduler Node (Legacy)](scheduler.md) for migration guidance.
 
 ---
 
@@ -1030,18 +473,16 @@ agent:
 | Subagent | Purpose | Output | Stored In | Key Features |
 |----------|---------|--------|-----------|--------------|
 | `gen_sql_summary` | Summarize and classify SQL queries | YAML (SQL summary) | `/data/reference_sql` | Subject tree categorization, auto context retrieval |
-| `gen_semantic_model` | Generate semantic model from tables | YAML (semantic model) | `/data/semantic_models` | DDL to MetricFlow model, built-in validation |
-| `gen_metrics` | Generate metrics from SQL | YAML (metric) | `/data/semantic_models` | SQL to MetricFlow metric, subject tree support |
+| `semantic_modeling` | Author semantic models and metrics | Dosi YAML | `/data/semantic_models` | Unified validation and full Knowledge Base reconcile |
 | `ask_metrics` | Answer existing metric questions | Markdown report | N/A | KPI values, trends, grouped results, attribution, no raw SQL fallback |
+| `ontology_analyst` | Answer questions over an ontology | Markdown report | N/A | Concept catalog, role-aware paths, value-domain checks, record queries, no raw SQL fallback |
 | `explore` | Read-only data exploration | Structured context | N/A | Strictly read-only, fast turn budget, three exploration directions |
 | `gen_sql` | Generate optimized SQL | SQL query / SQL file | N/A | Deep SQL expertise, auto-validation, file-based output |
 | `gen_report` | Flexible report generation | Structured report | N/A | Configurable tools, extensible, custom report subagents |
 | `gen_table` | Create tables interactively | DDL + execution result | Database | DDL confirmation, CTAS or natural-language schema creation |
 | `gen_job` | Data pipeline jobs (intra-DB ETL + cross-DB transfer) | Job / transfer result | Source + target databases | DDL/DML execution, cross-dialect type mapping via MigrationTargetMixin, `transfer_query_result`, lightweight reconciliation when source != target |
 | `gen_skill` | Create or optimize skills | Skill path | Skills directory | Interactive authoring, validation, skill loading |
-| `gen_dashboard` | BI dashboard CRUD (Superset, Grafana) | Dashboard result | BI platform | Dynamic tool exposure, existing serving data, multi-platform |
 | `gen_visual_report` | Self-contained visual report (narrative, pre-baked queries) | `reports/<slug>/` (executable SQL + executed results + report components) | Project root | Modular section-by-section edits, generate from metrics or your own SQL, CLI auto-opens the report in your browser |
-| `scheduler` | Airflow job lifecycle management | Scheduler result | Airflow | Submit, monitor, update, and troubleshoot jobs |
 
 **Built-in Features Across All Subagents:**
 - Minimal configuration required (only `model` and `max_turns` optional)

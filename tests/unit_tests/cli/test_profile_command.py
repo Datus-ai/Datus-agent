@@ -88,6 +88,56 @@ def test_permission_switch_to_auto():
     assert agent_config.active_profile_name == "auto"
 
 
+def test_permission_shortcut_cycles_all_profiles_without_modal_confirmation():
+    from datus.cli.repl import DatusCLI
+
+    manager = PermissionManager(active_profile="normal")
+    agent_config = _make_agent_config("normal")
+    cli = _FakeCLI(manager, agent_config, profile_responses=[])
+
+    DatusCLI._cycle_permission_mode(cli)
+    assert cli.active_profile == "auto"
+    assert manager.active_profile == "auto"
+
+    DatusCLI._cycle_permission_mode(cli)
+    assert cli.active_profile == "dangerous"
+    assert manager.active_profile == "dangerous"
+
+    DatusCLI._cycle_permission_mode(cli)
+    assert cli.active_profile == "normal"
+    assert manager.active_profile == "normal"
+    assert cli.picker_calls == 0
+    assert cli.confirm_calls == 0
+
+
+def test_permission_shortcut_does_not_print_to_output_area():
+    from datus.cli.repl import DatusCLI
+
+    manager = PermissionManager(active_profile="normal")
+    agent_config = _make_agent_config("normal")
+    cli = _FakeCLI(manager, agent_config, profile_responses=[])
+
+    DatusCLI._cycle_permission_mode(cli)
+
+    cli.console.print.assert_not_called()
+
+
+def test_prompt_session_ctrl_p_binding_cycles_permission_mode():
+    from prompt_toolkit.keys import Keys
+
+    from datus.cli.repl import DatusCLI
+
+    cli = MagicMock()
+    bindings = DatusCLI._create_custom_key_bindings(cli)
+    handler = next(binding.handler for binding in bindings.bindings if binding.keys == (Keys.ControlP,))
+    event = MagicMock()
+
+    handler(event)
+
+    cli._cycle_permission_mode.assert_called_once_with()
+    event.app.invalidate.assert_called_once_with()
+
+
 def test_profile_alias_shows_warning_in_picker():
     from datus.cli.repl import DatusCLI
 

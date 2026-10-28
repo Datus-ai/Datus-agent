@@ -4,10 +4,8 @@
 
 """Unit tests for :mod:`datus.cli.bootstrap_bi_commands`.
 
-We mock the picker, the four streams, and the sub-agent persistence
-stream so the test covers the orchestration logic only: header
-messages, semantic-model gating, ScopedContext assembly, and adapter
-cleanup on every exit path.
+The public slash command is a skill shortcut. Legacy ``_run_plan`` coverage is
+kept below while that internal migration surface remains available.
 """
 
 from __future__ import annotations
@@ -20,9 +18,10 @@ from unittest.mock import MagicMock, patch
 import pytest
 from rich.console import Console
 
-from datus.cli.bootstrap_bi_commands import BootstrapBiCommands
+from datus.cli.bootstrap_bi_commands import _DASHBOARD_BOOTSTRAP_PROMPT, BootstrapBiCommands
 from datus.cli.bootstrap_bi_picker import BootstrapBiPlan, DashboardCliOptions
 from datus.cli.bootstrap_bi_streams import BiBuildState
+from datus.cli.skill_command_utils import render_skill_prompt
 from datus.schemas.action_history import ActionHistory, ActionStatus
 from datus.schemas.agent_models import ScopedContext
 
@@ -43,7 +42,6 @@ def agent_config() -> SimpleNamespace:
         current_datasource="local",
         agentic_nodes={},
         path_manager=SimpleNamespace(),
-        resolve_semantic_adapter=lambda x: x,
         current_db_config=lambda *_a, **_k: SimpleNamespace(catalog="cat", database="db", schema="sch"),
     )
 
@@ -86,54 +84,60 @@ async def _streams_no_yield(*_a, **_k):
 
 
 # ─────────────────────────────────────────────────────────────────
-# cmd happy path / cancel paths
+# skill-backed slash command
 # ─────────────────────────────────────────────────────────────────
 
 
-def test_cmd_aborts_when_picker_returns_none(agent_config, console) -> None:
+def _cli(agent_config, console, *, plan_mode: bool = False) -> SimpleNamespace:
+    return SimpleNamespace(
+        agent_config=agent_config,
+        console=console,
+        chat_commands=MagicMock(),
+        plan_mode_active=plan_mode,
+        configuration_manager=None,
+    )
+
+
+def test_cmd_delegates_to_dashboard_bootstrap_skill(agent_config, console) -> None:
+    cli = _cli(agent_config, console)
+    cmd = BootstrapBiCommands(cli)
+
+    cmd.cmd()
+
+    cli.chat_commands.execute_chat_command.assert_called_once_with(
+        render_skill_prompt(_DASHBOARD_BOOTSTRAP_PROMPT, ""),
+        plan_mode=False,
+        subagent_name=None,
+    )
+    message = cli.chat_commands.execute_chat_command.call_args.args[0]
+    assert 'load_skill(skill_name="dashboard-bootstrap")' in message
+    assert "legacy bootstrap picker" in message
+    assert "Let the skill decide" in message
+    assert "or create dashboard-specific subagents" not in message
+
+
+def test_cmd_forwards_user_context_and_plan_mode(agent_config, console) -> None:
+    cli = _cli(agent_config, console, plan_mode=True)
+    cmd = BootstrapBiCommands(cli)
+
+    cmd.cmd("Superset profile prod, dashboard 42, run automatically")
+
+    cli.chat_commands.execute_chat_command.assert_called_once_with(
+        render_skill_prompt(
+            _DASHBOARD_BOOTSTRAP_PROMPT,
+            "Superset profile prod, dashboard 42, run automatically",
+        ),
+        plan_mode=True,
+        subagent_name=None,
+    )
+
+
+def test_cmd_without_cli_reports_chat_requirement(agent_config, console) -> None:
     cmd = BootstrapBiCommands(agent_config, console)
-    with patch("datus.cli.bootstrap_bi_commands.BootstrapBiPicker") as picker_cls:
-        picker_cls.return_value.run.return_value = None
-        cmd.cmd()
-    output = console.file.getvalue()
-    assert "Cancelled" in output
 
+    cmd.cmd()
 
-def test_cmd_aborts_when_picker_raises(agent_config, console) -> None:
-    cmd = BootstrapBiCommands(agent_config, console)
-    with patch("datus.cli.bootstrap_bi_commands.BootstrapBiPicker") as picker_cls:
-        picker_cls.return_value.run.side_effect = ValueError("no service")
-        cmd.cmd()
-    assert "no service" in console.file.getvalue()
-
-
-def test_cmd_aborts_on_keyboard_interrupt_in_picker(agent_config, console) -> None:
-    cmd = BootstrapBiCommands(agent_config, console)
-    with patch("datus.cli.bootstrap_bi_commands.BootstrapBiPicker") as picker_cls:
-        picker_cls.return_value.run.side_effect = KeyboardInterrupt
-        cmd.cmd()
-    assert "Cancelled" in console.file.getvalue()
-
-
-def test_cmd_closes_adapter_after_full_run(agent_config, console) -> None:
-    plan = _plan()
-    cmd = BootstrapBiCommands(agent_config, console)
-
-    with (
-        patch("datus.cli.bootstrap_bi_commands.BootstrapBiPicker") as picker_cls,
-        patch("datus.cli.bootstrap_bi_commands.stream_bi_metadata", side_effect=_streams_no_yield),
-        patch("datus.cli.bootstrap_bi_commands.stream_bi_reference_sql", side_effect=_streams_no_yield),
-        patch("datus.cli.bootstrap_bi_commands.stream_bi_semantic_model", side_effect=_streams_no_yield),
-        patch("datus.cli.bootstrap_bi_commands.stream_bi_metrics", side_effect=_streams_no_yield),
-        patch("datus.cli.bootstrap_bi_commands.stream_bi_save_subagents", side_effect=_streams_no_yield),
-        patch("datus.cli.bootstrap_bi_commands.qualify_table_names", return_value=["cat.db.sch.orders"]),
-        patch("datus.cli.bootstrap_bi_commands.SubAgentManager"),
-        patch("datus.cli.bootstrap_bi_commands.configuration_manager"),
-    ):
-        picker_cls.return_value.run.return_value = plan
-        cmd.cmd()
-
-    plan.adapter.close.assert_called_once()
+    assert "relies on the chat pipeline" in console.file.getvalue()
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -142,11 +146,9 @@ def test_cmd_closes_adapter_after_full_run(agent_config, console) -> None:
 
 
 @pytest.mark.asyncio
-async def test_run_plan_skips_metrics_when_semantic_validation_fails(agent_config, console) -> None:
+async def test_run_plan_reports_unified_semantic_failure(agent_config, console) -> None:
     plan = _plan()
     cmd = BootstrapBiCommands(agent_config, console)
-
-    metric_calls: list = []
 
     async def _meta_stream(*_a, **_k):
         if False:
@@ -161,42 +163,36 @@ async def test_run_plan_skips_metrics_when_semantic_validation_fails(agent_confi
         return
         yield  # pragma: no cover
 
-    async def _metrics_stream(*_a, **_k):
-        metric_calls.append(True)
-        if False:
-            yield  # pragma: no cover
-
     actions: list[ActionHistory] = []
     with (
         patch("datus.cli.bootstrap_bi_commands.stream_bi_metadata", side_effect=_meta_stream),
         patch("datus.cli.bootstrap_bi_commands.stream_bi_reference_sql", side_effect=_ref_stream),
         patch("datus.cli.bootstrap_bi_commands.stream_bi_semantic_model", side_effect=_sem_stream),
-        patch("datus.cli.bootstrap_bi_commands.stream_bi_metrics", side_effect=_metrics_stream),
-        patch("datus.cli.bootstrap_bi_commands.stream_bi_save_subagents", side_effect=_streams_no_yield),
+        patch(
+            "datus.cli.bootstrap_bi_commands.stream_bi_save_subagents",
+            side_effect=_streams_no_yield,
+        ) as save_subagents,
         patch("datus.cli.bootstrap_bi_commands.qualify_table_names", return_value=["t"]),
         patch("datus.cli.bootstrap_bi_commands.SubAgentManager"),
         patch("datus.cli.bootstrap_bi_commands.configuration_manager"),
     ):
         await cmd._run_plan(plan, actions)
 
-    assert metric_calls == []  # metrics stream never invoked
-    assert any(a.status == ActionStatus.FAILED.value and "Skipping metrics" in a.messages for a in actions)
+    assert any(
+        a.status == ActionStatus.FAILED.value and "Unified semantic modeling failed" in a.messages for a in actions
+    )
+    save_subagents.assert_not_called()
+    assert not any("Sub-Agent build successful" in a.messages for a in actions)
 
 
 @pytest.mark.asyncio
-async def test_run_plan_runs_metrics_when_semantic_ok_set(agent_config, console) -> None:
+async def test_run_plan_uses_metrics_collected_by_semantic_modeling(agent_config, console) -> None:
     plan = _plan()
     cmd = BootstrapBiCommands(agent_config, console)
 
-    metric_calls: list = []
-
     async def _set_ok_stream(*_, state, **_k):
         state.semantic_ok = True
-        if False:
-            yield  # pragma: no cover
-
-    async def _metrics_stream(*_, state, **_k):
-        metric_calls.append(state.semantic_ok)
+        state.metrics.append("sales.orders.total_orders")
         if False:
             yield  # pragma: no cover
 
@@ -205,7 +201,6 @@ async def test_run_plan_runs_metrics_when_semantic_ok_set(agent_config, console)
         patch("datus.cli.bootstrap_bi_commands.stream_bi_metadata", side_effect=_streams_no_yield),
         patch("datus.cli.bootstrap_bi_commands.stream_bi_reference_sql", side_effect=_streams_no_yield),
         patch("datus.cli.bootstrap_bi_commands.stream_bi_semantic_model", side_effect=_set_ok_stream),
-        patch("datus.cli.bootstrap_bi_commands.stream_bi_metrics", side_effect=_metrics_stream),
         patch("datus.cli.bootstrap_bi_commands.stream_bi_save_subagents", side_effect=_streams_no_yield),
         patch("datus.cli.bootstrap_bi_commands.qualify_table_names", return_value=["t"]),
         patch("datus.cli.bootstrap_bi_commands.SubAgentManager"),
@@ -213,7 +208,7 @@ async def test_run_plan_runs_metrics_when_semantic_ok_set(agent_config, console)
     ):
         await cmd._run_plan(plan, actions)
 
-    assert metric_calls == [True]
+    assert not any("Unified semantic modeling failed" in a.messages for a in actions)
 
 
 @pytest.mark.asyncio
@@ -261,7 +256,6 @@ async def test_run_plan_skips_save_when_scoped_context_empty(agent_config, conso
         patch("datus.cli.bootstrap_bi_commands.stream_bi_metadata", side_effect=_streams_no_yield),
         patch("datus.cli.bootstrap_bi_commands.stream_bi_reference_sql", side_effect=_streams_no_yield),
         patch("datus.cli.bootstrap_bi_commands.stream_bi_semantic_model", side_effect=_sem_stream),
-        patch("datus.cli.bootstrap_bi_commands.stream_bi_metrics", side_effect=_streams_no_yield),
         patch("datus.cli.bootstrap_bi_commands.stream_bi_save_subagents", side_effect=_save_stream),
         # qualify_table_names returns empty so ScopedContext is also empty.
         patch("datus.cli.bootstrap_bi_commands.qualify_table_names", return_value=[]),

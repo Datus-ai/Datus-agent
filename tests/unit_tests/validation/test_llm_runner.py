@@ -152,19 +152,19 @@ class TestBuildPrompt:
         assert "Table: users" in prompt
 
     def test_table_target_with_catalog_renders_catalog_line(self):
-        t = TableTarget(catalog="default_catalog", database="ac_manage", table="stats")
+        t = TableTarget(catalog="default_catalog", database="analytics", table="stats")
         prompt = _build_prompt(t, precheck=None)
         assert "Catalog: default_catalog" in prompt
-        assert "Database: ac_manage" in prompt
+        assert "Database: analytics" in prompt
         assert "Table: stats" in prompt
 
     def test_transfer_target_renders_catalog_when_set(self):
         t = TransferTarget(
             source=DBRef(name="pg"),
-            target=TableTarget(catalog="default_catalog", database="ac_manage", table="stats"),
+            target=TableTarget(catalog="default_catalog", database="analytics", table="stats"),
         )
         prompt = _build_prompt(t, precheck=None)
-        assert "default_catalog.ac_manage.stats" in prompt
+        assert "default_catalog.analytics.stats" in prompt
 
 
 class TestValidatorMaxTurns:
@@ -286,19 +286,19 @@ class TestSelectReadonlyTools:
         fake = self._FakeDBFuncTool(
             [
                 self._FakeTool("describe_table"),
-                self._FakeTool("execute_ddl"),  # write — must be excluded
-                self._FakeTool("read_query"),
+                self._FakeTool("transfer_query_result"),  # write — must be excluded
+                self._FakeTool("execute_sql"),
                 self._FakeTool("mystery_tool"),  # not in whitelist
             ]
         )
         out = _select_readonly_tools(fake)
         names = {getattr(t, "name", "") for t in out}
-        assert names == {"describe_table", "read_query"}
+        assert names == {"describe_table", "execute_sql"}
 
     def test_whitelist_membership_matches_documented_set(self):
         """Regression guard — the whitelist must not silently gain write
         tools. If this fails the validator sub-agent boundary has widened."""
-        assert "read_query" in VALIDATOR_READONLY_TOOL_NAMES
+        assert "execute_sql" in VALIDATOR_READONLY_TOOL_NAMES
         assert "execute_ddl" not in VALIDATOR_READONLY_TOOL_NAMES
         assert "execute_write" not in VALIDATOR_READONLY_TOOL_NAMES
         assert "transfer_query_result" not in VALIDATOR_READONLY_TOOL_NAMES

@@ -440,7 +440,7 @@ class TestBuildAgentArgs:
         defaults = dict(
             benchmark="bird_dev",
             datasource="ns1",
-            workflow="reflection",
+            workflow="fixed",
             max_steps=30,
             workers=1,
             summary_report_file=None,
@@ -455,7 +455,7 @@ class TestBuildAgentArgs:
         result = build_agent_args(cli_args, task_ids, round_dir, 0, "run1")
         assert result.benchmark == "bird_dev"
         assert result.datasource == "ns1"
-        assert result.workflow == "reflection"
+        assert result.workflow == "fixed"
         assert result.max_steps == 30
         assert result.max_workers == 1
         assert result.task_ids == ["1", "2", "3"]
@@ -547,7 +547,7 @@ class TestSetupBaseParserArgs:
         parser = argparse.ArgumentParser()
         setup_base_parser_args(parser)
         args = parser.parse_args(["--datasource", "ns", "--benchmark", "bm"])
-        assert args.workflow == "reflection"
+        assert args.workflow == "fixed"
 
     def test_plan_mode_flag(self):
         parser = argparse.ArgumentParser()

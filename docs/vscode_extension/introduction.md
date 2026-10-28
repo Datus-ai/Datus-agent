@@ -81,7 +81,7 @@ The left-hand **Datus: Object Explorer** offers two tabs:
     - Click a table → a *Table Info* tab opens in the editor area with **Columns** (type / nullable / default / PK), **Indexes**, and **Sample data**.
     - Search and refresh are available at the top — refresh after metadata changes to resync immediately.
 - **Context**: the context knowledge tree, aligned with Datus-agent's `subject/` directory:
-    - **Metrics**: MetricFlow metric definitions.
+    - **Metrics**: Dosi metric definitions.
     - **Reference**: Reference SQL and Reference Templates.
     - **Knowledge**: External Knowledge / Platform Documentation.
 
@@ -93,19 +93,19 @@ The **Agents** section in the lower-left lists every subagent for the current pr
 
 1. **Description**: basic information (name, description, target scenario).
 2. **Tools**: pick available tools / MCP tools.
-3. **Objects**: define the SubAgent's visible **Catalog scope** and **Context scope** — using the same two trees as above, with check boxes down to schema / table / knowledge-node level. The *Selected* area at the bottom echoes wildcards such as `jeff_shop.*` and `Root.*`.
+3. **Objects**: define the SubAgent's visible **Catalog scope** and **Context scope** — using the same two trees as above, with check boxes down to schema / table / knowledge-node level. The *Selected* area at the bottom echoes wildcards such as `sample_shop.*` and `Root.*`.
 4. **Rules**: behavior rules, few-shot examples, conversational style, and so on.
 
 ![Add SubAgent wizard (Objects step)](../assets/vscode-create-subagent.png)
 
-Submitting the wizard writes the subagent into Datus-agent's configuration (equivalent to `/agent` in the CLI) and immediately makes it selectable from the SubAgent dropdown in the Chat panel. Built-in subagents (`gen_sql`, `gen_metrics`, `gen_dashboard`, `gen_semantic_model`, `gen_report`, `scheduler`, …) are read-only — you can inspect their Tools / Objects / Rules in the wizard but cannot edit them.
+Submitting the wizard writes the subagent into Datus-agent's configuration (equivalent to `/agent` in the CLI) and immediately makes it selectable from the SubAgent dropdown in the Chat panel. Built-in subagents (`gen_sql`, `semantic_modeling`, `gen_dashboard`, `gen_report`, `scheduler`, …) are read-only — you can inspect their Tools / Objects / Rules in the wizard but cannot edit them.
 
 ### 3. Datus Studio Chat Panel
 
 The right-hand **Datus Studio** is the main entry point for talking to Datus-agent. It mirrors Web Chatbot but stays closer to IDE workflow:
 
 - **Plain conversation**: ask in natural language; Datus generates SQL, calls tools, and returns results as Markdown / tables / links.
-- **SubAgent switching**: the **Main...** dropdown below the input lets you pick `gen_sql`, `gen_dashboard`, `gen_metrics`, or any custom subagent. Switching immediately routes the chat through that subagent's visible scope and rules.
+- **SubAgent switching**: the **Main...** dropdown below the input lets you pick `gen_sql`, `gen_dashboard`, `semantic_modeling`, or any custom subagent. Switching immediately routes the chat through that subagent's visible scope and rules.
 - **Datasource switching**: the **database** dropdown in the bottom-right switches the current session's datasource without a restart.
 - **Plan mode**: when enabled, Datus first emits an execution plan and a SQL draft, then waits for your confirmation before executing — well suited to high-risk queries on production data.
 - **Session history**: chat history is stored under `~/.datus/sessions/{project}/`, partitioned by project; the side panel can load past sessions to continue chatting or to compare side-by-side.

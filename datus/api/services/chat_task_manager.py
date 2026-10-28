@@ -9,11 +9,14 @@ the client can reconnect and resume from where it left off.
 
 import asyncio
 import copy
+import os
 import uuid
+from contextlib import ExitStack
 from datetime import datetime
-from typing import Any, AsyncGenerator, Dict, List, Literal, Optional
+from typing import Any, AsyncGenerator, Callable, Dict, List, Literal, Optional, Set, Tuple
 
 from datus.agent.node.agentic_node import AgenticNode
+from datus.api.hooks.turn_stats_hooks import TurnStatsEvent, get_turn_stats_hook
 from datus.api.models.cli_models import (
     IMessageContent,
     SSEDataType,
@@ -27,20 +30,55 @@ from datus.api.models.cli_models import (
     SSEUsageData,
     StreamChatInput,
 )
+from datus.api.models.message_contents import PreparedChatMessage
 from datus.api.services.action_sse_converter import action_to_sse_event
+from datus.api.services.background_drain import track_background_task
+from datus.api.services.turn_stats import TurnStatsCollector, resolve_subagent
 from datus.cli.autocomplete import AtReferenceCompleter
+from datus.cli.execution_state import PendingInputQueue
 from datus.configuration.agent_config import AgentConfig
-from datus.schemas.action_history import ActionHistoryManager, ActionRole, ActionStatus
+from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
 from datus.schemas.node_models import Metric, ReferenceSql, TableSchema
 from datus.tools.proxy.proxy_tool import apply_proxy_tools
 from datus.utils.loggings import get_logger
 from datus.utils.path_manager import set_current_path_manager
 from datus.utils.time_utils import now_utc_iso
-from datus.utils.trace_context import build_chat_trace_context, reset_trace_context, set_trace_context
+from datus.utils.trace_context import (
+    build_chat_trace_context,
+    resolve_trace_identity,
+    trace_context,
+)
+
+
+def _release_stamp() -> Optional[str]:
+    """Build identity for the running agent.
+
+    ``DATUS_RELEASE`` wins so a deployment can stamp the image tag it actually
+    rolled out; the package version is the fallback for anything that runs
+    outside a container.
+    """
+    release = os.environ.get("DATUS_RELEASE")
+    if release and release.strip():
+        return release.strip()
+    try:
+        from datus import __version__
+
+        return str(__version__).strip() or None
+    except Exception:  # noqa: BLE001 - never fail a chat turn over a version lookup
+        return None
+
 
 logger = get_logger(__name__)
 
 HEARTBEAT_INTERVAL = 10  # seconds
+
+# Max run-boundary auto-continuations per task, bounding a client that keeps
+# POSTing /chat/insert from running one task indefinitely.
+_MAX_INSERT_CONTINUATIONS = 20
+
+# How many (session, datasource) pairs the unbound-datasource warning remembers
+# before it forgets them all and starts again.
+_MAX_WARNED_DATASOURCES = 512
 
 
 def is_thinking_only_content(content_items) -> bool:
@@ -100,24 +138,67 @@ def _assistant_content_fingerprint(event: SSEEvent) -> str:
 def _should_skip_duplicate_assistant_message(
     action,
     event: SSEEvent,
-    seen_fingerprints: set[str],
+    seen_fingerprints: dict[str, str],
 ) -> bool:
+    """Return True when this event repeats text already sent this turn.
+
+    ``seen_fingerprints`` maps rendered text -> the message_id that first
+    carried it, because UPDATE has to be judged differently from CREATE:
+
+    * CREATE re-stating known text is always a duplicate.
+    * UPDATE re-stating it is a duplicate only under a *different* message_id.
+      An UPDATE on the id that already owns the text is the legitimate
+      overwrite path (streamed thinking deltas replaced by the finished
+      response, ``finalize_progress`` stepping one bubble through its stages).
+
+    Judging UPDATE at all is the point: one assistant turn carrying text plus N
+    parallel tool calls opens N ``thinking_stream_*`` messages that each stream
+    the same prose and each close with an UPDATE. Skipping UPDATE entirely —
+    which this did — let all N through, and a mission thread rendered the same
+    paragraph four times in a row.
+    """
     if action.role != ActionRole.ASSISTANT or action.status != ActionStatus.SUCCESS:
         return False
     if action.action_type == "thinking_delta":
         return False
     if event.event != "message" or not isinstance(event.data, SSEMessageData):
         return False
-    if event.data.type != SSEDataType.CREATE_MESSAGE:
+    if event.data.type not in (SSEDataType.CREATE_MESSAGE, SSEDataType.UPDATE_MESSAGE):
         return False
+
     fingerprint = _assistant_content_fingerprint(event)
-    return bool(fingerprint and fingerprint in seen_fingerprints)
+    if not fingerprint:
+        return False
+
+    owner = seen_fingerprints.get(fingerprint)
+    if owner is None:
+        return False
+    if event.data.type == SSEDataType.UPDATE_MESSAGE:
+        return owner != event.data.payload.message_id
+    return True
 
 
-def _remember_assistant_message(event: SSEEvent, seen_fingerprints: set[str]) -> None:
+def _remember_assistant_message(event: SSEEvent, seen_fingerprints: dict[str, str]) -> None:
     fingerprint = _assistant_content_fingerprint(event)
-    if fingerprint:
-        seen_fingerprints.add(fingerprint)
+    if not fingerprint:
+        return
+    # First writer wins — it is the one whose UPDATEs stay legitimate.
+    seen_fingerprints.setdefault(fingerprint, _message_id_of(event))
+
+
+def _message_id_of(event: SSEEvent) -> str:
+    data = event.data
+    return data.payload.message_id if isinstance(data, SSEMessageData) else ""
+
+
+def _is_turn_error_action(action) -> bool:
+    """True for the main agent's terminal ``error`` action (not a sub-agent's)."""
+    return action.action_type == "error" and action.status == ActionStatus.FAILED and getattr(action, "depth", 0) == 0
+
+
+def _turn_error_message(action) -> str:
+    output = action.output if isinstance(action.output, dict) else {}
+    return str(output.get("error") or action.messages or "Unknown error")
 
 
 def _should_include_final_response(action, assistant_response_sent: bool) -> bool:
@@ -258,8 +339,9 @@ def _fill_database_context(
 class ChatTask:
     """Represents a single running agentic loop."""
 
-    def __init__(self, session_id: str, asyncio_task: asyncio.Task):
+    def __init__(self, session_id: str, asyncio_task: asyncio.Task, user_id: Optional[str] = None):
         self.session_id = session_id
+        self.user_id = user_id
         self.asyncio_task = asyncio_task
         self.node: Optional[AgenticNode] = None
         self.events: list[SSEEvent] = []
@@ -268,9 +350,83 @@ class ChatTask:
         self.created_at = datetime.now()
         self.error: Optional[str] = None
         self.consumer_offset: int = 0
+        # Created up-front — before the node exists — so ``POST /chat/insert``
+        # can enqueue during node startup (node creation is an ``await
+        # to_thread`` that can take hundreds of ms). ``_run_loop`` points the
+        # node at this same instance, so the filter drains these on turn one.
+        self.pending_input_queue: PendingInputQueue = PendingInputQueue()
+        self.message_contents: Dict[str, dict] = {}
+        self.tool_result_contents: Dict[str, dict] = {}
+        self.content_events: Dict[str, str] = {}
+        self.previous_message_id: Optional[int] = 0
+        # Whether ``/chat/insert`` may still enqueue. ``_run_loop`` flips this
+        # off once it stops draining (final drain empty), so inserts arriving
+        # during the run's tail (persist / usage / end events) get
+        # SESSION_NOT_RUNNING and the client falls back to a fresh turn, rather
+        # than enqueueing with nothing left to drain them.
+        self.accepting_inserts: bool = True
+        # Host data captured at turn start (``TurnStatsHook.capture_context``)
+        # and handed back with the turn's call statistics once it ends.
+        self.stats_context: Dict[str, Any] = {}
+        # Settles the turn with the host (billing) once it is over — completed,
+        # failed or cancelled. Set by the route; see TurnEndCallback.
+        self.on_turn_end: Optional[TurnEndCallback] = None
+        self.turn_id: Optional[str] = None
+        # Guards on_turn_end to exactly once per turn (see _settle_turn).
+        self.settled: bool = False
+        # ``SSEEndData`` of a completed turn; the usage the host is billed for.
+        self.end_usage: Optional[Dict[str, Any]] = None
 
+    def register_message_contents(self, text: str, parts: list) -> PreparedChatMessage:
+        content_id = uuid.uuid4().hex
+        self.message_contents[content_id] = {"text": str(text), "parts": parts, "persist": True}
+        return PreparedChatMessage(text, content_id)
+
+    def restore_message_contents(self, text: str, action_id: str, content_id: Optional[str] = None):
+        content_id = content_id or self.content_events.get(action_id) or getattr(text, "content_id", None)
+        if content_id is None:
+            claimed = set(self.content_events.values())
+            content_id = next(
+                (key for key, record in self.message_contents.items() if key not in claimed and record["text"] == text),
+                None,
+            )
+        if content_id in self.message_contents:
+            self.content_events[action_id] = content_id
+            return self.message_contents[content_id]["parts"]
+        return None
+
+
+#: ``(usage, error, status, turn_id)``: the turn's SSEEndData-shaped usage, the
+#: error text of a failed turn, ``completed`` | ``error`` | ``cancelled``, and the
+#: task's own per-turn id.
+TurnEndCallback = Callable[[Dict[str, Any], Optional[str], str, str], None]
+
+
+def _usage_kwargs(turn_usage: Any) -> Dict[str, Any]:
+    """``SSEEndData`` token fields from a node ``TokenUsage``; empty for ``None``."""
+    if not turn_usage:
+        return {}
+    return {
+        "requests": turn_usage.requests,
+        "input_tokens": turn_usage.input_tokens,
+        "output_tokens": turn_usage.output_tokens,
+        "total_tokens": turn_usage.total_tokens,
+        "cached_tokens": turn_usage.cached_tokens,
+        "cache_write_tokens": turn_usage.cache_write_tokens,
+        "session_total_tokens": turn_usage.session_total_tokens,
+        "context_length": turn_usage.context_length,
+    }
+
+
+# Agents the system runs on the user's behalf (a reaction triggers ``feedback``);
+# their turns are not a user choosing to chat with that subagent.
+_SYSTEM_TRIGGERED_AGENTS = frozenset({"feedback"})
 
 COMPLETED_TASK_TTL = 300  # seconds to keep completed tasks for resume
+
+# Web clients run a FULL server-side bash (all commands allowed), confined by
+# the strict OS sandbox rather than a command whitelist — see ``start_chat``.
+WEB_BASH_ALLOWED_PATTERNS = ["*"]
 
 
 class ChatTaskManager:
@@ -290,6 +446,37 @@ class ChatTaskManager:
         self._default_source = default_source
         self._default_interactive = default_interactive
         self._stream_thinking = stream_thinking
+        # (session_id, datasource) pairs already reported as unbound. A channel
+        # pinned to a datasource that was unbound sends the same name every
+        # turn, and only the first one is news.
+        self._warned_datasources: Set[Tuple[str, str]] = set()
+
+    def _warn_unbound_datasource(self, request: StreamChatInput, agent_config: AgentConfig) -> None:
+        """Report a dropped ``datasource`` once per session, not once per turn.
+
+        Names the available datasources, which is what tells a reader whether
+        the request is stale or the binding is missing — so it is worth building
+        the list, and worth building it only once.
+        """
+        key = (request.session_id or "", request.datasource or "")
+        if key in self._warned_datasources:
+            return
+        # Bounded rather than pruned: this only exists to keep a repeat out of
+        # the log, so forgetting everything occasionally costs one extra line.
+        if len(self._warned_datasources) >= _MAX_WARNED_DATASOURCES:
+            self._warned_datasources.clear()
+        self._warned_datasources.add(key)
+        # %r on both request-supplied values: ``session_id`` is free-form client
+        # input, and repr escapes the CR/LF that would otherwise let it forge a
+        # second log line.
+        logger.warning(
+            "Ignoring datasource %r for session %r: not bound to this project (available: %s); "
+            "falling back to %r and dropping the catalog/database/schema that came with it",
+            request.datasource,
+            request.session_id,
+            sorted(agent_config.services.datasources),
+            agent_config.current_datasource,
+        )
 
     # ------------------------------------------------------------------
     # Public API
@@ -301,33 +488,66 @@ class ChatTaskManager:
         request: StreamChatInput,
         sub_agent_id: Optional[str] = None,
         user_id: Optional[str] = None,
-        principal: Optional[Dict[str, Any]] = None,
+        policy_context: Optional[Dict[str, Any]] = None,
+        stats_context: Optional[Dict[str, Any]] = None,
+        on_turn_end: Optional["TurnEndCallback"] = None,
     ) -> ChatTask:
         """Create a background task for the agentic loop.
             :param sub_agent_id: builtin name or custom sub-agent DB ID
+            :param stats_context: host data returned with the turn's call statistics
+            :param on_turn_end: called once the turn is over, however it ended,
+                with ``(usage, error, status, turn_id)`` — see :meth:`_settle_turn`
         Raises ``ValueError`` if a task is already running for the session.
         """
         # Clone config to avoid cross-request mutation of shared AgentConfig
         agent_config = copy.deepcopy(agent_config)
-        agent_config.principal = dict(principal or {})
+        agent_config.policy_context = dict(policy_context or {})
         # API surface has no interactive broker to confirm EXTERNAL file
         # access, so force filesystem strict mode — every node constructed
         # below reads this flag via AgenticNode._resolve_filesystem_strict().
         agent_config.filesystem_strict = True
-        # Remote front-ends (vscode/web) own their own shell: the daemon must
-        # not offer a server-side BashTool. ``project_root`` is intentionally
-        # left untouched — web keeps its configured root, and the read-only
-        # ``AgentConfig.project_root`` property already falls back to the
-        # launch CWD when no root was supplied, so an empty project_root
-        # naturally resolves to the current directory.
+        # API responses render dashboards/reports dynamically server-side
+        # (e.g. /dashboard/detail); never compile the CLI's standalone HTML.
+        agent_config.compile_visual_html = False
+        # Multi-tenant API surface: the AgentConfig may be supplied by an
+        # AuthProvider and the agent must never modify configuration. Hides
+        # ``requires_mutable_config`` setup skills and switches the plugin
+        # prompt preamble to read-only wording. Set on the per-request clone
+        # only — the shared config keeps its default.
+        agent_config.config_mutable = False
+        # vscode owns its own local shell: the daemon must not offer a
+        # server-side BashTool at all. web has no shell of its own; it runs a
+        # FULL server-side bash (all commands allowed) confined by the strict
+        # OS sandbox instead of a command whitelist. Strict gives
+        # kernel-enforced file isolation (workspace + tmp + explicit allowlist
+        # only, ``~/.datus`` blocked) plus a minimized child environment that
+        # hides process-wide secrets — a far stronger boundary than the old
+        # ``datus*``-prefix soft whitelist. Fail-closed: if no OS sandbox
+        # mechanism is available (e.g. a Linux host without bubblewrap) the
+        # tool rejects every command rather than run it unconfined. An
+        # agent.yml ``bash.enabled: false`` still wins: this never re-enables a
+        # disabled tool. ``project_root`` is intentionally left untouched — web
+        # keeps its configured root, and the read-only
+        # ``AgentConfig.project_root`` property already falls back to the launch
+        # CWD when no root was supplied, so an empty project_root naturally
+        # resolves to the current directory.
         effective_source = request.source or self._default_source
-        if effective_source in ("vscode", "web"):
+        if effective_source == "vscode":
             agent_config.bash_tool_enabled = False
+        elif effective_source == "web":
+            agent_config.bash_allowed_patterns = WEB_BASH_ALLOWED_PATTERNS
+            agent_config.bash_sandbox.enabled = True
+            agent_config.bash_sandbox.mode = "strict"
         # Stash the resolved source on the cloned config so downstream nodes
         # can adapt prompt-side hints to the front-end (e.g. vscode renders
         # the literal "." for the SQL files root because the IDE owns its own
         # workspace path).
         agent_config._client_source = effective_source
+        # Who dispatched this run. Read by ``_setup_task_result_tool`` to decide
+        # whether the agent gets a way to declare a structured outcome. Stashed
+        # on the cloned config, like _client_source, so concurrent requests on
+        # the same project do not see each other's origin.
+        agent_config._request_origin = getattr(request, "origin", None)
         # Per-request response language override. Empty / None keeps the
         # yaml-level ``agent.language`` default intact.
         if request.language:
@@ -340,6 +560,29 @@ class ChatTaskManager:
                 agent_config.set_active_custom(model_id, persist=False)
             else:
                 agent_config.set_active_provider_model(provider, model_id, persist=False)
+        # Per-request datasource override (e.g. an IM channel pinned to a datasource).
+        # Switches the connection profile; the setter validates it exists in config.
+        #
+        # A name that is not bound falls back to the project's default instead of
+        # raising: the caller is a UI hint (the web composer's picker keeps its own
+        # selection, and one resolved against another project's roster — or unbound
+        # since — arrives here stale), and the setter's DatusException reached the
+        # client as an ``error`` SSE event that killed the whole turn.
+        if request.datasource:
+            if request.datasource in agent_config.services.datasources:
+                agent_config.current_datasource = request.datasource
+            else:
+                self._warn_unbound_datasource(request, agent_config)
+                request.datasource = agent_config.current_datasource or None
+                # The whole selection goes, not just its datasource: these three
+                # name objects INSIDE the warehouse that was just dropped, and
+                # ``_fill_database_context`` below prefers the request's value
+                # over the config's — so keeping them would point the turn at
+                # another warehouse's same-named database, which is the silent
+                # half of the bug the fallback exists to avoid.
+                request.catalog = None
+                request.database = None
+                request.db_schema = None
         request.catalog, request.database, request.db_schema = _fill_database_context(
             agent_config,
             catalog=request.catalog,
@@ -355,7 +598,16 @@ class ChatTaskManager:
             raise ValueError(f"A task is already running for session {session_id}")
 
         # Placeholder — asyncio_task set immediately after
-        task = ChatTask(session_id=session_id, asyncio_task=None)  # type: ignore[arg-type]
+        task = ChatTask(session_id=session_id, asyncio_task=None, user_id=user_id)  # type: ignore[arg-type]
+        task.register_message_contents(
+            request.message,
+            [part.model_dump(mode="json") for part in request.messages]
+            if request.messages is not None
+            else [{"type": "markdown", "payload": {"content": request.message}}],
+        )
+        task.stats_context = dict(stats_context or {})
+        task.on_turn_end = on_turn_end
+        task.turn_id = uuid.uuid4().hex
         self._tasks[session_id] = task
 
         asyncio_task = asyncio.create_task(
@@ -368,7 +620,20 @@ class ChatTaskManager:
             )
         )
         task.asyncio_task = asyncio_task
+        # A task cancelled before its first step never enters _run_loop, so its
+        # ``finally`` never settles it or releases the session. Cover that here.
+        asyncio_task.add_done_callback(lambda _done: self._finish_unstarted(task))
         return task
+
+    def _finish_unstarted(self, task: ChatTask) -> None:
+        """Settle and release a task whose ``_run_loop`` never ran; else a no-op."""
+        if task.settled:
+            return
+        if task.status == "running":
+            task.status = "cancelled"
+        if self._tasks.get(task.session_id) is task:
+            self._tasks.pop(task.session_id, None)
+        self._settle_turn(task, None)
 
     async def stop_task(self, session_id: str) -> bool:
         """Stop a running task by interrupting its node."""
@@ -472,7 +737,7 @@ class ChatTaskManager:
         """Execute the full agentic loop, pushing SSE events to the task buffer."""
         session_id = task.session_id
         event_id = 0
-        trace_token = None
+        trace_stack = ExitStack()
 
         # Pin the path manager into this task's context. Required when the caller
         # dispatched us from a thread that never inherited AgentConfig's ContextVar
@@ -481,8 +746,28 @@ class ChatTaskManager:
         # back to ``get_path_manager()`` and get an empty project_name.
         set_current_path_manager(agent_config.path_manager)
 
+        turn_started_at = datetime.now()
+        turn_id = task.turn_id or uuid.uuid4().hex
+        task.turn_id = turn_id
+        # Chatting with a subagent directly makes it the depth-0 node, so its
+        # own tool calls are the subagent's, not the main agent's.
+        top_level_caller = "subagent" if sub_agent_id and sub_agent_id != "chat" else "main"
+        turn_stats = TurnStatsCollector(
+            lambda name: resolve_subagent(agent_config, name), top_level_caller=top_level_caller
+        )
+        # Only tally when a host listens; a collector bug stops the tally, never the turn.
+        collect_turn_stats = get_turn_stats_hook() is not None
+        # Latest cumulative usage the node reported mid-turn. The node drops its
+        # own snapshot when its stream closes, which on a cancel or a crash is
+        # before this method's ``finally`` runs — so keep a copy to bill from.
+        last_usage = None
+
         try:
             start_time = datetime.now()
+
+            # Snapshot the turn counter BEFORE the run so the @-context persist
+            # below only fires when this run actually adds a new user turn.
+            pre_turn_number = await asyncio.to_thread(self._max_user_turn_number, agent_config, session_id, user_id)
 
             # 1. Create node.
             #    Runs in thread pool because setup_tools() triggers synchronous
@@ -517,18 +802,36 @@ class ChatTaskManager:
 
             node = await asyncio.to_thread(_init_node)
             task.node = node
-            trace_token = set_trace_context(
-                build_chat_trace_context(
-                    session_id=session_id,
-                    llm_session_id=node.session_id,
-                    node_name=node.get_node_name() if hasattr(node, "get_node_name") else None,
-                    subagent_id=sub_agent_id,
-                    user_id=user_id,
-                    datasource=agent_config.current_datasource,
-                    source_session_id=request.source_session_id,
-                    source=request.source or self._default_source,
-                    model=request.model,
-                    agent_home=agent_config.home,
+            task.previous_message_id = await asyncio.to_thread(
+                self._max_message_id, agent_config, node.session_id, user_id
+            )
+            # Enable mid-run insert (steering): point the node at the
+            # task-scoped queue that ``start_chat`` created before the node
+            # existed, so messages POSTed to ``/chat/insert`` during node
+            # startup are preserved. The model layer's
+            # ``call_model_input_filter`` — wired ONLY when the queue is
+            # non-None — injects queued messages at the next LLM turn boundary.
+            # Without this the API path silently drops mid-run messages (the
+            # CLI wires its own queue in chat_commands).
+            node.pending_input_queue = task.pending_input_queue
+            trace_stack.enter_context(
+                trace_context(
+                    build_chat_trace_context(
+                        session_id=session_id,
+                        llm_session_id=node.session_id,
+                        node_name=node.get_node_name() if hasattr(node, "get_node_name") else None,
+                        subagent_id=sub_agent_id,
+                        user_id=user_id,
+                        datasource=agent_config.current_datasource,
+                        source_session_id=request.source_session_id,
+                        source=request.source or self._default_source,
+                        model=request.model,
+                        agent_home=agent_config.home,
+                        identity=resolve_trace_identity(),
+                        max_turns=getattr(node, "max_turns", None),
+                        release=_release_stamp(),
+                    ),
+                    replace=True,
                 )
             )
 
@@ -556,9 +859,17 @@ class ChatTaskManager:
             event_id += 1
             event_id = await self._push_degraded_capability_warnings(task, node, event_id)
 
-            # 3. Resolve @-references
-            at_tables, at_metrics, at_sqls = self._resolve_at_context(
-                agent_config, request.table_paths, request.metric_paths, request.sql_paths
+            # 3. Resolve @-references. Run in a worker thread (like node
+            # creation): the metric/reference-sql stores use blocking psycopg
+            # connections that must not be driven from the event-loop thread —
+            # doing so corrupts the pooled connection ("the connection is lost").
+            at_tables, at_metrics, at_sqls, at_hints = await asyncio.to_thread(
+                self._resolve_at_context,
+                agent_config,
+                request.table_paths,
+                request.metric_paths,
+                request.sql_paths,
+                request.knowledge_paths,
             )
 
             # 4. Build typed input and assign to node
@@ -568,6 +879,7 @@ class ChatTaskManager:
                 at_tables=at_tables,
                 at_metrics=at_metrics,
                 at_sqls=at_sqls,
+                at_hints=at_hints,
                 catalog=request.catalog,
                 database=request.database,
                 db_schema=request.db_schema,
@@ -584,125 +896,264 @@ class ChatTaskManager:
             # guard is needed here.
             effective_source = request.source or self._default_source
             if effective_source == "vscode":
+                # VSCode edits the user's *local* filesystem — the client is
+                # always the executor, whatever the permission profile.
                 apply_proxy_tools(node, ["filesystem_tools.*"])
             elif effective_source == "web":
-                apply_proxy_tools(node, ["write_file", "edit_file"])
+                # The active profile (not request.permission_mode) is checked
+                # because a failed ``switch_profile`` silently keeps the
+                # node's original profile — proxying must follow what will
+                # actually gate execution.
+                active_profile = getattr(getattr(node, "permission_manager", None), "active_profile", None)
+                if active_profile in ("auto", "dangerous"):
+                    # These profiles ALLOW workspace writes without asking and
+                    # the web client skips its confirmation UI for them, so a
+                    # browser round-trip buys nothing and only adds failure
+                    # modes (hidden/closed tab, dropped SSE → the proxy-result
+                    # wait timing out after 600s). Run filesystem tools
+                    # server-side. The empty set reaches the SSE converter so
+                    # call-tool frames carry ``proxied: false`` and the client
+                    # knows not to execute them itself.
+                    # Mutate in place like ``apply_proxy_tools`` does —
+                    # PermissionHooks may hold a shared reference to the set.
+                    existing_proxied = getattr(node, "proxied_tool_names", None)
+                    if isinstance(existing_proxied, set):
+                        existing_proxied.clear()
+                    else:
+                        node.proxied_tool_names = set()
+                    logger.info(
+                        "Filesystem tools run server-side for session=%s (profile=%s)", session_id, active_profile
+                    )
+                else:
+                    apply_proxy_tools(node, ["write_file", "edit_file", "delete_file"])
+                    from datus.tools.proxy.semantic_plan_review import apply_semantic_plan_review
+
+                    apply_semantic_plan_review(node)
             elif effective_source:
                 logger.warning("Unsupported source '%s'; skipping proxy shortcut", effective_source)
 
             # 6. Execute streaming
             action_history = ActionHistoryManager()
             action_count = 0
+            # action_id is globally unique, so delta de-dup can safely span passes.
             seen_delta_action_ids: set[str] = set()
-            assistant_response_sent = False
-            tool_result_seen = False
-            seen_assistant_message_fingerprints: set[str] = set()
+            # The node catches its own failures and ends the pass with an
+            # ``error`` action instead of raising, so the ``except`` below never
+            # sees them. Remember the main agent's so the turn still settles
+            # as ``error`` for the host hooks.
+            turn_error: Optional[str] = None
 
-            async for action in node.execute_stream_with_interactions(action_history):
-                action_count += 1
+            async def _run_pass() -> None:
+                nonlocal event_id, action_count, collect_turn_stats, last_usage, turn_error
+                turn_error = None  # a continuation pass that succeeds clears it
+                # Per-run render state — reset each pass. A continuation pass is a
+                # fresh turn, so its reply must not be dropped as a duplicate of an
+                # earlier pass ("re-run it" is a common steering ask) nor suppressed
+                # by a stale assistant_response_sent carried over between passes.
+                assistant_response_sent = False
+                tool_result_seen = False
+                seen_assistant_message_fingerprints: dict[str, str] = {}
+                async for action in node.execute_stream_with_interactions(action_history):
+                    action_count += 1
+                    if _is_turn_error_action(action):
+                        turn_error = _turn_error_message(action)
+                    running = getattr(node, "running_turn_usage", None)
+                    if running is not None:
+                        last_usage = running
+                    if collect_turn_stats:
+                        try:
+                            turn_stats.observe(action)
+                        except Exception:
+                            collect_turn_stats = False
+                            logger.warning(
+                                "Turn stats collection failed for session %s; skipping the rest of this turn",
+                                session_id,
+                                exc_info=True,
+                            )
 
-                # Convert action to SSE
-                # Per-request stream_response overrides the server-level --stream flag
-                effective_stream = (
-                    request.stream_response if request.stream_response is not None else self._stream_thinking
-                )
+                    # Convert action to SSE
+                    # Per-request stream_response overrides the server-level --stream flag
+                    effective_stream = (
+                        request.stream_response if request.stream_response is not None else self._stream_thinking
+                    )
 
-                is_first_delta = True
-                if action.action_type == "thinking_delta":
-                    is_first_delta = action.action_id not in seen_delta_action_ids
-                    seen_delta_action_ids.add(action.action_id)
+                    is_first_delta = True
+                    if action.action_type == "thinking_delta":
+                        is_first_delta = action.action_id not in seen_delta_action_ids
+                        seen_delta_action_ids.add(action.action_id)
 
-                # finalize_progress actions reuse the same id across stages
-                # so the SSE wire emits CREATE then UPDATE_MESSAGE; we mark
-                # everything past the first emission as an update.
-                is_finalize_progress_update = False
-                if action.action_type == "finalize_progress":
-                    is_finalize_progress_update = action.action_id in seen_delta_action_ids
-                    seen_delta_action_ids.add(action.action_id)
+                    # finalize_progress actions reuse the same id across stages
+                    # so the SSE wire emits CREATE then UPDATE_MESSAGE; we mark
+                    # everything past the first emission as an update.
+                    is_finalize_progress_update = False
+                    if action.action_type == "finalize_progress":
+                        is_finalize_progress_update = action.action_id in seen_delta_action_ids
+                        seen_delta_action_ids.add(action.action_id)
 
-                is_update = is_finalize_progress_update or (
-                    effective_stream
-                    and action.action_type == "response"
-                    and isinstance(action.output, dict)
-                    and action.action_id in seen_delta_action_ids
-                )
+                    is_update = is_finalize_progress_update or (
+                        effective_stream
+                        and action.action_type == "response"
+                        and isinstance(action.output, dict)
+                        and action.action_id in seen_delta_action_ids
+                    )
 
-                sse = action_to_sse_event(
-                    action,
-                    event_id,
-                    action.action_id,
-                    stream_thinking=effective_stream,
-                    is_first_delta=is_first_delta,
-                    is_update=bool(is_update),
-                    include_final_response=_should_include_final_response(action, assistant_response_sent),
-                )
-                if sse:
-                    # Per-LLM-call usage event: the converter has no access
-                    # to the service-level session ids, so we stamp them
-                    # here before fan-out. Skip the assistant-message dedup
-                    # path entirely since usage carries no rendered text.
-                    if sse.event == "usage" and isinstance(sse.data, SSEUsageData):
-                        sse.data.session_id = session_id
-                        # Only main-agent usage (depth==0) belongs to this
-                        # node's LLM session. Sub-agent usage (depth>0) keeps the
-                        # sub-agent session id stamped by the converter so the
-                        # consumer can attribute it to the right session instead
-                        # of mislabelling it as the parent's.
-                        if sse.data.depth == 0:
-                            sse.data.llm_session_id = node.session_id
+                    sse = action_to_sse_event(
+                        action,
+                        event_id,
+                        action.action_id,
+                        stream_thinking=effective_stream,
+                        is_first_delta=is_first_delta,
+                        is_update=bool(is_update),
+                        include_final_response=_should_include_final_response(action, assistant_response_sent),
+                        proxied_tool_names=getattr(node, "proxied_tool_names", None),
+                        # A fast prepare can beat the original tool-start frame.
+                        # Include its snapshot there too so UPDATE-before-CREATE
+                        # delivery never strands a pending confirmation.
+                        tool_previews=getattr(node, "tool_review_previews", None),
+                    )
+                    if sse:
+                        # Per-LLM-call usage event: the converter has no access
+                        # to the service-level session ids, so we stamp them
+                        # here before fan-out. Skip the assistant-message dedup
+                        # path entirely since usage carries no rendered text.
+                        if sse.event == "usage" and isinstance(sse.data, SSEUsageData):
+                            sse.data.session_id = session_id
+                            # Only main-agent usage (depth==0) belongs to this
+                            # node's LLM session. Sub-agent usage (depth>0) keeps the
+                            # sub-agent session id stamped by the converter so the
+                            # consumer can attribute it to the right session instead
+                            # of mislabelling it as the parent's.
+                            if sse.data.depth == 0:
+                                sse.data.llm_session_id = node.session_id
+                            await self._push_event(task, sse)
+                            event_id += 1
+                            continue
+                        if _should_skip_duplicate_assistant_message(
+                            action,
+                            sse,
+                            seen_assistant_message_fingerprints,
+                        ):
+                            continue
+                        if (
+                            sse.event == "message"
+                            and getattr(getattr(sse.data, "payload", None), "role", None) == "user"
+                        ):
+                            original = task.restore_message_contents(
+                                action.messages, action.action_id, (action.input or {}).get("message_content_id")
+                            )
+                            if original is not None:
+                                sse.data.payload.content = [IMessageContent(**part) for part in original]
                         await self._push_event(task, sse)
                         event_id += 1
-                        continue
-                    if _should_skip_duplicate_assistant_message(
-                        action,
-                        sse,
-                        seen_assistant_message_fingerprints,
-                    ):
-                        continue
-                    await self._push_event(task, sse)
-                    event_id += 1
-                    _remember_assistant_message(sse, seen_assistant_message_fingerprints)
-                    if _is_visible_assistant_response(action, sse, tool_result_seen=tool_result_seen):
-                        assistant_response_sent = True
-                    if action.role == ActionRole.TOOL and action.status != ActionStatus.PROCESSING:
-                        tool_result_seen = True
+                        _remember_assistant_message(sse, seen_assistant_message_fingerprints)
+                        if _is_visible_assistant_response(action, sse, tool_result_seen=tool_result_seen):
+                            assistant_response_sent = True
+                        if action.role == ActionRole.TOOL and action.status != ActionStatus.PROCESSING:
+                            tool_result_seen = True
+
+            # Mid-run insert (steering) auto-continuation: a message queued
+            # AFTER the final LLM turn is never seen by the SDK's
+            # call_model_input_filter (no further turn boundary fires), so after
+            # each run drain any residue and continue with a fresh turn. Mirrors
+            # the CLI's execute_chat_command loop and prevents silently dropping
+            # late mid-run messages. Messages queued mid-turn are injected in-run
+            # by the filter and never reach here.
+            continuations = 0
+            while True:
+                await _run_pass()
+                residual = self._drain_pending_for_continuation(node)
+                if not residual:
+                    # Close the accept window, then drain once more. An insert
+                    # that landed during this run's tail must not be stranded;
+                    # after the window closes /chat/insert returns
+                    # SESSION_NOT_RUNNING and the client re-sends as a new turn.
+                    task.accepting_inserts = False
+                    residual = self._drain_pending_for_continuation(node)
+                    if not residual:
+                        break
+                    task.accepting_inserts = True
+
+                continuations += 1
+                if continuations > _MAX_INSERT_CONTINUATIONS:
+                    # Defensive bound: a client that inserts without pause could
+                    # otherwise keep one task running forever. Stop accepting and
+                    # log what we drop rather than silently truncating.
+                    task.accepting_inserts = False
+                    logger.warning(
+                        "Mid-run insert continuation cap (%d) hit for session %s; dropping %d residual message(s)",
+                        _MAX_INSERT_CONTINUATIONS,
+                        session_id,
+                        len(residual),
+                    )
+                    break
+
+                # Echo each residual as a user_insert frame so the client
+                # dismisses its pending entry and renders the user bubble —
+                # the same wire shape the in-run filter path emits via the
+                # InteractionBroker.
+                for text in residual:
+                    event_id = await self._emit_user_insert_sse(task, text, event_id)
+                combined = "\n\n".join(residual)
+                if len(residual) > 1:
+                    parts = []
+                    for text in residual:
+                        record = task.message_contents.get(getattr(text, "content_id", None))
+                        if record is not None:
+                            record["persist"] = False
+                            parts.extend(record["parts"])
+                        else:
+                            parts.append({"type": "markdown", "payload": {"content": text}})
+                    task.register_message_contents(combined, parts)
+                node.input = self._create_node_input(
+                    user_message=combined,
+                    current_node=node,
+                    at_tables=[],
+                    at_metrics=[],
+                    at_sqls=[],
+                    at_hints=[],
+                    catalog=request.catalog,
+                    database=request.database,
+                    db_schema=request.db_schema,
+                    plan_mode=request.plan_mode or False,
+                    source_session_id=None,
+                )
+
+            # 6.5 Persist this turn's @-context (table/metric/sql/knowledge refs)
+            # so the history API can re-render them. Best-effort and off the
+            # event loop; must never fail the turn.
+            await asyncio.to_thread(
+                self._persist_turn_at_context, agent_config, session_id, request, user_id, pre_turn_number
+            )
+
+            await self._persist_message_contents(task, agent_config, node.session_id, user_id)
 
             # 7. End event
             token_kwargs: dict = {}
             try:
-                turn_usage = await node.get_last_turn_usage()
-                if turn_usage:
-                    token_kwargs = {
-                        "requests": turn_usage.requests,
-                        "input_tokens": turn_usage.input_tokens,
-                        "output_tokens": turn_usage.output_tokens,
-                        "total_tokens": turn_usage.total_tokens,
-                        "cached_tokens": turn_usage.cached_tokens,
-                        "session_total_tokens": turn_usage.session_total_tokens,
-                        "context_length": turn_usage.context_length,
-                    }
+                token_kwargs = _usage_kwargs(await node.get_last_turn_usage() or last_usage)
             except Exception:
                 logger.debug("Failed to extract turn token usage for end event", exc_info=True)
 
+            end_data = SSEEndData(
+                session_id=session_id,
+                llm_session_id=node.session_id,
+                total_events=event_id,
+                action_count=action_count,
+                duration=(datetime.now() - start_time).total_seconds(),
+                **token_kwargs,
+            )
+            task.end_usage = end_data.model_dump()
             await self._push_event(
                 task,
-                SSEEvent(
-                    id=event_id,
-                    event="end",
-                    data=SSEEndData(
-                        session_id=session_id,
-                        llm_session_id=node.session_id,
-                        total_events=event_id,
-                        action_count=action_count,
-                        duration=(datetime.now() - start_time).total_seconds(),
-                        **token_kwargs,
-                    ),
-                    timestamp=now_utc_iso(),
-                ),
+                SSEEvent(id=event_id, event="end", data=end_data, timestamp=now_utc_iso()),
             )
             event_id += 1
 
-            task.status = "completed"
+            if turn_error is not None:
+                task.status = "error"
+                task.error = turn_error
+            else:
+                task.status = "completed"
 
         except asyncio.CancelledError:
             task.status = "cancelled"
@@ -728,8 +1179,20 @@ class ChatTaskManager:
             event_id += 1
 
         finally:
-            if trace_token is not None:
-                reset_trace_context(trace_token)
+            if task.status != "completed" and task.node is not None:
+                await self._persist_message_contents(task, agent_config, task.node.session_id, user_id)
+            trace_stack.close()
+            self._emit_turn_stats(
+                task,
+                turn_stats,
+                agent_config=agent_config,
+                request=request,
+                sub_agent_id=sub_agent_id,
+                user_id=user_id,
+                started_at=turn_started_at,
+                turn_id=turn_id,
+            )
+            self._settle_turn(task, last_usage)
             async with task.condition:
                 task.condition.notify_all()
             self._tasks.pop(session_id, None)
@@ -737,8 +1200,226 @@ class ChatTaskManager:
             self._completed_tasks[session_id] = task
             self._purge_expired_completed()
 
+    @staticmethod
+    def _settle_turn(task: ChatTask, last_usage: Any) -> None:
+        """Hand the finished turn's usage to the host so it can be billed.
+
+        Runs from ``_run_loop``'s ``finally``, so a turn is settled however it
+        ended: completed (the ``end`` event's usage), failed, or cancelled by
+        ``/chat/stop`` — the last two with the usage the node had reported
+        before it stopped. A client that disconnects no longer matters: the task
+        keeps running and settles when it is done.
+        """
+        if task.settled:
+            return
+        task.settled = True
+        callback = task.on_turn_end
+        if callback is None:
+            return
+
+        status = task.status if task.status in ("completed", "error", "cancelled") else "error"
+        try:
+            usage = task.end_usage
+            if usage is None:
+                usage = {"session_id": task.session_id, **_usage_kwargs(last_usage)}
+                if task.node is not None:
+                    usage["llm_session_id"] = getattr(task.node, "session_id", None)
+            callback(dict(usage), task.error if status == "error" else None, status, task.turn_id or "")
+        except Exception:
+            logger.warning("Turn settlement hook failed for session %s", task.session_id, exc_info=True)
+
+    async def _persist_message_contents(self, task, agent_config, session_id, user_id) -> None:
+        contents = {**task.message_contents, **task.tool_result_contents}
+        if not contents or task.previous_message_id is None:
+            return
+        try:
+            await asyncio.to_thread(
+                self._session_manager(agent_config, user_id).save_message_contents,
+                session_id,
+                contents,
+                task.previous_message_id,
+            )
+        except Exception:
+            logger.exception("Failed to persist message contents for %s", session_id)
+
+    @staticmethod
+    def _emit_turn_stats(
+        task: ChatTask,
+        collector: TurnStatsCollector,
+        *,
+        agent_config: AgentConfig,
+        request: StreamChatInput,
+        sub_agent_id: Optional[str],
+        user_id: Optional[str],
+        started_at: datetime,
+        turn_id: str,
+    ) -> None:
+        """Hand the finished turn's call statistics to the host, if one listens.
+
+        Runs from ``_run_loop``'s ``finally`` so completed, failed and cancelled
+        turns are all reported — including ones whose SSE client disconnected.
+        Scheduled as a background task; statistics must never fail a turn.
+        """
+        hook = get_turn_stats_hook()
+        if hook is None:
+            return
+
+        try:
+            status = task.status if task.status in ("completed", "error", "cancelled") else "error"
+            duration_ms = max(0, int((datetime.now() - started_at).total_seconds() * 1000))
+            direct = None
+            if sub_agent_id and sub_agent_id != "chat" and sub_agent_id not in _SYSTEM_TRIGGERED_AGENTS:
+                direct = resolve_subagent(agent_config, sub_agent_id)
+            subagents, tools = collector.finalize(status, duration_ms, direct)
+            event = TurnStatsEvent(
+                session_id=task.session_id,
+                user_id=user_id,
+                agent_name=sub_agent_id or "chat",
+                status=status,
+                duration_ms=duration_ms,
+                subagents=subagents,
+                tools=tools,
+                origin=getattr(request, "origin", None),
+                error=task.error,
+                context=dict(task.stats_context),
+                turn_id=turn_id,
+            )
+        except Exception:
+            logger.warning("Failed to build turn stats for session %s", task.session_id, exc_info=True)
+            return
+
+        async def _deliver() -> None:
+            try:
+                await hook.on_turn_finished(event)
+            except Exception:
+                logger.warning("Turn stats hook failed for session %s", event.session_id, exc_info=True)
+
+        try:
+            track_background_task(asyncio.create_task(_deliver(), name=f"turn-stats:{task.session_id}"))
+        except Exception:  # pragma: no cover — defensive
+            logger.warning("Failed to schedule turn stats hook", exc_info=True)
+
+    @staticmethod
+    def _drain_pending_for_continuation(node) -> Optional[List[str]]:
+        """Drain mid-run messages left in the queue after a run finished.
+
+        Returns the FIFO list to continue with, or ``None`` when there is
+        nothing to continue or the run was interrupted (in which case the
+        queue is cleared, matching the CLI's cancel semantics).
+        """
+        queue = getattr(node, "pending_input_queue", None)
+        if queue is None or len(queue) == 0:
+            return None
+        ic = getattr(node, "interrupt_controller", None)
+        if ic is not None and getattr(ic, "is_interrupted", False):
+            queue.clear()
+            return None
+        return queue.drain()
+
+    async def _emit_user_insert_sse(self, task: "ChatTask", text: str, event_id: int) -> int:
+        """Emit a ``user_insert`` SSE frame for a residual mid-run message.
+
+        Mirrors the in-run filter path (which surfaces injections via
+        ``InteractionBroker.emit_user_insert``) so the client dismisses the
+        matching pending entry and renders the user bubble. Returns the next
+        ``event_id``.
+        """
+        action = ActionHistory(
+            action_id=str(uuid.uuid4()),
+            role=ActionRole.USER,
+            status=ActionStatus.SUCCESS,
+            action_type="user_insert",
+            messages=text,
+            input={"user_message": text, "source": "mid_run_insert"},
+            output={"user_message": text},
+        )
+        sse = action_to_sse_event(action, event_id, action.action_id)
+        if sse:
+            original = task.restore_message_contents(text, action.action_id)
+            if original is not None:
+                sse.data.payload.content = [IMessageContent(**part) for part in original]
+            await self._push_event(task, sse)
+            return event_id + 1
+        return event_id
+
+    @staticmethod
+    def _session_manager(agent_config: AgentConfig, user_id: Optional[str]):
+        """Build a SessionManager pointed at this run's session dir + scope."""
+        from datus.models.session_manager import SessionManager
+        from datus.utils.path_manager import get_path_manager
+
+        base_dir = getattr(agent_config, "session_dir", None) or str(
+            get_path_manager(agent_config=agent_config).sessions_dir
+        )
+        return SessionManager(session_dir=base_dir, scope=user_id)
+
+    def _max_user_turn_number(self, agent_config: AgentConfig, session_id: str, user_id: Optional[str]) -> int:
+        """Best-effort snapshot of the session's turn counter (0 on any error)."""
+        try:
+            return self._session_manager(agent_config, user_id).get_max_user_turn_number(session_id)
+        except Exception:
+            return 0
+
+    def _max_message_id(self, agent_config: AgentConfig, session_id: str, user_id: Optional[str]) -> Optional[int]:
+        try:
+            return self._session_manager(agent_config, user_id).get_max_message_id(session_id)
+        except Exception:
+            logger.warning("Cannot snapshot message identities for %s", session_id, exc_info=True)
+            return None
+
+    def _persist_turn_at_context(
+        self,
+        agent_config: AgentConfig,
+        session_id: str,
+        request: StreamChatInput,
+        user_id: Optional[str],
+        previous_turn_number: int = -1,
+    ) -> None:
+        """Persist the just-completed turn's @-references to the session side table.
+
+        Stores the raw request path identifiers (not the resolved objects) so
+        :meth:`ChatService.get_history` can echo them back for front-end display.
+        ``previous_turn_number`` (captured before the run) gates the write so a
+        run that added no new user turn never mis-attaches to the prior bubble.
+        No-op when the turn carried no references; failures are swallowed.
+        """
+        context: Dict[str, Any] = {}
+        if request.table_paths:
+            context["table_paths"] = list(request.table_paths)
+        if request.metric_paths:
+            context["metric_paths"] = list(request.metric_paths)
+        if request.sql_paths:
+            context["sql_paths"] = list(request.sql_paths)
+        if request.knowledge_paths:
+            context["knowledge_paths"] = list(request.knowledge_paths)
+        if not context:
+            return
+        try:
+            self._session_manager(agent_config, user_id).save_user_message_context(
+                session_id, context, previous_turn_number=previous_turn_number
+            )
+        except Exception:
+            logger.debug("Failed to persist turn @-context for session %s", session_id, exc_info=True)
+
     async def _push_event(self, task: ChatTask, event: SSEEvent) -> None:
         """Append an event to the task buffer and notify consumers."""
+        if isinstance(event.data, SSEMessageData):
+            for part in event.data.payload.content:
+                call_id = part.payload.get("callToolId")
+                if call_id and (
+                    part.type == "call-tool-result" or (part.type == "call-tool" and part.payload.get("preview"))
+                ):
+                    key = f"tool-result:{call_id}"
+                    record = task.tool_result_contents.setdefault(
+                        key,
+                        {
+                            "tool_call_id": call_id,
+                            "parent_action_id": event.data.payload.parent_action_id,
+                            "parts": [],
+                        },
+                    )
+                    record["parts"] = [p for p in record["parts"] if p["type"] != part.type]
+                    record["parts"].append(copy.deepcopy(part.model_dump()))
         logger.debug(f"Pushing event: {event}")
         async with task.condition:
             task.events.append(event)
@@ -825,63 +1506,21 @@ class ChatTaskManager:
         ``/profile`` flow can still mutate the global field because it
         owns the process exclusively; this API path cannot.
 
-        No-ops when ``permission_mode`` is falsy, the node has no
-        ``permission_manager`` (e.g. workflow nodes that skip the skill
-        setup), or the requested profile already matches the active one.
-        Failure handling is split deliberately:
+        Because the override lives on the node, a subagent built later from
+        the same shared config does not see it — ``SubAgentTaskTool`` copies
+        it down explicitly.
 
-        * Building ``user_overrides`` from ``agent.yml`` fails closed —
-          raises so the outer ``_run_loop`` aborts the turn and emits an
-          SSE error. Silently dropping malformed user rules would apply
-          the bare profile base, which can be **broader** than the
-          operator-configured posture (e.g. yaml had an explicit DENY
-          we'd lose), so the safe move is to refuse the switch loudly.
-        * ``switch_profile`` failures (unknown profile, malformed merge
-          result) are logged and swallowed because at that point the
-          node still has its original, server-default profile installed.
+        See :func:`apply_profile_override` for the no-op and failure rules;
+        a raise from there aborts the turn in ``_run_loop`` and emits an SSE
+        error, which is the intended fail-closed behaviour.
         """
-        if not permission_mode:
-            return
-        permission_manager = getattr(node, "permission_manager", None)
-        if permission_manager is None:
-            return
-        if getattr(permission_manager, "active_profile", None) == permission_mode:
-            return
+        from datus.tools.permission.profile_override import apply_profile_override
 
-        from datus.tools.permission.profiles import build_user_overrides
-
-        raw_permissions = getattr(agent_config, "_raw_permissions", {}) or {}
-        raw_user = {k: v for k, v in raw_permissions.items() if k != "profile"}
-        try:
-            user_overrides = build_user_overrides(permission_mode, raw_user)
-        except Exception as exc:
-            logger.error(
-                "Cannot build user overrides for permission_mode=%r from agent.yml: %s; "
-                "refusing to switch profile to avoid broadening permissions beyond the "
-                "operator-configured rules",
-                permission_mode,
-                exc,
-                exc_info=True,
-            )
-            raise RuntimeError(
-                f"Failed to apply permission_mode={permission_mode!r}: agent.yml permissions.rules is malformed ({exc})"
-            ) from exc
-
-        try:
-            permission_manager.switch_profile(permission_mode, user_overrides=user_overrides)
-        except Exception as e:
-            logger.error(
-                "Failed to switch permission profile to %r for session=%s: %s",
-                permission_mode,
-                getattr(node, "session_id", None),
-                e,
-            )
-            return
-
-        logger.info(
-            "Applied per-request permission profile %r for session=%s",
+        apply_profile_override(
+            getattr(node, "permission_manager", None),
+            agent_config,
             permission_mode,
-            getattr(node, "session_id", None),
+            subject=f"session={getattr(node, 'session_id', None)}",
         )
 
     # ------------------------------------------------------------------
@@ -895,6 +1534,7 @@ class ChatTaskManager:
         at_tables: List[TableSchema],
         at_metrics: List[Metric],
         at_sqls: List[ReferenceSql],
+        at_hints: Optional[List[Dict[str, Any]]] = None,
         catalog: Optional[str] = None,
         database: Optional[str] = None,
         db_schema: Optional[str] = None,
@@ -929,6 +1569,7 @@ class ChatTaskManager:
             at_tables=at_tables,
             at_metrics=at_metrics,
             at_sqls=at_sqls,
+            context_hints=at_hints,
             prompt_language="en",
             plan_mode=plan_mode,
             source_session_id=source_session_id,
@@ -967,46 +1608,230 @@ class ChatTaskManager:
         )
         return event_id + 1
 
+    @staticmethod
+    def _match_table_entry(flatten: Dict[str, Any], path: str) -> Optional[Dict[str, Any]]:
+        """Best-effort match when the picker's fullName != the metadata-store key.
+
+        The @-picker builds table paths from live introspection (the catalog
+        tree), while the completer indexes the schema-metadata store; the two can
+        differ in catalog presence or schema level (e.g. picker sends
+        ``default_catalog.db.table`` but the store key is ``db.schema.table``).
+        Fall back to matching the trailing components — table name, plus the
+        database when the path carries one. Returns a hit only when exactly one
+        candidate matches, so a genuinely ambiguous name never resolves to the
+        wrong table.
+        """
+        segs = [s.strip().strip('"').lower() for s in path.split(".") if s.strip()]
+        if not segs:
+            return None
+        want_table = segs[-1]
+        want_db = segs[-2] if len(segs) >= 2 else None
+        candidates: List[Dict[str, Any]] = []
+        for entry in flatten.values():
+            if str(entry.get("table_name", "")).lower() != want_table:
+                continue
+            if want_db is not None:
+                entry_db = str(entry.get("database_name", "")).lower()
+                if entry_db and entry_db != want_db:
+                    continue
+            candidates.append(entry)
+        return candidates[0] if len(candidates) == 1 else None
+
+    @staticmethod
+    def _none_to_empty(detail: Dict[str, Any]) -> Dict[str, Any]:
+        """Coerce ``None`` values to ``""`` for typed-model construction.
+
+        The path-scoped store returns optional string columns as ``None`` (e.g.
+        a reference SQL with no ``comment`` / ``tags``), but Metric / ReferenceSql
+        declare those as ``str``; ``from_dict``'s ``.get(k, "")`` doesn't catch a
+        present-but-None value, so normalise here.
+        """
+        return {k: ("" if v is None else v) for k, v in detail.items()}
+
+    @staticmethod
+    def _split_subject_path(path: str) -> tuple[List[str], str]:
+        """Split a subject-tree ref path into ``(subject_path, name)``.
+
+        The canonical form is ``/``-joined (``Commerce/Orders/aov``). A path that
+        contains no ``/`` is treated as an older ``.``-joined form and converted;
+        a ``/``-joined path is trusted verbatim so a ``.`` inside a leaf name
+        (``v1.2``) is preserved. The last segment is the leaf name.
+        """
+        normalized = path if "/" in path else path.replace(".", "/")
+        segs = [s.strip().strip('"') for s in normalized.split("/") if s.strip()]
+        if not segs:
+            return [], ""
+        return segs[:-1], segs[-1]
+
+    @staticmethod
+    def _synthesize_table_entry(path: str) -> Optional[Dict[str, Any]]:
+        """Build a name-only table entry from a picked path when the store can't resolve it.
+
+        Only ``table_name`` is surfaced to the prompt ("Available tables"), so an
+        empty ``definition`` is fine — the node inspects the real DDL via its own
+        ``describe_table``. ``database_name`` is a best-effort guess from the
+        leading segment for display/scoping; it isn't required for resolution.
+        """
+        segs = [s.strip().strip('"') for s in path.split(".") if s.strip()]
+        if not segs:
+            return None
+        return {
+            "identifier": path,
+            "catalog_name": "",
+            "database_name": segs[-2] if len(segs) >= 2 else "",
+            "schema_name": "",
+            "table_name": segs[-1],
+            "table_type": "table",
+            "definition": "",
+        }
+
     def _resolve_at_context(
         self,
         agent_config: AgentConfig,
         table_paths: Optional[List[str]],
         metric_paths: Optional[List[str]],
         sql_paths: Optional[List[str]],
-    ) -> tuple[List[TableSchema], List[Metric], List[ReferenceSql]]:
-        """Resolve @-reference paths to typed objects using a fresh completer."""
+        knowledge_paths: Optional[List[str]] = None,
+    ) -> tuple[List[TableSchema], List[Metric], List[ReferenceSql], List[Dict[str, Any]]]:
+        """Resolve @-reference paths to typed objects (+ look-up hints).
+
+        Tables come from the schema-metadata completer with a name-only fallback.
+        Metrics and reference SQL are resolved by EXACT subject path via
+        non-vector, path-scoped store lookups — deliberately NOT the completer's
+        vector search, which is empty until the KB is vectorised (and is slated
+        for removal).
+
+        Anything that can't be pre-loaded (a metric/sql that didn't resolve, and
+        every @Knowledge ref, which has no store loader) becomes a ``hint`` —
+        ``{kind, name, subject_path}`` — so the prompt can still name it
+        instead of dropping it and forcing a blind search.
+        """
+        logger.info(
+            "AT-CONTEXT resolving: table_paths=%s metric_paths=%s sql_paths=%s knowledge_paths=%s "
+            "(project=%s, datasource=%s)",
+            table_paths,
+            metric_paths,
+            sql_paths,
+            knowledge_paths,
+            getattr(agent_config, "project_name", None),
+            getattr(agent_config, "current_datasource", None),
+        )
+        tables = self._resolve_table_paths(agent_config, table_paths)
+        metrics, metric_hints = self._resolve_metric_paths(agent_config, metric_paths)
+        sqls, sql_hints = self._resolve_sql_paths(agent_config, sql_paths)
+        hints = metric_hints + sql_hints + self._knowledge_hints(knowledge_paths)
+        logger.info(
+            "AT-CONTEXT resolved: tables=%s metrics=%s sqls=%s hints=%s",
+            [t.table_name for t in tables],
+            [m.name for m in metrics],
+            [s.name for s in sqls],
+            [f"{h['kind']}:{h['name']}" for h in hints],
+        )
+        return tables, metrics, sqls, hints
+
+    def _knowledge_hints(self, knowledge_paths: Optional[List[str]]) -> List[Dict[str, Any]]:
+        """@Knowledge has no store loader yet — surface every ref as a hint."""
+        hints: List[Dict[str, Any]] = []
+        for path in knowledge_paths or []:
+            subject_path, name = self._split_subject_path(path)
+            if name:
+                hints.append({"kind": "knowledge", "name": name, "subject_path": subject_path})
+        return hints
+
+    def _resolve_table_paths(self, agent_config: AgentConfig, table_paths: Optional[List[str]]) -> List[TableSchema]:
+        tables: List[TableSchema] = []
+        if not table_paths:
+            return tables
         try:
             completer = AtReferenceCompleter(agent_config)
-            completer.reload_data()
+            completer.table_completer.reload_data()
+            table_flatten = completer.table_completer.flatten_data
         except Exception as exc:
-            logger.warning("Failed to resolve @ references; continuing without context references: %s", exc)
-            return [], [], []
-
-        tables: List[TableSchema] = []
-        for path in table_paths or []:
+            logger.warning("Table completer unavailable; falling back to name-only @Table refs: %s", exc)
+            table_flatten = {}
+        for path in table_paths:
             try:
-                entry = completer.table_completer.flatten_data.get(path)
+                entry = table_flatten.get(path) or self._match_table_entry(table_flatten, path)
+                if not entry:
+                    # The @-picker builds table paths from live introspection, so a
+                    # picked table always exists even when the schema-metadata store
+                    # is empty/stale (KB not indexed for this datasource). The prompt
+                    # injection only needs the table NAME (the node's own describe_table
+                    # fetches the DDL), so synthesise a name-only entry rather than
+                    # silently dropping the reference and re-asking the user.
+                    logger.warning(
+                        "Unresolved @Table path '%s' (%d indexed tables); using name-only reference. Sample keys: %s",
+                        path,
+                        len(table_flatten),
+                        list(table_flatten.keys())[:5],
+                    )
+                    entry = self._synthesize_table_entry(path)
                 if entry:
                     tables.append(TableSchema.from_dict(entry))
             except Exception as e:
                 logger.warning(f"Failed to resolve table path '{path}': {e}")
+        return tables
 
+    def _resolve_metric_paths(
+        self, agent_config: AgentConfig, metric_paths: Optional[List[str]]
+    ) -> tuple[List[Metric], List[Dict[str, Any]]]:
         metrics: List[Metric] = []
-        for path in metric_paths or []:
-            try:
-                entry = completer.metric_completer.flatten_data.get(path)
-                if entry:
-                    metrics.append(Metric.from_dict(entry))
-            except Exception as e:
-                logger.warning(f"Failed to resolve metric path '{path}': {e}")
+        hints: List[Dict[str, Any]] = []
+        if not metric_paths:
+            return metrics, hints
+        try:
+            from datus.storage.metric.store import MetricRAG
 
+            rag = MetricRAG(agent_config)
+        except Exception as exc:
+            logger.warning("MetricRAG unavailable; emitting @Metric look-up hints: %s", exc)
+            rag = None
+        for path in metric_paths:
+            subject_path, name = self._split_subject_path(path)
+            if not name:
+                continue
+            try:
+                details = rag.get_metrics_detail(subject_path=subject_path, name=name) if rag else []
+                if details:
+                    metric = Metric.from_dict(self._none_to_empty(details[0]))
+                    # Authoritative subject_path from the picked path (the store row
+                    # may omit it), so the prompt can name where the metric lives.
+                    metric.subject_path = subject_path
+                    metrics.append(metric)
+                    continue
+                logger.warning("Unresolved @Metric path '%s'; emitting look-up hint", path)
+            except Exception as e:
+                logger.warning("Failed to resolve metric path '%s': %s; emitting look-up hint", path, e)
+            hints.append({"kind": "metric", "name": name, "subject_path": subject_path})
+        return metrics, hints
+
+    def _resolve_sql_paths(
+        self, agent_config: AgentConfig, sql_paths: Optional[List[str]]
+    ) -> tuple[List[ReferenceSql], List[Dict[str, Any]]]:
         sqls: List[ReferenceSql] = []
-        for path in sql_paths or []:
-            try:
-                entry = completer.sql_completer.flatten_data.get(path)
-                if entry:
-                    sqls.append(ReferenceSql.from_dict(entry))
-            except Exception as e:
-                logger.warning(f"Failed to resolve sql path '{path}': {e}")
+        hints: List[Dict[str, Any]] = []
+        if not sql_paths:
+            return sqls, hints
+        try:
+            from datus.storage.reference_sql.store import ReferenceSqlRAG
 
-        return tables, metrics, sqls
+            store = ReferenceSqlRAG(agent_config)
+        except Exception as exc:
+            logger.warning("ReferenceSqlRAG unavailable; emitting @Sql look-up hints: %s", exc)
+            store = None
+        for path in sql_paths:
+            subject_path, name = self._split_subject_path(path)
+            if not name:
+                continue
+            try:
+                details = store.get_reference_sql_detail(subject_path=subject_path, name=name) if store else []
+                if details:
+                    ref = ReferenceSql.from_dict(self._none_to_empty(details[0]))
+                    ref.subject_path = subject_path
+                    sqls.append(ref)
+                    continue
+                logger.warning("Unresolved @Sql path '%s'; emitting look-up hint", path)
+            except Exception as e:
+                logger.warning("Failed to resolve sql path '%s': %s; emitting look-up hint", path, e)
+            hints.append({"kind": "reference_sql", "name": name, "subject_path": subject_path})
+        return sqls, hints

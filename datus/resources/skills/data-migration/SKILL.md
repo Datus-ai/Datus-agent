@@ -40,7 +40,7 @@ Activate when you need to:
 ### Phase 1: Inspect Source
 
 - Use `describe_table(database=source)` to get source schema
-- Use `read_query(database=source)` to get row count and sample data
+- Use `execute_sql(sql="SELECT COUNT(*) AS rows FROM <source_table>", database=source)` to get the row count and `execute_sql(sql="SELECT * FROM <source_table> LIMIT 5", database=source)` to inspect sample data
 - Identify column types, nullable columns, and primary key candidates
 - Document the source schema for DDL generation
 
@@ -58,7 +58,7 @@ Activate when you need to:
 - Map source types → target types guided by `type_hints`. When ambiguous, prefer widening over narrowing.
 - Draft the CREATE TABLE DDL.
 - Call `validate_ddl(database=target, ddl=<draft>, target_table=<name>)`. Iterate until `errors == []`.
-- Execute the DDL with `execute_ddl(sql, database=target)`.
+- Execute the DDL with `execute_sql(sql, database=target)`.
 
 ### Phase 4: Transfer Data
 

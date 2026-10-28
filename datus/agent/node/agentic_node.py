@@ -12,28 +12,47 @@ streaming interactions with tool integration and action history management.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import os
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, AsyncGenerator, Awaitable, Callable, Dict, List, Literal, Optional, Set
+from typing import TYPE_CHECKING, Any, AsyncGenerator, Awaitable, Callable, Dict, List, Literal, Optional, Set, Tuple
 
 from agents import Tool
 from agents.extensions.memory import AdvancedSQLiteSession
 from agents.mcp import MCPServerStdio
 
-from datus.agent.node.compact_archive import ToolArchive, maybe_truncate_item
-from datus.agent.node.compact_prompts import build_continuation_message, render_major_compact_prompt
+from datus.agent.node.compact_archive import ToolArchive, archive_old_tool_outputs, maybe_truncate_item
+from datus.agent.node.compact_prompts import (
+    MID_TURN_SUMMARY_INSTRUCTIONS,
+    build_continuation_message,
+    render_major_compact_prompt,
+)
+from datus.agent.node.context_rewriter import (
+    DEFAULT_OUTPUT_RESERVE_TOKENS,
+    MidTurnCompactor,
+    build_assistant_item,
+    build_mid_turn_view,
+    detect_item_format,
+    estimate_items_tokens,
+)
 from datus.agent.node.node import Node
 from datus.cli.execution_state import ExecutionInterrupted, InteractionBroker, InterruptController, PendingInputQueue
 from datus.configuration.agent_config import AgentConfig, CompactConfig
 from datus.models.base import LLMBaseModel
+from datus.models.request_capacity import ContextCapacityError
+from datus.observability.compaction import compact_metrics, compact_started, observe_compaction
 from datus.prompts.prompt_manager import get_prompt_manager
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
 from datus.schemas.base import BaseInput, BaseResult
+from datus.tools.db_tools.data_file_loader import LOCAL_FILES_DATASOURCE
 from datus.utils.exceptions import DatusException, ErrorCode
-from datus.utils.json_utils import to_str
+from datus.utils.language_utils import build_fallback_directive as _build_fallback_directive
+from datus.utils.language_utils import ensure_native_directive as _ensure_native_directive
+from datus.utils.language_utils import resolve_language_name as _resolve_language_name
+from datus.utils.language_utils import resolve_native_directive as _resolve_native_directive
 from datus.utils.loggings import get_logger
 from datus.utils.message_utils import build_structured_content
 from datus.utils.node_utils import build_database_context
@@ -42,37 +61,12 @@ if TYPE_CHECKING:
     from datus.agent.node.stream_run_context import StreamRunContext
     from datus.agent.workflow import Workflow
     from datus.schemas.token_usage import TokenUsage
+    from datus.storage.session_state import ContextState
+    from datus.tools.func_tool.fs_path_policy import PathAllowlist
     from datus.tools.permission.permission_manager import PermissionManager
     from datus.tools.skill_tools.skill_manager import SkillManager
 
 logger = get_logger(__name__)
-
-
-_LANGUAGE_NAME_MAP: Dict[str, str] = {
-    "en": "English",
-    "zh": "Chinese",
-    "zh-cn": "Chinese",
-    "zh-tw": "Traditional Chinese",
-    "ja": "Japanese",
-    "ko": "Korean",
-    "es": "Spanish",
-    "fr": "French",
-    "de": "German",
-    "pt": "Portuguese",
-    "ru": "Russian",
-    "it": "Italian",
-}
-
-
-def _resolve_language_name(code: str) -> str:
-    """Map a language code (e.g. ``"zh"``) to a human-readable name.
-
-    Unknown codes are returned as-is so operators can plug in custom values
-    without a code change.
-    """
-    if not code:
-        return "English"
-    return _LANGUAGE_NAME_MAP.get(code.strip().lower(), code)
 
 
 class AgenticNode(Node):
@@ -89,6 +83,14 @@ class AgenticNode(Node):
     # the box without forcing users to wire each skill manually. Set to an explicit
     # empty string in yml to opt out of the defaults.
     DEFAULT_SKILLS: Optional[str] = None
+
+    # Skills whose full content is injected into the system prompt by the host
+    # at render time instead of being advertised in ``<available_skills>`` for
+    # LLM-initiated ``load_skill`` calls. Use for specifications the node needs
+    # on every run (e.g. authoring format specs); optional, conditionally
+    # useful workflows belong in ``DEFAULT_SKILLS``. Subclasses may override
+    # ``_get_required_skills()`` to derive the list from configuration.
+    REQUIRED_SKILLS: Optional[str] = None
 
     # When True, this node's ``SkillFuncTool`` loads skills in *authoring* mode:
     # ``allowed_agents`` scoping on ``load_skill`` is bypassed so the agent can
@@ -207,8 +209,19 @@ class AgenticNode(Node):
 
         self.tool_registry = ToolRegistry()
 
+        # Plugin-declared tool argument transformers are applied lazily on the
+        # first ``_compose_hooks`` call, after ``setup_tools`` and any
+        # ``apply_proxy_tools`` rewrites — see ``_ensure_tool_transformers``.
+        self._tool_transformers_applied = False
+
         # Parse node configuration from agent.yml (available to all agentic nodes)
         self.node_config = self._parse_node_config(agent_config, self.get_node_name())
+
+        # Attach the MCP servers named in node_config["mcp"] unless the caller
+        # supplied explicit instances. Done here so every agentic node honors
+        # its configured selection — subclasses must not re-implement this.
+        if not self.mcp_servers:
+            self.mcp_servers = self._setup_mcp_servers()
 
         # Setup permission manager (after node_config is available)
         self._setup_permission_manager()
@@ -267,8 +280,8 @@ class AgenticNode(Node):
         # session); ``restore_context_state`` below overwrites them when an
         # on-disk ``context_state`` section exists. These MUST be set before
         # the restore call so the restored values are not clobbered.
+        self._context_state: Optional["ContextState"] = None
         self._restored_context_used: int = 0
-        self._restored_context_length: int = 0
         try:
             self.restore_plan_mode_state()
         except Exception as exc:  # noqa: BLE001 — restore must never crash construction
@@ -292,6 +305,11 @@ class AgenticNode(Node):
         self._compacted_until: int = 0
         self._archive: Optional[ToolArchive] = None
         self._compact_lock: Optional[asyncio.Lock] = None
+        # SQLite boundary captured right after a mid-turn rewrite. The CLI's
+        # ESC rollback prefers it over the checkpoint taken before the turn:
+        # a rewrite replaces every row, so the pre-turn boundary would delete
+        # the whole session. Reset at the start of every turn.
+        self.mid_turn_rewrite_checkpoint: Optional[Any] = None
 
         # ── Mid-turn token-usage streaming ─────────────────────────────
         # Populated by :class:`TokenUsageHook` after every LLM call so the
@@ -316,9 +334,9 @@ class AgenticNode(Node):
         self.degraded_capabilities[key] = message
 
     def _record_context_search_degraded(self, error: BaseException | str) -> str:
-        from datus.storage.embedding_diagnostics import format_context_degraded_warning
+        from datus.storage.embedding_diagnostics import format_context_unavailable
 
-        message = format_context_degraded_warning(error)
+        message = format_context_unavailable(error)
         self._record_degraded_capability("context_search_tools", message)
         return message
 
@@ -393,6 +411,27 @@ class AgenticNode(Node):
                 self._session_manager = SessionManager(session_dir=base_dir, scope=user_scope)
         return self._session_manager
 
+    def relocate_session(self, *, scope: Optional[str], session_subdir: Optional[str]) -> None:
+        """Point this node's session at another directory after construction.
+
+        ``__init__`` already built and cached the session manager to restore state,
+        so assigning ``scope`` / ``session_subdir`` alone changes nothing; this drops
+        everything derived from the old location and restores from the new one.
+        """
+        self.scope = scope
+        self.session_subdir = session_subdir
+        self._session_manager = None
+        self._session = None
+        self._archive = None
+        try:
+            self.restore_plan_mode_state()
+        except Exception as exc:  # noqa: BLE001 — same contract as ``__init__``
+            logger.warning("Failed to restore plan-mode state for %s: %s", self.session_id, exc)
+        try:
+            self.restore_context_state()
+        except Exception as exc:  # noqa: BLE001 — same contract as ``__init__``
+            logger.warning("Failed to restore context state for %s: %s", self.session_id, exc)
+
     @property
     def context_length(self) -> Optional[int]:
         """Context window of the current model, refreshed per access.
@@ -406,7 +445,15 @@ class AgenticNode(Node):
         if current is None:
             return None
         try:
-            return current.context_length()
+            length = current.context_length()
+            if length is None:
+                from datus.models.request_capacity import RequestCapacity
+
+                capacity_getter = getattr(current, "request_capacity", None)
+                capacity = capacity_getter() if callable(capacity_getter) else None
+                if isinstance(capacity, RequestCapacity):
+                    return capacity.context_length
+            return length
         except Exception:
             return None
 
@@ -532,18 +579,61 @@ class AgenticNode(Node):
             logger.debug("agent_state_path unavailable: %s", exc)
             return None
 
-    def _persist_plan_mode_state(self) -> None:
-        """Flush current plan-mode fields to disk. No-op without session_id."""
-        state_path = self._agent_state_file()
-        if state_path is None:
+    def _persist_plan_mode_state(self, only_if_absent: bool = False) -> None:
+        """Flush current plan-mode fields to the session db. No-op without session_id.
+
+        Plan mode can be toggled before the first message, when the database
+        does not exist yet; ``save_session_meta`` skips that write rather than
+        materialising an empty file that would list as a session, and
+        ``_get_or_create_session`` repeats the call once the session is real.
+        Nothing is lost in that window: a session with no database cannot be
+        resumed, so there is no reader for the state it would have stored.
+
+        ``only_if_absent`` seeds a session that has no plan-mode row yet without
+        overwriting one. Callers that merely materialise the session hold a
+        snapshot taken at construction time, which another process may have
+        moved on from — see :meth:`_get_or_create_session`.
+        """
+        if not self.session_id:
             return
+        from datus.models.sqlite_session import SESSION_PLAN_MODE_KEY
         from datus.storage.session_state import PlanModeState
 
-        PlanModeState(
-            plan_mode_active=self.plan_mode_active,
-            plan_file_path=self.plan_file_path,
-            workflow_prompt_sent=self.workflow_prompt_sent,
-        ).save(state_path)
+        try:
+            if only_if_absent and self.session_manager.load_session_meta(self.session_id, SESSION_PLAN_MODE_KEY):
+                return
+            payload = PlanModeState(
+                plan_mode_active=self.plan_mode_active,
+                plan_file_path=self.plan_file_path,
+                workflow_prompt_sent=self.workflow_prompt_sent,
+            ).to_json()
+            self.session_manager.save_session_meta(self.session_id, SESSION_PLAN_MODE_KEY, payload)
+        except Exception:  # noqa: BLE001 — session creation must not fail over a flag
+            logger.debug("Failed to persist plan-mode state", exc_info=True)
+
+    def _load_plan_mode_state(self) -> Optional["PlanModeState"]:  # noqa: F821 — forward-ref
+        """Read plan-mode state, preferring the session db over legacy JSON.
+
+        Sessions that predate the move still carry a ``plan_mode`` section in
+        ``{project_data_dir}/state/{session_id}.json``; they keep working and
+        migrate to the database on their next toggle.
+        """
+        from datus.models.sqlite_session import SESSION_PLAN_MODE_KEY
+        from datus.storage.session_state import PlanModeState
+
+        if self.session_id:
+            try:
+                payload = self.session_manager.load_session_meta(self.session_id, SESSION_PLAN_MODE_KEY)
+            except Exception:  # noqa: BLE001
+                payload = None
+                logger.debug("Failed to read plan-mode state from the session db", exc_info=True)
+            state = PlanModeState.from_json(payload)
+            if state is not None:
+                return state
+        state_path = self._agent_state_file()
+        if state_path is None or not state_path.exists():
+            return None
+        return PlanModeState.load(state_path)
 
     def restore_plan_mode_state(self) -> None:
         """Re-hydrate plan-mode fields from disk into this node.
@@ -561,12 +651,9 @@ class AgenticNode(Node):
         ``_plan_just_confirmed`` is intentionally NOT restored — it is a
         turn-local one-shot flag and should always start False on resume.
         """
-        state_path = self._agent_state_file()
-        if state_path is None or not state_path.exists():
+        loaded = self._load_plan_mode_state()
+        if loaded is None:
             return
-        from datus.storage.session_state import PlanModeState
-
-        loaded = PlanModeState.load(state_path)
         self.plan_mode_active = loaded.plan_mode_active
         self.plan_file_path = loaded.plan_file_path
         self.workflow_prompt_sent = loaded.workflow_prompt_sent
@@ -579,51 +666,59 @@ class AgenticNode(Node):
             self.workflow_prompt_sent,
         )
 
-    def persist_context_state(self, last_call_input_tokens: int, context_length: int) -> None:
-        """Persist the latest LLM call's context-window occupancy to disk.
+    def persist_context_state(self, last_call_input_tokens: int) -> None:
+        """Publish a measured occupancy, then persist it. Zero invalidates.
 
-        Called by :class:`TokenUsageHook` after every LLM call. Unlike the
-        SQLite ``running_turn_usage`` snapshot (cleared at turn end), this
-        survives so a resumed process can render the context bar immediately.
-        No-op without a session_id / resolvable state path.
+        Memory is authoritative for the running node even when persistence
+        fails. The session db holds the durable value, zeroed by any history
+        rewrite in the same transaction; the JSON section is only a
+        compatibility mirror for sessions that predate the move, so it is
+        refreshed where it already exists and never created — a new file would
+        be a second storage location ``SessionManager`` has to clean up for no
+        reader's benefit.
         """
-        state_path = self._agent_state_file()
-        if state_path is None:
-            return
-        try:
-            from datus.storage.session_state import ContextState
-
-            used = max(0, int(last_call_input_tokens or 0))
-            length = max(0, int(context_length or 0))
-            ContextState(last_call_input_tokens=used, context_length=length).save(state_path)
-            # Keep the in-memory mirror in sync so a status-bar read in the
-            # same process does not have to round-trip through disk.
-            self._restored_context_used = used
-            self._restored_context_length = length
-        except Exception as exc:  # noqa: BLE001 — persistence must never crash the run loop
-            logger.debug("Failed to persist context state for %s: %s", self.session_id, exc)
-
-    def restore_context_state(self) -> None:
-        """Re-hydrate the last persisted context occupancy into this node.
-
-        Idempotent; invoked from ``__init__``. When no state file exists yet
-        (fresh session) the restored values stay at their 0 defaults.
-        """
-        state_path = self._agent_state_file()
-        if state_path is None or not state_path.exists():
-            return
         from datus.storage.session_state import ContextState
 
-        loaded = ContextState.load(state_path)
+        state = ContextState(max(0, int(last_call_input_tokens or 0)))
+        self._context_state = state
+        self._restored_context_used = state.last_call_input_tokens
+        if self.session_id:
+            try:
+                self.session_manager.save_context_state(self.session_id, state)
+            except Exception:
+                logger.debug("Failed to persist SQLite context state", exc_info=True)
+        try:
+            state_path = self._agent_state_file()
+            if state_path is not None and state_path.exists():
+                state.save(state_path)
+        except Exception:
+            logger.debug("Failed to persist JSON context state", exc_info=True)
+
+    def restore_context_state(self) -> None:
+        """Restore the durable measurement, falling back to legacy JSON."""
+        from datus.storage.session_state import ContextState
+
+        loaded = None
+        if self.session_id:
+            try:
+                loaded = self.session_manager.load_context_state(self.session_id)
+            except Exception:
+                # An unreadable durable zero must not revive an old JSON value.
+                loaded = ContextState()
+                logger.debug("Failed to restore SQLite context state", exc_info=True)
+        if not isinstance(loaded, ContextState):
+            state_path = self._agent_state_file()
+            if state_path is None or not state_path.exists():
+                return
+            loaded = ContextState.load(state_path)
+        self._context_state = loaded
         self._restored_context_used = loaded.last_call_input_tokens
-        self._restored_context_length = loaded.context_length
-        if loaded.last_call_input_tokens or loaded.context_length:
-            logger.info(
-                "Context state restored for session %s: used=%s length=%s",
-                self.session_id,
-                loaded.last_call_input_tokens,
-                loaded.context_length,
-            )
+
+    def get_context_usage(self) -> "ContextState":
+        """Return the latest measured input occupancy; never substitute spend."""
+        from datus.storage.session_state import read_context_state
+
+        return read_context_state(self)
 
     def _get_plan_mode_tools(self) -> List[Tool]:
         """Build the plan-mode func tools (``confirm_plan`` + ``todo_*``).
@@ -690,15 +785,14 @@ class AgenticNode(Node):
     def _build_datasource_reminder(self, user_input: Any = None) -> str:
         """Live per-turn datasource line for the user-message envelope.
 
-        The frozen system-prompt snapshot must never pin the *current*
-        datasource: a mid-session ``/datasource`` switch would silently leave a
-        stale dialect in every later turn. Instead this line rides in the
-        ``<system_reminder>`` envelope of each user message. It merges what
+        The current datasource belongs in the ``<system_reminder>`` envelope
+        of each user message; the system-prompt snapshot tracks only the bound
+        database skill in its identity. This reminder merges what
         used to be a separate "Database Context" block — dialect, catalog,
-        database (resolved via the connector default), and schema — into one
-        line so the dialect is stated exactly once per turn. Gated on
-        ``db_func_tool`` so non-DB nodes add no noise; returns an empty string
-        when no datasource is selected.
+        database (resolved via the connector default), adapter-provided SQL
+        semantics, and schema — into one line so the dialect is stated exactly
+        once per turn. Gated on ``db_func_tool`` so non-DB nodes add no noise;
+        returns an empty string when no datasource is selected.
         """
         agent_config = getattr(self, "agent_config", None)
         if not agent_config or getattr(self, "db_func_tool", None) is None:
@@ -711,6 +805,7 @@ class AgenticNode(Node):
             return ""
 
         details: List[str] = []
+        namespace_hint = ""
         dialect = ds_ctx.get("current_datasource_dialect")
         if dialect:
             details.append(f"dialect: {dialect}")
@@ -721,14 +816,211 @@ class AgenticNode(Node):
         database = resolve_database_name_for_prompt(connector, getattr(user_input, "database", "") or "")
         if database:
             details.append(f"database: {database}")
+        sql_context_getter = getattr(connector, "get_sql_generation_context", None)
+        if callable(sql_context_getter):
+            try:
+                sql_context = sql_context_getter(database_name=database) or {}
+                compatibility_mode = sql_context.get("compatibility_mode") if isinstance(sql_context, dict) else None
+                if compatibility_mode:
+                    compatibility_mode = str(compatibility_mode).strip()
+                    if compatibility_mode:
+                        details.append(f"compatibility mode: {compatibility_mode}")
+                if isinstance(sql_context, dict) and isinstance(sql_context.get("namespace_hint"), str):
+                    namespace_hint = sql_context["namespace_hint"].strip()
+            except Exception as e:
+                # SQL-generation hints must never make an otherwise usable
+                # datasource fail. The adapter may be talking to an older or
+                # restricted server that cannot expose the requested trait.
+                logger.debug("Unable to read connector SQL-generation context: %s", e)
         schema = getattr(user_input, "db_schema", "") or ""
         if schema:
             details.append(f"schema: {schema}")
         suffix = f" ({', '.join(details)})" if details else ""
-        return (
+        line = (
             f"Current datasource: {datasource}{suffix}. This is the authoritative "
             "target for this turn; generate SQL for THIS dialect."
         )
+        if namespace_hint:
+            line += f" {namespace_hint}"
+
+        # The uploads catalog is a *second* datasource, and nothing else tells the
+        # model it exists: this reminder names only the current one, and no prompt
+        # template renders ``available_datasources``. Without this the model
+        # writes the primary dialect against DuckDB views, or does not look for
+        # uploaded files at all. Config-only check — deliberately no query to
+        # count tables, which would cost a round trip on every single turn.
+        available = ds_ctx.get("available_datasources") or {}
+        if LOCAL_FILES_DATASOURCE in available and datasource != LOCAL_FILES_DATASOURCE:
+            line += (
+                f" Uploaded data files are separately queryable via "
+                f"datasource '{LOCAL_FILES_DATASOURCE}' (dialect: duckdb) after "
+                f"load_file_as_table registers them."
+            )
+        return line
+
+    def _semantic_runtime_db_context(self) -> Dict[str, str]:
+        """Return the current datasource/catalog/database/schema for Dosi initialization."""
+        agent_config = getattr(self, "agent_config", None)
+        if not agent_config:
+            return {}
+
+        from datus.utils.node_utils import resolve_database_name_for_prompt
+
+        datasource = getattr(agent_config, "current_datasource", "") or ""
+        runtime_context: Dict[str, str] = {}
+        runtime_context_getter = getattr(agent_config, "runtime_db_context", None)
+        if callable(runtime_context_getter):
+            try:
+                runtime_context = runtime_context_getter() or {}
+            except Exception as e:
+                logger.debug("Unable to read runtime DB context for Dosi: %s", e)
+                runtime_context = {}
+        datasource = runtime_context.get("datasource") or datasource
+        context: Dict[str, str] = {}
+        if datasource:
+            context["datasource"] = datasource
+
+        db_config = None
+        try:
+            db_config = agent_config.current_db_config(datasource)
+        except Exception as e:
+            logger.debug("Unable to read current DB config for Dosi context: %s", e)
+
+        user_input = getattr(self, "input", None)
+        connector = getattr(getattr(self, "db_func_tool", None), "connector", None)
+
+        catalog = (
+            getattr(user_input, "catalog", "")
+            or runtime_context.get("catalog")
+            or runtime_context.get("catalog_name")
+            or getattr(db_config, "catalog", "")
+            or ""
+        )
+        if catalog:
+            context["catalog"] = str(catalog).strip()
+
+        requested_database = (
+            getattr(user_input, "database", "")
+            or runtime_context.get("database")
+            or runtime_context.get("database_name")
+            or ""
+        )
+        database = resolve_database_name_for_prompt(connector, requested_database)
+        database = (
+            database
+            or runtime_context.get("database")
+            or runtime_context.get("database_name")
+            or getattr(db_config, "database", "")
+            or ""
+        )
+        if database:
+            context["database"] = str(database).strip()
+
+        schema = (
+            getattr(user_input, "db_schema", "")
+            or runtime_context.get("schema")
+            or runtime_context.get("db_schema")
+            or runtime_context.get("schema_name")
+            or getattr(db_config, "schema", "")
+            or ""
+        )
+        if schema:
+            context["schema"] = str(schema).strip()
+            context["db_schema"] = str(schema).strip()
+
+        return {key: value for key, value in context.items() if value}
+
+    def _render_at_context_parts(self, user_input: Any) -> List[str]:
+        """Render resolved @-referenced context as ordered prompt parts.
+
+        Single source of truth for surfacing @Knowledge / @Table / @Metric /
+        @Sql references to the LLM. Shared by :meth:`_build_enhanced_message`
+        and the deliverable / visual-artifact overrides so a new reference kind
+        is rendered everywhere by editing this one method. Reads every field
+        via ``getattr`` — inputs that don't declare a field (or don't inherit
+        :class:`~datus.schemas.at_context.AtContextInput`) simply contribute
+        nothing.
+        """
+        parts: List[str] = []
+
+        ext_know = getattr(user_input, "external_knowledge", "") or ""
+        if ext_know:
+            parts.append(f"## Business knowledge\nMUST apply the following business logic:\n{ext_know}")
+
+        schemas = getattr(user_input, "schemas", None)
+        if schemas:
+            from datus.schemas.node_models import TableSchema
+
+            names = TableSchema.table_names_to_prompt(schemas)
+            bullets = "\n".join(f"- {n.strip()}" for n in names.splitlines() if n.strip())
+            parts.append("## Referenced tables\nMUST use ONLY these tables in FROM/JOIN clauses:\n" + bullets)
+
+        metrics = getattr(user_input, "metrics", None)
+        if metrics:
+            blocks = []
+            for m in metrics:
+                subject_path = getattr(m, "subject_path", []) or []
+                header = f"### {m.name}"
+                if subject_path:
+                    header += f"  (subject_path: {'/'.join(subject_path)})"
+                lines = [header]
+                desc = (getattr(m, "description", "") or "").strip()
+                if desc:
+                    lines.append(desc)
+                meta = []
+                metric_type = (getattr(m, "metric_type", "") or "").strip()
+                measure_expr = (getattr(m, "measure_expr", "") or "").strip()
+                dimensions = getattr(m, "dimensions", []) or []
+                if metric_type:
+                    meta.append(f"type: {metric_type}")
+                if measure_expr:
+                    meta.append(f"measure: {measure_expr}")
+                if dimensions:
+                    meta.append(f"dimensions: {', '.join(dimensions)}")
+                if meta:
+                    lines.append(" · ".join(meta))
+                blocks.append("\n".join(lines))
+            parts.append("## Referenced metrics\n" + "\n\n".join(blocks))
+
+        reference_sql = getattr(user_input, "reference_sql", None)
+        if reference_sql:
+            blocks = []
+            for r in reference_sql:
+                summary = (getattr(r, "summary", "") or "").strip()
+                subject_path = getattr(r, "subject_path", []) or []
+                header = f"### {r.name}" + (f" — {summary}" if summary else "")
+                if subject_path:
+                    header += f"  (subject_path: {'/'.join(subject_path)})"
+                sql = (getattr(r, "sql", "") or "").strip()
+                blocks.append(header + (f"\n```sql\n{sql}\n```" if sql else ""))
+            parts.append("## Referenced SQL\n" + "\n\n".join(blocks))
+
+        hint_part = self._render_context_hint_part(getattr(user_input, "context_hints", None))
+        if hint_part:
+            parts.append(hint_part)
+
+        return parts
+
+    @staticmethod
+    def _render_context_hint_part(hints: Optional[List[Dict[str, Any]]]) -> str:
+        """Render names and paths for referenced items that couldn't be pre-loaded."""
+        if not hints:
+            return ""
+        label_by_kind = {"metric": "Metric", "reference_sql": "Reference SQL", "knowledge": "Knowledge"}
+        lines = ["## Referenced items", "The user attached these references; their details are not loaded here:"]
+        for h in hints:
+            kind = h.get("kind", "")
+            name = h.get("name", "")
+            subject_path = h.get("subject_path", []) or []
+            label = label_by_kind.get(kind, kind or "Item")
+            if kind == "reference_sql":
+                lines.append(f'- {label} "{name}" → call get_reference_sql(subject_path={subject_path}, name="{name}")')
+            elif kind == "metric":
+                lines.append(f'- {label} "{name}" (subject_path: {subject_path})')
+            else:
+                full = "/".join(list(subject_path) + [name])
+                lines.append(f'- {label} "{name}" (subject path: {full})')
+        return "\n".join(lines)
 
     def _build_enhanced_message(
         self,
@@ -778,10 +1070,6 @@ class AgenticNode(Node):
         if datasource_reminder:
             enhanced_parts.append(datasource_reminder)
 
-        ext_know = getattr(user_input, "external_knowledge", "") or ""
-        if ext_know:
-            enhanced_parts.append(f"MUST use these business logic:\n{ext_know}")
-
         db_type = getattr(self.agent_config, "db_type", "") if self.agent_config else ""
         if db_type and not datasource_reminder:
             # Always resolve empty database via the connector default — the
@@ -805,23 +1093,7 @@ class AgenticNode(Node):
             if ctx:
                 enhanced_parts.append(ctx)
 
-        schemas = getattr(user_input, "schemas", None)
-        if schemas:
-            from datus.schemas.node_models import TableSchema
-
-            table_names_str = TableSchema.table_names_to_prompt(schemas)
-            enhanced_parts.append(
-                "Available tables (MUST use these tables and ONLY use these "
-                f"table names in FROM/JOIN clauses): \n{table_names_str}"
-            )
-
-        metrics = getattr(user_input, "metrics", None)
-        if metrics:
-            enhanced_parts.append(f"Metrics: \n{to_str([item.model_dump() for item in metrics])}")
-
-        reference_sql = getattr(user_input, "reference_sql", None)
-        if reference_sql:
-            enhanced_parts.append(f"Reference SQL: \n{to_str([item.model_dump() for item in reference_sql])}")
+        enhanced_parts.extend(self._render_at_context_parts(user_input))
 
         if extra_enhanced_parts:
             enhanced_parts.extend(p for p in extra_enhanced_parts if p)
@@ -909,9 +1181,13 @@ class AgenticNode(Node):
         the inputs that change the prompt's identity within a session: the
         node template, its version, and the active model (a model switch also
         resets the provider-side prefix cache, so rebuilding is free). The
-        live per-turn datasource/dialect is injected in the user message
-        instead, so it deliberately does **not** appear here; date, language,
-        memory, and skills are frozen until the snapshot is rebuilt.
+        live per-turn datasource is injected in the user message instead. The
+        bound database skill is part of the system prompt, so its identity
+        appears here and a dialect switch rebuilds the snapshot. ``language`` DOES
+        appear: it is a per-request field on the Chat API, so a user switching
+        the UI language mid-session must not keep replaying a snapshot that
+        pins the old one. Date and memory stay frozen until the snapshot is rebuilt. Injected
+        skill contents are fingerprinted so same-named updates rebuild it.
         """
         agent_config = getattr(self, "agent_config", None)
         version = prompt_version
@@ -932,11 +1208,53 @@ class AgenticNode(Node):
                     model_id = f"{getattr(mc, 'type', '') or ''}:{getattr(mc, 'model', '') or ''}"
             except Exception:
                 model_id = ""
+        language = getattr(agent_config, "language", None) if agent_config is not None else None
         return {
             "node_name": self.get_node_name(),
+            # NOT implied by ``node_name``. The node name used to decide the
+            # template outright, so listing it here covered both; now
+            # ``system_prompt`` decides and can change while the node name does
+            # not — a sub-agent retyped from chat to ask_metrics is the case.
+            # Left out, a session would replay the previous template's bytes
+            # until a compact or /clear. Snapshots written before this key
+            # existed miss the comparison and rebuild once, which is the safe
+            # direction.
+            "system_prompt_template": self._system_prompt_template_name(),
             "prompt_version": str(version or ""),
             "model_name": model_id,
+            "language": str(language or "").strip(),
+            "database_skill": ",".join(self._get_database_skill_candidates()),
+            "injected_skills_sha256": hashlib.sha256(self._required_skill_context().encode()).hexdigest(),
         }
+
+    def _system_prompt_template_name(self) -> str:
+        """The template ``_get_system_prompt`` renders, as PromptManager names it.
+
+        ``system_prompt`` names the template; the node name is only the fallback.
+        Without that a host naming its nodes after the user's sub-agent (SaaS
+        does) could only resolve a template FILE named after that sub-agent —
+        which is why one used to be copied to disk per sub-agent just to hold a
+        builtin's content.
+
+        One method because the snapshot identity above and the render below must
+        start from the same name: if they ever disagreed at the START, a snapshot
+        would outlive a change that should have invalidated it.
+
+        They can still end up on different templates — ``_get_system_prompt``
+        falls back to the node name when this one resolves to no file, and the
+        identity records what was ASKED FOR, not what rendered. The window that
+        opens is narrow: only if the asked-for template later appears on disk
+        (an operator dropping the file in, or a rollback to a backend that still
+        copied them) does a snapshot survive a change it should not have.
+
+        ``node_config`` is read defensively: this now runs on the
+        ``execute_stream`` path via the snapshot identity, and computing a cache
+        key must not be what takes a turn down. A node built without one falls
+        back to its own name, which is exactly how this resolved before
+        ``system_prompt`` was honoured.
+        """
+        node_config = getattr(self, "node_config", None) or {}
+        return f"{node_config.get('system_prompt') or self.get_node_name()}_system"
 
     def _get_session_system_prompt(
         self,
@@ -971,6 +1289,7 @@ class AgenticNode(Node):
                 # The replayed prompt advertises skill/bash/memory tools whose
                 # mounting is normally a side effect of the (skipped) build.
                 self._ensure_lazy_tools_mounted()
+                self._apply_init_tool_scope()
                 return snapshot["prompt"]
 
         # Cache miss / stale meta: rebuild. Preserve the call shape — several
@@ -982,6 +1301,7 @@ class AgenticNode(Node):
 
         if sm is not None:
             sm.save_system_prompt_snapshot(session_id, prompt, meta)
+        self._apply_init_tool_scope()
         return prompt
 
     def _get_system_prompt(
@@ -992,7 +1312,7 @@ class AgenticNode(Node):
         """
         Get the system prompt for this agentic node using PromptManager.
 
-        The template name follows the pattern: {get_node_name()}_system_{version}
+        The template name follows the pattern: {system_prompt or get_node_name()}_system_{version}
 
         Args:
             prompt_version: Optional prompt version to use, overrides agent config version
@@ -1011,8 +1331,7 @@ class AgenticNode(Node):
 
         root_path = self._resolve_workspace_root()
 
-        # Construct template name: {template_name}_system_{version}
-        template_name = f"{self.get_node_name()}_system"
+        template_name = self._system_prompt_template_name()
 
         render_kwargs: Dict[str, Any] = {
             "agent_config": self.agent_config,
@@ -1031,11 +1350,46 @@ class AgenticNode(Node):
             )
 
         except FileNotFoundError as e:
-            # Template not found - throw DatusException
-            raise DatusException(
-                code=ErrorCode.COMMON_TEMPLATE_NOT_FOUND,
-                message_args={"template_name": template_name, "version": version or "latest"},
-            ) from e
+            # Fall back to the node name before giving up. The two subclasses
+            # that override this have always done so; the base raising outright
+            # is what makes a mismatched ``system_prompt`` fatal rather than
+            # merely wrong.
+            #
+            # ⚠️ IT IS ALSO A VERSION-SKEW GUARD. A host may still be sending an
+            # UNSANITIZED sub-agent name as ``system_prompt`` while the template
+            # on disk is named after the sanitized one — any character outside
+            # [A-Za-z0-9_-] differs, so a sub-agent named in Chinese resolves to
+            # nothing here while the node name resolves fine.
+            fallback_name = f"{self.get_node_name()}_system"
+            if fallback_name == template_name:
+                raise DatusException(
+                    code=ErrorCode.COMMON_TEMPLATE_NOT_FOUND,
+                    message_args={"template_name": template_name, "version": version or "latest"},
+                ) from e
+
+            logger.warning("Template '%s' not found; falling back to '%s'", template_name, fallback_name)
+            try:
+                base_prompt = get_prompt_manager(agent_config=self.agent_config).render_template(
+                    template_name=fallback_name,
+                    version=version,
+                    **render_kwargs,
+                )
+            except FileNotFoundError:
+                raise DatusException(
+                    code=ErrorCode.COMMON_TEMPLATE_NOT_FOUND,
+                    message_args={"template_name": template_name, "version": version or "latest"},
+                ) from e
+            except Exception as fallback_exc:
+                # The sibling ``except Exception`` below cannot see this — an
+                # exception raised inside an except block is not caught by the
+                # same try's other handlers — so the wrapping is repeated here.
+                # Without it the fallback path is the only one that can surface
+                # a raw Jinja error to the caller.
+                logger.error(f"Template loading error for '{fallback_name}': {fallback_exc}")
+                raise DatusException(
+                    code=ErrorCode.COMMON_CONFIG_ERROR,
+                    message_args={"config_error": f"Template loading failed for '{fallback_name}': {fallback_exc}"},
+                ) from fallback_exc
         except Exception as e:
             # Other template errors - wrap in DatusException
             logger.error(f"Template loading error for '{template_name}': {e}")
@@ -1067,6 +1421,11 @@ class AgenticNode(Node):
         base_prompt = self._inject_runtime_context(base_prompt)
         base_prompt = self._inject_datasource_runtime_context(base_prompt)
 
+        # Inject installed-plugin context (available scheduling/plugin
+        # environments and what they do), grouped with the other "what's
+        # available" context above.
+        base_prompt = self._inject_plugin_context(base_prompt)
+
         # Inject AGENTS.md project context if present in cwd
         agents_md = self._load_agents_md()
         if agents_md:
@@ -1074,6 +1433,11 @@ class AgenticNode(Node):
 
         # Mount the lazily injected skill/bash/memory tools.
         self._ensure_lazy_tools_mounted()
+
+        # Inject required-skill specifications deterministically. These are
+        # host-mandated (e.g. authoring format specs) and must not depend on
+        # the LLM choosing to call ``load_skill``.
+        base_prompt = self._inject_required_skills(base_prompt)
 
         # Inject available skills XML into system prompt when skill_func_tool is active.
         if self.skill_func_tool:
@@ -1104,6 +1468,7 @@ class AgenticNode(Node):
         self._ensure_skill_tools_in_tools()
         self._ensure_bash_tool_in_tools()
         self._ensure_memory_tool_in_tools()
+        self._ensure_web_tools_in_tools()
 
     def _runtime_context_current_date(self) -> str:
         """Current-date reference rendered into the shared runtime-context block.
@@ -1163,6 +1528,31 @@ class AgenticNode(Node):
             base_prompt = base_prompt + "\n\n" + section.strip()
         return base_prompt
 
+    def _inject_plugin_context(self, base_prompt: str) -> str:
+        """Append self-describing context contributed by installed plugins.
+
+        Each ``datus.plugins`` package may expose a class-level
+        ``system_prompt(profiles)`` returning a markdown block (e.g. the
+        available scheduler environments). datus collects those sections and
+        appends them verbatim — the plugin owns formatting and is responsible
+        for surfacing only non-secret fields. Skipped entirely when the
+        plugin system is disabled (``agent.plugins_enabled: false``).
+        """
+        agent_config = getattr(self, "agent_config", None)
+        if agent_config is None or not getattr(agent_config, "plugins_enabled", True):
+            return base_prompt
+        try:
+            from datus.plugins.registry import plugin_system_prompt_sections
+
+            sections = plugin_system_prompt_sections(agent_config)
+        except Exception as e:
+            logger.warning(f"Failed to inject plugin context: {e}")
+            return base_prompt
+        for section in sections:
+            if section and section.strip():
+                base_prompt = base_prompt + "\n\n" + section.strip()
+        return base_prompt
+
     def _inject_response_language(self, base_prompt: str) -> str:
         """Append a language directive driven by ``agent_config.language``.
 
@@ -1181,10 +1571,16 @@ class AgenticNode(Node):
                 version=None,
                 language_code=language_code,
                 language_name=_resolve_language_name(language_code),
+                native_directive=_resolve_native_directive(language_code),
             )
         except Exception as e:
+            # Returning the prompt untouched would read as "no language pinned"
+            # and hand the turn back to the model's own choice — the very drift
+            # this directive exists to stop. Fall back like the other two call
+            # sites do.
             logger.warning(f"Failed to render response_language template: {e}")
-            return base_prompt
+            return base_prompt + "\n\n" + _build_fallback_directive(language_code)
+        language_section = _ensure_native_directive(language_section, language_code)
         if language_section and language_section.strip():
             base_prompt = base_prompt + "\n\n" + language_section
         return base_prompt
@@ -1297,56 +1693,23 @@ class AgenticNode(Node):
         if self._session is None:
             self._session = self.session_manager.create_session(self.session_id)
             logger.debug(f"Created session: {self.session_id}")
+            # Plan mode may have been toggled before the database existed, in
+            # which case that write was skipped. There is somewhere to put it
+            # now, and a resumable session must carry its plan-mode flags.
+            #
+            # Seed only, never overwrite: this method also runs from paths that
+            # only need a session object — turn counting, the API's throwaway
+            # compaction node — whose in-memory flags were restored when the
+            # node was built and may already be stale. Blindly writing them
+            # back would drop a live process out of plan mode.
+            self._persist_plan_mode_state(only_if_absent=True)
 
         return self._session
 
     async def _count_session_tokens(self) -> int:
-        """
-        Estimate current context window usage in tokens.
-
-        Returns the last API call's input_tokens from the most recent execute,
-        which represents the actual conversation size in the context window.
-        Falls back to the last turn's total_tokens from turn_usage table.
-
-        Returns:
-            Estimated context window token usage
-        """
-        # Primary: get last_call_input_tokens from the most recent root assistant action.
-        # Scope to root-level actions (depth == 0) so child/tool usage from sub-agents
-        # doesn't leak into the parent session's context estimate.
-        for action in reversed(self.actions):
-            # Stop at the last root-level user message to scope to the current turn
-            if action.role == ActionRole.USER and action.depth == 0:
-                break
-            if (
-                action.role == ActionRole.ASSISTANT
-                and action.depth == 0
-                and isinstance(action.output, dict)
-                and isinstance(action.output.get("usage"), dict)
-            ):
-                usage = action.output["usage"]
-                last_call = usage.get("last_call_input_tokens", 0)
-                if last_call > 0:
-                    return last_call
-                # Fallback within action: use input_tokens (still per-turn, not cumulative sum)
-                input_tokens = usage.get("input_tokens", 0)
-                if input_tokens > 0:
-                    return input_tokens
-                break
-
-        # Fallback: get the latest turn's total_tokens from turn_usage table
-        if self._session and hasattr(self._session, "get_turn_usage"):
-            try:
-                turn_usage = await self._session.get_turn_usage()
-                if turn_usage:
-                    # turn_usage is a list of per-turn records; use the last one
-                    last_turn = turn_usage[-1] if isinstance(turn_usage, list) else turn_usage
-                    if isinstance(last_turn, dict):
-                        return last_turn.get("total_tokens", 0)
-            except Exception as e:
-                logger.debug(f"Failed to get turn usage for token counting: {e}")
-
-        return 0
+        """Return measured input occupancy, or zero when it is unknown."""
+        state = self.get_context_usage()
+        return state.last_call_input_tokens
 
     # ── Compact subsystem ──────────────────────────────────────────────
     # Public entry: ``compact(mode, reason)``. CLI, RunHooks, and model-layer
@@ -1358,6 +1721,7 @@ class AgenticNode(Node):
     # the most recent ``keep_recent_user_turns`` user turns) and offloads
     # any arguments/output over ``archive_threshold`` to disk.
 
+    @observe_compaction
     async def compact(
         self,
         mode: Literal["major", "minor", "auto"] = "auto",
@@ -1397,14 +1761,6 @@ class AgenticNode(Node):
                 compact_action_id = f"compact_{uuid.uuid4().hex[:8]}"
                 self._emit_compact_display_action(compact_action_id, "progress")
                 result = await self._major_compact(reason=reason)
-                # A major compact is a session rebuild: drop the frozen system
-                # prompt so the next turn re-bakes it (fresh date, AGENTS.md,
-                # memory, skills) instead of replaying the pre-compact snapshot.
-                if result.get("success") and self.session_id:
-                    try:
-                        self.session_manager.delete_system_prompt_snapshot(self.session_id)
-                    except Exception as exc:
-                        logger.debug("Failed to drop system-prompt snapshot after compact: %s", exc)
                 # Always emit the terminal action — even on failure — so the
                 # pinned hint is cleared; the renderer only draws the panel when
                 # a summary is actually present.
@@ -1479,9 +1835,11 @@ class AgenticNode(Node):
             self._archive = None
         if not hasattr(self, "_compact_lock"):
             self._compact_lock = None
+        if not hasattr(self, "mid_turn_rewrite_checkpoint"):
+            self.mid_turn_rewrite_checkpoint = None
 
-    async def _decide_compact_mode(self, mid_turn: bool = False) -> Literal["major", "minor", "noop"]:
-        """Choose major / minor / noop from token-ratio + session item counts.
+    async def _decide_compact_mode(self) -> Literal["major", "minor", "noop"]:
+        """Choose a mode for an explicit ``compact(mode="auto")`` call.
 
         Priority order:
         1. Token usage above ``major.token_threshold`` → major. The session
@@ -1496,12 +1854,10 @@ class AgenticNode(Node):
            still be in the model's cache).
         3. Otherwise → noop.
 
-        ``mid_turn`` skips the minor branch. The minor gate is the user-turn
-        count, which cannot change within a single user turn (a new ``user``
-        message only arrives on the next turn), so re-evaluating it after every
-        tool call is redundant — minor is decided once at turn start
-        (``pre_user_turn``). Only major, whose token ratio grows as the turn
-        progresses, needs the per-tool-call check that ``CompactHook`` provides.
+        The streaming loop does not use this compatibility dispatcher.
+        Its unified per-model-call decision is
+        :meth:`_decide_mid_turn_compact_mode`, driven by the
+        :class:`~datus.agent.node.context_rewriter.MidTurnCompactor`.
 
         The user-turn count is read from session items (the same source
         ``_resolve_user_turn_cutoff`` uses) rather than ``self.actions``, so a
@@ -1517,12 +1873,33 @@ class AgenticNode(Node):
             ratio = 0.0
         if cfg.major.enabled and ratio >= cfg.major.token_threshold:
             return "major"
-        if mid_turn:
-            return "noop"
         if cfg.minor.enabled:
             count = await self._user_turn_count_from_session()
             if count > cfg.minor.keep_recent_user_turns:
                 return "minor"
+        return "noop"
+
+    def _decide_mid_turn_compact_mode(
+        self, ratio: float, *, first_call: bool = False
+    ) -> Literal["major", "minor", "noop"]:
+        """Choose the automatic pass before any model request.
+
+        ``ratio`` already includes the tool outputs appended since the last
+        model call and the output headroom (see :meth:`compact_mid_turn`).
+        Major wins when it is enabled for mid-turn and the ratio reaches
+        ``major.token_threshold``; otherwise the cheaper archive stage runs at
+        ``minor.mid_turn_token_threshold``. Either stage can be switched off
+        independently with its ``mid_turn_enabled`` flag.
+        """
+        cfg = self._compact_cfg
+        if cfg.major.enabled and (first_call or cfg.major.mid_turn_enabled) and ratio >= cfg.major.token_threshold:
+            return "major"
+        if (
+            cfg.minor.enabled
+            and (first_call or cfg.minor.mid_turn_enabled)
+            and ratio >= cfg.minor.mid_turn_token_threshold
+        ):
+            return "minor"
         return "noop"
 
     async def _user_turn_count_from_session(self) -> int:
@@ -1553,60 +1930,10 @@ class AgenticNode(Node):
         return sum(1 for it in items if isinstance(it, dict) and it.get("role") == "user")
 
     def _history_token_ratio_sync(self) -> float:
-        """Synchronous estimate of context window usage as a fraction.
-
-        Prefers the in-memory ``running_turn_usage`` snapshot, which
-        :class:`TokenUsageHook` refreshes after every LLM call (``on_llm_end``
-        / native ``emit_manual``). The only caller is ``_decide_compact_mode``
-        via ``CompactHook.on_tool_end``, and any ``on_tool_end`` fires after at
-        least one LLM call in the current turn, so the snapshot reflects the
-        **live** context occupancy of the turn in progress — the same value the
-        CLI status bar renders (``running_turn_usage.session_total_tokens``),
-        keeping the compact trigger and the status bar in agreement. This is
-        what lets a major compact fire mid-turn instead of one turn late.
-
-        When no live snapshot exists, falls back to the restored context state
-        (``_restored_context_used`` / ``_restored_context_length``, populated by
-        ``restore_context_state()``) so a resumed node still reflects an
-        already-full session before its first LLM call, then to walking
-        ``self.actions`` — only populated once the turn ends
-        (``self.actions.extend(...)`` after the stream loop). We avoid awaiting
-        the session here because the trigger check has to be cheap enough to call
-        from ``on_tool_end`` without stalling the run loop. Returns 0.0 when no
-        source yields a positive token count or no ``context_length`` is known.
-        """
-        running = getattr(self, "running_turn_usage", None)
-        if running is not None:
-            tok = running.session_total_tokens or running.input_tokens or 0
-            ctx = running.context_length or self.context_length or 0
-            if ctx > 0 and tok > 0:
-                return tok / float(ctx)
-        # Resumed node: ``running_turn_usage`` and ``self.actions`` are both empty
-        # before the first LLM call of the turn, but ``restore_context_state()``
-        # has already re-hydrated the last persisted occupancy. Honour it so the
-        # pre-user-turn major trigger does not miss an already-full session for a
-        # whole model call.
-        restored_tok = getattr(self, "_restored_context_used", 0) or 0
-        restored_ctx = getattr(self, "_restored_context_length", 0) or self.context_length or 0
-        if restored_ctx > 0 and restored_tok > 0:
-            return restored_tok / float(restored_ctx)
-        if not self.context_length:
-            return 0.0
-        for action in reversed(self.actions):
-            if action.role == ActionRole.USER and action.depth == 0:
-                break
-            if (
-                action.role == ActionRole.ASSISTANT
-                and action.depth == 0
-                and isinstance(action.output, dict)
-                and isinstance(action.output.get("usage"), dict)
-            ):
-                usage = action.output["usage"]
-                tok = usage.get("last_call_input_tokens") or usage.get("input_tokens") or 0
-                if tok > 0:
-                    return tok / float(self.context_length)
-                break
-        return 0.0
+        """Return measured occupancy for explicit compact(auto) callers."""
+        state = self.get_context_usage()
+        length = self.context_length
+        return state.last_call_input_tokens / length if length else 0.0
 
     def _get_compact_lock(self) -> asyncio.Lock:
         """Lazily allocate the per-node compact lock.
@@ -1623,8 +1950,26 @@ class AgenticNode(Node):
     def _get_archive(self) -> Optional[ToolArchive]:
         """Lazily build the on-disk tool I/O archive for this session.
 
-        Path resolution is fully delegated to :class:`DatusPathManager` —
-        archives always land under ``session_data_dir(session_id)``.
+        Anchored on the SessionManager's resolved directory, so the archive
+        lands beside this session's database.
+
+        ⚠️ NOT on ``DatusPathManager``, which is what it used to do.
+        ``AgentConfig.session_dir`` is an override a host may set, and when it
+        does the path manager knows nothing about it: ``sessions_dir`` is
+        derived from ``home``. The publication runtime sets both — ``home`` is
+        the version snapshot, mounted READ-ONLY, and the writable session tree
+        deliberately sits outside it — so every archive tried to mkdir inside
+        the snapshot and died with ``EROFS``. Silently, because the archive is
+        optional: compaction fell back to leaving long tool output inline,
+        which only shows up later as a context window filling faster than it
+        should.
+
+        Going through the session manager also restores what
+        ``DatusPathManager.session_dir`` documents — archives sit alongside the
+        session db, so deleting the db takes them with it — and applies the
+        same scope / sub-agent nesting the db already gets. That nesting is the
+        session manager's business (see :meth:`session_manager`); recomputing
+        it here is what let the two drift apart in the first place.
         """
         if self._archive is not None:
             return self._archive
@@ -1635,12 +1980,13 @@ class AgenticNode(Node):
         if self.agent_config is not None:
             path_manager = getattr(self.agent_config, "path_manager", None)
         try:
-            project_name = path_manager.project_name if path_manager else ""
+            base_dir = Path(self.session_manager.session_dir) / self.session_id / "data"
             self._archive = ToolArchive(
-                project_name=project_name,
+                # Carried for the error text only; `base_dir` decides the path.
+                project_name=path_manager.project_name if path_manager else "",
                 session_id=self.session_id,
+                base_dir=base_dir,
                 preview_chars=cfg.archive_preview_chars,
-                path_manager=path_manager,
             )
         except Exception as exc:
             logger.warning("Failed to construct ToolArchive for session %s: %s", self.session_id, exc)
@@ -1668,29 +2014,38 @@ class AgenticNode(Node):
             return -1
         return user_indices[-n]
 
-    async def _dump_session_history_jsonl(self) -> Optional[Path]:
-        """Write the full session history to a JSONL file before major compact.
+    async def _dump_session_history_jsonl(self, items: Optional[List[Dict[str, Any]]] = None) -> Optional[Path]:
+        """Write the full conversation history to a JSONL file before major compact.
 
         One item per line, written verbatim. Lets the LLM ``read_file`` any
         original item by offset after the summary is in place — the structured
         summary covers the common case, the JSONL covers the long tail.
-        Returns ``None`` when the archive directory is unavailable; the major
-        compact still runs but without a recovery pointer.
+        ``items`` is the transcript to dump; when omitted the session is read
+        (turn-start / manual compact). Mid-turn callers pass the in-memory
+        view the model is being sent. Returns ``None`` when the archive
+        directory is unavailable; major compaction then preserves the current
+        transcript instead of replacing it with an unrecoverable summary.
         """
         archive = self._get_archive()
-        if archive is None or self._session is None:
+        if archive is None:
             return None
-        try:
-            items = await self._session.get_items()
-        except Exception as exc:
-            logger.warning("session.get_items() failed during history dump: %s", exc)
-            return None
+        if items is None:
+            if self._session is None:
+                return None
+            try:
+                items = await self._session.get_items()
+            except Exception as exc:
+                logger.warning("session.get_items() failed during history dump: %s", exc)
+                return None
         ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-        path = archive.dir / f"history_{ts}.jsonl"
+        path = archive.dir / f"history_{ts}_{uuid.uuid4().hex}.jsonl"
+        from datus.utils.image_content import replace_images
+
         try:
-            with path.open("w", encoding="utf-8") as f:
-                for it in items:
-                    f.write(json.dumps(it, ensure_ascii=False, default=str) + "\n")
+            from datus.storage.semantic_model.artifact_file import atomic_write_text
+
+            content = "".join(json.dumps(replace_images(it), ensure_ascii=False, default=str) + "\n" for it in items)
+            atomic_write_text(path, content, mode=0o600)
         except OSError as exc:
             logger.warning("history JSONL dump failed: %s", exc)
             return None
@@ -1723,25 +2078,23 @@ class AgenticNode(Node):
             logger.warning("Cannot major-compact: no session available")
             return {"mode": "major", "reason": reason, "success": False, "summary": "", "summary_token": 0}
 
-        logger.info("Starting major compact for session %s (reason=%s)", self.session_id, reason)
-        history_jsonl_path = await self._dump_session_history_jsonl()
-
-        sys_prompt = self._get_system_prompt()
-        summarization_prompt = render_major_compact_prompt(node_role=self.get_node_name())
+        compact_started(mode="major", trigger=reason)
+        try:
+            items = list(await self._session.get_items())
+        except Exception as exc:
+            # Never summarize (and then clear) a history we could not read.
+            logger.warning("session.get_items() failed during major compact: %s", exc)
+            return {"mode": "major", "reason": reason, "success": False, "summary": "", "summary_token": 0}
+        history_jsonl_path = await self._dump_session_history_jsonl(items) if items else None
+        if items and history_jsonl_path is None:
+            return {"mode": "major", "reason": reason, "success": False, "error": "Cannot preserve original history"}
+        # A Claude-native session stores Anthropic-format messages; the
+        # continuation must be written in the same dialect or the next native
+        # replay sends an ``output_text`` block Anthropic does not accept.
+        item_format = detect_item_format(items)
 
         try:
-            result = await self.model.generate_with_tools(
-                prompt=summarization_prompt,
-                instruction=sys_prompt,
-                session=self._session,
-                max_turns=1,
-                temperature=0.3,
-                max_tokens=4000,
-                agent_name=self.get_node_name(),
-            )
-            summary = result.get("content", "") if isinstance(result, dict) else getattr(result, "content", "") or ""
-            usage = result.get("usage", {}) if isinstance(result, dict) else {}
-            summary_token = usage.get("output_tokens", 0) if isinstance(usage, dict) else 0
+            summary, summary_token = await self._summarize_items(items, item_format=item_format)
         except Exception as exc:
             logger.error("Failed to generate major-compact summary: %s", exc)
             return {"mode": "major", "reason": reason, "success": False, "summary": "", "summary_token": 0}
@@ -1749,18 +2102,10 @@ class AgenticNode(Node):
         continuation = build_continuation_message(
             summary or "(empty summary)",
             str(history_jsonl_path) if history_jsonl_path else "",
+            self._tool_result_references(items),
         )
         try:
-            await self._session.clear_session()
-            await self._session.add_items(
-                [
-                    {
-                        "type": "message",
-                        "role": "assistant",
-                        "content": [{"type": "output_text", "text": continuation}],
-                    },
-                ]
-            )
+            await self._replace_session_items([build_assistant_item(continuation, item_format)], mode="major")
         except Exception as persist_err:
             logger.error("Failed to persist major-compact continuation: %s", persist_err)
             return {
@@ -1776,12 +2121,7 @@ class AgenticNode(Node):
         # starts scanning from the top of the rewritten session.
         self._compacted_until = 0
 
-        logger.info(
-            "Major compact complete: %d chars summary, %d output tokens, history=%s",
-            len(summary),
-            summary_token,
-            history_jsonl_path,
-        )
+        compact_metrics(items_before=len(items), items_after=1, summary_chars=len(summary))
         return {
             "mode": "major",
             "reason": reason,
@@ -1790,6 +2130,23 @@ class AgenticNode(Node):
             "summary_token": summary_token,
             "history_jsonl": str(history_jsonl_path) if history_jsonl_path else "",
         }
+
+    def _archive_history_view(
+        self, items: List[Dict[str, Any]], *, history_end: Optional[int] = None
+    ) -> Tuple[List[Dict[str, Any]], int, int]:
+        history = items if history_end is None else items[:history_end]
+        cutoff = self._resolve_user_turn_cutoff(history)
+        archive = self._get_archive()
+        if cutoff <= 0 or archive is None:
+            return items, 0, cutoff
+        rewritten = list(items)
+        count = 0
+        for idx in range(cutoff):
+            item = maybe_truncate_item(items[idx], archive, self._compact_cfg.minor.archive_threshold, idx)
+            if item is not items[idx]:
+                count += 1
+                rewritten[idx] = item
+        return (rewritten if count else items), count, cutoff
 
     async def _minor_compact(self, *, reason: str) -> Dict[str, Any]:
         """Rule-based user-turn-bounded compact pass.
@@ -1845,16 +2202,7 @@ class AgenticNode(Node):
                 "window": [lo, cutoff],
             }
 
-        rewritten: List[Dict[str, Any]] = []
-        archived_count = 0
-        for idx, it in enumerate(items):
-            if lo <= idx < cutoff:
-                new_it = maybe_truncate_item(it, archive, cfg.archive_threshold, idx)
-                if new_it is not it:
-                    archived_count += 1
-                rewritten.append(new_it)
-            else:
-                rewritten.append(it)
+        rewritten, archived_count, cutoff = self._archive_history_view(items)
         if archived_count == 0:
             # Nothing crossed the threshold or everything was already archived
             # — advance the high-water mark anyway so we don't keep re-scanning
@@ -1868,9 +2216,9 @@ class AgenticNode(Node):
                 "window": [lo, cutoff],
             }
 
+        compact_started(mode="minor", trigger=reason, items_before=len(items))
         try:
-            await self._session.clear_session()
-            await self._session.add_items(rewritten)
+            await self._replace_session_items(rewritten)
         except Exception as exc:
             logger.error("Failed to persist minor-compact rewrite: %s", exc)
             return {
@@ -1882,13 +2230,7 @@ class AgenticNode(Node):
             }
 
         self._compacted_until = cutoff
-        logger.info(
-            "Minor compact done: window=[%d,%d) archived=%d reason=%s",
-            lo,
-            cutoff,
-            archived_count,
-            reason,
-        )
+        compact_metrics(items_before=len(items), items_after=len(rewritten), window=[lo, cutoff])
         return {
             "mode": "minor",
             "reason": reason,
@@ -1896,6 +2238,356 @@ class AgenticNode(Node):
             "archived_count": archived_count,
             "window": [lo, cutoff],
         }
+
+    # ── Mid-turn compaction (driven by MidTurnCompactor before each model call) ──
+
+    async def _summarize_items(
+        self,
+        items: List[Dict[str, Any]],
+        *,
+        item_format: str,
+        instruction: Optional[str] = None,
+        custom_instructions: Optional[str] = None,
+    ) -> Tuple[str, int]:
+        """One summarization call over an explicit transcript.
+
+        Shared by manual major compact (``items`` read from the session)
+        and automatic compact (``items`` is the in-memory view
+        the model is being sent). Never touches the live session: the model's
+        ``summarize_items`` runs with ``session=None`` and no hooks. Raises on
+        model failure so callers decide how to degrade.
+
+        Returns ``(summary_text, summary_output_tokens)``.
+        """
+        sys_prompt = instruction if instruction is not None else self._get_system_prompt()
+        prompt = render_major_compact_prompt(node_role=self.get_node_name(), custom_instructions=custom_instructions)
+        from datus.models.summary_chunks import bounded_summary
+
+        return await bounded_summary(
+            self.model,
+            items,
+            instruction=sys_prompt,
+            prompt=prompt,
+            item_format=item_format,
+            agent_name=self.get_node_name(),
+        )
+
+    async def _replace_session_items(
+        self, items: List[Dict[str, Any]], *, mode: str = "minor", pending_user_turns: int = 0
+    ) -> None:
+        """Atomically replace history and complete rewrite bookkeeping before cancellation."""
+        if self._session is None:
+            raise DatusException(ErrorCode.COMMON_FIELD_REQUIRED, message_args={"field_name": "session"})
+
+        async def replace() -> None:
+            if pending_user_turns:
+                await self._session.replace_items(items, pending_user_turns=pending_user_turns)
+            else:
+                await self._session.replace_items(items)
+            self._invalidate_context_usage()
+            self._refresh_turn_checkpoint_after_rewrite()
+            if mode == "major":
+                self._compacted_until = 0
+                if self.session_id:
+                    try:
+                        self.session_manager.delete_system_prompt_snapshot(self.session_id)
+                    except Exception:
+                        logger.debug("Failed to invalidate system prompt after rewrite", exc_info=True)
+
+        task = asyncio.create_task(replace())
+        try:
+            await asyncio.shield(task)
+        except asyncio.CancelledError:
+            await task
+            raise
+
+    def _mid_turn_output_reserve(self) -> int:
+        """Output-token headroom reserved when checking request capacity.
+
+        A context that still "fits" but leaves no room for the model's reply
+        overflows on the very next call, so the trigger counts the reply
+        budget as already used.
+        """
+        max_tokens = 0
+        try:
+            model = self.model
+            getter = getattr(model, "max_tokens", None) if model is not None else None
+            if callable(getter):
+                max_tokens = int(getter() or 0)
+        except Exception:  # noqa: BLE001 — headroom is a heuristic
+            max_tokens = 0
+        return max_tokens or DEFAULT_OUTPUT_RESERVE_TOKENS
+
+    def _invalidate_context_usage(self) -> None:
+        """Discard the old measurement without changing cumulative consumption."""
+        running = getattr(self, "running_turn_usage", None)
+        if running is not None:
+            self.running_turn_usage = running.model_copy(
+                update={
+                    "session_total_tokens": 0,
+                    "context_usage_ratio": 0.0,
+                    "context_usage_valid": False,
+                }
+            )
+        self.persist_context_state(0)
+        self._notify_status_dirty()
+
+    def _refresh_turn_checkpoint_after_rewrite(self) -> None:
+        """Publish a rollback boundary that sits *after* the rewritten history.
+
+        The CLI captures a SQLite checkpoint before each turn and, on ESC,
+        deletes everything newer. A mid-turn rewrite replaces every row, so
+        that pre-turn boundary would wipe the session; the checkpoint taken
+        here keeps the compacted view and removes only what follows it.
+        """
+        self._session_rewritten_this_turn = True
+        self.mid_turn_rewrite_checkpoint = None
+        if not self.session_id:
+            return
+        try:
+            self.mid_turn_rewrite_checkpoint = self.session_manager.checkpoint_turn(self.session_id)
+        except Exception:  # noqa: BLE001
+            logger.debug("Failed to refresh the turn checkpoint after mid-turn compact", exc_info=True)
+
+    @observe_compaction
+    async def compact_mid_turn(
+        self,
+        items: List[Dict[str, Any]],
+        *,
+        item_format: str,
+        base_tokens: int,
+        tail_start: int,
+        instruction: str = "",
+        turn_request: Optional[Dict[str, Any]] = None,
+        reason: str = "before_model_call",
+        first_call: bool = False,
+        archive_history: bool = False,
+        pending_user_turns: int = 0,
+        output_tokens: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """Two-stage compaction of the transcript a running turn is about to send.
+
+        Called by :class:`~datus.agent.node.context_rewriter.MidTurnCompactor`
+        before every model call, including the first, with the exact item list the model would
+        receive. Occupancy is estimated as ``base_tokens`` (the last call's
+        real input tokens) plus a chars/4 estimate of ``items[tail_start:]``
+        (everything appended since) plus the output headroom.
+
+        On the first request, archive eligible historical user turns once.
+        On subsequent requests:
+
+        1. **minor** — archive the turn's tool outputs older than the newest
+           ``keep_recent_tool_results`` (lossless, no LLM call); re-estimate.
+        2. **major** — if still at or above ``major.token_threshold``, summarize
+           the (archived) view and rebuild it as
+           ``[this turn's user request(s)] + [assistant summary] + [user resume]``.
+
+        Whatever survives is persisted with an atomic history replacement so
+        SQLite mirrors the new view; a persistence failure leaves the original
+        ``items`` in force. Returns a dict with ``mode`` (``noop`` / ``minor``
+        / ``major``), ``success``, ``items`` (the list to send), and the major
+        fields (``summary``, ``summary_token``, ``history_jsonl``,
+        ``major_error`` when the summary failed after a successful archive).
+        Capacity, archive and session-persistence errors stop preparation.
+        """
+        self._ensure_compact_state()
+        noop: Dict[str, Any] = {"mode": "noop", "reason": reason, "success": True, "items": items}
+        try:
+            lock = self._get_compact_lock()
+            async with lock:
+                context_length = int(self.context_length or 0)
+                if context_length <= 0 and not archive_history:
+                    return noop
+                if self._session is None and self.session_id:
+                    self._get_or_create_session()
+                if self._session is None:
+                    return noop
+                cfg = self._compact_cfg
+                output_reserve = output_tokens if output_tokens is not None else self._mid_turn_output_reserve()
+                tail_start = max(0, min(int(tail_start), len(items)))
+                effective = int(base_tokens or 0) + estimate_items_tokens(items[tail_start:]) + output_reserve
+                ratio = effective / float(context_length) if context_length > 0 else 0.0
+                mode = self._decide_mid_turn_compact_mode(ratio, first_call=first_call)
+                if mode == "noop" and not archive_history:
+                    return noop
+                compact_started(
+                    mode=mode,
+                    trigger=reason,
+                    items_before=len(items),
+                    tokens_before=effective,
+                    token_measurement_source="usage_plus_tail_estimate",
+                )
+                entry_ratio = ratio
+
+                view: List[Dict[str, Any]] = items
+                archived_count = 0
+                result: Dict[str, Any] = {"mode": "noop", "reason": reason, "success": True, "archived_count": 0}
+
+                # Stage 1: cheap, lossless archive of this turn's older tool outputs.
+                if cfg.minor.enabled and (first_call or cfg.minor.mid_turn_enabled):
+                    archive = self._get_archive()
+                    if archive is not None:
+                        if archive_history:
+                            history_end = next((i for i, item in enumerate(items) if item is turn_request), len(items))
+                            view, archived_count, _ = self._archive_history_view(items, history_end=history_end)
+                        elif not first_call:
+                            view, archived_count = archive_old_tool_outputs(
+                                items,
+                                item_format=item_format,
+                                archive=archive,
+                                threshold=cfg.minor.archive_threshold,
+                                keep_recent=cfg.minor.keep_recent_tool_results,
+                            )
+                        if archived_count:
+                            result.update(mode="minor", archived_count=archived_count)
+                            # Subtract what the archive saved from the measured
+                            # occupancy instead of re-estimating the items alone:
+                            # the system prompt and tool schemas still count.
+                            saved = estimate_items_tokens(items) - estimate_items_tokens(view)
+                            ratio = max(0.0, (effective - saved) / float(context_length)) if context_length > 0 else 0.0
+                        else:
+                            view = items
+
+                # Stage 2: LLM summary when the archive stage was not enough.
+                if (
+                    cfg.major.enabled
+                    and (first_call or cfg.major.mid_turn_enabled)
+                    and ratio >= cfg.major.token_threshold
+                ):
+                    compact_action_id = f"compact_{uuid.uuid4().hex[:8]}"
+                    self._emit_compact_display_action(compact_action_id, "progress")
+                    major_ok = False
+                    try:
+                        history_jsonl_path = await self._dump_session_history_jsonl(items)
+                        if history_jsonl_path is None:
+                            raise ContextCapacityError("RESULT_ARCHIVE_FAILED", "Cannot preserve original history")
+                        summary, summary_token = await self._summarize_items(
+                            view,
+                            item_format=item_format,
+                            instruction=instruction or None,
+                            custom_instructions=MID_TURN_SUMMARY_INSTRUCTIONS,
+                        )
+                        continuation = build_continuation_message(
+                            summary or "(empty summary)",
+                            str(history_jsonl_path) if history_jsonl_path else "",
+                            self._tool_result_references(items),
+                        )
+                        view = build_mid_turn_view(
+                            view,
+                            continuation,
+                            item_format=item_format,
+                            turn_request=turn_request,
+                        )
+                        result.update(
+                            mode="major",
+                            summary=summary,
+                            summary_token=summary_token,
+                            history_jsonl=str(history_jsonl_path) if history_jsonl_path else "",
+                        )
+                        major_ok = True
+                    except Exception as exc:  # noqa: BLE001 — degrade to the archive result
+                        logger.error("Mid-turn major compact failed to summarize: %s", exc)
+                        result["major_error"] = str(exc)
+                    finally:
+                        self._emit_compact_display_action(compact_action_id, "summary", result if major_ok else None)
+
+                if view is items:
+                    result["items"] = items
+                    return result
+
+                try:
+                    await self._replace_session_items(view, mode=result["mode"], pending_user_turns=pending_user_turns)
+                except Exception as exc:  # noqa: BLE001
+                    logger.error("Failed to persist mid-turn compact rewrite: %s", exc)
+                    raise ContextCapacityError("SESSION_PERSIST_FAILED", "Cannot persist the prepared context") from exc
+
+                result["items"] = view
+                compact_metrics(
+                    items_after=len(view),
+                    archived_count=archived_count,
+                    entry_context_ratio=entry_ratio,
+                    context_ratio_after=ratio,
+                )
+                return result
+        except ContextCapacityError:
+            raise
+        except Exception:  # noqa: BLE001 — optional compaction failures preserve input
+            logger.exception("Mid-turn compact failed unexpectedly")
+            return {"mode": "major", "reason": reason, "success": False, "items": items}
+
+    def _build_context_rewriter(self, ctx: "StreamRunContext") -> Optional[MidTurnCompactor]:
+        """Create the per-request view, even when soft compaction is disabled.
+
+        One instance per ``_stream_once`` call; it also resets itself on the
+        SDK ``on_start`` hook so a retried run never inherits a stale overlay.
+        """
+        self._ensure_compact_state()
+
+        def refresh_instruction() -> str:
+            ctx.system_instruction = self._get_session_system_prompt(
+                prompt_version=getattr(ctx.user_input, "prompt_version", None),
+                template_context=self._build_template_context(ctx),
+            )
+            return ctx.system_instruction
+
+        return MidTurnCompactor(
+            self,
+            interrupt_controller=getattr(self, "interrupt_controller", None),
+            system_instruction=ctx.system_instruction or "",
+            refresh_instruction=refresh_instruction,
+            turn_state=ctx.extras,
+        )
+
+    def _get_tool_result_store(self):
+        """Reuse the resolved, writable session archive for indexed result pages."""
+        from datus.utils.tool_result_store import ToolResultStore
+
+        archive = self._get_archive()
+        if archive is None:
+            return None
+        store = getattr(self, "_tool_result_store", None)
+        capacity = self.model.request_capacity()
+        if (
+            not isinstance(store, ToolResultStore)
+            or store.root.parent != archive.dir
+            or getattr(self, "_tool_result_capacity", None) != capacity
+        ):
+            store = ToolResultStore(
+                archive, counter=capacity.count, page_tokens=max(2048, min(8192, capacity.input_limit() // 16))
+            )
+            self._tool_result_store = store
+            self._tool_result_capacity = capacity
+        return store
+
+    def _tool_result_references(self, items: List[Any]) -> list[dict]:
+        from datus.utils.tool_result_store import ToolResultStore
+
+        store = self._get_tool_result_store()
+        return store.recovery_references(items) if isinstance(store, ToolResultStore) else []
+
+    def _ensure_tool_result_reader(self) -> None:
+        from datus.tools.func_tool.tool_result_tools import ToolResultFuncTool
+
+        if not any(getattr(tool, "name", None) == "read_tool_result" for tool in self.tools or []):
+            self.tool_result_func_tool = ToolResultFuncTool(self._get_tool_result_store)
+            self.tools = [*(self.tools or []), *self.tool_result_func_tool.available_tools()]
+            self.tool_registry.register_tools("tool_result_tools", ["read_tool_result"])
+
+    def _apply_init_tool_scope(self) -> None:
+        """Reapply invocation-local restrictions after prompt/tool refreshes."""
+        init_context = getattr(self, "_init_context", None)
+        if init_context is not None:
+            if not getattr(self, "_tool_transformers_applied", False):
+                # A refresh may append tools to an already restricted list.
+                # Apply plugin wrappers before reapplying the init wrapper.
+                self.tools = [getattr(tool, "_init_original_tool", tool) for tool in self.tools or []]
+            names = {tool.name for tool in self.tools or []}
+            if self.db_func_tool is not None and "get_table_ddl" not in names:
+                self.tools.append(self.db_func_tool.to_function_tool(self.db_func_tool.get_table_ddl))
+            self._ensure_tool_transformers()
+            self.tools = init_context.wrap_tools(self.tools)
+            self.mcp_servers = {}
+            self._builtin_web_tools = None
 
     async def _auto_compact(self) -> bool:
         """Backward-compatible wrapper kept for callers outside this class.
@@ -1966,9 +2658,11 @@ class AgenticNode(Node):
             "scoped_context",
             "scoped_kb_path",
             "adapter_type",
-            "semantic_adapter",
             "subject_tree_prompt_limit",
             "require_final_result_selection",
+            # ontology_analyst: how many concepts the startup catalog may
+            # inline in the prompt.
+            "concept_catalog_prompt_limit",
             "sql_file_threshold",
             "sql_preview_lines",
             "bi_platform",
@@ -2002,8 +2696,61 @@ class AgenticNode(Node):
                     normalized_rules.append(str(rule))
             config["rules"] = normalized_rules
 
-        logger.info(f"Parsed node configuration for '{node_name}': {config}")
+        logger.debug("node.configured", node_name=node_name, config_keys=sorted(config))
         return config
+
+    def _setup_mcp_servers(self) -> Dict[str, Any]:
+        """Build MCP server instances from the comma-separated ``node_config["mcp"]``."""
+        mcp_servers = {}
+
+        config_value = self.node_config.get("mcp", "")
+        if not config_value:
+            return mcp_servers
+
+        mcp_server_names = [p.strip() for p in config_value.split(",") if p.strip()]
+
+        for server_name in mcp_server_names:
+            try:
+                server = self._setup_mcp_server_from_config(server_name)
+                if server:
+                    mcp_servers[server_name] = server
+
+            except Exception as e:
+                logger.error(f"Failed to setup MCP server '{server_name}': {e}")
+
+        logger.debug(f"Setup {len(mcp_servers)} MCP servers: {list(mcp_servers.keys())}")
+        return mcp_servers
+
+    def _setup_mcp_server_from_config(self, server_name: str) -> Optional[Any]:
+        """Build one MCP server instance via MCPManager.
+
+        MCPManager resolves definitions from the in-memory
+        ``agent_config.services["mcp_servers"]`` first (SaaS host) and falls
+        back to ``{agent.home}/conf/.mcp.json`` (CLI/standalone).
+        """
+        try:
+            from datus.tools.mcp_tools.mcp_manager import MCPManager
+
+            mcp_manager = MCPManager(agent_config=self.agent_config)
+            server_config = mcp_manager.get_server_config(server_name)
+
+            if not server_config:
+                logger.warning(f"MCP server '{server_name}' not found in configuration")
+                return None
+
+            server_instance, details = mcp_manager._create_server_instance(server_config)
+
+            if server_instance:
+                logger.debug(f"Added MCP server '{server_name}' from configuration: {details}")
+                return server_instance
+            else:
+                error_msg = details.get("error", "Unknown error")
+                logger.warning(f"Failed to create MCP server '{server_name}': {error_msg}")
+                return None
+
+        except Exception as e:
+            logger.error(f"Failed to setup MCP server '{server_name}' from config: {e}")
+            return None
 
     def _setup_permission_manager(self) -> None:
         """
@@ -2027,7 +2774,18 @@ class AgenticNode(Node):
             from datus.tools.permission.permission_manager import PermissionManager
 
             is_workflow = getattr(self, "execution_mode", None) == "workflow"
-            if is_workflow:
+            # Print mode opts out of the forced-``dangerous`` posture by
+            # setting ``agent_config.workflow_permission_profile`` (the
+            # configured or ``--permission-mode`` profile), so ``datus -p``
+            # only auto-runs what the profile's allow rules cover. Unattended
+            # flows (bootstrap, scheduler, benchmarks) leave it ``None`` and
+            # keep the historical dangerous baseline. isinstance guards
+            # against mocked agent_configs in tests.
+            workflow_profile = getattr(self.agent_config, "workflow_permission_profile", None)
+            if is_workflow and isinstance(workflow_profile, str) and workflow_profile:
+                permissions_config = self.agent_config.permissions_config
+                active_profile = workflow_profile
+            elif is_workflow:
                 from datus.tools.permission.profiles import get_profile
 
                 permissions_config = get_profile("dangerous")
@@ -2046,6 +2804,9 @@ class AgenticNode(Node):
                 global_config=permissions_config,
                 node_overrides={self.get_node_name(): node_permissions} if node_permissions else {},
                 active_profile=active_profile,
+                plugin_bash_rules=getattr(self.agent_config, "plugin_bash_rules", None),
+                project_bash_allows=getattr(self.agent_config, "project_bash_allow", None),
+                project_sql_allows=getattr(self.agent_config, "project_sql_allow", None),
             )
             # Forward existing callback to permission manager
             if self._permission_callback:
@@ -2082,6 +2843,8 @@ class AgenticNode(Node):
             self.skill_manager = SkillManager(
                 config=skills_config,
                 permission_manager=self.permission_manager,
+                config_mutable=self._resolve_config_mutable(),
+                agent_config=self.agent_config,
             )
             logger.debug(
                 f"Skill manager initialized for node '{self.get_node_name()}' "
@@ -2127,6 +2890,8 @@ class AgenticNode(Node):
 
                 self.skill_manager = SkillManager(
                     permission_manager=self.permission_manager,
+                    config_mutable=self._resolve_config_mutable(),
+                    agent_config=self.agent_config,
                 )
                 logger.info(
                     f"Created default SkillManager for node '{self.get_node_name()}' "
@@ -2146,6 +2911,118 @@ class AgenticNode(Node):
             )
         except Exception as e:
             logger.error(f"Failed to setup skill func tools: {e}")
+
+    def _get_required_skills(self) -> List[str]:
+        """Return skill names whose content is host-injected into the prompt.
+
+        Defaults to parsing the class-level ``REQUIRED_SKILLS`` string.
+        Subclasses may override to derive the list from configuration (e.g.
+        the active semantic authoring format).
+        """
+        patterns = type(self).REQUIRED_SKILLS
+        if not patterns:
+            return []
+        return [pattern.strip() for pattern in patterns.split(",") if pattern.strip()]
+
+    def _get_database_skill_candidates(self) -> List[str]:
+        """Return the optional dialect skill for the DB tool's bound connector."""
+        db_func_tool = getattr(self, "db_func_tool", None)
+        if db_func_tool is None:
+            return []
+        try:
+            connector = db_func_tool.connector
+            if connector is None:
+                return []
+            db_type = connector.get_type()
+        except Exception as exc:
+            logger.debug("Failed to read bound database type for skill candidates: %s", exc)
+            return []
+
+        db_type = getattr(db_type, "value", db_type)
+        normalized = str(db_type or "").strip().lower().replace("_", "-")
+        return [f"db-{normalized}-sql"] if normalized else []
+
+    def _render_required_skill_content(self, skill_name: str, content: str) -> str:
+        """Render node-specific runtime values into a required skill."""
+        del skill_name
+        return content
+
+    def _required_skill_context(self) -> str:
+        """Resolve the exact skill context used for injection and snapshot identity.
+
+        Required skills carry specifications the node needs on every run, so
+        the host injects them at prompt-build time instead of advertising them
+        in ``<available_skills>`` and hoping the LLM calls ``load_skill``.
+        Permission checks are skipped — the node itself mandates these skills —
+        but ``allowed_agents`` scoping still applies.
+
+        Raises:
+            DatusException: When a required skill cannot be loaded. A missing
+                authoring spec would silently degrade every generation, so this
+                fails fast instead.
+        """
+        required_skills = self._get_required_skills()
+        if getattr(self, "_init_context", None) is not None:
+            required_skills = list(dict.fromkeys([*required_skills, "init"]))
+        database_candidates = (
+            self._get_database_skill_candidates() if getattr(self, "db_func_tool", None) is not None else []
+        )
+        if not required_skills and not database_candidates:
+            return ""
+
+        if not getattr(self, "skill_manager", None):
+            from datus.tools.skill_tools.skill_manager import SkillManager
+
+            self.skill_manager = SkillManager(
+                permission_manager=getattr(self, "permission_manager", None),
+                config_mutable=self._resolve_config_mutable(),
+                agent_config=self.agent_config,
+            )
+
+        from xml.sax.saxutils import quoteattr as xml_quoteattr
+
+        # Database skills follow a convention but remain adapter-optional. Only
+        # inject candidates actually contributed by an installed adapter; class-
+        # declared required skills retain their fail-fast contract.
+        database_skills = [name for name in database_candidates if self.skill_manager.get_skill(name) is not None]
+        skills_to_inject = list(dict.fromkeys([*required_skills, *database_skills]))
+        if not skills_to_inject:
+            return ""
+
+        required_skill_names = set(required_skills)
+        sections = []
+        for skill_name in skills_to_inject:
+            success, message, content = self.skill_manager.load_skill(
+                skill_name,
+                self.get_node_name(),
+                check_permission=False,
+                node_class=self.get_node_class_name(),
+            )
+            if not success or not content:
+                if skill_name not in required_skill_names:
+                    logger.debug("Skipping optional database skill '%s': %s", skill_name, message)
+                    continue
+                from datus.utils.exceptions import DatusException, ErrorCode
+
+                raise DatusException(
+                    code=ErrorCode.COMMON_CONFIG_ERROR,
+                    message_args={
+                        "config_error": (
+                            f"Required skill '{skill_name}' could not be loaded for node "
+                            f"'{self.get_node_name()}': {message}"
+                        )
+                    },
+                )
+            content = self._render_required_skill_content(skill_name, content)
+            content = self.skill_manager.format_skill_content(skill_name, content)
+            sections.append(f"<required_skill name={xml_quoteattr(skill_name)}>\n{content}\n</required_skill>")
+            logger.debug("Resolved skill '%s' for '%s'", skill_name, self.get_node_name())
+
+        return "\n\n".join(sections)
+
+    def _inject_required_skills(self, base_prompt: str) -> str:
+        context = self._required_skill_context()
+        return base_prompt + "\n\n" + context if context else base_prompt
 
     @staticmethod
     def _merge_skill_patterns(existing_skills: Any, injected_skills: List[str]) -> str:
@@ -2199,6 +3076,55 @@ class AgenticNode(Node):
         except Exception as e:
             logger.error(f"Failed to setup ask_user tool: {e}")
             self.ask_user_tool = None
+
+    def _setup_task_result_tool(self):
+        """Setup the structured task-outcome tool, for orchestrator-driven runs.
+
+        Only wired up when the request declared an orchestrator origin: an
+        ordinary IDE chat has a human reading the answer and no need to declare
+        an outcome. The caller reads the resulting tool call off the stream and
+        stops the run, so this is effectively how such a run ends.
+        """
+        if getattr(self.agent_config, "_request_origin", None) != "orchestrator":
+            self.task_result_tool = None
+            return
+
+        try:
+            from datus.tools.func_tool.task_result_tools import TaskResultTool
+
+            self.task_result_tool = TaskResultTool()
+            if self.tools is not None:
+                self.tools.extend(self.task_result_tool.available_tools())
+            self._allow_task_result_tool()
+            logger.debug("Setup submit_task_result tool")
+        except Exception as e:
+            logger.error(f"Failed to setup task result tool: {e}")
+            self.task_result_tool = None
+
+    def _allow_task_result_tool(self) -> None:
+        """Exempt ``submit_task_result`` from the permission prompt.
+
+        Same reasoning as ``ask_user``: this is the channel the run reports
+        through, not a resource it touches. Under ``normal`` / ``auto`` it
+        matches no ALLOW rule and lands on ``default=ASK``, so a finished
+        dispatch stopped to ask permission to say it had finished — and the
+        card sat in the thread waiting for a human.
+
+        Declared here rather than in ``profiles.py`` because the tool itself is
+        injected here, only for orchestrator origins. A rule in the shared
+        profiles would outlive the tool and name it for every other caller.
+        ``add_persistent_rule`` so a later ``/profile`` switch, which rebuilds
+        ``global_config``, does not drop it.
+        """
+        if self.permission_manager is None:
+            return
+
+        from datus.tools.permission.permission_config import PermissionLevel, PermissionRule
+
+        category = getattr(self.task_result_tool, "permission_category", "tools")
+        self.permission_manager.add_persistent_rule(
+            PermissionRule(tool=category, pattern="submit_task_result", permission=PermissionLevel.ALLOW)
+        )
 
     def _setup_sub_agent_task_tool(self):
         """Setup SubAgentTaskTool based on subagents config or node default.
@@ -2268,10 +3194,12 @@ class AgenticNode(Node):
         """Create the node's general-purpose :class:`BashTool` instance.
 
         Available to every agentic node when ``agent.bash.enabled`` is
-        ``True`` (the default). ``allowed_patterns=["*"]`` means the tool
-        exposes ``execute_command`` for any shell command; per-call gating
-        is the responsibility of the ``bash_tools`` ASK rule in the
-        permission profile, not a static pattern whitelist.
+        ``True`` (the default). ``allowed_patterns`` comes from
+        ``agent_config.bash_allowed_patterns``: the default ``["*"]`` exposes
+        ``bash`` for any shell command with per-call gating left to the
+        ``bash_tools`` ASK rule in the permission profile; a restrictive list
+        (e.g. the web front-end's ``["datus*"]``) is enforced as a hard
+        whitelist inside the tool itself.
 
         Only creates the instance — the tool enters ``self.tools`` via
         :meth:`_ensure_bash_tool_in_tools` so subclass ``setup_tools()``
@@ -2289,20 +3217,83 @@ class AgenticNode(Node):
             logger.warning("Skipping bash tool because permission enforcement is unavailable")
             self.bash_tool = None
             return
+        # Non-list values (configs mocked without the attribute, legacy
+        # bootstraps) fall back to the unrestricted default — the AgentConfig
+        # setter already normalizes real config input.
+        allowed_patterns = getattr(self.agent_config, "bash_allowed_patterns", None)
+        if not isinstance(allowed_patterns, list) or not allowed_patterns:
+            allowed_patterns = ["*"]
         try:
-            from datus.tools.func_tool.bash_tool import BashTool
+            from datus.tools.func_tool.bash_tool import BashExecutionContext, BashTool
+
+            # Datus home stays readable inside the sandbox: skills, templates
+            # and plugins live there and are read/executed via bash.
+            sandbox_read_dirs = []
+            try:
+                from datus.utils.path_manager import get_path_manager
+
+                sandbox_read_dirs.append(str(get_path_manager(agent_config=self.agent_config).datus_home))
+            except Exception as exc:
+                logger.debug("Failed to resolve datus home for sandbox read dirs: %s", exc)
+
+            execution_context_provider = None
+            if not getattr(self.agent_config, "config_mutable", True):
+                from datus.plugins.runtime_context import prepare_plugin_invocation
+
+                def _managed_plugin_context(command: str):
+                    prepared = prepare_plugin_invocation(command, self.agent_config)
+                    if prepared is None:
+                        return None
+                    return BashExecutionContext(
+                        command=prepared.command,
+                        env=prepared.env,
+                        sandbox_read_dirs=prepared.sandbox_read_dirs,
+                    )
+
+                execution_context_provider = _managed_plugin_context
 
             self.bash_tool = BashTool(
                 workspace_root=self._resolve_workspace_root(),
-                allowed_patterns=["*"],
+                allowed_patterns=allowed_patterns,
+                # Offload oversized command output to the session data dir (the
+                # same location minor compact uses). Resolved lazily: this method
+                # runs before ``session_id`` is finalized, so the closure reads it
+                # at execute time. Returns None until a session id exists → the
+                # tool falls back to in-memory truncation.
+                output_dir_provider=self._bash_output_dir,
+                # Shared mutable settings: /sandbox on|off flips ``enabled`` on
+                # the AgentConfig object and this tool sees it next call.
+                sandbox_settings=getattr(self.agent_config, "bash_sandbox", None),
+                sandbox_read_dirs=sandbox_read_dirs,
+                execution_context_provider=execution_context_provider,
             )
             logger.debug(f"Setup bash tool with workspace: {self.bash_tool.workspace_root}")
         except Exception as e:
             logger.error(f"Failed to setup bash tool: {e}")
             self.bash_tool = None
 
+    def _bash_output_dir(self) -> Optional[Path]:
+        """Session data dir for bash output offload, or None if unavailable.
+
+        Reused directory convention as the compact archive
+        (``path_manager.session_data_dir(session_id)``). Returns None before a
+        session id is allocated, when there is no ``agent_config`` (mirrors
+        ``_resolve_session_data_dir`` — otherwise ``get_path_manager`` would fall
+        back to a process-wide default rooted at ``~/.datus``), or when the path
+        manager can't be built, so the bash tool degrades to in-memory truncation.
+        """
+        if not self.agent_config or not self.session_id:
+            return None
+        try:
+            from datus.utils.path_manager import get_path_manager
+
+            return get_path_manager(agent_config=self.agent_config).session_data_dir(self.session_id)
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.debug("Failed to resolve bash output dir: %s", exc)
+            return None
+
     def _ensure_bash_tool_in_tools(self) -> None:
-        """Ensure the BashTool's ``execute_command`` is in ``self.tools``.
+        """Ensure the BashTool's ``bash`` is in ``self.tools``.
 
         Mirrors :meth:`_ensure_skill_tools_in_tools` — called lazily so the
         late ``setup_tools()`` reset in subclasses doesn't strip the tool.
@@ -2326,6 +3317,53 @@ class AgenticNode(Node):
             f"Bash tool injected into node '{self.get_node_name()}': "
             f"{[t.name for t in self.bash_tool.available_tools()]}"
         )
+
+    def _ensure_web_tools_in_tools(self) -> None:
+        """Mount the unified ``web_tool`` group per the active provider.
+
+        Mirrors :meth:`_ensure_skill_tools_in_tools`. The active model decides
+        whether each capability is served by a vendor-native tool (then the local
+        function tool is suppressed and the model layer injects the hosted tool)
+        or by the local backend. Re-runs per request so a runtime ``/model``
+        switch re-resolves the backends; stale local web tools are dropped first.
+        """
+        from datus.tools.func_tool.web_tool import WebTool
+
+        try:
+            model = self.model
+        except Exception:
+            model = None
+        search_builtin = bool(getattr(model, "supports_builtin_web_search", lambda: False)()) if model else False
+        fetch_builtin = bool(getattr(model, "supports_builtin_web_fetch", lambda: False)()) if model else False
+        self._builtin_web_tools = {"web_search": search_builtin, "web_fetch": fetch_builtin}
+
+        self._web_tool = WebTool(
+            self.agent_config,
+            sub_agent_name=getattr(self, "sub_agent_name", None),
+            expose_local_search=not search_builtin,
+            expose_local_fetch=not fetch_builtin,
+        )
+        desired = self._web_tool.available_tools()
+        web_names = set(WebTool.all_tools_name())
+
+        # Drop previously-mounted web tools so a provider switch can't leave a
+        # stale local backend behind, then mount the current desired set.
+        existing = [t for t in (getattr(self, "tools", None) or []) if getattr(t, "name", None) not in web_names]
+        existing.extend(desired)
+        self.tools = existing
+        # The tool list was rebuilt: freshly mounted web tools are unwrapped, so
+        # clear the "transformers applied" flag to force a re-wrap on the next
+        # ``_ensure_tool_transformers`` pass. Without this, a runtime ``/model``
+        # switch that remounts web tools would leave them unwrapped and matching
+        # plugin transformers (policy enforcement) would silently fail open.
+        # ``apply_tool_transformers`` skips already-wrapped tools, so the re-wrap
+        # never double-transforms the tools carried over above.
+        self._tool_transformers_applied = False
+        if desired:
+            logger.info(
+                f"Web tools injected into node '{self.get_node_name()}': "
+                f"{[t.name for t in desired]} (builtin={self._builtin_web_tools})"
+            )
 
     def _ensure_memory_tool_in_tools(self) -> None:
         """Ensure ``add_memory`` / ``edit_memory`` are in ``self.tools`` for a main agent.
@@ -2478,8 +3516,7 @@ class AgenticNode(Node):
         async def _run_async():
             final_action = None
             async for action in self.execute_stream(action_history_manager):
-                if action.status == ActionStatus.SUCCESS:
-                    final_action = action
+                final_action = action
             return final_action
 
         try:
@@ -2489,20 +3526,24 @@ class AgenticNode(Node):
             # Extract result from final action output
             if final_action and final_action.output:
                 output_data = final_action.output
+                terminal_succeeded = final_action.status == ActionStatus.SUCCESS
                 if isinstance(output_data, dict):
                     result_class = getattr(self, "result_class", None)
                     if result_class:
                         try:
-                            self.result = result_class.model_validate(output_data)
+                            result_payload = dict(output_data)
+                            if not terminal_succeeded:
+                                result_payload["success"] = False
+                            self.result = result_class.model_validate(result_payload)
                         except Exception as e:
                             logger.warning(f"Failed to validate result as {result_class.__name__}: {e}")
                             self.result = BaseResult(
-                                success=output_data.get("success", True),
+                                success=terminal_succeeded and output_data.get("success", True),
                                 error=output_data.get("error"),
                             )
                     else:
                         self.result = BaseResult(
-                            success=output_data.get("success", True),
+                            success=terminal_succeeded and output_data.get("success", True),
                             error=output_data.get("error"),
                         )
                 else:
@@ -2545,6 +3586,37 @@ class AgenticNode(Node):
     # ``_build_error_result``.
     result_class: Any = None
 
+    def _apply_turn_db_context(self) -> None:
+        """Point the connector at this turn's catalog and schema.
+
+        The prompt already names ``user_input.db_schema`` as the authoritative
+        target, but unqualified SQL ran against the datasource's configured
+        schema — so a schema picked in the composer only reached the model. The
+        connector keeps this state in ContextVars, and each chat turn runs in its
+        own task (tools inherit it via ``asyncio.to_thread``), so it cannot leak
+        into another session or the next turn.
+        """
+        db_func_tool = getattr(self, "db_func_tool", None)
+        connector = getattr(db_func_tool, "connector", None) if db_func_tool is not None else None
+        if connector is None or not callable(getattr(connector, "switch_context", None)):
+            return
+        # A persistent native connection (Snowflake, Redshift, DuckDB, SQLite...)
+        # would get a live USE/SET that every session sharing it would see.
+        if hasattr(connector, "connection"):
+            return
+        # Not ``database``: some callers put the datasource key there, and on a
+        # PG-family connector that opens an engine to a database that does not exist.
+        catalog = getattr(self.input, "catalog", "") or ""
+        schema = getattr(self.input, "db_schema", "") or ""
+        if not (catalog or schema):
+            return
+        try:
+            connector.switch_context(catalog_name=catalog, schema_name=schema)
+        except Exception as e:
+            # A failed switch leaves the configured defaults in place, which is
+            # what every turn did before; never fail the turn over it.
+            logger.warning("Unable to apply turn db context: %s", e)
+
     async def execute_stream(
         self, action_history_manager: Optional[ActionHistoryManager] = None
     ) -> AsyncGenerator[ActionHistory, None]:
@@ -2581,12 +3653,16 @@ class AgenticNode(Node):
             pending_input_queue=getattr(self, "pending_input_queue", None),
         )
 
+        # A fresh turn: any rollback boundary published by a previous turn's
+        # mid-turn rewrite is stale now.
+        self.mid_turn_rewrite_checkpoint = None
+        self._session_rewritten_this_turn = False
+
         node_name = self.get_node_name()
-        logger.info(
-            "%s execute_stream start: session=%s msg=%r",
-            node_name,
-            getattr(self, "session_id", None),
-            (getattr(self.input, "user_message", "") or "")[:120],
+        logger.debug(
+            "turn.started",
+            node_name=node_name,
+            message_chars=len(getattr(self.input, "user_message", "") or ""),
         )
         initial_action = ActionHistory.create_action(
             role=ActionRole.USER,
@@ -2598,6 +3674,8 @@ class AgenticNode(Node):
         ahm.add_action(initial_action)
         yield initial_action
 
+        self._apply_turn_db_context()
+
         try:
             await self._before_stream(ctx)
 
@@ -2605,7 +3683,6 @@ class AgenticNode(Node):
             # callers (print mode ``--resume``, API chat with ``interactive=False``,
             # sub-agents continuing a parent session) all want SDK to see prior
             # items. ``execution_mode`` controls human-in-the-loop, not history.
-            await self._auto_compact()
             ctx.session = self._get_or_create_session()
 
             template_context = self._build_template_context(ctx)
@@ -2694,13 +3771,16 @@ class AgenticNode(Node):
             raise
         except Exception as exc:
             error_msg = self._format_execution_error(exc)
-            logger.error("%s execution error: %s", node_name, error_msg)
+            # ``error_msg`` may be trimmed to the provider's sentence; keep the
+            # full exception in the server log.
+            logger.error("%s execution error: %s", node_name, exc)
 
             error_result = self._build_error_result(exc, ctx)
             self.result = error_result
+            error_output = self._error_output(error_result, exc)
             ahm.update_current_action(
                 status=ActionStatus.FAILED,
-                output=error_result.model_dump(),
+                output=error_output,
                 messages=f"Error: {error_msg}",
             )
             error_action = ActionHistory.create_action(
@@ -2708,7 +3788,7 @@ class AgenticNode(Node):
                 action_type="error",
                 messages=f"{node_name} interaction failed: {error_msg}",
                 input_data=self.input.model_dump(),
-                output_data=error_result.model_dump(),
+                output_data=error_output,
                 status=ActionStatus.FAILED,
             )
             ahm.add_action(error_action)
@@ -2773,11 +3853,28 @@ class AgenticNode(Node):
             else None
         )
         effective_max_turns = explicit_turns if explicit_turns is not None else self.max_turns
+        # Wrap tools with plugin transformers BEFORE the stream call below
+        # captures ``self.tools``: call arguments evaluate left to right, so
+        # deferring to ``hooks=self._compose_run_hooks(ctx)`` would be one
+        # argument too late and the first run would execute unwrapped tools.
+        self._ensure_tool_result_reader()
+        self._apply_init_tool_scope()
+        self._ensure_tool_transformers()
         self._current_action_history = ctx.action_history_manager
+        # Per-run mid-turn compactor. Created before ``_compose_run_hooks`` so
+        # the same instance is both composed into the hooks (its ``on_start``
+        # resets the view per SDK run) and handed to the model layer as the
+        # per-model-call context rewriter.
+        ctx.context_rewriter = self._build_context_rewriter(ctx)
+        self._active_context_rewriter = ctx.context_rewriter
+        from datus.utils.tool_result_store import ACTIVE_RESULT_STORE
+
+        result_store_token = ACTIVE_RESULT_STORE.set(None)
         try:
             async for stream_action in self.model.generate_with_tools_stream(
                 prompt=ctx.user_prompt,
                 tools=self.tools or [],
+                builtin_web_tools=getattr(self, "_builtin_web_tools", None),
                 mcp_servers=self.mcp_servers,
                 instruction=ctx.system_instruction,
                 max_turns=effective_max_turns,
@@ -2790,6 +3887,7 @@ class AgenticNode(Node):
                 # Defensive: test doubles that bypass ``AgenticNode.__init__``
                 # may not have a broker; the model layer skips emit when None.
                 interaction_broker=getattr(self, "interaction_broker", None),
+                context_rewriter=ctx.context_rewriter,
             ):
                 rewritten = self._maybe_rewrite_stream_action(stream_action, ctx)
                 action_to_yield = rewritten or stream_action
@@ -2821,7 +3919,9 @@ class AgenticNode(Node):
 
                 yield action_to_yield
         finally:
+            ACTIVE_RESULT_STORE.reset(result_store_token)
             self._current_action_history = None
+            self._active_context_rewriter = None
 
     # ── optional hooks (subclasses override as needed) ──────────────────
 
@@ -2859,10 +3959,8 @@ class AgenticNode(Node):
     def _compose_run_hooks(self, ctx: "StreamRunContext") -> Any:
         """Hook: compose the final ``hooks`` argument passed to the model.
 
-        Default: include ``self.hooks`` (typically a ``GenerationHooks``
-        instance for todo/plan workflow nodes) only in interactive mode;
-        otherwise return permission hooks alone. This covers SqlSummary,
-        Feedback, GenSemanticModel, and GenMetrics out of the box.
+        Default: include ``self.hooks`` only in interactive mode;
+        otherwise return permission hooks alone.
 
         Subclasses with non-``self.hooks`` extras (Deliverable's
         ``_validation_hook``) override to call ``self._compose_hooks(extra)``
@@ -3021,14 +4119,17 @@ class AgenticNode(Node):
         call overwrites it.
         """
         self.running_turn_usage = None
+        self._context_state = None
         self._restored_context_used = 0
-        self._restored_context_length = 0
         if not self.session_id:
             return
         try:
             sm = getattr(self, "session_manager", None)
             if sm is not None and hasattr(sm, "clear_running_turn_usage"):
                 sm.clear_running_turn_usage(self.session_id)
+                from datus.storage.session_state import ContextState
+
+                sm.save_context_state(self.session_id, ContextState())
         except Exception:  # noqa: BLE001 — cleanup must never crash node logic
             logger.debug("Failed to clear running_turn_usage for %s", self.session_id, exc_info=True)
         try:
@@ -3080,7 +4181,11 @@ class AgenticNode(Node):
             "token_count": current_tokens,
             "action_count": len(self.actions),
             "context_usage_ratio": current_tokens / self.context_length if self.context_length else 0,
-            "context_remaining": self.context_length - current_tokens if self.context_length else 0,
+            "context_remaining": (
+                max(0, self.context_length - current_tokens)
+                if self.context_length and self.get_context_usage().last_call_input_tokens
+                else 0
+            ),
             "context_length": self.context_length,
         }
 
@@ -3111,8 +4216,8 @@ class AgenticNode(Node):
                 usage_dict = action.output["usage"]
                 return _TokenUsage.from_usage_dict(
                     usage_dict,
-                    session_total_tokens=usage_dict.get("last_call_input_tokens", 0)
-                    or usage_dict.get("input_tokens", 0),
+                    session_total_tokens=self.get_context_usage().last_call_input_tokens,
+                    context_usage_valid=self.get_context_usage().last_call_input_tokens > 0,
                     context_length=self.context_length or 0,
                 )
         return None
@@ -3166,6 +4271,32 @@ class AgenticNode(Node):
             return False
         return bool(self.agent_config.filesystem_strict)
 
+    def _with_loaded_skill_roots(self, allowlist: Optional["PathAllowlist"] = None) -> Optional["PathAllowlist"]:
+        from datus.tools.func_tool.fs_path_policy import PathAllowlist
+
+        manager = getattr(self, "skill_manager", None)
+        roots = getattr(manager, "loaded_skill_roots", ()) if manager else ()
+        if not roots:
+            return allowlist or None
+        base = allowlist or PathAllowlist()
+        return PathAllowlist(read=tuple(dict.fromkeys([*base.read, *sorted(roots)])), write=base.write)
+
+    def _resolve_filesystem_allowlist(self) -> Optional["PathAllowlist"]:
+        """Configured roots plus read-only bundles of skills loaded by this node."""
+        allowlist = getattr(self.agent_config, "filesystem_allowlist", None) if self.agent_config else None
+        return self._with_loaded_skill_roots(allowlist)
+
+    def _resolve_config_mutable(self) -> bool:
+        """Whether the agent may edit the agent config file (agent.yml).
+
+        Reads ``self.agent_config.config_mutable`` (default ``True``). The
+        chat API / gateway set it to ``False`` on their per-request config
+        clone so config-editing setup skills are hidden and refused.
+        """
+        if not self.agent_config:
+            return True
+        return bool(getattr(self.agent_config, "config_mutable", True))
+
     def _make_filesystem_tool(self, **kwargs):
         """Construct a ``FilesystemFuncTool`` with this node's identity baked in.
 
@@ -3194,12 +4325,15 @@ class AgenticNode(Node):
             strict = self._resolve_filesystem_strict()
         current_node = kwargs.pop("current_node", None) or self.get_node_name()
         session_data_dir = kwargs.pop("session_data_dir", None) or self._resolve_session_data_dir()
+        path_allowlist = kwargs.pop("path_allowlist", None) or self._resolve_filesystem_allowlist()
         return FilesystemFuncTool(
             root_path=root_path,
             current_node=current_node,
             datus_home=datus_home,
             strict=strict,
             session_data_dir=session_data_dir,
+            path_allowlist=path_allowlist,
+            path_allowlist_provider=lambda: self._with_loaded_skill_roots(path_allowlist),
             **kwargs,
         )
 
@@ -3284,6 +4418,8 @@ class AgenticNode(Node):
                 datus_home=_Path(path_manager.datus_home),
                 strict=self._resolve_filesystem_strict(),
                 session_data_dir=session_data_dir,
+                allowlist=self._resolve_filesystem_allowlist(),
+                allowlist_provider=self._resolve_filesystem_allowlist,
             )
         except Exception as e:
             logger.debug(f"Failed to build FilesystemPolicy: {e}")
@@ -3328,7 +4464,7 @@ class AgenticNode(Node):
         Prefers ``all_tools_name()`` (the full surface, independent of
         runtime availability) over ``available_tools()`` so the registry
         also covers method-level wrappers some nodes mount directly (e.g.
-        ``DBFuncTool.execute_ddl`` on gen_job) and conditional tools that
+        ``DBFuncTool.transfer_query_result`` on gen_job) and conditional tools that
         appear only with certain configs. Registering a superset is safe:
         the registry is a name → category lookup consulted per call, so
         names that are never mounted are never queried.
@@ -3400,6 +4536,8 @@ class AgenticNode(Node):
 
             # Never call ``_get_or_create_broker`` here — it resets the queue
             # and orphans any parent CLI listener when running as a sub-agent.
+            from datus.tools.permission.auto_reviewer import create_auto_reviewer
+
             self.permission_hooks = PermissionHooks(
                 broker=self.interaction_broker,
                 permission_manager=self.permission_manager,
@@ -3408,6 +4546,10 @@ class AgenticNode(Node):
                 fs_policy=self._make_filesystem_policy(),
                 non_interactive=non_interactive,
                 proxied_tool_names=self.proxied_tool_names,
+                project_root=getattr(self.agent_config, "project_root", None),
+                config_mutable=self._resolve_config_mutable(),
+                auto_reviewer=create_auto_reviewer(self.agent_config),
+                review_context_provider=self._build_permission_review_context,
             )
             logger.debug(
                 f"PermissionHooks attached to node '{self.get_node_name()}' "
@@ -3425,6 +4567,112 @@ class AgenticNode(Node):
             raise DatusException(
                 code=ErrorCode.COMMON_CONFIG_ERROR,
                 message_args={"config_error": f"Permission hook setup failed for {self.get_node_name()}: {e}"},
+            ) from e
+
+    def _build_permission_review_context(self) -> Dict[str, Any]:
+        """Return minimal permission-review evidence without tool outputs.
+
+        User actions are trusted authorization evidence. Bash/SQL call
+        arguments are retained only as explicitly-labelled untrusted history;
+        assistant prose and every tool result are omitted.
+        """
+        combined: List[ActionHistory] = list(self.actions)
+        current = getattr(self, "_current_action_history", None)
+        if current is not None:
+            combined.extend(current.get_actions())
+
+        seen: Set[str] = set()
+        user_messages: List[str] = []
+        prior_actions: List[Dict[str, Any]] = []
+        for action in combined:
+            if action.action_id in seen:
+                continue
+            seen.add(action.action_id)
+            role = ActionRole(action.role)
+            if role == ActionRole.USER:
+                payload = action.input if isinstance(action.input, dict) else {}
+                message = payload.get("user_message") or action.messages
+                if isinstance(message, str) and message.strip():
+                    user_messages.append(message.removeprefix("User: ").strip())
+                continue
+            if role != ActionRole.TOOL:
+                continue
+            tool_name = action.action_type or action.function_name()
+            if tool_name not in {"bash", "execute_sql"}:
+                continue
+            payload = action.input if isinstance(action.input, dict) else {}
+            arguments: Any = payload.get("arguments", payload)
+            if isinstance(arguments, str):
+                try:
+                    arguments = json.loads(arguments)
+                except (json.JSONDecodeError, TypeError):
+                    arguments = {"raw": arguments}
+            prior_actions.append({"tool": tool_name, "arguments": arguments})
+
+        sandbox = getattr(self.agent_config, "bash_sandbox", None)
+        return {
+            "trusted_user_messages": user_messages,
+            "prior_actions": prior_actions,
+            "environment": {
+                "session_id": self.session_id,
+                "sandbox_enabled": bool(getattr(sandbox, "enabled", False)),
+                "sandbox_mode": getattr(sandbox, "mode", None),
+            },
+        }
+
+    def _ensure_tool_transformers(self) -> None:
+        """Wrap ``self.tools`` with plugin-declared argument transformers, once.
+
+        Invoked lazily from :meth:`_compose_hooks` so wrapping happens after
+        ``setup_tools`` and any ``apply_proxy_tools`` rewrite (proxied tools
+        are skipped — they execute client-side). Idempotent via a flag so a
+        node reused across turns never double-wraps.
+
+        Gated by ``agent.plugins_enabled`` like every other plugin surface.
+        Collection failures are swallowed inside the registry (a broken plugin
+        must not break the agent), but once a plugin *has* declared
+        transformers, a failure to apply them raises: transformers are policy
+        code, and running without them would silently drop enforcement.
+        """
+        # Defensive getattr: test doubles that bypass ``AgenticNode.__init__``
+        # may carry neither the flag nor an agent_config (same rationale as the
+        # ``interaction_broker`` getattr in ``_stream_once``).
+        if getattr(self, "_tool_transformers_applied", False):
+            return
+        if not getattr(getattr(self, "agent_config", None), "plugins_enabled", True):
+            self._tool_transformers_applied = True
+            return
+        from datus.plugins.registry import collect_plugin_tool_transformers
+
+        agent_config = getattr(self, "agent_config", None)
+        active_names = agent_config.active_plugin_names() if hasattr(agent_config, "active_plugin_names") else None
+        transformers_by_pattern = collect_plugin_tool_transformers(active_names)
+        if not transformers_by_pattern:
+            self._tool_transformers_applied = True
+            return
+        try:
+            from datus.tools.middleware import apply_tool_transformers
+
+            wrapped = apply_tool_transformers(self, transformers_by_pattern)
+            logger.debug(
+                "Applied plugin tool transformers on node '%s': %d tool(s) wrapped",
+                self.get_node_name(),
+                wrapped,
+            )
+            # Only mark applied on success: setting the flag before the
+            # attempt would turn the fail-closed raise below into fail-open
+            # on the next turn (the early return above would skip wrapping
+            # entirely and matched tools would run unenforced).
+            self._tool_transformers_applied = True
+        except Exception as e:
+            # Fail closed: a declared transformer that cannot be applied means
+            # policy enforcement would silently vanish for matched tools.
+            from datus.utils.exceptions import DatusException, ErrorCode
+
+            logger.exception("Failed to apply plugin tool transformers for %s", self.get_node_name())
+            raise DatusException(
+                code=ErrorCode.COMMON_CONFIG_ERROR,
+                message_args={"config_error": f"Tool transformer setup failed for {self.get_node_name()}: {e}"},
             ) from e
 
     @staticmethod
@@ -3463,18 +4711,38 @@ class AgenticNode(Node):
         return 0
 
     @staticmethod
+    def _error_output(error_result: BaseResult, exc: BaseException) -> Dict[str, Any]:
+        """The failed action's output: the error result, plus the model error code if any.
+
+        The code rides on the action rather than on ``BaseResult`` (which
+        forbids extra fields and is dumped by every node), and is what lets a
+        host tell a wrong model name or a rejected key from any other failure.
+        """
+        from datus.models.model_error import classify_model_error
+
+        output = error_result.model_dump()
+        code = classify_model_error(exc)
+        if code is not None:
+            output["error_code"] = code.name
+        return output
+
+    @staticmethod
     def _format_execution_error(exc: BaseException) -> str:
         """Render an exception for error_result / error_action display.
 
         ``DatusException`` carries a structured error code that is normally
         lost when callers fall back to ``str(exc)``. Surface it as
         ``[CODE] <message>`` so logs and SSE error cards remain greppable.
+
+        A provider rejection stringifies as ``Error code: 400 - {<body>}``;
+        only the provider's own message inside that body is shown.
         """
+        from datus.models.model_error import model_error_message
         from datus.utils.exceptions import DatusException
 
         if isinstance(exc, DatusException):
             return f"[{exc.code}] {exc}"
-        return str(exc)
+        return model_error_message(exc) or str(exc)
 
     def _compose_hooks(self, extra: Any = None) -> Any:
         """Combine permission hooks with an optional per-node hook.
@@ -3486,22 +4754,23 @@ class AgenticNode(Node):
         none exist. Callers pass the result directly into
         ``generate_with_tools_stream(hooks=...)``.
 
-        Always wires the ``CompactHook`` in so ``on_tool_end`` increments
-        the rolling-window counter and dispatches major / minor compacts
-        from inside the Runner loop. The hook is cheap to construct (just
-        holds a reference to this node) so we always include it — its
-        ``_decide_compact_mode`` will return ``noop`` when no compact is
-        needed, which is the common case.
+        The per-run ``MidTurnCompactor`` (``_stream_once`` stores it on
+        ``_active_context_rewriter`` for the duration of the call) is wired
+        in too, so its ``on_start`` resets the compaction view whenever the
+        model layer starts a new SDK run. Compaction itself is not hook
+        driven: the compactor is consulted by the model layer before every
+        model call (``call_model_input_filter`` / the native loop).
 
         ``TokenUsageHook`` is also wired in so each LLM call's ``on_llm_end``
         publishes a ``token_usage`` action mid-turn (see
         ``datus/agent/node/token_usage_hook.py``).
         """
         self._ensure_permission_hooks()
-        compact_hook = self._get_or_create_compact_hook()
+        self._ensure_tool_transformers()
+        context_rewriter = getattr(self, "_active_context_rewriter", None)
         token_usage_hook = self._get_or_create_token_usage_hook()
 
-        active = [h for h in (extra, self.permission_hooks, compact_hook, token_usage_hook) if h is not None]
+        active = [h for h in (extra, self.permission_hooks, context_rewriter, token_usage_hook) if h is not None]
         if not active:
             return None
         if len(active) == 1:
@@ -3562,29 +4831,3 @@ class AgenticNode(Node):
             callback()
         except Exception:  # noqa: BLE001 — never crash the run loop
             logger.debug("Status dirty callback raised", exc_info=True)
-
-    def _get_or_create_compact_hook(self) -> Any:
-        """Lazily build the ``CompactHook`` for this node.
-
-        Construction is deferred to first SDK call so test harnesses that
-        bypass ``__init__`` don't trip on a missing attribute, and so the
-        hook is only created in the loop where it will actually be used.
-
-        Returns ``None`` when the compact subsystem is disabled in config
-        (both ``major.enabled`` and ``minor.enabled`` off). Enabled for all
-        ``execution_mode`` values: ``cfg.*.enabled`` is the real gate, so
-        workflow callers that span multiple turns (API chat resume, sub-agents
-        with shared session_id) still get rolling-window compaction.
-        """
-        self._ensure_compact_state()
-        cfg = self._compact_cfg
-        if not (cfg.major.enabled or cfg.minor.enabled):
-            return None
-        existing = getattr(self, "_compact_hook_instance", None)
-        if existing is not None:
-            return existing
-        from datus.agent.node.compact_hook import CompactHook
-
-        hook = CompactHook(self)
-        self._compact_hook_instance = hook
-        return hook

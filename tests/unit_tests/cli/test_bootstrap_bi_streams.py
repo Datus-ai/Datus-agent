@@ -16,7 +16,7 @@ from __future__ import annotations
 from pathlib import Path
 from types import SimpleNamespace
 from typing import AsyncGenerator
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 import yaml
@@ -52,7 +52,6 @@ def agent_config(tmp_path: Path) -> SimpleNamespace:
             sql_summary_path=lambda: tmp_path / "summaries",
             subject_dir=tmp_path / "subject",
         ),
-        resolve_semantic_adapter=lambda x: x,
     )
 
 
@@ -89,7 +88,7 @@ async def test_stream_bi_metadata_yields_entry_exit_messages(agent_config) -> No
 
     with (
         patch("datus.storage.schema_metadata.local_init.init_local_schema_async", side_effect=_ok),
-        patch("datus.storage.schema_metadata.store.SchemaWithValueRAG"),
+        patch("datus.storage.schema_metadata.create_metadata_rag", return_value=MagicMock()),
         patch("datus.tools.db_tools.db_manager.db_manager_instance"),
     ):
         actions = await _consume(stream_bi_metadata(agent_config, table_names=["t1", "t2"]))
@@ -107,7 +106,7 @@ async def test_stream_bi_metadata_yields_failed_on_helper_exception(agent_config
 
     with (
         patch("datus.storage.schema_metadata.local_init.init_local_schema_async", side_effect=_boom),
-        patch("datus.storage.schema_metadata.store.SchemaWithValueRAG"),
+        patch("datus.storage.schema_metadata.create_metadata_rag", return_value=MagicMock()),
         patch("datus.tools.db_tools.db_manager.db_manager_instance"),
     ):
         actions = await _consume(stream_bi_metadata(agent_config, table_names=["t1"]))
@@ -236,8 +235,11 @@ async def test_stream_bi_semantic_model_skips_when_no_sqls(agent_config, state) 
 
 @pytest.mark.asyncio
 async def test_stream_bi_semantic_model_sets_semantic_ok_on_validation_success(agent_config, state) -> None:
+    calls: list[tuple] = []
+
     async def _ok_async(*_a, **_k):
-        return True, ""
+        calls.append((_a, _k))
+        return True, "", {"semantic_models": []}
 
     validation_scopes: list[str] = []
 
@@ -247,7 +249,7 @@ async def test_stream_bi_semantic_model_sets_semantic_ok_on_validation_success(a
 
     with (
         patch(
-            "datus.storage.semantic_model.semantic_model_init.init_success_story_semantic_model_async",
+            "datus.storage.semantic_model.semantic_modeling_init.init_success_story_semantic_modeling_async",
             side_effect=_ok_async,
         ),
         patch(
@@ -266,18 +268,19 @@ async def test_stream_bi_semantic_model_sets_semantic_ok_on_validation_success(a
         )
 
     assert state.semantic_ok is True
-    assert validation_scopes == ["semantic_model"]
+    assert validation_scopes == ["all"]
+    assert calls[0][0][2] == ["superset", "sales"]
     assert any("validated" in a.messages.lower() for a in actions)
 
 
 @pytest.mark.asyncio
 async def test_stream_bi_semantic_model_keeps_semantic_ok_false_on_validation_failure(agent_config, state) -> None:
     async def _ok_async(*_a, **_k):
-        return True, ""
+        return True, "", {"semantic_models": []}
 
     with (
         patch(
-            "datus.storage.semantic_model.semantic_model_init.init_success_story_semantic_model_async",
+            "datus.storage.semantic_model.semantic_modeling_init.init_success_story_semantic_modeling_async",
             side_effect=_ok_async,
         ),
         patch(
@@ -300,7 +303,7 @@ async def test_stream_bi_semantic_model_keeps_semantic_ok_false_on_validation_fa
 
 
 # ─────────────────────────────────────────────────────────────────
-# stream_bi_metrics
+# unified metric collection
 # ─────────────────────────────────────────────────────────────────
 
 
@@ -315,63 +318,46 @@ async def test_stream_bi_metrics_skips_when_no_sqls(agent_config, state) -> None
             state=state,
         )
     )
-    assert actions[0].status == ActionStatus.FAILED.value
+    assert actions[0].status == ActionStatus.SUCCESS.value
+    assert "no separate metrics step" in actions[0].messages
     assert state.metrics == []
 
 
-@pytest.mark.asyncio
-async def test_stream_bi_metrics_collects_metric_identifiers(agent_config, state, tmp_path: Path) -> None:
+@pytest.mark.parametrize("single_mapping", [False, True])
+def test_collects_dosi_metric_identifiers(agent_config, tmp_path: Path, single_mapping: bool) -> None:
     semantic_dir = tmp_path / "subject" / "semantic_models" / "metrics"
     semantic_dir.mkdir(parents=True)
     yaml_file = semantic_dir / "orders.yml"
+    semantic_model = {
+        "name": "commerce",
+        "datasets": [{"name": "orders", "source": "orders"}],
+        "metrics": [
+            {
+                "name": "total_orders",
+                "expression": {"dialects": [{"dialect": "ANSI_SQL", "expression": "COUNT(*)"}]},
+                "custom_extensions": [
+                    {
+                        "vendor_name": "DATUS",
+                        "data": '{"dataset":"orders","subject_path":["superset","sales"]}',
+                    }
+                ],
+            }
+        ],
+    }
     yaml_file.write_text(
         yaml.safe_dump(
             {
-                "metric": {
-                    "name": "total_orders",
-                    "locked_metadata": {"tags": ["subject_tree:superset/sales"]},
-                }
+                "version": "0.2.0.dev0",
+                "semantic_model": semantic_model if single_mapping else [semantic_model],
             }
         ),
         encoding="utf-8",
     )
 
-    async def _ok_metrics(*_a, **_k):
-        return True, "", {"semantic_models": ["semantic_models/metrics/orders.yml"]}
+    with patch("datus.storage.artifact_path.resolve_kb_sandbox_path", return_value=str(yaml_file)):
+        metrics = _collect_metrics_from_semantic_models(["semantic_models/metrics/orders.yml"], agent_config)
 
-    validation_scopes: list[str] = []
-
-    def _validate(_agent_config, *, scope: str = "all"):
-        validation_scopes.append(scope)
-        return True, None
-
-    with (
-        patch(
-            "datus.storage.metric.metric_init.init_success_story_metrics_async",
-            side_effect=_ok_metrics,
-        ),
-        patch(
-            "datus.cli.bootstrap_bi_streams._validate_semantic_model_sync",
-            side_effect=_validate,
-        ),
-        patch(
-            "datus.cli.generation_hooks.resolve_kb_sandbox_path",
-            return_value=str(yaml_file),
-        ),
-    ):
-        actions = await _consume(
-            stream_bi_metrics(
-                agent_config,
-                sqls=[_candidate()],
-                platform="superset",
-                dashboard_name="Sales",
-                state=state,
-            )
-        )
-
-    assert state.metrics == ["superset.sales.total_orders"]
-    assert validation_scopes == ["all"]
-    assert any("Collected 1 metric" in a.messages for a in actions)
+    assert metrics == ["superset.sales.total_orders"]
 
 
 def test_validate_semantic_model_sync_passes_requested_scope(agent_config, monkeypatch) -> None:
@@ -394,59 +380,8 @@ def test_validate_semantic_model_sync_passes_requested_scope(agent_config, monke
     assert validation_scopes == ["semantic_model"]
 
 
-@pytest.mark.asyncio
-async def test_stream_bi_metrics_does_not_collect_when_helper_fails(agent_config, state) -> None:
-    async def _bad_metrics(*_a, **_k):
-        return False, "model error", None
-
-    with patch(
-        "datus.storage.metric.metric_init.init_success_story_metrics_async",
-        side_effect=_bad_metrics,
-    ):
-        await _consume(
-            stream_bi_metrics(
-                agent_config,
-                sqls=[_candidate()],
-                platform="superset",
-                dashboard_name="Sales",
-                state=state,
-            )
-        )
-
-    assert state.metrics == []
-
-
-@pytest.mark.asyncio
-async def test_stream_bi_metrics_aborts_collection_on_post_validation_failure(agent_config, state) -> None:
-    async def _ok_metrics(*_a, **_k):
-        return True, "", {"semantic_models": ["x.yml"]}
-
-    with (
-        patch(
-            "datus.storage.metric.metric_init.init_success_story_metrics_async",
-            side_effect=_ok_metrics,
-        ),
-        patch(
-            "datus.cli.bootstrap_bi_streams._validate_semantic_model_sync",
-            return_value=(False, "post-fail"),
-        ),
-    ):
-        actions = await _consume(
-            stream_bi_metrics(
-                agent_config,
-                sqls=[_candidate()],
-                platform="superset",
-                dashboard_name="Sales",
-                state=state,
-            )
-        )
-
-    assert state.metrics == []
-    assert any("Metrics validation failed" in a.messages for a in actions)
-
-
 def test_collect_metrics_skips_files_outside_sandbox(agent_config) -> None:
-    with patch("datus.cli.generation_hooks.resolve_kb_sandbox_path", return_value=None):
+    with patch("datus.storage.artifact_path.resolve_kb_sandbox_path", return_value=None):
         out = _collect_metrics_from_semantic_models(["sketchy.yml"], agent_config)
     assert out == []
 
@@ -454,6 +389,6 @@ def test_collect_metrics_skips_files_outside_sandbox(agent_config) -> None:
 def test_collect_metrics_skips_when_yaml_missing_subject(tmp_path: Path, agent_config) -> None:
     yaml_file = tmp_path / "metric.yml"
     yaml_file.write_text(yaml.safe_dump({"metric": {"name": "x", "locked_metadata": {"tags": []}}}), encoding="utf-8")
-    with patch("datus.cli.generation_hooks.resolve_kb_sandbox_path", return_value=str(yaml_file)):
+    with patch("datus.storage.artifact_path.resolve_kb_sandbox_path", return_value=str(yaml_file)):
         out = _collect_metrics_from_semantic_models(["metric.yml"], agent_config)
     assert out == []

@@ -89,7 +89,7 @@ ambiguous.
 ## Tools
 
 Use `describe_table` to introspect the target. Do **not**
-run `read_query` for counting rows or sampling data — out of scope.
+run `execute_sql` for counting rows or sampling data — out of scope.
 
 ## Project-level validation examples
 

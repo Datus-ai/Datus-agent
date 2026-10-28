@@ -8,7 +8,7 @@ from typing import Any, Dict, List, Literal, Optional
 from datus_storage_base.conditions import And, Condition, WhereExpr, eq, like
 
 from datus.configuration.agent_config import AgentConfig
-from datus.schemas.doc_search_node_models import DocNavResult, DocSearchInput, DocSearchResult, GetDocResult
+from datus.schemas.document_search_models import DocNavResult, DocSearchInput, DocSearchResult, GetDocResult
 from datus.storage.document.store import DocumentStore, document_store
 from datus.storage.embedding_diagnostics import is_embedding_unavailable_error
 from datus.tools.base import BaseTool
@@ -475,6 +475,7 @@ def search_by_tavily(
     include_raw_content: Literal[False, "text", "markdown"] = False,
     include_domains: Optional[List[str]] = None,
     api_key: Optional[str] = None,
+    structured: bool = False,
 ) -> DocSearchResult:
     """Search external documents using the Tavily Search API.
 
@@ -498,6 +499,10 @@ def search_by_tavily(
         include_domains: Restrict search to specific domains (max 300),
             e.g. ["docs.snowflake.com", "stackoverflow.com"].
         api_key: Tavily API key. Falls back to TAVILY_API_KEY env var if not provided.
+        structured: When True, ``docs[query]`` holds per-result dicts
+            (``{"title", "url", "snippet", "raw_content"}``) so callers can build
+            the canonical ``web_search`` schema with title/url preserved. When
+            False (default), ``docs[query]`` holds plain text blobs (legacy).
 
     Returns:
         DocSearchResult with matched documents.
@@ -543,10 +548,30 @@ def search_by_tavily(
         response.raise_for_status()
 
         result = response.json()
-        texts = [(item.get("raw_content") or item.get("content") or "") for item in result.get("results", [])]
+        raw_results = result.get("results", [])
+        answer = result.get("answer")
+
+        if structured:
+            # Preserve per-result title/url/snippet so callers can build the
+            # canonical web_search schema. The synthesized ``answer`` is NOT a
+            # search result and is intentionally dropped here: including it as a
+            # title-less row would inflate ``result_count`` and diverge from
+            # provider-native backends (which surface only real results).
+            items: List[Dict[str, Any]] = []
+            for item in raw_results:
+                items.append(
+                    {
+                        "title": item.get("title") or "",
+                        "url": item.get("url") or "",
+                        "snippet": item.get("content") or "",
+                        "raw_content": item.get("raw_content") or "",
+                    }
+                )
+            return DocSearchResult(success=True, docs={query: items}, doc_count=len(items))
+
+        texts = [(item.get("raw_content") or item.get("content") or "") for item in raw_results]
 
         # Prepend the generated answer if available
-        answer = result.get("answer")
         if answer:
             texts.insert(0, answer)
 

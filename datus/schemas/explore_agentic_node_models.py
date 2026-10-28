@@ -14,10 +14,11 @@ from typing import List, Optional
 
 from pydantic import Field
 
-from datus.schemas.base import BaseInput, BaseResult
+from datus.schemas.at_context import AtContextInput
+from datus.schemas.base import BaseResult
 
 
-class ExploreNodeInput(BaseInput):
+class ExploreNodeInput(AtContextInput):
     """
     Input model for ExploreAgenticNode interactions.
     """

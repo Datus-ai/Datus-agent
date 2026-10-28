@@ -3,19 +3,40 @@ API routes for Table and SemanticModel endpoints.
 """
 
 import asyncio
+from typing import Optional
 
 from fastapi import APIRouter, Query
 
 from datus.api.deps import ServiceDep
 from datus.api.models.base_models import Result
 from datus.api.models.table_models import (
+    SEMANTIC_MODEL_FILE_DESCRIPTION,
     GetSemanticModelData,
     GetTableDetailData,
-    SemanticModelInput,
+    GetTablesColumnsData,
+    GetTablesColumnsInput,
+    PrepareMetricDefinitionsData,
+    PrepareMetricDefinitionsInput,
+    SaveSemanticModelData,
+    SaveSemanticModelInput,
     ValidateSemanticModelData,
+    ValidateSemanticModelInput,
 )
 
 router = APIRouter(prefix="/api/v1", tags=["table"])
+
+
+@router.post("/semantic_model/prepare", response_model=Result[PrepareMetricDefinitionsData])
+async def prepare_metric_definitions(
+    request: PrepareMetricDefinitionsInput,
+    svc: ServiceDep,
+) -> Result[PrepareMetricDefinitionsData]:
+    """Update candidate computations and validate without persistence or queries."""
+    return await svc.datasource.prepare_metric_definitions(request)
+
+
+# Pre-configured parameter to avoid definition-time evaluation in defaults.
+DATASOURCE_QUERY = Query("", description="Datasource to resolve the table against; empty means the current one")
 
 
 # ========== Table Endpoints ==========
@@ -33,9 +54,27 @@ async def get_table_detail(
         ...,
         description="Full table name e.g. 'production_db.public.frpm' or 'db.schema.table'",
     ),
+    datasource: Optional[str] = DATASOURCE_QUERY,
 ) -> Result[GetTableDetailData]:
     """Get table detail."""
-    return await asyncio.to_thread(svc.datasource.get_table_schema, table)
+    # Normalized here so an omitted query param and an explicit empty one both
+    # mean "the current datasource" to the service.
+    return await asyncio.to_thread(svc.datasource.get_table_schema, table, datasource or None)
+
+
+@router.post(
+    "/table/columns",
+    response_model=Result[GetTablesColumnsData],
+    summary="Get Columns For Multiple Tables",
+    description="Batch-fetch column metadata for a list of tables (autocomplete prefetch). "
+    "Results are cached in memory; tables that fail to resolve are omitted.",
+)
+async def get_tables_columns(
+    request: GetTablesColumnsInput,
+    svc: ServiceDep,
+) -> Result[GetTablesColumnsData]:
+    """Batch table columns."""
+    return await asyncio.to_thread(svc.datasource.get_tables_columns, request.tables, request.datasource)
 
 
 # ========== SemanticModel Endpoints ==========
@@ -45,30 +84,27 @@ async def get_table_detail(
     "/semantic_model",
     response_model=Result[GetSemanticModelData],
     summary="Get Semantic Model",
-    description="Get SemanticModel YAML configuration for a specific table",
+    description="Read one SemanticModel YAML artifact together with its stable identity and revision",
 )
 async def get_semantic_model(
     svc: ServiceDep,
-    table: str = Query(
-        ...,
-        description="Full table name e.g. 'production_db.public.frpm' or 'db.schema.table'",
-    ),
+    semantic_model_file: str = Query(..., description=SEMANTIC_MODEL_FILE_DESCRIPTION),
 ) -> Result[GetSemanticModelData]:
     """Get SemanticModel YAML."""
-    return await asyncio.to_thread(svc.datasource.get_semantic_model, table)
+    return await asyncio.to_thread(svc.datasource.get_semantic_model, semantic_model_file)
 
 
 @router.post(
     "/semantic_model",
-    response_model=Result[dict],
+    response_model=Result[SaveSemanticModelData],
     summary="Save Semantic Model",
-    description="Save or update SemanticModel YAML configuration for a table",
+    description="Atomically save and reconcile one SemanticModel YAML artifact",
 )
 async def save_semantic_model(
-    request: SemanticModelInput,
+    request: SaveSemanticModelInput,
     svc: ServiceDep,
-) -> Result[dict]:
-    """Save SemanticModel YAML."""
+) -> Result[SaveSemanticModelData]:
+    """Save SemanticModel YAML and reconcile its Knowledge Base rows."""
     return await svc.datasource.save_semantic_model(request)
 
 
@@ -76,10 +112,10 @@ async def save_semantic_model(
     "/semantic_model/validate",
     response_model=Result[ValidateSemanticModelData],
     summary="Validate Semantic Model",
-    description="Validate SemanticModel YAML structure and syntax",
+    description="Validate SemanticModel YAML structure and syntax without writing it",
 )
 async def validate_semantic_model(
-    request: SemanticModelInput,
+    request: ValidateSemanticModelInput,
     svc: ServiceDep,
 ) -> Result[ValidateSemanticModelData]:
     """Validate SemanticModel YAML."""

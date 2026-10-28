@@ -32,7 +32,7 @@ The Datus Agent Knowledge Base is a multi-modal intelligence system that transfo
 **Purpose**: Manage and query standardized business KPIs.
 
 - **Stores**: Metric definitions, subject tree categorization
-- **Capabilities**: Direct metric queries via MetricFlow, metrics-first strategy
+- **Capabilities**: Direct metric queries via Dosi, metrics-first strategy
 - **Use**: Consistent reporting, eliminate duplicate SQL, standardized definitions
 
 ### 4. [Reference SQL](reference_sql.md)

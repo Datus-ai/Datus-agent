@@ -8,16 +8,57 @@ Unit tests for datus/models/claude_model.py.
 CI-level: zero external dependencies. Anthropic client and all I/O mocked.
 """
 
+import copy
+import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from agents import Usage
 
-from datus.models.claude_model import ClaudeModel, convert_tools_for_anthropic, wrap_prompt_cache
+from datus.models.claude_model import (
+    ClaudeModel,
+    _anthropic_trace_input,
+    _anthropic_trace_model_config,
+    _anthropic_trace_output,
+    _anthropic_trace_usage,
+    convert_tools_for_anthropic,
+    wrap_prompt_cache,
+)
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+def _content_block(block_type: str, **attrs):
+    """A native Anthropic content block.
+
+    Every real block carries ``type``; a bare ``MagicMock`` does not, and that
+    looseness is what let ``content[0].text`` ship — the fixture answered to
+    any attribute the parser reached for.
+    """
+    block = MagicMock()
+    block.type = block_type
+    for name, value in attrs.items():
+        setattr(block, name, value)
+    return block
+
+
+def _text_block(text: str):
+    return _content_block("text", text=text)
+
+
+def _thinking_block(thinking: str = "considering the request"):
+    """A thinking block, which has ``.thinking`` and no ``.text``.
+
+    ``interleaved-thinking-2025-05-14`` rides in ``OAUTH_BETA_HEADERS``, so a
+    thinking-capable model on the native path leads with one of these.
+    """
+    block = MagicMock(spec=["type", "thinking"])
+    block.type = "thinking"
+    block.thinking = thinking
+    return block
 
 
 def _make_model_config(
@@ -44,6 +85,9 @@ def _make_model_config(
     cfg.retry_interval = 0.0
     cfg.strict_json_schema = True
     cfg.auth_type = auth_type
+    cfg.context_length = None
+    cfg.max_tokens = None
+    cfg.tokenizer_ref = None
     return cfg
 
 
@@ -103,6 +147,70 @@ class TestWrapPromptCache:
         result = wrap_prompt_cache(messages)
         # String content should remain unchanged (not list, so no cache_control added)
         assert result[-1]["content"] == "plain string"
+
+
+class TestAnthropicTraceNormalization:
+    def test_normalizes_input_output_and_usage_without_mutating_request(self):
+        request = {
+            "system": [{"type": "text", "text": "system"}],
+            "messages": [{"role": "user", "content": [{"type": "text", "text": "hello"}]}],
+            "max_tokens": 2048,
+            "temperature": 0.2,
+        }
+        response = _make_response(
+            [
+                _make_text_block("working"),
+                _make_tool_use_block("sync_semantic", "toolu_1", {"model": "orders"}),
+            ],
+            input_tokens=5,
+            output_tokens=7,
+        )
+        response.usage.cache_read_input_tokens = 100
+        response.usage.cache_creation_input_tokens = 20
+
+        traced_input = _anthropic_trace_input(request)
+        traced_output = _anthropic_trace_output(response)
+
+        assert traced_input[0] == {"role": "system", "content": [{"type": "text", "text": "system"}]}
+        assert traced_input[1]["role"] == "user"
+        traced_input[1]["content"][0]["text"] = "changed"
+        assert request["messages"][0]["content"][0]["text"] == "hello"
+        assert traced_output[0]["content"] == "working"
+        assert traced_output[0]["tool_calls"] == [
+            {
+                "id": "toolu_1",
+                "type": "function",
+                "function": {"name": "sync_semantic", "arguments": '{"model": "orders"}'},
+            }
+        ]
+        assert _anthropic_trace_usage(response) == {
+            "requests": 1,
+            "input_tokens": 125,
+            "output_tokens": 7,
+            "total_tokens": 132,
+            "input_tokens_details": {
+                "cache_write_tokens": 20,
+                "cached_tokens": 100,
+            },
+            "output_tokens_details": {"reasoning_tokens": 0},
+        }
+        assert _anthropic_trace_usage(response, cache_write_supported=False) == {
+            "requests": 1,
+            "input_tokens": 125,
+            "output_tokens": 7,
+            "total_tokens": 132,
+            "input_tokens_details": {
+                "cache_write_tokens": 0,
+                "cached_tokens": 100,
+            },
+            "output_tokens_details": {"reasoning_tokens": 0},
+        }
+        assert _anthropic_trace_model_config(request) == {
+            "provider": "anthropic",
+            "system": "anthropic",
+            "max_tokens": 2048,
+            "temperature": 0.2,
+        }
 
 
 # ---------------------------------------------------------------------------
@@ -239,6 +347,33 @@ class TestGetBaseUrl:
         assert model._get_base_url() == "https://api.anthropic.com"
 
 
+class TestSupportsBuiltinWebSearch:
+    """Hosted ``web_search_20250305`` is gated on the official Anthropic host.
+
+    Third-party Claude-compatible proxies (e.g. ``kimi_coding`` at
+    ``api.kimi.com/coding``) share ``type: claude`` but return malformed
+    ``server_tool_use`` blocks for the hosted tool, so it must NOT be injected
+    for them — they fall back to the local Tavily backend.
+    """
+
+    def test_official_anthropic_enables_web_search(self):
+        model = _make_claude_model(_make_model_config(base_url="https://api.anthropic.com"))
+        assert model.supports_builtin_web_search() is True
+
+    def test_default_base_url_enables_web_search(self):
+        # base_url=None resolves to the Anthropic default host.
+        model = _make_claude_model(_make_model_config(base_url=None))
+        assert model.supports_builtin_web_search() is True
+
+    def test_kimi_coding_proxy_disables_web_search(self):
+        model = _make_claude_model(_make_model_config(base_url="https://api.kimi.com/coding/"))
+        assert model.supports_builtin_web_search() is False
+
+    def test_arbitrary_proxy_disables_web_search(self):
+        model = _make_claude_model(_make_model_config(base_url="https://myproxy.example.com/v1"))
+        assert model.supports_builtin_web_search() is False
+
+
 # ---------------------------------------------------------------------------
 # generate (litellm path vs native path)
 # ---------------------------------------------------------------------------
@@ -286,10 +421,8 @@ class TestClaudeModelGenerate:
         cfg = _make_model_config(use_native_api=True)
         model = _make_claude_model(cfg)
 
-        content_block = MagicMock()
-        content_block.text = "native response"
         mock_response = MagicMock()
-        mock_response.content = [content_block]
+        mock_response.content = [_text_block("native response")]
         mock_create = MagicMock(return_value=mock_response)
         model.anthropic_client.messages.create = mock_create
 
@@ -301,10 +434,8 @@ class TestClaudeModelGenerate:
         cfg = _make_model_config(use_native_api=True)
         model = _make_claude_model(cfg)
 
-        content_block = MagicMock()
-        content_block.text = "ok"
         mock_response = MagicMock()
-        mock_response.content = [content_block]
+        mock_response.content = [_text_block("ok")]
         mock_create = MagicMock(return_value=mock_response)
         model.anthropic_client.messages.create = mock_create
 
@@ -327,6 +458,72 @@ class TestClaudeModelGenerate:
 
         result = model.generate("hello")
         assert result == ""
+
+
+class TestNativeThinkingBlocks:
+    """A leading thinking block must not cost us the answer.
+
+    Regression: ``content[0].text`` raised ``'BetaThinkingBlock' object has no
+    attribute 'text'`` and the caller saw a failed request instead of the
+    complete text sitting in the next block. It surfaced as an AI permission
+    review reporting "unavailable", but it breaks every non-streaming native
+    call: OAuth subscription tokens force this path and the client carries
+    ``interleaved-thinking-2025-05-14``, so the server may think whether or not
+    the caller asked it to — ``generate`` never forwards ``enable_thinking``.
+    """
+
+    @staticmethod
+    def _generate(content, prompt="review this"):
+        cfg = _make_model_config(use_native_api=True)
+        model = _make_claude_model(cfg)
+        mock_response = MagicMock()
+        mock_response.content = content
+        model.anthropic_client.messages.create = MagicMock(return_value=mock_response)
+        return model.generate(prompt)
+
+    def test_thinking_block_before_text_still_returns_the_text(self):
+        assert self._generate([_thinking_block(), _text_block('{"decision": "allow"}')]) == '{"decision": "allow"}'
+
+    def test_thinking_only_response_returns_empty_not_an_error(self):
+        """No text to return, but a truncated think must not raise."""
+        assert self._generate([_thinking_block()]) == ""
+
+    def test_redacted_thinking_block_is_skipped(self):
+        redacted = MagicMock(spec=["type", "data"])
+        redacted.type = "redacted_thinking"
+        redacted.data = "encrypted"
+
+        assert self._generate([redacted, _text_block("answer")]) == "answer"
+
+    def test_tool_use_block_is_skipped(self):
+        tool_use = MagicMock(spec=["type", "id", "name", "input"])
+        tool_use.type = "tool_use"
+
+        assert self._generate([_text_block("answer"), tool_use]) == "answer"
+
+    def test_multiple_text_blocks_are_joined(self):
+        assert self._generate([_text_block("first"), _text_block("second")]) == "first\nsecond"
+
+    def test_empty_text_block_does_not_add_a_blank_line(self):
+        assert self._generate([_text_block(""), _text_block("only")]) == "only"
+
+    def test_none_content_returns_empty(self):
+        assert self._generate(None) == ""
+
+    def test_json_survives_the_reviewer_round_trip(self):
+        """The concrete failure: a verdict that never reached the reviewer."""
+        import json
+
+        verdict = {
+            "risk_level": "low",
+            "user_authorization": "high",
+            "decision": "allow",
+            "confidence": 0.97,
+            "rationale": "deletes a temp dir, regenerable",
+        }
+        raw = self._generate([_thinking_block(), _text_block(json.dumps(verdict))])
+
+        assert json.loads(raw) == verdict
 
 
 # ---------------------------------------------------------------------------
@@ -718,6 +915,37 @@ def _make_tool_use_block(name="read_query", block_id="tool_1", input_data=None):
     return block
 
 
+def _make_server_tool_use_block(block_id="srv_1", name="web_search", input_data=None):
+    """A server_tool_use block whose model_dump carries an output-only
+    ``citations`` field (as the streaming accumulator attaches it)."""
+    block = MagicMock()
+    block.type = "server_tool_use"
+    block.id = block_id
+    block.name = name
+    block.input = input_data or {"query": "datus"}
+    block.model_dump = lambda mode="json": {
+        "type": "server_tool_use",
+        "id": block_id,
+        "name": name,
+        "input": block.input,
+        "citations": None,
+    }
+    return block
+
+
+def _make_web_search_result_block(tool_use_id="srv_1"):
+    block = MagicMock()
+    block.type = "web_search_tool_result"
+    block.tool_use_id = tool_use_id
+    block.model_dump = lambda mode="json": {
+        "type": "web_search_tool_result",
+        "tool_use_id": tool_use_id,
+        "content": [{"type": "web_search_result", "title": "t", "url": "https://x"}],
+        "cache_control": {"type": "ephemeral"},
+    }
+    return block
+
+
 def _make_response(content_blocks, input_tokens=100, output_tokens=50):
     response = MagicMock()
     response.content = content_blocks
@@ -763,6 +991,105 @@ class TestGenerateWithMcpStream:
         assert "hello world" in actions[0].output["raw_output"]
 
     @pytest.mark.asyncio
+    async def test_web_search_only_turn_persists_sanitized_server_blocks(self):
+        """A web_search-only completion (no local tool_use) must enable the
+        server-side web_search tool and persist its sanitized server_tool_use /
+        web_search_tool_result blocks into the session on the break path."""
+        from datus.schemas.action_history import ActionHistoryManager
+
+        cfg = _make_model_config(use_native_api=True)
+        model = _make_claude_model(cfg)
+
+        message_blocks = [
+            _make_server_tool_use_block("srv_1"),
+            _make_web_search_result_block("srv_1"),
+            _make_text_block("Here is what I found."),
+        ]
+        model.anthropic_client.messages.create.return_value = _make_response(message_blocks)
+
+        session = AsyncMock()
+        ahm = ActionHistoryManager()
+        captured_tools = {}
+        with patch("datus.models.claude_model.multiple_mcp_servers") as mock_mcp:
+            mock_mcp.return_value.__aenter__ = AsyncMock(return_value={})
+            mock_mcp.return_value.__aexit__ = AsyncMock(return_value=False)
+            async for _ in model._generate_with_mcp_stream(
+                prompt="search the web",
+                mcp_servers={},
+                instruction="sys",
+                output_type={},
+                builtin_web_tools={"web_search": True, "web_fetch": True},
+                session=session,
+                action_history_manager=ahm,
+            ):
+                pass
+            captured_tools = model.anthropic_client.messages.create.call_args.kwargs.get("tools", [])
+
+        # The hosted web_search tool is enabled; the local-only web_fetch is NOT.
+        tool_types = {t.get("type") for t in captured_tools if isinstance(t, dict)}
+        assert "web_search_20250305" in tool_types
+        assert "web_fetch_20250910" not in tool_types
+
+        # The persisted assistant message keeps the sanitized server blocks
+        # (citations / cache_control stripped to the input schema).
+        session.add_items.assert_awaited()
+        persisted = session.add_items.await_args.args[0]
+        assistant_blocks = [b for m in persisted if m["role"] == "assistant" for b in m["content"]]
+        srv = next(b for b in assistant_blocks if b.get("type") == "server_tool_use")
+        assert set(srv) == {"type", "id", "name", "input"}
+        result = next(b for b in assistant_blocks if b.get("type") == "web_search_tool_result")
+        assert set(result) == {"type", "tool_use_id", "content"}
+
+    @pytest.mark.asyncio
+    async def test_server_tool_use_with_null_id_does_not_crash(self):
+        """Regression: a ``server_tool_use`` block with a missing ``id`` (as
+        ``kimi_coding``'s Anthropic-compatible endpoint returns for the hosted
+        web_search tool) must not crash ActionHistory validation.
+
+        The provider omits ``id`` / ``tool_use_id``, which the SDK parses as
+        ``None``. The post-stream server-tool pass used to build the action with
+        ``action_id=block.id`` (=None) and the dedup-by-id check missed it,
+        raising ``ValidationError: action_id Input should be a valid string``.
+        The fix substitutes a generated ``srv_*`` id so action_id is never None.
+        """
+        from datus.schemas.action_history import ActionHistoryManager, ActionRole
+
+        cfg = _make_model_config(use_native_api=True)
+        model = _make_claude_model(cfg)
+
+        # Mirror the captured kimi response: server_tool_use + result both lack ids.
+        message_blocks = [
+            _make_server_tool_use_block(block_id=None),
+            _make_web_search_result_block(tool_use_id=None),
+            _make_text_block("done"),
+        ]
+        model.anthropic_client.messages.create.return_value = _make_response(message_blocks)
+
+        ahm = ActionHistoryManager()
+        actions = []
+        with patch("datus.models.claude_model.multiple_mcp_servers") as mock_mcp:
+            mock_mcp.return_value.__aenter__ = AsyncMock(return_value={})
+            mock_mcp.return_value.__aexit__ = AsyncMock(return_value=False)
+            # Must not raise pydantic ValidationError.
+            async for action in model._generate_with_mcp_stream(
+                prompt="select 1",
+                mcp_servers={},
+                instruction="sys",
+                output_type={},
+                builtin_web_tools={"web_search": True},
+                action_history_manager=ahm,
+            ):
+                actions.append(action)
+
+        # Every emitted action carries a valid non-None string action_id.
+        assert actions, "expected at least the final assistant action"
+        assert all(isinstance(a.action_id, str) and a.action_id for a in actions)
+        # The server tool was still surfaced with a generated fallback id.
+        tool_actions = [a for a in actions if a.role == ActionRole.TOOL]
+        assert tool_actions, "server_tool_use should still surface as a TOOL action"
+        assert all(a.action_id.startswith(("srv_", "complete_")) for a in tool_actions)
+
+    @pytest.mark.asyncio
     async def test_tool_call_yields_processing_and_success(self):
         """When API returns tool_use, should yield PROCESSING + SUCCESS + final."""
         from datus.schemas.action_history import ActionHistoryManager, ActionRole, ActionStatus
@@ -805,7 +1132,80 @@ class TestGenerateWithMcpStream:
         assert actions[0].action_type == "list_tables"
         assert actions[1].role == ActionRole.TOOL
         assert actions[1].status == ActionStatus.SUCCESS
+        assert actions[1].output["raw_output"] == '["table1", "table2"]'
         assert actions[2].role == ActionRole.ASSISTANT
+
+    @pytest.mark.asyncio
+    async def test_structured_tool_result_uses_canonical_action_output(self):
+        """Structured native-Claude tool results match OpenAI-compatible actions.
+
+        ActionHistory consumers need the FuncToolResult envelope as a mapping,
+        while the Anthropic Messages API must still receive a JSON string in the
+        next turn's tool_result block.
+        """
+        from datus.schemas.action_history import ActionHistoryManager, ActionRole, ActionStatus
+
+        cfg = _make_model_config(use_native_api=True)
+        model = _make_claude_model(cfg)
+
+        tool_block = _make_tool_use_block(
+            name="search_reference_sql", block_id="call_1", input_data={"query": "orders"}
+        )
+        resp_tool = _make_response([tool_block])
+        resp_final = _make_response([_make_text_block("done")])
+        model.anthropic_client.messages.create.side_effect = [resp_tool, resp_final]
+
+        # Real shape: trans_to_function_tool returns FuncToolResult.model_dump(),
+        # an envelope dict whose records live under "result" — not a bare list.
+        records = [
+            {"name": "task:0", "sql": "SELECT 1", "summary": "x", "tags": [], "source_context_id": "refsql:task:0"},
+            {"name": "task:9", "sql": "SELECT 2", "summary": "y", "tags": [], "source_context_id": "refsql:task:9"},
+        ]
+        envelope = {"success": 1, "error": None, "result": records}
+        func_tool = MagicMock()
+        func_tool.name = "search_reference_sql"
+        func_tool.description = "Search reference SQL"
+        func_tool.params_json_schema = {"type": "object"}
+        func_tool.on_invoke_tool = AsyncMock(return_value=envelope)
+
+        ahm = ActionHistoryManager()
+        actions = []
+        with patch("datus.models.claude_model.multiple_mcp_servers") as mock_mcp:
+            mock_mcp.return_value.__aenter__ = AsyncMock(return_value={})
+            mock_mcp.return_value.__aexit__ = AsyncMock(return_value=False)
+            async for action in model._generate_with_mcp_stream(
+                prompt="test",
+                mcp_servers={},
+                instruction="sys",
+                output_type={},
+                func_tools=[func_tool],
+                action_history_manager=ahm,
+            ):
+                actions.append(action)
+
+        success = [a for a in actions if a.role == ActionRole.TOOL and a.status == ActionStatus.SUCCESS]
+        assert len(success) == 1
+        output = success[0].output
+
+        assert output["raw_output"] == envelope
+
+        # Keep the unwrapped records for existing provenance consumers.
+        assert output.get("result") == records
+        ids = [item["source_context_id"] for item in output["result"]]
+        assert ids == ["refsql:task:0", "refsql:task:9"]
+
+        # The provider-facing replay remains a string even though ActionHistory is
+        # structured, so this change does not alter the Anthropic wire contract.
+        second_turn_messages = model.anthropic_client.messages.create.call_args_list[1].kwargs["messages"]
+        tool_result = next(
+            block
+            for message in second_turn_messages
+            if message.get("role") == "user" and isinstance(message.get("content"), list)
+            for block in message["content"]
+            if block.get("type") == "tool_result"
+        )
+        assert isinstance(tool_result["content"], str)
+        assert json.loads(tool_result["content"]) == envelope
 
     @pytest.mark.asyncio
     async def test_func_tool_receives_tool_call_id_matching_block_id(self):
@@ -1096,11 +1496,11 @@ class TestGenerateWithMcpStream:
         assert session.add_items.await_count == 1
 
     @pytest.mark.asyncio
-    async def test_session_skip_persist_when_final_content_empty(self):
+    async def test_session_checkpoints_and_seals_when_final_content_empty(self):
         """When ``max_turns`` is exhausted while still tool-calling, ``final_content``
-        stays empty. Persisting an empty assistant text block would be rejected by
-        Anthropic on replay (``text content blocks must be non-empty``), so the
-        guard must skip ``add_items`` entirely.
+        stays empty. Every completed tool round must already be durable, and the
+        run must append a non-empty assistant seal so the next user turn replays
+        with valid role alternation.
         """
         from datus.schemas.action_history import ActionHistoryManager
 
@@ -1141,9 +1541,107 @@ class TestGenerateWithMcpStream:
 
         # final_response still yielded so the caller gets a response.
         final = next(a for a in actions if a.action_type == "final_response")
+        assert "max_turns=2" in final.output["raw_output"]
+        # Two complete tool rounds checkpointed, followed by one assistant seal.
+        assert session.add_items.await_count == 3
+        persisted = [item for call in session.add_items.await_args_list for item in call.args[0]]
+        assert persisted[0]["role"] == "user"
+        assert (
+            sum(
+                block.get("type") == "tool_use"
+                for item in persisted
+                for block in item.get("content", [])
+                if isinstance(block, dict)
+            )
+            == 2
+        )
+        assert (
+            sum(
+                block.get("type") == "tool_result"
+                for item in persisted
+                for block in item.get("content", [])
+                if isinstance(block, dict)
+            )
+            == 2
+        )
+        assert persisted[-1]["role"] == "assistant"
+        assert "max_turns=2" in persisted[-1]["content"][0]["text"]
+        assert all(
+            block.get("text", "x") != ""
+            for item in persisted
+            for block in item.get("content", [])
+            if isinstance(block, dict) and block.get("type") == "text"
+        )
+
+    @pytest.mark.asyncio
+    async def test_max_turns_keeps_delta_fragments_out_of_final_response(self):
+        """A final response containing text plus tool_use is incomplete as an
+        agent run. Its model-authored text is streamed and persisted, while the
+        incomplete final_response stays empty. Each delta is one fragment."""
+        from datus.schemas.action_history import ActionHistoryManager
+
+        cfg = _make_model_config(use_native_api=True)
+        model = _make_claude_model(cfg)
+
+        text_start = MagicMock()
+        text_start.type = "text"
+        delta1 = MagicMock(type="text_delta", text="First fragment. ")
+        delta2 = MagicMock(type="text_delta", text="Second fragment.")
+        full_text = "First fragment. Second fragment."
+        final_msg = _make_response([_make_text_block(full_text), _make_tool_use_block()])
+        stream_manager = _FakeAsyncStreamManager(
+            [
+                _FakeStreamEvent("content_block_start", content_block=text_start),
+                _FakeStreamEvent("content_block_delta", delta=delta1),
+                _FakeStreamEvent("content_block_delta", delta=delta2),
+                _FakeStreamEvent("content_block_stop"),
+            ],
+            final_msg,
+        )
+        async_client = MagicMock()
+        async_client.messages.stream = MagicMock(return_value=stream_manager)
+        model.async_anthropic_client = async_client
+
+        func_tool = MagicMock()
+        func_tool.name = "read_query"
+        func_tool.description = ""
+        func_tool.params_json_schema = {"type": "object"}
+        func_tool.on_invoke_tool = AsyncMock(return_value="result")
+        session = MagicMock()
+        session.get_items = AsyncMock(return_value=[])
+        session.add_items = AsyncMock()
+
+        actions = []
+        with patch("datus.models.claude_model.multiple_mcp_servers") as mock_mcp:
+            mock_mcp.return_value.__aenter__ = AsyncMock(return_value={})
+            mock_mcp.return_value.__aexit__ = AsyncMock(return_value=False)
+            async for action in model._generate_with_mcp_stream(
+                prompt="probe",
+                mcp_servers={},
+                instruction="sys",
+                output_type={},
+                max_turns=1,
+                func_tools=[func_tool],
+                action_history_manager=ActionHistoryManager(),
+                session=session,
+            ):
+                actions.append(action)
+
+        deltas = [action for action in actions if action.action_type == "thinking_delta"]
+        assert [action.output["delta"] for action in deltas] == ["First fragment. ", "Second fragment."]
+        final = next(action for action in actions if action.action_type == "final_response")
         assert final.output["raw_output"] == ""
-        # Critically: we must NOT have persisted an empty assistant text block.
-        session.add_items.assert_not_awaited()
+
+        persisted = [item for call in session.add_items.await_args_list for item in call.args[0]]
+        text_blocks = [
+            block["text"]
+            for item in persisted
+            if item.get("role") == "assistant"
+            for block in item.get("content", [])
+            if block.get("type") == "text"
+        ]
+        assert full_text in text_blocks
+        assert any("max_turns=1" in text for text in text_blocks)
 
     @pytest.mark.asyncio
     async def test_prompt_list_variant_is_normalized_to_string(self):
@@ -1350,10 +1848,10 @@ class TestNativeTokenUsageStreaming:
         assert usage.input_tokens_details.cached_tokens == 200
 
     @pytest.mark.asyncio
-    async def test_native_loop_skips_durable_usage_when_no_final_text(self):
+    async def test_native_loop_persists_durable_usage_after_max_turn_seal(self):
         """When the loop exhausts max_turns mid-tool-call (no final text), the
-        session is not persisted — and neither should the usage row be, to
-        avoid a turn_usage row with no matching message."""
+        checkpointed messages are sealed into a valid turn, so cumulative usage
+        should be committed against that durable user turn."""
         from datus.schemas.action_history import ActionHistoryManager
 
         cfg = _make_model_config(use_native_api=True)
@@ -1396,8 +1894,8 @@ class TestNativeTokenUsageStreaming:
             ):
                 pass
 
-        assert stored == [], "no durable usage row when the turn produced no final text"
-        session.add_items.assert_not_awaited()
+        assert len(stored) == 1
+        assert session.add_items.await_count == 3
 
 
 def _make_recorder_hooks():
@@ -1524,10 +2022,11 @@ class TestNativeLoopHooks:
         connected_server.call_tool = AsyncMock(return_value=tool_result)
 
         hooks = _make_recorder_hooks()
+        actions = []
         with patch("datus.models.claude_model.multiple_mcp_servers") as mock_mcp:
             mock_mcp.return_value.__aenter__ = AsyncMock(return_value={"srv": connected_server})
             mock_mcp.return_value.__aexit__ = AsyncMock(return_value=False)
-            async for _ in model._generate_with_mcp_stream(
+            async for action in model._generate_with_mcp_stream(
                 prompt="q",
                 mcp_servers={"srv": MagicMock()},
                 instruction="sys",
@@ -1535,7 +2034,7 @@ class TestNativeLoopHooks:
                 action_history_manager=ActionHistoryManager(),
                 hooks=hooks,
             ):
-                pass
+                actions.append(action)
 
         hooks.on_tool_start.assert_awaited_once()
         _ctx, _agent, ts_tool = hooks.on_tool_start.await_args.args
@@ -1543,9 +2042,12 @@ class TestNativeLoopHooks:
         hooks.on_tool_end.assert_awaited_once()
         assert hooks.on_tool_end.await_args.args[3] == "rows"
         connected_server.call_tool.assert_awaited_once()
+        completed = next(action for action in actions if action.action_id == "complete_call_m")
+        assert completed.output["raw_output"] == "rows"
 
     @pytest.mark.asyncio
-    async def test_denied_tool_aborts_native_loop(self):
+    @pytest.mark.parametrize("entrypoint", ["stream", "nonstream"])
+    async def test_denied_tool_aborts_native_loop(self, entrypoint):
         """on_tool_start raising PermissionDeniedException must propagate out of
         the generator and prevent the tool from running — mirroring the SDK
         path, where a denied tool aborts the run instead of feeding the model a
@@ -1573,16 +2075,25 @@ class TestNativeLoopHooks:
             mock_mcp.return_value.__aenter__ = AsyncMock(return_value={})
             mock_mcp.return_value.__aexit__ = AsyncMock(return_value=False)
             with pytest.raises(PermissionDeniedException):
-                async for action in model._generate_with_mcp_stream(
-                    prompt="q",
-                    mcp_servers={},
-                    instruction="sys",
-                    output_type={},
-                    func_tools=[func_tool],
-                    action_history_manager=ActionHistoryManager(),
-                    hooks=hooks,
-                ):
-                    seen.append(action)
+                if entrypoint == "nonstream":
+                    await model.generate_with_tools(
+                        prompt="q",
+                        mcp_servers={"test": MagicMock()},
+                        instruction="sys",
+                        tools=[func_tool],
+                        hooks=hooks,
+                    )
+                else:
+                    async for action in model._generate_with_mcp_stream(
+                        prompt="q",
+                        mcp_servers={},
+                        instruction="sys",
+                        output_type={},
+                        func_tools=[func_tool],
+                        action_history_manager=ActionHistoryManager(),
+                        hooks=hooks,
+                    ):
+                        seen.append(action)
 
         # Tool never executed; no SUCCESS completion emitted for the block.
         func_tool.on_invoke_tool.assert_not_awaited()
@@ -1718,7 +2229,7 @@ class TestStoreNativeTurnUsage:
     async def test_noop_when_session_is_none(self):
         model = _make_claude_model(_make_model_config(use_native_api=True))
         # No session → nothing to persist; the guard returns None without raising.
-        result = await model._store_native_turn_usage(None, {"total_tokens": 100})
+        result = await model._store_native_turn_usage(None, Usage(total_tokens=100))
         assert result is None
 
     @pytest.mark.asyncio
@@ -1728,11 +2239,11 @@ class TestStoreNativeTurnUsage:
         # it) must trip the guard and no-op rather than AttributeError.
         session = MagicMock(spec=["add_items"])
         assert not hasattr(session, "store_run_usage")
-        result = await model._store_native_turn_usage(session, {"total_tokens": 100})
+        result = await model._store_native_turn_usage(session, Usage(total_tokens=100))
         assert result is None
 
     @pytest.mark.asyncio
-    async def test_builds_usage_and_calls_store_run_usage(self):
+    async def test_passes_sdk_usage_to_store_run_usage(self):
         model = _make_claude_model(_make_model_config(use_native_api=True))
         stored = []
 
@@ -1741,23 +2252,60 @@ class TestStoreNativeTurnUsage:
 
         session = MagicMock()
         session.store_run_usage = _store
-        await model._store_native_turn_usage(
-            session,
-            {
-                "requests": 3,
-                "input_tokens": 52499,
-                "output_tokens": 1932,
-                "total_tokens": 54431,
-                "cached_tokens": 37747,
-                "reasoning_tokens": 0,
-            },
+        usage = model._build_sdk_usage(
+            requests=3,
+            cumulative_input_tokens=52499,
+            cumulative_output_tokens=1932,
+            cache_read_tokens=37747,
+            cache_write_tokens=4096,
+            last_call_input_tokens=18000,
+            last_call_cache_read_tokens=12000,
+            last_call_cache_write_tokens=2048,
         )
+        await model._store_native_turn_usage(session, usage)
         assert len(stored) == 1
-        usage = stored[0]
-        assert usage.input_tokens == 52499
-        assert usage.output_tokens == 1932
-        assert usage.total_tokens == 54431
-        assert usage.input_tokens_details.cached_tokens == 37747
+        stored_usage = stored[0]
+        assert stored_usage is usage
+        assert stored_usage.input_tokens == 52499
+        assert stored_usage.output_tokens == 1932
+        assert stored_usage.total_tokens == 54431
+        assert stored_usage.input_tokens_details.cached_tokens == 37747
+        assert stored_usage.input_tokens_details.cache_write_tokens == 4096
+        assert stored_usage.request_usage_entries[-1].input_tokens_details.cache_write_tokens == 2048
+
+    @pytest.mark.asyncio
+    async def test_custom_endpoint_does_not_persist_cache_write_tokens(self):
+        model = _make_claude_model(
+            _make_model_config(
+                use_native_api=True,
+                base_url="https://proxy.example.com/anthropic",
+            )
+        )
+        stored = []
+
+        async def _store(result):
+            stored.append(result.context_wrapper.usage)
+
+        session = MagicMock()
+        session.store_run_usage = _store
+        usage = model._build_sdk_usage(
+            requests=1,
+            cumulative_input_tokens=5000,
+            cumulative_output_tokens=100,
+            cache_read_tokens=2000,
+            cache_write_tokens=1000,
+            last_call_input_tokens=5000,
+            last_call_cache_read_tokens=2000,
+            last_call_cache_write_tokens=1000,
+        )
+
+        await model._store_native_turn_usage(session, usage)
+
+        [stored_usage] = stored
+        assert stored_usage.input_tokens == 5000
+        assert stored_usage.input_tokens_details.cached_tokens == 2000
+        assert stored_usage.input_tokens_details.cache_write_tokens == 0
+        assert stored_usage.request_usage_entries[-1].input_tokens_details.cache_write_tokens == 0
 
     @pytest.mark.asyncio
     async def test_swallows_store_run_usage_failure(self):
@@ -1772,7 +2320,7 @@ class TestStoreNativeTurnUsage:
         session = MagicMock()
         session.store_run_usage = _boom
         # The warning path must not propagate the exception.
-        await model._store_native_turn_usage(session, {"total_tokens": 100})
+        await model._store_native_turn_usage(session, Usage(total_tokens=100))
         # Storage WAS attempted (and the raised error swallowed), confirming the
         # except branch ran rather than the call being skipped entirely.
         assert len(attempts) == 1
@@ -1863,69 +2411,6 @@ class TestGenerateWithToolsRouting:
 # ---------------------------------------------------------------------------
 # _count_session_tokens fallback
 # ---------------------------------------------------------------------------
-
-
-class TestCountSessionTokensFallback:
-    @pytest.mark.asyncio
-    async def test_uses_last_call_input_tokens_from_latest_action(self):
-        """Primary: uses last_call_input_tokens from the most recent action with usage."""
-        from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
-
-        mock_node = MagicMock()
-        mock_node._session = MagicMock()
-        mock_node.actions = [
-            ActionHistory(
-                action_id="a1",
-                role=ActionRole.ASSISTANT,
-                messages="ok",
-                action_type="final_response",
-                status=ActionStatus.SUCCESS,
-                output={
-                    "raw_output": "answer",
-                    "usage": {"last_call_input_tokens": 500, "input_tokens": 800, "total_tokens": 1200},
-                },
-            ),
-            ActionHistory(
-                action_id="a2",
-                role=ActionRole.ASSISTANT,
-                messages="ok2",
-                action_type="final_response",
-                status=ActionStatus.SUCCESS,
-                output={
-                    "raw_output": "answer2",
-                    "usage": {"last_call_input_tokens": 900, "input_tokens": 1500, "total_tokens": 2000},
-                },
-            ),
-        ]
-
-        from datus.agent.node.agentic_node import AgenticNode
-
-        result = await AgenticNode._count_session_tokens(mock_node)
-        # Should return last_call_input_tokens from the LAST action (900), not sum
-        assert result == 900
-
-    @pytest.mark.asyncio
-    async def test_falls_back_to_input_tokens_when_no_last_call(self):
-        """When last_call_input_tokens is 0, fall back to input_tokens."""
-        from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
-
-        mock_node = MagicMock()
-        mock_node._session = MagicMock()
-        mock_node.actions = [
-            ActionHistory(
-                action_id="a1",
-                role=ActionRole.ASSISTANT,
-                messages="ok",
-                action_type="final_response",
-                status=ActionStatus.SUCCESS,
-                output={"usage": {"last_call_input_tokens": 0, "input_tokens": 999, "total_tokens": 1500}},
-            ),
-        ]
-
-        from datus.agent.node.agentic_node import AgenticNode
-
-        result = await AgenticNode._count_session_tokens(mock_node)
-        assert result == 999
 
 
 class TestInjectOAuthHeaders:
@@ -2276,6 +2761,110 @@ class TestGenerateWithMcpStreamTextDeltas:
         assert "final_response" in persisted_types
 
     @pytest.mark.asyncio
+    async def test_stream_null_id_server_tool_pairs_with_generated_id(self):
+        """Regression: malformed proxies (kimi) stream ``server_tool_use`` /
+        ``web_search_tool_result`` blocks with a null id. The completion must
+        reuse the start's generated ``srv_*`` id instead of collapsing onto
+        ``complete_None`` — otherwise ``ActionHistoryManager.add_action`` dedupes
+        a second null-id search away and the pair never matches the start.
+        """
+        from datus.schemas.action_history import ActionHistoryManager, ActionRole
+
+        cfg = _make_model_config(use_native_api=True)
+        model = _make_claude_model(cfg)
+
+        def _srv_start(name="web_search"):
+            block = MagicMock()
+            block.type = "server_tool_use"
+            block.id = None  # provider omits the id
+            block.name = name
+            block.input = {"query": "datus"}
+            return block
+
+        def _srv_result():
+            block = MagicMock()
+            block.type = "web_search_tool_result"
+            block.tool_use_id = None  # provider omits the id
+            block.content = []
+            return block
+
+        # Two interleaved null-id server searches in one turn.
+        events = [
+            _FakeStreamEvent("content_block_start", content_block=_srv_start()),
+            _FakeStreamEvent("content_block_start", content_block=_srv_result()),
+            _FakeStreamEvent("content_block_start", content_block=_srv_start()),
+            _FakeStreamEvent("content_block_start", content_block=_srv_result()),
+        ]
+        final_msg = _make_response([_make_text_block("done")])
+        stream_manager = _FakeAsyncStreamManager(events, final_msg)
+
+        async_client = MagicMock()
+        async_client.messages.stream = MagicMock(return_value=stream_manager)
+        model.async_anthropic_client = async_client
+
+        ahm = ActionHistoryManager()
+        actions = []
+        with patch("datus.models.claude_model.multiple_mcp_servers") as mock_mcp:
+            mock_mcp.return_value.__aenter__ = AsyncMock(return_value={})
+            mock_mcp.return_value.__aexit__ = AsyncMock(return_value=False)
+            async for action in model._generate_with_mcp_stream(
+                prompt="search the web",
+                mcp_servers={},
+                instruction="sys",
+                output_type={},
+                builtin_web_tools={"web_search": True},
+                action_history_manager=ahm,
+            ):
+                actions.append(action)
+
+        tool_actions = [a for a in actions if a.role == ActionRole.TOOL]
+        # Two starts (srv_*) + two completions (complete_srv_*) all surface.
+        starts = [a for a in tool_actions if a.action_id.startswith("srv_")]
+        completes = [a for a in tool_actions if a.action_id.startswith("complete_")]
+        assert len(starts) == 2
+        assert len(completes) == 2
+        # No action_id is None or collapses onto the bare ``complete_None`` id.
+        assert all(isinstance(a.action_id, str) and a.action_id for a in actions)
+        assert all(a.action_id != "complete_None" for a in completes)
+        # Each completion pairs with a distinct start's generated id.
+        assert {c.action_id for c in completes} == {f"complete_{s.action_id}" for s in starts}
+
+    @pytest.mark.asyncio
+    async def test_stream_proxy_endpoint_does_not_inject_hosted_web_search(self):
+        """A non-official Claude-compatible proxy (kimi) must NOT receive the
+        hosted ``web_search_20250305`` tool even when ``web_search`` is requested
+        — it falls back to the local Tavily backend instead.
+        """
+        from datus.schemas.action_history import ActionHistoryManager
+
+        cfg = _make_model_config(use_native_api=True, base_url="https://api.kimi.com/coding")
+        model = _make_claude_model(cfg)
+
+        final_msg = _make_response([_make_text_block("done")])
+        stream_manager = _FakeAsyncStreamManager([], final_msg)
+        async_client = MagicMock()
+        async_client.messages.stream = MagicMock(return_value=stream_manager)
+        model.async_anthropic_client = async_client
+
+        ahm = ActionHistoryManager()
+        with patch("datus.models.claude_model.multiple_mcp_servers") as mock_mcp:
+            mock_mcp.return_value.__aenter__ = AsyncMock(return_value={})
+            mock_mcp.return_value.__aexit__ = AsyncMock(return_value=False)
+            async for _ in model._generate_with_mcp_stream(
+                prompt="search the web",
+                mcp_servers={},
+                instruction="sys",
+                output_type={},
+                builtin_web_tools={"web_search": True},
+                action_history_manager=ahm,
+            ):
+                pass
+
+        captured_tools = async_client.messages.stream.call_args.kwargs.get("tools", [])
+        tool_types = {t.get("type") for t in captured_tools if isinstance(t, dict)}
+        assert "web_search_20250305" not in tool_types
+
+    @pytest.mark.asyncio
     async def test_interrupt_during_stream_raises_execution_interrupted(self):
         """When ``interrupt_controller.is_interrupted`` is True during the stream
         loop, the generator must raise ``ExecutionInterrupted`` so the caller can
@@ -2586,7 +3175,7 @@ class TestAnthropicMessagesStream:
 
         result = model._anthropic_messages_stream(model="m", messages=[])
 
-        assert result == "beta-stream-ctx"
+        assert hasattr(result, "__aenter__")
         async_client.beta.messages.stream.assert_called_once()
         async_client.messages.stream.assert_not_called()
 
@@ -2604,7 +3193,7 @@ class TestAnthropicMessagesStream:
 
         result = model._anthropic_messages_stream(model="m", messages=[])
 
-        assert result == "standard-stream-ctx"
+        assert hasattr(result, "__aenter__")
         async_client.messages.stream.assert_called_once()
         async_client.beta.messages.stream.assert_not_called()
 
@@ -2674,3 +3263,680 @@ class TestAcloseAsyncClients:
         assert any("async anthropic client" in w.lower() and "already closed" in w for w in warned), (
             f"Expected warning naming 'async anthropic client' with the underlying error, got: {warned}"
         )
+
+
+# ---------------------------------------------------------------------------
+# ssl_verify (private/self-signed CA support)
+# ---------------------------------------------------------------------------
+
+
+class TestSslVerify:
+    """``ssl_verify`` config wires into both the litellm path (SSL_VERIFY env
+    materialization) and the native Anthropic client (custom httpx http_client)."""
+
+    @pytest.fixture(autouse=True)
+    def _restore_ssl_env(self):
+        import os
+
+        # Clear proxy vars too: a stray HTTP(S)_PROXY in CI/dev shells would make
+        # the native path build a proxy transport and break the "no proxy" /
+        # "no custom client" assertions below.
+        keys = ("SSL_VERIFY", "SSL_CERT_FILE", "HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy")
+        saved = {k: os.environ.get(k) for k in keys}
+        for k in keys:
+            os.environ.pop(k, None)
+        yield
+        for k, v in saved.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+
+    def test_ca_path_builds_native_client_and_materializes_env(self):
+        import os
+
+        cfg = _make_model_config(base_url="https://internal.example.com")
+        cfg.ssl_verify = "/etc/ssl/internal-ca.pem"
+        # Patch the transports so we assert verify propagation without httpx
+        # eagerly validating the (fake) CA path on the filesystem.
+        with (
+            patch("httpx.HTTPTransport") as sync_tx,
+            patch("httpx.AsyncHTTPTransport") as async_tx,
+        ):
+            model = _make_claude_model(cfg)
+
+        assert model.ssl_verify == "/etc/ssl/internal-ca.pem"
+        # litellm path: materialized into the SSL_VERIFY env var.
+        assert os.environ["SSL_VERIFY"] == "/etc/ssl/internal-ca.pem"
+        # native path: a custom httpx client is built once with our verify value.
+        assert sync_tx.call_count == 1
+        assert async_tx.call_count == 1
+        assert sync_tx.call_args.kwargs.get("verify") == "/etc/ssl/internal-ca.pem"
+        assert async_tx.call_args.kwargs.get("verify") == "/etc/ssl/internal-ca.pem"
+        # no proxy configured -> the transport carries no proxy.
+        assert "proxy" not in sync_tx.call_args.kwargs
+
+    def test_pem_content_builds_in_memory_context_and_materializes_file(self):
+        import os
+        import ssl
+
+        from tests.unit_tests.utils.test_ssl_utils import _self_signed_ca_pem
+
+        cfg = _make_model_config(base_url="https://internal.example.com")
+        cfg.ssl_verify = _self_signed_ca_pem()
+        with (
+            patch("httpx.HTTPTransport") as sync_tx,
+            patch("httpx.AsyncHTTPTransport"),
+        ):
+            model = _make_claude_model(cfg)
+
+        # native path: inline PEM -> in-memory SSLContext (no file), passed to httpx.
+        assert isinstance(model.ssl_verify, ssl.SSLContext)
+        assert isinstance(sync_tx.call_args.kwargs.get("verify"), ssl.SSLContext)
+        # litellm path: PEM content spilled to a real CA bundle file on disk.
+        ca_path = os.environ["SSL_VERIFY"]
+        try:
+            assert os.path.exists(ca_path)
+            with open(ca_path, encoding="utf-8") as f:
+                assert f.read() == cfg.ssl_verify
+        finally:
+            os.remove(ca_path)
+
+    def test_ssl_verify_false_materializes_false(self):
+        import os
+
+        cfg = _make_model_config()
+        cfg.ssl_verify = False
+        with (
+            patch("httpx.HTTPTransport") as sync_tx,
+            patch("httpx.AsyncHTTPTransport"),
+        ):
+            model = _make_claude_model(cfg)
+
+        assert model.ssl_verify is False
+        assert os.environ["SSL_VERIFY"] == "false"
+        # verify=False still needs an explicit client carrying verify=False.
+        assert sync_tx.call_count == 1
+        assert sync_tx.call_args.kwargs.get("verify") is False
+
+    def test_unset_preserves_default_behavior(self):
+        import os
+
+        cfg = _make_model_config()
+        cfg.ssl_verify = None
+        model = _make_claude_model(cfg)
+
+        assert model.ssl_verify is None
+        # No proxy + no ssl_verify -> no custom client, env untouched.
+        assert model.proxy_client is None
+        assert model.async_proxy_client is None
+        assert "SSL_VERIFY" not in os.environ
+
+
+class TestNativeMidRunInsert:
+    """Mid-run message insertion on the native Anthropic loop.
+
+    Every Claude model pointed at the official ``api.anthropic.com`` endpoint
+    runs here — ``supports_builtin_web_search()`` is true for that host, which
+    routes ``generate_with_tools_stream`` to the native path for API-key and
+    subscription auth alike. The native loop is not driven by the agents-SDK
+    Runner, so it gets no ``call_model_input_filter``; without an explicit
+    drain, a message typed mid-run stayed queued for the whole run and only
+    landed afterwards through the chat layer's auto-continuation.
+    """
+
+    @staticmethod
+    async def _run_two_turns(model, queue, push_during_tool: bool = True):
+        """Drive turn 1 (tool_use) → turn 2 (text), recording each turn's messages."""
+        from unittest.mock import AsyncMock
+
+        from datus.schemas.action_history import ActionHistoryManager
+
+        seen_messages = []
+        responses = [
+            _make_response([_make_tool_use_block(name="probe_tool", block_id="tu_1", input_data={})]),
+            _make_response([_make_text_block("done")]),
+        ]
+
+        def _create(**request_kwargs):
+            seen_messages.append(copy.deepcopy(request_kwargs.get("messages")))
+            return responses[len(seen_messages) - 1]
+
+        func_tool = MagicMock()
+        func_tool.name = "probe_tool"
+        func_tool.description = "Probe tool"
+        func_tool.params_json_schema = {"type": "object"}
+
+        async def _invoke(ctx, input_json):
+            # The user types while the tool is executing.
+            if push_during_tool:
+                queue.push("STOP_AND_CHECK")
+            return "tool finished"
+
+        func_tool.on_invoke_tool = _invoke
+
+        with (
+            patch.object(type(model), "_anthropic_messages_create", lambda self, **kw: _create(**kw)),
+            patch("datus.models.claude_model.multiple_mcp_servers") as mock_mcp,
+        ):
+            mock_mcp.return_value.__aenter__ = AsyncMock(return_value={})
+            mock_mcp.return_value.__aexit__ = AsyncMock(return_value=False)
+            async for _ in model._generate_with_mcp_stream(
+                prompt="start",
+                mcp_servers={},
+                instruction="sys",
+                output_type={},
+                func_tools=[func_tool],
+                action_history_manager=ActionHistoryManager(),
+                pending_input_queue=queue,
+            ):
+                pass
+
+        return seen_messages
+
+    @pytest.mark.asyncio
+    async def test_insert_during_tool_call_reaches_the_next_model_call(self):
+        from datus.cli.execution_state import PendingInputQueue
+
+        model = _make_claude_model()
+        queue = PendingInputQueue()
+
+        seen = await self._run_two_turns(model, queue)
+
+        assert len(seen) == 2
+        assert "STOP_AND_CHECK" not in json.dumps(seen[0], default=str)
+        assert "STOP_AND_CHECK" in json.dumps(seen[1], default=str)
+        assert len(queue) == 0
+
+    @pytest.mark.asyncio
+    async def test_insert_is_appended_as_a_user_text_message(self):
+        """Anthropic shape check: a user message with a plain ``text`` block.
+
+        The native path speaks the Messages API, not the Responses API, so the
+        item shape differs from the SDK filter's ``input_text`` block. Getting
+        this wrong yields a 400 from Anthropic rather than a silent no-op.
+        """
+        from datus.cli.execution_state import PendingInputQueue
+
+        model = _make_claude_model()
+        queue = PendingInputQueue()
+
+        seen = await self._run_two_turns(model, queue)
+
+        inserted = [
+            m
+            for m in seen[1]
+            if m.get("role") == "user" and "STOP_AND_CHECK" in json.dumps(m.get("content"), default=str)
+        ]
+        assert len(inserted) == 1
+        # A plain ``text`` block, not the Responses API's ``input_text``.
+        # ``cache_control`` may be attached by ``wrap_prompt_cache`` — being the
+        # newest message, the insert legitimately becomes the cache breakpoint.
+        (block,) = inserted[0]["content"]
+        assert block["type"] == "text"
+        assert block["text"] == "STOP_AND_CHECK"
+        # It must trail the tool_result, never replace or precede it: Anthropic
+        # requires the tool_use to be answered by its tool_result.
+        assert json.dumps(seen[1][-1], default=str) == json.dumps(inserted[0], default=str)
+        assert any("tool_result" in json.dumps(m.get("content"), default=str) for m in seen[1])
+
+    @pytest.mark.asyncio
+    async def test_interrupted_run_does_not_consume_the_queue(self):
+        """An aborting native run must leave staged text for the next run."""
+        from datus.cli.execution_state import ExecutionInterrupted, InterruptController, PendingInputQueue
+        from datus.schemas.action_history import ActionHistoryManager
+
+        model = _make_claude_model()
+        queue = PendingInputQueue()
+        queue.push("STOP_AND_CHECK")
+        controller = InterruptController()
+        controller.interrupt()
+
+        with patch("datus.models.claude_model.multiple_mcp_servers") as mock_mcp:
+            mock_mcp.return_value.__aenter__ = AsyncMock(return_value={})
+            mock_mcp.return_value.__aexit__ = AsyncMock(return_value=False)
+            with pytest.raises(ExecutionInterrupted):
+                async for _ in model._generate_with_mcp_stream(
+                    prompt="start",
+                    mcp_servers={},
+                    instruction="sys",
+                    output_type={},
+                    func_tools=[],
+                    action_history_manager=ActionHistoryManager(),
+                    interrupt_controller=controller,
+                    pending_input_queue=queue,
+                ):
+                    pass
+
+        assert queue.snapshot() == ["STOP_AND_CHECK"]
+
+    @pytest.mark.asyncio
+    async def test_idle_queue_adds_no_message(self):
+        from datus.cli.execution_state import PendingInputQueue
+
+        model = _make_claude_model()
+        queue = PendingInputQueue()
+
+        seen = await self._run_two_turns(model, queue, push_during_tool=False)
+
+        # Turn 2 = initial user prompt + assistant tool_use + tool_result.
+        assert len(seen[1]) == 3
+
+
+# ---------------------------------------------------------------------------
+# Mid-turn compaction on the native loop
+# ---------------------------------------------------------------------------
+
+
+class TestNativeMidTurnCompaction:
+    """The native Anthropic loop consults the per-run context rewriter before
+    every model call — the equivalent of the SDK's ``call_model_input_filter``
+    boundary — and continues from the rewritten ``messages`` in place."""
+
+    @staticmethod
+    def _view():
+        return [
+            {"role": "user", "content": [{"type": "text", "text": "start"}]},
+            {"role": "assistant", "content": [{"type": "text", "text": "SUMMARY of the work so far"}]},
+            {"role": "user", "content": [{"type": "text", "text": "[DATUS_COMPACT_RESUME] continue"}]},
+        ]
+
+    async def _run(self, model, rewriter, session, queue=None, inserted_text=None):
+        from unittest.mock import AsyncMock
+
+        from datus.schemas.action_history import ActionHistoryManager
+
+        seen_messages = []
+        responses = [
+            _make_response([_make_tool_use_block(name="probe_tool", block_id="tu_1", input_data={})]),
+            _make_response([_make_text_block("done")]),
+        ]
+
+        def _create(**request_kwargs):
+            seen_messages.append(copy.deepcopy(request_kwargs.get("messages")))
+            return responses[len(seen_messages) - 1]
+
+        func_tool = MagicMock()
+        func_tool.name = "probe_tool"
+        func_tool.description = "Probe tool"
+        func_tool.params_json_schema = {"type": "object"}
+
+        async def _invoke(ctx, input_json):
+            if queue is not None and inserted_text:
+                queue.push(inserted_text)
+            return "tool finished " + "x" * 200
+
+        func_tool.on_invoke_tool = _invoke
+
+        with (
+            patch.object(type(model), "_anthropic_messages_create", lambda self, **kw: _create(**kw)),
+            patch("datus.models.claude_model.multiple_mcp_servers") as mock_mcp,
+        ):
+            mock_mcp.return_value.__aenter__ = AsyncMock(return_value={})
+            mock_mcp.return_value.__aexit__ = AsyncMock(return_value=False)
+            async for _ in model._generate_with_mcp_stream(
+                prompt="start",
+                mcp_servers={},
+                instruction="sys",
+                output_type={},
+                func_tools=[func_tool],
+                action_history_manager=ActionHistoryManager(),
+                session=session,
+                context_rewriter=rewriter,
+                pending_input_queue=queue,
+            ):
+                pass
+        return seen_messages
+
+    @pytest.mark.asyncio
+    async def test_second_request_sends_the_rewritten_messages(self):
+        from unittest.mock import AsyncMock
+
+        model = _make_claude_model()
+        view = self._view()
+        rewriter_calls = []
+
+        async def _rewrite(messages):
+            rewriter_calls.append(copy.deepcopy(messages))
+            if len(rewriter_calls) == 2:
+                rewriter.compactions += 1
+            # A fresh list, like the real compactor: the loop appends to it.
+            return list(view) if len(rewriter_calls) == 2 else None
+
+        rewriter = MagicMock()
+        rewriter.compactions = 0
+        rewriter.rewrite_native_messages = _rewrite
+        session = MagicMock()
+        session.get_items = AsyncMock(return_value=[])
+        session.add_items = AsyncMock()
+
+        seen = await self._run(model, rewriter, session)
+
+        assert len(seen) == 2
+        # Consulted before every model call, with the pre-rewrite transcript on
+        # the second call: prompt, assistant tool_use, tool_result.
+        assert len(rewriter_calls) == 2
+        assert rewriter_calls[0] == [{"role": "user", "content": [{"type": "text", "text": "start"}]}]
+        assert any("tool_result" in json.dumps(m, default=str) for m in rewriter_calls[1])
+        # The second request is exactly the rewritten view (plus the cache marker).
+        assert seen[1] == wrap_prompt_cache(view)
+        assert "tool_result" not in json.dumps(seen[1], default=str)
+        assert "tool_use" not in json.dumps(seen[1], default=str)
+
+    @pytest.mark.asyncio
+    async def test_only_the_post_rewrite_delta_is_persisted(self):
+        """The compactor already persisted the view; the loop must not re-add
+        it, and must not replay the compacted prefix either."""
+        from unittest.mock import AsyncMock
+
+        model = _make_claude_model()
+        view = self._view()
+        calls = {"n": 0}
+
+        async def _rewrite(messages):
+            calls["n"] += 1
+            if calls["n"] == 2:
+                rewriter.compactions += 1
+            return list(view) if calls["n"] == 2 else None
+
+        rewriter = MagicMock()
+        rewriter.compactions = 0
+        rewriter.rewrite_native_messages = _rewrite
+        session = MagicMock()
+        session.get_items = AsyncMock(return_value=[])
+        session.add_items = AsyncMock()
+
+        await self._run(model, rewriter, session)
+
+        batches = [call.args[0] for call in session.add_items.await_args_list]
+        # Checkpoint after tool round 1 (before the rewrite): prompt + tool round.
+        assert batches[0][0] == {"role": "user", "content": [{"type": "text", "text": "start"}]}
+        assert any("tool_result" in json.dumps(m, default=str) for m in batches[0])
+        # After the rewrite only the final assistant message is appended.
+        assert len(batches[-1]) == 1
+        assert batches[-1][0]["role"] == "assistant"
+        assert "done" in json.dumps(batches[-1][0], default=str)
+        assert not any("SUMMARY" in json.dumps(b, default=str) for b in batches)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("block_content", [False, True])
+    async def test_projection_preserves_raw_history_and_each_user_turn(self, tmp_path, block_content):
+        from agents import SQLiteSession
+
+        from datus.agent.node.context_rewriter import MidTurnCompactor
+        from datus.cli.execution_state import PendingInputQueue
+        from datus.utils.tool_archive import ToolArchive
+        from datus.utils.tool_result_store import ACTIVE_RESULT_STORE, ToolResultStore
+        from tests.unit_tests.agent.node.test_context_rewriter import _FakeNode
+
+        raw = "large historical result " * 5000
+        history = [
+            {"role": "assistant", "content": [{"type": "tool_use", "id": "old", "name": "probe_tool", "input": {}}]},
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": "old",
+                        "content": [{"type": "text", "text": raw}] if block_content else raw,
+                    }
+                ],
+            },
+            {"role": "assistant", "content": [{"type": "text", "text": "Previous work saved"}]},
+        ]
+        session = SQLiteSession("native-projection", db_path=str(tmp_path / "session.db"))
+        await session.add_items(history)
+        node = _FakeNode(context_length=200000)
+        store = ToolResultStore(ToolArchive("project", "native-projection", base_dir=tmp_path))
+        node._get_tool_result_store = lambda: store
+        rewriter = MidTurnCompactor(node)
+        queue = PendingInputQueue()
+        token = ACTIVE_RESULT_STORE.set(None)
+        try:
+            seen = await self._run(_make_claude_model(), rewriter, session, queue, "CHECK_REFUNDS")
+            persisted = await session.get_items()
+        finally:
+            ACTIVE_RESULT_STORE.reset(token)
+            session.close()
+
+        assert rewriter.compactions == 0
+        assert all(raw not in json.dumps(view) and "result_id" in json.dumps(view) for view in seen)
+        assert persisted[: len(history)] == history
+        user_texts = [
+            part["text"]
+            for item in persisted
+            if item.get("role") == "user"
+            for part in item["content"]
+            if part.get("type") == "text"
+        ]
+        assert user_texts == ["start", "CHECK_REFUNDS"]
+        assert "tool finished" in json.dumps(persisted) and "done" in json.dumps(persisted)
+
+    @pytest.mark.asyncio
+    async def test_no_rewriter_leaves_the_loop_unchanged(self):
+        from unittest.mock import AsyncMock
+
+        model = _make_claude_model()
+        session = MagicMock()
+        session.get_items = AsyncMock(return_value=[])
+        session.add_items = AsyncMock()
+
+        seen = await self._run(model, None, session)
+
+        assert len(seen) == 2
+        assert any("tool_result" in json.dumps(m, default=str) for m in seen[1])
+
+
+class TestClaudeSummarizeItems:
+    """``ClaudeModel.summarize_items`` on Anthropic-format transcripts."""
+
+    @staticmethod
+    def _transcript():
+        return [
+            {"role": "user", "content": [{"type": "text", "text": "analyse refunds"}]},
+            {
+                "role": "assistant",
+                "content": [
+                    {"type": "text", "text": "running"},
+                    {"type": "tool_use", "id": "t1", "name": "execute_sql", "input": {"sql": "select 1"}},
+                ],
+            },
+            {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t1", "content": "1 row"}]},
+        ]
+
+    @pytest.mark.asyncio
+    async def test_native_summary_sends_tool_stubs_and_returns_text(self):
+        model = _make_claude_model()
+        captured = {}
+
+        def _create(**kw):
+            captured.update(kw)
+            return _make_response([_make_text_block("## Summary\nprogress")], input_tokens=50, output_tokens=7)
+
+        with patch.object(type(model), "_anthropic_messages_create", lambda self, **kw: _create(**kw)):
+            result = await model.summarize_items(
+                self._transcript(), instruction="sys", prompt="SUMMARIZE", item_format="anthropic"
+            )
+
+        assert result["content"] == "## Summary\nprogress"
+        assert result["usage"]["output_tokens"] == 7
+        assert result["usage"]["input_tokens"] == 50
+        messages = captured["messages"]
+        # The prompt is folded into the trailing user (tool_result) message so
+        # user/assistant alternation is preserved.
+        assert messages[-1]["role"] == "user"
+        assert messages[-1]["content"][0]["type"] == "tool_result"
+        assert messages[-1]["content"][-1]["text"] == "SUMMARIZE"
+        assert len(messages) == 3
+        # tool_use/tool_result blocks in the history require tool definitions;
+        # stubs are sent, and tool_choice forbids calling them.
+        assert [t["name"] for t in captured["tools"]] == ["execute_sql"]
+        assert captured["tool_choice"] == {"type": "none"}
+        assert captured["max_tokens"] == 4000
+        assert "system" in captured
+
+    @pytest.mark.asyncio
+    async def test_text_only_transcript_sends_no_tools_and_appends_the_prompt(self):
+        model = _make_claude_model()
+        captured = {}
+
+        def _create(**kw):
+            captured.update(kw)
+            return _make_response([_make_text_block("S")])
+
+        transcript = [
+            {"role": "user", "content": [{"type": "text", "text": "hi"}]},
+            {"role": "assistant", "content": [{"type": "text", "text": "hello"}]},
+        ]
+        with patch.object(type(model), "_anthropic_messages_create", lambda self, **kw: _create(**kw)):
+            result = await model.summarize_items(
+                transcript, instruction="sys", prompt="SUMMARIZE", item_format="anthropic"
+            )
+
+        assert result["content"] == "S"
+        assert "tools" not in captured and "tool_choice" not in captured
+        assert captured["messages"][-1]["role"] == "user"
+        assert captured["messages"][-1]["content"][0]["text"] == "SUMMARIZE"
+        assert len(captured["messages"]) == 3
+        # The caller's list is not mutated.
+        assert len(transcript) == 2
+
+    @pytest.mark.asyncio
+    async def test_non_text_response_yields_empty_summary(self):
+        model = _make_claude_model()
+        with patch.object(
+            type(model),
+            "_anthropic_messages_create",
+            lambda self, **kw: _make_response([_make_tool_use_block(name="execute_sql", block_id="t9")]),
+        ):
+            result = await model.summarize_items(
+                self._transcript(), instruction="", prompt="P", item_format="anthropic"
+            )
+        assert result["content"] == ""
+
+    @pytest.mark.asyncio
+    async def test_responses_transcript_uses_the_litellm_path(self):
+        from unittest.mock import AsyncMock
+
+        model = _make_claude_model()
+        items = [{"role": "user", "content": "hi"}]
+        with patch(
+            "datus.models.openai_compatible.OpenAICompatibleModel.summarize_items",
+            new=AsyncMock(return_value={"content": "via litellm", "usage": {}}),
+        ) as base:
+            result = await model.summarize_items(items, instruction="sys", prompt="P", item_format="responses")
+        assert result["content"] == "via litellm"
+        assert base.await_args.args[0] == items
+        assert base.await_args.kwargs["item_format"] == "responses"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("oauth", [False, True])
+    @pytest.mark.parametrize("transport", ["sync", "stream"])
+    async def test_chunked_native_summary_fits_the_actual_transport(self, oauth, transport):
+        from contextlib import asynccontextmanager
+
+        from datus.models.summary_chunks import bounded_summary
+
+        model = _make_claude_model()
+        model.model_config.context_length = 8192
+        model.model_config.max_tokens = 1024
+        model._is_oauth_token = oauth
+        model.use_native_api = True
+        response = _make_response([_make_text_block("short summary")], input_tokens=50, output_tokens=7)
+        sent = []
+
+        def create(**kwargs):
+            sent.append(kwargs)
+            return response
+
+        @asynccontextmanager
+        async def stream(**kwargs):
+            sent.append(kwargs)
+            yield SimpleNamespace(get_final_message=AsyncMock(return_value=response), current_message_snapshot=response)
+
+        if transport == "stream":
+            model.async_anthropic_client = MagicMock()
+        items = [{"role": "user", "content": [{"type": "text", "text": "project rule " * 600}]}]
+        original = copy.deepcopy(items)
+        # Replace only the external transports: real summary planning, chunking,
+        # request construction and the mandatory transport guard all execute.
+        with (
+            patch.object(model, "_raw_anthropic_messages_create", side_effect=create),
+            patch.object(model, "_raw_anthropic_messages_stream", side_effect=stream),
+        ):
+            text, used = await bounded_summary(
+                model,
+                items,
+                instruction="Keep current goals",
+                prompt="Summarize",
+                item_format="anthropic",
+                agent_name="test",
+            )
+        assert text == "short summary" and used == len(sent) * 7
+        assert 2 < len(sent) <= 8
+        assert all(request["max_tokens"] == 4000 for request in sent)
+        assert items == original
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("oauth", [False, True])
+    async def test_native_summary_preflight_counts_tool_stubs_and_system_framing(self, oauth):
+        from datus.models.request_capacity import guard_request
+
+        model = _make_claude_model()
+        model._is_oauth_token = oauth
+        items = self._transcript()
+        expected = model.summary_capacity_checker("sys", "SUMMARIZE", "anthropic", 4000)(items)
+        with patch.object(
+            model, "_raw_anthropic_messages_create", return_value=_make_response([_make_text_block("summary")])
+        ) as send:
+            result = await model.summarize_items(items, instruction="sys", prompt="SUMMARIZE", item_format="anthropic")
+        assert result["content"] == "summary"
+        request = send.call_args.kwargs
+        assert [tool["name"] for tool in request["tools"]] == ["execute_sql"]
+        assert request["tool_choice"] == {"type": "none"}
+        assert expected == guard_request(model.request_capacity(), request)
+
+    @pytest.mark.asyncio
+    async def test_oauth_only_model_cannot_summarize_responses_transcripts(self):
+        from datus.utils.exceptions import DatusException
+
+        model = _make_claude_model()
+        model.use_native_api = True
+        model._is_oauth_token = True
+        with pytest.raises(DatusException):
+            await model.summarize_items([{"role": "user", "content": "hi"}], instruction="", prompt="P")
+
+
+@pytest.mark.asyncio
+async def test_native_first_request_and_inserts_use_unified_compaction(tmp_path):
+    """Native requests compact before the first call and include inserts before checking."""
+    from datus.agent.node.context_rewriter import MidTurnCompactor
+    from datus.cli.execution_state import PendingInputQueue
+    from tests.unit_tests.agent.node.test_compact_helpers import TestMeasuredContextContracts
+
+    node = TestMeasuredContextContracts._node(tmp_path)
+    await node._session.add_items(
+        [
+            {"role": "user", "content": [{"type": "text", "text": "old"}]},
+            {"role": "assistant", "content": [{"type": "text", "text": "OLD_HISTORY " * 40000}]},
+        ]
+    )
+    queue = PendingInputQueue()
+    queue.push("FIRST_INSERT")
+    rewriter = MidTurnCompactor(node, refresh_instruction=lambda: "FRESH_SYSTEM")
+    seen = await TestNativeMidTurnCompaction()._run(
+        _make_claude_model(),
+        rewriter,
+        node._session,
+        queue=queue,
+        inserted_text="LATER_INSERT",
+    )
+    assert all("OLD_HISTORY" not in json.dumps(items) for items in seen)
+    assert "start" in json.dumps(seen[0][0])
+    assert "FIRST_INSERT" in json.dumps(seen[0])
+    assert "LATER_INSERT" in json.dumps(seen[1])
+    stored = await node._session.get_items()
+    assert sum("start" in json.dumps(item) for item in stored) == 1
+    assert "LATER_INSERT" in json.dumps(stored)
+    assert rewriter.system_instruction == "FRESH_SYSTEM"
+    node._session.close()

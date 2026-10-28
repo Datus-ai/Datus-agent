@@ -4,7 +4,7 @@
 
 AI-powered data-analysis agent: NL → SQL, multi-DB, RAG knowledge base, MCP protocol.
 
-- **Stack**: Python 3.12+, OpenAI Agents SDK + LiteLLM, LanceDB, FastAPI, FastMCP, Streamlit
+- **Stack**: Python 3.12+, OpenAI Agents SDK + LiteLLM, LanceDB, FastAPI, FastMCP
 - **Package manager**: uv · **License**: Apache-2.0
 
 ## Build & Run
@@ -49,6 +49,7 @@ Use `@pytest.mark.asyncio` and `pytest_asyncio.fixture`. Event-loop helpers (esp
 
 - **Per-project (CWD)**:
   - `./subject/{semantic_models, sql_summaries}/` — KB content, anchored to project root
+  - `./lineage/lineage.json` — persisted project table lineage graph (`upsert_lineage` / `query_lineage`); the directory holds nothing else and is the cross-process write lock
   - `./.datus/skills/` — project skills, override `~/.datus/skills`
   - `./.datus/config.yml` — project overrides for `target` (provider/model), `default_datasource`, `project_name`. Whitelisted keys only; written by the `/model` slash command
 - **Global, sharded by project**:
@@ -78,6 +79,13 @@ Resolution order: `.datus/config.yml` → `agent.target` in `agent.yml`.
 - **New LLM model (new SDK/auth)**: file in `datus/models/`, inherit `LLMBaseModel` (`base.py`), register in `MODEL_TYPE_MAP`, add to `PROVIDER_MODELS` in `tests/regression/test_regression_llm.py`
 - **New MCP tool**: function in `datus/tools/func_tool/`, register in MCP server tool list
 
+### Permission Configuration Mutability
+
+- `AgentConfig.config_mutable` controls whether permission prompts may offer project-scoped persistence.
+- When `config_mutable=False` (multi-tenant API/gateway configurations supplied through `AgentConfig`), Bash and SQL prompts offer only once/session/deny choices; they must never offer or write project grants to `./.datus/config.yml`.
+- Existing `project_bash_allow` and `project_sql_allow` grants supplied through `AgentConfig` remain effective in read-only configuration mode.
+- CLI flows default to `config_mutable=True` and retain project-scoped persistence.
+
 ## Guardrails
 
 - **No direct DB imports**: use `ConnectorRegistry` / `db_manager_instance`
@@ -98,7 +106,7 @@ Must start with one of: `[BugFix]` `[Enhancement]` `[Feature]` `[Refactor]` `[UT
 
 1. **`## Why`** — problem solved; link issues if any
 2. **`## Solution`** — approach, key decisions, tradeoffs
-3. **`## Test Cases`** — added/changed integration/nightly tests; if none, justify
+3. **`## Test Cases`** — added/changed integration/nightly tests; if none, justify. `[BugFix]` PRs also state that the new tests fail on the pre-fix code (see **Bug-fix regression tests**)
 
 When using `gh pr create --body`, copy `.github/PULL_REQUEST_TEMPLATE.md` as the starting point. PRs with empty/missing sections must be revised before review.
 
@@ -146,7 +154,7 @@ Unit tests follow the mapping rule above. The table lists **additional** integra
 | `datus/agent/node/` | `unit_tests/agent/node/test_node.py`, `test_schema_linking.py`, `test_date_parser_*.py` |
 | `datus/cli/repl.py` | `integration/cli/test_cli_commands.py`, `regression/test_regression_web_e2e.py` |
 | `datus/tools/func_tool/` | `integration/tools/test_func_tools_db.py`, `integration/tools/test_mcp_server.py` |
-| `datus/tools/skill_tools/` | `unit_tests/tools/skill_tools/test_skill_*.py` (config, registry_unit, manager_unit, bash_tool, func_tool) |
+| `datus/tools/skill_tools/` | `unit_tests/tools/skill_tools/test_skill_*.py` |
 | `datus/tools/permission/` | `unit_tests/tools/permission/test_permission_*.py` |
 | `datus/mcp_server.py` | `unit_tests/test_mcp_server.py`, `integration/tools/test_mcp_server.py` |
 | `datus/storage/reference_template/` | `unit_tests/storage/reference_template/test_*.py`, `integration/tools/test_reference_template.py` |
@@ -155,3 +163,14 @@ Unit tests follow the mapping rule above. The table lists **additional** integra
 ### Test quality (beyond coverage)
 
 Beyond happy paths, exercise: **input format variants** (all valid shapes, not just the common one); **return-type contracts** (every branch returns the same structure); **cross-component contracts** (consume the producer's real output); **adversarial inputs** for regex/SQL/path sandboxes; **recursive/nested structures** at depth ≥ 3; **spec compliance** for standards (`.gitignore`, SQL dialects).
+
+### Bug-fix regression tests
+
+- **Red first**: the tests a `[BugFix]` PR adds must fail on the pre-fix code. Verify by running them with the implementation change reverted — `git stash push -- <changed source paths>` → run → `git stash pop`, or a worktree at the pre-fix commit — and say so in `## Test Cases`.
+- **Assert the property, not the instance**: pin the invariant the bug violated, not the value the fix happens to produce — "no binary source type ever maps to VARBINARY", not "BYTEA maps to STRING" — so the test stays red when the bug returns under a different spelling.
+
+### No tombstone tests when removing code
+
+When removing code, update or delete the existing tests that covered it. Do **not** add tests asserting that code/functions/strings no longer exist (`not hasattr(...)`, `"xxx" not in source`, import-failure checks) — these pin implementation details, never catch real bugs, and break legitimate future refactors. The proof that a removal is safe is the existing behavioral tests passing, not a new negative assertion.
+
+Exception: when the removal itself is an external contract, add a regression test that asserts the **behavior** does not occur, and note in the test which contract it protects. Qualifying cases: deprecated public APIs/config fields (e.g. a removed YAML key must be silently ignored), security fixes (e.g. secrets must not appear in logs), and removed side effects with real regression risk (`assert_not_called` on a mock).

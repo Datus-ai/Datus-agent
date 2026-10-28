@@ -22,7 +22,8 @@ from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from datus.schemas.base import BaseInput, BaseResult
+from datus.schemas.at_context import AtContextInput
+from datus.schemas.base import BaseResult
 from datus.schemas.gen_visual_report_models import (  # re-use the cross-artifact primitives
     DATA_REF_RE,
     QUERY_SLUG_RE,
@@ -126,7 +127,7 @@ class QueryTemplateMetaFile(BaseModel):
         return self
 
 
-class GenVisualDashboardNodeInput(BaseInput):
+class GenVisualDashboardNodeInput(AtContextInput):
     """Input model for GenVisualDashboardAgenticNode."""
 
     user_message: str = Field(..., description="User's dashboard question (required)")

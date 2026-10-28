@@ -4,7 +4,7 @@
 
 元数据模块主要用于使 LLM 能够根据用户问题快速匹配可能相关的表定义信息和样本数据。
 
-当你使用 `bootstrap-kb` 命令时，我们会将你指定的数据源中创建表/视图/物化视图的 SQL 语句和样本数据初始化到向量数据库中。
+当你使用 `bootstrap-kb` 命令时，我们会将你指定的数据源中创建表/视图/物化视图的 SQL 语句和样本数据初始化到本地知识库存储中。
 
 此模块包含两种类型的信息：**表定义**和**样本数据**。
 
@@ -47,6 +47,28 @@ datus-agent bootstrap-kb --datasource <your_datasource> --kb_update_strategy [ch
     - `check`：检查当前构建的数据条目数
     - `overwrite`：完全覆盖现有数据
     - `incremental`：增量更新：如果现有数据已更改，则更新它并追加不存在的数据
+- `--kb_search_mode`：可选的元数据搜索模式。默认值是 `vector`；设置为 `fts` 时会从头构建全文检索 metadata。
+
+### 元数据搜索模式
+
+metadata 搜索默认继续使用现有 vector store，因此老用户升级后不需要重建数据，检索行为保持不变。
+
+如果要使用不生成 embedding 的全文检索，显式设置 `kb.search.mode` 为 `fts`：
+
+```yaml
+kb:
+  search:
+    mode: fts
+```
+
+必须在构建 metadata 前选定模式。已有 vector 数据切换到 FTS 时需要完整重建：
+
+```bash
+datus-agent bootstrap-kb --datasource <your_datasource> --components metadata \
+  --kb_search_mode fts --kb_update_strategy overwrite
+```
+
+关于存储后端要求、持久配置与单次覆盖的区别、索引验证、增量更新、模式切换和故障排查，请参阅[元数据全文检索](metadata_fts.md)。
 
 ## 使用示例
 

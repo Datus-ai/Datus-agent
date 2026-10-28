@@ -57,8 +57,7 @@ Show me total revenue by product category for the last month
 
 - `gen_sql`
 - `gen_report`
-- `gen_semantic_model`
-- `gen_metrics`
+- `semantic_modeling`
 - `gen_dashboard`
 - `scheduler`
 
@@ -73,8 +72,7 @@ Show me total revenue by product category for the last month
 你可以收藏 subagent 的 URL 便于快速访问：
 
 ```
-http://localhost:8501/?subagent=gen_metrics
-http://localhost:8501/?subagent=gen_semantic_model
+http://localhost:8501/?subagent=semantic_modeling
 http://localhost:8501/?subagent=finance_report
 ```
 

@@ -6,7 +6,7 @@ Subagent 是 Datus 中的专用 AI 助手。它与主聊天 agent 共用同一�
 
 Subagent 可以是：
 
-- 内置系统 subagent，例如 `gen_sql`、`explore`、`scheduler`
+- 内置系统 subagent，例如 `gen_sql`、`explore`、`gen_job`
 - 在 `agent.yml` 的 `agent.agentic_nodes` 下定义的自定义 subagent
 
 ## Subagent 包含什么
@@ -21,20 +21,24 @@ Subagent 可以是：
 
 ## 内置 Subagent
 
-当前代码里由 `SYS_SUB_AGENTS` 定义的内置集合为：
+当前对用户开放的内置集合为：
 
 1. `explore`：只读的结构、知识和文件探索
 2. `gen_sql`：专用 SQL 生成
-3. `gen_report`：结构化报告生成
-4. `gen_semantic_model`：MetricFlow 语义模型生成
-5. `gen_metrics`：MetricFlow 指标生成
-6. `gen_sql_summary`：SQL 摘要生成
-7. `gen_table`：交互式建表
-8. `gen_job`：数据管道作业（单库 ETL 和跨库迁移）
-9. `gen_skill`：skill 创建与优化
-10. `gen_dashboard`：BI 仪表盘创建与管理
+3. `ask_metrics`：使用已有语义指标回答问题
+4. `ontology_analyst`：基于数据源的 ontology 回答指标和明细问题（仅在存在 ontology 时提供）
+5. `gen_report`：结构化报告生成
+6. `semantic_modeling`：统一的 Dosi 语义模型和指标创作
+7. `gen_sql_summary`：SQL 摘要生成
+8. `gen_table`：交互式建表
+9. `gen_job`：数据管道作业（单库 ETL 和跨库迁移）
+10. `gen_skill`：skill 创建与优化
 11. `gen_visual_report`：在 `reports/<slug>/` 下产出自包含的可视化报告
-12. `scheduler`：Airflow 作业生命周期管理
+
+Airflow 调度及 Superset 等外部 BI 操作不再属于 subagent 类型，而是由主
+agent 直接使用已安装 plugin 及其内置 skill 完成。代码中暂时保留
+`SchedulerAgenticNode` 和 `GenDashboardAgenticNode` 的旧实现，但它们不能再
+作为内置或自定义 subagent 被发现和执行。
 
 详细说明见 [内置 subagent](./builtin_subagents.zh.md)。
 
@@ -42,7 +46,7 @@ Subagent 可以是：
 
 自定义 subagent 配置在 `agent.agentic_nodes` 下。
 
-统一 agent TUI（`/agent` 或 `/subagent`）Custom Tab 的向导当前可以创建 `gen_sql` 风格或 `gen_report` 风格的自定义 subagent。如果你想把更专用的节点类别名成一个自定义入口，例如 `explore`、`gen_table`、`gen_skill`、`gen_dashboard`、`scheduler`，需要直接手工编辑 `agent.yml`。
+统一 agent TUI（`/agent` 或 `/subagent`）Custom Tab 的向导当前可以创建 `gen_sql` 风格或 `gen_report` 风格的自定义 subagent。如果你想把仍可用的专用节点类别名成一个自定义入口，例如 `explore`、`gen_table`、`gen_skill`，需要直接手工编辑 `agent.yml`。指向旧调度或外部 BI 节点类的自定义 alias 会被忽略。
 
 示例：
 
@@ -76,7 +80,7 @@ agent:
 
 ## 如何使用 Subagent
 
-### 方法 1：CLI 斜杠命令
+### 方法 1：CLI 自动派发或指定 Agent
 
 先启动 CLI：
 
@@ -84,12 +88,14 @@ agent:
 datus --datasource production
 ```
 
-然后使用 `/[name]` 启动 subagent：
+通常直接描述需求，主 agent 会自动派发。要为单次消息明确指定 subagent，在消息末尾添加 `@Agent <name>`：
 
 ```text
-/gen_metrics 根据这段 SQL 生成收入指标：SELECT SUM(revenue) FROM orders
-/finance_report 分析本季度与上季度的收入变化
+根据这段 SQL 生成收入指标：SELECT SUM(revenue) FROM orders。@Agent semantic_modeling
+分析本季度与上季度的收入变化。@Agent finance_report
 ```
+
+需要连续使用同一个 subagent 时，先运行 `/agent <name>`，再输入正常消息。旧的 `/<name> <message>` 形式不再支持。
 
 ### 方法 2：Web 界面
 
@@ -108,7 +114,7 @@ datus --web --datasource production --subagent finance_report
 也可以直接访问 URL：
 
 ```text
-http://localhost:8501/?subagent=gen_metrics
+http://localhost:8501/?subagent=semantic_modeling
 http://localhost:8501/?subagent=finance_report
 ```
 
@@ -141,13 +147,13 @@ graph LR
 | `explore` | 收集 schema、样本数据、知识库或文件上下文 |
 | `gen_sql` | 执行更深的多步 SQL 推理 |
 | `gen_report` | 生成结构化分析报告 |
-| `gen_semantic_model` | 生成 MetricFlow 语义模型 |
-| `gen_metrics` | 生成 MetricFlow 指标 |
+| `semantic_modeling` | 创作 Dosi 语义模型和指标 |
 | `gen_sql_summary` | 把 SQL 总结为可复用知识 |
 | `gen_table` | 交互式创建表 |
 | `gen_job` | 构建数据管道作业（单库 ETL 或跨库迁移） |
 | `gen_skill` | 创建或优化 skill |
-| `gen_dashboard` | 创建或管理 BI 仪表盘 |
 | `gen_visual_report` | 在 `reports/<slug>/` 下产出自包含的可视化报告 |
-| `scheduler` | 提交或操作 Airflow 作业 |
 | 自定义名称 | `agent.yml` 中可发现的任意自定义 subagent |
+
+Airflow 或外部 BI 任务应让主 agent 直接使用已安装 plugin；不要调用
+`task()`，也不要创建自定义 subagent alias。

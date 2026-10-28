@@ -15,6 +15,7 @@ import subprocess
 import sys
 import tomllib
 import urllib.request
+from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Iterable
@@ -26,7 +27,6 @@ from packaging.version import InvalidVersion, Version
 REPO_ROOT = Path(__file__).resolve().parents[1]
 ADAPTER_CORE_PACKAGES = (
     "datus-db-core",
-    "datus-semantic-core",
     "datus-bi-core",
     "datus-scheduler-core",
 )
@@ -52,13 +52,24 @@ def read_pyproject_version(repo_root: Path) -> Version:
 
 
 def parse_dependency_list(requirement_lines: Iterable[str]) -> dict[str, Requirement]:
-    requirements: dict[str, Requirement] = {}
+    parsed: list[Requirement] = []
     for raw_line in requirement_lines:
         line = raw_line.strip()
         if not line or line.startswith("#"):
             continue
-        requirement = Requirement(line)
-        requirements[canonicalize_name(requirement.name)] = requirement
+        parsed.append(Requirement(line))
+
+    # A package pinned per environment (`pandas==2.1.4; python_version < "3.13"`
+    # plus a second line) is keyed by name and marker, so each line is compared
+    # with its twin instead of the last one silently replacing the others.
+    counts = Counter(canonicalize_name(requirement.name) for requirement in parsed)
+    requirements: dict[str, Requirement] = {}
+    for requirement in parsed:
+        name = canonicalize_name(requirement.name)
+        key = f"{name}; {requirement.marker}" if counts[name] > 1 else name
+        if key in requirements:
+            raise ValueError(f"{requirement.name} is listed more than once with the same marker: {key}")
+        requirements[key] = requirement
     return requirements
 
 
@@ -143,6 +154,60 @@ def check_console_script_versions(
             continue
         if str(version) not in output:
             errors.append(f"{command} --version output {output!r} does not contain expected version {version}")
+    return errors
+
+
+def check_requirements_match_pyproject(repo_root: Path) -> list[str]:
+    """Require requirements.txt to restate ``project.dependencies`` exactly.
+
+    Both lists are maintained by hand — nothing regenerates ``requirements.txt``
+    — so they drift silently, and the drift is not cosmetic. Consumers install
+    ``-r requirements.txt`` before ``pip install -e .``, and only the second
+    command reads pyproject, so a stale pin here decides what actually gets
+    installed until some later command happens to override it. That is how
+    ``openai-agents`` sat at 0.7.0 here for a release after pyproject moved to
+    0.13.4, and how ``jsonschema``/``jinja2`` — required by the plugin manifest
+    loader — were missing from this file entirely.
+
+    ``check_adapter_dependency_consistency`` below covers only the three adapter
+    packages, and only their lower bounds, which is why none of that was caught.
+    """
+    pyproject_deps = read_pyproject_dependencies(repo_root)
+    requirements_deps = read_requirements_dependencies(repo_root)
+    errors: list[str] = []
+
+    for name in sorted(set(pyproject_deps) - set(requirements_deps)):
+        errors.append(f"{pyproject_deps[name].name} is in pyproject.toml but missing from requirements.txt")
+    for name in sorted(set(requirements_deps) - set(pyproject_deps)):
+        errors.append(f"{requirements_deps[name].name} is in requirements.txt but missing from pyproject.toml")
+
+    for name in sorted(set(pyproject_deps) & set(requirements_deps)):
+        expected = pyproject_deps[name]
+        actual = requirements_deps[name]
+        if expected.specifier != actual.specifier:
+            errors.append(
+                f"{expected.name} version mismatch: pyproject.toml has "
+                f"'{expected.specifier}', requirements.txt has '{actual.specifier}'"
+            )
+        if expected.extras != actual.extras:
+            errors.append(
+                f"{expected.name} extras mismatch: pyproject.toml has "
+                f"{sorted(expected.extras)}, requirements.txt has {sorted(actual.extras)}"
+            )
+        # A marker or a direct-reference URL decides whether a dependency is
+        # installed at all, and from where, while leaving the specifier and
+        # extras identical — so neither is covered by the comparisons above.
+        if expected.marker != actual.marker:
+            errors.append(
+                f"{expected.name} marker mismatch: pyproject.toml has "
+                f"'{expected.marker}', requirements.txt has '{actual.marker}'"
+            )
+        if expected.url != actual.url:
+            errors.append(
+                f"{expected.name} URL mismatch: pyproject.toml has "
+                f"'{expected.url}', requirements.txt has '{actual.url}'"
+            )
+
     return errors
 
 
@@ -260,7 +325,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--check-adapter-latest",
         action="store_true",
-        help="Fetch PyPI metadata and require adapter core lower bounds to match latest published versions",
+        help="Fetch PyPI metadata and require adapter lower bounds to match latest published versions",
     )
     parser.add_argument(
         "--allow-prerelease",
@@ -285,6 +350,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.check_console_versions:
         errors.extend(check_console_script_versions(version))
 
+    errors.extend(check_requirements_match_pyproject(repo_root))
+
     dependency_checks, dependency_errors = check_adapter_dependency_consistency(repo_root)
     errors.extend(dependency_errors)
 
@@ -307,7 +374,7 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     print(f"Release readiness checks passed for datus-agent {version}")
-    print("Adapter core dependency lower bounds:")
+    print("Adapter dependency lower bounds:")
     for check in dependency_checks:
         latest = f", latest={check.latest_version}" if check.latest_version is not None else ""
         print(f"  - {check.name}>={check.pyproject_lower_bound}{latest}")

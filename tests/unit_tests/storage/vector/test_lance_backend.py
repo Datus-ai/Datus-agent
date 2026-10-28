@@ -7,10 +7,12 @@
 import unittest.mock
 from unittest.mock import MagicMock
 
+import lancedb
 import pyarrow as pa
 import pytest
 from datus_storage_base.conditions import and_, eq, in_
 
+from datus.storage.fts import FtsField, FtsIndexStatus, FtsSpec
 from datus.storage.vector.lance_backend import LanceVectorBackend, LanceVectorDatabase, LanceVectorTable
 from datus.utils.exceptions import DatusException
 
@@ -117,6 +119,63 @@ class TestLanceVectorTableSearchOps:
         assert table.count_rows(where=where) == 2
         raw_table.count_rows.assert_called_once_with("(status = 'active' AND role = 'admin')")
 
+    def test_multimatch_searches_independently_indexed_fields(self, tmp_path):
+        raw_table = lancedb.connect(tmp_path).create_table(
+            "multi_fts",
+            data=pa.table(
+                {
+                    "id": [1, 2],
+                    "title": ["orders handbook", "customer handbook"],
+                    "body": ["monthly revenue", "retention cohorts"],
+                }
+            ),
+        )
+        table = LanceVectorTable(raw_table)
+        spec = FtsSpec((FtsField("title", boost=3.0), FtsField("body")))
+        for field in spec.fields:
+            table.create_fts_index(field)
+
+        assert table.fts_index_status(spec) == FtsIndexStatus.READY
+        assert table.search_fts("orders", spec, 5).to_pylist()[0]["id"] == 1
+        assert table.search_fts("retention", spec, 5).to_pylist()[0]["id"] == 2
+
+    def test_ngram_fts_matches_chinese_without_whitespace(self, tmp_path):
+        raw_table = lancedb.connect(tmp_path).create_table(
+            "ngram_fts",
+            data=pa.table({"id": [1, 2], "search_text": ["订单购买分析", "客户流失分析"]}),
+        )
+        table = LanceVectorTable(raw_table)
+        spec = FtsSpec((FtsField("search_text", tokenizer="ngram"),))
+        table.create_fts_index(spec.fields[0])
+
+        assert table.search_fts("购买", spec, 5).to_pylist()[0]["id"] == 1
+
+    def test_fts_status_detects_tokenizer_mismatch(self, tmp_path):
+        raw_table = lancedb.connect(tmp_path).create_table(
+            "mismatched_fts",
+            data=pa.table({"text": ["orders"]}),
+        )
+        table = LanceVectorTable(raw_table)
+        table.create_fts_index(FtsField("text"))
+
+        expected = FtsSpec((FtsField("text", tokenizer="ngram"),))
+        assert table.fts_index_status(expected) == FtsIndexStatus.VERSION_MISMATCH
+
+    def test_legacy_fts_directory_is_detected_and_removed_for_rebuild(self, tmp_path):
+        raw_table = lancedb.connect(tmp_path).create_table(
+            "legacy_fts",
+            data=pa.table({"text": ["orders"]}),
+        )
+        table = LanceVectorTable(raw_table)
+        spec = FtsSpec((FtsField("text"),))
+        legacy_path = tmp_path / "legacy_fts.lance" / "_indices" / "fts"
+        legacy_path.mkdir(parents=True)
+        (legacy_path / "marker").write_text("legacy", encoding="utf-8")
+
+        assert table.fts_index_status(spec) == FtsIndexStatus.LEGACY
+        assert table.remove_legacy_fts_index() is True
+        assert not legacy_path.exists()
+
 
 class TestLanceVectorTableIndexOps:
     """Tests for table-level index operations."""
@@ -129,11 +188,17 @@ class TestLanceVectorTableIndexOps:
         raw_table.create_index.assert_called_once_with(metric="l2", vector_column_name="vec_col", replace=True)
 
     def test_create_fts_index(self):
-        """create_fts_index() delegates to underlying table."""
+        """create_fts_index() uses the unified single-field API."""
         raw_table = MagicMock()
         table = LanceVectorTable(raw_table)
-        table.create_fts_index(["title", "body"])
-        raw_table.create_fts_index.assert_called_once_with(field_names=["title", "body"], replace=True)
+        table.create_fts_index(FtsField("body", tokenizer="ngram"))
+        raw_table.create_index.assert_called_once()
+        args, kwargs = raw_table.create_index.call_args
+        assert args == ("body",)
+        assert kwargs["replace"] is True
+        assert kwargs["config"].base_tokenizer == "ngram"
+        assert kwargs["config"].ngram_min_length == 2
+        assert kwargs["config"].ngram_max_length == 2
 
     def test_create_scalar_index(self):
         """create_scalar_index() delegates to underlying table."""
@@ -141,6 +206,13 @@ class TestLanceVectorTableIndexOps:
         table = LanceVectorTable(raw_table)
         table.create_scalar_index("category")
         raw_table.create_scalar_index.assert_called_once_with("category", replace=True)
+
+    def test_optimize(self):
+        """optimize() incrementally updates the underlying Lance indices."""
+        raw_table = MagicMock()
+        table = LanceVectorTable(raw_table)
+        table.optimize()
+        raw_table.optimize.assert_called_once_with()
 
     def test_compact_files(self):
         """compact_files() delegates to underlying table."""
@@ -187,6 +259,29 @@ class TestLanceVectorDatabase:
         raw_db.open_table.side_effect = ValueError("Table not found")
         db = LanceVectorDatabase(raw_db)
         assert db.table_exists("missing") is False
+
+    def test_table_exists_false_for_corrupt_lance_table_metadata(self):
+        """table_exists() treats incomplete Lance table directories as missing."""
+        raw_db = MagicMock()
+        raw_db.open_table.side_effect = RuntimeError('FileDoesNotExist("meta.json")')
+        db = LanceVectorDatabase(raw_db)
+        assert db.table_exists("missing") is False
+
+    def test_table_exists_reraises_non_missing_errors(self):
+        raw_db = MagicMock()
+        raw_db.open_table.side_effect = RuntimeError("connection lost")
+        db = LanceVectorDatabase(raw_db)
+
+        with pytest.raises(RuntimeError, match="connection lost"):
+            db.table_exists("my_table")
+
+    def test_table_exists_reraises_meta_json_errors_without_missing_table_signature(self):
+        raw_db = MagicMock()
+        raw_db.open_table.side_effect = RuntimeError("failed to parse meta.json")
+        db = LanceVectorDatabase(raw_db)
+
+        with pytest.raises(RuntimeError, match="failed to parse meta.json"):
+            db.table_exists("my_table")
 
     def test_create_table_passes_kwargs(self):
         """create_table() passes schema to db connection without embedding."""

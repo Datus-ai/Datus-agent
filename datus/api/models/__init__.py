@@ -104,9 +104,11 @@ from datus.api.models.table_models import (
     GetTableDetailData,
     GetTableDetailInput,
     IndexInfo,
-    SemanticModelInput,
+    SaveSemanticModelData,
+    SaveSemanticModelInput,
     TableDetailData,
     ValidateSemanticModelData,
+    ValidateSemanticModelInput,
 )
 
 __all__ = [
@@ -174,8 +176,10 @@ __all__ = [
     "GetTableDetailInput",
     "GetTableDetailData",
     "GetSemanticModelData",
-    "SemanticModelInput",
+    "SaveSemanticModelData",
+    "SaveSemanticModelInput",
     "ValidateSemanticModelData",
+    "ValidateSemanticModelInput",
     # explorer_models
     "SubjectNodeType",
     "SubjectNode",

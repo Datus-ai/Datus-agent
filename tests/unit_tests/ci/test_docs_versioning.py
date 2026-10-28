@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib.util
 import json
 from pathlib import Path
+from unittest.mock import Mock, call
 
 MODULE_PATH = Path(__file__).resolve().parents[3] / "ci" / "docs_versioning.py"
 MODULE_SPEC = importlib.util.spec_from_file_location("docs_versioning", MODULE_PATH)
@@ -152,6 +153,55 @@ def test_docs_version_visibility_hides_patch_and_old_minor_versions():
     assert docs_versioning.should_hide_docs_version("0.3.7", min_visible_minor) is True
     assert docs_versioning.should_hide_docs_version("0.4.0rc1", min_visible_minor) is True
     assert docs_versioning.should_hide_docs_version("latest", min_visible_minor) is False
+
+
+def test_hide_legacy_docs_versions_scopes_mike_commands_to_deploy_prefix(monkeypatch):
+    check_output = Mock(
+        return_value=json.dumps(
+            [
+                {"version": "0.1", "properties": {"hidden": False}},
+                {"version": "0.3", "properties": {"hidden": False}},
+            ]
+        )
+    )
+    run = Mock()
+
+    monkeypatch.setattr(docs_versioning.subprocess, "check_output", check_output)
+    monkeypatch.setattr(docs_versioning.subprocess, "run", run)
+
+    changed = docs_versioning.hide_legacy_docs_versions((0, 2), "zh")
+
+    assert changed is True
+    check_output.assert_called_once_with(
+        ["mike", "list", "-j", "--deploy-prefix", "zh"],
+        text=True,
+    )
+    assert run.call_args_list == [
+        call(
+            [
+                "mike",
+                "props",
+                "--deploy-prefix",
+                "zh",
+                "0.1",
+                "--set",
+                "hidden=true",
+                "--allow-empty",
+            ],
+            check=True,
+        ),
+        call(["git", "push", "--", "origin", "gh-pages"], check=True),
+    ]
+
+
+def test_hide_legacy_cli_forwards_deploy_prefix(monkeypatch):
+    hide_legacy = Mock(return_value=False)
+    monkeypatch.setattr(docs_versioning, "hide_legacy_docs_versions", hide_legacy)
+
+    result = docs_versioning.main(["hide-legacy", "--min-visible-minor", "0.2", "--deploy-prefix", "zh"])
+
+    assert result == 0
+    hide_legacy.assert_called_once_with((0, 2), "zh")
 
 
 def test_hide_legacy_cli_reports_invalid_minor(capsys):

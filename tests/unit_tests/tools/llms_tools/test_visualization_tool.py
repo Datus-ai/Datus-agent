@@ -12,6 +12,7 @@ import pytest
 
 from datus.schemas.visualization import VisualizationInput, VisualizationOutput
 from datus.tools.llms_tools.visualization_tool import VisualizationTool
+from datus.utils.language_utils import NATIVE_DIRECTIVE_MAP
 
 
 def _make_tool(model=None):
@@ -412,3 +413,285 @@ class TestLlmBasedRecommendation:
 
         # x_col should fall back to a column that exists
         assert result.x_col == "cat"
+
+
+class TestLanguageDirective:
+    """The tool is a standalone LLM call, so a pinned language has to reach the prompt."""
+
+    def test_no_language_returns_empty_directive(self):
+        tool = _make_tool()
+        assert tool._language_directive(None) == ""
+
+    def test_blank_language_returns_empty_directive(self):
+        tool = _make_tool()
+        assert tool._language_directive("   ") == ""
+
+    def test_explicit_language_renders_template(self):
+        tool = _make_tool()
+        with patch("datus.tools.llms_tools.visualization_tool.get_prompt_manager") as mock_gpm:
+            mock_gpm.return_value.render_template.return_value = "# Response Language\n- Use: Chinese (zh)"
+            directive = tool._language_directive("zh")
+
+        kw = mock_gpm.return_value.render_template.call_args.kwargs
+        assert kw["language_code"] == "zh"
+        assert kw["language_name"] == "Chinese"
+        assert kw["native_directive"] == NATIVE_DIRECTIVE_MAP["zh"]
+        # A home carrying a pre-upgrade template copy renders the name line
+        # only; the native sentence is restated on top of whatever came back.
+        assert directive == f"# Response Language\n- Use: Chinese (zh)\n- {NATIVE_DIRECTIVE_MAP['zh']}"
+
+    def test_falls_back_to_agent_config_language(self):
+        config = MagicMock()
+        config.language = "ja"
+        tool = VisualizationTool(agent_config=config, model=MagicMock())
+        with patch("datus.tools.llms_tools.visualization_tool.get_prompt_manager") as mock_gpm:
+            mock_gpm.return_value.render_template.return_value = "directive"
+            tool._language_directive(None)
+
+        assert mock_gpm.return_value.render_template.call_args.kwargs["language_name"] == "Japanese"
+
+    def test_blank_explicit_language_falls_back_to_agent_config(self):
+        """A blank override is 'unset' — it must not suppress the configured default."""
+        config = MagicMock()
+        config.language = "ja"
+        tool = VisualizationTool(agent_config=config, model=MagicMock())
+        with patch("datus.tools.llms_tools.visualization_tool.get_prompt_manager") as mock_gpm:
+            mock_gpm.return_value.render_template.return_value = "directive"
+            tool._language_directive("   ")
+
+        kw = mock_gpm.return_value.render_template.call_args.kwargs
+        assert kw["language_code"] == "ja"
+        assert kw["language_name"] == "Japanese"
+
+    def test_explicit_language_wins_over_agent_config(self):
+        config = MagicMock()
+        config.language = "ja"
+        tool = VisualizationTool(agent_config=config, model=MagicMock())
+        with patch("datus.tools.llms_tools.visualization_tool.get_prompt_manager") as mock_gpm:
+            mock_gpm.return_value.render_template.return_value = "directive"
+            tool._language_directive("zh-CN")
+
+        kw = mock_gpm.return_value.render_template.call_args.kwargs
+        assert kw["language_code"] == "zh-CN"
+        assert kw["language_name"] == "Chinese"
+
+    def test_render_failure_falls_back_to_minimal_directive(self):
+        tool = _make_tool()
+        with patch("datus.tools.llms_tools.visualization_tool.get_prompt_manager") as mock_gpm:
+            mock_gpm.return_value.render_template.side_effect = Exception("template missing")
+            directive = tool._language_directive("zh")
+
+        assert directive == f"# Response Language\n- Use: Chinese (zh)\n- {NATIVE_DIRECTIVE_MAP['zh']}"
+
+    def test_empty_render_falls_back_to_minimal_directive(self):
+        tool = _make_tool()
+        with patch("datus.tools.llms_tools.visualization_tool.get_prompt_manager") as mock_gpm:
+            mock_gpm.return_value.render_template.return_value = "   "
+            directive = tool._language_directive("fr")
+
+        assert directive == f"# Response Language\n- Use: French (fr)\n- {NATIVE_DIRECTIVE_MAP['fr']}"
+
+    def test_execute_passes_directive_into_prompt(self):
+        mock_model = MagicMock()
+        mock_model.generate_with_json_output.return_value = {
+            "chart_type": "Bar Chart",
+            "x_col": "cat",
+            "y_cols": ["val"],
+            "reason": "bar",
+        }
+        tool = _make_tool(model=mock_model)
+        df = pd.DataFrame({"cat": ["A", "B"], "val": [1, 2]})
+
+        with patch("datus.tools.llms_tools.visualization_tool.get_prompt_manager") as mock_gpm:
+            mock_gpm.return_value.render_template.return_value = "directive"
+            tool.execute(_make_input(df), language="zh")
+
+        # The last render is the prompt itself; the directive render precedes it.
+        prompt_call = mock_gpm.return_value.render_template.call_args_list[-1]
+        assert prompt_call.kwargs["language_directive"] == f"directive\n- {NATIVE_DIRECTIVE_MAP['zh']}"
+
+    def test_execute_with_context_passes_directive_into_prompt(self):
+        mock_model = MagicMock()
+        mock_model.generate_with_json_output.return_value = {
+            "chart_type": "Bar Chart",
+            "x_col": "cat",
+            "y_cols": ["val"],
+            "reason": "bar",
+            "period": None,
+            "filters": [],
+            "insight": "grew",
+        }
+        tool = _make_tool(model=mock_model)
+        df = pd.DataFrame({"cat": ["A", "B"], "val": [1, 2]})
+
+        with patch("datus.tools.llms_tools.visualization_tool.get_prompt_manager") as mock_gpm:
+            mock_gpm.return_value.render_template.return_value = "directive"
+            result = tool.execute_with_context(_make_input(df), sql="SELECT 1", language="zh")
+
+        prompt_call = mock_gpm.return_value.render_template.call_args_list[-1]
+        assert prompt_call.kwargs["language_directive"] == f"directive\n- {NATIVE_DIRECTIVE_MAP['zh']}"
+        assert result.success is True
+
+    def test_prompt_carries_empty_directive_when_unpinned(self):
+        mock_model = MagicMock()
+        mock_model.generate_with_json_output.return_value = {
+            "chart_type": "Bar Chart",
+            "x_col": "cat",
+            "y_cols": ["val"],
+            "reason": "bar",
+        }
+        tool = _make_tool(model=mock_model)
+        df = pd.DataFrame({"cat": ["A", "B"], "val": [1, 2]})
+
+        with patch("datus.tools.llms_tools.visualization_tool.get_prompt_manager") as mock_gpm:
+            mock_gpm.return_value.render_template.return_value = "prompt"
+            tool.execute(_make_input(df))
+
+        assert mock_gpm.return_value.render_template.call_args.kwargs["language_directive"] == ""
+
+
+class TestHeuristicLanguage:
+    """No LLM means no generated wording — the fallback still has to honour the language."""
+
+    def _bar_df(self):
+        # More distinct categories than max_pie_categories, so the heuristic
+        # lands on Bar rather than Pie.
+        return pd.DataFrame({"region": list("ABCDEFGHI"), "sales": list(range(9))})
+
+    def test_rule_based_reason_is_localized(self):
+        tool = _make_tool(model=None)
+        reason = tool._rule_based_recommendation(self._bar_df(), language="zh-CN").reason
+        assert "region" in reason
+        assert "sales" in reason
+        assert not reason.isascii()
+
+    def test_rule_based_reason_defaults_to_english(self):
+        tool = _make_tool(model=None)
+        assert tool._rule_based_recommendation(self._bar_df()).reason.isascii()
+
+    def test_execute_without_model_localizes_the_fallback(self):
+        tool = _make_tool(model=None)
+        result = tool.execute(_make_input(self._bar_df()), language="zh-CN")
+        assert result.chart_type == "Bar Chart"
+        assert not result.reason.isascii()
+
+    def test_execute_with_context_localizes_the_fallback(self):
+        tool = _make_tool(model=None)
+        result = tool.execute_with_context(_make_input(self._bar_df()), sql="SELECT 1", language="zh")
+        assert result.chart_type == "Bar Chart"
+        assert not result.reason.isascii()
+
+    def test_llm_failure_falls_back_in_the_requested_language(self):
+        mock_model = MagicMock()
+        mock_model.generate_with_json_output.side_effect = Exception("LLM error")
+        tool = _make_tool(model=mock_model)
+
+        with patch("datus.tools.llms_tools.visualization_tool.get_prompt_manager") as mock_gpm:
+            mock_gpm.return_value.render_template.return_value = "prompt"
+            result = tool.execute(_make_input(self._bar_df()), language="zh")
+
+        assert result.success is True
+        assert not result.reason.isascii()
+
+    def test_agent_config_language_applies_without_an_explicit_override(self):
+        config = MagicMock()
+        config.language = "zh"
+        tool = VisualizationTool(agent_config=config, model=None)
+        assert not tool._rule_based_recommendation(self._bar_df()).reason.isascii()
+
+    def test_explicit_language_wins_over_agent_config(self):
+        config = MagicMock()
+        config.language = "zh"
+        tool = VisualizationTool(agent_config=config, model=None)
+        assert tool._rule_based_recommendation(self._bar_df(), language="en").reason.isascii()
+
+    def test_reason_survives_non_string_column_labels(self):
+        """A DataFrame can carry int labels (``pd.DataFrame([[1,2]])``). Rendering
+        the reason must not be what breaks on them — VisualizationOutput's own
+        ``x_col: str`` contract is the layer that rejects such a frame."""
+        tool = _make_tool(model=None)
+        reason = tool._default_reason("Scatter Plot", 0, [1], language="zh")
+        assert "0" in reason and "1" in reason
+
+    def test_empty_dataset_reason_is_localized(self):
+        tool = _make_tool(model=None)
+        result = tool.execute(_make_input(pd.DataFrame()), language="zh")
+        assert result.success is False
+        assert not result.reason.isascii()
+        # The developer-facing error stays English; only the user-facing reason moves.
+        assert result.error.isascii()
+
+    def test_empty_dataset_reason_is_localized_with_context(self):
+        tool = _make_tool(model=None)
+        result = tool.execute_with_context(_make_input(pd.DataFrame()), sql="SELECT 1", language="zh")
+        assert result.success is False
+        assert not result.reason.isascii()
+        assert result.error.isascii()
+
+
+class TestSamplingNote:
+    """``total_rows`` is how the caller says the rows it uploaded are a sample."""
+
+    @staticmethod
+    def _df():
+        return pd.DataFrame({"cat": ["a", "b"], "val": [1, 2]})
+
+    def test_note_states_both_counts(self):
+        tool = _make_tool()
+        note = tool._sampling_note(self._df(), total_rows=1000)
+        assert "2-row sample" in note
+        assert "1000-row result set" in note
+
+    def test_note_does_not_claim_which_rows_were_sampled(self):
+        """The tool is handed a row count, never which rows they are — saying
+        'the first N' would be a fact it cannot know, and one the model would
+        use (e.g. reading them as the earliest period)."""
+        tool = _make_tool()
+        note = tool._sampling_note(self._df(), total_rows=1000)
+        assert "first" not in note.lower()
+
+    def test_no_note_without_total_rows(self):
+        tool = _make_tool()
+        assert tool._sampling_note(self._df(), total_rows=None) == ""
+
+    def test_no_note_when_full_set_was_sent(self):
+        tool = _make_tool()
+        assert tool._sampling_note(self._df(), total_rows=2) == ""
+
+    def test_no_note_when_total_is_smaller_than_what_arrived(self):
+        """A total below the row count is a caller bug; claiming a sample would be worse."""
+        tool = _make_tool()
+        assert tool._sampling_note(self._df(), total_rows=1) == ""
+
+    def test_note_reaches_the_prompt(self):
+        mock_model = MagicMock()
+        mock_model.generate_with_json_output.return_value = {
+            "chart_type": "Bar Chart",
+            "x_col": "cat",
+            "y_cols": ["val"],
+            "reason": "compare",
+        }
+        tool = _make_tool(model=mock_model)
+
+        with patch("datus.tools.llms_tools.visualization_tool.get_prompt_manager") as mock_gpm:
+            mock_gpm.return_value.render_template.return_value = "prompt"
+            tool.execute(_make_input(self._df()), total_rows=1000)
+
+        assert "1000" in mock_gpm.return_value.render_template.call_args.kwargs["sampling_note"]
+
+    def test_note_reaches_the_context_prompt(self):
+        mock_model = MagicMock()
+        mock_model.generate_with_json_output.return_value = {
+            "chart_type": "Bar Chart",
+            "x_col": "cat",
+            "y_cols": ["val"],
+            "reason": "compare",
+            "insight": "…",
+        }
+        tool = _make_tool(model=mock_model)
+
+        with patch("datus.tools.llms_tools.visualization_tool.get_prompt_manager") as mock_gpm:
+            mock_gpm.return_value.render_template.return_value = "prompt"
+            tool.execute_with_context(_make_input(self._df()), sql="SELECT 1", total_rows=1000)
+
+        assert "1000" in mock_gpm.return_value.render_template.call_args.kwargs["sampling_note"]

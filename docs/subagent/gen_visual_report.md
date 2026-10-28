@@ -6,7 +6,7 @@
 
 ![Sample HTML report — KPI strip, headline metrics, and a monthly growth trend chart](../assets/gen_visual_report_preview.png)
 
-An HTML report is a long-form, narrative answer with the data baked in at build time. There are no filters and no live re-querying once the report is built. For interactive BI dashboards on Superset / Grafana, use `gen_dashboard` instead.
+An HTML report is a long-form, narrative answer with the data baked in at build time. There are no filters and no live re-querying once the report is built. For interactive BI dashboards on Superset or another external platform, ask the main agent to use the installed BI plugin directly.
 
 If you'd rather have a plain-text **Markdown report** (no HTML rendering, no charts), use the `gen_report` agent instead.
 
@@ -42,7 +42,7 @@ In "Q4 2025 Revenue Analysis", switch the revenue trend chart to monthly aggrega
 
 `gen_visual_report` accepts two equally valid starting points:
 
-- **From metrics** — reference an existing metric with `@Metrics <subject>.<group>.<metric>` (three segments — subject tree path + metric name). The agent will pull its definition, dimensions, and time windows from your semantic layer. Best when your project already has a curated metric registry (see [Generate Metrics](gen_metrics.md) for how to create them).
+- **From metrics** — reference an existing metric with `@Metrics <subject>.<group>.<metric>` (three segments — subject tree path + metric name). The agent will pull its definition, dimensions, and time windows from your semantic layer. Best when your project already has a curated metric registry (see [Semantic Modeling](semantic_modeling.md) for Dosi authoring).
   ```bash
   Build a Q4 2025 report around @Metrics revenue.daily.dau and @Metrics conversion.weekly.signup_rate, broken down by region.
   ```
@@ -120,3 +120,9 @@ You'll get a sharper report when your prompt includes:
 - **The breakdowns you want** — *"by region"*, *"by tenure bucket"*, *"monthly trend"*.
 
 If you skip any of these the agent will guess from your project's metrics and ask only when intent is genuinely ambiguous.
+
+## Content Source Declarations
+
+When authoring or editing an artifact, declare each `ChartCard` / `BlockHandle` id and query source as literals so Scope & Sources can connect content blocks to their queries. Keep shared KPI components visual-only and wrap each tile with a literal `BlockHandle` at its call site. Use a literal `queryIds` array when several queries contribute, including the queries providing a frontend-calculated ratio's numerator and denominator.
+
+`validate_render()` rejects dynamic ids, dynamic query sources, and spread card props that hide the declarations, with actionable repair messages. Existing dynamic wrappers continue to run, but must expose static declarations before an authored edit can finalize. Do not declare unused queries just to connect the graph.

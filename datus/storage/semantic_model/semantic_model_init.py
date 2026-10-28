@@ -3,23 +3,77 @@
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
 import asyncio
+import json
 import os
-from typing import Callable, Optional
+import tempfile
+from pathlib import Path
+from typing import Any, Callable, Optional
 
 import pandas as pd
+import yaml
 
-from datus.agent.node.gen_semantic_model_agentic_node import GenSemanticModelAgenticNode
-from datus.cli.generation_hooks import GenerationHooks
 from datus.configuration.agent_config import AgentConfig
-from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionStatus
+from datus.schemas.action_history import ActionHistory
 from datus.schemas.batch_events import BatchEvent, BatchStage
-from datus.schemas.semantic_agentic_node_models import SemanticNodeInput
 from datus.utils.loggings import get_logger
 from datus.utils.terminal_utils import suppress_keyboard_input
 
 logger = get_logger(__name__)
 
-SEMANTIC_MODEL_RESPONSE_ACTION_TYPE = f"{GenSemanticModelAgenticNode.NODE_NAME}_response"
+LEGACY_SEMANTIC_YAML_UNSUPPORTED_MESSAGE = (
+    "Legacy semantic YAML (`data_source:` / `metric:` documents) can no longer be imported. "
+    "Semantic authoring is Dosi-only: migrate the project to Dosi and re-author the model with semantic_modeling."
+)
+
+
+def reject_non_dosi_semantic_yaml(yaml_file_path: str, agent_config: Optional[AgentConfig]) -> Optional[str]:
+    """Return the actionable error when semantic YAML import is unavailable.
+
+    Legacy-format documents are rejected explicitly before any sync is
+    attempted. Returns ``None`` when the import may proceed.
+    """
+    del agent_config
+    try:
+        with open(yaml_file_path, "r", encoding="utf-8") as f:
+            docs = list(yaml.safe_load_all(f))
+    except Exception as exc:
+        return f"Failed to read semantic YAML file '{yaml_file_path}': {exc}"
+    if any(isinstance(doc, dict) and ("data_source" in doc or "metric" in doc) for doc in docs):
+        return LEGACY_SEMANTIC_YAML_UNSUPPORTED_MESSAGE
+    return None
+
+
+def _resolve_semantic_yaml_refresh_path(yaml_file_path: str, agent_config: Optional[AgentConfig]) -> Optional[str]:
+    raw_path = str(yaml_file_path or "")
+    if not raw_path:
+        return None
+
+    path_manager = getattr(agent_config, "path_manager", None) if agent_config is not None else None
+    subject_dir = getattr(path_manager, "subject_dir", None) if path_manager is not None else None
+    if isinstance(subject_dir, (str, os.PathLike)):
+        from datus.storage.artifact_path import resolve_kb_sandbox_path
+
+        return resolve_kb_sandbox_path(raw_path, "semantic", os.fspath(subject_dir))
+    return os.path.realpath(raw_path)
+
+
+def _atomic_dump_semantic_yaml(yaml_file_path: str, docs: list) -> None:
+    target_dir = os.path.dirname(os.path.realpath(yaml_file_path)) or "."
+    fd, temp_path = tempfile.mkstemp(
+        prefix=f".{os.path.basename(yaml_file_path)}.",
+        suffix=".tmp",
+        dir=target_dir,
+    )
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            yaml.safe_dump_all(docs, f, allow_unicode=True, sort_keys=False)
+        os.replace(temp_path, yaml_file_path)
+    except Exception:
+        try:
+            os.remove(temp_path)
+        except FileNotFoundError:
+            pass
+        raise
 
 
 async def init_success_story_semantic_model_async(
@@ -29,171 +83,21 @@ async def init_success_story_semantic_model_async(
     *,
     build_mode: str = "overwrite",
     action_callback: Optional[Callable[["ActionHistory"], None]] = None,
+    require_exact_osi_target: bool = False,
 ) -> tuple[bool, str]:
-    """
-    Async version: Initialize ONLY semantic model from success story CSV using ALL SQL queries.
+    """Route the legacy semantic-model bootstrap entry point to datasets-only authoring."""
+    del require_exact_osi_target
+    from datus.storage.semantic_model.semantic_modeling_init import init_success_story_semantic_modeling_async
 
-    IMPORTANT: This function processes the ENTIRE success_story CSV in one go,
-    NOT line-by-line. It uses execution_mode="workflow" (not plan mode).
-
-    The gen_semantic_model node will receive all SQL queries from the CSV
-    and generate semantic models for all tables found in those queries.
-
-    Args:
-        agent_config: Agent configuration
-        success_story: Path to success story CSV file
-        emit: Optional callback to stream BatchEvent progress events
-        build_mode: ``"overwrite"`` (default) wipes the semantic model store
-            for the current project before regenerating. ``"incremental"``
-            does not wipe; the LLM still runs and new entries are upserted
-            on top of existing ones (no row-level dedup).
-    """
-    # Load and validate CSV file
-    csv_path = success_story
-    try:
-        df = pd.read_csv(csv_path)
-    except FileNotFoundError:
-        error_msg = f"Success story CSV file not found: {csv_path}"
-        logger.error(error_msg)
-        return False, error_msg
-    except pd.errors.EmptyDataError:
-        error_msg = f"Success story CSV file is empty: {csv_path}"
-        logger.error(error_msg)
-        return False, error_msg
-    except Exception as e:
-        error_msg = f"Failed to read success story CSV file '{csv_path}': {e}"
-        logger.exception(error_msg)
-        return False, error_msg
-
-    # Validate required columns
-    required_columns = ["sql", "question"]
-    missing_columns = [col for col in required_columns if col not in df.columns]
-    if missing_columns:
-        error_msg = (
-            f"Success story CSV '{csv_path}' is missing required columns: {missing_columns}. "
-            f"Available columns: {list(df.columns)}"
-        )
-        logger.error(error_msg)
-        return False, error_msg
-
-    # Collect all SQL queries and questions
-    all_sqls = df["sql"].tolist()
-    all_questions = df["question"].tolist()
-
-    # Validate data alignment
-    if len(all_sqls) != len(all_questions):
-        error_msg = (
-            f"Success story CSV '{csv_path}' has mismatched column lengths: "
-            f"sql={len(all_sqls)}, question={len(all_questions)}"
-        )
-        logger.error(error_msg)
-        return False, error_msg
-
-    if len(all_sqls) == 0:
-        error_msg = f"Success story CSV '{csv_path}' contains no data rows"
-        logger.error(error_msg)
-        return False, error_msg
-
-    if build_mode == "overwrite":
-        from datus.storage.semantic_model.store import SemanticModelRAG
-
-        semantic_model_rag = SemanticModelRAG(agent_config)
-        logger.info(
-            "[overwrite] Wiping semantic_model rows for datasource '%s' before re-population",
-            semantic_model_rag.datasource_id,
-        )
-        semantic_model_rag.truncate()
-
-    # Build comprehensive context from all rows
-    context_message = "Generate semantic models for the following SQL queries:\n\n"
-    for idx, (sql, question) in enumerate(zip(all_sqls, all_questions), 1):
-        context_message += f"Query {idx}:\n"
-        context_message += f"Question: {question}\n"
-        context_message += f"SQL:\n{sql}\n\n"
-
-    current_db_config = agent_config.current_db_config()
-
-    # Emit task started event
-    if emit:
-        emit(BatchEvent(biz_name="semantic_model_init", stage=BatchStage.TASK_STARTED))
-
-    # Create semantic model generation node (workflow mode, NOT plan mode)
-    semantic_node = GenSemanticModelAgenticNode(
-        agent_config=agent_config,
-        execution_mode="workflow",  # CRITICAL: workflow mode only
+    successful, error_message, _ = await init_success_story_semantic_modeling_async(
+        agent_config,
+        success_story,
+        emit=emit,
+        build_mode=build_mode,
+        action_callback=action_callback,
+        authoring_scope="datasets",
     )
-
-    semantic_input = SemanticNodeInput(
-        user_message=context_message,
-        catalog=current_db_config.catalog,
-        database=current_db_config.database,
-        db_schema=current_db_config.schema,
-    )
-
-    action_history_manager = ActionHistoryManager()
-    semantic_node.input = semantic_input
-
-    try:
-        generated_files = []
-        terminal_error = None
-        async for action in semantic_node.execute_stream(action_history_manager):
-            if action_callback is not None:
-                try:
-                    action_callback(action)
-                except Exception as cb_exc:  # pragma: no cover - defensive
-                    logger.debug("semantic_model action_callback raised: %s", cb_exc)
-            # Emit streaming messages
-            if emit and action.messages:
-                emit(
-                    BatchEvent(
-                        biz_name="semantic_model_init",
-                        stage=BatchStage.ITEM_PROCESSING,
-                        payload={"messages": action.messages, "output": action.output},
-                    )
-                )
-
-            action_type = getattr(action, "action_type", "")
-            if (
-                action.status == ActionStatus.SUCCESS
-                and action_type == SEMANTIC_MODEL_RESPONSE_ACTION_TYPE
-                and action.output
-            ):
-                if isinstance(action.output, dict):
-                    # Check for semantic_models field (from SemanticNodeResult)
-                    if "semantic_models" in action.output:
-                        models = action.output["semantic_models"]
-                        if isinstance(models, list):
-                            generated_files.extend(models)
-                        elif models:  # Single file as string
-                            generated_files.append(models)
-            elif action.status == ActionStatus.FAILED and action_type in {"error", SEMANTIC_MODEL_RESPONSE_ACTION_TYPE}:
-                terminal_error = action.messages or "Semantic model generation failed"
-                logger.error(terminal_error)
-                continue
-
-        if terminal_error:
-            if emit:
-                emit(BatchEvent(biz_name="semantic_model_init", stage=BatchStage.TASK_FAILED, error=terminal_error))
-            return False, terminal_error
-
-        if not generated_files:
-            error_msg = f"Failed to generate any semantic models from {len(all_sqls)} SQL queries in '{csv_path}'"
-            logger.error(error_msg)
-            if emit:
-                emit(BatchEvent(biz_name="semantic_model_init", stage=BatchStage.TASK_FAILED, error=error_msg))
-            return False, error_msg
-
-        logger.info(f"Generated {len(generated_files)} semantic model files: {generated_files}")
-        if emit:
-            emit(BatchEvent(biz_name="semantic_model_init", stage=BatchStage.TASK_COMPLETED))
-        return True, ""
-
-    except Exception as e:
-        error_msg = f"Error generating semantic models from '{csv_path}': {e}"
-        logger.exception(error_msg)
-        if emit:
-            emit(BatchEvent(biz_name="semantic_model_init", stage=BatchStage.TASK_FAILED, error=error_msg))
-        return False, error_msg
+    return successful, error_message
 
 
 def init_success_story_semantic_model(
@@ -203,19 +107,218 @@ def init_success_story_semantic_model(
     *,
     build_mode: str = "overwrite",
 ) -> tuple[bool, str]:
-    """
-    Sync wrapper: Initialize ONLY semantic model from success story CSV using ALL SQL queries.
-
-    Args:
-        agent_config: Agent configuration
-        success_story: Path to success story CSV file
-        emit: Optional callback to stream BatchEvent progress events
-        build_mode: Forwarded to :func:`init_success_story_semantic_model_async`.
-    """
+    """Sync wrapper for datasets-only semantic modeling bootstrap."""
     with suppress_keyboard_input():
         return asyncio.run(
             init_success_story_semantic_model_async(agent_config, success_story, emit, build_mode=build_mode)
         )
+
+
+def refresh_success_story_semantic_model_profile(
+    agent_config: AgentConfig,
+    yaml_file_path: str,
+    success_story: str,
+    emit: Optional[Callable[[BatchEvent], None]] = None,
+    *,
+    profile_mode: str = "deep",
+    max_tables: int = 8,
+    max_columns_per_table: int = 40,
+    top_n: int = 8,
+    max_profile_seconds: int = 120,
+) -> tuple[bool, str, int]:
+    """Refresh profile-derived descriptions for an existing semantic YAML file.
+
+    This is the CLI/API orchestration path for ``kb_update_strategy=refresh-profile``:
+    it mines historical SQL from the success-story CSV, samples bounded live-data
+    profiles through read-only DB tools, updates only generated description
+    suffixes in the YAML, and syncs that YAML back to semantic storage.
+    """
+    if not yaml_file_path:
+        return False, "--semantic_yaml is required for semantic_model refresh-profile", 0
+    if not success_story:
+        return False, "--success_story is required for semantic_model refresh-profile", 0
+
+    resolved_yaml_path = _resolve_semantic_yaml_refresh_path(yaml_file_path, agent_config)
+    if not resolved_yaml_path:
+        return False, f"Semantic YAML file rejected by sandbox check: {yaml_file_path}", 0
+    if not os.path.exists(resolved_yaml_path):
+        return False, f"Semantic YAML file not found: {resolved_yaml_path}", 0
+
+    rejection = reject_non_dosi_semantic_yaml(resolved_yaml_path, agent_config)
+    if rejection:
+        return False, rejection, 0
+
+    entries, error = _load_success_story_profile_entries(success_story)
+    if error:
+        return False, error, 0
+
+    try:
+        with open(resolved_yaml_path, "r", encoding="utf-8") as f:
+            docs = [doc for doc in yaml.safe_load_all(f) if doc is not None]
+    except Exception as exc:
+        return False, f"Failed to read semantic YAML file '{resolved_yaml_path}': {exc}", 0
+
+    tables = _semantic_yaml_profile_tables(docs)
+    if not tables:
+        return False, f"No table targets found in semantic YAML file: {resolved_yaml_path}", 0
+
+    current_db_config = agent_config.current_db_config()
+    runtime_db_context_getter = getattr(agent_config, "runtime_db_context", None)
+    runtime_db_context = runtime_db_context_getter() if callable(runtime_db_context_getter) else {}
+    runtime_db_context = runtime_db_context if isinstance(runtime_db_context, dict) else {}
+    catalog = runtime_db_context.get("catalog") or runtime_db_context.get("catalog_name") or current_db_config.catalog
+    database = (
+        runtime_db_context.get("database") or runtime_db_context.get("database_name") or current_db_config.database
+    )
+    schema_name = (
+        runtime_db_context.get("schema")
+        or runtime_db_context.get("db_schema")
+        or runtime_db_context.get("schema_name")
+        or current_db_config.schema
+    )
+
+    if emit:
+        emit(
+            BatchEvent(
+                biz_name="semantic_model_profile_refresh",
+                stage=BatchStage.TASK_STARTED,
+                total_items=len(tables),
+                payload={"semantic_yaml": resolved_yaml_path, "tables": tables},
+            )
+        )
+
+    try:
+        from datus.tools.func_tool.database import DBFuncTool
+        from datus.tools.func_tool.semantic_discovery_tools import SemanticDiscoveryTools
+
+        db_tool = DBFuncTool(agent_config=agent_config, sub_agent_name="semantic_modeling", read_only=True)
+        discovery_tools = SemanticDiscoveryTools(db_tool=db_tool, enable_semantic_model_profiler=True)
+        profile_result = discovery_tools.profile_semantic_model_evidence(
+            sql_entries_json=json.dumps(entries, ensure_ascii=False),
+            tables=tables,
+            catalog=str(catalog or ""),
+            database=str(database or ""),
+            schema_name=str(schema_name or ""),
+            profile_mode=profile_mode,
+            max_tables=max_tables,
+            max_columns_per_table=max_columns_per_table,
+            top_n=top_n,
+            max_profile_seconds=max_profile_seconds,
+        )
+    except Exception as exc:
+        error = f"Failed to profile semantic YAML '{resolved_yaml_path}': {exc}"
+        logger.exception(error)
+        if emit:
+            emit(BatchEvent(biz_name="semantic_model_profile_refresh", stage=BatchStage.TASK_FAILED, error=error))
+        return False, error, 0
+
+    if not profile_result.success:
+        error = profile_result.error or "profile_semantic_model_evidence failed"
+        if emit:
+            emit(BatchEvent(biz_name="semantic_model_profile_refresh", stage=BatchStage.TASK_FAILED, error=error))
+        return False, error, 0
+
+    success, error, changed = refresh_semantic_yaml_profile_descriptions(
+        resolved_yaml_path,
+        profile_result.result or {},
+        agent_config=agent_config,
+        sync_to_storage=True,
+    )
+
+    if emit:
+        emit(
+            BatchEvent(
+                biz_name="semantic_model_profile_refresh",
+                stage=BatchStage.TASK_COMPLETED if success else BatchStage.TASK_FAILED,
+                completed_items=len(tables) if success else 0,
+                failed_items=0 if success else len(tables),
+                error=error or None,
+                payload={"semantic_yaml": resolved_yaml_path, "changed_description_count": changed},
+            )
+        )
+    return success, error, changed
+
+
+def _load_success_story_profile_entries(success_story: str) -> tuple[list[dict[str, str]], str]:
+    try:
+        df = pd.read_csv(success_story)
+    except FileNotFoundError:
+        return [], f"Success story CSV file not found: {success_story}"
+    except pd.errors.EmptyDataError:
+        return [], f"Success story CSV file is empty: {success_story}"
+    except Exception as exc:
+        return [], f"Failed to read success story CSV file '{success_story}': {exc}"
+
+    if "sql" not in df.columns:
+        return [], f"Success story CSV '{success_story}' is missing required column: sql"
+
+    entries = []
+    for idx, row in df.iterrows():
+        sql = _success_story_cell(row, "sql")
+        if not sql:
+            continue
+        entries.append(
+            {
+                "name": _success_story_cell(row, "source_context_id")
+                or _success_story_cell(row, "name")
+                or f"success_story_{idx + 1}",
+                "question": _success_story_cell(row, "question"),
+                "sql": sql,
+            }
+        )
+    if not entries:
+        return [], f"Success story CSV '{success_story}' contains no SQL rows"
+    return entries, ""
+
+
+def _success_story_cell(row: Any, key: str) -> str:
+    value = row.get(key)
+    if value is None or pd.isna(value):
+        return ""
+    return str(value).strip()
+
+
+def _semantic_yaml_profile_tables(docs: list[dict]) -> list[str]:
+    return _dedupe_semantic_yaml_values(
+        _osi_dataset_table(dataset) for doc in docs for dataset in _iter_osi_yaml_datasets(doc)
+    )
+
+
+def _iter_osi_yaml_datasets(doc: Any) -> list[dict]:
+    if not isinstance(doc, dict):
+        return []
+    datasets = [dataset for dataset in doc.get("datasets") or [] if isinstance(dataset, dict)]
+    semantic_models = doc.get("semantic_model")
+    if isinstance(semantic_models, list):
+        for semantic_model in semantic_models:
+            if isinstance(semantic_model, dict):
+                datasets.extend(
+                    dataset for dataset in semantic_model.get("datasets") or [] if isinstance(dataset, dict)
+                )
+    return datasets
+
+
+def _osi_dataset_table(dataset: dict) -> str:
+    source = dataset.get("source")
+    if isinstance(source, dict) and source.get("table"):
+        return str(source["table"]).strip()
+    if isinstance(source, str) and source.strip():
+        return source.strip()
+    return str(dataset.get("table") or dataset.get("name") or "").strip()
+
+
+def _dedupe_semantic_yaml_values(values) -> list[str]:
+    result = []
+    seen = set()
+    for value in values:
+        text = str(value or "").strip()
+        if not text:
+            continue
+        key = text.lower()
+        if key not in seen:
+            seen.add(key)
+            result.append(text)
+    return result
 
 
 def init_semantic_yaml_semantic_model(
@@ -223,7 +326,8 @@ def init_semantic_yaml_semantic_model(
     agent_config: AgentConfig,
 ) -> tuple[bool, str]:
     """
-    Initialize ONLY semantic model (table/column/entity) from YAML, skip metrics.
+    Initialize ONLY semantic model (dataset/relationship) projections from a
+    Dosi/OSI YAML file, skip metrics.
 
     Args:
         yaml_file_path: Path to semantic YAML file
@@ -233,46 +337,17 @@ def init_semantic_yaml_semantic_model(
         logger.error(f"Semantic YAML file {yaml_file_path} not found")
         return False, f"Semantic YAML file {yaml_file_path} not found"
 
-    return process_semantic_yaml_file(yaml_file_path, agent_config, include_metrics=False)
+    error = reject_non_dosi_semantic_yaml(yaml_file_path, agent_config)
+    if error:
+        return False, error
 
+    from datus.tools.func_tool.generation_tools import GenerationTools
 
-def process_semantic_yaml_file(
-    yaml_file_path: str,
-    agent_config: AgentConfig,
-    include_semantic_objects: bool = True,
-    include_metrics: bool = True,
-) -> tuple[bool, str]:
-    """
-    Process semantic YAML file by directly syncing to vector store using GenerationHooks.
-
-    Args:
-        yaml_file_path: Path to semantic YAML file
-        agent_config: Agent configuration
-        include_semantic_objects: Whether to sync tables/columns/entities
-        include_metrics: Whether to sync metrics
-    Returns:
-        - Whether the execution was successful
-        - Failed reason
-
-    """
-    logger.info(
-        f"Processing semantic YAML file: {yaml_file_path} "
-        f"(semantic_objects={include_semantic_objects}, metrics={include_metrics})"
-    )
-
-    # Validate file exists
-    if not os.path.exists(yaml_file_path):
-        error_msg = f"Semantic YAML file not found: {yaml_file_path}"
-        logger.error(error_msg)
-        return False, error_msg
-
-    # Use GenerationHooks static method to sync to DB
     try:
-        result = GenerationHooks._sync_semantic_to_db(
+        result = GenerationTools(agent_config=agent_config).sync_osi_to_db(
             yaml_file_path,
-            agent_config,
-            include_semantic_objects=include_semantic_objects,
-            include_metrics=include_metrics,
+            include_semantic_objects=True,
+            include_metrics=False,
         )
     except Exception as e:
         error_msg = f"Failed to sync semantic YAML file '{yaml_file_path}' to vector store: {e}"
@@ -282,8 +357,168 @@ def process_semantic_yaml_file(
     if result.get("success"):
         logger.info(f"Successfully synced to vector store: {result.get('message')}")
         return True, ""
-    else:
-        error = result.get("error", "Unknown error")
-        error_msg = f"Failed to sync '{yaml_file_path}' to vector store: {error}"
-        logger.error(error_msg)
-        return False, error
+    return False, result.get("error", "Unknown error")
+
+
+def semantic_yaml_files(root: Path) -> list[Path]:
+    """Every authored semantic YAML under ``root``, in a stable order."""
+    if root.is_file():
+        return [root]
+    if not root.is_dir():
+        return []
+    found = {path for pattern in ("*.yml", "*.yaml") for path in root.rglob(pattern)}
+    # ``metrics`` holds per-metric fragments, not whole semantic models; the
+    # authoring inventory skips them for the same reason.
+    return sorted(path for path in found if "metrics" not in path.relative_to(root).parts)
+
+
+def sync_semantic_yaml_tree(
+    agent_config: AgentConfig,
+    root: str = "",
+) -> tuple[bool, str, int]:
+    """Re-project authored YAML into the Knowledge Base, file by file.
+
+    This is the plain YAML-to-KB refresh: no LLM, no network, no warehouse
+    access. ``sync_osi_to_db`` replaces one artifact at a time and is
+    idempotent, so running it again is always safe — which is what makes it
+    usable both as a storage-format migration and as a manual "I edited the
+    YAML, reload it" action.
+
+    ``root`` defaults to the active datasource's semantic-model directory; a
+    file path syncs exactly that file.
+    """
+    from datus.agent.node.semantic_authoring import _osi_semantic_model_dir
+
+    target = Path(root).expanduser() if root else _osi_semantic_model_dir(agent_config)
+    if target is None:
+        return False, "Unable to resolve the semantic model directory for the active datasource", 0
+    if not target.exists():
+        return False, f"Semantic model path not found: {target}", 0
+
+    files = semantic_yaml_files(target)
+    if not files:
+        # Deleting the last model is the strongest form of the case this
+        # prunes for, so it cannot return before reconciling.
+        pruned = _prune_rows_for_missing_artifacts(agent_config, [], target) if target.is_dir() else 0
+        suffix = f", pruned {pruned} deleted artifact(s)" if pruned else ""
+        return True, f"No semantic YAML found under {target}{suffix}", 0
+
+    from datus.tools.func_tool.generation_tools import GenerationTools
+
+    tools = GenerationTools(agent_config=agent_config)
+    synced = 0
+    failures: list[str] = []
+    for path in files:
+        rejection = reject_non_dosi_semantic_yaml(str(path), agent_config)
+        if rejection:
+            failures.append(f"{path.name}: {rejection}")
+            continue
+        try:
+            result = tools.sync_osi_to_db(str(path), include_semantic_objects=True, include_metrics=True)
+        except Exception as e:  # noqa: BLE001 - one bad file must not stop the rest
+            logger.exception(f"Failed to sync semantic YAML file '{path}'")
+            failures.append(f"{path.name}: {e}")
+            continue
+        if result.get("success"):
+            synced += 1
+        else:
+            failures.append(f"{path.name}: {result.get('error', 'Unknown error')}")
+
+    if failures:
+        return False, f"Synced {synced}/{len(files)} semantic YAML file(s); failed: " + "; ".join(failures), synced
+
+    # A directory sync reconciles the tree, so a model whose file was deleted or
+    # renamed has to lose its rows. Per-artifact replacement cannot do this: it
+    # is scoped to a yaml_path, and a file that no longer exists is never
+    # visited. Left behind, its rows keep describe_table offering a model whose
+    # yaml_path does not open.
+    pruned = _prune_rows_for_missing_artifacts(agent_config, files, target) if target.is_dir() else 0
+    suffix = f", pruned {pruned} deleted artifact(s)" if pruned else ""
+    return True, f"Synced {synced} semantic YAML file(s) from {target}{suffix}", synced
+
+
+def _prune_rows_for_missing_artifacts(agent_config: AgentConfig, present: list[Path], root: Path) -> int:
+    """Drop rows under ``root`` whose source YAML is no longer on disk. Returns artifacts pruned."""
+    from datus.storage.semantic_model.reconcile import _DatasourceStores, _normalized
+
+    try:
+        stores = _DatasourceStores(agent_config, agent_config.current_datasource)
+        pruned, node_ids = stores.prune_missing(keep={_normalized(str(path)) for path in present}, under=root)
+        stores.remove_emptied_nodes(node_ids)
+    except Exception:  # noqa: BLE001 - pruning must never fail an otherwise good sync
+        logger.exception("Failed to prune rows for deleted semantic models")
+        return 0
+    if pruned:
+        logger.info(f"Pruned knowledge-base rows for {len(pruned)} deleted semantic YAML file(s)")
+    return len(pruned)
+
+
+def refresh_semantic_yaml_profile_descriptions(
+    yaml_file_path: str,
+    profile_evidence: dict,
+    *,
+    agent_config: Optional[AgentConfig] = None,
+    sync_to_storage: bool = False,
+) -> tuple[bool, str, int]:
+    """Refresh generated `Observed profile` description suffixes in a semantic YAML file.
+
+    The caller is responsible for producing ``profile_evidence`` via the read-only
+    profiler. This function preserves semantic structure and only updates
+    description fields. When ``sync_to_storage`` is true, the updated YAML is
+    projected back into the semantic stores after it is written.
+    """
+    if sync_to_storage and agent_config is None:
+        return False, "agent_config is required when sync_to_storage=True", 0
+
+    resolved_yaml_path = _resolve_semantic_yaml_refresh_path(yaml_file_path, agent_config)
+    if not resolved_yaml_path:
+        return False, f"Semantic YAML file rejected by sandbox check: {yaml_file_path}", 0
+
+    if not os.path.exists(resolved_yaml_path):
+        return False, f"Semantic YAML file not found: {resolved_yaml_path}", 0
+
+    # Reject retired document formats before mutating the artifact.
+    if agent_config is not None:
+        rejection = reject_non_dosi_semantic_yaml(resolved_yaml_path, agent_config)
+        if rejection:
+            return False, rejection, 0
+
+    try:
+        with open(resolved_yaml_path, "r", encoding="utf-8") as f:
+            docs = [doc for doc in yaml.safe_load_all(f) if doc is not None]
+    except Exception as exc:
+        return False, f"Failed to read semantic YAML file '{resolved_yaml_path}': {exc}", 0
+
+    try:
+        from datus.storage.semantic_model.profile_description import refresh_osi_yaml_descriptions
+
+        changed = refresh_osi_yaml_descriptions(docs, profile_evidence)
+    except Exception as exc:
+        return False, f"Failed to refresh semantic YAML descriptions: {exc}", 0
+
+    if changed <= 0 and not sync_to_storage:
+        return True, "", 0
+
+    if changed > 0:
+        try:
+            _atomic_dump_semantic_yaml(resolved_yaml_path, docs)
+        except Exception as exc:
+            return False, f"Failed to write semantic YAML file '{resolved_yaml_path}': {exc}", 0
+
+    if sync_to_storage:
+        try:
+            from datus.tools.func_tool.generation_tools import GenerationTools
+
+            result = GenerationTools(agent_config=agent_config).sync_osi_to_db(
+                resolved_yaml_path,
+                include_semantic_objects=True,
+                include_metrics=False,
+            )
+        except Exception as exc:
+            sync_error = f"Failed to sync OSI semantic YAML file '{resolved_yaml_path}' to vector store: {exc}"
+            logger.exception(sync_error)
+            return False, sync_error, changed
+        if not result.get("success"):
+            return False, result.get("error", ""), changed
+
+    return True, "", changed

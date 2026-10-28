@@ -1,272 +1,129 @@
-# 数据源配置（Datasources）
+# Datasources
 
-配置 `agent.services.datasources` 下的数据库连接。
-
-## 概览
-
-Datus Agent 在 `agent.yml` 中通过 `agent.services` 统一管理运行时集成。本页聚焦 `services.datasources` 下的数据库连接；语义层、BI 平台和调度器分别在同级页面单独说明。
-
-主要特性：
-
-- **统一连接入口**：支持 Snowflake、StarRocks、SQLite、DuckDB 等数据库，以及语义层、BI、调度器服务
-- **凭证安全**：支持 `${ENV_VAR}` 环境变量展开
-- **默认数据库**：可通过 `default: true` 标记默认数据库
-- **插件适配器**：可按需安装数据库适配器
-- **动态发现**：支持通过 `path_pattern` 批量发现多个本地数据库文件
-
-> **说明**：早期版本的 `services.databases` 键已重命名为 `services.datasources`。请在 `agent.yml` 中手动更改键名——运行时会拒绝旧键。
-
-## 配置结构
-
-数据库统一配置在 `agent.services.datasources` 下，每个条目都是一个独立数据库连接：
+Datasource 是 Datus 用于执行 SQL、发现元数据和构建知识库索引的具名数据库连接。在 `agent.yml` 的 `agent.services.datasources` 下配置：
 
 ```yaml
 agent:
   services:
     datasources:
-      my_snowflake:
-        type: snowflake
-        account: ${SNOWFLAKE_ACCOUNT}
-        username: ${SNOWFLAKE_USER}
-        password: ${SNOWFLAKE_PASSWORD}  # 可配置 private_key，或在没有 private_key 时 password 和 private_key_file 二选一
-        # private_key: ${SNOWFLAKE_PRIVATE_KEY}
-        # private_key_file: ${SNOWFLAKE_PRIVATE_KEY_FILE}
-        # private_key_file_pwd: ${SNOWFLAKE_PRIVATE_KEY_FILE_PWD}
-        database: ${SNOWFLAKE_DATABASE}  # 可选
-        schema: ${SNOWFLAKE_SCHEMA}      # 可选
-        warehouse: ${SNOWFLAKE_WAREHOUSE}
-        role: ${SNOWFLAKE_ROLE}          # 可选
+      analytics:
+        type: postgresql
+        host: ${POSTGRES_HOST}
+        port: 5432
+        username: ${POSTGRES_USER}
+        password: ${POSTGRES_PASSWORD}
+        database: analytics
+        schema: public
         default: true
-
-      my_duckdb:
-        type: duckdb
-        uri: ./data/analytics.duckdb
-
-    semantic_layer:
-      metricflow: {}
-
-    bi_platforms:
-      superset:
-        type: superset
-        api_base_url: http://localhost:8088
-        username: ${SUPERSET_USER}
-        password: ${SUPERSET_PASSWORD}
-
-    schedulers:
-      airflow_prod:
-        type: airflow
-        api_base_url: ${AIRFLOW_URL}
-        username: ${AIRFLOW_USER}
-        password: ${AIRFLOW_PASSWORD}
-        dags_folder: ${AIRFLOW_DAGS_DIR}
 ```
 
-## 服务分组
+`datasources` 下的每个 key 都是 datasource 名称，只能包含字母、数字、下划线和连字符。最多为一个条目设置 `default: true`；仅有一个 datasource 时，Datus 会自动选择它。
 
-| 配置段 | 用途 | 选择方式 |
-|--------|------|----------|
-| `services.datasources` | SQL 与知识库操作使用的数据库连接 | `--datasource` / 当前数据库 / 默认数据库 |
-| `services.semantic_layer` | 语义适配器配置，例如 MetricFlow | `semantic_adapter` |
-| `services.bi_platforms` | BI 平台凭据与数据集物化配置 | `bi_platform` |
-| `services.schedulers` | 调度器服务实例，例如 Airflow | `scheduler_service` |
+!!! note
+    配置路径仍然是 `agent.services.datasources`。Dosi 模型发现规则见 [Dosi 语义引擎](../semantic/dosi_engine.zh.md)；Airflow 等外部系统优先使用 [Plugin](../plugin/introduction.md)。
 
-## 支持的数据库类型
+## 选择数据源
 
-### Snowflake
+SQLite 和 DuckDB 内置在 Datus 中。其他 datasource 均由可独立安装的 `datus-<type>` adapter 提供。在 `/datasource` 中新增数据源时，Datus 可以自动安装缺失的 adapter，也可以手动安装对应包。
+
+| Datasource | `type` | 安装包 | 命名空间 |
+|---|---|---|---|
+| [SQLite](datasources/sqlite.md) | `sqlite` | 内置 | 数据库文件 → 表 |
+| [DuckDB](datasources/duckdb.md) | `duckdb` | 内置 | database → schema → table |
+| [MySQL](datasources/mysql.md) | `mysql` | `datus-mysql` | database → table |
+| [PostgreSQL](datasources/postgresql.md) | `postgresql` | `datus-postgresql` | database → schema → table |
+| [Amazon Aurora](datasources/aurora.md) | `mysql` / `postgresql` | `datus-mysql` / `datus-postgresql` | 与所选引擎相同 |
+| [Greenplum](datasources/greenplum.md) | `greenplum` | `datus-greenplum` | database → schema → table |
+| [Amazon Redshift](datasources/redshift.md) | `redshift` | `datus-redshift` | database → schema → table |
+| [Amazon Athena](datasources/athena.md) | `athena` | `datus-athena` | catalog → database → table |
+| [Snowflake](datasources/snowflake.md) | `snowflake` | `datus-snowflake` | database → schema → table |
+| [Google BigQuery](datasources/bigquery.md) | `bigquery` | `datus-bigquery` | project → dataset → table |
+| [StarRocks](datasources/starrocks.md) | `starrocks` | `datus-starrocks` | catalog → database → table |
+| [Apache Doris](datasources/doris.md) | `doris` | `datus-doris` | catalog → database → table |
+| [TiDB](datasources/tidb.md) | `tidb` | `datus-tidb` | database → table |
+| [ClickHouse](datasources/clickhouse.md) | `clickhouse` | `datus-clickhouse` | database → table |
+| [Trino](datasources/trino.md) | `trino` | `datus-trino` | catalog → schema → table |
+| [Hive / 星环 Inceptor](datasources/hive.md) | `hive` | `datus-hive` | database → table |
+| [Spark SQL](datasources/spark.md) | `spark` | `datus-spark` | database → table |
+| [ClickZetta](datasources/clickzetta.md) | `clickzetta` | `datus-clickzetta` | instance/workspace → schema → table |
+| [Hologres](datasources/hologres.md) | `hologres` | `datus-hologres` | database → schema → table |
+| [MaxCompute](datasources/maxcompute.md) | `maxcompute` | `datus-maxcompute` | project → 可选 schema → table |
+| [Oracle](datasources/oracle.md) | `oracle` | `datus-oracle` | schema → table |
+| [SAP HANA](datasources/hana.md) | `hana` | `datus-hana` | schema → table；tenant 是连接目标 |
+| [GaussDB / openGauss](datasources/gaussdb.md) | `gaussdb` | `datus-gaussdb` | database → schema → table |
+| [GaussDB(DWS)](datasources/dws.md) | `dws` | `datus-dws` | database → schema → table |
+
+Athena 和 HANA 当前需要使用各自页面的源码安装命令。请先安装再添加 datasource；自动安装无法获取尚未发布的 adapter。Aurora 复用 MySQL 或 PostgreSQL 的类型与安装包。
+
+## 通用 profile 字段
+
+各 datasource 子页面只列该类型专用的连接字段。下面两个 profile 字段由 Datus 自身处理，适用于全部 datasource：
+
+| 字段 | 类型 | 必填 | 默认值 | 说明 |
+|---|---|---:|---|---|
+| `type` | string | 是 | — | 上表列出的 adapter 类型。 |
+| `default` | boolean | 否 | `false` | 将当前条目标记为默认 datasource。 |
+
+Adapter 配置模型会拒绝未知字段，因此字段名必须与文档完全一致。凭证应通过环境变量传入：
 
 ```yaml
-my_snowflake:
-  type: snowflake
-  account: ${SNOWFLAKE_ACCOUNT}
-  username: ${SNOWFLAKE_USER}
-  password: ${SNOWFLAKE_PASSWORD}      # 可配置 private_key，或在没有 private_key 时 password 和 private_key_file 二选一
-  # private_key: ${SNOWFLAKE_PRIVATE_KEY}
-  # private_key_file: ${SNOWFLAKE_PRIVATE_KEY_FILE}
-  # private_key_file_pwd: ${SNOWFLAKE_PRIVATE_KEY_FILE_PWD}  # 可选
-  database: ${SNOWFLAKE_DATABASE}    # 可选
-  schema: ${SNOWFLAKE_SCHEMA}        # 可选
-  warehouse: ${SNOWFLAKE_WAREHOUSE}
-  role: ${SNOWFLAKE_ROLE}            # 可选
-  default: true                      # 可选：设为默认数据库
-```
-
-Snowflake 支持密码认证和 key-pair 认证。托管/SaaS 场景推荐把 PEM 私钥作为 secret 配置到 `private_key`；
-本地或 CI 已有私钥文件时可以使用 `private_key_file`。如果配置了 `private_key`，它会优先于
-`private_key_file` 和 `password`；没有 `private_key` 时，`password` 和 `private_key_file` 必须二选一。
-私钥加密时再配置 `private_key_file_pwd`；适配器内部会使用 Snowflake JWT 认证。
-
-Snowflake 使用 `database` + `schema` 命名空间。Snowflake 不要配置 `catalog`；`catalog` 过滤只适用于
-StarRocks 等支持 catalog 的引擎。
-
-### StarRocks
-
-```yaml
-my_starrocks:
-  type: starrocks
-  host: ${STARROCKS_HOST}
-  port: ${STARROCKS_PORT}
-  username: ${STARROCKS_USER}
-  password: ${STARROCKS_PASSWORD}
-  database: ${STARROCKS_DATABASE}
-  catalog: ${STARROCKS_CATALOG}      # 可选
-```
-
-### SQLite
-
-```yaml
-my_sqlite:
-  type: sqlite
-  uri: sqlite:////Users/xxx/data/orders.db
-```
-
-### DuckDB
-
-```yaml
-my_duckdb:
-  type: duckdb
-  uri: duckdb:////Users/xxx/data/analytics.duckdb
-```
-
-### MySQL
-
-```yaml
-my_mysql:
-  type: mysql
-  host: localhost
-  port: 3306
-  username: ${MYSQL_USER}
-  password: ${MYSQL_PASSWORD}
-  database: analytics
-```
-
-### PostgreSQL
-
-```yaml
-my_postgresql:
-  type: postgresql
-  host: localhost
-  port: 5432
-  username: ${POSTGRES_USER}
-  password: ${POSTGRES_PASSWORD}
-  database: analytics
-```
-
-### 路径模式（批量发现多个文件）
-
-使用 glob 模式自动发现数据库文件：
-
-```yaml
-bird_benchmark:
-  type: sqlite
-  path_pattern: benchmark/bird/dev_20240627/dev_databases/**/*.sqlite
-```
-
-常见模式包括：`*.sqlite`、`**/*.sqlite`、`data/2024/*.db`
-
-## 配置参数
-
-### 通用参数
-
-| 参数 | 是否必填 | 说明 |
-|------|----------|------|
-| `type` | 是 | 数据库类型，例如 `sqlite`、`duckdb`、`snowflake`、`starrocks`、`mysql`、`postgresql` |
-| `default` | 否 | 设为 `true` 后作为默认数据库 |
-| `uri` | 文件型数据库必填 | SQLite / DuckDB 的连接 URI |
-| `host` | 服务型数据库必填 | 数据库主机地址 |
-| `port` | 服务型数据库必填 | 数据库端口 |
-| `username` | 服务型数据库必填 | 用户名 |
-| `password` | 服务型数据库必填 | 密码 |
-| `database` | 否 | 数据库名 |
-
-### 数据库特定参数
-
-- **Snowflake**：`account`、`warehouse`、`role`、`schema`
-- **StarRocks**：`catalog`
-- **SQLite/DuckDB**：`path_pattern` 用于批量发现数据库文件
-- **MySQL/PostgreSQL**：`host`、`port`、`username`、`password`、`database`
-
-## 管理数据库
-
-### 交互式配置
-
-使用 `datus-agent configure` 交互式添加、删除或管理数据库：
-
-```bash
-datus-agent configure
-```
-
-它会先展示当前模型与数据库，然后提供菜单：
-
-```text
-Current Databases:
-┏━━━━━━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━┓
-┃ Name         ┃ Type      ┃ Connection              ┃ Default ┃
-┡━━━━━━━━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━┩
-│ demo         │ duckdb    │ ./demo.duckdb           │ *       │
-│ prod_sf      │ snowflake │ account=my_account      │         │
-└──────────────┴───────────┴─────────────────────────┴─────────┘
-
-What would you like to do?
-  → [add_database] Add a database
-    [delete_database] Delete a database
-    [done] Done
-```
-
-当你选择未安装的数据库类型（例如 snowflake、mysql）时，适配器插件会自动安装。
-
-### CLI 命令
-
-```bash
-# 列出所有数据库
-datus-agent service list
-
-# 交互式添加数据库
-datus-agent service add
-
-# 交互式删除数据库
-datus-agent service delete
-```
-
-### 指定自定义配置文件
-
-```bash
-datus-agent service list --config /path/to/agent.yml
-datus-agent configure --config /path/to/agent.yml
-```
-
-## 默认数据库选择
-
-运行 CLI 命令时，可以显式指定要使用的数据库：
-
-```bash
-datus-cli --datasource my_duckdb
-datus-agent run --datasource my_snowflake --task "..." --task_db_name ANALYTICS
-```
-
-如果没有指定 `--datasource`：
-
-1. 若某个数据库设置了 `default: true`，则自动使用它
-2. 若只配置了一个数据库，则自动使用该数据库
-3. 若配置了多个数据库且都未设置默认值，则展示可选列表
-
-## 安全建议
-
-### 凭证管理
-
-```yaml
-# 推荐：使用环境变量
 username: ${DB_USERNAME}
 password: ${DB_PASSWORD}
-
-# 不推荐：直接硬编码凭证
-username: "actual_username"
-password: "actual_password"
 ```
+
+`${NAME:-fallback}` 可以提供默认值。`${NAME}` 未定义时会展开为明显的缺失标记，连接会失败，不会静默使用空凭证。
+
+## 文件数据源批量匹配
+
+SQLite 和 DuckDB 可以用 `path_pattern` 代替 `uri`，将多个文件绑定到一个 datasource：
+
+```yaml
+agent:
+  services:
+    datasources:
+      benchmark:
+        type: sqlite
+        path_pattern: benchmark/databases/**/*.sqlite
+        database: california_schools  # 可选：初始文件名（不含扩展名）
+```
+
+匹配到的文件会成为同一个 datasource 下的多个 database。启动时如果没有匹配到文件，Datus 会跳过该条目。
+
+## 添加、测试与选择数据源
+
+推荐使用交互式 datasource 管理器：
+
+```bash
+datus
+```
+
+在 CLI 中运行 `/datasource`。新增或编辑条目时会校验字段、安装缺失的 adapter、测试连通性，并写回 `--config` 或默认搜索顺序选中的当前 `agent.yml`。使用 `/datasource <name>` 可切换当前会话的数据源。
+
+如果手工编辑配置文件，可以指定目标 datasource 启动 Datus。创建 connector 和首次加载元数据时会直接暴露配置、网络与认证错误：
+
+```bash
+datus --config conf/agent.yml --datasource analytics
+```
+
+项目级默认选择写在 `.datus/config.yml`：
+
+```yaml
+default_datasource: analytics
+```
+
+## 故障排查
+
+| 现象 | 原因与处理 |
+|---|---|
+| `Unsupported value ... for field datasource` | 选择的名称不是 `agent.services.datasources` 下的 key。检查拼写和实际加载的配置文件。 |
+| Adapter 导入或安装失败 | 在运行 `datus` 的同一个 Python 环境中安装子页面标明的包。 |
+| 提示未知或多余字段 | 已安装的 adapter 会按自身 schema 校验配置。移除该字段，或改用对应 datasource 页面中的准确字段名。 |
+| 已连接但看不到目标对象 | 检查 adapter 的命名空间字段（`catalog`、`database`、`schema` 或 `schema_name`）以及数据库账号授权。 |
+| 凭证显示为 `<MISSING:...>` | 启动 Datus 前先导出对应环境变量。 |
 
 ## 相关文档
 
-- [数据库适配器](../adapters/db_adapters.md) - 安装 MySQL、Snowflake、StarRocks 等插件适配器
-- [语义层配置](semantic_layer.md) - 配置语义适配器
-- [BI 平台配置](bi_platforms.md) - 配置 Superset 或 Grafana
-- [调度器配置](schedulers.md) - 配置 Airflow 等调度器
-- [CLI 命令](../cli-commands.md) - 查看 `configure`、`init`、`service` 等完整命令说明
+- [数据库 adapter 架构](../adapters/db_adapters.md)
+- [SQL policy 与部署级只读模式](sql_policy.md)
+- [Plugin 系统](../plugin/introduction.md)
+- [CLI 参考](../cli/reference.md)

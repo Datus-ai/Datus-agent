@@ -239,6 +239,26 @@ class TestBuildTableFilter:
         assert "schema_name = 'public'" in clause
         assert "table_name = 'users'" in clause
 
+    def test_table_column_renames_only_the_table_leaf(self):
+        """A store that binds its table under another column gets that column.
+
+        The namespace parts are named the same everywhere, so only the leaf may
+        move -- renaming them too would filter on columns that do not exist.
+        """
+        node = ScopedFilterBuilder.build_table_filter("public.users", "postgresql", table_column="source_table")
+        clause = build_where(node)
+        assert "source_table = 'users'" in clause
+        assert "schema_name = 'public'" in clause
+        assert "table_name" not in clause
+
+    def test_table_column_applies_to_every_token(self):
+        """Each OR branch has to carry the override, not just the first."""
+        node = ScopedFilterBuilder.build_table_filter("users, orders", table_column="source_table")
+        clause = build_where(node)
+        assert "source_table = 'users'" in clause
+        assert "source_table = 'orders'" in clause
+        assert "table_name" not in clause
+
 
 # ---------------------------------------------------------------------------
 # TestBuildSubjectFilter

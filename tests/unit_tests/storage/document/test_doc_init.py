@@ -146,6 +146,12 @@ class TestDetectVersionsFromPaths:
         result = _detect_versions_from_paths(["v1.0.0"])
         assert result == {"1.0.0"}
 
+    def test_pre_release_version_paths(self):
+        assert _detect_versions_from_paths(["1.0.0-beta", "1.0.0-rc1", "1.0.0"]) == {"1.0.0-beta", "1.0.0-rc1", "1.0.0"}
+
+    def test_only_non_version_paths(self):
+        assert _detect_versions_from_paths(["docs", "README.md", "CHANGELOG.md"]) == set()
+
 
 # ---------------------------------------------------------------------------
 # _detect_versions_from_file_paths
@@ -816,7 +822,7 @@ class TestInitPlatformDocsOverwrite:
     @patch("datus.storage.document.doc_init.LocalFetcher")
     @patch("datus.storage.document.doc_init.document_store")
     def test_index_creation_error_logged(self, mock_store_fn, mock_fetcher_cls, mock_processor_cls):
-        """When create_indices raises, error is captured in stats but result is still success."""
+        """When create_indices raises, bootstrap reports failure."""
         from datus.storage.document.streaming_processor import ProcessingStats
 
         mock_store = MagicMock()
@@ -844,8 +850,7 @@ class TestInitPlatformDocsOverwrite:
 
         mock_store.create_indices.assert_called_once()
         assert any("Index error" in err for err in result.errors)
-        # total_chunks > 0 so success is True despite index error
-        assert result.success is True
+        assert result.success is False
 
     @patch("datus.storage.document.doc_init.StreamingDocProcessor")
     @patch("datus.storage.document.doc_init.LocalFetcher")

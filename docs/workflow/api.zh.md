@@ -83,7 +83,7 @@ client_id=your_client_id&client_secret=your_client_secret&grant_type=client_cred
 
 | 参数 | 类型 | 必填 | 说明 |
 |---|---|---|---|
-| `workflow` | string | ✅ | 工作流名称（nl2sql、reflection、fixed、metric_to_sql） |
+| `workflow` | string | ✅ | 工作流名称（`fixed`、`chat_agentic` 或 `gen_sql_agentic`） |
 | `datasource` | string | ✅ | 数据库数据源 |
 | `task` | string | ✅ | 自然语言任务描述 |
 | `mode` | string | ✅ | 执行模式（sync 或 async） |
@@ -106,7 +106,7 @@ Content-Type: application/json
 **请求体：**
 ```json
 {
-  "workflow": "nl2sql",
+  "workflow": "fixed",
   "datasource": "your_database_datasource",
   "task": "Show me monthly revenue by product category",
   "mode": "sync",
@@ -120,13 +120,12 @@ Content-Type: application/json
 {
   "task_id": "client_20240115143000",
   "status": "completed",
-  "workflow": "nl2sql",
+  "workflow": "fixed",
   "sql": "SELECT DATE_TRUNC('month', order_date) as month, product_category, SUM(amount) as revenue FROM orders WHERE order_date >= '2023-01-01' GROUP BY month, product_category ORDER BY month, revenue DESC",
-  "result": [ ... ],
+  "result": [],
   "metadata": {
     "execution_time": 12.5,
-    "nodes_executed": 5,
-    "reflection_rounds": 0
+    "nodes_executed": 5
   },
   "error": null,
   "execution_time": 12.5
@@ -145,7 +144,7 @@ Cache-Control: no-cache
 **请求体：**
 ```json
 {
-  "workflow": "nl2sql",
+  "workflow": "fixed",
   "datasource": "your_database_datasource",
   "task": "Show me monthly revenue by product category",
   "mode": "async",
@@ -157,7 +156,7 @@ Cache-Control: no-cache
 **响应（SSE 流）：**
 ```
 event: started
-:data: {"task_id": "client_20240115143000", "workflow": "nl2sql"}
+:data: {"task_id": "client_20240115143000", "workflow": "fixed"}
 ...
 event: done
 :data: {"task_id": "client_20240115143000", "status": "completed", "total_time": 15.2}
@@ -186,14 +185,8 @@ event: done
 
 ## 工作流类型
 
-### reflection
-- 具反思与纠错能力；可适配并重试；适合复杂或不确定问题
-
 ### fixed
 - 确定性路径；无自适应；适合明确需求
-
-### metric_to_sql
-- 基于业务指标；包含时间解析；适合标准化 BI
 
 ## 配置
 

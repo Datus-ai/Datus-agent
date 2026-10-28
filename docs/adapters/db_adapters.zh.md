@@ -1,362 +1,74 @@
-# 数据库适配器
+# 数据库 adapters
 
-Datus Agent 通过基于插件的适配器系统支持连接各种数据库。本文档介绍可用的适配器、安装方法以及数据库连接配置。
+Datus 使用基于 registry 的数据库 adapter 系统。SQLite 与 DuckDB 随 Agent 内置；其他服务型数据库和云数仓都由独立版本的 `datus-<type>` 包提供，并通过 `datus.adapters` entry-point group 自动发现。
 
-## 概览
+连接 profile 统一放在 [Datasources](../configuration/datasources.md) 下。每个子页面是字段、默认值、认证规则和命名空间行为的准确信息源；本页只说明 adapter 如何安装与加载。
 
-Datus 使用模块化适配器架构，允许连接不同的数据库：
+## 安装与发现
 
-- **内置适配器**：SQLite 和 DuckDB 包含在核心包中
-- **插件适配器**：其他数据库（MySQL、Snowflake、StarRocks 等）可作为独立包安装
-
-这种设计保持核心包轻量化，同时允许按需添加特定数据库支持。
-
-## 支持的数据库
-
-| 数据库 | 包名 | 安装方式 | 状态 |
-|--------|------|----------|------|
-| SQLite | 内置 | 已包含 | 可用 |
-| DuckDB | 内置 | 已包含 | 可用 |
-| MySQL | datus-mysql | `pip install datus-mysql` | 可用 |
-| StarRocks | datus-starrocks | `pip install datus-starrocks` | 可用 |
-| Snowflake | datus-snowflake | `pip install datus-snowflake` | 可用 |
-| ClickZetta | datus-clickzetta | `pip install datus-clickzetta` | 可用 |
-| Hive | datus-hive | `pip install datus-hive` | 可用 |
-| Spark | datus-spark | `pip install datus-spark` | 可用 |
-| ClickHouse | datus-clickhouse | `pip install datus-clickhouse` | 可用 |
-| Trino | datus-trino | `pip install datus-trino` | 可用 |
-
-## 安装
-
-### 内置数据库
-
-SQLite 和 DuckDB 已包含在 Datus Agent 中，无需额外安装。
-
-### 插件适配器
-
-为您的数据库安装对应的适配器包：
+推荐通过 `/datasource` 管理器安装：
 
 ```bash
-# MySQL
-pip install datus-mysql
-
-# Snowflake
-pip install datus-snowflake
-
-# StarRocks
-pip install datus-starrocks
-
-# ClickZetta
-pip install datus-clickzetta
-
-# Hive
-pip install datus-hive
-
-# Spark
-pip install datus-spark
-
-# ClickHouse
-pip install datus-clickhouse
-
-# Trino
-pip install datus-trino
+datus
 ```
 
-安装后，Datus Agent 会自动检测并加载适配器。
+运行 `/datasource`，选择数据库类型并填写 profile。缺少 adapter 时，Datus 会把 `datus-<type>` 安装到当前解释器，加载 entry point，校验 profile，并在保存前测试连接。
 
-## 配置
-
-在 `agent.yml` 的 `agent.services.datasources` 下配置数据源连接：
-
-```yaml
-agent:
-  services:
-    datasources:
-      mydata:
-        type: sqlite
-        uri: sqlite:///path/to/database.db
-```
-
-`services.datasources` 下的每个条目都表示一个逻辑数据库连接。
-
-### SQLite
-
-```yaml
-mydata:
-  type: sqlite
-  uri: sqlite:///path/to/database.db
-```
-
-### DuckDB
-
-```yaml
-analytics:
-  type: duckdb
-  uri: duckdb:///path/to/database.duckdb
-```
-
-### MySQL
-
-```yaml
-production:
-  type: mysql
-  host: localhost
-  port: 3306
-  username: your_username
-  password: your_password
-  database: your_database
-```
-
-### PostgreSQL
-
-```yaml
-production_pg:
-  type: postgresql
-  host: localhost
-  port: 5432
-  username: your_username
-  password: your_password
-  database: your_database
-  schema: public  # 可选，默认为 public
-  sslmode: prefer  # 可选，默认为 prefer
-```
-
-### Snowflake
-
-```yaml
-warehouse:
-  type: snowflake
-  account: your_account
-  username: your_username
-  password: your_password  # 可配置 private_key，或在没有 private_key 时 password 和 private_key_file 二选一
-  # private_key: |
-  #   -----BEGIN PRIVATE KEY-----
-  #   ...
-  #   -----END PRIVATE KEY-----
-  # private_key_file: /path/to/rsa_key.p8
-  # private_key_file_pwd: optional_key_passphrase
-  warehouse: your_warehouse
-  database: your_database
-  schema: your_schema
-  role: your_role  # 可选
-```
-
-Snowflake 支持密码认证和 key-pair 认证。可以配置 `private_key`，或在没有 `private_key` 时配置 `password` 和 `private_key_file` 其中一个。`private_key` 会优先于 `private_key_file` 和 `password`；私钥加密时再配置 `private_key_file_pwd`。Snowflake 使用 `database` 和 `schema`，不要为 Snowflake 配置 `catalog`。
-
-### StarRocks
-
-```yaml
-analytics:
-  type: starrocks
-  host: localhost
-  port: 9030
-  username: root
-  password: your_password
-  database: your_database
-```
-
-### ClickZetta
-
-```yaml
-lakehouse:
-  type: clickzetta
-  service: CLICKZETTA_SERVICE
-  username: CLICKZETTA_USERNAME
-  password: CLICKZETTA_PASSWORD
-  instance: CLICKZETTA_INSTANCE
-  workspace: CLICKZETTA_WORKSPACE
-  schema: CLICKZETTA_SCHEMA
-  vcluster: CLICKZETTA_VCLUSTER
-```
-
-### Hive
-
-```yaml
-hive_data:
-  type: hive
-  host: 127.0.0.1
-  port: 10000
-  username: hive
-  database: default
-  auth: NONE  # 可选：NONE、LDAP、CUSTOM、KERBEROS
-  configuration:  # 可选 Hive session 配置
-    hive.execution.engine: spark
-```
-
-### Spark
-
-```yaml
-spark_data:
-  type: spark
-  host: localhost
-  port: 10000
-  username: spark
-  database: default
-  auth_mechanism: NONE  # 可选：NONE、PLAIN、KERBEROS
-```
-
-### ClickHouse
-
-```yaml
-analytics:
-  type: clickhouse
-  host: localhost
-  port: 8123
-  username: default
-  password: your_password
-  database: your_database
-```
-
-### Trino
-
-```yaml
-trino_data:
-  type: trino
-  host: localhost
-  port: 8080
-  username: trino
-  catalog: hive
-  schema: default
-  http_scheme: http  # 可选：http 或 https
-```
-
-## 多数据库连接
-
-可以在 `agent.services.datasources` 下配置多个独立数据源连接：
-
-```yaml
-agent:
-  services:
-    datasources:
-      source_db:
-        type: mysql
-        host: source-server
-        username: reader
-        password: password
-        database: source
-
-      target_db:
-        type: snowflake
-        account: your_account
-        username: writer
-        password: password
-        warehouse: compute_wh
-        database: target
-```
-
-## 适配器功能
-
-### 通用功能
-
-所有适配器支持：
-
-- SQL 查询执行（SELECT、INSERT、UPDATE、DELETE）
-- DDL 操作（CREATE、ALTER、DROP）
-- 元数据获取（表、视图、schema）
-- 样本数据获取
-- 连接池和超时管理
-
-### 适配器特定功能
-
-#### MySQL
-- INFORMATION_SCHEMA 查询
-- SHOW CREATE TABLE/VIEW 支持
-- 完整 CRUD 操作
-
-#### Snowflake
-- 多数据库和 schema 支持
-- 表、视图和物化视图
-- Arrow 格式高效数据传输
-- 原生 SDK 集成
-
-#### StarRocks
-- 多 Catalog 支持
-- 物化视图支持
-- MySQL 协议兼容
-
-#### ClickZetta
-- Workspace 和 schema 管理
-- Volume/Stage 文件操作
-- 原生 SDK 集成
-
-#### Hive
-- HiveServer2/Thrift 协议连接
-- Hive session 配置支持
-- 多种认证机制（NONE、LDAP、CUSTOM、KERBEROS）
-- 数据库上下文切换（USE 语句）
-
-#### Spark
-- 通过 HiveServer2 协议连接 Spark Thrift Server
-- 多种认证机制（NONE、PLAIN、KERBEROS）
-- Spark SQL 方言支持
-
-#### ClickHouse
-- HTTP 协议连接
-- 无 schema 层（数据库即 schema）
-- ClickHouse 特有的 DML 语法（ALTER TABLE UPDATE）
-- 轻量级删除支持
-
-#### Trino
-- 三级层次结构：catalog → schema → table
-- 跨 catalog 查询支持
-- 内置 TPC-H 连接器用于基准测试
-- HTTP/HTTPS 连接及 SSL 支持
-
-## 故障排除
-
-### 适配器未找到
-
-如果看到 `Connector 'mysql' not found` 错误，请确保已安装对应的适配器包：
+受控部署可以显式安装，并与其他依赖一起锁定版本：
 
 ```bash
-pip install datus-mysql
+pip install datus-postgresql
 ```
 
-### 连接问题
+安装 adapter 会注册四类行为：
 
-检查以下内容：
+- 对外公开的 `type` 名称，例如 `postgresql`；
+- 负责拒绝未知字段并提供默认值的 Pydantic 连接模型；
+- connector factory 与命名空间/URI handler；
+- 可选的数据库专用 SQL 指引或 skill。
 
-1. **网络连接**：确保能够访问数据库服务器
-2. **凭证**：验证用户名和密码是否正确
-3. **端口**：确认指定的端口正确
-4. **数据库名**：确保数据库存在
+Adapter 必须安装在运行 `datus` 的同一个 Python 环境中。安装到另一个 virtual environment 不会被当前进程发现。
 
-### 驱动依赖
-
-部分适配器需要额外的系统依赖：
-
-- **MySQL**：需要 `pymysql`（自动安装）
-- **Snowflake**：需要 `snowflake-connector-python`（自动安装）
-- **Hive**：需要 `pyhive`、`thrift`、`thrift-sasl`、`pure-sasl`（自动安装）
-- **Spark**：需要 `pyhive`、`thrift`、`thrift-sasl`、`pure-sasl`（自动安装）
-- **ClickHouse**：需要 `clickhouse-sqlalchemy`（自动安装）
-- **Trino**：需要 `trino`（自动安装）
-
-## 架构
+## 运行时流程
 
 ```text
-datus-agent (核心)
-├── 内置适配器
-│   ├── SQLite Connector
-│   └── DuckDB Connector
-│
-└── 插件系统 (Entry Points)
-    ├── datus-sqlalchemy (基础层)
-    │   ├── datus-mysql
-    │   ├── datus-starrocks
-    │   ├── datus-hive
-    │   ├── datus-spark
-    │   ├── datus-clickhouse
-    │   └── datus-trino
-    │
-    └── 原生 SDK 适配器
-        ├── datus-snowflake
-        └── datus-clickzetta
+agent.services.datasources.<name>
+        ↓
+Agent 保留通用字段与 adapter 专用字段
+        ↓
+adapter 连接模型校验类型、默认值与约束
+        ↓
+registry 按 <type> 创建 connector
+        ↓
+SQL 执行、元数据发现与命名空间切换
 ```
 
-适配器系统使用 Python 的 entry points 机制实现自动发现。当您安装适配器包时，它会自动注册到 Datus Agent 并可供使用。
+Adapter 包负责数据库专用配置；Datus 负责外围 profile 名、`type`、`default`、环境变量展开和当前 datasource 选择。因此连接字段按 datasource 独立成页，而不是维护一张只能近似描述所有数据库的共享表。
+
+## 开发 adapter
+
+数据库 adapters 位于 [`Datus-ai/datus-db-adapters`](https://github.com/Datus-ai/datus-db-adapters) workspace。新增 adapter 应：
+
+1. 依赖 `datus-db-core`，适用时复用 `datus-sqlalchemy`；
+2. 定义严格的 Pydantic 配置模型；
+3. 实现 connector contract，并准确声明 namespace capability；
+4. 暴露与 datasource `type` 同名的 `datus.adapters` entry point；
+5. 通过共享 adapter contract 与 TPC-H 测试；
+6. 在本文档中增加一组中英文 datasource 详细页。
+
+应以仓库当前 reference adapter 和测试标准为准，不要原样复制旧 package。
+
+## 故障排查
+
+| 现象 | 原因与处理 |
+|---|---|
+| Adapter 不在列表中 | 把 `datus-<type>` 安装到运行 `datus` 的解释器，然后重新打开 `/datasource`。 |
+| 安装成功但加载失败 | 直接 import `datus_<type>`，暴露缺失 native library 或依赖冲突。 |
+| Profile 拒绝多余字段 | 只使用对应 datasource 页面列出的字段；adapter 模型有意使用严格校验。 |
+| 元数据层级错误 | 检查 adapter 声明的 catalog/database/schema capability，以及 profile 是否使用文档规定的 namespace 字段。 |
 
 ## 下一步
 
-- [快速开始](../getting_started/Quickstart.md) - 开始使用 Datus Agent
-- [配置参考](../configuration/introduction.md) - 详细配置选项
+- [配置 datasources](../configuration/datasources.md)
+- [在 CLI 中使用 `/datasource`](../cli/other_commands.md#datasource)
+- [配置 SQL policy 与只读模式](../configuration/sql_policy.md)

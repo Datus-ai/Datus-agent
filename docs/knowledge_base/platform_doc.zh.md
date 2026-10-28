@@ -172,6 +172,8 @@ datus-agent platform-doc --platform starrocks --github-ref 4.0.5
 如需在自定义节点或子代理中启用这些工具，请在工具配置里加入 `platform_doc_tools`（或具体的 `platform_doc_search_tools.*`）。
 **推荐调用顺序**：`list_document_nav` → `get_document` → `search_document` → `web_search_document`（兜底）。
 
+`web_search_document` 与 [Web 工具组](../configuration/web_tool.zh.md)中的通用 `web_search` 不是同一个工具 —— 两者共享 Tavily key 配置，但权限类别各自独立。
+
 **`get_document` 一次只取一篇文档**，示例：
 
 ```text

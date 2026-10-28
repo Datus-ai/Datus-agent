@@ -13,14 +13,15 @@ from typing import Any, Dict, Optional
 
 from pydantic import Field
 
-from datus.schemas.base import BaseInput, BaseResult
+from datus.schemas.at_context import AtContextInput
+from datus.schemas.base import BaseResult
 
 
-class GenDashboardNodeInput(BaseInput):
+class GenDashboardNodeInput(AtContextInput):
     """Input model for GenDashboardAgenticNode."""
 
     user_message: str = Field(..., description="User's dashboard request (required)")
-    database: Optional[str] = Field(None, description="Source datasource")
+    database: Optional[str] = Field(None, description="Database name for context")
     prompt_version: Optional[str] = Field(None, description="Prompt template version")
 
 

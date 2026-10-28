@@ -1,0 +1,9 @@
+steps:
+- kind: ddl
+  sql: CREATE TABLE {{db}}.typed_values (id INT, label STRING, nullable_text STRING, day_value DATE, ts_value TIMESTAMP,
+    amount DECIMAL(38,10), flag BOOLEAN) STORED AS ORC
+- kind: insert
+  sql: INSERT INTO {{db}}.typed_values SELECT 1, '中文', CAST(NULL AS STRING), CAST('2024-02-29' AS DATE), CAST('2024-02-29
+    12:34:56.123' AS TIMESTAMP), CAST('1234567890123456789012345678.1234567890' AS DECIMAL(38,10)), TRUE UNION ALL
+    SELECT 2, '', 'present', CAST('2024-03-01' AS DATE), CAST('2024-03-01 00:00:00' AS TIMESTAMP), CAST('-0.0000000001'
+    AS DECIMAL(38,10)), FALSE

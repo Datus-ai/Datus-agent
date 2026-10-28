@@ -12,9 +12,11 @@ layered on top via ``PermissionConfig.merge_with`` (last-match-wins).
 The three profiles embody three security postures:
 
 * ``normal``:    read-only tools, semantic tools, and skill loading allowed,
-  all other writes ASK, named destructive tools DENY. Default for new installs.
+  all other writes ASK, named destructive tools DENY. SQL reads auto-allow,
+  every other statement class ASK. Default for new installs.
 * ``auto``:      Normal + workspace writes auto-execute, BI/scheduler
-  non-trigger writes auto, DB writes still ASK.
+  non-trigger writes auto, SQL non-destructive writes auto — destructive
+  statements (UPDATE/DELETE/MERGE/DROP/TRUNCATE/ALTER/REPLACE) still ASK.
 * ``dangerous``: everything ALLOW, including EXTERNAL filesystem paths in
   interactive mode. Workflow (non-interactive) flows still fail closed on
   EXTERNAL paths regardless of profile.
@@ -45,10 +47,13 @@ below cover the cases where the zone gate returns ``False`` (e.g.
 
 from typing import Optional
 
+from datus.tools.permission.bash_rules import BashCommandRules
 from datus.tools.permission.permission_config import (
+    AutoReviewConfig,
     PermissionConfig,
     PermissionLevel,
     PermissionRule,
+    SqlStatementRules,
 )
 
 PROFILE_NAMES: tuple[str, ...] = ("normal", "auto", "dangerous")
@@ -64,14 +69,28 @@ _NORMAL_RULES = [
     # context search / date utilities
     _rule("context_search_tools", "*", PermissionLevel.ALLOW),
     _rule("date_parsing_tools", "*", PermissionLevel.ALLOW),
-    # db read
-    _rule("db_tools", "read_query", PermissionLevel.ALLOW),
+    # static SQL lineage read. ``upsert_lineage`` / ``delete_lineage`` write the project file
+    # lineage/lineage.json (deleting sources, saving inline SQL), so they fall through to ASK.
+    _rule("lineage_tools", "query_lineage", PermissionLevel.ALLOW),
+    _rule("tool_result_tools", "read_tool_result", PermissionLevel.ALLOW),
+    # db read. ``execute_sql`` is the unified SQL entry point; its gating is
+    # handled dynamically per statement class in
+    # ``PermissionHooks._handle_sql_permission`` driven by each profile's
+    # ``sql_statements`` ruleset (read auto-allow, write/destructive per
+    # profile), so it intentionally has no static rule here.
     _rule("db_tools", "verify_sql", PermissionLevel.ALLOW),
     _rule("db_tools", "list_*", PermissionLevel.ALLOW),
     _rule("db_tools", "search_*", PermissionLevel.ALLOW),
     _rule("db_tools", "describe_*", PermissionLevel.ALLOW),
     _rule("db_tools", "get_*", PermissionLevel.ALLOW),
     _rule("db_tools", "search_*", PermissionLevel.ALLOW),
+    # Registering an uploaded file as a view is read-only in every sense the
+    # user cares about: the source path is classified against the filesystem
+    # policy first, the file is only read, and the view lands in a private
+    # per-project catalog that holds nothing but view definitions. Falling
+    # through to ``default=ASK`` would prompt for what is effectively "open the
+    # file the user just asked about".
+    _rule("db_tools", "load_file_as_table", PermissionLevel.ALLOW),
     # bi read + destructive deny
     _rule("bi_tools", "list_*", PermissionLevel.ALLOW),
     _rule("bi_tools", "get_*", PermissionLevel.ALLOW),
@@ -98,6 +117,10 @@ _NORMAL_RULES = [
     _rule("filesystem_tools", "read_*", PermissionLevel.ALLOW),
     _rule("filesystem_tools", "glob", PermissionLevel.ALLOW),
     _rule("filesystem_tools", "grep", PermissionLevel.ALLOW),
+    # Object-scoped deletes remain individually confirmable even in auto;
+    # unlike a general file delete they are exposed directly to authoring LLMs.
+    _rule("filesystem_tools", "delete_osi_metrics", PermissionLevel.ASK),
+    _rule("filesystem_tools", "delete_osi_datasets", PermissionLevel.ASK),
     # persistent memory: ALLOW. add_memory/edit_memory only touch a single
     # hidden, 2000-byte-capped MEMORY.md with no external reach — gating
     # benign self-notes behind a prompt would fire on routine "remember this"
@@ -122,8 +145,8 @@ _NORMAL_RULES = [
     # fire on nearly every chat interaction for zero safety benefit.
     _rule("sub_agent_tools", "*", PermissionLevel.ALLOW),
     # reference templates: read-only end to end — search/get/render are pure
-    # lookups and ``execute_reference_template`` renders Jinja then runs
-    # ``db_tools.read_query`` (never a write). Historically gen_sql lumped
+    # lookups and ``execute_reference_template`` renders Jinja then runs the
+    # internal read-only query path (never a write). Historically gen_sql lumped
     # these into ``semantic_tools`` (ALLOW) while chat left them in the
     # catch-all (ASK); the dedicated category unifies on ALLOW.
     _rule("reference_template_tools", "*", PermissionLevel.ALLOW),
@@ -133,25 +156,149 @@ _NORMAL_RULES = [
     # a whole via the rendered preview, not per-call prompts. Mirrors the
     # historical lumping into ``semantic_tools``.
     _rule("artifact_tools", "*", PermissionLevel.ALLOW),
-    # platform doc lookups are read-only; ``web_search_document`` reaches
-    # the network (Tavily) and stays at the profile default (ASK in
-    # normal/auto).
+    # platform doc lookups are read-only local reads.
     _rule("platform_doc_tools", "list_*", PermissionLevel.ALLOW),
     _rule("platform_doc_tools", "get_*", PermissionLevel.ALLOW),
     _rule("platform_doc_tools", "search_*", PermissionLevel.ALLOW),
-    # mcp: ASK; skill loading ALLOW, but skill script execution still ASK.
+    # web_tool reaches the public network (Tavily search / httpx fetch), but it is
+    # read-only retrieval and ``web_fetch`` is hardened against SSRF (non-public
+    # targets are refused). ALLOW keeps it from prompting on every lookup. NOTE:
+    # vendor-native web tools (Codex hosted web_search, Anthropic web_search_20250305
+    # / web_fetch_20250910) run server-side and do NOT pass through local
+    # PermissionHooks at all — gating the local backends at ASK could not be
+    # enforced on the native ones anyway, so we keep both consistently at ALLOW.
+    _rule("web_tool", "web_search", PermissionLevel.ALLOW),
+    _rule("web_tool", "web_fetch", PermissionLevel.ALLOW),
+    # mcp: ASK; skill loading ALLOW.
     _rule("mcp.*", "*", PermissionLevel.ASK),
     _rule("skills", "*", PermissionLevel.ALLOW),
-    _rule("skills", "skill_execute_command", PermissionLevel.ASK),
     # General-purpose bash execution: always ASK in normal/auto so a stray
     # command can't run without user consent. ``dangerous`` profile (default
-    # ALLOW, no rules) lets it through.
-    _rule("bash_tools", "execute_command", PermissionLevel.ASK),
+    # ALLOW, no rules) lets it through. This coarse rule is the FALLBACK for
+    # when the command-level ``bash_commands`` ruleset below is absent or
+    # errors out (defense in depth) — the fine-grained gate in
+    # ``PermissionHooks._handle_bash_permission`` normally decides first.
+    _rule("bash_tools", "bash", PermissionLevel.ASK),
+]
+
+# Command-level bash whitelist for ``normal``: commands that cannot mutate
+# state or execute arbitrary code REGARDLESS of their flags, so prompting on
+# them is pure friction (they're the read-only backbone of data/dev work in a
+# pipeline like ``cat log | grep err | wc -l``).
+#
+# SECURITY — what is deliberately NOT here:
+#   * awk / sed — programmable: ``awk 'BEGIN{system("...")}'`` execs, ``sed -i``
+#     writes in place. Prefix+first-arg matching can't see the quoted program,
+#     so blanket-allowing them would auto-run arbitrary code. Left at ASK; a
+#     user who accepts the risk can add ``awk:*`` / ``sed:*`` to agent.yml.
+#   * find — ``-exec`` / ``-delete`` run commands / delete files.
+#   * tee / sort -o / dd — write files.
+#   * curl / wget / nc / ssh — network egress.
+#   * rm / mv / cp / mkdir / touch / chmod — filesystem writes (mkdir/touch
+#     move to ``auto`` below).
+# Wrappers (bash -c, sudo, xargs, env, ...), compound constructs (loops,
+# subshells) and any residual metacharacter command ($(), redirection,
+# background &) are force-ASKed by the safety ceiling in
+# ``evaluate_bash_command`` regardless of this list. Note that a command
+# chained with ``|``/``&&``/``||``/``;`` is judged per sub-command, so a chain
+# built purely from this list auto-runs.
+# Tunable via ``permissions.bash_commands``.
+_NORMAL_BASH_ALLOW = [
+    # environment / identity info
+    "pwd",
+    "whoami",
+    "id:*",
+    # ``hostname NAME`` / ``date -s`` are mutating forms (root-only, but they
+    # still break the read-only contract), so no blanket ``:*`` here: exact
+    # match only, plus ``date +FORMAT`` for the common read-only formatting.
+    "hostname",
+    "uname:*",
+    "date",
+    "date:+*",
+    "which:*",
+    "type:*",
+    "printenv:*",
+    "locale:*",
+    "echo:*",
+    "printf:*",
+    "seq:*",
+    "true",
+    "false",
+    # directory / file listing & inspection
+    "ls:*",
+    "tree:*",
+    "stat:*",
+    "file:*",
+    "du:*",
+    "df:*",
+    "wc:*",
+    "basename:*",
+    "dirname:*",
+    "realpath:*",
+    "readlink:*",
+    # file content readers (stdout only — cannot write or exec)
+    "cat:*",
+    "head:*",
+    "tail:*",
+    "tac:*",
+    "nl:*",
+    "rev:*",
+    # text search / filter / transform (read input, write only to stdout)
+    "grep:*",
+    "egrep:*",
+    "fgrep:*",
+    "rg:*",
+    "cut:*",
+    "tr:*",
+    "uniq:*",
+    "comm:*",
+    "column:*",
+    "fold:*",
+    "paste:*",
+    "expand:*",
+    "unexpand:*",
+    # compare
+    "diff:*",
+    "cmp:*",
+    # checksums / encoding (read-only computation)
+    "md5sum:*",
+    "sha1sum:*",
+    "sha256sum:*",
+    "cksum:*",
+    "base64:*",
+    # git read-only
+    "git status",
+    "git branch",
+    "git log:*",
+    "git diff:*",
+    "git show:*",
+    "git remote:*",
+    "git tag",
+    "git describe:*",
+    "git rev-parse:*",
+    "git blame:*",
+    "git ls-files:*",
+    "git shortlog:*",
+]
+
+# ``auto`` adds lightweight workspace writes, consistent with auto's
+# filesystem posture (INTERNAL writes auto-allow). Read-only commands already
+# come from ``_NORMAL_BASH_ALLOW``. ``sort`` is here (not normal) because
+# ``sort -o FILE`` can write a file.
+_AUTO_BASH_ALLOW = _NORMAL_BASH_ALLOW + [
+    "sort:*",
+    "mkdir:*",
+    "touch:*",
 ]
 
 NORMAL = PermissionConfig(
     default_permission=PermissionLevel.ASK,
     rules=_NORMAL_RULES,
+    bash_commands=BashCommandRules(allow=_NORMAL_BASH_ALLOW),
+    # execute_sql statement classes: reads auto-allow, everything else ASK
+    # (the SqlStatementRules defaults are exactly normal's posture).
+    sql_statements=SqlStatementRules(),
+    auto_review=AutoReviewConfig(enabled=False),
 )
 
 # --- Auto --------------------------------------------------------------------
@@ -161,6 +308,7 @@ NORMAL = PermissionConfig(
 # posture, so forcing them to switch to ``dangerous`` just to remove one
 # chart is hostile. ASK still gates each call via the broker.
 _AUTO_EXTRA_RULES = [
+    _rule("semantic_tools", "write_semantic_model_plan_file", PermissionLevel.ALLOW),
     # workspace writes — ALLOW promotes the INTERNAL × write decision in
     # ``_handle_filesystem_zone`` so the auto profile no longer falls through
     # to ``default=ASK`` like normal does. EXTERNAL paths are still gated by
@@ -168,6 +316,12 @@ _AUTO_EXTRA_RULES = [
     _rule("filesystem_tools", "write_file", PermissionLevel.ALLOW),
     _rule("filesystem_tools", "edit_file", PermissionLevel.ALLOW),
     _rule("filesystem_tools", "delete_file", PermissionLevel.ALLOW),
+    _rule("filesystem_tools", "upsert_osi_metrics", PermissionLevel.ALLOW),
+    _rule("filesystem_tools", "upsert_osi_datasets", PermissionLevel.ALLOW),
+    # lineage analysis is a workspace write that re-derives sources from files; removing saved
+    # sources stays individually confirmable, like the object-scoped OSI deletes.
+    _rule("lineage_tools", "upsert_lineage", PermissionLevel.ALLOW),
+    _rule("lineage_tools", "delete_lineage", PermissionLevel.ASK),
     # plan writes
     _rule("tools", "todo_write", PermissionLevel.ALLOW),
     _rule("tools", "todo_update", PermissionLevel.ALLOW),
@@ -182,11 +336,11 @@ _AUTO_EXTRA_RULES = [
     _rule("scheduler_tools", "pause_job", PermissionLevel.ALLOW),
     _rule("scheduler_tools", "resume_job", PermissionLevel.ALLOW),
     _rule("scheduler_tools", "trigger_*", PermissionLevel.ASK),
-    # db writes: always ASK
-    _rule("db_tools", "execute_ddl", PermissionLevel.ASK),
-    _rule("db_tools", "execute_write", PermissionLevel.ASK),
+    # db statements: gated dynamically by ``PermissionHooks._handle_sql_permission``
+    # via auto's ``sql_statements`` ruleset below (reads + non-destructive writes
+    # auto-allow, destructive statements ASK), so only the standalone cross-DB
+    # transfer tool needs an explicit ASK rule here.
     _rule("db_tools", "transfer_query_result", PermissionLevel.ASK),
-    _rule("db_tools", "write_query", PermissionLevel.ASK),
     # Named destructives — downgrade NORMAL's DENY to ASK in Auto. The user
     # can confirm at the prompt; DENY would force a profile switch to
     # ``dangerous`` (which is far more permissive than just ``delete``).
@@ -197,13 +351,25 @@ _AUTO_EXTRA_RULES = [
 AUTO = PermissionConfig(
     default_permission=PermissionLevel.ASK,
     rules=_NORMAL_RULES + _AUTO_EXTRA_RULES,
+    bash_commands=BashCommandRules(allow=_AUTO_BASH_ALLOW),
+    # execute_sql statement classes: reads AND non-destructive writes (INSERT/
+    # CREATE/benign DDL/USE) auto-allow; destructive statements (UPDATE/DELETE/
+    # MERGE/DROP/TRUNCATE/ALTER/REPLACE) and unparseable SQL still ASK.
+    sql_statements=SqlStatementRules(write=PermissionLevel.ALLOW),
+    auto_review=AutoReviewConfig(enabled=True),
 )
 
 # --- Dangerous ---------------------------------------------------------------
 # default=ALLOW, no rules. PathZone at hook layer still gates EXTERNAL fs.
+# bash_commands stays None: the fine-grained bash gate steps aside and the
+# profile default of ALLOW lets every command through, preserving the
+# historical allow-everything behavior of this profile. sql_statements stays
+# None for the same reason: the SQL gate falls back to the coarse rule check,
+# which resolves to the profile default of ALLOW for every statement class.
 DANGEROUS = PermissionConfig(
     default_permission=PermissionLevel.ALLOW,
     rules=[],
+    auto_review=AutoReviewConfig(enabled=False),
 )
 
 
@@ -264,6 +430,7 @@ def build_user_overrides(
 def build_effective_config(
     profile_name: str,
     user_raw: Optional[dict] = None,
+    plugin_bash_rules: Optional[BashCommandRules] = None,
 ) -> PermissionConfig:
     """Build the effective permission config for a profile + user overrides.
 
@@ -282,12 +449,31 @@ def build_effective_config(
             unknown names.
         user_raw: The raw user permissions dict (without the ``profile``
             key). ``None`` or ``{}`` yields the bare profile base.
+        plugin_bash_rules: Bash rules declared by installed plugins for this
+            profile (``collect_plugin_cli_permissions()[profile_name]``).
+            Layered between the profile base and the user rules: since
+            ``evaluate_bash_command`` applies deny > safety > ask > allow
+            regardless of list order, a plugin ``allow`` can never override a
+            user ``deny``. Ignored when the profile carries no
+            ``bash_commands`` ruleset (dangerous stays fully open).
 
     Returns:
         The merged ``PermissionConfig`` ready to install on
         ``AgentConfig.permissions_config`` and ``PermissionManager.global_config``.
     """
     base = get_profile(profile_name)
+    if plugin_bash_rules is not None and not plugin_bash_rules.is_empty() and base.bash_commands is not None:
+        # Rebuild instead of mutating: ``get_profile`` returns shared
+        # module-level singletons. Every profile field must be carried over —
+        # omitting one here silently drops it whenever a plugin declares bash
+        # rules.
+        base = PermissionConfig(
+            default_permission=base.default_permission,
+            rules=list(base.rules),
+            bash_commands=base.bash_commands.merge_with(plugin_bash_rules),
+            sql_statements=base.sql_statements,
+            auto_review=base.auto_review,
+        )
     if not user_raw:
         return base
 

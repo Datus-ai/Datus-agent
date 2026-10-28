@@ -5,6 +5,7 @@ import io
 from pathlib import Path
 
 import defusedxml.ElementTree as ET
+import pytest
 
 MODULE_PATH = Path(__file__).resolve().parents[3] / "ci" / "run-pr-tests.py"
 MODULE_SPEC = importlib.util.spec_from_file_location("run_pr_tests", MODULE_PATH)
@@ -36,10 +37,11 @@ def test_select_impacted_unit_tests_includes_changed_unit_tests_and_dedupes():
         ]
     )
 
-    assert impacted == [
+    assert set(impacted) == {
+        "tests/unit_tests/agent/node/",
         "tests/unit_tests/tools/",
         "tests/unit_tests/ci/",
-    ]
+    }
 
 
 def test_select_impacted_unit_tests_collapses_parent_directory_over_child_files():
@@ -53,7 +55,7 @@ def test_select_impacted_unit_tests_collapses_parent_directory_over_child_files(
         ]
     )
 
-    assert impacted == ["tests/unit_tests/storage/"]
+    assert set(impacted) == {"tests/unit_tests/agent/node/", "tests/unit_tests/tools/", "tests/unit_tests/storage/"}
 
 
 def test_select_impacted_unit_tests_maps_db_tools_to_db_tools_tests():
@@ -64,25 +66,26 @@ def test_select_impacted_unit_tests_maps_db_tools_to_db_tools_tests():
         ]
     )
 
-    assert impacted == ["tests/unit_tests/tools/db_tools/"]
+    assert set(impacted) == {"tests/unit_tests/agent/node/", "tests/unit_tests/tools/"}
 
 
 def test_select_impacted_unit_tests_maps_prompt_and_resource_paths_without_full_suite():
     impacted = run_pr_tests.select_impacted_unit_tests(
         [
-            "datus/prompts/prompt_templates/gen_metrics_system_1.2.j2",
-            "datus/resources/skills/gen-metrics/SKILL.md",
-            "datus/resources/skills/gen-semantic-model/SKILL.md",
+            "datus/prompts/prompt_templates/semantic_modeling_system_1.0.j2",
+            "datus/resources/skills/dosi-semantic-authoring/SKILL.md",
         ]
     )
 
-    assert impacted == [
+    assert set(impacted) == {
+        "tests/unit_tests/agent/",
+        "tests/unit_tests/models/",
         "tests/unit_tests/prompts/",
         "tests/unit_tests/tools/skill_tools/",
-    ]
+    }
 
 
-def test_select_impacted_unit_tests_prefers_specific_subpackage_mappings():
+def test_select_impacted_unit_tests_includes_consumers_and_specific_subpackages():
     impacted = run_pr_tests.select_impacted_unit_tests(
         [
             "datus/agent/node/gen_sql_agentic_node.py",
@@ -95,15 +98,16 @@ def test_select_impacted_unit_tests_prefers_specific_subpackage_mappings():
         ]
     )
 
-    assert impacted == [
-        "tests/unit_tests/agent/node/",
-        "tests/unit_tests/api/services/",
+    assert set(impacted) == {
+        "tests/unit_tests/agent/",
+        "tests/unit_tests/models/",
+        "tests/unit_tests/api/",
+        "tests/unit_tests/cli/",
+        "tests/unit_tests/tools/",
         "tests/unit_tests/storage/metric/",
         "tests/unit_tests/storage/semantic_model/",
-        "tests/unit_tests/tools/func_tool/",
-        "tests/unit_tests/tools/skill_tools/",
         "tests/unit_tests/validation/",
-    ]
+    }
 
 
 def test_select_impacted_unit_tests_maps_non_python_files_to_parent_directory():
@@ -228,6 +232,7 @@ def test_run_tests_treats_empty_impacted_collection_as_success(tmp_path, monkeyp
     monkeypatch.setattr(run_pr_tests, "DEFAULT_COVERAGE_DB", str(tmp_path / ".coverage"))
     monkeypatch.setattr(run_pr_tests, "resolve_impacted_unit_tests", lambda base_ref: ["tests/unit_tests/"])
     monkeypatch.setattr(run_pr_tests, "merge_junit_results", lambda junit_xml_paths: None)
+    monkeypatch.setattr(run_pr_tests, "verify_gate", lambda *args: 0)
 
     exit_codes = iter([0, 5])
     monkeypatch.setattr(
@@ -246,10 +251,161 @@ def test_run_tests_treats_empty_impacted_collection_as_success(tmp_path, monkeyp
 
 
 def test_pr_harness_marker_expressions_route_component_tests():
-    assert run_pr_tests.PR_HARNESS_MARK_EXPR == "acceptance or component or llm_harness"
+    assert run_pr_tests.PR_HARNESS_MARK_EXPR == "(acceptance or component or llm_harness) and not quarantine"
     assert run_pr_tests.IMPACTED_UNIT_MARK_EXPR == (
         "not acceptance and not component and not llm_harness and not nightly and not quarantine"
     )
+
+
+@pytest.mark.parametrize(
+    ("cpu_count", "expected_workers"),
+    [
+        (None, "1"),
+        (1, "1"),
+        (2, "1"),
+        (3, "1"),
+        (4, "2"),
+        (8, "4"),
+    ],
+)
+def test_parallel_worker_default_uses_half_available_cpus(monkeypatch, cpu_count, expected_workers):
+    monkeypatch.delenv("IMPACTED_UNIT_PARALLEL_WORKERS", raising=False)
+    monkeypatch.setattr(run_pr_tests.os, "cpu_count", lambda: cpu_count)
+
+    assert run_pr_tests._resolve_parallel_workers() == expected_workers
+
+
+def test_parallel_worker_env_override_takes_precedence(monkeypatch):
+    monkeypatch.setenv("IMPACTED_UNIT_PARALLEL_WORKERS", "6")
+    monkeypatch.setattr(run_pr_tests.os, "cpu_count", lambda: 16)
+
+    assert run_pr_tests._resolve_parallel_workers() == "6"
+
+
+def test_parallel_suite_uses_configured_workers(tmp_path, monkeypatch):
+    monkeypatch.setattr(run_pr_tests, "PARALLEL_WORKERS", "4")
+    command = run_pr_tests._build_pytest_command(
+        ["tests/unit_tests/"],
+        str(tmp_path / "junit.xml"),
+        parallel=True,
+    )
+
+    worker_flag = command.index("-n")
+    assert command[worker_flag : worker_flag + 2] == ["-n", "4"]
+    assert "--dist" not in command
+
+
+def test_parallel_suite_emits_dist_mode_after_workers(tmp_path, monkeypatch):
+    monkeypatch.setattr(run_pr_tests, "PARALLEL_WORKERS", "4")
+    command = run_pr_tests._build_pytest_command(
+        ["tests/unit_tests/"],
+        str(tmp_path / "junit.xml"),
+        parallel=True,
+        dist="loadfile",
+    )
+
+    worker_flag = command.index("-n")
+    assert command[worker_flag : worker_flag + 5] == ["-n", "4", "--max-worker-restart=0", "--dist", "loadfile"]
+
+
+def test_parallel_suite_writes_failure_report_when_a_worker_crashes(tmp_path, monkeypatch):
+    """Completed file scopes must not strand loadfile's worker recovery queue."""
+    (tmp_path / "pytest.ini").write_text("[pytest]\n")
+    (tmp_path / "test_large.py").write_text(
+        "import time, pytest\n@pytest.mark.parametrize('item', range(80))\ndef test_large(item): time.sleep(0.005)\n"
+    )
+    for index in range(8):
+        (tmp_path / f"test_small_{index}.py").write_text(
+            "import pytest\n@pytest.mark.parametrize('item', range(4))\ndef test_small(item): pass\n"
+        )
+    (tmp_path / "test_crash.py").write_text(
+        "import os, pytest\n"
+        "@pytest.mark.parametrize('item', range(3))\n"
+        "def test_crash(item):\n"
+        "    if item == 1: os._exit(17)\n"
+    )
+    monkeypatch.chdir(tmp_path)
+    # The synthetic nested pytest owns its temp directory and plugins. Nightly's
+    # outer --basetemp can be a parent of tmp_path and is invalid in this cwd.
+    monkeypatch.delenv("PYTEST_ADDOPTS", raising=False)
+    monkeypatch.setattr(run_pr_tests, "PARALLEL_WORKERS", "2")
+    monkeypatch.setattr(run_pr_tests, "TEST_CMD_TIMEOUT", 15)
+    monkeypatch.setattr(run_pr_tests, "DEFAULT_PYTEST_BASETEMP", str(tmp_path / "pytest-temp"))
+    monkeypatch.setattr(run_pr_tests, "DEFAULT_COVERAGE_DB", str(tmp_path / ".coverage"))
+    monkeypatch.setattr(run_pr_tests, "DEFAULT_COVERAGE_XML", str(tmp_path / "coverage.xml"))
+    junit = tmp_path / "results.xml"
+    log = io.StringIO()
+
+    exit_code = run_pr_tests._run_pytest_suite(
+        [str(tmp_path)], str(junit), log, suite_name="worker crash regression", parallel=True, dist="loadfile"
+    )
+
+    assert exit_code == 1, log.getvalue()
+    results = run_pr_tests.parse_test_results(str(junit))
+    assert results["failed"] + results["errors"] == 1
+    assert "worker" in results["failures"][0]["text"]
+    assert "TIMEOUT" not in log.getvalue()
+
+
+def test_serial_suite_ignores_dist_mode(tmp_path):
+    command = run_pr_tests._build_pytest_command(
+        ["tests/unit_tests/"],
+        str(tmp_path / "junit.xml"),
+        parallel=False,
+        dist="loadfile",
+    )
+
+    assert "-n" not in command
+    assert "--dist" not in command
+
+
+def test_emit_reports_produces_only_cobertura_xml(tmp_path):
+    command = run_pr_tests._build_pytest_command(
+        ["tests/unit_tests/"],
+        str(tmp_path / "junit.xml"),
+    )
+
+    cov_reports = [arg for arg in command if arg.startswith("--cov-report")]
+    assert cov_reports == [f"--cov-report=xml:{run_pr_tests.DEFAULT_COVERAGE_XML}"]
+
+
+def test_suppressed_reports_disable_cov_output(tmp_path):
+    command = run_pr_tests._build_pytest_command(
+        ["tests/unit_tests/"],
+        str(tmp_path / "junit.xml"),
+        emit_reports=False,
+    )
+
+    cov_reports = [arg for arg in command if arg.startswith("--cov-report")]
+    assert cov_reports == ["--cov-report="]
+
+
+def test_run_tests_runs_acceptance_parallel_with_per_file_distribution(tmp_path, monkeypatch):
+    monkeypatch.setattr(run_pr_tests, "_reset_report_outputs", lambda: None)
+    monkeypatch.setattr(run_pr_tests, "DEFAULT_PYTEST_LOG", str(tmp_path / "pytest-coverage.txt"))
+    monkeypatch.setattr(run_pr_tests, "OUT_DIR", str(tmp_path))
+    monkeypatch.setattr(run_pr_tests, "DEFAULT_COVERAGE_DB", str(tmp_path / ".coverage"))
+    monkeypatch.setattr(run_pr_tests, "resolve_impacted_unit_tests", lambda base_ref: ["tests/unit_tests/"])
+    monkeypatch.setattr(run_pr_tests, "merge_junit_results", lambda junit_xml_paths: None)
+    monkeypatch.setattr(run_pr_tests, "verify_gate", lambda *args: 0)
+
+    suite_calls = []
+
+    def fake_suite(targets, junit_xml, log_file, **kwargs):
+        suite_calls.append(kwargs)
+        return 0
+
+    monkeypatch.setattr(run_pr_tests, "_run_pytest_suite", fake_suite)
+
+    exit_code, _ = run_pr_tests.run_tests(base_ref="main")
+
+    assert exit_code == 0
+    acceptance_call = next(call for call in suite_calls if call["suite_name"] == "acceptance")
+    assert acceptance_call["parallel"] is True
+    assert acceptance_call["dist"] == "loadfile"
+    impacted_call = next(call for call in suite_calls if call["suite_name"] == "impacted unit tests")
+    assert impacted_call["parallel"] is True
+    assert impacted_call.get("dist") is None
 
 
 def test_resolve_explicit_compare_ref_prefers_origin_for_branch_name(monkeypatch):

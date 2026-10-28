@@ -1,4 +1,4 @@
-import glob
+import copy
 import json
 import time
 from pathlib import Path
@@ -15,21 +15,17 @@ from datus.configuration.agent_config import AgentConfig
 from datus.configuration.node_type import NodeType
 from datus.schemas.base import BaseResult
 from datus.schemas.compare_node_models import CompareInput, CompareResult
-from datus.schemas.doc_search_node_models import DocSearchInput, DocSearchResult
 from datus.schemas.node_models import (
     ExecuteSQLInput,
     ExecuteSQLResult,
-    ReflectionInput,
     SQLContext,
     SqlTask,
 )
-from datus.schemas.reason_sql_node_models import ReasoningInput, ReasoningResult
 from datus.schemas.schema_linking_node_models import SchemaLinkingInput, SchemaLinkingResult
-from datus.schemas.search_metrics_node_models import SearchMetricsInput, SearchMetricsResult
 from datus.tools.func_tool import db_function_tools
 from datus.utils.constants import DBType
 from datus.utils.loggings import get_logger
-from tests.conftest import TEST_DATA_DIR, load_acceptance_config
+from tests.conftest import TEST_DATA_DIR, isolate_bird_sqlite_databases, load_acceptance_config
 from tests.unit_tests.mock_llm_model import (
     MockLLMResponse,
     MockToolCall,
@@ -55,42 +51,9 @@ def execute_sql_input() -> List[Dict[str, Any]]:
 
 
 @pytest.fixture
-def reflection_input() -> List[Dict[str, Any]]:
-    """Load test data from YAML file"""
-    yaml_path = TEST_DATA_DIR / "ReflectionInput.yaml"
-    with open(yaml_path, "r") as f:
-        r_input = yaml.safe_load(f)
-        return r_input
-
-
-@pytest.fixture
 def output_input() -> Dict[str, Any]:
     """Load test data from YAML file"""
     yaml_path = TEST_DATA_DIR / "OutputInput.yaml"
-    with open(yaml_path, "r") as f:
-        return yaml.safe_load(f)
-
-
-@pytest.fixture
-def reasoning_input() -> Dict[str, Any]:
-    """Load test data from YAML file"""
-    yaml_path = TEST_DATA_DIR / "ReasoningInput.yaml"
-    with open(yaml_path, "r") as f:
-        return yaml.safe_load(f)
-
-
-@pytest.fixture
-def doc_search_input() -> List[Dict[str, Any]]:
-    """Load test data from YAML file"""
-    yaml_path = TEST_DATA_DIR / "DocSearchInput.yaml"
-    with open(yaml_path, "r") as f:
-        return yaml.safe_load(f)
-
-
-@pytest.fixture
-def search_metrics_input() -> List[Dict[str, Any]]:
-    """Load test data from YAML file"""
-    yaml_path = TEST_DATA_DIR / "SearchMetricsInput.yaml"
     with open(yaml_path, "r") as f:
         return yaml.safe_load(f)
 
@@ -105,14 +68,33 @@ def search_metrics_input() -> List[Dict[str, Any]]:
 #    }
 
 
+@pytest.fixture(scope="module")
+def isolated_bird_sqlite_root(tmp_path_factory) -> Path:
+    return tmp_path_factory.mktemp("bird_sqlite")
+
+
+@pytest.fixture(scope="module")
+def isolated_demo_duckdb_path(tmp_path_factory) -> Path:
+    return init_demo_db(tmp_path_factory.mktemp("demo_duckdb") / "duck.db")
+
+
 @pytest.fixture
-def agent_config() -> AgentConfig:
+def agent_config(isolated_bird_sqlite_root, isolated_demo_duckdb_path) -> AgentConfig:
     # Post-refactor (PR #542) legacy configs with `path_pattern` expand into
     # one database per matched file (keyed by logic name). The old "bird_sqlite" key is no
     # longer valid, so the loader drops it; individual tests override `current_datasource` as
     # needed. Seed a valid default here so fixtures that touch the DB (e.g. `function_tools`)
     # can initialize.
     agent_config = load_acceptance_config(datasource="bird_sqlite")
+    isolate_bird_sqlite_databases(
+        agent_config,
+        isolated_bird_sqlite_root,
+        ("california_schools", "financial", "toxicology", "card_games"),
+        reuse_existing=True,
+    )
+    if "duckdb" in agent_config.services.datasources:
+        agent_config.services.datasources["duckdb"].uri = str(isolated_demo_duckdb_path)
+    agent_config.agentic_nodes = copy.deepcopy(agent_config.agentic_nodes)
     if not agent_config.current_datasource and agent_config.services.datasources:
         agent_config.current_datasource = "bird_school"
     Path(agent_config.rag_storage_path()).mkdir(parents=True, exist_ok=True)
@@ -130,28 +112,20 @@ def function_tools(agent_config: AgentConfig) -> List[Tool]:
     return db_function_tools(agent_config)
 
 
-def init_metricflow_db() -> None:
-    db_dir = TEST_DATA_DIR / "datus_metricflow_db"
-    db_path = db_dir / "duck.db"
-    if not db_dir.exists():
-        db_dir.mkdir(parents=True, exist_ok=True)
-    csv_path: Path = Path(__file__).parent / "data/metricflow_csv" / "*.csv"
+def init_demo_db(db_path: Path) -> Path:
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    if db_path.exists():
+        db_path.unlink()
     conn = duckdb.connect(db_path)
-    conn.execute("CREATE SCHEMA IF NOT EXISTS mf_demo;")
-    csv_files = glob.glob(str(csv_path))
-    for csv_file in csv_files:
-        full_file_name = Path(csv_file).name
-        file_name = full_file_name.split(".")[0]
-        table_name = f"mf_demo.{file_name}"
-        conn.execute(f"CREATE OR REPLACE TABLE {table_name} AS SELECT * FROM read_csv_auto('{csv_file}', header=TRUE)")
-    conn.close()
+    try:
+        conn.execute("CREATE SCHEMA IF NOT EXISTS demo;")
+    finally:
+        conn.close()
+    return db_path
 
 
 class TestNodeFactory:
     """Test suite for Node class"""
-
-    def setup_method(self) -> None:
-        init_metricflow_db()
 
     def test_node_initialization(self, agent_config):
         """Test node initialization"""
@@ -341,175 +315,6 @@ class TestNodeFactory:
             Node.new_instance("test_node", "Test Node", "invalid_type", agent_config=agent_config)
         assert "Invalid node type" in str(exc_info.value)
 
-    def test_reflection_init(self):
-        """Test reflection input initialization with list of SQL contexts"""
-        # Create test data
-        task = SqlTask(task="test task", database_type="snowlfake", database_name="test_db")
-
-        sql_contexts = [
-            SQLContext(
-                sql_query="SELECT * FROM test",
-                explanation="test explanation",
-                sql_return="test result",
-                row_count=1,
-                reflection_strategy="SUCCESS",
-                reflection_explanation="test explanation",
-            ),
-            SQLContext(
-                sql_query="SELECT count(*) FROM test",
-                explanation="count explanation",
-                sql_return="10",
-                row_count=1,
-                reflection_strategy="SCHEMA_LINKING",
-                reflection_explanation="need schema linking",
-            ),
-        ]
-
-        # Create reflection input
-        reflect_input = ReflectionInput(task_description=task, sql_context=sql_contexts)
-
-        # Verify initialization
-        assert reflect_input.task_description.task == "test task"
-        assert len(reflect_input.sql_context) == 2
-        assert reflect_input.sql_context[0].sql_query == "SELECT * FROM test"
-        assert reflect_input.sql_context[1]
-        # save_to_yaml(reflection_input, "ReflectionInput.yaml")
-
-    def test_reasoning_node(self, agent_config, function_tools: List[Tool], mock_llm_create):
-        """Test reasoning node with SSB SQLite database using revenue calculation task"""
-        try:
-            # Mock LLM response for reasoning
-            # Note: reasoning_sql_with_mcp expects "sql" key in JSON response, not "sql_query"
-            mock_llm_create.reset(
-                responses=[
-                    MockLLMResponse(
-                        tool_calls=[
-                            MockToolCall(name="list_tables", arguments="{}"),
-                        ],
-                        content=json.dumps(
-                            {
-                                "sql": (
-                                    "SELECT SUM(lo_revenue) as total_revenue FROM lineorder "
-                                    "WHERE lo_orderdate >= 19940101 AND lo_orderdate < 19940201 "
-                                    "AND lo_discount BETWEEN 4 AND 6 AND lo_quantity BETWEEN 26 AND 35"
-                                ),
-                                "explanation": (
-                                    "Calculate total revenue for January 1994 with specified discount and quantity"
-                                ),
-                            }
-                        ),
-                    ),
-                ]
-            )
-
-            agent_config.current_datasource = "ssb_sqlite"
-
-            # Create simple ReasoningInput with revenue calculation task
-            input_data = ReasoningInput(
-                contexts=[],
-                data_details=[],
-                table_schemas=[],
-                metrics=[],
-                sql_task=SqlTask(
-                    id="revenue_test",
-                    task=(
-                        "Total revenue for January 1994 where discount was between 4 and 6 and "
-                        "quantity sold was between 26 and 35"
-                    ),
-                    database_type="sqlite",
-                    database_name="SSB",
-                    output_dir="output/test",
-                ),
-                database_type="sqlite",
-                prompt_version="",
-            )
-
-            # Create node instance for testing
-            node = Node.new_instance(
-                node_id="reasoning_test",
-                description="Reasoning SQL Test",
-                node_type=NodeType.TYPE_REASONING,
-                input_data=input_data,
-                agent_config=agent_config,
-                tools=function_tools,
-            )
-
-            # Verify initial node configuration
-            assert node.type == NodeType.TYPE_REASONING
-            assert isinstance(node.input, ReasoningInput)
-
-            # Execute node
-            result = node.run()
-            logger.debug(f"Reasoning node result: {result.to_str()}")
-
-            # Simple assertions - just check it works and produces SQL
-            assert isinstance(result, ReasoningResult), "Result type mismatch"
-            assert result.success is True, f"Node execution failed: {result}"
-            assert node.status == "completed", f"Node execution failed with status: {node.status}"
-
-        except Exception as e:
-            logger.error(f"Simple reasoning node test failed: {str(e)}")
-            raise
-
-    def test_reflection_node(self, reflection_input, agent_config, function_tools: List[Tool], mock_llm_create):
-        """Test reflection node with test case[0] from YAML"""
-        try:
-            # Mock LLM response for reflection
-            mock_llm_create.reset(
-                responses=[
-                    MockLLMResponse(
-                        content=json.dumps(
-                            {
-                                "strategy": "SUCCESS",
-                                "details": {
-                                    "reflection_strategy": "SUCCESS",
-                                    "reflection_explanation": (
-                                        "The SQL query executed successfully and returned valid results"
-                                    ),
-                                    "is_correct": "true",
-                                },
-                            }
-                        ),
-                    ),
-                ]
-            )
-
-            # Create reflection input data
-            index = 0
-            input_data = reflection_input[index]["input"]
-            # expected_result = reflection_input[index]["result"]
-
-            logger.debug(f"raw input: {input_data}")
-
-            # Parse input components
-            task_description = SqlTask.from_dict(input_data["task_description"])
-            contexts = [SQLContext(**context_data) for context_data in input_data["sql_context"]]
-
-            # Create reflection input
-            reflection_input_obj = ReflectionInput(task_description=task_description, sql_context=contexts)
-
-            # Create reflection node
-            node = Node.new_instance(
-                node_id=f"reflection_test_{index}",
-                description="Reflection Analysis",
-                node_type=NodeType.TYPE_REFLECT,
-                input_data=reflection_input_obj,
-                agent_config=agent_config,
-                tools=function_tools,
-            )
-
-            # Validate node type and input
-            assert node.type == NodeType.TYPE_REFLECT
-            assert isinstance(node.input, ReflectionInput)
-
-            # Run reflection node
-            result = node.run()
-            logger.debug(f"Reflection node result: {result}")
-
-        except Exception as e:
-            logger.error(f"Reflection node test failed: {str(e)}")
-            raise
-
     def test_execution_node(self, execute_sql_input, agent_config, function_tools: List[Tool]):
         """Test SQL execution node with Snowflake database"""
         try:
@@ -556,56 +361,10 @@ class TestNodeFactory:
                 assert result.row_count == 1
                 assert isinstance(result.sql_return, str)
                 assert result.sql_return.endswith("\n")
+                assert int(result.sql_return.splitlines()[1]) > 0
 
         except Exception as e:
             logger.error(f"Execution node test failed: {str(e)}")
-            raise
-
-    def test_doc_search_node(self, doc_search_input, agent_config):
-        """Test document node"""
-        try:
-            # Create doc search input from test data
-            for case in doc_search_input:
-                input_data = DocSearchInput(**case["doc_search"])
-                node = Node.new_instance(
-                    node_id="doc_search_test",
-                    description="Doc Search Test",
-                    node_type=NodeType.TYPE_DOC_SEARCH,
-                    input_data=input_data,
-                    agent_config=agent_config,
-                )
-                result = node.run()
-                logger.debug(f"Doc search node result: {result}")
-                assert node.status == "completed", f"Node execution failed with status: {node.status}"
-                assert isinstance(result, DocSearchResult), "Result type mismatch"
-                assert result.success is True, f"Node execution failed: {result}"
-        except Exception as e:
-            logger.error(f"Doc search node test failed: {str(e)}")
-            raise
-
-    def test_search_metrics_node(self, search_metrics_input, agent_config: AgentConfig):
-        """Test schema linking node"""
-        # Take first test case from the list
-        _current_datasource = agent_config.current_datasource
-        try:
-            for case in search_metrics_input:
-                input_data = SearchMetricsInput(**case["input"])
-                node = Node.new_instance(
-                    node_id="search_metrics",
-                    description="Search Metrics",
-                    node_type=NodeType.TYPE_SEARCH_METRICS,
-                    input_data=input_data,
-                    agent_config=agent_config,
-                )
-                assert node.type == NodeType.TYPE_SEARCH_METRICS
-                assert isinstance(node.input, SearchMetricsInput)
-                result = node.run()
-                logger.debug(f"Search metrics node result: {result}")
-                assert node.status == "completed", f"Node execution failed with status: {node.status}, {node.result}"
-                assert isinstance(result, SearchMetricsResult), "Result type mismatch"
-                assert result.success is True, f"Node execution failed: {result}"
-        except Exception as e:
-            logger.error(f"Search metrics node test failed: {str(e)}")
             raise
 
     def test_compare_node(self, agent_config: AgentConfig, function_tools: List[Tool], mock_llm_create):

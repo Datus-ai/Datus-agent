@@ -15,6 +15,7 @@ from datus.api.services.agent_service import (
     VALID_TOOL_CATEGORIES,
     VALID_TOOL_METHODS,
     AgentService,
+    _available_builtin_subagents,
     _build_scoped_context,
     _build_tool_types,
     _classify_subject_paths,
@@ -178,7 +179,7 @@ class TestValidateToolsForAgentType:
 
     def test_ask_metrics_allows_valid_tools_outside_default_surface(self):
         tools = [
-            "db_tools.read_query",
+            "db_tools.execute_sql",
             "date_parsing_tools.parse_temporal_expressions",
             "semantic_tools.validate_semantic",
             "semantic_tools.*",
@@ -255,19 +256,18 @@ class TestConstants:
         assert "platform_doc_tools" not in _USER_FACING_TOOL_CATEGORIES
 
     def test_filesystem_tools_valid_methods_match_runtime_surface(self):
-        """``VALID_TOOL_METHODS["filesystem_tools"]`` is derived from
-        ``FilesystemFuncTool.all_tools_name()`` so it auto-tracks the
-        runtime instead of drifting (``delete_file`` was previously
-        missing from the hand-curated set).
+        """``VALID_TOOL_METHODS["filesystem_tools"]`` tracks the complete
+        general plus OSI metric filesystem surface.
 
         Pin both directions: every name the runtime advertises ends up
         in the saas catalog, and every name in the catalog is a real
         public method on the class.
         """
         from datus.tools.func_tool.filesystem_tools import FilesystemFuncTool
+        from datus.tools.func_tool.metric_filesystem_tools import MetricFilesystemFuncTool
 
         catalog = VALID_TOOL_METHODS["filesystem_tools"]
-        introspected = set(FilesystemFuncTool.all_tools_name())
+        introspected = set(MetricFilesystemFuncTool.all_tools_name())
         assert catalog == introspected
 
         # The runtime advertises its tool surface in ``available_tools``;
@@ -276,15 +276,29 @@ class TestConstants:
         # filters out BaseTool framework methods.
         expected_runtime_methods = {
             "read_file",
+            "read_image",
             "write_file",
             "edit_file",
             "delete_file",
+            "upsert_osi_metrics",
+            "delete_osi_metrics",
+            "upsert_osi_datasets",
+            "delete_osi_datasets",
             "glob",
             "grep",
         }
         assert introspected == expected_runtime_methods
-        for name in expected_runtime_methods:
+        for name in expected_runtime_methods - {
+            "upsert_osi_metrics",
+            "delete_osi_metrics",
+            "upsert_osi_datasets",
+            "delete_osi_datasets",
+        }:
             assert hasattr(FilesystemFuncTool, name), f"FilesystemFuncTool dropped method {name!r}"
+        assert hasattr(MetricFilesystemFuncTool, "upsert_osi_metrics")
+        assert hasattr(MetricFilesystemFuncTool, "delete_osi_metrics")
+        assert hasattr(MetricFilesystemFuncTool, "upsert_osi_datasets")
+        assert hasattr(MetricFilesystemFuncTool, "delete_osi_datasets")
         # BaseTool framework methods must NOT show up in the catalog.
         for framework_method in ("set_tool_context", "get_actions", "call_action"):
             assert framework_method not in catalog
@@ -312,9 +326,9 @@ class TestConstants:
         entry = SUBAGENT_TOOL_REFERENCE["ask_metrics"]
         assert entry["default_tools"] == [
             "context_search_tools.search_metrics",
-            "context_search_tools.get_metrics",
             "semantic_tools.list_metrics",
-            "semantic_tools.get_dimensions",
+            "semantic_tools.get_metric",
+            "semantic_tools.get_dataset",
             "semantic_tools.query_metrics",
             "semantic_tools.attribution_analyze",
             "context_search_tools.list_subject_tree",
@@ -322,6 +336,18 @@ class TestConstants:
         assert set(entry["tool_types"].keys()) == set(_USER_FACING_TOOL_CATEGORIES)
         for category, payload in entry["tool_types"].items():
             assert payload["tools"] == sorted(VALID_TOOL_METHODS[category])
+
+    def test_tool_reference_ask_metrics_matches_the_node_defaults(self):
+        """A client persisting these defaults must get a working AskMetrics.
+
+        Saving them as explicit node tools takes ``AskMetricsAgenticNode``'s own
+        fallback out of play, so anything missing here is simply absent at
+        runtime — and the prompt requires ``get_metric`` before grouping,
+        filtering, attribution, or grain selection.
+        """
+        from datus.agent.node.ask_metrics_agentic_node import AskMetricsAgenticNode
+
+        assert SUBAGENT_TOOL_REFERENCE["ask_metrics"]["default_tools"] == list(AskMetricsAgenticNode.DEFAULT_TOOLS)
 
     def test_tool_reference_chat_has_full_default_set(self):
         """chat default_tools enumerates every non-semantic category as wildcard."""
@@ -364,7 +390,7 @@ class TestConstants:
         """semantic_tools category is registered with its core methods."""
         assert "semantic_tools" in VALID_TOOL_METHODS
         assert "list_metrics" in VALID_TOOL_METHODS["semantic_tools"]
-        assert "get_dimensions" in VALID_TOOL_METHODS["semantic_tools"]
+        assert "get_metric" in VALID_TOOL_METHODS["semantic_tools"]
 
 
 class TestAgentServiceInit:
@@ -419,13 +445,25 @@ class TestGetUseTools:
             "reference_template_tools",
         }
 
+    def test_tool_reference_ontology_analyst_matches_the_node_defaults(self):
+        from datus.agent.node.ontology_analyst_agentic_node import OntologyAnalystAgenticNode
+
+        entry = SUBAGENT_TOOL_REFERENCE["ontology_analyst"]
+        assert entry["default_tools"] == list(OntologyAnalystAgenticNode.DEFAULT_TOOLS)
+        assert _validate_tools_for_agent_type(entry["default_tools"], "ontology_analyst") == []
+        semantic = set(entry["tool_types"]["semantic_tools"]["tools"])
+        assert {"describe_concept", "find_concept_paths", "select_records"} <= semantic
+
+    def test_ontology_analyst_seeds_its_own_prompt(self):
+        assert AgentService._TYPE_TO_TEMPLATE["ontology_analyst"] == "ontology_analyst_system"
+
     def test_ask_metrics_returns_broad_configurable_tool_types(self):
         """ask_metrics keeps narrow defaults but surfaces valid configurable tools."""
         result = AgentService.get_use_tools("ask_metrics")
         assert result.success is True
         assert result.data["default_tools"] == SUBAGENT_TOOL_REFERENCE["ask_metrics"]["default_tools"]
         assert set(result.data["tool_types"].keys()) == set(_USER_FACING_TOOL_CATEGORIES)
-        assert "read_query" in result.data["tool_types"]["db_tools"]["tools"]
+        assert "execute_sql" in result.data["tool_types"]["db_tools"]["tools"]
         assert "parse_temporal_expressions" in result.data["tool_types"]["date_parsing_tools"]["tools"]
         assert result.data["tool_types"] == SUBAGENT_TOOL_REFERENCE["ask_metrics"]["tool_types"]
 
@@ -536,15 +574,16 @@ class TestListAgents:
         result = await svc.list_agents(real_agent_config)
         assert result.success is True
         agent_names = {a["name"] for a in result.data["agents"]}
-        for builtin_name in BUILTIN_SUBAGENTS:
+        for builtin_name in _available_builtin_subagents(real_agent_config):
             assert builtin_name in agent_names
+        assert "semantic_modeling" in agent_names
 
     async def test_list_contains_builtin_type_entries(self, real_agent_config):
         """At least some agents in the list have type='builtin'."""
         svc = AgentService()
         result = await svc.list_agents(real_agent_config)
         builtin_agents = [a for a in result.data["agents"] if a["type"] == "builtin"]
-        assert len(builtin_agents) == len(BUILTIN_SUBAGENTS)
+        assert len(builtin_agents) == len(_available_builtin_subagents(real_agent_config))
 
     async def test_list_includes_custom_agents(self, real_agent_config):
         """list_agents includes custom agents from agentic_nodes."""
@@ -553,7 +592,7 @@ class TestListAgents:
         assert result.success is True
         # real_agent_config has agentic_nodes from conftest
         agent_names = {a["name"] for a in result.data["agents"]}
-        assert len(agent_names) >= len(BUILTIN_SUBAGENTS)
+        assert len(agent_names) >= len(_available_builtin_subagents(real_agent_config))
 
 
 class TestSanitizeAgenticNodeName:
@@ -692,7 +731,7 @@ class TestGetAgent:
         svc = AgentService()
         nodes = real_agent_config.agentic_nodes or {}
         assert nodes, "real_agent_config fixture must provide agentic_nodes"
-        first_name = next(iter(nodes))
+        first_name = next(name for name in nodes if name not in SYS_SUB_AGENTS)
         result = await svc.get_agent(first_name, real_agent_config)
         assert result.success is True
         agent = result.data["agent"]
@@ -832,6 +871,55 @@ class TestCreateAgent:
         result = await svc.create_agent(request, real_agent_config)
         assert result.success is True
         assert result.data["name"] == "test_new_agent"
+
+    async def test_create_agent_binds_the_named_datasource(self, real_agent_config, agent_yml_with_singleton):
+        """`datasource_name` must reach `scoped_context.datasource`.
+
+        Ignoring it bound the agent to the active datasource instead of the one
+        the caller asked for — the same name the caller scoped its `catalogs`
+        against, so the scope would be matched on the wrong warehouse.
+        """
+        from datus.api.models.agent_models import CreateAgentInput
+
+        current = real_agent_config.current_datasource
+        real_agent_config.services.datasources["second"] = real_agent_config.services.datasources[current]
+
+        svc = AgentService()
+        result = await svc.create_agent(
+            CreateAgentInput(
+                name="agent_on_second",
+                type="gen_sql",
+                tools=["db_tools"],
+                datasource_name="second",
+            ),
+            real_agent_config,
+        )
+
+        assert result.success is True
+        agent = real_agent_config.agentic_nodes["agent_on_second"]
+        assert agent["scoped_context"]["datasource"] == "second"
+        # `datasource_name` selects the binding; it is not itself a stored field.
+        # A regression could bind correctly and still write it to the entry.
+        assert "datasource_name" not in agent
+
+    async def test_create_agent_rejects_an_unbound_datasource(self, real_agent_config, agent_yml_with_singleton):
+        """Better than silently binding to the current one."""
+        from datus.api.models.agent_models import CreateAgentInput
+
+        svc = AgentService()
+        result = await svc.create_agent(
+            CreateAgentInput(
+                name="agent_nowhere",
+                type="gen_sql",
+                tools=["db_tools"],
+                datasource_name="not_bound",
+            ),
+            real_agent_config,
+        )
+
+        assert result.success is False
+        assert result.errorCode == "INVALID_DATASOURCE"
+        assert "not_bound" in result.errorMessage
 
     async def test_create_agent_duplicate_name_fails(self, real_agent_config, agent_yml_with_singleton):
         """create_agent rejects duplicate agent name."""
@@ -983,41 +1071,6 @@ class TestEditAgent:
         assert get_result.success is True
         assert get_result.data["agent"]["description"] == "updated description"
 
-    async def test_edit_with_prompt_template_writes_under_resolved_home(
-        self, real_agent_config, agent_yml_with_singleton
-    ):
-        """``edit_agent`` with an explicit ``prompt_template`` invokes
-        ``_save_prompt_template``, which must resolve ``agent_config.home``
-        through ``path_manager`` so a literal ``~`` does not leak into the
-        filesystem write.
-        """
-        from datus.api.models.agent_models import CreateAgentInput, EditAgentInput
-
-        resolved_home = real_agent_config.path_manager.datus_home
-        # Mutate ``agent_config.home`` post-construction to a tilde path —
-        # path_manager remains pointed at resolved_home.
-        real_agent_config.home = "~/datus-tilde-edit-template-does-not-exist"
-
-        svc = AgentService()
-        await svc.create_agent(
-            CreateAgentInput(name="prompt_edit_agent", type="gen_sql"),
-            real_agent_config,
-        )
-        edit = await svc.edit_agent(
-            EditAgentInput(
-                id="prompt_edit_agent",
-                name="prompt_edit_agent",
-                prompt_template="custom system prompt body",
-                prompt_version="1.0",
-            ),
-            real_agent_config,
-        )
-        assert edit.success is True
-        # Template file landed under the resolved home, not anywhere a
-        # literal-tilde expansion would point.
-        target = resolved_home / "template" / "prompt_edit_agent_system_1.0.j2"
-        assert target.exists() and target.read_text(encoding="utf-8") == "custom system prompt body"
-
     async def test_template_copy_resolves_tilde_in_home(self, real_agent_config, agent_yml_with_singleton, tmp_path):
         """Regression: ``agent_config.home`` may carry a literal ``~`` (default
         ``~/.datus``). ``_copy_prompt_template`` (called by ``create_agent``)
@@ -1047,8 +1100,8 @@ class TestEditAgent:
         assert result.success is True
 
         # The template should land under the resolved home, never under a
-        # literal tilde-prefixed directory next to CWD. CreateAgentInput
-        # defaults prompt_version="1.0", so the file is suffixed accordingly.
+        # literal tilde-prefixed directory next to CWD. The copy is stamped
+        # with ``_COPIED_TEMPLATE_VERSION``, so the file is suffixed accordingly.
         template_file = resolved_home / "template" / "tilde_template_agent_system_1.0.j2"
         assert template_file.exists(), f"template not found at {template_file}"
         # And no literal-tilde directory should have been created on disk.
@@ -1100,6 +1153,88 @@ class TestEditAgent:
             assert "cross_path_agent" not in (home_data.get("agent", {}).get("agentic_nodes") or {})
         finally:
             agent_config_loader.CONFIGURATION_MANAGER = None
+
+    async def test_edit_agent_rebinds_on_datasource_name_alone(self, real_agent_config, agent_yml_with_singleton):
+        """An edit carrying only ``datasource_name`` must move the binding.
+
+        The field is excluded from ``model_dump`` (it is not a persisted
+        column), which also hid it from the "did anything change" check — so
+        this edit reached the no-op return and reported success while leaving the
+        agent bound where it was.
+        """
+        import yaml
+
+        from datus.api.models.agent_models import CreateAgentInput, EditAgentInput
+
+        current = real_agent_config.current_datasource
+        real_agent_config.services.datasources["second"] = real_agent_config.services.datasources[current]
+
+        svc = AgentService()
+        await svc.create_agent(CreateAgentInput(name="rebind_me", type="gen_sql"), real_agent_config)
+
+        result = await svc.edit_agent(
+            EditAgentInput(id="rebind_me", name="rebind_me", datasource_name="second"),
+            real_agent_config,
+        )
+        assert result.success is True
+
+        with open(agent_yml_with_singleton) as f:
+            entry = yaml.safe_load(f)["agent"]["agentic_nodes"]["rebind_me"]
+        assert entry["scoped_context"]["datasource"] == "second"
+        # And it is still not a column.
+        assert "datasource_name" not in entry
+
+    async def test_edit_agent_keeps_the_saved_binding_when_unnamed(self, real_agent_config, agent_yml_with_singleton):
+        """Editing catalogs must not silently rebind to the active datasource.
+
+        ``EditAgentInput`` says an omitted ``datasource_name`` leaves the binding
+        untouched. Resolving the active datasource ahead of the saved one meant an
+        agent bound to B was rebound to A by any scope edit made while A was
+        current.
+        """
+        import yaml
+
+        from datus.api.models.agent_models import CreateAgentInput, EditAgentInput
+
+        current = real_agent_config.current_datasource
+        real_agent_config.services.datasources["second"] = real_agent_config.services.datasources[current]
+
+        svc = AgentService()
+        await svc.create_agent(
+            CreateAgentInput(name="stay_on_second", type="gen_sql", datasource_name="second"),
+            real_agent_config,
+        )
+
+        # Only catalogs change; the active datasource is still `current`.
+        result = await svc.edit_agent(
+            EditAgentInput(id="stay_on_second", name="stay_on_second", catalogs=["main.*"]),
+            real_agent_config,
+        )
+        assert result.success is True
+
+        with open(agent_yml_with_singleton) as f:
+            entry = yaml.safe_load(f)["agent"]["agentic_nodes"]["stay_on_second"]
+        assert entry["scoped_context"]["datasource"] == "second"
+
+    async def test_edit_agent_rejects_an_unbound_datasource_name(self, real_agent_config, agent_yml_with_singleton):
+        """An explicitly named datasource the config does not declare is refused.
+
+        Otherwise the edit stores an undeclared datasource and returns success,
+        leaving an agent whose scope can never match.
+        """
+        from datus.api.models.agent_models import CreateAgentInput, EditAgentInput
+
+        svc = AgentService()
+        await svc.create_agent(CreateAgentInput(name="reject_edit", type="gen_sql"), real_agent_config)
+
+        result = await svc.edit_agent(
+            EditAgentInput(id="reject_edit", name="reject_edit", datasource_name="not_bound"),
+            real_agent_config,
+        )
+
+        assert result.success is False
+        assert result.errorCode == "INVALID_DATASOURCE"
+        assert "not_bound" in result.errorMessage
 
     async def test_edit_agent_persists_description_as_agent_description(
         self, real_agent_config, agent_yml_with_singleton
@@ -1927,7 +2062,7 @@ class TestDeleteAgent:
 
         svc = AgentService()
         await svc.create_agent(
-            CreateAgentInput(name="template_owner", type="gen_sql", prompt_version="1.0"),
+            CreateAgentInput(name="template_owner", type="gen_sql"),
             real_agent_config,
         )
 
@@ -2052,7 +2187,7 @@ class TestDeleteAgent:
 
         svc = AgentService()
         await svc.create_agent(
-            CreateAgentInput(name="unlink_fails", type="gen_sql", prompt_version="1.0"),
+            CreateAgentInput(name="unlink_fails", type="gen_sql"),
             real_agent_config,
         )
 

@@ -14,10 +14,11 @@ from datus.schemas.node_models import TableSchema, TableValue
 from datus.storage.base import BaseEmbeddingStore, WhereExpr
 from datus.storage.datasource_scope import add_datasource_scope_to_rows, datasource_condition, resolve_datasource_id
 from datus.storage.embedding_models import EmbeddingModel
-from datus.tools.db_tools import connector_registry
+from datus.storage.fts import FtsField, FtsSpec
 from datus.utils.constants import DBType
 from datus.utils.json_utils import json2csv
 from datus.utils.loggings import get_logger
+from datus.utils.sql_utils import parse_table_name_parts
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
@@ -101,7 +102,7 @@ class BaseMetadataStorage(BaseEmbeddingStore):
             query_type=query_type,
         )
 
-    def create_indices(self):
+    def create_indices(self, *, include_fts: bool = True):
         self._ensure_table_ready()
 
         self._create_scalar_index("database_name")
@@ -110,7 +111,17 @@ class BaseMetadataStorage(BaseEmbeddingStore):
         self._create_scalar_index("table_name")
         self._create_scalar_index("table_type")
 
-        self.create_fts_index(["database_name", "schema_name", "table_name", self.vector_source_name])
+        if include_fts:
+            self.create_fts_index(
+                FtsSpec(
+                    (
+                        FtsField("table_name", boost=3.0),
+                        FtsField("schema_name", boost=2.0),
+                        FtsField("database_name", boost=2.0),
+                        FtsField(self.vector_source_name),
+                    )
+                )
+            )
 
     def search_all(
         self,
@@ -300,10 +311,10 @@ class SchemaWithValueRAG:
 
         logger.debug(f"Batch stored {len(schemas)} schemas, {len(final_values)} values")
 
-    def after_init(self):
-        """After init the schema and value, create the indices for the tables."""
-        self.schema_store.create_indices()
-        self.value_store.create_indices()
+    def after_init(self, build_mode: str = "overwrite"):
+        """Create only the indices required by the legacy vector mode."""
+        self.schema_store.create_indices(include_fts=False)
+        self.value_store.create_indices(include_fts=False)
 
     def get_schema_size(self):
         return self.schema_store._count_rows(where=self._add_sub_agent_filter(None))
@@ -403,64 +414,16 @@ class SchemaWithValueRAG:
         # Parse table names and build where clause
         table_conditions = []
         for full_table in tables:
-            parts = full_table.split(".")
-            table_name = parts[-1]
-            if len(parts) == 4:
-                cat, db, sch = parts[0], parts[1], parts[2]
-                table_conditions.append(
-                    _build_where_clause(
-                        table_name=table_name,
-                        catalog_name=cat,
-                        database_name=db,
-                        schema_name=sch,
-                        table_type="full",
-                    )
+            parsed = parse_table_name_parts(full_table, dialect)
+            table_conditions.append(
+                _build_where_clause(
+                    table_name=parsed["table_name"],
+                    catalog_name=parsed["catalog_name"] or catalog_name,
+                    database_name=parsed["database_name"] or database_name,
+                    schema_name=parsed["schema_name"] or schema_name,
+                    table_type="full",
                 )
-            elif len(parts) == 3:
-                # Format depends on dialect capabilities:
-                # - catalog + no schema (e.g., StarRocks): catalog.database.table
-                # - with schema (e.g., PostgreSQL, Snowflake): database.schema.table
-                if connector_registry.support_catalog(dialect) and not connector_registry.support_schema(dialect):
-                    cat, db, sch = parts[0], parts[1], ""
-                else:
-                    cat, db, sch = catalog_name, parts[0], parts[1]
-
-                table_conditions.append(
-                    _build_where_clause(
-                        table_name=table_name,
-                        catalog_name=cat,
-                        database_name=db,
-                        schema_name=sch,
-                        table_type="full",
-                    )
-                )
-            elif len(parts) == 2:
-                # No schema layer: part[0] is database_name
-                # Has schema layer: part[0] is schema_name
-                if not connector_registry.support_schema(dialect):
-                    cat, db, sch = catalog_name, parts[0], ""
-                else:
-                    cat, db, sch = catalog_name, database_name, parts[0]
-
-                table_conditions.append(
-                    _build_where_clause(
-                        table_name=table_name,
-                        catalog_name=cat,
-                        database_name=db,
-                        schema_name=sch,
-                        table_type="full",
-                    )
-                )
-            else:
-                table_conditions.append(
-                    _build_where_clause(
-                        table_name=table_name,
-                        catalog_name=catalog_name,
-                        database_name=database_name,
-                        schema_name=schema_name,
-                        table_type="full",
-                    )
-                )
+            )
 
         combined_condition = None
         if table_conditions:

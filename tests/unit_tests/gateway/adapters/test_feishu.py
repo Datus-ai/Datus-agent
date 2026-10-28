@@ -133,6 +133,21 @@ def _make_adapter():
     return adapter
 
 
+class TestFeishuIsConfigured:
+    """Feishu needs both app_id and app_secret to be considered configured."""
+
+    def test_configured_with_both_credentials(self):
+        assert _make_adapter().is_configured() is True
+
+    def test_not_configured_when_a_credential_is_missing(self):
+        from datus.gateway.adapters.feishu import FeishuAdapter
+
+        bridge = MagicMock()
+        for cfg in ({"app_id": "x"}, {"app_secret": "x"}, {}):
+            adapter = FeishuAdapter(channel_id="c", config=cfg, bridge=bridge)
+            assert adapter.is_configured() is False
+
+
 def _make_message(text: str = "hello", sql: Optional[str] = None) -> OutboundMessage:
     return OutboundMessage(
         channel_id="test-feishu",

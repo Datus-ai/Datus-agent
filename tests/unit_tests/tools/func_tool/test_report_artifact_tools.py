@@ -27,6 +27,7 @@ No mocks; we use a real SQLite database wired through ``DBFuncTool`` so
 from __future__ import annotations
 
 import sqlite3
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -34,9 +35,43 @@ import pytest
 
 from datus.tools.func_tool import DBFuncTool, ReportArtifactTools, ReportFilesystemFuncTool
 from datus.tools.func_tool.report_artifact_tools import (
+    _atomic_write_text,
     _infer_column_type,
     _resolve_relative_import,
 )
+
+
+@pytest.mark.parametrize("overwrite", [True, False])
+def test_atomic_write_preserves_existing_file_unless_overwrite_is_enabled(tmp_path, overwrite):
+    target = tmp_path / "model.yml"
+    _atomic_write_text(target, "original\r\n", overwrite=False)
+    if overwrite:
+        _atomic_write_text(target, "replacement\r\n")
+        assert target.read_bytes() == b"replacement\r\n"
+    else:
+        with pytest.raises(FileExistsError):
+            _atomic_write_text(target, "replacement\r\n", overwrite=False)
+        assert target.read_bytes() == b"original\r\n"
+    assert list(tmp_path.iterdir()) == [target]
+
+
+def test_concurrent_exclusive_writes_publish_one_complete_file(tmp_path):
+    target = tmp_path / "model.yml"
+
+    def write(index):
+        content = f"model {index}\r\n" * 1000
+        try:
+            _atomic_write_text(target, content, overwrite=False)
+            return content.encode()
+        except FileExistsError:
+            return None
+
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        results = list(executor.map(write, range(24)))
+    winners = [content for content in results if content is not None]
+    assert winners == [target.read_bytes()]
+    assert list(tmp_path.iterdir()) == [target]
+
 
 # ----------------------------------------------------------------------------- #
 # Fixtures                                                                      #
@@ -453,6 +488,25 @@ export default function KpiBanner({ rows }) {
 
 
 class TestValidateRender:
+    @pytest.mark.parametrize("extra,success", [("sales_by_store", 1), ("missing", 0)])
+    def test_validates_additional_declared_sources(
+        self, report_tools: ReportArtifactTools, project_root: Path, extra, success
+    ):
+        saved = report_tools.save_query(
+            name="sales_by_store", sql="SELECT store_name FROM sales", goal="Stores", hypothesis="Saved stores"
+        )
+        assert saved.success == 1, saved.error
+        source = (
+            "import { ChartCard } from '@datus/web-artifact';\n"
+            "export default function App() { return ("
+            '<ChartCard chartId="combined" chartType="line" sqlId="queries/sales_by_store" '
+            f'queryIds={{["queries/{extra}"]}}><div /></ChartCard>); }}'
+        )
+        _write_render(project_root, report_tools.report_slug, {"app.jsx": source})
+        result = report_tools.validate_render()
+        assert result.success == success, result.error
+        assert ("queryIds" in (result.error or "")) == (not success)
+
     def test_happy_path(self, report_tools: ReportArtifactTools, project_root: Path):
         report_tools.save_query(
             name="sales_by_store",
@@ -502,6 +556,55 @@ class TestValidateRender:
         result = report_tools.validate_render()
         assert result.success == 0
         assert "export default" in (result.error or "")
+
+    def test_rejects_hook_below_an_early_return(self, report_tools: ReportArtifactTools, project_root: Path):
+        report_tools.save_query(
+            name="sales_by_store",
+            sql="SELECT store_name FROM sales",
+            goal="list store names",
+            hypothesis="store names are stable identifiers within the dataset",
+        )
+        early_return = """\
+import React from 'react';
+import { useDatusArtifact } from '@datus/web-artifact';
+
+export default function App() {
+  const { useQuerySql } = useDatusArtifact();
+  const { data, loading } = useQuerySql('queries/sales_by_store');
+  if (loading) return null;
+  const rows = React.useMemo(() => data?.rows ?? [], [data]);
+  return React.createElement('div', null, rows.length);
+}
+"""
+        _write_render(project_root, report_tools.report_slug, {"app.jsx": early_return})
+        result = report_tools.validate_render()
+        assert result.success == 0
+        assert "useMemo() on line 8" in (result.error or "")
+        assert "line 7" in (result.error or "")
+
+    def test_accepts_a_guard_that_sits_below_every_hook(self, report_tools: ReportArtifactTools, project_root: Path):
+        report_tools.save_query(
+            name="sales_by_store",
+            sql="SELECT store_name FROM sales",
+            goal="list store names",
+            hypothesis="store names are stable identifiers within the dataset",
+        )
+        correct = """\
+import React from 'react';
+import { useDatusArtifact } from '@datus/web-artifact';
+
+export default function App() {
+  const { useQuerySql } = useDatusArtifact();
+  const { data, loading } = useQuerySql('queries/sales_by_store');
+  const rows = React.useMemo(() => data?.rows ?? [], [data]);
+  const fmt = (v) => { if (v == null) return '-'; return String(v); };
+  if (loading) return null;
+  return React.createElement('div', null, fmt(rows.length));
+}
+"""
+        _write_render(project_root, report_tools.report_slug, {"app.jsx": correct})
+        result = report_tools.validate_render()
+        assert result.success == 1, result.error
 
     def test_rejects_dangling_sqlid(self, report_tools: ReportArtifactTools, project_root: Path):
         _write_render(
@@ -667,6 +770,211 @@ class TestValidateRender:
         assert result.success == 1, result.error
         # Only the literal slug appears in query_refs.
         assert result.result["query_refs"] == ["queries/sales_by_store"]
+
+
+# ----------------------------------------------------------------------------- #
+# Card primitives (<ChartCard> / <BlockHandle>) inside a report render tree      #
+# ----------------------------------------------------------------------------- #
+
+
+def _cards_app_jsx(body: str) -> str:
+    """An ``app.jsx`` whose single query is ``queries/sales_by_store``."""
+    return f"""\
+import React from 'react';
+import {{ ChartCard, BlockHandle, useDatusArtifact }} from '@datus/web-artifact';
+
+export default function App() {{
+  const {{ useQuerySql }} = useDatusArtifact();
+  const {{ data }} = useQuerySql('queries/sales_by_store');
+  return (
+    <div>
+{body}
+    </div>
+  );
+}}
+"""
+
+
+class TestValidateRenderCards:
+    """Reports get the same card audit dashboards have.
+
+    Before this, ``validate_render`` for a report checked imports, hooks
+    and query refs but never looked at the card primitives — so a
+    duplicated or malformed id shipped, and only misbehaved once a reader
+    clicked the block in the published viewer.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _saved_query(self, report_tools: ReportArtifactTools):
+        report_tools.save_query(
+            name="sales_by_store",
+            sql="SELECT store_name FROM sales",
+            goal="list store names",
+            hypothesis="store names are stable identifiers within the dataset",
+        )
+
+    def test_valid_cards_land_in_the_registry(self, report_tools: ReportArtifactTools, project_root: Path):
+        body = """\
+      <ChartCard chartId="store_sales" sqlId="queries/sales_by_store" chartType="bar" data={data}>
+        <div />
+      </ChartCard>
+      <BlockHandle handleId="total_revenue" name="Total revenue" kind="kpi" sqlId="queries/sales_by_store">
+        <div />
+      </BlockHandle>"""
+        _write_render(project_root, report_tools.report_slug, {"app.jsx": _cards_app_jsx(body)})
+
+        result = report_tools.validate_render()
+        assert result.success == 1, result.error
+        assert result.result["cards"] == [
+            {"chart_id": "store_sales", "jsx_path": "render/app.jsx", "kind": "chart"},
+            {"chart_id": "total_revenue", "jsx_path": "render/app.jsx", "kind": "kpi"},
+        ]
+
+    def test_duplicate_ids_across_primitives_rejected(self, report_tools: ReportArtifactTools, project_root: Path):
+        # The failure this whole audit exists for: two blocks minting the
+        # same chip, the second of which de-dupes away in the chat input.
+        body = """\
+      <ChartCard chartId="store_sales" sqlId="queries/sales_by_store" chartType="bar" data={data}>
+        <div />
+      </ChartCard>
+      <BlockHandle handleId="store_sales" name="Total revenue" kind="kpi">
+        <div />
+      </BlockHandle>"""
+        _write_render(project_root, report_tools.report_slug, {"app.jsx": _cards_app_jsx(body)})
+
+        result = report_tools.validate_render()
+        assert result.success == 0
+        assert "duplicates" in (result.error or "")
+
+    def test_malformed_handle_id_rejected(self, report_tools: ReportArtifactTools, project_root: Path):
+        body = """\
+      <BlockHandle handleId="Total Revenue" name="Total revenue" kind="kpi">
+        <div />
+      </BlockHandle>"""
+        _write_render(project_root, report_tools.report_slug, {"app.jsx": _cards_app_jsx(body)})
+
+        result = report_tools.validate_render()
+        assert result.success == 0
+        assert "handleId" in (result.error or "")
+
+    def test_chart_card_missing_props_rejected(self, report_tools: ReportArtifactTools, project_root: Path):
+        body = """\
+      <ChartCard sqlId="queries/sales_by_store" data={data}>
+        <div />
+      </ChartCard>"""
+        _write_render(project_root, report_tools.report_slug, {"app.jsx": _cards_app_jsx(body)})
+
+        result = report_tools.validate_render()
+        assert result.success == 0
+        assert "chartId" in (result.error or "")
+
+    def test_dangling_card_sql_id_names_the_report_saver(self, report_tools: ReportArtifactTools, project_root: Path):
+        # Wording is kind-specific: a report saves results via save_query,
+        # not templates via save_query_template.
+        body = """\
+      <ChartCard chartId="store_sales" sqlId="queries/nope" chartType="bar" data={data}>
+        <div />
+      </ChartCard>"""
+        _write_render(project_root, report_tools.report_slug, {"app.jsx": _cards_app_jsx(body)})
+
+        result = report_tools.validate_render()
+        assert result.success == 0
+        assert "save_query" in (result.error or "")
+        assert "save_query_template" not in (result.error or "")
+
+    def test_forwarded_handle_id_requires_static_declaration(
+        self, report_tools: ReportArtifactTools, project_root: Path
+    ):
+        # A forwarded handle cannot contribute a content node to static insight.
+        # Finalization must ask the model to declare it at the call site.
+        shared = """\
+import React from 'react';
+import { BlockHandle } from '@datus/web-artifact';
+
+export default function KpiCard({ handleId, label, children }) {
+  return (
+    <BlockHandle handleId={handleId} name={label} kind="kpi">
+      {children}
+    </BlockHandle>
+  );
+}
+"""
+        app = """\
+import React from 'react';
+import KpiCard from './kpi-card';
+import { useDatusArtifact } from '@datus/web-artifact';
+
+export default function App() {
+  const { useQuerySql } = useDatusArtifact();
+  const { data } = useQuerySql('queries/sales_by_store');
+  return <KpiCard handleId="total_revenue" label="Total revenue">{data?.rows?.length}</KpiCard>;
+}
+"""
+        _write_render(
+            project_root,
+            report_tools.report_slug,
+            {"app.jsx": app, "kpi-card.jsx": shared},
+        )
+
+        result = report_tools.validate_render()
+        assert result.success == 0
+        assert "string-literal handleId" in result.error
+        assert "call site" in result.error
+
+    def test_nested_jsx_in_a_prop_value_does_not_truncate_the_tag(
+        self, report_tools: ReportArtifactTools, project_root: Path
+    ):
+        # The attribute matcher is atom-based precisely so a ``>`` inside a
+        # JSX expression can't end the tag early. If it did, the props after
+        # it would go unseen and this valid card would be reported as
+        # missing chartType.
+        body = """\
+      <ChartCard
+        title={<span>revenue &gt; target</span>}
+        titleRight={<Badge label={a > b ? 'up' : 'down'} />}
+        chartId="store_sales"
+        sqlId="queries/sales_by_store"
+        chartType="bar"
+        data={data}
+      >
+        <div />
+      </ChartCard>"""
+        _write_render(project_root, report_tools.report_slug, {"app.jsx": _cards_app_jsx(body)})
+
+        result = report_tools.validate_render()
+        assert result.success == 1, result.error
+        assert result.result["cards"] == [{"chart_id": "store_sales", "jsx_path": "render/app.jsx", "kind": "chart"}]
+
+    def test_traversal_sql_id_rejected_on_grammar_not_on_disk(
+        self, report_tools: ReportArtifactTools, project_root: Path
+    ):
+        # ``queries/<slug>`` is matched against ^[a-z0-9_]+$, so a traversal
+        # attempt fails the grammar and never reaches a filesystem lookup.
+        # Asserting on WHICH message comes back is the point: the
+        # "not produced via save_query" wording would mean we had already
+        # gone to disk with attacker-shaped input.
+        body = """\
+      <ChartCard chartId="store_sales" sqlId="queries/../../etc/passwd" chartType="bar" data={data}>
+        <div />
+      </ChartCard>"""
+        _write_render(project_root, report_tools.report_slug, {"app.jsx": _cards_app_jsx(body)})
+
+        result = report_tools.validate_render()
+        assert result.success == 0
+        assert "not a valid queries/<slug> reference" in (result.error or "")
+        assert "save_query" not in (result.error or "")
+
+    def test_spread_props_require_static_declarations(self, report_tools: ReportArtifactTools, project_root: Path):
+        body = """\
+      <ChartCard {...cardProps} data={data}>
+        <div />
+      </ChartCard>"""
+        _write_render(project_root, report_tools.report_slug, {"app.jsx": _cards_app_jsx(body)})
+
+        result = report_tools.validate_render()
+        assert result.success == 0
+        assert "spread props" in result.error
+        assert "call site" in result.error
 
 
 # ----------------------------------------------------------------------------- #

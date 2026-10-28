@@ -121,4 +121,4 @@ skills with the same name.
 ```
 
 For more detail on authoring skills, permissions, and the marketplace
-workflow, see [Skills Integration](../integration/skills.md).
+workflow, see [Skills Integration](../skills/introduction.md).

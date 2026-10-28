@@ -99,6 +99,30 @@ class TestGatewayStart:
             await gw.start()
         assert "my-slack" not in gw._adapters
 
+    def test_base_adapter_is_configured_by_default(self):
+        # Adapters that don't override is_configured() (no credentials to check)
+        # are treated as configured, so they are never skipped.
+        assert _FakeAdapter("c", {}, bridge=MagicMock()).is_configured() is True
+
+    @pytest.mark.asyncio
+    async def test_enabled_but_unconfigured_channel_skipped(self):
+        """An enabled channel whose adapter isn't configured (missing credentials)
+        is skipped, not started — so the gateway never crash-loops on invalid_auth."""
+
+        class _UnconfiguredAdapter(_FakeAdapter):
+            def is_configured(self):
+                return False
+
+        cfg = {"my-slack": {"adapter": "slack", "enabled": True, "extra": {}}}
+        gw = _make_gateway(cfg)
+        with (
+            patch("datus.gateway.runtime.register_builtins"),
+            patch("datus.gateway.runtime.get_adapter_class", return_value=_UnconfiguredAdapter),
+        ):
+            # Only channel is skipped → no adapters → start() returns early (no block).
+            await gw.start()
+        assert gw._adapters == {}
+
     @pytest.mark.asyncio
     async def test_enabled_channel_instantiated_and_started(self):
         cfg = {

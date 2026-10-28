@@ -30,3 +30,14 @@ def test_publish_release_skips_finalize_steps_for_prereleases():
         "&& steps.release_version.outputs.is_prerelease != 'true' }}"
     ) in workflow
     assert "Tag/docs/main metadata sync: skipped for prerelease" in workflow
+
+
+def test_publish_release_checks_staged_metadata_changes():
+    workflow = (REPO_ROOT / ".github" / "workflows" / "publish-release.yml").read_text(encoding="utf-8")
+
+    assert 'merged_tree="$(git merge-tree --write-tree origin/main "${SOURCE_SHA}" | sed -n \'1p\')"' in workflow
+    assert 'git checkout "${merged_tree}" -- pyproject.toml requirements.txt requirements-test.txt uv.lock' in workflow
+    assert (
+        "if git diff --cached --quiet -- pyproject.toml requirements.txt requirements-test.txt uv.lock; then"
+        in workflow
+    )

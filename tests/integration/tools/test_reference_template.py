@@ -11,6 +11,7 @@ CI tests verify tool availability using pre-built test data (from build_scripts/
 
 import json
 from pathlib import Path
+from typing import Any, Dict
 
 import pytest
 
@@ -309,3 +310,77 @@ class TestReferenceTemplateToolsCI:
         )
         assert render_result.success == 1
         assert "{{" not in render_result.result["rendered_sql"]
+
+
+# ============================================================================
+# CI: Artifact sync — generated YAML file → Knowledge Base
+# ============================================================================
+
+
+class TestReferenceTemplateArtifactSync:
+    """CI-level: sync a generated reference-template YAML artifact into real
+    storage (the path the SqlSummary finalizer runs after each generation)."""
+
+    TEMPLATE_SQL: str = "SELECT * FROM schools WHERE County = '{{ county }}'"
+
+    def _write_artifact(self, tmp_path: Path, item_id: str = "auto_generated") -> Path:
+        import yaml as yaml_lib
+
+        artifact = tmp_path / "county_schools_tpl.yaml"
+        artifact.write_text(
+            yaml_lib.safe_dump(
+                {
+                    "id": item_id,
+                    "name": "county_schools_tpl",
+                    "sql": self.TEMPLATE_SQL,
+                    "summary": "Schools filtered by county",
+                    "search_text": "schools county filter",
+                    "subject_tree": "california_schools/Charter/County",
+                    "tags": "integration",
+                }
+            ),
+            encoding="utf-8",
+        )
+        return artifact
+
+    def test_sync_stores_template_and_resync_updates_row(self, agent_config: AgentConfig, tmp_path):
+        from datus.storage.reference_template.artifact_sync import sync_reference_template_artifact_to_kb
+        from datus.storage.reference_template.init_utils import gen_reference_template_id
+        from datus.storage.reference_template.store import ReferenceTemplateRAG
+
+        storage = ReferenceTemplateRAG(agent_config)
+        item_id = gen_reference_template_id(self.TEMPLATE_SQL)
+
+        def _stored_row() -> Dict[str, Any]:
+            rows = [row for row in storage.search_all_reference_templates() if row["id"] == item_id]
+            assert rows, "Synced template not found in storage"
+            return rows[0]
+
+        try:
+            artifact = self._write_artifact(tmp_path)
+            result = sync_reference_template_artifact_to_kb(str(artifact), agent_config)
+            assert result["success"] is True, f"Sync failed: {result}"
+
+            stored = _stored_row()
+            assert stored["name"] == "county_schools_tpl"
+            assert stored["template"] == self.TEMPLATE_SQL
+            assert json.loads(stored["parameters"]) == [{"name": "county"}]
+            assert stored["subject_path"] == ["california_schools", "Charter", "County"]
+
+            # Re-syncing the same business ID updates the row instead of
+            # skipping: the YAML artifact is the source of truth.
+            updated = self._write_artifact(tmp_path, item_id=item_id)
+            import yaml as yaml_lib
+
+            doc = yaml_lib.safe_load(updated.read_text(encoding="utf-8"))
+            doc["summary"] = "Schools filtered by county (revised)"
+            updated.write_text(yaml_lib.safe_dump(doc), encoding="utf-8")
+
+            result = sync_reference_template_artifact_to_kb(str(updated), agent_config)
+            assert result["success"] is True, f"Re-sync failed: {result}"
+            stored = _stored_row()
+            assert stored["summary"] == "Schools filtered by county (revised)"
+        finally:
+            # The pre-built Knowledge Base is shared across this test run —
+            # remove the deterministic row so no other test observes it.
+            storage.delete_reference_template(["california_schools", "Charter", "County"], "county_schools_tpl")

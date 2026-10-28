@@ -46,7 +46,7 @@ The user's SQL already fully defines the output schema. Do NOT ask the user abou
 
 1. **Parse the input SQL**: Identify source tables, JOIN conditions, selected columns, and transformations.
 2. **Call `describe_table`** for each source table to understand column types.
-3. **Optionally call `read_query`** with `LIMIT 10` to validate the query output.
+3. **Optionally call `execute_sql`** with `LIMIT 10` to validate the query output.
 4. **Determine table name**: Derive from the SQL context (e.g., `wide_order_customer`). If the user specified a name, use it.
 5. **Go directly to Phase 2** — do NOT ask about table usage, purpose, or column selection.
 
@@ -101,9 +101,9 @@ ask_user(questions=[{
 
 ## Phase 3: Execute and Verify
 
-1. **Call `execute_ddl(sql)`** with the confirmed or workflow-authorized DDL statement.
+1. **Call `execute_sql(sql)`** with the confirmed or workflow-authorized DDL statement.
 2. **Verify**:
-   - SQL Mode: Call `read_query("SELECT COUNT(*) FROM {schema}.{table_name}")` to confirm row count
+   - SQL Mode: Call `execute_sql("SELECT COUNT(*) FROM {schema}.{table_name}")` to confirm row count
    - Description Mode: Call `describe_table("{schema}.{table_name}")` to confirm schema matches
 3. **Call `describe_table("{schema}.{table_name}")`** to confirm the created schema.
 
@@ -120,7 +120,7 @@ Output a summary including:
 - Row count (for CTAS) or column count (for CREATE TABLE)
 - Column list with types
 - Original SQL (for CTAS) or user description (for CREATE TABLE)
-- Hint: if the user needs a semantic model, suggest `task(type="gen_semantic_model", prompt="{table_name}")`
+- Hint: if the user needs a semantic model, suggest `task(type="semantic_modeling", prompt="{table_name}")`.
 
 ## Important Rules
 
@@ -130,4 +130,4 @@ Output a summary including:
 - If the target table already exists, ask whether to drop/recreate/abort when interactive; require explicit replacement authorization when workflow mode.
 - Language: match user's language (Chinese input → Chinese output)
 - Do NOT modify the source tables — only create new tables
-- **Single responsibility** — gen-table only creates tables, does not generate semantic model YAML. For semantic model, suggest using `gen_semantic_model`
+- **Single responsibility** — gen-table only creates tables and does not generate semantic model YAML. Suggest `semantic_modeling` for Dosi authoring.

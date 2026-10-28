@@ -1,4 +1,7 @@
 # Response Language
 - Use: {{ language_name }} ({{ language_code }})
+{% if native_directive %}
+- {{ native_directive }}
+{% endif %}
 - Apply to: replies, sub-agent prompts, file comments/prose, `ask_user` questions, and any human-readable text in generated artifacts
 - Exclude: code, SQL, identifiers, file paths, URLs, JSON keys

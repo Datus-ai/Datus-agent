@@ -3,8 +3,9 @@
 from enum import Enum
 from typing import Any, Dict, List, Literal, Optional, Union
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from datus.api.models.message_contents import ChatMessageContent
 from datus.utils.time_utils import now_utc_iso
 
 
@@ -15,6 +16,7 @@ class ExecuteSQLInput(BaseModel):
     model_config = ConfigDict(
         json_schema_extra={
             "example": {
+                "datasource": "prod_warehouse",
                 "database_name": "sales_db",
                 "sql_query": "SELECT * FROM users WHERE status = 'active'",
                 "result_format": "csv",
@@ -24,6 +26,11 @@ class ExecuteSQLInput(BaseModel):
         }
     )
 
+    # Which connection profile to run against. A project can bind several, and
+    # the dotted table names in the SQL carry no datasource level — so the
+    # editor tab's datasource has to travel with the statement or it silently
+    # runs on the project's default warehouse instead.
+    datasource: Optional[str] = Field(None, description="Datasource to execute against; null means the current one")
     database_name: Optional[str] = Field(None, description="Database name")
     sql_query: str = Field(..., description="SQL query to execute")
     result_format: str = Field("arrow", description="Result format (arrow, csv, json)")
@@ -72,6 +79,7 @@ class ExecuteContextInput(BaseModel):
         json_schema_extra={
             "example": {
                 "context_type": "tables",
+                "datasource": "prod_warehouse",
                 "database_name": "sales_db",
                 "schema_name": "public",
                 "args": "",
@@ -133,8 +141,29 @@ class ChatInput(BaseModel):
     )
 
     # Core message fields
-    message: str = Field(..., description="Chat message")
+    message: str = Field(default="", description="Legacy text message; messages takes precedence")
+    messages: Optional[List[ChatMessageContent]] = Field(default=None, min_length=1, max_length=20)
+
+    @model_validator(mode="after")
+    def validate_message(self):
+        if self.messages is not None:
+            self.message = "\n\n".join(part.payload.content for part in self.messages if part.type == "markdown")
+            if not self.message.strip() and not any(part.type == "image" for part in self.messages):
+                raise ValueError("messages must contain text or an image")
+        elif not self.message.strip():
+            raise ValueError("message or messages is required")
+        return self
+
     session_id: Optional[str] = Field(None, description="Session ID")
+    origin: Optional[str] = Field(
+        default=None,
+        description=(
+            "Who started this run. 'orchestrator' means an external orchestrator "
+            "dispatched it rather than a person typing, and the agent is given the "
+            "submit_task_result tool so it can declare a structured outcome the "
+            "caller can act on. Leave unset for ordinary chat."
+        ),
+    )
     model: Optional[str] = Field(
         default=None,
         description=(
@@ -151,6 +180,10 @@ class ChatInput(BaseModel):
     )
 
     # Database context fields
+    datasource: Optional[str] = Field(
+        None,
+        description="Datasource (connection profile) override; selects which configured datasource to use",
+    )
     catalog: Optional[str] = Field(None, description="Database catalog for context")
     database: Optional[str] = Field(None, description="Database name for context")
     db_schema: Optional[str] = Field(None, description="Database schema for context")
@@ -315,6 +348,11 @@ class FeedbackChatInput(ChatInput):
     reaction_emoji: str = Field(..., description="Normalized emoji name (e.g. 'thumbsup')")
     reference_msg: str = Field(..., description="Text of the bot message the user reacted to")
     reaction_msg: Optional[str] = Field(default=None, description="Optional free-text comment attached to the reaction")
+
+    @model_validator(mode="after")
+    def validate_message(self):
+        # Feedback uses the server-rendered reaction prompt, not caller message parts.
+        return self
 
     @field_validator("source_session_id", "reaction_emoji", "reference_msg")
     @classmethod
@@ -487,6 +525,21 @@ class IUpdateMessagePayload(BaseModel):
 
 
 # SSE Event Data Models
+class AtContextData(BaseModel):
+    """@-referenced context attached to a user message (path identifiers only).
+
+    Mirrors the request's ``*_paths`` fields. Populated by the history API for
+    user messages so the front-end can re-render the referenced tables /
+    metrics / SQL / knowledge as read-only chips. Empty lists when a turn
+    carried no references of that kind.
+    """
+
+    table_paths: List[str] = Field(default_factory=list, description="@Table path identifiers")
+    metric_paths: List[str] = Field(default_factory=list, description="@Metrics path identifiers")
+    sql_paths: List[str] = Field(default_factory=list, description="@Sql path identifiers")
+    knowledge_paths: List[str] = Field(default_factory=list, description="@Knowledge path identifiers")
+
+
 class SSEMessagePayload(BaseModel):
     """Payload for SSE message events."""
 
@@ -495,6 +548,9 @@ class SSEMessagePayload(BaseModel):
     content: List[IMessageContent] = Field(default_factory=list, description="Message content list")
     depth: int = Field(default=0, description="Nesting depth (0=main, 1=sub-agent)")
     parent_action_id: Optional[str] = Field(default=None, description="Parent action ID for sub-agent grouping")
+    at_context: Optional[AtContextData] = Field(
+        default=None, description="@-referenced context for a user message (history replay only)"
+    )
 
 
 class SSEMessageData(BaseModel):
@@ -524,6 +580,7 @@ class SSEEndData(BaseModel):
     output_tokens: int = Field(0, description="Turn output tokens")
     total_tokens: int = Field(0, description="Turn total tokens")
     cached_tokens: int = Field(0, description="Cache hit tokens")
+    cache_write_tokens: int = Field(0, description="Input tokens written to cache")
     session_total_tokens: int = Field(0, description="Current context window usage (last model call input_tokens)")
     context_length: int = Field(0, description="Model max context window")
 
@@ -551,6 +608,7 @@ class SSEUsageDelta(BaseModel):
     output_tokens: int = Field(0, description="Output tokens produced by this LLM call")
     total_tokens: int = Field(0, description="Total tokens (input + output + reasoning)")
     cached_tokens: int = Field(0, description="Cached input tokens credited to this call")
+    cache_write_tokens: int = Field(0, description="Input tokens written to cache by this call")
     reasoning_tokens: int = Field(0, description="Reasoning tokens spent on this call")
 
 
@@ -574,6 +632,7 @@ class SSEUsageData(BaseModel):
     output_tokens: int = Field(0, description="Turn-cumulative output tokens")
     total_tokens: int = Field(0, description="Turn-cumulative total tokens")
     cached_tokens: int = Field(0, description="Turn-cumulative cache-hit tokens")
+    cache_write_tokens: int = Field(0, description="Turn-cumulative cache-write tokens")
     reasoning_tokens: int = Field(0, description="Turn-cumulative reasoning tokens")
     last_call_input_tokens: int = Field(0, description="Most recent call's input window size")
     context_length: int = Field(0, description="Model max context window")

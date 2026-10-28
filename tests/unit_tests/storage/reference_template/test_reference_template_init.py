@@ -377,7 +377,7 @@ class TestProcessTemplateItem:
             "datus.storage.reference_template.reference_template_init.SqlSummaryAgenticNode",
             return_value=mock_node,
         ):
-            result = await process_template_item(item, mock_config, build_mode="overwrite")
+            result = await process_template_item(item, mock_config)
 
         assert result == "tpl_001.yaml"
         # Verify metadata was backfilled into item
@@ -440,7 +440,7 @@ class TestProcessTemplateItem:
             "datus.storage.reference_template.reference_template_init.SqlSummaryAgenticNode",
             return_value=mock_node,
         ):
-            result = await process_template_item(item, mock_config, build_mode="overwrite")
+            result = await process_template_item(item, mock_config)
 
         assert result == "subject/sql_summaries/tpl_001.yaml"
         assert item["name"] == "free_rate_query"
@@ -485,7 +485,7 @@ class TestProcessTemplateItem:
             "datus.storage.reference_template.reference_template_init.SqlSummaryAgenticNode",
             return_value=mock_node,
         ):
-            result = await process_template_item(item, mock_config, build_mode="overwrite")
+            result = await process_template_item(item, mock_config)
 
         assert result is None
 

@@ -8,15 +8,6 @@ Nodes are the fundamental building blocks of Datus Agent's workflow system. Each
 
 Control nodes manage workflow execution flow and decision-making.
 
-#### Reflect Node
-- **Purpose**: Evaluate results and decide next steps
-- **Key Feature**: Core intelligence that enables adaptive SQL generation
-- **Common Strategies**:
-  - Simple regeneration (retry SQL generation)
-  - Document search (find relevant documentation)
-  - Schema re-analysis (re-examine database structure)
-  - Deep reasoning analysis
-
 #### Parallel Node
 - **Purpose**: Execute multiple child nodes simultaneously
 - **Use Case**: Testing multiple SQL generation strategies for comparison
@@ -68,10 +59,6 @@ Action nodes perform specific data processing and SQL-related tasks.
   - Performance metrics display
 - **Output**: User-friendly result presentation
 
-#### Reasoning Node
-- **Purpose**: Provide deep analysis and reasoning
-- **Use Case**: Complex business logic explanation and validation
-
 #### Fix Node
 - **Purpose**: Repair problematic SQL queries
 - **Key Features**:
@@ -97,24 +84,9 @@ Action nodes perform specific data processing and SQL-related tasks.
   - Creates reusable data models
 - **Output**: Semantic model definitions for business intelligence
 
-#### Search Metrics Node
-- **Purpose**: Find relevant business metrics
-- **Use Case**: Reusing existing business calculations and ensuring consistency
-
 #### Compare Node
 - **Purpose**: Compare SQL results with expected outcomes
 - **Use Case**: Testing, validation, and quality assurance scenarios
-
-#### Date Parser Node
-- **Purpose**: Parse temporal expressions in user queries
-- **Examples**:
-  - "last month" → specific date range
-  - "Q3 2023" → quarter date boundaries
-  - "past 7 days" → rolling date window
-
-#### Document Search Node
-- **Purpose**: Find relevant documentation and context
-- **Use Case**: Providing additional context for complex queries and domain knowledge
 
 ### 3. Agentic Nodes
 
@@ -128,6 +100,14 @@ Advanced AI-powered nodes with conversational and adaptive capabilities.
   - Context maintenance
   - Adaptive responses
 - **Use Case**: Interactive SQL generation and refinement
+
+### 4. Function Tools
+
+Metric search, date parsing, and platform documentation search are exposed to agentic nodes as function tools rather than standalone workflow nodes:
+
+- `context_search_tools.search_metrics`: Find relevant business metrics
+- `date_parsing_tools.parse_temporal_expressions`: Normalize temporal expressions such as “last month”
+- `platform_doc_tools.search_document`: Search indexed platform documentation
 
 ## Node Implementation Details
 
@@ -151,8 +131,6 @@ class Context:
     sql_contexts: List[SQLContext]      # Generated SQL and results
     table_schemas: List[TableSchema]    # Database schema information
     metrics: List[BusinessMetric]       # Available business metrics
-    reflections: List[Reflection]       # Reflection results
-    documents: List[Document]           # Retrieved documentation
 ```
 
 ### Error Handling
@@ -175,10 +153,6 @@ nodes:
   schema_linking:
     model: "claude-3-sonnet"
     temperature: 0.1
-
-  reasoning:
-    model: "claude-3-opus"
-    temperature: 0.3
 
 agentic_nodes:
   gen_sql:
@@ -214,10 +188,9 @@ nodes:
 
 ### Node Selection
 
-1. **Use Schema Linking First**: Always start workflows with schema linking for context
-2. **Combine Complementary Nodes**: Use reasoning and gen_sql together for complex queries
-3. **Add Reflection for Robustness**: Include reflection nodes for adaptive behavior
-4. **Use Parallel for Experimentation**: Run multiple strategies in parallel for comparison
+1. **Use Schema Linking First**: Start SQL workflows with schema linking when schema context is needed
+2. **Use gen_sql for SQL Generation**: Keep SQL generation and tool-driven analysis in the agentic node
+3. **Use Parallel for Experimentation**: Run multiple strategies in parallel for comparison
 
 ### Performance Optimization
 
@@ -244,19 +217,6 @@ class CustomValidationNode(BaseNode):
     def run(self, input: ValidationInput) -> ValidationOutput:
         # Custom validation logic
         return ValidationOutput(is_valid=True, message="Validation passed")
-```
-
-### Dynamic Workflows
-
-Nodes can modify workflow execution dynamically:
-
-```python
-# In reflection node
-if complexity_score > threshold:
-    workflow.add_node("reasoning", after="current")
-
-if needs_validation:
-    workflow.add_node("compare", before="output")
 ```
 
 ### Node Composition

@@ -23,7 +23,7 @@
 - `gen_sql`（默认）
 - `gen_report`
 
-如果你希望创建更高级的 alias，例如 `explore`、`gen_table`、`gen_skill`、`gen_dashboard`、`scheduler`，需要手工编辑 `agent.yml`。
+如果你希望创建更高级的 alias，例如 `explore`、`gen_table`、`gen_skill`，需要手工编辑 `agent.yml`。调度和外部 BI 操作由主 agent 直接使用已安装 plugin 完成，不能通过自定义 subagent alias 暴露。
 
 ## 向导字段
 
@@ -129,16 +129,13 @@ agent:
 ```yaml
 agent:
   agentic_nodes:
-    sales_dashboard:
-      node_class: gen_dashboard
+    schema_explorer:
+      node_class: explore
       model: claude
-      bi_platform: superset
-      max_turns: 30
-
-    etl_scheduler:
-      node_class: scheduler
-      model: claude
-      max_turns: 30
+      max_turns: 15
 ```
+
+旧配置中的 `node_class: gen_dashboard` 或 `node_class: scheduler` 不会再被列出
+或实例化。请让主 agent 改用对应的 Superset 或 Airflow plugin。
 
 支持的节点类别以及运行时行为，见 [Subagent 指南](./introduction.zh.md) 和 [内置 subagent](./builtin_subagents.zh.md)。

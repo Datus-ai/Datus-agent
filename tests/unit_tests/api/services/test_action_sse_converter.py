@@ -121,6 +121,31 @@ class TestExtractFunction:
 class TestBuildToolCallContent:
     """Tests for _build_tool_call_content."""
 
+    def test_tool_start_carries_an_already_prepared_snapshot_for_early_preview_delivery(self):
+        snapshot = {
+            "filePath": ".datus/semantic-model-plans/s/semantic-model-plan.json",
+            "oldText": "",
+            "newText": "{}",
+        }
+        action = _make_action(
+            action_id="fast-call",
+            role=ActionRole.TOOL,
+            status=ActionStatus.PROCESSING,
+            input={"function_name": "write_semantic_model_plan_file", "arguments": {"model_name": "sales"}},
+        )
+        event = action_to_sse_event(
+            action,
+            1,
+            action.action_id,
+            proxied_tool_names={"write_semantic_model_plan_file"},
+            tool_previews={"fast-call": snapshot, "other-call": {"newText": "unrelated"}},
+        )
+        assert event.data.type == SSEDataType.CREATE_MESSAGE
+        assert event.data.payload.content[0].payload["preview"] == snapshot
+        action.action_id = "not-prepared"
+        event = action_to_sse_event(action, 2, action.action_id, tool_previews={"fast-call": snapshot})
+        assert "preview" not in event.data.payload.content[0].payload
+
     def test_builds_call_tool_content(self):
         """Produces IMessageContent with type='call-tool' and correct payload."""
         action = _make_action(
@@ -145,6 +170,25 @@ class TestBuildToolCallContent:
         )
         contents = _build_tool_call_content(action)
         assert contents[0].payload["toolParams"] == {}
+
+    def test_omits_proxied_flag_without_tool_names(self):
+        """History conversion (no live node) must not stamp ``proxied`` at all,
+        so legacy clients keep their own execute-or-not heuristic."""
+        action = _make_action(input={"function_name": "write_file", "arguments": {}})
+        contents = _build_tool_call_content(action)
+        assert "proxied" not in contents[0].payload
+
+    def test_marks_proxied_true_for_client_executed_tool(self):
+        action = _make_action(input={"function_name": "write_file", "arguments": {}})
+        contents = _build_tool_call_content(action, proxied_tool_names={"write_file", "edit_file"})
+        assert contents[0].payload["proxied"] is True
+
+    def test_marks_proxied_false_for_server_executed_tool(self):
+        """An empty proxied set (auto/dangerous web session) stamps False so the
+        client neither shows a confirm bar nor re-executes the tool."""
+        action = _make_action(input={"function_name": "write_file", "arguments": {}})
+        contents = _build_tool_call_content(action, proxied_tool_names=set())
+        assert contents[0].payload["proxied"] is False
 
 
 class TestBuildToolResultContent:
@@ -592,6 +636,18 @@ class TestBuildErrorContent:
         contents = _build_error_content(action)
         assert contents[0].payload["content"] == "Unknown error"
 
+    def test_passes_error_code_through(self):
+        """A classified failure carries its ErrorCode name to the host."""
+        action = _make_action(output={"error": "model rejected", "error_code": "MODEL_NOT_FOUND"})
+        contents = _build_error_content(action)
+        assert contents[0].payload == {"content": "model rejected", "errorCode": "MODEL_NOT_FOUND"}
+
+    def test_omits_error_code_when_unclassified(self):
+        """No code key at all rather than a null one."""
+        action = _make_action(output={"error": "tool crashed"})
+        contents = _build_error_content(action)
+        assert contents[0].payload == {"content": "tool crashed"}
+
     def test_non_dict_output_uses_messages(self):
         """Non-dict output falls back to messages or default."""
         action = _make_action(output="raw", messages="Msg fallback")
@@ -900,6 +956,20 @@ class TestActionToSSEEvent:
         event = action_to_sse_event(action, event_id=2, message_id="msg-2")
         event = _assert_sse_event(event)
         assert event.data.payload.content[0].type == "call-tool"
+
+    def test_tool_processing_passes_proxied_tool_names_through(self):
+        """The streaming caller's proxied set reaches the call-tool payload."""
+        action = _make_action(
+            role=ActionRole.TOOL,
+            status=ActionStatus.PROCESSING,
+            input={"function_name": "write_file", "arguments": {"path": "a.sql"}},
+        )
+        event = action_to_sse_event(action, event_id=2, message_id="msg-2", proxied_tool_names=set())
+        event = _assert_sse_event(event)
+        assert event.data.payload.content[0].payload["proxied"] is False
+
+        event = action_to_sse_event(action, event_id=3, message_id="msg-3", proxied_tool_names={"write_file"})
+        assert _assert_sse_event(event).data.payload.content[0].payload["proxied"] is True
 
     def test_tool_success_produces_call_tool_result(self):
         """TOOL + SUCCESS maps to call-tool-result content."""
@@ -1469,6 +1539,7 @@ class TestTokenUsageEvent:
                     "output_tokens": 300,
                     "total_tokens": 1500,
                     "cached_tokens": 100,
+                    "cache_write_tokens": 80,
                     "reasoning_tokens": 50,
                 },
                 "delta": {
@@ -1477,6 +1548,7 @@ class TestTokenUsageEvent:
                     "output_tokens": 200,
                     "total_tokens": 900,
                     "cached_tokens": 0,
+                    "cache_write_tokens": 30,
                     "reasoning_tokens": 0,
                 },
                 "context_length": 200_000,
@@ -1490,6 +1562,7 @@ class TestTokenUsageEvent:
         assert isinstance(event.data, SSEUsageData)
         assert event.data.total_tokens == 1500
         assert event.data.cached_tokens == 100
+        assert event.data.cache_write_tokens == 80
         assert event.data.reasoning_tokens == 50
         assert event.data.last_call_input_tokens == 700
         assert event.data.context_length == 200_000
@@ -1497,6 +1570,7 @@ class TestTokenUsageEvent:
         assert event.data.delta.total_tokens == 900
         assert event.data.delta.input_tokens == 700
         assert event.data.delta.output_tokens == 200
+        assert event.data.delta.cache_write_tokens == 30
 
     def test_missing_output_fields_zero_fill_instead_of_crashing(self):
         """Defensive: a malformed ``token_usage`` action should still emit a

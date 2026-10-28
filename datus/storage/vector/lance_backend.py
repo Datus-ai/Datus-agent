@@ -6,7 +6,10 @@
 
 import os
 import re
-from typing import Any, Dict, List, Optional, Union
+import shutil
+from pathlib import Path
+from typing import Any, Dict, List, Optional
+from urllib.parse import unquote, urlparse
 
 import lancedb
 import pandas as pd
@@ -18,10 +21,12 @@ from lancedb.embeddings import EmbeddingFunctionConfig
 from lancedb.embeddings.base import EmbeddingFunction as LanceDBEmbeddingFunction
 from lancedb.embeddings.base import TextEmbeddingFunction
 from lancedb.embeddings.registry import register
-from lancedb.query import LanceQueryBuilder
+from lancedb.index import FTS
+from lancedb.query import LanceQueryBuilder, MatchQuery, MultiMatchQuery
 from lancedb.rerankers import LinearCombinationReranker
 from lancedb.table import Table as LanceTable
 
+from datus.storage.fts import FtsIndexStatus, FtsSpec, FtsSpecInput, normalize_fts_spec
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
 
@@ -100,9 +105,9 @@ def _wrap_embedding(model: EmbeddingFunction) -> TextEmbeddingFunction:
     from datus.storage.fastembed_embeddings import FastEmbedEmbeddings
 
     if isinstance(model, FastEmbedEmbeddings):
-        adapter = _LanceFastEmbedAdapter(name=model.name, batch_size=model.batch_size)
+        adapter = _LanceFastEmbedAdapter.create(name=model.name, batch_size=model.batch_size)
     else:
-        adapter = _LanceOpenAIAdapter(
+        adapter = _LanceOpenAIAdapter.create(
             name=getattr(model, "name", ""),
             dim=getattr(model, "dim", None),
             base_url=getattr(model, "base_url", None),
@@ -164,18 +169,35 @@ class LanceVectorTable(VectorTable):
     def search_hybrid(
         self,
         query_text: str,
-        vector_source_column: str,
+        vector_column: str,
         top_n: int,
         where: WhereExpr = None,
         select_fields: Optional[List[str]] = None,
     ) -> pa.Table:
         compiled = build_where(where)
-        query_builder = self._table.search(
-            query=query_text, query_type="hybrid", vector_column_name=vector_source_column
-        )
+        query_builder = self._table.search(query=query_text, query_type="hybrid", vector_column_name=vector_column)
         query_builder = self._fill_query(query_builder, select_fields, compiled)
         reranker = LinearCombinationReranker()
         return query_builder.limit(top_n * 2).rerank(reranker).to_arrow()
+
+    def search_fts(
+        self,
+        query_text: str,
+        fts_spec: FtsSpecInput,
+        top_n: int,
+        where: WhereExpr = None,
+        select_fields: Optional[List[str]] = None,
+    ) -> pa.Table:
+        compiled = build_where(where)
+        fts_spec = normalize_fts_spec(fts_spec)
+        if len(fts_spec.fields) == 1:
+            field = fts_spec.fields[0]
+            query = MatchQuery(query_text, field.name, boost=field.boost)
+        else:
+            query = MultiMatchQuery(query_text, fts_spec.columns, boosts=fts_spec.boosts)
+        query_builder = self._table.search(query=query)
+        query_builder = self._fill_query(query_builder, select_fields, compiled)
+        return query_builder.limit(top_n).to_arrow()
 
     def search_all(
         self,
@@ -204,8 +226,51 @@ class LanceVectorTable(VectorTable):
     def create_vector_index(self, column: str, metric: str = "cosine", **kwargs) -> None:
         self._table.create_index(metric=metric, vector_column_name=column, **kwargs)
 
-    def create_fts_index(self, field_names: Union[str, List[str]]) -> None:
-        self._table.create_fts_index(field_names=field_names, replace=True)
+    def create_fts_index(self, spec: FtsSpecInput) -> None:
+        for field in normalize_fts_spec(spec).fields:
+            config = FTS(
+                base_tokenizer=field.tokenizer,
+                ngram_min_length=field.ngram_min_length,
+                ngram_max_length=field.ngram_max_length,
+                stem=False,
+                remove_stop_words=False,
+                ascii_folding=False,
+            )
+            self._table.create_index(field.name, config=config, replace=True)
+
+    def supports_fts(self) -> bool:
+        return True
+
+    def fts_index_status(self, spec: FtsSpec) -> FtsIndexStatus:
+        if self._legacy_fts_path() is not None:
+            return FtsIndexStatus.LEGACY
+        index_by_field = {}
+        for index in self._table.list_indices():
+            index_type = getattr(index, "index_type", "")
+            index_type = getattr(index_type, "value", index_type)
+            if str(index_type).upper() == "FTS":
+                columns = getattr(index, "fields", getattr(index, "columns", []))
+                for column in columns:
+                    index_by_field[column] = index
+        if not set(spec.columns).issubset(index_by_field):
+            return FtsIndexStatus.MISSING
+        for field in spec.fields:
+            details = getattr(index_by_field[field.name], "index_details", {}) or {}
+            if details.get("base_tokenizer") != field.tokenizer:
+                return FtsIndexStatus.VERSION_MISMATCH
+            if field.tokenizer == "ngram" and (
+                details.get("min_ngram_length") != field.ngram_min_length
+                or details.get("max_ngram_length") != field.ngram_max_length
+            ):
+                return FtsIndexStatus.VERSION_MISMATCH
+        return FtsIndexStatus.READY
+
+    def remove_legacy_fts_index(self) -> bool:
+        legacy_path = self._legacy_fts_path()
+        if legacy_path is None:
+            return False
+        shutil.rmtree(legacy_path)
+        return True
 
     def create_scalar_index(self, column: str) -> None:
         self._table.create_scalar_index(column, replace=True)
@@ -219,6 +284,10 @@ class LanceVectorTable(VectorTable):
 
     # -- Maintenance --
 
+    def optimize(self) -> None:
+        """Incrementally add changed fragments to existing indices."""
+        self._table.optimize()
+
     def compact_files(self) -> None:
         self._table.compact_files()
 
@@ -226,6 +295,15 @@ class LanceVectorTable(VectorTable):
         self._table.cleanup_old_versions()
 
     # -- Internal helpers --
+
+    def _legacy_fts_path(self) -> Optional[Path]:
+        uri = str(getattr(self._table, "uri", ""))
+        parsed = urlparse(uri)
+        if parsed.scheme not in {"", "file"}:
+            return None
+        table_path = Path(unquote(parsed.path if parsed.scheme else uri))
+        legacy_path = table_path / "_indices" / "fts"
+        return legacy_path if legacy_path.exists() else None
 
     @staticmethod
     def _fill_query(
@@ -251,12 +329,33 @@ class LanceVectorDatabase(VectorDatabase):
     def __init__(self, db_connection: DBConnection) -> None:
         self._db = db_connection
 
+    def supports_fts(self) -> bool:
+        return True
+
+    @staticmethod
+    def _is_missing_table_error(exc: Exception) -> bool:
+        if isinstance(exc, FileNotFoundError):
+            return True
+        exc_name = type(exc).__name__.lower()
+        exc_text = str(exc).lower()
+        if "filedoesnotexist" in exc_name or "filedoesnotexist" in exc_text:
+            return True
+        if "tablenotfound" in exc_name:
+            return True
+        if "table not found" in exc_text or "table does not exist" in exc_text:
+            return True
+        if isinstance(exc, ValueError) and ("not found" in exc_text or "does not exist" in exc_text):
+            return True
+        return False
+
     def table_exists(self, table_name: str) -> bool:
         try:
             self._db.open_table(table_name)
             return True
-        except ValueError:
-            return False
+        except Exception as exc:
+            if self._is_missing_table_error(exc):
+                return False
+            raise
 
     def table_names(self, limit: int = 100) -> List[str]:
         return self._db.table_names(limit=limit)

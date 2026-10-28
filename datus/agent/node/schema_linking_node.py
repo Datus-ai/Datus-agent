@@ -77,14 +77,9 @@ class SchemaLinkingNode(Node):
             )
         else:
             # Setup schema linking input
-            matching_rate = self.agent_config.schema_linking_rate
-            matching_rates = ["fast", "medium", "slow", "from_llm"]
-            start = matching_rates.index(matching_rate)
-            final_matching_rate = matching_rates[min(start + workflow.reflection_round, len(matching_rates) - 1)]
-            logger.debug(f"Final matching rate: {final_matching_rate}")
             next_input = SchemaLinkingInput(
                 input_text=workflow.task.task,
-                matching_rate=final_matching_rate,
+                matching_rate=self.agent_config.schema_linking_rate,
                 database_type=workflow.task.database_type,
                 database_name=workflow.task.database_name,
                 sql_context=None,

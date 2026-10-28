@@ -71,6 +71,7 @@ class TestSubagentToolReference:
         # read_file / glob / grep are essential for the LLM to navigate the
         # artifact directory by hand.
         assert "filesystem_tools.read_file" in defaults
+        assert "filesystem_tools.read_image" in defaults
         assert "filesystem_tools.glob" in defaults
         assert "filesystem_tools.grep" in defaults
 

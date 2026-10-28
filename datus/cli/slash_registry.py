@@ -71,6 +71,7 @@ SLASH_COMMANDS: tuple[SlashSpec, ...] = (
     # context
     SlashSpec("catalog", "Display database catalog explorer", "context"),
     SlashSpec("subject", "Display semantic models, metrics, and references", "context"),
+    SlashSpec("save", "Save the last SQL/result to a file (json/csv/sql)", "context"),
     # agent
     SlashSpec("agent", "Open the unified agent manager (built-in overrides / default)", "agent"),
     SlashSpec("subagent", "Open the unified agent manager (custom sub-agents)", "agent"),
@@ -79,8 +80,11 @@ SLASH_COMMANDS: tuple[SlashSpec, ...] = (
     # system
     SlashSpec("mcp", "Manage MCP servers (list/add/remove/check/call/filter)", "system"),
     SlashSpec("skill", "Manage skills and marketplace (list/install/publish/...)", "system"),
+    SlashSpec("plugins", "Manage installed plugins (profiles + per-project activation)", "system"),
     SlashSpec("bootstrap", "Bootstrap KB (schema / sql / semantic / metrics / knowledge)", "system"),
-    SlashSpec("bootstrap-bi", "Extract BI dashboard assets for sub-agent context", "system"),
+    SlashSpec(
+        "bootstrap-bi", "Build dashboard reference SQL and metrics through the dashboard-bootstrap skill", "system"
+    ),
     SlashSpec("model", "Switch LLM provider/model", "system", aliases=("models",)),
     SlashSpec("effort", "Set reasoning effort (off|minimal|low|medium|high)", "system"),
     SlashSpec("init", "Lightweight init: AGENTS.md inventory + knowledge/memory (no vector KB)", "system"),
@@ -95,6 +99,11 @@ SLASH_COMMANDS: tuple[SlashSpec, ...] = (
     SlashSpec(
         "permission",
         "Switch the permission profile (normal / auto / dangerous)",
+        "system",
+    ),
+    SlashSpec(
+        "sandbox",
+        "Toggle the OS-level bash sandbox (status / on / off / strict / normal)",
         "system",
     ),
     SlashSpec(

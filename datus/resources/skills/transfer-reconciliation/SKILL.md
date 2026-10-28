@@ -44,7 +44,7 @@ targets and emit a structured JSON report.
 The hook hands you a `SessionTarget` containing one or more
 `TransferTarget` records. Each record carries only:
 
-- `source.name` — the source connector key (route `read_query` here for
+- `source.name` — the source connector key (route `execute_sql` here for
   source-side probes only when a project-specific validator explicitly needs
   them).
 - `target.datasource` / `target.database` / `target.db_schema` /
@@ -79,12 +79,12 @@ Those are examples for user-defined strict validators.
 ## Tools
 
 You have read-only access to: `list_databases`, `list_schemas`, `list_tables`,
-`describe_table`, `search_table`, `read_query`. Any
+`describe_table`, `search_table`, `execute_sql`. Any
 write tool is explicitly excluded.
 
 ## Critical rules
 
-- `read_query` takes a `datasource=<connector key>` kwarg — it must be the
+- `execute_sql` takes a `datasource=<connector key>` kwarg — it must be the
   **concrete connector key** from the TransferTarget, not the literal words
   "source" or "target". Read it from the target payload:
     - For source-side queries: use the value of `TransferTarget.source.name`
@@ -94,7 +94,7 @@ write tool is explicitly excluded.
   If the SQL needs to disambiguate a database or schema inside that
   connector, qualify it in the query (e.g. `FROM <db>.<schema>.<table>`).
   Never pass the strings `"source"`/`"target"` — those are not real
-  datasource keys and `read_query` will route to the wrong connector.
+  datasource keys and `execute_sql` will route to the wrong connector.
 - Source database is read-only. The default validator should not query it.
 - Report the row-count and target-query checks only. Keep failures concrete.
 

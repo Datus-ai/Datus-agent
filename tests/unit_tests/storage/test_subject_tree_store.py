@@ -4,8 +4,9 @@ from datetime import datetime
 from unittest.mock import patch
 
 import pytest
+from datus_storage_base.rdb.base import WhereOp
 
-from datus.storage.subject_tree.store import SubjectTreeStore
+from datus.storage.subject_tree.store import ROOT_PARENT_ID, SubjectNodeRecord, SubjectTreeStore
 
 
 class TestSubjectTreeStore:
@@ -29,6 +30,26 @@ class TestSubjectTreeStore:
         assert store.get_full_path(node["node_id"]) == ["Finance"]
         assert datetime.strptime(node["created_at"], "%Y-%m-%d %H:%M:%S") <= datetime.now()
         assert node["updated_at"] == node["created_at"]
+
+    @pytest.mark.parametrize(
+        "variant",
+        ["marketing", "MARKETING", " Marketing ", "market_ing", "Market-ing", "Marketing."],
+    )
+    def test_equivalent_names_reuse_one_node(self, store, variant):
+        """Subject paths are written by an LLM one entry at a time; without
+        normalized matching a single area fragments into near-duplicate
+        siblings and its content splits across them."""
+        original = store.create_node(None, "Marketing", "")
+        assert store.find_or_create_path([variant]) == original["node_id"]
+        assert [node["name"] for node in store.get_children(None)] == ["Marketing"]
+
+    def test_genuinely_different_names_stay_separate(self, store):
+        """Normalization only merges spelling variants — distinct wording is
+        a real distinction the store must not silently collapse."""
+        store.create_node(None, "Marketing", "")
+        other = store.find_or_create_path(["Marketing Analytics"])
+        assert other != store.get_children(None)[0]["node_id"]
+        assert len(store.get_children(None)) == 2
 
     def test_create_child_node(self, store):
         """Test creating child node."""
@@ -862,3 +883,35 @@ class TestSubjectTreeDatasourceFields:
 
 
 # Datasource isolation is row-level in the shared project tree.
+
+
+# ========== Construction Write Tests ==========
+
+
+class TestSubjectTreeConstructionWrites:
+    """Constructing the store must not write unless there is something to migrate.
+
+    ``__init__`` runs the legacy NULL-parent migration on every construction. Issuing
+    that UPDATE unconditionally puts a write on the read path, which locks out
+    consumers that hold only SELECT on the knowledge base.
+    """
+
+    def test_construction_does_not_write_when_nothing_to_migrate(self, storage_test_project):
+        seed = SubjectTreeStore(project=storage_test_project)
+        seed.create_node(None, "Finance")
+        table_cls = type(seed._table)
+
+        with patch.object(table_cls, "update", autospec=True) as update_spy:
+            SubjectTreeStore(project=storage_test_project)
+
+        update_spy.assert_not_called()
+
+    def test_construction_still_migrates_legacy_null_parents(self, storage_test_project):
+        seed = SubjectTreeStore(project=storage_test_project)
+        node_id = seed.create_node(None, "Finance")["node_id"]
+        seed._table.update({"parent_id": None}, where=[("node_id", WhereOp.EQ, node_id)])
+
+        SubjectTreeStore(project=storage_test_project)
+
+        migrated = seed._table.query(SubjectNodeRecord, where=[("node_id", WhereOp.EQ, node_id)])
+        assert [row.parent_id for row in migrated] == [ROOT_PARENT_ID]

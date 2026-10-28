@@ -1,8 +1,9 @@
 """Service for knowledge base bootstrap with SSE streaming."""
 
 import asyncio
-import os
+import copy
 import types
+from pathlib import Path
 from typing import AsyncGenerator, Optional
 
 from datus.api.models.kb_models import (
@@ -11,18 +12,21 @@ from datus.api.models.kb_models import (
     BootstrapKbInput,
     KbComponent,
 )
+from datus.api.utils.path_utils import safe_resolve
 from datus.configuration.agent_config import AgentConfig
-from datus.schemas.batch_events import BatchEvent, BatchStage
+from datus.schemas.batch_events import BatchEvent, BatchEventEmitter, BatchStage
 from datus.storage.metric.metric_init import init_success_story_metrics
 from datus.storage.metric.store import MetricRAG
 from datus.storage.reference_sql import ReferenceSqlRAG
 from datus.storage.reference_sql.reference_sql_init import init_reference_sql
-from datus.storage.schema_metadata import SchemaWithValueRAG
+from datus.storage.schema_metadata import create_metadata_rag
 from datus.storage.schema_metadata.local_init import init_local_schema
+from datus.storage.semantic_dataset.store import SemanticDatasetRAG
 from datus.storage.semantic_model.semantic_model_init import (
     init_success_story_semantic_model,
+    refresh_success_story_semantic_model_profile,
 )
-from datus.storage.semantic_model.store import SemanticModelRAG
+from datus.storage.semantic_model.semantic_modeling_init import init_success_story_semantic_modeling
 from datus.tools.db_tools.db_manager import DBManager
 from datus.utils.loggings import get_logger
 from datus.utils.time_utils import now_utc_iso, to_utc_iso
@@ -39,6 +43,26 @@ class KbService:
 
     def __init__(self, agent_config: AgentConfig):
         self.agent_config = agent_config
+
+    def _config_for(self, request: BootstrapKbInput) -> AgentConfig:
+        """The config this bootstrap runs under.
+
+        A project bound to several datasources has separate metadata and
+        separate KB rows per datasource (the stores scope rows by
+        ``current_datasource``), so indexing one must not be able to write
+        another's. Returns a copy with the datasource switched rather than
+        mutating the shared config, which is cached per project and read
+        concurrently by every other request.
+        """
+        requested = (getattr(request, "datasource", None) or "").strip()
+        if not requested or requested == self.agent_config.current_datasource:
+            return self.agent_config
+
+        clone = copy.copy(self.agent_config)
+        # Raises for a datasource the project has not bound — better than
+        # silently indexing the current one under the requested name.
+        clone.current_datasource = requested
+        return clone
 
     # ------------------------------------------------------------------
     # Public entry point
@@ -57,7 +81,40 @@ class KbService:
         loop = asyncio.get_running_loop()
         summary: dict[str, dict] = {}
 
-        for comp_name in request.components:
+        # Components run one after another, so a set the request never had the
+        # right to ask for has to be refused before the first one writes. The
+        # refusal is emitted on "all" because consumers treat that component as
+        # the end of the stream, and it belongs to the request rather than to
+        # any single component.
+        if rejection := self._reject_unsupported_component_set(request):
+            yield self._make_event(
+                stream_id,
+                "all",
+                BatchStage.TASK_FAILED,
+                error=rejection,
+                payload={"components": summary},
+            )
+            return
+
+        # Resolved here, before the first component runs, for two reasons: the
+        # datasource setter raises for a name the project has not bound, and by
+        # the time a component is running the SSE headers are out — an exception
+        # from inside this generator breaks the stream instead of reaching the
+        # client as an error it can read. Computed once and reused; cloning the
+        # config per component was pure waste.
+        try:
+            config = self._config_for(request)
+        except Exception as e:  # noqa: BLE001 — surfaced to the client below
+            yield self._make_event(
+                stream_id,
+                "all",
+                BatchStage.TASK_FAILED,
+                error=str(e),
+                payload={"components": summary},
+            )
+            return
+
+        for comp_name, aliases, authoring_scope in self._component_execution_specs(request):
             if cancel_event.is_set():
                 yield self._make_event(
                     stream_id,
@@ -70,7 +127,7 @@ class KbService:
             # Stream BatchEvents from the queue in real-time while the thread runs.
             trace_component = comp_name.value if hasattr(comp_name, "value") else str(comp_name)
             trace_ctx = build_bootstrap_trace_context(
-                datasource=self.agent_config.current_datasource,
+                datasource=config.current_datasource,
                 components=[trace_component],
                 strategy=request.strategy,
                 stream_id=stream_id,
@@ -78,9 +135,22 @@ class KbService:
                 extra={"source": "api"},
             )
 
-            def _run_component_with_trace(trace_ctx=trace_ctx, comp_name=comp_name):
+            def _run_component_with_trace(
+                trace_ctx=trace_ctx,
+                comp_name=comp_name,
+                authoring_scope=authoring_scope,
+            ):
                 with trace_context(trace_ctx, replace=True):
-                    return self._run_component(request, comp_name, queue, loop, cancel_event, project_root)
+                    return self._run_component(
+                        request,
+                        comp_name,
+                        queue,
+                        loop,
+                        cancel_event,
+                        project_root,
+                        config=config,
+                        authoring_scope=authoring_scope,
+                    )
 
             future = loop.run_in_executor(None, _run_component_with_trace)
 
@@ -123,7 +193,9 @@ class KbService:
             # Final per-component event
             if component_error:
                 yield self._make_event(stream_id, comp_name, BatchStage.TASK_FAILED, error=str(component_error))
-                summary[comp_name] = {"status": "failed", "message": str(component_error)}
+                result_payload = {"status": "failed", "message": str(component_error)}
+                for alias in aliases:
+                    summary[alias] = result_payload
             else:
                 status = result.get("status", "success") if isinstance(result, dict) else "success"
                 message = result.get("message", "") if isinstance(result, dict) else str(result)
@@ -141,9 +213,25 @@ class KbService:
                         message=message,
                         payload=result if isinstance(result, dict) else None,
                     )
-                summary[comp_name] = (
-                    result if isinstance(result, dict) else {"status": "success", "message": str(result)}
-                )
+                result_payload = result if isinstance(result, dict) else {"status": "success", "message": str(result)}
+                for alias in aliases:
+                    if alias == comp_name:
+                        summary[alias] = result_payload
+                        continue
+                    alias_payload = dict(result_payload)
+                    details = dict(alias_payload.get("details") or {})
+                    details["shared_execution"] = comp_name
+                    alias_payload["details"] = details
+                    summary[alias] = alias_payload
+                    alias_stage = BatchStage.TASK_FAILED if status == "failed" else BatchStage.TASK_COMPLETED
+                    yield self._make_event(
+                        stream_id,
+                        alias,
+                        alias_stage,
+                        message=message,
+                        error=error_msg if status == "failed" else None,
+                        payload=alias_payload if status != "failed" else None,
+                    )
 
         # Final stream-end event
         yield self._make_event(
@@ -166,8 +254,13 @@ class KbService:
         loop: asyncio.AbstractEventLoop,
         cancel_event: asyncio.Event,
         project_root: str,
+        *,
+        config: Optional[AgentConfig] = None,
+        authoring_scope: Optional[str] = None,
     ) -> dict:
-        config = self.agent_config
+        # Resolved once by the caller, which is also where a bad datasource is
+        # turned into a readable failure event rather than a broken SSE stream.
+        config = config if config is not None else self._config_for(request)
         strategy = request.strategy
         pool_size = 1
         dir_path = config.rag_storage_path()
@@ -180,13 +273,39 @@ class KbService:
         args = self._build_args(request, project_root)
 
         subject_tree = request.subject_tree
-
         try:
+            if strategy in {"refresh-profile", "sync-yaml"} and component != KbComponent.SEMANTIC_MODEL:
+                return {
+                    "status": "failed",
+                    "message": f"strategy={strategy} is only supported with semantic_model",
+                }
+
             if component == KbComponent.METADATA:
                 return self._init_metadata(config, strategy, pool_size, dir_path, args, emit)
 
+            elif (
+                component
+                in {
+                    KbComponent.SEMANTIC_MODELING,
+                    KbComponent.SEMANTIC_MODEL,
+                    KbComponent.METRICS,
+                }
+                and authoring_scope is not None
+            ):
+                return self._init_semantic_modeling(
+                    config,
+                    strategy,
+                    args,
+                    subject_tree,
+                    emit,
+                    authoring_scope=authoring_scope,
+                )
+
             elif component == KbComponent.SEMANTIC_MODEL:
                 return self._init_semantic_model(config, strategy, dir_path, args, emit)
+
+            elif component == KbComponent.SEMANTIC_MODELING:
+                return self._init_semantic_modeling(config, strategy, args, subject_tree, emit)
 
             elif component == KbComponent.METRICS:
                 return self._init_metrics(config, strategy, dir_path, args, subject_tree, emit)
@@ -214,7 +333,7 @@ class KbService:
         emit=None,
     ) -> dict:
         if strategy == "check":
-            store = SchemaWithValueRAG(config)
+            store = create_metadata_rag(config)
             return {
                 "status": "success",
                 "message": f"metadata already built, schema_size={store.get_schema_size()}, "
@@ -222,11 +341,11 @@ class KbService:
             }
 
         if strategy == "overwrite":
-            store = SchemaWithValueRAG(config)
+            store = create_metadata_rag(config)
             store.truncate()
             logger.info("Truncated schema metadata tables for overwrite")
 
-        store = SchemaWithValueRAG(config)
+        store = create_metadata_rag(config)
         db_manager = DBManager(config.datasource_configs)
         init_local_schema(
             store,
@@ -253,12 +372,48 @@ class KbService:
         args: types.SimpleNamespace,
         emit,
     ) -> dict:
-        successful, error_message = init_success_story_semantic_model(config, args.success_story, emit=emit)
-        if successful:
-            rag = SemanticModelRAG(config)
+        rag = SemanticDatasetRAG(config)
+        if strategy == "check":
             return {
                 "status": "success",
-                "message": f"semantic_model bootstrap completed, semantic_object_count={rag.get_size()}",
+                "message": (f"semantic_model check completed, semantic_dataset_count={rag.get_size()}"),
+            }
+        if strategy == "sync-yaml":
+            from datus.storage.semantic_model.semantic_model_init import sync_semantic_yaml_tree
+
+            successful, message, synced = sync_semantic_yaml_tree(config, args.semantic_yaml or "")
+            if successful:
+                return {
+                    "status": "success",
+                    "message": f"{message}, semantic_dataset_count={SemanticDatasetRAG(config).get_size()}",
+                }
+            return {"status": "failed", "message": message, "synced": synced}
+
+        if strategy == "refresh-profile":
+            successful, error_message, changed = refresh_success_story_semantic_model_profile(
+                config,
+                args.semantic_yaml,
+                args.success_story,
+                emit=emit,
+            )
+            if successful:
+                return {
+                    "status": "success",
+                    "message": (
+                        "semantic_model profile refresh completed, "
+                        f"changed_description_count={changed}, "
+                        f"semantic_dataset_count={rag.get_size()}"
+                    ),
+                    "error": error_message,
+                }
+            return {"status": "failed", "message": error_message}
+        successful, error_message = init_success_story_semantic_model(
+            config, args.success_story, emit=emit, build_mode=strategy
+        )
+        if successful:
+            return {
+                "status": "success",
+                "message": f"semantic_model bootstrap completed, semantic_dataset_count={rag.get_size()}",
                 "error": error_message,
             }
         return {"status": "failed", "message": error_message}
@@ -272,15 +427,61 @@ class KbService:
         subject_tree: Optional[list],
         emit,
     ) -> dict:
-        successful, error_message, _ = init_success_story_metrics(config, args.success_story, subject_tree, emit=emit)
-        if successful:
-            rag = MetricRAG(config)
+        rag = MetricRAG(config)
+        if strategy == "check":
             return {
                 "status": "success",
+                "message": f"metrics check completed, metrics_count={rag.get_metrics_size()}",
+            }
+        successful, error_message, _ = init_success_story_metrics(
+            config, args.success_story, subject_tree, emit=emit, build_mode=strategy
+        )
+        if successful:
+            return {
+                "status": "partial" if error_message else "success",
                 "message": f"metrics bootstrap completed, metrics_count={rag.get_metrics_size()}",
                 "error": error_message,
             }
         return {"status": "failed", "message": error_message}
+
+    def _init_semantic_modeling(
+        self,
+        config: AgentConfig,
+        strategy: str,
+        args: types.SimpleNamespace,
+        subject_tree: Optional[list[str]],
+        emit: BatchEventEmitter,
+        *,
+        authoring_scope: str = "full",
+    ) -> dict:
+        helper_kwargs = {
+            "emit": emit,
+            "build_mode": strategy,
+            "batch_size": args.metrics_batch_size,
+        }
+        if authoring_scope != "full":
+            helper_kwargs["authoring_scope"] = authoring_scope
+        successful, error_message, details = init_success_story_semantic_modeling(
+            config,
+            args.success_story,
+            subject_tree,
+            **helper_kwargs,
+        )
+        if not successful:
+            return {"status": "failed", "message": error_message, "details": details}
+
+        details = details or {}
+        return {
+            "status": "success",
+            "message": (
+                "semantic_modeling bootstrap completed, "
+                f"semantic_dataset_count={details.get('semantic_dataset_count', 0)}, "
+                f"metrics_count={details.get('metrics_count', 0)}, "
+                f"sql_entries_covered={details.get('sql_entries_covered', 0)}, "
+                f"authoring_scope={authoring_scope}"
+            ),
+            "details": details,
+        }
 
     def _init_reference_sql(
         self,
@@ -451,20 +652,78 @@ class KbService:
     # ------------------------------------------------------------------
 
     @staticmethod
+    def _reject_unsupported_component_set(request: BootstrapKbInput) -> Optional[str]:
+        """Describe why the whole request is invalid, or None when it is fine."""
+        if request.strategy not in {"refresh-profile", "sync-yaml"}:
+            return None
+        components = [
+            component.value if hasattr(component, "value") else str(component) for component in request.components
+        ]
+        unsupported = [component for component in components if component != KbComponent.SEMANTIC_MODEL.value]
+        if not unsupported:
+            return None
+        return f"strategy={request.strategy} is only supported with semantic_model, not {', '.join(unsupported)}"
+
+    @staticmethod
+    def _component_execution_specs(request: BootstrapKbInput) -> list[tuple[str, list[str], Optional[str]]]:
+        """Collapse semantic authoring aliases into one semantic_modeling execution."""
+        components = [
+            component.value if hasattr(component, "value") else str(component) for component in request.components
+        ]
+        semantic_components = {
+            KbComponent.SEMANTIC_MODELING.value,
+            KbComponent.SEMANTIC_MODEL.value,
+            KbComponent.METRICS.value,
+        }
+        requested_semantic = list(
+            dict.fromkeys(component for component in components if component in semantic_components)
+        )
+        normalize_authoring = bool(requested_semantic) and request.strategy not in {
+            "check",
+            "refresh-profile",
+            "sync-yaml",
+        }
+        if not normalize_authoring:
+            return [(component, [component], None) for component in components]
+
+        authoring_scope = (
+            "full"
+            if {KbComponent.SEMANTIC_MODELING.value, KbComponent.METRICS.value}.intersection(requested_semantic)
+            else "datasets"
+        )
+        first_semantic = requested_semantic[0]
+        specs: list[tuple[str, list[str], Optional[str]]] = []
+        semantic_added = False
+        for component in components:
+            if component not in semantic_components:
+                specs.append((component, [component], None))
+            elif not semantic_added and component == first_semantic:
+                specs.append((component, requested_semantic, authoring_scope))
+                semantic_added = True
+        return specs
+
+    @staticmethod
     def _build_args(request: BootstrapKbInput, project_root: str) -> types.SimpleNamespace:
         """Create a SimpleNamespace mimicking argparse.Namespace for the bootstrap-kb helpers."""
-        # Resolve relative paths against the project root
-        success_story = os.path.join(project_root, request.success_story) if request.success_story else None
-        sql_dir = os.path.join(project_root, request.sql_dir) if request.sql_dir else None
+        root = Path(project_root)
+
+        def _project_path(value: Optional[str]) -> Optional[str]:
+            return str(safe_resolve(root, value)) if value else None
+
+        success_story = _project_path(request.success_story)
+        semantic_yaml = _project_path(request.semantic_yaml)
+        sql_dir = _project_path(request.sql_dir)
 
         return types.SimpleNamespace(
             success_story=success_story,
+            semantic_yaml=semantic_yaml,
             sql_dir=sql_dir,
             schema_linking_type=request.schema_linking_type,
             catalog=request.catalog or "",
             database_name=request.database_name or "",
             pool_size=1,
             kb_update_strategy=request.strategy,
+            metrics_batch_size=request.metrics_batch_size,
             validate_only=False,
         )
 

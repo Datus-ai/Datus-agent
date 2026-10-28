@@ -52,8 +52,7 @@ class _Tab(Enum):
     SCHEMA = "metadata"
     SQL = "reference_sql"
     TEMPLATE = "reference_template"
-    SEMANTIC = "semantic_model"
-    METRICS = "metrics"
+    SEMANTIC = "semantic_modeling"
 
 
 _TAB_ORDER: Tuple[_Tab, ...] = (
@@ -61,7 +60,6 @@ _TAB_ORDER: Tuple[_Tab, ...] = (
     _Tab.SQL,
     _Tab.TEMPLATE,
     _Tab.SEMANTIC,
-    _Tab.METRICS,
 )
 
 
@@ -69,8 +67,7 @@ _TAB_LABELS: Dict[_Tab, str] = {
     _Tab.SCHEMA: " Schema ",
     _Tab.SQL: " SQL ",
     _Tab.TEMPLATE: " Template ",
-    _Tab.SEMANTIC: " Semantic ",
-    _Tab.METRICS: " Metrics ",
+    _Tab.SEMANTIC: " Semantic Modeling ",
 }
 
 
@@ -120,7 +117,7 @@ _FocusEntry = Union[TextArea, Checkbox]
 
 
 class BootstrapApp:
-    """Six-tab :mod:`prompt_toolkit` Application for ``/bootstrap``."""
+    """Four-tab :mod:`prompt_toolkit` Application for ``/bootstrap``."""
 
     def __init__(
         self,
@@ -156,14 +153,8 @@ class BootstrapApp:
         # ── SEMANTIC ───────────────────────────────────────────────────
         self._sem_datasource = _make_field("datasource:        ", ds)
         self._sem_success_story = _make_field("success_story:     ")
+        self._sem_subject_tree = _make_field("subject_tree:      ")
         self._sem_overwrite = _make_overwrite()
-
-        # ── METRICS ────────────────────────────────────────────────────
-        self._met_datasource = _make_field("datasource:        ", ds)
-        self._met_success_story = _make_field("success_story:     ")
-        self._met_pool = _make_field("pool_size:         ", "3")
-        self._met_subject_tree = _make_field("subject_tree:      ")
-        self._met_overwrite = _make_overwrite()
 
         # Dual-mode finish hook — see EffortApp.
         self._on_done: Optional[Callable[[Optional[BootstrapPlan]], None]] = None
@@ -289,14 +280,8 @@ class BootstrapApp:
             _Tab.SEMANTIC: _wrap_form(
                 self._sem_datasource,
                 self._sem_success_story,
+                self._sem_subject_tree,
                 self._sem_overwrite,
-            ),
-            _Tab.METRICS: _wrap_form(
-                self._met_datasource,
-                self._met_success_story,
-                self._met_pool,
-                self._met_subject_tree,
-                self._met_overwrite,
             ),
         }
 
@@ -340,8 +325,7 @@ class BootstrapApp:
         _Tab.SCHEMA: "Crawl the live database schema into the metadata RAG.",
         _Tab.SQL: "Index every SQL file under the directory as reference SQL.",
         _Tab.TEMPLATE: "Index every Jinja2 template under the directory.",
-        _Tab.SEMANTIC: "Generate semantic models from a success-story CSV.",
-        _Tab.METRICS: "Extract core metrics from a success-story CSV.",
+        _Tab.SEMANTIC: "Author Dosi semantic models and metrics from a success-story CSV.",
     }
 
     def _render_section_header(self) -> List[Tuple[str, str]]:
@@ -467,15 +451,8 @@ class BootstrapApp:
             return [
                 self._sem_datasource,
                 self._sem_success_story,
+                self._sem_subject_tree,
                 self._sem_overwrite,
-            ]
-        if self._tab == _Tab.METRICS:
-            return [
-                self._met_datasource,
-                self._met_success_story,
-                self._met_pool,
-                self._met_subject_tree,
-                self._met_overwrite,
             ]
         return []
 
@@ -516,15 +493,8 @@ class BootstrapApp:
             return {
                 "datasource": _require_nonempty(self._sem_datasource.text, field="datasource"),
                 "success_story": _require_nonempty(self._sem_success_story.text, field="success_story"),
+                "subject_tree": self._sem_subject_tree.text.strip(),
                 "build_mode": _build_mode_from_checkbox(self._sem_overwrite),
-            }
-        if tab == _Tab.METRICS:
-            return {
-                "datasource": _require_nonempty(self._met_datasource.text, field="datasource"),
-                "success_story": _require_nonempty(self._met_success_story.text, field="success_story"),
-                "pool_size": _validate_int(self._met_pool.text, field="pool_size"),
-                "subject_tree": self._met_subject_tree.text.strip(),
-                "build_mode": _build_mode_from_checkbox(self._met_overwrite),
             }
         raise _ValidationError(f"Unsupported tab: {self._tab}")
 

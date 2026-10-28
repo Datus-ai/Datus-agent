@@ -10,7 +10,7 @@ from datus.configuration.agent_config import AgentConfig
 from datus.models.base import LLMBaseModel
 from datus.schemas.node_models import TableSchema, TableValue
 from datus.schemas.schema_linking_node_models import SchemaLinkingInput, SchemaLinkingResult
-from datus.storage.schema_metadata.store import SchemaWithValueRAG
+from datus.storage.schema_metadata import create_metadata_rag
 from datus.tools.base import BaseTool
 from datus.tools.llms_tools.match_schema import MatchSchemaTool
 from datus.utils.loggings import get_logger
@@ -23,7 +23,7 @@ class SchemaLineageTool(BaseTool):
 
     def __init__(
         self,
-        storage: Optional[SchemaWithValueRAG] = None,
+        storage: Optional[Any] = None,
         agent_config: Optional[AgentConfig] = None,
         **kwargs,
     ):
@@ -37,7 +37,7 @@ class SchemaLineageTool(BaseTool):
         if storage:
             self.store = storage
         else:
-            self.store = SchemaWithValueRAG(agent_config)
+            self.store = create_metadata_rag(agent_config)
 
     def validate_input(self, input_data: Dict[str, Any]) -> None:
         """Validate the input data for schema lineage operations.
@@ -72,7 +72,11 @@ class SchemaLineageTool(BaseTool):
 
         # Leave exceptions to the higher-ups to handle.
         if input_param.matching_rate == "from_llm":
-            tool = MatchSchemaTool(model, storage=self.store.schema_store, agent_config=self.agent_config)
+            schema_store = getattr(self.store, "schema_store", None)
+            if schema_store is None:
+                logger.info("LLM schema matching requires legacy schema_store; falling back to metadata search")
+                return self._search_similar_schemas(input_param, input_param.top_n_by_rate())
+            tool = MatchSchemaTool(model, storage=schema_store, agent_config=self.agent_config)
             if not tool:
                 return SchemaLinkingResult(
                     success=False,
@@ -119,7 +123,17 @@ class SchemaLineageTool(BaseTool):
         Returns:
             SchemaLinkingResult: The result of the search
         """
-        return self.store.schema_store.search_top_tables_by_every_schema(
+        schema_store = getattr(self.store, "schema_store", None)
+        if schema_store is None:
+            return SchemaLinkingResult(
+                success=False,
+                error="Schema-by-schema linking requires legacy schema metadata storage",
+                schema_count=0,
+                value_count=0,
+                table_schemas=[],
+                table_values=[],
+            )
+        return schema_store.search_top_tables_by_every_schema(
             input_param.input_text,
             database_name=input_param.database_name,
             catalog_name=input_param.catalog_name,

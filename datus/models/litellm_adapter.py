@@ -71,6 +71,26 @@ def is_official_openai_endpoint(provider: Optional[str], base_url: Optional[str]
     return hostname == "api.openai.com"
 
 
+def is_official_anthropic_endpoint(base_url: Optional[str]) -> bool:
+    """True iff ``base_url`` resolves to Anthropic's hosted API (``api.anthropic.com``).
+
+    A missing ``base_url`` implies the Anthropic SDK default
+    (``https://api.anthropic.com``). Any other host is treated as a third-party
+    Claude-compatible proxy (e.g. ``kimi_coding``'s ``api.kimi.com/coding``,
+    self-hosted gateways). Those advertise Anthropic compatibility but do NOT
+    honor Anthropic's server-side tools (``web_search_20250305``): they either
+    ignore the tool or echo back malformed ``server_tool_use`` blocks with a
+    missing ``id``, so callers must not inject the hosted tool for them.
+    """
+    if not base_url:
+        return True
+    try:
+        hostname = (urlparse(base_url).hostname or "").lower()
+    except Exception:
+        return False
+    return hostname == "api.anthropic.com"
+
+
 def is_known_non_thinking_model(provider: Optional[str], model_name: Optional[str]) -> bool:
     """Return True only when the (provider, model) is on the deny-list.
 
@@ -103,7 +123,7 @@ class LiteLLMAdapter:
     - DeepSeek (deepseek-chat, deepseek-reasoner, etc.)
     - Qwen/DashScope (qwen3-coder, etc.)
     - Google Gemini (gemini-2.5-pro, gemini-3-pro, etc.)
-    - Moonshot/Kimi (kimi-k2.5, kimi-k2-thinking, etc.)
+    - Moonshot/Kimi (kimi-k2.6, etc.)
     """
 
     # Model name prefix mapping for LiteLLM
@@ -136,7 +156,7 @@ class LiteLLMAdapter:
     # Model name prefixes for auto-detection
     # When provider is generic (e.g., "openai"), detect actual provider from model name
     MODEL_NAME_PREFIXES = {
-        "kimi": "kimi",  # kimi-k2, kimi-k2.5, kimi-k2-thinking
+        "kimi": "kimi",  # kimi-k2.6
         "moonshot": "kimi",  # moonshot-v1-8k, etc.
         "claude": "claude",  # claude-sonnet-4, etc.
         "gpt": "openai",  # gpt-4o, gpt-5, etc.
@@ -185,7 +205,7 @@ class LiteLLMAdapter:
 
         Args:
             provider: The model provider (openai, claude, deepseek, qwen, gemini, kimi)
-            model: The model name (e.g., gpt-4o, claude-sonnet-4, kimi-k2.5)
+            model: The model name (e.g., gpt-4o, claude-sonnet-4, kimi-k2.6)
             api_key: API key for the provider
             base_url: Optional custom base URL (overrides default)
             enable_thinking: Legacy bool switch; True is equivalent to reasoning_effort="medium".
@@ -208,7 +228,7 @@ class LiteLLMAdapter:
         """
         Auto-detect provider from model name when provider is generic.
 
-        This allows configurations like type: "openai" with model: "kimi-k2.5"
+        This allows configurations like type: "openai" with model: "kimi-k2.6"
         to be automatically detected as kimi provider for correct LiteLLM routing.
 
         When a custom base_url is provided and its domain doesn't match the detected
@@ -218,7 +238,7 @@ class LiteLLMAdapter:
 
         Args:
             provider: The configured provider (e.g., "openai")
-            model: The model name (e.g., "kimi-k2.5")
+            model: The model name (e.g., "kimi-k2.6")
             base_url: Optional custom base URL for domain validation
 
         Returns:
@@ -372,22 +392,23 @@ class LiteLLMAdapter:
           speaks the Responses API. This is the only endpoint that accepts
           ``reasoning_effort`` together with function tools for o-series /
           gpt-5* reasoning models.
-        - **Anthropic Claude** uses :class:`CacheControlLitellmModel` so the
-          prompt caching control markers survive the LiteLLM transform.
-        - **Every other OpenAI-compatible provider** (DeepSeek, Kimi, Qwen,
-          Gemini, OpenRouter, GLM, MiniMax, vLLM, and self-hosted proxies)
-          uses :class:`LitellmModel` as before.
+        - **Every other OpenAI-compatible provider** (Anthropic Claude,
+          DeepSeek, Kimi, Qwen, Gemini, OpenRouter, GLM, MiniMax, vLLM, and
+          self-hosted proxies) uses :class:`DatusLitellmModel`, which adds
+          Datus image, reasoning, and provider compatibility on top of the
+          observed SDK model.
 
-        Kimi/Moonshot thinking models still go through the LiteLLM path and
-        continue to rely on :mod:`datus.models.sdk_patches` for the
-        ``reasoning_content`` echo-back behaviour required on tool-calling
-        turns.
+        Every LiteLLM-path model receives
+        :func:`datus.models.reasoning_replay.should_replay_reasoning_content`
+        as the SDK's ``should_replay_reasoning_content`` hook, so DeepSeek and
+        Kimi/Moonshot thinking models get each turn's own ``reasoning_content``
+        echoed back on later requests.
 
         Returns:
             Model instance configured for this adapter
         """
         try:
-            from agents.extensions.models.litellm_model import LitellmModel
+            from datus.models.litellm_model import DatusLitellmModel, register_image_model_capabilities
         except ImportError as err:
             raise ImportError(
                 "LitellmModel not found. Please install openai-agents with litellm support: "
@@ -397,9 +418,12 @@ class LiteLLMAdapter:
         if self._is_official_openai():
             return self._build_openai_responses_model()
 
+        from datus.models.reasoning_replay import should_replay_reasoning_content
+
         # Build model kwargs for the LiteLLM path
         model_kwargs = {
             "model": self.litellm_model_name,
+            "should_replay_reasoning_content": should_replay_reasoning_content,
         }
 
         # Add API key - LiteLLM uses different env var names per provider
@@ -416,13 +440,8 @@ class LiteLLMAdapter:
         # at call time in OpenAICompatibleModel.generate_with_tools/_stream.
 
         logger.debug(f"Creating LitellmModel with model={self.litellm_model_name}")
-
-        if self.provider == "claude":
-            from datus.models.litellm_cache_control import CacheControlLitellmModel
-
-            return CacheControlLitellmModel(**model_kwargs)
-
-        return LitellmModel(**model_kwargs)
+        register_image_model_capabilities(self.litellm_model_name)
+        return DatusLitellmModel(**model_kwargs)
 
     def _build_openai_responses_model(self) -> "Model":
         """Construct an :class:`OpenAIResponsesModel` bound to this adapter.
@@ -433,8 +452,9 @@ class LiteLLMAdapter:
         ``default_headers`` flow into the client so Coding Plan-style
         User-Agent overrides still apply on the Responses path.
         """
-        from agents.models.openai_responses import OpenAIResponsesModel
         from openai import AsyncOpenAI
+
+        from datus.models.observed_model import ObservedResponsesModel as OpenAIResponsesModel
 
         client_kwargs: Dict[str, object] = {"api_key": self.api_key or ""}
         if self.base_url:

@@ -3,11 +3,14 @@
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
 from datus.utils.trace_context import (
+    TRACE_IDENTITY_ATTRIBUTE_PREFIX,
     build_benchmark_trace_context,
     build_bootstrap_trace_context,
     build_chat_trace_context,
     build_trace_span_attributes,
     build_workflow_trace_context_from_runner,
+    resolve_trace_identity,
+    set_trace_identity_provider,
     trace_context,
 )
 
@@ -166,3 +169,92 @@ def test_trace_span_attributes_normalize_complex_metadata_values():
 
     assert attrs["datus.metadata.payload"] == '{"tables": ["schools"]}'
     assert attrs["datus.metadata.attempt"] == 2
+
+
+def test_chat_context_carries_agent_owned_join_keys():
+    """max_turns and release are Datus' own facts and stay first-class."""
+    ctx = build_chat_trace_context(
+        session_id="chat_session_1",
+        node_name="olist_order_analyst",
+        user_id="u1",
+        max_turns=30,
+        release="0.4.0",
+    )
+
+    assert ctx.metadata["max_turns"] == 30
+    assert ctx.metadata["release"] == "0.4.0"
+    assert ctx.metadata["node_name"] == "olist_order_analyst"
+
+
+def test_chat_context_forwards_host_identity_verbatim():
+    """Datus must not interpret the host's identity fields, only carry them."""
+    ctx = build_chat_trace_context(
+        session_id="chat_session_1",
+        node_name="chat",
+        identity={"workspace_id": "ws_abc", "tenant": "acme"},
+    )
+
+    assert ctx.identity == {"workspace_id": "ws_abc", "tenant": "acme"}
+    # Tags are the only filterable trace field, so each identity field is tagged
+    # under the host's own key -- no Datus-side vocabulary.
+    assert "workspace_id:ws_abc" in ctx.tags
+    assert "tenant:acme" in ctx.tags
+
+
+def test_chat_context_without_a_host_carries_no_identity():
+    """A plain OSS install registers no provider and must produce no empty tags."""
+    ctx = build_chat_trace_context(session_id="chat_session_1", node_name="chat")
+
+    assert ctx.identity == {}
+    assert ctx.tags == ("chat", "agent:chat")
+
+
+def test_identity_reaches_span_attributes_under_its_own_namespace():
+    """Exporters forward this prefix wholesale; a field that stops here is lost."""
+    ctx = build_chat_trace_context(
+        session_id="chat_session_1",
+        node_name="chat",
+        max_turns=30,
+        identity={"workspace_id": "ws_abc", "request_trace_id": "abc123"},
+    )
+    attrs = build_trace_span_attributes(operation="chat", ctx=ctx)
+
+    assert attrs[f"{TRACE_IDENTITY_ATTRIBUTE_PREFIX}workspace_id"] == "ws_abc"
+    assert attrs[f"{TRACE_IDENTITY_ATTRIBUTE_PREFIX}request_trace_id"] == "abc123"
+    assert attrs["datus.metadata.max_turns"] == 30
+
+
+class TestTraceIdentityProvider:
+    """The host names its runs; Datus only asks."""
+
+    def teardown_method(self):
+        set_trace_identity_provider(None)
+
+    def test_no_provider_means_no_identity(self):
+        set_trace_identity_provider(None)
+        assert resolve_trace_identity() == {}
+
+    def test_provider_reads_the_hosts_own_request_state(self):
+        """The hook takes no arguments; a contextvar the host set is still visible."""
+        import contextvars
+
+        host_var = contextvars.ContextVar("host_request", default=None)
+        set_trace_identity_provider(lambda: {"workspace_id": host_var.get()})
+
+        host_var.set("ws_abc")
+        assert resolve_trace_identity() == {"workspace_id": "ws_abc"}
+
+    def test_values_are_coerced_and_blanks_dropped(self):
+        set_trace_identity_provider(lambda: {"a": 7, "b": None, "c": "  ", "d": " x "})
+        assert resolve_trace_identity() == {"a": "7", "d": "x"}
+
+    def test_a_broken_provider_costs_identity_not_the_run(self):
+        def boom():
+            raise RuntimeError("host hook is broken")
+
+        set_trace_identity_provider(boom)
+        assert resolve_trace_identity() == {}
+
+    def test_a_provider_returning_junk_is_ignored(self):
+        set_trace_identity_provider(lambda: "not a mapping")
+        assert resolve_trace_identity() == {}

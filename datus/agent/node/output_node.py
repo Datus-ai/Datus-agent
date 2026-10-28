@@ -27,6 +27,9 @@ class OutputNode(Node):
 
     def setup_input(self, workflow: Workflow) -> Dict:
         sql_context = workflow.get_last_sqlcontext()
+        artifact_profile = getattr(workflow.task, "artifact_profile", "interactive")
+        if artifact_profile not in {"interactive", "benchmark_v1"}:
+            artifact_profile = "interactive"
         # normally last node of workflow
         next_input = OutputInput(
             finished=True,
@@ -34,6 +37,7 @@ class OutputNode(Node):
             task=workflow.get_task(),
             database_name=workflow.task.database_name,
             output_dir=workflow.task.output_dir,
+            artifact_profile=artifact_profile,
             gen_sql=sql_context.sql_query or "",
             sql_result=sql_context.sql_return or "",
             row_count=sql_context.row_count or 0,

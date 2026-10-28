@@ -19,7 +19,7 @@ from datus.observability.manager import (
     _trace_baggage_attributes,
 )
 from datus.observability.reference import TraceReference
-from datus.utils.trace_context import TraceContext, trace_context
+from datus.utils.trace_context import TRACE_IDENTITY_ATTRIBUTE_PREFIX, TraceContext, trace_context
 
 
 class FakeAdapter:
@@ -461,3 +461,73 @@ def test_module_helpers_register_flush_and_delegate(monkeypatch):
 
     assert fake_manager.shutdown_called is True
     assert fake_manager.flush_called is True
+
+
+@pytest.mark.parametrize("prefix", ["datus.metadata.", "datus."])
+def test_trace_baggage_attributes_carry_agent_owned_join_keys(prefix):
+    """Join keys must ride the baggage; a key left on the root span reaches no exporter.
+
+    Both accepted input shapes have to produce identical baggage: callers write
+    ``datus.metadata.<key>`` (what ``build_trace_span_attributes`` emits) or the
+    direct ``datus.<key>`` form, and the fallback between them is the kind of
+    thing that silently prefers the wrong one.
+    """
+    attrs = _trace_baggage_attributes(
+        "chat",
+        {
+            "datus.trace.name": "agent/chat",
+            f"{prefix}node_name": "olist_order_analyst",
+            f"{prefix}max_turns": 30,
+            f"{prefix}release": "0.4.0",
+            "datus.tags": "chat,agent:chat",
+        },
+    )
+
+    assert attrs["datus.node_name"] == "olist_order_analyst"
+    assert attrs["datus.max_turns"] == "30"
+    assert attrs["datus.release"] == "0.4.0"
+    assert attrs["datus.tags"] == "chat,agent:chat"
+    assert all(not key.startswith("langfuse.") for key in attrs)
+
+
+@pytest.mark.parametrize(
+    "attributes",
+    [
+        {"datus.max_turns": 0},
+        {"datus.metadata.max_turns": 0},
+        # The direct form is explicit and must win, even when it is falsy.
+        {"datus.max_turns": 0, "datus.metadata.max_turns": 30},
+    ],
+)
+def test_a_zero_join_key_is_a_value_not_an_absence(attributes):
+    """A configured ``max_turns: 0`` must survive as "0", not be read as unset.
+
+    Falling back on falsiness rather than absence dropped it entirely in the
+    direct form, and let a stale metadata copy override it when both were set.
+    """
+    assert _trace_baggage_attributes("chat", attributes)["datus.max_turns"] == "0"
+
+
+def test_trace_baggage_forwards_host_identity_by_prefix():
+    """Identity travels as a namespace so a host can add a field with no code change."""
+    attrs = _trace_baggage_attributes(
+        "chat",
+        {
+            "datus.trace.name": "agent/chat",
+            f"{TRACE_IDENTITY_ATTRIBUTE_PREFIX}workspace_id": "ws_abc",
+            f"{TRACE_IDENTITY_ATTRIBUTE_PREFIX}anything_the_host_invents": "v",
+        },
+    )
+
+    assert attrs[f"{TRACE_IDENTITY_ATTRIBUTE_PREFIX}workspace_id"] == "ws_abc"
+    assert attrs[f"{TRACE_IDENTITY_ATTRIBUTE_PREFIX}anything_the_host_invents"] == "v"
+
+
+def test_trace_baggage_attributes_skip_absent_join_keys():
+    """A host that supplies nothing must not add empty baggage entries."""
+    attrs = _trace_baggage_attributes(
+        "chat",
+        {"datus.trace.name": "agent/chat", f"{TRACE_IDENTITY_ATTRIBUTE_PREFIX}blank": "  "},
+    )
+
+    assert attrs == {"datus.trace.name": "agent/chat"}

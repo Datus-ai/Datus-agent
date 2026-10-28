@@ -11,14 +11,13 @@ apply a scope filter at query time against the shared global storage.
 
 from __future__ import annotations
 
-from typing import Dict, List, Optional
+from typing import List, Optional
 
 from datus_storage_base.conditions import Node, and_, eq, like, or_
 
-from datus.tools.db_tools import connector_registry
-from datus.utils.constants import DBType
 from datus.utils.loggings import get_logger
 from datus.utils.reference_paths import split_reference_path
+from datus.utils.sql_utils import parse_table_name_parts
 
 logger = get_logger(__name__)
 
@@ -27,12 +26,15 @@ class ScopedFilterBuilder:
     """Build LanceDB WHERE filters from ScopedContext attributes."""
 
     @staticmethod
-    def build_table_filter(tables_str: str, dialect: str = "") -> Optional[Node]:
-        """Build a filter for metadata/semantic_model stores from table identifiers.
+    def build_table_filter(tables_str: str, dialect: str = "", table_column: str = "table_name") -> Optional[Node]:
+        """Build a filter for table-scoped stores from table identifiers.
 
         Args:
             tables_str: Comma/newline-separated table identifiers (e.g. "public.users, orders")
             dialect: Database dialect (e.g. DBType.SQLITE) for field-order resolution
+            table_column: Column holding the physical table name in the target
+                store. Every store that carries table coordinates names the
+                namespace columns the same way, so only the leaf differs.
 
         Returns:
             Combined OR condition, or None if no valid tokens
@@ -43,7 +45,7 @@ class ScopedFilterBuilder:
 
         conditions: List[Node] = []
         for token in tokens:
-            cond = _table_condition_for_token(token, dialect)
+            cond = _table_condition_for_token(token, dialect, table_column)
             if cond is not None:
                 conditions.append(cond)
 
@@ -150,38 +152,20 @@ def _value_condition(field: str, value: str) -> Node:
     return eq(field, value)
 
 
-def _table_condition_for_token(token: str, dialect: str = "") -> Optional[Node]:
+def _table_condition_for_token(token: str, dialect: str = "", table_column: str = "table_name") -> Optional[Node]:
     """Parse a single table identifier token into a LanceDB condition.
 
     Uses right-aligned field mapping based on the dialect's supported fields.
     """
-    parts = [p.strip() for p in token.split(".") if p.strip()]
-    if not parts:
+    parsed = parse_table_name_parts(token, dialect)
+    if not parsed["table_name"]:
         return None
 
-    field_order: List[str] = []
-    if connector_registry.support_catalog(dialect):
-        field_order.append("catalog_name")
-    if connector_registry.support_database(dialect) or dialect == DBType.SQLITE:
-        field_order.append("database_name")
-    if connector_registry.support_schema(dialect):
-        field_order.append("schema_name")
-    field_order.append("table_name")
-
-    values: Dict[str, str] = {f: "" for f in field_order}
-    num_fields = len(field_order)
-    trimmed_parts = parts[-num_fields:]
-    start_field_idx = max(0, num_fields - len(trimmed_parts))
-    for i, part in enumerate(trimmed_parts):
-        field_idx = start_field_idx + i
-        if field_idx < num_fields:
-            values[field_order[field_idx]] = part
-
     conditions: List[Node] = []
-    for field, value in values.items():
+    for field, value in parsed.items():
         if not value:
             continue
-        conditions.append(_value_condition(field, value))
+        conditions.append(_value_condition(table_column if field == "table_name" else field, value))
 
     if not conditions:
         return None

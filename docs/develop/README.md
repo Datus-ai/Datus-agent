@@ -4,12 +4,6 @@ This page is for contributors running Datus Agent from a source checkout. If you
 
 ## Source Setup
 
-Clone the repository and initialize submodules:
-
-```bash
-git submodule update --init
-```
-
 Use Python 3.12. The recommended development environment is `uv`:
 
 ```bash
@@ -38,11 +32,14 @@ Use these entry points in docs and scripts:
 
 `python -m datus.main` and `python -m datus.cli.main` still work for low-level debugging, but they are not the preferred user-facing commands.
 
-To build the docs from a fresh source checkout, provide the MkDocs plugins required by `mkdocs.yml`:
+The English and Chinese docs are built separately so each site has its own search index. From a fresh source checkout, provide the MkDocs plugins required by `mkdocs.yml` and select the locale:
 
 ```bash
-uv run --with mkdocs-material --with mike --with mkdocs-static-i18n mkdocs build --strict
+DOCS_LOCALE=en uv run --with mkdocs-material --with mike --with mkdocs-static-i18n mkdocs build --strict --site-dir site/en
+DOCS_LOCALE=zh uv run --with mkdocs-material --with mike --with mkdocs-static-i18n mkdocs build --strict --site-dir site/zh
 ```
+
+Versioned English docs are published at `/<version>/`, while Chinese docs are published at `/zh/<version>/`.
 
 ## Configuration
 
@@ -100,11 +97,13 @@ uv run datus-agent check-db --config conf/agent.yml --datasource local_duckdb
 uv run datus --config conf/agent.yml --datasource local_duckdb
 ```
 
-Inside the REPL, SQL is detected automatically:
+Inside the REPL, press **Tab** on an empty line to switch to `sql>` mode before running SQL:
 
 ```text
-> show tables;
-> select * from tree;
+                          # Tab switches to SQL mode
+sql> show tables;
+sql> select * from tree;
+                          # Esc returns to chat mode
 > /help
 ```
 
@@ -212,6 +211,8 @@ uv run datus-agent benchmark \
 
 ### Spider 2.0 Snow
 
+Download the [Spider2 dataset](../benchmark/benchmark_manual.md#spider2-data) into `{agent.home}/benchmark/spider2/` before running this benchmark. The source checkout does not contain it.
+
 Configure a Snowflake datasource. The datasource name can be anything; the examples use `snowflake`.
 
 ```yaml
@@ -254,9 +255,7 @@ Spider metadata bootstrap can take hours because the benchmark contains thousand
 
 ### Semantic Layer
 
-MetricFlow is configured through the semantic adapter system, not by running `poetry lock`, `mf setup`, or editing `~/.metricflow/config.yml` manually.
-
-At minimum, configure a datasource and an explicit MetricFlow semantic adapter:
+Agent uses the bundled Dosi engine for semantic models and metrics. Configure a datasource:
 
 ```yaml
 agent:
@@ -265,11 +264,9 @@ agent:
       duckdb:
         type: duckdb
         uri: duckdb:///path/to/duck.db
-    semantic_layer:
-      metricflow: {}
 ```
 
-The `/services semantic` TUI can add the `metricflow` entry and install `datus-semantic-metricflow` if the adapter package is missing.
+Install Agent dependencies with `uv sync --locked`. Dosi loads models from the project's `subject/semantic_models/<datasource>/` directory.
 
 Place semantic-layer benchmark data under:
 
@@ -290,7 +287,7 @@ uv run datus-agent benchmark \
   --config conf/agent.yml \
   --datasource duckdb \
   --benchmark semantic_layer \
-  --workflow metric_to_sql
+  --workflow gen_sql_agentic
 ```
 
 ## Observability
@@ -304,5 +301,5 @@ Observability setup and tracing examples now live in the dedicated [Observabilit
 - [Agent Configuration](../configuration/agent.md)
 - [Observability](observability.md)
 - [Benchmark Manual](../benchmark/benchmark_manual.md)
-- [Semantic Layer Configuration](../configuration/semantic_layer.md)
+- [Dosi Semantic Engine](../semantic/dosi_engine.md)
 - [LLM Trace Usage](../training/llm_trace_usage.md)

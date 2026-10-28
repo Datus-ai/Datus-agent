@@ -152,6 +152,18 @@ class TestExtractTableSqlEvidence:
 class TestFindMissingSemanticModels:
     """Tests for find_missing_semantic_models."""
 
+    @staticmethod
+    def _make_config(catalog: str = "", database: str = "mydb", schema: str = "public") -> MagicMock:
+        """Config whose current_db_config returns string hierarchy defaults."""
+        config = MagicMock()
+        config.db_type = "snowflake"
+        db_cfg = MagicMock()
+        db_cfg.catalog = catalog
+        db_cfg.database = database
+        db_cfg.schema = schema
+        config.current_db_config.return_value = db_cfg
+        return config
+
     def test_empty_tables_returns_empty(self):
         """Empty table set should return empty list."""
         from datus.storage.semantic_model.auto_create import find_missing_semantic_models
@@ -160,77 +172,96 @@ class TestFindMissingSemanticModels:
         result = find_missing_semantic_models(set(), config)
         assert result == []
 
-    @patch("datus.storage.semantic_model.store.SemanticModelRAG")
+    @patch("datus.storage.semantic_dataset.store.SemanticDatasetRAG")
     def test_all_models_exist(self, MockRAG):
         """When all semantic models exist, should return empty list."""
         from datus.storage.semantic_model.auto_create import find_missing_semantic_models
 
-        config = MagicMock()
+        config = self._make_config()
         mock_rag = MagicMock()
         MockRAG.return_value = mock_rag
-
-        # Simulate existing semantic model
-        mock_rag.storage.search_objects.return_value = [{"name": "users"}]
+        mock_rag.table_exists.return_value = True
 
         result = find_missing_semantic_models({"users"}, config)
         assert result == []
 
-    @patch("datus.storage.semantic_model.store.SemanticModelRAG")
+    @patch("datus.storage.semantic_dataset.store.SemanticDatasetRAG")
     def test_missing_models_detected(self, MockRAG):
         """When semantic models are missing, should return those table names."""
         from datus.storage.semantic_model.auto_create import find_missing_semantic_models
 
-        config = MagicMock()
+        config = self._make_config()
         mock_rag = MagicMock()
         MockRAG.return_value = mock_rag
-
-        # No matching results
-        mock_rag.storage.search_objects.return_value = []
+        mock_rag.table_exists.return_value = False
 
         result = find_missing_semantic_models({"missing_table"}, config)
         assert "missing_table" in result
 
-    @patch("datus.storage.semantic_model.store.SemanticModelRAG")
-    def test_case_insensitive_match(self, MockRAG):
-        """Should match table names case-insensitively."""
+    @patch("datus.storage.semantic_dataset.store.SemanticDatasetRAG")
+    def test_same_name_different_database_checked_by_hierarchy(self, MockRAG):
+        """A qualified reference is resolved to its hierarchy before the existence check."""
         from datus.storage.semantic_model.auto_create import find_missing_semantic_models
 
-        config = MagicMock()
+        config = self._make_config()
         mock_rag = MagicMock()
         MockRAG.return_value = mock_rag
+        mock_rag.table_exists.return_value = False
 
-        mock_rag.storage.search_objects.return_value = [{"name": "USERS"}]
+        result = find_missing_semantic_models({"db2.sales.orders"}, config)
 
-        result = find_missing_semantic_models({"users"}, config)
-        assert result == []
+        assert result == ["db2.sales.orders"]
+        # The qualified parts must reach table_exists so db1/db2 are distinguished.
+        kwargs = mock_rag.table_exists.call_args.kwargs
+        assert kwargs["table_name"] == "orders"
+        assert kwargs["database_name"] == "db2"
+        assert kwargs["schema_name"] == "sales"
 
-    @patch("datus.storage.semantic_model.store.SemanticModelRAG")
-    def test_fully_qualified_name_parsed(self, MockRAG):
-        """Should parse fully qualified names (db.schema.table) and use last part."""
+    @patch("datus.storage.semantic_dataset.store.SemanticDatasetRAG")
+    def test_fully_qualified_name_existing(self, MockRAG):
+        """A qualified reference that exists is not reported as missing."""
         from datus.storage.semantic_model.auto_create import find_missing_semantic_models
 
-        config = MagicMock()
+        config = self._make_config()
         mock_rag = MagicMock()
         MockRAG.return_value = mock_rag
-
-        mock_rag.storage.search_objects.return_value = [{"name": "orders"}]
+        mock_rag.table_exists.return_value = True
 
         result = find_missing_semantic_models({"mydb.public.orders"}, config)
         assert result == []
 
-    @patch("datus.storage.semantic_model.store.SemanticModelRAG")
+    @patch("datus.storage.semantic_dataset.store.SemanticDatasetRAG")
     def test_search_error_treated_as_missing(self, MockRAG):
-        """Search errors should treat the table as missing."""
+        """Existence-check errors should treat the table as missing."""
         from datus.storage.semantic_model.auto_create import find_missing_semantic_models
 
-        config = MagicMock()
+        config = self._make_config()
         mock_rag = MagicMock()
         MockRAG.return_value = mock_rag
-
-        mock_rag.storage.search_objects.side_effect = Exception("Storage error")
+        mock_rag.table_exists.side_effect = Exception("Storage error")
 
         result = find_missing_semantic_models({"error_table"}, config)
         assert "error_table" in result
+
+    @patch("datus.storage.semantic_dataset.store.SemanticDatasetRAG")
+    def test_db_config_error_does_not_abort_check(self, MockRAG):
+        """A broken db config falls back to no hierarchy defaults instead of raising."""
+        from datus.storage.semantic_model.auto_create import find_missing_semantic_models
+
+        config = MagicMock()
+        config.db_type = "snowflake"
+        config.current_db_config.side_effect = RuntimeError("no datasource configured")
+        mock_rag = MagicMock()
+        MockRAG.return_value = mock_rag
+        mock_rag.table_exists.return_value = False
+
+        result = find_missing_semantic_models({"db2.sales.orders"}, config)
+
+        assert result == ["db2.sales.orders"]
+        # Qualified parts from the reference itself still reach table_exists.
+        kwargs = mock_rag.table_exists.call_args.kwargs
+        assert kwargs["table_name"] == "orders"
+        assert kwargs["database_name"] == "db2"
 
 
 # ---------------------------------------------------------------------------
@@ -256,9 +287,12 @@ class TestCreateSemanticModelForTable:
         mock_db_config.database = "mydb"
         mock_db_config.schema = "public"
         mock_config.current_db_config.return_value = mock_db_config
+        node_init_kwargs = {}
+        semantic_input_cls = MagicMock(return_value=MagicMock())
 
         class MockNode:
             def __init__(self, *args, **kwargs):
+                node_init_kwargs.update(kwargs)
                 self.input = None
 
             async def execute_stream(self, ahm):
@@ -266,17 +300,21 @@ class TestCreateSemanticModelForTable:
 
         with (
             patch(
-                "datus.agent.node.gen_semantic_model_agentic_node.GenSemanticModelAgenticNode",
+                "datus.agent.node.semantic_modeling_agentic_node.SemanticModelingAgenticNode",
                 MockNode,
             ),
             patch(
                 "datus.schemas.semantic_agentic_node_models.SemanticNodeInput",
-                MagicMock(return_value=MagicMock()),
+                semantic_input_cls,
             ),
         ):
             success, error = await create_semantic_model_for_table("users", mock_config)
         assert success is True
         assert error == ""
+        assert node_init_kwargs["authoring_scope"] == "datasets"
+        input_kwargs = semantic_input_cls.call_args.kwargs
+        assert input_kwargs["authoring_scope"] == "datasets"
+        assert "Do not create, update, or delete metrics" in input_kwargs["user_message"]
 
     @pytest.mark.asyncio
     async def test_terminal_error_action_returns_false(self):
@@ -303,7 +341,7 @@ class TestCreateSemanticModelForTable:
 
         with (
             patch(
-                "datus.agent.node.gen_semantic_model_agentic_node.GenSemanticModelAgenticNode",
+                "datus.agent.node.semantic_modeling_agentic_node.SemanticModelingAgenticNode",
                 MockNode,
             ),
             patch(
@@ -340,7 +378,7 @@ class TestCreateSemanticModelForTable:
 
         with (
             patch(
-                "datus.agent.node.gen_semantic_model_agentic_node.GenSemanticModelAgenticNode",
+                "datus.agent.node.semantic_modeling_agentic_node.SemanticModelingAgenticNode",
                 MockNode,
             ),
             patch(
@@ -379,12 +417,12 @@ class TestCreateSemanticModelForTable:
                     messages="Tool call: validate_semantic('{}...')",
                 )
                 yield SimpleNamespace(
-                    status=ActionStatus.SUCCESS, action_type="gen_semantic_model_response", messages="ok"
+                    status=ActionStatus.SUCCESS, action_type="semantic_modeling_response", messages="ok"
                 )
 
         with (
             patch(
-                "datus.agent.node.gen_semantic_model_agentic_node.GenSemanticModelAgenticNode",
+                "datus.agent.node.semantic_modeling_agentic_node.SemanticModelingAgenticNode",
                 MockNode,
             ),
             patch(
@@ -420,7 +458,7 @@ class TestCreateSemanticModelForTable:
 
         with (
             patch(
-                "datus.agent.node.gen_semantic_model_agentic_node.GenSemanticModelAgenticNode",
+                "datus.agent.node.semantic_modeling_agentic_node.SemanticModelingAgenticNode",
                 MockNode,
             ),
             patch(
@@ -459,7 +497,7 @@ class TestCreateSemanticModelForTable:
         emit_count = []
         with (
             patch(
-                "datus.agent.node.gen_semantic_model_agentic_node.GenSemanticModelAgenticNode",
+                "datus.agent.node.semantic_modeling_agentic_node.SemanticModelingAgenticNode",
                 MockNode,
             ),
             patch(
@@ -497,7 +535,7 @@ class TestCreateSemanticModelForTable:
 
         with (
             patch(
-                "datus.agent.node.gen_semantic_model_agentic_node.GenSemanticModelAgenticNode",
+                "datus.agent.node.semantic_modeling_agentic_node.SemanticModelingAgenticNode",
                 MockNode,
             ),
             patch(
@@ -547,7 +585,7 @@ class TestCreateSemanticModelForTable:
 
         with (
             patch(
-                "datus.agent.node.gen_semantic_model_agentic_node.GenSemanticModelAgenticNode",
+                "datus.agent.node.semantic_modeling_agentic_node.SemanticModelingAgenticNode",
                 MockNode,
             ),
             patch(

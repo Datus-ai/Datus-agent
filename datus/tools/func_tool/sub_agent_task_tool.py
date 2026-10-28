@@ -13,7 +13,6 @@ tools, template rendering, and action history.
 
 from __future__ import annotations
 
-import json
 import uuid
 from contextlib import nullcontext
 from datetime import datetime
@@ -33,7 +32,8 @@ from datus.schemas.action_history import (
     ActionStatus,
 )
 from datus.schemas.agent_models import ScopedContext, SubAgentConfig
-from datus.tools.func_tool.base import FuncToolResult
+from datus.schemas.at_context import apply_at_context
+from datus.tools.func_tool.base import FuncToolResult, parse_tool_args, write_back_tool_args
 from datus.utils.constants import SYS_SUB_AGENTS
 from datus.utils.loggings import get_logger
 from datus.utils.memory_loader import resolve_memory_node
@@ -42,6 +42,7 @@ if TYPE_CHECKING:
     from datus.agent.node.agentic_node import AgenticNode
     from datus.cli.execution_state import InteractionBroker
     from datus.schemas.action_bus import ActionBus
+    from datus.schemas.base import BaseInput
 
 logger = get_logger(__name__)
 
@@ -50,6 +51,7 @@ NODE_CLASS_MAP = {
     "gen_sql": NodeType.TYPE_GEN_SQL,
     "chat": NodeType.TYPE_CHAT,
     "ask_metrics": NodeType.TYPE_ASK_METRICS,
+    "ontology_analyst": NodeType.TYPE_ONTOLOGY_ANALYST,
     "gen_report": NodeType.TYPE_GEN_REPORT,
     "gen_visual_report": NodeType.TYPE_GEN_VISUAL_REPORT,
     "gen_visual_dashboard": NodeType.TYPE_GEN_VISUAL_DASHBOARD,
@@ -59,8 +61,6 @@ NODE_CLASS_MAP = {
     "gen_table": NodeType.TYPE_GEN_TABLE,
     "gen_job": NodeType.TYPE_GEN_JOB,
     "gen_skill": NodeType.TYPE_GEN_SKILL,
-    "gen_dashboard": NodeType.TYPE_GEN_DASHBOARD,
-    "scheduler": NodeType.TYPE_SCHEDULER,
 }
 
 # Descriptions for built-in system subagents (used in task tool description for LLM)
@@ -68,7 +68,7 @@ BUILTIN_SUBAGENT_DESCRIPTIONS = {
     "gen_sql": (
         "Generate optimized SQL queries. Returns JSON with {sql, response, tokens_used}. "
         "For complex SQL (50+ lines), returns {sql_file_path, sql_preview, response} instead - "
-        "pass sql_file_path directly to read_query() to execute (no need to read_file() first). "
+        "pass sql_file_path directly to execute_sql() to execute (no need to read_file() first). "
         "Modifications return sql_diff in unified diff format. "
         "Use for data queries, analysis, and report SQL. Prompt: provide the question directly."
     ),
@@ -78,10 +78,12 @@ BUILTIN_SUBAGENT_DESCRIPTIONS = {
         "sample data, date context\n"
         "    Prompt example: 'Explore schema for tables related to sales: "
         "list tables, describe columns, sample 10 rows'\n"
-        "  * Knowledge: business metrics, reference SQL patterns, "
-        "domain knowledge, semantic objects\n"
-        "    Prompt example: 'Search knowledge base for sales-related metrics, "
-        "reference SQL, and business rules'\n"
+        "  * Knowledge: look up *definitions* and reference material in the "
+        "knowledge base — metric definitions, reference SQL patterns, domain "
+        "rules, semantic objects. Definition/context lookup only; it does not "
+        "compute metric values or produce an analytical deliverable.\n"
+        "    Prompt example: 'Search knowledge base for the definitions of "
+        "sales-related metrics, reference SQL, and business rules'\n"
         "  * File: workspace SQL files, documentation, configuration files\n"
         "    Prompt example: 'Browse workspace for SQL files and documentation "
         "related to sales'\n"
@@ -93,7 +95,19 @@ BUILTIN_SUBAGENT_DESCRIPTIONS = {
         "Answer metric-based questions quickly using existing semantic metrics. "
         "Use for KPI values, trends, grouped metric results, and metric attribution "
         "when the question can be answered by the semantic layer. Does not fall back "
-        "to raw SQL. Returns JSON with {response, markdown_report, tokens_used}."
+        "to raw SQL. If ontology_analyst is offered, prefer it for this datasource. "
+        "Returns JSON with {response, markdown_report, tokens_used}."
+    ),
+    "ontology_analyst": (
+        "Answer data questions over the current datasource's Apache Ossie ontology "
+        "(business concepts, their role-named links and closed value sets) through the "
+        "semantic layer: metric values, trends and attribution like ask_metrics, plus "
+        "record-level answers (list ids, names, statuses of matching records). Prefer it "
+        "over ask_metrics whenever it is offered, especially when the question depends on "
+        "which relationship is meant (the airport a flight arrives at vs departs from), "
+        "filters on coded status values, or asks for individual records. Does not fall "
+        "back to raw SQL. Prompt: provide the question directly. "
+        "Returns JSON with {response, markdown_report, tokens_used}."
     ),
     "gen_report": (
         "Legacy Markdown report subagent. Use only when the user explicitly asks to use "
@@ -112,6 +126,11 @@ BUILTIN_SUBAGENT_DESCRIPTIONS = {
         "for a *report* with charts/tables, a dashboard, or any answer that benefits "
         "from persisted SQL + rendered visualisations (the artifact is consumed by "
         "Datus-CLI HTML export and Datus-SaaS dynamic iframe renderer). "
+        "When the user wants a report driven by existing or defined metrics / KPIs "
+        "(names specific metrics, or asks for it to be based on metrics), "
+        "this subagent is the right owner: it holds the semantic-layer tools "
+        "(list_metrics / query_metrics) and dry-runs the canonical metric SQL as the "
+        "build baseline. "
         "Prompt: provide the analytical question and any context (time range, scope, "
         "metrics of interest); the agent will discover data, save queries via save_query, "
         "write_file the render/*.jsx components, then finalize with validate_render. "
@@ -127,7 +146,13 @@ BUILTIN_SUBAGENT_DESCRIPTIONS = {
         "filter values and executes it live against the bound datasource. "
         "Use this whenever the user asks for an interactive dashboard with filters "
         "(date range, region, segment, etc.) that should re-query data on demand, "
-        "instead of a one-shot pre-baked report. The subagent picks a fresh slug "
+        "instead of a one-shot pre-baked report. "
+        "When the user wants the dashboard driven by existing or defined metrics / KPIs "
+        "(names specific metrics, or asks for it to be based on metrics), "
+        "this subagent is the right owner: it holds the semantic-layer tools "
+        "(list_metrics / query_metrics) and dry-runs the canonical metric SQL as the "
+        "build baseline. "
+        "The subagent picks a fresh slug "
         "via start_new_dashboard (or reuses one via bind_existing_dashboard), "
         "persists each query via save_query_template, write_file's the render/*.jsx "
         "components, then finalizes with validate_render. "
@@ -136,23 +161,13 @@ BUILTIN_SUBAGENT_DESCRIPTIONS = {
         "wire them to the JSX filter state. Returns JSON with {response, "
         "dashboard_slug, app_jsx_path, render_file_count, template_count, tokens_used}."
     ),
-    "gen_semantic_model": (
-        "Generate MetricFlow semantic model YAML files from database table structures. "
-        "Use when asked to create or update semantic models, define entities, relationships, or dimensions. "
-        "Prompt MUST contain table name(s), e.g. 'orders' or 'orders, customers, products'. "
-        "Returns JSON with {response, semantic_models (list of file paths), tokens_used}."
-    ),
-    "gen_metrics": (
-        "Define and generate MetricFlow metric definitions. "
-        "Three input modes: "
-        "(1) SQL-based: provide SQL queries for metric extraction. "
-        "(2) Natural language: describe the business metric or calculation rules, "
-        "the agent will guide through interactive Q&A to define the metric. "
-        "(3) Batch: provide multiple SQL queries for AST-backed metric candidate extraction. "
-        "For batch input, if the user provides a CSV file path, YOU (the parent agent) must read the file content first "
-        "and include the full content in the prompt — the metrics agent cannot access files outside its workspace. "
-        "The metrics agent will preserve final business output expressions and treat base measures as dependencies. "
-        "Returns JSON with {response, tokens_used}."
+    "semantic_modeling": (
+        "Create or update Dosi semantic datasets, metrics, or both in one coherent run. "
+        "Prefer this owner when a request may need metric prerequisites or spans both artifact kinds. "
+        "It always inspects the active datasource's existing semantic models first, reuses the unique suitable "
+        "target, interprets the supplied SQL and request directly, and validates it before Host reconciliation. "
+        "Preserve table names, pasted SQL, or an explicitly named workspace SQL file path in the delegated prompt. "
+        "Returns JSON with {response, semantic_models, status, tokens_used}."
     ),
     "gen_sql_summary": (
         "Analyze and summarize SQL queries into reusable knowledge base entries for semantic search. "
@@ -172,8 +187,8 @@ BUILTIN_SUBAGENT_DESCRIPTIONS = {
         "(1) SQL-based: provide a JOIN/SELECT SQL → CTAS to create a wide table for query acceleration. "
         "(2) Natural language: describe the table structure (columns, types, purpose) → generate CREATE TABLE DDL. "
         "Both modes: the agent analyzes the input, proposes a table schema, asks for confirmation, "
-        "and executes the DDL. For semantic model generation on the new table, "
-        "use gen_semantic_model separately. Returns JSON with {response, tokens_used}."
+        "and executes the DDL. For Dosi semantic authoring on the new table, "
+        "use semantic_modeling separately. Returns JSON with {response, tokens_used}."
     ),
     "gen_job": (
         "Execute data pipeline jobs — BOTH intra-database ETL AND cross-database migration. "
@@ -187,24 +202,6 @@ BUILTIN_SUBAGENT_DESCRIPTIONS = {
         "Inspects source and target schemas, generates DDL, writes data, validates results. "
         "Prompt: describe what you want to build or migrate; specify source/target databases "
         "and tables. Returns JSON with {response, tokens_used}."
-    ),
-    "gen_dashboard": (
-        "Create, update, and manage BI dashboards on the configured BI platform "
-        "(Superset, Grafana, or any future adapter). Builds BI assets on top of "
-        "tables or SQL datasets that already exist in a BI-registered database. "
-        "Data preparation belongs to a separate gen_job or scheduler step before "
-        "calling gen_dashboard. Prompt: provide the BI platform, serving table "
-        "or SQL dataset, dimensions, time range, chart type, and dashboard title. "
-        "Also supports read-only ops (list/get dashboards, list charts and "
-        "datasets). Returns JSON with {response, dashboard_result, tokens_used}."
-    ),
-    "scheduler": (
-        "Submit, monitor, update, and troubleshoot scheduled jobs on Airflow. "
-        "Handles the full lifecycle: submit SQL/SparkSQL jobs with cron schedules, "
-        "monitor job status and run history, view run logs, troubleshoot failures, "
-        "update job SQL/config, pause/resume/delete jobs, trigger manual runs. "
-        "Prompt: describe what scheduler operation you need. "
-        "Returns JSON with {response, scheduler_result, tokens_used}."
     ),
 }
 
@@ -267,7 +264,11 @@ class SubAgentTaskTool:
             "properties": {
                 "type": {
                     "type": "string",
-                    "description": "The subagent type to delegate to",
+                    "description": (
+                        "Required. Select exactly one subagent name from the Available types "
+                        "listed in this tool description. Never omit this argument, even when "
+                        "the intended subagent is obvious from context."
+                    ),
                 },
                 "prompt": {
                     "type": "string",
@@ -290,12 +291,27 @@ class SubAgentTaskTool:
             },
             "required": ["type", "prompt", "description"],
         }
+        accepted_args = frozenset(schema["properties"])
 
         async def _invoke(_tool_ctx, args_str) -> dict:
-            try:
-                args = json.loads(args_str) if isinstance(args_str, str) else dict(args_str or {})
-            except (TypeError, json.JSONDecodeError):
-                return FuncToolResult(success=0, error="Invalid JSON arguments for task tool").model_dump()
+            args, canonical_json, error = parse_tool_args(
+                args_str,
+                tool_name="task",
+            )
+            write_back_tool_args(_tool_ctx, canonical_json)
+            if error:
+                return FuncToolResult(success=0, error=error).model_dump()
+            # ``strict_json_schema=False`` means the provider does not enforce the
+            # schema, so a model can emit keys that are not declared here (garbled
+            # or hallucinated names, or ``call_id`` which this wrapper supplies).
+            # Splatting those into ``task()`` raises TypeError inside the tool
+            # invocation, which aborts the entire streaming run instead of failing
+            # this one call. Drop them; genuinely missing required arguments are
+            # still reported by ``task()`` with a retry hint.
+            unexpected = sorted(set(args) - accepted_args)
+            if unexpected:
+                logger.warning("Ignoring unsupported task() argument(s): %s", ", ".join(unexpected))
+                args = {key: value for key, value in args.items() if key in accepted_args}
             # Resolve parent call_id from SDK ToolContext for action linking
             call_id = getattr(_tool_ctx, "tool_call_id", None) if _tool_ctx else None
             result = await self.task(call_id=call_id, **args)
@@ -325,9 +341,13 @@ class SubAgentTaskTool:
         from disk so the new ``prompt`` is appended to existing turn history.
         """
         if not type:
-            return FuncToolResult(success=0, error="Missing required parameter: type")
+            return FuncToolResult(success=0, error=self._missing_parameter_retry("type"))
         if not prompt:
-            return FuncToolResult(success=0, error="Missing required parameter: prompt")
+            return FuncToolResult(success=0, error=self._missing_parameter_retry("prompt"))
+        # Some models fill an optional string with "" to mean "new session"; as a
+        # resume id it fails the format check and burns a turn on the retry.
+        if isinstance(session_id, str) and not session_id.strip():
+            session_id = None
 
         try:
             return await self._execute_node(
@@ -337,7 +357,36 @@ class SubAgentTaskTool:
             logger.error(f"Task tool execution error (type={type}): {e}")
             return FuncToolResult(success=0, error=f"Task execution failed: {str(e)}")
 
+    def _missing_parameter_retry(self, parameter: str) -> str:
+        """Build an actionable retry message for a missing required argument."""
+        available = self._get_available_types()
+        if not available:
+            return (
+                f"Missing required parameter: {parameter}. "
+                "No subagent types are currently available. "
+                "Update the subagent allowlist or agent configuration before retrying."
+            )
+
+        available_text = ", ".join(available)
+        example_type = "gen_sql" if "gen_sql" in available else available[0]
+        return (
+            f"Missing required parameter: {parameter}. Retry task() with all required arguments. "
+            f"Set `type` to exactly one of these Available types: {available_text}. "
+            f'Example: task(type="{example_type}", prompt="<task or question>", '
+            'description="<short one-line goal>").'
+        )
+
     # ── node creation ─────────────────────────────────────────────────
+
+    def _nest_session(self, node, parent_session_id: str) -> None:
+        """Store the subagent's session under the main session, in the user's scope.
+
+        Path: ``{sessions_dir}/{user_scope}/{parent_session_id}/{subagent_session_id}.db``.
+        """
+        if not hasattr(node, "relocate_session"):
+            node.session_subdir = parent_session_id
+            return
+        node.relocate_session(scope=getattr(self._parent_node, "scope", None), session_subdir=parent_session_id)
 
     def _create_node(self, subagent_type: str, session_id: Optional[str] = None):
         """Create a new AgenticNode instance for the given subagent type.
@@ -352,22 +401,55 @@ class SubAgentTaskTool:
         """
         # Builtin system subagents have non-standard constructors
         if subagent_type in SYS_SUB_AGENTS:
-            return self._create_builtin_node(subagent_type, session_id=session_id)
+            node = self._create_builtin_node(subagent_type, session_id=session_id)
+        else:
+            node_type, node_name = self._resolve_node_type(subagent_type)
+            node_id = f"task_{subagent_type}_{uuid.uuid4().hex[:8]}"
+            description = f"SubAgent task: {subagent_type}"
 
-        node_type, node_name = self._resolve_node_type(subagent_type)
-        node_id = f"task_{subagent_type}_{uuid.uuid4().hex[:8]}"
-        description = f"SubAgent task: {subagent_type}"
+            from datus.agent.node.node import Node
 
-        from datus.agent.node.node import Node
+            node = Node.new_instance(
+                node_id=node_id,
+                description=description,
+                node_type=node_type,
+                agent_config=self.agent_config,
+                node_name=node_name,
+                is_subagent=True,
+                session_id=session_id,
+            )
 
-        return Node.new_instance(
-            node_id=node_id,
-            description=description,
-            node_type=node_type,
-            agent_config=self.agent_config,
-            node_name=node_name,
-            is_subagent=True,
-            session_id=session_id,
+        self._inherit_permission_profile(node)
+        return node
+
+    def _inherit_permission_profile(self, node: Any) -> None:
+        """Run the child under the profile the parent is actually running under.
+
+        A per-request ``permission_mode`` is applied to the top-level node's
+        ``PermissionManager`` only — ``AgentConfig`` is shared across
+        concurrent requests, so the override deliberately never touches it.
+        The child is built from that same shared config, so without this it
+        falls back to the server default: a user who asked for ``dangerous``
+        gets permission prompts as soon as the work lands in a subagent.
+
+        Workflow children are left alone — they force ``dangerous`` by design
+        (see ``AgenticNode._setup_permission_manager``), and copying an
+        interactive parent's profile down would narrow that.
+        """
+        if getattr(node, "execution_mode", None) == "workflow":
+            return
+
+        parent_manager = getattr(self._parent_node, "permission_manager", None)
+        if parent_manager is None:
+            return
+
+        from datus.tools.permission.profile_override import apply_profile_override
+
+        apply_profile_override(
+            getattr(node, "permission_manager", None),
+            self.agent_config,
+            getattr(parent_manager, "active_profile", None),
+            subject=f"subagent node={getattr(node, 'node_id', None)}",
         )
 
     def _resolve_execution_mode(self) -> Literal["interactive", "workflow"]:
@@ -380,19 +462,10 @@ class SubAgentTaskTool:
 
     def _create_builtin_node(self, subagent_type: str, session_id: Optional[str] = None):
         """Create a builtin system subagent node with its non-standard constructor."""
-        if subagent_type == "gen_semantic_model":
-            from datus.agent.node.gen_semantic_model_agentic_node import GenSemanticModelAgenticNode
+        if subagent_type == "semantic_modeling":
+            from datus.agent.node.semantic_modeling_agentic_node import SemanticModelingAgenticNode
 
-            return GenSemanticModelAgenticNode(
-                agent_config=self.agent_config,
-                execution_mode=self._resolve_execution_mode(),
-                is_subagent=True,
-                session_id=session_id,
-            )
-        elif subagent_type == "gen_metrics":
-            from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode
-
-            return GenMetricsAgenticNode(
+            return SemanticModelingAgenticNode(
                 agent_config=self.agent_config,
                 execution_mode=self._resolve_execution_mode(),
                 is_subagent=True,
@@ -419,6 +492,21 @@ class SubAgentTaskTool:
                 agent_config=self.agent_config,
                 tools=None,
                 node_name="gen_sql",
+                execution_mode=self._resolve_execution_mode(),
+                is_subagent=True,
+                session_id=session_id,
+            )
+        elif subagent_type == "ontology_analyst":
+            from datus.agent.node.ontology_analyst_agentic_node import OntologyAnalystAgenticNode
+
+            return OntologyAnalystAgenticNode(
+                node_id=f"task_ontology_analyst_{uuid.uuid4().hex[:8]}",
+                description="Ontology question-answering node for ontology_analyst",
+                node_type="ontology_analyst",
+                input_data=None,
+                agent_config=self.agent_config,
+                tools=None,
+                node_name="ontology_analyst",
                 execution_mode=self._resolve_execution_mode(),
                 is_subagent=True,
                 session_id=session_id,
@@ -454,18 +542,6 @@ class SubAgentTaskTool:
                 session_id=session_id,
             )
         elif subagent_type == "gen_visual_report":
-            # Same session_id contract as gen_visual_dashboard below —
-            # ``BaseVisualArtifactAgenticNode.__init__`` doesn't accept
-            # ``session_id``, so silently dropping it would let resume
-            # loops spawn a fresh session per turn while the LLM
-            # thinks it picked up an existing one. Fail loud.
-            if session_id is not None:
-                raise ValueError(
-                    "gen_visual_report does not support session resume "
-                    "(BaseVisualArtifactAgenticNode constructor has no "
-                    "session_id parameter). Drop the session_id kwarg, "
-                    "or use a resumable subagent type."
-                )
             from datus.agent.node.gen_visual_report_agentic_node import GenVisualReportAgenticNode
 
             return GenVisualReportAgenticNode(
@@ -478,25 +554,9 @@ class SubAgentTaskTool:
                 node_name="gen_visual_report",
                 execution_mode=self._resolve_execution_mode(),
                 is_subagent=True,
+                session_id=session_id,
             )
         elif subagent_type == "gen_visual_dashboard":
-            # ``GenVisualDashboardAgenticNode`` inherits from
-            # ``BaseVisualArtifactAgenticNode`` whose ``__init__`` does
-            # NOT accept ``session_id`` (no resume flow yet — the
-            # artifact directory + manifest itself is the persistence
-            # boundary). Silently dropping a caller-supplied session_id
-            # the way other visual subagents do would let resume loops
-            # spawn a fresh session every turn while the LLM thinks it
-            # picked up an existing one. Fail loud instead so the
-            # caller can either drop the kwarg or wait for a
-            # constructor-level resume API.
-            if session_id is not None:
-                raise ValueError(
-                    "gen_visual_dashboard does not support session resume "
-                    "(BaseVisualArtifactAgenticNode constructor has no "
-                    "session_id parameter). Drop the session_id kwarg, "
-                    "or use a resumable subagent type."
-                )
             from datus.agent.node.gen_visual_dashboard_agentic_node import GenVisualDashboardAgenticNode
 
             return GenVisualDashboardAgenticNode(
@@ -509,6 +569,7 @@ class SubAgentTaskTool:
                 node_name="gen_visual_dashboard",
                 execution_mode=self._resolve_execution_mode(),
                 is_subagent=True,
+                session_id=session_id,
             )
         elif subagent_type == "gen_table":
             from datus.agent.node.gen_table_agentic_node import GenTableAgenticNode
@@ -544,26 +605,6 @@ class SubAgentTaskTool:
                 is_subagent=True,
                 session_id=session_id,
             )
-        elif subagent_type == "gen_dashboard":
-            from datus.agent.node.gen_dashboard_agentic_node import GenDashboardAgenticNode
-
-            return GenDashboardAgenticNode(
-                agent_config=self.agent_config,
-                execution_mode=self._resolve_execution_mode(),
-                node_id=f"task_gen_dashboard_{uuid.uuid4().hex[:8]}",
-                is_subagent=True,
-                session_id=session_id,
-            )
-        elif subagent_type == "scheduler":
-            from datus.agent.node.scheduler_agentic_node import SchedulerAgenticNode
-
-            return SchedulerAgenticNode(
-                agent_config=self.agent_config,
-                execution_mode=self._resolve_execution_mode(),
-                node_id=f"task_scheduler_{uuid.uuid4().hex[:8]}",
-                is_subagent=True,
-                session_id=session_id,
-            )
         else:
             raise ValueError(f"Unknown builtin subagent type: {subagent_type}")
 
@@ -591,6 +632,9 @@ class SubAgentTaskTool:
         if subagent_type == "ask_metrics":
             return NodeType.TYPE_ASK_METRICS, "ask_metrics"
 
+        if subagent_type == "ontology_analyst":
+            return NodeType.TYPE_ONTOLOGY_ANALYST, "ontology_analyst"
+
         # Built-in gen_visual_report type
         if subagent_type == "gen_visual_report":
             return NodeType.TYPE_GEN_VISUAL_REPORT, "gen_visual_report"
@@ -601,14 +645,12 @@ class SubAgentTaskTool:
 
         # Built-in system subagents (SYS_SUB_AGENTS)
         builtin_type_map = {
-            "gen_semantic_model": (NodeType.TYPE_SEMANTIC, "gen_semantic_model"),
-            "gen_metrics": (NodeType.TYPE_SEMANTIC, "gen_metrics"),
+            "semantic_modeling": (NodeType.TYPE_SEMANTIC, "semantic_modeling"),
             "gen_sql_summary": (NodeType.TYPE_SQL_SUMMARY, "gen_sql_summary"),
             "ask_metrics": (NodeType.TYPE_ASK_METRICS, "ask_metrics"),
+            "ontology_analyst": (NodeType.TYPE_ONTOLOGY_ANALYST, "ontology_analyst"),
             "gen_table": (NodeType.TYPE_GEN_TABLE, "gen_table"),
             "gen_job": (NodeType.TYPE_GEN_JOB, "gen_job"),
-            "gen_dashboard": (NodeType.TYPE_GEN_DASHBOARD, "gen_dashboard"),
-            "scheduler": (NodeType.TYPE_SCHEDULER, "scheduler"),
         }
         if subagent_type in builtin_type_map:
             return builtin_type_map[subagent_type]
@@ -618,9 +660,10 @@ class SubAgentTaskTool:
         if not sub_config:
             raise ValueError(f"Unknown subagent type: {subagent_type}")
 
-        node_class = (
-            sub_config.get("node_class") if isinstance(sub_config, dict) else getattr(sub_config, "node_class", None)
-        )
+        if isinstance(sub_config, dict):
+            node_class = sub_config.get("node_class") or sub_config.get("type")
+        else:
+            node_class = getattr(sub_config, "node_class", None) or getattr(sub_config, "type", None)
         node_type = NODE_CLASS_MAP.get(node_class or "gen_sql", NodeType.TYPE_GEN_SQL)
         return node_type, subagent_type
 
@@ -649,7 +692,7 @@ class SubAgentTaskTool:
             hooks_obj = getattr(node, attr, None)
             if hooks_obj is None:
                 continue
-            # Direct hook (GenerationHooks, PermissionHooks)
+            # Direct hook (e.g. PermissionHooks)
             if hasattr(hooks_obj, "broker"):
                 hooks_obj.broker = broker
             # CompositeHooks wrapping multiple hooks
@@ -657,6 +700,35 @@ class SubAgentTaskTool:
                 for h in hooks_obj.hooks_list:
                     if hasattr(h, "broker"):
                         h.broker = broker
+
+    def _inherit_pending_input_queue(self, node: "AgenticNode") -> None:
+        """Share the parent's pending-input queue with a sub-agent node.
+
+        ``call_model_input_filter`` drains the queue on the node that owns it,
+        once per LLM turn. Without this the queue stays with the parent while a
+        sub-agent holds the floor, so a mid-run insert — "the chart you just
+        wrote throws on render, fix it" — only reaches the model after the
+        sub-agent has already returned and delivered its broken artifact.
+
+        The queue is thread-safe and :meth:`PendingInputQueue.drain` empties it,
+        so parent and sub-agent holding one shared reference can never
+        double-deliver an item; whichever loop reaches its next turn first
+        consumes it.
+
+        Two consequences of that "first turn wins" rule, both accepted:
+
+        * Sharing is not scoped to artifact fixes. Any mid-run insert — even one
+          aimed at the parent ("stop, try another angle") — is consumed by a
+          sub-agent that happens to be holding the floor. Steering the loop that
+          is actually running is the intended reading of a mid-run message, and
+          the parent still sees the text on its own next turn via the session.
+        * With several sub-agents started in one parent turn, which of them
+          picks the item up is not deterministic. Still strictly better than the
+          old behaviour, where the item always waited out the full round trip.
+        """
+        parent_queue = getattr(self._parent_node, "pending_input_queue", None)
+        if parent_queue is not None:
+            node.pending_input_queue = parent_queue
 
     # ── execution via execute_stream ───────────────────────────────────
 
@@ -739,12 +811,13 @@ class SubAgentTaskTool:
             if isinstance(parent_sid, str) and parent_sid:
                 try:
                     SessionManager._validate_session_id(parent_sid)
-                    node.session_subdir = parent_sid
                 except ValueError:
                     logger.warning(
                         "Parent session_id %r failed validation; falling back to flat layout",
                         parent_sid,
                     )
+                else:
+                    self._nest_session(node, parent_sid)
 
             # Verify the .db file actually exists after session_subdir is wired up
             # — session_manager resolves the nested directory layout per
@@ -758,8 +831,11 @@ class SubAgentTaskTool:
                     ),
                 )
 
-            # Set input on the node
-            node.input = self._build_node_input(node, prompt)
+            # Set input on the node, then refresh DB-backed tools so connector
+            # routing follows the inherited physical database as well.
+            db_ctx = self._parent_db_context()
+            node.input = self._build_node_input(node, prompt, db_ctx=db_ctx)
+            self._refresh_node_db_tools(node, db_ctx)
 
             # Inject parent's InteractionBroker so that sub-agent INTERACTION
             # actions are routed through the parent's broker queue.  When injected,
@@ -767,6 +843,8 @@ class SubAgentTaskTool:
             # avoid dual-consuming the same broker.fetch() stream.
             if self._interaction_broker is not None:
                 self._inject_broker(node, self._interaction_broker)
+
+            self._inherit_pending_input_queue(node)
 
             # Propagate proxy tool config from parent node so sub-agent tools are
             # also proxied.  Uses the parent's tool_channel so stdin dispatch can
@@ -777,6 +855,12 @@ class SubAgentTaskTool:
                 from datus.tools.proxy.proxy_tool import apply_proxy_tools
 
                 apply_proxy_tools(node, self._parent_node.proxy_tool_patterns, channel=self._parent_node.tool_channel)
+
+            from datus.tools.proxy.semantic_plan_review import SemanticPlanReviewContext, apply_semantic_plan_review
+
+            review_context = getattr(self._parent_node, "semantic_plan_review_context", None)
+            if isinstance(review_context, SemanticPlanReviewContext):
+                apply_semantic_plan_review(node, context=review_context)
 
             # Iterate the async generator directly (we're already in async context)
             action_history_manager = ActionHistoryManager()
@@ -815,16 +899,21 @@ class SubAgentTaskTool:
 
                     # Forward sub-action to the ActionBus (real-time CoT streaming)
                     if self._action_bus is not None:
-                        action.depth = 1
+                        # The yielded action is also stored in the child node's
+                        # ActionHistoryManager. Keep that root-level history
+                        # intact so child-local accounting (for example,
+                        # _extract_total_tokens) can still find depth=0 actions.
+                        forwarded_action = action.model_copy()
+                        forwarded_action.depth = 1
                         if call_id:
-                            action.parent_action_id = call_id
+                            forwarded_action.parent_action_id = call_id
                         logger.debug(
                             "SubAgentTaskTool bus.put",
-                            action_type=action.action_type,
-                            role=str(action.role),
-                            status=str(action.status),
+                            action_type=forwarded_action.action_type,
+                            role=str(forwarded_action.role),
+                            status=str(forwarded_action.status),
                         )
-                        self._action_bus.put(action)
+                        self._action_bus.put(forwarded_action)
 
                     if action.role == ActionRole.TOOL:
                         tool_count += 1
@@ -835,6 +924,7 @@ class SubAgentTaskTool:
                             final_output = action.output
                     elif action.status == ActionStatus.SUCCESS and action.output:
                         final_output = action.output
+                        subagent_status = ActionStatus.SUCCESS
             except Exception as e:
                 # Surface the failure as an envelope (not a re-raise) so the
                 # parent agent can resume the partial subagent session via
@@ -929,40 +1019,146 @@ class SubAgentTaskTool:
 
     # ── input building ─────────────────────────────────────────────────
 
-    def _build_node_input(self, node, prompt: str):
-        """Build the appropriate input object for the given node."""
+    def _parent_db_context(self) -> Dict[str, Optional[str]]:
+        """Physical DB context (database/catalog/schema) the parent node targets.
+
+        A subagent must inherit the parent's *resolved* database rather than fall back to
+        the datasource's default. For a multi-database glob (``path_pattern``) datasource
+        the default is an arbitrary first-matched file, so an un-inherited subagent would
+        silently target the wrong database (e.g. a california_schools task exploring an
+        unrelated bird database). Mirrors the parent's ``database`` — a physical database
+        name, never the datasource key.
+        """
+        parent = self._parent_node
+        if parent is None:
+            return {}
+        parent_input = getattr(parent, "input", None)
+        requested_db = self._string_attr(parent_input, "database") or ""
+        connector = getattr(getattr(parent, "db_func_tool", None), "connector", None)
+        from datus.utils.node_utils import resolve_database_name_for_prompt
+
+        resolved_db = resolve_database_name_for_prompt(connector, requested_db)
+        if not isinstance(resolved_db, str) or not resolved_db:
+            resolved_db = None
+
+        return {
+            "database": resolved_db,
+            "catalog": self._string_attr(parent_input, "catalog"),
+            "db_schema": self._string_attr(parent_input, "db_schema"),
+        }
+
+    @staticmethod
+    def _string_attr(obj: Any, name: str) -> Optional[str]:
+        value = getattr(obj, name, None)
+        return value if isinstance(value, str) and value else None
+
+    @staticmethod
+    def _apply_db_context(node_input: "BaseInput", ctx: Dict[str, Optional[str]]) -> "BaseInput":
+        """Set inherited DB context on a freshly-built subagent input in place.
+
+        Only assigns fields the input model actually declares (``ExploreNodeInput`` carries
+        ``database`` alone; gen_sql/ask_metrics also carry ``catalog``/``db_schema``), so a
+        sparser input silently skips what it does not support.
+        """
+        for field, value in ctx.items():
+            if value and hasattr(node_input, field):
+                setattr(node_input, field, value)
+        return node_input
+
+    @staticmethod
+    def _refresh_node_db_tools(node: "AgenticNode", ctx: Dict[str, Optional[str]]) -> None:
+        """Rebuild DB-backed tool instances after inherited input context is set."""
+        node_database = SubAgentTaskTool._string_attr(getattr(node, "input", None), "database")
+        if not node_database or not ctx.get("database") or not hasattr(node, "db_func_tool"):
+            return
+        setup_tools = getattr(node, "setup_tools", None)
+        if callable(setup_tools):
+            setup_tools()
+            ask_user_tool = getattr(node, "ask_user_tool", None)
+            tools = getattr(node, "tools", None)
+            if ask_user_tool is not None and isinstance(tools, list):
+                tool_names = {getattr(tool, "name", "") for tool in tools}
+                if "ask_user" not in tool_names:
+                    tools.extend(ask_user_tool.available_tools())
+
+    def _build_node_input(self, node, prompt: str, db_ctx: Optional[Dict[str, Optional[str]]] = None):
+        """Build the subagent input and attach inherited DB + @-context.
+
+        Delegates type dispatch to :meth:`_build_typed_subagent_input`, then
+        threads the parent node's resolved @-context (schemas / metrics /
+        reference_sql / external_knowledge) through the single
+        :func:`apply_at_context` choke point, so a ``task()``-spawned subagent
+        sees the same @Table/@Metric/@Sql references the parent turn carried.
+        """
+        node_input = self._build_typed_subagent_input(node, prompt, db_ctx=db_ctx)
+        at_ctx = self._parent_at_context()
+        node_input = apply_at_context(
+            node_input,
+            schemas=at_ctx.get("schemas"),
+            metrics=at_ctx.get("metrics"),
+            reference_sql=at_ctx.get("reference_sql"),
+            external_knowledge=at_ctx.get("external_knowledge"),
+            context_hints=at_ctx.get("context_hints"),
+        )
+        return node_input
+
+    def _parent_at_context(self) -> Dict[str, Any]:
+        """Resolved @-context (schemas/metrics/reference_sql/knowledge) the parent carries.
+
+        Mirrors :meth:`_parent_db_context`: reads the parent node's ``input`` so a
+        subagent inherits the same @-references. Empty when there is no parent or
+        the parent input declares none.
+        """
+        parent = self._parent_node
+        if parent is None:
+            return {}
+        parent_input = getattr(parent, "input", None)
+        return {
+            "schemas": getattr(parent_input, "schemas", None),
+            "metrics": getattr(parent_input, "metrics", None),
+            "reference_sql": getattr(parent_input, "reference_sql", None),
+            "external_knowledge": getattr(parent_input, "external_knowledge", None) or None,
+            "context_hints": getattr(parent_input, "context_hints", None),
+        }
+
+    def _build_typed_subagent_input(self, node, prompt: str, db_ctx: Optional[Dict[str, Optional[str]]] = None):
+        """Build the node-type-specific subagent input (DB context only, no @-context).
+
+        The subagent inherits the parent node's resolved physical ``database`` (and
+        ``catalog``/``db_schema`` where supported) via :meth:`_parent_db_context`; without
+        this a subagent on a multi-database glob datasource falls back to the arbitrary
+        default database and explores the wrong one.
+        """
         from datus.agent.node.explore_agentic_node import ExploreAgenticNode
         from datus.agent.node.gen_sql_agentic_node import GenSQLAgenticNode
         from datus.schemas.explore_agentic_node_models import ExploreNodeInput
         from datus.schemas.gen_sql_agentic_node_models import GenSQLNodeInput
 
+        db_ctx = db_ctx if db_ctx is not None else self._parent_db_context()
+
         if isinstance(node, ExploreAgenticNode):
-            return ExploreNodeInput(
-                user_message=prompt,
-                database=self.agent_config.current_datasource,
-            )
+            return self._apply_db_context(ExploreNodeInput(user_message=prompt), db_ctx)
 
         if isinstance(node, GenSQLAgenticNode):
-            return GenSQLNodeInput(
-                user_message=prompt,
-                database=self.agent_config.current_datasource,
-            )
+            return self._apply_db_context(GenSQLNodeInput(user_message=prompt), db_ctx)
 
         from datus.agent.node.ask_metrics_agentic_node import AskMetricsAgenticNode
+        from datus.agent.node.ontology_analyst_agentic_node import OntologyAnalystAgenticNode
+
+        if isinstance(node, OntologyAnalystAgenticNode):
+            from datus.schemas.ontology_analyst_agentic_node_models import OntologyAnalystNodeInput
+
+            return self._apply_db_context(OntologyAnalystNodeInput(user_message=prompt), db_ctx)
 
         if isinstance(node, AskMetricsAgenticNode):
             from datus.schemas.ask_metrics_agentic_node_models import AskMetricsNodeInput
 
-            return AskMetricsNodeInput(
-                user_message=prompt,
-                database=self.agent_config.current_datasource,
-            )
+            return self._apply_db_context(AskMetricsNodeInput(user_message=prompt), db_ctx)
 
         # Built-in system subagent input types
         from datus.agent.node.gen_job_agentic_node import GenJobAgenticNode
-        from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode
-        from datus.agent.node.gen_semantic_model_agentic_node import GenSemanticModelAgenticNode
         from datus.agent.node.gen_table_agentic_node import GenTableAgenticNode
+        from datus.agent.node.semantic_modeling_agentic_node import SemanticModelingAgenticNode
         from datus.agent.node.sql_summary_agentic_node import SqlSummaryAgenticNode
 
         if isinstance(node, (GenTableAgenticNode, GenJobAgenticNode)):
@@ -970,15 +1166,13 @@ class SubAgentTaskTool:
 
             return SemanticNodeInput(
                 user_message=prompt,
-                database=self.agent_config.current_datasource,
             )
 
-        if isinstance(node, (GenSemanticModelAgenticNode, GenMetricsAgenticNode)):
+        if isinstance(node, SemanticModelingAgenticNode):
             from datus.schemas.semantic_agentic_node_models import SemanticNodeInput
 
             return SemanticNodeInput(
                 user_message=prompt,
-                database=self.agent_config.current_datasource,
             )
 
         if isinstance(node, SqlSummaryAgenticNode):
@@ -986,27 +1180,6 @@ class SubAgentTaskTool:
 
             return SqlSummaryNodeInput(
                 user_message=prompt,
-                database=self.agent_config.current_datasource,
-            )
-
-        from datus.agent.node.gen_dashboard_agentic_node import GenDashboardAgenticNode
-
-        if isinstance(node, GenDashboardAgenticNode):
-            from datus.schemas.gen_dashboard_agentic_node_models import GenDashboardNodeInput
-
-            return GenDashboardNodeInput(
-                user_message=prompt,
-                database=self.agent_config.current_datasource,
-            )
-
-        from datus.agent.node.scheduler_agentic_node import SchedulerAgenticNode
-
-        if isinstance(node, SchedulerAgenticNode):
-            from datus.schemas.scheduler_agentic_node_models import SchedulerNodeInput
-
-            return SchedulerNodeInput(
-                user_message=prompt,
-                database=self.agent_config.current_datasource,
             )
 
         from datus.agent.node.gen_report_agentic_node import GenReportAgenticNode
@@ -1016,7 +1189,6 @@ class SubAgentTaskTool:
 
             return GenReportNodeInput(
                 user_message=prompt,
-                database=self.agent_config.current_datasource,
             )
 
         from datus.agent.node.gen_visual_report_agentic_node import GenVisualReportAgenticNode
@@ -1026,7 +1198,6 @@ class SubAgentTaskTool:
 
             return GenVisualReportNodeInput(
                 user_message=prompt,
-                database=self.agent_config.current_datasource,
             )
 
         from datus.agent.node.gen_visual_dashboard_agentic_node import GenVisualDashboardAgenticNode
@@ -1036,7 +1207,6 @@ class SubAgentTaskTool:
 
             return GenVisualDashboardNodeInput(
                 user_message=prompt,
-                database=self.agent_config.current_datasource,
             )
 
         from datus.agent.node.gen_skill_agentic_node import SkillCreatorAgenticNode
@@ -1073,19 +1243,28 @@ class SubAgentTaskTool:
         to a later task() call.
         """
 
-        def _failure(error_msg: str) -> FuncToolResult:
+        def _failure(error_msg: str, output_payload: Optional[Dict[str, Any]] = None) -> FuncToolResult:
             # Carry session_id under `result` so the parent can resume the
             # partial subagent session. ``result`` is None when no session
             # was created (e.g. errors raised before node construction).
-            result_payload = {"session_id": session_id} if session_id else None
-            return FuncToolResult(success=0, error=error_msg, result=result_payload)
+            result_payload = {
+                key: output_payload[key]
+                for key in ("status", "blocker_code", "skip_reason", "response", "semantic_models", "tokens_used")
+                if output_payload is not None and key in output_payload
+            }
+            if session_id:
+                result_payload["session_id"] = session_id
+            return FuncToolResult(success=0, error=error_msg, result=result_payload or None)
 
         if not output or not isinstance(output, dict):
             return _failure("No result from subagent")
 
         # Check for explicit failure from subagent
         if output.get("success") is False:
-            return _failure(output.get("error") or output.get("response") or output.get("content", "Subagent failed"))
+            return _failure(
+                output.get("error") or output.get("response") or output.get("content", "Subagent failed"),
+                output,
+            )
 
         response = output.get("response", "")
         tokens = output.get("tokens_used", 0)
@@ -1123,13 +1302,15 @@ class SubAgentTaskTool:
         # Semantic model result: has 'semantic_models' key
         semantic_models = output.get("semantic_models")
         if semantic_models is not None:
-            return _wrap(
-                {
-                    "response": response,
-                    "semantic_models": semantic_models,
-                    "tokens_used": tokens,
-                }
+            result_dict = {
+                "response": response,
+                "semantic_models": semantic_models,
+                "tokens_used": tokens,
+            }
+            result_dict.update(
+                {key: output[key] for key in ("status", "blocker_code", "skip_reason") if output.get(key) is not None}
             )
+            return _wrap(result_dict)
 
         # SQL summary result: has 'sql_summary_file' key
         sql_summary_file = output.get("sql_summary_file")
@@ -1174,21 +1355,7 @@ class SubAgentTaskTool:
                 }
             )
 
-        # Dashboard result: has 'dashboard_result' key
-        dashboard_result = output.get("dashboard_result")
-        if dashboard_result is not None:
-            return _wrap(
-                {
-                    "response": response,
-                    "dashboard_result": dashboard_result,
-                    "tokens_used": tokens,
-                }
-            )
-
-        # Visual dashboard result (new artifact-based subagent). The
-        # legacy ``dashboard_result`` envelope above is from
-        # ``gen_dashboard_agentic_node.py``; the new
-        # ``GenVisualDashboardNodeResult`` carries the documented fields
+        # Visual dashboard results carry the documented fields
         # (``dashboard_slug``, ``app_jsx_path``, ``render_file_count``,
         # ``template_count``) flat at the top level. Without this branch
         # the conversion falls through to the generic envelope and drops
@@ -1207,17 +1374,6 @@ class SubAgentTaskTool:
                     "app_jsx_path": output.get("app_jsx_path"),
                     "render_file_count": output.get("render_file_count", 0),
                     "template_count": output.get("template_count", 0),
-                    "tokens_used": tokens,
-                }
-            )
-
-        # Scheduler result: has 'scheduler_result' key
-        scheduler_result = output.get("scheduler_result")
-        if scheduler_result is not None:
-            return _wrap(
-                {
-                    "response": response,
-                    "scheduler_result": scheduler_result,
                     "tokens_used": tokens,
                 }
             )
@@ -1249,11 +1405,21 @@ class SubAgentTaskTool:
         available = self._get_available_types()
 
         lines = [
+            "Required call contract:",
+            "- Every task tool call MUST include `type`, `prompt`, and `description`.",
+            "- `type` MUST be exactly one name from the Available types below. Never omit it, "
+            "even when the intended subagent is obvious from context.",
+            '- Call format: task(type="<available type>", prompt="<task or question>", '
+            'description="<short one-line goal>")',
+            "",
             "Delegate work to a specialized subagent when the requested deliverable belongs to that "
             "subagent's owning workflow or platform. Task complexity is not the deciding factor: "
-            "a simple scheduled job, dashboard, persisted table, semantic model, metric definition, "
-            "or skill should still be handled by its specialized subagent. Use your own tools "
-            "(list_tables, describe_table, read_query, etc.) for read-only answers, explanations, "
+            "a persisted table, semantic model, metric definition, visual artifact, or skill should "
+            "still be handled by its specialized subagent. Scheduling and external BI platform "
+            "operations are the exception: execute installed plugin commands and bundled skills "
+            "directly in the main agent; these plugin-backed operations are not delegatable types. "
+            "Use your own tools "
+            "(list_tables, describe_table, execute_sql, etc.) for read-only answers, explanations, "
             "or lightweight investigations that do not create or update an artifact owned by another "
             "platform/workflow.",
             "",
@@ -1276,7 +1442,9 @@ class SubAgentTaskTool:
             [
                 "",
                 "Guidelines:",
-                "- First classify the deliverable and its owning workflow/platform; delegate when it matches a subagent",
+                "- First classify the deliverable and its owning workflow/platform; delegate when it matches an "
+                "available subagent",
+                "- Handle scheduling and external BI operations directly with installed plugins, not task()",
                 "- For read-only answers, explanations, and lightweight investigations, handle directly with your own tools",
                 '- For complex questions requiring deep exploration, call multiple task(type="explore") '
                 "in PARALLEL, each with a direction-specific prompt (schema+sample, knowledge, file)",
@@ -1330,6 +1498,22 @@ class SubAgentTaskTool:
         # Wildcard mode (*): all discovered types, excluding self.
         return [t for t in self._discover_all_types() if t != self._parent_node_name]
 
+    def _current_datasource_has_ontology(self) -> bool:
+        """Whether a mapping under ``subject/ontology/`` binds a model of the current datasource."""
+        path_manager = getattr(self.agent_config, "path_manager", None)
+        datasource = getattr(self.agent_config, "current_datasource", None)
+        if path_manager is None or not isinstance(datasource, str) or not datasource:
+            return False
+        try:
+            from datus.tools.semantic_tools.dosi.engine import datasource_has_ontology
+
+            return datasource_has_ontology(
+                str(path_manager.semantic_models_dir / datasource), str(path_manager.ontology_dir)
+            )
+        except Exception as e:  # noqa: BLE001 - discovery must not break the task tool
+            logger.debug(f"Ontology discovery failed for {datasource!r}: {e}")
+            return False
+
     def _discover_all_types(self) -> List[str]:
         """Return every subagent type that can currently be instantiated.
 
@@ -1338,7 +1522,13 @@ class SubAgentTaskTool:
         in SYS_SUB_AGENTS (which only guards reserved system names).
         """
         types = ["explore"]
-        types.extend(sorted(name for name in SYS_SUB_AGENTS if name != "feedback"))
+        from datus.utils.constants import HIDDEN_SYS_SUB_AGENTS
+
+        builtin_types = set(SYS_SUB_AGENTS - HIDDEN_SYS_SUB_AGENTS)
+        if not self._current_datasource_has_ontology():
+            # Offered only where it can run: without an ontology it refuses.
+            builtin_types.discard("ontology_analyst")
+        types.extend(sorted(builtin_types))
 
         if self.agent_config and hasattr(self.agent_config, "agentic_nodes"):
             current_datasource = self.agent_config.current_datasource

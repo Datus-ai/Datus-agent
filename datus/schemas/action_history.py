@@ -4,7 +4,7 @@
 
 from datetime import datetime
 from enum import Enum
-from typing import Any, List, Optional
+from typing import Any, Callable, List, Optional
 
 from pydantic import BaseModel, Field
 
@@ -40,6 +40,8 @@ class ActionStatus(str, Enum):
 
 
 SUBAGENT_COMPLETE_ACTION_TYPE = "subagent_complete"
+TOOL_PREVIEW_ACTION_TYPE = "tool_preview"
+INTERRUPTED_ACTION_TYPE = "interrupted"
 
 
 class ActionHistory(BaseModel):
@@ -89,6 +91,26 @@ class ActionHistory(BaseModel):
         use_enum_values = True
 
 
+# Callbacks that may enrich an action before it enters the history. Every model
+# implementation funnels its actions through ``ActionHistoryManager.add_action``,
+# so this is the one place a cross-cutting annotation can be attached without
+# schemas depending on the layer that produces it (the permission gate registers
+# ``review_registry``'s stamper here). Enrichers mutate in place and must never
+# raise — a display annotation can't be allowed to drop an action.
+_ACTION_ENRICHERS: List[Callable[[ActionHistory], None]] = []
+
+
+def register_action_enricher(enricher: Callable[[ActionHistory], None]) -> None:
+    """Register a callback invoked on every action entering a history manager."""
+    if enricher not in _ACTION_ENRICHERS:
+        _ACTION_ENRICHERS.append(enricher)
+
+
+def clear_action_enrichers() -> None:
+    """Drop all registered enrichers (tests)."""
+    _ACTION_ENRICHERS.clear()
+
+
 class ActionHistoryManager:
     """Manager for action history during streaming execution"""
 
@@ -102,6 +124,12 @@ class ActionHistoryManager:
         if self.find_action_by_id(action.action_id):
             logger.debug(f"Action with id {action.action_id} already exists, skipping duplicate")
             return
+
+        for enricher in _ACTION_ENRICHERS:
+            try:
+                enricher(action)
+            except Exception as e:  # pragma: no cover - defensive
+                logger.warning(f"Action enricher {enricher!r} failed: {e}")
 
         logger.debug(f"Adding action: {action}")
         self.actions.append(action)
@@ -124,6 +152,21 @@ class ActionHistoryManager:
         """Clear all actions"""
         self.actions.clear()
         self.current_action_id = None
+
+    def checkpoint(self) -> int:
+        """Return a marker that can be used to roll back later additions."""
+        return len(self.actions)
+
+    def rollback_to(self, checkpoint: int) -> None:
+        """Discard actions appended after *checkpoint*.
+
+        CLI cancellation uses this when ESC arrives before the model has
+        produced a response, making the unsubmitted-looking turn disappear
+        from the same in-memory history that future turns receive.
+        """
+        checkpoint = max(0, min(int(checkpoint), len(self.actions)))
+        del self.actions[checkpoint:]
+        self.current_action_id = self.actions[-1].action_id if self.actions else None
 
     def find_action_by_id(self, action_id: str) -> Optional[ActionHistory]:
         """Find an action by its action_id"""

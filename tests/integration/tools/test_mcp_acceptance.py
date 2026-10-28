@@ -127,17 +127,22 @@ async def test_mcp_http_registration_read_only_call_and_error_envelope(mcp_url):
         tools = await session.list_tools()
         tool_by_name = {tool.name: tool for tool in tools.tools}
 
-        assert {"list_subject_tree", "read_query"}.issubset(tool_by_name)
-        assert tool_by_name["read_query"].inputSchema["type"] == "object"
-        assert "sql" in tool_by_name["read_query"].inputSchema["properties"]
+        assert {"list_subject_tree", "execute_sql"}.issubset(tool_by_name)
+        assert tool_by_name["execute_sql"].inputSchema["type"] == "object"
+        assert "sql" in tool_by_name["execute_sql"].inputSchema["properties"]
 
         subject_tree = parse_tool_result(await session.call_tool("list_subject_tree", {}))
         assert subject_tree["success"] == 1
         assert subject_tree["error"] is None
         assert isinstance(subject_tree["result"], dict)
 
+        query = parse_tool_result(await session.call_tool("execute_sql", {"sql": "SELECT 42 AS answer"}))
+        assert query["success"] == 1, query["error"]
+        assert query["error"] is None
+        assert "42" in json.dumps(query["result"])
+
         invalid_query = parse_tool_result(
-            await session.call_tool("read_query", {"sql": "SELECT * FROM nonexistent_mcp_acceptance_table"})
+            await session.call_tool("execute_sql", {"sql": "SELECT * FROM nonexistent_mcp_acceptance_table"})
         )
         assert invalid_query["success"] == 0
         assert invalid_query["result"] is None

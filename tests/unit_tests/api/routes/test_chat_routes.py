@@ -12,6 +12,7 @@ from fastapi import HTTPException
 from fastapi.responses import StreamingResponse
 
 from datus.api.models.base_models import Result
+from datus.api.models.chat_models import ToolResult, ToolResultInput
 from datus.api.models.cli_models import (
     ChatHistoryData,
     ChatSessionData,
@@ -28,9 +29,11 @@ from datus.api.routes.chat_routes import (
     get_chat_history,
     list_sessions,
     stream_chat,
+    submit_tool_result,
     submit_user_interaction,
 )
-from datus.tools.sql_policy import SqlPolicyConfig
+from datus.tools.proxy.tool_result_channel import ToolResultChannel
+from datus.utils.exceptions import DatusException, ErrorCode
 
 
 async def _timeout_wait_for(awaitable, timeout):
@@ -135,15 +138,35 @@ class TestSubmitUserInteractionConversion:
         assert result.errorCode == "BROKER_NOT_FOUND"
 
     @pytest.mark.asyncio
-    async def test_broker_submit_failure(self):
-        """Returns success=False when broker.submit returns False."""
+    async def test_unknown_interaction_key(self):
+        """A key the broker no longer holds reports INTERACTION_NOT_FOUND, not a bare failure."""
         task = _mock_task(broker_submit_return=False)
+        task.node.interaction_broker.is_pending = MagicMock(return_value=False)
         svc = _mock_svc(task=task)
         request = UserInteractionInput(session_id="s1", interaction_key="k1", input=[["1"]])
 
         result = await submit_user_interaction(request, svc)
 
+        task.node.interaction_broker.is_pending.assert_called_once_with("k1")
         assert result.success is False
+        assert result.errorCode == "INTERACTION_NOT_FOUND"
+        assert result.errorMessage == "This question is no longer waiting for an answer"
+        assert result.data == {"interaction_key": "k1", "submitted": False}
+
+    @pytest.mark.asyncio
+    async def test_rejected_answer_for_pending_key(self):
+        """A still-pending key whose answer the broker rejects reports INVALID_INPUT."""
+        task = _mock_task(broker_submit_return=False)
+        task.node.interaction_broker.is_pending = MagicMock(return_value=True)
+        svc = _mock_svc(task=task)
+        request = UserInteractionInput(session_id="s1", interaction_key="k1", input=[["9"]])
+
+        result = await submit_user_interaction(request, svc)
+
+        assert result.success is False
+        assert result.errorCode == "INVALID_INPUT"
+        assert result.errorMessage == "Answer does not match the question's options"
+        assert result.data == {"interaction_key": "k1", "submitted": False}
 
 
 def _mock_svc_with_nodes(agentic_nodes=None):
@@ -163,6 +186,10 @@ class TestIsValidSubagentId:
         """feedback is dispatched by _create_node but not in BUILTIN_SUBAGENTS."""
         svc = _mock_svc_with_nodes()
         assert _is_valid_subagent_id(svc, "feedback") is True
+
+    def test_semantic_modeling_is_builtin(self):
+        svc = _mock_svc_with_nodes()
+        assert _is_valid_subagent_id(svc, "semantic_modeling") is True
 
     def test_custom_node_by_name(self):
         svc = _mock_svc_with_nodes({"my_custom_agent": {"id": "uuid-1", "model": "deepseek"}})
@@ -205,6 +232,18 @@ class TestStreamChat404Gate:
         assert "nonexistent_xyz" in exc_info.value.detail
 
     @pytest.mark.asyncio
+    async def test_semantic_modeling_streams(self):
+        svc = _mock_svc_with_nodes()
+        svc.chat.stream_chat = MagicMock(return_value=AsyncMock().__aiter__())
+        ctx = MagicMock(user_id="u1")
+        request = StreamChatInput(message="/build-kb", subagent_id="semantic_modeling")
+
+        response = await stream_chat(request, svc, ctx, MagicMock())
+
+        assert isinstance(response, StreamingResponse)
+        assert response.status_code == 200
+
+    @pytest.mark.asyncio
     async def test_none_subagent_bypasses_gate(self):
         """Without a subagent_id the 404 gate is skipped — default routing handles it."""
         svc = _mock_svc_with_nodes()
@@ -219,25 +258,21 @@ class TestStreamChat404Gate:
         assert response.media_type == "text/event-stream"
 
 
-class TestStreamChatSqlPolicyPreCheck:
-    """SQL policy enabled chat requests must carry required request principal fields."""
+class TestStreamChatPolicyContextPreCheck:
+    """Active policy runtimes validate context before agent execution."""
 
     @pytest.mark.asyncio
-    async def test_enabled_sql_policy_without_principal_returns_sse_error(self):
+    async def test_rejected_policy_context_returns_sse_error(self):
         svc = _mock_svc_with_nodes()
-        svc.agent_config.sql_policy_config = SqlPolicyConfig.from_dict(
-            {
-                "enabled": True,
-                "provider": "x:Y",
-                "policies": [{"condition": {"value_from": "principal.market_code"}}],
-            }
-        )
         svc.chat.stream_chat = MagicMock(side_effect=AssertionError("upstream invoked"))
         ctx = MagicMock(user_id=None)
-        ctx.principal = {}
+        ctx.policy_context = {"row_filter": {"access_mode": "denied"}}
         request = StreamChatInput(message="hi")
 
-        response = await stream_chat(request, svc, ctx, MagicMock())
+        runtime = MagicMock()
+        runtime.validate_context.return_value = MagicMock(allowed=False, reason="Policy context denies all data reads")
+        with patch("datus.api.routes.chat_routes.PolicyRuntime", return_value=runtime):
+            response = await stream_chat(request, svc, ctx, MagicMock())
 
         chunks = []
         async for chunk in response.body_iterator:
@@ -248,80 +283,98 @@ class TestStreamChatSqlPolicyPreCheck:
         payload = json.loads(
             next(line for line in chunks[0].splitlines() if line.startswith("data: "))[len("data: ") :]
         )
-        assert payload["error_type"] == "SQL_POLICY_PRINCIPAL_REQUIRED"
-        assert "principal.market_code" in payload["error"]
-        assert "provider that populates principal fields" in payload["error"]
-        assert "agent.sql_policy" in payload["error"]
+        assert payload["error_type"] == "POLICY_CONTEXT_REJECTED"
+        assert "denies all data reads" in payload["error"]
         svc.chat.stream_chat.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_enabled_sql_policy_with_required_principal_allows_service_call(self):
+    async def test_policy_runtime_failure_returns_generic_sse_error(self):
+        svc = _mock_svc_with_nodes()
+        svc.chat.stream_chat = MagicMock(side_effect=AssertionError("upstream invoked"))
+        ctx = MagicMock(user_id=None, policy_context={})
+        request = StreamChatInput(message="hi")
+
+        runtime = MagicMock()
+        runtime.validate_context.side_effect = DatusException(
+            ErrorCode.COMMON_CONFIG_ERROR,
+            message="internal plugin path and policy details",
+        )
+        with (
+            patch("datus.api.routes.chat_routes.PolicyRuntime", return_value=runtime),
+            patch("datus.api.routes.chat_routes.logger.error") as log_error,
+        ):
+            response = await stream_chat(request, svc, ctx, MagicMock())
+
+        chunks = [chunk.decode() if isinstance(chunk, bytes) else chunk async for chunk in response.body_iterator]
+        payload = json.loads(
+            next(line for line in chunks[0].splitlines() if line.startswith("data: "))[len("data: ") :]
+        )
+        assert payload["error_type"] == "POLICY_RUNTIME_ERROR"
+        assert payload["error"] == "Policy validation failed."
+        assert "internal plugin" not in chunks[0]
+        log_error.assert_called_once_with(
+            "Policy runtime validation failed: %s",
+            ANY,
+            exc_info=True,
+        )
+        svc.chat.stream_chat.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_allowed_policy_context_reaches_service(self):
         async def empty_stream(*_args, **_kwargs):
             if False:
                 yield
 
         svc = _mock_svc_with_nodes()
-        svc.agent_config.sql_policy_config = SqlPolicyConfig.from_dict(
-            {
-                "enabled": True,
-                "provider": "x:Y",
-                "policies": [{"condition": {"value_from": "principal.market_code"}}],
-            }
-        )
         svc.chat.stream_chat = MagicMock(return_value=empty_stream())
         ctx = MagicMock(user_id=None)
-        ctx.principal = {"market_code": "MKT300"}
+        ctx.policy_context = {"row_filter": {"access_mode": "scoped", "market_codes": ["MKT300"]}}
         request = StreamChatInput(message="hi")
 
-        response = await stream_chat(request, svc, ctx, MagicMock())
+        runtime = MagicMock()
+        runtime.validate_context.return_value = MagicMock(allowed=True)
+        with patch("datus.api.routes.chat_routes.PolicyRuntime", return_value=runtime):
+            response = await stream_chat(request, svc, ctx, MagicMock())
         async for _ in response.body_iterator:
             pass
 
         svc.chat.stream_chat.assert_called_once()
-        assert svc.chat.stream_chat.call_args.kwargs["principal"] == {"market_code": "MKT300"}
+        assert svc.chat.stream_chat.call_args.kwargs["policy_context"] == ctx.policy_context
 
     @pytest.mark.asyncio
-    async def test_enabled_sql_policy_without_principal_paths_allows_service_call(self):
+    async def test_no_active_policy_allows_empty_context(self):
         async def empty_stream(*_args, **_kwargs):
             if False:
                 yield
 
         svc = _mock_svc_with_nodes()
-        svc.agent_config.sql_policy_config = SqlPolicyConfig.from_dict(
-            {
-                "enabled": True,
-                "provider": "x:Y",
-                "policies": [{"name": "static_policy", "condition": {"value_from": "literal.MKT300"}}],
-            }
-        )
         svc.chat.stream_chat = MagicMock(return_value=empty_stream())
         ctx = MagicMock(user_id=None)
-        ctx.principal = {}
+        ctx.policy_context = {}
         request = StreamChatInput(message="hi")
 
-        response = await stream_chat(request, svc, ctx, MagicMock())
+        runtime = MagicMock()
+        runtime.validate_context.return_value = MagicMock(allowed=True)
+        with patch("datus.api.routes.chat_routes.PolicyRuntime", return_value=runtime):
+            response = await stream_chat(request, svc, ctx, MagicMock())
         async for _ in response.body_iterator:
             pass
 
         svc.chat.stream_chat.assert_called_once()
-        assert svc.chat.stream_chat.call_args.kwargs["principal"] == {}
+        assert svc.chat.stream_chat.call_args.kwargs["policy_context"] == {}
 
     @pytest.mark.asyncio
-    async def test_user_id_only_does_not_satisfy_required_business_principal(self):
+    async def test_user_id_is_not_merged_into_policy_context(self):
         svc = _mock_svc_with_nodes()
-        svc.agent_config.sql_policy_config = SqlPolicyConfig.from_dict(
-            {
-                "enabled": True,
-                "provider": "x:Y",
-                "policies": [{"condition": {"value_from": "principal.market_code"}}],
-            }
-        )
         svc.chat.stream_chat = MagicMock(side_effect=AssertionError("upstream invoked"))
         ctx = MagicMock(user_id="alice")
-        ctx.principal = {}
+        ctx.policy_context = {}
         request = StreamChatInput(message="hi")
 
-        response = await stream_chat(request, svc, ctx, MagicMock())
+        runtime = MagicMock()
+        runtime.validate_context.return_value = MagicMock(allowed=False, reason="missing policy context field")
+        with patch("datus.api.routes.chat_routes.PolicyRuntime", return_value=runtime):
+            response = await stream_chat(request, svc, ctx, MagicMock())
 
         chunks = []
         async for chunk in response.body_iterator:
@@ -330,8 +383,9 @@ class TestStreamChatSqlPolicyPreCheck:
         payload = json.loads(
             next(line for line in chunks[0].splitlines() if line.startswith("data: "))[len("data: ") :]
         )
-        assert payload["error_type"] == "SQL_POLICY_PRINCIPAL_REQUIRED"
-        assert "principal.market_code" in payload["error"]
+        assert payload["error_type"] == "POLICY_CONTEXT_REJECTED"
+        assert "missing policy context field" in payload["error"]
+        assert runtime.validate_context.call_args.args[0] == {}
         svc.chat.stream_chat.assert_not_called()
 
 
@@ -402,8 +456,10 @@ class TestInsertMessageEndpoint:
 
     The endpoint is the API equivalent of typing in the TUI while the
     agent is streaming: it appends a free-text user message to the
-    pending-input queue carried by the running node, so the model sees
-    it before its next LLM turn.
+    task-scoped pending-input queue, so the model sees it before its next
+    LLM turn. The queue lives on the task (not the node) and is created
+    up-front, so a message that arrives while the node is still starting
+    up is still enqueued rather than lost.
     """
 
     @staticmethod
@@ -413,11 +469,13 @@ class TestInsertMessageEndpoint:
         return InsertMessageInput(session_id=session_id, message=message)
 
     @staticmethod
-    def _make_task_with_queue(queue=None):
+    def _make_task_with_queue(queue=None, status="running"):
+        from datus.api.services.chat_task_manager import ChatTask
         from datus.cli.execution_state import PendingInputQueue
 
-        task = MagicMock()
-        task.node.pending_input_queue = queue if queue is not None else PendingInputQueue()
+        task = ChatTask(session_id="s1", asyncio_task=None)
+        task.status = status
+        task.pending_input_queue = queue if queue is not None else PendingInputQueue()
         return task
 
     @pytest.mark.asyncio
@@ -432,7 +490,7 @@ class TestInsertMessageEndpoint:
         assert result.success is True
         assert result.data.session_id == "s1"
         assert result.data.queued_count == 1
-        assert task.node.pending_input_queue.snapshot() == ["hello"]
+        assert task.pending_input_queue.snapshot() == ["hello"]
 
     @pytest.mark.asyncio
     async def test_multiple_pushes_accumulate(self):
@@ -446,7 +504,7 @@ class TestInsertMessageEndpoint:
 
         assert result.success is True
         assert result.data.queued_count == 2
-        assert task.node.pending_input_queue.snapshot() == ["first", "second"]
+        assert task.pending_input_queue.snapshot() == ["first", "second"]
 
     @pytest.mark.asyncio
     async def test_missing_task_returns_session_not_running(self):
@@ -460,17 +518,35 @@ class TestInsertMessageEndpoint:
         assert result.errorCode == "SESSION_NOT_RUNNING"
 
     @pytest.mark.asyncio
-    async def test_task_without_node_returns_session_not_running(self):
+    async def test_completed_task_returns_session_not_running(self):
+        """A finished task must not accept inserts — its run loop is gone and
+        nothing would ever drain the queue."""
         from datus.api.routes.chat_routes import insert_message
 
-        task = MagicMock()
-        task.node = None
+        task = self._make_task_with_queue(status="completed")
         svc = _mock_svc(task=task)
 
         result = await insert_message(self._make_request("anything"), svc)
 
         assert result.success is False
         assert result.errorCode == "SESSION_NOT_RUNNING"
+
+    @pytest.mark.asyncio
+    async def test_node_still_starting_up_still_enqueues(self):
+        """Race: /insert arrives before ``_run_loop`` built the node
+        (``task.node is None``). The queue is task-scoped, so the message is
+        still enqueued and the node drains it on the first turn."""
+        from datus.api.routes.chat_routes import insert_message
+
+        task = self._make_task_with_queue()
+        task.node = None
+        svc = _mock_svc(task=task)
+
+        result = await insert_message(self._make_request("hello"), svc)
+
+        assert result.success is True
+        assert result.data.queued_count == 1
+        assert task.pending_input_queue.snapshot() == ["hello"]
 
     @pytest.mark.asyncio
     async def test_whitespace_only_message_returns_invalid_input(self):
@@ -484,17 +560,16 @@ class TestInsertMessageEndpoint:
         assert result.success is False
         assert result.errorCode == "INVALID_INPUT"
         # Queue untouched.
-        assert len(task.node.pending_input_queue) == 0
+        assert len(task.pending_input_queue) == 0
 
     @pytest.mark.asyncio
-    async def test_node_without_queue_returns_queue_unavailable(self):
-        """Node exists but caller never initialised pending_input_queue —
-        the route must surface that as a distinct error rather than
-        silently pushing nowhere."""
+    async def test_missing_queue_returns_queue_unavailable(self):
+        """Defensive: the queue is somehow absent — surface a distinct error
+        rather than silently pushing nowhere."""
         from datus.api.routes.chat_routes import insert_message
 
-        task = MagicMock()
-        task.node.pending_input_queue = None
+        task = self._make_task_with_queue()
+        task.pending_input_queue = None
         svc = _mock_svc(task=task)
 
         result = await insert_message(self._make_request("hello"), svc)
@@ -512,7 +587,7 @@ class TestInsertMessageEndpoint:
         await insert_message(self._make_request("  padded  "), svc)
 
         # Stripped form lands in the queue.
-        assert task.node.pending_input_queue.snapshot() == ["padded"]
+        assert task.pending_input_queue.snapshot() == ["padded"]
 
 
 # ===========================================================================
@@ -531,11 +606,11 @@ class TestListSessions:
         expected = Result[ChatSessionData](success=True, data=ChatSessionData(sessions=[], total_count=0))
         svc.chat.list_sessions.return_value = expected
 
-        result = await list_sessions(svc, ctx, subagent_id=None)
+        result = await list_sessions(svc, ctx, subagent_id=None, offset=0, limit=None)
 
         assert result.success is True
         assert result is expected
-        svc.chat.list_sessions.assert_called_once_with(user_id="user1", subagent_id=None)
+        svc.chat.list_sessions.assert_called_once_with(user_id="user1", subagent_id=None, offset=0, limit=None)
 
     @pytest.mark.asyncio
     async def test_timeout_returns_request_timeout_error(self):
@@ -560,9 +635,22 @@ class TestListSessions:
             success=True, data=ChatSessionData(sessions=[], total_count=0)
         )
 
-        await list_sessions(svc, ctx, subagent_id="gen_sql")
+        await list_sessions(svc, ctx, subagent_id="gen_sql", offset=0, limit=None)
 
-        svc.chat.list_sessions.assert_called_once_with(user_id="user2", subagent_id="gen_sql")
+        svc.chat.list_sessions.assert_called_once_with(user_id="user2", subagent_id="gen_sql", offset=0, limit=None)
+
+    @pytest.mark.asyncio
+    async def test_forwards_offset_and_limit(self):
+        svc = MagicMock()
+        ctx = MagicMock()
+        ctx.user_id = "user3"
+        svc.chat.list_sessions.return_value = Result[ChatSessionData](
+            success=True, data=ChatSessionData(sessions=[], total_count=0)
+        )
+
+        await list_sessions(svc, ctx, subagent_id=None, offset=20, limit=10)
+
+        svc.chat.list_sessions.assert_called_once_with(user_id="user3", subagent_id=None, offset=20, limit=10)
 
     @pytest.mark.asyncio
     async def test_timeout_result_type_is_result(self):
@@ -676,3 +764,230 @@ class TestGetChatHistory:
         assert isinstance(result, Result)
         assert result.data is None
         mock_wf.assert_called_once_with(ANY, timeout=_FUSE_IO_TIMEOUT)
+
+
+def _tool_result_input(call_id="call_1", session_id="sess1"):
+    return ToolResultInput(
+        session_id=session_id,
+        call_tool_id=call_id,
+        tool_result=ToolResult(success=1, result="ok"),
+    )
+
+
+def _task_with_channel(channel):
+    task = MagicMock()
+    task.node.tool_channel = channel
+    task.node.scope = "owner"
+    return task
+
+
+class TestSubmitToolResult:
+    @pytest.mark.asyncio
+    async def test_matched_publishes_and_returns_received(self):
+        channel = ToolResultChannel()
+        svc = _mock_svc(task=_task_with_channel(channel))
+
+        result = await submit_tool_result(_tool_result_input(), svc, MagicMock(user_id="owner"))
+
+        assert result.success is True
+        assert result.data.status == "received"
+        # The published result is observable by a waiter.
+        assert await channel.wait_for("call_1") == {"success": 1, "error": None, "result": "ok"}
+
+    @pytest.mark.asyncio
+    async def test_late_report_returns_ignored(self):
+        channel = ToolResultChannel()
+        # Future already settled — simulates a report arriving after the waiter
+        # timed out / a duplicate.
+        await channel.publish("call_1", {"success": 1})
+        svc = _mock_svc(task=_task_with_channel(channel))
+
+        result = await submit_tool_result(_tool_result_input(), svc, MagicMock(user_id="owner"))
+
+        assert result.success is True
+        assert result.data.status == "ignored"
+
+    @pytest.mark.asyncio
+    async def test_unknown_task_returns_not_found(self):
+        svc = _mock_svc(task=None)
+
+        result = await submit_tool_result(_tool_result_input(), svc, MagicMock(user_id="owner"))
+
+        assert result.success is False
+        assert result.errorCode == "TASK_NOT_FOUND"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("decision", [0, 1])
+async def test_http_tool_result_requires_the_session_owner(tmp_path, decision):
+    """An authenticated project peer cannot accept or cancel another user's review."""
+    import asyncio
+    from types import SimpleNamespace
+
+    from fastapi import FastAPI, Request
+    from httpx import ASGITransport, AsyncClient
+
+    from datus.api.deps import get_app_context, get_datus_service
+    from datus.api.routes.chat_routes import router
+    from datus.tools.func_tool.semantic_plan_file_tools import SemanticPlanFileTools
+    from datus.tools.proxy.semantic_plan_review import apply_semantic_plan_review
+
+    writer = SemanticPlanFileTools(tmp_path)
+    node = SimpleNamespace(
+        action_bus=MagicMock(),
+        semantic_plan_file_tool=writer,
+        tools=writer.available_tools(),
+        tool_channel=ToolResultChannel(),
+        proxied_tool_names=set(),
+        scope="owner",
+    )
+    apply_semantic_plan_review(node)
+    svc = _mock_svc(SimpleNamespace(node=node, status="running"))
+    app = FastAPI()
+    app.include_router(router)
+    app.dependency_overrides[get_datus_service] = lambda: svc
+
+    def context(request: Request):
+        return SimpleNamespace(user_id=request.headers["x-user"])
+
+    app.dependency_overrides[get_app_context] = context
+    pending = asyncio.create_task(
+        node.tools[0].on_invoke_tool(
+            SimpleNamespace(tool_call_id="plan-call"), json.dumps({"model_name": "sales", "plan_json": {}})
+        )
+    )
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            query = {"session_id": "s1", "call_tool_id": "plan-call"}
+            for _ in range(100):
+                if "plan-call" in node.tool_review_previews:
+                    break
+                await asyncio.sleep(0.01)
+            preview = node.tool_review_previews["plan-call"]
+            payload = {**query, "tool_result": {"success": decision}}
+            for _ in range(2):
+                rejected = await client.post("/api/v1/chat/tool_result", json=payload, headers={"x-user": "peer"})
+                assert rejected.status_code == 404
+                assert not pending.done()
+                assert not list(tmp_path.rglob("semantic-model-plan.json"))
+            accepted = await client.post(
+                "/api/v1/chat/tool_result", json={**query, "tool_result": {"success": 1}}, headers={"x-user": "owner"}
+            )
+            assert accepted.status_code == 200
+            result = await pending
+            assert result["result"]["review_status"] == "accepted"
+            assert (tmp_path / preview["filePath"]).read_text() == preview["newText"]
+    finally:
+        node.tool_channel.cancel_all()
+        pending.cancel()
+        await asyncio.gather(pending, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("user,status", [("owner", 200), ("peer", 404)])
+async def test_resume_stream_is_scoped_to_the_task_owner(user, status):
+    from types import SimpleNamespace
+
+    from fastapi import FastAPI, Request
+    from httpx import ASGITransport, AsyncClient
+
+    from datus.api.deps import get_app_context, get_datus_service
+    from datus.api.routes.chat_routes import router
+    from datus.api.services.chat_task_manager import ChatTask, ChatTaskManager
+
+    task = ChatTask("review-session", None, user_id="owner")
+    task.status = "completed"
+    manager = ChatTaskManager()
+    manager._completed_tasks[task.session_id] = task
+    app = FastAPI()
+    app.include_router(router)
+    app.dependency_overrides[get_datus_service] = lambda: SimpleNamespace(task_manager=manager)
+
+    def context(request: Request):
+        return SimpleNamespace(user_id=request.headers["x-user"])
+
+    app.dependency_overrides[get_app_context] = context
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.post(
+            "/api/v1/chat/resume", json={"session_id": task.session_id}, headers={"x-user": user}
+        )
+    assert response.status_code == status
+
+
+class TestSemanticPlanReviewDecisions:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("status", ["accepted", "changes_requested", "cancelled"])
+    async def test_review_delivery_is_idempotent_and_cancellation_stops_the_turn(self, status):
+        import asyncio
+        from types import SimpleNamespace
+
+        from datus.api.services.chat_task_manager import ChatTaskManager
+        from datus.tools.proxy.semantic_plan_review import SemanticPlanReviewContext
+
+        channel = ToolResultChannel()
+        context = SemanticPlanReviewContext(channel, set(), previews={"review": {"newText": "frozen"}})
+        task = SimpleNamespace(
+            node=SimpleNamespace(scope="owner", tool_channel=channel, semantic_plan_review_context=context),
+            events=[],
+            condition=asyncio.Condition(),
+            tool_result_contents={},
+        )
+        svc = _mock_svc(task)
+        svc.task_manager.stop_task = AsyncMock(return_value=True)
+        svc.task_manager._push_event = AsyncMock(
+            side_effect=lambda task, event: ChatTaskManager._push_event(svc.task_manager, task, event)
+        )
+
+        # AsyncMock does not await a coroutine returned by its sync side effect.
+        async def push(task, event):
+            await ChatTaskManager._push_event(svc.task_manager, task, event)
+
+        svc.task_manager._push_event.side_effect = push
+        decision = {"review_status": status}
+        if status == "changes_requested":
+            decision["feedback"] = "Remove refund_amount"
+        request = ToolResultInput(
+            session_id="session",
+            call_tool_id="review",
+            tool_result=ToolResult(success=int(status == "accepted"), result=decision),
+        )
+        auth = SimpleNamespace(user_id="owner")
+        first = await submit_tool_result(request, svc, auth)
+        second = await submit_tool_result(request, svc, auth)
+        assert first.success and second.success
+        assert first.data.status == second.data.status == "received"
+        if status == "cancelled":
+            svc.task_manager.stop_task.assert_awaited_once_with("session")
+            assert task.events[0].data.payload.content[0].payload["result"]["result"]["review_status"] == "cancelled"
+        else:
+            svc.task_manager.stop_task.assert_not_awaited()
+            assert await channel.wait_for("review", timeout=1) == request.tool_result.model_dump()
+        conflicting = ToolResultInput(
+            session_id="session",
+            call_tool_id="review",
+            tool_result=ToolResult(
+                success=0, result={"review_status": "cancelled" if status != "cancelled" else "accepted"}
+            ),
+        )
+        assert (await submit_tool_result(conflicting, svc, auth)).errorCode == "REVIEW_ALREADY_RESOLVED"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("feedback", ["", "  ", ["metric"], "x" * 4001])
+    async def test_invalid_feedback_leaves_the_review_waiting(self, feedback):
+        from types import SimpleNamespace
+
+        from datus.tools.proxy.semantic_plan_review import SemanticPlanReviewContext
+
+        channel = ToolResultChannel()
+        context = SemanticPlanReviewContext(channel, set(), previews={"review": {}})
+        task = SimpleNamespace(
+            node=SimpleNamespace(scope="owner", tool_channel=channel, semantic_plan_review_context=context)
+        )
+        request = ToolResultInput(
+            session_id="session",
+            call_tool_id="review",
+            tool_result=ToolResult(success=0, result={"review_status": "changes_requested", "feedback": feedback}),
+        )
+        response = await submit_tool_result(request, _mock_svc(task), SimpleNamespace(user_id="owner"))
+        assert response.errorCode == "INVALID_REVIEW"
+        assert not context.decisions

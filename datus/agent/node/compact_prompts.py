@@ -19,9 +19,40 @@ from __future__ import annotations
 from typing import Optional
 
 from datus.prompts.prompt_manager import get_prompt_manager
+from datus.utils.message_utils import COMPACT_RESUME_MARKER, is_compact_resume_text
 
 _TEMPLATE_NAME = "compact_major"
 _TEMPLATE_VERSION = "1.0"
+
+#: Prefix of the resume instruction appended after a mid-turn compaction.
+MID_TURN_RESUME_PREFIX = COMPACT_RESUME_MARKER
+
+#: Extra steering for the summary when it is produced in the middle of a turn:
+#: the model resumes from it immediately, without a fresh user message.
+MID_TURN_SUMMARY_INSTRUCTIONS = (
+    "This summary is produced in the middle of a task: the agent resumes from it immediately, "
+    "without any new user message. Be exact about the step that was in flight, the result of the "
+    "most recent tool call, and the very next action to take."
+)
+
+
+def build_mid_turn_resume_message() -> str:
+    """The user-role instruction that closes a mid-turn compaction view.
+
+    Ends the rewritten history on a ``user`` turn so the model keeps working
+    rather than replying to the summary, and tells it not to re-ask or
+    acknowledge the compaction.
+    """
+    return (
+        f"{MID_TURN_RESUME_PREFIX} The conversation above was compacted while you were working. "
+        "Continue the task from the summary exactly where it left off: do not ask the user to "
+        "confirm, do not repeat completed work, and do not mention the compaction."
+    )
+
+
+def is_mid_turn_resume_text(text: str) -> bool:
+    """Whether ``text`` is a resume instruction produced by an earlier compaction."""
+    return is_compact_resume_text(text)
 
 
 def render_major_compact_prompt(
@@ -44,7 +75,9 @@ def render_major_compact_prompt(
     )
 
 
-def build_continuation_message(summary: str, history_jsonl_path: str) -> str:
+def build_continuation_message(
+    summary: str, history_jsonl_path: str, result_references: Optional[list[dict]] = None
+) -> str:
     """Append the JSONL recovery pointer to the LLM summary.
 
     The pointer is appended verbatim rather than asked of the LLM so that
@@ -53,6 +86,18 @@ def build_continuation_message(summary: str, history_jsonl_path: str) -> str:
     a plain markdown string suitable for an ``output_text`` assistant block.
     """
     body = summary.strip()
+    if result_references:
+        from datus.utils.tool_result_store import RESULT_REFERENCES_CLOSE, RESULT_REFERENCES_OPEN, json_text
+
+        body += (
+            "\n\nExact recent tool-result references retained by the runtime. Copy identifiers and cursors verbatim; "
+            "use read_tool_result to continue, or the history below for older results.\n"
+            + RESULT_REFERENCES_OPEN
+            + "\n"
+            + json_text(result_references)
+            + "\n"
+            + RESULT_REFERENCES_CLOSE
+        )
     if history_jsonl_path:
         return f"{body}\n\n---\nFull session history (every item, JSONL): `read_file({history_jsonl_path!r})`"
     return body

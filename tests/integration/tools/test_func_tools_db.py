@@ -34,7 +34,7 @@ class TestDBFuncToolIntegrationReal:
         result = ssb_db_tool.list_tables()
 
         assert result.success == 1
-        table_names = [t["name"] for t in result.result]
+        table_names = [t["qualified_name"].split(".")[-1] for t in result.result]
         # SSB database has: date, supplier, customer, part, lineorder
         expected_tables = {"date", "supplier", "customer", "part", "lineorder"}
         assert expected_tables.issubset(set(table_names))
@@ -46,46 +46,81 @@ class TestDBFuncToolIntegrationReal:
         assert result.success == 1
         assert "columns" in result.result
         columns = result.result["columns"]
-        assert len(columns) > 0
+        assert {"c_custkey", "c_name"}.issubset({col["name"] for col in columns})
 
         # Check column structure
         for col in columns:
             assert "name" in col
             assert "type" in col
 
+    def test_sqlite_describe_table_surfaces_constraints(self, tmp_path):
+        """Constraint facts (composite pk, NOT NULL, default) survive the real connector round-trip."""
+        import sqlite3
+
+        from datus.tools.db_tools.config import SQLiteConfig
+        from datus.tools.db_tools.sqlite_connector import SQLiteConnector
+
+        db_path = tmp_path / "constraints.db"
+        conn = sqlite3.connect(db_path)
+        conn.execute(
+            """
+            CREATE TABLE snapshot (
+                etl_dt TEXT NOT NULL,
+                org_no TEXT NOT NULL,
+                amount REAL,
+                status TEXT DEFAULT 'new',
+                PRIMARY KEY (etl_dt, org_no)
+            )
+            """
+        )
+        conn.commit()
+        conn.close()
+
+        connector = SQLiteConnector(SQLiteConfig(db_path=str(db_path)))
+        tool = DBFuncTool(connector)
+        result = tool.describe_table("snapshot")
+
+        assert result.success == 1, f"Expected success but got error: {result.error}"
+        cols = {c["name"]: c for c in result.result["columns"]}
+        assert cols["etl_dt"]["pk"] is True
+        assert cols["org_no"]["pk"] is True
+        assert cols["etl_dt"]["nullable"] is False
+        assert "pk" not in cols["amount"]
+        assert "nullable" not in cols["amount"]
+        assert cols["status"]["default_value"] == "'new'"
+
     def test_sqlite_read_query_executes_sql(self, ssb_db_tool):
         """Test that read_query executes actual SQL."""
         result = ssb_db_tool.read_query("SELECT COUNT(*) as cnt FROM customer")
 
         assert result.success == 1
-        assert result.result is not None
-        # Result should be compressed data with count info
-        assert "data" in result.result or "is_compressed" in result.result
+        assert result.result["original_rows"] == 1
+        assert result.result["original_columns"] == ["cnt"]
 
     def test_sqlite_read_query_with_limit(self, ssb_db_tool):
         """Test read_query with LIMIT clause."""
         result = ssb_db_tool.read_query("SELECT * FROM customer LIMIT 5")
 
         assert result.success == 1
-        assert result.result is not None
+        assert result.result["original_rows"] == 5
 
     def test_sqlite_read_query_invalid_sql_returns_error(self, ssb_db_tool):
         """Test that invalid SQL returns an error."""
         result = ssb_db_tool.read_query("SELECT * FROM nonexistent_table_xyz")
 
         assert result.success == 0
-        assert result.error is not None
+        assert "nonexistent_table_xyz" in result.error
 
     def test_sqlite_available_tools_correct_count(self, ssb_db_tool):
         """Test that SQLite returns correct number of tools."""
         tools = ssb_db_tool.available_tools()
 
-        # SQLite should have: list_tables, describe_table, read_query
+        # SQLite should have: list_tables, describe_table, execute_sql
         # No list_databases (single file), no list_schemas (SQLite doesn't have schemas)
         tool_names = {t.name for t in tools}
         assert "list_tables" in tool_names
         assert "describe_table" in tool_names
-        assert "read_query" in tool_names
+        assert "execute_sql" in tool_names
 
     def test_sqlite_connector_dialect(self, ssb_db_tool):
         """Test that SQLite connector has correct dialect."""
@@ -97,8 +132,7 @@ class TestDBFuncToolIntegrationReal:
 
         tool = db_function_tool_instance(ssb_sqlite_config)
 
-        assert tool._db_manager is not None
-        assert tool.connector is not None
+        assert tool.connector.dialect == DBType.SQLITE
 
 
 @pytest.mark.acceptance
@@ -127,7 +161,6 @@ class TestSqliteMultiConnector:
     def test_connector_mode_initialization(self, db_tool):
         """Test that multi-connector mode initializes correctly."""
 
-        assert db_tool._db_manager is not None
         assert db_tool._default_datasource == "bird_sqlite"
         assert db_tool._connector_cache_size > 1
 
@@ -143,13 +176,13 @@ class TestSqliteMultiConnector:
         result = db_tool.list_tables(database="california_schools")
         assert result.success == 1
         assert len(result.result) > 1
-        table_names = set([item["name"] for item in result.result])
+        table_names = set([item["qualified_name"].split(".")[-1] for item in result.result])
         assert {"frpm", "satscores", "schools"}.issubset(table_names)
 
         result = db_tool.list_tables(database="card_games")
         assert result.success == 1
         assert len(result.result) > 1
-        table_names = set([item["name"] for item in result.result])
+        table_names = set([item["qualified_name"].split(".")[-1] for item in result.result])
         assert {"cards", "legalities", "set_translations", "foreign_data", "rulings", "sets"}.issubset(table_names)
 
 
@@ -178,7 +211,7 @@ class TestDuckDBTool:
         result = duckdb_tool.list_tables(schema_name="mf_demo")
 
         assert result.success == 1
-        table_names = [t["name"] for t in result.result]
+        table_names = [t["qualified_name"].split(".")[-1] for t in result.result]
         # DuckDB has: mf_demo_countries, mf_demo_customers, mf_demo_transactions, mf_time_spine
         expected_tables = {"mf_demo_countries", "mf_demo_customers", "mf_demo_transactions", "mf_time_spine"}
         assert expected_tables.issubset(set(table_names))
@@ -199,21 +232,22 @@ class TestDuckDBTool:
         assert result.success == 1
         assert "columns" in result.result
         columns = result.result["columns"]
-        assert len(columns) > 0
+        assert {col["name"] for col in columns} == {"country", "ds", "id_customer"}
 
     def test_duckdb_read_query_executes_sql(self, duckdb_tool):
         """Test that read_query executes SQL on DuckDB."""
         result = duckdb_tool.read_query("SELECT COUNT(*) as cnt FROM mf_demo.mf_demo_customers")
 
         assert result.success == 1
-        assert result.result is not None
+        assert result.result["original_rows"] == 1
+        assert result.result["original_columns"] == ["cnt"]
 
     def test_duckdb_read_query_with_schema_qualified_table(self, duckdb_tool):
         """Test read_query with schema-qualified table name."""
         result = duckdb_tool.read_query("SELECT * FROM mf_demo.mf_demo_countries LIMIT 3")
 
         assert result.success == 1
-        assert result.result is not None
+        assert result.result["original_rows"] == 3
 
     def test_duckdb_connector_dialect(self, duckdb_tool):
         """Test that DuckDB connector has correct dialect."""
@@ -228,7 +262,7 @@ class TestDuckDBTool:
         assert "list_schemas" in tool_names
         assert "list_tables" in tool_names
         assert "describe_table" in tool_names
-        assert "read_query" in tool_names
+        assert "execute_sql" in tool_names
 
 
 # =============================================================================
@@ -250,7 +284,7 @@ class TestConnectorInterface:
         connector = connector_registry.create_connector("sqlite", config)
         try:
             result = connector.test_connection()
-            assert result is not None
+            assert result is True
         finally:
             connector.close()
 
@@ -260,11 +294,11 @@ class TestConnectorInterface:
 
         from datus.tools.db_tools.config import DuckDBConfig
 
-        config = DuckDBConfig(db_path="tests/data/datus_metricflow_db/duck.db")
+        config = DuckDBConfig(db_path="tests/data/demo_duckdb/duck.db")
         connector = connector_registry.create_connector("duckdb", config)
         try:
             result = connector.test_connection()
-            assert result is not None
+            assert result is True
         finally:
             connector.close()
 
@@ -295,7 +329,6 @@ class TestDBFuncToolErrors:
         result = ssb_db_tool.read_query("SELECT * FROM nonexistent_xyz_table")
 
         assert result.success == 0, "Should fail for nonexistent table"
-        assert result.error is not None, "Error message should not be None"
         assert len(result.error) > 10, f"Error message should be descriptive, got: {result.error}"
 
     def test_read_query_invalid_sql_syntax(self, ssb_db_tool):
@@ -303,8 +336,7 @@ class TestDBFuncToolErrors:
         result = ssb_db_tool.read_query("COMPLETELY INVALID SQL STATEMENT")
 
         assert result.success == 0, "Should fail for invalid SQL"
-        assert result.error is not None, "Error message should not be None"
-        assert len(result.error) > 0, "Error message should not be empty"
+        assert "Only read-only queries" in result.error
 
 
 @pytest.mark.acceptance
@@ -333,7 +365,7 @@ class TestScopedTables:
         result = scoped_db_tool.list_tables()
 
         assert result.success == 1, f"list_tables should succeed, got error: {result.error}"
-        table_names = [t["name"] for t in result.result]
+        table_names = [t["qualified_name"].split(".")[-1] for t in result.result]
 
         assert "customer" in table_names, "customer should be in scoped results"
         assert "lineorder" in table_names, "lineorder should be in scoped results"
@@ -361,7 +393,7 @@ class TestScopedTables:
         # Blocked table should fail
         blocked_result = scoped_tool.describe_table("supplier")
         assert blocked_result.success == 0, "describe_table for out-of-scope table should fail"
-        assert blocked_result.error is not None, "Should have error message"
+        assert "scope" in blocked_result.error.lower()
 
 
 @pytest.mark.acceptance
@@ -382,3 +414,203 @@ class TestSearchTable:
             assert "search_table" in tool_names, "search_table should be available when schema RAG exists"
         else:
             assert "search_table" not in tool_names, "search_table should not be available without schema RAG"
+
+
+@pytest.mark.acceptance
+class TestAllToolsNameContract:
+    """all_tools_name() is the agent-facing tool surface, minus non-tool methods.
+
+    It feeds two consumers: VALID_TOOL_METHODS (datus/api/services/agent_service.py,
+    the saas editor catalog returned by GET /agent/use_tools) and the permission
+    registry (AgenticNode._populate_tool_registry). Two kinds of public methods
+    must never leak into it: framework plumbing (``to_function_tool``) and the
+    internal statement-dispatch helpers of the unified ``execute_sql`` entry point
+    (``read_query`` / ``execute_write`` / ``execute_ddl`` / ``get_table_ddl``),
+    which are never decorated and never mounted as tools.
+    """
+
+    def test_all_tools_name_includes_decorated_tools(self):
+        """Every @mcp_tool()-decorated method is part of the surface."""
+        from datus.utils.mcp_decorators import get_mcp_tools
+
+        names = DBFuncTool.all_tools_name()
+
+        assert len(names) == len(set(names)), "no duplicate tool names"
+        decorated = {name for name, _, _ in get_mcp_tools(DBFuncTool)}
+        assert decorated == {
+            "search_table",
+            "list_databases",
+            "list_schemas",
+            "list_tables",
+            "describe_table",
+            "execute_sql",
+            "load_file_as_table",
+            "plan_datasource",
+            "import_database_file",
+            "check_datasource_quality",
+            "get_migration_capabilities",
+            "suggest_table_layout",
+            "validate_ddl",
+        }
+        assert decorated.issubset(set(names))
+
+    def test_all_tools_name_includes_directly_mounted_tools(self):
+        """Tools gen_job mounts directly stay in the surface so the permission
+        registry can classify them under db_tools — dropping them would silently
+        disable the ASK gate on ``transfer_query_result``. The other three also
+        carry @mcp_tool now; ``transfer_query_result`` does not."""
+        names = set(DBFuncTool.all_tools_name())
+
+        for tool in ("transfer_query_result", "get_migration_capabilities", "suggest_table_layout", "validate_ddl"):
+            assert tool in names, f"{tool} is mounted directly by gen_job and must stay classified"
+
+    def test_all_tools_name_excludes_non_tool_methods(self):
+        """Framework plumbing and internal execute_sql dispatch helpers are not
+        tools and must not appear in the surface (they leak into the saas editor
+        catalog otherwise)."""
+        names = set(DBFuncTool.all_tools_name())
+
+        for method in (
+            "to_function_tool",
+            "available_tools",
+            "read_query",
+            "execute_write",
+            "execute_ddl",
+            "get_table_ddl",
+            "quote_sql_identifier",
+        ):
+            assert hasattr(DBFuncTool, method), f"{method} should still exist as a method"
+            assert method not in names, f"{method} is not an agent tool and must be excluded"
+
+    def test_all_tools_name_is_exactly_the_real_tool_surface(self):
+        """The full db_tools surface is exactly the decorated tools plus the
+        gen_job-mounted tools — no more, no less. Pins the saas editor catalog."""
+        assert set(DBFuncTool.all_tools_name()) == {
+            # @mcp_tool()-decorated
+            "search_table",
+            "list_databases",
+            "list_schemas",
+            "list_tables",
+            "describe_table",
+            "execute_sql",
+            "load_file_as_table",
+            "plan_datasource",
+            "import_database_file",
+            "check_datasource_quality",
+            # mounted directly by gen_job
+            "transfer_query_result",
+            "get_migration_capabilities",
+            "suggest_table_layout",
+            "validate_ddl",
+        }
+
+
+@pytest.mark.acceptance
+class TestSqlReadOnlyDeploymentAgainstRealSqlite:
+    """``agent.sql_read_only`` end-to-end against a real connector.
+
+    The unit tests drive ``DBFuncTool`` with a mocked connector, which proves the
+    branch is taken but not that the write never lands. These run the same calls
+    against a real SQLite file and then assert the database is unchanged — the
+    property a deployment actually depends on.
+    """
+
+    @pytest.fixture
+    def db_path(self, tmp_path):
+        import sqlite3
+
+        path = tmp_path / "readonly.db"
+        conn = sqlite3.connect(path)
+        conn.execute("CREATE TABLE t (id INTEGER PRIMARY KEY, name TEXT)")
+        conn.execute("INSERT INTO t (id, name) VALUES (1, 'original')")
+        conn.commit()
+        conn.close()
+        return path
+
+    def _tool(self, db_path, *, sql_read_only):
+        import copy
+
+        from datus.tools.db_tools.config import SQLiteConfig
+        from datus.tools.db_tools.sqlite_connector import SQLiteConnector
+        from tests.conftest import load_acceptance_config
+
+        connector = SQLiteConnector(SQLiteConfig(db_path=str(db_path)))
+        # Deep-copied: hardening is one-way by design, so mutating the shared
+        # acceptance config would leak a read-only posture into every test that
+        # loads it afterwards.
+        config = copy.deepcopy(load_acceptance_config(datasource="ssb_sqlite", home="tests"))
+        if sql_read_only:
+            config.harden_sql_read_only()
+        return DBFuncTool(connector, agent_config=config)
+
+    @staticmethod
+    def _rows(db_path):
+        import sqlite3
+
+        conn = sqlite3.connect(db_path)
+        try:
+            return conn.execute("SELECT id, name FROM t ORDER BY id").fetchall()
+        finally:
+            conn.close()
+
+    @staticmethod
+    def _tables(db_path):
+        import sqlite3
+
+        conn = sqlite3.connect(db_path)
+        try:
+            return {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        finally:
+            conn.close()
+
+    @pytest.mark.parametrize(
+        "sql",
+        [
+            "INSERT INTO t (id, name) VALUES (2, 'added')",
+            "UPDATE t SET name = 'changed'",
+            "DELETE FROM t",
+            "DROP TABLE t",
+            "CREATE TABLE t2 (id INT)",
+            "ALTER TABLE t ADD COLUMN extra TEXT",
+            "SELECT 1; DROP TABLE t",
+        ],
+    )
+    def test_writes_are_refused_and_the_database_is_untouched(self, db_path, sql):
+        tool = self._tool(db_path, sql_read_only=True)
+
+        result = tool.execute_sql(sql)
+
+        assert result.success == 0
+        assert self._rows(db_path) == [(1, "original")]
+        assert self._tables(db_path) == {"t"}
+
+    def test_reads_still_work(self, db_path):
+        tool = self._tool(db_path, sql_read_only=True)
+
+        result = tool.execute_sql("SELECT id, name FROM t")
+
+        assert result.success == 1
+
+    def test_writable_pragma_is_refused(self, db_path):
+        """Classifies as METADATA_SHOW but mutates the file."""
+        tool = self._tool(db_path, sql_read_only=True)
+
+        assert tool.execute_sql("PRAGMA journal_mode=WAL").success == 0
+
+    def test_transfer_query_result_is_refused(self, db_path):
+        """gen_job mounts this directly and it writes to the TARGET datasource
+        without going through execute_sql."""
+        tool = self._tool(db_path, sql_read_only=True)
+
+        result = tool.transfer_query_result(source_sql="SELECT * FROM t", target_table="copy_of_t")
+
+        assert result.success == 0
+        assert "copy_of_t" not in self._tables(db_path)
+
+    def test_the_same_writes_succeed_when_the_switch_is_off(self, db_path):
+        """The gate is opt-in: without it these calls really do mutate the
+        database, which is what makes the refusals above meaningful."""
+        tool = self._tool(db_path, sql_read_only=False)
+
+        assert tool.execute_sql("INSERT INTO t (id, name) VALUES (2, 'added')").success == 1
+        assert self._rows(db_path) == [(1, "original"), (2, "added")]

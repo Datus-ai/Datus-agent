@@ -14,13 +14,15 @@ from unittest.mock import MagicMock, patch
 import pytest
 from rich.console import Console
 
-from datus.cli.bootstrap_bi_commands import BootstrapBiCommands
+from datus.cli.bootstrap_bi_commands import _DASHBOARD_BOOTSTRAP_PROMPT, BootstrapBiCommands
 from datus.cli.bootstrap_bi_picker import BootstrapBiPlan, DashboardCliOptions
-from datus.cli.bootstrap_streams import stream_metrics, stream_semantic_model
+from datus.cli.bootstrap_streams import stream_semantic_modeling
 from datus.cli.build_kb_commands import BuildKbCommands
 from datus.cli.datasource_commands import DatasourceCommands
 from datus.cli.init_commands import _INIT_PROMPT, InitCommands
+from datus.cli.input_modes import InputMode
 from datus.cli.model_commands import ModelCommands
+from datus.cli.plugin_commands import PluginCommands
 from datus.cli.repl import CommandType, DatusCLI
 from datus.cli.skill_command_utils import render_skill_prompt
 from datus.cli.slash_registry import lookup
@@ -52,6 +54,7 @@ def _build_core_cli() -> DatusCLI:
     cli = object.__new__(DatusCLI)
     cli.console = _console()
     cli.plan_mode_active = True
+    cli.input_mode = InputMode.CHAT
     cli.tui_app = None
     cli._prefill_input = None
     cli.default_agent = ""
@@ -87,8 +90,10 @@ def _build_core_cli() -> DatusCLI:
     cli.bootstrap_bi_commands = MagicMock()
     cli.bootstrap_commands = MagicMock()
     cli.model_commands = ModelCommands(cli)
+    cli.plugin_commands = PluginCommands(cli)
     cli.language_commands = MagicMock()
     cli.effort_commands = MagicMock()
+    cli.sandbox_commands = MagicMock()
     cli.init_commands = InitCommands(cli)
     cli.build_kb_commands = BuildKbCommands(cli)
     cli.datasource_commands = DatasourceCommands(cli)
@@ -112,17 +117,31 @@ def _build_core_cli() -> DatusCLI:
     return cli
 
 
-def test_cli_slash_commands_route_through_shared_repl_dispatch() -> None:
+def test_cli_slash_commands_route_through_shared_repl_dispatch(tmp_path) -> None:
     cli = _build_core_cli()
+    cli.agent_config.project_root = tmp_path
+    cli.agent_config.project_name = "core_acceptance"
+    cli.agent_config.sub_agent_config.return_value = {}
+    cli.agent_config.current_db_config.return_value = SimpleNamespace(
+        type="duckdb",
+        catalog="",
+        database="",
+        schema="",
+        to_dict=lambda: {"type": "duckdb"},
+    )
+    cli.cli_context.current_catalog = ""
+    cli.cli_context.current_db_name = ""
+    cli.cli_context.current_schema = ""
 
     cmd_type, cmd, args = DatusCLI._parse_command(cli, "/init")
     assert (cmd_type, cmd, args) == (CommandType.SLASH, "/init", "")
     DatusCLI._execute_slash_command(cli, cmd, args)
-    cli.chat_commands.execute_chat_command.assert_called_once_with(
-        render_skill_prompt(_INIT_PROMPT, ""),
-        plan_mode=True,
-        subagent_name=None,
-    )
+    cli.chat_commands.execute_chat_command.assert_called_once()
+    call = cli.chat_commands.execute_chat_command.call_args
+    assert call.args[0].startswith(render_skill_prompt(_INIT_PROMPT, ""))
+    assert call.kwargs["plan_mode"] is True
+    assert call.kwargs["subagent_name"] is None
+    assert call.kwargs["init_context"].root == tmp_path.resolve()
 
     cmd_type, cmd, args = DatusCLI._parse_command(cli, "/model openai/gpt-5.5")
     assert (cmd_type, cmd, args) == (CommandType.SLASH, "/model", "openai/gpt-5.5")
@@ -152,6 +171,33 @@ def test_cli_slash_commands_route_through_shared_repl_dispatch() -> None:
     cli.bg_sync.schedule.assert_called_once_with(datasource="warehouse", reason="switch")
 
 
+def test_bootstrap_bi_routes_to_dashboard_bootstrap_skill() -> None:
+    cli = _build_core_cli()
+    cli.bootstrap_bi_commands = BootstrapBiCommands(cli)
+    cli.commands["/bootstrap-bi"] = cli.bootstrap_bi_commands.cmd
+
+    cmd_type, cmd, args = DatusCLI._parse_command(
+        cli,
+        "/bootstrap-bi use Superset profile prod and dashboard 42",
+    )
+    assert (cmd_type, cmd, args) == (
+        CommandType.SLASH,
+        "/bootstrap-bi",
+        "use Superset profile prod and dashboard 42",
+    )
+
+    DatusCLI._execute_slash_command(cli, cmd, args)
+
+    cli.chat_commands.execute_chat_command.assert_called_once_with(
+        render_skill_prompt(
+            _DASHBOARD_BOOTSTRAP_PROMPT,
+            "use Superset profile prod and dashboard 42",
+        ),
+        plan_mode=True,
+        subagent_name=None,
+    )
+
+
 def test_quickstart_documented_repl_entrypoints_stay_routable() -> None:
     """Quickstart REPL commands should remain valid slash/SQL/chat entrypoints."""
     repo_root = Path(__file__).resolve().parents[3]
@@ -175,77 +221,100 @@ def test_quickstart_documented_repl_entrypoints_stay_routable() -> None:
         (CommandType.SLASH, "/tables", ""),
     ]
 
+    # SQL is no longer auto-detected: bare ``desc ...`` is model chat by
+    # default, and only executes as SQL once the user opts into SQL mode
+    # (Tab on an empty line in the TUI cycles chat → sql → bash).
+    assert DatusCLI._parse_command(cli, "desc gold_vs_bitcoin")[0] == CommandType.CHAT
+    cli.input_mode = InputMode.SQL
     assert DatusCLI._parse_command(cli, "desc gold_vs_bitcoin")[0] == CommandType.SQL
+    cli.input_mode = InputMode.BASH
+    assert DatusCLI._parse_command(cli, "git status")[0] == CommandType.BASH
+    cli.input_mode = InputMode.CHAT
     assert DatusCLI._parse_command(cli, "Detailed analysis of gold-Bitcoin correlation.")[0] == CommandType.CHAT
 
 
 @pytest.mark.asyncio
-async def test_bootstrap_semantic_model_and_metrics_streams_orchestrate_fake_helpers() -> None:
-    agent_config = SimpleNamespace(current_datasource="", project_name="acceptance-project")
+async def test_bootstrap_semantic_modeling_stream_orchestrates_unified_helper() -> None:
+    agent_config = SimpleNamespace(
+        current_datasource="",
+        project_name="acceptance-project",
+    )
     calls: list[tuple] = []
 
-    async def fake_semantic(agent_config, success_story, emit, *, build_mode, action_callback):
-        calls.append(("semantic", agent_config.current_datasource, success_story, build_mode))
-        action_callback(_action("semantic artifact persisted", action_type="semantic_model_saved"))
-        return True, ""
-
-    async def fake_metrics(
-        *,
+    async def fake_semantic_modeling(
         agent_config,
         success_story,
         subject_tree,
         emit,
+        *,
         build_mode,
         action_callback,
     ):
         calls.append(
             (
-                "metrics",
+                "semantic_modeling",
                 agent_config.current_datasource,
                 success_story,
                 tuple(subject_tree or ()),
                 build_mode,
             )
         )
-        action_callback(_action("metrics artifact persisted", action_type="metrics_saved"))
+        action_callback(_action("Dosi semantic layer persisted", action_type="semantic_modeling_saved"))
         return True, "", {"semantic_models": ["subject/semantic_models/local/orders.yml"]}
 
-    with (
-        patch(
-            "datus.storage.semantic_model.semantic_model_init.init_success_story_semantic_model_async",
-            side_effect=fake_semantic,
-        ),
-        patch(
-            "datus.storage.metric.metric_init.init_success_story_metrics_async",
-            side_effect=fake_metrics,
-        ),
+    with patch(
+        "datus.storage.semantic_model.semantic_modeling_init.init_success_story_semantic_modeling_async",
+        side_effect=fake_semantic_modeling,
     ):
-        semantic_actions = [
+        actions = [
             action
-            async for action in stream_semantic_model(
-                agent_config,
-                datasource="local",
-                success_story="/tmp/story.csv",
-                build_mode="overwrite",
-            )
-        ]
-        metrics_actions = [
-            action
-            async for action in stream_metrics(
+            async for action in stream_semantic_modeling(
                 agent_config,
                 datasource="local",
                 success_story="/tmp/story.csv",
                 subject_tree=["Sales", "Orders"],
-                build_mode="incremental",
+                build_mode="overwrite",
             )
         ]
 
     assert calls == [
-        ("semantic", "local", "/tmp/story.csv", "overwrite"),
-        ("metrics", "local", "/tmp/story.csv", ("Sales", "Orders"), "incremental"),
+        ("semantic_modeling", "local", "/tmp/story.csv", ("Sales", "Orders"), "overwrite"),
     ]
-    assert any(action.action_type == "semantic_model_saved" for action in semantic_actions)
-    assert any(action.action_type == "metrics_saved" for action in metrics_actions)
+    assert any(action.action_type == "semantic_modeling_saved" for action in actions)
+
+
+@pytest.mark.asyncio
+async def test_bootstrap_semantic_modeling_stream_propagates_expected_failure() -> None:
+    agent_config = SimpleNamespace(
+        current_datasource="",
+        project_name="acceptance-project",
+    )
+
+    async def fake_semantic_modeling(
+        *_args: object,
+        **_kwargs: object,
+    ) -> tuple[bool, str, None]:
+        return False, "Invalid success-story input.", None
+
+    with patch(
+        "datus.storage.semantic_model.semantic_modeling_init.init_success_story_semantic_modeling_async",
+        side_effect=fake_semantic_modeling,
+    ):
+        actions = [
+            action
+            async for action in stream_semantic_modeling(
+                agent_config,
+                datasource="local",
+                success_story="/tmp/invalid.csv",
+            )
+        ]
+
+    assert any(
+        action.status == ActionStatus.FAILED.value and "Invalid success-story input" in action.messages
+        for action in actions
+    )
+    assert actions[-1].action_id.startswith("complete_")
+    assert actions[-1].status == ActionStatus.FAILED.value
 
 
 @pytest.mark.asyncio
@@ -255,7 +324,6 @@ async def test_bootstrap_bi_extracts_context_and_hands_it_to_save_stream() -> No
         db_type="duckdb",
         agentic_nodes={},
         path_manager=SimpleNamespace(),
-        resolve_semantic_adapter=lambda value: value,
         current_db_config=lambda *_a, **_k: SimpleNamespace(catalog="cat", database="db", schema="public"),
     )
     plan = BootstrapBiPlan(
@@ -290,11 +358,8 @@ async def test_bootstrap_bi_extracts_context_and_hands_it_to_save_stream() -> No
 
     async def semantic_model_stream(*_args, state, **_kwargs):
         state.semantic_ok = True
-        yield _action("semantic model ready", action_type="gen_semantic_model")
-
-    async def metrics_stream(*_args, state, **_kwargs):
         state.metrics.append("superset.sales.total_orders")
-        yield _action("metrics ready", action_type="gen_metrics")
+        yield _action("semantic layer ready", action_type="semantic_modeling")
 
     async def save_stream(*_args, sub_agent_name, scoped_context, **_kwargs):
         saved["sub_agent_name"] = sub_agent_name
@@ -306,7 +371,6 @@ async def test_bootstrap_bi_extracts_context_and_hands_it_to_save_stream() -> No
         patch("datus.cli.bootstrap_bi_commands.stream_bi_metadata", side_effect=metadata_stream),
         patch("datus.cli.bootstrap_bi_commands.stream_bi_reference_sql", side_effect=reference_sql_stream),
         patch("datus.cli.bootstrap_bi_commands.stream_bi_semantic_model", side_effect=semantic_model_stream),
-        patch("datus.cli.bootstrap_bi_commands.stream_bi_metrics", side_effect=metrics_stream),
         patch("datus.cli.bootstrap_bi_commands.stream_bi_save_subagents", side_effect=save_stream),
         patch("datus.cli.bootstrap_bi_commands.qualify_table_names", return_value=["cat.db.public.orders"]),
         patch("datus.cli.bootstrap_bi_commands.SubAgentManager"),
@@ -325,8 +389,7 @@ async def test_bootstrap_bi_extracts_context_and_hands_it_to_save_stream() -> No
         "schema_crawl",
         "sql_summary_response",
     ]
-    assert any(action.action_type == "gen_semantic_model" for action in actions)
-    assert any(action.action_type == "gen_metrics" for action in actions)
+    assert any(action.action_type == "semantic_modeling" for action in actions)
     assert any(action.action_type == "save_subagents" for action in actions)
 
 
@@ -337,7 +400,6 @@ async def test_bootstrap_bi_missing_table_context_fails_before_subagent_save() -
         db_type="duckdb",
         agentic_nodes={},
         path_manager=SimpleNamespace(),
-        resolve_semantic_adapter=lambda value: value,
         current_db_config=lambda *_a, **_k: SimpleNamespace(catalog="cat", database="db", schema="public"),
     )
     plan = BootstrapBiPlan(

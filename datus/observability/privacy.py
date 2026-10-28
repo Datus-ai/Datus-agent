@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import re
+from functools import lru_cache
 from typing import Any, Mapping
 
 from datus.observability.config import RedactConfig
@@ -60,17 +61,23 @@ def _is_sensitive_field(key: str, fields: list[str]) -> bool:
     return False
 
 
-def _field_parts(value: str) -> list[str]:
+# Three regex passes per call, made for every key of every redacted mapping and
+# again for every configured field. The inputs repeat endlessly -- the same
+# schema keys ("type", "properties", "description") and the same handful of
+# configured fields -- so the result is cached. A tuple, so a cached value can
+# never be mutated by a caller.
+@lru_cache(maxsize=4096)
+def _field_parts(value: str) -> tuple[str, ...]:
     acronym_spaced = re.sub(r"([A-Z]+)([A-Z][a-z])", r"\1_\2", value)
     camel_spaced = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", acronym_spaced)
-    return [part for part in re.split(r"[^A-Za-z0-9]+", camel_spaced.lower()) if part]
+    return tuple(part for part in re.split(r"[^A-Za-z0-9]+", camel_spaced.lower()) if part)
 
 
 def _normalize_field(value: str) -> str:
     return "_".join(_field_parts(value))
 
 
-def _contains_part_sequence(parts: list[str], target: list[str]) -> bool:
+def _contains_part_sequence(parts: tuple[str, ...], target: tuple[str, ...]) -> bool:
     if not target or len(target) > len(parts):
         return False
     size = len(target)

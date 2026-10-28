@@ -6,7 +6,7 @@ chat-history retrieval can share the same conversion logic.
 """
 
 import json
-from typing import Any, List, Optional
+from typing import Any, Dict, List, Optional, Set
 
 from datus.agent.node.compact_archive import parse_archived_marker
 from datus.api.models.cli_models import (
@@ -18,7 +18,13 @@ from datus.api.models.cli_models import (
     SSEUsageData,
     SSEUsageDelta,
 )
-from datus.schemas.action_history import SUBAGENT_COMPLETE_ACTION_TYPE, ActionHistory, ActionRole, ActionStatus
+from datus.schemas.action_history import (
+    SUBAGENT_COMPLETE_ACTION_TYPE,
+    TOOL_PREVIEW_ACTION_TYPE,
+    ActionHistory,
+    ActionRole,
+    ActionStatus,
+)
 from datus.utils.json_utils import llm_result2json
 from datus.utils.loggings import get_logger
 from datus.utils.time_utils import now_utc_iso, to_utc_iso
@@ -52,14 +58,33 @@ def _extract_function(action: ActionHistory) -> tuple[str, dict]:
     return function_name, arguments
 
 
-def _build_tool_call_content(action: ActionHistory) -> List[IMessageContent]:
-    """Build content for tool call started event."""
+def _build_tool_call_content(
+    action: ActionHistory,
+    proxied_tool_names: Optional[Set[str]] = None,
+    tool_previews: Optional[Dict[str, dict]] = None,
+) -> List[IMessageContent]:
+    """Build content for tool call started event.
+
+    ``proxied_tool_names`` — names of tools the client must execute and
+    report back (see ``apply_proxy_tools``). When provided, the payload
+    carries ``proxied`` so the web client knows whether to run the tool
+    (True) or the server already ran it (False). Omitted for converters
+    without a live node (history retrieval): absent means the client
+    falls back to its legacy heuristic.
+    """
     function_name, arguments = _extract_function(action)
     payload_data = {
         "callToolId": action.action_id,
         "toolName": function_name,
         "toolParams": arguments,
     }
+    if proxied_tool_names is not None:
+        payload_data["proxied"] = function_name in proxied_tool_names
+    preview = (tool_previews or {}).get(action.action_id)
+    if action.action_type == TOOL_PREVIEW_ACTION_TYPE and isinstance(action.output, dict):
+        preview = action.output.get("preview")
+    if preview is not None:
+        payload_data["preview"] = preview
     return [IMessageContent(type="call-tool", payload=payload_data)]
 
 
@@ -177,9 +202,13 @@ def _extract_error(value: Any) -> Optional[str]:
 
 def _build_user_content(action: ActionHistory) -> List[IMessageContent]:
     """Build content for user message event."""
+    from datus.cli.manual_exec import exec_to_markdown
+
     input_data = action.input
     user_message = input_data.get("user_message", "") if isinstance(input_data, dict) else ""
-    payload_data = {"content": user_message}
+    # A manual-execution record renders as readable Markdown so the raw
+    # sentinel never reaches SSE clients.
+    payload_data = {"content": exec_to_markdown(user_message)}
     return [IMessageContent(type="markdown", payload=payload_data)]
 
 
@@ -255,10 +284,19 @@ def _build_thinking_content(action: ActionHistory) -> Optional[List[IMessageCont
 
 
 def _build_error_content(action: ActionHistory) -> List[IMessageContent]:
-    """Build content for failed action event, extracting error from BaseResult format."""
+    """Build content for failed action event, extracting error from BaseResult format.
+
+    The output's ``error_code`` (an ``ErrorCode`` name such as
+    ``MODEL_NOT_FOUND``) goes out as ``errorCode`` when the node classified the
+    failure, so a host can offer the right fix without parsing the provider's
+    message.
+    """
     output = action.output if isinstance(action.output, dict) else {}
     error_message = output.get("error") or action.messages or "Unknown error"
-    return [IMessageContent(type="error", payload={"content": error_message})]
+    payload: Dict[str, Any] = {"content": error_message}
+    if output.get("error_code"):
+        payload["errorCode"] = output["error_code"]
+    return [IMessageContent(type="error", payload=payload)]
 
 
 def _build_interaction_content(action: ActionHistory) -> List[IMessageContent]:
@@ -361,9 +399,113 @@ def _build_interaction_result_content(action: ActionHistory) -> Optional[List[IM
     return [IMessageContent(type="markdown", payload=payload_data)]
 
 
+def _build_answered_ask_user_content(
+    call_action: ActionHistory, result_action: ActionHistory
+) -> Optional[List[IMessageContent]]:
+    """Rebuild an answered ``ask_user`` card from its tool call + tool result.
+
+    The INTERACTION actions behind a live card never reach the stored
+    transcript, so on history replay only the tool pair survives. Returns
+    ``None`` unless the question was actually answered (cancelled, failed or
+    malformed calls keep rendering as they did before).
+    """
+    _, arguments = _extract_function(call_action)
+    questions = arguments.get("questions")
+    if isinstance(questions, str):
+        try:
+            questions = json.loads(questions)
+        except (TypeError, ValueError):
+            return None
+    if not isinstance(questions, list) or not questions:
+        return None
+
+    result_payload = _normalize_tool_result_payload(
+        output=result_action.output,
+        status=result_action.status,
+        fallback_error=result_action.messages,
+    )
+    if not result_payload.get("success"):
+        return None
+    answers_raw = result_payload.get("result")
+    if isinstance(answers_raw, str):
+        try:
+            answers_raw = json.loads(answers_raw)
+        except (TypeError, ValueError):
+            return None
+    if not isinstance(answers_raw, list) or len(answers_raw) != len(questions):
+        return None
+
+    requests_payload = []
+    answers = []
+    for question, answer_item in zip(questions, answers_raw):
+        if not isinstance(question, dict) or not isinstance(answer_item, dict):
+            return None
+        options = question.get("options") or None
+        if options is not None and not isinstance(options, list):
+            return None
+        multi_select = bool(question.get("multi_select")) if options else False
+        # Keys mirror ``AskUserTool``'s ``choices_dict`` so replay and live agree.
+        requests_payload.append(
+            {
+                "title": str(question.get("title") or "Question"),
+                "content": str(question.get("question") or ""),
+                "options": [{"key": str(j), "title": str(opt)} for j, opt in enumerate(options, 1)]
+                if options
+                else None,
+                "defaultChoice": None,
+                "contentType": "markdown",
+                "allowFreeText": True,
+                "multiSelect": multi_select,
+            }
+        )
+        # The tool result already carries display text, not option keys.
+        answer = answer_item.get("answer")
+        answers.append([str(a) for a in answer] if isinstance(answer, list) else [str(answer or "")])
+
+    payload_data = {
+        "interactionKey": call_action.action_id,
+        "actionType": "request_batch" if len(questions) > 1 else "request_choice",
+        "requests": requests_payload,
+        "submitted": True,
+        "answers": answers,
+    }
+    return [IMessageContent(type="user-interaction", payload=payload_data)]
+
+
 # ------------------------------------------------------------------
 # Public converter
 # ------------------------------------------------------------------
+
+
+def answered_ask_user_to_sse_event(
+    call_action: ActionHistory,
+    result_action: ActionHistory,
+    event_id: int,
+    message_id: str,
+) -> Optional[SSEEvent]:
+    """History-only: an answered ``ask_user`` tool pair as one interaction card.
+
+    Kept out of ``action_to_sse_event`` on purpose — the live stream already
+    emits the real INTERACTION card, and doing this there would draw it twice.
+    """
+    contents = _build_answered_ask_user_content(call_action, result_action)
+    if contents is None:
+        return None
+    return SSEEvent(
+        id=event_id,
+        event="message",
+        data=SSEMessageData(
+            type=SSEDataType.CREATE_MESSAGE,
+            payload=SSEMessagePayload(
+                message_id=message_id,
+                role="assistant",
+                content=contents,
+                depth=call_action.depth,
+                parent_action_id=call_action.parent_action_id,
+            ),
+        ),
+        timestamp=to_utc_iso(getattr(call_action, "start_time", None)) or now_utc_iso(),
+    )
 
 
 def _build_token_usage_event(action: ActionHistory, event_id: int) -> Optional[SSEEvent]:
@@ -413,6 +555,7 @@ def _build_token_usage_event(action: ActionHistory, event_id: int) -> Optional[S
         output_tokens=_i(cumulative, "output_tokens"),
         total_tokens=_i(cumulative, "total_tokens"),
         cached_tokens=_i(cumulative, "cached_tokens"),
+        cache_write_tokens=_i(cumulative, "cache_write_tokens"),
         reasoning_tokens=_i(cumulative, "reasoning_tokens"),
         last_call_input_tokens=last_call_input_tokens,
         context_length=context_length,
@@ -422,6 +565,7 @@ def _build_token_usage_event(action: ActionHistory, event_id: int) -> Optional[S
             output_tokens=_i(delta, "output_tokens"),
             total_tokens=_i(delta, "total_tokens"),
             cached_tokens=_i(delta, "cached_tokens"),
+            cache_write_tokens=_i(delta, "cache_write_tokens"),
             reasoning_tokens=_i(delta, "reasoning_tokens"),
         ),
     )
@@ -442,6 +586,8 @@ def action_to_sse_event(
     is_first_delta: bool = True,
     is_update: bool = False,
     include_final_response: bool = False,
+    proxied_tool_names: Optional[Set[str]] = None,
+    tool_previews: Optional[Dict[str, dict]] = None,
 ) -> Optional[SSEEvent]:
     """Convert an ActionHistory object to an SSEEvent.
 
@@ -469,6 +615,10 @@ def action_to_sse_event(
         If True, convert node wrapper actions such as chat_response to markdown.
         Streaming callers should only set this when no plain assistant response
         has already been emitted for the turn.
+    proxied_tool_names : Optional[Set[str]]
+        Tool names proxied to the client for execution; stamps ``proxied``
+        on call-tool payloads (see ``_build_tool_call_content``). Pass None
+        when no live node is available (history retrieval).
     """
     try:
         role = action.role
@@ -533,7 +683,9 @@ def action_to_sse_event(
         elif action.action_type == SUBAGENT_COMPLETE_ACTION_TYPE:
             contents = _build_subagent_complete_content(action)
         elif role == ActionRole.TOOL and status == ActionStatus.PROCESSING:
-            contents = _build_tool_call_content(action)
+            contents = _build_tool_call_content(action, proxied_tool_names, tool_previews)
+            if action.action_type == TOOL_PREVIEW_ACTION_TYPE:
+                sse_type = SSEDataType.UPDATE_MESSAGE
         elif role == ActionRole.TOOL:
             contents = _build_tool_result_content(action)
         elif role == ActionRole.INTERACTION and status == ActionStatus.PROCESSING:

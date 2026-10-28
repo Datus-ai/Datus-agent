@@ -211,7 +211,9 @@ class TestDeepSeekModel:
         ]
 
         for prompt in prompts:
-            result = self.model.generate(prompt, max_tokens=100)
+            # deepseek-v4-flash may spend part of the output budget on
+            # reasoning before emitting the final answer.
+            result = self.model.generate(prompt, max_tokens=512)
 
             assert result is not None, f"Response should not be None for prompt: {prompt}"
             assert isinstance(result, str), "Response should be a string"

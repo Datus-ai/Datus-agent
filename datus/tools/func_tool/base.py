@@ -3,12 +3,15 @@
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
 # -*- coding: utf-8 -*-
+import asyncio
 import inspect
 import json
-from typing import Any, Callable, Dict, Iterable, List, Optional
+from typing import Any, Callable, Dict, Iterable, List, Optional, TypeVar
 
+import json_repair
 from agents import FunctionTool, function_tool
-from pydantic import BaseModel, Field
+from agents.function_schema import function_schema
+from pydantic import BaseModel, Field, ValidationError
 
 from datus.utils.loggings import get_logger
 
@@ -26,6 +29,130 @@ def normalize_null(value):
     if isinstance(value, str) and value.strip().lower() in ("null", "none", ""):
         return None
     return value
+
+
+def normalize_tool_args(arguments: dict, params_schema: dict) -> dict:
+    """Decode stringified arrays/booleans only for unambiguous declared types.
+
+    Leave strings, open objects, ambiguous unions and nested values untouched.
+    Normalization does not replace the tool's strict argument validation.
+    """
+    normalized = dict(arguments)
+    for name, schema in params_schema.get("properties", {}).items():
+        value = arguments.get(name)
+        if not isinstance(value, str):
+            continue
+        variants = schema.get("anyOf", [schema])
+        types = [variant.get("type") for variant in variants]
+        if any(not isinstance(kind, str) for kind in types):
+            continue
+        kinds = set(types) - {"null"}
+        if kinds == {"boolean"} and value.casefold() in {"true", "false"}:
+            normalized[name] = value.casefold() == "true"
+        elif kinds == {"array"}:
+            try:
+                decoded = json.loads(value)
+            except (ValueError, RecursionError):
+                continue
+            if isinstance(decoded, list):
+                normalized[name] = decoded
+    return normalized
+
+
+def parse_tool_args(
+    args_str: Any,
+    *,
+    tool_name: str = "unknown",
+    params_schema: Optional[dict] = None,
+) -> tuple[dict, str, Optional[str]]:
+    """Parse tool arguments, repairing malformed JSON objects when possible.
+
+    Returns ``(arguments, canonical_json, error)``. ``canonical_json`` is always
+    a valid JSON object so it can safely replace the raw tool-call arguments
+    before the Agents SDK replays or persists the call. A repaired call returns
+    an error so the model retries with valid arguments instead of executing
+    parameters that permission hooks did not inspect.
+    """
+    if not args_str:
+        return {}, "{}", None
+
+    original_error: Optional[Exception] = None
+
+    if isinstance(args_str, str):
+        stripped = args_str.strip()
+        if not stripped:
+            return {}, "{}", None
+        try:
+            parsed = json.loads(stripped)
+        except (json.JSONDecodeError, TypeError) as exc:
+            original_error = exc
+            parsed = None
+            # Function-tool arguments must be a JSON object. Limiting repair to
+            # object-shaped input avoids turning arbitrary text into an empty
+            # object and treating it as a successful repair.
+            if stripped.startswith("{"):
+                try:
+                    parsed = json_repair.loads(stripped)
+                except Exception:  # noqa: BLE001 - json-repair is best effort
+                    parsed = None
+                if isinstance(parsed, dict):
+                    canonical_json = json.dumps(parsed, ensure_ascii=False, separators=(",", ":"))
+                    logger.warning(
+                        "Repaired malformed JSON arguments for tool '%s': %s",
+                        tool_name,
+                        original_error,
+                    )
+                    error = (
+                        f"Malformed JSON arguments for tool '{tool_name}' were repaired for replay. "
+                        "The tool was not executed. Retry the tool with one complete JSON object."
+                    )
+                    return parsed, canonical_json, error
+    else:
+        try:
+            parsed = dict(args_str)
+        except (TypeError, ValueError) as exc:
+            original_error = exc
+            parsed = None
+
+    if not isinstance(parsed, dict):
+        if original_error is None:
+            original_error = TypeError(f"expected a JSON object, got {type(parsed).__name__}")
+        args_len = len(args_str) if isinstance(args_str, str) else 0
+        truncated_hint = ""
+        if isinstance(args_str, str):
+            stripped = args_str.rstrip()
+            if stripped and not stripped.endswith("}"):
+                truncated_hint = " Output appears truncated — likely hit model max_output_tokens limit."
+        error = (
+            f"Invalid JSON arguments for tool '{tool_name}' ({original_error}). "
+            f"Args length: {args_len} chars.{truncated_hint}"
+        )
+        return {}, "{}", error
+
+    canonical_json = (
+        args_str if isinstance(args_str, str) else json.dumps(parsed, ensure_ascii=False, separators=(",", ":"))
+    )
+    if params_schema is not None:
+        normalized = normalize_tool_args(parsed, params_schema)
+        if normalized != parsed:
+            parsed = normalized
+            canonical_json = json.dumps(parsed, ensure_ascii=False, separators=(",", ":"))
+    return parsed, canonical_json, None
+
+
+def write_back_tool_args(tool_ctx: Any, canonical_json: str) -> None:
+    """Update the current SDK tool call so replay and session persistence use valid JSON."""
+    if tool_ctx is None:
+        return
+
+    tool_ctx.tool_arguments = canonical_json
+    tool_call = getattr(tool_ctx, "tool_call", None)
+    if tool_call is None:
+        return
+    if isinstance(tool_call, dict):
+        tool_call["arguments"] = canonical_json
+    else:
+        tool_call.arguments = canonical_json
 
 
 class FuncToolResult(BaseModel):
@@ -91,10 +218,27 @@ class FuncToolListResult(BaseModel):
     )
 
 
+_ToolMethod = TypeVar("_ToolMethod", bound=Callable)
+
+
+def tool_schema(*, strict_mode: bool) -> Callable[[_ToolMethod], _ToolMethod]:
+    """Declare schema policy on a callable without wrapping or registering it.
+
+    ``trans_to_function_tool`` reads this declaration for every registration path,
+    including methods selected by name and methods listed by ``available_tools``.
+    """
+
+    def declare(method: _ToolMethod) -> _ToolMethod:
+        method.__datus_tool_strict_mode__ = strict_mode
+        return method
+
+    return declare
+
+
 def trans_to_function_tool(
     bound_method: Callable,
     *,
-    strict_mode: bool = True,
+    strict_mode: Optional[bool] = None,
     excluded_params: Optional[Iterable[str]] = None,
 ) -> FunctionTool:
     """
@@ -103,15 +247,17 @@ def trans_to_function_tool(
 
     Args:
         bound_method: The instance method to wrap.
-        strict_mode: When True (default), the OpenAI Agents SDK enforces a strict JSON schema
-            (no extra properties, no free-form ``Dict[str, Any]`` parameters). Set to False
-            for tools that genuinely need an open-ended object parameter — e.g. a
-            ``sample_params``-style dict where the LLM provides arbitrary keys matching
-            a declaration the tool itself validates.
+        strict_mode: Override the method's ``@tool_schema`` declaration. When omitted,
+            use the declaration, defaulting to True for undeclared methods. Strict mode
+            rejects free-form ``Dict[str, Any]`` parameters. Declare ``strict_mode=False``
+            on methods that accept binding names validated by the tool itself.
         excluded_params: Optional parameter names to remove from the exposed JSON schema.
             Use this for dialect-specific parameters that the current tool instance does not support.
     """
+    if strict_mode is None:
+        strict_mode = getattr(bound_method, "__datus_tool_strict_mode__", True)
     tool_template = function_tool(bound_method, strict_mode=strict_mode)
+    argument_schema = function_schema(bound_method, strict_json_schema=False)
     excluded_param_set = set(excluded_params or [])
 
     corrected_schema = json.loads(json.dumps(tool_template.params_json_schema))
@@ -125,30 +271,19 @@ def trans_to_function_tool(
     # The invoker MUST be an 'async' function.
     # We define a closure to correctly capture the 'bound_method' for each iteration.
     def create_async_invoker(method_to_call: Callable) -> Callable:
-        async def final_invoker(tool_ctx, args_str) -> dict:
+        async def final_invoker(tool_ctx, args_str) -> Any:
             """
             This is an async wrapper for tool methods.
             The agent framework will 'await' this coroutine.
             """
-            # The actual work (JSON parsing, method call)
-            try:
-                if args_str:
-                    args_dict = json.loads(args_str) if isinstance(args_str, str) else dict(args_str or {})
-                else:
-                    args_dict = {}
-            except (TypeError, json.JSONDecodeError) as e:
-                args_len = len(args_str) if isinstance(args_str, str) else 0
-                truncated_hint = ""
-                if isinstance(args_str, str) and args_len > 0:
-                    # Check if it looks like truncated output (no closing brace)
-                    stripped = args_str.rstrip()
-                    if not stripped.endswith("}") and not stripped.endswith("]"):
-                        truncated_hint = " Output appears truncated — likely hit model max_output_tokens limit."
-                return {
-                    "success": 0,
-                    "error": f"Invalid JSON arguments ({e}). Args length: {args_len} chars.{truncated_hint}",
-                    "result": None,
-                }
+            args_dict, canonical_json, error = parse_tool_args(
+                args_str,
+                tool_name=method_to_call.__name__,
+                params_schema=corrected_schema,
+            )
+            write_back_tool_args(tool_ctx, canonical_json)
+            if error:
+                return {"success": 0, "error": error, "result": None}
 
             # Call sync or async bound methods transparently
             if inspect.ismethod(method_to_call):
@@ -156,7 +291,8 @@ def trans_to_function_tool(
                 if hasattr(tool, "set_tool_context"):
                     tool.set_tool_context(tool_ctx)
 
-            # Filter out unexpected parameters that LLM may hallucinate
+            # Reject unknown arguments: silently dropping a filter can change
+            # the meaning of a successful query.
             sig = inspect.signature(method_to_call)
             valid_params = set(sig.parameters.keys()) - {"self"} - excluded_param_set
             has_var_keyword = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values())
@@ -171,18 +307,80 @@ def trans_to_function_tool(
             if not has_var_keyword:
                 extra_params = set(args_dict.keys()) - valid_params
                 if extra_params:
-                    logger.warning(
-                        f"Tool '{method_to_call.__name__}' received unexpected parameters "
-                        f"{extra_params}, filtering them out"
-                    )
-                    args_dict = {k: v for k, v in args_dict.items() if k in valid_params}
+                    return {
+                        "success": 0,
+                        "error": f"Unknown parameter(s) for '{method_to_call.__name__}': "
+                        + ", ".join(sorted(extra_params))
+                        + ". The tool was not executed; use the declared parameter names.",
+                        "result": None,
+                    }
 
+            # Reject missing required parameters symmetrically with the extra/
+            # excluded-parameter handling above. Without this, an LLM tool call
+            # that omits a required argument (e.g. ``edit_file`` without
+            # ``path``) reaches ``method_to_call(**args_dict)`` and raises a raw
+            # ``TypeError`` at bind time. That exception is uncaught here and
+            # aborts the whole agent interaction/batch, silently dropping work.
+            # Returning a recoverable error lets the model retry in-turn, the
+            # same as it does for malformed JSON or unsupported parameters.
+            missing_required = {
+                name
+                for name, param in sig.parameters.items()
+                if name != "self"
+                and name not in excluded_param_set
+                and param.default is inspect.Parameter.empty
+                and param.kind in (inspect.Parameter.POSITIONAL_OR_KEYWORD, inspect.Parameter.KEYWORD_ONLY)
+                and name not in args_dict
+            }
+            if missing_required:
+                params = ", ".join(sorted(missing_required))
+                return {
+                    "success": 0,
+                    "error": f"Missing required parameter(s) for '{method_to_call.__name__}': {params}",
+                    "result": None,
+                }
+
+            try:
+                # Reuse the SDK's model, including nested Pydantic types and
+                # explicitly open dictionaries. JSON validation permits declared
+                # JSON representations (e.g. dates) without coercing wrong types.
+                validated = argument_schema.params_pydantic_model.model_validate_json(
+                    json.dumps(args_dict), strict=True
+                )
+            except ValidationError as exc:
+                errors = [
+                    {"parameter": ".".join(map(str, e["loc"])), "message": e["msg"], "type": e["type"]}
+                    for e in exc.errors(include_input=False, include_url=False)
+                ]
+                detail = "; ".join(f"{e['parameter']}: {e['message']}" for e in errors[:5])
+                return {
+                    "success": 0,
+                    "error": f"Invalid arguments for '{method_to_call.__name__}': {detail}. The tool was not executed.",
+                    "result": {"argument_errors": errors},
+                }
+            positional, kwargs = argument_schema.to_call_args(validated)
+            kwargs = {k: v for k, v in kwargs.items() if k not in excluded_param_set}
             if inspect.iscoroutinefunction(method_to_call):
-                result = await method_to_call(**args_dict)
+                result = await method_to_call(*positional, **kwargs)
             else:
-                result = method_to_call(**args_dict)
+                # Offload synchronous tool methods to a worker thread. Many tools
+                # (DB metadata/queries, filesystem ops) make blocking I/O calls;
+                # ``final_invoker`` is awaited directly on the asyncio event-loop
+                # thread, so calling them inline freezes the loop — a single slow
+                # ``list_tables`` against a large StarRocks cluster would hang the
+                # whole server (all requests unresponsive). ``asyncio.to_thread``
+                # keeps the loop free and copies the current contextvars (trace
+                # context) into the worker. ``set_tool_context`` is applied above
+                # on the per-session tool instance, so it is visible in the thread.
+                result = await asyncio.to_thread(method_to_call, *positional, **kwargs)
             if isinstance(result, FuncToolResult):
-                return result.model_dump(mode="json")
+                result = result.model_dump(mode="json")
+            from datus.utils.tool_result_store import ACTIVE_RESULT_STORE
+
+            store = ACTIVE_RESULT_STORE.get()
+            call_id = getattr(tool_ctx, "tool_call_id", None)
+            if store is not None and isinstance(call_id, str):
+                store.register(call_id, result)
             return result
 
         return final_invoker

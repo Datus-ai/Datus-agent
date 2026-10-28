@@ -162,11 +162,7 @@ def _create_single_node(
 ) -> Node:
     # normalize aliases from config
     normalized_type = node_type
-    if node_type in {"reason_sql", "reasoning_sql", "reason"}:
-        normalized_type = NodeType.TYPE_REASONING
-    elif node_type in {"reflection", "reflect"}:
-        normalized_type = NodeType.TYPE_REFLECT
-    elif node_type == "execute":
+    if node_type == "execute":
         normalized_type = NodeType.TYPE_EXECUTE_SQL
     elif node_type == "chat":
         normalized_type = NodeType.TYPE_CHAT
@@ -194,6 +190,16 @@ def _create_single_node(
             db_schema=sql_task.schema_name or None,
             reference_date=sql_task.current_date or None,
         )
+    elif normalized_type == NodeType.TYPE_ONTOLOGY_ANALYST:
+        from datus.schemas.ontology_analyst_agentic_node_models import OntologyAnalystNodeInput
+
+        input_data = OntologyAnalystNodeInput(
+            user_message=sql_task.task or "",
+            catalog=sql_task.catalog_name or None,
+            database=sql_task.database_name or None,
+            db_schema=sql_task.schema_name or None,
+            reference_date=sql_task.current_date or None,
+        )
 
     node = Node.new_instance(
         node_id=node_id,
@@ -201,7 +207,17 @@ def _create_single_node(
         node_type=normalized_type,
         input_data=input_data,
         agent_config=agent_config,
-        node_name=node_type if normalized_type in (NodeType.TYPE_GEN_SQL, NodeType.TYPE_ASK_METRICS) else None,
+        node_name=(
+            node_type
+            if normalized_type
+            in (
+                NodeType.TYPE_GEN_SQL,
+                NodeType.TYPE_ASK_METRICS,
+                NodeType.TYPE_ONTOLOGY_ANALYST,
+                NodeType.TYPE_SEMANTIC,
+            )
+            else None
+        ),
     )
 
     return node
@@ -209,7 +225,7 @@ def _create_single_node(
 
 def generate_workflow(
     task: SqlTask,
-    plan_type: str = "reflection",
+    plan_type: str = "fixed",
     agent_config: Optional[AgentConfig] = None,
 ) -> Workflow:
     logger.info(f"Generating workflow for task based on plan type '{plan_type}': {task}")
@@ -217,7 +233,7 @@ def generate_workflow(
     if not plan_type and agent_config:
         plan_type = agent_config.workflow_plan
     elif not plan_type:
-        plan_type = "reflection"  # fallback to default
+        plan_type = "fixed"  # fallback to default
 
     if agent_config and plan_type in agent_config.custom_workflows:
         logger.info(f"Using custom workflow '{plan_type}' from configuration")
@@ -267,10 +283,10 @@ def generate_workflow(
     for node in nodes:
         workflow.add_node(node)
     if task.tables and agent_config is not None:
-        from datus.storage.schema_metadata import SchemaWithValueRAG
+        from datus.storage.schema_metadata import create_metadata_rag
 
         try:
-            rag = SchemaWithValueRAG(agent_config=agent_config)
+            rag = create_metadata_rag(agent_config)
             schemas, values = rag.search_tables(
                 task.tables, task.catalog_name, task.database_name, task.schema_name, dialect=task.database_type
             )

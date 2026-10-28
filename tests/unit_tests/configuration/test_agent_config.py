@@ -13,6 +13,7 @@ CI-level: zero external deps, zero network.
 """
 
 import argparse
+from unittest.mock import patch
 
 import pytest
 
@@ -23,18 +24,50 @@ from datus.configuration.agent_config import (
     DatasetDbConfig,
     DbConfig,
     DocumentConfig,
+    KbSearchConfig,
     ModelConfig,
     NodeConfig,
     ServicesConfig,
     ValidationConfig,
+    _apply_runtime_db_context_to_dosi_profile,
+    _db_config_to_dosi_profile,
     _parse_single_file_db,
     file_stem_from_uri,
     load_model_config,
     resolve_env,
 )
-from datus.utils.exceptions import DatusException
+from datus.utils.exceptions import DatusException, ErrorCode
 
 pytestmark = pytest.mark.ci
+
+
+class TestMCPExecutionConfig:
+    @pytest.mark.parametrize("raw", [True, 8, "invalid", [1], [("max_workers", 2)]])
+    def test_malformed_mcp_execution_shape_uses_defaults(self, tmp_path, raw):
+        config = AgentConfig(
+            nodes={},
+            home=str(tmp_path),
+            target="mock",
+            models={"mock": {"type": "openai", "api_key": "unused", "model": "unused"}},
+            skip_init_dirs=True,
+            mcp_tool_execution=raw,
+        )
+        assert config.mcp_tool_execution == {}
+
+    def test_valid_mcp_execution_mapping_is_copied(self, tmp_path):
+        from collections import UserDict
+
+        raw = UserDict({"max_workers": "2", "max_queue_size": 0})
+        config = AgentConfig(
+            nodes={},
+            home=str(tmp_path),
+            target="mock",
+            models={"mock": {"type": "openai", "api_key": "unused", "model": "unused"}},
+            skip_init_dirs=True,
+            mcp_tool_execution=raw,
+        )
+        raw["max_workers"] = 9
+        assert config.mcp_tool_execution == {"max_workers": "2", "max_queue_size": 0}
 
 
 # ---------------------------------------------------------------------------
@@ -207,6 +240,109 @@ class TestDbConfigFilterKwargs:
         kwargs = {"type": "postgresql", "host": "localhost", "custom_option": "${CUSTOM_TOKEN}"}
         cfg = DbConfig.filter_kwargs(DbConfig, kwargs)
         assert cfg.extra["custom_option"] == "token-value"
+
+
+class TestDosiDbProfile:
+    @pytest.mark.parametrize("auth", [{"auth_mode": "iam"}, {"secret_ref": "test/database"}])
+    def test_aurora_settings_keep_types_and_are_independent(self, monkeypatch, auth):
+        monkeypatch.setenv("TEST_AWS_REGION", "us-east-1")
+        cfg = DbConfig.filter_kwargs(
+            DbConfig,
+            {
+                "type": "postgresql",
+                "host": "writer.example",
+                "database": "configured_db",
+                "aurora": True,
+                "aws": {"region": "${TEST_AWS_REGION}", "profile": "test"},
+                "ssl_verify_cert": False,
+                "secret_cache_ttl_seconds": 300,
+                **auth,
+            },
+        )
+
+        profile = _db_config_to_dosi_profile(cfg)
+        result = _apply_runtime_db_context_to_dosi_profile(profile, {"database": "runtime_db"})
+
+        assert result["aurora"] is True
+        assert result["ssl_verify_cert"] is False
+        assert result["secret_cache_ttl_seconds"] == 300
+        assert isinstance(result["secret_cache_ttl_seconds"], int)
+        assert result["aws"] == {"region": "us-east-1", "profile": "test"}
+        assert result["database"] == "runtime_db"
+        assert profile["database"] == "configured_db"
+        for key, value in auth.items():
+            assert result[key] == value
+        result["aws"]["region"] = "eu-west-1"
+        assert cfg.extra["aws"]["region"] == "us-east-1"
+
+    def test_explicit_fields_win_over_extra(self):
+        cfg = DbConfig(type="mysql", host="configured", extra={"host": "other", "port": 3306})
+        result = _db_config_to_dosi_profile(cfg)
+        assert result["host"] == "configured"
+        assert result["port"] == 3306
+        assert "extra" not in result
+
+    def test_db_config_conversion_preserves_catalog(self):
+        cfg = DbConfig(type="trino", host="trino-host", catalog="hive", database="college_exam")
+
+        result = _db_config_to_dosi_profile(cfg)
+
+        assert result["catalog"] == "hive"
+        assert result["database"] == "college_exam"
+
+    def test_runtime_context_overlay_uses_generic_aliases(self):
+        db_config = {"type": "mysql", "host": "localhost", "database": "configured_db"}
+
+        result = _apply_runtime_db_context_to_dosi_profile(
+            db_config,
+            {
+                "catalog_name": "runtime_catalog",
+                "database_name": "runtime_db",
+                "db_schema": "runtime_schema",
+            },
+        )
+
+        assert result == {
+            "type": "mysql",
+            "host": "localhost",
+            "catalog": "runtime_catalog",
+            "database": "runtime_db",
+            "schema": "runtime_schema",
+        }
+
+    def test_runtime_context_normalizes_aliases(self, tmp_path):
+        cfg = AgentConfig(
+            nodes={"test": NodeConfig(model="test-model", input=None)},
+            home=str(tmp_path / "h"),
+            target="mock",
+            models={"mock": {"type": "openai", "api_key": "k", "model": "m"}},
+            skip_init_dirs=True,
+        )
+
+        cfg.set_runtime_db_context(
+            {
+                "catalog_name": "runtime_catalog",
+                "database_name": "runtime_db",
+                "db_schema": "runtime_schema",
+            }
+        )
+
+        assert cfg.runtime_db_context() == {
+            "catalog_name": "runtime_catalog",
+            "catalog": "runtime_catalog",
+            "database_name": "runtime_db",
+            "database": "runtime_db",
+            "db_schema": "runtime_schema",
+            "schema": "runtime_schema",
+            "schema_name": "runtime_schema",
+        }
+
+        cfg.set_runtime_db_context({"schema_name": "runtime_schema_name"})
+        assert cfg.runtime_db_context() == {
+            "schema_name": "runtime_schema_name",
+            "schema": "runtime_schema_name",
+            "db_schema": "runtime_schema_name",
+        }
 
 
 # ---------------------------------------------------------------------------
@@ -518,6 +654,35 @@ class TestLoadModelConfig:
         assert d["type"] == "openai"
         assert d["model"] == "gpt-4"
 
+    def test_ssl_verify_defaults_none(self):
+        cfg = ModelConfig(type="openai", api_key="sk", model="gpt-4")
+        assert cfg.ssl_verify is None
+        assert cfg.to_dict()["ssl_verify"] is None
+
+    def test_load_ssl_verify_passthrough(self):
+        cfg = load_model_config({"type": "claude", "model": "claude", "ssl_verify": "/etc/ssl/ca.pem"})
+        assert cfg.ssl_verify == "/etc/ssl/ca.pem"
+
+    def test_load_ssl_verify_absent_is_none(self):
+        cfg = load_model_config({"type": "claude", "model": "claude"})
+        assert cfg.ssl_verify is None
+
+    def test_load_ssl_verify_env_substitution(self, monkeypatch):
+        monkeypatch.setenv("MY_CA", "/etc/ssl/from-env.pem")
+        cfg = load_model_config({"type": "claude", "model": "claude", "ssl_verify": "${MY_CA}"})
+        assert cfg.ssl_verify == "/etc/ssl/from-env.pem"
+
+    @pytest.mark.parametrize("value", [123, ["x"], {"a": 1}])
+    def test_load_ssl_verify_invalid_type_raises(self, value):
+        with pytest.raises(DatusException):
+            load_model_config({"type": "claude", "model": "claude", "ssl_verify": value})
+
+    @pytest.mark.parametrize("value", ["/etc/ssl/ca.pem", True, False])
+    def test_ssl_verify_round_trips(self, value):
+        cfg = ModelConfig(type="claude", api_key="sk", model="claude", ssl_verify=value)
+        assert cfg.ssl_verify == value
+        assert cfg.to_dict()["ssl_verify"] == value
+
 
 class TestAgentConfigServiceSelectors:
     def _make(self, tmp_path, *, services=None, agentic_nodes=None):
@@ -538,105 +703,11 @@ class TestAgentConfigServiceSelectors:
             skip_init_dirs=True,
         )
 
-    def test_resolve_semantic_adapter_returns_explicit_configured_adapter(self, tmp_path):
-        cfg = self._make(
-            tmp_path,
-            services={
-                "datasources": {},
-                "semantic_layer": {
-                    "metricflow": {"timeout": 300},
-                },
-            },
-        )
-        assert cfg.resolve_semantic_adapter("metricflow") == "metricflow"
-
-    def test_resolve_semantic_adapter_auto_selects_single_configured_entry(self, tmp_path):
-        cfg = self._make(
-            tmp_path,
-            services={
-                "datasources": {},
-                "semantic_layer": {
-                    "metricflow": {"timeout": 300},
-                },
-            },
-        )
-        assert cfg.resolve_semantic_adapter() == "metricflow"
-
-    def test_resolve_semantic_adapter_defaults_to_metricflow_when_no_service_configured(self, tmp_path):
-        cfg = self._make(
-            tmp_path,
-            services={
-                "datasources": {},
-            },
-        )
-        assert cfg.resolve_semantic_adapter() == "metricflow"
-
-    def test_explicit_semantic_adapter_wins_when_no_service_configured(self, tmp_path):
-        cfg = self._make(
-            tmp_path,
-            services={
-                "datasources": {},
-            },
-        )
-        assert cfg.resolve_semantic_adapter("dbt") == "dbt"
-
-    def test_active_semantic_pin_wins_when_no_service_configured(self, tmp_path):
-        cfg = self._make(
-            tmp_path,
-            services={
-                "datasources": {},
-            },
-        )
-        cfg.set_active_semantic("dbt", persist=False)
-        assert cfg.resolve_semantic_adapter() == "dbt"
-
-    def test_build_semantic_adapter_config_defaults_to_metricflow_when_no_service_configured(self, tmp_path):
-        cfg = self._make(
-            tmp_path,
-            services={
-                "datasources": {
-                    "demo": {
-                        "type": "duckdb",
-                        "uri": "duckdb:///:memory:",
-                        "default": True,
-                    }
-                },
-            },
-        )
-        config = cfg.build_semantic_adapter_config()
-        assert config["type"] == "metricflow"
-        assert config["datasource"] == "demo"
-
-    def test_build_semantic_adapter_config_preserves_snowflake_key_pair_fields(self, tmp_path):
-        cfg = self._make(
-            tmp_path,
-            services={
-                "datasources": {
-                    "sf": {
-                        "type": "snowflake",
-                        "account": "sf_account",
-                        "username": "sf_user",
-                        "role": "ANALYST",
-                        "private_key_file": "/tmp/rsa_key.p8",
-                        "private_key_file_pwd": 1234,
-                        "warehouse": "COMPUTE_WH",
-                        "database": "ANALYTICS",
-                        "default": True,
-                    }
-                },
-                "semantic_layer": {"metricflow": {}},
-            },
-        )
-
-        config = cfg.build_semantic_adapter_config()
-
-        assert config["type"] == "metricflow"
-        assert config["datasource"] == "sf"
-        assert config["db_config"]["type"] == "snowflake"
-        assert config["db_config"]["role"] == "ANALYST"
-        assert config["db_config"]["private_key_file"] == "/tmp/rsa_key.p8"
-        assert config["db_config"]["private_key_file_pwd"] == "1234"
-        assert "default" not in config["db_config"]
+    def test_legacy_semantic_layer_is_ignored_with_warning(self, tmp_path):
+        with patch("datus.configuration.agent_config.logger.warning") as warning:
+            cfg = self._make(tmp_path, services={"datasources": {}, "semantic_layer": {"legacy": None}})
+        assert not hasattr(cfg.services, "semantic_layer")
+        warning.assert_called_once_with("Ignoring `agent.services.semantic_layer`; Dosi is built in.")
 
     def test_file_datasource_preserves_adapter_specific_extra_fields(self, tmp_path):
         cfg = self._make(
@@ -665,20 +736,6 @@ class TestAgentConfigServiceSelectors:
                 "warehouse": "s3://warehouse/",
             }
         }
-
-    def test_resolve_semantic_adapter_requires_explicit_choice_for_multiple_entries(self, tmp_path):
-        cfg = self._make(
-            tmp_path,
-            services={
-                "datasources": {},
-                "semantic_layer": {
-                    "metricflow": {"timeout": 300},
-                    "cube": {"timeout": 60},
-                },
-            },
-        )
-        with pytest.raises(DatusException, match="Multiple semantic layers are configured"):
-            cfg.resolve_semantic_adapter()
 
     def test_default_scheduler_service_prefers_single_default(self, tmp_path):
         cfg = self._make(
@@ -987,89 +1044,6 @@ class TestAgentConfigServiceSelectors:
         )
         assert cfg.default_dashboard_service() is None
 
-    # ── default_semantic_adapter ───────────────────────────────────────
-
-    def test_default_semantic_adapter_returns_none_for_empty_section(self, tmp_path):
-        """Empty section now means "nothing configured" — callers must
-        explicitly add an entry. Returning ``None`` here lets the resolver
-        own the user-facing error."""
-        cfg = self._make(tmp_path, services={"datasources": {}})
-        assert cfg.default_semantic_adapter() is None
-
-    def test_default_semantic_adapter_uses_unique_entry(self, tmp_path):
-        cfg = self._make(
-            tmp_path,
-            services={
-                "datasources": {},
-                "semantic_layer": {"metricflow": {}},
-            },
-        )
-        assert cfg.default_semantic_adapter() == "metricflow"
-
-    def test_default_semantic_adapter_picks_default_flag(self, tmp_path):
-        """When multiple semantic adapters are configured, ``default: true``
-        wins over the unique-entry shortcut (which doesn't apply here)."""
-        cfg = self._make(
-            tmp_path,
-            services={
-                "datasources": {},
-                "semantic_layer": {
-                    "metricflow": {"default": True},
-                    # Hypothetical second adapter — registry validation is
-                    # deferred so the test can exercise the selection
-                    # logic without registering a real adapter.
-                    "dbt": {},
-                },
-            },
-        )
-        assert cfg.default_semantic_adapter() == "metricflow"
-
-    def test_default_semantic_adapter_rejects_multiple_defaults(self, tmp_path):
-        cfg = self._make(
-            tmp_path,
-            services={
-                "datasources": {},
-                "semantic_layer": {
-                    "metricflow": {"default": True},
-                    "dbt": {"default": True},
-                },
-            },
-        )
-        with pytest.raises(DatusException, match="Multiple semantic layers are marked"):
-            cfg.default_semantic_adapter()
-
-    # ── active_semantic / set_active_semantic / resolver pin ────────────
-
-    def test_active_semantic_pin_outranks_global_default(self, tmp_path):
-        cfg = self._make(
-            tmp_path,
-            services={
-                "datasources": {},
-                "semantic_layer": {
-                    "metricflow": {"default": True},
-                    "dbt": {},
-                },
-            },
-        )
-        cfg.set_active_semantic("dbt", persist=False)
-        assert cfg.resolve_semantic_adapter() == "dbt"
-
-    def test_stale_active_semantic_falls_through_to_default(self, tmp_path, caplog):
-        """A pin pointing at a deleted adapter is ignored (with warning);
-        resolution falls through to the global default."""
-        import logging
-
-        cfg = self._make(
-            tmp_path,
-            services={
-                "datasources": {},
-                "semantic_layer": {"metricflow": {}},
-            },
-        )
-        cfg.set_active_semantic("never_configured", persist=False)
-        with caplog.at_level(logging.WARNING):
-            assert cfg.resolve_semantic_adapter() == "metricflow"
-
 
 # ---------------------------------------------------------------------------
 # AgentConfig.api_config
@@ -1109,7 +1083,7 @@ class TestAgentConfigApiSection:
 
 
 class TestAgentConfigKnowledgeBase:
-    def _make(self, tmp_path, knowledge_base=None):
+    def _make(self, tmp_path, knowledge_base=None, kb=None):
         kwargs = dict(
             nodes={"test": NodeConfig(model="test-model", input=None)},
             home=str(tmp_path / "h"),
@@ -1126,6 +1100,8 @@ class TestAgentConfigKnowledgeBase:
         )
         if knowledge_base is not None:
             kwargs["knowledge_base"] = knowledge_base
+        if kb is not None:
+            kwargs["kb"] = kb
         return AgentConfig(**kwargs)
 
     def test_knowledge_base_config_resolves_nested_env_values(self, tmp_path, monkeypatch):
@@ -1141,6 +1117,46 @@ class TestAgentConfigKnowledgeBase:
         cfg = self._make(tmp_path, knowledge_base="bad")
 
         assert cfg.knowledge_base == {}
+
+    def test_kb_config_rejects_non_dict(self, tmp_path):
+        cfg = self._make(tmp_path, kb="bad")
+
+        assert cfg.kb_search == KbSearchConfig(mode="vector")
+        assert cfg.kb_search_mode == "vector"
+
+    def test_kb_search_defaults_to_vector(self, tmp_path):
+        cfg = self._make(tmp_path)
+
+        assert cfg.kb_search == KbSearchConfig(mode="vector")
+        assert cfg.kb_search_mode == "vector"
+
+    def test_kb_search_ignores_removed_enabled_flag(self, tmp_path):
+        cfg = self._make(tmp_path, kb={"search": {"enabled": "false", "mode": "fts"}})
+
+        assert cfg.kb_search == KbSearchConfig(mode="fts")
+        assert cfg.kb_search_mode == "fts"
+
+    def test_kb_search_accepts_explicit_fts_mode(self, tmp_path):
+        cfg = self._make(tmp_path, kb={"search": {"mode": "fts"}})
+
+        assert cfg.kb_search_mode == "fts"
+
+    def test_kb_search_keeps_legacy_knowledge_base_search_compatibility(self, tmp_path):
+        cfg = self._make(tmp_path, knowledge_base={"search": {"mode": "fts"}})
+
+        assert cfg.kb_search_mode == "fts"
+
+    def test_kb_search_rejects_hybrid_mode(self, tmp_path):
+        with pytest.raises(DatusException):
+            self._make(tmp_path, kb={"search": {"mode": "hybrid"}})
+
+    def test_override_kb_search_mode(self, tmp_path):
+        cfg = self._make(tmp_path)
+
+        cfg.override_by_args(kb_search_mode="fts")
+
+        assert cfg.kb_search == KbSearchConfig(mode="fts")
+        assert cfg.kb_search_mode == "fts"
 
 
 class TestAgentConfigChannels:
@@ -1481,6 +1497,52 @@ class TestAgentConfigFilesystemStrict:
         cfg.override_by_args(filesystem_strict=None)
         assert cfg.filesystem_strict is True
 
+
+class TestAgentConfigFilesystemAllowlist:
+    """``agent.filesystem.allow_read``/``allow_write`` → ``filesystem_allowlist``.
+
+    The allowlist is what lets a strict deployment reach directories mounted
+    outside the project root (e.g. the Airflow DAGs folder) — it must survive
+    alongside ``strict`` in the same config section.
+    """
+
+    _make = TestAgentConfigFilesystemStrict._make
+
+    def test_default_is_empty(self, tmp_path):
+        cfg = self._make(tmp_path)
+        assert bool(cfg.filesystem_allowlist) is False
+        assert cfg.filesystem_allowlist.read == ()
+        assert cfg.filesystem_allowlist.write == ()
+
+    def test_parsed_alongside_strict(self, tmp_path):
+        dags = tmp_path / "dags"
+        cfg = self._make(tmp_path, filesystem={"strict": True, "allow_write": [str(dags)]})
+        assert cfg.filesystem_strict is True
+        assert cfg.filesystem_allowlist.write == (dags.resolve(),)
+
+    def test_read_and_write_kept_separate(self, tmp_path):
+        cfg = self._make(
+            tmp_path,
+            filesystem={"allow_read": [str(tmp_path / "ro")], "allow_write": [str(tmp_path / "rw")]},
+        )
+        assert cfg.filesystem_allowlist.read == ((tmp_path / "ro").resolve(),)
+        assert cfg.filesystem_allowlist.write == ((tmp_path / "rw").resolve(),)
+
+    def test_setter_accepts_dict_and_none(self, tmp_path):
+        cfg = self._make(tmp_path)
+        cfg.filesystem_allowlist = {"allow_write": [str(tmp_path / "dags")]}
+        assert cfg.filesystem_allowlist.write == ((tmp_path / "dags").resolve(),)
+        cfg.filesystem_allowlist = None
+        assert bool(cfg.filesystem_allowlist) is False
+
+    def test_setter_accepts_allowlist_instance(self, tmp_path):
+        from datus.tools.func_tool.fs_path_policy import PathAllowlist
+
+        cfg = self._make(tmp_path)
+        allowlist = PathAllowlist.from_dict({"allow_read": [str(tmp_path / "shared")]})
+        cfg.filesystem_allowlist = allowlist
+        assert cfg.filesystem_allowlist is allowlist
+
     def test_override_by_args_missing_preserves_yaml(self, tmp_path):
         # override_by_args is also called without a filesystem_strict key
         # (e.g. in non-CLI code paths). That must not reset the flag.
@@ -1572,6 +1634,99 @@ class TestAgentConfigBashToolEnabled:
         assert cfg.bash_tool_enabled is False
         cfg.bash_tool_enabled = "true"
         assert cfg.bash_tool_enabled is True
+
+
+class TestAgentConfigBashAllowedPatterns:
+    """``bash_allowed_patterns`` restricts which commands the general-purpose
+    ``BashTool`` accepts. Sourced from ``agent.bash.allowed_patterns`` in YAML
+    and settable at runtime (the API surface sets ``["datus*"]`` for web
+    clients); default is ``["*"]`` — unrestricted at the execution layer.
+    """
+
+    _make = TestAgentConfigBashToolEnabled._make
+
+    def test_default_unrestricted(self, tmp_path):
+        cfg = self._make(tmp_path)
+        assert cfg.bash_allowed_patterns == ["*"]
+
+    def test_from_yaml_list(self, tmp_path):
+        cfg = self._make(tmp_path, bash={"allowed_patterns": ["datus*", "git status"]})
+        assert cfg.bash_allowed_patterns == ["datus*", "git status"]
+
+    def test_yaml_entries_stripped_and_blanks_dropped(self, tmp_path):
+        cfg = self._make(tmp_path, bash={"allowed_patterns": [" datus* ", "", "   "]})
+        assert cfg.bash_allowed_patterns == ["datus*"]
+
+    @pytest.mark.parametrize("bad_value", ["datus*", 42, {"a": 1}, [], [42, None]])
+    def test_malformed_yaml_falls_back_to_default(self, tmp_path, bad_value):
+        # A non-list value, an empty list, or a list without a single valid
+        # string entry must not silently hide the tool — fall back to the
+        # unrestricted default where the permission profile gates calls.
+        cfg = self._make(tmp_path, bash={"allowed_patterns": bad_value})
+        assert cfg.bash_allowed_patterns == ["*"]
+
+    def test_runtime_setter_overrides(self, tmp_path):
+        cfg = self._make(tmp_path)
+        cfg.bash_allowed_patterns = ["datus*"]
+        assert cfg.bash_allowed_patterns == ["datus*"]
+
+    def test_runtime_setter_rejects_malformed(self, tmp_path):
+        cfg = self._make(tmp_path)
+        cfg.bash_allowed_patterns = ["datus*"]
+        cfg.bash_allowed_patterns = None
+        assert cfg.bash_allowed_patterns == ["*"]
+
+
+class TestAgentConfigBashSandbox:
+    """``bash.sandbox`` parses into a shared, mutable ``SandboxSettings``
+    driving the OS-level sandbox around ``BashTool``. Default is disabled so
+    existing deployments see zero behavior change.
+    """
+
+    _make = TestAgentConfigBashToolEnabled._make
+
+    def test_default_disabled_with_empty_lists(self, tmp_path):
+        cfg = self._make(tmp_path)
+        assert cfg.bash_sandbox.enabled is False
+        assert cfg.bash_sandbox.allow_read == []
+        assert cfg.bash_sandbox.allow_write == []
+
+    def test_from_yaml_full_section(self, tmp_path):
+        cfg = self._make(
+            tmp_path,
+            bash={"sandbox": {"enabled": True, "allow_read": ["/data"], "allow_write": ["/scratch"]}},
+        )
+        assert cfg.bash_sandbox.enabled is True
+        assert cfg.bash_sandbox.allow_read == ["/data"]
+        assert cfg.bash_sandbox.allow_write == ["/scratch"]
+        assert cfg.bash_sandbox.mode == "normal"
+        assert cfg.bash_sandbox.deny_network is False
+
+    def test_from_yaml_strict_tier(self, tmp_path):
+        cfg = self._make(
+            tmp_path,
+            bash={"sandbox": {"enabled": True, "mode": "strict", "deny_network": True}},
+        )
+        assert cfg.bash_sandbox.is_strict is True
+        assert cfg.bash_sandbox.deny_network is True
+
+    @pytest.mark.parametrize("yaml_value", ["true", "1", "yes", "on", True])
+    def test_string_true_enables(self, tmp_path, yaml_value):
+        cfg = self._make(tmp_path, bash={"sandbox": {"enabled": yaml_value}})
+        assert cfg.bash_sandbox.enabled is True
+
+    def test_non_mapping_sandbox_section_defaults_disabled(self, tmp_path):
+        cfg = self._make(tmp_path, bash={"sandbox": "true"})
+        assert cfg.bash_sandbox.enabled is False
+
+    def test_settings_object_is_shared_and_mutable(self, tmp_path):
+        # /sandbox on|off mutates the object in place; BashTool holds the
+        # same reference, so identity across reads is the contract here.
+        cfg = self._make(tmp_path)
+        settings = cfg.bash_sandbox
+        settings.enabled = True
+        assert cfg.bash_sandbox is settings
+        assert cfg.bash_sandbox.enabled is True
 
 
 class TestAgentConfigTavilyApiKey:
@@ -1681,6 +1836,65 @@ class TestAgentConfigLanguage:
         cfg = self._make(tmp_path, language="en")
         cfg.language = "ja"
         assert cfg.language == "ja"
+
+
+class TestAgentConfigPolicyContext:
+    @staticmethod
+    def _base_kwargs(tmp_path):
+        return {
+            "nodes": {"test": NodeConfig(model="test-model", input=None)},
+            "home": str(tmp_path / "h"),
+            "target": "mock",
+            "models": {
+                "mock": {
+                    "type": "openai",
+                    "api_key": "k",
+                    "model": "m",
+                    "base_url": "http://localhost:0",
+                }
+            },
+            "skip_init_dirs": True,
+        }
+
+    def test_legacy_sql_policy_config_is_rejected(self, tmp_path):
+        with (
+            patch("datus.plugins.store.activate") as activate,
+            pytest.raises(DatusException, match="agent.sql_policy has been removed") as exc_info,
+        ):
+            AgentConfig(
+                nodes={"test": NodeConfig(model="test-model", input=None)},
+                home=str(tmp_path / "h"),
+                target="mock",
+                models={
+                    "mock": {
+                        "type": "openai",
+                        "api_key": "k",
+                        "model": "m",
+                        "base_url": "http://localhost:0",
+                    }
+                },
+                sql_policy={"enabled": True},
+                skip_init_dirs=True,
+            )
+        assert exc_info.value.code == ErrorCode.COMMON_CONFIG_ERROR
+        activate.assert_not_called()
+
+    def test_default_workflow_is_fixed(self, tmp_path):
+        cfg = AgentConfig(**self._base_kwargs(tmp_path))
+        assert cfg.workflow_plan == "fixed"
+
+    @pytest.mark.parametrize(
+        ("configured", "expected"),
+        [(None, "en"), ("en", "en"), ("zh", "zh"), ("cn", "zh")],
+    )
+    def test_date_parsing_language_config(self, tmp_path, configured, expected):
+        kwargs = self._base_kwargs(tmp_path)
+        if configured is not None:
+            kwargs["date_parsing"] = {"language": configured}
+
+        config = AgentConfig(**kwargs)
+
+        assert config.date_parsing_language == expected
 
 
 class TestServicesConfigFromDict:
@@ -1851,6 +2065,9 @@ class TestProviderConfigurationDispatch:
             cfg.active_model()
         assert "/model" in exc_info.value.message
         assert "datus init" not in exc_info.value.message
+        # A host UI branches on this code to offer "add a model", so it must
+        # stay distinct from the generic missing-field code.
+        assert exc_info.value.code is ErrorCode.MODEL_NOT_SELECTED
 
     # ── Setters ────────────────────────────────────────────────────
 
@@ -1881,8 +2098,14 @@ class TestProviderConfigurationDispatch:
 
     def test_set_active_custom_rejects_unknown_name(self, tmp_path):
         cfg = self._make(tmp_path)
-        with pytest.raises(DatusException):
+        with pytest.raises(DatusException) as excinfo:
             cfg.set_active_custom("not-registered")
+
+        # Remote front-ends match on this error_type to recover a stale
+        # model selection, so keep both the code and the listing stable.
+        assert excinfo.value.code is ErrorCode.MODEL_NOT_CONFIGURED
+        assert "Unknown custom model `not-registered`" in str(excinfo.value)
+        assert "legacy" in str(excinfo.value)
 
     def test_set_provider_config_mutates_in_memory(self, tmp_path):
         cfg = self._make(tmp_path)
@@ -2204,3 +2427,666 @@ class TestAgentConfigModelExtras:
     def test_get_extra_unknown_name_returns_empty(self, tmp_path):
         cfg = self._make(tmp_path, model_extras={"primary": {"foo": "bar"}})
         assert cfg.get_model_extra("custom/unknown") == {}
+
+
+class TestPluginProfiles:
+    """``init_plugin_services`` parsing + ``get_plugin_profile`` resolution."""
+
+    def _make(self, tmp_path, plugins=None, active_plugins=None):
+        return AgentConfig(
+            nodes={"test": NodeConfig(model="test-model", input=None)},
+            home=str(tmp_path / "h"),
+            target="mock",
+            models={"mock": {"type": "openai", "api_key": "k", "model": "m"}},
+            plugins=plugins or {},
+            active_plugins=active_plugins,
+            skip_init_dirs=True,
+        )
+
+    def test_parses_profiles_and_interpolates_env(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("AF_PW", "s3cret")
+        cfg = self._make(
+            tmp_path,
+            plugins={
+                "hello": {
+                    "prod": {"api_base_url": "http://h/api/v1", "password": "${AF_PW}"},
+                    "staging": {"api_base_url": "http://s/api/v1"},
+                }
+            },
+        )
+        assert set(cfg.plugin_services["hello"]) == {"prod", "staging"}
+        # ``name`` is defaulted to the profile key; ``${VAR}`` is expanded.
+        assert cfg.plugin_services["hello"]["prod"]["name"] == "prod"
+        assert cfg.plugin_services["hello"]["prod"]["password"] == "s3cret"
+
+    def test_skips_malformed_entries(self, tmp_path):
+        cfg = self._make(
+            tmp_path,
+            plugins={"hello": {"good": {"api_base_url": "x"}, "bad": "not-a-mapping"}, "junk": "nope"},
+        )
+        assert set(cfg.plugin_services["hello"]) == {"good"}
+        # A non-mapping plugin section is skipped entirely.
+        assert "junk" not in cfg.plugin_services
+
+    def test_explicit_profile_wins(self, tmp_path):
+        cfg = self._make(
+            tmp_path,
+            plugins={"hello": {"prod": {"api_base_url": "p"}, "staging": {"api_base_url": "s"}}},
+        )
+        assert cfg.get_plugin_profile("hello", "staging")["api_base_url"] == "s"
+
+    def test_explicit_missing_profile_raises(self, tmp_path):
+        cfg = self._make(tmp_path, plugins={"hello": {"prod": {"api_base_url": "p"}}})
+        with pytest.raises(DatusException):
+            cfg.get_plugin_profile("hello", "nope")
+
+    def test_project_pin_between_flag_and_default(self, tmp_path):
+        cfg = self._make(
+            tmp_path,
+            plugins={"hello": {"prod": {"api_base_url": "p"}, "staging": {"api_base_url": "s"}}},
+            active_plugins={"hello": "staging"},
+        )
+        # No explicit profile → project pin selects ``staging``.
+        assert cfg.get_plugin_profile("hello")["api_base_url"] == "s"
+
+    def test_default_flag_selected(self, tmp_path):
+        cfg = self._make(
+            tmp_path,
+            plugins={
+                "hello": {
+                    "prod": {"api_base_url": "p", "default": True},
+                    "staging": {"api_base_url": "s"},
+                }
+            },
+        )
+        assert cfg.get_plugin_profile("hello")["api_base_url"] == "p"
+
+    def test_multiple_defaults_raises(self, tmp_path):
+        cfg = self._make(
+            tmp_path,
+            plugins={
+                "hello": {
+                    "a": {"api_base_url": "a", "default": True},
+                    "b": {"api_base_url": "b", "default": True},
+                }
+            },
+        )
+        with pytest.raises(DatusException):
+            cfg.get_plugin_profile("hello")
+
+    def test_sole_profile_selected(self, tmp_path):
+        cfg = self._make(tmp_path, plugins={"hello": {"only": {"api_base_url": "o"}}})
+        assert cfg.get_plugin_profile("hello")["api_base_url"] == "o"
+
+    def test_ambiguous_without_default_raises(self, tmp_path):
+        cfg = self._make(
+            tmp_path,
+            plugins={"hello": {"a": {"api_base_url": "a"}, "b": {"api_base_url": "b"}}},
+        )
+        with pytest.raises(DatusException):
+            cfg.get_plugin_profile("hello")
+
+    def test_no_config_returns_empty_dict(self, tmp_path):
+        cfg = self._make(tmp_path, plugins={})
+        # A plugin with no ``agent.plugins`` section → config-free, returns {}.
+        assert cfg.get_plugin_profile("hello") == {}
+
+    def test_stale_pin_falls_back_to_default(self, tmp_path):
+        cfg = self._make(
+            tmp_path,
+            plugins={"hello": {"prod": {"api_base_url": "p", "default": True}}},
+            active_plugins={"hello": "deleted"},
+        )
+        # Pin points at a profile that no longer exists → fall back to default.
+        assert cfg.get_plugin_profile("hello")["api_base_url"] == "p"
+
+
+class TestPluginActivation:
+    """Project-level activation accessors + ``set_plugin_activation``."""
+
+    def _make(self, tmp_path, active_plugins=None, plugins=None):
+        from datus.configuration.project_config import PluginActivation  # noqa: F401 (import kept local)
+
+        return AgentConfig(
+            nodes={"test": NodeConfig(model="test-model", input=None)},
+            home=str(tmp_path / "h"),
+            project_root=str(tmp_path),
+            target="mock",
+            models={"mock": {"type": "openai", "api_key": "k", "model": "m"}},
+            plugins=plugins or {},
+            active_plugins=active_plugins,
+            skip_init_dirs=True,
+        )
+
+    def test_section_absent_activates_everything(self, tmp_path):
+        cfg = self._make(tmp_path, active_plugins=None)
+        assert cfg.plugins_section_present() is False
+        assert cfg.active_plugin_names() is None  # no filter
+        assert cfg.plugin_active("anything") is True
+        assert cfg.active_plugin_profiles("anything") is None
+
+    def test_whitelist_gates_unlisted_plugins(self, tmp_path):
+        cfg = self._make(
+            tmp_path,
+            active_plugins={"alpha": {"enabled": True}, "beta": {"enabled": False}},
+        )
+        assert cfg.plugins_section_present() is True
+        assert cfg.active_plugin_names() == {"alpha"}
+        assert cfg.plugin_active("alpha") is True
+        assert cfg.plugin_active("beta") is False
+        assert cfg.plugin_active("gamma") is False  # unlisted
+
+    def test_active_profiles_narrowing(self, tmp_path):
+        cfg = self._make(tmp_path, active_plugins={"alpha": {"enabled": True, "active_profile": ["prod"]}})
+        assert cfg.active_plugin_profiles("alpha") == ["prod"]
+        # Disabled / unlisted → empty list (inactive).
+        assert cfg.active_plugin_profiles("missing") == []
+
+    def test_master_switch_off_disables_all(self, tmp_path):
+        cfg = self._make(tmp_path, active_plugins={"alpha": {"enabled": True}})
+        cfg.plugins_enabled = False
+        assert cfg.active_plugin_names() == set()
+        assert cfg.plugin_active("alpha") is False
+
+    def test_get_plugin_profile_single_active_becomes_default(self, tmp_path):
+        cfg = AgentConfig(
+            nodes={"test": NodeConfig(model="test-model", input=None)},
+            home=str(tmp_path / "h"),
+            project_root=str(tmp_path),
+            target="mock",
+            models={"mock": {"type": "openai", "api_key": "k", "model": "m"}},
+            plugins={"hello": {"prod": {"api_base_url": "p"}, "staging": {"api_base_url": "s"}}},
+            active_plugins={"hello": {"enabled": True, "active_profile": ["staging"]}},
+            skip_init_dirs=True,
+        )
+        # A single active profile is the CLI default.
+        assert cfg.get_plugin_profile("hello")["api_base_url"] == "s"
+
+    def test_set_plugin_activation_seeds_and_persists(self, tmp_path, monkeypatch):
+        # Section absent → seeding pulls in all installed plugins so toggling
+        # one does not silently deactivate the rest.
+        class _EP:
+            def __init__(self, name):
+                self.name = name
+
+        monkeypatch.setattr(
+            "datus.plugins.registry.iter_plugin_entry_points",
+            lambda: [_EP("alpha"), _EP("beta")],
+        )
+        # Keep the managed-store scan hermetic (no dependence on ~/.datus).
+        monkeypatch.setattr("datus.plugins.store.iter_installed", lambda: [])
+        cfg = self._make(tmp_path, active_plugins=None)
+        cfg.set_plugin_activation("alpha", enabled=False)
+
+        from datus.configuration.project_config import load_project_override
+
+        override = load_project_override(cwd=str(tmp_path))
+        assert set(override.plugins) == {"alpha", "beta"}
+        assert override.plugins["alpha"].enabled is False
+        assert override.plugins["beta"].enabled is True
+        # In-memory state flipped to whitelist mode.
+        assert cfg.plugins_section_present() is True
+        assert cfg.plugin_active("beta") is True
+        assert cfg.plugin_active("alpha") is False
+
+    def test_set_plugin_activation_seed_includes_managed_store(self, tmp_path, monkeypatch):
+        # Entry-point discovery empty (e.g. a managed plugin dir not yet on
+        # sys.path) must NOT collapse the seed to a single-entry whitelist that
+        # deactivates every other installed plugin — the managed store is merged.
+        monkeypatch.setattr("datus.plugins.registry.iter_plugin_entry_points", lambda: [])
+        monkeypatch.setattr(
+            "datus.plugins.store.iter_installed",
+            lambda: [{"name": "airflow"}, {"name": "statsig"}],
+        )
+        cfg = self._make(tmp_path, active_plugins=None)
+        cfg.set_plugin_activation("airflow", enabled=False)
+
+        from datus.configuration.project_config import load_project_override
+
+        override = load_project_override(cwd=str(tmp_path))
+        assert set(override.plugins) == {"airflow", "statsig"}
+        assert override.plugins["airflow"].enabled is False
+        assert override.plugins["statsig"].enabled is True
+
+    def test_set_plugin_activation_profiles(self, tmp_path):
+        cfg = self._make(tmp_path, active_plugins={"alpha": {"enabled": True}})
+        cfg.set_plugin_activation("alpha", enabled=True, active_profiles=["prod", "dev"])
+        assert cfg.active_plugin_profiles("alpha") == ["prod", "dev"]
+        cfg.set_plugin_activation("alpha", enabled=True, clear_profiles=True)
+        assert cfg.active_plugin_profiles("alpha") is None
+
+    def test_save_and_delete_plugin_profile(self, tmp_path, monkeypatch):
+        # Route the global config writes through a ConfigurationManager backed
+        # by a temp agent.yml so the CRUD round-trips without touching ~/.datus.
+        import datus.configuration.agent_config_loader as loader
+
+        agent_yml = tmp_path / "agent.yml"
+        agent_yml.write_text("agent:\n  plugins: {}\n")
+        mgr = loader.ConfigurationManager(str(agent_yml))
+        monkeypatch.setattr(loader, "configuration_manager", lambda *a, **k: mgr)
+
+        cfg = self._make(tmp_path)
+        cfg.save_plugin_profile("hello", "prod", {"api_base_url": "http://h"})
+        assert cfg.plugin_services["hello"]["prod"]["api_base_url"] == "http://h"
+        assert mgr.get("plugins")["hello"]["prod"]["api_base_url"] == "http://h"
+
+        assert cfg.delete_plugin_profile("hello", "prod") is True
+        assert "hello" not in cfg.plugin_services
+        # Deleting a missing profile returns False.
+        assert cfg.delete_plugin_profile("hello", "prod") is False
+
+    def test_save_plugin_profile_raises_on_persist_failure(self, tmp_path, monkeypatch):
+        # A failed disk write must propagate (not silently update in-memory
+        # state that would vanish on restart).
+        import datus.configuration.agent_config_loader as loader
+        from datus.utils.exceptions import DatusException
+
+        class _FailingMgr:
+            def get(self, key, default=None):
+                return {}
+
+            def update_item(self, *args, **kwargs):
+                return False  # save failed
+
+        monkeypatch.setattr(loader, "configuration_manager", lambda *a, **k: _FailingMgr())
+        cfg = self._make(tmp_path)
+        with pytest.raises(DatusException):
+            cfg.save_plugin_profile("hello", "prod", {"api_base_url": "http://h"})
+        # In-memory plugin services were NOT mutated.
+        assert "hello" not in cfg.plugin_services
+
+
+class TestPluginsEnabledSwitch:
+    """``agent.plugins_enabled`` master switch for the plugin system."""
+
+    def _make(self, tmp_path, **extra):
+        return AgentConfig(
+            nodes={"test": NodeConfig(model="test-model", input=None)},
+            home=str(tmp_path / "h"),
+            target="mock",
+            models={"mock": {"type": "openai", "api_key": "k", "model": "m"}},
+            skip_init_dirs=True,
+            **extra,
+        )
+
+    def test_defaults_to_enabled(self, tmp_path):
+        cfg = self._make(tmp_path)
+        assert cfg.plugins_enabled is True
+
+    @pytest.mark.parametrize("value", [False, "false", "no", "off", "0"])
+    def test_disabled_values(self, tmp_path, value):
+        cfg = self._make(tmp_path, plugins_enabled=value)
+        assert cfg.plugins_enabled is False
+
+    @pytest.mark.parametrize("value", [True, "true", "yes", "on", "1"])
+    def test_enabled_values(self, tmp_path, value):
+        cfg = self._make(tmp_path, plugins_enabled=value)
+        assert cfg.plugins_enabled is True
+
+    def test_disabled_ignores_plugins_section(self, tmp_path):
+        cfg = self._make(
+            tmp_path,
+            plugins_enabled=False,
+            plugins={"hello": {"prod": {"api_base_url": "p", "default": True}}},
+        )
+        # The whole ``agent.plugins`` section is ignored when disabled.
+        assert cfg.plugin_services == {}
+        assert cfg.get_plugin_profile("hello") == {}
+
+
+class TestConfigMutable:
+    """``config_mutable`` — read-only config mode for API/gateway surfaces."""
+
+    def _make(self, tmp_path, **extra):
+        return AgentConfig(
+            nodes={"test": NodeConfig(model="test-model", input=None)},
+            home=str(tmp_path / "h"),
+            target="mock",
+            models={"mock": {"type": "openai", "api_key": "k", "model": "m"}},
+            skip_init_dirs=True,
+            **extra,
+        )
+
+    def test_defaults_to_mutable(self, tmp_path):
+        assert self._make(tmp_path).config_mutable is True
+
+    @pytest.mark.parametrize("value", [False, "false", "no", "off", "0"])
+    def test_immutable_values(self, tmp_path, value):
+        assert self._make(tmp_path, config_mutable=value).config_mutable is False
+
+    def test_setter_coerces_to_bool(self, tmp_path):
+        cfg = self._make(tmp_path)
+        cfg.config_mutable = 0
+        assert cfg.config_mutable is False
+        cfg.config_mutable = "yes"
+        assert cfg.config_mutable is True
+
+    def test_deepcopy_isolates_the_clone(self, tmp_path):
+        import copy
+
+        cfg = self._make(tmp_path)
+        clone = copy.deepcopy(cfg)
+        clone.config_mutable = False
+        assert clone.config_mutable is False
+        assert cfg.config_mutable is True
+
+
+class TestSqlReadOnly:
+    """``sql_read_only`` — deployment-wide hard read-only posture."""
+
+    def _make(self, tmp_path, **extra):
+        return AgentConfig(
+            nodes={"test": NodeConfig(model="test-model", input=None)},
+            home=str(tmp_path / "h"),
+            target="mock",
+            models={"mock": {"type": "openai", "api_key": "k", "model": "m"}},
+            skip_init_dirs=True,
+            **extra,
+        )
+
+    def test_defaults_to_false(self, tmp_path):
+        assert self._make(tmp_path).sql_read_only is False
+
+    @pytest.mark.parametrize("value", [True, "true", "yes", "on", "1"])
+    def test_read_only_values(self, tmp_path, value):
+        assert self._make(tmp_path, sql_read_only=value).sql_read_only is True
+
+    @pytest.mark.parametrize("value", [False, "false", "no", "off", "0", ""])
+    def test_writable_values(self, tmp_path, value):
+        """``"false"`` is the one that matters: a naive ``bool()`` would read it
+        as True and silently invert a security switch.
+        """
+        assert self._make(tmp_path, sql_read_only=value).sql_read_only is False
+
+    def test_harden_turns_it_on(self, tmp_path):
+        cfg = self._make(tmp_path)
+        cfg.harden_sql_read_only()
+        assert cfg.sql_read_only is True
+
+    def test_hardening_twice_is_idempotent(self, tmp_path):
+        cfg = self._make(tmp_path, sql_read_only=True)
+        cfg.harden_sql_read_only()
+        assert cfg.sql_read_only is True
+
+    def test_there_is_no_way_to_relax_it(self, tmp_path):
+        """One-way by construction: the posture is exposed as a read-only
+        property, so nothing sharing the process — a plugin, a tool transformer,
+        third-party code — can undo a yaml-level ``true``. Assignment raises
+        rather than silently doing nothing, which is why this is a method and
+        not a tighten-only setter.
+        """
+        cfg = self._make(tmp_path, sql_read_only=True)
+
+        with pytest.raises(AttributeError):
+            cfg.sql_read_only = False
+
+        assert cfg.sql_read_only is True
+
+    def test_deepcopy_isolates_the_clone(self, tmp_path):
+        import copy
+
+        cfg = self._make(tmp_path)
+        clone = copy.deepcopy(cfg)
+        clone.harden_sql_read_only()
+        assert clone.sql_read_only is True
+        assert cfg.sql_read_only is False
+
+    def test_excluded_from_asdict_so_the_fingerprint_stays_stable(self, tmp_path):
+        """The flag is stored as a private attribute behind a property and is
+        deliberately NOT a dataclass field: ``compute_fingerprint`` runs
+        ``dataclasses.asdict``, which does ``getattr(obj, field.name)`` and would
+        raise on a declared-but-unstored ``sql_read_only``, silently collapsing
+        every config's fingerprint to the ``id:`` fallback.
+        """
+        from datus.api.services.datus_service import DatusService
+
+        fingerprint = DatusService.compute_fingerprint(self._make(tmp_path, sql_read_only=True))
+        assert not fingerprint.startswith("id:")
+
+
+class TestPluginPathsConfig:
+    """``agent.plugin_paths`` — extra plugin-level directory mounts."""
+
+    def _make(self, tmp_path, **extra):
+        return AgentConfig(
+            nodes={"test": NodeConfig(model="test-model", input=None)},
+            home=str(tmp_path / "h"),
+            target="mock",
+            models={"mock": {"type": "openai", "api_key": "k", "model": "m"}},
+            skip_init_dirs=True,
+            **extra,
+        )
+
+    def test_defaults_to_empty(self, tmp_path):
+        assert self._make(tmp_path).plugin_paths == []
+
+    def test_keeps_string_entries_stripped(self, tmp_path):
+        cfg = self._make(tmp_path, plugin_paths=["/opt/plugins/foo", "  ~/dev/bar  ", "", "   ", 42, None])
+        assert cfg.plugin_paths == ["/opt/plugins/foo", "~/dev/bar"]
+
+    def test_non_list_value_ignored_with_warning(self, tmp_path, caplog):
+        with caplog.at_level("WARNING"):
+            cfg = self._make(tmp_path, plugin_paths="/opt/plugins/foo")
+        assert cfg.plugin_paths == []
+        assert "plugin_paths must be a list" in caplog.text
+
+    def test_activates_request_plugin_paths_during_construction(self, tmp_path, monkeypatch):
+        """Direct AuthProvider construction must not depend on the YAML loader."""
+        calls = []
+
+        def activate(active_names, plugins_enabled=True, extra_paths=None):
+            calls.append((active_names, plugins_enabled, extra_paths))
+            return []
+
+        monkeypatch.setattr("datus.plugins.store.activate", activate)
+
+        self._make(
+            tmp_path,
+            plugin_paths=[" /srv/tenant/plugin "],
+            active_plugins={"tenant-plugin": {"enabled": True}},
+        )
+
+        assert calls == [({"tenant-plugin"}, True, ["/srv/tenant/plugin"])]
+
+
+class TestPluginStateSignature:
+    """``plugin_state_signature`` — the plugin half of the SaaS config fingerprint.
+
+    ``DatusService.compute_fingerprint`` hashes ``dataclasses.asdict`` plus this
+    snapshot; every plugin input lives in instance attributes that ``asdict``
+    cannot see, so these tests pin that each one reaches the payload.
+    """
+
+    def _make(self, tmp_path, **extra):
+        return AgentConfig(
+            nodes={"test": NodeConfig(model="test-model", input=None)},
+            home=str(tmp_path / "h"),
+            project_root=str(tmp_path),
+            target="mock",
+            models={"mock": {"type": "openai", "api_key": "k", "model": "m"}},
+            skip_init_dirs=True,
+            **extra,
+        )
+
+    def test_reports_config_side_plugin_state(self, tmp_path):
+        cfg = self._make(
+            tmp_path,
+            plugin_paths=["/srv/tenant/plugin"],
+            plugins={"hello": {"prod": {"api_base_url": "https://prod"}}},
+            active_plugins={"hello": {"enabled": True, "active_profile": ["prod"]}},
+        )
+
+        signature = cfg.plugin_state_signature()
+
+        assert signature["enabled"] is True
+        assert signature["section_present"] is True
+        assert signature["paths"] == ["/srv/tenant/plugin"]
+        assert signature["activation"] == {"hello": {"enabled": True, "active_profile": ["prod"]}}
+        assert signature["profiles"]["hello"]["prod"]["api_base_url"] == "https://prod"
+
+    def test_absent_section_reports_no_whitelist(self, tmp_path):
+        signature = self._make(tmp_path).plugin_state_signature()
+        assert signature["section_present"] is False
+        assert signature["activation"] == {}
+        assert signature["paths"] == []
+
+    def test_unpinned_plugin_keeps_active_profile_none(self, tmp_path):
+        """``None`` (all profiles) must stay distinct from ``[]`` (none pinned)."""
+        cfg = self._make(tmp_path, active_plugins={"hello": {"enabled": True}})
+        assert cfg.plugin_state_signature()["activation"] == {"hello": {"enabled": True, "active_profile": None}}
+
+    def test_master_switch_reported(self, tmp_path):
+        cfg = self._make(tmp_path, plugins_enabled=False)
+        assert cfg.plugin_state_signature()["enabled"] is False
+
+    def test_is_json_serializable(self, tmp_path):
+        """The host hashes it through ``json.dumps`` — no dataclass leaks."""
+        import json
+
+        cfg = self._make(
+            tmp_path,
+            plugin_paths=["/srv/tenant/plugin"],
+            plugins={"hello": {"prod": {"api_base_url": "https://prod"}}},
+            active_plugins={"hello": {"enabled": True, "active_profile": ["prod"]}},
+        )
+
+        assert json.loads(json.dumps(cfg.plugin_state_signature())) == cfg.plugin_state_signature()
+
+    def test_reads_no_filesystem_state(self, tmp_path):
+        """Runs on every API request — it must stay a pure in-memory read.
+
+        A managed-store scan here would cost I/O per request and buy nothing: the
+        rebuild it triggers reuses the same AgentConfig and the process keeps its
+        already-loaded manifests.
+        """
+        from datus.plugins import store
+
+        cfg = self._make(tmp_path, active_plugins={"hello": {"enabled": True}})
+        store.write_meta(cfg.path_manager.plugins_dir / "hello", {"name": "hello", "version": "1.0"})
+        before = cfg.plugin_state_signature()
+
+        store.write_meta(cfg.path_manager.plugins_dir / "hello", {"name": "hello", "version": "2.0"})
+
+        assert cfg.plugin_state_signature() == before
+
+
+class TestPromptManagerAttribute:
+    """``AgentConfig.prompt_manager`` — the runtime prompt-template override.
+
+    It is an instance attribute rather than a dataclass field on purpose; these
+    tests pin the two properties that choice buys, so a future refactor that
+    promotes it to a field fails loudly instead of silently degrading the SaaS
+    service cache.
+    """
+
+    @staticmethod
+    def _make(tmp_path):
+        return AgentConfig(
+            nodes={"test": NodeConfig(model="test-model", input=None)},
+            home=str(tmp_path / "h"),
+            target="mock",
+            models={"mock": {"type": "openai", "api_key": "k", "model": "m"}},
+            skip_init_dirs=True,
+        )
+
+    def test_defaults_to_none(self, tmp_path):
+        """Unset means "derive the template dir from home" — the CLI path."""
+        assert self._make(tmp_path).prompt_manager is None
+
+    def test_get_prompt_manager_falls_back_to_path_manager_when_unset(self, tmp_path):
+        from datus.prompts.prompt_manager import get_prompt_manager
+
+        cfg = self._make(tmp_path)
+        pm = get_prompt_manager(agent_config=cfg)
+
+        assert pm.user_templates_dir == cfg.path_manager.template_dir
+
+    def test_attached_manager_overrides_the_home_derived_one(self, tmp_path):
+        """A host whose templates live outside ``home`` attaches its own manager."""
+        from datus.prompts.prompt_manager import PromptManager, get_prompt_manager
+        from datus.utils.path_manager import DatusPathManager
+
+        cfg = self._make(tmp_path)
+        elsewhere = tmp_path / "elsewhere"
+        cfg.prompt_manager = PromptManager(path_manager=DatusPathManager(str(elsewhere)))
+
+        pm = get_prompt_manager(agent_config=cfg)
+
+        assert pm is cfg.prompt_manager
+        assert pm.user_templates_dir == elsewhere.resolve() / "template"
+        assert pm.user_templates_dir != cfg.path_manager.template_dir
+
+    def test_excluded_from_asdict_so_the_fingerprint_stays_stable(self, tmp_path):
+        """``DatusService.compute_fingerprint`` hashes ``dataclasses.asdict``.
+
+        A PromptManager stringifies to a memory address, so if it ever entered the
+        payload the fingerprint would differ on every rebuild and the cached service
+        would be evicted mid-session.
+        """
+        import dataclasses
+
+        from datus.prompts.prompt_manager import PromptManager
+        from datus.utils.path_manager import DatusPathManager
+
+        cfg = self._make(tmp_path)
+        before = dataclasses.asdict(cfg)
+
+        cfg.prompt_manager = PromptManager(path_manager=DatusPathManager(str(tmp_path / "elsewhere")))
+        after = dataclasses.asdict(cfg)
+
+        assert "prompt_manager" not in after
+        assert "prompt_manager" not in AgentConfig.__dataclass_fields__
+        assert after == before
+
+    def test_survives_deepcopy(self, tmp_path):
+        """Hosts clone the config per request (e.g. chat_task_manager)."""
+        import copy
+
+        from datus.prompts.prompt_manager import PromptManager, get_prompt_manager
+        from datus.utils.path_manager import DatusPathManager
+
+        cfg = self._make(tmp_path)
+        elsewhere = tmp_path / "elsewhere"
+        cfg.prompt_manager = PromptManager(path_manager=DatusPathManager(str(elsewhere)))
+
+        cloned = copy.deepcopy(cfg)
+
+        assert isinstance(cloned.prompt_manager, PromptManager)
+        # A real clone, not a shared reference back into the original config.
+        assert cloned.prompt_manager is not cfg.prompt_manager
+        assert get_prompt_manager(agent_config=cloned).user_templates_dir == elsewhere.resolve() / "template"
+
+
+class TestCompactConfigMidTurnKeys:
+    """The mid-turn compaction knobs round-trip through ``CompactConfig.from_dict``."""
+
+    def test_defaults(self):
+        from datus.configuration.agent_config import CompactConfig
+
+        cfg = CompactConfig.from_dict(None)
+        assert cfg.major.mid_turn_enabled is True
+        assert cfg.minor.mid_turn_enabled is True
+        assert cfg.minor.mid_turn_token_threshold == 0.75
+        assert cfg.minor.keep_recent_tool_results == 5
+
+    def test_yaml_strings_are_coerced(self):
+        from datus.configuration.agent_config import CompactConfig
+
+        cfg = CompactConfig.from_dict(
+            {
+                "major": {"mid_turn_enabled": "false", "token_threshold": "0.8"},
+                "minor": {"mid_turn_enabled": "no", "mid_turn_token_threshold": "0.6", "keep_recent_tool_results": "3"},
+            }
+        )
+        assert cfg.major.mid_turn_enabled is False
+        assert cfg.major.token_threshold == 0.8
+        assert cfg.minor.mid_turn_enabled is False
+        assert cfg.minor.mid_turn_token_threshold == 0.6
+        assert cfg.minor.keep_recent_tool_results == 3
+
+    def test_unknown_keys_are_ignored_and_existing_keys_unchanged(self):
+        from datus.configuration.agent_config import CompactConfig
+
+        cfg = CompactConfig.from_dict({"major": {"bogus": 1}, "minor": {"keep_recent_user_turns": 2}})
+        assert cfg.minor.keep_recent_user_turns == 2
+        assert cfg.minor.keep_recent_tool_results == 5

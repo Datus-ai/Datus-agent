@@ -62,8 +62,7 @@ class BIFuncTool:
     def _resolved_platform(self) -> Optional[str]:
         """Return the BI platform name to use.
 
-        Preference order (matches ``get_scheduler_config`` /
-        ``resolve_semantic_adapter``):
+        Preference order (matches ``get_scheduler_config``):
         1. Explicit ``bi_service`` passed to the constructor.
         2. Project-level default from ``./.datus/config.yml`` (read via
            ``agent_config.active_dashboard()``). A stale override that

@@ -11,14 +11,14 @@ The agent analyzes the input, generates DDL, asks for user confirmation, execute
 
 ## Quick Start
 
-Start Datus CLI and use the gen_table subagent:
+Start Datus CLI and describe the table you want. The chat agent can route the request automatically; append `@Agent gen_table` when you want to select it explicitly:
 
-```bash
+```text
 # SQL mode: create wide table from a JOIN query
-/gen_table CREATE TABLE wide_orders AS SELECT o.*, c.name FROM orders o JOIN customers c ON o.customer_id = c.id
+Create the wide_orders table from this query: SELECT o.*, c.name FROM orders o JOIN customers c ON o.customer_id = c.id @Agent gen_table
 
 # Description mode: describe what you want
-/gen_table Create a user_profiles table with id (int), name (varchar), email (varchar), created_at (timestamp)
+Create a user_profiles table with id (int), name (varchar), email (varchar), and created_at (timestamp). @Agent gen_table
 ```
 
 The chat agent can also automatically delegate to gen_table when it detects a table creation task.
@@ -94,7 +94,7 @@ agent:
 
 - DDL execution requires user confirmation — tables are never created silently
 - If the target table already exists, the agent warns and asks whether to DROP + recreate or abort
-- gen_table only creates tables — for semantic model generation on the new table, use `gen_semantic_model` separately
+- gen_table only creates tables — for Dosi semantic authoring on the new table, use `semantic_modeling` separately
 - Source tables are never modified
 
 ## Output Format

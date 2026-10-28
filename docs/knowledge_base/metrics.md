@@ -1,167 +1,244 @@
-# Business Metrics Intelligence
+# Metrics
 
-Starting from **version 0.2.4**, the Metrics component focuses on creating standardized, queryable business metrics as an independent semantic query layer. Metrics can be executed directly through MetricFlow, rather than serving solely as references for LLM SQL generation.
+A metric is a reusable, executable business calculation such as revenue, active customers, or failed-bank assets. It gives a calculation one stable name and definition so users can ask business questions without rewriting its aggregation logic.
 
-## Core Value
+Metrics are part of a [semantic model](semantic_model.md). Their definitions live in the model's OSI YAML; Datus projects them into a separate Knowledge Base store for discovery, and the built-in Dosi engine compiles and executes metric queries.
 
-Solves common enterprise challenges:
+## What a metric defines
 
-- **Duplicate SQL queries**: Query metrics directly instead of rewriting similar SQL
-- **Inconsistent definitions**: Standardize metric definitions across teams through executable specifications
-- **Manual classification**: Organize metrics with hierarchical subject tree taxonomy
-- **Ad-hoc SQL complexity**: Use semantic queries (`query_metrics`) instead of generating SQL for common metrics
+A metric normally includes:
 
-## How It Works
+- a datasource-wide unique `name`;
+- a business `description` and `ai_context.instructions`;
+- an aggregate, ratio, or arithmetic `expression`;
+- the dataset and business time it uses;
+- a three-level `subject_path` for discovery;
+- optional display metadata such as `unit` and `format`;
+- optional reusable window behavior, such as rolling, cumulative, or period comparison.
 
-Metrics are business-level calculations built on top of semantic models. Starting from version 0.2.4, they operate independently:
+The dataset, fields, and relationships required by a metric are defined in the same semantic-model file. This keeps the calculation and the model needed to execute it in one authoritative artifact.
 
-- **Metrics** (this document): Standardized KPIs queryable via MetricFlow
-- **Semantic Models** (see [semantic_model.md](semantic_model.md)): Schema extensions for ad-hoc SQL generation
+## Definition, discovery, and execution
 
-Both can be generated from historical SQLs, but metrics focus on reusable business logic while semantic models focus on schema understanding.
+Metric data has three distinct roles:
 
-## Querying Metrics
+1. **OSI YAML is the definition.** It is the source of truth for expressions, time behavior, descriptions, and extensions.
+2. **The `metrics` Knowledge Base store is the discovery projection.** It indexes the metric name, description, subject path, model, dimensions, source YAML, and other retrieval metadata for the active datasource.
+3. **Dosi executes queries.** `query_metrics` sends metric names, dimensions, time bounds, filters, and ordering to Dosi, which compiles and runs the query.
 
-Once metrics are defined, query them directly using MetricFlow tools:
+Moving a metric to another `subject_path` changes its classification, not its identity. Metric names must therefore remain unique within one datasource.
+
+## Quick start with natural language
+
+The recommended user flow is to ask a business question. The main agent recognizes metric questions and automatically delegates them to `ask_metrics`:
+
+```bash
+datus --datasource duckdb_demo
+```
+
+```text
+Show the annual trend in the number of failed banks and their total assets.
+```
+
+The user does not need to know the metric names. AskMetrics uses the subject tree and metric descriptions to infer that this question needs `bank_failure_count` and `failed_assets_million`, discovers the available time dimension, and queries them by year.
+
+This flow assumes the metrics already exist on the active datasource. If no existing metric can answer the question, AskMetrics reports that limitation instead of switching to an unrelated raw-SQL answer. See [AskMetrics](../subagent/ask_metrics.md) for routing, configuration, and output behavior.
+
+## Current metric YAML
+
+The following excerpt is the `semantic_model[0].metrics` section from the `bank_failures.yml` file generated against Datus's sample DuckDB database. It uses the dataset and fields shown in [Semantic Models](semantic_model.md). The leading indentation is intentional: this block belongs inside a semantic model and is not a standalone YAML document.
+
+```yaml
+    metrics:
+      - name: bank_failure_count
+        expression:
+          dialects:
+            - dialect: DUCKDB
+              expression: COUNT(*)
+        description: Number of failed banks, measured as bank failure event rows.
+        ai_context:
+          instructions: Use date as business time; group by state or a time grain when requested.
+        custom_extensions:
+          - vendor_name: DATUS
+            data: '{"v":"1.4","dataset":"bank_failures","time_dimension":"bank_failures.date","subject_path":["banking","bank_failures","count"],"unit":"banks"}'
+
+      - name: failed_assets_million
+        expression:
+          dialects:
+            - dialect: DUCKDB
+              expression: SUM(bank_failures.assets_million)
+        description: Total assets of failed banks, in millions of US dollars.
+        ai_context:
+          instructions: Use date as business time and sum assets at failure.
+        custom_extensions:
+          - vendor_name: DATUS
+            data: '{"v":"1.4","time_dimension":"bank_failures.date","subject_path":["banking","bank_failures","assets"],"unit":"USD million"}'
+```
+
+Metric expressions use the same `expression.dialects[]` structure as field expressions. Qualify fields with their dataset name, as in `SUM(bank_failures.assets_million)`. An aggregate such as `COUNT(*)` cannot reveal its dataset from a qualified field, so its DATUS extension supplies `dataset` explicitly.
+
+Do not place `dataset`, `time_dimension`, `subject_path`, `unit`, or window settings at the metric's top level. They are Datus behavior and belong in the metric's DATUS `custom_extensions` entry.
+
+## Metric extensions
+
+The DATUS extension is an OSI `custom_extensions` entry whose `data` value is a JSON string:
+
+```yaml
+custom_extensions:
+  - vendor_name: DATUS
+    data: '{"v":"1.4","time_dimension":"orders.order_date","subject_path":["sales","revenue","total"],"unit":"USD"}'
+```
+
+Common keys are:
+
+| Key | Purpose |
+| --- | --- |
+| `dataset` | Anchors an expression when its dataset cannot be inferred, for example `COUNT(*)`. |
+| `time_dimension` | Selects the metric's business time field. Qualify it when names may collide. |
+| `subject_path` | Places the metric in a three-level discovery hierarchy. |
+| `unit`, `format` | Describe how results should be labeled or displayed. |
+| `fill_nulls_with` | Defines explicit null-filling behavior. |
+| `window` | Defines a reusable rolling, cumulative, comparison, ranking, or value window. |
+
+`semantic_modeling` writes the extension version required by the installed engine. Preserve generated version values and keep only one DATUS entry on each object.
+
+## Querying metrics
+
+AskMetrics is the normal user-facing query path. For integrations or advanced agent workflows, the underlying tools separate discovery from execution:
 
 ```python
-# In agent conversation or workflow
-# Search for relevant metrics
-search_semantic_objects(query="daily active users", kinds=["metric"])
+# Discover candidate definitions from the Knowledge Base.
+search_metrics(
+    query_text="annual failed-bank count and assets",
+    top_n=5,
+)
 
-# Execute metric query
+# How each metric is computed, what it reads, and its time grains.
+get_metric(name="bank_failure_count")
+
+# The fields of a dataset a metric reads, with their definitions.
+get_dataset(name="bank_failures")
+
+# Execute both metrics by year.
 query_metrics(
-    metrics=["daily_active_users"],
-    group_by=["platform", "country"],
-    start_time="2024-01-01",
-    end_time="2024-01-31"
+    metrics=["bank_failure_count", "failed_assets_million"],
+    dimensions=["metric_time"],
+    time_granularity="year",
+    order_by=["metric_time__year"],
 )
 ```
 
-**Metrics-First Strategy**: When user queries involve KPIs (e.g., "show me DAU by platform"), the agent will:
-1. Search for matching metrics using `search_semantic_objects`
-2. Execute via `query_metrics` if found (preferred)
-3. Fall back to ad-hoc SQL generation only if no metric exists
+### What the discovery tools return
 
-This ensures consistent metric definitions across the organization.
+Each discovery tool answers with text, one fact per line, and leaves out what an object does not have.
 
-## Usage
+- `list_metrics` lists metrics grouped under their subject path, one `- name -- description` line each. When the page is not the whole catalog, a last `more:` line gives the `offset` to call again with.
+- `get_metric` describes one metric:
+    - `expr`: how it is computed from other metrics or fields. An aggregate (`COUNT(DISTINCT orders.customer_id)`), a filter (`base FILTER (WHERE condition)`), a compose's arithmetic, a level-of-detail declaration, or a window's base.
+    - `datasets`: the datasets it reads. `dimension_datasets`: the datasets whose fields it can be grouped and filtered by, written `name(f1, f2)` when only some fields qualify.
+    - `window` and `compares_across`: a window metric's rule, and the dimensions a ranking or share compares across.
+    - `params`: each parameter as `name type = default [domain] -- meaning`, with `[declared_on metric]` when a member or a fixed value it reads declares it.
+    - `required`: the dimensions every query of it must group by. `requires_time_axis: true`: the query must also group by `metric_time` at a grain.
+    - `time`: `metric_time` and its grains, finest first; `none` for a metric whose table has no time field.
+- `get_dataset` describes one dataset: a header line with its description, `source`, `time` field and primary key, then one line per field. A column is `- name`; a computed field is `- expression AS name`; a fixed field is `- fixed(base, keys) AS name`, a value computed per key over rows of its own. Marks in brackets give a time field's format, a field that is not a dimension, and the dataset a fixed field reads. A last `relationships:` block lists each relationship as `cardinality dataset on column=column`.
 
-**Prerequisites**: This command relies on [datus-semantic-metricflow](../adapters/semantic_adapters.md), install it first with `pip install datus-semantic-metricflow`.
+`query_metrics` accepts these current parameters:
 
-### Basic Command
+| Parameter | Meaning |
+| --- | --- |
+| `metrics` | One or more exact metric names. |
+| `dimensions` | Fields as `dataset.field`, from the datasets `get_metric` lists under `dimension_datasets` (`get_dataset` shows their fields). `metric_time` selects the metric's time axis, with `time_granularity` for its grain. |
+| `time_start`, `time_end` | Optional half-open time range: start is inclusive and end is exclusive. Use ISO dates (`YYYY-MM-DD`). Every metric and every fixed field applies it on its own table's time field. |
+| `time_granularity` | `day`, `week`, `month`, `quarter`, or `year`. |
+| `where` | Optional filter expression without the `WHERE` keyword. A condition on a selected metric (`revenue > 1000`) filters the result rows after aggregation, like `HAVING`; in a query with a window metric, a condition on group-by fields only also filters the result, so the kept rows keep the ranks and partition counts of the whole population. Every other condition filters rows before aggregation. |
+| `context_filter` | Optional scope every number obeys, applied before aggregation in every part of the query that can read its columns; a part that cannot is listed in the result's `warnings`. It scopes the population a window metric ranks, counts or weighs: `where="market = 'North'"` shows North's rank among all markets, `context_filter="market = 'North'"` ranks North's rows against each other. It also scopes the rows a fixed level-of-detail value is computed over, which `where` does not. |
+| `order_by` | Result columns to sort; prefix a name with `-` for descending order. |
+| `limit` | Maximum rows, used only when the user asks for Top N, a preview, or another explicit row limit. |
+| `params` | Bindings for the parameters `get_metric` lists under `params`, by name: the metric's own, its members', and those of the fixed values it reads. A list binds several values in one query and returns one column per value: `{"k": [1, 7]}` yields `<metric>__k_1` and `<metric>__k_7`. Omitted parameters take their defaults. |
+| `dry_run` | Return compiled SQL without executing the metric query; a configured warehouse dry-run provider also validates the SQL. The result carries the query's `warnings`, as an executed query does. |
+
+For example, to include all of January 2024, use `time_start="2024-01-01"` and `time_end="2024-02-01"`.
+
+An executed query returns text: a `result_id` line, a `rows` line with the row count, one line for each thing to report (a `warning` or `info` from the engine, a `note` on `IN (...)` values that matched no row, a `column` line mapping a column named after a parameter binding to its metric), then a blank line and the rows as CSV. A long result shows its first and last rows around a `... N rows omitted` line; the complete result is cached, `get_query_metrics_result` pages it, and it is what the final answer uses. The text leaves out the compiled SQL; a `dry_run` returns it.
+
+### Where a condition goes
+
+Each condition of a question goes in one place:
+
+- `time_start`/`time_end`: the period. Every metric and every fixed field (a per-entity value such as a customer's order count) applies it on its own table's time field. A metric or fixed field whose table has no time field is read whole, and the result's `warnings` say so; a metric whose `get_metric` shows `time: none` reads such a table, so query it without `time_start`/`time_end`.
+- `context_filter`: a scope every number obeys, such as one platform or one campaign. Every part of the query applies it where it can read the columns; a part that cannot is listed in `warnings`.
+- `where`: the result rows. A condition on a field never changes a fixed field's value; a condition on a selected metric filters after aggregation. A snapshot table's version day goes here.
+
+A fixed value that must not follow the period, such as a first purchase day or a lifetime total, is read by putting the question's dates in `where`, on the date field of the metric's own table, instead of `time_start`/`time_end`: the dates pick the rows the metric counts and leave every fixed value over all history.
+
+```python
+query_metrics(
+    metrics=["active_customers"],
+    dimensions=["visits.customer_first_order_day"],
+    where="visits.visit_date >= '2024-01-01' AND visits.visit_date < '2024-02-01'",
+)
+```
+
+The positions differ only where a value depends on rows outside its own group: a fixed level-of-detail value, an `include`/`exclude` grain, or a window. `get_metric` and `get_dataset` show each of them. `get_dataset` writes a fixed field as `fixed(order_count, customers.customer_id) AS name` (one value per customer; `fixed(revenue)` is one value for the whole table); a level-of-detail metric states its declaration in `expr`; a window metric has a `window` line. `query_metrics` returns `warnings` for a condition a part could not read, so a dry run shows a misplaced condition before the query runs.
+
+| Part | How the positions act on it |
+| --- | --- |
+| Fixed value | The period lands on its own table's time field, and `context_filter` narrows it where it can read the columns; `where` does not. A condition on the fixed field itself goes in `where`. A fixed field whose base takes window parameters reads the window bound in `params`. |
+| `include`, `exclude` | Every position narrows it. |
+| Period-over-period and running windows | Dates go in `time_start`/`time_end`; in `where` they cut the lookback and the compared value comes back empty. |
+| Moving windows | `time_start`/`time_end`, `context_filter` and `where` give the same numbers. |
+| Ranks | `where` on a grouped field keeps the value among all rows; `context_filter` computes it within the subset. |
+
+For "each region's share of the whole company in January", the company total should change with January but not with the region, so January goes in `time_start`/`time_end` and the region in `where`.
+
+## Creating and updating metrics
+
+Use `semantic_modeling` for normal authoring. It can create required datasets and fields, add or update metrics in the same YAML, validate the complete model, dry-run representative queries when requested, and synchronize both Knowledge Base projections.
+
+```text
+Add a monthly revenue growth metric to the sales model, use order_date as business time, validate it, and dry-run a yearly query.
+```
+
+For batch authoring from a CSV containing `question` and `sql`, use the unified semantic-modeling component:
 
 ```bash
-# From CSV (historical SQLs)
 datus-agent bootstrap-kb \
-    --datasource <your_datasource> \
-    --components metrics \
-    --success_story path/to/success_story.csv
-
-# From YAML (semantic models)
-datus-agent bootstrap-kb \
-    --datasource <your_datasource> \
-    --components metrics \
-    --semantic_yaml path/to/semantic_model.yaml
+  --datasource <your_datasource> \
+  --components semantic_modeling \
+  --success_story path/to/success_story.csv \
+  --kb_update_strategy incremental \
+  --metrics-batch-size 5
 ```
 
-### Key Parameters
+`--metrics-batch-size` controls how many history rows are processed in one authoring batch. `--subject_tree` may provide allowed comma-separated categories; when omitted, authoring reuses existing categories or creates suitable ones.
 
-| Parameter | Required | Description | Example |
-|-----------|----------|-------------|---------|
-| `--datasource` | ✅ | Database datasource | `sales_db` |
-| `--components` | ✅ | Components to initialize | `metrics` |
-| `--success_story` | ⚠️ | CSV file with historical SQLs and questions (required if no `--semantic_yaml`) | `success_story.csv` |
-| `--semantic_yaml` | ⚠️ | Semantic model YAML file (required if no `--success_story`) | `semantic_model.yaml` |
-| `--kb_update_strategy` | ❌ | Update strategy | `overwrite`/`incremental` |
-| `--subject_tree` | ❌ | Predefined categories (comma-separated) | `Sales/Reporting/Daily,Finance/Revenue/Monthly` |
-| `--pool_size` | ❌ | Concurrent thread count | `4` |
+The default `check` strategy does not author metrics. It only reports the current semantic-dataset and metric projection counts, so use `incremental` or `overwrite` when generation is intended.
 
-### Subject Tree Categorization
+## Synchronizing the Knowledge Base
 
-Organizes metrics using hierarchical taxonomy: `domain/layer1/layer2` (e.g., `Sales/Reporting/Daily`)
-
-**Two modes:**
-
-- **Predefined**: Use `--subject_tree` to enforce specific categories
-- **Learning**: Omit `--subject_tree` to reuse existing categories or create new ones
+A successful `semantic_modeling` run synchronizes its target file automatically. If YAML was edited manually, reconcile all semantic-object and metric projections with:
 
 ```bash
-# Predefined mode example
---subject_tree "Sales/Reporting/Daily,Finance/Revenue/Monthly"
-
-# Learning mode: omit --subject_tree parameter
+datus-agent bootstrap-kb \
+  --datasource <your_datasource> \
+  --components semantic_model \
+  --kb_update_strategy sync-yaml
 ```
 
-**Generated Tag Format:**
+`sync-yaml` reads every model under the active datasource by default, replaces each artifact's projected rows, removes metrics no longer declared in that artifact, and prunes rows for deleted files during a directory-wide sync. It does not call an LLM or query the warehouse.
 
-When metrics are generated, the subject_tree classification is stored in `locked_metadata.tags` with the format `"subject_tree: {domain}/{layer1}/{layer2}"`:
+To check the number of indexed metrics without changing them:
 
-```yaml
-metric:
-  name: daily_revenue
-  type: simple
-  type_params:
-    measure: revenue
-  locked_metadata:
-    tags:
-      - "Finance"
-      - "subject_tree: Sales/Reporting/Daily"
+```bash
+datus-agent bootstrap-kb \
+  --datasource <your_datasource> \
+  --components metrics \
+  --kb_update_strategy check
 ```
 
-**Important for YAML Import:**
+## Related guides
 
-When using `--semantic_yaml` to sync metrics from YAML files to lancedb, you must manually add the `locked_metadata.tags` with subject_tree format in your YAML file for successful categorization. The system will not automatically classify metrics imported from YAML - you need to include the tags yourself:
-
-```yaml
-metric:
-  name: your_metric
-  # ... other fields
-  locked_metadata:
-    tags:
-      - "YourDomain"
-      - "subject_tree: Domain/Layer1/Layer2"
-```
-
-## Data Source Formats
-
-### CSV Format
-
-```csv
-question,sql
-How many customers have been added per day?,"SELECT ds AS date, SUM(1) AS new_customers FROM customers GROUP BY ds ORDER BY ds;"
-What is the total transaction amount?,SELECT SUM(transaction_amount_usd) as total_amount FROM transactions;
-```
-
-### YAML Format (Metrics Only)
-
-When importing metrics from YAML files, the metric definition references an existing semantic model:
-
-```yaml
-metric:
-  name: total_revenue
-  description: "Total revenue from all transactions"
-  type: simple
-  type_params:
-    measure: amount  # References measure from semantic model
-  filter: "amount > 0"
-  locked_metadata:
-    tags:
-      - "Finance"
-      - "subject_tree: Finance/Revenue/Total"
-```
-
-**Note**: The underlying semantic model (`data_source` with dimensions/measures) should already exist. See [semantic_model.md](semantic_model.md) for how to define semantic models.
-
-## Summary
-
-The Metrics component establishes a **semantic query layer** that transforms historical SQLs into standardized, executable metric definitions. Unlike traditional semantic layers that only serve as LLM references, Datus metrics can be directly queried through MetricFlow, eliminating the need for ad-hoc SQL generation for common KPIs.
-
-Key differentiators:
-
-- **Executable Metrics**: Query via `query_metrics` instead of generating SQL
-- **Metrics-First Strategy**: Agent prioritizes metric queries over ad-hoc SQL
-- **Independent from Semantic Models**: Metrics operate as a separate query tool, not embedded in schema definitions
-- **Hierarchical Organization**: Subject tree taxonomy for discoverability
-
-This approach ensures consistent metric definitions across teams while reducing query complexity and improving performance.
+- [AskMetrics](../subagent/ask_metrics.md): natural-language metric questions and capability boundaries
+- [Semantic Modeling](../subagent/semantic_modeling.md): end-to-end authoring and complete generated YAML
+- [Semantic Models](semantic_model.md): datasets, fields, relationships, and Knowledge Base projection
+- [Dosi engine](../semantic/dosi_engine.md): model location and query behavior

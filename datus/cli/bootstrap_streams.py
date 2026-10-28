@@ -48,7 +48,7 @@ _DONE = object()
 def _set_current_datasource(agent_config: AgentConfig, datasource: str) -> None:
     """Pin ``agent_config.current_datasource`` so storage classes scope correctly.
 
-    ``SemanticModelRAG`` / ``MetricRAG`` both read
+    ``SemanticDatasetRAG`` / ``MetricRAG`` both read
     this attribute at construction time, so callers must set it before
     instantiating any RAG. We avoid mutating it when ``datasource`` is
     falsy to keep the existing REPL state intact.
@@ -271,8 +271,8 @@ async def stream_metadata(
     ``pool_size`` are kept at sensible defaults; the simplified ``/bootstrap``
     Schema tab does not expose them.
     """
+    from datus.storage.schema_metadata import create_metadata_rag
     from datus.storage.schema_metadata.local_init import init_local_schema_async
-    from datus.storage.schema_metadata.store import SchemaWithValueRAG
     from datus.tools.db_tools.db_manager import db_manager_instance
 
     if not datasource:
@@ -283,7 +283,7 @@ async def stream_metadata(
 
     yield message_action(f"Crawling schema from datasource `{datasource}` (mode={build_mode})…")
 
-    metadata_store = SchemaWithValueRAG(agent_config)
+    metadata_store = create_metadata_rag(agent_config)
     db_manager = db_manager_instance(agent_config.datasource_configs)
 
     async def _factory(emit):
@@ -385,7 +385,6 @@ async def stream_reference_sql(
                     node_name="gen_sql_summary",
                     agent_config=agent_config,
                     execution_mode="workflow",
-                    build_mode=build_mode,
                     subject_tree=subject_tree,
                 )
                 user_message = "Analyze and summarize this SQL query"
@@ -492,7 +491,70 @@ async def stream_reference_template(
 
 
 # ─────────────────────────────────────────────────────────────────────
-# stream_semantic_model — single batched subagent
+# stream_semantic_modeling — unified Dosi authoring
+# ─────────────────────────────────────────────────────────────────────
+
+
+async def stream_semantic_modeling(
+    agent_config: AgentConfig,
+    *,
+    datasource: str,
+    success_story: str,
+    build_mode: str = "incremental",
+    subject_tree: Optional[List[str]] = None,
+    authoring_scope: str = "full",
+) -> AsyncGenerator[ActionHistory, None]:
+    """Author Dosi semantic assets from one success-story CSV."""
+    if not datasource:
+        yield message_action("Semantic modeling: --datasource is required, skipping.", status=ActionStatus.FAILED)
+        return
+    if not success_story:
+        yield message_action("Semantic modeling: --success_story is required, skipping.", status=ActionStatus.FAILED)
+        return
+
+    _set_current_datasource(agent_config, datasource)
+
+    from datus.storage.semantic_model.semantic_modeling_init import init_success_story_semantic_modeling_async
+
+    captured: Dict[str, Any] = {}
+
+    async def _factory(emit, on_action):
+        helper_kwargs = {
+            "build_mode": build_mode,
+            "action_callback": on_action,
+        }
+        if authoring_scope != "full":
+            helper_kwargs["authoring_scope"] = authoring_scope
+        ok, error, result = await init_success_story_semantic_modeling_async(
+            agent_config,
+            success_story,
+            subject_tree,
+            emit,
+            **helper_kwargs,
+        )
+        captured.update(ok=ok, error=error, result=result)
+        return ok
+
+    async def _inner(_mgr):
+        async for action in _run_helper_with_actions(_factory, function_name="semantic_modeling"):
+            yield action
+        if captured.get("ok") is False:
+            yield message_action(
+                str(captured.get("error") or "Semantic modeling failed."),
+                action_type="semantic_modeling",
+                status=ActionStatus.FAILED,
+            )
+
+    async for action in as_task_subagent(
+        subagent_type="semantic_modeling",
+        description=f"{success_story} (mode={build_mode}, scope={authoring_scope})",
+        inner_factory=_inner,
+    ):
+        yield action
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Compatibility aliases for retired split authoring tasks
 # ─────────────────────────────────────────────────────────────────────
 
 
@@ -503,49 +565,15 @@ async def stream_semantic_model(
     success_story: str,
     build_mode: str = "incremental",
 ) -> AsyncGenerator[ActionHistory, None]:
-    """Generate the semantic model from a success-story CSV.
-
-    Wraps :class:`GenSemanticModelAgenticNode` as one
-    ``task(gen_semantic_model, …)`` subagent group. ``build_mode`` is
-    forwarded to ``init_success_story_semantic_model_async``: in
-    ``incremental`` mode the helper short-circuits without an LLM call
-    when the store is already populated.
-    """
-    if not datasource:
-        yield message_action("Semantic Model: --datasource is required, skipping.", status=ActionStatus.FAILED)
-        return
-    if not success_story:
-        yield message_action("Semantic Model: --success_story is required, skipping.", status=ActionStatus.FAILED)
-        return
-
-    _set_current_datasource(agent_config, datasource)
-
-    from datus.storage.semantic_model.semantic_model_init import init_success_story_semantic_model_async
-
-    async def _factory(emit, on_action):
-        return await init_success_story_semantic_model_async(
-            agent_config,
-            success_story,
-            emit,
-            build_mode=build_mode,
-            action_callback=on_action,
-        )
-
-    async def _inner(_mgr):
-        async for action in _run_helper_with_actions(_factory, function_name="gen_semantic_model"):
-            yield action
-
-    async for action in as_task_subagent(
-        subagent_type="gen_semantic_model",
-        description=f"{success_story} (mode={build_mode})",
-        inner_factory=_inner,
+    """Compatibility alias that routes semantic authoring to semantic_modeling."""
+    async for action in stream_semantic_modeling(
+        agent_config,
+        datasource=datasource,
+        success_story=success_story,
+        build_mode=build_mode,
+        authoring_scope="datasets",
     ):
         yield action
-
-
-# ─────────────────────────────────────────────────────────────────────
-# stream_metrics — single batched subagent
-# ─────────────────────────────────────────────────────────────────────
 
 
 async def stream_metrics(
@@ -557,42 +585,15 @@ async def stream_metrics(
     build_mode: str = "incremental",
     subject_tree: Optional[List[str]] = None,
 ) -> AsyncGenerator[ActionHistory, None]:
-    """Wrap :class:`GenMetricsAgenticNode` invocation as a ``gen_metrics`` task group.
-
-    ``pool_size`` is accepted for form parity with other tabs but the
-    underlying ``init_success_story_metrics_async`` invokes the LLM once
-    per CSV (single batch), so it is not currently consumed.
-    """
-    del pool_size  # explicit parity; unused
-    if not datasource:
-        yield message_action("Metrics: --datasource is required, skipping.", status=ActionStatus.FAILED)
-        return
-    if not success_story:
-        yield message_action("Metrics: --success_story is required, skipping.", status=ActionStatus.FAILED)
-        return
-
-    _set_current_datasource(agent_config, datasource)
-
-    from datus.storage.metric.metric_init import init_success_story_metrics_async
-
-    async def _factory(emit, on_action):
-        return await init_success_story_metrics_async(
-            agent_config=agent_config,
-            success_story=success_story,
-            subject_tree=subject_tree,
-            emit=emit,
-            build_mode=build_mode,
-            action_callback=on_action,
-        )
-
-    async def _inner(_mgr):
-        async for action in _run_helper_with_actions(_factory, function_name="gen_metrics"):
-            yield action
-
-    async for action in as_task_subagent(
-        subagent_type="gen_metrics",
-        description=f"{success_story} (mode={build_mode})",
-        inner_factory=_inner,
+    """Compatibility alias that routes metric authoring to semantic_modeling."""
+    del pool_size
+    async for action in stream_semantic_modeling(
+        agent_config,
+        datasource=datasource,
+        success_story=success_story,
+        build_mode=build_mode,
+        subject_tree=subject_tree,
+        authoring_scope="full",
     ):
         yield action
 
@@ -602,6 +603,7 @@ __all__ = [
     "stream_metadata",
     "stream_reference_sql",
     "stream_reference_template",
+    "stream_semantic_modeling",
     "stream_semantic_model",
     "stream_metrics",
 ]

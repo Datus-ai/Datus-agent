@@ -1,64 +1,57 @@
-from importlib import import_module
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
 
+from datus import entrypoints
 from datus.utils.constants import DBType
+from datus.utils.multiprocessing_utils import configure_multiprocessing_start_method
 from datus.utils.path_utils import get_files_from_glob_pattern
 
 
-# test datus.models.base
+def test_multiprocessing_start_method_defaults_to_spawn():
+    with patch("multiprocessing.get_start_method", return_value=None):
+        with patch("multiprocessing.set_start_method") as mock_set:
+            assert configure_multiprocessing_start_method() == "spawn"
+            mock_set.assert_called_once_with("spawn")
+
+
+def test_multiprocessing_start_method_preserves_host_choice():
+    with patch("multiprocessing.get_start_method", return_value="fork"):
+        with patch("multiprocessing.set_start_method") as mock_set:
+            assert configure_multiprocessing_start_method() == "fork"
+            mock_set.assert_not_called()
+
+
+def test_multiprocessing_start_method_handles_selection_race():
+    with patch("multiprocessing.get_start_method", side_effect=[None, "forkserver"]):
+        with patch("multiprocessing.set_start_method", side_effect=RuntimeError("already set")):
+            assert configure_multiprocessing_start_method() == "forkserver"
+
+
 @pytest.mark.parametrize(
-    "platform_name, expected_method",
+    ("entrypoint", "module_name"),
     [
-        ("Windows", "spawn"),  # Windows
-        ("Linux", "fork"),  # not Windows
-        ("Darwin", "fork"),  # macOS
+        (entrypoints.agent_main, "datus.main"),
+        (entrypoints.cli_main, "datus.cli.main"),
+        (entrypoints.api_main, "datus.api.main"),
+        (entrypoints.mcp_main, "datus.mcp_server"),
+        (entrypoints.gateway_main, "datus.gateway.main"),
     ],
 )
-def test_multiprocessing_start_method_base(platform_name, expected_method):
-    with patch("platform.system", return_value=platform_name):
-        with patch("multiprocessing.set_start_method") as mock_set:
-            base_module = import_module("datus.models.base")
-            mock_set.reset_mock()
-            base_module.configure_multiprocessing_start_method()
-            mock_set.assert_called_once_with(expected_method, force=True)
+def test_console_entrypoint_configures_before_import(entrypoint, module_name):
+    events = []
+    module = SimpleNamespace(main=lambda: events.append("run") or 17)
 
+    with (
+        patch.object(
+            entrypoints, "configure_multiprocessing_start_method", side_effect=lambda: events.append("configure")
+        ),
+        patch.object(entrypoints, "import_module", side_effect=lambda name: events.append(f"import:{name}") or module),
+    ):
+        assert entrypoint() == 17
 
-# test datus.storage.embedding_models
-@pytest.mark.parametrize(
-    "platform_name, expected_method",
-    [
-        ("Windows", "spawn"),
-        ("Linux", "fork"),
-        ("Darwin", "fork"),
-    ],
-)
-def test_multiprocessing_start_method_embedding(platform_name, expected_method):
-    with patch("platform.system", return_value=platform_name):
-        with patch("multiprocessing.set_start_method") as mock_set:
-            embedding_module = import_module("datus.storage.embedding_models")
-            mock_set.reset_mock()
-            embedding_module.configure_multiprocessing_start_method()
-            mock_set.assert_called_once_with(expected_method, force=True)
-
-
-def test_multiprocessing_start_method_base_ignores_runtime_error():
-    with patch("platform.system", return_value="Linux"):
-        with patch("multiprocessing.set_start_method", side_effect=RuntimeError("already set")) as mock_set:
-            base_module = import_module("datus.models.base")
-            mock_set.reset_mock()
-            base_module.configure_multiprocessing_start_method()
-            mock_set.assert_called_once_with("fork", force=True)
-
-
-def test_multiprocessing_start_method_embedding_ignores_runtime_error():
-    with patch("platform.system", return_value="Linux"):
-        with patch("multiprocessing.set_start_method", side_effect=RuntimeError("already set")) as mock_set:
-            embedding_module = import_module("datus.storage.embedding_models")
-            mock_set.reset_mock()
-            embedding_module.configure_multiprocessing_start_method()
-            mock_set.assert_called_once_with("fork", force=True)
+    assert events == ["configure", f"import:{module_name}", "run"]
 
 
 def test_detect_toxicology_db(tmp_path):

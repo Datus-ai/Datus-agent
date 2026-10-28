@@ -18,9 +18,23 @@ class DataVisualizationRequest(BaseModel):
     """POST body for /api/v1/data_visualization."""
 
     csv_data: CsvData
+    total_rows: Optional[int] = Field(
+        None,
+        description=(
+            "Row count of the full result set when ``csv_data`` carries only a sample of it. "
+            "Omit when ``csv_data`` is the whole set."
+        ),
+    )
     chart_type: Optional[ChartType] = Field(None, description="Desired chart type; omit for auto-recommendation")
     sql: Optional[str] = Field(None, description="SQL query that produced the data (enables metadata extraction)")
     user_question: Optional[str] = Field(None, description="User's original question (improves insight quality)")
+    language: Optional[str] = Field(
+        None,
+        description=(
+            "Response language override for the generated text (reason / filters / insight), "
+            "e.g. 'en', 'zh'. Falls back to agent.language from yaml when unset."
+        ),
+    )
 
 
 # ── Response payloads ────────────────────────────────────────────────

@@ -16,9 +16,9 @@ Both call sites must produce identical wording, so the per-tool formatters
 live in one place. Only the ``success`` path is per-tool; failure
 summaries are produced uniformly by :func:`format_failure`.
 
-All non-filesystem summaries are clipped to ``SUMMARY_TEXT_MAX_CHARS``
-characters at the registry exit; filesystem tools (``read_file``,
-``write_file``, ``edit_file``, ``glob``, ``grep``) bypass the clip.
+Most summaries are clipped to ``SUMMARY_TEXT_MAX_CHARS`` characters at the
+registry exit. Tools whose compact contract requires complete identifiers,
+including filesystem tools and ``attribution_analyze``, bypass the clip.
 """
 
 from __future__ import annotations
@@ -27,6 +27,7 @@ import json
 from typing import Any, Callable, Dict, Optional
 
 from datus.utils.loggings import get_logger
+from datus.utils.query_result_text import parse_query_result_text
 
 logger = get_logger(__name__)
 
@@ -34,7 +35,13 @@ logger = get_logger(__name__)
 SUMMARY_TEXT_MAX_CHARS = 19
 SUMMARY_ERROR_MAX_CHARS = 19
 
-FS_TOOLS_NO_CLIP = frozenset({"read_file", "write_file", "edit_file", "glob", "grep"})
+# Filesystem tools want full path/count visibility; web tools want their
+# result titles / page label visible on the compact line rather than clipped
+# to a handful of characters.
+FS_TOOLS_NO_CLIP = frozenset(
+    {"read_file", "read_image", "write_file", "edit_file", "delete_file", "glob", "grep", "web_search", "web_fetch"}
+)
+SUMMARY_TOOLS_NO_CLIP = FS_TOOLS_NO_CLIP | frozenset({"attribution_analyze"})
 
 
 # ── Generic helpers (public API) ────────────────────────────────────────
@@ -61,6 +68,33 @@ def looks_like_failure(data: dict) -> bool:
     if isinstance(error, str) and error.strip():
         return True
     return False
+
+
+def detect_tool_failure(output_content: Any) -> bool:
+    """Return True when a tool's output payload signals failure.
+
+    Tools built on :class:`~datus.tools.func_tool.base.FuncToolResult` report
+    errors via ``success=0`` / non-empty ``error`` instead of raising, so the
+    model integrations cannot infer failure from "did the call throw". Every
+    backend (OpenAI-compatible, Claude-native, Codex) must run the returned
+    payload through this helper to render ✗ and mark the action FAILED.
+
+    Accepts the raw ``ToolCallOutputItem.output`` shape: a dict (normal SDK
+    path), a JSON string, or anything else (treated as non-failure).
+    """
+    data: Optional[dict] = None
+    if isinstance(output_content, dict):
+        data = output_content
+    elif isinstance(output_content, str):
+        try:
+            parsed = json.loads(output_content)
+        except (TypeError, ValueError):
+            return False
+        if isinstance(parsed, dict):
+            data = parsed
+    if data is None:
+        return False
+    return looks_like_failure(data)
 
 
 def format_failure(data: dict) -> str:
@@ -142,13 +176,12 @@ def _list_count(value: Any, singular: str, plural: str) -> str:
 def _clip_short(text: str, tool_name: str = "", limit: int = SUMMARY_TEXT_MAX_CHARS) -> str:
     """Final-stage clip applied at registry exit.
 
-    Filesystem tools (``read_file``, ``write_file``, ``edit_file``,
-    ``glob``, ``grep``) are exempt — their summaries are returned
-    verbatim because users want full path / count visibility there.
+    Tools in ``SUMMARY_TOOLS_NO_CLIP`` are exempt because their summaries carry
+    identifiers that must remain complete.
     """
     if not isinstance(text, str):
         return text
-    if tool_name in FS_TOOLS_NO_CLIP:
+    if tool_name in SUMMARY_TOOLS_NO_CLIP:
         return text
     if len(text) <= limit:
         return text
@@ -198,6 +231,29 @@ def _fmt_execute_ddl(result: Any) -> str:
     return ""
 
 
+def _fmt_execute_sql(result: Any) -> str:
+    """Unified ``execute_sql`` summary — dispatches by result payload shape.
+
+    Read results carry ``compressed_data``/``original_rows``; write results
+    carry a row count; DDL results carry only a ``message``.
+    """
+    if isinstance(result, dict):
+        if "compressed_data" in result or "original_rows" in result:
+            return _fmt_read_query(result)
+        # ``execute_write`` always emits a ``message`` and may legitimately
+        # report ``row_count: None``, so classify a write by its ``sql_type``
+        # (or any row-count key) BEFORE the DDL ``message`` check — otherwise an
+        # INSERT/UPDATE/DELETE with an unknown row count would be mislabeled
+        # "DDL OK".
+        if result.get("sql_type") in {"insert", "update", "delete"} or any(
+            key in result for key in ("row_count", "affected_rows", "rows_affected")
+        ):
+            return _fmt_execute_write(result) or "Write OK"
+        if result.get("message"):
+            return _fmt_execute_ddl(result)
+    return _fmt_read_query(result)
+
+
 def _fmt_describe_table(result: Any) -> str:
     if not isinstance(result, dict):
         return ""
@@ -227,20 +283,28 @@ def _fmt_list_schemas(result: Any) -> str:
     return ""
 
 
+def search_table_result_counts(result: Any) -> tuple[int, int]:
+    """Return table and sample-row counts from the current search_table result shape."""
+    if not isinstance(result, dict):
+        return 0, 0
+
+    metadata = result.get("metadata")
+    if not isinstance(metadata, list):
+        return 0, 0
+
+    sample_count = sum(
+        len(sample_rows)
+        for item in metadata
+        if isinstance(item, dict) and isinstance((sample_rows := item.get("sample_rows")), list)
+    )
+
+    return len(metadata), sample_count
+
+
 def _fmt_search_table(result: Any) -> str:
     if not isinstance(result, dict):
         return ""
-    metadata = result.get("metadata") or []
-    if not isinstance(metadata, list):
-        return ""
-    n = len(metadata)
-    sample = result.get("sample_data")
-    if isinstance(sample, dict):
-        sample_rows = sample.get("original_rows", 0) or 0
-    elif isinstance(sample, list):
-        sample_rows = len(sample)
-    else:
-        sample_rows = 0
+    n, sample_rows = search_table_result_counts(result)
     if n == 0 and sample_rows == 0:
         return "no matches"
     tbl_label = "tbl" if n == 1 else "tbls"
@@ -439,14 +503,31 @@ def _fmt_write_query(result: Any) -> str:
 
 
 def _fmt_list_metrics(result: Any) -> str:
+    """The text page list_metrics answers with: one ``- name`` line per metric,
+    a ``more:`` line when there is another page. Older records hold the envelope."""
+    if isinstance(result, str):
+        n = sum(1 for line in result.splitlines() if line.startswith("- "))
+        base = pluralize(n, "metric")
+        return f"{base}+" if any(line.startswith("more: ") for line in result.splitlines()) else base
     return _envelope_with_label(result, "metric", "metrics")
 
 
-def _fmt_get_dimensions(result: Any) -> str:
-    return _envelope_with_label(result, "dimension", "dimensions")
+def _fmt_get_metric(result: Any) -> str:
+    """One metric with its dimensions, so summarize the dimension count."""
+    if isinstance(result, dict):
+        dimensions = result.get("dimensions")
+        if isinstance(dimensions, list):
+            return pluralize(len(dimensions), "dimension")
+        if result.get("dimensions_error"):
+            return "no dims"
+    return ""
 
 
 def _fmt_query_metrics(result: Any) -> str:
+    """An executed result's shape: from its text, or from the envelope older records hold."""
+    parsed = parse_query_result_text(result)
+    if parsed is not None:
+        return f"{parsed.row_count}r × {len(parsed.columns)}c"
     if isinstance(result, dict):
         cols = result.get("columns")
         data = result.get("data")
@@ -477,14 +558,64 @@ def _fmt_validate_semantic(result: Any) -> str:
 
 def _fmt_attribution_analyze(result: Any) -> str:
     if isinstance(result, dict):
-        ranking = result.get("dimension_ranking") or []
+        implementation = result.get("implementation")
+        strategy = result.get("strategy")
+        summary_parts = [" ".join(str(item) for item in (implementation, strategy) if item)]
+        summary_parts = [part for part in summary_parts if part]
+        if strategy == "unsupported":
+            reason = result.get("unsupported_reason")
+            code = reason.get("code") if isinstance(reason, dict) else None
+            if code:
+                summary_parts.append(str(code))
+            return "; ".join(summary_parts)
+
+        warnings = result.get("warnings") or []
+        failed_count = sum(
+            1
+            for warning in warnings
+            if isinstance(warning, dict) and warning.get("code") == "dimension_analysis_failed"
+        )
+        per_dimension = result.get("per_dimension")
+        if isinstance(per_dimension, dict) and per_dimension:
+            usable_count = 0
+            non_additive_count = 0
+            truncated_count = 0
+            for dimension_result in per_dimension.values():
+                if not isinstance(dimension_result, dict):
+                    continue
+                if dimension_result.get("truncated"):
+                    truncated_count += 1
+                elif dimension_result.get("non_additive"):
+                    non_additive_count += 1
+                else:
+                    usable_count += 1
+
+            requested_count = len(per_dimension) + failed_count
+            noun = "dimension" if requested_count == 1 else "dimensions"
+            summary_parts.append(f"{usable_count}/{requested_count} {noun} usable")
+            if failed_count:
+                summary_parts.append(f"{failed_count} failed")
+            if non_additive_count:
+                summary_parts.append(f"{non_additive_count} non-additive")
+            if truncated_count:
+                summary_parts.append(f"{truncated_count} truncated")
+            warning_count = len(warnings) if isinstance(warnings, list) else 0
+            if warning_count:
+                summary_parts.append(pluralize(warning_count, "warning"))
+            return ", ".join(summary_parts)
+
         selected = result.get("selected_dimensions") or []
-        n_sel = len(selected) if isinstance(selected, list) else 0
-        n_rank = len(ranking) if isinstance(ranking, list) else 0
-        if n_sel and n_rank:
-            return f"sel {n_sel}/{n_rank} dims"
-        if n_sel:
-            return f"sel {n_sel} dim" if n_sel == 1 else f"sel {n_sel} dims"
+        if isinstance(selected, list) and selected:
+            summary_parts.append(f"selected {','.join(str(dimension) for dimension in selected)}")
+        warning_codes = []
+        if isinstance(warnings, list):
+            for warning in warnings:
+                code = warning.get("code") if isinstance(warning, dict) else None
+                if isinstance(code, str) and code and code not in warning_codes:
+                    warning_codes.append(code)
+        if warning_codes:
+            summary_parts.append(f"warnings {','.join(warning_codes)}")
+        return "; ".join(summary_parts)
     return ""
 
 
@@ -528,7 +659,7 @@ def _fmt_check_semantic_model_exists(result: Any) -> str:
     return ""
 
 
-def _fmt_end_semantic_model_generation(result: Any) -> str:
+def _fmt_publish_semantic_model(result: Any) -> str:
     if isinstance(result, dict):
         files = result.get("semantic_model_files")
         if isinstance(files, list):
@@ -537,7 +668,7 @@ def _fmt_end_semantic_model_generation(result: Any) -> str:
     return ""
 
 
-def _fmt_end_metric_generation(result: Any) -> str:
+def _fmt_publish_metrics(result: Any) -> str:
     if isinstance(result, dict):
         sync = result.get("sync") or {}
         if isinstance(sync, dict) and sync.get("success"):
@@ -553,48 +684,13 @@ def _fmt_generate_sql_summary_id(result: Any) -> str:
     return ""
 
 
-def _fmt_analyze_table_relationships(result: Any) -> str:
+def _fmt_profile_semantic_model_evidence(result: Any) -> str:
     if isinstance(result, dict):
-        relationships = result.get("relationships")
-        if isinstance(relationships, list) and relationships:
-            n = len(relationships)
-            return f"{n} rel" if n == 1 else f"{n} rels"
-        summary = result.get("summary")
-        if isinstance(summary, str) and summary:
-            return summary
-        if isinstance(relationships, list):
-            return "0 rels"
-    return ""
-
-
-def _fmt_analyze_column_usage_patterns(result: Any) -> str:
-    if isinstance(result, dict):
-        patterns = result.get("column_patterns")
-        if isinstance(patterns, dict) and patterns:
-            n = len(patterns)
-            return f"{n} col analyzed" if n == 1 else f"{n} cols analyzed"
-        summary = result.get("summary")
-        if isinstance(summary, str) and summary:
-            return summary
-    return ""
-
-
-def _fmt_get_multiple_tables_ddl(result: Any) -> str:
-    if isinstance(result, list):
-        n = len(result)
-        return f"DDL of {n} table" if n == 1 else f"DDL of {n} tables"
-    return ""
-
-
-def _fmt_analyze_metric_candidates_from_history(result: Any) -> str:
-    if isinstance(result, dict):
-        candidates = result.get("metric_candidates")
-        if isinstance(candidates, list):
-            n = len(candidates)
-            suffix = ""
-            if result.get("query_classification") == "metric_plus_derived_datasource":
-                suffix = " + datasource"
-            return (f"{n} metric cand" if n == 1 else f"{n} metric cands") + suffix
+        tables = result.get("tables")
+        if isinstance(tables, dict):
+            n = len(tables)
+            suffix = " + data" if result.get("data_profiled") else ""
+            return (f"{n} table profiled" if n == 1 else f"{n} tables profiled") + suffix
         summary = result.get("summary")
         if isinstance(summary, str) and summary:
             return summary
@@ -787,6 +883,12 @@ def _fmt_read_file(result: Any) -> str:
     return ""
 
 
+def _fmt_read_image(result: Any) -> str:
+    if isinstance(result, dict):
+        return f"{result.get('path', 'image')} ({result.get('width', '?')}×{result.get('height', '?')})"
+    return ""
+
+
 def _fmt_write_file(result: Any) -> str:
     if isinstance(result, str):
         marker = "File written successfully: "
@@ -801,6 +903,15 @@ def _fmt_edit_file(result: Any) -> str:
         marker = "File edited successfully: "
         if result.startswith(marker):
             return f"edited {result[len(marker) :]}"
+        return truncate_text(result)
+    return ""
+
+
+def _fmt_delete_file(result: Any) -> str:
+    if isinstance(result, str):
+        marker = "File deleted successfully: "
+        if result.startswith(marker):
+            return f"deleted {result[len(marker) :]}"
         return truncate_text(result)
     return ""
 
@@ -1018,7 +1129,13 @@ def _fmt_search_document(result: Any) -> str:
     return ""
 
 
-def _fmt_web_search_document(result: Any) -> str:
+def _fmt_web_search(result: Any) -> str:
+    # Canonical schema (datus.schemas.web_result): {query, result_count, results}.
+    from datus.schemas.web_result import web_search_short_summary
+
+    if isinstance(result, dict) and ("results" in result or "query" in result):
+        return web_search_short_summary(result)
+    # Legacy fallbacks (older docs/doc_count shape, or a bare list).
     if isinstance(result, list):
         return pluralize(len(result), "web result")
     if isinstance(result, dict):
@@ -1027,6 +1144,14 @@ def _fmt_web_search_document(result: Any) -> str:
             n = len(result["docs"])
         if isinstance(n, int):
             return pluralize(n, "web result")
+    return ""
+
+
+def _fmt_web_fetch(result: Any) -> str:
+    from datus.schemas.web_result import web_fetch_short_summary
+
+    if isinstance(result, dict) and isinstance(result.get("content"), str):
+        return web_fetch_short_summary(result)
     return ""
 
 
@@ -1043,8 +1168,8 @@ class ToolSummaryRegistry:
     per-tool formatters are invoked only when the payload indicates
     success and the unwrapped ``result`` is non-empty.
 
-    The registry exit applies :func:`_clip_short` so every non-filesystem
-    summary is bounded to ``SUMMARY_TEXT_MAX_CHARS`` characters.
+    The registry exit applies :func:`_clip_short`; tools outside
+    ``SUMMARY_TOOLS_NO_CLIP`` are bounded to ``SUMMARY_TEXT_MAX_CHARS``.
     """
 
     def __init__(self) -> None:
@@ -1109,6 +1234,7 @@ def _register_builtins(registry: ToolSummaryRegistry) -> None:
     """Register every built-in tool formatter."""
     builtins: Dict[str, FormatterFn] = {
         # Database tools
+        "execute_sql": _fmt_execute_sql,
         "read_query": _fmt_read_query,
         "query": _fmt_read_query,
         "execute_write": _fmt_execute_write,
@@ -1140,8 +1266,9 @@ def _register_builtins(registry: ToolSummaryRegistry) -> None:
         "write_query": _fmt_write_query,
         # Semantic tools
         "list_metrics": _fmt_list_metrics,
-        "get_dimensions": _fmt_get_dimensions,
+        "get_metric": _fmt_get_metric,
         "query_metrics": _fmt_query_metrics,
+        "select_records": _fmt_query_metrics,
         "validate_semantic": _fmt_validate_semantic,
         "attribution_analyze": _fmt_attribution_analyze,
         "search_metrics": _fmt_search_metrics,
@@ -1150,13 +1277,10 @@ def _register_builtins(registry: ToolSummaryRegistry) -> None:
         # Generation / semantic discovery
         "check_semantic_object_exists": _fmt_check_semantic_object_exists,
         "check_semantic_model_exists": _fmt_check_semantic_model_exists,
-        "end_semantic_model_generation": _fmt_end_semantic_model_generation,
-        "end_metric_generation": _fmt_end_metric_generation,
+        "publish_semantic_model": _fmt_publish_semantic_model,
+        "publish_metrics": _fmt_publish_metrics,
         "generate_sql_summary_id": _fmt_generate_sql_summary_id,
-        "analyze_table_relationships": _fmt_analyze_table_relationships,
-        "analyze_column_usage_patterns": _fmt_analyze_column_usage_patterns,
-        "analyze_metric_candidates_from_history": _fmt_analyze_metric_candidates_from_history,
-        "get_multiple_tables_ddl": _fmt_get_multiple_tables_ddl,
+        "profile_semantic_model_evidence": _fmt_profile_semantic_model_evidence,
         # Scheduler tools
         "submit_sql_job": _fmt_submit_sql_job,
         "submit_sparksql_job": _fmt_submit_sparksql_job,
@@ -1182,8 +1306,10 @@ def _register_builtins(registry: ToolSummaryRegistry) -> None:
         "execute_reference_template": _fmt_execute_reference_template,
         # Filesystem
         "read_file": _fmt_read_file,
+        "read_image": _fmt_read_image,
         "write_file": _fmt_write_file,
         "edit_file": _fmt_edit_file,
+        "delete_file": _fmt_delete_file,
         "glob": _fmt_glob,
         "grep": _fmt_grep,
         # Plan / todo
@@ -1206,7 +1332,8 @@ def _register_builtins(registry: ToolSummaryRegistry) -> None:
         "list_document_nav": _fmt_list_document_nav,
         "get_document": _fmt_get_document,
         "search_document": _fmt_search_document,
-        "web_search_document": _fmt_web_search_document,
+        "web_search": _fmt_web_search,
+        "web_fetch": _fmt_web_fetch,
     }
     for name, fn in builtins.items():
         registry.register(name, fn)

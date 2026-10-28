@@ -2,16 +2,19 @@
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
+import json
 import os
-from typing import Any, Dict, List, Optional
+import re
+from typing import Any, Dict, List, Optional, Set
 
 import pyarrow as pa
 import yaml
-from datus_storage_base.conditions import WhereExpr, and_, in_
+from datus_storage_base.conditions import WhereExpr, and_, eq, in_, not_
 
 from datus.configuration.agent_config import AgentConfig
 from datus.storage.base import EmbeddingModel
 from datus.storage.datasource_scope import datasource_condition, resolve_datasource_id
+from datus.storage.fts import FtsField, FtsSpec
 from datus.storage.knowledge_provenance import enrich_metric_results, is_knowledge_provenance_enabled
 from datus.storage.subject_tree.store import BaseSubjectEmbeddingStore, base_schema_columns
 from datus.utils.loggings import get_logger
@@ -20,12 +23,49 @@ logger = get_logger(__name__)
 
 METRIC_ID_PREFIX = "metric:"
 _METRIC_DEFINITION_FIELDS = ("semantic_model_name", "metric_type", "measure_expr", "base_measures")
+_METRIC_LOOKUP_MAX_QUERY_LENGTH = 120
+_METRIC_EXACT_QUERY_PATTERN = re.compile(r"^[0-9A-Za-z_.:/-]+$")
+_METRIC_LOOKUP_TOKEN_PATTERN = re.compile(r"[^0-9a-zA-Z]+")
 
 
 def normalize_metric_name(value: Any) -> str:
     """Return the datasource-local business key used for metric names."""
 
     return str(value or "").strip().lower()
+
+
+def metric_lookup_key(value: Any) -> str:
+    """Normalize metric names and ids for exact-name retrieval fallback."""
+
+    text = str(value or "").strip().lower()
+    if text.startswith(METRIC_ID_PREFIX):
+        text = text[len(METRIC_ID_PREFIX) :]
+    text = _METRIC_LOOKUP_TOKEN_PATTERN.sub("_", text).strip("_")
+    return re.sub(r"_+", "_", text)
+
+
+def metric_exact_query_keys(query_text: Any) -> Set[str]:
+    """Return lookup keys for identifier-like exact metric lookups."""
+
+    text = str(query_text or "").strip()
+    if not text or len(text) > _METRIC_LOOKUP_MAX_QUERY_LENGTH:
+        return set()
+    if not _METRIC_EXACT_QUERY_PATTERN.fullmatch(text):
+        return set()
+
+    key = metric_lookup_key(text)
+    return {key} if key else set()
+
+
+def metric_matches_exact_query(metric: Dict[str, Any], query_keys: Set[str]) -> bool:
+    """Return true when a metric row exactly matches normalized query keys."""
+
+    if not query_keys:
+        return False
+    for field in ("name", "id"):
+        if metric_lookup_key(metric.get(field)) in query_keys:
+            return True
+    return False
 
 
 def build_metric_id(subject_path: List[str], name: str) -> str:
@@ -85,7 +125,7 @@ class MetricStorage(BaseSubjectEmbeddingStore):
                     # -- Retrieval Fields --
                     pa.field("description", pa.string()),  # For LLM reading (RAG) and vector search
                     pa.field("vector", pa.list_(pa.float32(), list_size=embedding_model.dim_size)),
-                    # -- MetricFlow Specific Fields --
+                    # -- Metric metadata projected from Dosi for retrieval --
                     pa.field("metric_type", pa.string()),  # "simple" | "derived" | "ratio" | "cumulative"
                     pa.field("measure_expr", pa.string()),  # Underlying aggregation: "COUNT(DISTINCT user_id)"
                     pa.field("base_measures", pa.list_(pa.string())),  # Dependency measures: ["revenue", "orders"]
@@ -100,6 +140,9 @@ class MetricStorage(BaseSubjectEmbeddingStore):
                     # -- Operations & Lineage --
                     pa.field("yaml_path", pa.string()),
                     pa.field("updated_at", pa.timestamp("ms")),
+                    # Stable metric identity from DATUS extension data.uid (CUID2).
+                    # Legacy rows remain empty until semantic modeling syncs them.
+                    pa.field("uid", pa.string()),
                 ]
             ),
             vector_source_name="description",
@@ -119,7 +162,16 @@ class MetricStorage(BaseSubjectEmbeddingStore):
         self._create_scalar_index("schema_name")
 
         self.create_subject_index()
-        self.create_fts_index(["description", "name"])
+        self.create_fts_index(FtsSpec((FtsField("name", boost=3.0), FtsField("description"))))
+
+    def _scope_column_migration_exprs(self) -> Dict[str, str]:
+        # Also add uid to pre-existing metric tables (empty default; authored
+        # identities land on the next semantic-modeling reconciliation),
+        # reusing the same best-effort ensure_columns migration as scope columns.
+        exprs = super()._scope_column_migration_exprs()
+        if self._schema is not None and "uid" in set(self._schema.names):
+            exprs = {**exprs, "uid": "''"}
+        return exprs
 
     def batch_store_metrics(self, metrics: List[Dict[str, Any]]) -> None:
         """Store multiple metrics in the database efficiently.
@@ -232,6 +284,12 @@ class MetricStorage(BaseSubjectEmbeddingStore):
             if existing_name not in names:
                 continue
             incoming = next(metric for metric in metrics if normalize_metric_name(metric.get("name")) == existing_name)
+            # Same id == same metric identity (ids are name-derived): a re-sync
+            # legitimately overwrites it in place — including a changed
+            # definition — since the YAML file is the source of truth. Only a
+            # *different* id sharing the name is a genuine identity collision.
+            if existing.get("id") == incoming.get("id"):
+                continue
             conflict_field = metric_definition_conflict(existing, incoming)
             if conflict_field:
                 raise ValueError(
@@ -239,7 +297,7 @@ class MetricStorage(BaseSubjectEmbeddingStore):
                     f"existing metric id '{existing.get('id')}' has a different '{conflict_field}'. "
                     "Choose a more specific metric name or update the existing metric explicitly."
                 )
-            if existing.get("id") and existing.get("id") != incoming.get("id"):
+            if existing.get("id"):
                 stale_duplicate_ids.append(str(existing["id"]))
 
         return stale_duplicate_ids
@@ -626,6 +684,7 @@ class MetricRAG:
         from datus.storage.registry import get_storage
 
         self.agent_config = agent_config
+        self.sub_agent_name = sub_agent_name
         self.datasource_id = resolve_datasource_id(agent_config, datasource_id)
         self._provenance_enabled = is_knowledge_provenance_enabled(agent_config)
         self.storage: MetricStorage = get_storage(
@@ -674,13 +733,60 @@ class MetricRAG:
         """Delete all metrics for this datasource."""
         self.storage.delete_datasource_rows(self.datasource_id)
 
+    def list_artifact_paths(self) -> List[str]:
+        """Every distinct ``yaml_path`` this store currently holds rows for.
+
+        A tree-wide sync needs this to notice files that disappeared: the
+        per-artifact deletes are scoped to a path, so a model whose file was
+        removed is never visited and its rows would outlive it.
+        """
+        rows = self.storage._search_all(
+            where=and_(*self._sub_agent_conditions()), select_fields=["yaml_path"]
+        ).to_pylist()
+        return sorted({str(row.get("yaml_path") or "") for row in rows} - {""})
+
+    def delete_artifact_rows(self, yaml_path: str) -> None:
+        """Delete metric rows projected from a single YAML artifact."""
+        if not yaml_path:
+            return
+        self.storage._delete_rows(and_(eq("yaml_path", yaml_path), *self._sub_agent_conditions()))
+
+    def delete_artifact_rows_except(self, yaml_path: str, keep_ids: List[str]) -> None:
+        """Delete stale metric rows for one YAML artifact after replacement succeeds."""
+        if not yaml_path:
+            return
+        normalized_keep_ids = [row_id for row_id in keep_ids if row_id]
+        if not normalized_keep_ids:
+            self.delete_artifact_rows(yaml_path)
+            return
+        self.storage._delete_rows(
+            and_(eq("yaml_path", yaml_path), not_(in_("id", normalized_keep_ids)), *self._sub_agent_conditions())
+        )
+
+    def list_artifact_rows(self, yaml_path: str) -> List[Dict[str, Any]]:
+        """Return metric rows projected from a single YAML artifact."""
+        if not yaml_path:
+            return []
+        return self.storage._search_all(
+            where=and_(eq("yaml_path", yaml_path), *self._sub_agent_conditions())
+        ).to_pylist()
+
+    def restore_artifact_rows(self, yaml_path: str, rows: List[Dict[str, Any]]) -> None:
+        """Restore one YAML artifact to a previously captured row snapshot."""
+        if not yaml_path:
+            return
+        self.delete_artifact_rows(yaml_path)
+        if rows:
+            self.upsert_batch(rows)
+        self.create_indices()
+
     def store_batch(self, metrics: List[Dict[str, Any]]):
-        logger.info(f"store metrics: {metrics}")
+        logger.debug("store metrics", count=len(metrics))
         self.storage.batch_store_metrics(metrics)
 
     def upsert_batch(self, metrics: List[Dict[str, Any]]):
         """Upsert metrics (update if id exists, insert if not)."""
-        logger.info(f"upsert metrics: {metrics}")
+        logger.debug("upsert metrics", count=len(metrics))
         self.storage.batch_upsert_metrics(metrics)
 
     def search_all_metrics(
@@ -712,13 +818,86 @@ class MetricRAG:
         self, query_text: str, subject_path: Optional[List[str]] = None, top_n: int = 5
     ) -> List[Dict[str, Any]]:
         """Search metrics by query text with optional subject path filtering."""
-        results = self.storage.search_metrics(
+        exact_results = self._search_exact_metric_matches(query_text, subject_path)
+        vector_results = self.storage.search_metrics(
             query_text=query_text,
             subject_path=subject_path,
             top_n=top_n,
             extra_conditions=self._sub_agent_conditions(),
         )
-        return self._enrich_metric_results(results)
+        results = self._merge_search_results(exact_results, vector_results, top_n)
+        enriched = self._enrich_metric_results(results)
+        self._emit_retrieval(query_text, enriched)
+        return enriched
+
+    def _emit_retrieval(self, query_text: str, results: List[Dict[str, Any]]) -> None:
+        # Fire-and-forget: report retrieved metrics so the host can count
+        # consumption. Never let hook errors break a search.
+        try:
+            from datus.api.hooks import MetricRetrievalEvent, get_metric_retrieval_hook
+
+            hook = get_metric_retrieval_hook()
+            if hook is None:
+                return
+            hook.on_retrieval(
+                MetricRetrievalEvent(
+                    query_text=query_text,
+                    datasource_id=self.datasource_id,
+                    project_name=getattr(self.agent_config, "project_name", None),
+                    sub_agent_name=self.sub_agent_name,
+                    # uid is the contract's string field — normalize missing/null
+                    # to "" (legacy identity missing) rather than forwarding None.
+                    metrics=[{"id": r.get("id"), "name": r.get("name"), "uid": r.get("uid") or ""} for r in results],
+                )
+            )
+        except Exception as exc:  # noqa: BLE001 — retrieval must never fail on telemetry
+            logger.debug(f"metric retrieval hook failed: {exc}")
+
+    def _search_exact_metric_matches(
+        self,
+        query_text: str,
+        subject_path: Optional[List[str]] = None,
+    ) -> List[Dict[str, Any]]:
+        query_keys = metric_exact_query_keys(query_text)
+        if not query_keys:
+            return []
+
+        try:
+            candidates = self.storage.search_all_metrics(
+                subject_path=subject_path,
+                extra_conditions=self._sub_agent_conditions(),
+            )
+        except Exception as exc:  # pragma: no cover - defensive fallback
+            logger.debug("Unable to run exact metric-name fallback: %s", exc)
+            return []
+
+        return [metric for metric in candidates if metric_matches_exact_query(metric, query_keys)]
+
+    @classmethod
+    def _merge_search_results(
+        cls,
+        exact_results: List[Dict[str, Any]],
+        vector_results: List[Dict[str, Any]],
+        top_n: int,
+    ) -> List[Dict[str, Any]]:
+        merged: List[Dict[str, Any]] = []
+        seen: Set[str] = set()
+        for metric in [*exact_results, *vector_results]:
+            key = cls._search_result_identity(metric)
+            if key in seen:
+                continue
+            seen.add(key)
+            merged.append(metric)
+            if top_n and len(merged) >= top_n:
+                break
+        return merged
+
+    @staticmethod
+    def _search_result_identity(metric: Dict[str, Any]) -> str:
+        metric_id = metric.get("id")
+        if metric_id:
+            return f"id:{metric_id}"
+        return f"row:{json.dumps(metric, sort_keys=True, default=str)}"
 
     def get_metrics_detail(self, subject_path: List[str], name: str) -> List[Dict[str, Any]]:
         """Get metrics detail by subject path and name."""

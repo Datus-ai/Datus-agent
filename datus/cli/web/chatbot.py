@@ -22,27 +22,32 @@ from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
 from datus.api.service import create_app
-from datus.utils.loggings import get_logger
+from datus.configuration.logging_config import resolve_logging_arguments
+from datus.utils.loggings import configure_entrypoint_logging, get_logger
 
 logger = get_logger(__name__)
 
 _TEMPLATES_DIR = os.path.join(os.path.dirname(__file__), "templates")
 
 # CDN URLs used when --chatbot-dist is NOT provided (production mode).
-# React is bundled into datus-chatbot.umd.js, no separate React CDN needed.
-_CDN_CHATBOT_VERSION = "1.1.3"
+# The v2 bundle also has classic JSX references that require a global React runtime.
+_CDN_CHATBOT_VERSION = "~2.0.0"
+_CDN_REACT_VERSION = "18.3.1"
+_CDN_REACT_JS = f"https://unpkg.com/react@{_CDN_REACT_VERSION}/umd/react.production.min.js"
 _CDN_CHATBOT_CSS = f"https://unpkg.com/@datus/web-chatbot@{_CDN_CHATBOT_VERSION}/dist/datus-chatbot.css"
 _CDN_CHATBOT_JS = f"https://unpkg.com/@datus/web-chatbot@{_CDN_CHATBOT_VERSION}/dist/datus-chatbot.umd.js"
 
 # Dev URLs used when --chatbot-dist IS provided (local development mode).
 _DEV_CHATBOT_CSS = "/chatbot-assets/datus-chatbot.css"
 _DEV_CHATBOT_JS = "/chatbot-assets/datus-chatbot.umd.js"
+_DEV_REACT_JS = "/chatbot-assets/react.production.min.js"
 
 
 def _build_agent_args(args: argparse.Namespace) -> argparse.Namespace:
     """Bridge CLI ``datus web`` arguments to the shape expected by
     ``create_app`` / ``DatusAPIService``.
     """
+    resolve_logging_arguments(args)
     agent_args = argparse.Namespace(
         datasource=args.datasource,
         config=getattr(args, "config", None),
@@ -58,7 +63,13 @@ def _build_agent_args(args: argparse.Namespace) -> argparse.Namespace:
         source=None,
         interactive=True,
         output_dir=getattr(args, "output_dir", "./output"),
-        log_level="DEBUG" if getattr(args, "debug", False) else "INFO",
+        log_level=getattr(args, "log_level", None),
+        log_level_source=getattr(args, "log_level_source", "default"),
+        log_redact=getattr(args, "log_redact", {}),
+        _logging_resolved=getattr(args, "_logging_resolved", False),
+        # Forward the CLI permission override so ``load_agent_config`` applies
+        # it for ``datus --web`` the same way it does for REPL / --print.
+        permission_mode=getattr(args, "permission_mode", None),
     )
     return agent_args
 
@@ -116,13 +127,23 @@ def create_web_app(args: argparse.Namespace) -> FastAPI:
     else:
         chatbot_css, chatbot_js = _CDN_CHATBOT_CSS, _CDN_CHATBOT_JS
 
+    react_js = (
+        _DEV_REACT_JS
+        if use_local and os.path.isfile(os.path.join(chatbot_dist, "react.production.min.js"))
+        else _CDN_REACT_JS
+    )
+
     # ── Render the HTML template ───────────────────────────────────
     html_template = _read_template()
     user_name = getattr(args, "user_name", None) or os.getenv("USER", "User")
 
     # Pre-render the static parts (asset URLs); dynamic parts (origin, user)
     # are rendered per-request so reverse proxies and alternate hostnames work.
-    static_html = html_template.replace("{{ chatbot_css }}", chatbot_css).replace("{{ chatbot_js }}", chatbot_js)
+    static_html = (
+        html_template.replace("{{ chatbot_css }}", chatbot_css)
+        .replace("{{ chatbot_js }}", chatbot_js)
+        .replace("{{ react_js }}", react_js)
+    )
 
     # Override the default JSON root endpoint with the chatbot page
     @app.get("/", response_class=HTMLResponse, include_in_schema=False)
@@ -166,6 +187,7 @@ def run_web_interface(args: argparse.Namespace) -> None:
 
     config_path = getattr(args, "config", None) or "conf/agent.yml"
     set_current_path_manager(get_home_from_config(config_path))
+    configure_entrypoint_logging(args)
 
     host = getattr(args, "host", "localhost")
     port = getattr(args, "port", 8501)
@@ -189,7 +211,8 @@ def run_web_interface(args: argparse.Namespace) -> None:
             app,
             host=host,
             port=port,
-            log_level="debug" if getattr(args, "debug", False) else "info",
+            log_level=args.log_level.lower(),
+            log_config=None,
         )
         server = uvicorn.Server(config)
         asyncio.run(server.serve())

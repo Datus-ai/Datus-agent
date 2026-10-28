@@ -13,16 +13,12 @@ permissions, etc.) and add three things:
 
 1. **Artifact binding** — bind to one specific artifact via either of two
    sources: an in-memory ``artifact_blob`` injected into the agentic_nodes
-   entry by the backend (a frozen ``{manifest, files}`` snapshot of the
-   latest published version), or an on-disk ``reports/<slug>/`` /
-   ``dashboards/<slug>/`` directory under ``project_root``. The blob
-   source wins when present; the disk source remains the fallback for
-   CLI runs and kinds that have not yet been wired through publish
-   (currently ``ask_dashboard``). ``BLOB_REQUIRED = True`` on a subclass
-   turns missing-blob into a hard failure rather than a disk fallback —
-   used by ``ask_report`` where every live SaaS session must answer
-   against the published artifact, not whatever happens to be on local
-   disk.
+   entry by an embedding host (a frozen ``{manifest, files}`` snapshot),
+   or an on-disk ``reports/<slug>/`` / ``dashboards/<slug>/`` directory
+   under ``project_root``. The blob source wins when present and usable;
+   otherwise both kinds fall back to the disk directory — local
+   directories are the source of truth, and blob injection is purely an
+   optional capability of whoever builds the agentic_nodes entry.
 2. **Constrained filesystem view** — override ``_make_filesystem_tool``
    so the LLM's ``read_file`` / ``glob`` / ``grep`` calls are anchored
    at the artifact root. Relative paths in prompts (``analysis/intent.md``,
@@ -55,8 +51,7 @@ by explicit instruction. The earlier ``interpretation.json`` preload
 was removed along with the file itself.
 
 Per-kind specialization (``ARTIFACT_KIND`` / template name / whether
-``insights.json`` is expected / whether ``BLOB_REQUIRED``) lives in the
-two concrete subclasses.
+``insights.json`` is expected) lives in the two concrete subclasses.
 """
 
 from __future__ import annotations
@@ -147,16 +142,10 @@ class BaseArtifactAskAgenticNode(ChatAgenticNode):
     NODE_NAME: ClassVar[str] = "ask_artifact"
     ARTIFACT_KIND: ClassVar[Literal["report", "dashboard"]] = "report"
     ARTIFACT_ROOT_DIR_NAME: ClassVar[str] = "reports"
-    # When True, a missing ``artifact_blob`` in the agentic_nodes entry is a
-    # fatal startup error rather than a signal to fall back to the on-disk
-    # ``<kind>/<slug>/`` directory. Kinds whose backend publish flow always
-    # produces a blob (currently ``ask_report``) set this to True so the
-    # half-bound state (subagent exists, no published version) errors at init
-    # instead of silently grounding the LLM against an unrelated on-disk
-    # tree (or worse, the backend's own filesystem which won't have the
-    # artifact at all). Kinds without a publish flow yet
-    # (``ask_dashboard``) keep this False so the disk path stays available.
-    BLOB_REQUIRED: ClassVar[bool] = False
+    # Artifact ask agents are read-only consultants — they may explore the
+    # datasource but must never mutate it. ``execute_sql`` is write-capable, so
+    # construct its DBFuncTool in read-only mode to hard-reject non-read SQL.
+    _db_read_only: bool = True
 
     # Tool groups selectable via the subagent's ``tools`` whitelist, mapped to
     # the node attribute that holds the built tool instance. An ask_* agent's
@@ -176,6 +165,7 @@ class BaseArtifactAskAgenticNode(ChatAgenticNode):
         "date_parsing_tools": "date_parsing_tools",
         "filesystem_tools": "filesystem_func_tool",
         "platform_doc_tools": "_platform_doc_tool",
+        "web_tool": "_web_tool",
         "bash_tools": "bash_tool",
         "skills": "skill_func_tool",
     }
@@ -263,6 +253,12 @@ class BaseArtifactAskAgenticNode(ChatAgenticNode):
 
     # ── Tool whitelist enforcement (honor SubAgent.tools) ───────────────
 
+    #: The base class also reads ``tools``, but this node must not let it: the
+    #: whitelist below runs *after* the base builds every tool instance and
+    #: needs them all to exist (see the docstring). Two mechanisms narrowing on
+    #: the same field would leave `filesystem_func_tool` and friends None.
+    HONOURS_CONFIGURED_TOOLS: ClassVar[bool] = False
+
     def setup_tools(self) -> None:
         """Restrict the LLM-facing tool surface to the configured ``tools``.
 
@@ -337,8 +333,11 @@ class BaseArtifactAskAgenticNode(ChatAgenticNode):
 
                 self.semantic_tools = SemanticTools(
                     agent_config=self.agent_config,
-                    sub_agent_name=self.node_config.get("system_prompt"),
-                    adapter_type=self.node_config.get("adapter_type", "metricflow"),
+                    # The agentic_nodes KEY, never ``system_prompt`` — that names the
+                    # prompt template, and the scope lookup silently returns unfiltered
+                    # storage when the name misses (``rag_scope.build_scope_filter``).
+                    sub_agent_name=self.get_node_name(),
+                    runtime_db_context_provider=self._semantic_runtime_db_context,
                 )
             except Exception as exc:
                 logger.error("%s: failed to build whitelisted semantic_tools: %s", self.get_node_name(), exc)
@@ -415,6 +414,17 @@ class BaseArtifactAskAgenticNode(ChatAgenticNode):
         except Exception:
             return False
 
+    def _db_tool_exposed(self, tool_name: str) -> bool:
+        """True if a specific db_tools tool survived the whitelist prune.
+
+        The method-level whitelist can keep ``execute_sql`` while dropping
+        ``describe_table`` (or vice versa), so tool-specific prompt guidance must
+        derive its flag from the exposed ``self.tools`` per tool rather than the
+        coarse :meth:`_db_tools_exposed`. Otherwise the prompt advertises a tool
+        the model cannot call ("Tool ... not found").
+        """
+        return any(tool.name == tool_name for tool in self.tools)
+
     def _group_whitelisted(self, group: str) -> bool:
         """True if the configured ``tools`` grants any tool in ``group``.
 
@@ -431,7 +441,7 @@ class BaseArtifactAskAgenticNode(ChatAgenticNode):
     def _ensure_bash_tool_in_tools(self) -> None:
         """Gate :class:`AgenticNode`'s lazy bash re-injection on the whitelist.
 
-        ``_finalize_system_prompt`` re-adds ``execute_command`` to
+        ``_finalize_system_prompt`` re-adds ``bash`` to
         ``self.tools`` on every prompt build — AFTER ``setup_tools()`` already
         pruned it — which silently re-exposes bash on an ask_* agent whose
         ``tools`` never granted ``bash_tools`` (the model then sees it in its
@@ -452,6 +462,26 @@ class BaseArtifactAskAgenticNode(ChatAgenticNode):
         if not self._group_whitelisted("skills"):
             return
         super()._ensure_skill_tools_in_tools()
+
+    def _ensure_web_tools_in_tools(self) -> None:
+        """Gate :class:`AgenticNode`'s lazy web-tool re-injection on the whitelist.
+
+        Same prompt-build / snapshot-replay bypass as bash and skills (see
+        :meth:`_ensure_bash_tool_in_tools`): the base injector re-adds
+        ``web_search`` / ``web_fetch`` (and resolves provider-native builtins)
+        on every rebuild, which would silently grant web access to an ask_*
+        agent whose ``tools`` whitelist never requested ``web_tool``. Skip — and
+        scrub any stale local web tools + builtin flags — unless whitelisted.
+        """
+        if not self._group_whitelisted("web_tool"):
+            from datus.tools.func_tool.web_tool import WebTool
+
+            web_names = set(WebTool.all_tools_name())
+            self.tools = [t for t in (self.tools or []) if getattr(t, "name", None) not in web_names]
+            self._builtin_web_tools = {"web_search": False, "web_fetch": False}
+            self._web_tool = None
+            return
+        super()._ensure_web_tools_in_tools()
 
     def _get_available_skills_context(self) -> str:
         """Suppress the skills XML when ``skills`` isn't whitelisted.
@@ -476,14 +506,11 @@ class BaseArtifactAskAgenticNode(ChatAgenticNode):
 
         Resolution order:
 
-        1. If ``entry["artifact_blob"]`` is present, bind to the in-memory
-           bundle (``{manifest, files}``). The filesystem tool then runs
-           against :class:`MemoryFilesystemFuncTool` and ``_artifact_root`` stays None.
-        2. Otherwise, if ``BLOB_REQUIRED`` is True, fail — the caller is
-           contractually supposed to provide a blob for this kind.
-        3. Otherwise, fall back to resolving the on-disk
-           ``<project_root>/<kind>/<slug>/`` directory (legacy CLI flow and
-           kinds without a backend publish path yet).
+        1. If ``entry["artifact_blob"]`` is present and usable, bind to the
+           in-memory bundle (``{manifest, files}``). The filesystem tool then
+           runs against :class:`MemoryFilesystemFuncTool` and ``_artifact_root`` stays None.
+        2. Otherwise, fall back to resolving the on-disk
+           ``<project_root>/<kind>/<slug>/`` directory.
 
         Failures raise :class:`DatusException` — there is no useful default
         for a missing binding and we'd rather see a clear startup error
@@ -531,13 +558,12 @@ class BaseArtifactAskAgenticNode(ChatAgenticNode):
 
         self._artifact_slug = slug
 
-        # Path 1: in-memory blob from the agentic_nodes entry. Backend
-        # populates this for ``ask_report`` from the latest VisualReportVersion
-        # at config-build time. Reject obviously degenerate shapes (empty
-        # dict, ``{"files": []}``, missing manifest) before binding so a
-        # malformed blob ends up in the BLOB_REQUIRED / disk-fallback
-        # branches below instead of silently binding to an empty
-        # filesystem — without this, a half-bound report would answer
+        # Path 1: in-memory blob from the agentic_nodes entry, when the
+        # embedding host injected one at config-build time. Reject obviously
+        # degenerate shapes (empty dict, ``{"files": []}``, missing
+        # manifest) before binding so a malformed blob falls back to the
+        # disk directory instead of silently binding to an empty
+        # filesystem — without this, a half-bound artifact would answer
         # "File not found" to every read and look like a working agent.
         blob = entry.get("artifact_blob")
         if self._is_usable_blob(blob):
@@ -546,29 +572,10 @@ class BaseArtifactAskAgenticNode(ChatAgenticNode):
 
         if blob is not None:
             logger.warning(
-                "%s artifact_blob present but unusable (type=%s, keys=%s); routing to BLOB_REQUIRED/disk fallback",
+                "%s artifact_blob present but unusable (type=%s, keys=%s); falling back to disk binding",
                 self.NODE_NAME,
                 type(blob).__name__,
                 sorted(blob.keys()) if isinstance(blob, dict) else None,
-            )
-
-        if self.BLOB_REQUIRED:
-            logger.error(
-                "%s init failing: slug=%s has no usable artifact_blob and BLOB_REQUIRED=True",
-                self.NODE_NAME,
-                slug,
-            )
-            raise DatusException(
-                code=ErrorCode.COMMON_CONFIG_ERROR,
-                message_args={
-                    "config_error": (
-                        f"{self.NODE_NAME} agent for slug {slug!r} has no "
-                        "``artifact_blob`` in its agentic_nodes entry. The "
-                        f"{self.ARTIFACT_KIND} has not been published yet — "
-                        "publish it first so the latest version's artifact is "
-                        "snapshotted into the subagent config."
-                    )
-                },
             )
 
         self._bind_artifact_from_disk(agent_config, slug)
@@ -577,17 +584,13 @@ class BaseArtifactAskAgenticNode(ChatAgenticNode):
     def _is_usable_blob(blob: Any) -> bool:
         """Return True only for blobs that carry real artifact content.
 
-        The backend's wire shape is ``{manifest: {...}, files: [{path,
-        content}, ...]}`` and a successful publish always populates both:
-        ``manifest`` is required on the source ``VisualReportVersion`` and
-        ``files`` covers the per-prefix allowlist (render/queries/analysis)
-        which is non-empty for any artifact that passed the publish
-        validator. So an empty dict, a ``files``-only blob with no
-        manifest, or a blob with ``files: []`` is a degenerate/half-bound
-        signal — treat it as a missing blob so the BLOB_REQUIRED branch
-        fires for kinds that need it (rather than the agent silently
-        binding to an empty filesystem and answering "File not found" to
-        every read).
+        The injected wire shape is ``{manifest: {...}, files: [{path,
+        content}, ...]}`` and a well-formed snapshot always populates
+        both. So an empty dict, a ``files``-only blob with no manifest,
+        or a blob with ``files: []`` is a degenerate/half-bound signal —
+        treat it as a missing blob so binding falls back to the disk
+        directory (rather than the agent silently binding to an empty
+        filesystem and answering "File not found" to every read).
         """
         if not isinstance(blob, dict):
             return False
@@ -856,6 +859,8 @@ class BaseArtifactAskAgenticNode(ChatAgenticNode):
         # Ask consultants never carry the task() delegation tool; set it
         # explicitly so a shared partial can't advertise a tool they lack.
         context["has_task_tool"] = False
+        # Web tools are not advertised in the prompt (see ChatAgenticNode):
+        # their tool-schema descriptions document usage on their own.
         context["active_profile"] = getattr(self.agent_config, "active_profile_name", None) or "normal"
         from datus.utils.time_utils import get_default_current_date
 
@@ -902,11 +907,12 @@ class BaseArtifactAskAgenticNode(ChatAgenticNode):
         otherwise), the skills XML (suppressed unless ``skills`` is
         whitelisted), and the response-language directive.
         """
-        # Re-inject whitelisted bash / skill tools (gated; no-op when the
+        # Re-inject whitelisted bash / skill / web tools (gated; no-op when the
         # whitelist didn't grant them). These add to ``self.tools``, not prompt
         # text — needed so a whitelist that DID grant them still works.
         self._ensure_skill_tools_in_tools()
         self._ensure_bash_tool_in_tools()
+        self._ensure_web_tools_in_tools()
         if self.skill_func_tool:
             skills_xml = self._get_available_skills_context()
             if skills_xml:
@@ -1124,8 +1130,7 @@ class BaseArtifactAskAgenticNode(ChatAgenticNode):
 
         # Reverse index: (kind, tuple(path), name) -> sorted list of
         # referencing query slugs. The path is part of the key because
-        # ``get_metrics(path, name)`` / ``get_reference_sql(path, name)``
-        # both take (path, name) and two different assets can legitimately
+        # Two different assets can legitimately
         # share a leaf ``name`` under different folders (e.g.
         # ``Commerce/Orders/aov`` vs ``Finance/Reporting/aov``). Keying
         # on name alone would conflate them and the "used by" list would
@@ -1194,8 +1199,9 @@ class BaseArtifactAskAgenticNode(ChatAgenticNode):
             "",
             (
                 "The artifact was grounded in the following subject-library "
-                "assets. To fetch a canonical definition, call "
-                "`get_metrics(path, name)` / `get_reference_sql(path, name)`:"
+                "assets. Use `get_metric(name)` for executable metric details when "
+                "the name is unambiguous, "
+                "or `get_reference_sql(path, name)` for reference SQL:"
             ),
             "",
         ]
@@ -1709,12 +1715,21 @@ class BaseArtifactAskAgenticNode(ChatAgenticNode):
         # which would mislead the LLM.
         has_insights = self._artifact_has_insights()
         # When the subagent whitelist drops db_tools, the model has no
-        # describe_table / read_query to call — promising them in the rules
-        # makes it attempt unavailable tools ("Tool ... not found").
-        db_exposed = self._db_tools_exposed()
+        # describe_table / execute_sql to call — promising them in the rules
+        # makes it attempt unavailable tools ("Tool ... not found"). The
+        # method-level whitelist can keep one without the other, so derive each
+        # flag independently rather than from the coarse db-exposed check.
+        describe_exposed = self._db_tool_exposed("describe_table")
+        execute_sql_exposed = self._db_tool_exposed("execute_sql")
+        db_exposed = describe_exposed or execute_sql_exposed
+        live_tool_names = [
+            f"`{name}`"
+            for name, exposed in (("describe_table", describe_exposed), ("execute_sql", execute_sql_exposed))
+            if exposed
+        ]
         live_data_clause = (
-            "(call `describe_table` / `execute_sql` for those)"
-            if db_exposed
+            f"(call {' / '.join(live_tool_names)} for those)"
+            if live_tool_names
             else "(live database tools are not enabled for this agent, so answer "
             "from the snapshot and say plainly when something cannot be verified live)"
         )
@@ -1728,8 +1743,8 @@ class BaseArtifactAskAgenticNode(ChatAgenticNode):
             # model from offering to run queries. State it up front.
             lines.append(
                 "**This agent has NO live database access.** You cannot query "
-                "the database or introspect schema live (no `read_query`, "
-                "`list_tables`, or `describe_table`). Do NOT offer to run SQL "
+                "the database or introspect schema live (no SQL execution or "
+                "schema-introspection tools). Do NOT offer to run SQL "
                 "or fetch fresh data — answer only from the inlined data + "
                 "artifact files above, and say plainly when a question would "
                 "require a live query you can't run."
@@ -1774,7 +1789,10 @@ class BaseArtifactAskAgenticNode(ChatAgenticNode):
             "user explicitly asks, but call it out in your answer."
         )
         if self.ARTIFACT_KIND == "dashboard":
-            if db_exposed:
+            # This rule is specifically about running ad-hoc SQL, so gate it on
+            # ``execute_sql`` alone — a whitelist that keeps only ``describe_table``
+            # leaves ``db_exposed`` True but must NOT advertise SQL execution.
+            if execute_sql_exposed:
                 lines.append(
                     "6. **Dashboard queries have no precomputed data**. The "
                     "`queries/<slug>.sql.j2` files (inlined above) are "

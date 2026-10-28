@@ -10,7 +10,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from datus.configuration.agent_config import ServicesConfig
 from datus.tools.mcp_tools.mcp_config import (
+    HTTPServerConfig,
     MCPConfig,
     MCPServerType,
     SSEServerConfig,
@@ -362,6 +364,45 @@ class TestMCPManagerAsync:
         assert tools == []
 
     @pytest.mark.asyncio
+    async def test_check_connectivity_asks_for_the_unfiltered_surface(self, tmp_path):
+        """Connectivity reports a tool count, so it must see every tool."""
+        manager = _make_manager(tmp_path)
+        config = STDIOServerConfig(name="srv", command="python")
+        manager.config.add_server(config)
+
+        with patch.object(manager, "_create_server_instance", return_value=(None, {"error": "fail"})) as create:
+            await manager.check_connectivity("srv")
+
+        create.assert_called_once_with(config, with_tool_filter=False)
+
+    @pytest.mark.asyncio
+    async def test_list_tools_asks_for_the_unfiltered_surface(self, tmp_path):
+        """It filters afterwards, and `apply_filter=False` callers (the picker
+        UI) must be able to see a blocked tool — otherwise it could never be
+        re-enabled."""
+        manager = _make_manager(tmp_path)
+        config = STDIOServerConfig(name="srv", command="python")
+        manager.config.add_server(config)
+
+        with patch.object(manager, "_create_server_instance", return_value=(None, {"error": "fail"})) as create:
+            await manager.list_tools("srv")
+
+        create.assert_called_once_with(config, with_tool_filter=False)
+
+    @pytest.mark.asyncio
+    async def test_call_tool_keeps_the_filter_bound(self, tmp_path):
+        """Defence in depth: call_tool already refuses a blocked name, and the
+        instance stays filtered on top of that."""
+        manager = _make_manager(tmp_path)
+        config = STDIOServerConfig(name="srv", command="python")
+        manager.config.add_server(config)
+
+        with patch.object(manager, "_create_server_instance", return_value=(None, {"error": "fail"})) as create:
+            await manager.call_tool("srv", "some_tool", {})
+
+        create.assert_called_once_with(config)
+
+    @pytest.mark.asyncio
     async def test_list_tools_success_with_filter(self, tmp_path):
         manager = _make_manager(tmp_path)
         tf = ToolFilterConfig(allowed_tool_names=["read"])
@@ -610,3 +651,148 @@ class TestCleanup:
         # cleanup() is a no-op finalizer; verify manager state remains intact
         assert isinstance(manager.config, MCPConfig)
         assert manager.config_path.name == ".mcp.json"
+
+
+# ---------------------------------------------------------------------------
+# Runtime tool filtering
+# ---------------------------------------------------------------------------
+
+
+class TestSdkToolFilter:
+    """The filter has to reach the SDK server instance, not just list_tools."""
+
+    def _http_config(self, tool_filter=None):
+        return HTTPServerConfig(name="srv", url="https://mcp.example.com/mcp", tool_filter=tool_filter)
+
+    def test_returns_none_without_filter(self, tmp_path):
+        manager = _make_manager(tmp_path)
+        assert manager._sdk_tool_filter(self._http_config()) is None
+
+    def test_returns_none_when_disabled(self, tmp_path):
+        manager = _make_manager(tmp_path)
+        tf = ToolFilterConfig(enabled=False, allowed_tool_names=["a"])
+        assert manager._sdk_tool_filter(self._http_config(tf)) is None
+
+    def test_returns_none_when_nothing_listed(self, tmp_path):
+        """enabled=True with no names is "no restriction", not "allow nothing"."""
+        manager = _make_manager(tmp_path)
+        tf = ToolFilterConfig(enabled=True)
+        assert manager._sdk_tool_filter(self._http_config(tf)) is None
+
+    def test_translates_to_the_sdk_shape(self, tmp_path):
+        """Must be the SDK's mapping — its own model would silently filter all."""
+        manager = _make_manager(tmp_path)
+        tf = ToolFilterConfig(enabled=True, allowed_tool_names=["a"], blocked_tool_names=["b"])
+
+        result = manager._sdk_tool_filter(self._http_config(tf))
+
+        assert isinstance(result, dict)
+        assert result["allowed_tool_names"] == ["a"]
+        assert result["blocked_tool_names"] == ["b"]
+
+    def test_agent_facing_instance_carries_the_filter(self, tmp_path):
+        manager = _make_manager(tmp_path)
+        tf = ToolFilterConfig(enabled=True, allowed_tool_names=["a"])
+
+        instance, _ = manager._create_server_instance(self._http_config(tf))
+
+        assert instance.tool_filter == {"allowed_tool_names": ["a"]}
+
+    def test_management_instance_sees_the_full_surface(self, tmp_path):
+        """list_tools/connectivity must report every tool, or a blocked one
+        could never be re-enabled from the UI."""
+        manager = _make_manager(tmp_path)
+        tf = ToolFilterConfig(enabled=True, allowed_tool_names=["a"])
+
+        instance, _ = manager._create_server_instance(self._http_config(tf), with_tool_filter=False)
+
+        assert instance.tool_filter is None
+
+
+# ---------------------------------------------------------------------------
+# In-memory servers supplied by the host (SaaS)
+# ---------------------------------------------------------------------------
+
+
+class TestServersFromAgentConfig:
+    """The host passes servers through AgentConfig; nothing touches the disk."""
+
+    SERVERS = {
+        "github": {
+            "type": "http",
+            "url": "https://api.example.com/mcp/",
+            "headers": {"Authorization": "Bearer tok"},
+        }
+    }
+
+    def _manager(self, tmp_path: Path, services) -> MCPManager:
+        mock_path_manager = MagicMock()
+        config_file = tmp_path / "conf" / ".mcp.json"
+        config_file.parent.mkdir(parents=True, exist_ok=True)
+        mock_path_manager.mcp_config_path.return_value = config_file
+        mock_path_manager.ensure_dirs.return_value = None
+        agent_config = SimpleNamespace(services=services)
+
+        with patch("datus.utils.path_manager.get_path_manager", return_value=mock_path_manager):
+            return MCPManager(agent_config=agent_config)
+
+    def test_loads_servers_without_reading_the_file(self, tmp_path):
+        manager = self._manager(tmp_path, {"mcp_servers": self.SERVERS})
+
+        assert manager.externally_managed is True
+        assert [s.name for s in manager.list_servers()] == ["github"]
+        assert manager.get_server_config("github").headers == {"Authorization": "Bearer tok"}
+        # The file was never created, so credentials never hit the volume.
+        assert not (tmp_path / "conf" / ".mcp.json").exists()
+
+    def test_in_memory_servers_win_over_a_file(self, tmp_path):
+        config_file = tmp_path / "conf" / ".mcp.json"
+        config_file.parent.mkdir(parents=True, exist_ok=True)
+        config_file.write_text(json.dumps({"mcpServers": {"stale": {"type": "http", "url": "https://old"}}}))
+
+        manager = self._manager(tmp_path, {"mcp_servers": self.SERVERS})
+
+        assert [s.name for s in manager.list_servers()] == ["github"]
+
+    def test_empty_section_falls_back_to_the_file(self, tmp_path):
+        """An absent section means "this host doesn't manage MCP" — a CLI user's
+        own file must keep working."""
+        config_file = tmp_path / "conf" / ".mcp.json"
+        config_file.parent.mkdir(parents=True, exist_ok=True)
+        config_file.write_text(json.dumps({"mcpServers": {"local": {"type": "http", "url": "https://local"}}}))
+
+        manager = self._manager(tmp_path, {"mcp_servers": {}})
+
+        assert manager.externally_managed is False
+        assert [s.name for s in manager.list_servers()] == ["local"]
+
+    def test_loads_through_the_real_services_config(self, tmp_path):
+        """The production path is AgentConfig -> ServicesConfig dataclass, not a
+        plain dict. Cover it end to end: an untyped section is dropped by
+        `from_dict` and never reaches the manager, which is exactly how this
+        broke once — every dict-shaped test stayed green while the agent read
+        nothing."""
+        services = ServicesConfig.from_dict({"mcp_servers": self.SERVERS})
+        assert services.mcp_servers == self.SERVERS
+
+        manager = self._manager(tmp_path, services)
+
+        assert manager.externally_managed is True
+        assert [s.name for s in manager.list_servers()] == ["github"]
+        assert not (tmp_path / "conf" / ".mcp.json").exists()
+
+    def test_writes_are_refused(self, tmp_path):
+        manager = self._manager(tmp_path, {"mcp_servers": self.SERVERS})
+
+        added, add_msg = manager.add_server(HTTPServerConfig(name="another", url="https://y/mcp"))
+        removed, remove_msg = manager.remove_server("github")
+        filtered, filter_msg = manager.set_tool_filter(
+            "github", ToolFilterConfig(enabled=True, allowed_tool_names=["a"])
+        )
+
+        # Persisting would write a file nothing reads back, so the edit would
+        # look like it worked and quietly disappear on the next request.
+        assert (added, removed, filtered) == (False, False, False)
+        for msg in (add_msg, remove_msg, filter_msg):
+            assert "managed by the host" in msg
+        assert [s.name for s in manager.list_servers()] == ["github"]

@@ -322,7 +322,7 @@ def _load_pydantic_v2_classes():
     from datus.schemas.base import BaseInput, BaseResult, CommonData
     from datus.schemas.chat_agentic_node_models import ChatNodeInput
     from datus.schemas.gen_sql_agentic_node_models import GenSQLNodeInput
-    from datus.schemas.node_models import ExecuteSQLResult, ReflectionResult
+    from datus.schemas.node_models import ExecuteSQLResult
     from datus.schemas.semantic_agentic_node_models import SemanticNodeInput
     from datus.tools.db_tools.config import ConnectionConfig
 
@@ -331,7 +331,6 @@ def _load_pydantic_v2_classes():
         (BaseResult, "extra", "forbid"),
         (CommonData, "extra", "forbid"),
         (ExecuteSQLResult, "arbitrary_types_allowed", True),
-        (ReflectionResult, "use_enum_values", True),
         (ChatNodeInput, "populate_by_name", True),
         (GenSQLNodeInput, "populate_by_name", True),
         (SemanticNodeInput, "populate_by_name", True),
@@ -350,7 +349,6 @@ class TestPydanticV2ConfigDict:
             "BaseResult",
             "CommonData",
             "ExecuteSQLResult",
-            "ReflectionResult",
             "ChatNodeInput",
             "GenSQLNodeInput",
             "SemanticNodeInput",
@@ -370,7 +368,7 @@ class TestPydanticV2ConfigDict:
         from datus.schemas.base import BaseInput, BaseResult, CommonData
         from datus.schemas.chat_agentic_node_models import ChatNodeInput
         from datus.schemas.gen_sql_agentic_node_models import GenSQLNodeInput
-        from datus.schemas.node_models import ExecuteSQLResult, ReflectionResult
+        from datus.schemas.node_models import ExecuteSQLResult
         from datus.schemas.semantic_agentic_node_models import SemanticNodeInput
         from datus.tools.db_tools.config import ConnectionConfig
 
@@ -379,7 +377,6 @@ class TestPydanticV2ConfigDict:
             BaseResult,
             CommonData,
             ExecuteSQLResult,
-            ReflectionResult,
             ChatNodeInput,
             GenSQLNodeInput,
             SemanticNodeInput,

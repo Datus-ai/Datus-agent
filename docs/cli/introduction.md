@@ -17,7 +17,7 @@ In addition to the three magic commands, you can also:
 - [Run SQL directly](sql_execution.md) like a traditional SQL client
 - Use [session commands](chat_command.md#session-commands) such as `/compact` and `/clear` to manage or reset sessions
 - [Explore metadata](sql_execution.md#explore-metadata) with `/tables` and `/databases`
-- Use [`/model`](model_command.md) to switch LLM providers and models at runtime
+- Use [`/model`](other_commands.md#model) to switch LLM providers and models at runtime
 - Use [`/mcp`](mcp_extensions.md) to add, remove, or test MCP servers to extend functionality
 - Use [plan mode](plan_mode.md) to break down complex tasks into reviewable steps before execution
 
@@ -31,7 +31,7 @@ Vibe SQL is the Datus philosophy that you don't need to write every SQL line you
 
 ## What Makes Datus-CLI Different
 
-- **Context, not control** - Datus treats the workflow context as short-term memory (task description, executed SQL + results/reflections, selected tables/metrics) and builds long-term memory from user preferences and the surrounding data environment (lineage, metrics, docs)
+- **Context, not control** - Datus treats the workflow context as short-term memory (task description, executed SQL and results, selected tables/metrics) and builds long-term memory from user preferences and the surrounding data environment (lineage, metrics, docs)
 
 - **Explainable, reliable flows** - Workflows can pause, edit, and resume at any node, introducing human-in-the-loop (HITL) when confidence is low—so you get both exploration and control
 

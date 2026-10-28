@@ -24,7 +24,7 @@ from datus.configuration.agent_config_loader import load_agent_config, parse_con
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
 from datus.schemas.node_models import SqlTask
 from datus.storage.task import TaskStore
-from datus.utils.loggings import get_logger
+from datus.utils.loggings import configure_entrypoint_logging, get_logger
 
 from ..utils.json_utils import to_str
 from .legacy_auth import auth_service, get_current_client
@@ -58,6 +58,7 @@ class DatusAPIService:
 
     async def initialize(self):
         """Initialize the service with default configurations."""
+        configure_entrypoint_logging(self.args, if_unconfigured=True)
         # Load default agent configuration
         self.agent_config = load_agent_config(**vars(self.args))
         logger.info("Agent configuration loaded successfully")
@@ -452,6 +453,14 @@ async def lifespan(app: FastAPI):
         stream_thinking=getattr(args, "stream_thinking", False),
     )
 
+    # Install a SIGUSR1 handler so operators can dump async task stacks from a
+    # running (possibly daemonised) server: ``kill -USR1 <pid>`` writes the
+    # snapshot to the log. Useful when a request hangs on an interaction that
+    # never resolves — the loop is alive but a coroutine is parked.
+    from datus.utils.async_debug import install_task_dump_signal_handler
+
+    install_task_dump_signal_handler()
+
     logger.info("Datus API Service started")
     try:
         yield
@@ -460,7 +469,14 @@ async def lifespan(app: FastAPI):
         try:
             await drain_background_tasks()
         finally:
-            await service_cache.shutdown()
+            try:
+                await service_cache.shutdown()
+            finally:
+                # Shutting the cache down cancels in-flight turns, and each one
+                # settles (post_chat / turn stats) as a new background task —
+                # drain those too, even if the shutdown itself failed or was
+                # cancelled, or a restart drops the billing of every turn it stops.
+                await drain_background_tasks()
 
 
 def create_app(agent_args: argparse.Namespace) -> FastAPI:
@@ -600,7 +616,7 @@ except Exception as e:
 
 _datasource = os.getenv("DATUS_DATASOURCE", "default")
 _output_dir = os.getenv("DATUS_OUTPUT_DIR", "./output")
-_log_level = os.getenv("DATUS_LOG_LEVEL", "INFO")
+_log_level = None  # Resolved from environment/config in each worker.
 
 _default_args = argparse.Namespace(
     config=_config_path,

@@ -54,10 +54,10 @@ class TestTableTarget:
         assert t.catalog is None
 
     def test_catalog_round_trip(self):
-        t = TableTarget(catalog="default_catalog", database="ac_manage", table="stats")
+        t = TableTarget(catalog="default_catalog", database="analytics", table="stats")
         dumped = t.model_dump(by_alias=True, exclude_none=True)
         assert dumped["catalog"] == "default_catalog"
-        assert dumped["database"] == "ac_manage"
+        assert dumped["database"] == "analytics"
         restored = TableTarget.model_validate(dumped)
         assert restored.catalog == "default_catalog"
 

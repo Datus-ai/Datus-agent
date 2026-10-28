@@ -13,16 +13,21 @@ Tests the skill-related methods in the AgenticNode base class:
 """
 
 from unittest.mock import Mock, patch
+from xml.etree import ElementTree as ET
 
 import pytest
 
 from datus.agent.node.agentic_node import AgenticNode
 from datus.configuration.agent_config import AgentConfig
+from datus.tools.db_tools.config import SQLiteConfig
+from datus.tools.db_tools.sqlite_connector import SQLiteConnector
+from datus.tools.func_tool.database import DBFuncTool
 from datus.tools.permission.permission_config import PermissionConfig, PermissionLevel, PermissionRule
 from datus.tools.permission.permission_manager import PermissionManager
 from datus.tools.skill_tools.skill_config import SkillConfig
 from datus.tools.skill_tools.skill_func_tool import SkillFuncTool
 from datus.tools.skill_tools.skill_manager import SkillManager
+from datus.utils.constants import DBType
 
 # Globally patch LLMBaseModel.create_model to return None for all tests
 pytestmark = pytest.mark.usefixtures("mock_llm_model")
@@ -103,6 +108,7 @@ def mock_agent_config():
     config.skills_config = None
     config.prompt_version = None
     config.project_root = "."
+    config.current_db_configs.return_value = {}
 
     # Prevent model creation by returning None for active_model
     config.active_model.return_value = None
@@ -187,7 +193,6 @@ class TestFinalizeSystemPrompt:
         assert result.startswith(base_prompt)
         assert "<available_skills>" in result
         assert "sql-analysis" in result
-        assert "skill-owned scripts" in result
         assert "native tool directly" in result
 
     def test_with_skill_func_tool_empty_xml_appends_explicit_none_block(
@@ -274,10 +279,9 @@ class TestEnsureSkillToolsInTools:
         node._ensure_skill_tools_in_tools()
 
         # Should have added skill tools
-        assert len(node.tools) == 2  # load_skill and skill_execute_command
+        assert len(node.tools) == 1  # load_skill only
         tool_names = [t.name for t in node.tools]
         assert "load_skill" in tool_names
-        assert "skill_execute_command" in tool_names
 
     def test_idempotent_does_not_duplicate(self, mock_agent_config, skill_manager):
         """Calling twice doesn't add duplicate tools."""
@@ -321,10 +325,9 @@ class TestEnsureSkillToolsInTools:
 
         # Should have created tools list
         assert isinstance(node.tools, list)
-        assert len(node.tools) == 2
+        assert len(node.tools) == 1
         tool_names = [t.name for t in node.tools]
         assert "load_skill" in tool_names
-        assert "skill_execute_command" in tool_names
 
     def test_preserves_existing_tools(self, mock_agent_config, skill_manager):
         """When self.tools has existing tools, they are preserved."""
@@ -345,11 +348,10 @@ class TestEnsureSkillToolsInTools:
         node._ensure_skill_tools_in_tools()
 
         # Should have both existing and skill tools
-        assert len(node.tools) == 3
+        assert len(node.tools) == 2
         tool_names = [t.name for t in node.tools]
         assert "existing_tool" in tool_names
         assert "load_skill" in tool_names
-        assert "skill_execute_command" in tool_names
 
 
 class TestSetupSkillFuncTools:
@@ -750,9 +752,12 @@ class TestSkillIntegrationEdgeCases:
         """Test that finalize_system_prompt preserves existing tools."""
         mock_agent_config.agentic_nodes = {"test_node": {"skills": "sql-*"}}
         # BashTool is fail-closed when no permission manager exists; wire a
-        # permissive config so the lazy injector includes ``execute_command``.
+        # permissive config so the lazy injector includes ``bash``.
         mock_agent_config.permissions_config = PermissionConfig(default_permission=PermissionLevel.ALLOW)
         mock_agent_config.active_profile_name = "normal"
+        # Local web_search is mounted only when a Tavily key resolves; pin one so
+        # the count is deterministic without depending on the CI env (no keys).
+        mock_agent_config.tavily_api_key = "test-key"
 
         node = MinimalAgenticNode(
             node_id="test24",
@@ -773,18 +778,20 @@ class TestSkillIntegrationEdgeCases:
         base_prompt = "Base prompt"
         node._finalize_system_prompt(base_prompt)
 
-        # Should have all tools: 2 existing + 2 skill tools + 1 bash tool +
+        # Should have all tools: 2 existing + 1 skill tool + 1 bash tool +
         # 2 memory tools (this node is a main agent, so add_memory/edit_memory
-        # are lazy-injected alongside skills and bash).
-        assert len(node.tools) == 7
+        # are lazy-injected alongside skills and bash) + 2 web tools
+        # (web_search/web_fetch, mounted unconditionally for the local backend).
+        assert len(node.tools) == 8
         tool_names = [t.name for t in node.tools]
         assert "tool1" in tool_names
         assert "tool2" in tool_names
         assert "load_skill" in tool_names
-        assert "skill_execute_command" in tool_names
-        assert "execute_command" in tool_names
+        assert "bash" in tool_names
         assert "add_memory" in tool_names
         assert "edit_memory" in tool_names
+        assert "web_search" in tool_names
+        assert "web_fetch" in tool_names
 
     def test_setup_exception_handling(self, mock_agent_config):
         """Test that setup exceptions are handled gracefully."""
@@ -883,15 +890,11 @@ class TestBuiltinNodeDefaultSkills:
 
         assert GenTableAgenticNode.DEFAULT_SKILLS == "gen-table"
 
-    def test_gen_metrics_defaults(self):
-        from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode
+    def test_semantic_modeling_defaults_derive_from_dosi_runtime(self):
+        from datus.agent.node.semantic_modeling_agentic_node import SemanticModelingAgenticNode
 
-        assert GenMetricsAgenticNode.DEFAULT_SKILLS == "gen-metrics, gen-semantic-model"
-
-    def test_gen_semantic_model_defaults(self):
-        from datus.agent.node.gen_semantic_model_agentic_node import GenSemanticModelAgenticNode
-
-        assert GenSemanticModelAgenticNode.DEFAULT_SKILLS == "gen-semantic-model"
+        assert SemanticModelingAgenticNode.DEFAULT_SKILLS is None
+        assert SemanticModelingAgenticNode.REQUIRED_SKILLS is None
 
     def test_gen_dashboard_leaves_defaults_unset(self):
         """gen_dashboard injects {platform}-dashboard dynamically in setup, not via DEFAULT_SKILLS."""
@@ -961,8 +964,7 @@ class TestSkillAllowedAgentsConsistency:
         [
             ("gen_job", ["gen-table", "table-validation", "data-migration"]),
             ("gen_table", ["gen-table", "table-validation"]),
-            ("gen_semantic_model", ["gen-semantic-model"]),
-            ("gen_metrics", ["gen-metrics", "gen-semantic-model"]),
+            ("semantic_modeling", ["dosi-semantic-authoring"]),
             ("gen_dashboard", ["bi-validation", "grafana-dashboard", "superset-dashboard"]),
             ("gen_skill", ["create-skill", "optimize-skill"]),
             ("scheduler", ["airflow-workflow", "scheduler-validation"]),
@@ -1018,9 +1020,11 @@ class TestBashToolToggle:
             agent_config=mock_agent_config,
         )
 
-        assert node.bash_tool is not None
+        from datus.tools.func_tool.bash_tool import BashTool
+
+        assert isinstance(node.bash_tool, BashTool)
         bash_names = {t.name for t in node.bash_tool.available_tools()}
-        assert "execute_command" in bash_names
+        assert "bash" in bash_names
 
     def test_bash_tool_disabled_via_config(self, mock_agent_config):
         """``bash_tool_enabled=False`` keeps ``BashTool`` out of the node."""
@@ -1049,7 +1053,7 @@ class TestBashToolToggle:
         """Without permission enforcement, BashTool must NOT be created.
 
         ``_ensure_permission_hooks`` is a no-op when ``permission_manager``
-        is ``None``, so creating an ``execute_command`` tool would expose
+        is ``None``, so creating an ``bash`` tool would expose
         unrestricted shell execution to the model. Fail closed instead.
         """
         # ``permissions_config = None`` short-circuits ``_setup_permission_manager``,
@@ -1069,3 +1073,345 @@ class TestBashToolToggle:
         node.tools = []
         node._ensure_bash_tool_in_tools()
         assert node.tools == []
+
+    def test_bash_allowed_patterns_passed_through_to_tool(self, mock_agent_config):
+        """``agent_config.bash_allowed_patterns`` reaches the BashTool instance.
+
+        The API surface sets ``["datus*"]`` for web clients; the node must
+        hand it to the tool verbatim so the execution-layer whitelist gates
+        commands regardless of the permission profile.
+        """
+        self._wire_permissions(mock_agent_config)
+        mock_agent_config.bash_allowed_patterns = ["datus*"]
+
+        node = MinimalAgenticNode(
+            node_id="bash_patterns_passthrough",
+            description="Test node",
+            node_type="chat",
+            agent_config=mock_agent_config,
+        )
+
+        from datus.tools.func_tool.bash_tool import BashTool
+
+        assert isinstance(node.bash_tool, BashTool)
+        assert node.bash_tool.allowed_patterns == ["datus*"]
+        assert node.bash_tool._is_command_allowed("datus plugin list") is True
+        assert node.bash_tool._is_command_allowed("rm -rf /") is False
+
+    def test_non_list_bash_patterns_fall_back_to_unrestricted(self, mock_agent_config):
+        """A config without a usable ``bash_allowed_patterns`` (e.g. a Mock
+        or a legacy bootstrap) must not kill the tool — it falls back to the
+        unrestricted default gated by the permission profile."""
+        self._wire_permissions(mock_agent_config)
+        # Mock(spec=AgentConfig) resolves the attribute to a truthy Mock —
+        # exactly the non-list shape the fallback must absorb.
+
+        node = MinimalAgenticNode(
+            node_id="bash_patterns_fallback",
+            description="Test node",
+            node_type="chat",
+            agent_config=mock_agent_config,
+        )
+
+        from datus.tools.func_tool.bash_tool import BashTool
+
+        assert isinstance(node.bash_tool, BashTool)
+        assert node.bash_tool.allowed_patterns == ["*"]
+
+    def test_read_only_managed_config_wires_plugin_runtime_provider(self, mock_agent_config):
+        """Only managed/read-only AgentConfig instances bridge plugin CLI config."""
+        self._wire_permissions(mock_agent_config)
+        mock_agent_config.config_mutable = False
+
+        node = MinimalAgenticNode(
+            node_id="bash_managed_plugin_context",
+            description="Test node",
+            node_type="chat",
+            agent_config=mock_agent_config,
+        )
+
+        from datus.tools.func_tool.bash_tool import BashTool
+
+        assert isinstance(node.bash_tool, BashTool)
+        assert node.bash_tool.execution_context_provider.__name__ == "_managed_plugin_context"
+
+    def test_mutable_local_config_does_not_wire_runtime_provider(self, mock_agent_config):
+        self._wire_permissions(mock_agent_config)
+        mock_agent_config.config_mutable = True
+
+        node = MinimalAgenticNode(
+            node_id="bash_local_plugin_context",
+            description="Test node",
+            node_type="chat",
+            agent_config=mock_agent_config,
+        )
+
+        from datus.tools.func_tool.bash_tool import BashTool
+
+        assert isinstance(node.bash_tool, BashTool)
+        assert node.bash_tool.execution_context_provider is None
+
+
+@pytest.fixture
+def bound_db_tool(tmp_path):
+    """Use the real primary-connector contract without any remote database."""
+    connector = SQLiteConnector(SQLiteConfig(db_path=str(tmp_path / "skills.sqlite")))
+    tool = DBFuncTool(connector)
+    yield tool
+    connector.close()
+
+
+@pytest.fixture
+def database_skill_manager(temp_skills_dir, skill_manager):
+    """Discover dialect skills from local files as installed adapters would."""
+    for db_type in ("sqlite", "duckdb", "oracle", "postgresql", "custom-db"):
+        skill_dir = temp_skills_dir / f"db-{db_type}-sql"
+        skill_dir.mkdir()
+        (skill_dir / "SKILL.md").write_text(
+            f"---\nname: db-{db_type}-sql\ndescription: {db_type} SQL rules\n---\n\n{db_type} dialect instructions.\n"
+        )
+    skill_manager.refresh()
+    return skill_manager
+
+
+class TestRequiredSkillsInjection:
+    """``REQUIRED_SKILLS`` host-injection primitive (``_inject_required_skills``)."""
+
+    def _make_node(self, mock_agent_config, skill_manager, required):
+        node = MinimalAgenticNode(
+            node_id="required_skills_node",
+            description="Test node",
+            node_type="chat",
+            agent_config=mock_agent_config,
+        )
+        node.skill_manager = skill_manager
+        node.__class__ = type(
+            "RequiredSkillsNode",
+            (MinimalAgenticNode,),
+            {"REQUIRED_SKILLS": required, "get_node_name": lambda self: "test_node"},
+        )
+        return node
+
+    def test_required_skill_content_is_injected(self, mock_agent_config, skill_manager, monkeypatch):
+        node = self._make_node(mock_agent_config, skill_manager, "sql-analysis")
+        monkeypatch.setattr(node, "_inject_memory_context", lambda p, override_node_name=None: p)
+        monkeypatch.setattr(node, "_inject_response_language", lambda p: p)
+
+        result = node._finalize_system_prompt("base prompt")
+
+        assert '<required_skill name="sql-analysis">' in result
+        assert "SQL analysis techniques" in result
+        assert "</required_skill>" in result
+
+    def test_multiple_required_skills_all_injected(self, mock_agent_config, skill_manager):
+        node = self._make_node(mock_agent_config, skill_manager, "sql-analysis, data-profiler")
+
+        result = node._inject_required_skills("base prompt")
+
+        assert '<required_skill name="sql-analysis">' in result
+        assert '<required_skill name="data-profiler">' in result
+
+    def test_missing_required_skill_raises(self, mock_agent_config, skill_manager):
+        from datus.utils.exceptions import DatusException
+
+        node = self._make_node(mock_agent_config, skill_manager, "no-such-skill")
+
+        with pytest.raises(DatusException, match="no-such-skill"):
+            node._inject_required_skills("base prompt")
+
+    def test_no_required_skills_leaves_prompt_unchanged(self, mock_agent_config, skill_manager):
+        node = self._make_node(mock_agent_config, skill_manager, None)
+
+        assert node._inject_required_skills("base prompt") == "base prompt"
+
+    def test_get_required_skills_parses_comma_separated_string(self, mock_agent_config, skill_manager):
+        node = self._make_node(mock_agent_config, skill_manager, " sql-analysis ,, data-profiler ")
+
+        assert node._get_required_skills() == ["sql-analysis", "data-profiler"]
+
+    def test_installed_database_skill_is_injected(
+        self,
+        mock_agent_config,
+        skill_manager,
+        temp_skills_dir,
+        bound_db_tool,
+        monkeypatch,
+    ):
+        skill_dir = temp_skills_dir / "db-oracle-sql"
+        skill_dir.mkdir()
+        (skill_dir / "SKILL.md").write_text(
+            """---
+name: db-oracle-sql
+description: Oracle SQL generation rules
+---
+
+# Oracle SQL
+
+Use FETCH FIRST instead of LIMIT.
+"""
+        )
+        skill_manager.refresh()
+        mock_agent_config.current_db_configs.return_value = {
+            "oracle_prod": {"type": "oracle"},
+            "postgres_prod": {"type": "postgresql"},
+        }
+        node = self._make_node(mock_agent_config, skill_manager, None)
+
+        monkeypatch.setattr(bound_db_tool.connector, "get_type", lambda: "oracle")
+        node.db_func_tool = bound_db_tool
+
+        result = node._inject_required_skills("base prompt")
+
+        assert '<required_skill name="db-oracle-sql">' in result
+        assert "Use FETCH FIRST instead of LIMIT." in result
+        assert "db-postgresql-sql" not in result
+
+    def test_database_skill_connector_failure_leaves_prompt_unchanged(
+        self, mock_agent_config, database_skill_manager, bound_db_tool
+    ):
+        node = self._make_node(mock_agent_config, database_skill_manager, None)
+        node.db_func_tool = bound_db_tool
+        with patch.object(bound_db_tool.connector, "get_type", side_effect=RuntimeError("connector unavailable")):
+            assert node._inject_required_skills("base prompt") == "base prompt"
+
+    def test_database_skill_outside_node_scope_is_skipped(
+        self,
+        mock_agent_config,
+        skill_manager,
+        temp_skills_dir,
+        bound_db_tool,
+        monkeypatch,
+    ):
+        skill_dir = temp_skills_dir / "db-oracle-sql"
+        skill_dir.mkdir()
+        (skill_dir / "SKILL.md").write_text(
+            """---
+name: db-oracle-sql
+description: Oracle SQL generation rules
+allowed_agents:
+  - another_node
+---
+
+# Oracle SQL
+
+Use FETCH FIRST instead of LIMIT.
+"""
+        )
+        skill_manager.refresh()
+        mock_agent_config.current_db_configs.return_value = {"oracle_prod": {"type": "oracle"}}
+        node = self._make_node(mock_agent_config, skill_manager, None)
+        monkeypatch.setattr(bound_db_tool.connector, "get_type", lambda: "oracle")
+        node.db_func_tool = bound_db_tool
+
+        assert node._inject_required_skills("base prompt") == "base prompt"
+
+    @pytest.mark.parametrize("node_name", ["ask_metrics", "gen_report"])
+    @pytest.mark.parametrize("required", [None, "sql-analysis"])
+    def test_nodes_without_db_tools_skip_dialect_skills(
+        self, mock_agent_config, database_skill_manager, node_name, required, monkeypatch
+    ):
+        mock_agent_config.current_db_configs.return_value = {"sqlite": {"type": DBType.SQLITE}}
+        node = self._make_node(mock_agent_config, database_skill_manager, required)
+        monkeypatch.setattr(node, "get_node_name", lambda: node_name)
+        node.db_func_tool = None
+
+        result = node._inject_required_skills("base prompt")
+
+        assert '<required_skill name="db-' not in result
+        if required:
+            assert f'<required_skill name="{required}">' in result
+        else:
+            assert result == "base prompt"
+
+    @pytest.mark.parametrize(
+        ("db_type", "expected"),
+        [(DBType.SQLITE, "sqlite"), (DBType.DUCKDB, "duckdb"), (" ORACLE ", "oracle"), ("CUSTOM_DB", "custom-db")],
+    )
+    def test_only_bound_connector_dialect_is_injected(
+        self, mock_agent_config, database_skill_manager, bound_db_tool, monkeypatch, db_type, expected
+    ):
+        mock_agent_config.current_db_configs.return_value = {
+            "oracle": {"type": "oracle"},
+            "postgres": {"type": "postgresql"},
+            "sqlite": {"type": DBType.SQLITE},
+            "another_sqlite": {"type": DBType.SQLITE},
+        }
+        mock_agent_config.current_datasource = "postgres"
+        node = self._make_node(mock_agent_config, database_skill_manager, None)
+        node.db_func_tool = bound_db_tool
+        monkeypatch.setattr(bound_db_tool.connector, "get_type", lambda: db_type)
+
+        result = node._inject_required_skills("base prompt")
+        skills = ET.fromstring(f"<prompt>{result}</prompt>").findall("required_skill")
+
+        assert [skill.attrib["name"] for skill in skills] == [f"db-{expected}-sql"]
+        assert f"{expected} dialect instructions." in "".join(skills[0].itertext())
+
+    def test_real_connector_type_wins_over_changed_config(
+        self, mock_agent_config, database_skill_manager, bound_db_tool
+    ):
+        node = self._make_node(mock_agent_config, database_skill_manager, None)
+        node.db_func_tool = bound_db_tool
+        mock_agent_config.current_datasource = "duckdb"
+        mock_agent_config.current_db_configs.return_value = {"duckdb": {"type": DBType.DUCKDB}}
+
+        result = node._inject_required_skills("base prompt")
+
+        assert '<required_skill name="db-sqlite-sql">' in result
+        assert 'name="db-duckdb-sql"' not in result
+        mock_agent_config.current_db_configs.assert_not_called()
+
+    def test_required_and_bound_dialect_skill_is_injected_once(
+        self, mock_agent_config, database_skill_manager, bound_db_tool
+    ):
+        node = self._make_node(mock_agent_config, database_skill_manager, "db-sqlite-sql, db-sqlite-sql")
+        node.db_func_tool = bound_db_tool
+        mock_agent_config.current_db_configs.return_value = {"sqlite": {"type": DBType.SQLITE}}
+
+        result = node._inject_required_skills("base prompt")
+
+        assert result.count('<required_skill name="db-sqlite-sql">') == 1
+
+    def test_missing_optional_bound_dialect_skill_is_skipped(self, mock_agent_config, skill_manager, bound_db_tool):
+        node = self._make_node(mock_agent_config, skill_manager, "sql-analysis")
+        node.db_func_tool = bound_db_tool
+
+        result = node._inject_required_skills("base prompt")
+
+        assert '<required_skill name="sql-analysis">' in result
+        assert '<required_skill name="db-' not in result
+
+    def test_missing_explicit_skill_still_fails_with_db_tools(
+        self, mock_agent_config, database_skill_manager, bound_db_tool
+    ):
+        from datus.utils.exceptions import DatusException
+
+        node = self._make_node(mock_agent_config, database_skill_manager, "no-such-skill")
+        node.db_func_tool = bound_db_tool
+
+        with pytest.raises(DatusException, match="no-such-skill"):
+            node._inject_required_skills("base prompt")
+
+    @pytest.mark.parametrize("db_type", [None, "", "   "])
+    def test_empty_bound_type_does_not_fall_back_to_config(
+        self, mock_agent_config, database_skill_manager, bound_db_tool, monkeypatch, db_type
+    ):
+        mock_agent_config.current_db_configs.return_value = {"sqlite": {"type": DBType.SQLITE}}
+        node = self._make_node(mock_agent_config, database_skill_manager, "sql-analysis")
+        node.db_func_tool = bound_db_tool
+        monkeypatch.setattr(bound_db_tool.connector, "get_type", lambda: db_type)
+
+        result = node._inject_required_skills("base prompt")
+
+        assert '<required_skill name="sql-analysis">' in result
+        assert '<required_skill name="db-' not in result
+
+    def test_unbound_db_tool_does_not_fall_back_to_config(
+        self, mock_agent_config, database_skill_manager, bound_db_tool, monkeypatch
+    ):
+        mock_agent_config.current_db_configs.return_value = {"sqlite": {"type": DBType.SQLITE}}
+        node = self._make_node(mock_agent_config, database_skill_manager, None)
+        node.db_func_tool = bound_db_tool
+        monkeypatch.setattr(bound_db_tool, "_primary_connector", None)
+
+        assert node._inject_required_skills("base prompt") == "base prompt"

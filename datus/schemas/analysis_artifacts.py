@@ -71,9 +71,10 @@ class SubjectAssetRef(BaseModel):
     uniquely addressed by the subject-tree ``path`` plus the leaf
     ``name`` — the same two values every discovery tool
     (``list_metrics``, ``search_metrics``, ``list_subject_tree``)
-    surfaces back to the LLM, and the same two values the ``ask_*``
-    consultant needs to call ``get_metrics(path, name)`` /
-    ``get_reference_sql(path, name)`` for the full definition.
+    surfaces back to the LLM. The path distinguishes assets with the same
+    leaf name; ``get_metric(name)`` provides executable details for an
+    unambiguous metric name, while ``get_reference_sql(path, name)`` provides
+    reference SQL details.
 
     Opaque storage-layer ids (``metric:Foo/Bar.baz``) are deliberately
     NOT part of this wire contract — they leak storage concerns into
@@ -103,6 +104,12 @@ class SubjectAssetRef(BaseModel):
             "subject-library uses for retrieval."
         ),
     )
+
+
+class SqlSourceSelection(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    reason: str = Field(min_length=1, max_length=2000)
+    candidate_metrics: List[SubjectAssetRef] = Field(default_factory=list)
 
 
 class SubjectRefs(BaseModel):
@@ -198,6 +205,8 @@ class QueryBrief(BaseModel):
             "aggregates get an empty string."
         ),
     )
+
+    source_selection: Optional[SqlSourceSelection] = None
 
 
 class Insight(BaseModel):

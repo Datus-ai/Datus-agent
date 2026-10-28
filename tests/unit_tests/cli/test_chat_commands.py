@@ -38,6 +38,7 @@ from rich.console import Console
 
 from datus.cli.chat_commands import ChatCommands, _is_model_config_error
 from datus.cli.cli_context import CliContext
+from datus.cli.execution_state import ExecutionInterrupted, InterruptController, PendingInputQueue
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
 
 # ===========================================================================
@@ -75,7 +76,15 @@ class MinimalCLI:
     def _print_welcome(self):
         """No-op stand-in for the real banner printer."""
 
-    def run_on_bg_loop(self, coro):
+    def _cycle_permission_mode(self):
+        """No-op stand-in for the Ctrl+P permission-cycle shortcut handler.
+
+        ``ChatCommands._streaming_key_callbacks`` binds this as the Ctrl+P
+        mid-stream callback, so the substitute CLI must expose it or every
+        streaming turn raises ``AttributeError``.
+        """
+
+    def run_on_bg_loop(self, coro, **_kwargs):
         """Simple synchronous stand-in for ``DatusCLI.run_on_bg_loop``.
 
         The real implementation routes through a persistent background loop to
@@ -203,6 +212,17 @@ class TestChatCommandsInit:
         assert cmds.chat_history == []
         assert cmds.last_actions == []
 
+    def test_streaming_ctrl_p_cycles_permission_mode(self, real_agent_config, mock_llm_create):
+        cmds = _make_chat_commands(real_agent_config)
+        cmds.cli._cycle_permission_mode = MagicMock()
+        streaming_ctx = MagicMock()
+
+        callbacks = cmds._streaming_key_callbacks(streaming_ctx)
+        callbacks[b"\x10"]()
+
+        cmds.cli._cycle_permission_mode.assert_called_once_with()
+        assert callbacks[b"\x0f"] == streaming_ctx.toggle_verbose
+
 
 # ===========================================================================
 # TestAgentDispatchHint
@@ -278,7 +298,7 @@ class TestShouldCreateNewNode:
         cmds.current_node = cmds._create_new_node(subagent_name="gen_sql")
         cmds.current_subagent_name = "gen_sql"
 
-        result = cmds._should_create_new_node(subagent_name="gen_semantic_model")
+        result = cmds._should_create_new_node(subagent_name="semantic_modeling")
         assert result is True
         assert cmds.current_subagent_name == "gen_sql"  # Not changed yet
 
@@ -303,6 +323,50 @@ class TestShouldCreateNewNode:
         assert cmds.current_subagent_name == "gen_sql"
 
 
+class TestGetOrCreateNode:
+    """The public check-create-publish shared by the web executor."""
+
+    def test_creates_and_publishes_when_no_node_exists(self, real_agent_config, mock_llm_create):
+        cmds = _make_chat_commands(real_agent_config)
+        node = cmds.get_or_create_node()
+        assert node.id == "chat_cli"
+        assert cmds.current_node is node
+        assert cmds.current_subagent_name is None
+
+    def test_reuses_published_node(self, real_agent_config, mock_llm_create):
+        cmds = _make_chat_commands(real_agent_config)
+        first = cmds.get_or_create_node()
+        assert cmds.get_or_create_node() is first
+
+    def test_switching_subagent_publishes_new_node_and_name(self, real_agent_config, mock_llm_create):
+        cmds = _make_chat_commands(real_agent_config)
+        regular = cmds.get_or_create_node()
+        switched = cmds.get_or_create_node("gen_sql")
+        assert switched is not regular
+        assert cmds.current_node is switched
+        assert cmds.current_subagent_name == "gen_sql"
+
+    def test_publish_happens_under_the_node_lock(self, real_agent_config, mock_llm_create):
+        """The decision and the assignment share one lock hold.
+
+        A warm-up observing an unlocked gap between them could publish its own
+        node over the one this call is about to return.
+        """
+        cmds = _make_chat_commands(real_agent_config)
+        held = []
+
+        def _record_lock_state(*args, **kwargs):
+            # ``RLock`` is reentrant, so a same-thread acquire always succeeds;
+            # the owner check is what proves the section is held.
+            held.append(cmds._node_lock._is_owned())
+            return MagicMock(name="node")
+
+        with patch.object(cmds, "_create_new_node", side_effect=_record_lock_state):
+            cmds.get_or_create_node()
+
+        assert held == [True]
+
+
 # ===========================================================================
 # TestExtractNodeTypeFromSessionId
 # ===========================================================================
@@ -323,10 +387,10 @@ class TestExtractNodeTypeFromSessionId:
         assert result == "gen_sql"
         assert "session" not in result
 
-    def test_gen_semantic_model_session(self):
-        """Extract 'gen_semantic_model' from a gen_semantic_model session ID."""
-        result = ChatCommands._extract_node_type_from_session_id("gen_semantic_model_session_789xyz")
-        assert result == "gen_semantic_model"
+    def test_semantic_modeling_session(self):
+        """Extract the semantic modeling agent from its session ID."""
+        result = ChatCommands._extract_node_type_from_session_id("semantic_modeling_session_789xyz")
+        assert result == "semantic_modeling"
         assert "_session_" not in result
 
     def test_no_session_marker_returns_chat(self):
@@ -376,26 +440,6 @@ class TestCreateNewNode:
 
         assert isinstance(node, GenSQLAgenticNode)
         assert not isinstance(node, ChatAgenticNode)
-
-    def test_gen_semantic_model_node_creation(self, real_agent_config, mock_llm_create):
-        """subagent_name='gen_semantic_model' creates a GenSemanticModelAgenticNode."""
-        from datus.agent.node.gen_semantic_model_agentic_node import GenSemanticModelAgenticNode
-
-        cmds = _make_chat_commands(real_agent_config)
-        node = cmds._create_new_node(subagent_name="gen_semantic_model")
-
-        assert isinstance(node, GenSemanticModelAgenticNode)
-        assert node.agent_config is real_agent_config
-
-    def test_gen_metrics_node_creation(self, real_agent_config, mock_llm_create):
-        """subagent_name='gen_metrics' creates a GenMetricsAgenticNode."""
-        from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode
-
-        cmds = _make_chat_commands(real_agent_config)
-        node = cmds._create_new_node(subagent_name="gen_metrics")
-
-        assert isinstance(node, GenMetricsAgenticNode)
-        assert node.agent_config is real_agent_config
 
     def test_gen_sql_summary_node_creation(self, real_agent_config, mock_llm_create):
         """subagent_name='gen_sql_summary' creates a SqlSummaryAgenticNode."""
@@ -473,35 +517,6 @@ class TestCreateNodeInput:
         assert isinstance(node_input, GenSQLNodeInput)
         assert node_type == "gen_sql"
         assert node_input.user_message == "Generate SQL for users"
-
-    def test_semantic_model_node_input(self, real_agent_config, mock_llm_create):
-        """GenSemanticModelAgenticNode gets SemanticNodeInput with 'semantic' type."""
-        from datus.agent.node.gen_semantic_model_agentic_node import GenSemanticModelAgenticNode
-        from datus.schemas.semantic_agentic_node_models import SemanticNodeInput
-
-        cmds = _make_chat_commands(real_agent_config)
-        node = cmds._create_new_node(subagent_name="gen_semantic_model")
-        assert isinstance(node, GenSemanticModelAgenticNode)
-
-        node_input, node_type = cmds.create_node_input("Build semantic model", node, [], [], [])
-
-        assert isinstance(node_input, SemanticNodeInput)
-        assert node_type == "semantic"
-        assert node_input.user_message == "Build semantic model"
-
-    def test_gen_metrics_node_input(self, real_agent_config, mock_llm_create):
-        """GenMetricsAgenticNode gets SemanticNodeInput with 'semantic' type."""
-        from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode
-        from datus.schemas.semantic_agentic_node_models import SemanticNodeInput
-
-        cmds = _make_chat_commands(real_agent_config)
-        node = cmds._create_new_node(subagent_name="gen_metrics")
-        assert isinstance(node, GenMetricsAgenticNode)
-
-        node_input, node_type = cmds.create_node_input("Generate metrics", node, [], [], [])
-
-        assert isinstance(node_input, SemanticNodeInput)
-        assert node_type == "semantic"
 
     def test_sql_summary_node_input(self, real_agent_config, mock_llm_create):
         """SqlSummaryAgenticNode gets SqlSummaryNodeInput with 'sql_summary' type."""
@@ -597,6 +612,11 @@ class TestExtractReportFromJson:
         cmds = _make_chat_commands(real_agent_config)
         result = cmds._extract_report_from_json("")
         assert result is None
+
+    def test_dict_input_returns_none(self, real_agent_config, mock_llm_create):
+        """Intermediate tool output must never be parsed as final report text."""
+        cmds = _make_chat_commands(real_agent_config)
+        assert cmds._extract_report_from_json({"response": "partial"}) is None
 
     def test_valid_json_with_report_field(self, real_agent_config, mock_llm_create):
         """Valid JSON with 'report' field extracts the report content."""
@@ -1011,14 +1031,19 @@ class TestCmdChatInfo:
 class TestAddInSqlContext:
     """Tests for add_in_sql_context logic."""
 
-    def _make_tool_action(self, function_name, output_data, status=ActionStatus.SUCCESS):
-        """Helper to create a TOOL action."""
+    def _make_tool_action(self, function_name, output_data, status=ActionStatus.SUCCESS, sql="SELECT 1"):
+        """Helper to create a TOOL action.
+
+        ``sql`` is the statement carried in the action input; the chat SQL-context
+        seeder only considers read-type ``execute_sql`` calls. Real tool actions
+        nest call params under ``input["arguments"]``, so mirror that shape here.
+        """
         return ActionHistory(
             action_id=f"test_{function_name}",
             role=ActionRole.TOOL,
             messages=f"Tool call: {function_name}",
             action_type=function_name,
-            input={"function_name": function_name, "arguments": "{}"},
+            input={"function_name": function_name, "arguments": {"sql": sql}},
             output=output_data,
             status=status,
         )
@@ -1043,7 +1068,7 @@ class TestAddInSqlContext:
         actions = [
             self._make_tool_action("list_tables", {"success": True, "raw_output": "tables"}),
             self._make_tool_action(
-                "read_query",
+                "execute_sql",
                 {
                     "success": "True",
                     "raw_output": {
@@ -1054,6 +1079,7 @@ class TestAddInSqlContext:
                         },
                     },
                 },
+                sql="SELECT * FROM users",
             ),
         ]
 
@@ -1068,7 +1094,7 @@ class TestAddInSqlContext:
         cmds = _make_chat_commands(real_agent_config)
         actions = [
             self._make_tool_action(
-                "read_query",
+                "execute_sql",
                 {
                     "success": "True",
                     "raw_output": {
@@ -1076,6 +1102,7 @@ class TestAddInSqlContext:
                         "error": "Table not found",
                     },
                 },
+                sql="SELECT * FROM nonexistent",
             ),
         ]
 
@@ -1091,12 +1118,13 @@ class TestAddInSqlContext:
         cmds = _make_chat_commands(real_agent_config)
         actions = [
             self._make_tool_action(
-                "read_query",
+                "execute_sql",
                 {
                     "success": "",
                     "error": "Permission denied",
                     "raw_output": "Permission denied",
                 },
+                sql="SELECT * FROM secret",
             ),
         ]
 
@@ -1111,11 +1139,12 @@ class TestAddInSqlContext:
         cmds = _make_chat_commands(real_agent_config)
         actions = [
             self._make_tool_action(
-                "read_query",
+                "execute_sql",
                 {
                     "success": "True",
                     "raw_output": "plain text output",
                 },
+                sql="SELECT * FROM users",
             ),
         ]
 
@@ -1131,7 +1160,7 @@ class TestAddInSqlContext:
         cmds = _make_chat_commands(real_agent_config)
         actions = [
             self._make_tool_action(
-                "read_query",
+                "execute_sql",
                 {
                     "success": "True",
                     "raw_output": json.dumps(
@@ -1144,6 +1173,7 @@ class TestAddInSqlContext:
                         }
                     ),
                 },
+                sql="SELECT id FROM users",
             ),
         ]
 
@@ -1158,7 +1188,7 @@ class TestAddInSqlContext:
     def test_sql_action_output_string_does_not_crash(self, real_agent_config, mock_llm_create):
         """read_query action output itself may be malformed; keep chat rendering alive."""
         cmds = _make_chat_commands(real_agent_config)
-        actions = [self._make_tool_action("read_query", "plain text output")]
+        actions = [self._make_tool_action("execute_sql", "plain text output", sql="SELECT * FROM users")]
 
         cmds.add_in_sql_context("SELECT * FROM users", "Query users", actions)
 
@@ -1172,7 +1202,7 @@ class TestAddInSqlContext:
         cmds = _make_chat_commands(real_agent_config)
         actions = [
             self._make_tool_action(
-                "read_query",
+                "execute_sql",
                 {
                     "success": "True",
                     "raw_output": {
@@ -1182,7 +1212,7 @@ class TestAddInSqlContext:
                 },
             ),
             self._make_tool_action(
-                "read_query",
+                "execute_sql",
                 {
                     "success": "True",
                     "raw_output": {
@@ -1200,6 +1230,42 @@ class TestAddInSqlContext:
         last_ctx = cmds.cli.cli_context.get_last_sql_context()
         assert last_ctx.row_count == 10
         assert last_ctx.sql_return == "second"
+
+    def test_write_action_does_not_overwrite_last_read_context(self, real_agent_config, mock_llm_create):
+        """A trailing write/DDL execute_sql must not clobber the last read context.
+
+        ``parse_sql_type`` gates the reverse scan: the final action is an
+        ``INSERT`` (not read-type), so the seeder skips it and seeds from the
+        preceding ``SELECT`` action — carrying that read's SQL, not the write's.
+        """
+        cmds = _make_chat_commands(real_agent_config)
+        actions = [
+            self._make_tool_action(
+                "execute_sql",
+                {
+                    "success": "True",
+                    "raw_output": {
+                        "success": 1,
+                        "result": {"original_rows": 7, "compressed_data": "id\n1"},
+                    },
+                },
+                sql="SELECT id FROM users",
+            ),
+            self._make_tool_action(
+                "execute_sql",
+                {"success": "True", "raw_output": {"success": 1, "row_count": 1}},
+                sql="INSERT INTO users VALUES (2)",
+            ),
+        ]
+        actions[1].action_id = "test_write_action"
+
+        cmds.add_in_sql_context("INSERT INTO users VALUES (2)", "Mixed turn", actions)
+
+        last_ctx = cmds.cli.cli_context.get_last_sql_context()
+        # Seeded from the read action, not the trailing write.
+        assert last_ctx.sql_query == "SELECT id FROM users"
+        assert last_ctx.row_count == 7
+        assert last_ctx.sql_return == "id\n1"
 
 
 # ===========================================================================
@@ -1348,8 +1414,8 @@ class TestEdgeCases:
     def test_should_create_new_node_none_subagent_with_existing_subagent(self, real_agent_config, mock_llm_create):
         """Switching from subagent to regular (None) creates new node."""
         cmds = _make_chat_commands(real_agent_config)
-        cmds.current_node = cmds._create_new_node(subagent_name="gen_metrics")
-        cmds.current_subagent_name = "gen_metrics"
+        cmds.current_node = cmds._create_new_node(subagent_name="gen_sql")
+        cmds.current_subagent_name = "gen_sql"
 
         assert cmds._should_create_new_node(subagent_name=None) is True
         assert cmds._should_create_new_node() is True
@@ -3411,7 +3477,7 @@ class MinimalCLIExtended:
     def prompt_input(self, message="", multiline=False, default="", **kw):
         return default
 
-    def run_on_bg_loop(self, coro):
+    def run_on_bg_loop(self, coro, **_kwargs):
         import asyncio
 
         return asyncio.run(coro)
@@ -3430,6 +3496,200 @@ def cli(real_agent_config):
 @pytest.fixture
 def chat_cmd(cli):
     return ChatCommands(cli)
+
+
+def test_rollback_unanswered_turn_cleans_all_in_memory_and_output_state(chat_cmd):
+    kept = ActionHistory.create_action(
+        role=ActionRole.ASSISTANT,
+        action_type="response",
+        messages="kept",
+        input_data={},
+    )
+    cancelled = ActionHistory.create_action(
+        role=ActionRole.USER,
+        action_type="chat_request",
+        messages="cancelled",
+        input_data={},
+    )
+    chat_cmd.cli.actions.add_action(kept)
+    action_checkpoint = chat_cmd.cli.actions.checkpoint()
+    chat_cmd.cli.actions.add_action(cancelled)
+
+    node = MagicMock()
+    node.session_id = "chat_session_cancelled"
+    node.actions = [kept, cancelled]
+    node.running_turn_usage = object()
+    node.mid_turn_rewrite_checkpoint = None
+    node._session_rewritten_this_turn = False
+    session_manager = MagicMock()
+    output_buffer = MagicMock()
+    checkpoint = object()
+
+    incremental = [cancelled]
+    chat_cmd._rollback_unanswered_turn(
+        current_node=node,
+        incremental_actions=incremental,
+        action_checkpoint=action_checkpoint,
+        node_action_checkpoint=1,
+        session_manager=session_manager,
+        session_checkpoint=checkpoint,
+        output_buffer=output_buffer,
+        output_checkpoint=checkpoint,
+    )
+
+    assert chat_cmd.cli.actions.get_actions() == [kept]
+    assert node.actions == [kept]
+    assert incremental == []
+    assert node.running_turn_usage is None
+    session_manager.rollback_turn.assert_called_once_with(node.session_id, checkpoint)
+    output_buffer.rollback.assert_called_once_with(checkpoint)
+
+
+def test_rollback_after_mid_turn_rewrite_uses_the_post_rewrite_checkpoint(chat_cmd):
+    """A mid-turn compaction replaces every SQLite row, so the checkpoint taken
+    before the turn would now delete the whole session. The node publishes a
+    boundary right after the rewrite; ESC must roll back to *that* one."""
+    node = MagicMock()
+    node.session_id = "chat_session_rewritten"
+    node.actions = []
+    node.running_turn_usage = None
+    pre_turn_checkpoint = object()
+    post_rewrite_checkpoint = object()
+    node.mid_turn_rewrite_checkpoint = post_rewrite_checkpoint
+    session_manager = MagicMock()
+
+    chat_cmd._rollback_unanswered_turn(
+        current_node=node,
+        incremental_actions=[],
+        action_checkpoint=chat_cmd.cli.actions.checkpoint(),
+        node_action_checkpoint=0,
+        session_manager=session_manager,
+        session_checkpoint=pre_turn_checkpoint,
+        output_buffer=None,
+        output_checkpoint=None,
+    )
+
+    session_manager.rollback_turn.assert_called_once_with(node.session_id, post_rewrite_checkpoint)
+
+
+def test_interrupted_turn_skips_final_action_render_and_resets_controller(chat_cmd, monkeypatch):
+    class FakeStreamingContext:
+        def __init__(self):
+            self.unanswered_rollback_requested = False
+            self.interrupt_requested = False
+            self.has_streamed_response = False
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def set_editable_user_message(self, _message):
+            pass
+
+        def set_clear_header_callback(self, _callback):
+            pass
+
+        def set_input_collector(self, _collector):
+            pass
+
+        def set_event_loop(self, _loop):
+            pass
+
+        def mark_model_response_started(self):
+            pass
+
+        def request_interrupted_notice(self):
+            self.interrupt_requested = True
+
+    streaming_ctx = FakeStreamingContext()
+
+    class FakeDisplay:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def display_streaming_actions(self, *_args, **_kwargs):
+            return streaming_ctx
+
+    controller = InterruptController()
+    controller_reset = MagicMock(wraps=controller.reset)
+    controller.reset = controller_reset
+    node = MagicMock()
+    node.session_id = "chat_session_interrupted"
+    node.pending_input_queue = PendingInputQueue()
+    node.interrupt_controller = controller
+    node.actions = []
+    node.db_func_tool = None
+    node.get_node_name.return_value = "chat"
+    node.session_manager.checkpoint_turn.return_value = object()
+
+    intermediate = ActionHistory.create_action(
+        role=ActionRole.TOOL,
+        action_type="partial_tool",
+        messages="partial",
+        input_data={},
+        output_data={"response": {"partial": True}},
+        status=ActionStatus.SUCCESS,
+    )
+
+    async def interrupted_stream(*_args, **_kwargs):
+        yield intermediate
+        streaming_ctx.request_interrupted_notice()
+        raise ExecutionInterrupted("cancelled")
+
+    node.execute_stream_with_interactions = interrupted_stream
+    chat_cmd.current_node = node
+    chat_cmd.cli._use_tui = True
+    chat_cmd.cli._tui_output_buffer = None
+    monkeypatch.setattr(chat_cmd, "_should_create_new_node", lambda _name=None: False)
+    monkeypatch.setattr(chat_cmd, "_is_agent_switch", lambda _name=None: False)
+    monkeypatch.setattr(
+        chat_cmd,
+        "create_node_input",
+        lambda *_args, **_kwargs: (MagicMock(database=""), "chat"),
+    )
+    monkeypatch.setattr("datus.cli.chat_commands.ActionHistoryDisplay", FakeDisplay)
+    render_final = MagicMock()
+    monkeypatch.setattr(chat_cmd, "_render_final_response", render_final)
+
+    chat_cmd._execute_chat("cancel me", interactive=True)
+
+    render_final.assert_not_called()
+    controller_reset.assert_called()
+    assert controller.is_interrupted is False
+    assert chat_cmd.last_actions[0] is intermediate
+    assert chat_cmd.last_actions[-1].action_type == "interrupted"
+    assert chat_cmd.all_turn_actions == [("cancel me", chat_cmd.last_actions)]
+
+
+def test_interrupted_turn_user_row_survives_full_screen_reprint(chat_cmd):
+    """Ctrl+O/sidebar repaint keeps a response-started interrupted turn."""
+    interrupted_action = ActionHistory.create_action(
+        role=ActionRole.ASSISTANT,
+        action_type="response",
+        messages="partial answer before escape",
+        input_data={},
+        output_data={"raw_output": "partial answer before escape"},
+        status=ActionStatus.SUCCESS,
+    )
+    interrupted_marker = ActionHistory.create_action(
+        role=ActionRole.SYSTEM,
+        action_type="interrupted",
+        messages="Interrupted",
+        input_data={},
+        output_data={},
+        status=ActionStatus.SUCCESS,
+    )
+    chat_cmd.all_turn_actions = [("keep this interrupted question", [interrupted_action, interrupted_marker])]
+    chat_cmd.last_actions = [interrupted_action, interrupted_marker]
+
+    chat_cmd._full_screen_reprint(verbose=True)
+
+    output = chat_cmd.console.file.getvalue()
+    assert "keep this interrupted question" in output
+    assert output.count("partial answer before escape") == 1
+    assert "Interrupted" in output
 
 
 # ---------------------------------------------------------------------------
@@ -3637,36 +3897,6 @@ class TestCreateNewNodeExtended:
         with patch("datus.agent.node.chat_agentic_node.ChatAgenticNode.__init__", return_value=None) as mock_init:
             chat_cmd._create_new_node(None)
         mock_init.assert_called_once()
-
-    def test_create_gen_semantic_model(self, chat_cmd):
-        mock_node = MagicMock()
-        with patch("datus.agent.node.gen_semantic_model_agentic_node.GenSemanticModelAgenticNode") as mock_cls:
-            mock_cls.return_value = mock_node
-            with patch.dict(
-                "sys.modules",
-                {"datus.agent.node.gen_semantic_model_agentic_node": MagicMock(GenSemanticModelAgenticNode=mock_cls)},
-            ):
-                result = chat_cmd._create_new_node("gen_semantic_model")
-        # _create_new_node returns the node; verify the correct class was instantiated
-        mock_cls.assert_called_once()
-        assert result is mock_node
-
-    def test_create_gen_metrics(self, chat_cmd):
-        mock_node = MagicMock()
-        with patch(
-            "datus.agent.node.gen_metrics_agentic_node.GenMetricsAgenticNode",
-            return_value=mock_node,
-        ):
-            with patch.dict(
-                "sys.modules",
-                {
-                    "datus.agent.node.gen_metrics_agentic_node": MagicMock(
-                        GenMetricsAgenticNode=MagicMock(return_value=mock_node)
-                    )
-                },
-            ):
-                result = chat_cmd._create_new_node("gen_metrics")
-        assert result is mock_node
 
     def test_create_gen_sql_default(self, chat_cmd):
         mock_node = MagicMock()
@@ -3992,13 +4222,13 @@ class TestSessionFilterByAgent:
         """cmd_resume with no args filters by intended agent (default_agent); empty result message mentions agent."""
         console = Console(file=io.StringIO(), no_color=True)
         cmds = _make_chat_commands(real_agent_config, console=console)
-        cmds.cli.default_agent = "gen_metrics"
+        cmds.cli.default_agent = "semantic_modeling"
 
         _create_session_on_disk("chat_session_a", [("user", "hi")])
         cmds.cmd_resume("")
 
         output = _get_console_output(console)
-        assert "gen_metrics" in output
+        assert "semantic_modeling" in output
         assert cmds.current_node is None
 
 
@@ -4087,3 +4317,186 @@ class TestRenderFinalResponseValidationReport:
             assert "[bad]" in rendered
             # The error string's ``[RED]`` must not be consumed as a color tag.
             assert "[RED]" in rendered
+
+
+# ---------------------------------------------------------------------------
+# Tests: manual-execution turn bypasses @-reference parsing
+# ---------------------------------------------------------------------------
+
+
+class TestExecMessageBypass:
+    """A marker-encoded execution record must reach the node verbatim — its
+    command may contain ``@`` / ``[`` that ``parse_at_context`` would mangle."""
+
+    def test_exec_message_skips_at_parsing_and_dispatch_hint(self, chat_cmd, monkeypatch):
+        from datus.cli.manual_exec import build_sql_error_payload, encode_exec_message
+
+        # A SQL command containing an ``@`` token that would otherwise be
+        # parsed as an @-reference.
+        message = encode_exec_message(build_sql_error_payload("SELECT * FROM t WHERE u = '@bob'", "boom"))
+
+        at_completer = MagicMock()
+        chat_cmd.cli.at_completer = at_completer
+
+        node = MagicMock()
+        node.pending_input_queue = None
+        node.interrupt_controller.is_interrupted = False
+        monkeypatch.setattr(chat_cmd, "_should_create_new_node", lambda subagent_name=None: False)
+        monkeypatch.setattr(chat_cmd, "_is_agent_switch", lambda subagent_name=None: False)
+        chat_cmd.current_node = node
+
+        captured = {}
+
+        def _capture(user_message, *args, **kwargs):
+            captured["message"] = user_message
+            raise RuntimeError("stop-after-input")
+
+        monkeypatch.setattr(chat_cmd, "create_node_input", _capture)
+        chat_cmd._execute_chat(message, interactive=True)
+
+        # @-reference parsing is skipped entirely, and the payload reaches the
+        # node input unchanged (no dispatch-hint appended).
+        at_completer.parse_at_context.assert_not_called()
+        assert captured["message"] == message
+
+    def test_plain_message_still_parses_at_context(self, chat_cmd, monkeypatch):
+        chat_cmd.cli.at_completer = MagicMock()
+        chat_cmd.cli.at_completer.parse_at_context.return_value = ([], [], [], None)
+
+        node = MagicMock()
+        node.pending_input_queue = None
+        node.interrupt_controller.is_interrupted = False
+        monkeypatch.setattr(chat_cmd, "_should_create_new_node", lambda subagent_name=None: False)
+        monkeypatch.setattr(chat_cmd, "_is_agent_switch", lambda subagent_name=None: False)
+        chat_cmd.current_node = node
+        monkeypatch.setattr(chat_cmd, "create_node_input", MagicMock(side_effect=RuntimeError("stop")))
+
+        chat_cmd._execute_chat("what is @revenue", interactive=True)
+        chat_cmd.cli.at_completer.parse_at_context.assert_called_once_with("what is @revenue")
+
+
+class TestEnsureNodeForBang:
+    """Lazy chat-node creation for the ``!<tool>`` handler."""
+
+    def test_creates_and_fully_mounts_node(self, real_agent_config, mock_llm_create):
+        cmds = _make_chat_commands(real_agent_config)
+        assert cmds.current_node is None
+        fake_node = MagicMock()
+        with patch.object(cmds, "_create_new_node", return_value=fake_node):
+            node = cmds.ensure_node_for_bang()
+        assert node is fake_node
+        assert cmds.current_node is fake_node
+        assert cmds.current_subagent_name is None
+        # Base tools + the lazily-injected skill/bash/memory/web tools are mounted
+        # so the ``!`` list is complete.
+        fake_node.setup_tools.assert_called_once()
+        fake_node._ensure_lazy_tools_mounted.assert_called_once()
+
+    def test_creates_real_regular_node(self, real_agent_config, mock_llm_create):
+        cmds = _make_chat_commands(real_agent_config)
+        node = cmds.ensure_node_for_bang()
+        # A regular (non-subagent) chat node is created and cached.
+        assert node.id == "chat_cli"
+        assert cmds.current_node is node
+
+    def test_reuses_existing_node(self, real_agent_config, mock_llm_create):
+        cmds = _make_chat_commands(real_agent_config)
+        first = cmds._create_new_node()
+        cmds.current_node = first
+        assert cmds.ensure_node_for_bang() is first
+
+    def test_returns_none_on_construction_failure(self, real_agent_config, mock_llm_create):
+        cmds = _make_chat_commands(real_agent_config)
+        with patch.object(cmds, "_create_new_node", side_effect=RuntimeError("boom")):
+            assert cmds.ensure_node_for_bang() is None
+        assert cmds.current_node is None
+
+    def test_warm_up_keeps_node_published_while_it_was_building(self, real_agent_config, mock_llm_create):
+        """A turn that publishes mid-warm-up owns ``current_node`` afterwards.
+
+        The warm-up (background init thread) and a chat turn (input thread) can
+        both observe ``current_node is None``; node construction is slow enough
+        that the warm-up finishes last and used to overwrite the node the turn
+        was already streaming into, orphaning its session — the running turn's
+        actions then belonged to a node nobody could reach.
+        """
+        cmds = _make_chat_commands(real_agent_config)
+        turn_node = MagicMock(name="turn_node")
+        warm_node = MagicMock(name="warm_node")
+
+        def _publish_turn_node_mid_build(*args, **kwargs):
+            # Stands in for a chat turn winning the race while this warm-up is
+            # still mounting tools on its own node.
+            cmds.current_node = turn_node
+            return warm_node
+
+        with patch.object(cmds, "_create_new_node", side_effect=_publish_turn_node_mid_build):
+            assert cmds.ensure_node_for_bang() is turn_node
+
+        assert cmds.current_node is turn_node
+
+    def test_concurrent_warm_up_and_turn_agree_on_one_node(self, real_agent_config, mock_llm_create):
+        """Whoever wins, the node the turn uses is the one left published.
+
+        Exercises the real threading shape: background warm-up against an input
+        thread running the same check-create-publish the chat path does.
+        """
+        import threading
+
+        cmds = _make_chat_commands(real_agent_config)
+        start = threading.Barrier(2)
+        turn_node_used = []
+        errors = []
+
+        def _run_turn():
+            try:
+                start.wait(timeout=1)
+                with cmds.node_transaction():
+                    if cmds._should_create_new_node(None):
+                        cmds.current_node = cmds._create_new_node(None)
+                    turn_node_used.append(cmds.current_node)
+            except Exception as exc:  # noqa: BLE001 - surfaced by the assert below
+                errors.append(("turn", exc))
+
+        def _run_warm_up():
+            try:
+                start.wait(timeout=1)
+                cmds.ensure_node_for_bang()
+            except Exception as exc:  # noqa: BLE001 - surfaced by the assert below
+                errors.append(("warm-up", exc))
+
+        threads = [threading.Thread(target=_run_turn), threading.Thread(target=_run_warm_up)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=2)
+
+        assert not any(thread.is_alive() for thread in threads), "node_transaction deadlocked"
+        assert not errors, f"worker threads raised: {errors}"
+        assert turn_node_used, "the turn thread never published a node"
+        assert cmds.current_node is turn_node_used[0]
+
+    def test_construction_failure_keeps_a_node_published_mid_build(self, real_agent_config, mock_llm_create):
+        """A node published inside the build survives a later failure.
+
+        The warm-up owns ``current_node`` only when it published it itself.
+        Clearing the attribute on any failure would discard a node a reentrant
+        caller installed while the build was running, orphaning its session.
+        """
+        cmds = _make_chat_commands(real_agent_config)
+        published_node = MagicMock(name="published_node")
+        warm_node = MagicMock(name="warm_node")
+
+        def _publish_then_fail():
+            # Stands in for a reentrant caller publishing its own node while
+            # this warm-up is still mounting tools, followed by a later step
+            # of the build raising.
+            cmds.current_node = published_node
+            raise RuntimeError("boom")
+
+        warm_node.setup_tools.side_effect = _publish_then_fail
+
+        with patch.object(cmds, "_create_new_node", return_value=warm_node):
+            assert cmds.ensure_node_for_bang() is published_node
+
+        assert cmds.current_node is published_node

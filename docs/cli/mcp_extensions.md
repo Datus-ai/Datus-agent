@@ -11,7 +11,7 @@ With `/mcp`, you can:
 - Check a server's connection and available tools
 - Call a tool exposed by any MCP server directly inside your CLI
 
-This makes Datus-CLI infinitely extensible: you can plug in SQLite, Snowflake, MetricFlow, Filesystem, or even your own custom MCP server without changing the Datus core.
+This makes Datus-CLI extensible: you can plug in SQLite, Snowflake, Filesystem, or your own MCP server without changing the Datus core.
 
 ## 2. Basic Usage
 
@@ -32,7 +32,7 @@ This makes Datus-CLI infinitely extensible: you can plug in SQLite, Snowflake, M
   --header "Authorization: Bearer token" --timeout 30.0
 
 # HTTP stream server
-/mcp add --transport http metricflow https://localhost:9000/mcp
+/mcp add --transport http analytics https://localhost:9000/mcp
 ```
 
 ---
@@ -48,7 +48,7 @@ Shows all configured MCP servers and their status:
 ```
 1. duckdb-mftutorial  ✘ failed
 2. filesystem         ✔ connected
-3. metricflow         ✔ connected
+3. analytics          ✔ connected
 4. snowflake_local    ✔ connected
 5. sqlite             ✔ connected
 ```
@@ -77,7 +77,7 @@ Verifies connectivity and prints available tools from that server.
 
 ```bash
 /mcp call sqlite.list_tables
-/mcp call metricflow.query_metrics '{"metrics": "revenue"}'
+/mcp call sqlite.read_query "SELECT COUNT(*) FROM customers"
 ```
 
 ---
@@ -192,17 +192,6 @@ MCP configurations support environment variable expansion:
 # Query tables through MCP
 /mcp call sqlite.list_tables
 /mcp call sqlite.read_query "SELECT * FROM customers LIMIT 5"
-```
-
-### MetricFlow Integration
-
-```bash
-# Add MetricFlow server for semantic layer
-/mcp add metricflow python -m mcp_metricflow_server
-
-# Access business metrics
-/mcp call metricflow.list_metrics
-/mcp call metricflow.query_metrics '{"metrics": ["revenue"], "dimensions": ["customer_segment"]}'
 ```
 
 ### Filesystem Integration

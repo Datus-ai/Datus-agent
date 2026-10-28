@@ -169,14 +169,14 @@ async def test_as_task_subagent_falls_back_to_json_when_response_blank() -> None
     async def inner_factory(_mgr: ActionHistoryManager) -> AsyncGenerator[ActionHistory, None]:
         yield ActionHistory.create_action(
             role=ActionRole.TOOL,
-            action_type="gen_metrics_response",
+            action_type="semantic_modeling_response",
             messages="done",
-            input_data={"function_name": "gen_metrics"},
+            input_data={"function_name": "semantic_modeling"},
             output_data=final_payload,
             status=ActionStatus.SUCCESS,
         )
 
-    actions = [a async for a in as_task_subagent("gen_metrics", "dashboard", inner_factory)]
+    actions = [a async for a in as_task_subagent("semantic_modeling", "dashboard", inner_factory)]
     final = actions[-1]
     assert "```json" in final.messages
     assert "semantic_models" in final.messages
@@ -212,14 +212,14 @@ async def test_as_task_subagent_emits_final_output_even_on_failed_inner() -> Non
     async def inner_factory(_mgr: ActionHistoryManager) -> AsyncGenerator[ActionHistory, None]:
         yield ActionHistory.create_action(
             role=ActionRole.TOOL,
-            action_type="gen_metrics_response",
+            action_type="semantic_modeling_response",
             messages="boom",
-            input_data={"function_name": "gen_metrics"},
+            input_data={"function_name": "semantic_modeling"},
             output_data=failure_payload,
             status=ActionStatus.FAILED,
         )
 
-    actions = [a async for a in as_task_subagent("gen_metrics", "dashboard", inner_factory)]
+    actions = [a async for a in as_task_subagent("semantic_modeling", "dashboard", inner_factory)]
     assert actions[-1].action_type == "bootstrap_subagent_final_output"
     assert actions[-1].status == ActionStatus.SUCCESS.value
     assert "missing primary key" in actions[-1].messages

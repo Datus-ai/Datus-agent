@@ -47,7 +47,8 @@ class TableTarget(BaseModel):
     )
     database: str = Field(
         ...,
-        description="Database identifier — historically the datasource key; may also be a physical DB for three-part DDL",
+        description="Physical database the table lives in; empty when the SQL/connector did not "
+        "specify one (the datasource key is NOT used as a fallback — see ``datasource``)",
     )
     db_schema: Optional[str] = Field(
         default=None,

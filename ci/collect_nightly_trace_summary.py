@@ -225,19 +225,6 @@ def summarize_observations(
                 "message": str(item.get("statusMessage") or item.get("error") or "Trace span failed"),
             }
         )
-    for duration, item in slowest:
-        if duration >= slow_span_threshold_seconds:
-            findings.append(
-                {
-                    "type": "slow_span",
-                    "severity": "info",
-                    "name": item.get("name"),
-                    "span_type": _observation_type(item),
-                    "duration_seconds": duration,
-                    "threshold_seconds": slow_span_threshold_seconds,
-                }
-            )
-
     if observations and type_counts.get("GENERATION", 0) == 0:
         findings.append(
             {

@@ -19,8 +19,21 @@ class ErrorCode(str, Enum):
     CONFIGURATION_GET_FAILED = "CONFIGURATION_GET_FAILED"
     MCP_SERVER_ERROR = "MCP_SERVER_ERROR"
     SQL_EXECUTION_ERROR = "SQL_EXECUTION_ERROR"
+    # Refused by the deployment-wide read-only posture (``agent.sql_read_only``);
+    # never attempted against the database. Distinct from SQL_EXECUTION_ERROR so
+    # callers can tell "policy says no, do not retry" from "the engine errored".
+    SQL_READ_ONLY = "SQL_READ_ONLY"
+    # Refused by a row policy — the caller may not read these rows, as opposed
+    # to the request being malformed. Same distinction ErrorCode.POLICY_DENIED
+    # draws on the tool side, and the reason a viewer renders it differently:
+    # a refusal is not worth a retry button.
+    POLICY_DENIED = "POLICY_DENIED"
     TOOL_EXECUTION_ERROR = "TOOL_EXECUTION_ERROR"
     DATABASE_CONNECTION_ERROR = "DATABASE_CONNECTION_ERROR"
+    # A datasource's shared connector was busy for longer than the caller was
+    # allowed to wait. Distinct from SQL_EXECUTION_ERROR: the statement was
+    # never sent, so retrying is safe even for a write.
+    DATASOURCE_BUSY = "DATASOURCE_BUSY"
     CONTEXT_COMMAND_ERROR = "CONTEXT_COMMAND_ERROR"
     CHAT_COMMAND_ERROR = "CHAT_COMMAND_ERROR"
     INTERNAL_COMMAND_ERROR = "INTERNAL_COMMAND_ERROR"
@@ -31,6 +44,9 @@ class ErrorCode(str, Enum):
     TASK_EXECUTION_FAILED = "TASK_EXECUTION_FAILED"
     AGENT_NOT_AVAILABLE = "AGENT_NOT_AVAILABLE"
     NOT_SUPPORTED = "NOT_SUPPORTED"
+    SEMANTIC_MODEL_REVISION_CONFLICT = "SEMANTIC_MODEL_REVISION_CONFLICT"
+    SEMANTIC_MODEL_INVALID = "SEMANTIC_MODEL_INVALID"
+    SEMANTIC_MODEL_SYNC_FAILED = "SEMANTIC_MODEL_SYNC_FAILED"
 
 
 class ModelConfig(BaseModel):
@@ -55,6 +71,30 @@ class DatasourceConfig(BaseModel):
     password: str = Field(..., description="Database password")
     database: str = Field(..., description="Database name")
     catalog: Optional[str] = Field(None, description="Database catalog (for databases that support catalogs)")
+
+
+class DatasourceSummary(BaseModel):
+    """One configured datasource, with nothing a caller does not need to name it.
+
+    Deliberately NOT ``DatasourceConfig``: that carries the decrypted password,
+    the credential-bearing ``uri`` and the Snowflake key passphrase. Listing the
+    datasources is something every client that renders a catalog does, on every
+    project entry — so it must not be a path that hands out credentials.
+    """
+
+    name: str = Field(..., description="Datasource (namespace) name")
+    type: str = Field(..., description="Datasource type (postgresql, starrocks, ...)")
+    is_current: bool = Field(False, description="Whether this is the project's current datasource")
+    catalog: Optional[str] = Field(None, description="Configured default catalog, if any")
+    database: Optional[str] = Field(None, description="Configured default database, if any")
+    db_schema: Optional[str] = Field(None, description="Configured default schema, if any")
+
+
+class DatasourceListData(BaseModel):
+    """Data for the datasource roster."""
+
+    datasources: list[DatasourceSummary] = Field(..., description="Configured datasources")
+    current_datasource: str = Field("", description="The project's current datasource")
 
 
 class StorageConfig(BaseModel):
@@ -87,7 +127,6 @@ class AgentConfigData(BaseModel):
     metrics: Optional[Dict[str, Dict]] = Field(None, description="Metrics configurations")
     storage: Optional[StorageConfig] = Field(None, description="Storage configuration")
     workflow: Optional[Dict] = Field(None, description="Workflow configuration")
-    reflection_nodes: Optional[Dict[str, List]] = Field(None, description="Reflection nodes configuration")
 
 
 class UpdateAgentConfigInput(BaseModel):

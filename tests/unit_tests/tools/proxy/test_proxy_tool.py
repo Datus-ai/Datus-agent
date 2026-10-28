@@ -126,6 +126,42 @@ class TestCreateProxyTool:
         assert result == {"success": 1, "result": "proxied"}
 
     @pytest.mark.asyncio
+    async def test_proxy_tool_returns_error_on_timeout(self, monkeypatch):
+        """A client that never reports must time out into a failure result."""
+        monkeypatch.setattr("datus.tools.proxy.proxy_tool.DEFAULT_RESULT_TIMEOUT", 0.01)
+        channel = ToolResultChannel()
+        original = FunctionTool(
+            name="write_file",
+            description="A test tool",
+            params_json_schema={"type": "object", "properties": {}},
+            on_invoke_tool=lambda ctx, args: {"success": 1},
+        )
+        proxy = create_proxy_tool(original, channel)
+
+        ctx = SimpleNamespace(tool_call_id="call_timeout")
+        # No publisher — the wait must elapse and surface a failure, not hang.
+        result = await proxy.on_invoke_tool(ctx, "{}")
+
+        assert result["success"] == 0
+        error = result["error"]
+        # The model is the first reader of this string and the only actor that
+        # can recover, so it has to be accurate about what is and is not known.
+        # The client executes and only then reports: the work may have happened
+        # and the report arrived after the waiter settled, or the user may press
+        # Accept later and it runs without ever reaching us. Claiming it did not
+        # run would send the model off to redo a write that already landed.
+        assert "write_file" in error
+        assert "UNKNOWN" in error
+        assert "expired" in error
+        # ``publish`` drops a result whose waiter already settled, so pointing
+        # the user at the stale card would promise a recovery that cannot work.
+        assert "dropped" in error
+        assert "fresh call" in error
+        assert result["result"] is None
+        # Telemetry distinguishes this from an ordinary tool failure.
+        assert ctx._datus_tool_status == "proxy_timeout"
+
+    @pytest.mark.asyncio
     async def test_proxy_tool_returns_error_on_channel_cancel(self):
         """Verify that RuntimeError from channel.cancel_all is caught and returns error dict."""
         channel = ToolResultChannel()
@@ -325,6 +361,45 @@ class TestApplyProxyTools:
         # execute_sql should be unchanged
         assert node.tools[1].name == "execute_sql"
         assert node.tools[1].on_invoke_tool is original_invoke
+
+    def test_web_source_proxies_all_filesystem_writes(self):
+        """The 'web' source proxies write_file/edit_file/delete_file (the
+        client-owned write subset) while leaving read-only fs tools server-side.
+        Mirrors the pattern list applied in ChatTaskManager._run_loop."""
+        original_invoke = MagicMock()
+
+        def _fs_tool(name):
+            return FunctionTool(
+                name=name,
+                description=name,
+                params_json_schema={"type": "object"},
+                on_invoke_tool=original_invoke,
+            )
+
+        tools = [_fs_tool(n) for n in ("write_file", "edit_file", "delete_file", "read_file")]
+        node = SimpleNamespace(
+            tools=tools,
+            tool_channel=ToolResultChannel(),
+            tool_registry=ToolRegistry(
+                {
+                    "write_file": "filesystem_tools",
+                    "edit_file": "filesystem_tools",
+                    "delete_file": "filesystem_tools",
+                    "read_file": "filesystem_tools",
+                }
+            ),
+            proxy_tool_patterns=None,
+        )
+
+        apply_proxy_tools(node, ["write_file", "edit_file", "delete_file"])
+
+        by_name = {t.name: t for t in node.tools}
+        assert by_name["write_file"].on_invoke_tool is not original_invoke
+        assert by_name["edit_file"].on_invoke_tool is not original_invoke
+        assert by_name["delete_file"].on_invoke_tool is not original_invoke
+        # read_file is not in the write subset and must stay server-side.
+        assert by_name["read_file"].on_invoke_tool is original_invoke
+        assert node.proxied_tool_names == {"write_file", "edit_file", "delete_file"}
 
     def test_non_function_tools_preserved(self):
         non_func_tool = MagicMock(spec=["name"])
@@ -532,12 +607,12 @@ class TestProxiedToolNames:
             on_invoke_tool=original_invoke,
         )
 
-        # gen_semantic_model is in _FS_DEPENDENT_NODES — write_file must NOT be
+        # semantic_modeling is in _FS_DEPENDENT_NODES — write_file must NOT be
         # proxied or recorded, but execute_sql still is.
         node = self._make_node(
             [write_file, execute_sql],
             registry=ToolRegistry({"write_file": "filesystem_tools", "execute_sql": "db_tools"}),
-            node_name="gen_semantic_model",
+            node_name="semantic_modeling",
         )
 
         apply_proxy_tools(node, ["*"])

@@ -8,14 +8,14 @@ agent 会根据用户的 prompt 自动判断路径：源库和目标库相同则
 
 ## 快速开始
 
-启动 Datus CLI 后使用 gen_job subagent：
+启动 Datus CLI 后直接用自然语言描述数据管道，chat agent 可以自动派发；需要明确选择时，在请求末尾加 `@Agent gen_job`：
 
-```bash
+```text
 # 单库 ETL
-/gen_job 从 orders 和 customers 表构建一个汇总表
+从 orders 和 customers 表构建一个汇总表。@Agent gen_job
 
 # 跨库传输
-/gen_job 把 local_duckdb 里的 users 表传输到 greenplum
+把 local_duckdb 里的 users 表传输到 greenplum。@Agent gen_job
 ```
 
 chat agent 检测到 ETL 或迁移任务时也会自动委派给 gen_job。
@@ -126,7 +126,7 @@ agent 首先调用 `list_databases()` 发现可用数据库：
 - **`suggest_table_layout(database=target, columns_json=...)`** — 返回 OLAP 相关建议（StarRocks 的 `{duplicate_key, distributed_by, buckets}`、ClickHouse 的 `{engine, order_by}`、Trino/Hive 的 `{partitioned_by}` 等）。
 - **`validate_ddl(database=target, ddl=..., target_table=...)`** — 做结构化校验（如 StarRocks 必须有 `DUPLICATE KEY` + `DISTRIBUTED BY`；ClickHouse 必须有 `ENGINE` + `ORDER BY`）；可选再跑 `dry_run_ddl`（在目标库 CREATE + DROP 临时表）。
 
-本版本已实现 Mixin 的 adapter：StarRocks、Greenplum、PostgreSQL、MySQL、ClickHouse、Trino、Snowflake、Redshift、DuckDB、SQLite，以及基于 SQLAlchemy 基类的通用 OLTP fallback。其他未实装的 adapter（如 BigQuery、Hive、Spark、ClickZetta）回退到纯 LLM 模式——`get_migration_capabilities` 返回 `{"supported": false, "warning": ...}`，由 LLM 凭自身知识处理目标方言。
+本版本已实现 Mixin 的 adapter：StarRocks、Greenplum、PostgreSQL、MySQL、ClickHouse、Trino、Snowflake、Redshift、BigQuery、DuckDB、SQLite，以及基于 SQLAlchemy 基类的通用 OLTP fallback。其他未实装的 adapter（如 Hive、Spark、ClickZetta）回退到纯 LLM 模式——`get_migration_capabilities` 返回 `{"supported": false, "warning": ...}`，由 LLM 凭自身知识处理目标方言。
 
 要为新方言加提示：在对应 adapter 实现 `MigrationTargetMixin` 即可，agent 不需改动。
 

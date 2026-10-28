@@ -3,8 +3,10 @@
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
 import functools
+import os
 import re
 import threading
+from contextlib import contextmanager
 from typing import Any, Callable, Dict, List, Literal, Optional, Set, TypeVar, override
 
 import duckdb
@@ -97,6 +99,12 @@ class DuckdbConnector(BaseSqlConnector, SchemaNamespaceMixin, MigrationTargetMix
         # ``SQLiteConnector.__init__`` for the full rationale.
         if config.database_name:
             self._default_database = config.database_name
+        elif self.db_path == ":memory:":
+            # In-memory DuckDB has no file stem, and DuckDB names the database
+            # ``memory`` (not ``:memory:``). Leave the default empty so metadata
+            # listing falls back to enumerating every attached database — the
+            # ``memory`` db plus any ATTACHed iceberg REST catalog (e.g. ``lake``).
+            self._default_database = ""
         else:
             from datus.configuration.agent_config import file_stem_from_uri
 
@@ -117,8 +125,8 @@ class DuckdbConnector(BaseSqlConnector, SchemaNamespaceMixin, MigrationTargetMix
     def _connect_locked(self):
         try:
             # Align with the `custom_user_agent` that duckdb_engine auto-injects on every connect:
-            # without this, any same-process SQLAlchemy+duckdb_engine client (metricflow validator,
-            # dbt, etc.) hits DuckDB's config-consistency check and fails with
+            # without this, any same-process SQLAlchemy+duckdb_engine client hits
+            # DuckDB's config-consistency check and fails with
             # "Can't open a connection to same database file with a different configuration".
             try:
                 import sqlalchemy as _sa
@@ -131,6 +139,17 @@ class DuckdbConnector(BaseSqlConnector, SchemaNamespaceMixin, MigrationTargetMix
 
             # Per-session settings — kept as post-connect SET so they don't enter
             # DuckDB's instance-config equality check.
+            #
+            # ``extension_directory`` must be SET explicitly: DuckDB has no env-var
+            # equivalent (verified — it silently falls back to ``$HOME/.duckdb``),
+            # and a container's build user and runtime user need not share a HOME.
+            # Deployments that bake extensions into the image (see the Dockerfile's
+            # ``excel`` layer) point this at that directory so an egress-less pod
+            # can still ``LOAD`` them.
+            extension_dir = os.environ.get("DATUS_DUCKDB_EXTENSION_DIRECTORY", "").strip()
+            if extension_dir:
+                self.connection.execute(f"SET extension_directory={self._sql_literal(extension_dir)}")
+
             if self.memory_limit:
                 self.connection.execute(f"SET memory_limit='{self.memory_limit}'")
 
@@ -145,6 +164,31 @@ class DuckdbConnector(BaseSqlConnector, SchemaNamespaceMixin, MigrationTargetMix
                 ErrorCode.DB_CONNECTION_FAILED,
                 message_args={"error_message": str(e)},
             ) from e
+
+    @contextmanager
+    def exclusive_connection(self):
+        """Yield the raw ``DuckDBPyConnection`` while holding the connector's lock.
+
+        For multi-statement units that need cursor metadata (``description``)
+        rather than an :class:`ExecuteSQLResult` — building a set of VIEWs over a
+        spreadsheet, say. Two reasons it goes through here instead of reaching
+        for ``.connection`` directly:
+
+        * ``DuckDBPyConnection`` is not thread-safe (see :func:`_serialised`), and
+          a multi-statement unit must hold the lock across *all* of it, not
+          per call.
+        * Opening a second ``duckdb.connect()`` on the same file would trip
+          DuckDB's instance-config equality check ("Can't open a connection to
+          same database file with a different configuration"), so callers must
+          share this connector's single connection.
+        """
+        # Lock first, then connect inside it. ``connect()`` takes the same
+        # RLock re-entrantly, and holding it across both steps is what stops a
+        # concurrent ``close()`` from landing between them and handing the caller
+        # a ``None`` connection.
+        with self._lock:
+            self.connect()
+            yield self.connection
 
     @staticmethod
     def _sql_literal(value: Any) -> str:
@@ -679,35 +723,53 @@ class DuckdbConnector(BaseSqlConnector, SchemaNamespaceMixin, MigrationTargetMix
                 sql_query=sql_query,
             )
 
+    @staticmethod
+    def _qualify_name(table: str, real_db: str, real_schema: str, arg_db: str, arg_schema: str) -> str:
+        """Prefix ``table`` with the database/schema levels the caller did not pin down.
+
+        ``real_db``/``real_schema`` are the row's actual coordinates; ``arg_db``/``arg_schema``
+        are the caller's *original* arguments. A level is prepended only when the caller left it
+        blank, yielding ``[db.][schema.]table`` so an unscoped listing stays addressable.
+        """
+        parts: List[str] = []
+        if not arg_db and real_db:
+            parts.append(real_db)
+        if not arg_schema and real_schema:
+            parts.append(real_schema)
+        parts.append(table)
+        return ".".join(parts)
+
     @override
     @_serialised
     def get_tables(self, catalog_name: str = "", database_name: str = "", schema_name: str = "") -> List[str]:
-        """Get all table names."""
+        """Get qualified table names (``[db.][schema.]table`` for levels not given by the caller)."""
         self.connect()
-        sql = "SELECT table_name FROM duckdb_tables() WHERE database_name != 'system'"
+        sql = "SELECT database_name, schema_name, table_name FROM duckdb_tables() WHERE database_name != 'system'"
         if database_name:
             sql += f" AND database_name = '{database_name}'"
         if schema_name:
             sql += f" AND schema_name = '{schema_name}'"
 
         result = self.connection.execute(sql)
-        return [row[0] for row in result.fetchall()]
+        return [self._qualify_name(row[2], row[0], row[1], database_name, schema_name) for row in result.fetchall()]
 
     @override
     @_serialised
     def get_views(self, catalog_name: str = "", database_name: str = "", schema_name: str = "") -> List[str]:
-        """Get all view names."""
+        """Get qualified view names (``[db.][schema.]view`` for levels not given by the caller)."""
         self.connect()
-        database_name = database_name or self.database_name
-        schema_name = schema_name or self.schema_name
-        sql = "SELECT view_name FROM duckdb_views() WHERE database_name != 'system'"
-        if database_name:
-            sql += f" AND database_name = '{database_name}'"
-        if schema_name:
-            sql += f" AND schema_name = '{schema_name}'"
+        # Keep the historical query scope (current db/schema when unspecified); qualification still
+        # uses the caller's *original* args so an unscoped call surfaces the resolved db/schema.
+        eff_db = database_name or self.database_name
+        eff_schema = schema_name or self.schema_name
+        sql = "SELECT database_name, schema_name, view_name FROM duckdb_views() WHERE database_name != 'system'"
+        if eff_db:
+            sql += f" AND database_name = '{eff_db}'"
+        if eff_schema:
+            sql += f" AND schema_name = '{eff_schema}'"
 
         result = self.connection.execute(sql)
-        return [row[0] for row in result.fetchall()]
+        return [self._qualify_name(row[2], row[0], row[1], database_name, schema_name) for row in result.fetchall()]
 
     @override
     @_serialised

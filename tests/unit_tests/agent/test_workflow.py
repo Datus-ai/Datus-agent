@@ -1,4 +1,5 @@
 import time
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -105,15 +106,6 @@ class TestWorkflowNode:
         )
         assert hitl_node.type == NodeType.TYPE_HITL
 
-        # Test reflect node type
-        reflect_node = Node.new_instance(
-            node_id="reflect_node",
-            description="Reflect node",
-            node_type=NodeType.TYPE_REFLECT,
-            input_data=None,
-        )
-        assert reflect_node.type == NodeType.TYPE_REFLECT
-
         # Test subworkflow node type
         subworkflow_node = Node.new_instance(
             node_id="subworkflow_node",
@@ -150,7 +142,7 @@ class TestWorkflow:
         monkeypatch.setattr("datus.tools.func_tool.db_function_tools", fake_db_function_tools)
         Workflow(
             name="test_workflow",
-            task=SqlTask(task="query", datasource="starrocks", database_name="ac_manage"),
+            task=SqlTask(task="query", datasource="starrocks", database_name="analytics"),
             agent_config=real_agent_config,
         )
 
@@ -171,7 +163,7 @@ class TestWorkflow:
 
         # Create workflow using plan.py's method
         task = SqlTask(task=task_text)
-        workflow = generate_workflow(task, "reflection", agent_config=real_agent_config)
+        workflow = generate_workflow(task, "fixed", agent_config=real_agent_config)
 
         # Verify core nodes exist
         expected_nodes = [
@@ -179,8 +171,7 @@ class TestWorkflow:
             ("node_1", "Understand the query and find related schemas", NodeType.TYPE_SCHEMA_LINKING),
             ("node_2", "SQL generation with conversational AI and tool calling", NodeType.TYPE_GEN_SQL),
             ("node_3", "Execute SQL query", NodeType.TYPE_EXECUTE_SQL),
-            ("node_4", "evaluation and self-reflection", NodeType.TYPE_REFLECT),
-            ("node_5", "Return the results to the user", NodeType.TYPE_OUTPUT),
+            ("node_4", "Return the results to the user", NodeType.TYPE_OUTPUT),
         ]
 
         # Check node properties
@@ -193,7 +184,7 @@ class TestWorkflow:
         # Verify workflow metadata
         assert workflow.status == "pending"
         assert workflow.current_node_index == 0
-        assert len(workflow.nodes) == 6
+        assert len(workflow.nodes) == 5
 
         # workflow.save(self.WORKFLOW_SAVE_PATH)
 
@@ -270,6 +261,24 @@ class TestWorkflow:
         assert loaded_node2.description == "Second node"
         assert loaded_node2.type == NodeType.TYPE_EXECUTE_SQL
 
+    def test_workflow_save_can_add_versioned_compatibility_envelope(self, tmp_path: Path, real_agent_config) -> None:
+        """Workflow.save wraps the payload in a versioned envelope for benchmark runs."""
+        import yaml
+
+        workflow = Workflow(
+            name="benchmark_workflow",
+            task=SqlTask(task="Test benchmark trajectory", artifact_profile="benchmark_v1"),
+            agent_config=real_agent_config,
+        )
+        save_path = tmp_path / "benchmark_workflow.yaml"
+
+        workflow.save(str(save_path), schema_version=1)
+
+        payload = yaml.safe_load(save_path.read_text(encoding="utf-8"))
+        assert payload["schema_version"] == 1
+        assert payload["workflow"]["name"] == "benchmark_workflow"
+        assert "artifact_type" not in payload
+
 
 # ---------------------------------------------------------------------------
 # Helper: create a Workflow with _init_tools patched out
@@ -305,7 +314,6 @@ class TestWorkflowInit:
         assert wf.current_node_index == 0
         assert wf.nodes == {}
         assert wf.node_order == []
-        assert wf.reflection_round == 0
         assert wf.completion_time is None
         assert wf.metadata == {}
 

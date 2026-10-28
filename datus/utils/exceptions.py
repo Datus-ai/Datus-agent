@@ -2,9 +2,11 @@
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
+import re
 import sys
 import traceback
 from enum import Enum
+from typing import Any, Dict, Optional
 
 from datus.utils.loggings import get_log_manager, get_logger
 
@@ -36,7 +38,10 @@ class ErrorCode(Enum):
 
     # Model errors
     MODEL_REQUEST_FAILED = ("300001", "LLM request failed")
-    MODEL_INVALID_RESPONSE = ("300002", "Invalid request format, content, or model response (HTTP 400)")
+    # Covers BOTH a rejected request (provider HTTP 400) and an unusable
+    # response (unparseable / empty model output), so the description must not
+    # name either one — the caller's ``error_detail`` says which it was.
+    MODEL_INVALID_RESPONSE = ("300002", "Invalid request or unusable model response")
     MODEL_TIMEOUT = ("300003", "Model request timeout")
 
     # API errors following Anthropic/OpenAI standards
@@ -55,6 +60,24 @@ class ErrorCode(Enum):
     MODEL_ILLEGAL_FORMAT_RESPONSE = (
         "300023",
         "Model returned response in illegal format. Response: '{response_preview}' (length: {response_length})",
+    )
+    MODEL_SSL_CERT_ERROR = (
+        "300024",
+        "TLS certificate verification failed for the model endpoint. If it uses a private or "
+        "self-signed CA, set `ssl_verify: <path-to-ca.pem>` on the model in agent.yml (or export "
+        "SSL_CERT_FILE=<path-to-ca.pem>). Avoid `ssl_verify: false`, which disables verification. "
+        "See docs/configuration/agent.md (Private or self-signed certificates).",
+    )
+    MODEL_NOT_CONFIGURED = (
+        "300025",
+        "Unknown custom model `{model_name}`. Available: {available_models}",
+    )
+    # Distinct from MODEL_NOT_CONFIGURED: nothing is selected at all, rather
+    # than a selection naming a model that doesn't exist. A UI host branches on
+    # this to offer "add a model" instead of "pick another one".
+    MODEL_NOT_SELECTED = (
+        "300026",
+        "No active LLM model configured",
     )
 
     # OAuth authentication errors
@@ -82,6 +105,7 @@ class ErrorCode(Enum):
     # Tool errors
     TOOL_EXECUTION_FAILED = ("400001", "Tool execution failed")
     TOOL_INVALID_INPUT = ("400002", "Invalid tool input")
+    BASH_SANDBOX_UNAVAILABLE = ("400003", "OS sandbox unavailable")
 
     # Validation errors (ValidationHook for table-producing subagents)
     VALIDATION_BLOCKING_FAILURE = (
@@ -100,6 +124,16 @@ class ErrorCode(Enum):
         "400020",
         "Skill at {location}: invalid frontmatter — {error_message}",
     )
+
+    # Plugin store errors
+    PLUGIN_STORE_ERROR = ("400030", "Plugin store error: {error_message}")
+
+    # Read refused by a policy plugin, as opposed to a malformed request.
+    # Distinct from TOOL_INVALID_INPUT so a caller can tell "you may not see
+    # this" from "your query is wrong" — the two want different UI, and only
+    # one of them is worth a retry button.
+    POLICY_DENIED = ("400040", "Policy denied the read: {error_message}")
+    PACKAGE_BUILD_ERROR = ("400031", "Package build error: {error_message}")
 
     # Storage errors - Vector Database Operations
     STORAGE_FAILED = ("410000", "Vector database operation failed: {error_message}")
@@ -163,11 +197,12 @@ class ErrorCode(Enum):
 
     DB_TABLE_NOT_EXISTS = ("500010", "Table {table_name} does not exist.")
 
-    # Semantic adapter errors
-    SEMANTIC_ADAPTER_NOT_FOUND = ("600001", "Semantic adapter '{adapter_type}' not found or not installed")
-    SEMANTIC_ADAPTER_ERROR = ("600002", "Semantic adapter operation failed: {error_message}")
-    SEMANTIC_ADAPTER_CONFIG_ERROR = ("600003", "Semantic adapter configuration error: {error_message}")
-    SEMANTIC_ADAPTER_SYNC_FAILED = ("600004", "Failed to sync from semantic adapter: {error_message}")
+    # Dosi storage synchronization
+    DOSI_SYNC_FAILED = ("600004", "Failed to sync from Dosi: {error_message}")
+    SEMANTIC_MODEL_BOOTSTRAP_FAILED = (
+        "600005",
+        "Failed to create prerequisite OSI semantic model: {error_message}",
+    )
 
     def __init__(self, code: str, desc: str):
         self.code = code
@@ -180,23 +215,59 @@ class DatusException(Exception):
     def __init__(self, code: ErrorCode, message=None, message_args=None, *args):
         self.code = code
         self.message_args = message_args or {}
+        #: The message on its own. ``message`` prefixes it with the code, which
+        #: is right for a log and wrong for anything a person reads — a policy
+        #: refusal already explains itself and does not need "error_code=" in
+        #: front of it.
+        self.detail = self.build_detail(message, message_args)
         self.message = self.build_msg(message, message_args)
         super().__init__(self.message, *args)
 
     def __str__(self):
         return self.message
 
-    def build_msg(self, message=None, message_args=None):
+    @staticmethod
+    def _desc_placeholders(template: str) -> set[str]:
+        """Root names of the ``{...}`` fields in ``template``.
+
+        ``{detail}`` -> ``detail``; ``{err.args[0]}`` -> ``err``, so a nested
+        accessor still counts its argument as consumed.
+        """
+        from string import Formatter
+
+        names: set[str] = set()
+        for _, field_name, _, _ in Formatter().parse(template):
+            if field_name:
+                names.add(re.split(r"[.\[]", field_name, maxsplit=1)[0])
+        return names
+
+    def build_msg(self, message: Optional[str] = None, message_args: Optional[Dict[str, Any]] = None) -> str:
+        return f"error_code={self.code.code}, error_message={self.build_detail(message, message_args)}"
+
+    def build_detail(self, message: Optional[str] = None, message_args: Optional[Dict[str, Any]] = None) -> str:
+        """The message without the ``error_code=`` prefix."""
         if message:
             final_message = message
         elif message_args:
             try:
-                final_message = self.code.desc.format(**message_args)
+                formatted = self.code.desc.format(**message_args)
             except (KeyError, IndexError):
                 final_message = f"{self.code.desc} (args={message_args})"
+            else:
+                # Args the description has no placeholder for used to be
+                # dropped without a trace: ``"...(HTTP 400)".format(
+                # error_detail=<real cause>)`` returns the template unchanged,
+                # so the only diagnostic the caller passed never reached the
+                # log. Append whatever the template did not consume.
+                unused = {k: v for k, v in message_args.items() if k not in self._desc_placeholders(self.code.desc)}
+                if unused:
+                    detail = ", ".join(f"{k}={v}" for k, v in unused.items())
+                    final_message = f"{formatted} ({detail})"
+                else:
+                    final_message = formatted
         else:
             final_message = self.code.desc
-        return f"error_code={self.code.code}, error_message={final_message}"
+        return final_message
 
 
 def setup_exception_handler(console_logger=None, prefix_wrap_func=None):

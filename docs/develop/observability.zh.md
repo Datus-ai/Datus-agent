@@ -98,6 +98,7 @@ agent:
         prompts: true
         responses: true
         reasoning: true
+        tool_definitions: true
         tool_args: true
         tool_results: true
         sql: true
@@ -281,3 +282,36 @@ uv run datus-agent benchmark \
 Tag 与 metadata 会包含 datasource、workflow、benchmark、task id、run id，以及可用时的 `agent.home`。
 
 Datus 不会在 workflow metadata 中持久化后端特有的 UI URL。使用 `trace_id`、`trace_span_id`、`trace_run_id`、`trace_provider` 等稳定 metadata 字段，将 workflow checkpoint 关联到对应 backend trace。
+
+## 模型调用与 Available tools
+
+每次模型调用有独立的本地 `model_call_id`。对应 generation 每轮保存实际解析出的完整工具定义，包括名称、描述、参数 schema，以及 `tool_choice`、`parallel_tool_calls`，不使用 hash 或前轮引用。SDK 禁用的工具不会出现在列表中。摘要调用标记为 `phase=compact_summary`，摘要没有工具不表示主任务丢失了工具。
+
+工具通过 OpenInference 的 `llm.tools.<index>.tool.json_schema` 和 `llm.invocation_parameters` JSON 中的 `tools` 上报。Langfuse 会将其解析到 generation 的 `input.tools` 及 **Available tools** 展示中。选中 generation 后查看 Available tools，或切换 Input 为 JSON。工具执行节点表示实际执行过的工具；Available tools 表示该轮提供给模型的工具。Anthropic 的原始 `input_schema` 会保留，同时增加 `parameters` 映射以兼容展示，不改变发给模型的请求。
+
+共用 tracing 层会将 LiteLLM 的流式 Response 外壳转换为带 `tool_calls` 的 assistant 消息。OpenInference 的 `input.value` 和 `output.value` 使用包含 `messages` 的 JSON 对象，同时保留索引化消息和用量字段。调用参数中的工具定义与索引化定义遵循相同的采集策略。所有 OTLP adapter 收到相同的 OpenInference 数据，不按后端单独转换输出，也不额外增加一套 GenAI 消息和工具数据。已通过实际 SDK 工具调用验证 Langfuse、LangSmith 和 Datadog 的数据接收结果。Langfuse 在 **Available tools** 展示工具定义，Datadog 在 `Metadata > tools` 展示。各平台的页面布局可以不同。
+
+`capture.tool_definitions` 默认跟随 `capture_content`（通常为 true）。关闭后两处 OpenInference 字段均不包含工具定义，仍保留远端关联 ID、计数和执行状态。工具定义遵循 tracing 脱敏设置。`datus.llm.tools_capture_state` 区分 `complete`、`redacted`、`disabled`、`truncated`、`failed`、`not_observable`；实际空列表为 complete、数量为零。每轮按 1 MiB 的定义采集预算及 1,536 个索引属性的预算选取工具，然后写入两处 OpenInference 字段；检测到 OTel 属性丢弃或字符串截断时标记不完整，并记录独立的成功采集数量。Datus 的 OTel span 属性数量上限为 4,096，下游采集器可能有其他限制。
+
+采集边界为 `sdk_request`：SDK 完成工具筛选和转换之后，LiteLLM 的供应商适配或网关继续变换之前。它证明 Datus 在此边界提供了哪些工具。验证模型服务最终收到了什么，需要通过返回的远端关联 ID 查询服务端请求日志。Tracing 不影响工具是否可调用。
+
+### 模型服务关联 ID
+
+每个 generation 将可观测到的模型服务标识统一记录为 `datus.llm.remote_correlation_id`，并附带 `remote_correlation_source` 和 `remote_correlation_status`。当前识别这些官方 API 字段：OpenAI `x-request-id`、Anthropic `request-id`、DeepSeek `x-ds-trace-id`、Kimi `msh-request-id`、MiniMax `trace-id`、GLM `request_id`、Gemini `responseId`。响应头名称不区分大小写。字段值原样保存，不使用通用 completion/message ID 或本地生成 ID 兜底。
+
+流式响应在 headers 或首个响应 chunk 暴露字段时立即记录，因此后续取消或解析失败仍可关联请求。Codex 直接文本/JSON 调用在认证刷新重试时生成独立调用记录，并通过 `retry_of` 关联。`remote_correlation_coverage=adapter_visible_response` 明确不包含 SDK 或网关内部不可见的重试；拿不到原始字段时保留 absent 或 not_observable。错误标记 `failure_stage=before_response` 或 `after_response`，建连失败不会记录响应耗时。Datus 只保存识别出的字段值和来源，不保存整份响应头，也不注入 trace context header。
+
+### 日志事件
+
+| 级别 | 内容 |
+| --- | --- |
+| INFO | `llm.started`、流式 `llm.response_received`、`llm.finished`：模型、本地和远端 ID、耗时、已有 usage、状态。`first_event_ms` 是首个 SDK 事件耗时，不一定是首个文本 token。 |
+| DEBUG | `llm.tools` 每轮记录名称、数量、调用策略，不打印完整定义；MCP 连接尝试和初始化细节。 |
+| INFO / WARNING | 主任务首次 `tools.available`；增减、schema 或调用策略变化时 `tools.changed`，工具减少为 WARNING。比较限定在同一逻辑操作、同一次 agent 执行内；同名并发子 Agent 分开比较。 |
+| INFO | `tool.finished` 记录 hook 可观测到的工具结束、耗时、失败状态；SDK 提供 tool-call ID 时关联模型调用。参数和结果继续遵循 trace 内容开关。返回值无法判断成败且没有可观测的 SDK 错误状态时标记为 `returned`，不认定成功。 |
+| INFO / WARNING | `compact.started` / `compact.finished` 记录模式、触发原因、已有条目和 token 估算、归档位置、`compact_id`。major compact 生成历史恢复指针但没有 `read_file` 时告警。 |
+| WARNING | MCP 可恢复失败、`mcp.degraded`、`mcp.budget_exhausted` 记录服务器、尝试次数和原因。工具变化附带附近能力事件 ID；未证实的变化原因明确为 unknown。 |
+
+可用的 session/trace/span ID 与 `run_id`、`model_call_id`、`compact_id` 关联日志和 trace。完整工具定义保存在 trace 中；不产生实际压缩的 compact 检查不打生命周期日志。重复配置和结果全文、初始化提示已减少；`logger.error` 不再强制附带堆栈，处理异常的边界通过 `logger.exception` 或 `exc_info` 显式记录。
+
+旧的 `--save_llm_trace` YAML 文件保持现有格式；新增字段进入外部 tracing 与结构化日志，不会补写旧 trace 文件。

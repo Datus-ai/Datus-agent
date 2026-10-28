@@ -1,0 +1,4089 @@
+# Copyright 2025-present DatusAI, Inc.
+# Licensed under the Apache License, Version 2.0.
+
+"""Contract tests for the gen-datasource engine that ships in the skill bundle.
+
+The engine is the skill's payload rather than an importable package, so nothing else in the test
+suite exercises it. These pin the parts the skill's instructions promise: the profile overrides an
+LLM is told to write, the DDL it is told to normalise, and the two column classes that used to be
+filled with nothing.
+"""
+
+import contextlib
+import importlib.util
+import io
+import sys
+from datetime import date
+from pathlib import Path
+
+import duckdb
+import pytest
+
+SKILL_DIR = Path(__file__).resolve().parents[4] / "datus" / "resources" / "skills" / "gen-datasource"
+
+
+@pytest.fixture(scope="module")
+def engine_module():
+    scripts = str(SKILL_DIR / "scripts")
+    sys.path.insert(0, scripts)  # ddl_engine imports genlib from its own directory
+    try:
+        spec = importlib.util.spec_from_file_location("_gd_engine", SKILL_DIR / "scripts" / "ddl_engine.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+    finally:
+        sys.path.remove(scripts)
+    return module
+
+
+HOSPITAL_DDL = """
+CREATE TABLE patients (
+    patient_id BIGINT PRIMARY KEY,
+    patient_name VARCHAR,
+    registered_at TIMESTAMP
+);
+CREATE TABLE encounters (
+    encounter_id BIGINT PRIMARY KEY,
+    patient_id BIGINT REFERENCES patients(patient_id),
+    admit_time TIMESTAMP,
+    encounter_status VARCHAR, -- open / in_treatment / discharged
+    total_charge DECIMAL(18, 2),
+    insurance_paid DECIMAL(18, 2),
+    self_paid DECIMAL(18, 2)
+);
+"""
+
+
+def _sem(engine, table, column):
+    return next(c["sem"] for c in engine.schema[table] if c["name"] == column)
+
+
+# --------------------------------------------------------------------------- column semantics
+
+
+@pytest.mark.acceptance
+def test_retail_naming_is_recognised_without_help(engine_module):
+    """The regex default has to stay useful, or every run pays to restate the obvious."""
+    eng = engine_module.DDLEngine(HOSPITAL_DDL, rows=2000)
+
+    assert _sem(eng, "encounters", "total_charge") == "amount"
+    assert _sem(eng, "encounters", "admit_time") == "ts"
+    assert _sem(eng, "encounters", "encounter_status") == "enum"
+
+
+@pytest.mark.acceptance
+def test_non_retail_money_columns_need_an_override(engine_module):
+    """`insurance_paid` is money, but no naming convention in the table says so.
+
+    This is the gap profile["semantics"] exists to close - pinned so a future rule change that
+    happens to cover it does not quietly remove the need for the override contract.
+    """
+    eng = engine_module.DDLEngine(HOSPITAL_DDL, rows=2000)
+
+    assert _sem(eng, "encounters", "insurance_paid") != "amount"
+
+
+@pytest.mark.acceptance
+def test_semantics_override_is_applied(engine_module):
+    eng = engine_module.DDLEngine(
+        HOSPITAL_DDL,
+        rows=2000,
+        profile={"semantics": {"encounters.insurance_paid": "amount", "encounters.self_paid": "amount"}},
+    )
+
+    assert _sem(eng, "encounters", "insurance_paid") == "amount"
+    assert _sem(eng, "encounters", "self_paid") == "amount"
+
+
+@pytest.mark.acceptance
+def test_semantics_override_survives_inference(engine_module):
+    """Inference re-tags declared keys as ids; an explicit override must outrank that."""
+    eng = engine_module.DDLEngine(HOSPITAL_DDL, rows=2000, profile={"semantics": {"encounters.encounter_id": "seq"}})
+
+    assert _sem(eng, "encounters", "encounter_id") == "seq"
+
+
+@pytest.mark.acceptance
+def test_precheck_rejects_an_unknown_semantic(engine_module):
+    eng = engine_module.DDLEngine(HOSPITAL_DDL, rows=2000, profile={"semantics": {"encounters.total_charge": "money"}})
+
+    with pytest.raises(ValueError, match="not a semantic"):
+        eng.precheck()
+
+
+@pytest.mark.acceptance
+def test_precheck_rejects_a_missing_column(engine_module):
+    """A typo must fail loudly: left alone the column keeps its wrong guess and the data looks fine."""
+    eng = engine_module.DDLEngine(
+        HOSPITAL_DDL, rows=2000, profile={"semantics": {"encounters.insurance_pad": "amount"}}
+    )
+
+    with pytest.raises(ValueError, match="has no column"):
+        eng.precheck()
+
+
+# --------------------------------------------------------------------------- generation
+
+
+@pytest.mark.acceptance
+def test_measure_columns_on_a_fact_table_are_filled(engine_module, tmp_path):
+    """They used to fall through to setdefault("") and the whole column landed NULL."""
+    import duckdb
+
+    out = tmp_path / "hosp.duckdb"
+    engine_module.DDLEngine(HOSPITAL_DDL, rows=4000).generate(str(out), verbose=False)
+
+    con = duckdb.connect(str(out), read_only=True)
+    total, filled = con.execute("SELECT count(*), count(insurance_paid) FROM encounters").fetchone()
+    con.close()
+
+    assert total > 0
+    assert filled == total, "a column the engine has no dedicated branch for must still be populated"
+
+
+@pytest.mark.acceptance
+def test_declared_constraints_survive_into_the_database(engine_module, tmp_path):
+    import duckdb
+
+    out = tmp_path / "hosp.duckdb"
+    engine_module.DDLEngine(HOSPITAL_DDL, rows=4000).generate(str(out), verbose=False)
+
+    con = duckdb.connect(str(out), read_only=True)
+    found = {(t, k) for t, k in con.execute("SELECT table_name, constraint_type FROM duckdb_constraints()").fetchall()}
+    con.close()
+
+    assert ("patients", "PRIMARY KEY") in found
+    assert ("encounters", "FOREIGN KEY") in found
+
+
+# --------------------------------------------------------------------------- DDL normalisation
+
+
+@pytest.mark.acceptance
+@pytest.mark.parametrize(
+    "dialect,ddl",
+    [
+        (
+            "mysql",
+            "CREATE TABLE `orders` (`order_id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT, PRIMARY KEY (`order_id`)) ENGINE=InnoDB;",
+        ),
+        ("postgres", "CREATE TABLE public.orders (order_id BIGSERIAL PRIMARY KEY, meta JSONB);"),
+        ("oracle", "CREATE TABLE orders (order_id NUMBER(19) PRIMARY KEY, note VARCHAR2(200));"),
+    ],
+)
+def test_foreign_dialect_fails_with_an_actionable_message(engine_module, dialect, ddl):
+    """The engine only speaks DuckDB. A bare parser error left the agent guessing, so the message
+    has to name the fix - most users paste DDL exported from their real warehouse."""
+    with pytest.raises(ValueError, match="rewrite it to DuckDB"):
+        engine_module.DDLEngine(ddl, rows=2000)
+
+
+@pytest.mark.acceptance
+def test_a_forward_foreign_key_is_not_a_dialect_problem(engine_module):
+    """A DDL that names the fact table first and its dimensions after it is the ordinary shape,
+    and DuckDB resolves a REFERENCES target at CREATE time - so the first pass fails on a target
+    that appears further down. Reject it and a valid schema comes back as "rewrite the dialect",
+    which sends the reader to edit syntax that was never wrong: the same file parsed once the
+    statements were reordered."""
+    eng = engine_module.DDLEngine(
+        "CREATE TABLE orders (id INTEGER PRIMARY KEY, cust_id INTEGER REFERENCES customers(id));"
+        "CREATE TABLE customers (id INTEGER PRIMARY KEY, name VARCHAR);",
+        rows=2000,
+    )
+
+    assert sorted(eng.schema) == ["customers", "orders"]
+
+
+@pytest.mark.acceptance
+def test_a_reference_chain_resolves_however_deep_it_is(engine_module):
+    """One retry pass only resolves a reference ONE level deep. With `a -> b -> c` declared in that
+    order, the retry meets `a` again before `b` exists - and the schema is valid. Worse than
+    failing, it failed as "no CREATE in this DDL declares that table", sending the reader to hunt a
+    typo in a name that is three lines further down. Passes now repeat while any statement lands."""
+    eng = engine_module.DDLEngine(
+        "CREATE TABLE a (id INTEGER PRIMARY KEY, b_id INTEGER REFERENCES b(id));"
+        "CREATE TABLE b (id INTEGER PRIMARY KEY, c_id INTEGER REFERENCES c(id));"
+        "CREATE TABLE c (id INTEGER PRIMARY KEY, name VARCHAR);",
+        rows=2000,
+    )
+
+    assert sorted(eng.schema) == ["a", "b", "c"]
+    assert eng.decl_fk, "the chain must survive as declared foreign keys, not just parse"
+
+
+@pytest.mark.acceptance
+def test_a_reference_to_a_table_nothing_declares_says_so(engine_module):
+    """The failure that survives the retry pass. It needs the OPPOSITE fix from a dialect error,
+    so it must not borrow that message - and it has to say that ordering is not the cause, or the
+    reader's next move is to shuffle statements that are already fine."""
+    with pytest.raises(ValueError, match="no CREATE in this DDL declares") as excinfo:
+        engine_module.DDLEngine(
+            "CREATE TABLE orders (id INTEGER PRIMARY KEY, cust_id INTEGER REFERENCES custmers(id));",
+            rows=2000,
+        )
+
+    assert "rewrite it to DuckDB" not in str(excinfo.value)
+    assert "Declaration ORDER is not the problem" in str(excinfo.value)
+
+
+@pytest.mark.acceptance
+def test_the_parse_failure_does_not_hand_back_a_traceback_into_the_engine(engine_module):
+    """``from None`` on that raise. With the chain attached, Python prints both DuckDB
+    ParserExceptions - each headed by a path into ddl_engine.py - ABOVE the sentence that says
+    what to do, and a `| tail -40` then cuts the sentence off. One measured run followed that
+    path into the engine's parser and spent the rest of its budget there."""
+    with pytest.raises(ValueError) as excinfo:
+        engine_module.DDLEngine("CREATE TABLE t (id INT AUTO_INCREMENT) ENGINE=InnoDB;", rows=2000)
+
+    assert excinfo.value.__cause__ is None
+    assert excinfo.value.__context__ is None or excinfo.value.__suppress_context__
+
+
+@pytest.mark.acceptance
+def test_duckdb_dialect_parses(engine_module):
+    eng = engine_module.DDLEngine(
+        'CREATE TABLE orders ("order_id" BIGINT PRIMARY KEY, paid_amt DECIMAL(18,2));', rows=2000
+    )
+
+    assert list(eng.schema) == ["orders"]
+
+
+# --------------------------------------------------------------------------- enum comments
+
+
+@pytest.mark.acceptance
+@pytest.mark.parametrize(
+    "comment,expected",
+    [
+        ("-- pending / paid / shipped", ["pending", "paid", "shipped"]),
+        ("-- order status: pending / paid / shipped", ["pending", "paid", "shipped"]),
+        ("-- pending | paid | shipped", ["pending", "paid", "shipped"]),
+        ("-- pending / paid / ...", ["pending", "paid"]),
+        ("-- the current state of the order", None),
+        ("-- pending, paid, shipped", None),
+    ],
+)
+def test_enum_domain_extraction_contract(engine_module, comment, expected):
+    """The skill documents this shape so the DDL-normalisation step can target it; the two
+    rejected forms are documented as rejected, so they are pinned too."""
+    # One column per line: the extractor reads the first identifier of the line, so a comment must
+    # sit on the line of the column it describes.
+    ddl = f"CREATE TABLE t (\n  id BIGINT PRIMARY KEY,\n  st VARCHAR, {comment}\n  amt DECIMAL(18,2)\n);"
+    eng = engine_module.DDLEngine(ddl, rows=1000)
+
+    assert eng.ddl_enums.get("st") == expected
+
+
+@pytest.mark.acceptance
+def test_comment_clause_carries_no_domain(engine_module):
+    """MySQL/StarRocks COMMENT 'x' is not a line comment - the skill tells the agent to convert it,
+    and this is why."""
+    ddl = "CREATE TABLE t (\n  id BIGINT PRIMARY KEY,\n  st VARCHAR,\n  amt DECIMAL(18,2)\n);"
+    eng = engine_module.DDLEngine(ddl, rows=1000)
+
+    assert "st" not in eng.ddl_enums
+
+
+EVENT_DDL = """
+CREATE TABLE visits (
+    visit_id BIGINT PRIMARY KEY,
+    admit_time TIMESTAMP,
+    total_charge DECIMAL(18, 2)
+);
+CREATE TABLE bills (
+    bill_id BIGINT PRIMARY KEY,
+    visit_id BIGINT REFERENCES visits(visit_id),
+    bill_dt DATE,
+    bill_amt DECIMAL(18, 2)
+);
+CREATE TABLE visit_events (
+    event_id BIGINT PRIMARY KEY,
+    visit_id BIGINT REFERENCES visits(visit_id),
+    event_seq INTEGER,
+    event_time TIMESTAMP,
+    event_type VARCHAR
+);
+"""
+
+
+@pytest.mark.acceptance
+def test_event_and_downstream_keys_honour_the_declared_type(engine_module, tmp_path):
+    """They emitted a prefixed string regardless of the declared type, so a BIGINT key was
+    TRY_CAST to NULL and the table then lost every constraint."""
+    import duckdb
+
+    out = tmp_path / "ev.duckdb"
+    result = engine_module.DDLEngine(EVENT_DDL, rows=20_000).generate(str(out), verbose=False)
+
+    assert result["degraded"] == [], "no table should have to drop its constraints"
+    con = duckdb.connect(str(out), read_only=True)
+    for table, key in (("visit_events", "event_id"), ("bills", "bill_id")):
+        total, filled = con.execute(f"SELECT count(*), count({key}) FROM {table}").fetchone()
+        assert total > 0 and filled == total, f"{table}.{key} must be populated"
+    con.close()
+
+
+@pytest.mark.acceptance
+def test_event_times_never_pass_the_cut_off(engine_module, tmp_path):
+    """The monotonic backstop used to add a second past the cap when the window was used up,
+    which produced future-dated rows - a defect the quality check fails on."""
+    import duckdb
+
+    out = tmp_path / "ev.duckdb"
+    engine_module.DDLEngine(EVENT_DDL, rows=20_000).generate(str(out), verbose=False)
+
+    con = duckdb.connect(str(out), read_only=True)
+    future = con.execute("SELECT count(*) FROM visit_events WHERE event_time > now()").fetchone()[0]
+    backwards = con.execute(
+        "SELECT count(*) FROM (SELECT event_time t, "
+        "lag(event_time) OVER (PARTITION BY visit_id ORDER BY event_seq) p FROM visit_events) "
+        "WHERE p IS NOT NULL AND t < p"
+    ).fetchone()[0]
+    con.close()
+
+    assert future == 0
+    assert backwards == 0
+
+
+@pytest.mark.acceptance
+def test_event_chain_never_steps_past_the_cap(engine_module):
+    """Directly: a chain started beyond its cap has no room, and the cap is the hard invariant."""
+    import datetime
+    import random
+    import sys
+
+    scripts = str(SKILL_DIR / "scripts")
+    sys.path.insert(0, scripts)
+    try:
+        from genlib import EventChain
+    finally:
+        sys.path.remove(scripts)
+
+    cap = datetime.datetime(2026, 9, 14, 20, 0, 0)
+    start = datetime.datetime(2026, 9, 14, 23, 30, 0)
+    chain = EventChain(random.Random(1), start)
+
+    stamps = [chain.step(avg_hours=6, cap=cap) for _ in range(4)]
+
+    assert all(t <= cap for t in stamps), "the cap is the hard invariant, including on the first step"
+    assert stamps[0] == cap, "a start beyond the cap is clamped to it"
+    assert chain.exhausted is True
+
+
+@pytest.mark.acceptance
+def test_event_chain_is_unaffected_within_the_cap(engine_module):
+    """The clamp must not disturb a chain that fits: still strictly increasing, still capped."""
+    import datetime
+    import random
+    import sys
+
+    scripts = str(SKILL_DIR / "scripts")
+    sys.path.insert(0, scripts)
+    try:
+        from genlib import EventChain
+    finally:
+        sys.path.remove(scripts)
+
+    cap = datetime.datetime(2026, 9, 14, 20, 0, 0)
+    chain = EventChain(random.Random(1), datetime.datetime(2026, 9, 10, 8, 0, 0))
+
+    stamps = [chain.step(avg_hours=6, cap=cap) for _ in range(5)]
+
+    assert stamps == sorted(stamps)
+    assert all(t <= cap for t in stamps)
+    assert chain.exhausted is False
+
+
+@pytest.mark.acceptance
+def test_report_prints_the_plan_not_just_the_shape(engine_module, capsys):
+    """report() has to answer what the agent would otherwise grep the engine for.
+
+    A measured run spent 66% of its wall clock reading ddl_engine.py through eight greps - VOCAB,
+    _joint_plan, _code_val, ROLE_METRIC, _cond_pick, the constructor - trying to predict the output
+    before paying for a generation pass. Each line below closes one of those.
+    """
+    ddl = """
+    CREATE TABLE customers (
+        customer_id BIGINT PRIMARY KEY,
+        customer_name VARCHAR,
+        city VARCHAR
+    );
+    CREATE TABLE orders (
+        order_id BIGINT PRIMARY KEY,
+        order_no VARCHAR UNIQUE,
+        customer_id BIGINT REFERENCES customers(customer_id),
+        order_time TIMESTAMP,
+        channel VARCHAR,
+        paid_amount DECIMAL(18, 2)
+    );
+    CREATE TABLE daily_channel_metrics (
+        metric_id BIGINT PRIMARY KEY,
+        metric_date DATE,
+        channel VARCHAR,
+        impressions BIGINT,
+        clicks BIGINT
+    );
+    """
+    profile = {
+        "conditional": {"orders.paid_amount": {"__by__": "channel", "social": [10, 50], "__default__": [20, 200]}},
+        "derive": {"daily_channel_metrics.clicks": {"from": "impressions", "ratio": (0.01, 0.03)}},
+        "joint": {"customers": [{"cols": ["city"], "values": [["Shanghai", 5], ["Shenzhen", 3]]}]},
+        # this cut-down schema is too small for the role to be inferred; the grid line is the point
+        "roles": {"daily_channel_metrics": "metric_daily"},
+    }
+    engine_module.DDLEngine(ddl, rows=40_000, profile=profile).report()
+    out = capsys.readouterr().out
+
+    assert "seed=" in out and "extra_tables=" in out, "the constructor knobs"
+    assert "name samples" in out and "customers.customer_name ->" in out, "what generated names look like"
+    assert "orders.order_no" in out, "which columns get a generated business code"
+    assert "dimension combos" in out, "how the daily metric grid is sized"
+    assert "conditional orders.paid_amount by channel" in out, "which declarative rules resolved"
+    assert "derive daily_channel_metrics.clicks from impressions" in out
+    assert "joint customers(city) 2 combos" in out
+
+
+@pytest.mark.acceptance
+def test_report_flags_a_conditional_without_a_default(engine_module, capsys):
+    """Silent fallback to the engine default is a common and invisible misconfiguration."""
+    ddl = "CREATE TABLE orders (order_id BIGINT PRIMARY KEY, order_time TIMESTAMP, channel VARCHAR, amt DECIMAL(18,2));"
+    profile = {"conditional": {"orders.amt": {"__by__": "channel", "social": [10, 50]}}}
+
+    engine_module.DDLEngine(ddl, rows=5_000, profile=profile).report()
+
+    assert "NO default" in capsys.readouterr().out
+
+
+METRIC_DDL = """
+CREATE TABLE orders (order_id BIGINT PRIMARY KEY, order_time TIMESTAMP, amt DECIMAL(18, 2));
+CREATE TABLE daily_channel_metrics (
+    metric_id BIGINT PRIMARY KEY,
+    metric_date DATE,
+    channel VARCHAR, -- paid_search / social / organic
+    impressions BIGINT,
+    clicks BIGINT
+);
+"""
+
+
+@pytest.mark.acceptance
+def test_report_metric_grid_matches_what_is_generated(engine_module, tmp_path):
+    """The row budget is a cap, not the count.
+
+    With three channels and room in the budget for eight combinations, the grid is three wide.
+    Reporting the budget would over-state both the combinations and the row count, which is the
+    opposite of what report() is for.
+    """
+    eng = engine_module.DDLEngine(METRIC_DDL, rows=60_000, profile={"roles": {"daily_channel_metrics": "metric_daily"}})
+    planned, _ = eng._metric_combos("daily_channel_metrics")
+    assert len(planned) == 3, "three channels, whatever the budget allows"
+
+    result = eng.generate(str(tmp_path / "m.duckdb"), verbose=False)
+
+    assert result["tables"]["daily_channel_metrics"] == len(eng.days) * len(planned)
+
+
+@pytest.mark.acceptance
+def test_report_says_when_the_schema_limits_the_grid(engine_module, capsys):
+    engine_module.DDLEngine(
+        METRIC_DDL, rows=60_000, profile={"roles": {"daily_channel_metrics": "metric_daily"}}
+    ).report()
+
+    out = capsys.readouterr().out
+
+    assert "3 dimension combos" in out
+    assert "all the schema allows" in out, "say why the grid is smaller than the budget"
+
+
+@pytest.mark.acceptance
+def test_report_knob_line_separates_months_from_days(engine_module, capsys):
+    """`months` is a constructor argument; the day count is what it works out to."""
+    engine_module.DDLEngine(HOSPITAL_DDL, rows=2000, months=11).report()
+
+    out = capsys.readouterr().out
+
+    assert "months=11 (" in out
+    assert "days," in out
+
+
+CODE_DDL = """
+CREATE TABLE products (
+    product_id BIGINT PRIMARY KEY,
+    brand VARCHAR,
+    product_name VARCHAR,
+    sku_code VARCHAR
+);
+CREATE TABLE orders (
+    order_id BIGINT PRIMARY KEY,
+    order_no VARCHAR,
+    product_id BIGINT REFERENCES products(product_id),
+    order_time TIMESTAMP,
+    paid_amount DECIMAL(18, 2)
+);
+"""
+
+
+@pytest.mark.acceptance
+def test_report_lists_only_the_columns_that_really_get_a_code(engine_module, tmp_path, capsys):
+    """`CODE_COL` is the generators' last branch, not their rule.
+
+    `sku_code` matches the pattern but inference classifies it as an enum, so the enum branch
+    fills it and no code is ever generated. Reporting it as a business code sent a production run
+    into the engine source to find out which line was lying.
+    """
+    eng = engine_module.DDLEngine(CODE_DDL, rows=3000, months=3, seed=1)
+    eng.report()
+    out = capsys.readouterr().out
+
+    codes = next(ln for ln in out.splitlines() if ln.startswith("generated business codes:"))
+    assert "orders.order_no" in codes
+    assert "sku_code" not in codes, "an enum column is filled by the enum branch, never by a code"
+
+    eng.generate(str(tmp_path / "c.duckdb"), verbose=False)
+    import duckdb
+
+    con = duckdb.connect(str(tmp_path / "c.duckdb"))
+    try:
+        assert con.execute("SELECT order_no FROM orders LIMIT 1").fetchone()[0].startswith("ORD")
+        # State the property rather than a forbidden prefix: sku_code must keep drawing from the
+        # finite enum domain inference gave it. A prefix test would pass for any wrong-but-not-
+        # SKU0 filler, and would fail a legitimate domain that happens to contain "SKU0...".
+        domain = set(eng._enum_values("products", "sku_code")[0])
+        assert domain, "the column must have an inferred enum domain to be drawn from"
+        generated = {row[0] for row in con.execute("SELECT DISTINCT sku_code FROM products").fetchall()}
+        assert generated <= domain, f"values outside the inferred domain: {sorted(generated - domain)}"
+    finally:
+        con.close()
+
+
+@pytest.mark.acceptance
+def test_a_code_column_is_not_also_reported_as_unrecognised(engine_module, capsys):
+    """Two adjacent report lines used to contradict each other about the same column."""
+    engine_module.DDLEngine(CODE_DDL, rows=3000, months=3, seed=1).report()
+
+    out = capsys.readouterr().out
+    unrecognised = [ln for ln in out.splitlines() if "unrecognised" in ln]
+
+    assert not any("order_no" in ln for ln in unrecognised), "it gets a code; the next line says so"
+
+
+@pytest.mark.acceptance
+def test_semantics_can_force_a_code_onto_an_enum_looking_column(engine_module, tmp_path):
+    """The documented escape hatch: declare it text and the code fallback takes over."""
+    eng = engine_module.DDLEngine(
+        CODE_DDL, rows=3000, months=3, seed=1, profile={"semantics": {"products.sku_code": "text"}}
+    )
+    assert eng._is_code_col("products", "sku_code")
+
+    eng.generate(str(tmp_path / "f.duckdb"), verbose=False)
+    import duckdb
+
+    con = duckdb.connect(str(tmp_path / "f.duckdb"))
+    try:
+        assert con.execute("SELECT sku_code FROM products LIMIT 1").fetchone()[0].startswith("SKU0")
+    finally:
+        con.close()
+
+
+@pytest.mark.acceptance
+def test_a_primary_key_matching_the_code_pattern_is_not_a_code_column(engine_module):
+    eng = engine_module.DDLEngine(
+        "CREATE TABLE tickets (ticket_no VARCHAR PRIMARY KEY, note VARCHAR, ref_no VARCHAR);",
+        rows=500,
+        months=3,
+    )
+
+    assert not eng._is_code_col("tickets", "ticket_no"), "the PK is filled by _pk_val"
+    assert eng._is_code_col("tickets", "ref_no")
+
+
+#: The three column names ``date_pk`` matches (``^(date_key|stat_dt|dt)$``). All three are
+#: idiomatic for a daily metric table's date column, so all three have to be covered - testing
+#: only ``stat_dt`` would leave two thirds of the rule unexercised.
+DATE_GRAIN_NAMES = ("stat_dt", "dt", "date_key")
+
+
+def _daily_metric_ddl(date_col="stat_dt"):
+    return f"""
+CREATE TABLE daily_channel_metrics (
+    {date_col} DATE,
+    channel VARCHAR,
+    impressions BIGINT,
+    clicks BIGINT,
+    orders_cnt BIGINT,
+    gmv DECIMAL(18, 2)
+);
+CREATE TABLE orders (
+    order_id BIGINT PRIMARY KEY,
+    order_time TIMESTAMP,
+    paid_amount DECIMAL(18, 2)
+);
+"""
+
+
+DAILY_METRIC_DDL = _daily_metric_ddl()
+
+
+@pytest.mark.acceptance
+@pytest.mark.parametrize("date_col", DATE_GRAIN_NAMES)
+def test_a_daily_metric_table_is_not_mistaken_for_a_date_dimension(engine_module, tmp_path, date_col):
+    """`stat_dt` / `dt` / `date_key` are the idiomatic names for a daily metric table's date column.
+
+    All three classify as `date_pk`, and the date-dimension branch matched on that alone - so the
+    whole table went through the date-dimension generator, came out one row per day, and left every
+    business column NULL. A headline metric table silently emptied is worse than a crash.
+    """
+    eng = engine_module.DDLEngine(_daily_metric_ddl(date_col), rows=20_000, months=6, seed=42)
+
+    assert eng.roles["daily_channel_metrics"] == "metric_daily"
+    assert eng.nrows["daily_channel_metrics"] > len(eng.days), "date x dimension, not one row per day"
+
+    out = tmp_path / f"m_{date_col}.duckdb"
+    eng.generate(str(out), verbose=False)
+    import duckdb
+
+    con = duckdb.connect(str(out))
+    try:
+        empty = con.execute(
+            "SELECT count(*) FROM daily_channel_metrics "
+            "WHERE channel IS NULL OR channel = '' OR gmv IS NULL OR impressions IS NULL"
+        ).fetchone()[0]
+        assert empty == 0, "every business column must carry a value"
+        # The date column itself must still be a real, in-window date on every row.
+        nulls, lo, hi = con.execute(
+            f"SELECT count(*) - count({date_col}), min({date_col}), max({date_col}) FROM daily_channel_metrics"  # noqa: S608
+        ).fetchone()
+        assert nulls == 0
+        assert eng.start <= lo and hi <= eng.end
+    finally:
+        con.close()
+
+
+@pytest.mark.acceptance
+def test_a_real_date_dimension_is_still_a_date_dimension(engine_module):
+    """The other direction: a genuine calendar table has four measures and two enums of its own.
+
+    Discriminating on the count of measures would demote it; discriminating on whether those
+    columns are calendar attributes keeps it.
+    """
+    cols = ", ".join(f"{name} {dtype}" for name, dtype in engine_module.DATE_DIM_COLS)
+    eng = engine_module.DDLEngine(
+        f"CREATE TABLE dim_date ({cols});"
+        "CREATE TABLE orders (order_id BIGINT PRIMARY KEY, order_time TIMESTAMP, paid_amount DECIMAL(18,2));",
+        rows=5000,
+        months=3,
+    )
+
+    assert eng.roles["dim_date"] == "date_dim"
+    assert eng.nrows["dim_date"] == len(eng.days), "exactly one row per day"
+
+
+@pytest.mark.acceptance
+def test_a_daily_summary_without_a_dimension_column_still_carries_measures(engine_module, tmp_path):
+    """The same swallow happened with no enum column at all - date plus measures was enough."""
+    eng = engine_module.DDLEngine(
+        "CREATE TABLE ads_daily_summary (dt DATE, gmv DECIMAL(18,2), orders_cnt BIGINT, uv BIGINT);"
+        "CREATE TABLE orders (order_id BIGINT PRIMARY KEY, order_time TIMESTAMP, paid_amount DECIMAL(18,2));",
+        rows=8000,
+        months=3,
+        seed=1,
+    )
+
+    assert eng.roles["ads_daily_summary"] == "metric_daily"
+
+    eng.generate(str(tmp_path / "s.duckdb"), verbose=False)
+    import duckdb
+
+    con = duckdb.connect(str(tmp_path / "s.duckdb"))
+    try:
+        assert con.execute("SELECT count(*) FROM ads_daily_summary WHERE gmv IS NULL").fetchone()[0] == 0
+    finally:
+        con.close()
+
+
+CODE_ON_CHILDREN_DDL = """
+CREATE TABLE orders (
+    order_id BIGINT PRIMARY KEY,
+    order_no VARCHAR,
+    order_time TIMESTAMP,
+    paid_amount DECIMAL(18, 2)
+);
+CREATE TABLE order_items (
+    item_id BIGINT PRIMARY KEY,
+    order_id BIGINT REFERENCES orders(order_id),
+    line_no VARCHAR,
+    quantity INTEGER,
+    item_amount DECIMAL(18, 2)
+);
+CREATE TABLE order_events (
+    event_id BIGINT PRIMARY KEY,
+    order_id BIGINT REFERENCES orders(order_id),
+    event_seq INTEGER,
+    event_type VARCHAR,
+    event_time TIMESTAMP,
+    trace_ref VARCHAR
+);
+"""
+
+
+@pytest.mark.acceptance
+def test_a_code_column_on_a_child_table_is_filled_not_left_null(engine_module, tmp_path):
+    """Only `_gen_dim` and `_gen_fact` called `_code_val` directly.
+
+    The detail, downstream, event and metric generators reach a leftover column through
+    `_fill_generic`, which had no code branch - so `order_items.line_no` came out NULL on every
+    row while `report()` listed it under "generated business codes".
+    """
+    eng = engine_module.DDLEngine(CODE_ON_CHILDREN_DDL, rows=9000, months=3, seed=1)
+    assert eng.roles["order_items"] == "detail"
+    assert eng.roles["order_events"] == "event"
+
+    eng.generate(str(tmp_path / "k.duckdb"), verbose=False)
+    import duckdb
+
+    con = duckdb.connect(str(tmp_path / "k.duckdb"))
+    try:
+        for table, column in (("order_items", "line_no"), ("order_events", "trace_ref")):
+            total, filled, distinct = con.execute(
+                f"SELECT count(*), count({column}), count(DISTINCT {column}) FROM {table}"  # noqa: S608
+            ).fetchone()
+            assert total > 0
+            assert filled == total, f"{table}.{column} left {total - filled} rows NULL"
+            # These generators nest loops, so a code keyed on a loop index would repeat.
+            assert distinct == total, f"{table}.{column} handed out duplicate codes"
+    finally:
+        con.close()
+
+
+@pytest.mark.acceptance
+def test_a_joint_column_is_never_reported_as_a_code(engine_module):
+    """A joint group is written into the row before the per-column chain runs.
+
+    The membership test therefore has to come before the `id` branch, not after it: an id column
+    inside a joint group is claimed by the group whatever its semantic says.
+    """
+    ddl = (
+        "CREATE TABLE sites (site_id BIGINT PRIMARY KEY, region_no VARCHAR, city_ref VARCHAR, site_name VARCHAR);"
+        "CREATE TABLE orders (order_id BIGINT PRIMARY KEY, order_time TIMESTAMP, paid_amount DECIMAL(18,2));"
+    )
+    profile = {
+        "semantics": {"sites.region_no": "text", "sites.city_ref": "id"},
+        "joint": {"sites": [{"cols": ["region_no", "city_ref"], "values": [["north", "c1"], ["south", "c2"]]}]},
+    }
+    eng = engine_module.DDLEngine(ddl, rows=3000, months=3, seed=1, profile=profile)
+
+    assert not eng._is_code_col("sites", "region_no"), "claimed by the joint group"
+    assert not eng._is_code_col("sites", "city_ref"), "claimed by the joint group, id semantic or not"
+
+
+@pytest.mark.acceptance
+@pytest.mark.parametrize("date_col", DATE_GRAIN_NAMES)
+@pytest.mark.parametrize("extra_tables", ("date_dim", "all"))
+def test_a_metric_table_does_not_satisfy_a_request_for_a_date_dimension(engine_module, date_col, extra_tables):
+    """`_ensure_date_dim` runs before `_infer`, and had its own, older notion of a date dimension.
+
+    So a caller who explicitly asked for one got none: the metric table's `stat_dt` was read as a
+    calendar that already existed. Both sites now share the one test that separates them.
+    """
+    eng = engine_module.DDLEngine(_daily_metric_ddl(date_col), rows=9000, months=3, seed=1, extra_tables=extra_tables)
+
+    assert "dim_date" in eng.schema, "the caller asked for a date dimension and must get one"
+    assert "dim_date" in eng.synthetic
+    assert eng.roles["daily_channel_metrics"] == "metric_daily"
+
+
+@pytest.mark.acceptance
+def test_a_real_date_dimension_is_not_duplicated(engine_module):
+    """The other direction: a calendar already in the DDL must not get a second one beside it."""
+    ddl = (
+        "CREATE TABLE dim_date (date_key DATE, year_num INTEGER, quarter_cd VARCHAR, "
+        "week_of_year INTEGER, is_weekend INTEGER);" + _daily_metric_ddl()
+    )
+    eng = engine_module.DDLEngine(ddl, rows=9000, months=3, seed=1, extra_tables="date_dim")
+
+    assert eng.synthetic == set(), "the DDL already has a calendar"
+    assert eng.roles["dim_date"] == "date_dim"
+
+
+@pytest.mark.acceptance
+def test_report_says_the_plan_is_pre_calibration(engine_module, capsys):
+    """The per-table plan does not add up to the target, and silence about that costs reasoning.
+
+    A production run spent a long stretch of one turn trying to reconcile a plan summing to 88,015
+    against a budget of 80,000 before concluding the engine would handle it.
+    """
+    eng = engine_module.DDLEngine(HOSPITAL_DDL, rows=80_000, months=17, seed=42)
+    eng.report()
+
+    out = capsys.readouterr().out
+    planned = sum(eng.nrows.get(t, 0) for t in eng.schema)
+
+    assert f"{planned:,}" in out, "print the planned total, not only the per-table rows"
+    assert "before calibration" in out
+    # A target, not a promise: calibration is capped at three passes and cannot move pinned or
+    # role-fixed tables, so a fully pinned schema lands outside the band and generate() says so.
+    assert "aims for 80,000" in out
+    assert "up to 3 passes" in out
+    assert "reports the deviation it reached" in out
+
+
+SQL_BLOCK_DDL = """
+CREATE TABLE customers (
+    customer_id BIGINT PRIMARY KEY,
+    customer_name VARCHAR
+);
+CREATE TABLE orders (
+    order_id BIGINT PRIMARY KEY,
+    customer_id BIGINT REFERENCES customers(customer_id),
+    order_time TIMESTAMP,
+    paid_amount DECIMAL(18, 2),
+    is_first_order BOOLEAN,
+    coupon_code VARCHAR
+);
+"""
+
+
+@pytest.mark.acceptance
+def test_a_column_that_does_not_exist_is_caught_before_generating(engine_module):
+    """A mistake in `pre_sql` used to cost a whole generate-import-check cycle to find.
+
+    So a production run hand-verified it instead: 221,000 characters of reasoning in one turn,
+    much of it walking DuckDB's type rules by hand. EXPLAIN needs no data, only the schema.
+    """
+    eng = engine_module.DDLEngine(
+        SQL_BLOCK_DDL, rows=5000, months=3, seed=1, profile={"pre_sql": ["UPDATE orders SET coupon_amount = 0"]}
+    )
+
+    errors, _warnings = eng.precheck(strict=False)
+
+    assert any("coupon_amount" in e and e.startswith("pre_sql[1]") for e in errors), errors
+
+
+@pytest.mark.acceptance
+def test_a_syntax_error_is_caught_before_generating(engine_module):
+    eng = engine_module.DDLEngine(
+        SQL_BLOCK_DDL, rows=5000, months=3, seed=1, profile={"extra_sql": ["UPDATE orders SET paid_amount = "]}
+    )
+
+    errors, _warnings = eng.precheck(strict=False)
+
+    assert any(e.startswith("extra_sql[1]") and "Parser Error" in e for e in errors), errors
+
+
+#: The shapes a real run writes: a window-function ``UPDATE ... FROM`` and a NULLIF division.
+SOUND_STATEMENTS = (
+    "UPDATE orders o SET is_first_order = (f.rn = 1) FROM ("
+    "SELECT order_id, ROW_NUMBER() OVER (PARTITION BY customer_id ORDER BY order_time, order_id) AS rn "
+    "FROM orders) f WHERE o.order_id = f.order_id",
+    "UPDATE orders SET paid_amount = ROUND(paid_amount / NULLIF(1, 0), 2) WHERE coupon_code IS NOT NULL",
+)
+
+
+@pytest.mark.acceptance
+@pytest.mark.parametrize(
+    "shape",
+    [
+        pytest.param(list, id="list"),
+        pytest.param(tuple, id="tuple"),
+        pytest.param(lambda stmts: ";\n".join(stmts) + ";", id="one-string"),
+    ],
+)
+@pytest.mark.parametrize("key", ["pre_sql", "extra_sql"])
+def test_sound_statements_raise_nothing(engine_module, shape, key):
+    """Sound SQL must pass in every accepted shape.
+
+    The validator splits a single string with DuckDB's own parser and takes list/tuple elements
+    verbatim, so the shapes are separate code paths and each needs its own evidence.
+    """
+    eng = engine_module.DDLEngine(SQL_BLOCK_DDL, rows=5000, months=3, seed=1, profile={key: shape(SOUND_STATEMENTS)})
+
+    errors, _warnings = eng.precheck(strict=False)
+
+    assert not [e for e in errors if e.startswith(("pre_sql", "extra_sql"))], errors
+
+
+@pytest.mark.acceptance
+def test_one_string_of_several_statements_is_split_and_numbered(engine_module):
+    """`pre_sql` also takes a single string; the finding still has to name which statement."""
+    eng = engine_module.DDLEngine(
+        SQL_BLOCK_DDL,
+        rows=5000,
+        months=3,
+        seed=1,
+        profile={"pre_sql": "UPDATE orders SET paid_amount = 1; UPDATE orders SET nope = 2;"},
+    )
+
+    errors, _warnings = eng.precheck(strict=False)
+
+    assert any(e.startswith("pre_sql[2]") and "nope" in e for e in errors), errors
+
+
+@pytest.mark.acceptance
+def test_a_statement_can_use_a_table_an_earlier_statement_created(engine_module):
+    """DDL in the block runs for real on the scratch schema, or the rest is planned against a lie."""
+    profile = {
+        "pre_sql": [
+            "CREATE TABLE tmp_first AS SELECT customer_id, min(order_time) AS t FROM orders GROUP BY 1",
+            "UPDATE orders o SET is_first_order = (o.order_time = f.t) FROM tmp_first f "
+            "WHERE o.customer_id = f.customer_id",
+            "DROP TABLE tmp_first",
+        ]
+    }
+    eng = engine_module.DDLEngine(SQL_BLOCK_DDL, rows=5000, months=3, seed=1, profile=profile)
+
+    errors, _warnings = eng.precheck(strict=False)
+
+    assert not [e for e in errors if e.startswith("pre_sql")], errors
+
+
+@pytest.mark.acceptance
+def test_report_plans_the_statements_itself(engine_module, capsys):
+    """`report()` must not claim work `precheck()` did, because nothing has called `precheck()`.
+
+    `__init__` stops at `_infer()` and `generate()` is the only other caller, so on the
+    `gen.py report` path - the first thing the skill runs - the claim would describe validation
+    that had not happened. It plans them itself instead, which is also where the feedback is
+    cheapest.
+    """
+    eng = engine_module.DDLEngine(
+        SQL_BLOCK_DDL, rows=5000, months=3, seed=1, profile={"pre_sql": ["UPDATE orders SET paid_amount = 1"]}
+    )
+    eng.report()
+
+    out = capsys.readouterr().out
+
+    assert "pre_sql: 1 statement(s) will run" in out
+    assert "planned against the schema" in out
+
+
+@pytest.mark.acceptance
+def test_report_shows_the_findings_instead_of_the_claim(engine_module, capsys):
+    """A broken statement must surface on the report path, not only inside generate()."""
+    eng = engine_module.DDLEngine(
+        SQL_BLOCK_DDL, rows=5000, months=3, seed=1, profile={"pre_sql": ["UPDATE orders SET nope = 1"]}
+    )
+    eng.report()
+
+    out = capsys.readouterr().out
+
+    assert "configuration pre-check failed" in out
+    assert "pre_sql[1]" in out and "nope" in out
+    assert "columns and types check out" not in out, "do not claim a clean bill next to a finding"
+
+
+@pytest.mark.acceptance
+@pytest.mark.parametrize("extra_tables", ("summary", "all"))
+def test_extra_sql_may_reference_the_auto_summary_layer(engine_module, extra_tables):
+    """`extra_sql` runs *after* the summary layer, and post-processing it is its main use.
+
+    Those tables are built during `build_db` and never appear in `self.schema`, so validating
+    against the schema alone reported every legitimate reference as "table does not exist" - and
+    `generate()` calls `precheck` in strict mode, which made `extra_sql` unusable on these paths.
+    """
+    eng = engine_module.DDLEngine(
+        SQL_BLOCK_DDL,
+        rows=5000,
+        months=3,
+        seed=1,
+        extra_tables=extra_tables,
+        profile={"extra_sql": ["UPDATE ads_business_daily SET row_cnt = row_cnt WHERE 1=0"]},
+    )
+
+    errors, _warnings = eng.precheck(strict=False)
+
+    assert not [e for e in errors if e.startswith("extra_sql")], errors
+
+
+@pytest.mark.acceptance
+def test_a_bad_column_on_a_summary_table_is_still_caught(engine_module):
+    """Staging the layer must not turn into waving it through."""
+    eng = engine_module.DDLEngine(
+        SQL_BLOCK_DDL,
+        rows=5000,
+        months=3,
+        seed=1,
+        extra_tables="summary",
+        profile={"extra_sql": ["UPDATE ads_business_daily SET order_cnt = 1"]},
+    )
+
+    errors, _warnings = eng.precheck(strict=False)
+
+    assert any(e.startswith("extra_sql[1]") and "order_cnt" in e for e in errors), errors
+
+
+@pytest.mark.acceptance
+def test_staging_the_summary_layer_leaves_the_engine_untouched(engine_module):
+    """`_auto_summary_sql` rewrites `_made`; a pre-check must not leave a trace."""
+    eng = engine_module.DDLEngine(
+        SQL_BLOCK_DDL,
+        rows=5000,
+        months=3,
+        seed=1,
+        extra_tables="summary",
+        profile={"extra_sql": ["UPDATE ads_business_daily SET row_cnt = row_cnt WHERE 1=0"]},
+    )
+    before = "_made" in eng.__dict__
+
+    eng.precheck(strict=False)
+
+    assert ("_made" in eng.__dict__) == before
+
+
+@pytest.mark.acceptance
+def test_the_summary_path_still_generates_end_to_end(engine_module, tmp_path):
+    """The check that matters: strict precheck runs inside generate()."""
+    eng = engine_module.DDLEngine(
+        SQL_BLOCK_DDL,
+        rows=8000,
+        months=4,
+        seed=1,
+        extra_tables="summary",
+        profile={"extra_sql": ["UPDATE ads_business_daily SET row_cnt = row_cnt WHERE 1=0"]},
+    )
+
+    result = eng.generate(str(tmp_path / "s.duckdb"), verbose=False)
+
+    assert "ads_business_daily" in result["tables"]
+
+
+BUDGET_DDL = """
+CREATE TABLE customers (
+    customer_id BIGINT PRIMARY KEY,
+    customer_name VARCHAR
+);
+CREATE TABLE orders (
+    order_id BIGINT PRIMARY KEY,
+    customer_id BIGINT REFERENCES customers(customer_id),
+    order_time TIMESTAMP,
+    paid_amount DECIMAL(18, 2)
+);
+CREATE TABLE order_items (
+    item_id BIGINT PRIMARY KEY,
+    order_id BIGINT REFERENCES orders(order_id),
+    quantity INTEGER,
+    item_amount DECIMAL(18, 2)
+);
+"""
+
+
+@pytest.mark.acceptance
+def test_pinning_more_rows_than_the_budget_is_refused(engine_module):
+    """Calibration can only scale tables that are neither pinned nor role-fixed.
+
+    Pin past the budget and there is nothing left to scale, so the total can never come back -
+    which is worth saying before generating rather than after.
+    """
+    eng = engine_module.DDLEngine(
+        BUDGET_DDL,
+        rows=80_000,
+        months=6,
+        seed=1,
+        profile={"table_rows": {"orders": 60_000, "order_items": 90_000}},
+    )
+
+    errors, _warnings = eng.precheck(strict=False)
+
+    assert any("table_rows pins 150,000 rows against a budget of 80,000" in e for e in errors), errors
+
+
+@pytest.mark.acceptance
+def test_pinning_inside_the_budget_is_left_alone(engine_module):
+    eng = engine_module.DDLEngine(BUDGET_DDL, rows=80_000, months=6, seed=1, profile={"table_rows": {"orders": 20_000}})
+
+    errors, _warnings = eng.precheck(strict=False)
+
+    assert not [e for e in errors if "table_rows pins" in e], errors
+
+
+@pytest.mark.acceptance
+def test_a_deviation_outside_tolerance_is_reported(engine_module, tmp_path, capsys):
+    """The warning fired only past 25%, so a run shipped +12.5% in silence."""
+    # Pin only the detail table: the fact table stays scalable, so this is a genuine overshoot
+    # rather than the "nothing left to calibrate" case, which precheck refuses outright.
+    eng = engine_module.DDLEngine(
+        BUDGET_DDL,
+        rows=4000,
+        months=6,
+        seed=1,
+        profile={"table_rows": {"order_items": 3800}},
+    )
+
+    result = eng.generate(str(tmp_path / "b.duckdb"))
+
+    assert abs(result["deviation"]) > 0.06
+    out = capsys.readouterr().out
+    assert "outside the 6% tolerance" in out, out
+    assert "pinned table_rows values leave calibration nothing to scale" in out
+
+
+@pytest.mark.acceptance
+def test_the_calibration_note_says_what_is_reused(engine_module, tmp_path, capsys):
+    """ "(reused previous calibration)" read as "the data is cached".
+
+    A production run deleted `data/_build` to fight a cache that does not exist.
+    """
+    out_path = tmp_path / "c.duckdb"
+    engine_module.DDLEngine(BUDGET_DDL, rows=6000, months=3, seed=1).generate(str(out_path))
+    capsys.readouterr()
+
+    engine_module.DDLEngine(BUDGET_DDL, rows=6000, months=3, seed=1).generate(str(out_path))
+
+    out = capsys.readouterr().out
+    assert "every row was generated fresh" in out, out
+
+
+@pytest.mark.acceptance
+def test_pinning_everything_scalable_is_refused(engine_module):
+    """`rows=` stops meaning anything once calibration has no table left to move.
+
+    The production overshoot came from exactly this: four of five tables pinned, one pass, +12.5%.
+    """
+    eng = engine_module.DDLEngine(
+        BUDGET_DDL,
+        rows=80_000,
+        months=6,
+        seed=1,
+        profile={"table_rows": {"orders": 20_000, "order_items": 30_000}},
+    )
+
+    errors, _warnings = eng.precheck(strict=False)
+
+    assert any("pins every table calibration could scale" in e for e in errors), errors
+
+
+@pytest.mark.acceptance
+def test_leaving_one_table_free_is_allowed(engine_module):
+    eng = engine_module.DDLEngine(
+        BUDGET_DDL, rows=80_000, months=6, seed=1, profile={"table_rows": {"order_items": 30_000}}
+    )
+
+    errors, _warnings = eng.precheck(strict=False)
+
+    assert not [e for e in errors if "pins every table" in e], errors
+
+
+@pytest.mark.acceptance
+def test_report_states_the_amount_identity_the_engine_enforces(engine_module, capsys):
+    """A production run restated this identity in `formulas` after deriving it by hand."""
+    eng = engine_module.DDLEngine(
+        "CREATE TABLE orders (order_id BIGINT PRIMARY KEY, order_time TIMESTAMP, "
+        "original_amount DECIMAL(18,2), discount_amount DECIMAL(18,2), shipping_amount DECIMAL(18,2), "
+        "tax_amount DECIMAL(18,2), coupon_amount DECIMAL(18,2), paid_amount DECIMAL(18,2));",
+        rows=5000,
+        months=3,
+        seed=1,
+    )
+    eng.report()
+
+    out = capsys.readouterr().out
+
+    assert "amount identity enforced on orders: paid_amount = original_amount - discount_amount" in out
+    assert "coupon is not part of it" in out
+    assert "not by restating the identity" in out
+    # The roles are what the identity is built from, and a wrong one is the whole failure mode:
+    # `scholarship_amount` read as a shipping charge is added to the paid amount, not deducted.
+    assert "amount roles on orders: " in out
+    assert "shipping_amount=ship" in out
+    assert "coupon_amount=coupon" in out
+
+
+@pytest.mark.acceptance
+def test_a_schema_with_nothing_to_calibrate_is_not_blamed_on_the_pin(engine_module):
+    """Dimensions and metric tables have nothing calibration can scale, pinned or not.
+
+    Refusing there blames the caller for their DDL, and the message named `table_rows` when only
+    `dim_rows` had been set.
+    """
+    eng = engine_module.DDLEngine(
+        "CREATE TABLE customers (customer_id BIGINT PRIMARY KEY, customer_name VARCHAR);"
+        "CREATE TABLE daily_metrics (stat_dt DATE, channel VARCHAR, impressions BIGINT, "
+        "clicks BIGINT, gmv DECIMAL(18,2));",
+        rows=9000,
+        months=6,
+        seed=1,
+        profile={"dim_rows": {"customers": 500}},
+    )
+
+    errors, _warnings = eng.precheck(strict=False)
+
+    assert not [e for e in errors if "pins every table" in e], errors
+
+
+@pytest.mark.acceptance
+def test_the_pin_message_names_the_key_that_was_set(engine_module):
+    eng = engine_module.DDLEngine(
+        BUDGET_DDL,
+        rows=80_000,
+        months=6,
+        seed=1,
+        profile={"table_rows": {"orders": 20_000, "order_items": 30_000}},
+    )
+
+    errors, _warnings = eng.precheck(strict=False)
+
+    message = next(e for e in errors if "pins every table" in e)
+    assert message.startswith("table_rows pins")
+    # and names the tables it is talking about
+    assert "order_items, orders" in message
+
+
+@pytest.mark.acceptance
+def test_the_profit_identity_names_a_real_column(engine_module, capsys):
+    """Every other term on that line is a column; "revenue" was the internal role name."""
+    engine_module.DDLEngine(
+        "CREATE TABLE order_items (item_id BIGINT PRIMARY KEY, order_time TIMESTAMP, "
+        "sales_amount DECIMAL(18,2), total_cost DECIMAL(18,2), gross_profit DECIMAL(18,2));",
+        rows=5000,
+        months=3,
+        seed=1,
+    ).report()
+
+    out = capsys.readouterr().out
+
+    assert "gross_profit = sales_amount - total_cost" in out
+    assert "revenue -" not in out
+
+
+@pytest.mark.acceptance
+def test_a_metric_table_does_not_claim_an_identity_the_engine_never_enforces(engine_module, capsys):
+    """Only `_gen_fact` and `_gen_detail`'s backfill call `_settle_amounts`.
+
+    A metric table fills its amounts independently, so the claimed
+    `paid = gross - discount + tax` was off by hundreds per row - the report asserting work the
+    engine does not do, which is the failure the line was added to prevent.
+    """
+    engine_module.DDLEngine(
+        "CREATE TABLE orders (order_id BIGINT PRIMARY KEY, order_time TIMESTAMP, paid_amount DECIMAL(18,2));"
+        "CREATE TABLE daily_channel_metrics (stat_dt DATE, channel VARCHAR, impressions BIGINT, "
+        "clicks BIGINT, gross_revenue DECIMAL(18,2), discount_amount DECIMAL(18,2), "
+        "tax_amount DECIMAL(18,2), paid_revenue DECIMAL(18,2));",
+        rows=9000,
+        months=6,
+        seed=1,
+    ).report()
+
+    out = capsys.readouterr().out
+
+    assert "daily_channel_metrics" in out, "the table is still in the plan"
+    assert "amount identity enforced" not in out
+
+
+DOWNSTREAM_DDL = """
+CREATE TABLE orders (
+    order_id BIGINT PRIMARY KEY,
+    order_date DATE,
+    paid_amount DECIMAL(18, 2)
+);
+CREATE TABLE order_items (
+    item_id BIGINT PRIMARY KEY,
+    order_id BIGINT REFERENCES orders(order_id),
+    order_date DATE,
+    quantity INTEGER,
+    item_amount DECIMAL(18, 2)
+);
+CREATE TABLE shipments (
+    shipment_id BIGINT PRIMARY KEY,
+    order_id BIGINT REFERENCES orders(order_id),
+    ship_date DATE,
+    freight_amount DECIMAL(18, 2)
+);
+"""
+
+
+@pytest.mark.acceptance
+def test_a_detail_table_is_planned_above_its_parent(engine_module):
+    """A detail row is a line of its parent document, so there cannot be fewer of them.
+
+    Independent role shares gave `fact` 0.52 and `detail` 0.28, and a production run was handed
+    26,320 order_items under 48,880 orders - 0.54 lines per order. The caller stopped trusting the
+    allocation, pinned `table_rows` on all five tables by hand, and spent the turn on arithmetic
+    the engine exists to do. SKILL.md section 1.2 has always asked for 1.4-2.2 lines per parent.
+    """
+    eng = engine_module.DDLEngine(BUDGET_DDL, rows=80_000, months=17, seed=42)
+
+    ratio = eng.nrows["order_items"] / eng.nrows["orders"]
+    assert ratio > 1, f"a detail table cannot hold fewer rows than its parent (got {ratio:.2f})"
+    assert 1.4 <= ratio <= 2.2, f"lines per parent outside the documented band (got {ratio:.2f})"
+
+
+@pytest.mark.acceptance
+def test_the_planned_detail_count_is_one_the_generator_can_reach(engine_module, tmp_path):
+    """The plan `report()` prints has to be the plan `generate()` carries out.
+
+    `_gen_detail` rounds lines-per-parent up to at least one, so a plan below the parent count was
+    not merely unrealistic - it was unreachable, and the run silently produced most of a table more
+    than the number it had just printed.
+    """
+    eng = engine_module.DDLEngine(BUDGET_DDL, rows=9_000, months=3, seed=1)
+    planned = eng.nrows["order_items"]
+
+    out = tmp_path / "detail.duckdb"
+    eng.generate(str(out), verbose=False)
+    import duckdb
+
+    con = duckdb.connect(str(out))
+    try:
+        actual = con.execute("SELECT count(*) FROM order_items").fetchone()[0]
+    finally:
+        con.close()
+
+    assert abs(actual - planned) / planned < 0.2, f"planned {planned:,}, generated {actual:,}"
+
+
+@pytest.mark.acceptance
+def test_a_downstream_fact_is_planned_below_its_parent(engine_module):
+    """A shipment / claim / repayment does not follow every document, so it is not a detail line.
+
+    Both roles used to draw from the same `detail` share; sizing them the same way would have
+    swapped one wrong ratio for another.
+    """
+    eng = engine_module.DDLEngine(DOWNSTREAM_DDL, rows=20_000, months=6, seed=1)
+    assert eng.roles["shipments"] == "downstream"
+
+    assert eng.nrows["shipments"] < eng.nrows["orders"]
+    assert eng.nrows["order_items"] > eng.nrows["orders"]
+
+
+NAMING_TPL_DDL = """
+CREATE TABLE products (
+    product_id BIGINT PRIMARY KEY,
+    product_name VARCHAR,
+    category VARCHAR,          -- Electronics / Beauty / Clothing
+    list_price DECIMAL(18, 2)
+);
+CREATE TABLE orders (
+    order_id BIGINT PRIMARY KEY,
+    product_id BIGINT REFERENCES products(product_id),
+    order_time TIMESTAMP,
+    paid_amount DECIMAL(18, 2)
+);
+"""
+
+
+@pytest.mark.acceptance
+def test_a_naming_template_naming_a_column_does_not_break_the_report(engine_module, capsys):
+    """`report()` previews names before a row exists, and a `tpl` draws from the row being built.
+
+    Passing no row made a perfectly valid `"{brand} {category}"` raise KeyError out of `report()` -
+    a traceback in place of the plan, on the first command the skill tells the caller to run. The
+    production workaround was a fake `vocab` entry, which then made the preview print names the run
+    would never produce.
+    """
+    engine_module.DDLEngine(
+        NAMING_TPL_DDL,
+        rows=9_000,
+        months=3,
+        seed=1,
+        profile={"naming": {"products": {"tpl": "{brand} {category}"}}},
+    ).report()
+
+    line = next(ln for ln in capsys.readouterr().out.splitlines() if "products.product_name ->" in ln)
+    drawn = {v for v in ("Electronics", "Beauty", "Clothing") if v in line}
+
+    assert drawn, f"the preview must show the domain the run will really draw from: {line}"
+    assert "CATEG" not in line, f"a fallback code means the preview never saw the DDL domain: {line}"
+
+
+@pytest.mark.acceptance
+def test_a_naming_template_naming_nothing_says_so_instead_of_raising(engine_module, capsys):
+    engine_module.DDLEngine(
+        NAMING_TPL_DDL,
+        rows=9_000,
+        months=3,
+        seed=1,
+        profile={"naming": {"products": {"tpl": "{brand} {nonesuch}"}}},
+    ).report()
+
+    out = capsys.readouterr().out
+
+    assert "'nonesuch'" in out
+    assert "neither a vocabulary key nor a generated column of products" in out
+
+
+@pytest.mark.acceptance
+def test_report_runs_the_validation_generate_will_run(engine_module, capsys):
+    """`gen.py report` is where the caller looks, and it used to validate nothing.
+
+    A production run pinned every table, read a plan with nothing wrong in it, and moved on; the
+    "pins every table calibration could scale" error existed the whole time and had no surface to
+    appear on until `generate()`, long after the profile was written.
+    """
+    engine_module.DDLEngine(
+        BUDGET_DDL,
+        rows=80_000,
+        months=6,
+        seed=1,
+        profile={"table_rows": {"orders": 26_000, "order_items": 40_000}},
+    ).report()
+
+    out = capsys.readouterr().out
+
+    assert "pins every table calibration could scale" in out
+
+
+@pytest.mark.acceptance
+def test_a_clean_profile_is_told_it_is_clean(engine_module, capsys):
+    """Silence reads as "not checked". It has to say the check ran."""
+    engine_module.DDLEngine(BUDGET_DDL, rows=80_000, months=6, seed=1, profile={"trend_mom": 0.03}).report()
+
+    assert "profile validated: no errors, no warnings" in capsys.readouterr().out
+
+
+@pytest.mark.acceptance
+def test_a_bare_ddl_is_not_told_its_profile_validated(engine_module, capsys):
+    """`plan_datasource` reports on a DDL alone, before a profile exists.
+
+    Saying "validated" there is a green light for work nobody has done yet.
+    """
+    engine_module.DDLEngine(BUDGET_DDL, rows=80_000, months=6, seed=1).report()
+
+    assert "profile validated" not in capsys.readouterr().out
+
+
+@pytest.mark.acceptance
+def test_a_failing_sql_block_is_reported_once_not_twice(engine_module, capsys):
+    """`_print_plan` listed the SQL problems and then the pre-check listed them again.
+
+    The one report that has to be unambiguous printed the same failure twice, four lines apart.
+    """
+    engine_module.DDLEngine(
+        BUDGET_DDL,
+        rows=80_000,
+        months=6,
+        seed=1,
+        profile={"pre_sql": "UPDATE orders SET no_such_col = 1;"},
+    ).report()
+
+    out = capsys.readouterr().out
+
+    assert out.count("pre_sql[1]:") == 1, out
+
+
+@pytest.mark.acceptance
+@pytest.mark.parametrize("requested", (1.0, 1.35, 1.84, 2.6, 3.0, 4.0))
+def test_lines_per_document_follow_the_plan(engine_module, requested):
+    """The line-count draw ignored the plan below two lines per document.
+
+    It returned the raw spread, mean 1.84, whatever `nrows` said - which made a detail table the one
+    table calibration could not move, because calibration works by rescaling `nrows` between passes.
+    """
+    import random
+
+    eng = engine_module.DDLEngine(BUDGET_DDL, rows=20_000, months=6, seed=1)
+    rng = random.Random(7)
+
+    mean = sum(eng._lines_for(requested, rng) for _ in range(40_000)) / 40_000
+
+    # An upper clamp used to truncate the tail, and it cost the most exactly where the caller had
+    # asked for the most: 2% of the requested mean at three lines per document, 3% at four.
+    assert abs(mean - requested) < 0.05, f"asked for {requested} lines per document, drew {mean:.3f}"
+
+
+@pytest.mark.acceptance
+def test_lines_per_document_never_drop_below_one(engine_module):
+    """A detail row belongs to a parent document, so a document cannot have zero lines."""
+    import random
+
+    eng = engine_module.DDLEngine(BUDGET_DDL, rows=20_000, months=6, seed=1)
+    rng = random.Random(7)
+
+    assert min(eng._lines_for(0.4, rng) for _ in range(5_000)) == 1
+
+
+@pytest.mark.acceptance
+def test_calibration_reaches_the_budget_through_the_detail_table(engine_module, tmp_path):
+    """Two production runs shipped ~90,000 rows against a requested 80,000.
+
+    Both pinned their other tables and left the detail table free to absorb the difference - which
+    it could not do, because the line-count draw was not reading `nrows`. Every one of the three
+    passes produced byte-identical row counts, and the run shipped the overshoot.
+    """
+    eng = engine_module.DDLEngine(
+        BUDGET_DDL,
+        rows=20_000,
+        months=6,
+        seed=1,
+        profile={"table_rows": {"customers": 1500, "orders": 9000}},
+    )
+
+    res = eng.generate(str(tmp_path / "cal.duckdb"), verbose=False)
+
+    assert abs(res["deviation"]) <= 0.06, f"{res['rows']:,} rows, deviation {res['deviation']:+.1%}"
+    assert res["tables"]["order_items"] >= res["tables"]["orders"], "still one line per order at the floor"
+
+
+@pytest.mark.acceptance
+def test_a_skipped_funnel_stage_still_gets_a_believable_ratio(engine_module):
+    """The ratio belongs to the pair of stages, not to the step's own name.
+
+    Keyed on the name alone, `purchasers` got "purchasers per checkout user" wherever it appeared -
+    so a schema that goes straight from sessions to purchasers was handed a 55% site conversion
+    rate. The stage levels divide, so a skipped stage narrows by the whole gap instead.
+    """
+    full = engine_module.DDLEngine._default_ratio("checkout_users", "purchasers")[0]
+    skipped = engine_module.DDLEngine._default_ratio("sessions", "purchasers")[0]
+
+    assert 0.4 < full[0] < full[1] < 0.7, full
+    assert 0.01 < skipped[0] < skipped[1] < 0.05, skipped
+
+
+@pytest.mark.acceptance
+def test_a_narrowing_funnel_step_never_prefills_above_one(engine_module):
+    """A step that loses people cannot gain them on some rows, or the funnel stops being a funnel."""
+    for src, dst in (("clicks", "sessions"), ("sessions", "unique_visitors"), ("add_to_carts", "checkout_users")):
+        (_lo, hi), known = engine_module.DDLEngine._default_ratio(src, dst)
+        assert known, f"{src} -> {dst} was not recognised"
+        assert hi < 1.0, f"{src} -> {dst} prefilled {hi}"
+
+
+@pytest.mark.acceptance
+def test_an_unrecognised_step_is_marked_rather_than_guessed_at(engine_module):
+    """A default the engine cannot justify has to say so, or it reads as an inferred value."""
+    ratio, known = engine_module.DDLEngine._default_ratio("widgets_seen", "sprockets_touched")
+
+    assert not known
+    assert ratio == engine_module.DDLEngine.FUNNEL_DEFAULT
+
+
+@pytest.mark.acceptance
+@pytest.mark.parametrize("pin,expected", [({"orders": 12_000}, 12_000), ({"orders": 1_500}, 1_500)])
+def test_pinning_the_parent_scales_its_detail_table(engine_module, pin, expected):
+    """A pin is a count, not a share, and a detail hangs off its parent's count.
+
+    Pins used to be applied last, as a plain overwrite once the shares were computed, so the detail
+    table stayed on the number its share gave it and never looked at the parent again: `orders`
+    pinned to 12,000 or to 1,500 both produced 12,085 `order_items` - one line per order or eight.
+    """
+    eng = engine_module.DDLEngine(BUDGET_DDL, rows=20_000, months=6, seed=1, profile={"table_rows": pin})
+
+    ratio = eng.nrows["order_items"] / eng.nrows["orders"]
+
+    assert eng.nrows["orders"] == expected, "the pin itself is the caller's instruction"
+    assert 1.4 <= ratio <= 2.2, f"lines per parent outside the documented band (got {ratio:.2f})"
+
+
+@pytest.mark.acceptance
+def test_pinning_the_detail_table_sizes_its_parent(engine_module):
+    """The same relationship read the other way: pinned lines imply how many documents carry them.
+
+    Resolving pins in one direction only left the parent on the 50-row floor - 600 lines per order.
+    """
+    eng = engine_module.DDLEngine(
+        BUDGET_DDL, rows=20_000, months=6, seed=1, profile={"table_rows": {"order_items": 30_000}}
+    )
+
+    assert eng.nrows["order_items"] == 30_000
+    assert 1.4 <= 30_000 / eng.nrows["orders"] <= 2.2, eng.nrows
+
+
+@pytest.mark.acceptance
+def test_pinning_both_ends_leaves_both_alone(engine_module):
+    """An explicit count on both tables is the caller overriding the ratio, which is allowed."""
+    eng = engine_module.DDLEngine(
+        BUDGET_DDL, rows=20_000, months=6, seed=1, profile={"table_rows": {"orders": 6_000, "order_items": 9_000}}
+    )
+
+    assert (eng.nrows["orders"], eng.nrows["order_items"]) == (6_000, 9_000)
+
+
+@pytest.mark.acceptance
+def test_a_wrongly_typed_sql_block_is_reported_not_raised(engine_module, capsys):
+    """`_sql_block` raises TypeError, and it did so from inside the report.
+
+    A traceback halfway through the plan, for a mistake the pre-check names in one sentence.
+    """
+    engine_module.DDLEngine(BUDGET_DDL, rows=5_000, months=3, seed=1, profile={"pre_sql": 123}).report()
+
+    out = capsys.readouterr().out
+
+    assert "pre_sql: must be a str or a list of str, got int" in out
+    assert "table" in out, "the rest of the plan still has to print"
+
+
+NESTED_DETAIL_DDL = """
+CREATE TABLE orders (
+    order_id BIGINT PRIMARY KEY,
+    order_time TIMESTAMP,
+    paid_amount DECIMAL(18, 2)
+);
+CREATE TABLE order_items (
+    item_id BIGINT PRIMARY KEY,
+    order_id BIGINT REFERENCES orders(order_id),
+    quantity INTEGER,
+    item_amount DECIMAL(18, 2)
+);
+CREATE TABLE item_serials (
+    serial_id BIGINT PRIMARY KEY,
+    item_id BIGINT REFERENCES order_items(item_id),
+    serial_no VARCHAR
+);
+"""
+
+
+@pytest.mark.acceptance
+def test_a_detail_table_can_itself_be_a_parent(engine_module, tmp_path):
+    """`order_items` has serials; a claim has line items. A detail table is a legitimate parent.
+
+    `_gen_detail` recorded neither `refs` nor `_fact_rows`, so `_parent_of` could not see it and the
+    nested table fell through to `_gen_fact` - generated as an independent fact, 10,754 rows with
+    the foreign key NULL on every single one. The FK check reports that as resolving, because it
+    excludes NULLs from both sides of the ratio.
+    """
+    import duckdb
+
+    out = tmp_path / "nested.duckdb"
+    engine_module.DDLEngine(NESTED_DETAIL_DDL, rows=20_000, months=6, seed=1).generate(str(out), verbose=False)
+
+    con = duckdb.connect(str(out))
+    try:
+        total, nulls = con.execute(
+            "SELECT count(*), count(*) FILTER (WHERE item_id IS NULL) FROM item_serials"
+        ).fetchone()
+        resolving = con.execute(
+            "SELECT count(*) FROM item_serials s JOIN order_items i ON s.item_id = i.item_id"
+        ).fetchone()[0]
+    finally:
+        con.close()
+
+    assert total > 0
+    assert nulls == 0, f"{nulls:,} of {total:,} nested-detail rows have no parent key"
+    assert resolving == total
+
+
+REVIEW_METRIC_DDL = """
+CREATE TABLE orders (
+    order_id BIGINT PRIMARY KEY,
+    order_time TIMESTAMP,
+    paid_amount DECIMAL(18, 2)
+);
+CREATE TABLE daily_seller_metrics (
+    stat_dt DATE,
+    seller VARCHAR,
+    impressions BIGINT,
+    clicks BIGINT,
+    review_count BIGINT,
+    gmv DECIMAL(18, 2)
+);
+"""
+
+
+@pytest.mark.acceptance
+def test_a_stage_word_only_matches_at_a_token_start(engine_module):
+    """A bare substring search read `review_count` as a page view, because it contains "view".
+
+    Page views are the one fan-out in the table, so a review column was prefilled to go *up* from
+    its predecessor instead of down - the only ratio in the funnel that must never be guessed wrong.
+    """
+    page_view = dict(engine_module.DDLEngine.FUNNEL_STAGE)[r"view|browse|detail|pv"]
+
+    for name in ("review_count", "review_score", "interview_count"):
+        assert engine_module.DDLEngine._stage_level(name) is None, name
+    for name in ("view_count", "page_view", "product_detail", "pv_cnt"):
+        assert engine_module.DDLEngine._stage_level(name) == page_view, name
+
+
+@pytest.mark.acceptance
+def test_an_unrecognised_stage_is_annotated_in_the_skeleton(engine_module):
+    """A default the engine cannot justify has to be marked where the caller will read it."""
+    skeleton = engine_module.DDLEngine(REVIEW_METRIC_DDL, rows=20_000, months=6, seed=1).profile_skeleton()
+
+    line = next(ln for ln in skeleton.splitlines() if "review_count" in ln)
+
+    assert "step not recognised" in line, line
+
+
+CAMPUS_DDL = """
+CREATE TABLE students (
+    student_id BIGINT PRIMARY KEY,
+    student_name VARCHAR,
+    gpa DECIMAL(4, 2)
+);
+CREATE TABLE enrolments (
+    enrol_id BIGINT PRIMARY KEY,
+    student_id BIGINT REFERENCES students(student_id),
+    enrol_time TIMESTAMP,
+    scholarship_amount DECIMAL(18, 2),
+    tuition_amount DECIMAL(18, 2),
+    paid_amount DECIMAL(18, 2)
+);
+"""
+
+
+@pytest.mark.acceptance
+@pytest.mark.parametrize(
+    "column,role",
+    [
+        ("scholarship_amount", "gross"),
+        ("shipping_amount", "ship"),
+        ("shipment_fee", "ship"),
+        ("taxonomy_value", "gross"),
+        ("tax_amount", "tax"),
+        ("taxes_paid", "tax"),
+    ],
+)
+def test_an_amount_role_matches_a_word_not_a_substring(engine_module, column, role):
+    """The role words are English business vocabulary and they collide across industries.
+
+    `scholarship_amount` matched the shipping pattern, so a scholarship was settled as a delivery
+    charge - *added* to the amount paid instead of deducted from it - and `taxonomy_value` was a tax.
+    """
+    assert engine_module.DDLEngine._amt_role(column) == role
+
+
+@pytest.mark.acceptance
+def test_the_report_names_the_role_it_gave_each_amount(engine_module, capsys):
+    """The identity is built from the roles, so the roles are what has to be checkable.
+
+    The report stated the identity and never said which column it had read as what, which is the
+    one thing a caller on a non-retail schema needs to see.
+    """
+    engine_module.DDLEngine(CAMPUS_DDL, rows=9_000, months=6, seed=1).report()
+
+    out = capsys.readouterr().out
+
+    assert "scholarship_amount=gross" in out
+    assert "paid_amount=paid" in out
+
+
+@pytest.mark.acceptance
+@pytest.mark.parametrize(
+    "shape,low,high", [("weekend_heavy", 1.15, 1.6), ("weekday_heavy", 0.2, 0.6), ("flat", 0.9, 1.1)]
+)
+def test_the_weekly_shape_reaches_the_data(engine_module, tmp_path, shape, low, high):
+    """`weekend_lift=1.33` was hardcoded: a consumer shop, and nothing else.
+
+    A B2B schema generated that way has its busiest days on the weekend, and the weekday check then
+    reports the "B2C shape" it was handed.
+    """
+    import duckdb
+
+    out = tmp_path / f"{shape}.duckdb"
+    # The seed cannot stabilize sampling if the date window moves with date.today().
+    engine_module.DDLEngine(
+        BUDGET_DDL,
+        rows=9_000,
+        months=6,
+        seed=1,
+        end_date=date(2026, 9, 21),
+        profile={"weekly_shape": shape},
+    ).generate(str(out), verbose=False)
+
+    con = duckdb.connect(str(out))
+    try:
+        ratio = con.execute(
+            "WITH d AS (SELECT order_time::date dt, count(*) n FROM orders GROUP BY 1) "
+            "SELECT avg(n) FILTER (WHERE dayofweek(dt) IN (0, 6)) "
+            "     / avg(n) FILTER (WHERE dayofweek(dt) NOT IN (0, 6)) FROM d"
+        ).fetchone()[0]
+    finally:
+        con.close()
+
+    assert low <= ratio <= high, f"{shape} produced a weekend/weekday ratio of {ratio:.2f}"
+
+
+@pytest.mark.acceptance
+def test_the_report_states_which_weekly_shape_is_in_force(engine_module, capsys):
+    engine_module.DDLEngine(BUDGET_DDL, rows=9_000, months=6, seed=1).report()
+
+    assert "weekly shape: weekend_heavy" in capsys.readouterr().out
+
+
+ATTR_DATE_DDL = """
+CREATE TABLE parties (
+    party_id BIGINT PRIMARY KEY,
+    party_name VARCHAR
+);
+CREATE TABLE movements (
+    movement_id BIGINT PRIMARY KEY,
+    party_id BIGINT REFERENCES parties(party_id),
+    {date_col} TIMESTAMP,
+    fee_amount DECIMAL(18, 2)
+);
+"""
+
+
+@pytest.mark.acceptance
+@pytest.mark.parametrize("date_col", ["aggregate_dt", "invalidated_at", "reopened_at", "reentry_time"])
+def test_a_business_date_is_not_demoted_by_a_substring(engine_module, date_col):
+    """The attribute-date test was an unanchored substring search.
+
+    `aggregate_dt` matched "reg", `invalidated_at` matched "valid", `reopened_at` matched "open"
+    and `reentry_time` matched "entry" - so the table's only business date read as an entity
+    attribute and the whole table became a dimension, every measure on it generated as a static
+    attribute with no time signal.
+    """
+    eng = engine_module.DDLEngine(ATTR_DATE_DDL.format(date_col=date_col), rows=9_000, months=6, seed=1)
+
+    assert eng.roles["movements"] == "fact"
+
+
+@pytest.mark.acceptance
+def test_a_table_demoted_by_a_date_name_says_so(engine_module, capsys):
+    """`opened_at` is an entity attribute on a dimension and the event time on a ticket table.
+
+    The heuristic cannot tell, so when it demotes a table that has measures and a foreign key it
+    names the column that decided it and the override, rather than leaving the caller to find out
+    from the data.
+    """
+    ddl = ATTR_DATE_DDL.format(date_col="opened_at")
+    eng = engine_module.DDLEngine(ddl, rows=9_000, months=6, seed=1)
+    eng.report()
+
+    out = capsys.readouterr().out
+
+    assert eng.roles["movements"] == "dim", "the heuristic still decides; the report just says so"
+    assert "`opened_at` reads as an entity attribute date" in out
+    assert "'movements': 'fact'" in out
+
+    override = engine_module.DDLEngine(ddl, rows=9_000, months=6, seed=1, profile={"roles": {"movements": "fact"}})
+    assert override.roles["movements"] == "fact", "the override the message names has to work"
+
+
+@pytest.mark.acceptance
+def test_measure_columns_arrive_as_skeleton_slots(engine_module):
+    """A measure's units cannot be inferred, and the fallback is a 0.1-40 lognormal.
+
+    A production schema got a GPA of 11.79 on a DECIMAL(4,2) because that fallback was hidden
+    behind the generator instead of written where the caller would read it.
+    """
+    skeleton = engine_module.DDLEngine(CAMPUS_DDL, rows=9_000, months=6, seed=1).profile_skeleton()
+
+    assert '"students.gpa": {"range": (0.1, 40)}' in skeleton
+    assert "cannot infer a measure" in skeleton
+
+
+@pytest.mark.acceptance
+@pytest.mark.parametrize(
+    "column,role",
+    [("payment_amount", "paid"), ("duty_free_price", "unit"), ("duty_amount", "tax")],
+)
+def test_the_role_words_cover_the_obvious_neighbours(engine_module, column, role):
+    """`payment_amount` fell to the catch-all because the pattern only had `pay_`, and
+    `duty_free_price` is a price rather than a duty."""
+    assert engine_module.DDLEngine._amt_role(column) == role
+
+
+@pytest.mark.acceptance
+def test_a_dimension_with_no_date_column_is_not_reported_as_demoted(engine_module, capsys):
+    """The demotion message blames a date column, so it must only fire when one decided it.
+
+    A table with measures, a foreign key and no date at all is a dimension for the ordinary reason.
+    It was reported as demoted by `` - an empty column name - which pointed the caller at a fact
+    table it should not build.
+    """
+    engine_module.DDLEngine(
+        "CREATE TABLE teachers (teacher_id BIGINT PRIMARY KEY, teacher_name VARCHAR);"
+        "CREATE TABLE courses (course_id BIGINT PRIMARY KEY, "
+        "teacher_id BIGINT REFERENCES teachers(teacher_id), course_name VARCHAR, credits INTEGER);",
+        rows=9_000,
+        months=6,
+        seed=1,
+    ).report()
+
+    out = capsys.readouterr().out
+
+    assert "planned as a dimension, because" not in out
+    assert "``" not in out
+
+
+@pytest.mark.acceptance
+@pytest.mark.parametrize("shape", ["weekend_heavy", "weekday_heavy", "flat"])
+def test_the_declared_weekly_shape_reaches_the_metadata(engine_module, tmp_path, shape):
+    """The quality check cannot honour a declaration it cannot see."""
+    import json
+
+    out = tmp_path / "m.duckdb"
+    engine_module.DDLEngine(BUDGET_DDL, rows=9_000, months=6, seed=1, profile={"weekly_shape": shape}).generate(
+        str(out), verbose=False
+    )
+
+    meta = json.loads((tmp_path / ".m.meta.json").read_text(encoding="utf-8"))
+
+    assert meta["weekly_shape"] == shape
+
+
+@pytest.mark.acceptance
+def test_measure_columns_left_on_the_fallback_are_named(engine_module):
+    """Deleting the skeleton's entry puts the column back on the fallback silently.
+
+    A warning rather than an error: the skeleton has to stay runnable as copied, and 0.1-40 is
+    genuinely right for some measures.
+    """
+    _errors, warnings = engine_module.DDLEngine(CAMPUS_DDL, rows=9_000, months=6, seed=1).precheck(strict=False)
+
+    assert any("students.gpa" in w and "0.1-40 fallback" in w for w in warnings), warnings
+
+
+@pytest.mark.acceptance
+def test_a_corrected_measure_range_clears_the_warning(engine_module):
+    _errors, warnings = engine_module.DDLEngine(
+        CAMPUS_DDL, rows=9_000, months=6, seed=1, profile={"columns": {"students.gpa": {"range": (0.0, 4.0)}}}
+    ).precheck(strict=False)
+
+    assert not [w for w in warnings if "0.1-40 fallback" in w], warnings
+
+
+@pytest.mark.acceptance
+@pytest.mark.parametrize("path", ["dim", "fill_generic"])
+def test_a_declared_measure_range_constrains_the_data(engine_module, tmp_path, path):
+    """Both measure generators ignored `columns['t.col']['range']`.
+
+    So the slot the skeleton writes and the warning precheck prints asked the caller to set a value
+    that changed nothing - a GPA declared (0.0, 4.0) still came out at 49.02. The two also
+    disagreed on the fallback, 0.1-50 on a dimension against 0.1-40 elsewhere, so neither matched
+    what was documented.
+    """
+    import duckdb
+
+    table, column, bounds = ("students", "gpa", (0.0, 4.0)) if path == "dim" else ("sessions", "room_area", (5.0, 40.0))
+    ddl = (
+        "CREATE TABLE students (student_id BIGINT PRIMARY KEY, student_name VARCHAR, gpa DECIMAL(4,2));"
+        "CREATE TABLE sessions (sess_id BIGINT PRIMARY KEY, "
+        "student_id BIGINT REFERENCES students(student_id), order_time TIMESTAMP, "
+        "fee_amount DECIMAL(18,2), room_area DECIMAL(6,2));"
+    )
+    out = tmp_path / f"{path}.duckdb"
+    engine_module.DDLEngine(
+        ddl, rows=9_000, months=6, seed=1, profile={"columns": {f"{table}.{column}": {"range": bounds}}}
+    ).generate(str(out), verbose=False)
+
+    con = duckdb.connect(str(out))
+    try:
+        low, high = con.execute(f"SELECT min({column}), max({column}) FROM {table}").fetchone()
+    finally:
+        con.close()
+
+    assert bounds[0] <= float(low) <= float(high) <= bounds[1], f"{column} spans {low}-{high}, asked for {bounds}"
+
+
+@pytest.mark.acceptance
+def test_a_measure_range_starting_at_zero_is_generable(engine_module, tmp_path):
+    """A lower bound of zero is the ordinary case for a bounded measure, and log(0) is not a number.
+
+    The lognormal draw raised `ValueError: math domain error` on the first range a caller would
+    write for a score.
+    """
+    import duckdb
+
+    out = tmp_path / "zero.duckdb"
+    engine_module.DDLEngine(
+        "CREATE TABLE gauges (gauge_id BIGINT PRIMARY KEY, gauge_name VARCHAR);"
+        "CREATE TABLE readings (reading_id BIGINT PRIMARY KEY, "
+        "gauge_id BIGINT REFERENCES gauges(gauge_id), order_time TIMESTAMP, "
+        "fee_amount DECIMAL(18,2), health_score DECIMAL(5,2));",
+        rows=9_000,
+        months=3,
+        seed=1,
+        profile={"columns": {"readings.health_score": {"range": (0.0, 100.0)}}},
+    ).generate(str(out), verbose=False)
+
+    con = duckdb.connect(str(out))
+    try:
+        low, high, below = con.execute(
+            "SELECT min(health_score), max(health_score), count(*) FILTER (WHERE health_score < 10) FROM readings"
+        ).fetchone()
+    finally:
+        con.close()
+
+    assert 0.0 <= float(low) <= float(high) <= 100.0, f"{low}-{high}"
+    assert below, "a range starting at zero has to be able to produce values near zero"
+
+
+@pytest.mark.acceptance
+def test_an_unsupported_weekly_shape_is_refused(engine_module):
+    """`.get(shape, weekend_heavy)` swallowed a typo and the surfaces then disagreed.
+
+    The report and the metadata echoed what was asked for while the data was generated as a
+    consumer shop, so the quality check was handed a label the rows did not carry.
+    """
+    errors, _warnings = engine_module.DDLEngine(
+        BUDGET_DDL, rows=9_000, months=6, seed=1, profile={"weekly_shape": "weekday-heavy"}
+    ).precheck(strict=False)
+
+    assert any("'weekday-heavy' is not a shape" in e for e in errors), errors
+
+
+@pytest.mark.acceptance
+@pytest.mark.parametrize("date_col", ["regression_dt", "regional_dt"])
+def test_reg_is_not_a_prefix_of_every_word_starting_with_reg(engine_module, date_col):
+    """Spelled out as `reg_` or `regist*`: a token start alone still caught `regression_dt`."""
+    eng = engine_module.DDLEngine(ATTR_DATE_DDL.format(date_col=date_col), rows=9_000, months=6, seed=1)
+
+    assert eng.roles["movements"] == "fact"
+
+
+@pytest.mark.acceptance
+@pytest.mark.parametrize("date_col", ["registered_at", "reg_dt", "registration_date"])
+def test_the_real_registration_dates_still_read_as_attributes(engine_module, date_col):
+    eng = engine_module.DDLEngine(ATTR_DATE_DDL.format(date_col=date_col), rows=9_000, months=6, seed=1)
+
+    assert eng.roles["movements"] == "dim"
+
+
+@pytest.mark.acceptance
+def test_duty_is_a_tax_only_in_a_monetary_form(engine_module):
+    """Anchored at the front alone, `duty_roster_allowance` was a tax."""
+    assert engine_module.DDLEngine._amt_role("duty_roster_allowance") == "gross"
+    assert engine_module.DDLEngine._amt_role("duty_amount") == "tax"
+    assert engine_module.DDLEngine._amt_role("import_duty") == "tax"
+
+
+@pytest.mark.acceptance
+def test_a_table_with_no_foreign_key_also_reports_its_demotion(engine_module, capsys):
+    """A table reaches ROLE_DIM with foreign keys and without them; only the first path reported."""
+    engine_module.DDLEngine(
+        "CREATE TABLE sensors (sensor_id BIGINT PRIMARY KEY, opened_at TIMESTAMP, "
+        "reading_score DECIMAL(8,2), calib_score DECIMAL(8,2));",
+        rows=9_000,
+        months=6,
+        seed=1,
+    ).report()
+
+    assert "sensors carries measures but is planned as a dimension" in capsys.readouterr().out
+
+
+@pytest.mark.acceptance
+def test_a_staging_warning_says_it_is_advisory(engine_module, capsys, monkeypatch):
+    """Every staging failure is already swallowed - the `except` blocks say so in their comments
+    ("never block generating on a staging problem"). That fact stayed in the comments: what the
+    reader got was an internal step name, a DuckDB error and a `!`, with nothing to say whether it
+    mattered. A measured run spent a whole turn hypothesising five different mechanisms for it,
+    then went into ddl_engine.py to find out - the first item on SKILL.md's list of ways to lose a
+    run. The answer is one clause long and belongs in the line."""
+    eng = engine_module.DDLEngine(
+        "CREATE TABLE orders (id INTEGER PRIMARY KEY, order_dt DATE, amt DOUBLE);",
+        rows=2000,
+        extra_tables="summary",
+    )
+    con = eng._scratch_schema()
+
+    def _boom(*_args, **_kwargs):
+        raise RuntimeError("Catalog Error: Table with name orders does not exist!")
+
+    monkeypatch.setattr(eng, "_auto_summary_sql", _boom)
+    assert eng._stage_summary_layer(con) is False, "a staging failure must never become a hard stop"
+
+    out = capsys.readouterr().out
+    assert "could not stage the summary layer" in out, out
+    assert "advisory only" in out, out
+    assert "generation is unaffected" in out, out
+
+
+@pytest.mark.acceptance
+def test_a_composite_primary_key_is_parsed_but_not_honoured_end_to_end(engine_module, tmp_path):
+    """Pins the LIMITATION, so the docs cannot start promising the capability again.
+
+    `_scan_constraints` parses `PRIMARY KEY (a, b)` into `decl_pk` as a list, and that is where it
+    stops: `pk_of` returns the first schema column for anything that is not single-column, and
+    `_dump_meta` writes `pks` from `pk_of` - so the quality check verifies `a` alone and a table
+    whose grain really is two columns reports duplicates however it is declared.
+
+    The second column is a DATE on purpose. An earlier version of this test used a TIMESTAMP and
+    passed, which pinned the entropy of a microsecond clock rather than anything the engine does -
+    the same DDL at day granularity produced 1,313 duplicate pairs and had its constraint dropped.
+    """
+    ddl = (
+        "CREATE TABLE meters (meter_id VARCHAR PRIMARY KEY, unit VARCHAR);"
+        "CREATE TABLE readings ("
+        "  meter_id VARCHAR REFERENCES meters(meter_id),"
+        "  read_date DATE, kwh DOUBLE, PRIMARY KEY (meter_id, read_date));"
+    )
+    eng = engine_module.DDLEngine(ddl, rows=5000)
+
+    assert eng.decl_pk["readings"] == ["meter_id", "read_date"], "parsing keeps both columns"
+    # ...and every consumer downstream drops the second one.
+    assert eng.pk_of("readings") == eng.schema["readings"][0]["name"]
+
+    out = tmp_path / "t.duckdb"
+    with contextlib.redirect_stdout(io.StringIO()):
+        eng.generate(str(out))
+    con = duckdb.connect(str(out), read_only=True)
+    dup_pairs = con.execute(
+        "SELECT count(*) FROM (SELECT meter_id, read_date FROM readings GROUP BY 1, 2 HAVING count(*) > 1)"
+    ).fetchone()[0]
+
+    assert dup_pairs > 0, (
+        "if this ever passes, generation learned about composite keys - update profile-spec's "
+        "capability table and SKILL.md step 0, which currently tell the reader it cannot"
+    )
+
+
+@pytest.mark.acceptance
+def test_a_guessed_enum_domain_is_named(engine_module, capsys):
+    """The report already names what it EXTRACTED a domain for and what it did not recognise at
+    all. Between them sat the column recognised as an enum whose values nothing declared - filled
+    from a built-in vocabulary, silently. It surfaces much later as a quality failure about a
+    distribution nobody chose: a measured run wrote an assertion about `flight_sensors.unit`, whose
+    domain had been guessed, and got back "sensor series differentiated by unit: actual 0.9994
+    (expected 1000~100000)"."""
+    # One column per line: the comment scanner anchors the column name at the start of the line,
+    # so two columns on one line hand the comment to the first of them.
+    eng = engine_module.DDLEngine(
+        "CREATE TABLE meters (\n"
+        "  meter_id VARCHAR PRIMARY KEY,\n"
+        "  unit VARCHAR\n"
+        ");\n"
+        "CREATE TABLE usage_events (\n"
+        "  event_id VARCHAR PRIMARY KEY,\n"
+        "  meter_id VARCHAR REFERENCES meters(meter_id),\n"
+        "  read_at TIMESTAMP,\n"
+        "  state VARCHAR, -- pending / settled / disputed\n"
+        "  kwh INTEGER\n"
+        ");",
+        rows=3000,
+    )
+    eng.report()
+    out = capsys.readouterr().out
+
+    named = out.split("GUESSED", 1)[1].split("\n")[0]
+    assert "value domains GUESSED" in out, out
+    assert "meters.unit" in named, "the undeclared enum must be named"
+    # `state` HAS a DDL comment, so it is extracted rather than guessed - naming it here would
+    # send the reader to re-declare something the engine already read.
+    assert "usage_events.state" not in named, named
+
+
+@pytest.mark.acceptance
+def test_every_build_says_to_run_the_check_next(engine_module, tmp_path):
+    """The instruction exists in SKILL.md too, and SKILL.md is loaded once at the top of a session
+    that then runs for dozens of turns. Two measured runs, two models: 79% of the wall clock went
+    to the stretch BEFORE the first `import_database_file` - one writing duckdb queries against
+    successive builds for 43 minutes, the other reading the engine's source for 33 - and once the
+    check finally ran it converged in three rounds either way. This line is printed at the moment
+    that choice is made."""
+    eng = engine_module.DDLEngine(
+        "CREATE TABLE carriers (carrier_id VARCHAR PRIMARY KEY, name VARCHAR);"
+        "CREATE TABLE flights (flight_id VARCHAR PRIMARY KEY,"
+        "  carrier_id VARCHAR REFERENCES carriers(carrier_id), scheduled_departure TIMESTAMP);",
+        rows=3000,
+    )
+    out = tmp_path / "datasource.duckdb"
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        eng.generate(str(out))
+    text = buf.getvalue()
+
+    assert "import_database_file" in text, text
+    assert "check_datasource_quality" in text, text
+    assert str(out) in text, "the path must be the one just built, so it can be copied verbatim"
+
+
+@pytest.mark.acceptance
+def test_a_broken_reference_downstream_is_the_one_reported(engine_module):
+    """`a -> b` and `b -> xxx` fail together, and `a` is first in file order - so reporting the
+    first leftover says "Table with name b does not exist" about a table declared on the very next
+    line, and never mentions `xxx`, which is the only thing actually wrong. The reader is sent to
+    hunt a typo in the wrong statement."""
+    with pytest.raises(ValueError) as excinfo:
+        engine_module.DDLEngine(
+            "CREATE TABLE a (id INTEGER PRIMARY KEY, b_id INTEGER REFERENCES b(id));"
+            "CREATE TABLE b (id INTEGER PRIMARY KEY, x_id INTEGER REFERENCES xxx(id));",
+            rows=2000,
+        )
+
+    assert "xxx" in str(excinfo.value), str(excinfo.value)
+    assert "Table with name b does not exist" not in str(excinfo.value)
+
+
+@pytest.mark.acceptance
+def test_a_reference_cycle_is_not_called_a_missing_table(engine_module):
+    """Both targets ARE declared, so "no CREATE declares that table" would be a false statement -
+    and the fix it asks for (check the spelling) does not exist."""
+    with pytest.raises(ValueError, match="cycle") as excinfo:
+        engine_module.DDLEngine(
+            "CREATE TABLE a (id INTEGER PRIMARY KEY, b_id INTEGER REFERENCES b(id));"
+            "CREATE TABLE b (id INTEGER PRIMARY KEY, a_id INTEGER REFERENCES a(id));",
+            rows=2000,
+        )
+
+    assert "no CREATE in this DDL declares" not in str(excinfo.value)
+
+
+@pytest.mark.acceptance
+@pytest.mark.parametrize(
+    "profile",
+    [
+        {"enums": {"unit": ["kWh", "m3"]}},
+        {"columns": {"meters.unit": {"values": ["kWh", "m3"]}}},
+    ],
+    ids=["profile_enums", "profile_columns_values"],
+)
+def test_a_domain_the_reader_already_set_is_not_reported_as_guessed(engine_module, capsys, profile):
+    """The line tells the reader to set `profile['enums']`. Saying it again after they have is the
+    shape this whole branch exists to remove - a hint with no exit, repeating every report.
+    `_enum_values_raw` honours `columns[t.c]['values']` above `enums[c]`, so both count."""
+    eng = engine_module.DDLEngine(
+        "CREATE TABLE meters (meter_id VARCHAR PRIMARY KEY, unit VARCHAR);"
+        "CREATE TABLE ev (id VARCHAR PRIMARY KEY,"
+        "  meter_id VARCHAR REFERENCES meters(meter_id), read_at TIMESTAMP);",
+        rows=3000,
+        profile=profile,
+    )
+    eng.report()
+
+    guessed = [line for line in capsys.readouterr().out.splitlines() if "GUESSED" in line]
+    assert not guessed, guessed
+
+
+@pytest.mark.acceptance
+def test_an_unstageable_table_is_named_in_the_warning(engine_module, capsys, monkeypatch):
+    """The warning could only quote DuckDB's error before, which names whichever table the failing
+    statement REFERENCED - so it pointed at the neighbour rather than at the table that failed."""
+    eng = engine_module.DDLEngine(
+        "CREATE TABLE carriers (carrier_id VARCHAR PRIMARY KEY, name VARCHAR);"
+        "CREATE TABLE flights (flight_id VARCHAR PRIMARY KEY,"
+        "  carrier_id VARCHAR REFERENCES carriers(carrier_id));",
+        rows=2000,
+    )
+    # Every CREATE fails, so the retry gives up and both tables reach the warning.
+    monkeypatch.setattr(eng, "decl_sql", {t: "CREATE TABLE broken (" for t in eng.schema})
+    eng._scratch_schema()
+
+    out = capsys.readouterr().out
+    assert "could not stage `flights`" in out, out
+    assert "could not stage `carriers`" in out, out
+    assert "advisory only" in out
+    # The cause claim was retired: ordering is retried until it stops helping, so a failure that
+    # survives to this line is not an ordering problem.
+    assert "foreign-key order" not in out
+
+
+@pytest.mark.acceptance
+def test_a_problem_hiding_behind_a_dependency_is_reported_not_the_dependency(engine_module):
+    """A statement can fail twice for different reasons: first because its FK target does not
+    exist yet, then - once everything creatable has been created - because of something else
+    entirely, a bad type say. Reporting the first failure then blames a dependency that has since
+    been satisfied and never mentions what is actually blocking it.
+
+    Driven through `_blame` directly rather than through DuckDB: which of the two errors a real
+    CREATE surfaces first is up to the binder (measured: it reports an unknown TYPE before an
+    unknown TABLE), so a DDL fixture would pin DuckDB's internals, not this decision.
+    """
+    stmts = [
+        "CREATE TABLE a (id INTEGER PRIMARY KEY)",
+        "CREATE TABLE b (a_id INTEGER REFERENCES a(id), v NUMBER(19))",
+    ]
+    leftover = [
+        (
+            stmts[1],
+            Exception("Catalog Error: Table with name a does not exist!"),
+            Exception("Type with name NUMBER does not exist!"),
+        )
+    ]
+
+    stmt, failure = engine_module.DDLEngine._blame(leftover, stmts)
+
+    assert stmt == stmts[1]
+    assert "NUMBER" in str(failure), "the surviving blocker, not the dependency it hid behind"
+
+
+@pytest.mark.acceptance
+def test_an_empty_enum_placeholder_is_not_a_decision(engine_module, capsys):
+    """`profile_skeleton` emits `"col": []` for every domain it could not fill, so a reader who
+    pastes the skeleton and fills nothing in has empty lists everywhere. `_enum_values_raw` skips
+    those (`if g:`) and falls back to the built-in vocabulary - the domain is still guessed, and
+    the line has to keep saying so or it goes quiet for exactly the reader who needs it."""
+    ddl = (
+        "CREATE TABLE meters (meter_id VARCHAR PRIMARY KEY, unit VARCHAR);"
+        "CREATE TABLE ev (id VARCHAR PRIMARY KEY,"
+        "  meter_id VARCHAR REFERENCES meters(meter_id), read_at TIMESTAMP);"
+    )
+    engine_module.DDLEngine(ddl, rows=3000, profile={"enums": {"unit": []}}).report()
+
+    out = capsys.readouterr().out
+    assert "meters.unit" in out.split("GUESSED", 1)[1].split("\n")[0], out
+
+
+# --------------------------------------------------------------------------- engine defects
+# Four generation defects found by reading what a measured run did with its 49 turns. It was not
+# avoiding the quality check: it was working around these, one at a time, from the source.
+
+
+def _build(engine_module, ddl, tmp_path, rows=5000, profile=None):
+    eng = engine_module.DDLEngine(ddl, rows=rows, profile=profile or {})
+    out = tmp_path / "t.duckdb"
+    with contextlib.redirect_stdout(io.StringIO()):
+        eng.generate(str(out))
+    return eng, duckdb.connect(str(out), read_only=True)
+
+
+@pytest.mark.acceptance
+def test_a_foreign_key_to_a_unique_column_samples_from_it(engine_module, tmp_path):
+    """SQL lets a foreign key reference any unique column. `decl_fk` has always recorded WHICH
+    column, and every sampling site read the parent's PRIMARY KEY instead - so the child was filled
+    from the wrong column and matched nothing. Measured before the fix: 100% orphans, against 0%
+    for the same DDL with the target declared PRIMARY KEY. Invariant 6 says FKs are sampled from
+    upstream; this was the schema shape that broke it silently."""
+    _eng, con = _build(
+        engine_module,
+        "CREATE TABLE p (pid VARCHAR PRIMARY KEY, series_id VARCHAR UNIQUE, unit VARCHAR);"
+        "CREATE TABLE c (series_id VARCHAR REFERENCES p(series_id), ts TIMESTAMP, v DOUBLE);",
+        tmp_path,
+    )
+
+    total = con.execute("SELECT count(*) FROM c").fetchone()[0]
+    orphans = con.execute("SELECT count(*) FROM c LEFT JOIN p USING (series_id) WHERE p.series_id IS NULL").fetchone()[
+        0
+    ]
+
+    assert total > 0
+    assert orphans == 0, f"{orphans}/{total} child rows point at no parent"
+
+
+@pytest.mark.acceptance
+def test_a_unique_column_does_not_collide_with_itself(engine_module, tmp_path):
+    """`iata_code UNIQUE` was classified `enum` by name and drew from a 4-value built-in
+    vocabulary: five rows, three distinct codes, and the constraint dropped for the whole table at
+    build time. A UNIQUE column says every value differs; enum semantics say pick from a short
+    list. Only one of those can be honoured."""
+    _eng, con = _build(
+        engine_module,
+        "CREATE TABLE carriers (carrier_id VARCHAR PRIMARY KEY, iata_code VARCHAR UNIQUE, name VARCHAR);"
+        "CREATE TABLE flights (flight_id VARCHAR PRIMARY KEY,"
+        "  carrier_id VARCHAR REFERENCES carriers(carrier_id), dep TIMESTAMP);",
+        tmp_path,
+    )
+
+    rows, distinct = con.execute("SELECT count(*), count(DISTINCT iata_code) FROM carriers").fetchone()
+    kept = con.execute(
+        "SELECT count(*) FROM duckdb_constraints() WHERE table_name='carriers' AND constraint_type='UNIQUE'"
+    ).fetchone()[0]
+
+    assert distinct == rows, f"{rows - distinct} duplicate values in a UNIQUE column"
+    assert kept, "the constraint was dropped at build time, so the database does not carry it"
+
+
+@pytest.mark.acceptance
+def test_a_denormalised_column_agrees_with_the_parent_it_points_at(engine_module, tmp_path):
+    """A fact carrying both `route_id` and `origin_code` is stating that they agree. Each was
+    sampled independently - the flight drew a route, then drew an unrelated airport - so 95% of
+    rows said their route starts at one airport and the flight at another. Both columns are
+    individually legal, so no assertion in `checks.json` can express the contradiction."""
+    _eng, con = _build(
+        engine_module,
+        "CREATE TABLE airports (code VARCHAR PRIMARY KEY, city VARCHAR);"
+        "CREATE TABLE routes (route_id VARCHAR PRIMARY KEY,"
+        "  origin_code VARCHAR REFERENCES airports(code), dist INTEGER);"
+        "CREATE TABLE flights (flight_id VARCHAR PRIMARY KEY,"
+        "  route_id VARCHAR REFERENCES routes(route_id),"
+        "  origin_code VARCHAR REFERENCES airports(code), dep TIMESTAMP);",
+        tmp_path,
+        rows=8000,
+    )
+
+    total = con.execute("SELECT count(*) FROM flights").fetchone()[0]
+    disagree = con.execute(
+        "SELECT count(*) FROM flights f JOIN routes r USING (route_id) WHERE f.origin_code <> r.origin_code"
+    ).fetchone()[0]
+    orphans = con.execute(
+        "SELECT count(*) FROM flights f LEFT JOIN airports a ON f.origin_code = a.code WHERE a.code IS NULL"
+    ).fetchone()[0]
+
+    assert disagree == 0, f"{disagree}/{total} flights disagree with the route they point at"
+    assert orphans == 0, "inheriting must not invent an airport that does not exist"
+
+
+@pytest.mark.acceptance
+def test_conditional_bands_a_measure_column_not_only_an_amount(engine_module, tmp_path):
+    """profile-spec documents the numeric form as "different [lo, hi] per group" with no mention
+    that it means amount columns only. A measure column accepted the banding and generated the
+    fallback range anyway: `delay_minutes` banded at [200, 400] for weather came out 0-8, and the
+    run went into the engine source to find out why."""
+    ddl = (
+        "CREATE TABLE d (\n"
+        "  delay_id VARCHAR PRIMARY KEY,\n"
+        "  delay_type VARCHAR, -- weather / carrier / security\n"
+        "  delay_minutes INTEGER\n"
+        ");"
+    )
+    profile = {
+        "conditional": {"d.delay_minutes": {"__by__": "delay_type", "weather": [200, 400], "__default__": [1, 5]}}
+    }
+    _eng, con = _build(engine_module, ddl, tmp_path, rows=8000, profile=profile)
+
+    banded = dict(con.execute("SELECT delay_type, min(delay_minutes) FROM d GROUP BY 1").fetchall())
+    assert banded.get("weather", 0) >= 200, banded
+    assert all(v < 200 for k, v in banded.items() if k != "weather"), banded
+
+
+# The three shapes the first version of these fixes walked straight into. Each one passed the
+# tests above and broke something the tests above do not look at.
+
+
+@pytest.mark.acceptance
+def test_a_foreign_key_whose_declared_parent_is_not_the_sampled_pool_still_builds(engine_module, tmp_path):
+    """`pk_owner` is keyed by column NAME across the whole schema, so `code` can be owned by
+    `airports` while this table's foreign key declares `countries(iso2)`. Trusting the declaration
+    then indexes an `airports` row by `iso2` - KeyError, and the whole generate dies. Picking the
+    wrong parent is a pre-existing inaccuracy; crashing on it would be new."""
+    _eng, con = _build(
+        engine_module,
+        "CREATE TABLE airports (code VARCHAR PRIMARY KEY, city VARCHAR);"
+        "CREATE TABLE countries (country_id VARCHAR PRIMARY KEY, iso2 VARCHAR UNIQUE, cname VARCHAR);"
+        "CREATE TABLE flights (flight_id VARCHAR PRIMARY KEY,"
+        "  code VARCHAR REFERENCES countries(iso2), dep TIMESTAMP);",
+        tmp_path,
+    )
+
+    assert con.execute("SELECT count(*) FROM flights").fetchone()[0] > 0
+
+
+@pytest.mark.acceptance
+def test_a_unique_constraint_does_not_blank_a_typed_column(engine_module, tmp_path):
+    """A primary or foreign key IS an identifier whatever it is called, so forcing id semantics on
+    it is safe. UNIQUE is not: it lands on natural keys of every type, and `report_date DATE
+    UNIQUE` on a calendar table is ordinary. Promoting it stopped the date generator running and
+    left the entire column NULL."""
+    eng, con = _build(
+        engine_module,
+        "CREATE TABLE calendar (cal_id VARCHAR PRIMARY KEY, report_date DATE UNIQUE, label VARCHAR);"
+        "CREATE TABLE f (fid VARCHAR PRIMARY KEY, cal_id VARCHAR REFERENCES calendar(cal_id), v DOUBLE);",
+        tmp_path,
+    )
+
+    assert [c["sem"] for c in eng.schema["calendar"] if c["name"] == "report_date"] == ["date"]
+    total, nulls = con.execute("SELECT count(*), count(*) FILTER (WHERE report_date IS NULL) FROM calendar").fetchone()
+    assert nulls == 0, f"{nulls}/{total} rows lost their date"
+
+
+@pytest.mark.acceptance
+def test_inheriting_a_column_moves_its_entity_too(engine_module, tmp_path):
+    """Rewriting `row` alone leaves `ent[other]` pointing at the parent that was just discarded,
+    and the enum backfill and cross-table `__by__` both read attributes off that entity. A first
+    attempt at this fix removed the route/airport contradiction and grew a new one in its place:
+    4,168 of 5,640 rows carried a `region` belonging to the abandoned airport. Trading one
+    inconsistency for another is not a fix, so both are asserted here."""
+    _eng, con = _build(
+        engine_module,
+        "CREATE TABLE airports (code VARCHAR PRIMARY KEY, region VARCHAR, city VARCHAR);"
+        "CREATE TABLE routes (route_id VARCHAR PRIMARY KEY,"
+        "  origin_code VARCHAR REFERENCES airports(code), dist INTEGER);"
+        "CREATE TABLE flights (flight_id VARCHAR PRIMARY KEY,"
+        "  route_id VARCHAR REFERENCES routes(route_id),"
+        "  origin_code VARCHAR REFERENCES airports(code), region VARCHAR, dep TIMESTAMP);",
+        tmp_path,
+        rows=8000,
+    )
+
+    route_mismatch = con.execute(
+        "SELECT count(*) FROM flights f JOIN routes r USING (route_id) WHERE f.origin_code <> r.origin_code"
+    ).fetchone()[0]
+    attribute_mismatch = con.execute(
+        "SELECT count(*) FROM flights f JOIN airports a ON f.origin_code = a.code WHERE f.region <> a.region"
+    ).fetchone()[0]
+
+    assert route_mismatch == 0, "the contradiction this fix exists for"
+    assert attribute_mismatch == 0, "and the one the first attempt created"
+
+
+@pytest.mark.acceptance
+def test_a_unique_column_elsewhere_does_not_take_a_declared_foreign_key_target(engine_module):
+    """An explicit REFERENCES states which table is meant; a UNIQUE column on an unrelated table
+    shares nothing but a name. Registering UNIQUE keys before the declared foreign keys let
+    `contacts.email` claim `email` out from under `tickets.email REFERENCES users(email)`."""
+    eng = engine_module.DDLEngine(
+        "CREATE TABLE users (user_id VARCHAR PRIMARY KEY, email VARCHAR UNIQUE);"
+        "CREATE TABLE contacts (contact_id VARCHAR PRIMARY KEY, email VARCHAR UNIQUE);"
+        "CREATE TABLE tickets (ticket_id VARCHAR PRIMARY KEY,"
+        "  email VARCHAR REFERENCES users(email), opened_at TIMESTAMP);",
+        rows=3000,
+    )
+
+    assert eng.pk_owner["email"] == "users"
+
+
+@pytest.mark.acceptance
+def test_conditional_bands_a_measure_by_a_cross_table_column(engine_module, tmp_path):
+    """The amount path has always resolved `"__by__": "upstream.column"`, and profile-spec does not
+    say measures are exempt. Threading the row through `_measure_val` without its resolved parents
+    left the cross-table form silently falling back to `__default__` - a half-fix, and the kind of
+    thing that sends the next reader into the engine to find out why."""
+    ddl = (
+        "CREATE TABLE carriers (\n"
+        "  carrier_id VARCHAR PRIMARY KEY,\n"
+        "  service_class VARCHAR, -- premium / economy\n"
+        "  name VARCHAR\n"
+        ");\n"
+        "CREATE TABLE f (\n"
+        "  fid VARCHAR PRIMARY KEY,\n"
+        "  carrier_id VARCHAR REFERENCES carriers(carrier_id),\n"
+        "  delay_minutes INTEGER,\n"
+        "  dep TIMESTAMP\n"
+        ");"
+    )
+    profile = {
+        "conditional": {
+            "f.delay_minutes": {"__by__": "carriers.service_class", "premium": [200, 400], "__default__": [1, 5]}
+        }
+    }
+    _eng, con = _build(engine_module, ddl, tmp_path, rows=8000, profile=profile)
+
+    banded = dict(
+        con.execute(
+            "SELECT c.service_class, min(f.delay_minutes) FROM f JOIN carriers c USING (carrier_id) GROUP BY 1"
+        ).fetchall()
+    )
+    assert banded.get("premium", 0) >= 200, banded
+    assert all(v < 200 for k, v in banded.items() if k != "premium"), banded
+
+
+@pytest.mark.acceptance
+def test_an_unresolvable_inheritance_is_skipped_not_half_applied(engine_module, tmp_path):
+    """The branch the first version of this fix never executed, and it held a guaranteed crash.
+
+    A parent and child can reference DIFFERENT columns of the same table - `p.x` holds `a.code`
+    while `f.x` must hold `a.alt` - so the parent's copy of the column is a value this column may
+    not hold, and no pooled entity carries it. That path mutated `ent` while iterating it, which
+    CPython rejects on every `__next__` including the final one, so reaching it at all was a
+    RuntimeError rather than a rare race.
+
+    Skipping the inheritance is also the correct outcome, not just the safe one: writing the value
+    and dropping the entity would leave `row[other]` naming a row that does not exist, while the
+    independently sampled value it would have replaced is at least self-consistent.
+    """
+    _eng, con = _build(
+        engine_module,
+        "CREATE TABLE a (code VARCHAR PRIMARY KEY, alt VARCHAR UNIQUE);"
+        "CREATE TABLE p (pid VARCHAR PRIMARY KEY, x VARCHAR REFERENCES a(code));"
+        "CREATE TABLE f (fid VARCHAR PRIMARY KEY, pid VARCHAR REFERENCES p(pid),"
+        "  x VARCHAR REFERENCES a(alt), dt TIMESTAMP);",
+        tmp_path,
+        rows=8000,
+    )
+
+    total = con.execute("SELECT count(*) FROM f").fetchone()[0]
+    orphans = con.execute("SELECT count(*) FROM f LEFT JOIN a ON f.x = a.alt WHERE a.alt IS NULL").fetchone()[0]
+
+    assert total > 0, "generation must complete at all"
+    assert orphans == 0, f"{orphans}/{total} rows point at an a.alt that does not exist"
+
+
+@pytest.mark.acceptance
+def test_a_unique_name_column_stays_readable(engine_module, tmp_path):
+    """Two wrong answers were available here and the fix has to beat both.
+
+    Leaving it alone: the vocabulary is finite and combinations repeat, so the column collided with
+    itself and the constraint was dropped for the whole table at build time. Classifying it as an
+    identifier like any other UNIQUE column: 1,200 unique values named `brand_name_1 ...
+    brand_name_1200`, which satisfies the constraint by throwing away what the column is for - a
+    demo database is read by an agent and shown to people.
+    """
+    eng, con = _build(
+        engine_module,
+        "CREATE TABLE brands (brand_id VARCHAR PRIMARY KEY, brand_name VARCHAR UNIQUE, country VARCHAR);"
+        "CREATE TABLE sales (sid VARCHAR PRIMARY KEY,"
+        "  brand_id VARCHAR REFERENCES brands(brand_id), amt DOUBLE, dt TIMESTAMP);",
+        tmp_path,
+        rows=60000,
+    )
+
+    assert [c["sem"] for c in eng.schema["brands"] if c["name"] == "brand_name"] == ["name"]
+    rows, distinct = con.execute("SELECT count(*), count(DISTINCT brand_name) FROM brands").fetchone()
+    kept = con.execute(
+        "SELECT count(*) FROM duckdb_constraints() WHERE table_name='brands' AND constraint_type='UNIQUE'"
+    ).fetchone()[0]
+    names = [r[0] for r in con.execute("SELECT brand_name FROM brands").fetchall()]
+
+    assert distinct == rows, "the constraint has to actually hold"
+    assert kept, "and survive into the built database"
+    assert not any(n.startswith("brand_name") for n in names), f"slugs, not names: {names[:3]}"
+
+
+# --------------------------------------------------------------------------- keys a parent owns
+# The FK-to-UNIQUE fix landed on `_gen_fact`'s sampling site, and the test above reaches it with a
+# two-table DDL. Three levels take a different path entirely: a detail / downstream / event row
+# gets its parent key from the parent's ref record, which carried the PRIMARY KEY and nothing else.
+
+THREE_LEVEL_DDL = """
+CREATE TABLE flights (
+    flight_id VARCHAR PRIMARY KEY,
+    scheduled_departure TIMESTAMP,
+    passenger_count INTEGER,
+    ticket_revenue DECIMAL(18, 2)
+);
+CREATE TABLE flight_sensors (
+    sensor_id VARCHAR PRIMARY KEY,
+    flight_id VARCHAR REFERENCES flights(flight_id),
+    series_id VARCHAR UNIQUE,
+    series_name VARCHAR
+);
+CREATE TABLE sensor_readings (
+    series_id VARCHAR REFERENCES flight_sensors(series_id),
+    ts TIMESTAMP,
+    value_double DOUBLE
+);
+"""
+
+
+@pytest.mark.acceptance
+def test_a_foreign_key_to_a_unique_column_on_a_detail_parent(engine_module, tmp_path):
+    """The same defect one level deeper, which is where a real DDL puts it.
+
+    `flight_sensors` is a detail of `flights`, so its rows come from `_gen_detail` and its children
+    read `pr["pk"]` - the PRIMARY KEY - whatever the foreign key declares. Measured on the DDL a
+    production run was given: 25,464 of 25,464 sensor_readings orphaned, the child column holding
+    `SEN0000001` (a `sensor_id` value) while `flight_sensors.series_id` was NULL on every row,
+    because no generator but `_gen_dim` ever filled a key column the table owns but is not keyed by.
+    """
+    _eng, con = _build(engine_module, THREE_LEVEL_DDL, tmp_path, rows=30000)
+
+    total = con.execute("SELECT count(*) FROM sensor_readings").fetchone()[0]
+    orphans = con.execute(
+        "SELECT count(*) FROM sensor_readings r LEFT JOIN flight_sensors p USING (series_id) WHERE p.series_id IS NULL"
+    ).fetchone()[0]
+    rows, distinct = con.execute("SELECT count(*), count(DISTINCT series_id) FROM flight_sensors").fetchone()
+
+    assert total > 0, "generation must complete at all"
+    assert orphans == 0, f"{orphans}/{total} readings point at a series that does not exist"
+    assert distinct == rows, "the parent's UNIQUE column has to hold, not just be non-null"
+
+
+@pytest.mark.acceptance
+def test_the_unique_target_keeps_its_declared_type(engine_module, tmp_path):
+    """An integer alternate key must not be handed a `SER0000001`, or the build refuses the CTAS."""
+    _eng, con = _build(
+        engine_module,
+        "CREATE TABLE f (fid VARCHAR PRIMARY KEY, dt TIMESTAMP, amt DECIMAL(18, 2));"
+        "CREATE TABLE p (pid VARCHAR PRIMARY KEY, fid VARCHAR REFERENCES f(fid), serial_no BIGINT UNIQUE);"
+        "CREATE TABLE c (serial_no BIGINT REFERENCES p(serial_no), ts TIMESTAMP, v DOUBLE);",
+        tmp_path,
+        rows=20000,
+    )
+
+    orphans = con.execute("SELECT count(*) FROM c LEFT JOIN p USING (serial_no) WHERE p.serial_no IS NULL").fetchone()[
+        0
+    ]
+    kind = con.execute("SELECT typeof(serial_no) FROM p LIMIT 1").fetchone()[0]
+
+    assert orphans == 0
+    assert kind == "BIGINT", f"an integer key must stay integral, got {kind}"
+
+
+@pytest.mark.acceptance
+def test_the_fix_does_not_touch_a_foreign_key_that_points_at_a_primary_key(engine_module, tmp_path):
+    """The overwhelmingly common shape goes through the same line now, so it needs pinning."""
+    _eng, con = _build(engine_module, THREE_LEVEL_DDL, tmp_path, rows=30000)
+
+    orphans = con.execute(
+        "SELECT count(*) FROM flight_sensors s LEFT JOIN flights f USING (flight_id) WHERE f.flight_id IS NULL"
+    ).fetchone()[0]
+
+    assert orphans == 0
+
+
+# --------------------------------------------------------------------------- keys a table has not
+
+
+def _meta(eng, tmp_path, name="t"):
+    import json
+
+    out = tmp_path / f"{name}.duckdb"
+    with contextlib.redirect_stdout(io.StringIO()):
+        eng.generate(str(out))
+    return json.loads((tmp_path / f".{name}.meta.json").read_text())
+
+
+@pytest.mark.acceptance
+def test_a_keyless_table_is_reported_keyless_rather_than_given_its_first_column(engine_module, tmp_path):
+    """`pk_of` always answers - it falls back to the first column - and the metadata used to pass
+    that guess to the quality check as a primary key. On a time series the first column is the
+    foreign key, so the check demanded it be unique and a measured run failed with
+    "sensor_readings.series_id has 16,377 duplicate keys" for a table that declares no key at all.
+    The instructions told the caller to leave such a table keyless; following them still failed, so
+    the run added a surrogate primary key to the user's own DDL instead."""
+    eng = engine_module.DDLEngine(THREE_LEVEL_DDL, rows=30000, profile={})
+
+    pks = _meta(eng, tmp_path)["pks"]
+
+    assert "sensor_readings" not in pks, f"a foreign key is not this table's key: {pks}"
+    assert pks["flight_sensors"] == "sensor_id"
+    assert pks["flights"] == "flight_id"
+
+
+@pytest.mark.acceptance
+def test_a_declared_composite_key_is_reported_as_no_single_column_key(engine_module, tmp_path):
+    """Nothing a one-column check can verify, and promoting `a` invents a constraint the DDL never
+    declared: `PRIMARY KEY (warehouse_id, sku_id)` is not a promise that `warehouse_id` is unique."""
+    eng = engine_module.DDLEngine(
+        "CREATE TABLE sku (sku_id VARCHAR PRIMARY KEY, sku_name VARCHAR);"
+        "CREATE TABLE stock_levels (warehouse_id VARCHAR, sku_id VARCHAR REFERENCES sku(sku_id),"
+        "  on_hand INTEGER, PRIMARY KEY (warehouse_id, sku_id));",
+        rows=8000,
+        profile={},
+    )
+
+    pks = _meta(eng, tmp_path, name="c")["pks"]
+
+    assert "stock_levels" not in pks, f"no single column of a composite key is the key: {pks}"
+    assert pks["sku"] == "sku_id"
+
+
+@pytest.mark.acceptance
+def test_an_undeclared_key_the_engine_generated_itself_is_still_verified(engine_module, tmp_path):
+    """The guess has to keep earning its place: where the engine really did generate the column as
+    a key, dropping it from the metadata would silently retire the check that catches duplicates."""
+    eng = engine_module.DDLEngine(
+        "CREATE TABLE orders (order_id VARCHAR, order_date TIMESTAMP, amount DECIMAL(18, 2));",
+        rows=6000,
+        profile={},
+    )
+
+    pks = _meta(eng, tmp_path, name="u")["pks"]
+
+    assert pks["orders"] == "order_id"
+
+
+@pytest.mark.acceptance
+def test_a_column_that_is_both_a_key_target_and_a_foreign_key_is_left_alone(engine_module, tmp_path):
+    """The one shape filling alternate keys can break, and the shape the first pass did break.
+
+    A 1:1 extension keyed by its parent's natural key owns a column that is a foreign key going up
+    and a key target coming down. Claiming it overwrote a value sampled from `users` with a
+    sequence of `accounts`' own - `USE0001601` against a parent that stops at `USE0001600` - and
+    cost 1,600/1,600 orphans upward plus 17,090/17,090 downward, a break of exactly the kind the
+    method exists to close. The two controls above only cover foreign keys pointing at a primary
+    key, so neither of them reaches this.
+
+    Only the direction is asserted. `accounts.user_id UNIQUE` does NOT hold on this shape - foreign
+    keys are sampled with replacement, so the column repeats, the constraint is dropped at build
+    time and `tx` orphans against what survives. That is a separate hole, unchanged by this fix and
+    the same on every version measured; do not read a passing test here as the shape being sound.
+    """
+    eng, con = _build(
+        engine_module,
+        "CREATE TABLE users (user_id VARCHAR PRIMARY KEY, uname VARCHAR, city VARCHAR);"
+        "CREATE TABLE accounts (account_id VARCHAR PRIMARY KEY,"
+        "  user_id VARCHAR UNIQUE REFERENCES users(user_id), tier VARCHAR);"
+        "CREATE TABLE tx (tx_id VARCHAR PRIMARY KEY, user_id VARCHAR REFERENCES accounts(user_id),"
+        "  ts TIMESTAMP, amt DECIMAL(18, 2));",
+        tmp_path,
+        rows=20000,
+    )
+
+    total = con.execute("SELECT count(*) FROM accounts").fetchone()[0]
+    orphans = con.execute(
+        "SELECT count(*) FROM accounts a LEFT JOIN users u USING (user_id) WHERE u.user_id IS NULL"
+    ).fetchone()[0]
+
+    assert eng._alt_key_cols("accounts") == (), "a column the table fills from its own parent is not ours to write"
+    assert orphans == 0, f"{orphans}/{total} accounts point at a user that does not exist"
+
+
+@pytest.mark.acceptance
+def test_alternate_keys_restart_when_calibration_restarts(engine_module, tmp_path):
+    """Calibration discards a pass and regenerates. The counter is engine state like `_name_seen`
+    and `_pool_key_idx`, which that block already resets - left running it numbered the shipped
+    rows from where the thrown-away pass had got to, so a 4,218-row table shipped keys starting
+    near 8,000 while its primary key started at 1."""
+    eng, con = _build(
+        engine_module,
+        THREE_LEVEL_DDL,
+        tmp_path,
+        rows=12000,
+        profile={"table_rows": {"flights": 400}},
+    )
+
+    rows, first, last = con.execute("SELECT count(*), min(series_id), max(series_id) FROM flight_sensors").fetchone()
+
+    assert eng._alt_seq[("flight_sensors", "series_id")] == rows, "one value handed out per shipped row"
+    assert first == "SER0000001", f"numbering has to start over, got {first}"
+    assert last == f"SER{rows:07d}", f"and run to the row count, got {last}"
+
+
+@pytest.mark.acceptance
+def test_an_inferred_foreign_key_does_not_veto_a_declared_key_target(engine_module, tmp_path):
+    """The exclusion above has to read what the DDL declares, not what inference guessed.
+
+    `self.fks` also holds columns inference called foreign keys on nothing more than a name some
+    other table happens to key - here `stores.region_code`, because an unrelated `regions` table
+    keys `region_code`. The DDL says that column is a UNIQUE key `visits` references; letting the
+    guess veto that inverts "declared wins over inferred", and measured it cost the parent its
+    UNIQUE constraint: the column was filled from `regions` instead, repeated, and was dropped.
+    """
+    eng, con = _build(
+        engine_module,
+        "CREATE TABLE regions (region_code VARCHAR PRIMARY KEY, rname VARCHAR);"
+        "CREATE TABLE stores (store_id VARCHAR PRIMARY KEY, region_code VARCHAR UNIQUE, sname VARCHAR);"
+        "CREATE TABLE visits (visit_id VARCHAR PRIMARY KEY,"
+        "  store_id VARCHAR REFERENCES stores(store_id),"
+        "  region_code VARCHAR REFERENCES stores(region_code), ts TIMESTAMP, amt DECIMAL(18, 2));",
+        tmp_path,
+        rows=20000,
+    )
+
+    assert "region_code" in eng.fks.get("stores", ()), "the premise: inference does call this a foreign key"
+    assert eng._alt_key_cols("stores") == ("region_code",), "and the declaration has to outrank it"
+
+    rows, distinct = con.execute("SELECT count(*), count(DISTINCT region_code) FROM stores").fetchone()
+    orphans = con.execute(
+        "SELECT count(*) FROM visits v LEFT JOIN stores s USING (region_code) WHERE s.region_code IS NULL"
+    ).fetchone()[0]
+    kept = con.execute(
+        "SELECT count(*) FROM duckdb_constraints() WHERE table_name='stores' AND constraint_type='UNIQUE'"
+    ).fetchone()[0]
+
+    assert distinct == rows, "the declared UNIQUE has to hold"
+    assert kept, "and survive into the built database"
+    assert orphans == 0
+
+
+@pytest.mark.parametrize("col_type", ["DATE", "TIMESTAMP", "DOUBLE", "DECIMAL(18, 2)"])
+@pytest.mark.acceptance
+def test_a_typed_key_target_is_carried_not_rewritten(engine_module, tmp_path, col_type):
+    """What a child must read and what this engine may overwrite are two questions.
+
+    Answering both with one set wrote a prefixed business code into a DATE / TIMESTAMP / DOUBLE
+    column, so the whole column landed NULL and the child was 100% orphaned - shapes that were
+    correct before, because those columns are filled by their own semantic branch and only ever
+    needed carrying to the child. Same reasoning as the typed-semantic gate on the UNIQUE
+    promotion: a typed column keeps its type, and uniqueness on it is closed elsewhere.
+    """
+    eng, con = _build(
+        engine_module,
+        f"CREATE TABLE p (pid VARCHAR PRIMARY KEY, k {col_type} UNIQUE, note VARCHAR);"
+        "CREATE TABLE f (fid VARCHAR PRIMARY KEY, pid VARCHAR REFERENCES p(pid), ts TIMESTAMP,"
+        "  amt DECIMAL(18, 2));"
+        f"CREATE TABLE c (k {col_type} REFERENCES p(k), ts TIMESTAMP, v DOUBLE);",
+        tmp_path,
+        rows=12000,
+    )
+
+    assert eng._alt_key_cols("p") == (), "a typed column is not ours to write"
+    assert eng._alt_ref_cols("p") == ("k",), "but the child still has to be able to read it"
+
+    filled = con.execute("SELECT count(*) FROM p WHERE k IS NOT NULL").fetchone()[0]
+    total = con.execute("SELECT count(*) FROM c").fetchone()[0]
+    orphans = con.execute("SELECT count(*) FROM c LEFT JOIN p USING (k) WHERE p.k IS NULL").fetchone()[0]
+
+    assert filled == con.execute("SELECT count(*) FROM p").fetchone()[0], "the parent column has to hold values"
+    assert orphans == 0, f"{orphans}/{total} children point at a key that does not exist"
+
+
+# --------------------------------------------------------------- the two ends of a directed edge
+
+
+@pytest.mark.acceptance
+def test_a_directed_edge_does_not_start_and_end_in_the_same_place(engine_module, tmp_path):
+    """Each end of the edge is sampled independently, so they collide.
+
+    Measured on a production DDL: 1 route in 13 had `origin == destination` and 403 rows of the
+    fact table were booked on it. The run that found it spent three attempts repairing it with
+    ad-hoc UPDATEs - all three refused, twice because the key was still referenced - and shipped
+    the self-loop anyway. Nothing here is domain-specific: the pair is recognised from the
+    directed-edge vocabulary the engine already uses for its other column conventions.
+    """
+    _eng, con = _build(
+        engine_module,
+        "CREATE TABLE depots (depot_code VARCHAR PRIMARY KEY, depot_name VARCHAR, region VARCHAR);"
+        "CREATE TABLE lanes (lane_id VARCHAR PRIMARY KEY,"
+        "  origin_depot_code VARCHAR REFERENCES depots(depot_code),"
+        "  destination_depot_code VARCHAR REFERENCES depots(depot_code), distance_km INTEGER);"
+        "CREATE TABLE shipments (shipment_id VARCHAR PRIMARY KEY,"
+        "  lane_id VARCHAR REFERENCES lanes(lane_id), shipped_at TIMESTAMP, freight_amount DECIMAL(18, 2));",
+        tmp_path,
+        rows=20000,
+    )
+
+    total, loops = con.execute(
+        "SELECT count(*), count(*) FILTER (WHERE origin_depot_code = destination_depot_code) FROM lanes"
+    ).fetchone()
+
+    assert total > 1, "the shape needs more than one lane to be meaningful"
+    assert loops == 0, f"{loops}/{total} lanes start and end at the same depot"
+
+
+@pytest.mark.acceptance
+def test_two_keys_to_one_parent_that_are_not_an_edge_may_still_agree(engine_module, tmp_path):
+    """The control, and the reason this is a vocabulary rather than a blanket rule.
+
+    `billing_address_id` and `shipping_address_id` both point at `addresses`, and being equal is
+    the common case there, not a defect. A rule that split every pair of keys to one parent would
+    make every order ship to an address it was not billed at.
+    """
+    eng, con = _build(
+        engine_module,
+        "CREATE TABLE addresses (address_id VARCHAR PRIMARY KEY, city VARCHAR, postcode VARCHAR);"
+        "CREATE TABLE orders (order_id VARCHAR PRIMARY KEY,"
+        "  billing_address_id VARCHAR REFERENCES addresses(address_id),"
+        "  shipping_address_id VARCHAR REFERENCES addresses(address_id),"
+        "  ordered_at TIMESTAMP, order_amount DECIMAL(18, 2));",
+        tmp_path,
+        rows=20000,
+    )
+
+    same = con.execute("SELECT count(*) FROM orders WHERE billing_address_id = shipping_address_id").fetchone()[0]
+
+    assert eng._opposed_fk_pairs("orders") == (), "these are not the two ends of an edge"
+    assert same > 0, "splitting them would be wrong; the pair has to be left alone"
+
+
+# ------------------------------------------------------- a row budget the pins make unreachable
+
+
+PINNABLE_DDL = """
+CREATE TABLE stores (store_id VARCHAR PRIMARY KEY, store_name VARCHAR, city VARCHAR);
+CREATE TABLE orders (
+    order_id VARCHAR PRIMARY KEY,
+    store_id VARCHAR REFERENCES stores(store_id),
+    ordered_at TIMESTAMP,
+    order_amount DECIMAL(18, 2)
+);
+CREATE TABLE order_lines (
+    line_id VARCHAR PRIMARY KEY,
+    order_id VARCHAR REFERENCES orders(order_id),
+    quantity INTEGER,
+    line_amount DECIMAL(18, 2)
+);
+CREATE TABLE order_events (
+    event_id VARCHAR PRIMARY KEY,
+    order_id VARCHAR REFERENCES orders(order_id),
+    event_type VARCHAR, -- created / picked / shipped
+    occurred_at TIMESTAMP
+);
+"""
+
+
+def _reachability_warning(eng):
+    _err, warn = eng.precheck(strict=False)
+    return [w for w in warn if "calibration can only scale" in w]
+
+
+@pytest.mark.acceptance
+def test_pins_that_make_the_budget_unreachable_are_named_before_generating(engine_module):
+    """The pins can each look modest and still put the target out of reach.
+
+    A pinned DETAIL fixes its parent (pin / lines-per-parent) and therefore every sibling detail
+    of that parent, so the plan grows well past what was pinned. Measured on a production run:
+    two pins covering 70% of the budget - too little for either existing pin check - implied a
+    plan 37% over it, and calibration, which may only scale the unpinned tables, still missed
+    after its three passes. The run spent two whole build cycles chasing the total.
+    """
+    eng = engine_module.DDLEngine(PINNABLE_DDL, rows=40000, profile={"table_rows": {"order_lines": 34000}})
+    err, _warn = eng.precheck(strict=False)
+
+    hit = _reachability_warning(eng)
+
+    # ONE pin, 85% of the budget, so neither existing pin check has anything to say: the total is
+    # under `rows * 1.06`, and `orders` / `order_events` are still free for calibration to scale.
+    assert err == [], f"the existing checks must stay quiet, or this proves nothing: {err}"
+    assert hit, "an unreachable budget has to be named before a row is generated"
+    assert "three passes" in hit[0], hit[0]
+
+
+@pytest.mark.parametrize(
+    "profile",
+    [
+        pytest.param({}, id="nothing_pinned"),
+        pytest.param({"table_rows": {"orders": 4000}}, id="one_reachable_pin"),
+        pytest.param({"dim_rows": {"stores": 40}}, id="dimension_pinned"),
+    ],
+)
+@pytest.mark.acceptance
+def test_a_budget_calibration_can_still_reach_is_not_warned_about(engine_module, profile):
+    """The warning has to stay quiet wherever calibration does its job, or it is noise that
+    teaches the reader to skip the pre-check."""
+    eng = engine_module.DDLEngine(PINNABLE_DDL, rows=40000, profile=profile)
+
+    assert _reachability_warning(eng) == []
+
+
+@pytest.mark.acceptance
+def test_the_warning_predicts_where_generation_actually_lands(engine_module, tmp_path):
+    """The prediction replays calibration's own update rule, so it cannot promise one outcome
+    while generate() produces another. If these two ever disagree the warning is worse than
+    nothing, because it is the surface the caller is told to trust."""
+    profile = {"table_rows": {"order_lines": 34000}}
+    eng = engine_module.DDLEngine(PINNABLE_DDL, rows=40000, profile=profile)
+    predicted = eng._calibration_lands_at(
+        sum(eng.nrows.values()),
+        {t: eng.nrows[t] for t in eng.nrows if eng.roles[t] != "dim" and t not in eng.pinned_rows},
+    )
+
+    _eng2, con = _build(engine_module, PINNABLE_DDL, tmp_path, rows=40000, profile=profile)
+    actual = sum(
+        r[0] for r in con.execute("SELECT count(*) FROM stores UNION ALL SELECT count(*) FROM orders").fetchall()
+    ) + sum(
+        r[0]
+        for r in con.execute("SELECT count(*) FROM order_lines UNION ALL SELECT count(*) FROM order_events").fetchall()
+    )
+
+    assert predicted > 40000 * 1.06, "the point of the fixture is that it overshoots"
+    assert abs(actual / predicted - 1) < 0.25, f"predicted ~{predicted:,}, generation produced {actual:,}"
+
+
+# ------------------------------------------------- real-world values for a key, without breaking it
+
+NATURAL_KEY_DDL = """
+CREATE TABLE airports (airport_code VARCHAR PRIMARY KEY, name VARCHAR, city VARCHAR);
+CREATE TABLE routes (
+    route_id VARCHAR PRIMARY KEY,
+    origin_airport_code VARCHAR REFERENCES airports(airport_code),
+    destination_airport_code VARCHAR REFERENCES airports(airport_code),
+    distance_miles INTEGER
+);
+CREATE TABLE flights (
+    flight_id VARCHAR PRIMARY KEY,
+    route_id VARCHAR REFERENCES routes(route_id),
+    departed_at TIMESTAMP,
+    passenger_count INTEGER
+);
+"""
+
+REAL_CODES = [
+    ["ATL", "Atlanta"],
+    ["LAX", "Los Angeles"],
+    ["ORD", "Chicago"],
+    ["DFW", "Dallas"],
+    ["DEN", "Denver"],
+    ["JFK", "New York"],
+    ["SFO", "San Francisco"],
+    ["SEA", "Seattle"],
+    ["LAS", "Las Vegas"],
+    ["MCO", "Orlando"],
+]
+NATURAL_KEY_PROFILE = {"joint": {"airports": [{"cols": ["airport_code", "city"], "values": REAL_CODES}]}}
+
+
+@pytest.mark.acceptance
+def test_a_joint_group_on_a_key_does_not_repeat_itself(engine_module, tmp_path):
+    """`joint` is the ONLY mechanism that can put real-world values in a key column, and it
+    sampled with replacement, so on a key it produced duplicates in silence.
+
+    Measured: 10 rows, 6 distinct, PRIMARY KEY dropped at build - and that cascades, because every
+    foreign key pointing at the table is then refused for want of a unique constraint. One
+    natural-key dimension took the constraints off three tables. `enums`, `vocab` and
+    `columns[...]['values']` are all ignored for a key column, and `pre_sql` cannot UPDATE a key
+    that is referenced, so a measured run spent ten minutes finding there was no legal way to ask
+    for `ATL` instead of `AIR0000001`.
+    """
+    _eng, con = _build(engine_module, NATURAL_KEY_DDL, tmp_path, rows=20000, profile=NATURAL_KEY_PROFILE)
+
+    rows, distinct = con.execute("SELECT count(*), count(DISTINCT airport_code) FROM airports").fetchone()
+    codes = {r[0] for r in con.execute("SELECT airport_code FROM airports").fetchall()}
+    # Each constraint on its own, not an aggregate count: the cascade is the point here, and a
+    # total of "some constraints" would pass with the two foreign keys silently missing.
+    kinds = {
+        (r[0], r[1])
+        for r in con.execute(
+            "SELECT table_name, constraint_type FROM duckdb_constraints() "
+            "WHERE table_name IN ('airports', 'routes', 'flights')"
+        ).fetchall()
+    }
+    orphans = {
+        "routes.origin": con.execute(
+            "SELECT count(*) FROM routes r LEFT JOIN airports a ON r.origin_airport_code = a.airport_code "
+            "WHERE a.airport_code IS NULL"
+        ).fetchone()[0],
+        "routes.destination": con.execute(
+            "SELECT count(*) FROM routes r LEFT JOIN airports a "
+            "ON r.destination_airport_code = a.airport_code WHERE a.airport_code IS NULL"
+        ).fetchone()[0],
+        "flights.route_id": con.execute(
+            "SELECT count(*) FROM flights f LEFT JOIN routes r USING (route_id) WHERE r.route_id IS NULL"
+        ).fetchone()[0],
+    }
+
+    assert distinct == rows, "a key cannot repeat"
+    assert codes <= {c[0] for c in REAL_CODES}, f"the supplied codes are the whole domain: {codes}"
+    assert ("airports", "PRIMARY KEY") in kinds, f"the key itself has to survive the build: {kinds}"
+    assert ("routes", "FOREIGN KEY") in kinds, f"and so must the keys pointing at it: {kinds}"
+    assert ("flights", "FOREIGN KEY") in kinds, f"including one level further down: {kinds}"
+    assert orphans == {k: 0 for k in orphans}, orphans
+
+
+@pytest.mark.acceptance
+def test_the_supplied_combinations_are_the_row_count(engine_module):
+    """Ten real airports means ten rows. Asking for forty can only be answered with a duplicate
+    key, so the plan is capped and the pre-check says so rather than leaving the caller to wonder
+    why `dim_rows` was ignored."""
+    profile = dict(NATURAL_KEY_PROFILE, dim_rows={"airports": 40})
+    eng = engine_module.DDLEngine(NATURAL_KEY_DDL, rows=20000, profile=profile)
+    _err, warn = eng.precheck(strict=False)
+
+    assert eng.nrows["airports"] == len(REAL_CODES)
+    assert any("capped at 10 rows, not 40" in w for w in warn), warn
+
+
+@pytest.mark.acceptance
+def test_a_joint_group_that_is_not_a_key_still_follows_its_weights(engine_module, tmp_path):
+    """The control. Dropping replacement everywhere would break what `joint` is for: a weighted
+    combination over non-key columns has to keep repeating, or the distribution disappears."""
+    profile = {
+        "joint": {
+            "orders": [
+                {
+                    "cols": ["channel", "source"],
+                    "values": [["paid_search", "Google", 20], ["social", "TikTok", 1]],
+                }
+            ]
+        }
+    }
+    _eng, con = _build(
+        engine_module,
+        "CREATE TABLE customers (customer_id VARCHAR PRIMARY KEY, customer_name VARCHAR);"
+        "CREATE TABLE orders (order_id VARCHAR PRIMARY KEY,"
+        "  customer_id VARCHAR REFERENCES customers(customer_id),"
+        "  channel VARCHAR, source VARCHAR, ordered_at TIMESTAMP, order_amount DECIMAL(18, 2));",
+        tmp_path,
+        rows=20000,
+        profile=profile,
+    )
+
+    mix = dict(con.execute("SELECT channel, count(*) FROM orders GROUP BY 1").fetchall())
+
+    assert sum(mix.values()) > 2, "a non-key joint group must repeat, that is the whole point"
+    assert mix.get("paid_search", 0) > mix.get("social", 0), f"and keep its weights: {mix}"
+
+
+@pytest.mark.acceptance
+def test_distinct_combinations_that_repeat_a_key_are_still_capped(engine_module, tmp_path):
+    """Distinct TUPLES are not distinct KEYS.
+
+    `[["ATL", "Atlanta"], ["ATL", "Atlanta Metro"]]` is two combinations and one duplicate key,
+    which drops the PRIMARY KEY at build time and with it every foreign key pointing at the table -
+    measured at 5 rows, 4 distinct, and constraints gone from three tables.
+    """
+    duplicated = [["ATL", "Atlanta"], ["ATL", "Atlanta Metro"]] + REAL_CODES[1:5]
+    profile = {"joint": {"airports": [{"cols": ["airport_code", "city"], "values": duplicated}]}}
+    eng, con = _build(engine_module, NATURAL_KEY_DDL, tmp_path, rows=12000, profile=profile)
+
+    rows, distinct = con.execute("SELECT count(*), count(DISTINCT airport_code) FROM airports").fetchone()
+    kinds = {r[0] for r in con.execute("SELECT constraint_type FROM duckdb_constraints()").fetchall()}
+
+    assert eng._joint_key_limit("airports") == 5, "one row per key value, not per combination"
+    assert distinct == rows
+    assert "PRIMARY KEY" in kinds
+
+
+@pytest.mark.acceptance
+def test_a_column_that_only_looks_like_a_key_is_not_treated_as_one(engine_module):
+    """`pk_of` always answers - it falls back to the first column - so on a keyless time series it
+    named the FOREIGN KEY as the key. A `joint` group on that column would then be drawn without
+    replacement and the table clamped to the number of combinations, for a column that repeats by
+    design."""
+    eng = engine_module.DDLEngine(
+        "CREATE TABLE series (series_id VARCHAR PRIMARY KEY, unit VARCHAR);"
+        "CREATE TABLE readings (series_id VARCHAR REFERENCES series(series_id), ts TIMESTAMP, v DOUBLE);",
+        rows=8000,
+        profile={},
+    )
+
+    assert eng.pk_of("readings") == "series_id", "the premise: the guess picks the foreign key"
+    assert "series_id" not in eng._key_cols("readings")
+    assert eng._key_cols("series") == frozenset({"series_id"})
+
+
+@pytest.mark.acceptance
+def test_the_two_ends_may_reference_different_unique_columns(engine_module, tmp_path):
+    """Compared as entities, not as values. `origin_port_id` resolves through `ports.port_id` and
+    `destination_iata` through `ports.iata`, so two values naming the SAME port are never equal and
+    a value comparison finds nothing to fix."""
+    eng, con = _build(
+        engine_module,
+        "CREATE TABLE ports (port_id VARCHAR PRIMARY KEY, iata VARCHAR UNIQUE, city VARCHAR);"
+        "CREATE TABLE lanes (lane_id VARCHAR PRIMARY KEY,"
+        "  origin_port_id VARCHAR REFERENCES ports(port_id),"
+        "  destination_iata VARCHAR REFERENCES ports(iata), distance_km INTEGER);"
+        "CREATE TABLE trips (trip_id VARCHAR PRIMARY KEY, lane_id VARCHAR REFERENCES lanes(lane_id),"
+        "  started_at TIMESTAMP, freight_amount DECIMAL(18, 2));",
+        tmp_path,
+        rows=12000,
+    )
+
+    total = con.execute("SELECT count(*) FROM lanes").fetchone()[0]
+    loops = con.execute(
+        "SELECT count(*) FROM lanes l JOIN ports a ON l.origin_port_id = a.port_id "
+        "JOIN ports b ON l.destination_iata = b.iata WHERE a.port_id = b.port_id"
+    ).fetchone()[0]
+
+    assert eng._opposed_fk_pairs("lanes"), "the premise: these are recognised as one edge"
+    assert total > 1
+    assert loops == 0, f"{loops}/{total} lanes start and end at the same port"
+
+
+@pytest.mark.acceptance
+def test_the_replay_stops_where_calibration_stops(engine_module):
+    """`generate()` rescales before attempts 2 and 3 and never after attempt 3, so the replay gets
+    two updates.
+
+    This fixture is the boundary that makes the count matter: two updates land at 43,019 (+7.5%,
+    outside tolerance, which is where generation really finishes) and a third would reach 41,544
+    (+3.9%, inside) - so replaying one update too many would have reported a budget as reachable
+    and withheld the warning.
+    """
+    eng = engine_module.DDLEngine(PINNABLE_DDL, rows=40000, profile={"table_rows": {"order_lines": 22000}})
+    planned = sum(eng.nrows.values())
+    free = {t: eng.nrows[t] for t in eng.nrows if eng.roles[t] != "dim" and t not in eng.pinned_rows}
+
+    def replay(passes):
+        scaled, fixed, total = dict(free), planned - sum(free.values()), planned
+        for _ in range(passes):
+            if not total or abs(total / 40000 - 1) <= 0.06:
+                break
+            k = 40000 / total
+            scaled = {t: max(50, int(n * k)) for t, n in scaled.items()}
+            total = fixed + sum(scaled.values())
+        return total
+
+    landed = eng._calibration_lands_at(planned, free)
+
+    assert landed == replay(2), "two updates, because generate() rescales before attempts 2 and 3"
+    assert abs(replay(3) / 40000 - 1) <= 0.06 < abs(landed / 40000 - 1), (
+        f"the fixture must be the boundary: two -> {landed:,}, three -> {replay(3):,}"
+    )
+    assert _reachability_warning(eng), "and the warning has to actually fire at two updates"
+
+
+# ------------------------------------------------------ keys a bare DDL never declared
+
+BARE_KEYED_BY_CODE = """
+CREATE TABLE airports (
+    airport_code VARCHAR,
+    name VARCHAR,
+    city VARCHAR
+);
+CREATE TABLE routes (
+    route_id VARCHAR,
+    origin_airport_code VARCHAR,
+    destination_airport_code VARCHAR,
+    distance_miles INTEGER
+);
+CREATE TABLE flights (
+    flight_id VARCHAR,
+    flight_number VARCHAR,
+    route_id VARCHAR,
+    origin_airport_code VARCHAR,
+    destination_airport_code VARCHAR,
+    departed_at TIMESTAMP,
+    passenger_count INTEGER
+);
+"""
+
+
+@pytest.mark.acceptance
+def test_a_table_keyed_by_its_own_name_is_recognised(engine_module, tmp_path):
+    """`_semantic` sends `_code` to `enum`, and both the key guess and the foreign-key inference
+    read `sem == "id"`, so on a DDL with no keys at all the `airports` dimension was an island:
+    8 of the 12 edges a reader would draw, and the plan said nothing about the gap.
+    """
+    eng, con = _build(engine_module, BARE_KEYED_BY_CODE, tmp_path, rows=30000)
+
+    edges = {t: sorted(v) for t, v in eng.fks.items() if v}
+    orphans = {
+        f"{t}.{c}": con.execute(
+            f"SELECT count(*) FROM {t} WHERE {c} NOT IN (SELECT airport_code FROM airports)"
+        ).fetchone()[0]
+        for t in ("routes", "flights")
+        for c in ("origin_airport_code", "destination_airport_code")
+    }
+
+    assert eng.natural_keys == {"airport_code": "airports"}
+    assert eng.pk_owner["airport_code"] == "airports"
+    assert edges == {
+        "routes": ["destination_airport_code", "origin_airport_code"],
+        "flights": ["destination_airport_code", "origin_airport_code", "route_id"],
+    }, f"every edge a reader would draw, and no others: {edges}"
+    assert orphans == {k: 0 for k in orphans}, orphans
+
+
+@pytest.mark.acceptance
+def test_the_same_key_under_a_longer_name_still_connects(engine_module):
+    """`pk_owner` is indexed by exact column name, so a qualified copy of the key was invisible.
+
+    Resolved in two passes against a snapshot: one pass made the answer depend on table order,
+    because the first table to claim `origin_airport_code` put it in the key map and the guard
+    then skipped every later table with the same column - `flights` linked and `routes`, two
+    statements further down, kept every row orphaned.
+    """
+    eng = engine_module.DDLEngine(BARE_KEYED_BY_CODE, rows=30000, profile={})
+
+    named = {f"{t}.{c}" for (t, c) in eng.renamed_keys}
+
+    assert named == {
+        "routes.origin_airport_code",
+        "routes.destination_airport_code",
+        "flights.origin_airport_code",
+        "flights.destination_airport_code",
+    }, named
+
+
+@pytest.mark.acceptance
+def test_an_attribute_that_merely_shares_a_suffix_is_not_a_key(engine_module):
+    """The control, and the reason the test is the table-name match rather than the suffix.
+
+    `orders.currency_code` is an attribute; `currencies.currency_code` is a key. Reading the
+    suffix alone would make every order's currency a foreign key into a table that may not exist,
+    and would take `payments.currency_code` with it.
+    """
+    eng = engine_module.DDLEngine(
+        "CREATE TABLE orders (order_no VARCHAR, currency_code VARCHAR, country_code VARCHAR,"
+        "  ordered_at TIMESTAMP, order_amount DECIMAL(18, 2));"
+        "CREATE TABLE payments (payment_no VARCHAR, order_no VARCHAR, currency_code VARCHAR,"
+        "  paid_at TIMESTAMP, paid_amount DECIMAL(18, 2));",
+        rows=20000,
+        profile={},
+    )
+
+    assert "currency_code" not in eng.natural_keys
+    assert "country_code" not in eng.natural_keys
+    assert not any(c == "currency_code" for (_t, c) in eng.renamed_keys)
+
+
+@pytest.mark.acceptance
+def test_a_more_key_shaped_column_wins(engine_module):
+    """`flights.flight_number` is named after its table and matches the naming, and it is NOT
+    unique - one flight number per day. Anything ending `_id` / `_key` takes precedence, which is
+    also what keeps `orders.order_no` from displacing `orders.order_id`."""
+    eng = engine_module.DDLEngine(BARE_KEYED_BY_CODE, rows=30000, profile={})
+
+    assert "flight_number" not in eng.natural_keys, "the table has flight_id; that is the key"
+    assert eng.pk_owner["flight_id"] == "flights"
+
+
+@pytest.mark.acceptance
+def test_a_declared_key_is_never_second_guessed(engine_module):
+    """Inference only fills gaps. A table that declares its key keeps it, even where the naming
+    rule would have picked a different column."""
+    eng = engine_module.DDLEngine(
+        "CREATE TABLE airports (airport_pk VARCHAR PRIMARY KEY, airport_code VARCHAR, city VARCHAR);"
+        "CREATE TABLE routes (route_id VARCHAR PRIMARY KEY,"
+        "  origin VARCHAR REFERENCES airports(airport_pk), distance_miles INTEGER);",
+        rows=20000,
+        profile={},
+    )
+
+    assert eng.natural_keys == {}
+    assert eng.pk_owner["airport_pk"] == "airports"
+
+
+# --------------------------------------------------- a fan-out that IS the grain
+
+FANOUT_DDL = """
+CREATE TABLE lots (
+    lot_id VARCHAR PRIMARY KEY,
+    started_at TIMESTAMP,
+    priority VARCHAR,
+    target_yield_pct DECIMAL(5, 2)
+);
+CREATE TABLE units (
+    unit_key VARCHAR PRIMARY KEY,
+    lot_id VARCHAR REFERENCES lots(lot_id),
+    slot_no INTEGER,
+    scrapped BOOLEAN
+);
+CREATE TABLE unit_tests (
+    test_key VARCHAR PRIMARY KEY,
+    unit_key VARCHAR REFERENCES units(unit_key),
+    site_no INTEGER,
+    passed BOOLEAN,
+    reading DOUBLE
+);
+"""
+# `lots` carries one ratio and a timestamp, which reads as a dimension; a fan-out has to hang off
+# something calibration can scale and the detail generator can read rows from, so the root is
+# declared a fact. The pre-check refuses the other arrangement rather than half-working.
+FANOUT_PROFILE = {
+    "roles": {"lots": "fact", "units": "detail", "unit_tests": "detail"},
+    "per_parent": {"units": 16, "unit_tests": 10},
+}
+
+
+@pytest.mark.acceptance
+def test_a_declared_fan_out_is_exact(engine_module, tmp_path):
+    """For a whole class of schema the fan-out IS the grain - a lot has exactly 16 units, a unit
+    exactly 10 measured sites - and there was no way to say so. The engine offers a stochastic 1.8
+    lines per parent, which destroys that grain, and pinning `table_rows` expresses the counts but
+    leaves calibration nothing to scale (measured: pins 24% over budget that three passes could
+    not recover). Faced with those two, a production run abandoned the engine and hand-wrote 886
+    lines of generator - 24 minutes of its 44.
+    """
+    _eng, con = _build(engine_module, FANOUT_DDL, tmp_path, rows=40000, profile=FANOUT_PROFILE)
+
+    per_lot = con.execute("SELECT min(c), max(c) FROM (SELECT count(*) c FROM units GROUP BY lot_id)").fetchone()
+    per_unit = con.execute(
+        "SELECT min(c), max(c) FROM (SELECT count(*) c FROM unit_tests GROUP BY unit_key)"
+    ).fetchone()
+    orphans = con.execute(
+        "SELECT count(*) FROM unit_tests t LEFT JOIN units u USING (unit_key) WHERE u.unit_key IS NULL"
+    ).fetchone()[0]
+
+    assert per_lot == (16, 16), f"exactly 16, not a spread around it: {per_lot}"
+    assert per_unit == (10, 10), per_unit
+    assert orphans == 0
+
+
+@pytest.mark.acceptance
+def test_the_budget_still_lands_with_a_fan_out(engine_module, tmp_path):
+    """The fan-out tables are DERIVED, not pinned: calibration scales the root and the tree
+    follows, so `rows=` still means something. Pinning them instead is what made the budget
+    unreachable."""
+    eng, con = _build(engine_module, FANOUT_DDL, tmp_path, rows=40000, profile=FANOUT_PROFILE)
+
+    total = sum(con.execute(f"SELECT count(*) FROM {t}").fetchone()[0] for t in ("lots", "units", "unit_tests"))
+
+    assert "units" not in eng.pinned_rows, "derived, not pinned"
+    assert abs(total / 40000 - 1) < 0.10, f"{total:,} against a 40,000 budget"
+
+
+@pytest.mark.acceptance
+def test_a_child_is_never_generated_before_its_parent(engine_module):
+    """Dependency COUNT is not a topological order, and the difference is not cosmetic.
+
+    In a chain A -> B -> C inside one role bucket, B and C both have one dependency, so the tie
+    broke on dict order. The child then found its parent with no refs yet, `_parent_of` called it
+    an orphan and `_gen_detail` fell through to `_gen_fact`, which invents the key: measured on a
+    12-table foundry DDL, the deepest table came out **100% orphaned against its parent** on the
+    stock engine with no profile at all.
+    """
+    eng = engine_module.DDLEngine(FANOUT_DDL, rows=40000, profile=FANOUT_PROFILE)
+    order = eng._topo()
+
+    assert order.index("lots") < order.index("units") < order.index("unit_tests"), order
+
+
+@pytest.mark.acceptance
+def test_a_key_cycle_does_not_hang_the_order(engine_module):
+    """A cycle inside one bucket has no topological order at all. Emit what is left rather than
+    spin: a cycle is the DDL's to fix, and generation still has to finish."""
+    eng = engine_module.DDLEngine(
+        "CREATE TABLE a (a_id VARCHAR PRIMARY KEY, b_id VARCHAR, amt DECIMAL(18, 2), dt TIMESTAMP);"
+        "CREATE TABLE b (b_id VARCHAR PRIMARY KEY, a_id VARCHAR, amt DECIMAL(18, 2), dt TIMESTAMP);",
+        rows=8000,
+        profile={},
+    )
+
+    order = eng._topo()
+
+    assert sorted(order) == ["a", "b"], order
+
+
+@pytest.mark.acceptance
+def test_a_fan_out_on_the_wrong_kind_of_table_says_so(engine_module):
+    """The row count is honoured for every role, because every generator reads `nrows`. One row
+    per parent is the detail generator's mechanism, so a table planned as something else gets the
+    count and not the grain - and is told, rather than half-working in silence."""
+    eng = engine_module.DDLEngine(
+        FANOUT_DDL,
+        rows=40000,
+        profile={"roles": {"lots": "fact", "units": "event"}, "per_parent": {"units": 16}},
+    )
+    err, warn = eng.precheck(strict=False)
+
+    assert err == [], f"the parent is a fact, so the arrangement is legal: {err}"
+    assert any("units" in w and "not one row per parent" in w for w in warn), warn
+
+
+@pytest.mark.acceptance
+def test_a_fan_out_rooted_in_a_dimension_is_refused(engine_module):
+    """Calibration never scales a dimension and the detail generator cannot read rows from one, so
+    a tree rooted there gets neither the budget nor the grain. Measured before the guard: 5,487
+    rows against a 40,000 budget, and 2 to 76 units per lot instead of 16."""
+    eng = engine_module.DDLEngine(
+        FANOUT_DDL, rows=40000, profile={"roles": {"units": "detail"}, "per_parent": {"units": 16}}
+    )
+    err, _warn = eng.precheck(strict=False)
+
+    assert eng.roles["lots"] == "dim", "the premise: this DDL reads as a dimension"
+    assert any("has to hang off a fact or a detail" in e for e in err), err
+
+
+@pytest.mark.acceptance
+def test_a_fan_out_with_no_parent_is_refused(engine_module):
+    """'N rows per parent row' has no meaning for a table that references nothing."""
+    eng = engine_module.DDLEngine(FANOUT_DDL, rows=40000, profile={"per_parent": {"lots": 4}})
+    err, _warn = eng.precheck(strict=False)
+
+    assert any("has no parent to count from" in e for e in err), err
+
+
+# --------------------------------------------------------------------------- detail-table profile blocks
+#
+# Four profile blocks that `report()` listed as "in effect" on a detail table and the detail
+# generator never read: a cross-table `conditional` whose upstream is the parent fact, a `joint`
+# group, `columns[...]['range']` on a count, and `lifecycle`. Measured on one run: 7 of its 17
+# assertions failed on the first check, and 10 minutes went into diagnosing the engine.
+
+FLIGHT_DDL = """
+CREATE TABLE carriers (
+    carrier_id VARCHAR PRIMARY KEY,
+    name VARCHAR
+);
+CREATE TABLE aircraft (
+    aircraft_id VARCHAR PRIMARY KEY,
+    carrier_id VARCHAR REFERENCES carriers(carrier_id),
+    model VARCHAR,
+    in_service BOOLEAN
+);
+CREATE TABLE flights (
+    flight_id VARCHAR PRIMARY KEY,
+    carrier_id VARCHAR REFERENCES carriers(carrier_id),
+    aircraft_id VARCHAR REFERENCES aircraft(aircraft_id),
+    scheduled_departure TIMESTAMP,
+    passenger_count INTEGER,
+    status VARCHAR, -- ON_TIME / DELAYED
+    revenue_amt DECIMAL(12, 2)
+);
+CREATE TABLE delays (
+    delay_id VARCHAR PRIMARY KEY,
+    flight_id VARCHAR REFERENCES flights(flight_id),
+    delay_type VARCHAR, -- NONE / WEATHER / AIRLINE
+    delay_minutes INTEGER,
+    pax_qty INTEGER
+);
+CREATE TABLE flight_alerts (
+    alert_id VARCHAR PRIMARY KEY,
+    flight_id VARCHAR REFERENCES flights(flight_id),
+    priority VARCHAR,
+    alert_status VARCHAR, -- OPEN / RESOLVED
+    created_at TIMESTAMP,
+    resolved_at TIMESTAMP
+);
+CREATE TABLE flight_sensors (
+    sensor_id VARCHAR PRIMARY KEY,
+    flight_id VARCHAR REFERENCES flights(flight_id),
+    series_id VARCHAR UNIQUE,
+    series_name VARCHAR,
+    unit VARCHAR
+);
+CREATE TABLE sensor_readings (
+    reading_id VARCHAR PRIMARY KEY,
+    series_id VARCHAR REFERENCES flight_sensors(series_id),
+    ts TIMESTAMP,
+    value_double DOUBLE
+);
+"""
+
+FLIGHT_BASE = {
+    "semantics": {"flight_sensors.series_name": "enum"},
+    "enums": {"series_name": ["ALTITUDE", "AIRSPEED"], "unit": ["ft", "knots"]},
+    "per_parent": {"delays": 1, "flight_alerts": 1, "flight_sensors": 2, "sensor_readings": 2},
+}
+
+
+def _flights(engine_module, tmp_path, **profile):
+    return _build(engine_module, FLIGHT_DDL, tmp_path, rows=6000, profile={**FLIGHT_BASE, **profile})
+
+
+@pytest.mark.acceptance
+def test_a_detail_conditional_may_group_by_its_parent_fact(engine_module, tmp_path):
+    """The parent of a detail table is not in `pools`, so the only way a child row sees it is
+    through `refs` - and those carried the key, the date and the status, never the column a
+    `__by__` named. `delays.delay_minutes by flights.status` resolved to nothing and used
+    `__default__` on every row, while `report()` printed the rule as in effect: the delayed /
+    on-time ratio came out 1.011 against an assertion of 5+."""
+    _eng, con = _flights(
+        engine_module,
+        tmp_path,
+        conditional={
+            "delays.delay_minutes": {
+                "__by__": "flights.status",
+                "ON_TIME": [0, 8],
+                "DELAYED": [100, 180],
+                "__default__": [40, 60],
+            },
+            "delays.delay_type": {
+                "__by__": "flights.status",
+                "ON_TIME": {"NONE": 1.0},
+                "DELAYED": {"WEATHER": 0.5, "AIRLINE": 0.5},
+                "__default__": {"AIRLINE": 1.0},
+            },
+        },
+    )
+
+    minutes = {
+        s: (lo, hi)
+        for s, lo, hi in con.execute(
+            "SELECT f.status, min(d.delay_minutes), max(d.delay_minutes)"
+            " FROM delays d JOIN flights f USING (flight_id) GROUP BY 1"
+        ).fetchall()
+    }
+    assert set(minutes) == {"ON_TIME", "DELAYED"}, minutes
+    assert minutes["DELAYED"][0] >= 100, minutes
+    assert minutes["ON_TIME"][1] <= 8, minutes
+    types = con.execute(
+        "SELECT f.status, list(DISTINCT d.delay_type) FROM delays d JOIN flights f USING (flight_id) GROUP BY 1"
+    ).fetchall()
+    kinds = {s: set(v) for s, v in types}
+    assert kinds["ON_TIME"] == {"NONE"}, kinds
+    assert "NONE" not in kinds["DELAYED"], kinds
+
+
+@pytest.mark.acceptance
+def test_a_detail_conditional_may_group_by_a_parent_detail(engine_module, tmp_path):
+    """Two levels down: the readings hang off the sensor row, which is itself a detail. The
+    parent's `refs` entry has to carry `series_name` for the band to resolve."""
+    _eng, con = _flights(
+        engine_module,
+        tmp_path,
+        conditional={
+            "sensor_readings.value_double": {
+                "__by__": "flight_sensors.series_name",
+                "ALTITUDE": [10000, 40000],
+                "AIRSPEED": [100, 600],
+                "__default__": [1, 5],
+            }
+        },
+    )
+
+    bands = {
+        s: (lo, hi)
+        for s, lo, hi in con.execute(
+            "SELECT s.series_name, min(r.value_double), max(r.value_double)"
+            " FROM sensor_readings r JOIN flight_sensors s USING (series_id) GROUP BY 1"
+        ).fetchall()
+    }
+    assert set(bands) == {"ALTITUDE", "AIRSPEED"}, bands
+    assert bands["ALTITUDE"][0] >= 10000, bands
+    assert bands["AIRSPEED"][1] <= 600, bands
+
+
+@pytest.mark.acceptance
+def test_a_joint_group_on_a_detail_table_is_drawn(engine_module, tmp_path):
+    """`_joint_plan` sizes its draw to a row count known up front, which a detail table does not
+    have, so the detail generator never called it - `flight_sensors(series_name, unit)` came out
+    `SERIES5 / UNIT3` under a group `report()` had listed as in effect."""
+    _eng, con = _flights(
+        engine_module,
+        tmp_path,
+        joint={
+            "flight_sensors": [{"cols": ["series_name", "unit"], "values": [["ALTITUDE", "ft"], ["AIRSPEED", "knots"]]}]
+        },
+    )
+
+    combos = set(con.execute("SELECT series_name, unit FROM flight_sensors GROUP BY 1, 2").fetchall())
+    assert combos == {("ALTITUDE", "ft"), ("AIRSPEED", "knots")}, combos
+
+
+@pytest.mark.acceptance
+def test_a_count_range_is_honoured_on_a_fact_and_on_a_detail(engine_module, tmp_path):
+    """The skeleton offers `columns['t.col']['range']` for every numeric column, and the fact and
+    detail generators drew a count from a fixed 1-5 without looking: `passenger_count` declared
+    (70, 250) averaged 1.85, and the run reclassified it as a measure to get around it."""
+    _eng, con = _flights(
+        engine_module,
+        tmp_path,
+        columns={"flights.passenger_count": {"range": (70, 250)}, "delays.pax_qty": {"range": (50, 90)}},
+    )
+
+    lo, hi = con.execute("SELECT min(passenger_count), max(passenger_count) FROM flights").fetchone()
+    assert 70 <= lo and hi <= 250, (lo, hi)
+    lo, hi = con.execute("SELECT min(pax_qty), max(pax_qty) FROM delays").fetchone()
+    assert 50 <= lo and hi <= 90, (lo, hi)
+
+
+@pytest.mark.acceptance
+def test_a_lifecycle_on_a_detail_table_truncates_by_stage(engine_module, tmp_path):
+    """`lifecycle` was read by `_gen_fact` alone. An alert per flight is a detail table, so its
+    stages were ignored and every OPEN alert carried a `resolved_at` - the run's own assertion
+    "open alerts are unresolved" failed on 888 rows."""
+    _eng, con = _flights(
+        engine_module,
+        tmp_path,
+        lifecycle={"flight_alerts": {"gap_hours": [0], "stages": {"OPEN": 0, "RESOLVED": 1}}},
+    )
+
+    by_status = dict(
+        con.execute("SELECT alert_status, count(resolved_at) * 1.0 / count(*) FROM flight_alerts GROUP BY 1").fetchall()
+    )
+    assert set(by_status) == {"OPEN", "RESOLVED"}, by_status
+    assert by_status["OPEN"] == 0, by_status
+    assert by_status["RESOLVED"] == 1, by_status
+    assert con.execute("SELECT count(*) FROM flight_alerts WHERE resolved_at < created_at").fetchone()[0] == 0
+    assert (
+        con.execute(
+            "SELECT count(*) FROM flight_alerts a JOIN flights f USING (flight_id)"
+            " WHERE a.created_at < f.scheduled_departure"
+        ).fetchone()[0]
+        == 0
+    ), "a detail chain starts from the parent row's timestamp"
+
+
+@pytest.mark.acceptance
+def test_a_stage_past_the_business_timestamps_is_warned_about(engine_module):
+    """`created_at` is an audit column, aligned to the first business timestamp and not a stage,
+    so `(created_at, resolved_at)` has one stage - and `stages: {OPEN: 1, RESOLVED: 2}`, the
+    natural reading, downgrades every RESOLVED row to OPEN without a word."""
+    eng = engine_module.DDLEngine(
+        FLIGHT_DDL,
+        rows=6000,
+        profile={**FLIGHT_BASE, "lifecycle": {"flight_alerts": {"stages": {"OPEN": 1, "RESOLVED": 2}}}},
+    )
+    err, warn = eng.precheck(strict=False)
+
+    assert err == [], err
+    hit = [w for w in warn if w.startswith("lifecycle[flight_alerts]")]
+    assert hit and "created_at" in hit[0] and "audit" in hit[0], warn
+
+
+# --------------------------------------------------------------------------- pre_sql runs before the constraints
+
+
+@pytest.mark.acceptance
+def test_pre_sql_may_update_a_foreign_key_column_that_children_reference(engine_module, tmp_path):
+    """DuckDB rewrites an UPDATE of an indexed column as delete + insert and refuses the delete
+    while a child references the row. With the constraints on before the SQL ran, `UPDATE flights
+    SET carrier_id = ...` died after a full generate pass, on a statement the pre-check had
+    planned as fine - EXPLAIN never fires a constraint. A run spent five minutes finding which of
+    its eight statements it was."""
+    eng = engine_module.DDLEngine(
+        FLIGHT_DDL,
+        rows=6000,
+        profile={**FLIGHT_BASE, "pre_sql": ["UPDATE flights SET carrier_id = (SELECT min(carrier_id) FROM carriers)"]},
+    )
+    out = tmp_path / "t.duckdb"
+    with contextlib.redirect_stdout(io.StringIO()):
+        result = eng.generate(str(out))
+    con = duckdb.connect(str(out), read_only=True)
+
+    assert result["degraded"] == [], result["degraded"]
+    assert con.execute("SELECT count(DISTINCT carrier_id) FROM flights").fetchone()[0] == 1, "the UPDATE ran"
+    kinds = {(t, k) for t, k in con.execute("SELECT table_name, constraint_type FROM duckdb_constraints()").fetchall()}
+    assert ("flights", "FOREIGN KEY") in kinds and ("delays", "FOREIGN KEY") in kinds, kinds
+    assert not [
+        t for (t,) in con.execute("SELECT table_name FROM duckdb_tables()").fetchall() if t.startswith("_stage")
+    ], "the constraint-free copies are gone"
+
+
+@pytest.mark.acceptance
+def test_pre_sql_that_orphans_a_child_costs_that_child_its_constraints_not_the_build(engine_module, tmp_path):
+    """The other side of running the SQL first: a statement that removes parents no longer fails
+    mid-SQL. The child cannot be re-created with its REFERENCES, so it ships constraint-free and
+    the build names it and why - the same path a generated UNIQUE violation already takes."""
+    eng = engine_module.DDLEngine(
+        FLIGHT_DDL,
+        rows=6000,
+        profile={**FLIGHT_BASE, "pre_sql": ["DELETE FROM flights WHERE status = 'DELAYED'"]},
+    )
+    out = tmp_path / "t.duckdb"
+    with contextlib.redirect_stdout(io.StringIO()):
+        result = eng.generate(str(out))
+
+    assert any(d.startswith("delays:") for d in result["degraded"]), result["degraded"]
+    con = duckdb.connect(str(out), read_only=True)
+    assert con.execute("SELECT count(*) FROM flights WHERE status = 'DELAYED'").fetchone()[0] == 0
+    assert con.execute("SELECT count(*) FROM delays").fetchone()[0] > 0, "the child table is still delivered"
+
+
+# --------------------------------------------------------------------------- two inferences a run paid a turn for
+
+
+@pytest.mark.acceptance
+@pytest.mark.parametrize(
+    ("column", "dtype", "sem"),
+    [
+        ("in_service", "BOOLEAN", "flag"),
+        ("active", "BOOLEAN", "flag"),
+        ("priority", "VARCHAR", "enum"),
+        ("severity", "VARCHAR", "enum"),
+    ],
+)
+def test_a_boolean_is_a_flag_and_a_priority_is_an_enum(engine_module, column, dtype, sem):
+    """`aircraft.in_service BOOLEAN` and `flight_alerts.priority` came out as free text, and the
+    plan listed them under "unrecognised". A BOOLEAN can only be a flag whatever its name, and
+    priority / severity are categorical wherever they appear."""
+    assert engine_module._semantic(column, dtype) == sem
+
+
+@pytest.mark.acceptance
+def test_the_two_inferences_reach_the_schema(engine_module):
+    eng = engine_module.DDLEngine(FLIGHT_DDL, rows=6000, profile=FLIGHT_BASE)
+
+    assert _sem(eng, "aircraft", "in_service") == "flag"
+    assert _sem(eng, "flight_alerts", "priority") == "enum"
+
+
+# --------------------------------------------------------------------------- the edges of the detail-table blocks
+
+
+@pytest.mark.acceptance
+def test_a_lifecycle_on_a_table_the_profile_creates_itself_is_refused_not_a_crash(engine_module):
+    """`pre_sql` may CREATE a table, and the table-level reference check accepts that name - but
+    the lifecycle check reads `self.schema`, where it does not exist. That was a KeyError where a
+    configuration error belongs."""
+    eng = engine_module.DDLEngine(
+        FLIGHT_DDL,
+        rows=6000,
+        profile={
+            **FLIGHT_BASE,
+            "pre_sql": ["CREATE TABLE alert_digest AS SELECT alert_id FROM flight_alerts"],
+            "lifecycle": {"alert_digest": {"stages": {"OPEN": 0}}},
+        },
+    )
+    err, _warn = eng.precheck(strict=False)
+
+    assert any(e.startswith("lifecycle[alert_digest]") and "not a DDL table" in e for e in err), err
+
+
+@pytest.mark.acceptance
+def test_a_key_bearing_joint_group_on_a_detail_table_is_refused(engine_module):
+    """A detail row count is not known up front, so its `joint` groups are drawn with replacement;
+    a UNIQUE column in one would repeat, and the table would ship without its constraints."""
+    eng = engine_module.DDLEngine(
+        FLIGHT_DDL,
+        rows=6000,
+        profile={
+            **FLIGHT_BASE,
+            "joint": {"flight_sensors": [{"cols": ["series_id", "series_name"], "values": [["S1", "ALTITUDE"]]}]},
+        },
+    )
+    err, _warn = eng.precheck(strict=False)
+
+    assert eng.roles["flight_sensors"] == "detail", "the premise"
+    assert any(e.startswith("joint[flight_sensors]") and "series_id" in e for e in err), err
+
+
+@pytest.mark.acceptance
+def test_a_joint_supplied_status_survives_the_detail_lifecycle(engine_module, tmp_path):
+    """The lifecycle sampled the status column unconditionally, so a `joint` group pairing status
+    with priority was overwritten on one of its two columns and the pair came apart."""
+    pairs = {("OPEN", "HIGH"), ("RESOLVED", "LOW")}
+    _eng, con = _flights(
+        engine_module,
+        tmp_path,
+        joint={"flight_alerts": [{"cols": ["alert_status", "priority"], "values": [list(p) for p in pairs]}]},
+        lifecycle={"flight_alerts": {"gap_hours": [0], "stages": {"OPEN": 0, "RESOLVED": 1}}},
+    )
+
+    seen = set(con.execute("SELECT alert_status, priority FROM flight_alerts GROUP BY 1, 2").fetchall())
+    assert seen == pairs, seen
+
+
+CLAIMS_DDL = """
+CREATE TABLE customers (
+    customer_id VARCHAR PRIMARY KEY,
+    name VARCHAR
+);
+CREATE TABLE orders (
+    order_id VARCHAR PRIMARY KEY,
+    customer_id VARCHAR REFERENCES customers(customer_id),
+    order_time TIMESTAMP,
+    amount_usd DECIMAL(12, 2),
+    order_status VARCHAR, -- PAID / SHIPPED
+);
+CREATE TABLE claims (
+    claim_id VARCHAR PRIMARY KEY,
+    order_id VARCHAR REFERENCES orders(order_id),
+    claim_status VARCHAR, -- OPEN / CLOSED
+    filed_at TIMESTAMP,
+    closed_at TIMESTAMP
+);
+CREATE TABLE claim_notes (
+    note_id VARCHAR PRIMARY KEY,
+    claim_id VARCHAR REFERENCES claims(claim_id),
+    note_ts TIMESTAMP,
+    body VARCHAR
+);
+"""
+
+
+@pytest.mark.acceptance
+def test_a_detail_with_its_own_lifecycle_anchors_its_children_to_itself(engine_module, tmp_path):
+    """A claim filed days after its order carries its own `filed_at`; the notes on that claim
+    have to follow the claim, not the order. The detail's reference record kept the parent's
+    timestamp and status, so grandchildren were anchored one level too high."""
+    _eng, con = _build(
+        engine_module,
+        CLAIMS_DDL,
+        tmp_path,
+        rows=6000,
+        profile={
+            "per_parent": {"claims": 1, "claim_notes": 2},
+            "lifecycle": {"claims": {"gap_hours": [0, 200], "stages": {"OPEN": 1, "CLOSED": 2}}},
+        },
+    )
+
+    assert con.execute("SELECT count(*) FROM claim_notes").fetchone()[0] > 0
+    before = con.execute(
+        "SELECT count(*) FROM claim_notes n JOIN claims c USING (claim_id) WHERE n.note_ts < c.filed_at"
+    ).fetchone()[0]
+    assert before == 0, f"{before} notes precede the claim they belong to"
+
+
+# --------------------------------------------------------------------------- what the design turn kept working out by hand
+#
+# Two bare-DDL runs spent a third of a 60,000-token design turn on the same three questions:
+# how to make a child sparse (a delay on a quarter of the flights), why the plan sized `airports`
+# at 13 when 54 were supplied, and who owns `series_id`. Each has a mechanical answer now.
+
+
+@pytest.mark.acceptance
+def test_a_fractional_fan_out_is_a_sparse_child(engine_module, tmp_path):
+    """`per_parent` only took whole numbers, so "one delay record on a quarter of the flights" had
+    no expression: the run planned a row budget for 1.8 lines per parent and a DELETE in pre_sql
+    to thin it. A fraction is the share of parents that get exactly one row; the rest get none,
+    and keep the amounts they already had."""
+    eng, con = _flights(engine_module, tmp_path, per_parent={**FLIGHT_BASE["per_parent"], "delays": 0.25})
+
+    flights = con.execute("SELECT count(*) FROM flights").fetchone()[0]
+    per_flight = dict(
+        con.execute(
+            "SELECT n, count(*) FROM (SELECT flight_id, count(*) n FROM delays GROUP BY 1) GROUP BY 1"
+        ).fetchall()
+    )
+    assert set(per_flight) == {1}, f"a sparse child has one row or none, never several: {per_flight}"
+    share = per_flight[1] / flights
+    assert 0.18 <= share <= 0.32, f"about a quarter of the flights carry a delay row, got {share:.2f}"
+    assert (
+        con.execute("SELECT count(*) FROM flights WHERE revenue_amt IS NULL OR revenue_amt = 0").fetchone()[0] == 0
+    ), "a flight without a delay row keeps its own amount"
+    assert eng.fixed_fanout["delays"] == 0.25
+
+
+@pytest.mark.acceptance
+def test_a_fractional_fan_out_is_planned_and_reported(engine_module, capsys):
+    eng = engine_module.DDLEngine(
+        FLIGHT_DDL, rows=6000, profile={**FLIGHT_BASE, "per_parent": {**FLIGHT_BASE["per_parent"], "delays": 0.25}}
+    )
+    err, _warn = eng.precheck(strict=False)
+    eng.report()
+    out = capsys.readouterr().out
+
+    assert err == [], err
+    assert eng.nrows["delays"] == max(1, int(eng.nrows["flights"] * 0.25)), (eng.nrows["delays"], eng.nrows["flights"])
+    assert "delays = one row on 25% of flights" in out, out
+
+
+@pytest.mark.parametrize("bad", [0, -1, 0.0, True, "0.25", 1.5])
+@pytest.mark.acceptance
+def test_a_fan_out_that_is_not_a_count_or_a_share_is_refused(engine_module, bad):
+    eng = engine_module.DDLEngine(FLIGHT_DDL, rows=6000, profile={**FLIGHT_BASE, "per_parent": {"delays": bad}})
+    err, _warn = eng.precheck(strict=False)
+
+    assert any(e.startswith("per_parent[delays]") and "fraction between 0 and 1" in e for e in err), err
+
+
+@pytest.mark.acceptance
+def test_the_combinations_supplied_for_a_key_are_the_row_count_not_only_a_ceiling(engine_module):
+    """Ten airports supplied against a plan of four used four of them, and the run spent a fix
+    round pinning `dim_rows` to the number it had already written out. The doc said the
+    combinations ARE the row count; the engine only capped."""
+    eng = engine_module.DDLEngine(NATURAL_KEY_DDL, rows=2000, profile=NATURAL_KEY_PROFILE)
+
+    assert eng.nrows["airports"] == len(REAL_CODES), eng.nrows
+    assert not getattr(eng, "_joint_clamped", {}), "nothing was capped, so nothing to warn about"
+
+
+@pytest.mark.acceptance
+def test_a_shared_id_column_guessed_for_the_wrong_owner_is_proposed_the_other_way(engine_module, capsys):
+    """`sensor_readings(series_id, ts, value_double)` gets `series_id` by the first-id-column
+    guess, so it becomes a 20-row dimension and `flight_sensors` points at it - backwards. The
+    table that also carries `series_name` owns the series. Both bare-DDL runs opened their design
+    turn on exactly this misread; the plan now says it, with the two lines to declare."""
+    ddl = (
+        "CREATE TABLE flights (flight_id VARCHAR, dep TIMESTAMP, revenue_amt DECIMAL(12,2));"
+        "CREATE TABLE flight_sensors (sensor_id VARCHAR, flight_id VARCHAR, series_id VARCHAR,"
+        "  series_name VARCHAR, unit VARCHAR);"
+        "CREATE TABLE sensor_readings (series_id VARCHAR, ts TIMESTAMP, value_double DOUBLE);"
+    )
+    eng = engine_module.DDLEngine(ddl, rows=6000)
+    eng.report()
+    out = capsys.readouterr().out
+
+    assert eng.pk_owner["series_id"] == "sensor_readings", "the premise: the guess is backwards"
+    hint = [ln for ln in out.splitlines() if "sensor_readings.series_id is guessed as the key" in ln]
+    assert hint, out
+    assert "series_name" in hint[0] and "REFERENCES flight_sensors(series_id)" in hint[0], hint[0]
+
+
+@pytest.mark.acceptance
+def test_no_proposal_when_the_shared_column_has_no_siblings(engine_module, capsys):
+    """`orders.customer_id` and `payments.customer_id` share a name and nothing else; a proposal
+    there would be noise on every schema with a foreign key."""
+    ddl = (
+        "CREATE TABLE customers (customer_id VARCHAR, name VARCHAR);"
+        "CREATE TABLE orders (order_id VARCHAR, customer_id VARCHAR, order_time TIMESTAMP, amount_usd DECIMAL(12,2));"
+    )
+    eng = engine_module.DDLEngine(ddl, rows=6000)
+    eng.report()
+
+    assert "is guessed as the key of" not in capsys.readouterr().out
+
+
+# --------------------------------------------------------------------------- the plan lands on the budget before pass 1
+
+FOUNDRY_DDL = """
+CREATE TABLE dim_device (
+    device_id VARCHAR PRIMARY KEY,
+    device_name VARCHAR
+);
+CREATE TABLE wafer_lot (
+    lot_id VARCHAR PRIMARY KEY,
+    device_id VARCHAR REFERENCES dim_device(device_id),
+    start_time TIMESTAMP,
+    wafer_qty_start INTEGER,
+    lot_status VARCHAR, -- RUNNING / DONE
+    cost_usd DECIMAL(12, 2)
+);
+CREATE TABLE wafer (
+    wafer_key VARCHAR PRIMARY KEY,
+    lot_id VARCHAR REFERENCES wafer_lot(lot_id),
+    slot_no INTEGER,
+    sort_yield_pct DECIMAL(6, 3)
+);
+CREATE TABLE probe_die_result (
+    die_id VARCHAR PRIMARY KEY,
+    wafer_key VARCHAR REFERENCES wafer(wafer_key),
+    die_x INTEGER,
+    pass_fail VARCHAR, -- PASS / FAIL
+    test_time_ms INTEGER
+);
+CREATE TABLE lot_process_run (
+    run_id VARCHAR PRIMARY KEY,
+    lot_id VARCHAR REFERENCES wafer_lot(lot_id),
+    track_in_time TIMESTAMP,
+    process_time_sec INTEGER
+);
+CREATE TABLE fdc_run_summary (
+    summary_id VARCHAR PRIMARY KEY,
+    run_id VARCHAR REFERENCES lot_process_run(run_id),
+    mean_value DOUBLE
+);
+"""
+FOUNDRY_FANOUT = {"wafer": 8, "probe_die_result": 18, "lot_process_run": 20, "fdc_run_summary": 5}
+
+
+@pytest.mark.acceptance
+def test_a_fan_out_tree_is_planned_on_the_budget_not_calibrated_down_from_a_multiple(engine_module):
+    """The fact layer is allocated for 1.8 lines per parent, and a declared fan-out tree multiplied
+    that to 1,341,886 planned rows against a budget of 80,000 on a 12-table foundry DDL. generate()
+    only calibrates after a full pass, so pass 1 built the 1.3M rows: 1.6 GB and 40 seconds here,
+    and inside a 2 GiB sandbox the process was killed - twice, with the trace ending at the call."""
+    eng = engine_module.DDLEngine(FOUNDRY_DDL, rows=80_000, profile={"per_parent": FOUNDRY_FANOUT})
+
+    planned = sum(eng.nrows[t] for t in eng.schema)
+    assert abs(planned / 80_000 - 1) <= 0.06, f"planned {planned:,} against 80,000"
+    lots = eng.nrows["wafer_lot"]
+    assert eng.nrows["wafer"] == lots * 8 and eng.nrows["probe_die_result"] == lots * 8 * 18, eng.nrows
+    assert eng.nrows["fdc_run_summary"] == lots * 20 * 5, eng.nrows
+
+
+@pytest.mark.acceptance
+def test_the_first_pass_of_a_fan_out_tree_is_the_right_size(engine_module, tmp_path):
+    """The plan is what pass 1 builds, so a plan on the budget means no oversized pass at all."""
+    eng = engine_module.DDLEngine(FOUNDRY_DDL, rows=40_000, profile={"per_parent": FOUNDRY_FANOUT})
+    out = tmp_path / "t.duckdb"
+    with contextlib.redirect_stdout(io.StringIO()):
+        result = eng.generate(str(out))
+
+    assert result["attempts"] == 1, f"pass 1 should already land: {result['attempts']} passes, {result['rows']:,} rows"
+    assert abs(result["rows"] / 40_000 - 1) <= 0.06, result["rows"]
+
+
+@pytest.mark.acceptance
+def test_prescaling_leaves_a_plan_that_already_fits_alone(engine_module):
+    """A plan within tolerance is not touched: the rule is idempotent, so a second application
+    to the plan it produced changes nothing."""
+    eng = engine_module.DDLEngine(FLIGHT_DDL, rows=6000, profile=FLIGHT_BASE)
+    planned = sum(eng.nrows[t] for t in eng.schema)
+    assert abs(planned / 6000 - 1) <= 0.06, planned
+
+    again = eng._prescale_to_budget(dict(eng.nrows))
+    assert again == eng.nrows
+
+
+@pytest.mark.parametrize("rows", [0, -5, None, True])
+@pytest.mark.acceptance
+def test_a_row_budget_that_is_not_positive_is_refused_at_construction(engine_module, rows):
+    """The plan divides by the budget as soon as the engine is built; a zero used to surface as a
+    ZeroDivisionError from inside the allocator rather than as the configuration error it is."""
+    with pytest.raises(ValueError, match="rows must be a positive"):
+        engine_module.DDLEngine(FLIGHT_DDL, rows=rows, profile=FLIGHT_BASE)

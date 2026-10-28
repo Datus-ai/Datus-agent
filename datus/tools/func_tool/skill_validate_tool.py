@@ -6,7 +6,7 @@
 Skill validation tool for the skill-creator subagent.
 
 Validates SKILL.md files: YAML frontmatter, required fields,
-allowed_commands patterns, and directory structure.
+and directory structure.
 """
 
 import re
@@ -22,7 +22,6 @@ logger = get_logger(__name__)
 
 FRONTMATTER_PATTERN = re.compile(r"^---\s*\n(.*?)\n---\s*\n", re.DOTALL)
 REQUIRED_FIELDS = ["name", "description"]
-VALID_COMMAND_PATTERN = re.compile(r"^[a-zA-Z0-9_]+:.+$")
 VALID_NAME_PATTERN = re.compile(r"^[a-z][a-z0-9-]*$")
 
 
@@ -32,7 +31,6 @@ class SkillValidateTool:
     Checks:
     - YAML frontmatter parses correctly
     - Required fields (name, description) are present
-    - allowed_commands patterns are well-formed
     - Directory structure is correct
     """
 
@@ -97,20 +95,6 @@ class SkillValidateTool:
         if description and len(description) > 500:
             issues.append("WARNING: Description is very long (>500 chars). Keep it concise.")
 
-        # Validate allowed_commands
-        allowed_commands = metadata.get("allowed_commands", [])
-        if allowed_commands:
-            if not isinstance(allowed_commands, list):
-                issues.append("ERROR: 'allowed_commands' must be a list")
-            else:
-                for cmd in allowed_commands:
-                    if not isinstance(cmd, str):
-                        issues.append(f"ERROR: allowed_commands entry must be a string, got: {type(cmd).__name__}")
-                    elif not VALID_COMMAND_PATTERN.match(cmd):
-                        issues.append(
-                            f"WARNING: Pattern '{cmd}' should match format 'prefix:glob' (e.g., 'python:scripts/*.py')"
-                        )
-
         # Validate context/agent fields
         context = metadata.get("context")
         if context and context != "fork":
@@ -130,9 +114,6 @@ class SkillValidateTool:
 
         # Check directory structure
         skill_dir = path.parent
-        scripts_dir = skill_dir / "scripts"
-        if allowed_commands and not scripts_dir.exists():
-            issues.append("WARNING: 'allowed_commands' set but no 'scripts/' directory found.")
 
         # Build result
         errors = [i for i in issues if i.startswith("ERROR")]

@@ -20,9 +20,9 @@ API 服务与 `datus` CLI、`datus-mcp` MCP 服务共享同一套配置、知识
 X-Datus-User-Id: alice
 ```
 
-SQL policy 使用单独的请求 principal。启用 `agent.sql_policy.enabled` 后，请通过 `X-Datus-Principal` 传入业务范围字段，
-header 值必须是 JSON object，例如 `{"market_code":"MKT300"}`。`X-Datus-User-Id` 不会写入 SQL policy principal。
-注意：`X-Datus-Principal` 中不允许包含 `user_id` 字段；该字段保留给 `X-Datus-User-Id`，否则会触发 400 校验错误。
+启用的 policy plugin 使用单独的执行上下文。通过 `X-Datus-Policy-Context` 传入 JSON object，例如
+`{"row_filter":{"access_mode":"scoped","market_codes":["MKT300"]}}`。认证和鉴权在上游完成；Agent 只转发
+该对象，不把它当作用户身份。`X-Datus-User-Id` 仍只用于会话隔离，不会被合并进 policy context。
 详见 [SQL Policy](../configuration/sql_policy.zh.md)。
 
 Datasource 隔离由 `--datasource` CLI 参数(或 `DATUS_DATASOURCE` 环境变量)单独控制,决定加载 `agent.yml`
@@ -56,8 +56,17 @@ Datasource 隔离由 `--datasource` CLI 参数(或 `DATUS_DATASOURCE` 环境变�
 所有 v1 接口位于 `/api/v1` 前缀下;健康检查 `/health` 与 OpenAPI/Swagger UI(`/docs`、`/openapi.json`)
 位于应用根路径。
 
+## 问题排查
+
+诊断服务器异常的方法：
+
+- **请求卡住**——如果一个请求迟迟不返回但 `GET /health` 仍能正常响应，那几乎总是某个协程被挂起，而非事件
+  循环被阻塞。向服务器发送 `SIGUSR1`（`kill -USR1 <pid>`），即可转储所有存活异步任务以及各自被挂起的最内层
+  栈帧。详见 [调试 — SIGUSR1 任务转储](debugging.zh.md#sigusr1-task-dump)。
+
 ## 下一步
 
 - [部署](deployment.zh.md) — 安装并启动 API 服务
 - [Chat](chat.zh.md) — Chat 接口与 SSE 流式协议
 - [知识库](knowledge_base.zh.md) — 知识库构建与平台文档接口（SSE 流式）
+- [调试](debugging.zh.md) — 用 SIGUSR1 异步任务转储诊断卡住的请求

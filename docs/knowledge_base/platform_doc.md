@@ -171,6 +171,8 @@ To expose these tools in custom nodes or subagents, include `platform_doc_tools`
 
 **Recommended call order**: `list_document_nav` → `get_document` → `search_document` → `web_search_document` (fallback).
 
+`web_search_document` is not the same tool as the general-purpose `web_search` from the [web tool group](../configuration/web_tool.md) — they share the Tavily key configuration but have separate permission categories.
+
 **`get_document` expects one document at a time**. Pass a single hierarchy path like:
 
 ```text

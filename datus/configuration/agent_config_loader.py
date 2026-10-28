@@ -3,7 +3,7 @@
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, List
 
 import yaml
 
@@ -320,6 +320,58 @@ def _apply_project_override(agent_raw: Dict[str, Any]) -> None:
         agent_raw["language"] = override.language
     if override.reasoning_effort is not None:
         agent_raw["target_reasoning_effort"] = override.reasoning_effort
+    if override.sandbox is not None:
+        # Project-level bash sandbox switch. A bool only toggles ``enabled``;
+        # the mode strings ``"strict"``/``"normal"`` enable AND pin the mode.
+        # ``allow_read``/``allow_write`` from the global agent.yml survive.
+        bash_raw = agent_raw.get("bash")
+        if not isinstance(bash_raw, dict):
+            bash_raw = {}
+        agent_raw["bash"] = bash_raw
+        sandbox_raw = bash_raw.get("sandbox")
+        if not isinstance(sandbox_raw, dict):
+            sandbox_raw = {}
+        bash_raw["sandbox"] = sandbox_raw
+        if isinstance(override.sandbox, str):
+            sandbox_raw["enabled"] = True
+            sandbox_raw["mode"] = override.sandbox
+        else:
+            sandbox_raw["enabled"] = override.sandbox
+    if override.bash_allow:
+        # Append project-level bash allow patterns into the permissions raw
+        # dict so they ride the normal parse/merge pipeline
+        # (AgentConfig._init_permissions_config -> build_effective_config).
+        # Tolerate malformed YAML shapes (string/list where a mapping is
+        # expected) the same way ``AgentConfig._init_permissions_config`` and
+        # the ``permission_mode`` override below do: replace with an empty
+        # container instead of crashing config loading.
+        permissions = agent_raw.get("permissions")
+        if not isinstance(permissions, dict):
+            permissions = {}
+        agent_raw["permissions"] = permissions
+        bash_commands = permissions.get("bash_commands")
+        if not isinstance(bash_commands, dict):
+            bash_commands = {}
+        permissions["bash_commands"] = bash_commands
+        allow = bash_commands.get("allow")
+        if not isinstance(allow, list):
+            allow = []
+        bash_commands["allow"] = allow
+        for pattern in override.bash_allow:
+            if pattern not in allow:
+                allow.append(pattern)
+        # Also forward the raw grant list: merged allow entries cannot beat
+        # ask rules (deny > ask > allow), so PermissionManager keeps these as
+        # an exact-match grant set that lets a project grant bypass an
+        # ask-rule hit (e.g. a plugin-declared ask persisted via the
+        # "allow (project)" prompt choice).
+        agent_raw["project_bash_allow"] = list(override.bash_allow)
+    if override.sql_allow:
+        # Unlike bash_allow, SQL grants are NOT merged into ``permissions.*``:
+        # the execute_sql gate resolves statement classes dynamically, so a
+        # static rule cannot express a per-kind grant. The raw kind list feeds
+        # PermissionManager's exact-match grant set only.
+        agent_raw["project_sql_allow"] = list(override.sql_allow)
     # ``dashboard`` / ``scheduler`` overrides reach AgentConfig through
     # dedicated kwargs so the project-level pin is consulted between the
     # explicit call-site argument and the global default flag at lookup
@@ -330,8 +382,15 @@ def _apply_project_override(agent_raw: Dict[str, Any]) -> None:
         agent_raw["active_dashboard"] = override.dashboard
     if override.scheduler is not None:
         agent_raw["active_scheduler"] = override.scheduler
-    if override.semantic is not None:
-        agent_raw["active_semantic"] = override.semantic
+    # ``plugins`` declares per-plugin activation for this project (enabled +
+    # active_profile list). Forwarded to AgentConfig as ``active_plugins``,
+    # which gates which plugins are loaded (CLI/skills/prompt/transformers) and
+    # is consulted by ``get_plugin_profile`` for the CLI default profile. The
+    # key is only written when the ``plugins:`` section is present (a present
+    # empty mapping ``{}`` deactivates every plugin), so AgentConfig can tell
+    # "section absent — activate everything" from "section present".
+    if override.plugins is not None:
+        agent_raw["active_plugins"] = override.plugins
 
 
 _PRE_INIT_OVERRIDE_KEYS = {"home", "project_root", "project_name"}
@@ -369,6 +428,17 @@ def load_agent_config(reload: bool = False, create_if_missing: bool = False, **k
         ).data
     )
     _apply_project_override(agent_raw)
+    # ``--permission-mode`` CLI override: reshapes ``permissions.profile`` before
+    # AgentConfig parses it, so ``permissions_config`` / ``active_profile_name``
+    # reflect the override everywhere (REPL status bar, print mode, hooks).
+    # User rules / bash_commands still layer on top via build_effective_config.
+    permission_mode = kwargs.get("permission_mode")
+    if permission_mode:
+        permissions_raw = agent_raw.get("permissions") or {}
+        if not isinstance(permissions_raw, dict):
+            permissions_raw = {}
+        permissions_raw["profile"] = permission_mode
+        agent_raw["permissions"] = permissions_raw
     pre_init_override_keys = _apply_pre_init_overrides(agent_raw, kwargs)
     nodes = {}
     if "nodes" in agent_raw:
@@ -379,19 +449,18 @@ def load_agent_config(reload: bool = False, create_if_missing: bool = False, **k
                     ErrorCode.COMMON_FIELD_INVALID,
                     message_args={
                         "field_name": "Node Type",
-                        "except_values": set(NodeType.ACTION_TYPES) | {NodeType.TYPE_REFLECT},
+                        "except_values": set(NodeType.ACTION_TYPES),
                         "your_value": nodes_raw,
                     },
                 )
+            nodes_raw = {nodes_raw: {}}
         for node_type, cfg in nodes_raw.items():
-            if node_type == NodeType.TYPE_REFLECT:
-                pass
-            elif node_type not in NodeType.ACTION_TYPES:
+            if node_type not in NodeType.ACTION_TYPES:
                 raise DatusException(
                     ErrorCode.COMMON_FIELD_INVALID,
                     message_args={
                         "field_name": "Node Type",
-                        "except_values": set(NodeType.ACTION_TYPES) | {NodeType.TYPE_REFLECT},
+                        "except_values": set(NodeType.ACTION_TYPES),
                         "your_value": node_type,
                     },
                 )
@@ -466,3 +535,26 @@ def get_agent_home(config_file: str = "") -> str:
         return "~/.datus"
 
     return raw.get("agent", {}).get("home", "~/.datus")
+
+
+def get_plugin_paths(config_file: str = "") -> List[str]:
+    """Read ``agent.plugin_paths`` from config without instantiating ``AgentConfig``.
+
+    Used by CLI plugin dispatch, which must inject configured plugin
+    directories into ``sys.path`` (path-only) BEFORE the full agent config —
+    and therefore the plugin entry-point probe — runs. Any failure resolves to
+    an empty list: dispatch falls through and the real error surfaces at
+    ``load_agent_config``.
+    """
+    try:
+        config_path = parse_config_path(config_file)
+        with open(config_path, "r", encoding="utf-8") as f:
+            raw = yaml.safe_load(f) or {}
+    except Exception as e:  # noqa: BLE001 - dispatch probing must never crash
+        logger.debug(f"Error reading plugin_paths from config: {e}")
+        return []
+    agent_raw = raw.get("agent")
+    paths = agent_raw.get("plugin_paths") if isinstance(agent_raw, dict) else None
+    if not isinstance(paths, list):
+        return []
+    return [p.strip() for p in paths if isinstance(p, str) and p.strip()]

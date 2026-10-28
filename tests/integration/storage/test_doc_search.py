@@ -17,11 +17,11 @@ from lancedb.embeddings.base import TextEmbeddingFunction
 from lancedb.embeddings.registry import register
 
 from datus.configuration.agent_config import AgentConfig
-from datus.configuration.agent_config_loader import load_agent_config
 from datus.storage.document.schemas import PlatformDocChunk
 from datus.storage.document.store import document_store
 from datus.storage.embedding_models import EMBEDDING_MODELS, EmbeddingModel
 from datus.utils.loggings import get_logger
+from tests.conftest import load_acceptance_config
 
 logger = get_logger(__name__)
 
@@ -59,7 +59,7 @@ def deterministic_document_embedding(monkeypatch):
     """Keep document-search acceptance off real fastembed/model cache state."""
     document_store.cache_clear()
     model = EmbeddingModel(model_name="datus-test-deterministic", dim_size=8)
-    model._model = _DeterministicDocEmbedding()
+    model._model = _DeterministicDocEmbedding.create()
     model.model_initialization_attempted = True
     monkeypatch.setitem(EMBEDDING_MODELS, "document", model)
     yield
@@ -177,7 +177,7 @@ def _build_test_chunks() -> List[PlatformDocChunk]:
 
 @pytest.fixture
 def agent_config() -> AgentConfig:
-    return load_agent_config()
+    return load_acceptance_config()
 
 
 @pytest.mark.acceptance

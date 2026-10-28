@@ -13,8 +13,10 @@ import json
 import platform
 import re
 import subprocess
-from contextlib import contextmanager
-from typing import TYPE_CHECKING, Any, List, Optional, Tuple
+import threading
+from collections.abc import Iterator
+from contextlib import ExitStack, contextmanager
+from typing import TYPE_CHECKING, Any, Callable, List, Optional, Tuple
 
 from rich.panel import Panel
 from rich.syntax import Syntax
@@ -31,7 +33,7 @@ from datus.cli.cli_styles import (
 )
 from datus.cli.execution_state import ExecutionInterrupted, PendingInputQueue, auto_submit_interaction
 from datus.cli.list_selector_app import ListItem, ListSelectorApp
-from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
+from datus.schemas.action_history import INTERRUPTED_ACTION_TYPE, ActionHistory, ActionRole, ActionStatus
 from datus.schemas.node_models import SQLContext
 from datus.utils.loggings import get_logger
 from datus.utils.terminal_utils import EscapeGuard, interrupt_on_escape
@@ -117,6 +119,15 @@ class ChatCommands:
         # Chat state management - unified node management
         self.current_node: ChatAgenticNode | None = None  # Can be ChatAgenticNode or GenSQLAgenticNode
         self.current_subagent_name: str | None = None  # Track current subagent name
+        # Serializes every ``current_node`` check-create-publish sequence.
+        # ``DatusCLI._warm_bang_node`` builds the default node from the
+        # background init thread while the input thread may start a chat turn,
+        # and node construction takes long enough (tool setup, skill/web/MCP
+        # mounting) for both to observe ``current_node is None`` and each
+        # publish its own node — the later writer then orphans the session the
+        # running turn is streaming into. Reentrant so a holder can call the
+        # nested node helpers.
+        self._node_lock = threading.RLock()
         self.chat_history = []
         self.last_actions = []
         self.all_turn_actions: List[Tuple[str, List[ActionHistory]]] = []
@@ -134,6 +145,13 @@ class ChatCommands:
         # when each turn completes so a stale reference never re-renders.
         self._current_incremental_actions: Optional[List[ActionHistory]] = None
 
+    def _streaming_key_callbacks(self, streaming_ctx) -> dict[bytes, Callable[[], None]]:
+        """Return shortcuts handled by the legacy mid-stream stdin listener."""
+        return {
+            b"\x0f": streaming_ctx.toggle_verbose,
+            b"\x10": self.cli._cycle_permission_mode,
+        }
+
     def update_chat_node_tools(self):
         """Update current node tools when datasource/database changes."""
         if self.current_node and hasattr(self.current_node, "setup_tools"):
@@ -141,6 +159,19 @@ class ChatCommands:
             if hasattr(self.current_node, "active_database"):
                 self.current_node.active_database = getattr(self.cli.cli_context, "current_db_name", "") or ""
             self.current_node.setup_tools()
+
+    @contextmanager
+    def node_transaction(self) -> Iterator[None]:
+        """Hold the node lock across a check-create-publish of ``current_node``.
+
+        Every caller that decides whether to build a node and then publishes
+        the result must run inside this block, so a concurrent builder either
+        waits and reuses the published node or observes the decision that won.
+        Callers outside this module (the web executor) use it too — the lock
+        itself stays private.
+        """
+        with self._node_lock:
+            yield
 
     def _should_create_new_node(self, subagent_name: str = None) -> bool:
         """Determine if a new node should be created."""
@@ -238,6 +269,71 @@ class ChatCommands:
         except Exception:  # noqa: BLE001
             pass
 
+    def get_or_create_node(self, subagent_name: Optional[str] = None) -> "AgenticNode":
+        """Return the active node, publishing a new one under the node lock if needed.
+
+        The plain check-create-publish, for callers that do not carry the
+        interactive chat path's agent-switch handling (session copy,
+        ``caller_node_name``, turn-action reset). Owning the transaction here
+        keeps :attr:`_node_lock` and the node-creation internals inside this
+        class instead of being reassembled by callers in other modules.
+        """
+        with self.node_transaction():
+            if self._should_create_new_node(subagent_name):
+                self.current_node = self._create_new_node(subagent_name)
+                self.current_subagent_name = subagent_name if subagent_name else None
+            return self.current_node
+
+    def ensure_node_for_bang(self) -> Optional["AgenticNode"]:
+        """Return the current chat node, lazily creating a default one if needed.
+
+        The ``!<tool>`` handler enumerates and invokes tools from the live chat
+        node's ``tools`` list, but ``current_node`` is created lazily on the
+        first chat turn. This builds the regular (non-subagent) node up front —
+        the same node the next chat turn would reuse (``_should_create_new_node``
+        returns ``False`` once ``current_node`` is set and no subagent is
+        active) — so a ``!<tool>`` call works before any chat has happened.
+
+        The node is built *fully* on a local reference (base tools via
+        ``setup_tools`` plus the skill/bash/memory/web tools that are otherwise
+        mounted lazily at execution time) before it is published to
+        ``self.current_node``, so ``!`` autocomplete lists the complete tool set
+        and never observes a half-mounted node. Returns ``None`` when node
+        construction fails.
+
+        Runs under :meth:`node_transaction` because this is the one caller that
+        builds a node nobody asked for yet: a chat turn starting concurrently
+        must never have its own node replaced by this warm-up. The publish is
+        therefore also re-checked — a turn that won the race keeps its node and
+        the warm one is dropped.
+        """
+        with self.node_transaction():
+            if self.current_node is not None:
+                return self.current_node
+            try:
+                node = self._create_new_node(None)
+                if hasattr(node, "active_database"):
+                    node.active_database = getattr(self.cli.cli_context, "current_db_name", "") or ""
+                if hasattr(node, "setup_tools"):
+                    node.setup_tools()
+                # Mount the tools that are otherwise injected lazily during a turn
+                # (skill / bash / memory / web) so the ``!`` list is complete.
+                if hasattr(node, "_ensure_lazy_tools_mounted"):
+                    node._ensure_lazy_tools_mounted()
+                if self.current_node is not None:
+                    logger.debug("Bang-node warm dropped: a chat turn published its own node first")
+                    return self.current_node
+                self.current_subagent_name = None
+                self.current_node = node
+            except Exception as exc:  # noqa: BLE001 - never crash the REPL on a ! call
+                logger.error(f"Failed to create chat node for '!' tool execution: {exc}", exc_info=True)
+                # ``current_node`` was ``None`` on entry, so a non-None value here
+                # was published by a reentrant caller inside the build. Clearing
+                # it would orphan that node's session — the very failure this
+                # method's re-check exists to prevent.
+                return self.current_node
+            return self.current_node
+
     def create_node_input(
         self,
         user_message: str,
@@ -333,6 +429,7 @@ class ChatCommands:
         message: str,
         plan_mode: bool = False,
         subagent_name: Optional[str] = None,
+        init_context=None,
     ):
         """Execute a chat command in interactive REPL mode.
 
@@ -343,14 +440,25 @@ class ChatCommands:
         hook), drain those messages and feed them into a fresh run so they
         are not silently dropped.
         """
+        if init_context is not None:
+            # One normal run in the current session. Late input remains queued
+            # for the next user turn; it must not restart an exhausted init budget.
+            try:
+                self._execute_chat(
+                    message,
+                    plan_mode=plan_mode,
+                    subagent_name=subagent_name,
+                    interactive=True,
+                    init_context=init_context,
+                )
+            except BaseException as exc:
+                init_context._stop(f"Init execution stopped: {type(exc).__name__}: {exc}")
+                raise
+            return
+
         current_message = message
         while True:
-            self._execute_chat(
-                current_message,
-                plan_mode=plan_mode,
-                subagent_name=subagent_name,
-                interactive=True,
-            )
+            self._execute_chat(current_message, plan_mode=plan_mode, subagent_name=subagent_name, interactive=True)
 
             node = self.current_node
             queue = node.pending_input_queue if node is not None else None
@@ -401,60 +509,86 @@ class ChatCommands:
         plan_mode: bool = False,
         subagent_name: Optional[str] = None,
         interactive: bool = True,
+        init_context=None,
     ):
         """Core chat execution logic shared by interactive and non-interactive modes."""
         if not message.strip():
             self.console.print("[yellow]Please provide a message to chat with the AI.[/]")
             return
 
+        editable_message = message
+        init_resources = ExitStack()
+        current_node = None
+        execution_interrupted = False
         try:
-            at_tables, at_metrics, at_sqls, at_agent = self.cli.at_completer.parse_at_context(message)
-            # ``@Agent <name>`` is a per-turn routing hint, not a default-agent
-            # override: ``current_subagent_name`` and the active node remain
-            # unchanged. The hint is appended to the message so the chat
-            # agent's existing ``task`` tool fires deterministically rather
-            # than relying on the LLM to spot the bare ``@Agent`` token.
-            if at_agent:
-                message = self._render_agent_dispatch_hint(message, at_agent)
+            # Manual-execution turns (SQL/bash run from the input bar) carry a
+            # marker-encoded payload whose command may legitimately contain
+            # ``@`` / ``[`` — skip ``@``-reference parsing and the dispatch
+            # hint so the payload round-trips verbatim for resume.
+            from datus.cli.manual_exec import is_exec_message
+
+            if is_exec_message(message):
+                at_tables, at_metrics, at_sqls = [], [], []
+                from datus.cli.manual_exec import decode_exec_message
+
+                exec_payload = decode_exec_message(message)
+                if exec_payload is not None:
+                    command = str(exec_payload.get("command", ""))
+                    editable_message = f"!{command}" if exec_payload.get("kind") == "tool" else command
+            else:
+                at_tables, at_metrics, at_sqls, at_agent = self.cli.at_completer.parse_at_context(message)
+                # ``@Agent <name>`` is a per-turn routing hint, not a default-agent
+                # override: ``current_subagent_name`` and the active node remain
+                # unchanged. The hint is appended to the message so the chat
+                # agent's existing ``task`` tool fires deterministically rather
+                # than relying on the LLM to spot the bare ``@Agent`` token.
+                if at_agent:
+                    message = self._render_agent_dispatch_hint(message, at_agent)
 
             if interactive:
-                # Decision logic: determine if we need to create a new node
-                need_new_node = self._should_create_new_node(subagent_name)
-                is_switch = self._is_agent_switch(subagent_name)
+                # The decision and the publish share one lock hold: a
+                # background ``!`` warm-up must not slip a node in between
+                # ``_should_create_new_node`` and the assignment below, nor
+                # replace this turn's node once it is published.
+                with self.node_transaction():
+                    # Decision logic: determine if we need to create a new node
+                    need_new_node = self._should_create_new_node(subagent_name)
+                    is_switch = self._is_agent_switch(subagent_name)
 
-                # Get or create node
-                if need_new_node:
-                    # Copy session when switching agents to preserve conversation
-                    # while keeping the session_id prefix consistent with the new
-                    # node type. The copy runs *before* construction so the new
-                    # node opens the cloned .db directly — no post-construct mutation.
-                    from datus.agent.node.node_factory import resolve_node_name
+                    # Get or create node
+                    if need_new_node:
+                        # Copy session when switching agents to preserve conversation
+                        # while keeping the session_id prefix consistent with the new
+                        # node type. The copy runs *before* construction so the new
+                        # node opens the cloned .db directly — no post-construct mutation.
+                        from datus.agent.node.node_factory import resolve_node_name
 
-                    prev_session_id = None
-                    prev_node_name = None
-                    new_session_id: Optional[str] = None
-                    if is_switch and self.current_node:
-                        prev_session_id = getattr(self.current_node, "session_id", None)
-                        prev_node_name = self.current_node.get_node_name()
-                    if prev_session_id:
-                        new_session_id = self._copy_session_for_switch(
-                            prev_session_id, resolve_node_name(subagent_name)
-                        )
-                    self.current_node = self._create_new_node(subagent_name, session_id=new_session_id)
-                    if prev_node_name:
-                        # Pass the previous node's name explicitly so downstream
-                        # nodes (e.g. feedback) can route memory to the caller
-                        # without having to parse the session id prefix.
-                        self.current_node.caller_node_name = prev_node_name
-                    self.current_subagent_name = subagent_name if subagent_name else None
-                    if not is_switch:
-                        self.all_turn_actions = []
+                        prev_session_id = None
+                        prev_node_name = None
+                        new_session_id: Optional[str] = None
+                        if is_switch and self.current_node:
+                            prev_session_id = getattr(self.current_node, "session_id", None)
+                            prev_node_name = self.current_node.get_node_name()
+                        if prev_session_id:
+                            new_session_id = self._copy_session_for_switch(
+                                prev_session_id, resolve_node_name(subagent_name)
+                            )
+                        self.current_node = self._create_new_node(subagent_name, session_id=new_session_id)
+                        if prev_node_name:
+                            # Pass the previous node's name explicitly so downstream
+                            # nodes (e.g. feedback) can route memory to the caller
+                            # without having to parse the session id prefix.
+                            self.current_node.caller_node_name = prev_node_name
+                        self.current_subagent_name = subagent_name if subagent_name else None
+                        if not is_switch:
+                            self.all_turn_actions = []
 
-                current_node = self.current_node
+                    current_node = self.current_node
             else:
                 # Non-interactive: always create a new node
-                self.current_node = self._create_new_node(None)
-                current_node = self.current_node
+                with self.node_transaction():
+                    self.current_node = self._create_new_node(None)
+                    current_node = self.current_node
 
             # Ensure the node has a pending-input queue so the TUI Enter
             # handler, the API ``/insert`` route, and the model layer's
@@ -481,6 +615,9 @@ class ChatCommands:
             ):
                 current_node._update_database_connection(active_db)
             from datus.utils.trace_context import build_chat_trace_context
+
+            if init_context is not None:
+                init_resources.enter_context(init_context.activate(current_node))
 
             trace_ctx = build_chat_trace_context(
                 session_id=current_node.session_id,
@@ -524,7 +661,11 @@ class ChatCommands:
             pending_non_thinking = None
 
             if interactive:
-                self.console.print("[dim]Press ESC or Ctrl+C to interrupt[/dim]")
+                action_checkpoint = self.cli.actions.checkpoint()
+                node_action_checkpoint = len(getattr(current_node, "actions", []))
+                session_manager = current_node.session_manager
+                session_checkpoint = session_manager.checkpoint_turn(current_node.session_id)
+                output_checkpoint = None
 
                 async def run_chat_stream():
                     """Run chat stream — INTERACTION actions flow into incremental_actions."""
@@ -536,7 +677,15 @@ class ChatCommands:
                         action_stream = current_node.execute_stream_with_interactions(
                             action_history_manager=self.cli.actions
                         )
+                        if init_context is not None:
+                            action_stream = init_context.stream(action_stream)
                         async for action in action_stream:
+                            if action.role in {
+                                ActionRole.ASSISTANT,
+                                ActionRole.TOOL,
+                                ActionRole.INTERACTION,
+                            } and action.action_type not in {"compact_progress", "compact_summary"}:
+                                streaming_ctx.mark_model_response_started()
                             # Token-usage updates drive the status bar / API
                             # ``usage`` events only; they carry no chat content
                             # and must never render as a transcript line. Sub-agent
@@ -620,6 +769,7 @@ class ChatCommands:
                     interaction_broker=current_node.interaction_broker,
                     streaming_deltas=streaming_deltas,
                 )
+                streaming_ctx.set_editable_user_message(editable_message)
                 # Reprint the CLI banner at the top after Ctrl+O clears the screen.
                 banner_callback = getattr(self.cli, "_print_welcome", None)
                 if banner_callback is not None:
@@ -631,12 +781,13 @@ class ChatCommands:
                 # mid-stream Ctrl+O verbose toggle wipes the viewport for real.
                 tui_output_buffer = getattr(self.cli, "_tui_output_buffer", None)
                 if tui_output_buffer is not None:
+                    output_checkpoint = tui_output_buffer.checkpoint()
                     streaming_ctx.set_clear_screen_callback(tui_output_buffer.clear)
 
                 # In TUI mode the persistent prompt_toolkit Application owns
                 # stdin, so the termios-based ``interrupt_on_escape`` listener
                 # would fight the main input loop. Skip it and rely on
-                # dedicated ESC / Ctrl+O key bindings registered on the TUI
+                # dedicated ESC / Ctrl+O / Ctrl+P key bindings registered on the TUI
                 # (see ``DatusCLI._init_tui_app``), which consult this
                 # streaming_ctx and the node's interrupt_controller directly.
                 if getattr(self.cli, "_use_tui", False):
@@ -644,24 +795,86 @@ class ChatCommands:
                 else:
                     esc_cm = interrupt_on_escape(
                         current_node.interrupt_controller,
-                        key_callbacks={b"\x0f": streaming_ctx.toggle_verbose},
+                        key_callbacks=self._streaming_key_callbacks(streaming_ctx),
                     )
 
-                # Publish the streaming context so the TUI Ctrl+O / ESC
+                # Publish the streaming context so the TUI Ctrl+O / Ctrl+P / ESC
                 # bindings can locate it while the agent runs.
                 self.current_streaming_ctx = streaming_ctx
                 try:
                     with esc_cm as esc_guard, streaming_ctx:
                         streaming_ctx.set_input_collector(self._make_input_collector(esc_guard))
                         try:
-                            self.cli.run_on_bg_loop(run_chat_stream())
+                            self.cli.run_on_bg_loop(
+                                run_chat_stream(),
+                                interrupt_controller=current_node.interrupt_controller,
+                            )
                         except KeyboardInterrupt:
+                            execution_interrupted = True
                             current_node.interrupt_controller.interrupt()
                             if current_node.pending_input_queue is not None:
                                 current_node.pending_input_queue.clear()
                             logger.info("KeyboardInterrupt caught, execution interrupted gracefully")
                         except ExecutionInterrupted:
+                            execution_interrupted = True
+                            current_node._drop_running_turn_usage_on_exit = True
+                            if current_node.pending_input_queue is not None:
+                                current_node.pending_input_queue.clear()
                             logger.info("ExecutionInterrupted caught, execution stopped gracefully")
+                    # A cooperative controller checkpoint can finish the
+                    # stream normally before Task.cancel is delivered. The
+                    # ESC-time latch, rather than the exception path, is the
+                    # authoritative rollback decision.
+                    rollback_unanswered = bool(getattr(streaming_ctx, "unanswered_rollback_requested", False))
+                    execution_interrupted = (
+                        execution_interrupted
+                        or rollback_unanswered
+                        or bool(
+                            getattr(streaming_ctx, "interrupt_requested", False)
+                            or current_node.interrupt_controller.is_interrupted
+                        )
+                    )
+                    if rollback_unanswered:
+                        self._rollback_unanswered_turn(
+                            current_node=current_node,
+                            incremental_actions=incremental_actions,
+                            action_checkpoint=action_checkpoint,
+                            node_action_checkpoint=node_action_checkpoint,
+                            session_manager=session_manager,
+                            session_checkpoint=session_checkpoint,
+                            output_buffer=tui_output_buffer,
+                            output_checkpoint=output_checkpoint,
+                        )
+                        current_node.interrupt_controller.reset()
+                        return
+                    if execution_interrupted:
+                        # Partial output (and the Interrupted notice) has
+                        # already been flushed by the streaming context. Do
+                        # not reinterpret the last intermediate/tool action as
+                        # a final response.  The turn is nevertheless durable:
+                        # the node/session layer has already recorded its user
+                        # message and any partial actions.  Keep the same turn
+                        # in the in-memory replay list before returning, or a
+                        # later full-screen repaint (Ctrl+O/sidebar reflow)
+                        # clears the visible user row even though /resume can
+                        # reconstruct it from SQLite.
+                        interrupted_actions = list(incremental_actions)
+                        interrupted_actions.append(
+                            ActionHistory.create_action(
+                                role=ActionRole.SYSTEM,
+                                action_type=INTERRUPTED_ACTION_TYPE,
+                                messages="Interrupted",
+                                input_data={},
+                                output_data={},
+                                status=ActionStatus.SUCCESS,
+                            )
+                        )
+                        self.last_actions = interrupted_actions
+                        self.all_turn_actions.append((message, interrupted_actions))
+                        # Clear the reusable controller before the next Enter
+                        # starts a fresh run.
+                        current_node.interrupt_controller.reset()
+                        return
                     streamed_body = bool(getattr(streaming_ctx, "has_streamed_response", False))
                 finally:
                     self.current_streaming_ctx = None
@@ -751,11 +964,19 @@ class ChatCommands:
                 )
                 with ns_streaming_ctx:
                     try:
-                        self.cli.run_on_bg_loop(run_stream())
+                        self.cli.run_on_bg_loop(
+                            run_stream(),
+                            interrupt_controller=current_node.interrupt_controller,
+                        )
                     except KeyboardInterrupt:
+                        execution_interrupted = True
                         current_node.interrupt_controller.interrupt()
                         logger.info("KeyboardInterrupt caught, execution interrupted gracefully")
                     except ExecutionInterrupted:
+                        execution_interrupted = True
+                        current_node._drop_running_turn_usage_on_exit = True
+                        if current_node.pending_input_queue is not None:
+                            current_node.pending_input_queue.clear()
                         logger.info("ExecutionInterrupted caught, execution stopped gracefully")
                 streamed_body = bool(getattr(ns_streaming_ctx, "has_streamed_response", False))
 
@@ -806,9 +1027,6 @@ class ChatCommands:
                         self.all_turn_actions.append((message, all_actions))
                         self._trace_verbose = False  # reset toggle for new chat round
 
-                if interactive:
-                    self.cli.console.print("[bold bright_black]Press Ctrl+O to toggle trace details.[/]")
-
             if interactive:
                 self.chat_history.append(
                     {
@@ -824,13 +1042,69 @@ class ChatCommands:
 
         except Exception as e:
             logger.error(f"Chat error: {str(e)}")
+            if init_context is not None:
+                init_context._stop(f"Init chat failed: {e}")
             self.console.print(f"[red]Error:[/] {str(e)}")
             if _is_model_config_error(e):
                 self.console.print("[yellow]Hint: Use /model to configure or switch your model.[/]")
         finally:
+            init_resources.close()
+            if init_context is not None:
+                controller = getattr(current_node, "interrupt_controller", None)
+                queue = getattr(current_node, "pending_input_queue", None)
+                pending = queue.snapshot() if queue is not None else []
+                init_context.record_user_updates(pending)
+                init_context.finish_execution(
+                    getattr(current_node, "result", None),
+                    interrupted=execution_interrupted or bool(controller is not None and controller.is_interrupted),
+                    pending_input=bool(pending),
+                )
             # Drop the in-progress reference so a later sidebar reflow does
             # not replay actions from a turn that has already finished.
             self._current_incremental_actions = None
+
+    def _rollback_unanswered_turn(
+        self,
+        *,
+        current_node,
+        incremental_actions: List[ActionHistory],
+        action_checkpoint: int,
+        node_action_checkpoint: int,
+        session_manager,
+        session_checkpoint,
+        output_buffer,
+        output_checkpoint,
+    ) -> None:
+        """Remove an ESC-cancelled, unanswered turn from every transcript."""
+        # A mid-turn compaction rewrites the whole session, so every row —
+        # including the compacted view of earlier turns — is newer than the
+        # checkpoint taken before the turn. Rolling back to that checkpoint
+        # would empty the session; the node publishes a fresh checkpoint right
+        # after each rewrite, and that one is the safe boundary.
+        rewrite_checkpoint = getattr(current_node, "mid_turn_rewrite_checkpoint", None)
+        effective_checkpoint = (
+            rewrite_checkpoint
+            if getattr(current_node, "_session_rewritten_this_turn", False) or rewrite_checkpoint is not None
+            else session_checkpoint
+        )
+        try:
+            session_manager.rollback_turn(current_node.session_id, effective_checkpoint)
+        except Exception:  # pragma: no cover - rollback remains best-effort on damaged DBs
+            logger.exception("Failed to roll back unanswered SQLite turn")
+
+        self.cli.actions.rollback_to(action_checkpoint)
+        node_actions = getattr(current_node, "actions", None)
+        if isinstance(node_actions, list):
+            del node_actions[node_action_checkpoint:]
+        incremental_actions.clear()
+        current_node.running_turn_usage = None
+        current_node._invalidate_context_usage()
+        pending_queue = getattr(current_node, "pending_input_queue", None)
+        if pending_queue is not None:
+            pending_queue.clear()
+
+        if output_buffer is not None and output_checkpoint is not None:
+            output_buffer.rollback(output_checkpoint)
 
     def _render_final_response(self, final_action: "ActionHistory", skip_markdown_body: bool = False) -> None:
         """Render the final response output (SQL, markdown, etc.) from a node action.
@@ -1260,7 +1534,7 @@ class ChatCommands:
         Returns:
             Extracted report content or None if not found
         """
-        if not response:
+        if not response or not isinstance(response, str):
             return None
 
         try:
@@ -1322,8 +1596,8 @@ class ChatCommands:
                 if output and isinstance(output, str):
                     output = output.replace("\\n", "\n").replace('\\"', '"').replace("\\'", "'")
                 return sql, output
-            except json.JSONDecodeError as e:
-                logger.debug(f"DEBUG: JSON decode failed for content: {content[:100]}... Error: {e}")
+            except json.JSONDecodeError:
+                pass
 
             # Pattern 3: Look for SQL code blocks
             sql_pattern = r"```sql\s*(.*?)\s*```"
@@ -1344,19 +1618,20 @@ class ChatCommands:
         self.console.clear()
 
         # Clear current session
-        if self.current_node:
-            try:
-                self.current_node.delete_session()
-                self.console.print("[green]Console and current session cleared.[/]")
-            except Exception as e:
-                logger.error(f"Error deleting session: {e}")
-                self.console.print("[green]Console cleared. Next chat will create a new session.[/]")
-        else:
-            self.console.print("[green]Console cleared. Next chat will create a new session.[/]")
+        with self.node_transaction():
+            if self.current_node:
+                try:
+                    self.current_node.delete_session()
+                    print_success(self.console, "Console and current session cleared.")
+                except Exception as e:
+                    logger.error(f"Error deleting session: {e}")
+                    print_success(self.console, "Console cleared. Next chat will create a new session.")
+            else:
+                print_success(self.console, "Console cleared. Next chat will create a new session.")
 
-        # Reset all node references
-        self.current_node = None
-        self.all_turn_actions = []
+            # Reset all node references
+            self.current_node = None
+            self.all_turn_actions = []
 
     def cmd_chat_info(self, args: str):
         """Display information about the current session."""
@@ -1388,8 +1663,7 @@ class ChatCommands:
                     self.console.print(f"  Token Count: {token_count}")
 
                 ctx_length = session_info.get("context_length", 0)
-                last_turn_usage = asyncio.run(self.current_node.get_last_turn_usage())
-                ctx_tokens = last_turn_usage.session_total_tokens if last_turn_usage else 0
+                ctx_tokens = self.current_node.get_context_usage().last_call_input_tokens
                 if ctx_length and ctx_tokens:
                     ratio = ctx_tokens / ctx_length * 100
                     self.console.print(f"  Context: {ctx_tokens:,}/{ctx_length:,} ({ratio:.1f}%)")
@@ -1472,6 +1746,11 @@ class ChatCommands:
             attached — otherwise Ctrl+O verbose mode hides blocking validation
             details from runs whose retry budget was exhausted.
             """
+            # Response-started ESC turns intentionally have no final response.
+            # Their partial trace plus the replay-only Interrupted marker were
+            # already rendered by ``render_action_history`` above.
+            if any(action.action_type == INTERRUPTED_ACTION_TYPE for action in turn_actions):
+                return
             final_action = self._find_node_final_action(turn_actions)
             if not final_action or final_action.depth != 0:
                 return
@@ -1640,11 +1919,16 @@ class ChatCommands:
                 )
 
                 items = []
+                from datus.cli.manual_exec import exec_preview
+
                 for info in session_infos:
                     sid = info["session_id"]
                     raw_first_msg = info.get("first_user_message", "") or ""
                     if not isinstance(raw_first_msg, str):
                         raw_first_msg = str(raw_first_msg)
+                    # A manual-execution first message renders as its raw
+                    # marker+JSON; show the friendly ``sql>``/``bash>`` preview.
+                    raw_first_msg = exec_preview(raw_first_msg)
                     first_msg = raw_first_msg.replace("\n", " ").replace("\r", " ")
                     if not first_msg:
                         first_msg = "(empty)"
@@ -1680,11 +1964,12 @@ class ChatCommands:
             # Pass session_id at construction so ``AgenticNode.__init__`` can
             # rehydrate persisted plan-mode state (and the todolist disk-load
             # path) before the first turn — see ``restore_plan_mode_state``.
-            new_node = self._create_new_node(subagent_name, session_id=target_session_id)
+            with self.node_transaction():
+                new_node = self._create_new_node(subagent_name, session_id=target_session_id)
 
-            # Update state
-            self.current_node = new_node
-            self.current_subagent_name = subagent_name
+                # Update state
+                self.current_node = new_node
+                self.current_subagent_name = subagent_name
 
             # Mirror restored plan-mode flag back to the REPL toggle so the
             # bottom status bar reflects what the node believes (PLAN vs CHAT).
@@ -1790,9 +2075,10 @@ class ChatCommands:
             if turn_num == 1:
                 # First turn selected — no prior messages, create a fresh session
                 node_name = self._extract_node_type_from_session_id(source_session_id)
-                new_node = self._create_new_node(node_name if node_name != "chat" else None)
-                self.current_node = new_node
-                self.current_subagent_name = node_name if node_name != "chat" else None
+                with self.node_transaction():
+                    new_node = self._create_new_node(node_name if node_name != "chat" else None)
+                    self.current_node = new_node
+                    self.current_subagent_name = node_name if node_name != "chat" else None
                 self.chat_history = []
                 self.all_turn_actions = []
                 self.last_actions = []
@@ -1811,10 +2097,11 @@ class ChatCommands:
             node_name = self._extract_node_type_from_session_id(new_session_id)
             subagent_name = node_name if node_name != "chat" else None
 
-            new_node = self._create_new_node(subagent_name, session_id=new_session_id)
+            with self.node_transaction():
+                new_node = self._create_new_node(subagent_name, session_id=new_session_id)
 
-            self.current_node = new_node
-            self.current_subagent_name = subagent_name
+                self.current_node = new_node
+                self.current_subagent_name = subagent_name
             if hasattr(self.cli, "plan_mode_active"):
                 self.cli.plan_mode_active = bool(getattr(new_node, "plan_mode_active", False))
 
@@ -1860,29 +2147,43 @@ class ChatCommands:
             except json.JSONDecodeError:
                 return value
 
+        from datus.utils.constants import SQLType
+        from datus.utils.sql_utils import parse_sql_type
+
+        def _action_sql(act) -> str:
+            # Tool actions store params under ``input["arguments"]`` (a dict or a
+            # JSON string); fall back to the top-level shape for older payloads.
+            inp = _maybe_parse_json(act.input)
+            if not isinstance(inp, dict):
+                return ""
+            args = _maybe_parse_json(inp.get("arguments", inp))
+            if not isinstance(args, dict):
+                return ""
+            return args.get("sql") or args.get("query", "") or ""
+
+        def _is_read_sql_action(act) -> bool:
+            # ``execute_sql`` is the unified entry point; only seed SQL context
+            # from read-type statements (by input SQL), so a write/DDL never
+            # clobbers the last query's context. Covers failed reads too.
+            if act.function_name() != "execute_sql":
+                return False
+            return parse_sql_type(_action_sql(act), "") in (SQLType.SELECT, SQLType.METADATA_SHOW, SQLType.EXPLAIN)
+
         last_sql_action = None
         for i in range(len(incremental_actions) - 1, -1, -1):
             action = incremental_actions[i]
-            if (
-                action
-                and action.is_done()
-                and action.role == ActionRole.TOOL
-                and action.function_name() == "read_query"
-            ):
+            if action and action.is_done() and action.role == ActionRole.TOOL and _is_read_sql_action(action):
                 last_sql_action = action
                 break
 
         if last_sql_action is None:
             # No SQL action found, skip adding to context
-            action_types = [
-                (a.action_type, a.role.value if hasattr(a.role, "value") else a.role) for a in incremental_actions
-            ]
-            logger.warning(f"No SQL action found in incremental_actions. Actions: {action_types}")
+            logger.debug("No SQL action found in incremental actions", action_count=len(incremental_actions))
             return
 
         action_output = _maybe_parse_json(last_sql_action.output)
         if not isinstance(action_output, dict):
-            logger.warning("read_query action output is not a dict; storing it as SQL context error")
+            logger.warning("execute_sql action output is not a dict; storing it as SQL context error")
             error = str(action_output or "")
             sql_return = None
             row_count = 0
@@ -1893,7 +2194,7 @@ class ChatCommands:
         else:
             tool_result = _maybe_parse_json(action_output.get("raw_output", {}))
             if not isinstance(tool_result, dict):
-                logger.warning("read_query raw_output is not a dict; storing it as SQL context error")
+                logger.warning("execute_sql raw_output is not a dict; storing it as SQL context error")
                 error = str(tool_result or "")
                 sql_return = ""
                 row_count = 0
@@ -1911,8 +2212,13 @@ class ChatCommands:
                 sql_return = ""
                 row_count = 0
 
+        # Seed the context with the SQL of the matched read action, not the
+        # caller-supplied ``sql`` — a later write/DDL turn must not pair the
+        # read result with the wrong statement. Fall back to ``sql`` when the
+        # action carries no parseable input.
+        matched_sql = _action_sql(last_sql_action) or sql
         sql_context = SQLContext(
-            sql_query=sql,
+            sql_query=matched_sql,
             sql_error=error,
             sql_return=sql_return,
             row_count=row_count,

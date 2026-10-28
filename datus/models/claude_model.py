@@ -16,27 +16,42 @@ import json
 import os
 import time
 import uuid
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, AsyncGenerator, Dict, List, Optional, Union
+from typing import Any, AsyncGenerator, Callable, Dict, List, Optional, Union
 
 import anthropic
 import httpx
 from agents import Agent, RunContextWrapper, Usage
 from agents.mcp import MCPServerStdio
 from agents.tool_context import ToolContext
-from agents.usage import InputTokensDetails, OutputTokensDetails, RequestUsage
+from agents.usage import InputTokensDetails, OutputTokensDetails, RequestUsage, model_usage_to_span_usage
 
 from datus.configuration.agent_config import ModelConfig
+from datus.models.litellm_adapter import is_official_anthropic_endpoint
 from datus.models.mcp_utils import multiple_mcp_servers
 from datus.models.openai_compatible import OpenAICompatibleModel
+from datus.observability.model_call import native_model_call, observe_model_phase
+from datus.observability.native_agents import (
+    capture_native_trace_content,
+    finish_native_span,
+    start_native_generation_span,
+    start_native_tool_span,
+    trace_native_agent_stream,
+)
+from datus.observability.tool_calls import observe_tool_hooks
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
 from datus.schemas.node_models import SQLContext
+from datus.schemas.tool_summary import detect_tool_failure
+from datus.utils.constants import SQLType
 from datus.utils.exceptions import DatusException, ErrorCode
+from datus.utils.image_content import anthropic_image_tool_content, image_result_for_display
 from datus.utils.loggings import get_logger
-from datus.utils.traceable_utils import optional_traceable
+from datus.utils.sql_utils import parse_sql_type
+from datus.utils.ssl_utils import is_ssl_cert_verification_error
 
 logger = get_logger(__name__)
 
@@ -53,6 +68,85 @@ class _ToolResult:
     """Lightweight stand-in for MCP CallToolResult (`.content[0].text`)."""
 
     content: List[_ToolResultPart] = field(default_factory=list)
+    model_content: Optional[List[Dict[str, Any]]] = None
+
+
+def _anthropic_trace_input(request_kwargs: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Normalize an Anthropic request into the chat-message shape used by Agents tracing."""
+    trace_messages: List[Dict[str, Any]] = []
+    system = request_kwargs.get("system")
+    if system is not None and system is not anthropic.NOT_GIVEN:
+        trace_messages.append({"role": "system", "content": copy.deepcopy(system)})
+    messages = request_kwargs.get("messages") or []
+    if isinstance(messages, list):
+        trace_messages.extend(copy.deepcopy(message) for message in messages if isinstance(message, dict))
+    return trace_messages
+
+
+def _anthropic_trace_output(response: Any) -> List[Dict[str, Any]]:
+    """Normalize Anthropic content blocks for ``GenerationSpanData.output``."""
+    text_parts: List[str] = []
+    tool_calls: List[Dict[str, Any]] = []
+    for block in getattr(response, "content", None) or []:
+        block_type = getattr(block, "type", None)
+        if block_type == "text":
+            text = getattr(block, "text", "") or ""
+            if text:
+                text_parts.append(text)
+        elif block_type in ("tool_use", "server_tool_use"):
+            tool_input = getattr(block, "input", None) or {}
+            tool_calls.append(
+                {
+                    "id": str(getattr(block, "id", None) or ""),
+                    "type": "function",
+                    "function": {
+                        "name": str(getattr(block, "name", None) or block_type),
+                        "arguments": json.dumps(tool_input, ensure_ascii=False, default=str),
+                    },
+                }
+            )
+    output: Dict[str, Any] = {"role": "assistant", "content": "\n".join(text_parts)}
+    if tool_calls:
+        output["tool_calls"] = tool_calls
+    return [output]
+
+
+def _anthropic_trace_usage(response: Any, *, cache_write_supported: bool = True) -> Dict[str, Any]:
+    """Return per-call token usage in the Agents SDK's standard shape."""
+    usage = getattr(response, "usage", None)
+    if usage is None:
+        return {}
+    fresh_input = int(getattr(usage, "input_tokens", 0) or 0)
+    cache_read = int(getattr(usage, "cache_read_input_tokens", 0) or 0)
+    raw_cache_write = int(getattr(usage, "cache_creation_input_tokens", 0) or 0)
+    cache_write = raw_cache_write if cache_write_supported else 0
+    output_tokens = int(getattr(usage, "output_tokens", 0) or 0)
+    input_tokens = fresh_input + cache_read + raw_cache_write
+    return model_usage_to_span_usage(
+        Usage(
+            requests=1,
+            input_tokens=input_tokens,
+            input_tokens_details=InputTokensDetails.model_validate(
+                {
+                    "cached_tokens": cache_read,
+                    "cache_write_tokens": cache_write,
+                }
+            ),
+            output_tokens=output_tokens,
+            output_tokens_details=OutputTokensDetails(reasoning_tokens=0),
+            total_tokens=input_tokens + output_tokens,
+        )
+    )
+
+
+def _anthropic_trace_model_config(request_kwargs: Dict[str, Any]) -> Dict[str, Any]:
+    """Keep only non-content invocation parameters on the generation span."""
+    config: Dict[str, Any] = {"provider": "anthropic", "system": "anthropic"}
+    for key in ("max_tokens", "temperature", "top_p", "top_k"):
+        value = request_kwargs.get(key)
+        if value is not None and value is not anthropic.NOT_GIVEN:
+            config[key] = value
+    return config
 
 
 def wrap_prompt_cache(messages):
@@ -68,6 +162,118 @@ def wrap_prompt_cache(messages):
         content[cnt_size - 1]["cache_control"] = {"type": "ephemeral"}
 
     return messages_copy
+
+
+def _extract_document_text(node, depth: int = 0) -> str:
+    """Best-effort recursive pull of readable text from a web_fetch document block.
+
+    Anthropic's ``web_fetch_result`` wraps the fetched page as a document block
+    whose text can sit at ``.source.data`` (text media type) or in a nested
+    ``.content[].text`` list, depending on the page. We probe both, bounded by
+    depth so a pathological structure can't recurse without end.
+    """
+    if node is None or depth > 6:
+        return ""
+
+    def _get(obj, key):
+        return obj.get(key) if isinstance(obj, dict) else getattr(obj, key, None)
+
+    # Direct text payloads.
+    text = _get(node, "text")
+    if isinstance(text, str) and text:
+        return text
+    source = _get(node, "source")
+    if source is not None:
+        data = _get(source, "data")
+        if isinstance(data, str) and data and (_get(source, "type") in (None, "text")):
+            return data
+    # Recurse into a nested content list / single child.
+    child = _get(node, "content")
+    if isinstance(child, list):
+        return "\n".join(filter(None, (_extract_document_text(c, depth + 1) for c in child)))
+    if child is not None:
+        return _extract_document_text(child, depth + 1)
+    return ""
+
+
+def summarize_web_tool_result(res_block, query: str = ""):
+    """Normalize an Anthropic ``web_search_tool_result`` / ``web_fetch_tool_result``.
+
+    Returns ``(summary, canonical_result)`` where ``summary`` is the compact
+    one-liner (SSE ``shortDesc`` / TUI compact line) and ``canonical_result`` is
+    the provider-agnostic schema from :mod:`datus.schemas.web_result` — so a
+    Claude server-tool call renders identically to the local Tavily / httpx
+    backends and the OpenAI hosted path.
+    """
+    from datus.schemas.web_result import (
+        normalize_fetch_result,
+        normalize_search_results,
+        web_fetch_short_summary,
+        web_search_short_summary,
+    )
+
+    content = getattr(res_block, "content", None) if res_block is not None else None
+
+    # web_search: ``content`` is a list of result blocks (title/url/page_age).
+    if isinstance(content, list):
+        items = []
+        for item in content:
+            items.append(
+                {
+                    "title": getattr(item, "title", None) or "",
+                    "url": getattr(item, "url", None) or "",
+                    "snippet": "",  # Anthropic returns encrypted_content; no readable snippet.
+                    "age": getattr(item, "page_age", None),
+                }
+            )
+        canonical = normalize_search_results(query, items)
+        return web_search_short_summary(canonical), canonical
+
+    # web_fetch: ``content`` is a single document-bearing result block.
+    if content is not None:
+        url = getattr(content, "url", None) or getattr(res_block, "url", None) or ""
+        doc = getattr(content, "content", None)
+        title = getattr(doc, "title", None) or getattr(content, "title", None) or ""
+        text = _extract_document_text(doc)
+        canonical = normalize_fetch_result(url=url, title=title, content=text, truncated=False)
+        return web_fetch_short_summary(canonical), canonical
+
+    return "completed", {}
+
+
+# Anthropic's message *input* schema for replayed server-side blocks is stricter
+# than the *output* schema: it accepts only the keys below per block type. The
+# streamed response (rehydrated via ``stream.get_final_message()``) attaches
+# output-only fields such as ``citations`` to these blocks — and because the SDK
+# block models use ``extra="allow"``, ``model_dump`` carries them through. Replaying
+# them verbatim trips a 400 (e.g. ``server_tool_use.citations: Extra inputs are not
+# permitted``), which aborts the turn before it can be persisted — so the next turn
+# also "forgets" the conversation. Whitelist the input-permitted keys to avoid this.
+_SERVER_BLOCK_INPUT_KEYS: Dict[str, tuple[str, ...]] = {
+    "server_tool_use": ("type", "id", "name", "input"),
+    "web_search_tool_result": ("type", "tool_use_id", "content"),
+    "web_fetch_tool_result": ("type", "tool_use_id", "content"),
+}
+
+
+def sanitize_server_block_for_replay(block: Any) -> Optional[Dict[str, Any]]:
+    """Dump a server-side content block to the Anthropic message *input* schema.
+
+    Returns a dict containing only the keys Anthropic accepts when the block is
+    replayed inside an assistant message, or ``None`` if the block cannot be
+    serialized. Drops output-only fields (notably ``citations``) that would
+    otherwise raise ``Extra inputs are not permitted``.
+    """
+    try:
+        dumped = block.model_dump(mode="json")
+    except Exception:
+        logger.debug("Skipping non-serializable content block: %s", getattr(block, "type", "?"))
+        return None
+    allowed = _SERVER_BLOCK_INPUT_KEYS.get(dumped.get("type"))
+    if allowed is None:
+        # Unknown server block type — fall back to verbatim dump (best effort).
+        return dumped
+    return {k: dumped[k] for k in allowed if k in dumped}
 
 
 def convert_tools_for_anthropic(mcp_tools):
@@ -122,6 +328,10 @@ class ClaudeModel(OpenAICompatibleModel):
         "oauth-2025-04-20",
         "interleaved-thinking-2025-05-14",
         "prompt-caching-scope-2026-01-05",
+        # Enables the server-side ``web_fetch_20250910`` tool on the native path.
+        # Harmless when web_fetch isn't requested — Anthropic ignores betas for
+        # tools absent from the request. (web_search_20250305 is GA, no beta.)
+        "web-fetch-2025-09-10",
     ]
 
     # Claude Code client headers — required for subscription tokens to be accepted.
@@ -153,6 +363,28 @@ class ClaudeModel(OpenAICompatibleModel):
         # Initialize native Anthropic client (always available for prompt caching)
         self._init_anthropic_client()
 
+    def supports_builtin_web_search(self) -> bool:
+        # Anthropic web_search_20250305 (GA) runs server-side via the native path,
+        # which is available for both OAuth and API-key auth. Gate on the official
+        # ``api.anthropic.com`` host: third-party Claude-compatible proxies (e.g.
+        # ``kimi_coding`` at ``api.kimi.com/coding``) share ``type: claude`` but do
+        # not really support the hosted tool — they return malformed
+        # ``server_tool_use`` blocks (missing ``id``) or an empty stub, so those
+        # endpoints fall back to the local Tavily backend instead.
+        return is_official_anthropic_endpoint(self._get_base_url())
+
+    def supports_builtin_web_fetch(self) -> bool:
+        # web_fetch is served by the LOCAL httpx backend (``web_tool.web_fetch``)
+        # rather than Anthropic's server-side ``web_fetch_20250910``. The hosted
+        # tool emits ``server_tool_use`` / ``web_fetch_tool_result`` blocks that
+        # must be replayed verbatim next turn; the rehydrated blocks carry an
+        # output-only ``citations`` field the message *input* schema rejects
+        # (400 ``server_tool_use.citations: Extra inputs are not permitted``),
+        # which aborts the turn before it can be persisted. The local backend
+        # returns a plain ``tool_result`` instead, sidestepping that entirely.
+        # (web_search stays server-side — see ``sanitize_server_block_for_replay``.)
+        return False
+
     def _get_api_key(self) -> str:
         """Get Anthropic API key from config or environment."""
         if self.model_config.auth_type == "subscription":
@@ -176,13 +408,21 @@ class ClaudeModel(OpenAICompatibleModel):
         self.proxy_client = None
         self.async_proxy_client = None
 
-        if proxy_url:
+        # SSL verification (e.g. a private gateway CA) resolved by the parent
+        # __init__. The native client takes no `verify` argument, so we must pass a
+        # custom http_client. Only do so when a proxy is set or ssl_verify is
+        # configured; otherwise leave http_client=None to preserve default behavior
+        # (the Anthropic SDK's httpx client honors the standard SSL_CERT_FILE env var).
+        verify = getattr(self, "ssl_verify", None)
+        if proxy_url or verify is not None:
+            verify_kwargs = {} if verify is None else {"verify": verify}
+            proxy_kwargs = {"proxy": httpx.Proxy(url=proxy_url)} if proxy_url else {}
             self.proxy_client = httpx.Client(
-                transport=httpx.HTTPTransport(proxy=httpx.Proxy(url=proxy_url)),
+                transport=httpx.HTTPTransport(**verify_kwargs, **proxy_kwargs),
                 timeout=60.0,
             )
             self.async_proxy_client = httpx.AsyncClient(
-                transport=httpx.AsyncHTTPTransport(proxy=httpx.Proxy(url=proxy_url)),
+                transport=httpx.AsyncHTTPTransport(**verify_kwargs, **proxy_kwargs),
                 timeout=60.0,
             )
 
@@ -284,15 +524,51 @@ class ClaudeModel(OpenAICompatibleModel):
 
         return system_message if system_message else anthropic.NOT_GIVEN
 
-    @optional_traceable(name="anthropic_messages_create", run_type="llm")
     def _anthropic_messages_create(self, **kwargs):
+        kwargs = self.check_request(kwargs)
+        with native_model_call(
+            model=self.model_name,
+            model_impl="anthropic_native",
+            protocol="messages",
+            endpoint=getattr(self.anthropic_client, "base_url", None),
+            params=kwargs,
+        ) as call:
+            response = self._raw_anthropic_messages_create(**kwargs)
+            call.response(response)
+            call.output(response)
+            return response
+
+    def _anthropic_messages_stream(self, **kwargs):
+        kwargs = self.check_request(kwargs)
+        manager = self._raw_anthropic_messages_stream(**kwargs)
+        return self._observe_anthropic_stream(manager, kwargs)
+
+    @asynccontextmanager
+    async def _observe_anthropic_stream(self, manager, kwargs):
+        with native_model_call(
+            model=self.model_name,
+            model_impl="anthropic_native",
+            protocol="messages",
+            endpoint=getattr(self.async_anthropic_client, "base_url", None),
+            params=kwargs,
+        ) as call:
+            async with manager as stream:
+                call.response(stream, streaming=True)
+                yield stream
+                # Inspect only the accumulated snapshot. get_final_message()
+                # drains unread SSE and would change early-exit behavior.
+                try:
+                    call.output(stream.current_message_snapshot)
+                except Exception:
+                    logger.debug("llm.final_message_not_observable", model_call_id=call.model_call_id)
+
+    def _raw_anthropic_messages_create(self, **kwargs):
         """Call the correct Anthropic Messages endpoint for the current auth mode."""
         if self._is_oauth_token:
             return self.anthropic_client.beta.messages.create(**kwargs)
         return self.anthropic_client.messages.create(**kwargs)
 
-    @optional_traceable(name="anthropic_messages_stream", run_type="llm")
-    def _anthropic_messages_stream(self, **kwargs):
+    def _raw_anthropic_messages_stream(self, **kwargs):
         """Return an async context manager that streams Anthropic Messages events.
 
         Routes to ``beta.messages.stream`` for OAuth subscription tokens (which
@@ -300,11 +576,9 @@ class ClaudeModel(OpenAICompatibleModel):
         ``messages.stream`` for standard API-key auth. Caller enters via
         ``async with self._anthropic_messages_stream(...) as stream:``.
 
-        Note: ``optional_traceable`` here records the call returning the
-        context manager. For ``messages.stream`` langsmith's ``wrap_anthropic``
-        additionally instruments per-event iteration; ``beta.messages.stream``
-        is not wrapped upstream, so this decorator is the only tracing the
-        OAuth path gets.
+        The surrounding native-agent loop owns the generation span so tracing
+        covers the full stream iteration instead of only this context-manager
+        factory call.
         """
         if self.async_anthropic_client is None:
             raise DatusException(
@@ -312,7 +586,18 @@ class ClaudeModel(OpenAICompatibleModel):
                 "Async Anthropic client is not initialized; streaming unavailable",
             )
         if self._is_oauth_token:
+            # OAuth client already carries the OAuth + web-fetch betas in its
+            # default headers; beta.messages is required for that path.
             return self.async_anthropic_client.beta.messages.stream(**kwargs)
+        # API-key path: web_search_20250305 is GA, but web_fetch_20250910 is beta
+        # and must go through beta.messages with the web-fetch beta header (the
+        # API-key client carries no default betas).
+        tools = kwargs.get("tools") or []
+        if any(isinstance(t, dict) and t.get("type") == "web_fetch_20250910" for t in tools):
+            extra = dict(kwargs.pop("extra_headers", {}) or {})
+            existing_beta = extra.get("anthropic-beta")
+            extra["anthropic-beta"] = ",".join(filter(None, [existing_beta, "web-fetch-2025-09-10"]))
+            return self.async_anthropic_client.beta.messages.stream(extra_headers=extra, **kwargs)
         return self.async_anthropic_client.messages.stream(**kwargs)
 
     def _diagnose_oauth_401(self, original_error: Exception) -> None:
@@ -409,20 +694,42 @@ class ClaudeModel(OpenAICompatibleModel):
                 messages=filtered_messages,
                 system=self._build_system_param(system_message),
                 max_tokens=kwargs.get("max_tokens") or self.max_tokens() or 20480,
-                temperature=kwargs.get("temperature", anthropic.NOT_GIVEN),
+                # ``temperature`` is never forwarded to Anthropic — the
+                # claude-*-5 family rejects it outright ("`temperature` is
+                # deprecated for this model."), so honouring a caller's value
+                # would fail the request rather than tune it. Matches the
+                # provider gate in ``OpenAICompatibleModel``; Anthropic applies
+                # its own default.
             )
 
-            if response.content:
-                return response.content[0].text
-            return ""
+            # A thinking-capable model answers with ``[ThinkingBlock,
+            # TextBlock, ...]`` — thinking first. On this path that is the
+            # normal shape, not an edge case: OAuth subscription tokens force
+            # ``use_native_api`` and the client carries
+            # ``interleaved-thinking-2025-05-14`` (see ``OAUTH_BETA_HEADERS``),
+            # so the server may emit thinking whether or not the caller asked
+            # for it — ``enable_thinking`` is not forwarded here at all.
+            # ``content[0].text`` therefore raised ``'BetaThinkingBlock' object
+            # has no attribute 'text'`` and threw away a complete answer, which
+            # is how a working AI permission review surfaced as "unavailable".
+            # Join the text blocks and skip the rest (thinking,
+            # redacted_thinking, tool_use), matching the streaming path.
+            return "\n".join(
+                block.text
+                for block in response.content or []
+                if getattr(block, "type", None) == "text" and getattr(block, "text", None)
+            )
 
         except anthropic.AuthenticationError as e:
             self._diagnose_oauth_401(e)  # raises specific DatusException for OAuth tokens
             raise
         except Exception as e:
+            if is_ssl_cert_verification_error(e):
+                raise DatusException(ErrorCode.MODEL_SSL_CERT_ERROR) from e
             logger.error(f"Error generating with Anthropic: {str(e)}")
             raise
 
+    @trace_native_agent_stream
     async def _generate_with_mcp_stream(
         self,
         prompt: Union[str, List[Dict[str, str]]],
@@ -435,6 +742,9 @@ class ClaudeModel(OpenAICompatibleModel):
         interrupt_controller=None,
         session: Optional[Any] = None,
         hooks=None,
+        pending_input_queue=None,
+        interaction_broker=None,
+        context_rewriter=None,
         **kwargs,
     ) -> AsyncGenerator[ActionHistory, None]:
         """Async generator: native Anthropic API with real-time tool call ActionHistory.
@@ -452,6 +762,10 @@ class ClaudeModel(OpenAICompatibleModel):
         self._setup_custom_json_encoder()
 
         logger.debug(f"Using native Anthropic API with prompt caching, model: {self.model_name}")
+        hooks = observe_tool_hooks(hooks)
+        active_generation_span = None
+        active_tool_span = None
+        trace_failure: BaseException | None = None
         try:
             all_tools = []
 
@@ -503,11 +817,23 @@ class ClaudeModel(OpenAICompatibleModel):
                             }
                         )
                         func_tool_map[ft.name] = ft
-                    # Re-apply cache control on last tool
-                    if tools:
-                        for t in tools:
-                            t.pop("cache_control", None)
-                        tools[-1]["cache_control"] = {"type": "ephemeral"}
+
+                # Append Anthropic server-side web tools when the node opts in.
+                # These run server-side (the results come back as
+                # web_search_tool_result / web_fetch_tool_result content blocks),
+                # so they are NOT registered in func_tool_map.
+                builtin_web = kwargs.get("builtin_web_tools") or {}
+                if builtin_web.get("web_search") and self.supports_builtin_web_search():
+                    tools.append({"type": "web_search_20250305", "name": "web_search", "max_uses": 5})
+                if builtin_web.get("web_fetch") and self.supports_builtin_web_fetch():
+                    tools.append({"type": "web_fetch_20250910", "name": "web_fetch", "max_uses": 5})
+
+                # Re-apply cache control so the ephemeral marker lands on the final
+                # tool, whatever its source (MCP / func / server-side web).
+                if tools:
+                    for t in tools:
+                        t.pop("cache_control", None)
+                    tools[-1]["cache_control"] = {"type": "ephemeral"}
                 # Load prior turns from the session so multi-turn chat works.
                 # Native Anthropic loop is not driven by openai-agents Runner, so
                 # we replay session history into ``messages`` ourselves.
@@ -518,10 +844,15 @@ class ClaudeModel(OpenAICompatibleModel):
                 if session is not None:
                     try:
                         prior_items = await session.get_items()
-                        if prior_items:
-                            messages.extend(prior_items)
                     except Exception as e:
                         logger.warning(f"Failed to load session history; starting fresh: {e}")
+                        prior_items = []
+                    if prior_items:
+                        messages.extend(prior_items)
+                        # Do not swallow a seal write failure. Continuing would
+                        # append the new user prompt after the durable
+                        # tool_result tail and corrupt replay role ordering.
+                        await self._seal_interrupted_native_history(session, messages)
                 # Anthropic ``text`` blocks must be a single string. The signature
                 # inherits ``prompt: Union[str, List[Dict[str, str]]]`` from the
                 # base class for legacy callers; defensively normalise list-shaped
@@ -531,14 +862,28 @@ class ClaudeModel(OpenAICompatibleModel):
                     "role": "user",
                     "content": [{"type": "text", "text": prompt_text}],
                 }
+                # Index of this turn's first NEW message in ``messages`` (prior
+                # session history was just replayed above, so anything before
+                # this index is already persisted). ``persisted_message_index``
+                # advances after every complete model/tool round so a long native
+                # Claude run survives max-turn exhaustion, process interruption,
+                # or a later model failure without replaying duplicate rows.
+                turn_start_index = len(messages)
+                persisted_message_index = turn_start_index
                 messages.append(user_turn_message)
                 tool_call_cache = {}
                 sql_contexts = []
                 final_content = ""
+                last_assistant_text = ""
+                conversation_completed = False
+                # Guards the failure-path persistence below: the success path
+                # sets this once it has committed the turn, so the ``except``
+                # handler never double-writes a turn it already saved.
+                turn_persisted = False
                 # Accumulate token usage across all turns
                 cumulative_input_tokens = 0
                 cumulative_output_tokens = 0
-                cache_creation_tokens = 0
+                cache_write_tokens = 0
                 cache_read_tokens = 0
                 last_call_input_tokens = 0
 
@@ -562,15 +907,83 @@ class ClaudeModel(OpenAICompatibleModel):
 
                     logger.debug(f"Turn {turn + 1}/{max_turns}")
 
+                    if context_rewriter is not None:
+                        context_rewriter.anchor_turn(messages)
+
+                    # Mid-run message insertion. The native loop is not driven by
+                    # the SDK Runner, so ``call_model_input_filter`` never fires
+                    # here; this is its equivalent and sits at the same point in
+                    # the cycle — after the previous round's tool_results were
+                    # appended, before the next model call. Without it a message
+                    # typed mid-run stays queued for the whole run and only lands
+                    # via the chat layer's auto-continuation, i.e. a full round
+                    # trip too late to steer anything.
+                    #
+                    # Appending to ``messages`` is the only persistence needed:
+                    # ``persisted_message_index`` was advanced to ``len(messages)``
+                    # at the end of the previous round, so this round's checkpoint
+                    # writes the inserted message along with the rest of the turn.
+                    for inserted_text in self.drain_pending_user_inserts(
+                        pending_input_queue,
+                        interrupt_controller=interrupt_controller,
+                        interaction_broker=interaction_broker,
+                    ):
+                        messages.append(
+                            {
+                                "role": "user",
+                                "content": [{"type": "text", "text": inserted_text}],
+                            }
+                        )
+
+                    request_messages = messages
+                    if context_rewriter is not None:
+                        from datus.agent.node.context_rewriter import extract_user_text
+
+                        context_rewriter.pending_user_turns = sum(
+                            extract_user_text(item) is not None for item in messages[persisted_message_index:]
+                        )
+                        context_rewriter.set_request_context(
+                            instruction, tools, kwargs.get("max_tokens") or self.max_tokens() or 20480
+                        )
+                        compactions_before = context_rewriter.compactions
+                        rewritten_messages = await context_rewriter.rewrite_native_messages(messages)
+                        if rewritten_messages is not None:
+                            request_messages = rewritten_messages
+                            if context_rewriter.compactions > compactions_before:
+                                # Only compaction replaces durable history. Tool
+                                # projections belong to this model request; keep
+                                # raw messages and unsaved user turns for storage.
+                                messages = rewritten_messages
+                                turn_start_index = 0
+                                persisted_message_index = len(messages)
+                        instruction = context_rewriter.system_instruction
+
                     request_kwargs = dict(
                         model=self.model_name,
                         system=self._build_system_param(instruction),
-                        messages=wrap_prompt_cache(messages),
+                        messages=wrap_prompt_cache(request_messages),
                         tools=tools,
                         max_tokens=kwargs.get("max_tokens") or self.max_tokens() or 20480,
-                        temperature=kwargs.get("temperature", anthropic.NOT_GIVEN),
+                        # No ``temperature`` — see ``generate`` above.
+                    )
+                    generation_input = capture_native_trace_content("prompts", _anthropic_trace_input(request_kwargs))
+                    active_generation_span = start_native_generation_span(
+                        input_messages=generation_input,
+                        model=self.model_name,
+                        model_config=_anthropic_trace_model_config(request_kwargs),
                     )
 
+                    # Track server-side web tool calls emitted in real time during
+                    # streaming so the post-stream scan (and the non-streaming
+                    # fallback) doesn't double-emit them.
+                    emitted_server_ids: set = set()
+                    server_tool_names: dict = {}
+                    server_tool_queries: dict = {}
+                    # Track the most recent server-tool start id so a result block
+                    # whose ``tool_use_id`` is ``None`` (malformed proxies) pairs back
+                    # to the generated ``srv_*`` id instead of collapsing onto
+                    # ``complete_None`` (which ActionHistoryManager would dedupe away).
+                    last_server_tool_id: Optional[str] = None
                     if self.async_anthropic_client is not None:
                         # Streaming path: yield text deltas as ``thinking_delta``
                         # ActionHistory in real time (parity with
@@ -589,9 +1002,64 @@ class ClaudeModel(OpenAICompatibleModel):
                                 event_type = getattr(event, "type", None)
                                 if event_type == "content_block_start":
                                     block_start = getattr(event, "content_block", None)
-                                    if block_start is not None and getattr(block_start, "type", None) == "text":
+                                    bs_type = getattr(block_start, "type", None) if block_start is not None else None
+                                    if bs_type == "text":
                                         thinking_stream_id = f"thinking_stream_{uuid.uuid4().hex[:8]}"
                                         thinking_accumulated = ""
+                                    elif bs_type == "server_tool_use":
+                                        # Server-side web tool call — surface it in real
+                                        # time (interleaved where it happens) instead of
+                                        # only after the stream completes.
+                                        sid = getattr(block_start, "id", None) or f"srv_{uuid.uuid4().hex[:8]}"
+                                        sname = getattr(block_start, "name", None) or "web_search"
+                                        server_tool_names[sid] = sname
+                                        emitted_server_ids.add(sid)
+                                        last_server_tool_id = sid
+                                        s_input = getattr(block_start, "input", {}) or {}
+                                        if isinstance(s_input, dict):
+                                            server_tool_queries[sid] = str(
+                                                s_input.get("query") or s_input.get("url") or ""
+                                            )
+                                        yield ActionHistory(
+                                            action_id=sid,
+                                            role=ActionRole.TOOL,
+                                            messages=f"Tool call: {sname}",
+                                            action_type=sname,
+                                            input={"function_name": sname, "arguments": s_input},
+                                            output={},
+                                            status=ActionStatus.PROCESSING,
+                                        )
+                                    elif bs_type in ("web_search_tool_result", "web_fetch_tool_result"):
+                                        # Malformed proxies (e.g. kimi) echo a result
+                                        # block with a null ``tool_use_id``; fall back
+                                        # to the matching start's generated id so the
+                                        # completion pairs with it and never collapses
+                                        # onto ``complete_None``.
+                                        tid = (
+                                            getattr(block_start, "tool_use_id", None)
+                                            or last_server_tool_id
+                                            or f"srv_{uuid.uuid4().hex[:8]}"
+                                        )
+                                        sname = server_tool_names.get(tid, "web_search")
+                                        summary, canonical = summarize_web_tool_result(
+                                            block_start, query=server_tool_queries.get(tid, "")
+                                        )
+                                        complete = ActionHistory(
+                                            action_id=f"complete_{tid}",
+                                            role=ActionRole.TOOL,
+                                            messages=f"Tool call: {sname}",
+                                            action_type=sname,
+                                            input={"function_name": sname, "arguments": {}},
+                                            output={
+                                                "success": True,
+                                                "raw_output": {"success": True, "result": canonical},
+                                                "summary": summary,
+                                                "status_message": summary,
+                                            },
+                                            status=ActionStatus.SUCCESS,
+                                        )
+                                        complete.end_time = datetime.now()
+                                        yield complete
                                 elif event_type == "content_block_delta":
                                     delta = getattr(event, "delta", None)
                                     if delta is None or getattr(delta, "type", None) != "text_delta":
@@ -659,11 +1127,12 @@ class ClaudeModel(OpenAICompatibleModel):
                     if hasattr(response, "usage") and response.usage:
                         call_input = getattr(response.usage, "input_tokens", 0)
                         call_cache_read = getattr(response.usage, "cache_read_input_tokens", 0)
-                        call_cache_creation = getattr(response.usage, "cache_creation_input_tokens", 0)
-                        call_total_input = call_input + call_cache_read + call_cache_creation
+                        raw_call_cache_write = getattr(response.usage, "cache_creation_input_tokens", 0)
+                        call_total_input = call_input + call_cache_read + raw_call_cache_write
+                        call_cache_write = raw_call_cache_write if self._supports_cache_write_usage() else 0
                         cumulative_input_tokens += call_total_input
                         cumulative_output_tokens += getattr(response.usage, "output_tokens", 0)
-                        cache_creation_tokens += call_cache_creation
+                        cache_write_tokens += call_cache_write
                         cache_read_tokens += call_cache_read
                         last_call_input_tokens = call_total_input
 
@@ -678,15 +1147,119 @@ class ClaudeModel(OpenAICompatibleModel):
                             cumulative_input_tokens=cumulative_input_tokens,
                             cumulative_output_tokens=cumulative_output_tokens,
                             cache_read_tokens=cache_read_tokens,
+                            cache_write_tokens=cache_write_tokens,
                             last_call_input_tokens=last_call_input_tokens,
+                            last_call_cache_read_tokens=call_cache_read,
+                            last_call_cache_write_tokens=call_cache_write,
                         )
                         await self._invoke_hook(hooks, "on_llm_end", run_ctx, hook_agent, response)
 
+                    active_generation_span.span_data.usage = _anthropic_trace_usage(
+                        response,
+                        cache_write_supported=self._supports_cache_write_usage(),
+                    )
+                    generation_output = capture_native_trace_content("responses", _anthropic_trace_output(response))
+                    finish_native_span(active_generation_span, output=generation_output)
+                    active_generation_span = None
+
                     message = response.content
+                    # Keep the fully rehydrated text from this model response.
+                    # Streaming ``thinking_delta.output.delta`` intentionally
+                    # remains one incremental fragment per event; this separate
+                    # snapshot is the source of truth when the last allowed turn
+                    # also contains tool_use blocks and the loop exhausts before
+                    # a normal text-only completion.
+                    last_assistant_text = "\n".join(
+                        block.text for block in message if block.type == "text" and block.text
+                    )
+
+                    # Surface server-side tool calls (Anthropic web_search /
+                    # web_fetch) as TOOL ActionHistory. The streaming path already
+                    # emits these in real time (tracked in ``emitted_server_ids``),
+                    # so this post-stream pass only covers the non-streaming
+                    # fallback. When streaming ran we skip it entirely: dedup-by-id
+                    # is unreliable for providers (e.g. kimi) that return
+                    # ``server_tool_use`` blocks with a null ``id`` — the streaming
+                    # path substitutes a generated ``srv_*`` id, leaving the
+                    # final-message block's ``id`` as ``None``, which would miss the
+                    # ``emitted_server_ids`` check and re-emit here with
+                    # ``action_id=None`` (crashing ActionHistory validation).
+                    used_streaming = self.async_anthropic_client is not None
+                    server_results = {
+                        getattr(b, "tool_use_id", None): b
+                        for b in message
+                        if getattr(b, "type", None) in ("web_search_tool_result", "web_fetch_tool_result")
+                    }
+                    for block in message:
+                        if used_streaming:
+                            break
+                        if getattr(block, "type", None) != "server_tool_use":
+                            continue
+                        if block.id in emitted_server_ids:
+                            continue
+                        # Fall back to a generated id when the provider omits one,
+                        # mirroring the streaming path, so ActionHistory never sees
+                        # a ``None`` action_id.
+                        sid = block.id or f"srv_{uuid.uuid4().hex[:8]}"
+                        block_input = getattr(block, "input", {}) or {}
+                        s_args = json.dumps(block_input, ensure_ascii=False)[:80]
+                        q = (
+                            block_input.get("query") or block_input.get("url") or ""
+                            if isinstance(block_input, dict)
+                            else ""
+                        )
+                        summary, canonical = summarize_web_tool_result(server_results.get(block.id), query=q)
+                        start_action = ActionHistory(
+                            action_id=sid,
+                            role=ActionRole.TOOL,
+                            messages=f"Tool call: {block.name}('{s_args}...')",
+                            action_type=block.name,
+                            input={"function_name": block.name, "arguments": block_input},
+                            output={},
+                            status=ActionStatus.PROCESSING,
+                        )
+                        if action_history_manager is not None:
+                            action_history_manager.add_action(start_action)
+                        yield start_action
+                        complete_action = ActionHistory(
+                            action_id=f"complete_{sid}",
+                            role=ActionRole.TOOL,
+                            messages=f"Tool call: {block.name}('{s_args}...')",
+                            action_type=block.name,
+                            input={"function_name": block.name, "arguments": block_input},
+                            output={
+                                "success": True,
+                                "raw_output": {"success": True, "result": canonical},
+                                "summary": summary,
+                                "status_message": summary,
+                            },
+                            status=ActionStatus.SUCCESS,
+                        )
+                        complete_action.end_time = datetime.now()
+                        if action_history_manager is not None:
+                            action_history_manager.add_action(complete_action)
+                        yield complete_action
 
                     # If no tool calls, conversation is complete
                     if not any(block.type == "tool_use" for block in message):
-                        final_content = "\n".join([block.text for block in message if block.type == "text"])
+                        final_content = last_assistant_text
+                        conversation_completed = True
+                        # Persist the final assistant message — including any
+                        # sanitized ``server_tool_use`` / ``web_search_tool_result``
+                        # blocks from a ``web_search``-only turn — before breaking.
+                        # The completion branch exits before the assistant-content
+                        # append below, so without this the native web-tool replay
+                        # history would be reduced to plain ``final_content``.
+                        final_replay_content: List[Dict[str, Any]] = []
+                        for block in message:
+                            if block.type == "text":
+                                final_replay_content.append({"type": "text", "text": block.text})
+                            else:
+                                sanitized = sanitize_server_block_for_replay(block)
+                                if sanitized is not None:
+                                    final_replay_content.append(sanitized)
+                        if final_replay_content:
+                            messages.append({"role": "assistant", "content": final_replay_content})
                         logger.debug("No tool calls, conversation completed")
                         break
 
@@ -736,12 +1309,19 @@ class ClaudeModel(OpenAICompatibleModel):
                                 or mcp_tool_objs.get(block.name)
                                 or SimpleNamespace(name=block.name)
                             )
+                            active_tool_span = start_native_tool_span(
+                                name=block.name,
+                                tool_call_id=block.id,
+                                input_value=block.input,
+                            )
                             await self._invoke_hook(hooks, "on_tool_start", tool_ctx, hook_agent, tool_obj)
 
                             tool_executed = False
-                            # Raw structured result handed to ``on_tool_end``; GenerationHooks
-                            # inspects the FuncToolResult dict / result text to sync the KB.
+                            # Result handed to ``on_tool_end``: function tools pass their
+                            # FuncToolResult (or raw return value) unchanged; MCP tools pass
+                            # the first content block's text.
                             hook_result: Any = None
+                            image_content = None
 
                             # Try function tools first
                             if block.name in func_tool_map:
@@ -757,11 +1337,23 @@ class ClaudeModel(OpenAICompatibleModel):
                                     # as separate ``<node>_request`` / ``<node>_response``
                                     # blocks.
                                     result_val = await ft.on_invoke_tool(tool_ctx, tool_args)
+                                    image_content = anthropic_image_tool_content(result_val)
                                     hook_result = result_val
-                                    # Ensure result is a string (Anthropic API requires string content)
-                                    result_str = result_val if isinstance(result_val, str) else json.dumps(result_val)
+                                    # Keep ordinary results intact for model input and
+                                    # hooks. Image metadata is the text companion to
+                                    # the separate native image content below.
+                                    model_result = (
+                                        image_result_for_display(result_val)
+                                        if image_content is not None
+                                        else result_val
+                                    )
+                                    result_str = (
+                                        model_result if isinstance(model_result, str) else json.dumps(model_result)
+                                    )
                                     # Wrap in object matching MCP tool result format
-                                    func_result = _ToolResult(content=[_ToolResultPart(text=result_str)])
+                                    func_result = _ToolResult(
+                                        content=[_ToolResultPart(text=result_str)], model_content=image_content
+                                    )
                                     tool_call_cache[block.id] = func_result
                                     tool_executed = True
                                 except Exception as e:
@@ -787,26 +1379,48 @@ class ClaudeModel(OpenAICompatibleModel):
                             if not tool_executed:
                                 logger.error(f"Tool {block.name} could not be executed")
 
-                            # Yield SUCCESS/FAILURE action for real-time tool call display
+                            # Yield SUCCESS/FAILURE action for real-time tool call display.
+                            # A tool that returns FuncToolResult(success=0) executed without
+                            # raising (tool_executed=True), so keying status off tool_executed
+                            # alone would render a green ✓ on a soft failure. Fold the payload's
+                            # success/error signal in via detect_tool_failure.
                             result_text = ""
                             if block.id in tool_call_cache:
-                                result_text = tool_call_cache[block.id].content[0].text
+                                result_text = image_result_for_display(tool_call_cache[block.id].content[0].text)
+                            tool_failed = (not tool_executed) or detect_tool_failure(hook_result)
                             result_summary = (
-                                self._format_tool_result(result_text, block.name) if tool_executed else "Failed"
+                                self._format_tool_result(result_text, block.name) if not tool_failed else "Failed"
                             )
+                            tool_output = {
+                                "success": not tool_failed,
+                                "raw_output": result_text,
+                                "summary": result_summary,
+                                "status_message": result_summary,
+                            }
+                            # Keep the Anthropic-facing tool_result string in
+                            # ``tool_call_cache`` while recording ordinary structured
+                            # function-tool results in ActionHistory using the same
+                            # envelope shape as the OpenAI-compatible path. Native image
+                            # results and MCP/plain-text tools retain their existing text
+                            # representation.
+                            structured_result = None
+                            display_result = image_result_for_display(hook_result)
+                            if isinstance(display_result, dict):
+                                if image_content is None:
+                                    tool_output["raw_output"] = display_result
+                                structured_result = display_result.get("result", display_result)
+                            elif isinstance(display_result, list):
+                                structured_result = display_result
+                            if isinstance(structured_result, (dict, list)):
+                                tool_output["result"] = structured_result
                             complete_action = ActionHistory(
                                 action_id=f"complete_{block.id}",
                                 role=ActionRole.TOOL,
                                 messages=f"Tool call: {block.name}('{args_str}...')",
                                 action_type=block.name,
                                 input={"function_name": block.name, "arguments": block.input},
-                                output={
-                                    "success": tool_executed,
-                                    "raw_output": result_text,
-                                    "summary": result_summary,
-                                    "status_message": result_summary,
-                                },
-                                status=ActionStatus.SUCCESS if tool_executed else ActionStatus.FAILED,
+                                output=tool_output,
+                                status=ActionStatus.SUCCESS if not tool_failed else ActionStatus.FAILED,
                             )
                             complete_action.end_time = datetime.now()
                             if action_history_manager is not None:
@@ -825,6 +1439,16 @@ class ClaudeModel(OpenAICompatibleModel):
                                 tool_obj,
                                 hook_result if tool_executed else {"success": 0, "error": result_summary},
                             )
+                            traced_tool_output = capture_native_trace_content("tool_results", tool_output)
+                            traced_tool_error = None
+                            if tool_failed:
+                                traced_tool_error = result_text or f"Tool {block.name} execution failed"
+                            finish_native_span(
+                                active_tool_span,
+                                output=traced_tool_output,
+                                error=traced_tool_error,
+                            )
+                            active_tool_span = None
 
                     # Build assistant message content from all blocks
                     content = []
@@ -842,6 +1466,16 @@ class ClaudeModel(OpenAICompatibleModel):
                                 }
                             )
                             tool_use_blocks.append(block)
+                        else:
+                            # Preserve server-side blocks (server_tool_use /
+                            # web_search_tool_result / web_fetch_tool_result) so a mixed
+                            # turn (server web tool + local tool_use) keeps a valid
+                            # assistant message when replayed to Anthropic next turn.
+                            # Sanitize to the input schema to drop output-only fields
+                            # (e.g. ``citations``) the API rejects on replay.
+                            sanitized = sanitize_server_block_for_replay(block)
+                            if sanitized is not None:
+                                content.append(sanitized)
 
                     if content:
                         messages.append({"role": "assistant", "content": content})
@@ -849,9 +1483,28 @@ class ClaudeModel(OpenAICompatibleModel):
                     for block in tool_use_blocks:
                         if block.id in tool_call_cache:
                             sql_result = tool_call_cache[block.id].content[0].text
-                            # Use "Error" to determine execution success
-                            if "Error" not in sql_result and block.name == "read_query":
-                                sql_query = block.input.get("query") or block.input.get("sql", "")
+                            # Only seed SQL context from successful read-only
+                            # execute_sql calls. Parse the tool payload to detect
+                            # failure instead of a brittle ``"Error" in text``
+                            # substring check, which both misses structured
+                            # ``{"success": 0, "error": ...}`` failures and can
+                            # reject valid result text that merely contains "Error".
+                            sql_query = block.input.get("query") or block.input.get("sql", "")
+                            tool_failed = False
+                            try:
+                                parsed_result = json.loads(sql_result) if isinstance(sql_result, str) else sql_result
+                            except (TypeError, json.JSONDecodeError):
+                                parsed_result = None
+                            if isinstance(parsed_result, dict):
+                                tool_failed = parsed_result.get("success") == 0 or bool(parsed_result.get("error"))
+                            elif isinstance(sql_result, str):
+                                tool_failed = sql_result.lstrip().lower().startswith("error")
+                            if (
+                                not tool_failed
+                                and block.name == "execute_sql"
+                                and parse_sql_type(sql_query, "")
+                                in (SQLType.SELECT, SQLType.METADATA_SHOW, SQLType.EXPLAIN)
+                            ):
                                 sql_context = SQLContext(
                                     sql_query=sql_query,
                                     sql_return=sql_result,
@@ -865,7 +1518,11 @@ class ClaudeModel(OpenAICompatibleModel):
                                         {
                                             "type": "tool_result",
                                             "tool_use_id": block.id,
-                                            "content": sql_result,
+                                            "content": (
+                                                tool_call_cache[block.id].model_content or sql_result
+                                                if isinstance(tool_call_cache[block.id], _ToolResult)
+                                                else sql_result
+                                            ),
                                         }
                                     ],
                                 }
@@ -885,15 +1542,37 @@ class ClaudeModel(OpenAICompatibleModel):
                                 }
                             )
 
+                    # A native Claude "turn" is durable once every tool_use in
+                    # the assistant response has a corresponding tool_result.
+                    # Persist only the new suffix; persisting the whole in-memory
+                    # transcript here would duplicate prior checkpoints.  The
+                    # database may temporarily end in a tool_result while the run
+                    # is active. Graceful termination seals that tail below, and
+                    # the next invocation repairs it if the process dies between
+                    # these two points.
+                    persisted_message_index = await self._persist_native_message_delta(
+                        session,
+                        messages,
+                        persisted_message_index,
+                    )
+
                 logger.debug("Agent execution completed")
-                usage_info = self._build_native_usage_info(
-                    requests=turn + 1,
-                    cumulative_input_tokens=cumulative_input_tokens,
-                    cumulative_output_tokens=cumulative_output_tokens,
-                    cache_read_tokens=cache_read_tokens,
-                    cache_creation_tokens=cache_creation_tokens,
-                    last_call_input_tokens=last_call_input_tokens,
-                )
+                max_turns_exhausted = not conversation_completed
+                max_turns_notice = f"[Agent stopped after reaching max_turns={max_turns}; work may remain incomplete.]"
+                empty_completion_notice = "[Assistant completed without returning text.]"
+                if max_turns_exhausted:
+                    # Text accompanying the final tool_use was already emitted
+                    # through thinking_delta + its paired response action and is
+                    # checkpointed in ``messages``. Do not publish it again as a
+                    # final_response: the run is incomplete, and upper layers use
+                    # that wrapper as a de-dup/finalization boundary which can
+                    # otherwise suppress the live delta stream.
+                    # A tool-only response has no text/delta to preserve, so make
+                    # the stop explicit instead of returning a completely blank
+                    # assistant result. This notice is a final response, never a
+                    # fabricated model delta.
+                    final_content = "" if last_assistant_text else max_turns_notice
+                usage_info = self._extract_usage_info(run_ctx.usage)
                 logger.debug(f"Native API cumulative token usage: {usage_info}")
 
                 final_action = ActionHistory(
@@ -912,40 +1591,39 @@ class ClaudeModel(OpenAICompatibleModel):
                 if action_history_manager is not None:
                     action_history_manager.add_action(final_action)
 
-                # Persist this turn into the session so the next turn replays it
-                # via ``session.get_items()``. Mirror what openai-agents Runner
-                # would do via SQLiteSession.add_items, but driven by us since
-                # the native Anthropic loop bypasses Runner.run.
-                #
-                # When the loop exits via ``max_turns`` exhaustion while still
-                # tool-calling, ``final_content`` stays "" — Anthropic rejects
-                # empty assistant text blocks on replay
-                # (``messages.{i}.content.{j}.text: text content blocks must be
-                # non-empty``), which would poison the session. Skip persistence
-                # in that case so the next turn starts from a clean slate.
-                if session is not None and final_content:
-                    try:
-                        assistant_turn_message = {
+                # A max-turn exit has no text-only completion, but the completed
+                # tool rounds (and any prose accompanying the final tool_use) are
+                # valuable history. Seal the persisted tool_result tail with a
+                # non-empty assistant message so the next user turn remains valid
+                # Anthropic replay input.
+                if max_turns_exhausted or not final_content:
+                    messages.append(
+                        {
                             "role": "assistant",
-                            "content": [{"type": "text", "text": final_content}],
+                            "content": [
+                                {
+                                    "type": "text",
+                                    "text": max_turns_notice if max_turns_exhausted else empty_completion_notice,
+                                }
+                            ],
                         }
-                        await session.add_items([user_turn_message, assistant_turn_message])
-                        # Persist the turn's token usage into the durable
-                        # ``turn_usage`` table. The native loop never calls
-                        # ``Runner.run`` (which is what normally triggers
-                        # ``store_run_usage``), so the CLI status bar's
-                        # cumulative total would stay at 0 without this. Must
-                        # run AFTER ``add_items`` so the SDK derives the right
-                        # ``user_turn_number`` from the freshly inserted rows.
-                        await self._store_native_turn_usage(session, usage_info)
-                    except Exception as e:
-                        logger.warning(f"Failed to persist session history for native Claude turn: {e}")
-                elif session is not None:
-                    logger.warning(
-                        "Skipping native Claude session persist: turn ended without final text "
-                        "(max_turns=%s exhausted while tool-calling).",
-                        max_turns,
                     )
+
+                persisted_message_index = await self._persist_native_message_delta(
+                    session,
+                    messages,
+                    persisted_message_index,
+                )
+                turn_persisted = session is not None and persisted_message_index == len(messages)
+
+                if turn_persisted:
+                    # The native loop never calls Runner.run (which normally
+                    # drives ``store_run_usage``), so commit the durable usage
+                    # only after every message in this turn is safely stored.
+                    try:
+                        await self._store_native_turn_usage(session, run_ctx.usage)
+                    except Exception as e:
+                        logger.warning(f"Failed to persist usage for native Claude turn: {e}")
 
                 # Close out the composed hooks' lifecycle, completing parity with
                 # the SDK Runner path (current ``on_end`` implementations are
@@ -955,52 +1633,191 @@ class ClaudeModel(OpenAICompatibleModel):
                 yield final_action
 
         except anthropic.AuthenticationError as e:
+            trace_failure = e
+            await self._persist_failed_turn(locals(), e)
             self._diagnose_oauth_401(e)
             raise
         except Exception as e:
+            trace_failure = e
+            await self._persist_failed_turn(locals(), e)
+            if is_ssl_cert_verification_error(e):
+                raise DatusException(ErrorCode.MODEL_SSL_CERT_ERROR) from e
             logger.error(f"Error in _generate_with_mcp_stream: {str(e)}")
             raise
+        except BaseException as e:
+            trace_failure = e
+            raise
+        finally:
+            finish_native_span(active_tool_span, error=trace_failure)
+            finish_native_span(active_generation_span, error=trace_failure)
 
-    def _build_native_usage_info(
-        self,
-        *,
-        requests: int,
-        cumulative_input_tokens: int,
-        cumulative_output_tokens: int,
-        cache_read_tokens: int,
-        cache_creation_tokens: int,
-        last_call_input_tokens: int,
-    ) -> dict:
-        """Build the standardized usage dict for the native Anthropic loop.
+    @staticmethod
+    async def _persist_native_message_delta(
+        session: Any,
+        messages: List[Dict[str, Any]],
+        persisted_message_index: int,
+    ) -> int:
+        """Append the not-yet-persisted suffix of a native Claude run.
 
-        Shared by the mid-turn per-call updates and the final action so the
-        cumulative numbers reported to the status bar / SSE never drift from
-        what is attached to the final assistant action. ``cached_tokens``
-        maps to Anthropic's ``cache_read_input_tokens`` (the portion served
-        from cache), matching :meth:`OpenAICompatibleModel._extract_usage_info`.
-
-        ``cumulative_input_tokens`` here already includes the cache_read /
-        cache_creation components (folded in by the caller) so that
-        ``input_tokens``, ``total_tokens``, ``cache_hit_rate`` and
-        ``context_usage_ratio`` share OpenAI's "input includes cached" semantics.
+        Returns the new durable boundary. A failed write leaves the boundary
+        unchanged so a later checkpoint retries the complete missing suffix.
         """
-        total_tokens = cumulative_input_tokens + cumulative_output_tokens
-        cached_tokens = cache_read_tokens
-        context_length = self.context_length()
-        return {
-            "requests": requests,
-            "input_tokens": cumulative_input_tokens,
-            "output_tokens": cumulative_output_tokens,
-            "total_tokens": total_tokens,
-            "cached_tokens": cached_tokens,
-            "cache_creation_tokens": cache_creation_tokens,
-            "reasoning_tokens": 0,
-            "cache_hit_rate": (round(cached_tokens / cumulative_input_tokens, 3) if cumulative_input_tokens > 0 else 0),
-            "context_usage_ratio": (
-                round(total_tokens / context_length, 3) if context_length and total_tokens > 0 else 0
-            ),
-            "last_call_input_tokens": last_call_input_tokens,
+        if session is None or persisted_message_index >= len(messages):
+            return persisted_message_index
+        pending = messages[persisted_message_index:]
+        try:
+            await session.add_items(pending)
+        except Exception as exc:
+            logger.warning("Failed to checkpoint native Claude session history: %s", exc)
+            return persisted_message_index
+        return len(messages)
+
+    @staticmethod
+    async def _seal_interrupted_native_history(session: Any, messages: List[Dict[str, Any]]) -> None:
+        """Repair a prior hard-stop checkpoint that ends in tool_result.
+
+        A process can die after a complete tool round is checkpointed but before
+        the following model call or graceful max-turn seal. Appending a normal
+        user prompt to that tail would create consecutive user messages, so add
+        one replay-safe assistant marker before accepting the next turn.
+        """
+        if not messages:
+            return
+        last = messages[-1]
+        if not isinstance(last, dict):
+            return
+        content = last.get("content")
+        if last.get("role") != "user" or not isinstance(content, list) or not content:
+            return
+        if not all(isinstance(block, dict) and block.get("type") == "tool_result" for block in content):
+            return
+        marker = {
+            "role": "assistant",
+            "content": [
+                {
+                    "type": "text",
+                    "text": "[Previous agent run stopped after completing a tool round; continuing from checkpoint.]",
+                }
+            ],
         }
+        await session.add_items([marker])
+        messages.append(marker)
+
+    async def _persist_failed_turn(self, frame_locals: Dict[str, Any], error: Exception) -> None:
+        """Best-effort save of an interrupted turn so the next turn isn't amnesiac.
+
+        When the native loop raises mid-turn (e.g. a 400 on replay, a network
+        drop, or an interrupt), the normal end-of-loop persistence never runs, so
+        neither the user message nor any partial reply reaches the session — and
+        the user's *next* turn "forgets" what was just asked. This commits the
+        user message plus a placeholder/partial assistant message (kept non-empty
+        and role-alternating so Anthropic accepts the replay) before the original
+        error propagates. It must never mask that error: all failures here are
+        swallowed.
+        """
+        session = frame_locals.get("session")
+        if session is None or frame_locals.get("turn_persisted"):
+            return
+        user_turn_message = frame_locals.get("user_turn_message")
+        if not user_turn_message:
+            return
+        try:
+            partial = (frame_locals.get("final_content") or "").strip()
+            if not partial:
+                # On a mid-stream failure ``final_content`` is still empty, but
+                # the partial text the user already saw lives in
+                # ``thinking_accumulated`` — prefer it over the placeholder.
+                partial = (frame_locals.get("thinking_accumulated") or "").strip()
+            assistant_text = partial or f"[Turn interrupted before completion: {type(error).__name__}]"
+            # Preserve any completed tool_use/tool_result rounds from this turn
+            # too, not just a placeholder — ``_replay_safe_turn_items`` drops a
+            # trailing dangling ``tool_use`` (interrupted before its result) and
+            # appends ``assistant_text`` so the history ends on an assistant
+            # message Anthropic will accept on replay.
+            messages = frame_locals.get("messages")
+            turn_start_index = frame_locals.get("turn_start_index")
+            persisted_message_index = frame_locals.get("persisted_message_index")
+            if isinstance(messages, list) and isinstance(turn_start_index, int):
+                durable_boundary = (
+                    persisted_message_index if isinstance(persisted_message_index, int) else turn_start_index
+                )
+                if durable_boundary > turn_start_index:
+                    # Complete tool rounds before this boundary are already in
+                    # SQLite. Replay-sanitize only the missing suffix: a failure
+                    # can occur after the next model response appended a tool_use
+                    # but before its tool_result was recorded. The helper uses
+                    # ``user_turn_message`` as an empty-suffix fallback, so strip
+                    # that already-durable message back out before appending.
+                    turn_items = self._replay_safe_turn_items(
+                        messages[durable_boundary:], user_turn_message, assistant_text
+                    )
+                    if turn_items and turn_items[0] == user_turn_message:
+                        turn_items = turn_items[1:]
+                else:
+                    turn_items = self._replay_safe_turn_items(
+                        messages[turn_start_index:], user_turn_message, assistant_text
+                    )
+            else:
+                turn_items = [
+                    user_turn_message,
+                    {"role": "assistant", "content": [{"type": "text", "text": assistant_text}]},
+                ]
+            await session.add_items(turn_items)
+            logger.info("Persisted interrupted native Claude turn so history survives the failure.")
+        except Exception as persist_err:
+            logger.warning(f"Failed to persist interrupted native Claude turn: {persist_err}")
+
+    @staticmethod
+    def _replay_safe_turn_items(
+        turn_items: List[Dict[str, Any]],
+        user_turn_message: Dict[str, Any],
+        fallback_text: str,
+    ) -> List[Dict[str, Any]]:
+        """Trim one native-loop turn to a replay-safe item list for the session.
+
+        ``turn_items`` is the slice of the native loop's ``messages`` added
+        during a single user turn: the user message, then alternating assistant
+        (``text`` + ``tool_use``) and user (``tool_result``) messages, ending —
+        on the success path — with a clean assistant text message.
+
+        Anthropic rejects replay of (a) an assistant ``tool_use`` block with no
+        matching ``tool_result`` and (b) a history that ends on a
+        user/``tool_result`` message (it would collide with the next turn's
+        user message). This drops any trailing *dangling* ``tool_use`` (only the
+        tail can dangle — the loop appends each ``tool_result`` immediately after
+        its ``tool_use``) and guarantees the sequence ends on an assistant
+        message, appending a non-empty ``fallback_text`` placeholder when needed
+        so the turn is never lost. Completed tool rounds are preserved verbatim.
+        """
+        items = [m for m in turn_items if isinstance(m, dict)]
+
+        def _tool_use_ids(msg: Dict[str, Any]) -> List[Any]:
+            content = msg.get("content")
+            if not isinstance(content, list):
+                return []
+            return [b.get("id") for b in content if isinstance(b, dict) and b.get("type") == "tool_use"]
+
+        answered = set()
+        for m in items:
+            if m.get("role") == "user" and isinstance(m.get("content"), list):
+                for b in m["content"]:
+                    if isinstance(b, dict) and b.get("type") == "tool_result":
+                        answered.add(b.get("tool_use_id"))
+
+        # Drop a trailing assistant turn whose tool calls were never answered
+        # (interrupted between emitting the tool_use and recording its result).
+        while items:
+            last = items[-1]
+            if last.get("role") == "assistant" and any(tid not in answered for tid in _tool_use_ids(last)):
+                items.pop()
+                continue
+            break
+
+        if not items:
+            items = [user_turn_message]
+        if items[-1].get("role") != "assistant":
+            items.append({"role": "assistant", "content": [{"type": "text", "text": fallback_text or "[empty turn]"}]})
+        return items
 
     def _build_sdk_usage(
         self,
@@ -1009,7 +1826,10 @@ class ClaudeModel(OpenAICompatibleModel):
         cumulative_input_tokens: int,
         cumulative_output_tokens: int,
         cache_read_tokens: int,
+        cache_write_tokens: int,
         last_call_input_tokens: int,
+        last_call_cache_read_tokens: int,
+        last_call_cache_write_tokens: int,
     ) -> Usage:
         """Build an SDK ``Usage`` snapshot from the native loop's counters.
 
@@ -1017,18 +1837,25 @@ class ClaudeModel(OpenAICompatibleModel):
         feed :class:`TokenUsageHook` (via ``on_llm_end``) the same shape the
         Runner would. ``TokenUsageHook._emit`` reads ``context.usage`` and calls
         :meth:`OpenAICompatibleModel._extract_usage_info` (inherited here), which
-        consumes ``input_tokens`` / ``output_tokens`` / ``total_tokens``,
-        ``input_tokens_details.cached_tokens`` and ``request_usage_entries[-1]``
-        for the last-call input. ``cumulative_input_tokens`` already folds in the
-        cache_read / cache_creation components (done by the caller) so the OpenAI
-        "input includes cached" semantics carry through cache-hit-rate and
-        context-usage-ratio derivation.
+        consumes the standard SDK token-detail fields and
+        ``request_usage_entries[-1]`` for the last-call input.
+        ``cumulative_input_tokens`` already folds in the cache-read/cache-write
+        components (done by the caller) so the OpenAI "input includes cached"
+        semantics carry through cache-hit-rate and context-usage-ratio derivation.
         """
         total_tokens = cumulative_input_tokens + cumulative_output_tokens
+        if not self._supports_cache_write_usage():
+            cache_write_tokens = 0
+            last_call_cache_write_tokens = 0
         return Usage(
             requests=requests,
             input_tokens=cumulative_input_tokens,
-            input_tokens_details=InputTokensDetails(cached_tokens=cache_read_tokens),
+            input_tokens_details=InputTokensDetails.model_validate(
+                {
+                    "cached_tokens": cache_read_tokens,
+                    "cache_write_tokens": cache_write_tokens,
+                }
+            ),
             output_tokens=cumulative_output_tokens,
             output_tokens_details=OutputTokensDetails(reasoning_tokens=0),
             total_tokens=total_tokens,
@@ -1040,7 +1867,12 @@ class ClaudeModel(OpenAICompatibleModel):
                     input_tokens=last_call_input_tokens,
                     output_tokens=0,
                     total_tokens=last_call_input_tokens,
-                    input_tokens_details=InputTokensDetails(cached_tokens=cache_read_tokens),
+                    input_tokens_details=InputTokensDetails.model_validate(
+                        {
+                            "cached_tokens": last_call_cache_read_tokens,
+                            "cache_write_tokens": last_call_cache_write_tokens,
+                        }
+                    ),
                     output_tokens_details=OutputTokensDetails(reasoning_tokens=0),
                 )
             ],
@@ -1073,26 +1905,16 @@ class ClaudeModel(OpenAICompatibleModel):
         except Exception:  # noqa: BLE001 — best-effort hooks never break the loop
             logger.debug("Hook '%s' raised; ignoring", method_name, exc_info=True)
 
-    async def _store_native_turn_usage(self, session, usage_info: dict) -> None:
+    async def _store_native_turn_usage(self, session, usage: Usage) -> None:
         """Persist the native turn's cumulative usage into ``turn_usage``.
 
-        Constructs an SDK :class:`Usage` and feeds it through the session's
-        ``store_run_usage`` via a minimal result shim so the durable schema
-        and turn-numbering match the Runner-driven models exactly.
+        Feeds the same SDK :class:`Usage` snapshot used by ``TokenUsageHook``
+        through the session's ``store_run_usage`` so the durable schema and
+        turn-numbering match the Runner-driven models exactly.
         """
         if session is None or not hasattr(session, "store_run_usage"):
             return
         try:
-            usage = Usage(
-                requests=int(usage_info.get("requests", 0) or 0),
-                input_tokens=int(usage_info.get("input_tokens", 0) or 0),
-                output_tokens=int(usage_info.get("output_tokens", 0) or 0),
-                total_tokens=int(usage_info.get("total_tokens", 0) or 0),
-                input_tokens_details=InputTokensDetails(cached_tokens=int(usage_info.get("cached_tokens", 0) or 0)),
-                output_tokens_details=OutputTokensDetails(
-                    reasoning_tokens=int(usage_info.get("reasoning_tokens", 0) or 0)
-                ),
-            )
 
             class _NativeUsageResult:
                 """Minimal ``RunResult`` stand-in exposing ``context_wrapper.usage``."""
@@ -1114,6 +1936,7 @@ class ClaudeModel(OpenAICompatibleModel):
         func_tools: Optional[List[Any]] = None,
         action_history_manager: Optional[ActionHistoryManager] = None,
         session: Optional[Any] = None,
+        hooks=None,
         **kwargs,
     ) -> Dict:
         """Non-streaming wrapper: consumes _generate_with_mcp_stream and returns result dict."""
@@ -1127,6 +1950,7 @@ class ClaudeModel(OpenAICompatibleModel):
             func_tools=func_tools,
             action_history_manager=action_history_manager,
             session=session,
+            hooks=hooks,
             **kwargs,
         ):
             if action.role == ActionRole.ASSISTANT and action.action_type == "final_response":
@@ -1167,6 +1991,7 @@ class ClaudeModel(OpenAICompatibleModel):
                 func_tools=tools,
                 action_history_manager=action_history_manager,
                 session=session,
+                hooks=hooks,
                 **kwargs,
             )
 
@@ -1191,6 +2016,155 @@ class ClaudeModel(OpenAICompatibleModel):
                 self._diagnose_oauth_401(e)
             raise
 
+    def summary_capacity_checker(
+        self, instruction: str, prompt: str, item_format: str, output_tokens: int
+    ) -> Callable[[List[Any]], int]:
+        """Size native summary chunks using the same request as the transport."""
+        if item_format != "anthropic":
+            return super().summary_capacity_checker(instruction, prompt, item_format, output_tokens)
+        from datus.models.request_capacity import guard_request
+
+        capacity = self.request_capacity()
+        return lambda items: guard_request(
+            capacity, self._native_summary_request(items, instruction, prompt, output_tokens)
+        )
+
+    def _native_summary_request(
+        self, items: List[Dict[str, Any]], instruction: str, prompt: str, max_tokens: int
+    ) -> Dict[str, Any]:
+        """Share OAuth identity, cache framing and transcript stubs with preflight."""
+        messages: List[Dict[str, Any]] = [dict(m) for m in items if isinstance(m, dict)]
+        prompt_block = {"type": "text", "text": prompt}
+        if messages and messages[-1].get("role") == "user" and isinstance(messages[-1].get("content"), list):
+            # Keep strict user/assistant alternation: fold the prompt into the
+            # trailing user message instead of adding a second user turn.
+            messages[-1] = {**messages[-1], "content": [*messages[-1]["content"], prompt_block]}
+        else:
+            messages.append({"role": "user", "content": [prompt_block]})
+
+        request_kwargs: Dict[str, Any] = dict(
+            model=self.model_name,
+            system=self._build_system_param(instruction),
+            messages=wrap_prompt_cache(messages),
+            max_tokens=max_tokens,
+        )
+        tool_stubs = self._tool_stubs_for_transcript(messages)
+        if tool_stubs:
+            request_kwargs["tools"] = tool_stubs
+            request_kwargs["tool_choice"] = {"type": "none"}
+
+        return request_kwargs
+
+    @observe_model_phase("compact_summary")
+    async def summarize_items(
+        self,
+        items: List[Dict[str, Any]],
+        *,
+        instruction: str,
+        prompt: str,
+        item_format: str = "responses",
+        max_tokens: int = 4000,
+        temperature: float = 0.3,
+        agent_name: str = "",
+        **kwargs,
+    ) -> Dict[str, Any]:
+        """Summarize a transcript for compaction.
+
+        Anthropic-format transcripts (the native loop's ``messages``) are
+        summarized with one direct Messages API call: the summarization prompt
+        is appended as the closing user text, no session is touched and no
+        hooks fire. The history still contains ``tool_use`` / ``tool_result``
+        blocks, and Anthropic rejects such requests unless tools are defined,
+        so minimal stub definitions for the tools seen in the transcript are
+        sent with ``tool_choice: none`` — the model can only answer in text.
+
+        Responses-format transcripts go through the LiteLLM path unless this
+        model is OAuth-only, in which case there is no valid route.
+        """
+        if item_format != "anthropic":
+            if self.use_native_api and self._is_oauth_token:
+                raise DatusException(
+                    ErrorCode.COMMON_UNSUPPORTED,
+                    message_args={"field_name": "item_format", "your_value": item_format},
+                )
+            self._inject_oauth_headers(kwargs)
+            return await super().summarize_items(
+                items,
+                instruction=instruction,
+                prompt=prompt,
+                item_format=item_format,
+                max_tokens=max_tokens,
+                temperature=temperature,
+                agent_name=agent_name,
+                **kwargs,
+            )
+
+        request_kwargs = self._native_summary_request(items, instruction, prompt, max_tokens)
+
+        if self.async_anthropic_client is not None:
+            async with self._anthropic_messages_stream(**request_kwargs) as stream:
+                response = await stream.get_final_message()
+        else:
+            response = self._anthropic_messages_create(**request_kwargs)
+
+        text = "\n".join(
+            block.text
+            for block in (getattr(response, "content", None) or [])
+            if getattr(block, "type", None) == "text" and getattr(block, "text", "")
+        )
+        usage = getattr(response, "usage", None)
+        input_tokens = (
+            int(getattr(usage, "input_tokens", 0) or 0)
+            + int(getattr(usage, "cache_read_input_tokens", 0) or 0)
+            + int(getattr(usage, "cache_creation_input_tokens", 0) or 0)
+        )
+        output_tokens = int(getattr(usage, "output_tokens", 0) or 0)
+        return {
+            "content": text,
+            "usage": {
+                "input_tokens": input_tokens,
+                "output_tokens": output_tokens,
+                "total_tokens": input_tokens + output_tokens,
+            },
+            "model": self.model_name,
+        }
+
+    @staticmethod
+    def _tool_stubs_for_transcript(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Minimal tool definitions covering every ``tool_use`` in ``messages``.
+
+        Returns an empty list when the transcript carries no tool blocks, so a
+        plain text-only history is sent without any ``tools`` parameter.
+        """
+        names: List[str] = []
+        has_tool_blocks = False
+        for message in messages:
+            content = message.get("content") if isinstance(message, dict) else None
+            if not isinstance(content, list):
+                continue
+            for block in content:
+                if not isinstance(block, dict):
+                    continue
+                block_type = block.get("type")
+                if block_type in ("tool_use", "tool_result"):
+                    has_tool_blocks = True
+                if block_type == "tool_use":
+                    name = block.get("name")
+                    if isinstance(name, str) and name and name not in names:
+                        names.append(name)
+        if not has_tool_blocks:
+            return []
+        if not names:
+            names.append("tool")
+        return [
+            {
+                "name": name,
+                "description": "Tool referenced by the transcript being summarized; not callable here.",
+                "input_schema": {"type": "object"},
+            }
+            for name in names
+        ]
+
     async def generate_with_tools_stream(
         self,
         prompt: Union[str, List[Dict[str, str]]],
@@ -1203,16 +2177,35 @@ class ClaudeModel(OpenAICompatibleModel):
         session=None,
         action_history_manager: Optional[ActionHistoryManager] = None,
         hooks=None,
+        interrupt_controller=None,
+        pending_input_queue=None,
+        interaction_broker=None,
+        context_rewriter=None,
         **kwargs,
     ) -> AsyncGenerator[ActionHistory, None]:
         """Generate response with streaming and tool support.
 
         Routes to native Anthropic API for OAuth subscription tokens,
         otherwise uses parent class LiteLLM implementation.
+
+        The mid-run insertion plumbing (``pending_input_queue`` /
+        ``interaction_broker``) is named explicitly rather than left to
+        ``**kwargs``: both branches need it, and the base signature ends in
+        ``**kwargs``, so forwarding it implicitly hides a dropped argument as
+        "insertion silently doesn't work" instead of a TypeError.
         """
-        # For OAuth tokens, use native path (LiteLLM sends x-api-key which is incompatible)
-        # Directly iterate the async generator for real-time tool call display
-        if self.use_native_api and self._is_oauth_token:
+        # Route to the native Anthropic path for (a) OAuth subscription tokens
+        # (LiteLLM sends x-api-key which is incompatible with Bearer auth), or
+        # (b) whenever vendor-native web tools are requested — server tools can
+        # only be expressed as raw tool dicts on the native Messages API, not via
+        # the agents-SDK LiteLLM tool list. Non-web calls (e.g. compaction
+        # summarization, which passes no builtin_web_tools) stay on LiteLLM.
+        _builtin_web_tools = kwargs.get("builtin_web_tools") or {}
+        _want_builtin_web = bool(
+            (_builtin_web_tools.get("web_search") and self.supports_builtin_web_search())
+            or (_builtin_web_tools.get("web_fetch") and self.supports_builtin_web_fetch())
+        )
+        if (self.use_native_api and self._is_oauth_token) or _want_builtin_web:
             if action_history_manager is None:
                 action_history_manager = ActionHistoryManager()
             async for action in self._generate_with_mcp_stream(
@@ -1223,9 +2216,12 @@ class ClaudeModel(OpenAICompatibleModel):
                 max_turns=max_turns,
                 func_tools=tools,
                 action_history_manager=action_history_manager,
-                interrupt_controller=kwargs.pop("interrupt_controller", None),
+                interrupt_controller=interrupt_controller,
                 session=session,
                 hooks=hooks,
+                pending_input_queue=pending_input_queue,
+                interaction_broker=interaction_broker,
+                context_rewriter=context_rewriter,
                 **kwargs,
             ):
                 yield action
@@ -1244,6 +2240,10 @@ class ClaudeModel(OpenAICompatibleModel):
                 session=session,
                 action_history_manager=action_history_manager,
                 hooks=hooks,
+                interrupt_controller=interrupt_controller,
+                pending_input_queue=pending_input_queue,
+                interaction_broker=interaction_broker,
+                context_rewriter=context_rewriter,
                 **kwargs,
             ):
                 yield action

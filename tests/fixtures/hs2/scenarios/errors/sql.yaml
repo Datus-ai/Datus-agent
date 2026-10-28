@@ -1,0 +1,42 @@
+cases:
+- id: errors.missing_column
+  capabilities:
+  - query.errors
+  targets:
+  - hive
+  - inceptor
+  sql: SELECT missing_hs2_column FROM {{db}}.orders
+  expect_error: missing_hs2_column
+- id: errors.missing_table
+  capabilities:
+  - query.errors
+  targets:
+  - hive
+  - inceptor
+  sql: SELECT * FROM {{db}}.missing_hs2_table
+  expect_error: missing_hs2_table
+- id: errors.syntax
+  capabilities:
+  - query.errors
+  targets:
+  - hive
+  - inceptor
+  sql: SELEC 1
+  expect_error: SQLState=
+  expect_error_by_backend:
+    python-adapter: Only SELECT and metadata queries are supported
+- id: errors.recovery
+  capabilities:
+  - query.errors
+  targets:
+  - hive
+  - inceptor
+  sql: SELECT COUNT(*) AS n FROM {{db}}.orders
+  expected:
+    columns:
+    - n
+    rows:
+    - - 4
+    types:
+    - int
+    ordered: false

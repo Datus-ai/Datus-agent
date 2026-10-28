@@ -127,3 +127,107 @@ class TestConfigureStorageDefaults:
         with patch("datus.storage.registry.get_embedding_model", side_effect=_fake_get_embedding_model):
             store = get_storage(_DummyStore, "metric", project="test")
         assert store.init_kwargs.get("table_prefix") == "tb_"
+
+
+class TestRequestScopedTablePrefix:
+    """``table_prefix_scope`` — one process serving two table sets.
+
+    Datus-backend can host the Studio surface (``tb_*``) and the publication
+    surface (``pub_tb_*``) together, and which one a request reads is a property
+    of the request. These tests pin the two things that made that impossible
+    before: the global-only prefix, and a store cache that did not key on it.
+    """
+
+    def test_scope_overrides_the_deployment_default(self):
+        from datus.storage.registry import get_storage_defaults, table_prefix_scope
+
+        configure_storage_defaults(table_prefix="tb_")
+        assert get_storage_defaults()["table_prefix"] == "tb_"
+        with table_prefix_scope("pub_tb_"):
+            assert get_storage_defaults()["table_prefix"] == "pub_tb_"
+        # ...and is restored, so a wrapped request cannot leak into the next one.
+        assert get_storage_defaults()["table_prefix"] == "tb_"
+
+    def test_scope_nests_and_restores(self):
+        from datus.storage.registry import get_storage_defaults, table_prefix_scope
+
+        configure_storage_defaults(table_prefix="tb_")
+        with table_prefix_scope("pub_tb_"):
+            with table_prefix_scope("other_"):
+                assert get_storage_defaults()["table_prefix"] == "other_"
+            assert get_storage_defaults()["table_prefix"] == "pub_tb_"
+        assert get_storage_defaults()["table_prefix"] == "tb_"
+
+    def test_the_store_built_inside_a_scope_carries_that_prefix(self):
+        from datus.storage.registry import table_prefix_scope
+
+        configure_storage_defaults(table_prefix="tb_")
+        with patch("datus.storage.registry.get_embedding_model", side_effect=_fake_get_embedding_model):
+            studio = get_storage(_DummyStore, "metric", project="p1")
+            with table_prefix_scope("pub_tb_"):
+                published = get_storage(_DummyStore, "metric", project="p1")
+
+        assert studio.init_kwargs["table_prefix"] == "tb_"
+        assert published.init_kwargs["table_prefix"] == "pub_tb_"
+
+    def test_two_table_sets_are_two_cache_entries_for_the_same_project(self):
+        """THE regression this exists for.
+
+        Same project, same factory, same datasource — only the prefix differs. If
+        the prefix is not in the key, the second call returns the first instance
+        and the process serves the wrong table set until it restarts.
+        """
+        from datus.storage.registry import table_prefix_scope
+
+        configure_storage_defaults(table_prefix="tb_")
+        with patch("datus.storage.registry.get_embedding_model", side_effect=_fake_get_embedding_model):
+            studio = get_storage(_DummyStore, "metric", project="same", datasource_id="ds")
+            with table_prefix_scope("pub_tb_"):
+                published = get_storage(_DummyStore, "metric", project="same", datasource_id="ds")
+            studio_again = get_storage(_DummyStore, "metric", project="same", datasource_id="ds")
+
+        assert studio is not published
+        # Still a cache, not a factory: the same prefix returns the same instance.
+        assert studio is studio_again
+
+    def test_a_scope_does_not_leak_into_a_concurrent_task(self):
+        """ContextVar, not a thread-local or a global: asyncio tasks must not see it.
+
+        Each task inherits a COPY of the context at creation, so the publication
+        task's override is invisible to the Studio task running beside it.
+        """
+        import asyncio
+
+        from datus.storage.registry import get_storage_defaults, table_prefix_scope
+
+        configure_storage_defaults(table_prefix="tb_")
+        seen: dict[str, str] = {}
+        started = asyncio.Event()
+
+        async def publication():
+            with table_prefix_scope("pub_tb_"):
+                started.set()
+                # Yield with the override in force, so the other task runs inside
+                # this window rather than before or after it.
+                await asyncio.sleep(0)
+                seen["publication"] = get_storage_defaults()["table_prefix"]
+
+        async def studio():
+            await started.wait()
+            seen["studio"] = get_storage_defaults()["table_prefix"]
+
+        async def main():
+            await asyncio.gather(publication(), studio())
+
+        asyncio.run(main())
+        assert seen == {"publication": "pub_tb_", "studio": "tb_"}
+
+    def test_no_scope_leaves_the_kwargs_shape_alone(self):
+        """With no defaults and no scope, the factory sees only ``db`` — as before.
+
+        An unconditional ``table_prefix=""`` would be handing every factory a
+        keyword it never used to receive.
+        """
+        with patch("datus.storage.registry.get_embedding_model", side_effect=_fake_get_embedding_model):
+            store = get_storage(_DummyStore, "metric", project="test")
+        assert set(store.init_kwargs) == {"db"}

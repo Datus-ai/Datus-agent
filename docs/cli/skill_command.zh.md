@@ -113,4 +113,4 @@ skills:
 /skill update
 ```
 
-skill 编写、权限模型与 marketplace 流程详见 [Skills 集成](../integration/skills.md)。
+skill 编写、权限模型与 marketplace 流程详见 [Skills 集成](../skills/introduction.md)。

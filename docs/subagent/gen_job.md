@@ -8,14 +8,14 @@ The agent auto-detects the path based on the user's prompt: if the source and ta
 
 ## Quick Start
 
-Start Datus CLI and use the gen_job subagent via natural language:
+Start Datus CLI and describe the pipeline you want in natural language. The chat agent can route the request automatically; append `@Agent gen_job` when you want to select it explicitly:
 
-```bash
+```text
 # Single-database ETL
-/gen_job Build a summary table from orders and customers tables
+Build a summary table from the orders and customers tables. @Agent gen_job
 
 # Cross-database transfer
-/gen_job Transfer the users table from local_duckdb to greenplum
+Transfer the users table from local_duckdb to greenplum. @Agent gen_job
 ```
 
 The chat agent can also automatically delegate to gen_job when it detects an ETL or migration task.
@@ -128,7 +128,7 @@ Type mapping and DDL requirements are NOT hardcoded in the agent. Each target ad
 - **`suggest_table_layout(database=target, columns_json=...)`** — returns OLAP-specific hints (e.g. `{duplicate_key, distributed_by, buckets}` for StarRocks, `{engine, order_by}` for ClickHouse, `{partitioned_by}` for Hive via Trino).
 - **`validate_ddl(database=target, ddl=..., target_table=...)`** — runs structural validation (e.g. StarRocks must have `DUPLICATE KEY` + `DISTRIBUTED BY`; ClickHouse must have `ENGINE` + `ORDER BY`); optionally runs `dry_run_ddl` (CREATE + DROP to a temp table).
 
-Adapters that implement the Mixin (as of this release): StarRocks, Greenplum, PostgreSQL, MySQL, ClickHouse, Trino, Snowflake, Redshift, DuckDB, SQLite, plus a generic OLTP fallback on the SQLAlchemy base. Adapters without a Mixin yet (e.g. BigQuery, Hive, Spark, ClickZetta) fall back to pure-LLM mode — `get_migration_capabilities` returns `{"supported": false, "warning": ...}` and the LLM relies on its own knowledge of the target dialect.
+Adapters that implement the Mixin (as of this release): StarRocks, Greenplum, PostgreSQL, MySQL, ClickHouse, Trino, Snowflake, Redshift, BigQuery, DuckDB, SQLite, plus a generic OLTP fallback on the SQLAlchemy base. Adapters without a Mixin yet (e.g. Hive, Spark, ClickZetta) fall back to pure-LLM mode — `get_migration_capabilities` returns `{"supported": false, "warning": ...}` and the LLM relies on its own knowledge of the target dialect.
 
 To add hints for a new target dialect, implement `MigrationTargetMixin` in the adapter — no changes to the agent are required.
 

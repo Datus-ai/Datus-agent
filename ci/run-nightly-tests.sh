@@ -25,12 +25,14 @@ NIGHTLY_TRACE_DIAGNOSTICS_FINALIZED=0
 test_exit_code=0
 last_command_exit_code=0
 NIGHTLY_GROUP_FILTER="${NIGHTLY_GROUP_FILTER:-}"
+GAUSSDB_TLS_HOST_DIR=""
 AGENT_TEST_CONFIG="${AGENT_TEST_CONFIG:-tests/conf/agent.yml}"
 DATUS_TEST_PROJECT_NAME="${DATUS_TEST_PROJECT_NAME:-datus_agent_nightly}"
 export DATUS_TEST_PROJECT_NAME
 NIGHTLY_REQUIRE_LANGFUSE_TRACING="${NIGHTLY_REQUIRE_LANGFUSE_TRACING:-0}"
 NIGHTLY_STARTED_AT="${NIGHTLY_STARTED_AT:-}"
 NIGHTLY_COMPOSE_PROJECT_PREFIX="${NIGHTLY_COMPOSE_PROJECT_PREFIX:-datus-nightly-${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-0}-}"
+UV_CACHE_DIR="${UV_CACHE_DIR:-$(uv cache dir)}"
 
 WORKSPACE_ROOT="${WORKSPACE_ROOT:-$(cd "${REPO_ROOT}/.." && pwd)}"
 EXTERNAL_REPOS_ROOT="${EXTERNAL_REPOS_ROOT:-${REPO_ROOT}/external}"
@@ -40,9 +42,12 @@ UNIT_TEST_HOME="${NIGHTLY_UNIT_TEST_HOME:-${RUNNER_TEMP:-${TMPDIR:-/tmp}}/datus-
 UNIT_TEST_PROJECT_ROOT="${NIGHTLY_UNIT_TEST_PROJECT_ROOT:-${UNIT_TEST_HOME}/workspace}"
 NIGHTLY_PYTEST_BASETEMP="${NIGHTLY_PYTEST_BASETEMP:-${RUNNER_TEMP:-${TMPDIR:-/tmp}}/datus-agent-nightly-pytest-${GITHUB_RUN_ID:-$$}-${GITHUB_RUN_ATTEMPT:-0}}"
 AGENT_TEST_CONFIG_BACKUP="${AGENT_TEST_CONFIG_BACKUP:-${TMPDIR:-/tmp}/datus-agent-nightly-config-${GITHUB_RUN_ID:-$$}.bak}"
-export LOG_FILE NIGHTLY_MANIFEST_FILE NIGHTLY_FAILURE_CLASSIFICATION_FILE PROVIDER_COVERAGE_MANIFEST_FILE NIGHTLY_TRACE_REFERENCES_FILE NIGHTLY_TRACE_SUMMARY_FILE NIGHTLY_PROCESS_DIAGNOSTICS_FILE NIGHTLY_HOME NIGHTLY_PROJECT_ROOT UNIT_TEST_HOME NIGHTLY_PYTEST_BASETEMP NIGHTLY_STARTED_AT
+export LOG_FILE NIGHTLY_MANIFEST_FILE NIGHTLY_FAILURE_CLASSIFICATION_FILE PROVIDER_COVERAGE_MANIFEST_FILE NIGHTLY_TRACE_REFERENCES_FILE NIGHTLY_TRACE_SUMMARY_FILE NIGHTLY_PROCESS_DIAGNOSTICS_FILE NIGHTLY_HOME NIGHTLY_PROJECT_ROOT UNIT_TEST_HOME NIGHTLY_PYTEST_BASETEMP NIGHTLY_STARTED_AT EXTERNAL_REPOS_ROOT UV_CACHE_DIR
 
 NIGHTLY_PYTEST_ROOTS=(tests/integration tests/regression)
+# This cloud acceptance has no credentialed nightly group yet. Ignore it before
+# import so strict collection does not require its explicitly opt-in credentials.
+NIGHTLY_OPTIONAL_CLOUD_IGNORES=(--ignore tests/integration/adapters/test_snowflake_secrets.py)
 
 default_repo_root() {
   local explicit_root="$1"
@@ -62,15 +67,19 @@ default_repo_root() {
 DB_ADAPTERS_ROOT="$(default_repo_root "${DB_ADAPTERS_ROOT:-}" datus-db-adapters)"
 BI_ADAPTERS_ROOT="$(default_repo_root "${BI_ADAPTERS_ROOT:-}" datus-bi-adapters)"
 SCHEDULER_ADAPTERS_ROOT="$(default_repo_root "${SCHEDULER_ADAPTERS_ROOT:-}" datus-scheduler-adapters)"
+STORAGE_ADAPTERS_ROOT="$(default_repo_root "${STORAGE_ADAPTERS_ROOT:-}" datus-storage-adapters)"
 
 POSTGRES_COMPOSE="${POSTGRES_COMPOSE:-${DB_ADAPTERS_ROOT}/datus-postgresql/docker-compose.yml}"
 MYSQL_COMPOSE="${MYSQL_COMPOSE:-${DB_ADAPTERS_ROOT}/datus-mysql/docker-compose.yml}"
 CLICKHOUSE_COMPOSE="${CLICKHOUSE_COMPOSE:-${DB_ADAPTERS_ROOT}/datus-clickhouse/docker-compose.yml}"
 STARROCKS_COMPOSE="${STARROCKS_COMPOSE:-${DB_ADAPTERS_ROOT}/datus-starrocks/docker-compose.yml}"
+DORIS_COMPOSE="${DORIS_COMPOSE:-${DB_ADAPTERS_ROOT}/datus-doris/docker-compose.yml}"
+TIDB_COMPOSE="${TIDB_COMPOSE:-${DB_ADAPTERS_ROOT}/datus-tidb/docker-compose.yml}"
 TRINO_COMPOSE="${TRINO_COMPOSE:-${DB_ADAPTERS_ROOT}/datus-trino/docker-compose.yml}"
 GREENPLUM_COMPOSE="${GREENPLUM_COMPOSE:-${DB_ADAPTERS_ROOT}/datus-greenplum/docker-compose.yml}"
 HIVE_COMPOSE="${HIVE_COMPOSE:-${DB_ADAPTERS_ROOT}/datus-hive/docker-compose.yml}"
 SPARK_COMPOSE="${SPARK_COMPOSE:-${DB_ADAPTERS_ROOT}/datus-spark/docker-compose.yml}"
+GAUSSDB_COMPOSE="${GAUSSDB_COMPOSE:-${DB_ADAPTERS_ROOT}/datus-gaussdb/docker-compose.yml}"
 SUPERSET_COMPOSE="${SUPERSET_COMPOSE:-${BI_ADAPTERS_ROOT}/datus-bi-superset/tests/integration/docker-compose.yml}"
 GRAFANA_COMPOSE="${GRAFANA_COMPOSE:-${BI_ADAPTERS_ROOT}/datus-bi-grafana/tests/integration/docker-compose.yml}"
 AIRFLOW_COMPOSE="${AIRFLOW_COMPOSE:-${SCHEDULER_ADAPTERS_ROOT}/datus-scheduler-airflow/tests/integration/docker-compose.yml}"
@@ -80,27 +89,38 @@ COMPOSE_FILES=(
   "$MYSQL_COMPOSE"
   "$CLICKHOUSE_COMPOSE"
   "$STARROCKS_COMPOSE"
+  "$DORIS_COMPOSE"
   "$TRINO_COMPOSE"
   "$GREENPLUM_COMPOSE"
   "$HIVE_COMPOSE"
   "$SPARK_COMPOSE"
+  "$GAUSSDB_COMPOSE"
   "$SUPERSET_COMPOSE"
   "$GRAFANA_COMPOSE"
   "$AIRFLOW_COMPOSE"
 )
 
 COMPOSE_GROUPS=(
-  "Superset Nightly Tests"
+  "P0 Dashboard Bootstrap Skill E2E"
   "Grafana Nightly Tests"
   "Airflow Nightly Tests"
   "PostgreSQL Adapter Tests"
   "MySQL Adapter Tests"
   "ClickHouse Adapter Tests"
   "StarRocks Adapter Tests"
+  "Doris Adapter Tests"
+  "TiDB Adapter Tests"
   "Trino Adapter Tests"
   "Greenplum Adapter Tests"
   "Hive Adapter Tests"
   "Spark Adapter Tests"
+  "GaussDB Adapter Tests"
+)
+
+DOCKER_GROUPS=(
+  "P0 PostgreSQL Agent Storage Contracts"
+  "PostgreSQL Storage Adapter Tests"
+  "${COMPOSE_GROUPS[@]}"
 )
 
 log() {
@@ -419,24 +439,34 @@ will_run_any_compose_suite() {
   return 1
 }
 
+will_run_any_docker_suite() {
+  local group_name
+  for group_name in "${DOCKER_GROUPS[@]}"; do
+    if should_run_group "$group_name"; then
+      return 0
+    fi
+  done
+  return 1
+}
+
 require_docker_runtime() {
-  if ! will_run_any_compose_suite; then
+  if ! will_run_any_docker_suite; then
     return 0
   fi
 
   if ! command -v docker >/dev/null 2>&1; then
-    echo "Docker is required for nightly compose-backed suites" | tee -a "$LOG_FILE" >&2
+    echo "Docker is required for Docker-backed nightly suites" | tee -a "$LOG_FILE" >&2
     test_exit_code=127
     return 1
   fi
 
   if ! docker info >/dev/null 2>&1; then
-    echo "Docker daemon is not available for nightly compose-backed suites" | tee -a "$LOG_FILE" >&2
+    echo "Docker daemon is not available for Docker-backed nightly suites" | tee -a "$LOG_FILE" >&2
     test_exit_code=127
     return 1
   fi
 
-  if ! has_docker_compose; then
+  if will_run_any_compose_suite && ! has_docker_compose; then
     echo "Docker Compose is required for nightly compose-backed suites" | tee -a "$LOG_FILE" >&2
     test_exit_code=127
     return 1
@@ -458,17 +488,20 @@ compose_project_slug() {
   local group_name="$1"
 
   case "$group_name" in
-    "Superset Nightly Tests") echo "superset" ;;
+    "P0 Dashboard Bootstrap Skill E2E") echo "superset" ;;
     "Grafana Nightly Tests") echo "grafana" ;;
     "Airflow Nightly Tests") echo "airflow" ;;
     "PostgreSQL Adapter Tests") echo "postgresql" ;;
     "MySQL Adapter Tests") echo "mysql" ;;
     "ClickHouse Adapter Tests") echo "clickhouse" ;;
     "StarRocks Adapter Tests") echo "starrocks" ;;
+    "Doris Adapter Tests") echo "doris" ;;
+    "TiDB Adapter Tests") echo "tidb" ;;
     "Trino Adapter Tests") echo "trino" ;;
     "Greenplum Adapter Tests") echo "greenplum" ;;
     "Hive Adapter Tests") echo "hive" ;;
     "Spark Adapter Tests") echo "spark" ;;
+    "GaussDB Adapter Tests") echo "gaussdb" ;;
     *)
       echo "$group_name" \
         | tr '[:upper:]' '[:lower:]' \
@@ -513,17 +546,20 @@ cleanup_all_compose() {
   local project_name
   for group_name in "${COMPOSE_GROUPS[@]}"; do
     case "$group_name" in
-      "Superset Nightly Tests") compose_file="$SUPERSET_COMPOSE" ;;
+      "P0 Dashboard Bootstrap Skill E2E") compose_file="$SUPERSET_COMPOSE" ;;
       "Grafana Nightly Tests") compose_file="$GRAFANA_COMPOSE" ;;
       "Airflow Nightly Tests") compose_file="$AIRFLOW_COMPOSE" ;;
       "PostgreSQL Adapter Tests") compose_file="$POSTGRES_COMPOSE" ;;
       "MySQL Adapter Tests") compose_file="$MYSQL_COMPOSE" ;;
       "ClickHouse Adapter Tests") compose_file="$CLICKHOUSE_COMPOSE" ;;
       "StarRocks Adapter Tests") compose_file="$STARROCKS_COMPOSE" ;;
+      "Doris Adapter Tests") compose_file="$DORIS_COMPOSE" ;;
+      "TiDB Adapter Tests") compose_file="$TIDB_COMPOSE" ;;
       "Trino Adapter Tests") compose_file="$TRINO_COMPOSE" ;;
       "Greenplum Adapter Tests") compose_file="$GREENPLUM_COMPOSE" ;;
       "Hive Adapter Tests") compose_file="$HIVE_COMPOSE" ;;
       "Spark Adapter Tests") compose_file="$SPARK_COMPOSE" ;;
+      "GaussDB Adapter Tests") compose_file="$GAUSSDB_COMPOSE" ;;
       *) continue ;;
     esac
     if [ -f "$compose_file" ]; then
@@ -651,10 +687,11 @@ prepare_nightly_langfuse_tracing() {
 nightly_trace_expected_for_group() {
   case "$1" in
     "Gen Agent Tests" | \
+      "P0 Dosi Semantic Modeling E2E" | \
       "Reference Template Nightly Tests" | \
       "Web UI Nightly Tests" | \
       "Product E2E Nightly Tests" | \
-      "Superset Nightly Tests" | \
+      "P0 Dashboard Bootstrap Skill E2E" | \
       "Grafana Nightly Tests" | \
       "Airflow Nightly Tests" | \
       "Provider Health Tests")
@@ -769,6 +806,14 @@ ensure_nightly_kb_data() {
   return 0
 }
 
+cleanup_gaussdb_tls_host_artifacts() {
+  if [ -n "$GAUSSDB_TLS_HOST_DIR" ] && [ -d "$GAUSSDB_TLS_HOST_DIR" ]; then
+    rm -f -- "$GAUSSDB_TLS_HOST_DIR/ca.crt"
+    rmdir "$GAUSSDB_TLS_HOST_DIR" 2>/dev/null || true
+  fi
+  GAUSSDB_TLS_HOST_DIR=""
+}
+
 cleanup_all() {
   set +e
   if [ "${NIGHTLY_SKIP_MANIFEST_FINALIZE:-0}" != "1" ]; then
@@ -779,16 +824,19 @@ cleanup_all() {
   fi
   restore_agent_test_config
   rm -f "$AGENT_TEST_CONFIG_BACKUP"
+  cleanup_gaussdb_tls_host_artifacts
   if validate_pytest_basetemp "$NIGHTLY_PYTEST_BASETEMP"; then
     rm -rf "$NIGHTLY_PYTEST_BASETEMP"
   fi
   cleanup_all_compose
+  "$REPO_ROOT/ci/cleanup-run-testcontainers.sh"
 }
 
 if [ "${1:-}" = "--cleanup-only" ]; then
   NIGHTLY_SKIP_MANIFEST_FINALIZE=1
   cleanup_all
-  exit 0
+  cleanup_status=$?
+  exit "$cleanup_status"
 fi
 
 handle_interrupt() {
@@ -805,10 +853,12 @@ export ADAPTERS_PG="${ADAPTERS_PG:-1}"
 export ADAPTERS_MYSQL="${ADAPTERS_MYSQL:-1}"
 export ADAPTERS_CH="${ADAPTERS_CH:-1}"
 export ADAPTERS_SR="${ADAPTERS_SR:-1}"
+export ADAPTERS_DORIS="${ADAPTERS_DORIS:-1}"
 export ADAPTERS_TRINO="${ADAPTERS_TRINO:-1}"
 export ADAPTERS_GP="${ADAPTERS_GP:-1}"
 export ADAPTERS_HIVE="${ADAPTERS_HIVE:-1}"
 export ADAPTERS_SPARK="${ADAPTERS_SPARK:-1}"
+export ADAPTERS_GAUSSDB="${ADAPTERS_GAUSSDB:-1}"
 export SUPERSET_PORT="${SUPERSET_PORT:-18088}"
 export SUPERSET_POSTGRES_HOST="${SUPERSET_POSTGRES_HOST:-127.0.0.1}"
 export SUPERSET_POSTGRES_PORT="${SUPERSET_POSTGRES_PORT:-15433}"
@@ -850,6 +900,8 @@ if [ "${NIGHTLY_FORCE_ADAPTER_ENV:-1}" = "1" ]; then
   export CLICKHOUSE_USER=default_user
   export CLICKHOUSE_PASSWORD=default_test
   export CLICKHOUSE_DATABASE=default_test
+  # Compose uses HTTP; let the adapter's HTTP defaults apply.
+  unset CLICKHOUSE_PROTOCOL CLICKHOUSE_VERIFY CLICKHOUSE_CA_CERT
 
   export STARROCKS_QUERY_HOST_PORT="${STARROCKS_QUERY_HOST_PORT:-29030}"
   export STARROCKS_HTTP_HOST_PORT="${STARROCKS_HTTP_HOST_PORT:-28030}"
@@ -860,12 +912,30 @@ if [ "${NIGHTLY_FORCE_ADAPTER_ENV:-1}" = "1" ]; then
   export STARROCKS_CATALOG=default_catalog
   export STARROCKS_DATABASE=test
 
+  export DORIS_QUERY_HOST_PORT="${DORIS_QUERY_HOST_PORT:-29031}"
+  export DORIS_HTTP_HOST_PORT="${DORIS_HTTP_HOST_PORT:-28031}"
+  export DORIS_HOST=127.0.0.1
+  export DORIS_PORT="$DORIS_QUERY_HOST_PORT"
+  export DORIS_USER=root
+  export DORIS_PASSWORD=
+  export DORIS_CATALOG=internal
+  export DORIS_DATABASE=test
+
+  export TIDB_HOST_PORT="${TIDB_HOST_PORT:-24000}"
+  export TIDB_STATUS_HOST_PORT="${TIDB_STATUS_HOST_PORT:-20080}"
+  export TIDB_HOST=127.0.0.1
+  export TIDB_PORT="$TIDB_HOST_PORT"
+  export TIDB_USER=root
+  export TIDB_PASSWORD=
+  export TIDB_DATABASE=test
+
   export TRINO_HOST_PORT="${TRINO_HOST_PORT:-28080}"
   export TRINO_HOST=127.0.0.1
   export TRINO_PORT="$TRINO_HOST_PORT"
   export TRINO_USER=trino
   export TRINO_PASSWORD=
   export TRINO_HTTP_SCHEME=http
+  unset TRINO_VERIFY TRINO_CA_CERT
 
   export GREENPLUM_HOST_PORT="${GREENPLUM_HOST_PORT:-15434}"
   export GREENPLUM_HOST=localhost
@@ -903,6 +973,9 @@ run_logged_unfiltered() {
   local started_at
   started_at="$(utc_now)"
   collect_pytest_suite "$group_name" "$@"
+  if [ -n "${PRODUCT_EXECUTION_DIR:-}" ] && command_contains_pytest "$@"; then
+    set -- "$@" -p ci.pytest_gate_plugin --gate-report "${PRODUCT_EXECUTION_DIR}/${group_name//[^A-Za-z0-9_-]/_}.json"
+  fi
   local trace_expected=0
   if nightly_trace_expected_for_group "$group_name"; then
     trace_expected=1
@@ -1095,7 +1168,7 @@ compose_host_port_specs() {
   local group_name="$1"
 
   case "$group_name" in
-    "Superset Nightly Tests")
+    "P0 Dashboard Bootstrap Skill E2E")
       printf 'Superset web:%s\nSuperset PostgreSQL:%s\n' "${SUPERSET_PORT:-18088}" "${SUPERSET_POSTGRES_PORT:-15433}"
       ;;
     "Grafana Nightly Tests")
@@ -1115,6 +1188,12 @@ compose_host_port_specs() {
       ;;
     "StarRocks Adapter Tests")
       printf 'StarRocks query:%s\nStarRocks HTTP:%s\n' "${STARROCKS_QUERY_HOST_PORT:-29030}" "${STARROCKS_HTTP_HOST_PORT:-28030}"
+      ;;
+    "Doris Adapter Tests")
+      printf 'Doris query:%s\nDoris HTTP:%s\n' "${DORIS_QUERY_HOST_PORT:-29031}" "${DORIS_HTTP_HOST_PORT:-28031}"
+      ;;
+    "TiDB Adapter Tests")
+      printf 'TiDB query:%s\nTiDB status:%s\n' "${TIDB_HOST_PORT:-24000}" "${TIDB_STATUS_HOST_PORT:-20080}"
       ;;
     "Trino Adapter Tests")
       printf 'Trino HTTP:%s\n' "${TRINO_HOST_PORT:-28080}"
@@ -1370,12 +1449,82 @@ PY
   return 1
 }
 
+wait_for_doris_client_readiness() {
+  local timeout_seconds="${1:-600}"
+
+  uv run --no-sync python "$DB_ADAPTERS_ROOT/datus-doris/scripts/wait_for_doris.py" \
+    --timeout "$timeout_seconds" 2>&1 | tee -a "$LOG_FILE"
+  local status=${PIPESTATUS[0]}
+  if [ "$status" -ne 0 ]; then
+    test_exit_code="$status"
+    return "$status"
+  fi
+  return 0
+}
+
+wait_for_trino_client_readiness() {
+  local timeout_seconds="${1:-300}"
+  local deadline=$((SECONDS + timeout_seconds))
+  local probe_output="${RUNNER_TEMP:-${TMPDIR:-/tmp}}/datus-trino-readiness-${GITHUB_RUN_ID:-$$}.log"
+  local remaining_seconds
+
+  while [ "$SECONDS" -lt "$deadline" ]; do
+    remaining_seconds=$((deadline - SECONDS))
+    if python3 - "$remaining_seconds" <<'PYTRINO' >"$probe_output" 2>&1; then
+import os
+import signal
+import subprocess
+import sys
+
+probe = """
+from datus_trino import TrinoConnector
+from datus_trino.testing import config_from_env
+
+conn = TrinoConnector(config_from_env())
+try:
+    if not conn.test_connection():
+        raise RuntimeError("Trino readiness query failed")
+finally:
+    conn.close()
+"""
+# Bound uv startup, the driver query and cleanup together. A separate process
+# group lets expiry stop both uv and its Python child on Linux and macOS.
+process = subprocess.Popen(["uv", "run", "--no-sync", "python", "-c", probe], start_new_session=True)
+try:
+    status = process.wait(timeout=float(sys.argv[1]))
+except subprocess.TimeoutExpired:
+    try:
+        os.killpg(process.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+    process.wait()
+    print("Trino readiness attempt exceeded the remaining deadline", file=sys.stderr)
+    status = 124
+sys.exit(status)
+PYTRINO
+      log "Trino client readiness probe succeeded"
+      return 0
+    fi
+    remaining_seconds=$((deadline - SECONDS))
+    if [ "$remaining_seconds" -gt 0 ]; then
+      sleep "$((remaining_seconds < 5 ? remaining_seconds : 5))"
+    fi
+  done
+
+  echo "Timed out waiting for Trino client readiness" | tee -a "$LOG_FILE" >&2
+  if [ -s "$probe_output" ]; then
+    sed 's/^/  /' "$probe_output" | tee -a "$LOG_FILE"
+  fi
+  test_exit_code=1
+  return 1
+}
+
 wait_for_compose_client_readiness() {
   local group_name="$1"
   local airflow_base
 
   case "$group_name" in
-    "Superset Nightly Tests")
+    "P0 Dashboard Bootstrap Skill E2E")
       wait_for_http_readiness "Superset" "${SUPERSET_URL%/}/health" 300
       ;;
     "Grafana Nightly Tests")
@@ -1398,8 +1547,14 @@ wait_for_compose_client_readiness() {
     "StarRocks Adapter Tests")
       wait_for_starrocks_client_readiness 300
       ;;
+    "Doris Adapter Tests")
+      wait_for_doris_client_readiness "${DORIS_READY_TIMEOUT:-600}"
+      ;;
+    "TiDB Adapter Tests")
+      wait_for_http_readiness "TiDB" "http://${TIDB_HOST:-127.0.0.1}:${TIDB_STATUS_HOST_PORT:-20080}/status" 300
+      ;;
     "Trino Adapter Tests")
-      wait_for_http_readiness "Trino" "http://${TRINO_HOST:-127.0.0.1}:${TRINO_PORT:-8080}/v1/info" 300
+      wait_for_trino_client_readiness 300
       ;;
     "Greenplum Adapter Tests")
       wait_for_tcp_readiness "Greenplum" "${GREENPLUM_HOST:-localhost}" "${GREENPLUM_PORT:-5432}" 300
@@ -1411,6 +1566,36 @@ wait_for_compose_client_readiness() {
       wait_for_tcp_readiness "Spark Thrift" "${SPARK_HOST:-localhost}" "${SPARK_PORT:-10000}" 300
       ;;
   esac
+}
+
+run_gaussdb_adapter_tests() {
+  local project_name
+  local tls_rootcert
+  local suite_status
+
+  project_name="$(compose_project_name "GaussDB Adapter Tests")"
+  cleanup_gaussdb_tls_host_artifacts
+  GAUSSDB_TLS_HOST_DIR="$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/datus-agent-gaussdb-tls.XXXXXX")" || return 1
+  tls_rootcert="$GAUSSDB_TLS_HOST_DIR/ca.crt"
+
+  if ! compose_cmd "$project_name" "$GAUSSDB_COMPOSE" cp gaussdb:/gaussdb-tls/ca.crt "$tls_rootcert"; then
+    cleanup_gaussdb_tls_host_artifacts
+    return 1
+  fi
+  # `docker compose cp` preserves the container file's mode (644); the GaussDB
+  # libpq refuses a root cert unless it is u=rw(600) or tighter.
+  chmod 600 "$tls_rootcert"
+
+  run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env \
+    DATUS_TEST_LAYER=nightly \
+    GAUSSDB_SSLMODE=verify-ca \
+    GAUSSDB_SSLROOTCERT="$tls_rootcert" \
+    uv run pytest -m nightly tests/integration/adapters/test_gaussdb.py \
+    --tb=short --verbose --timeout=300 --timeout-method=thread
+  suite_status=$?
+
+  cleanup_gaussdb_tls_host_artifacts
+  return "$suite_status"
 }
 
 run_compose_suite() {
@@ -1500,6 +1685,32 @@ run_compose_suite() {
   return 0
 }
 
+# Reuse the normal Nightly environments for an explicit branch evaluation.
+# Dedicated node suites must retain their service setup instead of being
+# silently deselected from the broad product group.
+PRODUCT_E2E_ROOTS=("${NIGHTLY_PYTEST_ROOTS[@]}")
+PRODUCT_REQUIRED_ARGS=()
+PRODUCT_EXECUTION_DIR=""
+DASHBOARD_MARK_EXPR="nightly and not product_e2e"
+if [ -n "${PRODUCT_TEST_BASE_REF:-}" ]; then
+  uv run python ci/plan-product-tests.py --base-ref "$PRODUCT_TEST_BASE_REF" --output ci/product-test-plan.json || exit 1
+  mapfile -t PRODUCT_E2E_ROOTS < <(uv run python -c 'import json,sys; sys.stdout.write("\n".join(json.load(open("ci/product-test-plan.json"))["live_targets"]))')
+  if [ "${#PRODUCT_E2E_ROOTS[@]}" -eq 0 ]; then
+    echo "ERROR: No real-model product cases selected for the requested comparison."
+    exit 1
+  fi
+  PRODUCT_EXECUTION_DIR=$(mktemp -d "${REPO_ROOT}/ci/product-execution.XXXXXX") || exit 1
+  NIGHTLY_GROUP_FILTER=$(uv run python -c 'import json,re; p=json.load(open("ci/product-test-plan.json")); print("^("+"|".join(re.escape(g) for g in ["Product E2E Nightly Tests", *p["nightly_groups"]])+")$")')
+  PRODUCT_REQUIRED_ARGS=(-p ci.pytest_fail_on_skip_plugin --fail-on-skip)
+  if [[ " ${PRODUCT_E2E_ROOTS[*]} " == *"test_init_live.py::test_qwen_scoped_init_supplements_existing_documents"* ]]; then
+    export DATUS_RUN_LIVE_INIT=1
+  fi
+  if [[ "$NIGHTLY_GROUP_FILTER" == *"Dashboard"* ]]; then
+    DASHBOARD_MARK_EXPR="nightly"
+  fi
+  log "Required product evaluation groups: $NIGHTLY_GROUP_FILTER"
+fi
+
 NIGHTLY_STARTED_AT="$(utc_now)"
 export NIGHTLY_STARTED_AT
 rm -f "$NIGHTLY_TRACE_REFERENCES_FILE" "$NIGHTLY_TRACE_SUMMARY_FILE" "$NIGHTLY_PROCESS_DIAGNOSTICS_FILE"
@@ -1515,6 +1726,7 @@ log "Nightly process diagnostics: $NIGHTLY_PROCESS_DIAGNOSTICS_FILE"
 log "DB_ADAPTERS_ROOT=$DB_ADAPTERS_ROOT"
 log "BI_ADAPTERS_ROOT=$BI_ADAPTERS_ROOT"
 log "SCHEDULER_ADAPTERS_ROOT=$SCHEDULER_ADAPTERS_ROOT"
+log "STORAGE_ADAPTERS_ROOT=$STORAGE_ADAPTERS_ROOT"
 log "NIGHTLY_HOME=$NIGHTLY_HOME"
 log "DATUS_TEST_PROJECT_NAME=$DATUS_TEST_PROJECT_NAME"
 log "UNIT_TEST_HOME=$UNIT_TEST_HOME"
@@ -1528,6 +1740,8 @@ log "POSTGRESQL_HOST=${POSTGRESQL_HOST:-} POSTGRESQL_PORT=${POSTGRESQL_PORT:-} P
 log "MYSQL_HOST=${MYSQL_HOST:-} MYSQL_PORT=${MYSQL_PORT:-} MYSQL_HOST_PORT=${MYSQL_HOST_PORT:-}"
 log "CLICKHOUSE_HOST=${CLICKHOUSE_HOST:-} CLICKHOUSE_PORT=${CLICKHOUSE_PORT:-} CLICKHOUSE_HTTP_HOST_PORT=${CLICKHOUSE_HTTP_HOST_PORT:-} CLICKHOUSE_NATIVE_HOST_PORT=${CLICKHOUSE_NATIVE_HOST_PORT:-}"
 log "STARROCKS_HOST=${STARROCKS_HOST:-} STARROCKS_PORT=${STARROCKS_PORT:-} STARROCKS_QUERY_HOST_PORT=${STARROCKS_QUERY_HOST_PORT:-} STARROCKS_HTTP_HOST_PORT=${STARROCKS_HTTP_HOST_PORT:-}"
+log "TIDB_HOST=${TIDB_HOST:-} TIDB_PORT=${TIDB_PORT:-} TIDB_STATUS_HOST_PORT=${TIDB_STATUS_HOST_PORT:-}"
+log "DORIS_HOST=${DORIS_HOST:-} DORIS_PORT=${DORIS_PORT:-} DORIS_QUERY_HOST_PORT=${DORIS_QUERY_HOST_PORT:-} DORIS_HTTP_HOST_PORT=${DORIS_HTTP_HOST_PORT:-}"
 log "TRINO_HOST=${TRINO_HOST:-} TRINO_PORT=${TRINO_PORT:-}"
 log "GREENPLUM_HOST=${GREENPLUM_HOST:-} GREENPLUM_PORT=${GREENPLUM_PORT:-} GREENPLUM_HOST_PORT=${GREENPLUM_HOST_PORT:-}"
 log "HIVE_HOST=${HIVE_HOST:-} HIVE_PORT=${HIVE_PORT:-} HIVE_METASTORE_HOST_PORT=${HIVE_METASTORE_HOST_PORT:-} HIVE_THRIFT_HOST_PORT=${HIVE_THRIFT_HOST_PORT:-} HIVE_WEBUI_HOST_PORT=${HIVE_WEBUI_HOST_PORT:-}"
@@ -1545,9 +1759,9 @@ validate_nightly_group_filter || exit 1
 validate_pytest_basetemp "$NIGHTLY_PYTEST_BASETEMP" || exit 1
 rm -rf "$NIGHTLY_PYTEST_BASETEMP"
 if [ -n "${PYTEST_ADDOPTS:-}" ]; then
-  export PYTEST_ADDOPTS="${PYTEST_ADDOPTS} --basetemp=$NIGHTLY_PYTEST_BASETEMP -p ci.pytest_trace_reference_plugin"
+  export PYTEST_ADDOPTS="${PYTEST_ADDOPTS} --basetemp=$NIGHTLY_PYTEST_BASETEMP -p ci.pytest_trace_reference_plugin --no-showlocals"
 else
-  export PYTEST_ADDOPTS="--basetemp=$NIGHTLY_PYTEST_BASETEMP -p ci.pytest_trace_reference_plugin"
+  export PYTEST_ADDOPTS="--basetemp=$NIGHTLY_PYTEST_BASETEMP -p ci.pytest_trace_reference_plugin --no-showlocals"
 fi
 require_docker_runtime || exit "$test_exit_code"
 
@@ -1561,7 +1775,19 @@ ensure_nightly_kb_data
 
 run_logged "MCP Server Tests" run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run pytest -m nightly tests/integration/tools/test_mcp_server.py --tb=short --verbose --timeout=60 --timeout-method=thread
 
-run_logged "Gen Agent Tests" run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run pytest -m nightly tests/integration/agent/test_gen_semantic_model_agentic.py tests/integration/agent/test_gen_metrics_agentic.py --tb=short --verbose --timeout=600 --timeout-method=thread --reruns 1 --reruns-delay 5
+run_logged "Gen Agent Tests" run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run pytest -m nightly tests/integration/agent/test_semantic_modeling_agentic.py \
+  --deselect tests/integration/agent/test_semantic_modeling_agentic.py::test_dosi_authoring_validates_reconciles_and_queries_without_llm \
+  --deselect tests/integration/agent/test_semantic_modeling_agentic.py::test_semantic_modeling_authors_one_queryable_dosi_model_with_real_llm \
+  --tb=short --verbose --timeout=600 --timeout-method=thread --reruns 1 --reruns-delay 5
+
+run_logged "P0 PostgreSQL Agent Storage Contracts" run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run python -m pytest tests/integration/storage/test_postgresql_semantic_kb.py -p ci.pytest_fail_on_skip_plugin --fail-on-skip --tb=short --verbose --timeout=300 --timeout-method=thread
+
+run_logged "P0 SQL Policy Plugin Contracts" run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run python -m pytest tests/integration/plugins/test_sql_policy_plugin.py -p ci.pytest_fail_on_skip_plugin --fail-on-skip --tb=short --verbose --timeout=300 --timeout-method=thread
+
+run_logged "P0 Dosi Semantic Modeling E2E" run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run python -m pytest \
+  tests/integration/agent/test_semantic_modeling_agentic.py::test_dosi_authoring_validates_reconciles_and_queries_without_llm \
+  tests/integration/agent/test_semantic_modeling_agentic.py::test_semantic_modeling_authors_one_queryable_dosi_model_with_real_llm \
+  -p ci.pytest_fail_on_skip_plugin --fail-on-skip --tb=short --verbose --timeout=600 --timeout-method=thread
 
 run_logged "Reference Template Nightly Tests" run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run pytest -m nightly tests/integration/tools/test_reference_template.py --tb=short --verbose --timeout=600 --timeout-method=thread --reruns 1 --reruns-delay 5
 
@@ -1572,46 +1798,61 @@ run_logged "Web UI Nightly Tests" run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_
 # them before their required server/compose setup is ready.
 NIGHTLY_DEDICATED_SUITE_DESELECTS=(
   --deselect tests/integration/tools/test_mcp_server.py
-  --deselect tests/integration/agent/test_gen_semantic_model_agentic.py
-  --deselect tests/integration/agent/test_gen_metrics_agentic.py
+  --deselect tests/integration/agent/test_semantic_modeling_agentic.py
   --deselect tests/integration/agent/test_gen_dashboard_agentic.py
   --deselect tests/integration/agent/test_scheduler_agentic.py
   --deselect tests/integration/tools/test_bi_dashboard.py
+  --deselect tests/integration/plugins/test_dashboard_bootstrap_plugin.py
+  --deselect tests/integration/plugins/test_sql_policy_plugin.py
+  --deselect tests/integration/storage/test_postgresql_semantic_kb.py
   --deselect tests/integration/tools/test_bi_grafana.py
   --deselect tests/integration/tools/test_reference_template.py
   --deselect tests/integration/adapters/test_postgresql.py
   --deselect tests/integration/adapters/test_mysql.py
   --deselect tests/integration/adapters/test_clickhouse.py
   --deselect tests/integration/adapters/test_starrocks.py
+  --deselect tests/integration/adapters/test_doris.py
+  --deselect tests/integration/adapters/test_tidb.py
   --deselect tests/integration/adapters/test_trino.py
   --deselect tests/integration/adapters/test_greenplum.py
   --deselect tests/integration/adapters/test_hive.py
   --deselect tests/integration/adapters/test_spark.py
+  --deselect tests/integration/adapters/test_gaussdb.py
   --deselect tests/regression/test_regression_web_e2e.py
 )
 
-run_logged "Main Nightly Tests" run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run pytest -m "nightly and not provider_health and not product_e2e" "${NIGHTLY_PYTEST_ROOTS[@]}" "${NIGHTLY_DEDICATED_SUITE_DESELECTS[@]}" --tb=short --verbose --timeout=300 --timeout-method=thread --reruns 1 --reruns-delay 5 --dist=loadscope -n auto
+run_logged "Main Nightly Tests" run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run pytest -m "nightly and not provider_health and not product_e2e" "${NIGHTLY_PYTEST_ROOTS[@]}" "${NIGHTLY_DEDICATED_SUITE_DESELECTS[@]}" "${NIGHTLY_OPTIONAL_CLOUD_IGNORES[@]}" --tb=short --verbose --timeout=300 --timeout-method=thread --reruns 1 --reruns-delay 5 --dist=loadscope -n auto
 
-run_logged "Product E2E Nightly Tests" run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run pytest -m "nightly and product_e2e and not provider_health" "${NIGHTLY_PYTEST_ROOTS[@]}" "${NIGHTLY_DEDICATED_SUITE_DESELECTS[@]}" --tb=short --verbose --timeout=600 --timeout-method=thread --reruns 1 --reruns-delay 5
+run_logged "Product E2E Nightly Tests" run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run pytest -m "nightly and product_e2e and not provider_health" "${PRODUCT_E2E_ROOTS[@]}" "${PRODUCT_REQUIRED_ARGS[@]}" "${NIGHTLY_DEDICATED_SUITE_DESELECTS[@]}" "${NIGHTLY_OPTIONAL_CLOUD_IGNORES[@]}" --tb=short --verbose --timeout=600 --timeout-method=thread --reruns 1 --reruns-delay 5
 
-run_compose_suite "Superset Nightly Tests" "$SUPERSET_COMPOSE" "postgres:300" "superset:1200" -- run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run pytest -m nightly tests/integration/agent/test_gen_dashboard_agentic.py tests/integration/tools/test_bi_dashboard.py --tb=short --verbose --timeout=600 --timeout-method=thread --reruns 1 --reruns-delay 5
+# Scheduled Nightly gates deterministic Superset contracts. An explicit
+# affected-node evaluation also runs its real-model workflows in this environment.
+run_compose_suite "P0 Dashboard Bootstrap Skill E2E" "$SUPERSET_COMPOSE" "postgres:300" "superset:1200" -- run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run python -m pytest -m "$DASHBOARD_MARK_EXPR" tests/integration/plugins/test_dashboard_bootstrap_plugin.py tests/integration/agent/test_gen_dashboard_agentic.py tests/integration/tools/test_bi_dashboard.py -p ci.pytest_fail_on_skip_plugin --fail-on-skip --tb=short --verbose --timeout=600 --timeout-method=thread
 
 run_compose_suite "Grafana Nightly Tests" "$GRAFANA_COMPOSE" "postgres:300" "grafana:600" -- run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run pytest -m nightly tests/integration/tools/test_bi_grafana.py --tb=short --verbose --timeout=300 --timeout-method=thread --reruns 1 --reruns-delay 5
 
-run_compose_suite "Airflow Nightly Tests" "$AIRFLOW_COMPOSE" "airflow:900" -- run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run pytest -m nightly tests/integration/agent/test_scheduler_agentic.py --tb=short --verbose --timeout=600 --timeout-method=thread --reruns 1 --reruns-delay 5
+run_compose_suite "Airflow Nightly Tests" "$AIRFLOW_COMPOSE" "airflow:900" -- run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run pytest -m nightly tests/integration/agent/test_scheduler_agentic.py "${PRODUCT_REQUIRED_ARGS[@]}" --tb=short --verbose --timeout=600 --timeout-method=thread --reruns 1 --reruns-delay 5
 
+run_logged "PostgreSQL Storage Adapter Tests" env DATUS_TEST_LAYER=nightly uv run --no-sync pytest "$STORAGE_ADAPTERS_ROOT/datus-storage-postgresql/tests" --tb=short --verbose --timeout=300 --timeout-method=thread
 run_compose_suite "PostgreSQL Adapter Tests" "$POSTGRES_COMPOSE" "postgres:300" -- run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run pytest -m nightly tests/integration/adapters/test_postgresql.py --tb=short --verbose --timeout=300 --timeout-method=thread
 run_compose_suite "MySQL Adapter Tests" "$MYSQL_COMPOSE" "mysql:300" -- run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run pytest -m nightly tests/integration/adapters/test_mysql.py --tb=short --verbose --timeout=300 --timeout-method=thread
 run_compose_suite "ClickHouse Adapter Tests" "$CLICKHOUSE_COMPOSE" "clickhouse:300" -- run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run pytest -m nightly tests/integration/adapters/test_clickhouse.py --tb=short --verbose --timeout=300 --timeout-method=thread
 run_compose_suite "StarRocks Adapter Tests" "$STARROCKS_COMPOSE" "starrocks:600" -- run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run pytest -m nightly tests/integration/adapters/test_starrocks.py --tb=short --verbose --timeout=300 --timeout-method=thread
+run_compose_suite "Doris Adapter Tests" "$DORIS_COMPOSE" "doris:600" -- run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run pytest -m nightly tests/integration/adapters/test_doris.py --tb=short --verbose --timeout=300 --timeout-method=thread
+run_compose_suite "TiDB Adapter Tests" "$TIDB_COMPOSE" "tidb:120" -- run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run pytest -m nightly tests/integration/adapters/test_tidb.py --tb=short --verbose --timeout=300 --timeout-method=thread
 run_compose_suite "Trino Adapter Tests" "$TRINO_COMPOSE" "trino:300" -- run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run pytest -m nightly tests/integration/adapters/test_trino.py --tb=short --verbose --timeout=300 --timeout-method=thread
 run_compose_suite "Greenplum Adapter Tests" "$GREENPLUM_COMPOSE" "greenplum:600" -- run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run pytest -m nightly tests/integration/adapters/test_greenplum.py --tb=short --verbose --timeout=300 --timeout-method=thread
 run_compose_suite "Hive Adapter Tests" "$HIVE_COMPOSE" "hive-metastore:600" "hive-server:900" -- run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run pytest -m nightly tests/integration/adapters/test_hive.py --tb=short --verbose --timeout=300 --timeout-method=thread
 run_compose_suite "Spark Adapter Tests" "$SPARK_COMPOSE" "spark-thrift:900" -- run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run pytest -m nightly tests/integration/adapters/test_spark.py --tb=short --verbose --timeout=300 --timeout-method=thread
+run_compose_suite "GaussDB Adapter Tests" "$GAUSSDB_COMPOSE" "gaussdb:600" -- run_gaussdb_adapter_tests
 
-run_logged_warn_only "Provider Health Tests" run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run pytest -m "nightly and provider_health" "${NIGHTLY_PYTEST_ROOTS[@]}" --tb=short --verbose --timeout=300 --timeout-method=thread --reruns 1 --reruns-delay 5
+run_logged_warn_only "Provider Health Tests" run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run pytest -m "nightly and provider_health" "${NIGHTLY_PYTEST_ROOTS[@]}" "${NIGHTLY_OPTIONAL_CLOUD_IGNORES[@]}" --tb=short --verbose --timeout=300 --timeout-method=thread --reruns 1 --reruns-delay 5
 
 run_logged_unfiltered "Flaky Log Classification" uv run python ci/check_flaky_registry.py --registry ci/flaky-registry.yml --log-file "$LOG_FILE" --warn-only
+
+if [ -n "${PRODUCT_EXECUTION_DIR:-}" ]; then
+  run_logged_unfiltered "Product Execution Evidence" uv run python ci/plan-product-tests.py --verify-execution "$PRODUCT_EXECUTION_DIR"
+fi
 
 manifest_finalize
 provider_coverage_finalize

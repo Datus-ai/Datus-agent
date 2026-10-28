@@ -14,7 +14,7 @@ class _Connector:
     def get_current_context(self):
         return {
             "catalog_name": "default_catalog",
-            "database_name": "ac_manage",
+            "database_name": "analytics",
             "schema_name": "",
         }
 
@@ -50,6 +50,6 @@ def test_resolve_benchmark_sql_context_falls_back_to_connector_context():
 
     assert _resolve_benchmark_sql_context(cfg, row, _Connector()) == {
         "catalog_name": "default_catalog",
-        "database_name": "ac_manage",
+        "database_name": "analytics",
         "schema_name": "",
     }

@@ -37,13 +37,33 @@ def test_config_exception(tmp_path):
         agent_config.override_by_args(datasource="abc")
 
 
+def test_date_parsing_tool_config_loads(tmp_path):
+    config_path = tmp_path / "agent.yml"
+    config_path.write_text(
+        "agent:\n  date_parsing:\n    language: zh\n",
+        encoding="utf-8",
+    )
+
+    config = load_agent_config(config=str(config_path), home=str(tmp_path), reload=True)
+
+    assert config.date_parsing_language == "zh"
+
+
+def test_string_node_config_loads_current_node(tmp_path):
+    config_path = tmp_path / "agent.yml"
+    config_path.write_text("agent:\n  nodes: gen_sql\n", encoding="utf-8")
+
+    config = load_agent_config(config=str(config_path), home=str(tmp_path), reload=True)
+
+    assert set(config.nodes) == {"gen_sql"}
+
+
 def test_service_config_structure(agent_config: AgentConfig):
     """Verify service config sections load into AgentConfig."""
     assert set(agent_config.services.datasources) >= {"bird_school", "snowflake", "local_duckdb"}
     assert "bird_school" in agent_config.services.datasources
     assert "snowflake" in agent_config.services.datasources
     assert "local_duckdb" in agent_config.services.datasources
-    assert "metricflow" in agent_config.services.semantic_layer
     assert "superset" in agent_config.services.bi_platforms
     assert "airflow_local" in agent_config.services.schedulers
 
@@ -164,14 +184,41 @@ def test_init_embedding_models_returns_current_storage_models():
 
 
 def test_get_db_name_type(agent_config: AgentConfig):
+    agent_config.current_datasource = "bird_school"
     db_name, db_type = agent_config.current_db_name_type(db_name="bird_school")
     assert db_name == "bird_school"
     assert db_type == DBType.SQLITE
 
+    agent_config.current_datasource = "local_duckdb"
     db_name, db_type = agent_config.current_db_name_type(db_name="local_duckdb")
     assert db_name == "local_duckdb"
     assert db_type == DBType.DUCKDB
 
+    # Regression: db_name="starrocks" collides with a different datasource key
+    # but must derive the type from current_datasource, not from starrocks
+    agent_config.current_datasource = "bird_school"
     db_name, db_type = agent_config.current_db_name_type(db_name="starrocks")
     assert db_name == "starrocks"
-    assert db_type == "starrocks"
+    assert db_type == DBType.SQLITE
+
+
+def test_get_db_name_type_with_custom_db_name(agent_config: AgentConfig):
+    """When db_name is not a datasource key, it should be preserved as the database name."""
+    agent_config.current_datasource = "bird_sqlite"
+    db_name, db_type = agent_config.current_db_name_type(db_name="my_custom_db")
+    assert db_name == "my_custom_db"
+    assert db_type == DBType.SQLITE
+
+
+def test_get_db_name_type_single_datasource_fallback(agent_config: AgentConfig):
+    """When db_name is provided but current_datasource is not set, falls back to single datasource."""
+    agent_config._current_datasource = ""
+    original = dict(agent_config.services.datasources)
+    single_key = next(iter(original))
+    agent_config.services.datasources = {single_key: original[single_key]}
+    try:
+        db_name, db_type = agent_config.current_db_name_type(db_name="custom_db")
+        assert db_name == "custom_db"
+        assert db_type == original[single_key].type
+    finally:
+        agent_config.services.datasources = original

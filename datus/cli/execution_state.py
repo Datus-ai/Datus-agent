@@ -11,7 +11,7 @@ import uuid
 from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import TYPE_CHECKING, AsyncGenerator, Dict, List, Optional
+from typing import TYPE_CHECKING, AsyncGenerator, Callable, Dict, List, Optional
 
 from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
 from datus.utils.loggings import get_logger
@@ -33,10 +33,55 @@ class InterruptController:
 
     def __init__(self):
         self._interrupted = threading.Event()
+        self._callback_lock = threading.Lock()
+        self._cancel_callbacks: Dict[str, Callable[[], None]] = {}
 
     def interrupt(self):
-        """Signal that execution should be interrupted."""
-        self._interrupted.set()
+        """Signal interruption and wake any registered async operation.
+
+        The event preserves the cooperative polling API used by tools and
+        model adapters.  Cancellation callbacks provide the wake-up path for
+        operations currently parked in an ``await`` (for example, waiting for
+        the next LLM stream event), so interruption does not depend on the
+        upstream API returning first.
+        """
+        with self._callback_lock:
+            if self._interrupted.is_set():
+                return
+            self._interrupted.set()
+            callbacks = tuple(self._cancel_callbacks.values())
+
+        # Call outside the lock: callbacks may schedule work on another event
+        # loop and must never block registration/unregistration.
+        for callback in callbacks:
+            try:
+                callback()
+            except Exception:
+                logger.exception("Interrupt cancellation callback failed")
+
+    def register_cancel_callback(self, callback: Callable[[], None]) -> str:
+        """Register a wake-up callback for the active async operation.
+
+        If interruption won the race before registration, invoke the callback
+        immediately.  The returned token must be passed to
+        :meth:`unregister_cancel_callback` when the operation finishes.
+        """
+        token = uuid.uuid4().hex
+        with self._callback_lock:
+            self._cancel_callbacks[token] = callback
+            interrupted = self._interrupted.is_set()
+
+        if interrupted:
+            try:
+                callback()
+            except Exception:
+                logger.exception("Late interrupt cancellation callback failed")
+        return token
+
+    def unregister_cancel_callback(self, token: str) -> None:
+        """Remove a previously registered cancellation callback."""
+        with self._callback_lock:
+            self._cancel_callbacks.pop(token, None)
 
     @property
     def is_interrupted(self) -> bool:
@@ -50,7 +95,8 @@ class InterruptController:
 
     def reset(self):
         """Clear the interrupt signal for a new execution cycle."""
-        self._interrupted.clear()
+        with self._callback_lock:
+            self._interrupted.clear()
 
 
 class PendingInputQueue:
@@ -195,13 +241,17 @@ class InteractionBroker:
         if self._closed:
             logger.debug("InteractionBroker.emit_user_insert called after close(); ignored")
             return
+        input_data = {"user_message": text, "source": "mid_run_insert"}
+        content_id = getattr(text, "content_id", None)
+        if content_id is not None:
+            input_data["message_content_id"] = content_id
         action = ActionHistory(
             action_id=str(uuid.uuid4()),
             role=ActionRole.USER,
             status=ActionStatus.SUCCESS,
             action_type="user_insert",
             messages=text,
-            input={"user_message": text, "source": "mid_run_insert"},
+            input=input_data,
             output={"user_message": text},
         )
         self._output_queue.put_nowait(action)
@@ -246,7 +296,11 @@ class InteractionBroker:
             Single-select answers have one element; multi-select may have more.
 
         Raises:
-            InteractionCancelled: If the broker is closed while waiting.
+            InteractionCancelled: The question itself was cancelled — the broker
+                was closed, or the user dismissed it (ESC submits ``[[""]]``).
+                Callers turn this into a tool-level "cancelled" result.
+            asyncio.CancelledError: The whole run is being cancelled. Propagates
+                untouched so the task actually dies; see the handler below.
         """
         if self._closed:
             raise InteractionCancelled("Broker is already closed")
@@ -307,7 +361,14 @@ class InteractionBroker:
         except asyncio.CancelledError:
             with self._lock:
                 self._pending.pop(action_id, None)
-            raise InteractionCancelled("Request cancelled")
+            # Re-raise, never downgrade to InteractionCancelled. Cancellation
+            # here means the *run* is being torn down (``/chat/stop`` cancels the
+            # task; a dropped SSE client cancels the generator), and swallowing
+            # CancelledError leaves that task alive: ``ask_user`` would catch the
+            # downgraded error, hand the model "User cancelled the question" as
+            # an ordinary tool result, and the LLM would carry on to its next
+            # action — after the caller was told the run had stopped.
+            raise
 
     async def fetch(self) -> AsyncGenerator[ActionHistory, None]:
         """Async generator that yields ActionHistory objects for interactions."""
@@ -389,6 +450,11 @@ class InteractionBroker:
     def has_pending(self) -> bool:
         """Check if there are pending interactions waiting for response."""
         return len(self._pending) > 0
+
+    def is_pending(self, action_id: str) -> bool:
+        """Check whether ``action_id`` is still waiting for a response."""
+        with self._lock:
+            return action_id in self._pending
 
     def is_queue_empty(self) -> bool:
         """Check if the output queue is empty."""

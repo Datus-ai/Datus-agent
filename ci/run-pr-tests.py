@@ -15,7 +15,6 @@ Outputs (written to GITHUB_OUTPUT if available, otherwise stdout):
 
 Generated files (all written to ci/ directory):
     ci/coverage.xml             - Cobertura coverage report
-    ci/htmlcov/                 - Full HTML coverage report
     ci/test-results.xml         - Combined JUnit test results
     ci/test-results-*.xml       - Per-suite JUnit results for acceptance / impacted unit suites
     ci/diff-cover.json          - Diff coverage data
@@ -38,38 +37,52 @@ import sys
 import tempfile
 import threading
 import xml.etree.ElementTree as XMLTree
+from pathlib import Path
 from typing import Any, TextIO
 
 import defusedxml.ElementTree as ET
 
 OUT_DIR = os.path.dirname(os.path.abspath(__file__))
+REPO_ROOT_DIR = os.path.dirname(OUT_DIR)
 DEFAULT_JUNIT_XML = os.path.join(OUT_DIR, "test-results.xml")
 DEFAULT_COVERAGE_XML = os.path.join(OUT_DIR, "coverage.xml")
 DEFAULT_COVERAGE_HTML = os.path.join(OUT_DIR, "htmlcov")
 DEFAULT_COVERAGE_DB = os.path.join(OUT_DIR, ".coverage")
 DEFAULT_PYTEST_LOG = os.path.join(OUT_DIR, "pytest-coverage.txt")
+# Direct script execution starts with ci/ on sys.path.
+sys.path.insert(0, REPO_ROOT_DIR)
+from ci.harness.test_plan import core_targets, impact_plan, verify_gate  # noqa: E402
+
 PYTEST_BASETEMP_ENV = "DATUS_CI_PYTEST_BASETEMP"
-PR_HARNESS_MARK_EXPR = "acceptance or component or llm_harness"
+PR_HARNESS_MARK_EXPR = "(acceptance or component or llm_harness) and not quarantine"
 IMPACTED_UNIT_MARK_EXPR = "not acceptance and not component and not llm_harness and not nightly and not quarantine"
 PR_ACCEPTANCE_TARGETS = [
+    "tests/unit_tests/models/test_request_capacity.py",
+    "tests/unit_tests/models/test_image_model_roundtrip.py",
+    "tests/unit_tests/observability/test_native_model_calls.py",
+    "tests/unit_tests/observability/test_model_call.py",
     "tests/unit_tests/agent/node/test_chat_agentic_node.py",
     "tests/unit_tests/agent/node/test_gen_sql_agentic_node.py",
     "tests/unit_tests/agent/node/test_compare_agentic_node.py",
     "tests/unit_tests/agent/node/test_explore_agentic_node.py",
     "tests/unit_tests/agent/node/test_feedback_agentic_node.py",
     "tests/unit_tests/agent/node/test_gen_report_agentic_node.py",
-    "tests/unit_tests/agent/node/test_gen_metrics_agentic_node.py",
-    "tests/unit_tests/agent/node/test_gen_semantic_model_agentic_node.py",
     "tests/unit_tests/agent/node/test_gen_table_agentic_node.py",
     "tests/unit_tests/agent/node/test_sql_summary_agentic_node.py",
     "tests/unit_tests/agent/node/test_skill_creator_agentic_node.py",
     "tests/unit_tests/agent/node/test_gen_job_agentic_node.py",
+    "tests/unit_tests/agent/node/test_gen_dashboard_agentic_node.py",
+    "tests/unit_tests/agent/node/test_scheduler_agentic_node.py",
     "tests/unit_tests/api/routes/test_chat_routes.py",
     "tests/unit_tests/api/services/test_kb_service.py",
     "tests/unit_tests/api/test_service.py",
     "tests/unit_tests/cli/test_core_entrypoint_acceptance.py",
     "tests/unit_tests/cli/test_interactive_init.py",
     "tests/unit_tests/cli/web/test_chatbot.py",
+    "tests/unit_tests/ci/test_harness_alignment.py",
+    "tests/unit_tests/ci/test_run_merge_queue_tests.py",
+    "tests/unit_tests/ci/harness/test_test_plan.py",
+    "tests/unit_tests/ci/test_prepare_ci_bird.py",
     "tests/integration/api/test_api.py",
     "tests/integration/cli/test_cli_commands.py",
     "tests/integration/cli/test_cli_textual.py",
@@ -77,18 +90,32 @@ PR_ACCEPTANCE_TARGETS = [
     "tests/integration/storage/test_doc_search.py",
     "tests/integration/storage/test_platform_doc_acceptance.py",
     "tests/integration/storage/test_platform_doc.py",
+    "tests/integration/tools/db_tools/test_data_file_loader_excel.py",
     "tests/integration/tools/test_func_tools_db.py",
+    "tests/integration/tools/test_dosi_attribution.py",
+    "tests/integration/tools/test_dosi_catalog_alignment.py",
+    "tests/integration/tools/test_dosi_metric_requirements.py",
+    "tests/integration/tools/test_dosi_query_filters.py",
+    "tests/integration/tools/test_dosi_ontology.py",
     "tests/integration/tools/test_mcp_acceptance.py",
-    "tests/integration/tools/test_mcp_server.py",
     "tests/integration/tools/db_tools/test_connector_duckdb.py",
     "tests/unit_tests/storage/test_feedback_store.py",
     "tests/unit_tests/tools/func_tool/test_bi_tools.py",
+    "tests/unit_tests/tools/func_tool/test_fs_path_policy.py",
     "tests/unit_tests/tools/func_tool/test_reference_template_tools.py",
     "tests/unit_tests/tools/func_tool/test_scheduler_tools.py",
     "tests/unit_tests/tools/func_tool/test_sub_agent_task_tool.py",
+    "tests/unit_tests/tools/db_tools/test_database_import.py",
+    "tests/unit_tests/tools/db_tools/test_datasource_plan.py",
+    "tests/unit_tests/tools/db_tools/test_datasource_quality.py",
+    "tests/unit_tests/tools/skill_tools/test_gen_datasource_bundle.py",
+    "tests/unit_tests/tools/skill_tools/test_gen_datasource_engine.py",
     "tests/unit_tests/tools/skill_tools/test_skill.py",
+    "tests/unit_tests/tools/skill_tools/test_skill_func_tool.py",
     "tests/unit_tests/utils/test_memory_loader.py",
 ]
+PR_ACCEPTANCE_TARGETS.extend(core_targets())
+
 IMPACTED_TEST_MAPPING = [
     ("datus/agent/node/", "tests/unit_tests/agent/node/"),
     ("datus/agent/", "tests/unit_tests/agent/"),
@@ -153,9 +180,21 @@ def log(msg: str) -> None:
 
 
 TEST_CMD_TIMEOUT = int(os.environ.get("TEST_CMD_TIMEOUT", "3600"))
-# Worker count for the impacted full unit suite (pytest-xdist). Kept low because
-# CI runners are modest; override via env if a beefier runner is used.
-IMPACTED_UNIT_PARALLEL_WORKERS = os.environ.get("IMPACTED_UNIT_PARALLEL_WORKERS", "2")
+
+
+def _resolve_parallel_workers() -> str:
+    """Use half of the available CPUs unless the runner provides an override.
+
+    Shared by every parallel suite; the env var keeps its historical name so
+    existing runner overrides stay effective.
+    """
+    configured = os.environ.get("IMPACTED_UNIT_PARALLEL_WORKERS")
+    if configured:
+        return configured
+    return str(max(1, (os.cpu_count() or 1) // 2))
+
+
+PARALLEL_WORKERS = _resolve_parallel_workers()
 GIT_CMD_TIMEOUT = int(os.environ.get("GIT_CMD_TIMEOUT", "60"))
 DIFF_COVER_TIMEOUT = int(os.environ.get("DIFF_COVER_TIMEOUT", "300"))
 _COMPARE_BRANCH_CACHE: dict[str, str | None] = {}
@@ -335,6 +374,7 @@ def _build_pytest_command(
     emit_reports: bool = True,
     basetemp: str | None = None,
     parallel: bool = False,
+    dist: str | None = None,
 ) -> list[str]:
     cmd = [
         sys.executable,
@@ -349,23 +389,23 @@ def _build_pytest_command(
         cmd.extend(["-m", mark_expr])
 
     if parallel:
-        # Distribute the suite across a few pytest-xdist workers so the full unit
-        # run stays under TEST_CMD_TIMEOUT; pytest-cov merges per-worker data.
-        # Worker count stays low (default 2) because CI runners are modest.
-        cmd.extend(["-n", IMPACTED_UNIT_PARALLEL_WORKERS])
+        # Distribute the suite across pytest-xdist workers so the suites stay
+        # under TEST_CMD_TIMEOUT; pytest-cov merges per-worker data.
+        # By default, use half of the available CPUs; runners may override this.
+        # loadfile/loadscope can requeue completed work as empty units after a
+        # worker crash (pytest-xdist#1378), leaving the session waiting forever.
+        # Preserve the crash as a failure rather than attempting recovery.
+        cmd.extend(["-n", PARALLEL_WORKERS, "--max-worker-restart=0"])
+        if dist:
+            cmd.extend(["--dist", dist])
 
+    cmd.extend(["-p", "ci.pytest_gate_plugin", "--gate-report", junit_xml + ".execution.json"])
     cmd.append("--cov=datus")
     if append:
         cmd.append("--cov-append")
 
     if emit_reports:
-        cmd.extend(
-            [
-                f"--cov-report=xml:{DEFAULT_COVERAGE_XML}",
-                f"--cov-report=html:{DEFAULT_COVERAGE_HTML}",
-                "--cov-report=term-missing",
-            ]
-        )
+        cmd.append(f"--cov-report=xml:{DEFAULT_COVERAGE_XML}")
     else:
         cmd.append("--cov-report=")
 
@@ -392,8 +432,10 @@ def _run_pytest_suite(
     append: bool = False,
     emit_reports: bool = True,
     parallel: bool = False,
+    dist: str | None = None,
 ) -> int:
     """Run one pytest suite and stream logs to stdout and the CI log file."""
+    Path(junit_xml + ".execution.json").unlink(missing_ok=True)
     basetemp = _suite_pytest_basetemp(suite_name)
     _prepare_suite_pytest_basetemp(basetemp)
     cmd = _build_pytest_command(
@@ -404,11 +446,16 @@ def _run_pytest_suite(
         emit_reports=emit_reports,
         basetemp=basetemp,
         parallel=parallel,
+        dist=dist,
     )
     log(f"Running {suite_name}: {' '.join(cmd)}")
     log(f"{suite_name} pytest basetemp: {basetemp}")
 
     env = os.environ.copy()
+    # Nested runner regressions may execute from a temporary project. Keep our
+    # reporting plugin importable there as well as in xdist workers.
+    repo_root = str(Path(__file__).resolve().parents[1])
+    env["PYTHONPATH"] = os.pathsep.join(filter(None, [repo_root, env.get("PYTHONPATH")]))
     env["COVERAGE_FILE"] = DEFAULT_COVERAGE_DB
     env[PYTEST_BASETEMP_ENV] = _nested_runner_pytest_basetemp(basetemp)
 
@@ -469,7 +516,7 @@ def _normalize_suite_exit_code(
 
 def select_impacted_unit_tests(changed_files: list[str]) -> list[str]:
     """Map changed source files to the unit-test paths that should run."""
-    impacted: list[str] = []
+    impacted: list[str] = impact_plan(changed_files)["unit_targets"]
     for path in changed_files:
         normalized = _normalize_path(path)
         if not normalized:
@@ -655,8 +702,7 @@ def list_changed_files(base_ref: str) -> list[str]:
     """Return repository paths changed against the PR base."""
     compare_ref = find_compare_branch(base_ref)
     if not compare_ref:
-        log("No compare branch available; skipping impacted unit-test selection")
-        return []
+        raise RuntimeError("Cannot select tests without a valid compare branch")
 
     proc = _run_cmd(
         ["git", "diff", "--name-only", f"{compare_ref}...HEAD"],
@@ -666,8 +712,7 @@ def list_changed_files(base_ref: str) -> list[str]:
     )
     if not proc or proc.returncode != 0:
         err = proc.stderr.strip() if proc else "timed out"
-        log(f"Failed to enumerate changed files against {compare_ref}: {err}")
-        return []
+        raise RuntimeError(f"Cannot enumerate changed files against {compare_ref}: {err}")
 
     changed = [_normalize_path(line.strip()) for line in proc.stdout.splitlines() if line.strip()]
     log(f"Detected {len(changed)} changed files against {compare_ref}")
@@ -685,8 +730,20 @@ def resolve_impacted_unit_tests(base_ref: str) -> list[str]:
     return impacted
 
 
+def missing_acceptance_targets() -> list[str]:
+    """Return PR acceptance targets that do not exist in the checkout."""
+    return [target for target in PR_ACCEPTANCE_TARGETS if not os.path.exists(os.path.join(REPO_ROOT_DIR, target))]
+
+
 def run_tests(base_ref: str = "") -> tuple[int, list[str]]:
     """Run PR acceptance plus impacted unit tests and return the exit code and JUnit XML paths."""
+    stale_targets = missing_acceptance_targets()
+    if stale_targets:
+        for target in stale_targets:
+            log(f"PR acceptance target missing from checkout: {target}")
+        log("Update PR_ACCEPTANCE_TARGETS in ci/run-pr-tests.py to match the tree")
+        return 1, []
+
     _reset_report_outputs()
 
     try:
@@ -703,6 +760,13 @@ def run_tests(base_ref: str = "") -> tuple[int, list[str]]:
                 suite_name="acceptance",
                 mark_expr=PR_HARNESS_MARK_EXPR,
                 emit_reports=not impacted_targets,
+                parallel=True,
+                # Per-file distribution: tests/integration/tools/test_func_tools_db.py
+                # opens the same on-disk DuckDB database from several test classes,
+                # and DuckDB allows only one process to hold the file lock. loadfile
+                # keeps every test of a file on one worker, so the lock is never
+                # contended across processes.
+                dist="loadfile",
             )
             exit_codes.append(acceptance_rc)
             junit_xml_paths.append(acceptance_xml)
@@ -728,6 +792,13 @@ def run_tests(base_ref: str = "") -> tuple[int, list[str]]:
                 )
                 junit_xml_paths.append(impacted_xml)
 
+        exit_codes.append(
+            verify_gate(
+                [Path(p + ".execution.json") for p in junit_xml_paths],
+                "pr_acceptance",
+                Path(OUT_DIR) / "gate-coverage.json",
+            )
+        )
         merge_junit_results(junit_xml_paths)
 
         if os.path.exists(DEFAULT_COVERAGE_DB):

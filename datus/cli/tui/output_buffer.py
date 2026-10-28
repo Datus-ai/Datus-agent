@@ -34,6 +34,7 @@ configured ``on_change`` callback is fired; wire it to
 from __future__ import annotations
 
 import threading
+from dataclasses import dataclass
 from typing import Callable, List, Optional, Tuple
 
 from prompt_toolkit.data_structures import Point
@@ -46,12 +47,19 @@ from datus.cli.tui.live_display_state import LiveDisplayLine
 from datus.cli.tui.search import SearchState
 from datus.cli.tui.selection import (
     TranscriptSelection,
-    extract_plain_text_between,
-    line_char_count,
+    extract_text_from_lines,
     split_line_for_selection,
 )
 
 _StyledToken = Tuple[str, str]
+
+
+@dataclass(frozen=True)
+class OutputBufferCheckpoint:
+    """Committed output state immediately before a cancellable chat turn."""
+
+    committed: Tuple[List[_StyledToken], ...]
+    partial: str
 
 
 class _BufferSnapshot:
@@ -94,9 +102,10 @@ class _BufferSnapshot:
 class TUIOutputBuffer:
     """Captures Rich console output and surfaces it as prompt_toolkit tokens.
 
-    The buffer is append-only. There is no maximum line cap — the user
-    explicitly chose unlimited history retention (see the plan). A future
-    iteration may add ``agent.tui.output_max_lines`` config.
+    Normal rendering is append-only, with a checkpoint/rollback escape hatch
+    for an unanswered turn cancelled before it becomes transcript history.
+    There is no maximum line cap. A future iteration may add
+    ``agent.tui.output_max_lines`` config.
     """
 
     def __init__(
@@ -300,6 +309,30 @@ class TUIOutputBuffer:
             self._cache_snapshot_partial = None
             self._cache_snapshot_live = None
         if had_content:
+            self._on_change()
+
+    def checkpoint(self) -> OutputBufferCheckpoint:
+        """Capture the committed transcript before starting a chat turn."""
+        with self._lock:
+            return OutputBufferCheckpoint(tuple(self._committed), self._partial)
+
+    def rollback(self, checkpoint: OutputBufferCheckpoint) -> None:
+        """Restore a previous transcript checkpoint and invalidate caches."""
+        with self._lock:
+            changed = tuple(self._committed) != checkpoint.committed or self._partial != checkpoint.partial
+            self._committed = list(checkpoint.committed)
+            self._partial = checkpoint.partial
+            self._last_line_count = len(self._committed) + (1 if self._partial else 0)
+            self._committed_version += 1
+            self._cache_tokens = None
+            self._cache_committed_version = -1
+            self._cache_partial = None
+            self._cache_live_lines = None
+            self._cache_snapshot = None
+            self._cache_snapshot_version = -1
+            self._cache_snapshot_partial = None
+            self._cache_snapshot_live = None
+        if changed:
             self._on_change()
 
     # ── wiring helpers ────────────────────────────────────────────
@@ -602,23 +635,5 @@ def extract_selection_text(
     padding spaces would land on the clipboard and force the user to
     clean them up manually after pasting.
     """
-    rng = selection.range()
-    if rng is None:
-        return ""
     snap = buffer.snapshot()
-    out_lines: List[str] = []
-    start, end = rng
-    for line_idx in range(start.line, end.line + 1):
-        if line_idx < 0 or line_idx >= snap.total:
-            continue
-        fragments = snap.get_line(line_idx)
-        if start.line == end.line:
-            from_col, to_col = start.column, end.column
-        elif line_idx == start.line:
-            from_col, to_col = start.column, line_char_count(fragments)
-        elif line_idx == end.line:
-            from_col, to_col = 0, end.column
-        else:
-            from_col, to_col = 0, line_char_count(fragments)
-        out_lines.append(extract_plain_text_between(fragments, from_col, to_col).rstrip())
-    return "\n".join(out_lines)
+    return extract_text_from_lines(snap.get_line, snap.total, selection)

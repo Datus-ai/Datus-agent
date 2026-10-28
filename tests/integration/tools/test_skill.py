@@ -156,7 +156,7 @@ class TestRealLLMSkillIntegration:
     Sends a real question to DeepSeek, expects the LLM to:
     1. Query the california_schools database
     2. Load the report-generator skill via load_skill()
-    3. Execute a report script via skill_execute_command()
+    3. Follow the skill's instructions to produce a report
 
     Nightly-only: requires API key and real database.
     """
@@ -164,8 +164,8 @@ class TestRealLLMSkillIntegration:
     QUESTION = (
         "What is the highest eligible free rate for K-12 students "
         "in the schools in Alameda County? "
-        "After getting the result, use load_skill to load the 'report-generator' skill, "
-        "then use skill_execute_command to generate a report with the final result."
+        "After getting the result, use load_skill to load the 'report-generator' skill "
+        "and follow its instructions to present the result."
     )
 
     @staticmethod
@@ -182,9 +182,7 @@ class TestRealLLMSkillIntegration:
         failed_tools = [a for a in tool_actions if a.status == "failed"]
 
         action_types = [a.action_type for a in all_actions]
-        action_messages = " ".join(a.messages for a in all_actions)
-        has_load_skill = "load_skill" in action_types or "load_skill" in action_messages
-        has_skill_exec = "skill_execute_command" in action_types or "skill_execute_command" in action_messages
+        has_load_skill = "load_skill" in action_types
 
         logger.info(f"\n{separator}")
         logger.info("")
@@ -230,15 +228,14 @@ class TestRealLLMSkillIntegration:
 
         logger.info("")
         logger.info("  SKILL INVOCATION:")
-        logger.info(f"    load_skill:             {'Found' if has_load_skill else 'Not found'}")
-        logger.info(f"    skill_execute_command:   {'Found' if has_skill_exec else 'Not found'}")
+        logger.info(f"    load_skill:   {'Found' if has_load_skill else 'Not found'}")
 
         logger.info("")
         logger.info(separator)
 
     @pytest.mark.asyncio
     async def test_skill_invocation_in_chat(self, llm_agent_config):
-        """Verify load_skill and skill_execute_command appear in action history."""
+        """Verify load_skill appears in action history."""
         import time
 
         from datus.agent.node.chat_agentic_node import ChatAgenticNode
@@ -275,20 +272,10 @@ class TestRealLLMSkillIntegration:
         self._print_report(model_name, duration, all_actions)
 
         action_types = [a.action_type for a in all_actions]
-        action_messages = " ".join(a.messages for a in all_actions)
 
-        has_load_skill = "load_skill" in action_types or "load_skill" in action_messages
-        has_skill_exec = "skill_execute_command" in action_types or "skill_execute_command" in action_messages
+        has_load_skill = "load_skill" in action_types
 
         assert has_load_skill, f"Expected load_skill in action history. Action types found: {action_types}"
-        if not has_skill_exec:
-            import warnings
-
-            warnings.warn(
-                "skill_execute_command not found in action history. "
-                "The LLM loaded the skill but did not execute a command.",
-                stacklevel=2,
-            )
 
         final_action = all_actions[-1]
         assert final_action.status in ("success", "failed"), f"Unexpected final status: {final_action.status}"

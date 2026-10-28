@@ -387,7 +387,7 @@ class TestInitSnowflakeSchema:
         )
 
         # after_init should always be called
-        mock_storage.after_init.assert_called_once()
+        mock_storage.after_init.assert_called_once_with(build_mode="overwrite")
 
     def test_deduplicates_db_ids(self, tmp_path):
         """Should process each db_id only once."""

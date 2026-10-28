@@ -1,123 +1,441 @@
-"""Unit tests for semantic authoring format resolution."""
+"""Unit tests for Dosi semantic authoring."""
 
+import hashlib
+from contextlib import asynccontextmanager
 from types import SimpleNamespace
-from unittest.mock import patch
 
+import pytest
+import yaml
+
+from datus.agent.node import semantic_authoring
 from datus.agent.node.semantic_authoring import (
-    AUTHORING_FORMAT_METRICFLOW,
-    AUTHORING_FORMAT_OSI,
-    osi_prompt_version,
-    osi_template_name,
-    resolve_authoring_format,
+    discover_osi_semantic_models,
+    plan_osi_semantic_model_target,
+    required_authoring_skills,
+    validate_osi_authoring_document,
 )
-from datus.prompts.prompt_manager import get_prompt_manager
 
 
-def _agent_config(adapter):
-    return SimpleNamespace(resolve_semantic_adapter=lambda requested=None: requested or adapter)
+@pytest.fixture(autouse=True)
+def _accept_any_authoring_document(monkeypatch):
+    """Target selection is what these exercise; the validator is covered on its own."""
+    monkeypatch.setattr(semantic_authoring, "validate_osi_authoring_document", lambda document, **kwargs: None)
 
 
-def test_explicit_node_config_override_wins():
-    assert resolve_authoring_format(_agent_config("metricflow"), {"authoring_format": "osi"}) == AUTHORING_FORMAT_OSI
-    assert (
-        resolve_authoring_format(_agent_config("osi"), {"authoring_format": "metricflow"})
-        == AUTHORING_FORMAT_METRICFLOW
+def _agent_config():
+    return SimpleNamespace()
+
+
+def _osi_config(tmp_path):
+    model_dir = tmp_path / "subject" / "semantic_models" / "warehouse"
+    return SimpleNamespace(
+        current_datasource="warehouse",
+        project_root=str(tmp_path),
+        path_manager=SimpleNamespace(semantic_model_path=lambda datasource: model_dir),
     )
 
 
-def test_derives_from_active_semantic_adapter():
-    assert resolve_authoring_format(_agent_config("osi"), None) == AUTHORING_FORMAT_OSI
-    assert resolve_authoring_format(_agent_config("metricflow"), None) == AUTHORING_FORMAT_METRICFLOW
-
-
-def test_derives_from_node_semantic_adapter():
-    assert resolve_authoring_format(_agent_config("metricflow"), {"semantic_adapter": "osi"}) == AUTHORING_FORMAT_OSI
-
-
-def test_defaults_to_metricflow_when_unknown():
-    assert resolve_authoring_format(None, None) == AUTHORING_FORMAT_METRICFLOW
-    assert resolve_authoring_format(_agent_config(None), {}) == AUTHORING_FORMAT_METRICFLOW
-
-
-def test_resolution_is_resilient_to_agent_config_errors():
-    def _boom():
-        raise RuntimeError("no semantic layer")
-
-    bad = SimpleNamespace(resolve_semantic_adapter=_boom)
-    assert resolve_authoring_format(bad, None) == AUTHORING_FORMAT_METRICFLOW
-
-
-def test_resolution_logs_agent_config_errors():
-    def _boom(_requested=None):
-        raise RuntimeError("no semantic layer")
-
-    bad = SimpleNamespace(resolve_semantic_adapter=_boom)
-    with patch("datus.agent.node.semantic_authoring.logger") as mock_logger:
-        assert resolve_authoring_format(bad, {"semantic_adapter": "osi"}) == AUTHORING_FORMAT_METRICFLOW
-
-    mock_logger.debug.assert_called_once()
-    assert "Failed to resolve semantic adapter" in mock_logger.debug.call_args.args[0]
-
-
-def test_osi_template_name_is_isolated_from_metricflow_template():
-    # Separate template_name so the default `{node}_system` latest scan is unaffected.
-    assert osi_template_name("gen_metrics") == "gen_metrics_osi_system"
-    assert osi_template_name("gen_semantic_model") == "gen_semantic_model_osi_system"
-
-
-def test_osi_prompt_version_ignores_injected_metricflow_version():
-    # Bootstrap (init_success_story_metrics) injects the latest *metricflow*
-    # template version (e.g. "1.2"), which is not a version of the OSI template.
-    # It must be ignored (-> None -> latest OSI template), not break rendering.
-    assert osi_prompt_version(None, "gen_metrics", "1.2") is None
-    assert osi_prompt_version(None, "gen_metrics", None) is None
-    # a real OSI template version is honored
-    assert osi_prompt_version(None, "gen_metrics", "1.0") == "1.0"
-
-
-def test_osi_prompt_version_logs_template_lookup_errors():
-    with (
-        patch(
-            "datus.prompts.prompt_manager.get_prompt_manager",
-            side_effect=RuntimeError("template registry unavailable"),
+def _write_osi_model(tmp_path, filename, model_name, datasets):
+    target = tmp_path / "subject" / "semantic_models" / "warehouse" / filename
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(
+        yaml.safe_dump(
+            {
+                "version": "0.2.0.dev0",
+                "semantic_model": [{"name": model_name, "datasets": datasets}],
+            },
+            sort_keys=False,
         ),
-        patch("datus.agent.node.semantic_authoring.logger") as mock_logger,
-    ):
-        assert osi_prompt_version(None, "gen_metrics", "1.2") is None
-
-    mock_logger.debug.assert_called_once()
-    assert "Failed to list OSI prompt template versions" in mock_logger.debug.call_args.args[0]
+        encoding="utf-8",
+    )
+    return target
 
 
-def test_osi_metrics_template_renders_despite_injected_metricflow_version():
-    # Regression: the OSI template must still render when the resolved version
-    # falls back to latest (the injected "1.2" does not exist for it).
-    pm = get_prompt_manager()
-    version = osi_prompt_version(None, "gen_metrics", "1.2")
-    text = pm.render_template(template_name="gen_metrics_osi_system", version=version)
-    assert "OSI" in text
+def test_validate_dosi_authoring_document_uses_native_validator(monkeypatch):
+    from datus.tools.semantic_tools.dosi import authoring
+
+    calls = []
+    monkeypatch.setattr(authoring, "validate_dosi_document", calls.append)
+    document = {"version": "0.2.0.dev0"}
+    assert validate_osi_authoring_document(document) is None
+    assert calls == [document]
 
 
-def test_osi_skill_skip_handles_missing_node_config(monkeypatch):
+def test_dosi_prompt_uses_engine_owned_contract(monkeypatch):
+    from datus.tools.semantic_tools.dosi import authoring_spec, engine
+
+    monkeypatch.setattr(authoring_spec, "compact_authoring_spec_text", lambda dialect: f"core dialect: {dialect}")
+    monkeypatch.setattr(authoring_spec, "authoring_overview_text", lambda: "engine contract")
+    monkeypatch.setattr(engine, "datus_extension_version", lambda: "1.8")
+    rendered = semantic_authoring.render_required_authoring_skill(
+        "dosi-semantic-authoring", 'extension version: "<datus_extension_version>"', include_osi_core=True
+    )
+    assert 'extension version: "1.8"' in rendered
+    assert "core dialect: <osi_dialect>" in rendered
+    assert "engine contract" in rendered
+
+
+def test_dosi_prompt_snapshot_includes_engine_and_core_contract_digests(monkeypatch):
+    from datus.tools.semantic_tools.dosi import authoring_spec, engine
+
+    monkeypatch.setattr(authoring_spec, "authoring_spec_text", lambda dialect: f"core {dialect}")
+    monkeypatch.setattr(authoring_spec, "datus_extension_authoring_spec_digest", lambda: "sha256:contract")
+    monkeypatch.setattr(engine, "datus_extension_version", lambda: "1.8")
+    core_digest = hashlib.sha256(b"core <osi_dialect>").hexdigest()
+    assert semantic_authoring.authoring_prompt_snapshot_meta(_agent_config(), "semantic_modeling") == {
+        "datus_extension_version": "1.8",
+        "datus_authoring_contract_digest": "sha256:contract",
+        "osi_core_authoring_spec_digest": f"sha256:{core_digest}",
+    }
+
+
+def test_osi_target_explicit_name_wins_over_domain_and_existing_fact(tmp_path):
+    config = _osi_config(tmp_path)
+    _write_osi_model(
+        tmp_path,
+        "legacy_sales.yml",
+        "legacy_sales",
+        [{"name": "orders", "source": "analytics.fact_orders"}],
+    )
+
+    target = plan_osi_semantic_model_target(
+        config,
+        semantic_model_name="Executive Sales",
+        business_domain="commerce",
+        fact_tables=["analytics.fact_orders"],
+    )
+
+    assert target["semantic_model_name"] == "executive_sales"
+    assert target["semantic_model_file"] == "subject/semantic_models/warehouse/executive_sales.yml"
+    assert target["matched_by"] == "explicit_name"
+    assert target["exists"] is False
+
+
+def test_osi_target_uses_business_domain_for_a_new_model(tmp_path):
+    target = plan_osi_semantic_model_target(
+        _osi_config(tmp_path),
+        business_domain="Order Fulfillment",
+        fact_tables=["analytics.fact_orders"],
+        dimension_tables=["analytics.dim_customer"],
+    )
+
+    assert target["semantic_model_name"] == "order_fulfillment"
+    assert target["matched_by"] == "business_domain"
+
+
+def test_osi_target_fact_fallback_does_not_change_when_dimensions_change(tmp_path):
+    config = _osi_config(tmp_path)
+    first = plan_osi_semantic_model_target(
+        config,
+        fact_tables=["analytics.fact_order_items"],
+        dimension_tables=["analytics.dim_customer"],
+    )
+    second = plan_osi_semantic_model_target(
+        config,
+        fact_tables=["analytics.fact_order_items"],
+        dimension_tables=["analytics.dim_customer", "analytics.dim_product"],
+    )
+
+    assert first["semantic_model_name"] == "fact_order_items_analytics"
+    assert second["semantic_model_name"] == first["semantic_model_name"]
+    assert second["semantic_model_file"] == first["semantic_model_file"]
+
+
+def test_osi_target_reuses_existing_model_name_when_dimensions_are_added(tmp_path):
+    config = _osi_config(tmp_path)
+    existing = _write_osi_model(
+        tmp_path,
+        "durable_revenue.yml",
+        "revenue_v1",
+        [{"name": "orders", "source": "analytics.fact_orders"}],
+    )
+
+    target = plan_osi_semantic_model_target(
+        config,
+        business_domain="new_domain_label",
+        fact_tables=["analytics.fact_orders"],
+        dimension_tables=["analytics.dim_customer"],
+    )
+
+    assert target["semantic_model_name"] == "revenue_v1"
+    assert target["semantic_model_file"].endswith("/durable_revenue.yml")
+    assert target["absolute_path"] == str(existing)
+    assert target["matched_by"] == "existing_fact_table"
+
+
+def test_osi_target_identity_uses_only_the_core_fact_table(tmp_path):
+    config = _osi_config(tmp_path)
+    _write_osi_model(
+        tmp_path,
+        "shared_inventory.yml",
+        "shared_inventory",
+        [{"name": "inventory", "source": "analytics.fact_inventory"}],
+    )
+
+    target = plan_osi_semantic_model_target(
+        config,
+        business_domain="support",
+        fact_tables=["support.fact_tickets", "analytics.fact_inventory"],
+    )
+
+    assert target["semantic_model_name"] == "support"
+    assert target["matched_by"] == "business_domain"
+    assert target["exists"] is False
+
+
+def test_osi_target_creates_a_different_file_for_an_unrelated_fact(tmp_path):
+    config = _osi_config(tmp_path)
+    _write_osi_model(
+        tmp_path,
+        "orders_analytics.yml",
+        "orders_analytics",
+        [{"name": "orders", "source": "analytics.fact_orders"}],
+    )
+
+    target = plan_osi_semantic_model_target(config, fact_tables=["finance.fact_payments"])
+
+    assert target["semantic_model_name"] == "fact_payments_analytics"
+    assert target["semantic_model_file"].endswith("/fact_payments_analytics.yml")
+    assert target["exists"] is False
+    assert len(discover_osi_semantic_models(config)) == 1
+
+
+def test_osi_target_does_not_reuse_same_leaf_table_from_another_schema(tmp_path):
+    config = _osi_config(tmp_path)
+    _write_osi_model(
+        tmp_path,
+        "sales_orders.yml",
+        "sales_orders",
+        [{"name": "orders", "source": "sales.fact_orders"}],
+    )
+
+    target = plan_osi_semantic_model_target(config, fact_tables=["finance.fact_orders"])
+
+    assert target["semantic_model_name"] == "fact_orders_analytics"
+    assert target["semantic_model_file"].endswith("/fact_orders_analytics.yml")
+    assert target["exists"] is False
+
+
+def test_osi_target_preserves_qualified_table_component_boundaries(tmp_path):
+    config = _osi_config(tmp_path)
+    _write_osi_model(
+        tmp_path,
+        "sales_orders.yml",
+        "sales_orders",
+        [{"name": "orders", "source": "sales_fact.orders"}],
+    )
+
+    target = plan_osi_semantic_model_target(config, fact_tables=["sales.fact_orders"])
+
+    assert target["semantic_model_name"] == "fact_orders_analytics"
+    assert target["exists"] is False
+
+
+def test_osi_target_allows_leaf_fallback_for_unqualified_fact_reference(tmp_path):
+    config = _osi_config(tmp_path)
+    _write_osi_model(
+        tmp_path,
+        "sales_orders.yml",
+        "sales_orders",
+        [{"name": "orders", "source": "sales.fact_orders"}],
+    )
+
+    target = plan_osi_semantic_model_target(config, fact_tables=["fact_orders"])
+
+    assert target["semantic_model_name"] == "sales_orders"
+    assert target["matched_by"] == "existing_fact_table"
+
+
+def test_osi_target_refuses_to_overwrite_an_unparseable_target_file(tmp_path):
+    config = _osi_config(tmp_path)
+    target_path = tmp_path / "subject" / "semantic_models" / "warehouse" / "sales.yml"
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+    target_path.write_text("semantic_model: [\n", encoding="utf-8")
+
+    target = plan_osi_semantic_model_target(config, semantic_model_name="sales")
+
+    assert target["ambiguous"] is True
+    assert "already exists" in target["reason"]
+    assert target["candidates"][0]["semantic_model_file"].endswith("/sales.yml")
+
+
+def test_osi_target_refuses_an_unsafe_generic_fallback(tmp_path):
+    target = plan_osi_semantic_model_target(
+        _osi_config(tmp_path),
+        dimension_tables=["analytics.dim_customer"],
+    )
+
+    assert target["ambiguous"] is True
+    assert target["matched_by"] == "missing_core_fact_table"
+    assert "business domain or core fact table" in target["reason"]
+
+
+def test_osi_target_refuses_to_reuse_an_occupied_filename_with_a_different_model_name(tmp_path):
+    config = _osi_config(tmp_path)
+    _write_osi_model(
+        tmp_path,
+        "sales.yml",
+        "legacy_sales_model",
+        [{"name": "orders", "source": "analytics.fact_orders"}],
+    )
+
+    target = plan_osi_semantic_model_target(
+        config,
+        semantic_model_name="sales",
+        fact_tables=["analytics.fact_payments"],
+    )
+
+    assert target["ambiguous"] is True
+    assert "already occupied" in target["reason"]
+
+
+def test_semantic_modeling_required_skills_are_dosi_native():
+    from datus.agent.node.semantic_modeling_agentic_node import SemanticModelingAgenticNode
+
+    node = SemanticModelingAgenticNode.__new__(SemanticModelingAgenticNode)
+    node.agent_config = _agent_config()
+    assert node._get_required_skills() == ["dosi-semantic-authoring"]
+    assert required_authoring_skills(None, "semantic_modeling") == "dosi-semantic-authoring"
+
+
+def test_semantic_authoring_base_configuration_is_neutral():
+    from datus.agent.node.semantic_authoring_agentic_node import SemanticAuthoringAgenticNode
+
+    assert SemanticAuthoringAgenticNode.NODE_NAME == "semantic_authoring"
+    assert SemanticAuthoringAgenticNode.INCLUDE_OSI_CORE_SPEC is False
+
+
+@pytest.mark.asyncio
+async def test_semantic_authoring_base_resets_request_local_state(monkeypatch):
     from datus.agent.node.agentic_node import AgenticNode
-    from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode
-    from datus.agent.node.gen_semantic_model_agentic_node import GenSemanticModelAgenticNode
+    from datus.agent.node.semantic_authoring_agentic_node import SemanticAuthoringAgenticNode
 
-    parent_calls = []
+    resets: list[str] = []
 
-    def _unexpected_parent_call(self):
-        parent_calls.append(type(self).__name__)
+    async def _parent_before_stream(_self, _ctx):
+        resets.append("parent")
 
-    monkeypatch.setattr(AgenticNode, "_setup_skill_func_tools", _unexpected_parent_call)
+    monkeypatch.setattr(AgenticNode, "_before_stream", _parent_before_stream)
+    node = SemanticAuthoringAgenticNode.__new__(SemanticAuthoringAgenticNode)
+    node.result = object()
+    node.generation_evidence = SimpleNamespace(reset=lambda: resets.append("evidence"))
+    node.osi_target_state = SimpleNamespace(reset=lambda: resets.append("target"))
+    node.osi_target_tools = SimpleNamespace(invalidate_inventory=lambda: resets.append("inventory"))
 
-    metrics_node = GenMetricsAgenticNode.__new__(GenMetricsAgenticNode)
-    metrics_node.agent_config = _agent_config("osi")
-    metrics_node.node_config = None
-    metrics_node._setup_skill_func_tools()
+    await node._before_stream(object())
 
-    semantic_node = GenSemanticModelAgenticNode.__new__(GenSemanticModelAgenticNode)
-    semantic_node.agent_config = _agent_config("osi")
-    semantic_node.node_config = None
-    semantic_node._setup_skill_func_tools()
+    assert node.result is None
+    assert resets == ["parent", "evidence", "target", "inventory"]
 
-    assert parent_calls == [], "MetricFlow skills should not be injected in OSI mode"
+
+@pytest.mark.asyncio
+async def test_semantic_authoring_base_rolls_back_terminal_failure(monkeypatch):
+    from datus.agent.node.agentic_node import AgenticNode
+    from datus.agent.node.semantic_authoring_agentic_node import SemanticAuthoringAgenticNode
+
+    marker = object()
+    rolled_back: list[bool] = []
+
+    @asynccontextmanager
+    async def _guard(_agent_config):
+        yield
+
+    async def _parent_execute_stream(_self, _manager):
+        yield marker
+
+    monkeypatch.setattr(semantic_authoring, "semantic_authoring_guard", _guard)
+    monkeypatch.setattr(AgenticNode, "execute_stream", _parent_execute_stream)
+    node = SemanticAuthoringAgenticNode.__new__(SemanticAuthoringAgenticNode)
+    node.agent_config = _agent_config()
+    node.result = SimpleNamespace(success=False)
+    node.filesystem_func_tool = SimpleNamespace(
+        rollback_failed_authoring=lambda: rolled_back.append(True) or True,
+    )
+
+    actions = [action async for action in node.execute_stream()]
+
+    assert actions == [marker]
+    assert rolled_back == [True]
+
+
+def test_semantic_authoring_base_reports_unavailable_warehouse_connection():
+    from datus.agent.node.semantic_authoring_agentic_node import SemanticAuthoringAgenticNode
+
+    node = SemanticAuthoringAgenticNode.__new__(SemanticAuthoringAgenticNode)
+    node.db_func_tool = None
+
+    assert node._warehouse_dry_run_compiled_sql("SELECT 1") == {
+        "status": "failed",
+        "error": "Database connection is unavailable.",
+    }
+
+
+@pytest.mark.parametrize(
+    ("read_result", "expected"),
+    [
+        (
+            SimpleNamespace(success=False, error="EXPLAIN rejected"),
+            {"status": "failed", "error": "EXPLAIN rejected"},
+        ),
+        (
+            SimpleNamespace(success=True, error=None),
+            {"status": "success", "datasource": "warehouse", "database": "analytics"},
+        ),
+    ],
+)
+def test_semantic_authoring_base_validates_compiled_sql_with_warehouse_explain(read_result, expected):
+    from datus.agent.node.semantic_authoring_agentic_node import SemanticAuthoringAgenticNode
+
+    calls: list[tuple[str, str, str]] = []
+    node = SemanticAuthoringAgenticNode.__new__(SemanticAuthoringAgenticNode)
+    node._semantic_runtime_db_context = lambda: {"datasource": "warehouse", "database": "analytics"}
+    node.db_func_tool = SimpleNamespace(
+        read_query=lambda sql, *, datasource, database: calls.append((sql, datasource, database)) or read_result,
+    )
+
+    assert node._warehouse_dry_run_compiled_sql("SELECT 1;") == expected
+    assert calls == [("EXPLAIN SELECT 1", "warehouse", "analytics")]
+
+
+def _ontology_config(ontology_dir):
+    return SimpleNamespace(current_datasource="warehouse", path_manager=SimpleNamespace(ontology_dir=ontology_dir))
+
+
+@pytest.mark.parametrize(
+    "config",
+    [None, SimpleNamespace(current_datasource="warehouse", path_manager=SimpleNamespace()), _ontology_config(object())],
+    ids=["no_config", "no_ontology_dir", "ontology_dir_not_a_path"],
+)
+def test_inline_mapping_models_is_empty_when_the_ontology_dir_is_unresolvable(config):
+    assert semantic_authoring.inline_mapping_models(config) == []
+
+
+def test_inline_mapping_models_skips_unreadable_and_non_mapping_files(tmp_path):
+    """A broken or unrelated file beside a mapping never breaks the authoring inventory."""
+    ontology_dir = tmp_path / "subject" / "ontology"
+    ontology_dir.mkdir(parents=True)
+    (ontology_dir / "broken.yaml").write_text("ontology: [\n", encoding="utf-8")
+    (ontology_dir / "notes.json").write_text("[1, 2]", encoding="utf-8")
+    (ontology_dir / "northstar.mapping.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "name": "northstar_mapping",
+                "ontology_ref": {"name": "Northstar", "document": {"name": "Northstar", "ontology": []}},
+                "semantic_model_ref": {"name": "northstar", "document": {"name": "northstar", "datasets": []}},
+                "concept_mappings": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    # The ontology directory is flat: a subdirectory is not part of it.
+    (ontology_dir / "archive").mkdir()
+    (ontology_dir / "archive" / "old.mapping.yaml").write_text(
+        (ontology_dir / "northstar.mapping.yaml").read_text(encoding="utf-8"), encoding="utf-8"
+    )
+
+    found = semantic_authoring.inline_mapping_models(_ontology_config(ontology_dir))
+
+    assert [(m["semantic_model_name"], m["mapping_file"]) for m in found] == [
+        ("northstar", "subject/ontology/northstar.mapping.yaml")
+    ]

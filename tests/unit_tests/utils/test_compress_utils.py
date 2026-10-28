@@ -1,7 +1,9 @@
 import csv
+import sqlite3
 from datetime import date
 from decimal import Decimal
 from io import StringIO
+from pathlib import Path
 from typing import Dict, List
 from unittest.mock import patch
 
@@ -9,9 +11,8 @@ import pandas as pd
 import pyarrow as pa
 import pytest
 
-from datus.configuration.agent_config import AgentConfig
-from datus.tools.db_tools import BaseSqlConnector
-from datus.tools.db_tools.db_manager import DBManager, db_manager_instance
+from datus.tools.db_tools.config import SQLiteConfig
+from datus.tools.db_tools.sqlite_connector import SQLiteConnector
 from datus.tools.func_tool import DBFuncTool
 from datus.utils.compress_utils import (
     DataCompressor,
@@ -23,7 +24,6 @@ from datus.utils.compress_utils import (
     _identify_id_time_columns,
     _to_dataframe_efficient,
 )
-from tests.conftest import load_acceptance_config
 
 
 def test_compress_mock():
@@ -107,21 +107,19 @@ def test_compressed_csv_quotes_values_with_commas():
     assert rows[-1]["ac_channel"] == "1,24"
 
 
-@pytest.fixture
-def agent_config():
-    return load_acceptance_config()
+def test_compress(tmp_path: Path):
+    # Own enough matching rows to exercise compression independently of BIRD fixtures.
+    db_path = tmp_path / "cards.sqlite"
+    with sqlite3.connect(db_path) as connection:
+        connection.execute(
+            "CREATE TABLE cards (name TEXT, setCode TEXT, rarity TEXT, type TEXT, "
+            "manaCost TEXT, cardKingdomId INTEGER, cardKingdomFoilId INTEGER)"
+        )
+        connection.executemany(
+            "INSERT INTO cards VALUES (?, ?, ?, ?, ?, ?, ?)",
+            [(f"Card {i:02}", "TEST", "rare", "Creature", "{1}", i, i + 100) for i in range(30)],
+        )
 
-
-@pytest.fixture
-def db_manager(agent_config: AgentConfig) -> DBManager:
-    # Only pass sqlite/duckdb databases to avoid connector-not-installed errors
-    sqlite_dbs = {
-        name: cfg for name, cfg in agent_config.services.datasources.items() if cfg.type in ("sqlite", "duckdb")
-    }
-    return db_manager_instance(sqlite_dbs)
-
-
-def test_compress(db_manager: DBManager):
     sql = """SELECT
     name,
     setCode,
@@ -141,16 +139,22 @@ ORDER BY
         ELSE 4
     END,
     name;"""
-    connector: BaseSqlConnector = db_manager.get_conn("bird_sqlite", "card_games")
-    tool = DBFuncTool(connector)
-    result = tool.read_query(sql)
+
+    connector = SQLiteConnector(SQLiteConfig(db_path=str(db_path)))
+    try:
+        result = DBFuncTool(connector).read_query(sql)
+    finally:
+        connector.close()
 
     assert result.success == 1
     assert isinstance(result.result, dict)
     query_result = result.result
     assert query_result["is_compressed"] is True
-    assert query_result["original_rows"] > 10
+    assert query_result["original_rows"] == 30
     assert isinstance(query_result["compressed_data"], str)
+    assert "..." in query_result["compressed_data"]
+    assert "Card 00" in query_result["compressed_data"]
+    assert "Card 29" in query_result["compressed_data"]
     assert query_result["original_columns"] == [
         "name",
         "setCode",

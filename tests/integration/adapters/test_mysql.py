@@ -133,7 +133,7 @@ def db_tool(seeded_connector: MySQLConnector) -> DBFuncTool:
 def test_list_tables_returns_seeded_tables(db_tool: DBFuncTool) -> None:
     result = db_tool.list_tables()
     assert result.success == 1, f"list_tables failed: {result.error}"
-    names = {entry["name"] for entry in result.result}
+    names = {entry["qualified_name"].split(".")[-1] for entry in result.result}
     assert REGION_TABLE in names, f"{REGION_TABLE} missing from {sorted(names)}"
     assert NATION_TABLE in names, f"{NATION_TABLE} missing from {sorted(names)}"
 

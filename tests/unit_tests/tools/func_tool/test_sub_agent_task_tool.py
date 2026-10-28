@@ -4,20 +4,37 @@
 
 """CI-level tests for SubAgentTaskTool (AgenticNode-based execution)."""
 
-from unittest.mock import MagicMock, Mock, patch
+import asyncio
+import json
+from pathlib import Path
+from types import SimpleNamespace
+from typing import AsyncGenerator
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
+from openai.types.responses import ResponseFunctionToolCall
 
 from datus.configuration.agent_config import AgentConfig
 from datus.configuration.node_type import NodeType
-from datus.schemas.action_history import SUBAGENT_COMPLETE_ACTION_TYPE, ActionHistory, ActionRole, ActionStatus
+from datus.models.session_manager import SessionManager
+from datus.schemas.action_history import (
+    SUBAGENT_COMPLETE_ACTION_TYPE,
+    ActionHistory,
+    ActionHistoryManager,
+    ActionRole,
+    ActionStatus,
+)
 from datus.schemas.agent_models import ScopedContext
+from datus.tools.func_tool.base import FuncToolResult
 from datus.tools.func_tool.sub_agent_task_tool import (
     BUILTIN_SUBAGENT_DESCRIPTIONS,
     NODE_CLASS_MAP,
     SubAgentTaskTool,
 )
-from datus.utils.constants import SYS_SUB_AGENTS
+from datus.utils.constants import HIDDEN_SYS_SUB_AGENTS, SYS_SUB_AGENTS
+
+# Built-ins offered only when their prerequisite exists (ontology_analyst needs an ontology).
+CONDITIONAL_SYS_SUB_AGENTS = {"ontology_analyst"}
 
 
 @pytest.fixture
@@ -76,6 +93,130 @@ class TestAvailableTools:
         assert "prompt" in schema["properties"]
         assert set(schema["required"]) == {"type", "prompt", "description"}
 
+    def test_type_schema_description_requires_available_type(self, task_tool):
+        schema = task_tool.available_tools()[0].params_json_schema
+        type_description = schema["properties"]["type"]["description"]
+        assert "Required" in type_description
+        assert "Available types" in type_description
+        assert "Never omit" in type_description
+
+    @pytest.mark.asyncio
+    async def test_repairs_arguments_for_replay_without_executing(self, task_tool):
+        tool = task_tool.available_tools()[0]
+        task_tool.task = AsyncMock(return_value=FuncToolResult(result={"session_id": "child-1"}))
+        raw_args = '{"type":"gen_sql","prompt":"show sales","description":"sales query",}'
+        raw_tool_call = ResponseFunctionToolCall(
+            arguments=raw_args,
+            call_id="call_task",
+            name="task",
+            type="function_call",
+        )
+        tool_ctx = SimpleNamespace(
+            tool_call_id="call_task",
+            tool_arguments=raw_args,
+            tool_call=raw_tool_call,
+        )
+
+        result = await tool.on_invoke_tool(tool_ctx, raw_args)
+
+        assert result["success"] == 0
+        assert "not executed" in result["error"]
+        task_tool.task.assert_not_awaited()
+        assert json.loads(tool_ctx.tool_arguments)["prompt"] == "show sales"
+        assert json.loads(raw_tool_call.arguments)["description"] == "sales query"
+
+        retry_args = json.dumps(
+            {
+                "type": "gen_sql",
+                "prompt": "show sales",
+                "description": "sales query",
+            }
+        )
+        retry_tool_call = ResponseFunctionToolCall(
+            arguments=retry_args,
+            call_id="call_task_retry",
+            name="task",
+            type="function_call",
+        )
+        retry_ctx = SimpleNamespace(
+            tool_call_id="call_task_retry",
+            tool_arguments=retry_args,
+            tool_call=retry_tool_call,
+        )
+
+        retry_result = await tool.on_invoke_tool(retry_ctx, retry_args)
+
+        assert retry_result["success"] == 1
+        task_tool.task.assert_awaited_once_with(
+            call_id="call_task_retry",
+            type="gen_sql",
+            prompt="show sales",
+            description="sales query",
+        )
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "extra",
+        [
+            {"laceholder": "x"},
+            {"call_id": "model-supplied"},
+            {"unknown_a": 1, "unknown_b": {"nested": True}},
+        ],
+        ids=["garbled-key", "wrapper-owned-key", "multiple-unknown-keys"],
+    )
+    async def test_unsupported_arguments_are_dropped_instead_of_raising(self, task_tool, extra):
+        """Undeclared keys must never reach ``task()``.
+
+        ``strict_json_schema=False`` lets a provider forward keys the schema
+        never declared; splatting them raised TypeError out of ``on_invoke_tool``
+        and killed the whole streaming run.
+        """
+        tool = task_tool.available_tools()[0]
+        task_tool.task = AsyncMock(return_value=FuncToolResult(result={"session_id": "child-1"}))
+        payload = {"type": "gen_sql", "prompt": "show sales", "description": "sales query", **extra}
+        raw_args = json.dumps(payload)
+        tool_ctx = SimpleNamespace(
+            tool_call_id="call_task_extra",
+            tool_arguments=raw_args,
+            tool_call=ResponseFunctionToolCall(
+                arguments=raw_args,
+                call_id="call_task_extra",
+                name="task",
+                type="function_call",
+            ),
+        )
+
+        result = await tool.on_invoke_tool(tool_ctx, raw_args)
+
+        assert result["success"] == 1
+        task_tool.task.assert_awaited_once_with(
+            call_id="call_task_extra",
+            type="gen_sql",
+            prompt="show sales",
+            description="sales query",
+        )
+
+    @pytest.mark.asyncio
+    async def test_unsupported_arguments_still_surface_missing_required_ones(self, task_tool):
+        """Dropping unknown keys must not mask a genuinely missing required argument."""
+        tool = task_tool.available_tools()[0]
+        raw_args = json.dumps({"laceholder": "x", "prompt": "show sales"})
+        tool_ctx = SimpleNamespace(
+            tool_call_id="call_task_missing",
+            tool_arguments=raw_args,
+            tool_call=ResponseFunctionToolCall(
+                arguments=raw_args,
+                call_id="call_task_missing",
+                name="task",
+                type="function_call",
+            ),
+        )
+
+        result = await tool.on_invoke_tool(tool_ctx, raw_args)
+
+        assert result["success"] == 0
+        assert "Missing required parameter: type" in result["error"]
+
 
 # ── _get_available_types ───────────────────────────────────────────
 
@@ -85,6 +226,9 @@ class TestGetAvailableTypes:
     def test_includes_gen_sql(self, task_tool):
         types = task_tool._get_available_types()
         assert "gen_sql" in types
+
+    def test_semantic_modeling_is_available(self, task_tool):
+        assert "semantic_modeling" in task_tool._get_available_types()
 
     def test_includes_custom_subagent(self, task_tool):
         types = task_tool._get_available_types()
@@ -191,6 +335,92 @@ class TestGetAvailableTypes:
         assert "explore" in types
 
 
+# ── _inherit_pending_input_queue ───────────────────────────────────
+
+
+class TestInheritPendingInputQueue:
+    @pytest.mark.asyncio
+    async def test_execute_node_wires_the_queue_into_the_sub_agent(self, task_tool, tmp_path):
+        """The call site, against a real node rather than a stand-in.
+
+        The unit tests below pin the helper's own logic; this one pins that
+        ``_execute_node`` actually calls it, and that ``pending_input_queue`` is
+        the attribute a real ``AgenticNode`` exposes — a stub object would agree
+        with any name we happened to pick.
+        """
+        from datus.cli.execution_state import PendingInputQueue
+
+        # ``_resolve_workspace_root`` reads ``project_root``; without a real
+        # path the node's filesystem tools fail to set up and log a traceback.
+        task_tool.agent_config.project_root = str(tmp_path)
+        task_tool.agent_config.workspace_root = str(tmp_path)
+        queue = PendingInputQueue()
+        task_tool.set_parent_node(SimpleNamespace(pending_input_queue=queue, proxy_tool_patterns=None, session_id=None))
+
+        created = {}
+
+        def _create_and_mute(subagent_type, session_id=None):
+            node = task_tool._create_builtin_node(subagent_type, session_id=session_id)
+
+            async def _no_actions(*_args, **_kwargs):
+                return
+                yield  # pragma: no cover — makes this an async generator
+
+            node.execute_stream_with_interactions = _no_actions
+            created["node"] = node
+            return node
+
+        task_tool._create_node = _create_and_mute
+
+        await task_tool._execute_node("gen_visual_report", "build a revenue report")
+
+        assert created["node"].pending_input_queue is queue
+
+    def test_shares_the_parents_queue_by_reference(self, task_tool):
+        from datus.cli.execution_state import PendingInputQueue
+
+        queue = PendingInputQueue()
+        task_tool.set_parent_node(SimpleNamespace(pending_input_queue=queue))
+        node = SimpleNamespace(pending_input_queue=None)
+
+        task_tool._inherit_pending_input_queue(node)
+
+        # Reference, not a copy — an insert pushed after the sub-agent started
+        # must be visible to the loop that is actually running.
+        assert node.pending_input_queue is queue
+        queue.push("the chart throws on render")
+        assert node.pending_input_queue.drain() == ["the chart throws on render"]
+
+    def test_drain_by_the_subagent_leaves_nothing_for_the_parent(self, task_tool):
+        from datus.cli.execution_state import PendingInputQueue
+
+        queue = PendingInputQueue()
+        task_tool.set_parent_node(SimpleNamespace(pending_input_queue=queue))
+        node = SimpleNamespace(pending_input_queue=None)
+        task_tool._inherit_pending_input_queue(node)
+
+        queue.push("fix it")
+        assert node.pending_input_queue.drain() == ["fix it"]
+        assert queue.drain() == []
+
+    def test_no_parent_leaves_the_node_untouched(self, task_tool):
+        node = SimpleNamespace(pending_input_queue=None)
+        task_tool._inherit_pending_input_queue(node)
+        assert node.pending_input_queue is None
+
+    def test_parent_without_a_queue_leaves_the_node_untouched(self, task_tool):
+        task_tool.set_parent_node(SimpleNamespace(pending_input_queue=None))
+        node = SimpleNamespace(pending_input_queue=None)
+        task_tool._inherit_pending_input_queue(node)
+        assert node.pending_input_queue is None
+
+    def test_parent_missing_the_attribute_is_tolerated(self, task_tool):
+        task_tool.set_parent_node(SimpleNamespace())
+        node = SimpleNamespace(pending_input_queue=None)
+        task_tool._inherit_pending_input_queue(node)
+        assert node.pending_input_queue is None
+
+
 # ── _resolve_node_type ─────────────────────────────────────────────
 
 
@@ -242,6 +472,13 @@ class TestResolveNodeType:
         assert node_type == NodeType.TYPE_ASK_METRICS
         assert node_name == "ask_metrics"
 
+    def test_semantic_modeling_description_is_advertised(self, task_tool):
+        semantic_description = BUILTIN_SUBAGENT_DESCRIPTIONS["semantic_modeling"]
+        assert "Dosi" in semantic_description
+        assert "SQL file path" in semantic_description
+        assembled_description = task_tool.available_tools()[0].description
+        assert semantic_description in assembled_description
+
     def test_gen_visual_report_constructs_and_builds_input(self, task_tool, tmp_path):
         """Mirror of ``test_gen_visual_dashboard_constructs_and_builds_input``
         for the report subagent — ``_create_builtin_node`` + the
@@ -269,16 +506,21 @@ class TestResolveNodeType:
             f"input builder returned wrong type: {type(node_input).__name__}"
         )
         assert node_input.user_message == prompt
-        assert node_input.database == "test_db"
+        # The ``database`` context field denotes a physical database, not a datasource, so the
+        # builder must not stuff the datasource name ("test_db") into it; it stays unset.
+        assert node_input.database is None
 
-    def test_gen_visual_report_rejects_session_id(self, task_tool):
-        """gen_visual_report has the same no-resume contract as
-        gen_visual_dashboard — both inherit from
-        ``BaseVisualArtifactAgenticNode`` which doesn't accept
-        ``session_id``. Pin ValueError + the load-bearing substring
-        so a regression to silent-drop trips here."""
-        with pytest.raises(ValueError, match="gen_visual_report.*session resume"):
-            task_tool._create_builtin_node("gen_visual_report", session_id="some-prior-session")
+    def test_gen_visual_report_resumes_session_id(self, task_tool):
+        """gen_visual_report resumes like every other subagent type.
+
+        ``BaseVisualArtifactAgenticNode.__init__`` gained ``session_id``
+        in #869; asserting the id survives construction catches both a
+        regression to the old hard rejection and a silent drop (which
+        would mint a fresh id here).
+        """
+        session_id = "gen_visual_report_session_778a0c01"
+        node = task_tool._create_builtin_node("gen_visual_report", session_id=session_id)
+        assert node.session_id == session_id
 
     def test_gen_visual_dashboard_resolves(self, task_tool):
         """gen_visual_dashboard must be registered alongside the other visual subagent.
@@ -336,24 +578,22 @@ class TestResolveNodeType:
             f"input builder returned wrong type: {type(node_input).__name__}"
         )
         assert node_input.user_message == prompt
-        # ``database`` is sourced from ``agent_config.current_datasource``
-        # which the fixture pins to "test_db".
-        assert node_input.database == "test_db"
+        # ``database`` denotes a physical database, not a datasource, so the builder leaves it
+        # unset rather than stuffing in ``current_datasource`` ("test_db").
+        assert node_input.database is None
 
-    def test_gen_visual_dashboard_rejects_session_id(self, task_tool):
-        """``_create_builtin_node`` for gen_visual_dashboard MUST fail
-        loud when a session_id is passed — the underlying
-        ``BaseVisualArtifactAgenticNode`` constructor has no
-        ``session_id`` parameter so silently dropping it (the prior
-        behaviour) would let resume loops spawn a fresh session per
-        turn while the LLM thinks it picked up an existing one. Pin
-        on ValueError + a substring that names both the subagent type
-        and the load-bearing reason ("does not support session
-        resume") so a regression to silent-drop or to a different
-        error class trips here.
+    def test_gen_visual_dashboard_resumes_session_id(self, task_tool):
+        """``task()`` must resume gen_visual_dashboard, not reject it.
+
+        The branch used to raise because the constructor had no
+        ``session_id``; #869 added it, so the rejection only broke the
+        documented resume contract — ``task()`` hands the caller a
+        ``session_id`` and the schema tells it to pass that back.
+        Equality (not just non-None) also catches a silent drop.
         """
-        with pytest.raises(ValueError, match="gen_visual_dashboard.*session resume"):
-            task_tool._create_builtin_node("gen_visual_dashboard", session_id="some-prior-session")
+        session_id = "gen_visual_dashboard_session_75ab230a"
+        node = task_tool._create_builtin_node("gen_visual_dashboard", session_id=session_id)
+        assert node.session_id == session_id
 
     def test_resolve_effective_inherits_parent_when_child_empty(self, task_tool):
         parent = MagicMock()
@@ -448,6 +688,7 @@ class TestResolveNodeType:
             "gen_sql": NodeType.TYPE_GEN_SQL,
             "chat": NodeType.TYPE_CHAT,
             "ask_metrics": NodeType.TYPE_ASK_METRICS,
+            "ontology_analyst": NodeType.TYPE_ONTOLOGY_ANALYST,
             "gen_report": NodeType.TYPE_GEN_REPORT,
             "gen_visual_report": NodeType.TYPE_GEN_VISUAL_REPORT,
             "gen_visual_dashboard": NodeType.TYPE_GEN_VISUAL_DASHBOARD,
@@ -457,8 +698,6 @@ class TestResolveNodeType:
             "gen_table": NodeType.TYPE_GEN_TABLE,
             "gen_job": NodeType.TYPE_GEN_JOB,
             "gen_skill": NodeType.TYPE_GEN_SKILL,
-            "gen_dashboard": NodeType.TYPE_GEN_DASHBOARD,
-            "scheduler": NodeType.TYPE_SCHEDULER,
         }
         assert set(NODE_CLASS_MAP.keys()) == set(expected_map.keys()), (
             f"NODE_CLASS_MAP keys differ: got {set(NODE_CLASS_MAP.keys())}"
@@ -472,6 +711,13 @@ class TestResolveNodeType:
 
 @pytest.mark.ci
 class TestBuildTaskDescription:
+    def test_starts_with_required_call_contract(self, task_tool):
+        desc = task_tool._build_task_description()
+        assert desc.startswith("Required call contract:")
+        assert "Every task tool call MUST include `type`, `prompt`, and `description`." in desc
+        assert "`type` MUST be exactly one name from the Available types below" in desc
+        assert 'task(type="<available type>"' in desc
+
     def test_contains_all_types(self, task_tool):
         desc = task_tool._build_task_description()
         assert "gen_sql" in desc
@@ -558,6 +804,88 @@ class TestNodeCreation:
         assert node2 is node_b
 
 
+# ── permission profile inheritance ─────────────────────────────────
+
+
+def _child(execution_mode="interactive", profile="normal"):
+    node = Mock(name="child")
+    node.execution_mode = execution_mode
+    node.node_id = "task_explore_abc"
+    manager = MagicMock()
+    manager.active_profile = profile
+    node.permission_manager = manager
+    return node
+
+
+def _parent(profile="dangerous"):
+    node = Mock(name="parent")
+    manager = MagicMock()
+    manager.active_profile = profile
+    node.permission_manager = manager
+    return node
+
+
+class TestSubagentInheritsPermissionProfile:
+    """A per-request permission_mode lives on the parent node's manager only.
+
+    The child is built from the shared AgentConfig, so without an explicit
+    copy it starts on the server default — and a user who asked for
+    ``dangerous`` gets permission prompts the moment the work moves into a
+    subagent.
+    """
+
+    def test_child_runs_under_the_parent_profile(self, task_tool):
+        child = _child(profile="normal")
+        task_tool.set_parent_node(_parent(profile="dangerous"))
+
+        with patch("datus.agent.node.node.Node.new_instance", return_value=child):
+            task_tool._create_node("explore")
+
+        child.permission_manager.switch_profile.assert_called_once()
+        assert child.permission_manager.switch_profile.call_args[0][0] == "dangerous"
+
+    def test_nothing_to_copy_without_a_parent(self, task_tool):
+        child = _child(profile="normal")
+
+        with patch("datus.agent.node.node.Node.new_instance", return_value=child):
+            task_tool._create_node("explore")
+
+        child.permission_manager.switch_profile.assert_not_called()
+
+    def test_leaves_a_workflow_child_alone(self, task_tool):
+        """Workflow nodes force ``dangerous`` by design — narrowing them here
+        would quietly change what unattended flows are allowed to do."""
+        child = _child(execution_mode="workflow", profile="dangerous")
+        task_tool.set_parent_node(_parent(profile="normal"))
+
+        with patch("datus.agent.node.node.Node.new_instance", return_value=child):
+            task_tool._create_node("explore")
+
+        child.permission_manager.switch_profile.assert_not_called()
+
+    def test_skips_a_child_already_on_that_profile(self, task_tool):
+        child = _child(profile="dangerous")
+        task_tool.set_parent_node(_parent(profile="dangerous"))
+
+        with patch("datus.agent.node.node.Node.new_instance", return_value=child):
+            task_tool._create_node("explore")
+
+        child.permission_manager.switch_profile.assert_not_called()
+
+    def test_builtin_subagents_inherit_too(self, task_tool):
+        # gen_table-style builtins take the non-standard constructor path,
+        # which is the one the DDL confirmation card came out of.
+        child = _child(profile="normal")
+        task_tool.set_parent_node(_parent(profile="dangerous"))
+
+        with patch.object(task_tool, "_create_builtin_node", return_value=child):
+            node = task_tool._create_node(next(iter(SYS_SUB_AGENTS)))
+
+        assert node is child
+        child.permission_manager.switch_profile.assert_called_once()
+        assert child.permission_manager.switch_profile.call_args[0][0] == "dangerous"
+
+
 # ── _build_node_input ──────────────────────────────────────────────
 
 
@@ -576,7 +904,7 @@ class TestBuildNodeInput:
 
         assert isinstance(result, GenSQLNodeInput)
         assert result.user_message == "Show all users"
-        assert result.database == "test_db"
+        assert result.database is None
 
     def test_ask_metrics_node_input(self, task_tool):
         from datus.agent.node.ask_metrics_agentic_node import AskMetricsAgenticNode
@@ -587,7 +915,7 @@ class TestBuildNodeInput:
 
         assert isinstance(result, AskMetricsNodeInput)
         assert result.user_message == "Show revenue by month"
-        assert result.database == "test_db"
+        assert result.database is None
 
 
 # ── _convert_to_func_result ───────────────────────────────────────
@@ -629,6 +957,33 @@ class TestConvertToFuncResult:
         result = task_tool._convert_to_func_result(output)
         assert result.success == 1
         assert result.result["response"] == "Some content"
+
+    def test_semantic_modeling_failure_preserves_blocker_contract(self, task_tool):
+        output = {
+            "success": False,
+            "error": "Multiple semantic models remain plausible.",
+            "status": "blocked",
+            "blocker_code": "semantic_model_selection_required",
+            "response": "Choose the intended semantic model.",
+            "semantic_models": [],
+            "tokens_used": 73,
+        }
+
+        result = task_tool._convert_to_func_result(
+            output,
+            session_id="semantic_modeling_session_blocked01",
+        )
+
+        assert result.success == 0
+        assert result.error == "Multiple semantic models remain plausible."
+        assert result.result == {
+            "status": "blocked",
+            "blocker_code": "semantic_model_selection_required",
+            "response": "Choose the intended semantic model.",
+            "semantic_models": [],
+            "tokens_used": 73,
+            "session_id": "semantic_modeling_session_blocked01",
+        }
 
     def test_markdown_report_result(self, task_tool):
         output = {"response": "Metric answer", "markdown_report": "## Metric answer", "tokens_used": 25}
@@ -725,6 +1080,14 @@ class TestSubAgentTaskAcceptance:
         parent.get_node_name.return_value = "chat"
         parent.proxy_tool_patterns = []
         parent.tool_channel = None
+        # A chat parent carries no bound physical database, so the delegated subagent must
+        # inherit nothing here (contrast TestSubagentInheritsParentDatabase, where a DB-bound
+        # parent does propagate). Pin these so the auto-MagicMock attributes don't masquerade
+        # as a real database.
+        parent.input.database = None
+        parent.input.catalog = None
+        parent.input.db_schema = None
+        parent.db_func_tool = None
         task_tool._parent_node = parent
 
         assert "sales_analyst" in task_tool._get_available_types()
@@ -761,7 +1124,7 @@ class TestSubAgentTaskAcceptance:
         assert result.result["sql"] == "SELECT SUM(amount) FROM sales"
         create_node.assert_called_once_with("sales_analyst", session_id=None)
         assert mock_node.input.user_message == "Summarize sales"
-        assert mock_node.input.database == "test_db"
+        assert mock_node.input.database is None
 
 
 # ── task execution ─────────────────────────────────────────────────
@@ -857,12 +1220,30 @@ class TestTaskExecution:
         result = await task_tool.task(type="", prompt="test")
         assert result.success == 0
         assert "Missing required parameter: type" in result.error
+        assert "Retry task() with all required arguments" in result.error
+        assert "sales_analyst" in result.error
+        assert 'task(type="gen_sql"' in result.error
+
+    @pytest.mark.asyncio
+    async def test_execute_missing_type_when_no_subagents_are_available(self, mock_agent_config):
+        task_tool = SubAgentTaskTool(agent_config=mock_agent_config, allowed_subagents=[])
+
+        result = await task_tool.task(type="", prompt="test")
+
+        assert result.success == 0
+        assert "Missing required parameter: type" in result.error
+        assert "No subagent types are currently available" in result.error
+        assert "Update the subagent allowlist or agent configuration" in result.error
+        assert "Example:" not in result.error
 
     @pytest.mark.asyncio
     async def test_execute_missing_prompt(self, task_tool):
         result = await task_tool.task(type="gen_sql", prompt="")
         assert result.success == 0
         assert "Missing required parameter: prompt" in result.error
+        assert "Retry task() with all required arguments" in result.error
+        assert "Available types" in result.error
+        assert 'prompt="<task or question>"' in result.error
 
     @pytest.mark.asyncio
     async def test_execute_custom_subagent(self, task_tool):
@@ -933,7 +1314,7 @@ class TestActionBusIntegration:
 
     @pytest.mark.asyncio
     async def test_actions_forwarded_to_bus(self, task_tool):
-        """Child actions are put into action_bus with depth=1."""
+        """Child actions are copied into action_bus with depth=1."""
         from datus.schemas.action_bus import ActionBus
         from datus.schemas.action_history import ActionRole
 
@@ -963,6 +1344,69 @@ class TestActionBusIntegration:
         # Forwarded action should be in the bus with depth=1
         forwarded = bus._queue.get_nowait()
         assert forwarded.depth == 1
+        assert forwarded is not mock_action
+        assert mock_action.depth == 0
+
+    @pytest.mark.asyncio
+    async def test_forwarding_preserves_child_history_for_token_accounting(self, task_tool):
+        """Parent-bus nesting must not hide usage from the child result."""
+        from datus.agent.node.agentic_node import AgenticNode
+        from datus.schemas.action_bus import ActionBus
+
+        bus = ActionBus()
+        task_tool.set_action_bus(bus)
+
+        mock_node = MagicMock()
+        mock_node.session_id = None
+
+        async def mock_stream(
+            action_history_manager: ActionHistoryManager,
+        ) -> AsyncGenerator[ActionHistory, None]:
+            user_action = ActionHistory.create_action(
+                role=ActionRole.USER,
+                action_type="gen_sql_request",
+                messages="User request",
+                input_data={},
+                status=ActionStatus.SUCCESS,
+            )
+            action_history_manager.add_action(user_action)
+            yield user_action
+
+            model_action = ActionHistory.create_action(
+                role=ActionRole.ASSISTANT,
+                action_type="assistant_message",
+                messages="Model response",
+                input_data={},
+                output_data={"content": "done", "usage": {"total_tokens": 12603}},
+                status=ActionStatus.SUCCESS,
+            )
+            action_history_manager.add_action(model_action)
+            yield model_action
+
+            tokens_used = AgenticNode._extract_total_tokens(action_history_manager.get_actions())
+            final_action = ActionHistory.create_action(
+                role=ActionRole.ASSISTANT,
+                action_type="gen_sql_response",
+                messages="Completed",
+                input_data={},
+                output_data={
+                    "sql": "SELECT 1",
+                    "response": "ok",
+                    "tokens_used": tokens_used,
+                },
+                status=ActionStatus.SUCCESS,
+            )
+            action_history_manager.add_action(final_action)
+            yield final_action
+
+        mock_node.execute_stream_with_interactions = mock_stream
+
+        with patch.object(task_tool, "_create_node", return_value=mock_node):
+            with patch.object(task_tool, "_build_node_input", return_value=Mock()):
+                result = await task_tool.task(type="gen_sql", prompt="test")
+
+        assert result.success == 1
+        assert result.result["tokens_used"] == 12603
 
     @pytest.mark.asyncio
     async def test_actions_have_parent_action_id(self, task_tool):
@@ -1049,7 +1493,7 @@ class TestInteractionBrokerPassthrough:
         assert node.interaction_broker is parent_broker
 
     def test_inject_broker_updates_hooks(self, task_tool):
-        """_inject_broker updates broker on GenerationHooks / PermissionHooks."""
+        """_inject_broker updates broker on hooks (e.g. PermissionHooks)."""
         from datus.cli.execution_state import InteractionBroker
 
         parent_broker = InteractionBroker()
@@ -1151,16 +1595,23 @@ class TestInteractionBrokerPassthrough:
         forwarded: list = []
         parent_bus.put = lambda action: forwarded.append(action)
 
-        final_action = Mock(spec=ActionHistory)
-        final_action.status = ActionStatus.SUCCESS
-        final_action.role = ActionRole.ASSISTANT
-        final_action.output = {"response": "ok", "tokens_used": 12603}
+        final_action = ActionHistory.create_action(
+            role=ActionRole.ASSISTANT,
+            action_type="gen_sql_response",
+            messages="Completed",
+            input_data={},
+            output_data={"response": "ok", "tokens_used": 12603},
+            status=ActionStatus.SUCCESS,
+        )
 
-        usage_action = Mock(spec=ActionHistory)
-        usage_action.status = ActionStatus.SUCCESS
-        usage_action.role = ActionRole.ASSISTANT
-        usage_action.action_type = "token_usage"
-        usage_action.output = {"cumulative": {"total_tokens": 12603, "cached_tokens": 8192}}
+        usage_action = ActionHistory.create_action(
+            role=ActionRole.ASSISTANT,
+            action_type="token_usage",
+            messages="Token usage update",
+            input_data={},
+            output_data={"cumulative": {"total_tokens": 12603, "cached_tokens": 8192}},
+            status=ActionStatus.SUCCESS,
+        )
 
         node_bus = ActionBus()
         mock_node = MagicMock()
@@ -1328,13 +1779,11 @@ class TestBuildTaskDescriptionFileStorage:
 @pytest.mark.ci
 class TestGetAvailableTypesBuiltIn:
     def test_includes_all_builtin_types(self, task_tool):
-        """All SYS_SUB_AGENTS appear in available types, except 'feedback'
-        which is a top-level node and not task()-delegatable."""
+        """Only visible built-ins appear for Dosi."""
         types = task_tool._get_available_types()
-        # feedback is a top-level node and must NEVER be exposed as delegatable.
-        assert "feedback" not in types, "feedback must not be exposed as a delegatable subagent"
+        assert HIDDEN_SYS_SUB_AGENTS.isdisjoint(types)
         for name in SYS_SUB_AGENTS:
-            if name == "feedback":
+            if name in HIDDEN_SYS_SUB_AGENTS or name in CONDITIONAL_SYS_SUB_AGENTS:
                 continue
             assert name in types, f"{name} not found in available types"
 
@@ -1359,8 +1808,73 @@ class TestGetAvailableTypesBuiltIn:
         which is not task()-delegatable)."""
         types = task_tool._get_available_types()
         builtin_in_list = [t for t in types if t in SYS_SUB_AGENTS]
-        expected = sorted(name for name in SYS_SUB_AGENTS if name != "feedback")
+        expected = sorted(SYS_SUB_AGENTS - HIDDEN_SYS_SUB_AGENTS - CONDITIONAL_SYS_SUB_AGENTS)
         assert builtin_in_list == expected
+
+
+@pytest.mark.ci
+class TestOntologyAnalystOffering:
+    """ontology_analyst refuses to run without an ontology, so it is offered only where one exists."""
+
+    @staticmethod
+    def _tool(tmp_path, datasource="flights_db"):
+        from datus.utils.path_manager import DatusPathManager
+
+        config = Mock(spec=AgentConfig)
+        config.current_datasource = datasource
+        config.agentic_nodes = {}
+        config.path_manager = DatusPathManager(datus_home=tmp_path / "home", project_root=tmp_path / "project")
+        models_dir = config.path_manager.semantic_models_dir / datasource
+        models_dir.mkdir(parents=True, exist_ok=True)
+        (models_dir / "aviation.yaml").write_text("version: 0.2.0.dev0\nname: aviation\ndatasets: []\n")
+        return SubAgentTaskTool(agent_config=config), config.path_manager.ontology_dir
+
+    @staticmethod
+    def _write_group(ontology_dir, datasource, mapping_name="aviation-aviation.mapping.yaml"):
+        """aviation.ontology.yaml plus a mapping onto ``semantic_models/<datasource>/aviation.yaml``."""
+        ontology_dir.mkdir(parents=True, exist_ok=True)
+        (ontology_dir / "aviation.ontology.yaml").write_text("version: 0.2.0.dev0\nname: Aviation\nontology: []\n")
+        (ontology_dir / mapping_name).write_text(
+            "version: 0.2.0.dev0\nname: m\n"
+            "ontology_ref: {name: Aviation, iri: ./aviation.ontology.yaml}\n"
+            f"semantic_model_ref: {{name: aviation, iri: ../semantic_models/{datasource}/aviation.yaml}}\n"
+            "concept_mappings: []\n"
+        )
+
+    def test_not_offered_without_ontology_dir(self, tmp_path):
+        tool, _ = self._tool(tmp_path)
+        types = tool._get_available_types()
+        assert "ontology_analyst" not in types
+        assert "- ontology_analyst:" not in tool._build_task_description()
+
+    def test_not_offered_without_a_mapping(self, tmp_path):
+        tool, ontology_dir = self._tool(tmp_path)
+        ontology_dir.mkdir(parents=True)
+        (ontology_dir / "README.txt").write_text("not an ontology")
+        # An ontology alone binds no model: a mapping does.
+        (ontology_dir / "aviation.yaml").write_text("version: 0.2.0.dev0\nname: Aviation\nontology: []\n")
+        assert "ontology_analyst" not in tool._get_available_types()
+
+    def test_offered_when_a_mapping_binds_a_model_of_the_datasource(self, tmp_path):
+        tool, ontology_dir = self._tool(tmp_path)
+        self._write_group(ontology_dir, "flights_db")
+        types = tool._get_available_types()
+        assert "ontology_analyst" in types
+        assert BUILTIN_SUBAGENT_DESCRIPTIONS["ontology_analyst"] in tool._build_task_description()
+
+    def test_a_mapping_onto_another_datasource_does_not_count(self, tmp_path):
+        tool, _ = self._tool(tmp_path, datasource="flights_db")
+        _, ontology_dir = self._tool(tmp_path, datasource="other_db")
+        self._write_group(ontology_dir, "other_db")
+        assert "ontology_analyst" not in tool._get_available_types()
+
+    def test_one_ontology_mapped_onto_two_datasources_is_offered_for_both(self, tmp_path):
+        flights, ontology_dir = self._tool(tmp_path, datasource="flights_db")
+        other, _ = self._tool(tmp_path, datasource="other_db")
+        self._write_group(ontology_dir, "flights_db", "aviation-flights.mapping.yaml")
+        self._write_group(ontology_dir, "other_db", "aviation-other.mapping.yaml")
+        assert "ontology_analyst" in flights._get_available_types()
+        assert "ontology_analyst" in other._get_available_types()
 
 
 # ── Built-in subagent: _resolve_node_type ──────────────────────────
@@ -1368,16 +1882,6 @@ class TestGetAvailableTypesBuiltIn:
 
 @pytest.mark.ci
 class TestResolveNodeTypeBuiltIn:
-    def test_gen_semantic_model(self, task_tool):
-        node_type, node_name = task_tool._resolve_node_type("gen_semantic_model")
-        assert node_type == NodeType.TYPE_SEMANTIC
-        assert node_name == "gen_semantic_model"
-
-    def test_gen_metrics(self, task_tool):
-        node_type, node_name = task_tool._resolve_node_type("gen_metrics")
-        assert node_type == NodeType.TYPE_SEMANTIC
-        assert node_name == "gen_metrics"
-
     def test_gen_sql_summary(self, task_tool):
         node_type, node_name = task_tool._resolve_node_type("gen_sql_summary")
         assert node_type == NodeType.TYPE_SQL_SUMMARY
@@ -1399,26 +1903,6 @@ class TestResolveNodeTypeBuiltIn:
 
 @pytest.mark.ci
 class TestCreateBuiltinNode:
-    @patch("datus.agent.node.gen_semantic_model_agentic_node.GenSemanticModelAgenticNode.__init__", return_value=None)
-    def test_gen_semantic_model(self, mock_init, task_tool):
-        task_tool._create_builtin_node("gen_semantic_model")
-        mock_init.assert_called_once_with(
-            agent_config=task_tool.agent_config,
-            execution_mode="interactive",
-            is_subagent=True,
-            session_id=None,
-        )
-
-    @patch("datus.agent.node.gen_metrics_agentic_node.GenMetricsAgenticNode.__init__", return_value=None)
-    def test_gen_metrics(self, mock_init, task_tool):
-        task_tool._create_builtin_node("gen_metrics")
-        mock_init.assert_called_once_with(
-            agent_config=task_tool.agent_config,
-            execution_mode="interactive",
-            is_subagent=True,
-            session_id=None,
-        )
-
     @patch("datus.agent.node.sql_summary_agentic_node.SqlSummaryAgenticNode.__init__", return_value=None)
     def test_gen_sql_summary(self, mock_init, task_tool):
         task_tool._create_builtin_node("gen_sql_summary")
@@ -1453,32 +1937,6 @@ class TestCreateBuiltinNode:
             session_id=None,
         )
 
-    @patch("datus.agent.node.gen_dashboard_agentic_node.GenDashboardAgenticNode.__init__", return_value=None)
-    def test_gen_dashboard(self, mock_init, task_tool):
-        from unittest.mock import ANY
-
-        task_tool._create_builtin_node("gen_dashboard")
-        mock_init.assert_called_once_with(
-            agent_config=task_tool.agent_config,
-            execution_mode="interactive",
-            node_id=ANY,
-            is_subagent=True,
-            session_id=None,
-        )
-
-    @patch("datus.agent.node.scheduler_agentic_node.SchedulerAgenticNode.__init__", return_value=None)
-    def test_scheduler(self, mock_init, task_tool):
-        from unittest.mock import ANY
-
-        task_tool._create_builtin_node("scheduler")
-        mock_init.assert_called_once_with(
-            agent_config=task_tool.agent_config,
-            execution_mode="interactive",
-            node_id=ANY,
-            is_subagent=True,
-            session_id=None,
-        )
-
     def test_unknown_builtin_raises(self, task_tool):
         with pytest.raises(ValueError, match="Unknown builtin subagent type"):
             task_tool._create_builtin_node("nonexistent")
@@ -1486,8 +1944,8 @@ class TestCreateBuiltinNode:
     def test_create_node_delegates_to_builtin(self, task_tool):
         """_create_node delegates to _create_builtin_node for SYS_SUB_AGENTS."""
         with patch.object(task_tool, "_create_builtin_node", return_value=Mock()) as mock_builtin:
-            task_tool._create_node("gen_semantic_model")
-            mock_builtin.assert_called_once_with("gen_semantic_model", session_id=None)
+            task_tool._create_node("semantic_modeling")
+            mock_builtin.assert_called_once_with("semantic_modeling", session_id=None)
 
     def test_create_node_custom_passes_is_subagent_true(self, task_tool):
         """Custom agents must receive ``is_subagent=True`` via Node.new_instance.
@@ -1545,14 +2003,11 @@ class TestBuiltinNodeInheritsExecutionMode:
         "subagent_type,init_path",
         [
             (
-                "gen_semantic_model",
-                "datus.agent.node.gen_semantic_model_agentic_node.GenSemanticModelAgenticNode.__init__",
+                "semantic_modeling",
+                "datus.agent.node.semantic_modeling_agentic_node.SemanticModelingAgenticNode.__init__",
             ),
-            ("gen_metrics", "datus.agent.node.gen_metrics_agentic_node.GenMetricsAgenticNode.__init__"),
             ("gen_sql_summary", "datus.agent.node.sql_summary_agentic_node.SqlSummaryAgenticNode.__init__"),
             ("gen_table", "datus.agent.node.gen_table_agentic_node.GenTableAgenticNode.__init__"),
-            ("gen_dashboard", "datus.agent.node.gen_dashboard_agentic_node.GenDashboardAgenticNode.__init__"),
-            ("scheduler", "datus.agent.node.scheduler_agentic_node.SchedulerAgenticNode.__init__"),
         ],
     )
     def test_builtin_node_uses_workflow_mode(self, task_tool, subagent_type, init_path):
@@ -1590,25 +2045,33 @@ class TestBuiltinNodeInheritsExecutionMode:
 
 @pytest.mark.ci
 class TestBuildNodeInputBuiltIn:
-    def test_semantic_model_node_input(self, task_tool):
-        from datus.agent.node.gen_semantic_model_agentic_node import GenSemanticModelAgenticNode
+    def test_semantic_modeling_node_input(self, task_tool):
+        from datus.agent.node.semantic_modeling_agentic_node import SemanticModelingAgenticNode
         from datus.schemas.semantic_agentic_node_models import SemanticNodeInput
 
-        mock_node = Mock(spec=GenSemanticModelAgenticNode)
+        mock_node = Mock(spec=SemanticModelingAgenticNode)
         result = task_tool._build_node_input(mock_node, "orders table")
         assert isinstance(result, SemanticNodeInput)
         assert result.user_message == "orders table"
-        assert result.database == "test_db"
+        assert result.database is None
 
-    def test_metrics_node_input(self, task_tool):
-        from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode
+    def test_semantic_modeling_node_receives_raw_task_and_inherited_at_context(self, task_tool):
+        from datus.agent.node.semantic_modeling_agentic_node import SemanticModelingAgenticNode
+        from datus.schemas.node_models import ReferenceSql
         from datus.schemas.semantic_agentic_node_models import SemanticNodeInput
 
-        mock_node = Mock(spec=GenMetricsAgenticNode)
-        result = task_tool._build_node_input(mock_node, "SELECT SUM(amount) FROM orders")
-        assert isinstance(result, SemanticNodeInput)
-        assert result.user_message == "SELECT SUM(amount) FROM orders"
-        assert result.database == "test_db"
+        parent = MagicMock()
+        parent.input = SemanticNodeInput(
+            user_message="Generate metrics",
+            reference_sql=[ReferenceSql(name="example", sql="SELECT SUM(amount) FROM finance.payments")],
+        )
+        task_tool.set_parent_node(parent)
+
+        mock_node = Mock(spec=SemanticModelingAgenticNode)
+        result = task_tool._build_node_input(mock_node, "Create the prerequisite model")
+
+        assert result.user_message == "Create the prerequisite model"
+        assert result.reference_sql == parent.input.reference_sql
 
     def test_sql_summary_node_input(self, task_tool):
         from datus.agent.node.sql_summary_agentic_node import SqlSummaryAgenticNode
@@ -1618,7 +2081,7 @@ class TestBuildNodeInputBuiltIn:
         result = task_tool._build_node_input(mock_node, "SELECT * FROM users")
         assert isinstance(result, SqlSummaryNodeInput)
         assert result.user_message == "SELECT * FROM users"
-        assert result.database == "test_db"
+        assert result.database is None
 
     def test_gen_table_node_input(self, task_tool):
         from datus.agent.node.gen_table_agentic_node import GenTableAgenticNode
@@ -1628,7 +2091,7 @@ class TestBuildNodeInputBuiltIn:
         result = task_tool._build_node_input(mock_node, "Create wide table from orders and customers")
         assert isinstance(result, SemanticNodeInput)
         assert result.user_message == "Create wide table from orders and customers"
-        assert result.database == "test_db"
+        assert result.database is None
 
     def test_ask_metrics_node_input(self, task_tool):
         from datus.agent.node.ask_metrics_agentic_node import AskMetricsAgenticNode
@@ -1639,7 +2102,7 @@ class TestBuildNodeInputBuiltIn:
 
         assert isinstance(result, AskMetricsNodeInput)
         assert result.user_message == "Show active users"
-        assert result.database == "test_db"
+        assert result.database is None
 
 
 # ── Built-in subagent: _build_task_description ─────────────────────
@@ -1649,19 +2112,26 @@ class TestBuildNodeInputBuiltIn:
 class TestBuildTaskDescriptionBuiltIn:
     def test_contains_all_builtin_types(self, task_tool):
         desc = task_tool._build_task_description()
-        # feedback is a top-level node; must NEVER be advertised to the LLM.
-        assert "feedback" not in desc, "feedback must not appear in task description"
+        for name in HIDDEN_SYS_SUB_AGENTS:
+            assert name not in desc
         for name in SYS_SUB_AGENTS:
-            if name == "feedback":
+            if name in HIDDEN_SYS_SUB_AGENTS:
                 continue
             assert name in desc, f"{name} not found in task description"
 
     def test_contains_builtin_descriptions(self, task_tool):
         desc = task_tool._build_task_description()
         for name, builtin_desc in BUILTIN_SUBAGENT_DESCRIPTIONS.items():
+            if name in CONDITIONAL_SYS_SUB_AGENTS:
+                continue
             assert builtin_desc in desc, f"Description for {name} not found"
 
-    def test_gen_semantic_model_description_content(self, task_tool):
+    def test_routes_plugin_backed_platforms_to_main_agent(self, task_tool):
+        desc = task_tool._build_task_description()
+        assert "Scheduling and external BI platform operations are the exception" in desc
+        assert "directly in the main agent" in desc
+
+    def test_semantic_modeling_description_content(self, task_tool):
         desc = task_tool._build_task_description()
         assert "semantic model" in desc.lower()
         assert "semantic_models" in desc
@@ -1698,6 +2168,21 @@ class TestConvertToFuncResultBuiltIn:
         assert result.success == 1
         assert result.result["semantic_models"] == []
 
+    def test_semantic_modeling_success_preserves_outcome(self, task_tool):
+        output = {
+            "response": "The request is not a metric.",
+            "semantic_models": [],
+            "tokens_used": 100,
+            "status": "skipped",
+            "skip_reason": "not_a_metric",
+        }
+
+        result = task_tool._convert_to_func_result(output)
+
+        assert result.success == 1
+        assert result.result["status"] == "skipped"
+        assert result.result["skip_reason"] == "not_a_metric"
+
     def test_sql_summary_file_result(self, task_tool):
         output = {
             "response": "Summarized query",
@@ -1722,54 +2207,6 @@ class TestConvertToFuncResultBuiltIn:
         assert "sql_file_path" in result.result
         assert "semantic_models" not in result.result
 
-    def test_dashboard_result(self, task_tool):
-        """Dashboard result should preserve dashboard_result dict."""
-        output = {
-            "response": "Created dashboard",
-            "dashboard_result": {"dashboard_id": 42, "url": "http://superset/dashboard/42"},
-            "tokens_used": 600,
-        }
-        result = task_tool._convert_to_func_result(output)
-        assert result.success == 1
-        assert result.result["dashboard_result"] == {"dashboard_id": 42, "url": "http://superset/dashboard/42"}
-        assert result.result["response"] == "Created dashboard"
-        assert result.result["tokens_used"] == 600
-
-    def test_dashboard_result_empty_dict(self, task_tool):
-        """Empty dashboard_result dict should still be preserved (not fall to generic)."""
-        output = {
-            "response": "No dashboard changes",
-            "dashboard_result": {},
-            "tokens_used": 100,
-        }
-        result = task_tool._convert_to_func_result(output)
-        assert result.success == 1
-        assert result.result["dashboard_result"] == {}
-
-    def test_scheduler_result(self, task_tool):
-        """Scheduler result should preserve scheduler_result dict."""
-        output = {
-            "response": "Job submitted",
-            "scheduler_result": {"job_id": "dag_123", "status": "scheduled"},
-            "tokens_used": 300,
-        }
-        result = task_tool._convert_to_func_result(output)
-        assert result.success == 1
-        assert result.result["scheduler_result"] == {"job_id": "dag_123", "status": "scheduled"}
-        assert result.result["response"] == "Job submitted"
-        assert result.result["tokens_used"] == 300
-
-    def test_scheduler_result_empty_dict(self, task_tool):
-        """Empty scheduler_result dict should still be preserved."""
-        output = {
-            "response": "No scheduler changes",
-            "scheduler_result": {},
-            "tokens_used": 50,
-        }
-        result = task_tool._convert_to_func_result(output)
-        assert result.success == 1
-        assert result.result["scheduler_result"] == {}
-
 
 # ── Built-in subagent: end-to-end task execution ──────────────────
 
@@ -1777,7 +2214,7 @@ class TestConvertToFuncResultBuiltIn:
 @pytest.mark.ci
 class TestTaskExecutionBuiltIn:
     @pytest.mark.asyncio
-    async def test_execute_gen_semantic_model(self, task_tool):
+    async def test_execute_semantic_modeling(self, task_tool):
         mock_action = Mock(spec=ActionHistory)
         mock_action.status = ActionStatus.SUCCESS
         mock_action.role = ActionRole.ASSISTANT
@@ -1796,35 +2233,11 @@ class TestTaskExecutionBuiltIn:
 
         with patch.object(task_tool, "_create_node", return_value=mock_node):
             with patch.object(task_tool, "_build_node_input", return_value=Mock()):
-                result = await task_tool.task(type="gen_semantic_model", prompt="orders table")
+                result = await task_tool.task(type="semantic_modeling", prompt="orders table")
 
         assert result.success == 1
         assert result.result["semantic_models"] == ["models/orders.yml"]
         assert result.result["tokens_used"] == 400
-
-    @pytest.mark.asyncio
-    async def test_execute_gen_metrics(self, task_tool):
-        mock_action = Mock(spec=ActionHistory)
-        mock_action.status = ActionStatus.SUCCESS
-        mock_action.role = ActionRole.ASSISTANT
-        mock_action.output = {
-            "response": "Extracted 3 metrics",
-            "tokens_used": 350,
-        }
-
-        mock_node = MagicMock()
-
-        async def mock_stream(ahm):
-            yield mock_action
-
-        mock_node.execute_stream_with_interactions = mock_stream
-
-        with patch.object(task_tool, "_create_node", return_value=mock_node):
-            with patch.object(task_tool, "_build_node_input", return_value=Mock()):
-                result = await task_tool.task(type="gen_metrics", prompt="SELECT SUM(amount) FROM orders")
-
-        assert result.success == 1
-        assert result.result["response"] == "Extracted 3 metrics"
 
     @pytest.mark.asyncio
     async def test_execute_gen_sql_summary(self, task_tool):
@@ -2312,7 +2725,7 @@ class TestProxyToolPropagation:
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
         "subagent_type",
-        ["gen_semantic_model", "gen_metrics", "gen_sql_summary"],
+        ["semantic_modeling", "gen_sql_summary"],
     )
     async def test_fs_dependent_types_still_call_apply_proxy(self, task_tool, subagent_type):
         """FS-dependent subagents still call apply_proxy_tools (exclusion is internal to proxy_tool)."""
@@ -2388,6 +2801,64 @@ def _build_persistent_mock_node(
 
 
 @pytest.mark.ci
+class TestNestedSessionLayout:
+    """Real nodes: the subagent's .db must land under the main session, in the user's scope.
+
+    ``AgenticNode.__init__`` caches its session manager while restoring state, so a
+    ``session_subdir`` assigned after construction used to be ignored.
+    """
+
+    PARENT = "chat_session_parent01"
+    USER = "alice"
+
+    def _tool(self, real_agent_config):
+        tool = SubAgentTaskTool(agent_config=real_agent_config)
+        tool._parent_node = SimpleNamespace(session_id=self.PARENT, scope=self.USER)
+        return tool
+
+    def _nested_dir(self, real_agent_config) -> Path:
+        return Path(real_agent_config.session_dir) / self.USER / self.PARENT
+
+    @staticmethod
+    def _seed(session_dir: str, session_id: str) -> None:
+        session = SessionManager(session_dir=session_dir).get_session(session_id)
+        asyncio.run(session.add_items([{"role": "user", "content": "earlier run"}]))
+
+    def test_new_session_nests_under_parent_in_user_scope(self, real_agent_config, mock_llm_create):
+        tool = self._tool(real_agent_config)
+        node = tool._create_node("explore")
+
+        tool._nest_session(node, self.PARENT)
+        node.session_manager.create_session(node.session_id)
+
+        assert Path(node.session_manager.session_dir) == self._nested_dir(real_agent_config)
+        assert (self._nested_dir(real_agent_config) / f"{node.session_id}.db").is_file()
+        assert not (Path(real_agent_config.session_dir) / f"{node.session_id}.db").exists()
+
+    def test_resume_finds_nested_session(self, real_agent_config, mock_llm_create):
+        sid = "explore_session_nested01"
+        self._seed(str(self._nested_dir(real_agent_config)), sid)
+        tool = self._tool(real_agent_config)
+        node = tool._create_node("explore", session_id=sid)
+
+        tool._nest_session(node, self.PARENT)
+
+        assert Path(node.session_manager.session_dir) == self._nested_dir(real_agent_config)
+        assert node.session_manager.session_exists(sid)
+
+    def test_resume_does_not_reach_the_shared_flat_layout(self, real_agent_config, mock_llm_create):
+        """The pre-fix flat dir is shared by every user; resume only looks in the user's own."""
+        sid = "explore_session_legacy01"
+        self._seed(real_agent_config.session_dir, sid)
+        tool = self._tool(real_agent_config)
+        node = tool._create_node("explore", session_id=sid)
+
+        tool._nest_session(node, self.PARENT)
+
+        assert Path(node.session_manager.session_dir) == self._nested_dir(real_agent_config)
+        assert not node.session_manager.session_exists(sid)
+
+
 class TestSessionPersistence:
     @pytest.mark.asyncio
     async def test_returns_session_id_in_result(self, task_tool):
@@ -2407,6 +2878,7 @@ class TestSessionPersistence:
         subagent .db nests under {sessions_dir}/{user_scope}/{parent_id}/."""
         parent = MagicMock()
         parent.session_id = "chat_session_parent01"
+        parent.scope = "alice"
         parent.proxy_tool_patterns = None
         task_tool.set_parent_node(parent)
 
@@ -2416,7 +2888,7 @@ class TestSessionPersistence:
                 result = await task_tool.task(type="gen_sql", prompt="test")
 
         assert result.success == 1
-        assert node.session_subdir == "chat_session_parent01"
+        node.relocate_session.assert_called_once_with(scope="alice", session_subdir="chat_session_parent01")
 
     @pytest.mark.asyncio
     async def test_no_parent_session_falls_back_to_flat_path(self, task_tool):
@@ -2462,6 +2934,19 @@ class TestSessionPersistence:
         assert result.success == 0
         assert "belongs to subagent type" in result.error
         assert "gen_report" in result.error
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("blank", ["", "   "])
+    async def test_blank_session_id_starts_a_new_session(self, task_tool, blank):
+        """A model that sends session_id="" for a fresh run must not hit the resume path."""
+        node = _build_persistent_mock_node(session_id_to_assign="gen_sql_session_new12345")
+        with patch.object(task_tool, "_create_node", return_value=node) as create_node:
+            with patch.object(task_tool, "_build_node_input", return_value=Mock()):
+                result = await task_tool.task(type="gen_sql", prompt="x", session_id=blank)
+        assert result.success == 1
+        assert result.result["session_id"] == "gen_sql_session_new12345"
+        assert create_node.call_args.kwargs.get("session_id") is None
+        node.session_manager.session_exists.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_resume_invalid_format_returns_error(self, task_tool):
@@ -2564,3 +3049,222 @@ class TestSessionPersistence:
         desc = schema["properties"]["session_id"]["description"]
         assert "continue" in desc.lower()
         assert "type" in desc.lower()  # callout that types must match
+
+
+@pytest.mark.ci
+class TestSubagentInheritsParentDatabase:
+    """A subagent spawned via the task tool must inherit the parent node's resolved
+    physical database (and catalog/schema where supported).
+
+    Regression guard: for a multi-database glob (``path_pattern``) datasource the default
+    database is an arbitrary first-matched file, so a subagent that does NOT inherit the
+    parent's database silently explores the wrong one — the root cause of a benchmark task
+    delegating to ``explore`` and hanging on an unrelated bird database.
+    """
+
+    @staticmethod
+    def _parent(database="", catalog="", db_schema="", connector_db=None):
+        parent = MagicMock()
+        parent.input.database = database
+        parent.input.catalog = catalog
+        parent.input.db_schema = db_schema
+        if connector_db is None:
+            parent.db_func_tool = None
+        else:
+            parent.db_func_tool.connector.database_name = connector_db
+        return parent
+
+    def test_parent_db_context_reads_parent_input(self, task_tool):
+        task_tool._parent_node = self._parent(database="california_schools", catalog="cat", db_schema="sch")
+        assert task_tool._parent_db_context() == {
+            "database": "california_schools",
+            "catalog": "cat",
+            "db_schema": "sch",
+        }
+
+    def test_parent_db_context_falls_back_to_connector_database_name(self, task_tool):
+        # Parent set no explicit database → use the connector's real database name, not the
+        # datasource default (resolve_database_name_for_prompt contract).
+        task_tool._parent_node = self._parent(database="", connector_db="california_schools")
+        assert task_tool._parent_db_context()["database"] == "california_schools"
+
+    def test_parent_db_context_ignores_mock_connector_database_name(self, task_tool):
+        parent = MagicMock()
+        parent.input.database = ""
+        parent.input.catalog = None
+        parent.input.db_schema = None
+        task_tool._parent_node = parent
+
+        assert task_tool._parent_db_context() == {
+            "database": None,
+            "catalog": None,
+            "db_schema": None,
+        }
+
+    def test_parent_db_context_no_parent_returns_empty(self, task_tool):
+        task_tool._parent_node = None
+        assert task_tool._parent_db_context() == {}
+
+    def test_apply_db_context_skips_fields_the_input_lacks(self):
+        # ExploreNodeInput declares only `database`; catalog/db_schema must be skipped, not error.
+        class OnlyDatabase:
+            database = None
+
+        obj = SubAgentTaskTool._apply_db_context(OnlyDatabase(), {"database": "db1", "catalog": "c", "db_schema": "s"})
+        assert obj.database == "db1"
+        assert not hasattr(obj, "catalog")
+
+    def test_apply_db_context_sets_all_declared_fields(self):
+        from datus.schemas.gen_sql_agentic_node_models import GenSQLNodeInput
+
+        ctx = {"database": "california_schools", "catalog": "cat", "db_schema": "sch"}
+        gen = SubAgentTaskTool._apply_db_context(GenSQLNodeInput(user_message="x"), ctx)
+        assert (gen.database, gen.catalog, gen.db_schema) == ("california_schools", "cat", "sch")
+
+    def test_build_node_input_explore_inherits_parent_database(self, real_agent_config, mock_llm_create):
+        from datus.agent.node.explore_agentic_node import ExploreAgenticNode
+        from datus.schemas.explore_agentic_node_models import ExploreNodeInput
+
+        tool = SubAgentTaskTool(agent_config=real_agent_config)
+        tool._parent_node = self._parent(database="california_schools")
+        node = ExploreAgenticNode(
+            node_id="t",
+            description="d",
+            node_type=NodeType.TYPE_EXPLORE,
+            agent_config=real_agent_config,
+            node_name="explore",
+        )
+        inp = tool._build_node_input(node, "explore schools")
+        assert isinstance(inp, ExploreNodeInput)
+        assert inp.database == "california_schools"
+
+    def test_build_node_input_explore_no_parent_leaves_database_unset(self, real_agent_config, mock_llm_create):
+        from datus.agent.node.explore_agentic_node import ExploreAgenticNode
+
+        tool = SubAgentTaskTool(agent_config=real_agent_config)
+        tool._parent_node = None
+        node = ExploreAgenticNode(
+            node_id="t",
+            description="d",
+            node_type=NodeType.TYPE_EXPLORE,
+            agent_config=real_agent_config,
+            node_name="explore",
+        )
+        inp = tool._build_node_input(node, "explore schools")
+        assert inp.database is None
+
+    def test_refresh_node_db_tools_rebuilds_when_database_inherited(self):
+        node = MagicMock()
+        node.input.database = "california_schools"
+        node.db_func_tool = MagicMock()
+
+        SubAgentTaskTool._refresh_node_db_tools(
+            node,
+            {"database": "california_schools", "catalog": None, "db_schema": None},
+        )
+
+        node.setup_tools.assert_called_once_with()
+
+    def test_refresh_node_db_tools_preserves_ask_user_after_setup(self):
+        read_query = Mock()
+        read_query.name = "read_query"
+        ask_user = Mock()
+        ask_user.name = "ask_user"
+
+        node = MagicMock()
+        node.input.database = "california_schools"
+        node.db_func_tool = MagicMock()
+        node.tools = [read_query, ask_user]
+        node.ask_user_tool.available_tools.return_value = [ask_user]
+
+        def reset_tools():
+            node.tools = [read_query]
+
+        node.setup_tools.side_effect = reset_tools
+
+        SubAgentTaskTool._refresh_node_db_tools(
+            node,
+            {"database": "california_schools", "catalog": None, "db_schema": None},
+        )
+
+        assert [tool.name for tool in node.tools] == ["read_query", "ask_user"]
+
+    def test_refresh_node_db_tools_skips_when_database_absent(self):
+        node = MagicMock()
+        node.input.database = None
+        node.db_func_tool = MagicMock()
+
+        SubAgentTaskTool._refresh_node_db_tools(
+            node,
+            {"database": None, "catalog": None, "db_schema": None},
+        )
+
+        node.setup_tools.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_task_delegation_reviews_plans_through_the_parent_session(task_tool, tmp_path):
+    from datus.tools.func_tool.semantic_plan_file_tools import SemanticPlanFileTools
+    from datus.tools.proxy.semantic_plan_review import apply_semantic_plan_review
+    from datus.tools.proxy.tool_result_channel import ToolResultChannel
+
+    class ReadyChannel(ToolResultChannel):
+        async def wait_for(self, call_id, timeout=None):
+            waiting.set()
+            return await super().wait_for(call_id, timeout)
+
+    waiting = asyncio.Event()
+    parent = SimpleNamespace(
+        tools=[],
+        semantic_plan_file_tool=None,
+        tool_channel=ReadyChannel(),
+        proxied_tool_names=set(),
+        proxy_tool_patterns=[],
+        session_id=None,
+        scope="owner",
+        pending_input_queue=None,
+    )
+    apply_semantic_plan_review(parent)
+    task_tool.set_parent_node(parent)
+    writer = SemanticPlanFileTools(tmp_path)
+    child = MagicMock()
+    child.semantic_plan_file_tool = writer
+    child.tools = writer.available_tools()
+    child.proxied_tool_names = set()
+    child.scope = "owner"
+    child.session_id = "semantic_modeling_session_test"
+    child.session_manager = None
+    observed = []
+
+    async def stream(*_args):
+        observed.append(
+            await child.tools[0].on_invoke_tool(
+                SimpleNamespace(tool_call_id="nested-call"), json.dumps({"model_name": "sales", "plan_json": {}})
+            )
+        )
+        return
+        yield  # pragma: no cover
+
+    child.execute_stream_with_interactions = stream
+    with (
+        patch.object(task_tool, "_create_node", return_value=child),
+        patch.object(task_tool, "_refresh_node_db_tools"),
+        patch.object(task_tool, "_build_node_input"),
+    ):
+        pending = asyncio.create_task(task_tool._execute_node("semantic_modeling", "plan sales"))
+        try:
+            await asyncio.wait_for(waiting.wait(), 2)
+            preview = parent.tool_review_previews["nested-call"]
+            child.action_bus.put.assert_called_once()
+            assert child.action_bus.put.call_args.args[0].output["preview"] == preview
+            assert not (tmp_path / preview["filePath"]).exists()
+            assert "write_semantic_model_plan_file" in parent.proxied_tool_names
+            assert "write_semantic_model_plan_file" in child.proxied_tool_names
+            await parent.tool_channel.publish("nested-call", {"success": 1})
+            await pending
+            assert observed[0]["result"]["review_status"] == "accepted"
+            assert (tmp_path / preview["filePath"]).read_text() == preview["newText"]
+            assert not parent.tool_review_previews
+        finally:
+            parent.tool_channel.cancel_all()
+            await pending

@@ -31,6 +31,34 @@ def skill_dir(tmp_path):
 
 
 class TestSkillRegistryScanAndAccess:
+    def test_default_registry_uses_request_agent_config(self, skill_dir, monkeypatch):
+        """A registry without explicit SkillConfig still stays tenant-scoped."""
+
+        class RuntimeConfig:
+            plugins_enabled = True
+
+            @staticmethod
+            def active_plugin_names():
+                return {"tenant-plugin"}
+
+        seen = []
+
+        def plugin_dirs(*, active_names):
+            seen.append(active_names)
+            return [str(skill_dir)]
+
+        monkeypatch.setattr("datus.plugins.registry.plugin_skill_directories", plugin_dirs)
+        monkeypatch.setattr(
+            "datus.plugins.activation.active_names_for_cwd",
+            lambda: (_ for _ in ()).throw(AssertionError("CWD config must not be read")),
+        )
+
+        registry = SkillRegistry(agent_config=RuntimeConfig())
+        registry.scan_directories()
+
+        assert registry.skill_exists("test-skill")
+        assert seen == [{"tenant-plugin"}]
+
     def test_scan_discovers_skills(self, skill_dir):
         config = SkillConfig(directories=[str(skill_dir)])
         registry = SkillRegistry(config=config)
@@ -89,13 +117,16 @@ class TestSkillRegistryScanAndAccess:
         content = registry.load_skill_content("test-skill")
         assert "# Test Skill Body" in content
 
-    def test_load_skill_content_caches(self, skill_dir):
+    def test_load_skill_content_reads_updates_without_rediscovery(self, skill_dir):
         config = SkillConfig(directories=[str(skill_dir)])
         registry = SkillRegistry(config=config)
         registry.scan_directories()
         c1 = registry.load_skill_content("test-skill")
+        path = skill_dir / "test-skill" / "SKILL.md"
+        path.write_text(path.read_text().replace("Test Skill Body", "Updated Skill Body"))
         c2 = registry.load_skill_content("test-skill")
-        assert c1 == c2
+        assert "# Test Skill Body" in c1
+        assert "# Updated Skill Body" in c2
 
     def test_load_skill_content_not_found(self, skill_dir):
         config = SkillConfig(directories=[str(skill_dir)])
@@ -209,25 +240,20 @@ class TestSkillRegistryDuplicateWarning:
 class TestSkillRegistryDiscoveryExtended:
     """Extended discovery tests for scripts, disabled model, and location type."""
 
-    def test_discover_skill_with_scripts(self, tmp_path):
-        skill_dir = tmp_path / "skills" / "script-skill"
+    def test_discover_skill_with_tags(self, tmp_path):
+        skill_dir = tmp_path / "skills" / "tagged-skill"
         skill_dir.mkdir(parents=True)
         (skill_dir / "SKILL.md").write_text(
-            "---\nname: script-skill\ndescription: A skill with scripts\n"
-            'tags: [scripts]\nallowed_commands:\n  - "python:scripts/*.py"\n  - "sh:*.sh"\n---\n\n# Script Skill\n'
+            "---\nname: tagged-skill\ndescription: A skill with tags\ntags: [sql, analysis]\n---\n\n# Tagged Skill\n"
         )
-        scripts_dir = skill_dir / "scripts"
-        scripts_dir.mkdir()
-        (scripts_dir / "analyze.py").write_text("print('analyzing')")
 
         config = SkillConfig(directories=[str(tmp_path / "skills")])
         registry = SkillRegistry(config=config)
         registry.scan_directories()
-        skill = registry.get_skill("script-skill")
-        assert skill.name == "script-skill"
-        assert skill.has_scripts() is True
-        assert "python:scripts/*.py" in skill.allowed_commands
-        assert "sh:*.sh" in skill.allowed_commands
+        skill = registry.get_skill("tagged-skill")
+        assert skill.name == "tagged-skill"
+        assert "sql" in skill.tags
+        assert "analysis" in skill.tags
 
     def test_discover_skill_disabled_model(self, tmp_path):
         skill_dir = tmp_path / "skills" / "user-only-skill"
@@ -353,9 +379,21 @@ class TestBuiltinSkillsResolution:
         # First-wins: the description must come from the override, not the built-in.
         assert skill.description == "User-shadow init"
 
-    def test_from_dict_does_not_duplicate_builtin(self):
+    def test_from_dict_does_not_duplicate_builtin(self, monkeypatch):
         """from_dict must be idempotent when the user already lists the packaged dir."""
+        import importlib.metadata as importlib_metadata
+
         from datus.tools.skill_tools.skill_config import _builtin_skills_dir
+
+        # Isolate from any installed plugin/adapter skill dirs (datus.plugins /
+        # datus.skills) so the assertion reflects only builtin de-duplication.
+        monkeypatch.setattr("datus.plugins.registry.plugin_skill_directories", lambda: [])
+
+        class _NoEntryPoints:
+            def select(self, *, group, name=None):
+                return []
+
+        monkeypatch.setattr(importlib_metadata, "entry_points", lambda: _NoEntryPoints())
 
         builtin = _builtin_skills_dir()
         assert isinstance(builtin, str)

@@ -1,7 +1,7 @@
 import argparse
 import os
 import time
-from typing import AsyncGenerator, Callable, Dict, Optional
+from typing import Any, AsyncGenerator, Callable, Dict, Optional
 
 from datus.agent.evaluate import evaluate_result, setup_node_input
 from datus.agent.plan import generate_workflow
@@ -11,6 +11,7 @@ from datus.configuration.node_type import NodeType
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
 from datus.schemas.base import BaseResult
 from datus.schemas.node_models import SqlTask
+from datus.storage.kb_retrieval import KbSearchMode, resolve_kb_search_mode
 from datus.utils.loggings import get_logger
 from datus.utils.trace_context import build_workflow_trace_context_from_runner
 from datus.utils.traceable_utils import get_trace_reference, optional_traceable
@@ -36,6 +37,7 @@ class WorkflowRunner:
         self._pre_run = pre_run_callable
         # Generate run_id if not provided (format: YYYYMMDD_HHMMSS)
         self.run_id = run_id
+        self.last_run_metadata: Dict[str, Any] = {}
 
     def initialize_workflow(self, sql_task: SqlTask):
         """Generate a new workflow plan."""
@@ -111,10 +113,15 @@ class WorkflowRunner:
 
         self.workflow.display()
         file_name = self.workflow.task.id
-        timestamp = int(time.time())
+        timestamp = time.time_ns()
+        artifact_profile = getattr(self.workflow.task, "artifact_profile", "interactive")
 
         # Use new hierarchical directory structure: {trajectory_dir}/{datasource}/{run_id}/
-        trajectory_dir = self.global_config.get_trajectory_run_dir(self.run_id)
+        if artifact_profile == "benchmark_v1":
+            datasource = self.workflow.task.datasource or self.global_config.current_datasource
+            trajectory_dir = self.global_config.trajectory_run_dir(datasource, self.run_id)
+        else:
+            trajectory_dir = self.global_config.get_trajectory_run_dir(self.run_id)
         os.makedirs(trajectory_dir, exist_ok=True)
 
         trace_reference = get_trace_reference()
@@ -127,9 +134,14 @@ class WorkflowRunner:
                 f"span_id={trace_reference.span_id} provider={trace_reference.provider}"
             )
 
-        save_path = f"{trajectory_dir}/{file_name}_{timestamp}.yaml"
-        self.workflow.save(save_path)
-        logger.info(f"Workflow saved to {save_path}")
+        if artifact_profile == "benchmark_v1":
+            # The benchmark attempt finalizer writes the native v1 trajectory;
+            # skip the compatibility envelope to avoid a duplicated payload.
+            save_path = None
+        else:
+            save_path = f"{trajectory_dir}/{file_name}_{timestamp}.yaml"
+            self.workflow.save(save_path)
+            logger.info(f"Workflow saved to {save_path}")
         final_result = self.workflow.get_final_result()
         logger.info(f"Workflow execution completed. Steps:{step_count}")
 
@@ -141,11 +153,13 @@ class WorkflowRunner:
         }
         if trace_metadata:
             result["trace_reference"] = trace_metadata
+        self.last_run_metadata = result
         return result
 
     def _ensure_prerequisites(self, sql_task: Optional[SqlTask], check_storage: bool) -> bool:
         if check_storage:
-            self.global_config.check_init_storage_config("database")
+            if resolve_kb_search_mode(self.global_config) == KbSearchMode.VECTOR:
+                self.global_config.check_init_storage_config("database")
             self.global_config.check_init_storage_config("metrics")
 
         if not self.init_or_load_workflow(sql_task):

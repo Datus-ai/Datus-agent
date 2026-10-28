@@ -33,7 +33,7 @@ logger = get_logger(__name__)
 
 # Database (read) tools the quickstart chat path must expose so a fresh user's
 # natural-language question can be answered with SQL against a local datasource.
-EXPECTED_DB_TOOLS = ("read_query", "list_tables", "describe_table")
+EXPECTED_DB_TOOLS = ("execute_sql", "list_tables", "describe_table")
 
 
 @pytest.mark.nightly
@@ -103,7 +103,9 @@ class TestQuickstartChatSmoke:
             f"got tool actions: {[(a.action_type, a.status) for a in actions if a.role == ActionRole.TOOL]}"
         )
 
-        sql_read_actions = [a for a in successful_tool_actions if "query" in a.action_type.lower()]
+        sql_read_actions = [
+            a for a in successful_tool_actions if "query" in a.action_type.lower() or "sql" in a.action_type.lower()
+        ]
         assert len(sql_read_actions) >= 1, (
             f"Quickstart answer must execute a SQL read tool, "
             f"successful tool action types: {[a.action_type for a in successful_tool_actions]}"

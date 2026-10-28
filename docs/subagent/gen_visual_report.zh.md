@@ -6,7 +6,7 @@
 
 ![HTML 报告示例——KPI 横幅、关键指标、月度增长趋势图](../assets/gen_visual_report_preview.png)
 
-HTML 报告是一份长篇叙事，数据在生成时就固化下来。页面上没有筛选器，也不会再次访问数据库。如果你要的是接 Superset / Grafana 的 BI 平台仪表盘，请使用 `gen_dashboard`。
+HTML 报告是一份长篇叙事，数据在生成时就固化下来。页面上没有筛选器，也不会再次访问数据库。如果你要的是接 Superset 等外部 BI 平台的仪表盘，请让主 agent 直接使用已安装的 BI plugin。
 
 如果你想要的是纯文本的 **Markdown 报告**（不带 HTML 渲染、不带图表），请改用 `gen_report` agent。
 
@@ -42,7 +42,7 @@ HTML 报告是一份长篇叙事，数据在生成时就固化下来。页面上
 
 `gen_visual_report` 接受两种同样合法的起点：
 
-- **从 metric 出发** —— 用 `@Metrics <subject>.<group>.<metric>` 三段式直接引用已经生成的指标（subject 树路径 + 指标名），agent 会自动从语义层加载定义、维度和时间窗。项目里已经沉淀了 metric 注册表时最适用（如何生成指标见 [Generate Metrics](gen_metrics.zh.md)）。
+- **从 metric 出发** —— 用 `@Metrics <subject>.<group>.<metric>` 三段式直接引用已经生成的指标（subject 树路径 + 指标名），agent 会自动从语义层加载定义、维度和时间窗。项目里已经沉淀了 metric 注册表时最适用（如何创作 Dosi 指标见 [Semantic Modeling](semantic_modeling.md)）。
   ```bash
   围绕 @Metrics revenue.daily.dau 和 @Metrics conversion.weekly.signup_rate 做一份 Q4 2025 报告，按地区拆分
   ```
@@ -120,3 +120,9 @@ agent:
 - **想看的维度** —— *"按地区"*、*"按入驻时长分桶"*、*"月度趋势"*
 
 省略也行，agent 会基于项目里的 metric 自行推断，仅在意图严重模糊时才主动追问。
+
+## 内容来源声明
+
+生成或编辑产物时，每个 `ChartCard` / `BlockHandle` 的 ID 和查询来源都需要使用字面量声明，以便「口径与来源」把内容节点连接到真实查询。KPI 的共享组件只负责视觉展示，在调用处用独立的 `BlockHandle` 包裹；多个查询共同提供数据时，通过字面量 `queryIds` 数组声明全部来源。前端计算的比率也需要声明提供分子和分母的查询。
+
+`validate_render()` 会拒绝动态 ID、动态查询来源和隐藏卡片属性的 spread props，并提示具体修复位置。已生成产物的动态封装仍可运行，但重新完成生成或编辑前需要补齐静态声明；未使用的查询不应为了补连线而被声明。

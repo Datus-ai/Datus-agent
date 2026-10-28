@@ -6,7 +6,11 @@ source:
     adapter contract, or release-confidence operation exposed from docs/.
 layers:
   pr_acceptance:
-    description: Fast deterministic PR signal for documented core flows.
+    description: >
+      Fast deterministic PR signal for documented core flows. Only nodeids whose
+      file is listed in PR_ACCEPTANCE_TARGETS (ci/run-pr-tests.py) run on every
+      PR; other nodeids run through the diff-driven impacted unit suite and only
+      execute when the PR touches their mapped source tree.
   merge_queue:
     description: Deterministic pre-merge signal on the merge-group commit.
   nightly:
@@ -23,14 +27,20 @@ docs_coverage_policy:
   exclude:
     - path: docs/index.md
       reason: Documentation site landing page, not a user-facing flow.
+    - path: docs/getting_started/index.md
+      reason: Getting Started path chooser and section overview, not a discrete product flow.
     - path: docs/develop/README.md
       reason: Contributor/development guide, not a product flow.
+    - path: docs/plugin/development.md
+      reason: Contributor/development guide for plugin authors, not a product flow.
     - path: docs/release_notes.md
       reason: Release notes, not a user-facing flow.
     - path: docs/configuration/introduction.md
       reason: Configuration section overview, not a discrete flow.
     - path: docs/knowledge_base/introduction.md
       reason: Knowledge base section overview, not a discrete flow.
+    - path: docs/API/debugging.md
+      reason: REST API diagnostics/troubleshooting reference (SIGUSR1 task dump), not a discrete product flow.
 flow_groups:
   onboarding:
     description: First-run and documented bootstrap flows.
@@ -53,11 +63,13 @@ flow_groups:
           pr_acceptance:
             status: covered
             nodeids:
+              - tests/integration/agent/test_core_acceptance.py::test_chat_stream_reaches_model_and_completes
               - tests/unit_tests/cli/test_core_entrypoint_acceptance.py::test_quickstart_documented_repl_entrypoints_stay_routable
               - tests/unit_tests/cli/test_interactive_init.py
           merge_queue:
             status: covered
             nodeids:
+              - tests/integration/agent/test_core_acceptance.py::test_chat_stream_reaches_model_and_completes
               - tests/unit_tests/cli/test_core_entrypoint_acceptance.py::test_quickstart_documented_repl_entrypoints_stay_routable
               - tests/unit_tests/cli/test_interactive_init.py
           nightly:
@@ -81,31 +93,44 @@ flow_groups:
         quality_sensitive: true
         docs:
           - docs/getting_started/dashboard_copilot.md
+          - docs/skills/dashboard_bootstrap.md
           - docs/getting_started/data_engineering_quickstart.md
           - docs/configuration/bi_platforms.md
         entrypoints:
-          - "CLI: datus bootstrap-bi"
-          - "CLI chat: dashboard generation subagent"
+          - "REPL: /bootstrap-bi compatibility skill shortcut"
+          - "CLI chat: natural-language dashboard bootstrap request"
         contracts:
-          - Bootstrap extracts semantic model, metrics, and reference SQL from documented BI context.
-          - Superset and Grafana integrations remain usable through BI tool contracts.
+          - The shortcut routes to the dashboard-bootstrap skill through the standard chat pipeline.
+          - The selected BI plugin exports confirmed SQL; builtin agents construct reference SQL and metrics.
+          - When configuration is mutable, the workflow uses create-subagent to persist the dashboard agent pair.
         coverage:
           pr_acceptance:
-            status: covered
+            status: partial
             nodeids:
-              - tests/unit_tests/cli/test_core_entrypoint_acceptance.py::test_bootstrap_bi_extracts_context_and_hands_it_to_save_stream
+              - tests/unit_tests/cli/test_core_entrypoint_acceptance.py::test_bootstrap_bi_routes_to_dashboard_bootstrap_skill
+              - tests/unit_tests/tools/skill_tools/test_dashboard_bootstrap_skill.py
+              - tests/unit_tests/tools/skill_tools/test_create_subagent_skill.py
               - tests/unit_tests/tools/func_tool/test_bi_tools.py
           merge_queue:
-            status: covered
+            status: partial
             nodeids:
-              - tests/unit_tests/cli/test_core_entrypoint_acceptance.py::test_bootstrap_bi_extracts_context_and_hands_it_to_save_stream
+              - tests/unit_tests/cli/test_core_entrypoint_acceptance.py::test_bootstrap_bi_routes_to_dashboard_bootstrap_skill
+              - tests/unit_tests/tools/skill_tools/test_dashboard_bootstrap_skill.py
+              - tests/unit_tests/tools/skill_tools/test_create_subagent_skill.py
               - tests/unit_tests/tools/func_tool/test_bi_tools.py
           nightly:
             status: covered
             nodeids:
-              - tests/integration/agent/test_gen_dashboard_agentic.py
-              - tests/integration/tools/test_bi_dashboard.py
+              - tests/integration/plugins/test_dashboard_bootstrap_plugin.py::test_dashboard_bootstrap_installs_plugin_and_exports_verified_superset_queries
+              - tests/integration/agent/test_gen_dashboard_agentic.py::TestGenDashboardAgenticInit
+              - tests/integration/tools/test_bi_dashboard.py::TestPartialIntegration::test_workflow_without_llm
               - tests/integration/tools/test_bi_grafana.py
+            notes: >
+              The P0 Superset path installs the managed plugin from source, verifies a real
+              dashboard SQL export manifest and checksums, checks node/tool initialization,
+              and exercises BI orchestration with fixed generation results. Superset real-model
+              workflows are manual evaluations; nightly does not guarantee model adherence
+              to the skill's confirmation boundary. See ci/cross-repo-harness.md.
           weekly_benchmark:
             status: not_applicable
             notes: >
@@ -133,18 +158,19 @@ flow_groups:
           pr_acceptance:
             status: covered
             nodeids:
-              - tests/unit_tests/cli/test_core_entrypoint_acceptance.py::test_bootstrap_semantic_model_and_metrics_streams_orchestrate_fake_helpers
+              - tests/integration/agent/test_core_acceptance.py::test_init_metadata_and_knowledge_are_reusable
+              - tests/unit_tests/cli/test_core_entrypoint_acceptance.py::test_bootstrap_semantic_modeling_stream_orchestrates_unified_helper
               - tests/integration/storage/test_storage_layout.py
           merge_queue:
             status: covered
             nodeids:
-              - tests/unit_tests/cli/test_core_entrypoint_acceptance.py::test_bootstrap_semantic_model_and_metrics_streams_orchestrate_fake_helpers
+              - tests/integration/agent/test_core_acceptance.py::test_init_metadata_and_knowledge_are_reusable
+              - tests/unit_tests/cli/test_core_entrypoint_acceptance.py::test_bootstrap_semantic_modeling_stream_orchestrates_unified_helper
               - tests/integration/storage/test_storage_layout.py
           nightly:
             status: covered
             nodeids:
-              - tests/integration/agent/test_gen_semantic_model_agentic.py
-              - tests/integration/agent/test_gen_metrics_agentic.py
+              - tests/integration/agent/test_semantic_modeling_agentic.py
               - tests/integration/agent/test_sql_summary_agentic.py
           weekly_benchmark:
             status: covered
@@ -162,9 +188,7 @@ flow_groups:
         docs:
           - docs/cli/introduction.md
           - docs/cli/chat_command.md
-          - docs/cli/model_command.md
-          - docs/cli/language_command.md
-          - docs/cli/effort_command.md
+          - docs/cli/other_commands.md
           - docs/cli/plan_mode.md
           - docs/configuration/compact.md
         entrypoints:
@@ -175,14 +199,14 @@ flow_groups:
           - Model, language, and effort overrides are accepted and persisted through the CLI layer.
         coverage:
           pr_acceptance:
-            status: covered
+            status: partial
             nodeids:
               - tests/unit_tests/cli/test_core_entrypoint_acceptance.py
               - tests/unit_tests/cli/test_model_commands.py
               - tests/unit_tests/cli/test_language_commands.py
               - tests/unit_tests/cli/test_effort_commands.py
           merge_queue:
-            status: covered
+            status: partial
             nodeids:
               - tests/unit_tests/cli/test_core_entrypoint_acceptance.py
               - tests/unit_tests/cli/test_model_commands.py
@@ -213,14 +237,16 @@ flow_groups:
           - Resume, stop, user interaction, and error envelopes remain compatible.
         coverage:
           pr_acceptance:
-            status: covered
+            status: partial
             nodeids:
+              - tests/integration/api/test_chat_acceptance.py
               - tests/unit_tests/api/routes/test_chat_routes.py
               - tests/unit_tests/api/services/test_chat_task_manager.py
               - tests/integration/api/test_api.py
           merge_queue:
-            status: covered
+            status: partial
             nodeids:
+              - tests/integration/api/test_chat_acceptance.py
               - tests/unit_tests/api/routes/test_chat_routes.py
               - tests/unit_tests/api/services/test_chat_task_manager.py
               - tests/integration/api/test_api.py
@@ -247,12 +273,12 @@ flow_groups:
           - Success-story archive behavior remains compatible with the API service layer.
         coverage:
           pr_acceptance:
-            status: covered
+            status: partial
             nodeids:
               - tests/unit_tests/cli/web/test_chatbot.py
               - tests/unit_tests/api/services/test_success_story_service.py
           merge_queue:
-            status: covered
+            status: partial
             nodeids:
               - tests/unit_tests/cli/web/test_chatbot.py
               - tests/unit_tests/api/services/test_success_story_service.py
@@ -282,13 +308,13 @@ flow_groups:
           - Gateway runtime can route messages to Datus chat services.
         coverage:
           pr_acceptance:
-            status: covered
+            status: partial
             nodeids:
               - tests/unit_tests/gateway/test_runtime.py
               - tests/unit_tests/gateway/adapters/test_feishu.py
               - tests/unit_tests/gateway/adapters/test_slack.py
           merge_queue:
-            status: covered
+            status: partial
             nodeids:
               - tests/unit_tests/gateway/test_runtime.py
               - tests/unit_tests/gateway/adapters/test_feishu.py
@@ -314,6 +340,30 @@ flow_groups:
         quality_sensitive: false
         docs:
           - docs/configuration/datasources.md
+          - docs/configuration/datasources/athena.md
+          - docs/configuration/datasources/aurora.md
+          - docs/configuration/datasources/bigquery.md
+          - docs/configuration/datasources/clickhouse.md
+          - docs/configuration/datasources/clickzetta.md
+          - docs/configuration/datasources/doris.md
+          - docs/configuration/datasources/duckdb.md
+          - docs/configuration/datasources/dws.md
+          - docs/configuration/datasources/gaussdb.md
+          - docs/configuration/datasources/greenplum.md
+          - docs/configuration/datasources/hana.md
+          - docs/configuration/datasources/hive.md
+          - docs/configuration/datasources/hologres.md
+          - docs/configuration/datasources/maxcompute.md
+          - docs/configuration/datasources/mysql.md
+          - docs/configuration/datasources/oracle.md
+          - docs/configuration/datasources/postgresql.md
+          - docs/configuration/datasources/redshift.md
+          - docs/configuration/datasources/snowflake.md
+          - docs/configuration/datasources/spark.md
+          - docs/configuration/datasources/sqlite.md
+          - docs/configuration/datasources/starrocks.md
+          - docs/configuration/datasources/tidb.md
+          - docs/configuration/datasources/trino.md
           - docs/cli/sql_execution.md
           - docs/cli/execution_command.md
         entrypoints:
@@ -324,13 +374,13 @@ flow_groups:
           - Read-only SQL execution rejects unsafe statements where required.
         coverage:
           pr_acceptance:
-            status: covered
+            status: partial
             nodeids:
               - tests/integration/tools/test_func_tools_db.py
               - tests/integration/tools/db_tools/test_connector_duckdb.py
               - tests/unit_tests/tools/db_tools/test_db_func_tools.py
           merge_queue:
-            status: covered
+            status: partial
             nodeids:
               - tests/integration/tools/test_func_tools_db.py
               - tests/integration/tools/db_tools/test_connector_duckdb.py
@@ -342,10 +392,13 @@ flow_groups:
               - tests/integration/adapters/test_mysql.py
               - tests/integration/adapters/test_clickhouse.py
               - tests/integration/adapters/test_starrocks.py
+              - tests/integration/adapters/test_doris.py
+              - tests/integration/adapters/test_tidb.py
               - tests/integration/adapters/test_trino.py
               - tests/integration/adapters/test_greenplum.py
               - tests/integration/adapters/test_hive.py
               - tests/integration/adapters/test_spark.py
+              - tests/integration/adapters/test_gaussdb.py
           weekly_benchmark:
             status: covered
             notes: Baisheng weekly benchmark runs Datus queries against StarRocks.
@@ -360,67 +413,66 @@ flow_groups:
           - docs/API/introduction.md
         entrypoints:
           - "REST API: /api/v1/chat/stream"
-          - "REST API header: X-Datus-Principal"
-          - DBFuncTool SQL policy enforcement
+          - "REST API header: X-Datus-Policy-Context"
+          - DBFuncTool policy runtime enforcement
         contracts:
-          - The default API auth provider parses request principals from X-Datus-Principal JSON.
-          - X-Datus-User-Id remains session identity and does not satisfy SQL policy principal fields.
-          - Enabled SQL policies fail fast when required principal fields are missing.
-          - Custom SQL policy providers can rewrite or deny protected read queries before database execution.
+          - The default API provider parses execution policy inputs from X-Datus-Policy-Context JSON.
+          - X-Datus-User-Id remains session identity and is not merged into policy context.
+          - Active policy runtimes validate context before any subagent starts.
+          - Policy plugins can rewrite or deny reads before execution and transform successful results afterward.
         coverage:
           pr_acceptance:
-            status: covered
+            status: partial
             nodeids:
-              - tests/unit_tests/api/auth/test_no_auth_provider.py
-              - tests/unit_tests/api/routes/test_chat_routes.py::TestStreamChatSqlPolicyPreCheck
-              - tests/unit_tests/tools/test_sql_policy.py
+              - tests/unit_tests/api/auth/test_header_context_provider.py
+              - tests/unit_tests/api/routes/test_chat_routes.py::TestStreamChatPolicyContextPreCheck
+              - tests/unit_tests/tools/test_policy_runtime.py
           merge_queue:
-            status: covered
+            status: partial
             nodeids:
-              - tests/unit_tests/api/auth/test_no_auth_provider.py
-              - tests/unit_tests/api/routes/test_chat_routes.py::TestStreamChatSqlPolicyPreCheck
-              - tests/unit_tests/tools/test_sql_policy.py
+              - tests/unit_tests/api/auth/test_header_context_provider.py
+              - tests/unit_tests/api/routes/test_chat_routes.py::TestStreamChatPolicyContextPreCheck
+              - tests/unit_tests/tools/test_policy_runtime.py
           nightly:
             status: covered
-            notes: >
-              Nightly API and adapter jobs exercise chat streaming and database reads; deterministic unit
-              tests cover request-principal parsing and the open-source provider contract without requiring
-              a live private policy provider deployment.
             nodeids:
+              - tests/integration/plugins/test_sql_policy_plugin.py::test_managed_sql_policy_enforces_sql_semantic_and_api_reads
               - tests/integration/api/test_api_chat.py
               - tests/integration/adapters/test_starrocks.py
+            notes: >
+              The P0 managed-plugin test installs the real policy package and exercises fresh-process
+              CLI discovery, SQL row filtering, semantic argument rewriting, API context validation,
+              deny behavior, and user-permission precedence without an LLM.
           weekly_benchmark:
             status: covered
             notes: Baisheng weekly benchmark can run against StarRocks with request-scoped market filters.
         gaps: []
 
       - id: data_access.adapter_contracts
-        title: DB, BI, scheduler, and semantic adapter contracts
+        title: DB, BI, and scheduler adapter contracts
         priority: p0
         quality_sensitive: false
         docs:
           - docs/adapters/db_adapters.md
           - docs/adapters/bi_adapters.md
           - docs/adapters/scheduler_adapters.md
-          - docs/adapters/semantic_adapters.md
         entrypoints:
           - DB adapters
           - BI adapters
           - Scheduler adapters
-          - Semantic adapters
         contracts:
           - Adapter packages keep the contract consumed by Datus-agent stable.
           - Datus-agent nightly installs sibling/source adapters where required and exercises real integrations.
         coverage:
           pr_acceptance:
-            status: covered
+            status: partial
             notes: Adapter repos run their own unit/build checks; Datus-agent PR covers consuming contracts.
             nodeids:
               - tests/unit_tests/tools/db_tools/test_registry.py
               - tests/unit_tests/tools/func_tool/test_bi_tools.py
               - tests/unit_tests/tools/func_tool/test_scheduler_tools.py
           merge_queue:
-            status: covered
+            status: partial
             notes: Adapter repos run merge-queue integration checks for Docker-backed contracts.
             nodeids:
               - tests/unit_tests/tools/db_tools/test_registry.py
@@ -429,10 +481,12 @@ flow_groups:
           nightly:
             status: covered
             nodeids:
-              - tests/integration/tools/test_bi_dashboard.py
+              - tests/integration/tools/test_bi_dashboard.py::TestPartialIntegration::test_workflow_without_llm
               - tests/integration/tools/test_bi_grafana.py
               - tests/integration/agent/test_scheduler_agentic.py
               - tests/integration/adapters/test_starrocks.py
+              - tests/integration/adapters/test_doris.py
+              - tests/integration/adapters/test_tidb.py
           weekly_benchmark:
             status: covered
             notes: Weekly benchmark uses datus-agent with released/source adapter packages for the selected scenario.
@@ -456,12 +510,12 @@ flow_groups:
           - Fuzzy search and subject-tree context remain available to context-search tools.
         coverage:
           pr_acceptance:
-            status: covered
+            status: partial
             nodeids:
               - tests/unit_tests/tools/func_tool/test_context_search.py
               - tests/integration/tools/test_context_search.py
           merge_queue:
-            status: covered
+            status: partial
             nodeids:
               - tests/unit_tests/tools/func_tool/test_context_search.py
               - tests/integration/tools/test_context_search.py
@@ -470,7 +524,7 @@ flow_groups:
             nodeids:
               - tests/integration/tools/test_context_search.py
               - tests/integration/tools/test_context_injection.py
-              - tests/integration/tools/test_context_injection.py::TestContextRetrievalInjection::test_search_knowledge_returns_seeded_entry
+              - tests/integration/tools/test_context_injection.py::TestContextRetrievalInjection::test_search_semantic_objects_surfaces_catalog_table
               - tests/integration/tools/test_context_injection.py::TestContextRetrievalInjection::test_list_subject_tree_nests_all_sources
               - tests/integration/tools/test_context_injection.py::TestContextInjectionRealLLM::test_context_tools_wired_into_node
               - tests/integration/tools/test_context_injection.py::TestContextInjectionRealLLM::test_execute_stream_invokes_context_tools
@@ -493,6 +547,7 @@ flow_groups:
         quality_sensitive: true
         docs:
           - docs/knowledge_base/metadata.md
+          - docs/knowledge_base/metadata_fts.md
           - docs/configuration/storage.md
         entrypoints:
           - CLI bootstrap
@@ -500,16 +555,18 @@ flow_groups:
           - Metadata storage backend
         contracts:
           - Table and column metadata can be initialized, stored, searched, and scoped by datasource.
+          - Metadata bootstrap and runtime retrieval use the configured vector or FTS mode consistently.
+          - FTS reports unsupported, missing, legacy, or incompatible indexes instead of silently falling back.
           - Storage layout remains isolated between projects.
         coverage:
           pr_acceptance:
-            status: covered
+            status: partial
             nodeids:
               - tests/integration/storage/test_storage_layout.py
               - tests/unit_tests/storage/schema_metadata/test_store.py
               - tests/unit_tests/api/routes/test_kb_routes.py
           merge_queue:
-            status: covered
+            status: partial
             nodeids:
               - tests/integration/storage/test_storage_layout.py
               - tests/unit_tests/storage/schema_metadata/test_store.py
@@ -517,7 +574,12 @@ flow_groups:
           nightly:
             status: covered
             nodeids:
-              - tests/integration/agent/test_kb_path_e2e.py
+              - tests/integration/storage/test_postgresql_semantic_kb.py::test_postgresql_semantic_kb_reconcile_is_idempotent
+              - tests/integration/agent/test_semantic_modeling_agentic.py
+            notes: >
+              The P0 PostgreSQL test configures both Agent RDB and vector storage to real
+              PostgreSQL/pgvector and verifies semantic projection, nullable booleans,
+              reconcile idempotency, vectors, subject tree rows, and RAG reads.
           weekly_benchmark:
             status: covered
             notes: Metadata is part of the Baisheng scenario context.
@@ -530,43 +592,60 @@ flow_groups:
         docs:
           - docs/knowledge_base/semantic_model.md
           - docs/knowledge_base/metrics.md
-          - docs/subagent/gen_semantic_model.md
-          - docs/subagent/gen_metrics.md
+          - docs/subagent/semantic_modeling.md
           - docs/subagent/ask_metrics.md
-          - docs/configuration/semantic_layer.md
-          - docs/adapters/metricflow_semantic_adapter.md
-          - docs/adapters/osi_semantic_adapter.md
+          - docs/subagent/ontology_analyst.md
+          - docs/semantic/dosi_engine.md
         entrypoints:
           - CLI bootstrap
-          - Gen semantic model subagent
-          - Gen metrics subagent
+          - Semantic modeling subagent
           - Ask metrics subagent
+          - Ontology analyst subagent
           - Extract-knowledge skill
           - Context search tools
         contracts:
           - Bootstrap and agentic generation persist semantic objects that are available to query-time retrieval.
           - Metrics and semantic models remain separable by kind and datasource scope, and extracted knowledge is captured as markdown via the extract-knowledge skill.
           - Existing metrics can be queried through the metric-first AskMetrics subagent without falling back to raw SQL generation.
+          - Ontologies under subject/ontology/ reach a datasource through mapping documents whose semantic_model_ref.iri names one of its model files; they are loaded only for OntologyAnalyst, which refuses to run without one.
+          - Semantic authoring uses the built-in Dosi runtime.
+          - Runtime database context is propagated into Dosi so validation can use the selected catalog/database/schema without a static datasource database.
         coverage:
           pr_acceptance:
-            status: covered
+            status: partial
             nodeids:
-              - tests/unit_tests/agent/node/test_gen_semantic_model_agentic_node.py
-              - tests/unit_tests/agent/node/test_gen_metrics_agentic_node.py
+              - tests/integration/agent/test_semantic_modeling_agentic.py::test_dosi_authoring_validates_reconciles_and_queries_without_llm
+              - tests/unit_tests/agent/node/test_semantic_modeling_agentic_node.py
               - tests/unit_tests/agent/node/test_ask_metrics_agentic_node.py
+              - tests/unit_tests/agent/node/test_ontology_analyst_agentic_node.py
+              - tests/unit_tests/tools/semantic_tools/test_dosi_ontology.py
               - tests/unit_tests/tools/func_tool/test_context_search.py
+              - tests/unit_tests/configuration/test_agent_config.py::TestDosiDbProfile::test_runtime_context_overlay_uses_generic_aliases
+              - tests/unit_tests/tools/func_tool/test_semantic_tools.py::TestRuntimeDbContext::test_runtime_change_rebuilds_dosi_runtime
           merge_queue:
-            status: covered
+            status: partial
             nodeids:
-              - tests/unit_tests/agent/node/test_gen_semantic_model_agentic_node.py
-              - tests/unit_tests/agent/node/test_gen_metrics_agentic_node.py
+              - tests/integration/agent/test_semantic_modeling_agentic.py::test_dosi_authoring_validates_reconciles_and_queries_without_llm
+              - tests/unit_tests/agent/node/test_semantic_modeling_agentic_node.py
               - tests/unit_tests/agent/node/test_ask_metrics_agentic_node.py
+              - tests/unit_tests/agent/node/test_ontology_analyst_agentic_node.py
+              - tests/unit_tests/tools/semantic_tools/test_dosi_ontology.py
               - tests/unit_tests/tools/func_tool/test_context_search.py
+              - tests/unit_tests/configuration/test_agent_config.py::TestDosiDbProfile::test_runtime_context_overlay_uses_generic_aliases
+              - tests/unit_tests/tools/func_tool/test_semantic_tools.py::TestRuntimeDbContext::test_runtime_change_rebuilds_dosi_runtime
           nightly:
             status: covered
             nodeids:
-              - tests/integration/agent/test_gen_semantic_model_agentic.py
-              - tests/integration/agent/test_gen_metrics_agentic.py
+              - tests/unit_tests/configuration/test_agent_config.py::TestDosiDbProfile::test_runtime_context_overlay_uses_generic_aliases
+              - tests/unit_tests/tools/func_tool/test_semantic_tools.py::TestRuntimeDbContext::test_runtime_change_rebuilds_dosi_runtime
+              - tests/integration/agent/test_semantic_modeling_agentic.py::test_dosi_authoring_validates_reconciles_and_queries_without_llm
+              - tests/integration/agent/test_semantic_modeling_agentic.py::test_semantic_modeling_authors_one_queryable_dosi_model_with_real_llm
+              - tests/integration/storage/test_postgresql_semantic_kb.py::test_postgresql_semantic_kb_reconcile_is_idempotent
+              - tests/integration/tools/test_dosi_ontology.py
+            notes: >
+              The P0 Dosi group owns a deterministic author-validate-reconcile-query test and one
+              real-LLM authoring smoke. PostgreSQL semantic projection is verified separately at
+              the Agent/storage seam.
           weekly_benchmark:
             status: covered
             notes: Baisheng weekly benchmark exercises retrieval-backed query generation.
@@ -590,13 +669,13 @@ flow_groups:
           - Query generation can retrieve relevant reference SQL without changing answer semantics.
         coverage:
           pr_acceptance:
-            status: covered
+            status: partial
             nodeids:
               - tests/unit_tests/agent/node/test_sql_summary_agentic_node.py
               - tests/unit_tests/tools/func_tool/test_reference_template_tools.py
               - tests/unit_tests/tools/func_tool/test_context_search.py
           merge_queue:
-            status: covered
+            status: partial
             nodeids:
               - tests/unit_tests/agent/node/test_sql_summary_agentic_node.py
               - tests/unit_tests/tools/func_tool/test_reference_template_tools.py
@@ -628,12 +707,12 @@ flow_groups:
           - GitHub and website sources remain represented as tracked gaps until covered.
         coverage:
           pr_acceptance:
-            status: covered
+            status: partial
             nodeids:
               - tests/integration/storage/test_platform_doc_acceptance.py
               - tests/unit_tests/tools/func_tool/test_platform_doc_search.py
           merge_queue:
-            status: covered
+            status: partial
             nodeids:
               - tests/integration/storage/test_platform_doc_acceptance.py
               - tests/unit_tests/tools/func_tool/test_platform_doc_search.py
@@ -657,7 +736,7 @@ flow_groups:
         docs:
           - docs/subagent/introduction.md
           - docs/subagent/builtin_subagents.md
-          - docs/integration/skills.md
+          - docs/skills/introduction.md
         entrypoints:
           - CLI chat subagent routing
           - Agentic node registry
@@ -669,6 +748,9 @@ flow_groups:
           pr_acceptance:
             status: covered
             nodeids:
+              - tests/integration/agent/test_core_acceptance.py::test_sql_result_reaches_followup_request
+              - tests/integration/agent/test_core_acceptance.py::test_multiturn_retains_question_and_tool_results
+              - tests/integration/agent/test_core_acceptance.py::test_tool_error_can_be_corrected
               - tests/unit_tests/agent/node/test_chat_agentic_node.py
               - tests/unit_tests/agent/node/test_gen_sql_agentic_node.py
               - tests/unit_tests/agent/node/test_compare_agentic_node.py
@@ -678,6 +760,9 @@ flow_groups:
           merge_queue:
             status: covered
             nodeids:
+              - tests/integration/agent/test_core_acceptance.py::test_sql_result_reaches_followup_request
+              - tests/integration/agent/test_core_acceptance.py::test_multiturn_retains_question_and_tool_results
+              - tests/integration/agent/test_core_acceptance.py::test_tool_error_can_be_corrected
               - tests/unit_tests/agent/node/test_chat_agentic_node.py
               - tests/unit_tests/agent/node/test_gen_sql_agentic_node.py
               - tests/unit_tests/agent/node/test_compare_agentic_node.py
@@ -718,8 +803,9 @@ flow_groups:
           - Real dashboard and scheduler paths are exercised in nightly with managed dependencies.
         coverage:
           pr_acceptance:
-            status: covered
+            status: partial
             nodeids:
+              - tests/integration/agent/test_core_acceptance.py::test_table_node_creates_a_queryable_data_product
               - tests/unit_tests/agent/node/test_gen_dashboard_agentic_node.py
               - tests/unit_tests/agent/node/test_scheduler_agentic_node.py
               - tests/unit_tests/agent/node/test_gen_job_agentic_node.py
@@ -727,8 +813,9 @@ flow_groups:
               - tests/unit_tests/agent/node/test_gen_visual_report_agentic_node.py
               - tests/unit_tests/agent/node/test_gen_visual_dashboard_agentic_node.py
           merge_queue:
-            status: covered
+            status: partial
             nodeids:
+              - tests/integration/agent/test_core_acceptance.py::test_table_node_creates_a_queryable_data_product
               - tests/unit_tests/agent/node/test_gen_dashboard_agentic_node.py
               - tests/unit_tests/agent/node/test_scheduler_agentic_node.py
               - tests/unit_tests/agent/node/test_gen_job_agentic_node.py
@@ -738,7 +825,7 @@ flow_groups:
           nightly:
             status: covered
             nodeids:
-              - tests/integration/agent/test_gen_dashboard_agentic.py
+              - tests/integration/agent/test_gen_dashboard_agentic.py::TestGenDashboardAgenticInit
               - tests/integration/agent/test_scheduler_agentic.py
               - tests/integration/tools/test_bi_grafana.py
               - tests/integration/agent/test_gen_table_agentic.py
@@ -752,7 +839,9 @@ flow_groups:
             notes: >
               Real-LLM smoke now covers gen_table (CTAS), gen_job (single-DB ETL on an isolated
               SQLite copy), gen_visual_report, and gen_visual_dashboard in addition to the existing
-              dashboard/scheduler/Grafana paths. gen_job cross-DB transfer stays in the unit tier.
+              scheduler/Grafana paths. Superset dashboard initialization is checked with a fake
+              model; its real-model workflow is a manual evaluation. gen_job cross-DB transfer
+              stays in the unit tier.
           weekly_benchmark:
             status: not_applicable
             notes: >
@@ -820,13 +909,13 @@ flow_groups:
           - MCP server integration remains available in nightly.
         coverage:
           pr_acceptance:
-            status: covered
+            status: partial
             nodeids:
               - tests/integration/tools/test_mcp_acceptance.py
               - tests/unit_tests/cli/test_mcp_commands.py
               - tests/unit_tests/tools/mcp_tools/test_mcp_manager.py
           merge_queue:
-            status: covered
+            status: partial
             nodeids:
               - tests/integration/tools/test_mcp_acceptance.py
               - tests/unit_tests/cli/test_mcp_commands.py
@@ -846,23 +935,30 @@ flow_groups:
         quality_sensitive: false
         docs:
           - docs/cli/skill_command.md
-          - docs/integration/skills.md
+          - docs/skills/introduction.md
+          - docs/skills/init.md
+          - docs/skills/build_kb.md
+          - docs/skills/storage_classify.md
+          - docs/skills/extract_knowledge.md
+          - docs/skills/memory_organization.md
+          - docs/skills/session_summarize.md
         entrypoints:
           - CLI skill commands
           - Skill manager
           - Skill execution permissions
+          - "Built-in skills: /init, /build-kb, storage-classify, extract-knowledge, memory-organization, session-summarize"
         contracts:
           - Skills can be discovered, loaded, and executed within permission boundaries.
           - Project-local skill behavior and marketplace operations are tracked for stronger coverage.
         coverage:
           pr_acceptance:
-            status: covered
+            status: partial
             nodeids:
               - tests/unit_tests/tools/skill_tools/test_skill.py
               - tests/unit_tests/cli/test_skill_commands.py
               - tests/unit_tests/tools/permission/test_profiles.py
           merge_queue:
-            status: covered
+            status: partial
             nodeids:
               - tests/unit_tests/tools/skill_tools/test_skill.py
               - tests/unit_tests/cli/test_skill_commands.py
@@ -872,7 +968,7 @@ flow_groups:
             nodeids:
               - tests/integration/tools/test_skill.py
               - tests/integration/tools/test_skill_execution.py
-              - tests/integration/tools/test_skill_execution.py::TestLocalSkillDiscoveryAndExecutionGate::test_skill_func_tool_exposes_execution_tools
+              - tests/integration/tools/test_skill_execution.py::TestLocalSkillDiscoveryAndExecutionGate::test_skill_func_tool_exposes_load_skill
               - tests/integration/tools/test_skill_execution.py::TestRealLLMSkillExecution::test_agent_invokes_local_skill
             notes: >
               Local skill discovery, permission filtering, and real-LLM skill execution are covered.
@@ -882,6 +978,57 @@ flow_groups:
             status: not_applicable
         gaps:
           - https://github.com/Datus-ai/Datus-agent/issues/910
+
+      - id: extension.plugins
+        title: Datus plugin discovery, dispatch, and agent integration
+        priority: p1
+        quality_sensitive: false
+        docs:
+          - docs/plugin/introduction.md
+          - docs/plugin/airflow.md
+          - docs/plugin/mwaa.md
+          - docs/plugin/s3.md
+          - docs/plugin/eks.md
+          - docs/plugin/k8s.md
+          - docs/plugin/flink.md
+        entrypoints:
+          - "CLI: datus <plugin> subcommand dispatch"
+          - Plugin profile resolution and project pins
+          - Plugin-bundled skill discovery
+          - System-prompt injection
+          - Plugin CLI bash permissions
+          - Tool argument transformers
+        contracts:
+          - Installed datus.plugins entry points dispatch before argparse and fall through cleanly when absent.
+          - Active-profile resolution (--profile > project pin > default > sole > empty) stays deterministic.
+          - User permission rules always beat plugin-declared rules; plugin rules never escape their namespace.
+          - Tool argument transformers rewrite or deny matched tool calls fail-closed.
+        coverage:
+          pr_acceptance:
+            status: partial
+            nodeids:
+              - tests/unit_tests/plugins/test_registry.py
+              - tests/unit_tests/cli/test_plugin_dispatch.py
+              - tests/unit_tests/tools/middleware/test_tool_middleware.py
+          merge_queue:
+            status: partial
+            nodeids:
+              - tests/unit_tests/plugins/test_registry.py
+              - tests/unit_tests/cli/test_plugin_dispatch.py
+              - tests/unit_tests/tools/middleware/test_tool_middleware.py
+          nightly:
+            status: covered
+            nodeids:
+              - tests/integration/plugins/test_sql_policy_plugin.py::test_managed_sql_policy_enforces_sql_semantic_and_api_reads
+              - tests/integration/plugins/test_dashboard_bootstrap_plugin.py::test_dashboard_bootstrap_installs_plugin_and_exports_verified_superset_queries
+            notes: >
+              P0 installs two real source packages only into isolated managed plugin stores (with no
+              globally installed fallback), exercises fresh-process entry-point discovery and CLI
+              dispatch, verifies bundled skill delivery, user permission precedence, a tool transformer,
+              and real Superset API/export behavior.
+          weekly_benchmark:
+            status: not_applicable
+        gaps: []
 
       - id: extension.auto_memory
         title: Auto memory
@@ -898,14 +1045,16 @@ flow_groups:
           - Remember/forget/correct behaviors are tracked until full lifecycle coverage exists.
         coverage:
           pr_acceptance:
-            status: covered
+            status: partial
             nodeids:
+              - tests/integration/agent/test_core_acceptance.py::test_memory_written_in_one_session_is_loaded_in_another
               - tests/unit_tests/utils/test_memory_loader.py
               - tests/unit_tests/agent/node/test_agentic_node_inherited_memory.py
               - tests/unit_tests/tools/func_tool/test_memory_filesystem_tools.py
           merge_queue:
-            status: covered
+            status: partial
             nodeids:
+              - tests/integration/agent/test_core_acceptance.py::test_memory_written_in_one_session_is_loaded_in_another
               - tests/unit_tests/utils/test_memory_loader.py
               - tests/unit_tests/agent/node/test_agentic_node_inherited_memory.py
               - tests/unit_tests/tools/func_tool/test_memory_filesystem_tools.py
@@ -944,13 +1093,13 @@ flow_groups:
           - Workflow API behavior is tracked until stronger integration coverage exists.
         coverage:
           pr_acceptance:
-            status: covered
+            status: partial
             nodeids:
               - tests/unit_tests/agent/test_workflow.py
               - tests/unit_tests/agent/test_workflow_runner.py
               - tests/integration/api/test_api.py
           merge_queue:
-            status: covered
+            status: partial
             nodeids:
               - tests/unit_tests/agent/test_workflow.py
               - tests/unit_tests/agent/test_workflow_runner.py
@@ -997,6 +1146,107 @@ flow_groups:
         gaps:
           - https://github.com/Datus-ai/Datus-agent/issues/910
 
+      - id: extension.project_package
+        title: Project packaging and handover
+        priority: p1
+        quality_sensitive: false
+        docs:
+          - docs/cli/package_command.md
+        entrypoints:
+          - "CLI: datus package (interactive wizard)"
+          - "CLI: datus package --yes (non-interactive defaults)"
+          - "Receiver: scripts/init.sh, scripts/rebuild_kb.sh, scripts/install_plugins.sh"
+        contracts:
+          - "The generated conf/agent.yml pins home: . and a fixed project_name, so an unzipped package runs without touching the receiver's ~/.datus."
+          - "No credential ever ships: every secret-bearing field becomes a ${VAR} placeholder and a final content scan fails the build on any surviving secret."
+          - Component selection (subagents, skills, metric datasources, subject areas, plugins, reports, dashboards) determines exactly what the archive carries.
+          - Knowledge-base sources travel as YAML with a generated rebuild script; binary indexes never ship.
+        coverage:
+          pr_acceptance:
+            status: partial
+            nodeids:
+              - tests/unit_tests/cli/test_package_builder.py
+              - tests/unit_tests/cli/test_package_cli.py
+          merge_queue:
+            status: partial
+            nodeids:
+              - tests/unit_tests/cli/test_package_builder.py
+              - tests/unit_tests/cli/test_package_cli.py
+          nightly:
+            status: not_applicable
+            notes: >
+              Packaging is fully deterministic — no LLM call, no remote service, no network. The
+              unit tier builds real archives and re-opens them, so a nightly run would add no signal.
+          weekly_benchmark:
+            status: not_applicable
+        gaps: []
+
+      - id: extension.web_tools
+        title: Web search and fetch tools
+        priority: p1
+        quality_sensitive: false
+        docs:
+          - docs/configuration/web_tool.md
+        entrypoints:
+          - "Tool: web_search"
+          - "Tool: web_fetch"
+        contracts:
+          - The unified web tool group resolves provider configuration and exposes web_search/web_fetch to agents per permission policy.
+          - web_search/web_fetch results render through the canonical web_result schema regardless of backend (Tavily / Anthropic / OpenAI hosted).
+        coverage:
+          pr_acceptance:
+            status: partial
+            nodeids:
+              - tests/unit_tests/tools/func_tool/test_web_tool.py
+              - tests/unit_tests/schemas/test_web_result.py
+              - tests/unit_tests/agent/node/test_agentic_node_web_tools.py
+          merge_queue:
+            status: partial
+            nodeids:
+              - tests/unit_tests/tools/func_tool/test_web_tool.py
+              - tests/unit_tests/schemas/test_web_result.py
+              - tests/unit_tests/agent/node/test_agentic_node_web_tools.py
+          nightly:
+            status: external
+            notes: >
+              Live web_search/web_fetch require real provider credentials (Tavily / Anthropic / OpenAI
+              hosted) and network egress, classified as an external dependency. Provider-agnostic result
+              parsing, rendering, and tool wiring/permission exposure are covered deterministically.
+          weekly_benchmark:
+            status: not_applicable
+        gaps:
+          - https://github.com/Datus-ai/Datus-agent/issues/910
+
+      - id: extension.image_tool
+        title: Local image reading tool
+        priority: p1
+        quality_sensitive: false
+        docs:
+          - docs/configuration/image_tool.md
+        entrypoints:
+          - "Tool: read_image"
+        contracts:
+          - read_image validates and normalizes a local image without exposing encoded image bytes in normal tool output.
+          - The normalized image reaches the next model request and remains usable when an agent session is resumed.
+        coverage:
+          pr_acceptance:
+            status: partial
+            nodeids:
+              - tests/unit_tests/tools/func_tool/test_read_image.py
+              - tests/unit_tests/models/test_image_model_roundtrip.py
+          merge_queue:
+            status: partial
+            nodeids:
+              - tests/unit_tests/tools/func_tool/test_read_image.py
+              - tests/unit_tests/models/test_image_model_roundtrip.py
+          nightly:
+            status: external
+            notes: Live image interpretation depends on provider credentials and network access.
+          weekly_benchmark:
+            status: not_applicable
+        gaps:
+          - https://github.com/Datus-ai/Datus-agent/issues/910
+
   quality_and_ops:
     description: Validation, observability, provider compatibility, benchmark, and release-confidence operations.
     flows:
@@ -1014,13 +1264,13 @@ flow_groups:
           - Validation target extraction stays compatible with documented usage.
         coverage:
           pr_acceptance:
-            status: covered
+            status: partial
             nodeids:
               - tests/unit_tests/validation/test_builtin_checks.py
               - tests/unit_tests/validation/test_report.py
               - tests/unit_tests/validation/test_target_extractor.py
           merge_queue:
-            status: covered
+            status: partial
             nodeids:
               - tests/unit_tests/validation/test_builtin_checks.py
               - tests/unit_tests/validation/test_report.py
@@ -1047,13 +1297,13 @@ flow_groups:
           - Weekly benchmark reports quality, efficiency, and diagnostics for selected scenarios.
         coverage:
           pr_acceptance:
-            status: covered
+            status: partial
             nodeids:
               - tests/unit_tests/test_multi_round_benchmark.py
               - tests/unit_tests/utils/test_benchmark_utils.py
               - tests/unit_tests/utils/test_benchmark_evaluation.py
           merge_queue:
-            status: covered
+            status: partial
             nodeids:
               - tests/unit_tests/test_multi_round_benchmark.py
               - tests/unit_tests/utils/test_benchmark_utils.py
@@ -1084,13 +1334,13 @@ flow_groups:
           - Trace references can be correlated with nightly and benchmark artifacts.
         coverage:
           pr_acceptance:
-            status: covered
+            status: partial
             nodeids:
               - tests/unit_tests/observability/test_manager.py
               - tests/unit_tests/observability/test_openai_agents.py
               - tests/unit_tests/ci/test_nightly_tracing_boundaries.py
           merge_queue:
-            status: covered
+            status: partial
             nodeids:
               - tests/unit_tests/observability/test_manager.py
               - tests/unit_tests/observability/test_openai_agents.py
@@ -1110,9 +1360,7 @@ flow_groups:
         quality_sensitive: false
         docs:
           - docs/configuration/agent.md
-          - docs/cli/model_command.md
-          - docs/cli/language_command.md
-          - docs/cli/effort_command.md
+          - docs/cli/other_commands.md
         entrypoints:
           - Provider catalog
           - Model command
@@ -1123,13 +1371,13 @@ flow_groups:
           - Real provider health smoke is separated from deterministic harness correctness.
         coverage:
           pr_acceptance:
-            status: covered
+            status: partial
             nodeids:
               - tests/unit_tests/cli/test_provider_model_catalog.py
               - tests/unit_tests/models/test_openai_compatible.py
               - tests/unit_tests/models/test_litellm_adapter.py
           merge_queue:
-            status: covered
+            status: partial
             nodeids:
               - tests/unit_tests/cli/test_provider_model_catalog.py
               - tests/unit_tests/models/test_openai_compatible.py
@@ -1145,3 +1393,89 @@ flow_groups:
             notes: Weekly benchmark records model/target metadata for quality trend tracking.
         gaps:
           - https://github.com/Datus-ai/Datus-agent/issues/910
+
+execution:
+  description: >
+    core_nodeids are mandatory executed tests, independent of change selection.
+    PR and merge-queue runners check collected nodeids and successful outcomes;
+    missing, skipped, xfailed, crashed or unexecuted core cases fail the gate.
+    A flow marked partial retains useful test references outside the fixed gate;
+    their existence is not evidence that the full flow ran for this change.
+  core_nodeids:
+    - tests/integration/agent/test_core_acceptance.py::test_table_node_creates_a_queryable_data_product
+    - tests/integration/agent/test_semantic_modeling_agentic.py::test_dosi_authoring_validates_reconciles_and_queries_without_llm
+    - tests/integration/agent/test_core_acceptance.py::test_chat_stream_reaches_model_and_completes
+    - tests/integration/agent/test_core_acceptance.py::test_sql_result_reaches_followup_request
+    - tests/integration/agent/test_core_acceptance.py::test_multiturn_retains_question_and_tool_results
+    - tests/integration/agent/test_core_acceptance.py::test_tool_error_can_be_corrected
+    - tests/integration/agent/test_core_acceptance.py::test_metadata_exploration_uses_real_schema
+    - tests/integration/agent/test_core_acceptance.py::test_memory_written_in_one_session_is_loaded_in_another
+    - tests/integration/agent/test_core_acceptance.py::test_init_metadata_and_knowledge_are_reusable
+    - tests/integration/agent/test_core_acceptance.py::test_read_only_refuses_a_write_without_changing_data
+    - tests/integration/agent/test_core_acceptance.py::test_large_tool_result_is_bounded_and_archived
+    - tests/integration/agent/test_core_acceptance.py::test_plan_confirmation_resumes_the_real_agent_loop
+    - tests/integration/api/test_chat_acceptance.py::test_chat_http_sql_multiturn_history_and_delete
+    - tests/integration/api/test_chat_acceptance.py::test_chat_history_is_isolated_by_user
+    - tests/integration/api/test_chat_acceptance.py::test_stop_releases_session_for_the_next_request
+  impact_rules:
+    - id: model-runtime
+      paths: [datus/models/, conf/, pyproject.toml, uv.lock]
+      unit_targets: [tests/unit_tests/models/, tests/unit_tests/observability/, tests/unit_tests/agent/node/]
+      live_targets: [tests/integration/agent/test_core_live.py]
+    - id: agent-runtime
+      paths: [datus/agent/, datus/prompts/, datus/resources/skills/]
+      unit_targets: [tests/unit_tests/agent/, tests/unit_tests/models/]
+      live_targets: [tests/integration/agent/test_core_live.py]
+    - id: tools-and-context
+      paths: [datus/tools/, datus/storage/, datus/utils/, datus/configuration/]
+      unit_targets: [tests/unit_tests/tools/, tests/unit_tests/agent/node/]
+      live_targets: [tests/integration/agent/test_core_live.py]
+    - id: chat-lifecycle
+      paths: [datus/api/, datus/cli/, datus/schemas/, tests/integration/api/test_api_chat.py]
+      unit_targets: [tests/unit_tests/api/, tests/unit_tests/cli/]
+      live_targets: [tests/integration/agent/test_core_live.py, tests/integration/api/test_api_chat.py]
+    - id: ci-selection
+      paths: [ci/, .github/workflows/]
+      unit_targets: [tests/unit_tests/ci/]
+    - id: node-semantic_modeling
+      paths: [datus/agent/node/semantic_modeling_agentic_node.py, tests/integration/agent/test_semantic_modeling_agentic.py]
+      live_targets: [tests/integration/agent/test_semantic_modeling_agentic.py]
+      nightly_groups: [P0 Dosi Semantic Modeling E2E]
+    - id: node-ask_metrics
+      paths: [datus/agent/node/ask_metrics_agentic_node.py, tests/integration/agent/test_ask_metrics_agentic.py]
+      live_targets: [tests/integration/agent/test_ask_metrics_agentic.py]
+    - id: node-ontology_analyst
+      paths: [datus/agent/node/ontology_analyst_agentic_node.py, tests/integration/agent/test_ontology_analyst_agentic.py]
+      live_targets: [tests/integration/agent/test_ontology_analyst_agentic.py]
+    - id: node-feedback
+      paths: [datus/agent/node/feedback_agentic_node.py, tests/integration/agent/test_feedback_agentic.py]
+      live_targets: [tests/integration/agent/test_feedback_agentic.py]
+    - id: node-gen_job
+      paths: [datus/agent/node/gen_job_agentic_node.py, tests/integration/agent/test_gen_job_agentic.py]
+      live_targets: [tests/integration/agent/test_gen_job_agentic.py]
+    - id: node-gen_table
+      paths: [datus/agent/node/gen_table_agentic_node.py, tests/integration/agent/test_gen_table_agentic.py]
+      live_targets: [tests/integration/agent/test_gen_table_agentic.py]
+    - id: node-gen_dashboard
+      paths: [datus/agent/node/gen_dashboard_agentic_node.py, tests/integration/agent/test_gen_dashboard_agentic.py]
+      live_targets: [tests/integration/agent/test_gen_dashboard_agentic.py]
+      nightly_groups: [P0 Dashboard Bootstrap Skill E2E]
+    - id: node-gen_visual_report
+      paths: [datus/agent/node/gen_visual_report_agentic_node.py, tests/integration/agent/test_gen_visual_report_agentic.py]
+      live_targets: [tests/integration/agent/test_gen_visual_report_agentic.py]
+    - id: node-gen_visual_dashboard
+      paths: [datus/agent/node/gen_visual_dashboard_agentic_node.py, tests/integration/agent/test_gen_visual_dashboard_agentic.py]
+      live_targets: [tests/integration/agent/test_gen_visual_dashboard_agentic.py]
+    - id: node-scheduler
+      paths: [datus/agent/node/scheduler_agentic_node.py, tests/integration/agent/test_scheduler_agentic.py]
+      live_targets: [tests/integration/agent/test_scheduler_agentic.py]
+      nightly_groups: [Airflow Nightly Tests]
+    - id: node-sql_summary
+      paths: [datus/agent/node/sql_summary_agentic_node.py, tests/integration/agent/test_sql_summary_agentic.py]
+      live_targets: [tests/integration/agent/test_sql_summary_agentic.py]
+    - id: init-skill
+      paths: [datus/cli/init_commands.py, datus/cli/init_context.py, datus/resources/skills/init/, tests/integration/cli/test_init_live.py]
+      live_targets: [tests/integration/cli/test_init_live.py::test_qwen_scoped_init_supplements_existing_documents]
+    - id: product-fixtures
+      paths: [tests/helpers/, tests/integration/agent/test_core_live.py]
+      live_targets: [tests/integration/agent/test_core_live.py]

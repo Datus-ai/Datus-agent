@@ -1,12 +1,12 @@
 """Service for direct tool dispatch via tool name."""
 
 import inspect
-from typing import Any, Callable, Dict
+from typing import Any, Callable, Dict, Optional
 
 from datus.api.models.base_models import Result
 from datus.api.models.config_models import ErrorCode
 from datus.configuration.agent_config import AgentConfig
-from datus.storage.embedding_diagnostics import format_context_degraded_warning
+from datus.storage.embedding_diagnostics import format_context_unavailable
 from datus.tools.func_tool.base import FuncToolResult
 from datus.tools.func_tool.context_search import ContextSearchTools
 from datus.utils.loggings import get_logger
@@ -20,20 +20,28 @@ class ToolService:
     CONTEXT_TOOL_NAMES = {
         "list_subject_tree",
         "search_metrics",
-        "get_metrics",
         "search_reference_sql",
         "get_reference_sql",
         "search_semantic_objects",
     }
 
-    def __init__(self, agent_config: AgentConfig):
+    def __init__(self, agent_config: AgentConfig, sub_agent_name: Optional[str] = None) -> None:
+        """Build the tool registry, optionally scoped to one sub-agent.
+
+        ``sub_agent_name`` must be the ``agentic_nodes`` key, never a config
+        entry's ``id``: ``AgentConfig.sub_agent_config`` is a plain lookup on
+        that mapping, so an ``id`` misses, yields ``{}``, and the scope filter
+        silently degrades to "no filter" — a 200 with unrestricted results
+        rather than an error. Callers resolve id -> key before getting here.
+        """
         self._agent_config = agent_config
+        self._sub_agent_name = sub_agent_name
         self.context_warning = ""
         try:
-            self._context_search_tools = ContextSearchTools(agent_config)
+            self._context_search_tools = ContextSearchTools(agent_config, sub_agent_name=sub_agent_name)
         except Exception as exc:
             self._context_search_tools = None
-            self.context_warning = format_context_degraded_warning(exc)
+            self.context_warning = format_context_unavailable(exc)
             logger.warning("Context search tool registry disabled: %s", self.context_warning)
         self._registry: Dict[str, Callable[..., FuncToolResult]] = self._build_registry()
 

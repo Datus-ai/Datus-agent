@@ -11,7 +11,7 @@ asyncio.Task so that client disconnects do not cancel the computation.
 """
 
 import asyncio
-from typing import TYPE_CHECKING, Annotated, Any, AsyncGenerator, Optional
+from typing import TYPE_CHECKING, Annotated, AsyncGenerator, Optional
 
 from fastapi import APIRouter, HTTPException, Path, Query, Request
 from fastapi.responses import StreamingResponse
@@ -23,7 +23,9 @@ from datus.api.hooks import (
     ChatPostUsageContext,
     ChatPreCheckOutcome,
     get_chat_hooks,
+    get_turn_stats_hook,
 )
+from datus.api.hooks.message_hooks import prepare_chat_messages
 from datus.api.models.base_models import Result
 from datus.api.models.chat_models import (
     InsertMessageData,
@@ -45,7 +47,9 @@ from datus.api.models.cli_models import (
     UserInteractionInput,
 )
 from datus.api.services.background_drain import track_background_task
-from datus.tools.sql_policy import SqlPolicyConfig
+from datus.api.utils.stream_errors import humanize_stream_error
+from datus.tools.policy_runtime import PolicyRuntime
+from datus.utils.exceptions import DatusException
 from datus.utils.feedback_prompt import build_reaction_feedback_prompt
 from datus.utils.loggings import get_logger
 from datus.utils.time_utils import now_utc_iso
@@ -85,66 +89,26 @@ def _is_valid_subagent_id(svc, subagent_id: str) -> bool:
     return False
 
 
-def _sql_policy_principal_pre_check(svc: "DatusService", ctx: "AppContext") -> Optional[ChatPreCheckOutcome]:
-    """Fail fast when enabled SQL policies need missing principal fields."""
+def _policy_context_pre_check(svc: "DatusService", ctx: "AppContext") -> Optional[ChatPreCheckOutcome]:
+    """Fail fast when an active policy rejects the request context."""
     agent_config = getattr(svc, "agent_config", None)
-    sql_policy_config = getattr(agent_config, "sql_policy_config", None)
-    if not isinstance(sql_policy_config, SqlPolicyConfig) or not sql_policy_config.enabled:
+    try:
+        context = getattr(ctx, "policy_context", None)
+        decision = PolicyRuntime(agent_config).validate_context(context if isinstance(context, dict) else {})
+    except DatusException as exc:
+        logger.error("Policy runtime validation failed: %s", exc, exc_info=True)
+        return ChatPreCheckOutcome(
+            allow=False,
+            error="Policy validation failed.",
+            error_type="POLICY_RUNTIME_ERROR",
+        )
+    if decision.allowed:
         return None
-
-    principal = getattr(ctx, "principal", None) or {}
-    required_paths = _required_principal_paths(sql_policy_config.raw)
-    missing_paths = _missing_principal_paths(principal, required_paths)
-    if not missing_paths:
-        return None
-
-    detail = ""
-    if missing_paths:
-        missing_fields = ", ".join(f"principal.{path}" for path in missing_paths)
-        detail = f" Missing principal field(s): {missing_fields}."
     return ChatPreCheckOutcome(
         allow=False,
-        error=(
-            "SQL policy is enabled, but this request is missing principal data required by policy."
-            f"{detail} "
-            "Authenticate the request with a provider that populates principal fields required by "
-            "agent.sql_policy. The agent cannot infer or set request principal from SQL."
-        ),
-        error_type="SQL_POLICY_PRINCIPAL_REQUIRED",
+        error=decision.reason or "Policy rejected the request context.",
+        error_type="POLICY_CONTEXT_REJECTED",
     )
-
-
-def _required_principal_paths(raw: Any) -> list[str]:
-    paths: set[str] = set()
-
-    def visit(value: Any) -> None:
-        if isinstance(value, dict):
-            value_from = value.get("value_from")
-            if isinstance(value_from, str) and value_from.startswith("principal."):
-                path = value_from[len("principal.") :].strip()
-                if path:
-                    paths.add(path)
-            for child in value.values():
-                visit(child)
-        elif isinstance(value, list):
-            for child in value:
-                visit(child)
-
-    visit(raw)
-    return sorted(paths)
-
-
-def _missing_principal_paths(principal: dict[str, Any], required_paths: list[str]) -> list[str]:
-    return [path for path in required_paths if not _principal_path_exists(principal, path)]
-
-
-def _principal_path_exists(principal: dict[str, Any], path: str) -> bool:
-    current: Any = principal
-    for part in path.split("."):
-        if not isinstance(current, dict) or part not in current:
-            return False
-        current = current[part]
-    return current not in (None, "", [])
 
 
 # ========== Stream Chat ==========
@@ -162,6 +126,7 @@ async def stream_chat(
     ctx: AppContextDep,
     http_request: Request,
 ):
+    await prepare_chat_messages(http_request, request)
     sub_agent_id = request.subagent_id
     if sub_agent_id and not _is_valid_subagent_id(svc, sub_agent_id):
         raise HTTPException(
@@ -169,7 +134,7 @@ async def stream_chat(
             detail=f"Subagent '{sub_agent_id}' not found",
         )
 
-    sql_policy_denial = _sql_policy_principal_pre_check(svc, ctx)
+    sql_policy_denial = _policy_context_pre_check(svc, ctx)
     if sql_policy_denial:
         return StreamingResponse(
             _emit_pre_check_denial(request, sql_policy_denial),
@@ -187,15 +152,22 @@ async def stream_chat(
         )
 
     pre_extra = pre_outcome.extra if pre_outcome else {}
+    stats_context = _capture_turn_stats_context(http_request, request, ctx.user_id)
+
+    on_turn_end = _post_chat_settler(hooks, http_request, request, ctx.user_id, pre_extra)
 
     async def generate_sse():
-        async for chunk in _stream_with_post_hook(
-            svc.chat.stream_chat(request, sub_agent_id=sub_agent_id, user_id=ctx.user_id, principal=ctx.principal),
-            http_request=http_request,
+        async for chunk in _stream_with_error_event(
+            svc.chat.stream_chat(
+                request,
+                sub_agent_id=sub_agent_id,
+                user_id=ctx.user_id,
+                policy_context=ctx.policy_context,
+                stats_context=stats_context,
+                on_turn_end=on_turn_end,
+            ),
             request=request,
             user_id=ctx.user_id,
-            hooks=hooks,
-            pre_extra=pre_extra,
         ):
             yield chunk
 
@@ -218,6 +190,7 @@ async def stream_chat_feedback(
     request: FeedbackChatInput,
     svc: ServiceDep,
     ctx: AppContextDep,
+    http_request: Request,
 ):
     rendered_message = build_reaction_feedback_prompt(
         reaction_emoji=request.reaction_emoji,
@@ -226,12 +199,12 @@ async def stream_chat_feedback(
     )
     stream_input = StreamChatInput(
         **request.model_dump(
-            exclude={"message", "reaction_emoji", "reference_msg", "reaction_msg"},
+            exclude={"message", "messages", "reaction_emoji", "reference_msg", "reaction_msg"},
         ),
         message=rendered_message,
         subagent_id="feedback",
     )
-    sql_policy_denial = _sql_policy_principal_pre_check(svc, ctx)
+    sql_policy_denial = _policy_context_pre_check(svc, ctx)
     if sql_policy_denial:
         return StreamingResponse(
             _emit_pre_check_denial(stream_input, sql_policy_denial),
@@ -239,9 +212,15 @@ async def stream_chat_feedback(
             headers=_sse_headers(),
         )
 
+    stats_context = _capture_turn_stats_context(http_request, stream_input, ctx.user_id)
+
     async def generate_sse():
         async for event in svc.chat.stream_chat(
-            stream_input, sub_agent_id="feedback", user_id=ctx.user_id, principal=ctx.principal
+            stream_input,
+            sub_agent_id="feedback",
+            user_id=ctx.user_id,
+            policy_context=ctx.policy_context,
+            stats_context=stats_context,
         ):
             yield f"id: {event.id}\nevent: {event.event}\ndata: {event.data.model_dump_json()}\n\n"
 
@@ -259,9 +238,12 @@ async def stream_chat_feedback(
 async def resume_chat(
     request: ResumeChatInput,
     svc: ServiceDep,
+    ctx: AppContextDep,
 ):
     task_manager = svc.task_manager
     task = task_manager.get_task(request.session_id)
+    if task is not None and task.user_id != ctx.user_id:
+        raise HTTPException(status_code=404, detail="Task not found")
     if task is None:
         return Result[dict](
             success=False,
@@ -322,8 +304,14 @@ async def compact_chat_session(
     summary="List Chat Sessions",
     description=(
         "List chat sessions. Pass subagent_id to filter by agent "
-        "(use 'chat' for the default chat agent, or any builtin/custom subagent id). "
-        "Omit to return every session for the user."
+        "(use 'chat' for the default chat agent, or any built-in/custom subagent id). "
+        "Omit to return sessions for every agent. Use offset/limit to paginate — "
+        "only the requested page is opened as sqlite, so the dominant per-session "
+        "cost doesn't scale with the user's total session count (the mtime sort "
+        "still stats every session file, far more cheaply). Omitting limit yields "
+        "the server default page size (api.default_session_page_size); larger "
+        "requested limits are clamped to api.max_session_page_size. total_count "
+        "reports the unpaginated total."
     ),
 )
 async def list_sessions(
@@ -333,10 +321,22 @@ async def list_sessions(
         default=None,
         description="Filter by subagent id; 'chat' selects the default chat agent",
     ),
+    offset: int = Query(default=0, ge=0, description="Number of sessions to skip"),
+    limit: Optional[int] = Query(
+        default=None,
+        ge=1,
+        description="Maximum number of sessions to return; omit for the server default page size",
+    ),
 ) -> Result[ChatSessionData]:
     try:
         return await asyncio.wait_for(
-            asyncio.to_thread(svc.chat.list_sessions, user_id=ctx.user_id, subagent_id=subagent_id),
+            asyncio.to_thread(
+                svc.chat.list_sessions,
+                user_id=ctx.user_id,
+                subagent_id=subagent_id,
+                offset=offset,
+                limit=limit,
+            ),
             timeout=_FUSE_IO_TIMEOUT,
         )
     except TimeoutError:
@@ -431,9 +431,23 @@ async def submit_user_interaction(
         )
 
     success = await broker.submit(request.interaction_key, request.input)
+    data = {"interaction_key": request.interaction_key, "submitted": success}
+    if success:
+        return Result[dict](success=True, data=data)
+    # A key the broker no longer holds belongs to a question nobody is waiting
+    # on: already answered, timed out, or asked by a process that has since gone.
+    if not broker.is_pending(request.interaction_key):
+        return Result[dict](
+            success=False,
+            data=data,
+            errorCode="INTERACTION_NOT_FOUND",
+            errorMessage="This question is no longer waiting for an answer",
+        )
     return Result[dict](
-        success=success,
-        data={"interaction_key": request.interaction_key, "submitted": success},
+        success=False,
+        data=data,
+        errorCode="INVALID_INPUT",
+        errorMessage="Answer does not match the question's options",
     )
 
 
@@ -454,16 +468,22 @@ async def submit_user_interaction(
 async def insert_message(
     request: InsertMessageInput,
     svc: ServiceDep,
+    http_request: Request = None,
 ) -> Result[InsertMessageData]:
     task_manager = svc.task_manager
     task = task_manager.get_task(request.session_id)
-    if task is None or task.node is None:
+    # The queue is task-scoped and created up-front, so a still-initializing
+    # node (``task.node is None``) is fine — enqueue anyway; the node picks up
+    # the queue on startup. Only reject when there is no live run at all
+    # (missing, or already completed/errored/cancelled).
+    if task is None or task.status != "running" or not getattr(task, "accepting_inserts", True):
         return Result[InsertMessageData](
             success=False,
             errorCode="SESSION_NOT_RUNNING",
             errorMessage="No active chat task for this session",
         )
 
+    await prepare_chat_messages(http_request, request)
     text = request.message.strip()
     if not text:
         return Result[InsertMessageData](
@@ -472,7 +492,7 @@ async def insert_message(
             errorMessage="message must be non-empty after stripping whitespace",
         )
 
-    queue = getattr(task.node, "pending_input_queue", None)
+    queue = getattr(task, "pending_input_queue", None)
     if queue is None:
         return Result[InsertMessageData](
             success=False,
@@ -480,6 +500,12 @@ async def insert_message(
             errorMessage="Pending input queue is not initialized for this session",
         )
 
+    text = task.register_message_contents(
+        text,
+        [part.model_dump(mode="json") for part in request.messages]
+        if request.messages is not None
+        else [{"type": "markdown", "payload": {"content": text}}],
+    )
     queue.push(text)
     return Result[InsertMessageData](
         success=True,
@@ -499,21 +525,94 @@ async def insert_message(
 async def submit_tool_result(
     request: ToolResultInput,
     svc: ServiceDep,
+    ctx: AppContextDep,
 ) -> Result[ToolResultData]:
     """Receive tool execution result from frontend."""
     task_manager = svc.task_manager
     task = task_manager.get_task(request.session_id) if request.session_id else None
     if not task or not task.node:
+        # No live waiter means the agent loop already gave up (e.g. the proxy
+        # tool timed out) or the session was never running — surface it so a
+        # client that thinks it is unblocking the turn can be diagnosed.
+        logger.warning(f"tool_result for unknown task: session_id={request.session_id}, call_id={request.call_tool_id}")
         return Result[ToolResultData](
             success=False,
             errorCode="TASK_NOT_FOUND",
             errorMessage="No active task found for this session",
         )
 
-    await task.node.tool_channel.publish(request.call_tool_id, request.tool_result.model_dump())
+    if getattr(task.node, "scope", None) != ctx.user_id:
+        raise HTTPException(status_code=404, detail="No active task found for this session")
+
+    from datus.tools.proxy.semantic_plan_review import SemanticPlanReviewContext
+
+    review_context = getattr(task.node, "semantic_plan_review_context", None)
+    review = request.tool_result.result
+    if isinstance(review_context, SemanticPlanReviewContext):
+        previous = review_context.decisions.get(request.call_tool_id)
+        decision = request.tool_result.model_dump()
+        if previous is not None:
+            if previous != decision:
+                return Result(
+                    success=False,
+                    errorCode="REVIEW_ALREADY_RESOLVED",
+                    errorMessage="This proposal already has a review decision",
+                )
+            return Result(success=True, data=ToolResultData(call_tool_id=request.call_tool_id, status="received"))
+        if request.call_tool_id in review_context.previews and isinstance(review, dict):
+            status = review.get("review_status")
+            feedback = review.get("feedback")
+            valid = (status == "accepted" and request.tool_result.success == 1) or (
+                status in ("cancelled", "changes_requested") and request.tool_result.success == 0
+            )
+            if status == "changes_requested":
+                valid = valid and isinstance(feedback, str) and bool(feedback.strip()) and len(feedback) <= 4000
+            if not valid:
+                return Result(
+                    success=False, errorCode="INVALID_REVIEW", errorMessage="Invalid plan review decision or feedback"
+                )
+            if status == "cancelled":
+                # Emit a display result before interruption so cancellation and its
+                # frozen snapshot remain readable even when the SDK run is stopped.
+                from datus.api.services.action_sse_converter import action_to_sse_event
+                from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
+
+                review_context.decisions[request.call_tool_id] = decision
+                event = action_to_sse_event(
+                    ActionHistory(
+                        action_id=f"complete_{request.call_tool_id}",
+                        action_type="tool_result",
+                        role=ActionRole.TOOL,
+                        status=ActionStatus.SUCCESS,
+                        input={"function_name": "write_semantic_model_plan_file", "arguments": {}},
+                        output={"success": 1, "result": {"review_status": "cancelled"}},
+                    ),
+                    len(task.events),
+                    f"complete_{request.call_tool_id}",
+                )
+                if event:
+                    await task_manager._push_event(task, event)
+                await task_manager.stop_task(request.session_id)
+                return Result(success=True, data=ToolResultData(call_tool_id=request.call_tool_id, status="received"))
+
+    logger.info(f"Received tool_result: session_id={request.session_id}, call_id={request.call_tool_id}")
+    delivered = await task.node.tool_channel.publish(request.call_tool_id, request.tool_result.model_dump())
+    if (
+        delivered
+        and isinstance(review_context, SemanticPlanReviewContext)
+        and request.call_tool_id in review_context.previews
+    ):
+        review_context.decisions[request.call_tool_id] = request.tool_result.model_dump()
+    if not delivered:
+        # Task is alive but no waiter took the result — it arrived after the
+        # proxy-tool wait already timed out, or it is a duplicate report.
+        logger.warning(f"tool_result arrived late: session_id={request.session_id}, call_id={request.call_tool_id}")
     return Result[ToolResultData](
         success=True,
-        data=ToolResultData(call_tool_id=request.call_tool_id, status="received"),
+        data=ToolResultData(
+            call_tool_id=request.call_tool_id,
+            status="received" if delivered else "ignored",
+        ),
     )
 
 
@@ -562,6 +661,22 @@ async def _run_pre_chat_hook(
     return outcome
 
 
+def _capture_turn_stats_context(
+    http_request: Request,
+    request: StreamChatInput,
+    user_id: Optional[str],
+) -> dict:
+    """Let the turn-stats hook snapshot request data it needs once the turn ends."""
+    hook = get_turn_stats_hook()
+    if hook is None:
+        return {}
+    try:
+        return dict(hook.capture_context(http_request, request, user_id) or {})
+    except Exception:
+        logger.warning("Turn stats hook failed to capture context", exc_info=True)
+        return {}
+
+
 async def _emit_pre_check_denial(
     request: StreamChatInput,
     outcome: ChatPreCheckOutcome,
@@ -576,49 +691,75 @@ async def _emit_pre_check_denial(
     yield f"id: {event.id}\nevent: {event.event}\ndata: {event.data.model_dump_json()}\n\n"
 
 
-async def _stream_with_post_hook(
-    upstream: AsyncGenerator[SSEEvent, None],
-    *,
+def _post_chat_settler(
+    hooks: Optional[ChatHooks],
     http_request: Request,
     request: StreamChatInput,
     user_id: Optional[str],
-    hooks: Optional[ChatHooks],
     pre_extra: dict,
-) -> AsyncGenerator[str, None]:
-    """Forward SSE events while capturing usage for the post-chat hook.
+):
+    """Build the task's ``on_turn_end`` callback that runs ``post_chat``.
 
-    The post hook is dispatched as a background task in ``finally`` so the
-    response stream is never blocked waiting for billing to acknowledge.
+    The chat task calls it from its own ``finally`` once the turn is over —
+    completed, failed, or stopped — so a turn is billed even when the SSE
+    client has already disconnected. The hook itself runs as a background task
+    and never blocks the turn.
+    """
+    if hooks is None:
+        return None
+
+    def _settle(usage: dict, error: Optional[str], status: str, turn_id: str) -> None:
+        ctx = ChatPostUsageContext(
+            user_id=user_id,
+            session_id=usage.get("session_id") or request.session_id,
+            model=request.model,
+            usage=usage,
+            error=error,
+            pre_check_extra=dict(pre_extra),
+            status=status,
+            turn_id=turn_id or None,
+        )
+        try:
+            _task = asyncio.create_task(
+                _safe_post_chat(hooks, http_request, request, ctx),
+                name=f"chat-post-hook:{ctx.session_id or '-'}",
+            )
+            track_background_task(_task)
+        except Exception:  # pragma: no cover — defensive
+            logger.error("Failed to schedule post_chat hook", exc_info=True)
+
+    return _settle
+
+
+async def _stream_with_error_event(
+    upstream: AsyncGenerator[SSEEvent, None],
+    *,
+    request: StreamChatInput,
+    user_id: Optional[str],
+) -> AsyncGenerator[str, None]:
+    """Forward SSE events, turning an upstream failure into a terminal error event.
 
     If the upstream generator raises before the stream completes, we log
     the error and emit a synthetic ``event: error`` to the client so the
     UI can surface a real reason instead of an opaque "network error".
     ``asyncio.CancelledError`` (client disconnect / shutdown) is treated
     as expected and skips the error event.
+
+    Billing is not settled here: the chat task does that itself, so it still
+    happens when this stream is cut short (see ``_post_chat_settler``).
     """
-    last_end_event: Optional[SSEEvent] = None
-    captured_error: Optional[BaseException] = None
-    was_cancelled: bool = False
     last_event_id: int = 0
 
     try:
         async for event in upstream:
-            if event.event == "end":
-                last_end_event = event
             if isinstance(event.id, int):
                 last_event_id = event.id
             yield f"id: {event.id}\nevent: {event.event}\ndata: {event.data.model_dump_json()}\n\n"
     except asyncio.CancelledError:
         # Client disconnected or the server is shutting down. The HTTP
-        # response is already gone — nothing to yield, nothing to log
-        # as error. We also do NOT schedule the post-chat hook below,
-        # because the usage payload is incomplete (no ``end`` event) and
-        # would otherwise look like a free successful turn to callers
-        # such as billing.
-        was_cancelled = True
+        # response is already gone — nothing to yield, nothing to log.
         raise
     except BaseException as exc:
-        captured_error = exc
         logger.error(
             "stream_chat generator failed for session=%s user=%s subagent=%s: %s",
             request.session_id,
@@ -634,12 +775,13 @@ async def _stream_with_post_hook(
         # outer bare ``raise`` below still re-propagates the original
         # ``exc`` instead of being masked.
         try:
+            error_type, error_message = humanize_stream_error(exc)
             error_event = SSEEvent(
                 id=last_event_id + 1,
                 event="error",
                 data=SSEErrorData(
-                    error=str(exc) or type(exc).__name__,
-                    error_type=type(exc).__name__,
+                    error=error_message,
+                    error_type=error_type,
                     session_id=request.session_id,
                 ),
                 timestamp=now_utc_iso(),
@@ -651,41 +793,6 @@ async def _stream_with_post_hook(
                 exc_info=True,
             )
         raise
-    finally:
-        # Only schedule the post-chat hook when we have a meaningful
-        # outcome to report: either the stream finished normally (an
-        # ``end`` event was observed) or it failed with a real error
-        # we can describe. Pure cancellation is skipped — the usage
-        # payload would be empty and billing/audit callers would treat
-        # the turn as a free success.
-        should_schedule_post_hook = (
-            hooks is not None and not was_cancelled and (last_end_event is not None or captured_error is not None)
-        )
-        if should_schedule_post_hook:
-            usage_dict: dict = {}
-            session_id_value: Optional[str] = request.session_id
-            if last_end_event is not None:
-                # SSEEndData fields cover requests / *_tokens / duration.
-                usage_dict = last_end_event.data.model_dump()
-                session_id_value = usage_dict.get("session_id") or session_id_value
-
-            ctx = ChatPostUsageContext(
-                user_id=user_id,
-                session_id=session_id_value,
-                model=request.model,
-                usage=usage_dict,
-                error=str(captured_error) if captured_error else None,
-                pre_check_extra=dict(pre_extra),
-            )
-
-            try:
-                _task = asyncio.create_task(
-                    _safe_post_chat(hooks, http_request, request, ctx),
-                    name=f"chat-post-hook:{session_id_value or '-'}",
-                )
-                track_background_task(_task)
-            except Exception:  # pragma: no cover — defensive
-                logger.error("Failed to schedule post_chat hook", exc_info=True)
 
 
 async def _safe_post_chat(

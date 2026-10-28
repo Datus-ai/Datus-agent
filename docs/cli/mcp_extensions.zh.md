@@ -11,7 +11,7 @@ MCP（Model Context Protocol）是 Datus-CLI 连接外部工具服务器的方�
 - 检查服务器连接情况与可用工具
 - 在 CLI 内直接调用任意 MCP 服务器暴露的工具
 
-这让 Datus-CLI 拥有无限扩展性：无需改动核心即可接入 SQLite、Snowflake、MetricFlow、文件系统，甚至自建的 MCP 服务器。
+这让 Datus-CLI 可以接入 SQLite、Snowflake、文件系统或自建 MCP 服务器，无需改动核心。
 
 ## 2. 基础用法
 
@@ -32,7 +32,7 @@ MCP（Model Context Protocol）是 Datus-CLI 连接外部工具服务器的方�
   --header "Authorization: Bearer token" --timeout 30.0
 
 # HTTP 流式服务器
-/mcp add --transport http metricflow https://localhost:9000/mcp
+/mcp add --transport http analytics https://localhost:9000/mcp
 ```
 
 ---
@@ -48,7 +48,7 @@ MCP（Model Context Protocol）是 Datus-CLI 连接外部工具服务器的方�
 ```
 1. duckdb-mftutorial  ✘ failed
 2. filesystem         ✔ connected
-3. metricflow         ✔ connected
+3. analytics          ✔ connected
 4. snowflake_local    ✔ connected
 5. sqlite             ✔ connected
 ```
@@ -77,7 +77,7 @@ MCP（Model Context Protocol）是 Datus-CLI 连接外部工具服务器的方�
 
 ```bash
 /mcp call sqlite.list_tables
-/mcp call metricflow.query_metrics '{"metrics": "revenue"}'
+/mcp call sqlite.read_query "SELECT COUNT(*) FROM customers"
 ```
 
 ---
@@ -192,17 +192,6 @@ MCP 配置支持环境变量展开：
 # 通过 MCP 查询数据表
 /mcp call sqlite.list_tables
 /mcp call sqlite.read_query "SELECT * FROM customers LIMIT 5"
-```
-
-### MetricFlow 集成
-
-```bash
-# 添加 MetricFlow 服务器以访问语义层
-/mcp add metricflow python -m mcp_metricflow_server
-
-# 调用业务指标
-/mcp call metricflow.list_metrics
-/mcp call metricflow.query_metrics '{"metrics": ["revenue"], "dimensions": ["customer_segment"]}'
 ```
 
 ### 文件系统集成

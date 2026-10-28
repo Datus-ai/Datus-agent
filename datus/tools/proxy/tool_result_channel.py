@@ -10,11 +10,30 @@ Wait and publish are order-independent: either side can arrive first.
 """
 
 import asyncio
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
+
+# Safety net: a proxied tool (e.g. write_file/edit_file executed on the client)
+# blocks the agent loop until the client POSTs its result. If the client never
+# reports — tab closed, crash, a frontend bug that swallows the report, or a
+# confirm-gated write whose Accept button nobody pressed — the loop would
+# otherwise hang forever. ``wait_for`` defaults to this bound so the turn fails
+# cleanly instead.
+#
+# Deliberately generous, because the cost is asymmetric. Expiring early kills a
+# turn the user was coming back to finish and throws away everything the agent
+# did in it; waiting too long only holds a sandbox. Someone who starts a task
+# and switches browser tabs is using the product as intended, and the click
+# arrives over its own POST, so a dropped output stream does not stop it
+# landing.
+#
+# The 20-minute stalls seen in prod were not caused by this number. They were
+# caused by nobody being told a card was waiting — fixed in the client, where
+# a pending confirmation is now counted and can be scrolled back to.
+DEFAULT_RESULT_TIMEOUT: float = 600.0
 
 
 class ToolResultChannel:
@@ -35,25 +54,50 @@ class ToolResultChannel:
             self._futures[call_id] = fut
         return fut
 
-    async def wait_for(self, call_id: str) -> Any:
-        """Wait for a result to be published for the given call_id."""
+    async def wait_for(self, call_id: str, timeout: Optional[float] = DEFAULT_RESULT_TIMEOUT) -> Any:
+        """Wait for a result to be published for the given call_id.
+
+        ``timeout`` (seconds) bounds the wait so a never-reported client tool
+        cannot block the agent loop forever; it defaults to
+        ``DEFAULT_RESULT_TIMEOUT`` and only an explicit ``timeout=None`` opts
+        into an unbounded wait. On expiry ``asyncio.wait_for`` cancels the
+        future (leaving it settled) and ``asyncio.TimeoutError`` propagates. The
+        settled future is retained so a late ``publish`` for the same
+        ``call_id`` is recognised as late rather than silently re-created.
+        """
         async with self._lock:
             future = self._get_or_create_future(call_id)
-        return await future
+        if timeout is None:
+            return await future
+        return await asyncio.wait_for(future, timeout)
 
-    async def publish(self, call_id: str, result: Any) -> None:
-        """Publish a result for the given call_id."""
+    async def publish(self, call_id: str, result: Any) -> bool:
+        """Publish a result for the given call_id.
+
+        Returns ``True`` if a live waiter received it, ``False`` if the result
+        was dropped — a duplicate, or one that arrived after the waiter timed
+        out — so callers can tell ``matched`` from ``late`` reports.
+        """
         async with self._lock:
             future = self._get_or_create_future(call_id)
-            if not future.done():
-                future.set_result(result)
+            if future.done():
+                # Already settled — typically a duplicate report, or one that
+                # arrived after wait_for timed out and dropped its waiter.
+                logger.warning(f"Tool result for call_id={call_id} ignored; waiter already settled")
+                return False
+            future.set_result(result)
+        logger.info(f"Tool result published for call_id={call_id}")
+        return True
 
-    def cancel_all(self, reason: str = "Channel closed"):
+    def cancel_all(self, reason: str = "Channel closed") -> None:
         """Cancel all pending futures.
 
         Note: This is a synchronous method and must be called from the
         same event-loop thread that owns the futures.
         """
+        pending = [call_id for call_id, fut in self._futures.items() if not fut.done()]
+        if pending:
+            logger.info(f"Cancelling {len(pending)} pending tool result(s): {reason}; call_ids={pending}")
         for future in self._futures.values():
             if not future.done():
                 future.set_exception(RuntimeError(reason))

@@ -15,6 +15,7 @@ from datus.api.routes.config_routes import (
     UpdateDatasourcesRequest,
     UpdateModelsRequest,
     get_agent_config_endpoint,
+    list_datasources_endpoint,
     probe_datasource_connectivity_endpoint,
     probe_model_connectivity_endpoint,
     update_datasources_endpoint,
@@ -31,6 +32,114 @@ def _mock_svc(datasources, *, target="deepseek", current_datasource="starrocks",
     svc.agent_config.datasource_configs = datasources
     svc.agent_config.home = home
     return svc
+
+
+@pytest.mark.asyncio
+async def test_list_datasources_returns_names_types_and_current():
+    svc = _mock_svc(
+        datasources={
+            "starrocks": SimpleNamespace(type="starrocks"),
+            "lake": SimpleNamespace(type="duckdb"),
+        },
+    )
+
+    result = await list_datasources_endpoint(svc)
+
+    assert result.success is True
+    assert result.data.current_datasource == "starrocks"
+    assert [(d.name, d.type, d.is_current) for d in result.data.datasources] == [
+        ("starrocks", "starrocks", True),
+        ("lake", "duckdb", False),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_list_datasources_carries_no_credentials():
+    """The reason this endpoint exists instead of reusing /config/agent.
+
+    A catalog UI lists the datasources on every project entry, for every member.
+    /config/agent answers that with each datasource's decrypted password and
+    credential-bearing uri; nothing here may carry them.
+    """
+    svc = _mock_svc(
+        datasources={
+            "starrocks": SimpleNamespace(
+                type="starrocks",
+                host="h1",
+                password="s3cret",
+                uri="starrocks://user:s3cret@h1:9030/db",
+                private_key_file_pwd="pk-pass",
+            )
+        },
+    )
+
+    result = await list_datasources_endpoint(svc)
+
+    serialized = result.data.model_dump_json()
+    for secret in ("s3cret", "pk-pass", "user:s3cret"):
+        assert secret not in serialized
+    assert set(result.data.datasources[0].model_dump()) == {
+        "name",
+        "type",
+        "is_current",
+        "catalog",
+        "database",
+        "db_schema",
+    }
+
+
+@pytest.mark.asyncio
+async def test_list_datasources_carries_configured_namespaces():
+    """A client opening a session must land on the configured schema, not the first one listed."""
+    svc = _mock_svc(
+        datasources={
+            "aviation": SimpleNamespace(type="postgresql", catalog="", database="app", schema="aviation"),
+            "sr": SimpleNamespace(type="starrocks", catalog="default_catalog", database="ods", schema=""),
+        },
+        current_datasource="aviation",
+    )
+
+    result = await list_datasources_endpoint(svc)
+
+    assert [(d.name, d.catalog, d.database, d.db_schema) for d in result.data.datasources] == [
+        ("aviation", None, "app", "aviation"),
+        ("sr", "default_catalog", "ods", None),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_list_datasources_ignores_non_string_namespaces():
+    """A pydantic-shaped config exposes ``schema`` as a bound method; it must not reach the wire."""
+    svc = _mock_svc(datasources={"pg": SimpleNamespace(type="postgresql", database="app", schema=lambda: None)})
+
+    result = await list_datasources_endpoint(svc)
+
+    assert result.data.datasources[0].database == "app"
+    assert result.data.datasources[0].db_schema is None
+
+
+@pytest.mark.asyncio
+async def test_list_datasources_unwraps_an_enum_type():
+    """`DbConfig.type` is an enum at runtime; the wire form must be its value."""
+    svc = _mock_svc(datasources={"lake": SimpleNamespace(type=SimpleNamespace(value="duckdb"))})
+
+    result = await list_datasources_endpoint(svc)
+
+    assert result.data.datasources[0].type == "duckdb"
+
+
+@pytest.mark.asyncio
+async def test_list_datasources_skips_none_entries_and_survives_no_current():
+    svc = _mock_svc(
+        datasources={"lake": SimpleNamespace(type="duckdb"), "broken": None},
+        current_datasource="",
+    )
+
+    result = await list_datasources_endpoint(svc)
+
+    assert [d.name for d in result.data.datasources] == ["lake"]
+    assert result.data.current_datasource == ""
+    assert result.data.datasources[0].is_current is False
 
 
 @pytest.mark.asyncio

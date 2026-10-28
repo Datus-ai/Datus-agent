@@ -185,34 +185,34 @@ def find_missing_semantic_models(
     Returns:
         List of table names that are missing semantic models
     """
-    from datus.storage.semantic_model.store import SemanticModelRAG
+    from datus.storage.semantic_dataset.store import SemanticDatasetRAG
 
     if not tables:
         return []
 
-    semantic_rag = SemanticModelRAG(agent_config)
+    semantic_rag = SemanticDatasetRAG(agent_config)
+    try:
+        current_db_config = agent_config.current_db_config()
+    except Exception as e:
+        logger.warning(f"Failed to resolve current db config, checking tables without defaults: {e}")
+        current_db_config = None
     missing = []
 
     for table_fq_name in tables:
-        # Parse table name (may be database.schema.table format)
-        parts = table_fq_name.split(".")
-        table_name = parts[-1]  # Last part is the table name
-
-        # Search for existing semantic model
         try:
-            result = semantic_rag.storage.search_objects(
-                query_text=table_name,
-                kinds=["table"],
-                top_n=5,
+            # Resolve the reference to a hierarchy scope so same-named tables
+            # in different databases/schemas are told apart.
+            target = _resolved_table_target(table_fq_name, agent_config, current_db_config)
+            exists = semantic_rag.table_exists(
+                table_name=target["table_name"],
+                catalog_name=target["catalog_name"],
+                database_name=target["database_name"],
+                schema_name=target["schema_name"],
             )
-
-            # Exact match on table name (case insensitive)
-            exists = any(obj.get("name", "").lower() == table_name.lower() for obj in result)
-
             if not exists:
                 missing.append(table_fq_name)
         except Exception as e:
-            logger.warning(f"Error checking semantic model for {table_name}: {e}")
+            logger.warning(f"Error checking semantic model for {table_fq_name}: {e}")
             missing.append(table_fq_name)
 
     return missing
@@ -241,14 +241,15 @@ async def create_semantic_model_for_table(
     Returns:
         (success, error_message)
     """
-    from datus.agent.node.gen_semantic_model_agentic_node import GenSemanticModelAgenticNode
+    from datus.agent.node.semantic_modeling_agentic_node import SemanticModelingAgenticNode
     from datus.schemas.semantic_agentic_node_models import SemanticNodeInput
 
     try:
         current_db_config = agent_config.current_db_config()
         target = _resolved_table_target(table, agent_config, current_db_config)
         user_message = (
-            "Generate a semantic model for the following table.\n\n"
+            "Use semantic_modeling to author only the Dosi datasets, fields, relationships, and model metadata "
+            "for the following table. Do not create, update, or delete metrics.\n\n"
             "Target table coordinate:\n"
             f"{_format_table_target_for_prompt(table, agent_config, current_db_config)}\n\n"
             "When calling database tools, pass the namespace fields separately exactly as shown above; "
@@ -275,14 +276,16 @@ async def create_semantic_model_for_table(
 
     semantic_input = SemanticNodeInput(
         user_message=user_message,
+        authoring_scope="datasets",
         catalog=target["catalog_name"],
         database=target["database_name"],
         db_schema=target["schema_name"],
     )
 
-    semantic_node = GenSemanticModelAgenticNode(
+    semantic_node = SemanticModelingAgenticNode(
         agent_config=agent_config,
         execution_mode="workflow",
+        authoring_scope="datasets",
     )
     semantic_node.input = semantic_input
 

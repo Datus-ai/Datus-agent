@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import base64
+import json
 import os
 import threading
 from collections import OrderedDict
@@ -130,6 +131,40 @@ def _langfuse_attributes_from_baggage(baggage_attrs: dict[str, Any]) -> dict[str
     run_id = _clean_string(baggage_attrs.get("datus.run_id"))
     if run_id:
         attributes["langfuse.trace.metadata.run_id"] = run_id
+
+    # Join keys land in metadata, which is the mapping this adapter already
+    # proves works end to end. ``release`` additionally gets Langfuse's
+    # first-class field so the UI can group by deploy.
+    from datus.observability.manager import _TRACE_JOIN_KEYS
+    from datus.utils.trace_context import TRACE_IDENTITY_ATTRIBUTE_PREFIX
+
+    for baggage_key, metadata_key in _TRACE_JOIN_KEYS.items():
+        value = _clean_string(baggage_attrs.get(baggage_key))
+        if value:
+            attributes[f"langfuse.trace.metadata.{metadata_key}"] = value
+    # Host identity, forwarded under its own names. This adapter never learns
+    # what they mean -- it strips the namespace and hands them to Langfuse.
+    for baggage_key, raw_value in baggage_attrs.items():
+        key = str(baggage_key)
+        if not key.startswith(TRACE_IDENTITY_ATTRIBUTE_PREFIX):
+            continue
+        value = _clean_string(raw_value)
+        name = key[len(TRACE_IDENTITY_ATTRIBUTE_PREFIX) :]
+        if value and name:
+            attributes[f"langfuse.trace.metadata.{name}"] = value
+    release = _clean_string(baggage_attrs.get("datus.release"))
+    if release:
+        attributes["langfuse.release"] = release
+
+    # Tags are the only trace field the Langfuse list API filters on, which is
+    # what makes an unattended scan cheap: one filtered query instead of paging
+    # every trace in the window.
+    tags = _clean_string(baggage_attrs.get("datus.tags"))
+    if tags:
+        attributes["langfuse.trace.tags"] = json.dumps(
+            [tag for tag in (part.strip() for part in tags.split(",")) if tag],
+            ensure_ascii=False,
+        )
 
     return attributes
 

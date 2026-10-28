@@ -96,6 +96,29 @@ class DeleteSubjectInput(BaseModel):
     subject_path: List[str] = Field(..., description="Path of the subject to delete")
 
 
+class ReconcileSubjectInput(BaseModel):
+    """Reconcile the subject tree with semantic YAML after files changed."""
+
+    paths: List[str] = Field(
+        default_factory=list,
+        description=(
+            "Project-relative paths created, modified or renamed to. Deleted paths need not be listed: "
+            "rows whose file is gone are pruned regardless."
+        ),
+    )
+
+
+class ReconcileSubjectData(BaseModel):
+    """Outcome of a subject reconcile."""
+
+    synced_files: List[str] = Field(default_factory=list, description="Semantic YAML files re-projected")
+    pruned_files: List[str] = Field(default_factory=list, description="Deleted files whose rows were dropped")
+    removed_subject_paths: List[List[str]] = Field(
+        default_factory=list, description="Subject directories removed because they were left empty"
+    )
+    failures: Dict[str, str] = Field(default_factory=dict, description="Path or datasource -> error")
+
+
 # ========== Metric Get/Edit ==========
 
 
@@ -104,6 +127,7 @@ class MetricInfo(BaseModel):
 
     name: str = Field(..., description="Metric name")
     yaml: str = Field(..., description="Metric YAML content")
+    semantic_model_file: Optional[str] = Field(None, description="Project-relative source model for Studio editing")
 
 
 class EditMetricInput(BaseModel):
@@ -117,11 +141,21 @@ class MetricPreviewInput(BaseModel):
     """Preview a saved metric by compiling it to SQL (dry-run)."""
 
     subject_path: List[str] = Field(..., description="Path to the saved metric; the leaf is the metric name")
+    catalog: Optional[str] = Field(None, description="Current catalog context")
+    database: Optional[str] = Field(None, description="Current database context")
+    db_schema: Optional[str] = Field(None, description="Current schema context")
     dimensions: Optional[List[str]] = Field(None, description="Optional dimensions to group by")
     time_start: Optional[str] = Field(None, description="Optional start time (ISO or relative, e.g. '-7d')")
     time_end: Optional[str] = Field(None, description="Optional end time (ISO or relative, e.g. 'now')")
     time_granularity: Optional[str] = Field(None, description="Optional grain: day/week/month/quarter/year")
     where: Optional[str] = Field(None, description="Optional SQL WHERE clause (without the WHERE keyword)")
+    context_filter: Optional[str] = Field(
+        None,
+        description=(
+            "Optional SQL filter that always applies before aggregation, scoping the population "
+            "a window metric ranks or counts"
+        ),
+    )
     limit: Optional[int] = Field(None, description="Optional row limit")
     order_by: Optional[List[str]] = Field(None, description="Optional order-by columns; prefix '-' for descending")
 
@@ -130,9 +164,21 @@ class MetricDimensionItem(BaseModel):
     """A queryable dimension of a metric."""
 
     name: str = Field(..., description="Dimension name")
+    required: bool = Field(False, description="Whether this metric always requires the dimension in group-by")
+    required_reason: Optional[str] = Field(None, description="Stable requirement reason code, e.g. 'metric_definition'")
     type: Optional[str] = Field(None, description="Dimension type, e.g. 'time', 'string', 'number'")
     description: Optional[str] = Field(None, description="Dimension description")
     is_primary_key: Optional[bool] = Field(None, description="Whether the dimension is a primary key")
+    recommended: Optional[bool] = Field(
+        None,
+        description=(
+            "Whether the dimension is recommended for analytical grouping; false does not prevent an explicit group-by"
+        ),
+    )
+    recommendation_source: Optional[str] = Field(
+        None,
+        description="How the grouping recommendation was declared or inferred",
+    )
 
 
 class MetricDimensionsData(BaseModel):
@@ -140,18 +186,43 @@ class MetricDimensionsData(BaseModel):
 
     metric: str = Field(..., description="Metric name")
     dimensions: List[MetricDimensionItem] = Field(default_factory=list, description="Queryable dimensions")
+    time_dimension: Optional[str] = Field(None, description="Canonical time dimension for the metric")
+    time_axis_required: bool = Field(
+        False, description="Whether the metric requires its time dimension and a supported granularity in every query"
+    )
+    time_granularities: List[str] = Field(
+        default_factory=list,
+        description="Legal time grains ordered from finest to coarsest",
+    )
 
 
 class MetricDimensionPreflight(BaseModel):
-    """Why the requested dimensions are not all supported by the metric."""
+    """Why the adapter rejected the preview before compiling any SQL.
+
+    Covers both rejection shapes: unsupported dimensions (``invalid_dimensions``
+    / ``common_dimensions``), and the adapter's structured query validation
+    (``code`` plus the ``required_*`` / ``suggested_retry`` fields, mirroring
+    ``SemanticValidationError``). Fields irrelevant to a given rejection stay
+    empty, so a client renders whichever it finds.
+    """
 
     message: str = Field(..., description="Human-readable explanation")
+    code: Optional[str] = Field(None, description="Validation category when known, e.g. 'time_grain_required'")
     invalid_dimensions: List[Dict[str, Any]] = Field(
         default_factory=list, description="Requested dimensions the metric does not support"
     )
     common_dimensions: List[str] = Field(default_factory=list, description="Dimensions the metric does support")
     suggested_metric_groups: List[Dict[str, Any]] = Field(
         default_factory=list, description="Compatible metric/dimension groupings"
+    )
+    required_dimensions: List[str] = Field(
+        default_factory=list, description="Dimensions the caller must add for the query to compile"
+    )
+    required_time_granularity: Optional[str] = Field(
+        None, description="Required or corrected time granularity, e.g. 'day'"
+    )
+    suggested_retry: Optional[Dict[str, Any]] = Field(
+        None, description="Concrete preview arguments the caller can retry with"
     )
 
 
@@ -162,7 +233,7 @@ class MetricPreviewData(BaseModel):
     sql: Optional[str] = Field(None, description="Runnable SQL compiled from the metric definition")
     database: Optional[str] = Field(None, description="Physical database the SQL should run against")
     preflight_error: Optional[MetricDimensionPreflight] = Field(
-        None, description="Set instead of sql when the requested dimensions are invalid"
+        None, description="Set instead of sql when the adapter rejected the query"
     )
 
 
@@ -195,3 +266,6 @@ class SubjectPathInput(BaseModel):
     """Subject path input."""
 
     subject_path: List[str] = Field(..., description="Subject path name")
+    catalog: Optional[str] = Field(None, description="Current catalog context")
+    database: Optional[str] = Field(None, description="Current database context")
+    db_schema: Optional[str] = Field(None, description="Current schema context")

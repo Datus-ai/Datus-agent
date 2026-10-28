@@ -206,7 +206,7 @@ All tools are permitted except those specifically blocked.
 mcp_tool.set_tool_filter(
     "my-server",
     allowed_tools=None,  # Not used with blocklist
-    blocked_tools=["delete_file", "execute_command", "system_shutdown"],
+    blocked_tools=["delete_file", "bash", "system_shutdown"],
     enabled=True
 )
 ```

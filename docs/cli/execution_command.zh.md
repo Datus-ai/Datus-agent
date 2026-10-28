@@ -1,115 +1,51 @@
-# 工具命令 `!`
+# 工具 / 插件命令 `!`
 
-## 1. 概览
+## 1. 概述
 
-以 `!` 为前缀的工具命令，为 Datus-CLI 会话提供一系列 AI 加持的能力与实用操作。你可以在不离开交互式终端的前提下，完成模式发现、指标搜索、SQL 参考搜索等智能数据任务。
-
-## 2. 命令分类
-
-### 2.1 模式发现命令
-
-#### `!sl` / `!schema_linking`
-执行智能模式匹配，为你的问题查找相关的数据表与字段。
+`!` 前缀是一个面向高级用户的"逃生舱"：在对话 REPL 中直接运行 agent 的某个**工具**，或某个已安装**插件**的 CLI——无需让模型代劳。它仅在 **chat 模式**下生效（在 SQL/bash 模式下，开头的 `!` 属于语句本身，例如 shell 的历史展开）。
 
 ```bash
-!sl user purchase information
-!schema_linking sales data by region
+!<tool> [args...]        # 直接运行一个 agent 工具
+!<plugin> <args...>      # 运行某个已安装插件的 CLI（datus <plugin> ...）
 ```
 
-特性：
+**优先匹配工具。** 若首个 token 命中某个在线工具，则按工具执行；否则若命中某个已安装且已激活的插件，则分发到该插件的 CLI；两者都不命中时，报错并给出用法提示。
 
-- 语义级别搜索相关数据库表
-- 展示表定义（DDL）
-- 预览样例数据
-- 可选匹配模式：fast、medium、slow、from_llm
-- 可设置 top_n 返回数量
+单独输入 `!` 可列出可用的工具与插件。
 
-交互式提示将引导你完成：
-
-- 选择 catalog / database / schema
-- 指定匹配数据表数量
-- 选择偏好的匹配方式
-
-### 2.2 搜索发现命令
-
-#### `!sm` / `!search_metrics`
-使用自然语言在数据目录中搜索对应的指标。
+## 2. 运行工具
 
 ```bash
-!sm monthly active users
-!search_metrics revenue growth rate
+!list_tables
+!search_table user purchase --top_n=5
+!describe_table orders
 ```
 
-支持以下筛选条件：
+- 参数语法很简单：按 schema 顺序的位置参数，加上 `--key=value` 具名覆盖（裸 `--flag` 等价于 `--flag=true`）。列表支持 `--items=a,b,c` 或 `--items=['a','b']`。
+- `!<tool> --help` 会打印该工具的参数 schema（名称 / 类型 / 是否必填 / 描述）。
+- 每次调用都会经过与 LLM 驱动调用**完全相同的权限管线**：只读工具无需确认即可运行，而写操作（含 INSERT/DDL 的 `execute_sql`、`bash`、文件写入等）在当前权限档位下需要确认。被拒绝的调用不会执行（也不会发给模型）。
+- 调用与结果会渲染为一个**执行 turn**（带样式的块，和 SQL/bash 模式一样）并喂给模型：本次执行**进入对话上下文并触发一次回复**，你可以紧接着追问相关内容。
 
-- Domain
-- Layer1（业务层）
-- Layer2（子层）
-- Top N 结果
+### 自动补全
 
-#### `!sq` / `!search_sql`
-使用自然语言描述搜索历史 SQL。
+- 输入 `!` 会弹出补全菜单，先列工具、后列插件，并在描述列标注类型。
+- 在工具名之后输入 `--` 可补全该工具的参数 flag 以及 `--help`。
+- 选定工具/插件名后，输入行尾会以浅灰色显示 `<必填> [--可选]` 提示，随输入进度提示剩余参数名。
+
+## 3. 运行插件 CLI
 
 ```bash
-!sq queries about user retention
-!search_sql monthly sales reports
+!hello sync orders --limit=100
+!hello status
 ```
 
-返回内容包括：
+- `!<plugin> <args...>` 会以子进程方式运行 `datus <plugin> <args...>`。该命令像普通 bash 命令一样受权限门控，并且插件自身的 CLI 权限在子进程内同样生效。其输出会作为执行 turn 喂给模型（与 `!<tool>` 一致），进入对话并触发一次回复。
+- 如果插件提供了命令信息，`!<plugin>` 补全器会列出可用命令并提示参数。补全也会
+  沿命令层级逐步展开，例如输入 `!airflow dags ` 后，可以继续选择 `list` 或
+  `trigger`。
 
-- SQL 文本（语法高亮）
-- 查询摘要与备注
-- 标签与分类
-- 域/层级元数据
-- 文件路径与相关度（距离分数）
+## 4. 说明
 
-### 2.3 实用命令
-
-#### `!save`
-将最近一次查询结果保存到文件。
-
-```bash
-!save
-```
-
-交互式选项：
-
-- 文件类型：json、csv、sql 或 all
-- 输出目录（默认 `~/.datus/output`）
-- 自定义文件名
-
-#### `!bash <command>`
-执行安全的 Bash 命令（有限制）。
-
-```bash
-!bash pwd
-!bash ls -la
-!bash cat config.yaml
-```
-
-**安全策略**：仅允许白名单命令：
-
-- `pwd` —— 查看当前目录
-- `ls` —— 列出目录内容
-- `cat` —— 展示文件内容
-- `head` —— 查看文件开头
-- `tail` —— 查看文件末尾
-- `echo` —— 输出文本
-
-不在白名单内的命令会被拒绝并提示安全警告。
-
-## 3. 最佳实践
-
-1. **先做模式匹配** —— 使用 `!sl` 寻找相关表，再编写查询
-2. **善用搜索** —— 使用 `!sm`、`!sq` 优先复用已有指标与查询
-3. **保存成果** —— 通过 `!save` 保存重要的查询结果
-4. **关注安全** —— 使用 `!bash` 时注意白名单限制
-
-## 4. 安全注意事项
-
-- 工具命令与 Datus-CLI 进程共享权限
-- Bash 命令被限制在安全白名单内
-- `!bash` 默认 10 秒超时，防止卡死
-- 所有操作都会记录日志以供审计
-- API 凭证与数据库连接均经过安全处理
-
+- `!` 只在 chat 模式下运行。若要执行 SQL / shell，请用 `Tab` 循环切换输入模式（chat → sql → bash）。
+- 工具命令与 Datus-CLI 进程同权限运行；权限档位（`/permission`）决定哪些工具操作会弹确认或被阻止。
+- 插件执行受 `agent.plugins_enabled` 和项目级插件激活控制——只有已安装且已激活的插件才能通过 `!` 访问。

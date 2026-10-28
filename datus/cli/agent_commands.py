@@ -9,34 +9,26 @@ This module provides a class to handle all agent-related commands.
 
 import asyncio
 import uuid
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Dict
 
 from rich.prompt import Confirm
 from rich.syntax import Syntax
-from rich.table import Table
 
 from datus.agent.evaluate import setup_node_input, update_context_from_node
 from datus.agent.node import Node
 from datus.agent.workflow import Workflow
 from datus.cli.cli_styles import (
     CODE_THEME,
-    HEADER_BOLD_CYAN,
-    TABLE_BORDER_STYLE,
     print_error,
     print_success,
     print_warning,
 )
-from datus.cli.subject_rich_utils import build_historical_sql_tags
 from datus.configuration.node_type import NodeType
 from datus.schemas.base import BaseInput
 from datus.schemas.compare_node_models import CompareInput
 from datus.schemas.gen_sql_agentic_node_models import GenSQLNodeInput
 from datus.schemas.node_models import ExecuteSQLInput, OutputInput, SqlTask
-from datus.schemas.reason_sql_node_models import ReasoningInput
 from datus.schemas.schema_linking_node_models import SchemaLinkingInput
-from datus.storage.embedding_diagnostics import format_context_degraded_warning, is_embedding_unavailable_error
-from datus.tools.db_tools import connector_registry
-from datus.tools.func_tool.context_search import ContextSearchTools
 from datus.tools.output_tools import OutputTool
 from datus.utils.constants import DBType
 from datus.utils.loggings import get_logger
@@ -59,29 +51,11 @@ class AgentCommands:
         self.agent = cli_instance.agent
         self.darun_is_running = False
         self.agent_thread = None
-        self._context_search_tools: ContextSearchTools | None = None
-        self._context_search_warning: str = ""
         self.output_tool: OutputTool | None = None
-
-    @property
-    def context_search_tools(self) -> ContextSearchTools | None:
-        if self._context_search_tools is None and not self._context_search_warning:
-            try:
-                self._context_search_tools = ContextSearchTools(self.cli.agent_config)
-            except Exception as exc:
-                self._context_search_warning = format_context_degraded_warning(exc)
-                logger.warning("Context search tools disabled: %s", self._context_search_warning)
-        return self._context_search_tools
 
     def update_agent_reference(self):
         """Update the agent reference if it has changed in the CLI."""
         self.agent = self.cli.agent
-
-    def _print_embedding_aware_error(self, action: str, error: BaseException | str | None) -> None:
-        if is_embedding_unavailable_error(error):
-            print_warning(self.console, format_context_degraded_warning(error))
-        else:
-            print_error(self.console, f"{action}: {error}")
 
     def create_node_input(self, node_type: str, task_text: str = None) -> BaseInput:
         """Create input for a specific node type with console prompts."""
@@ -141,17 +115,6 @@ class AgentCommands:
             fix_description = self.cli.prompt_input("Describe the issue to fix", default="")
             return ExecuteSQLInput(
                 sql_query=last_sql, sql_task=sql_task, database_type=sql_task.database_type, expectation=fix_description
-            )
-
-        elif node_type == NodeType.TYPE_REASONING:
-            sql_query = self.cli.prompt_input(
-                "Enter SQL query to reason about", default=self.cli_context.get_last_sql() or ""
-            )
-            return ReasoningInput(
-                sql_query=sql_query,
-                sql_task=sql_task,
-                database_type=sql_task.database_type,
-                table_schemas=self.cli_context.get_recent_tables(),
             )
 
         elif node_type == NodeType.TYPE_COMPARE:
@@ -383,299 +346,6 @@ class AgentCommands:
             logger.error(f"Failed to start agent session: {str(e)}")
             print_error(self.console, str(e))
 
-    def cmd_schema_linking(self, args: str):
-        """
-        Command to perform schema linking. Corresponds to !sl
-        """
-        self.console.print("[bold blue]Schema Linking[/]")
-        input_text = args.strip() or self.cli.prompt_input("Enter search text for tables")
-        if not input_text:
-            print_error(self.console, "Input text cannot be empty.")
-            return
-
-        catalog_name, database_name, schema_name = self._prompt_db_layers()
-        top_n = self.cli.prompt_input("Enter top_n to match", default="5")
-
-        # The tool's search_similar seems to handle table_type internally.
-        # The PDF mentions table_type, but the tool implementation has it fixed to "full".
-        # I will omit prompting for it as it won't be used.
-
-        from datus.storage.schema_metadata import SchemaWithValueRAG
-
-        schema_rag = SchemaWithValueRAG(self.cli.agent_config)
-
-        try:
-            with self.console.status("[green]Searching for relevant tables...[/]"):
-                metadata, sample_data = schema_rag.search_similar(
-                    query_text=input_text,
-                    catalog_name=catalog_name,
-                    database_name=database_name,
-                    schema_name=schema_name,
-                    top_n=int(top_n.strip()),
-                )
-        except Exception as exc:
-            self._print_embedding_aware_error("schema linking", exc)
-            return
-
-        if metadata.num_rows > 0 or sample_data.num_rows > 0:
-            self.console.print(
-                f"Found [green]{len(metadata)}[/] relevant tables and [bold blue]{len(sample_data)}[/] sample rows"
-            )
-
-            if metadata.num_rows > 0:
-                self._print_metadata_table(
-                    metadata.to_pylist(), data_column="definition", data_column_dsc="Definition (DDL)", lexer="sql"
-                )
-
-            if sample_data.num_rows > 0:
-                self._print_metadata_table(
-                    sample_data.to_pylist(), data_column="sample_rows", data_column_dsc="Sample Rows", lexer="markdown"
-                )
-
-        else:
-            print_warning(self.console, "No relevant tables found.")
-
-    def _prompt_db_layers(self) -> Tuple[str, str, str]:
-        dialect = self.cli.db_connector.dialect
-        catalog_name, database_name, schema_name = "", "", ""
-
-        if connector_registry.support_catalog(dialect):
-            catalog_name = self.cli.prompt_input("Enter catalog name", default=self.cli_context.current_catalog or "")
-        # SQLite has no "database" capability but still needs a database (file) prompt
-        if DBType.SQLITE == dialect or connector_registry.support_database(dialect):
-            database_name = self.cli.prompt_input("Enter database name", default=self.cli_context.current_db_name or "")
-        if connector_registry.support_schema(dialect):
-            schema_name = self.cli.prompt_input("Enter schema name", default=self.cli_context.current_schema or "")
-
-        return catalog_name, database_name, schema_name
-
-    def _print_metadata_table(
-        self, data_list: List[Dict[str, Any]], data_column: str, data_column_dsc: str = "", lexer: str = "sql"
-    ):
-        table = Table(
-            title="Schema Linking Results",
-            show_header=True,
-            border_style=TABLE_BORDER_STYLE,
-            header_style=HEADER_BOLD_CYAN,
-            expand=True,
-        )
-        table.add_column("Catalog", style="green", max_width=20)
-        table.add_column("Database", style="green", max_width=20)
-        table.add_column("Schema", style="green", max_width=20)
-        table.add_column("Table Name", style="bold green")
-        table.add_column("Type", style="yellow")
-        table.add_column(data_column_dsc if data_column_dsc else data_column, style="default")
-        table.add_column("Distance", style="dim")
-        for item in data_list:
-            table.add_row(
-                item.get("catalog_name"),
-                item.get("database_name"),
-                item.get("schema_name"),
-                item.get("table_name"),
-                item.get("table_type"),
-                Syntax(item.get(data_column, ""), lexer=lexer, line_numbers=True, word_wrap=True),
-                str(item.get("_distance", "")),
-            )
-        self.console.print(table)
-
-    def cmd_search_metrics(self, args: str):
-        """
-        Command to search for metrics. Corresponds to !sm and !search_metrics
-        """
-        self.console.print("[bold blue]Search Metrics[/]")
-        input_text = args.strip() or self.cli.prompt_input("Enter search text for metrics")
-        if not input_text:
-            print_error(self.console, "Input text cannot be empty.")
-            return
-        if self.context_search_tools is None:
-            print_warning(self.console, self._context_search_warning)
-            return
-        subject_path = self._prompt_subject_path()
-        top_n = self.cli.prompt_input("Enter top_n to match", default="5")
-
-        with self.console.status("[green]Searching for metrics...[/]"):
-            result = self.context_search_tools.search_metrics(
-                query_text=input_text,
-                subject_path=subject_path,
-                top_n=int(top_n.strip()),
-            )
-        if result.success and result.result:
-            metrics = result.result
-            print_success(self.console, f"Found {len(metrics)} metrics.")
-            table = Table(
-                title="Metrics Search Results",
-                show_header=True,
-                header_style=HEADER_BOLD_CYAN,
-                border_style=TABLE_BORDER_STYLE,
-                expand=True,
-            )
-            table.add_column("Name", style="bold green")
-            table.add_column("LLM Text", style="default")
-
-            for metric in metrics:
-                table.add_row(
-                    metric.get("name"),
-                    metric.get("description"),
-                )
-            self.console.print(table)
-        elif not result.success:
-            self._print_embedding_aware_error("searching metrics", result.error)
-        else:
-            print_warning(self.console, "No metrics found.")
-
-    def _prompt_subject_path(self) -> Optional[List[str]]:
-        """Prompt user for subject path input.
-
-        Returns:
-            List of subject path components or None if empty
-        """
-        subject_path_str = self.cli.prompt_input(
-            "Enter subject path (e.g., 'Finance/Revenue/Q1', or leave empty for no filter)"
-        )
-        if not subject_path_str or not subject_path_str.strip():
-            return None
-        return [component.strip() for component in subject_path_str.split("/") if component.strip()]
-
-    def cmd_search_reference_sql(self, args: str):
-        """
-        Command to search reference SQL queries. Corresponds to !sq and !search_sql
-        """
-        self.console.print("[bold blue]Search Reference SQL[/]")
-        input_text = args.strip() or self.cli.prompt_input("Enter search text for reference SQL")
-        if not input_text:
-            print_error(self.console, "Input text cannot be empty.")
-            return
-        if self.context_search_tools is None:
-            print_warning(self.console, self._context_search_warning)
-            return
-
-        subject_path = self._prompt_subject_path()
-        top_n = self.cli.prompt_input("Enter top_n to match", default="5")
-
-        with self.console.status("[green]Searching reference SQL...[/]"):
-            result = self.context_search_tools.search_reference_sql(
-                query_text=input_text, subject_path=subject_path, top_n=int(top_n.strip())
-            )
-
-        if result.success and result.result:
-            history = result.result
-            self.console.print(f"[bold]Found [green]{len(history)}[/] reference SQL queries.[/]")
-            table = Table(
-                title="Reference SQL Search Results",
-                show_header=True,
-                border_style=TABLE_BORDER_STYLE,
-                header_style=HEADER_BOLD_CYAN,
-                expand=True,
-            )
-            table.add_column("Name", style="bold green")
-            table.add_column("SQL", style="default")
-            table.add_column("Summary", style="default")
-            table.add_column("Comment", style="default")
-            table.add_column("Tags", style="blue")
-            table.add_column("Subject Path", style="yellow")
-            table.add_column("File Path", style="dim", overflow="fold")
-            table.add_column("Distance", style="dim")
-            #
-            for item in history:
-                # Format subject_path as string
-                subject_path_display = "/".join(item.get("subject_path", []))
-                table.add_row(
-                    item.get("name"),
-                    Syntax(item.get("sql"), lexer="sql", line_numbers=True, word_wrap=True),
-                    item.get("summary"),
-                    item.get("comment"),
-                    build_historical_sql_tags(item.get("tags", ""), "\n"),
-                    subject_path_display,
-                    item.get("filepath"),
-                    str(item.get("_distance", "")),
-                )
-            self.console.print(table)
-        elif not result.success:
-            self._print_embedding_aware_error("searching reference SQL", result.error)
-        else:
-            print_warning(self.console, "No reference SQL queries found.")
-
-    def cmd_doc_search(self, args: str):
-        """
-        Command to search platform documentation. Corresponds to !sd and !search_document
-        """
-        self.console.print("[bold blue]Search Document[/]")
-
-        platform = self.cli.prompt_input("Enter platform name (e.g., snowflake, duckdb, postgresql)")
-        if not platform or not platform.strip():
-            print_error(self.console, "Platform name is required.")
-            return
-        platform = platform.strip()
-
-        version = self.cli.prompt_input("Enter version (optional, press Enter to skip)", default="")
-        version = version.strip() or None
-
-        keywords_input = args.strip() or self.cli.prompt_input("Enter search keywords (comma-separated)")
-        if not keywords_input or not keywords_input.strip():
-            print_error(self.console, "Keywords cannot be empty.")
-            return
-        keywords = [k.strip() for k in keywords_input.split(",") if k.strip()]
-
-        top_n = self.cli.prompt_input("Enter top_n to match", default="5")
-        try:
-            top_n_value = int(top_n.strip())
-        except ValueError:
-            print_error(self.console, "top_n must be an integer.")
-            return
-
-        from datus.tools.search_tools.search_tool import SearchTool
-
-        search_tool = SearchTool(agent_config=self.cli.agent_config)
-
-        with self.console.status("[green]Searching documentation...[/]"):
-            result = search_tool.search_document(
-                platform=platform,
-                keywords=keywords,
-                version=version,
-                top_n=top_n_value,
-            )
-
-        if result.success and result.doc_count > 0:
-            print_success(self.console, f"Found {result.doc_count} document chunks.")
-            for keyword, chunks in result.docs.items():
-                if not chunks:
-                    continue
-                self.console.print(f"\n[bold cyan]Keyword: {keyword}[/] ({len(chunks)} results)")
-                table = Table(
-                    show_header=True,
-                    header_style=HEADER_BOLD_CYAN,
-                    border_style=TABLE_BORDER_STYLE,
-                    expand=True,
-                )
-                table.add_column("Title", style="bold green", max_width=30)
-                table.add_column("Titles", style="green", max_width=30)
-                table.add_column("Nav Path", style="magenta", max_width=30)
-                table.add_column("Hierarchy", style="yellow", max_width=40)
-                table.add_column("Content", style="default")
-                table.add_column("Doc Path", style="dim", max_width=30, overflow="fold")
-
-                for chunk in chunks:
-                    chunk_text = chunk.get("chunk_text", "")
-                    if len(chunk_text) > 200:
-                        chunk_text = chunk_text[:200] + "..."
-                    titles = chunk.get("titles", [])
-                    titles_str = " > ".join(titles) if isinstance(titles, list) else str(titles or "")
-                    nav_path = chunk.get("nav_path", [])
-                    nav_path_str = " > ".join(nav_path) if isinstance(nav_path, list) else str(nav_path or "")
-                    table.add_row(
-                        chunk.get("title", ""),
-                        titles_str,
-                        nav_path_str,
-                        chunk.get("hierarchy", ""),
-                        chunk_text,
-                        chunk.get("doc_path", ""),
-                    )
-                self.console.print(table)
-        elif not result.success:
-            self._print_embedding_aware_error("searching documents", result.error)
-        else:
-            print_warning(self.console, "No documents found.")
-
     def cmd_save(self, args: str):
         """
         Command to save the last result to a file. Corresponds to !output/save
@@ -733,8 +403,6 @@ class AgentCommands:
             database_name = self.cli.prompt_input("Enter database name", default=input.database_name)
             input.database_name = database_name.strip()
         elif isinstance(input, ExecuteSQLInput):
-            pass
-        elif isinstance(input, ReasoningInput):
             pass
         elif isinstance(input, OutputInput):
             workflow = self.cli.workflow_runner.workflow
@@ -809,29 +477,6 @@ class AgentCommands:
                 print_success(self.console, "SQL fix completed")
         else:
             print_error(self.console, "SQL fix failed", prefix=False)
-
-    def cmd_reason(self, args: str):
-        """Run the full reasoning node."""
-        # Create input for reasoning node
-        input_data = self.create_node_input(NodeType.TYPE_REASONING, args)
-        if not input_data:
-            return
-
-        # Run standalone node
-        result = self.run_standalone_node(NodeType.TYPE_REASONING, input_data)
-
-        if result and result.success:
-            print_success(self.console, "SQL reasoning completed")
-            # Display reasoning if available
-            if hasattr(result, "explanation") and result.explanation:
-                self.console.print(f"[blue]Explanation:[/] {result.explanation}")
-        else:
-            print_error(self.console, "SQL reasoning failed", prefix=False)
-
-    def cmd_reason_stream(self, args: str):
-        """Run SQL reasoning with streaming output and action history."""
-        # For now, redirect to normal reason - streaming can be added later
-        self.cmd_reason(args)
 
     def cmd_daend(self, args: str):
         """End the current agent session."""
@@ -966,7 +611,7 @@ class AgentCommands:
             else:
                 # Use normal print for results without sql_query
                 self.console.print(dict_to_tree(next_node.result.to_dict(), console=self.console))
-            logger.info(f"Node result: {next_node.result}")
+            logger.debug("node.finished", node_type=next_node.type)
             workflow.advance_to_next_node()  # ToDo: this should be modified for status
 
             # 6. Update workflow context
@@ -1016,104 +661,3 @@ class AgentCommands:
         """Compare SQL with streaming output and action history."""
         # For now, redirect to normal compare - streaming can be added later
         self.cmd_compare(args)
-
-    def _extract_sql_from_streaming_actions(self, actions, workflow, node):
-        """
-        Extract SQL from streaming actions and add to workflow context.
-        This method handles the _reason_sql_stream case where we need to update
-        the workflow context with the SQL from the final action.
-        """
-        try:
-            from datus.schemas.node_models import SQLContext
-            from datus.utils.json_utils import llm_result2json
-
-            logger.debug(f"Starting SQL extraction from streaming actions. Total actions: {len(actions)}")
-            logger.debug(f"Workflow context before extraction: {len(workflow.context.sql_contexts)} SQL contexts")
-
-            # Look for actions that contain SQL execution results or final message
-            sql_contexts = []
-
-            # First, check if the node has an action_history_manager with sql_contexts
-            if hasattr(node, "action_history_manager") and node.action_history_manager:
-                if hasattr(node.action_history_manager, "sql_contexts"):
-                    sql_contexts.extend(node.action_history_manager.sql_contexts)
-                    logger.info(f"Found {len(sql_contexts)} SQL contexts from action history manager")
-
-            # If no SQL contexts found, try to extract from actions
-            if not sql_contexts:
-                # Look for SQL execution results in actions
-                for action in actions:
-                    # Handle both string and enum status
-                    status_value = action.status.value if hasattr(action.status, "value") else action.status
-
-                    if action.action_type == "read_query" and status_value == "success":
-                        # This is a SQL execution result, create SQLContext from it
-                        sql_input = action.input or {}
-                        sql_output = action.output or {}
-
-                        sql_query = sql_input.get("sql", "")
-                        sql_result = sql_output.get("result", "")
-                        sql_error = sql_output.get("error", "")
-
-                        sql_context = SQLContext(
-                            sql_query=sql_query,
-                            explanation="",
-                            sql_return=sql_result,
-                            sql_error=sql_error,
-                            row_count=0,
-                        )
-                        sql_contexts.append(sql_context)
-                        logger.info(f"Added SQL context from read_query action: {sql_query[:100]}...")
-
-                # Look for final message with SQL result
-                for action in reversed(actions):  # Start from the last action
-                    # Handle both string and enum role
-                    role_value = action.role.value if hasattr(action.role, "value") else action.role
-                    if action.action_type == "message" and role_value == "assistant":
-                        # This could be the final reasoning result
-                        if action.output and action.output.get("raw_output"):
-                            raw_output = action.output.get("raw_output", "")
-
-                            try:
-                                # Parse the final result to extract SQL
-                                content_dict = llm_result2json(raw_output)
-                                sql_query = content_dict.get("sql", "")
-                                explanation = content_dict.get("output") or content_dict.get("explanation", "")
-
-                                if sql_query:
-                                    # Create SQLContext with the final result SQL
-                                    final_sql_context = SQLContext(
-                                        sql_query=sql_query,
-                                        explanation=explanation,
-                                        sql_return="",  # Will be filled by execution
-                                        sql_error="",
-                                        row_count=0,
-                                    )
-                                    sql_contexts.append(final_sql_context)
-                                    logger.info(f"Added final result SQL to SQLContext: {sql_query[:100]}...")
-                                    break  # Only take the first (last) valid final result
-
-                            except Exception as e:
-                                logger.debug(f"Could not parse final message as JSON: {e}")
-
-            # Add successful SQL contexts to workflow context
-            added_count = 0
-            for sql_ctx in sql_contexts:
-                if sql_ctx.sql_error == "":  # only add the successful sql context
-                    workflow.context.sql_contexts.append(sql_ctx)
-                    added_count += 1
-                    logger.info(f"✓ Added SQL context to workflow: {sql_ctx.sql_query[:100]}...")
-                else:
-                    logger.warning(
-                        f"✗ Skipping failed SQL context: {sql_ctx.sql_query[:100]}..., error: {sql_ctx.sql_error}"
-                    )
-
-            if added_count == 0:
-                logger.warning("No successful SQL contexts found in streaming execution")
-
-        except Exception as e:
-            logger.error(f"Failed to extract SQL from streaming actions: {str(e)}")
-            import traceback
-
-            logger.error(f"Traceback: {traceback.format_exc()}")
-            # Don't fail the entire process, just log the error

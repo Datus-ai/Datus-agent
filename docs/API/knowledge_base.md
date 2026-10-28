@@ -7,23 +7,49 @@ The knowledge base endpoints manage KB bootstrap operations with real-time progr
 
 ### `POST /api/v1/kb/bootstrap`
 
-Start a knowledge base component bootstrap with SSE progress streaming. Components include metadata, semantic model,
-metrics, and reference SQL.
+Start a knowledge base component bootstrap with SSE progress streaming. Components include metadata, unified Dosi
+semantic modeling, semantic compatibility aliases, metrics, and reference SQL.
 
 **Body**:
 
 | Field                | Type     | Default        | Notes |
 |----------------------|----------|----------------|-------|
-| `components`         | string[] | _(required)_   | Components to bootstrap: `metadata`, `semantic_model`, `metrics`, `reference_sql` |
-| `strategy`           | string   | `incremental`  | `check` (inspect only), `overwrite` (rebuild), or `incremental` (append/update) |
+| `components`         | string[] | _(required)_   | Components to bootstrap: `metadata`, `semantic_modeling`, `semantic_model`, `metrics`, `reference_sql` |
+| `strategy`           | string   | `incremental`  | `check` (inspect only), `overwrite` (rebuild), `incremental` (append/update), `refresh-profile` (semantic model only), or `sync-yaml` (semantic model only; re-project authored YAML, no LLM call) |
 | `schema_linking_type`| string   | `full`         | Metadata only: `table`, `view`, `mv`, or `full` |
 | `catalog`            | string   | `""`           | Metadata catalog filter for catalog-aware engines such as StarRocks; leave empty for Snowflake |
 | `database_name`      | string   | `""`           | Metadata database filter |
 | `success_story`      | string?  | `null`         | Project-root-relative path to success-story CSV |
+| `semantic_yaml`      | string?  | `null`         | Project-root-relative semantic model YAML path; required with `strategy=refresh-profile` |
 | `subject_tree`       | string[]?| `null`         | Predefined hierarchical categories |
 | `sql_dir`            | string?  | `null`         | Project-root-relative directory with `.sql` files |
 
 **Response**: `text/event-stream`. See [SSE event format](#sse-event-format) below.
+
+`strategy=sync-yaml` is only valid when `components` is exactly `["semantic_model"]`. It replays the authored
+YAML into storage without any LLM call; omit `semantic_yaml` to sync every file of the active datasource.
+
+`strategy=refresh-profile` is only valid when `components` is exactly `["semantic_model"]`. It requires both
+`semantic_yaml` and `success_story`, refreshes generated `Observed profile:` description suffixes in the existing
+OSI YAML using bounded read-only data profiling, and syncs the updated YAML back to semantic model storage.
+It does not run full semantic-model generation or truncate the semantic model store.
+
+For authoring strategies, `semantic_model` maps to datasets-only `semantic_modeling`; `metrics` and
+`semantic_modeling` map to full authoring. Multiple semantic components are normalized to one execution, with full
+scope taking precedence.
+
+**Example**:
+
+```bash
+curl -N -X POST http://localhost:8000/api/v1/kb/bootstrap \
+  -H "Content-Type: application/json" \
+  -d '{
+    "components": ["semantic_model"],
+    "strategy": "refresh-profile",
+    "semantic_yaml": "subject/semantic_models/starrocks/orders.yml",
+    "success_story": "success_story.csv"
+  }'
+```
 
 ### `POST /api/v1/kb/bootstrap/{stream_id}/cancel`
 

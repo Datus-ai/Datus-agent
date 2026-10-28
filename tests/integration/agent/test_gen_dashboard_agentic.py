@@ -5,15 +5,18 @@
 """
 Integration tests for GenDashboardAgenticNode.
 
-Tests the BI dashboard subagent with real Superset (Docker) + real LLM.
+Tests the BI dashboard subagent with real Superset (Docker).
+Initialization contracts use a fake model in nightly. Real-model execution is
+available for manual evaluation with ``-m product_e2e``.
 Requires:
 - Superset running on localhost:8088 (docker compose -f ../datus-bi-adapters/datus-bi-superset/tests/integration/docker-compose.yml up -d)
 - datus-bi-superset package installed
-- LLM API key (DEEPSEEK_API_KEY)
+- LLM API key (DEEPSEEK_API_KEY) for manual real-model evaluation only
 """
 
 import copy
 import os
+from unittest.mock import patch
 
 import pytest
 import requests
@@ -39,8 +42,6 @@ def _is_superset_running() -> bool:
 @pytest.fixture(scope="module")
 def dashboard_agent_config():
     """Load acceptance config with gen_dashboard agentic node configured."""
-    if not os.environ.get("DEEPSEEK_API_KEY"):
-        pytest.skip("DEEPSEEK_API_KEY not set")
     if not _is_superset_running():
         pytest.skip(f"Superset not reachable at {SUPERSET_URL}. Run docker compose up -d")
     pytest.importorskip("datus_bi_superset", reason="datus-bi-superset package not installed")
@@ -72,7 +73,17 @@ def dashboard_agent_config():
     return config
 
 
+@pytest.fixture
+def mock_dashboard_model():
+    """Keep node/tool initialization independent of provider credentials and APIs."""
+    from tests.unit_tests.mock_llm_model import MockLLMModel
+
+    with patch("datus.models.base.LLMBaseModel.create_model", return_value=MockLLMModel()):
+        yield
+
+
 @pytest.mark.nightly
+@pytest.mark.usefixtures("mock_dashboard_model")
 class TestGenDashboardAgenticInit:
     """Integration tests for GenDashboardAgenticNode initialization with real Superset."""
 
@@ -125,12 +136,15 @@ class TestGenDashboardAgenticInit:
 @pytest.mark.nightly
 @pytest.mark.product_e2e
 class TestGenDashboardAgenticExecution:
-    """Integration tests for GenDashboardAgenticNode execute_stream with real Superset + LLM."""
+    """Manual evaluation of execute_stream with real Superset + LLM."""
 
     @pytest.mark.asyncio
     @pytest.mark.timeout(300)
     async def test_list_dashboards(self, dashboard_agent_config):
         """execute_stream should list dashboards from real Superset."""
+        if not os.environ.get("DEEPSEEK_API_KEY"):
+            pytest.skip("DEEPSEEK_API_KEY not set")
+
         from datus.agent.node.gen_dashboard_agentic_node import GenDashboardAgenticNode
         from datus.schemas.action_history import ActionHistoryManager, ActionRole, ActionStatus
         from datus.schemas.gen_dashboard_agentic_node_models import GenDashboardNodeInput

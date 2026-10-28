@@ -1,114 +1,51 @@
-# Tool Commands `!`
+# Tool / Plugin Commands `!`
 
 ## 1. Overview
 
-Tool commands (prefixed with `!`) provide specialized AI-powered capabilities and utility operations within the Datus-CLI environment. These commands enable schema discovery, metrics search, SQL reference search, and other intelligent data operations without leaving the interactive session.
-
-## 2. Command Categories
-
-### 2.1 Schema Discovery Commands
-
-#### `!sl` / `!schema_linking`
-Perform intelligent schema linking to discover relevant tables and columns for your query.
+The `!` prefix is a power-user escape hatch that runs, directly from the chat REPL, either one of the agent's own **tools** or an installed **plugin's** CLI — without asking the model to do it for you. It is available in **chat mode** only (in SQL/bash mode a leading `!` is part of the statement, e.g. shell history expansion).
 
 ```bash
-!sl user purchase information
-!schema_linking sales data by region
+!<tool> [args...]        # run an agent tool directly
+!<plugin> <args...>      # run an installed plugin's CLI (datus <plugin> ...)
 ```
 
-Features:
+**Tools are matched first.** If the first token names a live tool it runs as a tool; otherwise, if it names an installed + activated plugin, it dispatches to that plugin's CLI; otherwise the input is rejected with a usage hint.
 
-- Semantic search for relevant database tables
-- Table definition (DDL) display
-- Sample data preview
-- Configurable matching methods: fast, medium, slow, from_llm
-- Adjustable top_n results
+Type `!` on its own to list the available tools and plugins.
 
-Interactive prompts guide you through:
-
-- Catalog/database/schema selection
-- Number of tables to match
-- Matching method preference
-
-### 2.2 Search & Discovery Commands
-
-#### `!sm` / `!search_metrics`
-Use natural language to search for corresponding metrics in your data catalog.
+## 2. Running a tool
 
 ```bash
-!sm monthly active users
-!search_metrics revenue growth rate
+!list_tables
+!search_table user purchase --top_n=5
+!describe_table orders
 ```
 
-Allows filtering by:
+- Arguments use a simple grammar: positional values in schema order, plus `--key=value` named overrides (bare `--flag` means `--flag=true`). Lists accept `--items=a,b,c` or `--items=['a','b']`.
+- `!<tool> --help` prints the tool's parameter schema (name / type / required / description).
+- Every call goes through the **same permission pipeline** an LLM-driven tool call would: read-only tools run without a prompt, while writes (`execute_sql` with INSERT/DDL, `bash`, file writes, …) require confirmation under the active permission profile. Denied calls never execute (and are not sent to the model).
+- The call + result render as an **execution turn** (a styled block, like SQL/bash modes) and are fed to the model: the run **enters the conversation context and triggers a reply**, so you can immediately ask follow-up questions about it.
 
-- Domain
-- Layer1 (business layer)
-- Layer2 (sub-layer)
-- Top N results
+### Autocomplete
 
-#### `!sq` / `!search_sql`
-Search historical SQL queries using natural language descriptions.
+- Typing `!` opens a completion menu listing tools (first) then plugins, each tagged in the description column.
+- After a tool name, `--` completes the tool's parameter flags plus `--help`.
+- Once a tool/plugin name is chosen, a dim `<required> [--optional]` hint is shown after the input, naming the remaining arguments as you type.
+
+## 3. Running a plugin CLI
 
 ```bash
-!sq queries about user retention
-!search_sql monthly sales reports
+!hello sync orders --limit=100
+!hello status
 ```
 
-Returns:
+- `!<plugin> <args...>` runs `datus <plugin> <args...>` as a subprocess. The command is permission-gated like any bash command, and the plugin's own CLI permissions apply inside the child process. Its output is fed to the model as an execution turn (same as `!<tool>`), so it enters the conversation and triggers a reply.
+- When a plugin provides command metadata, the `!<plugin>` completer lists its
+  commands and hints their arguments. Completion follows nested command groups,
+  so typing `!airflow dags ` can offer commands such as `list` and `trigger`.
 
-- SQL query text with syntax highlighting
-- Query summary and comments
-- Tags and categorization
-- Domain/layer metadata
-- File path and relevance distance
+## 4. Notes
 
-### 2.3 Utility Commands
-
-#### `!save`
-Save the last query result to a file.
-
-```bash
-!save
-```
-
-Interactive options:
-
-- File type: json, csv, sql, or all
-- Output directory (defaults to ~/.datus/output)
-- Custom filename
-
-#### `!bash <command>`
-Execute safe bash commands (security restricted).
-
-```bash
-!bash pwd
-!bash ls -la
-!bash cat config.yaml
-```
-
-**Security**: Only whitelisted commands are allowed:
-
-- `pwd` - Print working directory
-- `ls` - List files
-- `cat` - Display file contents
-- `head` - Show file beginning
-- `tail` - Show file end
-- `echo` - Display text
-
-Commands not in the whitelist will be rejected with a security warning.
-
-## 3. Best Practices
-
-1. **Start with Schema Linking** - Use `!sl` to discover relevant tables before writing queries
-2. **Leverage Search** - Use `!sm` and `!sq` to find existing metrics and queries before creating new ones
-3. **Save Results** - Use `!save` to preserve important query results
-4. **Security First** - Be aware of bash command restrictions when using `!bash`
-
-## 4. Security Considerations
-
-- Tool commands run with the same privileges as the Datus-CLI process
-- Bash commands are restricted to a whitelist of safe operations
-- `!bash` commands timeout after 10 seconds to prevent hanging
-- All operations are logged for audit purposes
-- API credentials and database connections are handled securely
+- `!` runs only in chat mode. Use `Tab` to cycle input modes (chat → sql → bash) for SQL / shell execution instead.
+- Tool commands run with the same privileges as the Datus-CLI process; the permission profile (`/permission`) governs which tool actions prompt or are blocked.
+- Plugin execution is gated by `agent.plugins_enabled` and the project's plugin activation — only installed and active plugins are reachable via `!`.

@@ -8,7 +8,7 @@
 
 An HTML dashboard is a **live data view** — every change to the date range, region, product line, or any other filter renders the saved SQL template with the new parameters and re-queries the database. That's the key difference from `gen_visual_report`, which bakes data into the page at build time: reports are for sharing in emails or briefings; dashboards are for the cases where you need to keep exploring or hand the page to someone who'll filter it themselves.
 
-For interactive BI dashboards on Superset / Grafana, use [`gen_dashboard`](gen_dashboard.md) instead.
+For interactive BI dashboards on Superset or another external platform, ask the main agent to use the installed BI plugin directly. The old BI dashboard node is documented only as a [legacy compatibility path](gen_dashboard.md).
 
 ## Quick Start
 
@@ -50,7 +50,7 @@ Once the dashboard is built, the chat panel prints the HTML file's absolute path
 
 `gen_visual_dashboard` accepts two equally valid starting points:
 
-- **From metrics** — reference an existing metric with `@Metrics <subject>.<group>.<metric>` (three segments — subject tree path + metric name). The agent will pull its definition, dimensions, and time windows from your semantic layer, and turn the dimensions into filters. Best when your project already has a curated metric registry (see [Generate Metrics](gen_metrics.md) for how to create them).
+- **From metrics** — reference an existing metric with `@Metrics <subject>.<group>.<metric>` (three segments — subject tree path + metric name). The agent will pull its definition, dimensions, and time windows from your semantic layer, and turn the dimensions into filters. Best when your project already has a curated metric registry (see [Semantic Modeling](semantic_modeling.md) for Dosi authoring).
   ```bash
   Build an ops overview around @Metrics revenue.daily.dau and @Metrics conversion.weekly.signup_rate, with region and date-range filters.
   ```
@@ -139,3 +139,9 @@ You'll get a sharper dashboard when your prompt includes:
 - **The time window** — *"last 90 days"*, *"all of 2025"* (this also becomes the default value of the date-range filter).
 
 If you skip any of these the agent will guess from your project's metrics and the SQL you gave it, and will only ask when intent is genuinely ambiguous.
+
+## Content Source Declarations
+
+When authoring or editing an artifact, declare each `ChartCard` / `BlockHandle` id and query source as literals so Scope & Sources can connect content blocks to their queries. Keep shared KPI components visual-only and wrap each tile with a literal `BlockHandle` at its call site. Use a literal `queryIds` array when several queries contribute, including the queries providing a frontend-calculated ratio's numerator and denominator.
+
+`validate_render()` rejects dynamic ids, dynamic query sources, and spread card props that hide the declarations, with actionable repair messages. Existing dynamic wrappers continue to run, but must expose static declarations before an authored edit can finalize. Do not declare unused queries just to connect the graph.

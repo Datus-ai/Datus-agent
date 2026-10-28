@@ -1,5 +1,6 @@
 import logging
 import os
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -384,23 +385,48 @@ class TestConfigureLogging:
 
         assert Path(mgr.log_dir) == path_manager.logs_dir
 
+    @pytest.mark.parametrize("logger_name", ("LiteLLM", "LiteLLM Router", "LiteLLM Proxy"))
+    def test_configure_logging_routes_litellm_to_file_only(self, tmp_path, capsys, logger_name):
+        from datus.utils.loggings import configure_logging
 
-class TestAddExcInfo:
-    """Tests for add_exc_info processor (line 202-206)."""
+        mgr = configure_logging(console_output=False, log_dir=str(tmp_path / "logs"))
+        import litellm  # noqa: F401
 
-    def test_adds_exc_info_for_error(self):
-        from datus.utils.loggings import add_exc_info
+        msg = f"{logger_name} completion() model= test-model; provider = test-provider"
+        litellm_logger = logging.getLogger(logger_name)
+        capsys.readouterr()
+        litellm_logger.warning(msg)
+        for handler in litellm_logger.handlers:
+            handler.flush()
 
-        event_dict = {}
-        result = add_exc_info(None, "error", event_dict)
-        assert result["exc_info"] is True
+        captured = capsys.readouterr()
+        assert msg not in captured.out
+        assert msg not in captured.err
+        assert msg in Path(mgr.file_handler.baseFilename).read_text(encoding="utf-8")
 
-    def test_no_exc_info_for_info(self):
-        from datus.utils.loggings import add_exc_info
+    @pytest.mark.parametrize("logger_name", ("LiteLLM", "LiteLLM Router", "LiteLLM Proxy"))
+    def test_configure_litellm_logging_removes_late_console_handler(self, tmp_path, capsys, logger_name):
+        from datus.utils.loggings import configure_litellm_logging, configure_logging
 
-        event_dict = {}
-        result = add_exc_info(None, "info", event_dict)
-        assert "exc_info" not in result
+        mgr = configure_logging(console_output=False, log_dir=str(tmp_path / "logs"))
+        litellm_logger = logging.getLogger(logger_name)
+        late_console_handler = logging.StreamHandler(sys.stdout)
+        late_console_handler.setFormatter(logging.Formatter("%(message)s"))
+        litellm_logger.addHandler(late_console_handler)
+
+        configure_litellm_logging()
+
+        msg = f"{logger_name} completion() model= late-import; provider = test-provider"
+        capsys.readouterr()
+        litellm_logger.warning(msg)
+        for handler in litellm_logger.handlers:
+            handler.flush()
+
+        captured = capsys.readouterr()
+        assert late_console_handler not in litellm_logger.handlers
+        assert msg not in captured.out
+        assert msg not in captured.err
+        assert msg in Path(mgr.file_handler.baseFilename).read_text(encoding="utf-8")
 
 
 class TestAddCodeLocation:
@@ -569,24 +595,6 @@ class TestSetupWebChatbotLogging:
 
         assert path_manager.logs_dir.exists()
         assert any(path_manager.logs_dir.glob("web_chatbot.*.log"))
-
-
-class TestAdaptiveRenderer:
-    """Tests for AdaptiveRenderer (lines 297-307)."""
-
-    def test_renderer_is_callable(self):
-        from datus.utils.loggings import AdaptiveRenderer
-
-        renderer = AdaptiveRenderer()
-        assert callable(renderer)
-
-    def test_renderer_produces_string_output(self):
-        """AdaptiveRenderer.__call__ returns a string (delegates to ConsoleRenderer)."""
-        from datus.utils.loggings import AdaptiveRenderer
-
-        renderer = AdaptiveRenderer()
-        result = renderer(None, "info", {"event": "test message"})
-        assert isinstance(result, str)
 
 
 class TestLogContext:

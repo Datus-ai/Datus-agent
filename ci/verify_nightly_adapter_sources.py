@@ -1,0 +1,290 @@
+#!/usr/bin/env python3
+"""Verify that nightly external packages came from the checked-out repositories."""
+
+from __future__ import annotations
+
+import argparse
+import importlib
+import json
+from importlib import metadata
+from pathlib import Path
+from urllib.parse import urlparse
+from urllib.request import url2pathname
+
+from pydantic import BaseModel, ConfigDict
+
+EXPECTED_LOCAL_PACKAGES = {
+    "datus-db-core": "datus-db-adapters/datus-db-core",
+    "datus-sqlalchemy": "datus-db-adapters/datus-sqlalchemy",
+    "datus-snowflake": "datus-db-adapters/datus-snowflake",
+    "datus-postgresql": "datus-db-adapters/datus-postgresql",
+    "datus-mysql": "datus-db-adapters/datus-mysql",
+    "datus-clickhouse": "datus-db-adapters/datus-clickhouse",
+    "datus-starrocks": "datus-db-adapters/datus-starrocks",
+    "datus-bigquery": "datus-db-adapters/datus-bigquery",
+    "datus-doris": "datus-db-adapters/datus-doris",
+    "datus-hologres": "datus-db-adapters/datus-hologres",
+    "datus-maxcompute": "datus-db-adapters/datus-maxcompute",
+    "datus-oracle": "datus-db-adapters/datus-oracle",
+    "datus-trino": "datus-db-adapters/datus-trino",
+    "datus-greenplum": "datus-db-adapters/datus-greenplum",
+    "datus-hive": "datus-db-adapters/datus-hive",
+    "datus-spark": "datus-db-adapters/datus-spark",
+    "datus-gaussdb": "datus-db-adapters/datus-gaussdb",
+    "datus-tidb": "datus-db-adapters/datus-tidb",
+    "datus-dws": "datus-db-adapters/datus-dws",
+    "datus-bi-core": "datus-bi-adapters/datus-bi-core",
+    "datus-bi-superset": "datus-bi-adapters/datus-bi-superset",
+    "datus-bi-grafana": "datus-bi-adapters/datus-bi-grafana",
+    "datus-scheduler-core": "datus-scheduler-adapters/datus-scheduler-core",
+    "datus-scheduler-airflow": "datus-scheduler-adapters/datus-scheduler-airflow",
+    "datus-storage-base": "datus-storage-adapters/datus-storage-base",
+    "datus-storage-postgresql": "datus-storage-adapters/datus-storage-postgresql",
+}
+
+
+class DatabaseAdapterContract(BaseModel):
+    """Agent-facing registration contract required from a database adapter."""
+
+    model_config = ConfigDict(frozen=True)
+
+    db_type: str
+    parser_dialect: str | None = None
+    required_hooks: tuple[str, ...] = ()
+    dialect_operation_methods: tuple[str, ...] = ()
+
+
+DATABASE_ADAPTER_CONTRACTS: dict[str, DatabaseAdapterContract] = {
+    "datus_bigquery": DatabaseAdapterContract(
+        db_type="bigquery",
+        parser_dialect="bigquery",
+        required_hooks=("get_identifier_parser", "get_sql_generation_notes"),
+    ),
+    "datus_doris": DatabaseAdapterContract(db_type="doris"),
+    "datus_hologres": DatabaseAdapterContract(
+        db_type="hologres",
+        parser_dialect="postgres",
+        required_hooks=("get_identifier_parser", "get_sql_generation_notes"),
+    ),
+    "datus_maxcompute": DatabaseAdapterContract(
+        db_type="maxcompute",
+        parser_dialect="hive",
+        required_hooks=("get_identifier_parser", "get_sql_generation_notes"),
+    ),
+    "datus_oracle": DatabaseAdapterContract(
+        db_type="oracle",
+        parser_dialect="oracle",
+        required_hooks=("get_sql_generation_notes", "get_dialect_operations"),
+        dialect_operation_methods=(
+            "render_limit",
+            "render_count",
+            "quote_identifier",
+            "infer_transfer_type",
+            "write_dataframe",
+        ),
+    ),
+    "datus_gaussdb": DatabaseAdapterContract(
+        db_type="gaussdb",
+        parser_dialect="postgres",
+        required_hooks=("get_identifier_parser", "get_sql_generation_notes"),
+    ),
+    # sqlglot has no TiDB dialect, so TiDB parses as MySQL. The db_type stays
+    # distinct because the semantic engine selects its native TiDB dialect by
+    # datasource type.
+    "datus_tidb": DatabaseAdapterContract(
+        db_type="tidb",
+        parser_dialect="mysql",
+        required_hooks=("get_sql_generation_notes",),
+    ),
+    # DWS speaks the PostgreSQL wire protocol and reuses the psycopg2 transport
+    # from datus-postgresql, so it registers no dialect of its own.
+    "datus_dws": DatabaseAdapterContract(
+        db_type="dws",
+        parser_dialect="postgres",
+        required_hooks=("get_identifier_parser", "get_sql_generation_notes"),
+    ),
+}
+
+CALLABLE_DATABASE_HOOKS = frozenset({"get_identifier_parser"})
+
+
+def distribution_source_path(package_name: str) -> tuple[Path | None, str | None]:
+    try:
+        dist = metadata.distribution(package_name)
+    except metadata.PackageNotFoundError:
+        return None, "package is not installed"
+
+    direct_url_text = dist.read_text("direct_url.json")
+    if not direct_url_text:
+        return None, "package has no direct_url.json and was likely installed from a registry"
+
+    try:
+        direct_url = json.loads(direct_url_text)
+    except json.JSONDecodeError as exc:
+        return None, f"package has invalid direct_url.json: {exc}"
+
+    source_url = direct_url.get("url")
+    if not isinstance(source_url, str) or not source_url:
+        return None, "package direct_url.json has no source URL"
+
+    parsed = urlparse(source_url)
+    if parsed.scheme != "file" or parsed.netloc not in ("", "localhost"):
+        return None, f"package source is not a local checkout: {source_url}"
+
+    return Path(url2pathname(parsed.path)).resolve(), None
+
+
+def verify_local_sources(external_repos_root: Path) -> list[str]:
+    external_repos_root = external_repos_root.resolve()
+    errors: list[str] = []
+
+    for package_name, relative_path in EXPECTED_LOCAL_PACKAGES.items():
+        expected_path = (external_repos_root / relative_path).resolve()
+        source_path, error = distribution_source_path(package_name)
+        if error:
+            errors.append(f"{package_name}: {error}")
+        elif source_path != expected_path:
+            errors.append(f"{package_name}: expected checkout source {expected_path}, got {source_path}")
+
+    return errors
+
+
+def verify_dosi_runtime_imports() -> list[str]:
+    errors: list[str] = []
+    try:
+        native = importlib.import_module("dosi_engine")
+    except Exception as exc:  # noqa: BLE001 - report the actual nightly import failure.
+        errors.append(f"dosi-engine import failed: {exc}")
+    else:
+        for name in ("Engine", "validate", "render_datus_authoring_spec"):
+            if not hasattr(native, name):
+                errors.append(f"dosi-engine is missing {name}")
+
+    try:
+        importlib.import_module("datus.tools.semantic_tools.dosi")
+    except Exception as exc:  # noqa: BLE001 - report the actual nightly import failure.
+        errors.append(f"Agent Dosi runtime import failed: {exc}")
+
+    return errors
+
+
+def verify_database_adapter_imports() -> list[str]:
+    """Verify new database adapters can register their Agent-facing hooks."""
+    errors: list[str] = []
+    try:
+        core = importlib.import_module("datus_db_core")
+        registry = core.connector_registry
+    except Exception as exc:  # noqa: BLE001 - report the actual nightly import failure.
+        return [f"datus-db-core registry import failed: {exc}"]
+
+    for module_name, contract in DATABASE_ADAPTER_CONTRACTS.items():
+        try:
+            module = importlib.import_module(module_name)
+            module.register()
+        except Exception as exc:  # noqa: BLE001 - report the actual nightly import failure.
+            errors.append(f"{module_name} registration failed: {exc}")
+            continue
+
+        db_type = contract.db_type
+        metadata_obj = registry.get_metadata(db_type)
+        if metadata_obj is None:
+            errors.append(f"{module_name} did not register connector metadata for {db_type}")
+            continue
+
+        expected_parser = contract.parser_dialect
+        if expected_parser and registry.get_parser_dialect(db_type) != expected_parser:
+            errors.append(f"{module_name} parser dialect is not {expected_parser}")
+
+        registered_hooks = {}
+        for hook_name in contract.required_hooks:
+            getter = getattr(registry, hook_name, None)
+            hook = getter(db_type) if callable(getter) else None
+            if not hook:
+                errors.append(f"{module_name} did not register {hook_name}")
+            elif hook_name in CALLABLE_DATABASE_HOOKS and not callable(hook):
+                errors.append(f"{module_name} registered non-callable {hook_name}")
+            else:
+                registered_hooks[hook_name] = hook
+
+        operations = registered_hooks.get("get_dialect_operations")
+        if operations is not None:
+            missing_methods = [
+                name for name in contract.dialect_operation_methods if not callable(getattr(operations, name, None))
+            ]
+            if missing_methods:
+                errors.append(
+                    f"{module_name} dialect operations are missing callable methods: {', '.join(missing_methods)}"
+                )
+
+    return errors
+
+
+def verify_storage_adapter_imports() -> list[str]:
+    errors: list[str] = []
+    required_names = ("FtsField", "FtsIndexStatus", "FtsSpec", "normalize_fts_spec")
+    fts_contract = None
+    try:
+        fts_contract = importlib.import_module("datus_storage_base.vector.fts")
+    except Exception as exc:  # noqa: BLE001 - report the actual nightly import failure.
+        errors.append(f"datus-storage-base FTS import failed: {exc}")
+    else:
+        missing_names = [name for name in required_names if not hasattr(fts_contract, name)]
+        if missing_names:
+            errors.append(f"datus-storage-base FTS contract is missing: {', '.join(missing_names)}")
+
+    try:
+        agent_fts = importlib.import_module("datus.storage.fts")
+    except Exception as exc:  # noqa: BLE001 - report the actual nightly import failure.
+        errors.append(f"Datus Agent FTS import failed: {exc}")
+    else:
+        mismatched_names = [
+            name
+            for name in required_names
+            if fts_contract is not None
+            and hasattr(fts_contract, name)
+            and getattr(agent_fts, name, None) is not getattr(fts_contract, name)
+        ]
+        if mismatched_names:
+            errors.append(
+                f"Datus Agent FTS contract does not re-export datus-storage-base: {', '.join(mismatched_names)}"
+            )
+
+    try:
+        vector_adapter = importlib.import_module("datus_storage_postgresql.vector")
+    except Exception as exc:  # noqa: BLE001 - report the actual nightly import failure.
+        errors.append(f"datus-storage-postgresql vector import failed: {exc}")
+    else:
+        if not hasattr(vector_adapter, "PgvectorBackend"):
+            errors.append("datus-storage-postgresql vector adapter is missing PgvectorBackend")
+
+    return errors
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--external-repos-root",
+        type=Path,
+        required=True,
+        help="Directory containing the checked-out external repositories.",
+    )
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
+    errors = verify_local_sources(args.external_repos_root)
+    errors.extend(verify_database_adapter_imports())
+    errors.extend(verify_dosi_runtime_imports())
+    errors.extend(verify_storage_adapter_imports())
+    if errors:
+        for error in errors:
+            print(f"ERROR: {error}")
+        return 1
+
+    print(f"Verified {len(EXPECTED_LOCAL_PACKAGES)} external packages from {args.external_repos_root.resolve()}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

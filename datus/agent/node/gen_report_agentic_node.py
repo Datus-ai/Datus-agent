@@ -207,8 +207,14 @@ class GenReportAgenticNode(AgenticNode):
         """Setup database tools."""
         try:
             self.db_func_tool = DBFuncTool(
+                # Same anchor the filesystem tools use, so a path the model got
+                # from glob resolves identically in load_file_as_table.
+                filesystem_root=self._resolve_workspace_root(),
                 agent_config=self.agent_config,
-                sub_agent_name=self.node_config.get("system_prompt"),
+                # The agentic_nodes KEY, never ``system_prompt`` — that names the
+                # prompt template, and the scope lookup silently returns unfiltered
+                # storage when the name misses (``rag_scope.build_scope_filter``).
+                sub_agent_name=self.get_node_name(),
             )
             self.tools.extend(self.db_func_tool.available_tools())
             logger.debug("Added database tools from DBFuncTool")
@@ -218,12 +224,10 @@ class GenReportAgenticNode(AgenticNode):
     def _setup_semantic_tools(self):
         """Setup semantic tools for report analysis."""
         try:
-            # Get adapter_type from configuration
-            adapter_type = self.node_config.get("adapter_type", "metricflow")
             self.semantic_tools = SemanticTools(
                 agent_config=self.agent_config,
-                sub_agent_name=self.node_config.get("system_prompt"),
-                adapter_type=adapter_type,
+                sub_agent_name=self.get_node_name(),
+                runtime_db_context_provider=self._semantic_runtime_db_context,
             )
             self.tools.extend(self.semantic_tools.available_tools())
             logger.debug("Added semantic tools from SemanticTools")
@@ -233,9 +237,7 @@ class GenReportAgenticNode(AgenticNode):
     def _setup_context_search_tools(self):
         """Setup context search tools."""
         try:
-            self.context_search_tools = ContextSearchTools(
-                self.agent_config, sub_agent_name=self.node_config.get("system_prompt")
-            )
+            self.context_search_tools = ContextSearchTools(self.agent_config, sub_agent_name=self.get_node_name())
             self.tools.extend(self.context_search_tools.available_tools())
             logger.debug("Added context search tools from ContextSearchTools")
         except Exception as e:
@@ -255,24 +257,26 @@ class GenReportAgenticNode(AgenticNode):
         try:
             if tool_type == "semantic_tools":
                 if not self.semantic_tools:
-                    adapter_type = self.node_config.get("adapter_type", "metricflow")
                     self.semantic_tools = SemanticTools(
                         agent_config=self.agent_config,
-                        sub_agent_name=self.node_config.get("system_prompt"),
-                        adapter_type=adapter_type,
+                        sub_agent_name=self.get_node_name(),
+                        runtime_db_context_provider=self._semantic_runtime_db_context,
                     )
                 tool_instance = self.semantic_tools
             elif tool_type == "db_tools":
                 if not self.db_func_tool:
                     self.db_func_tool = DBFuncTool(
+                        # Same anchor the filesystem tools use, so a path the model got
+                        # from glob resolves identically in load_file_as_table.
+                        filesystem_root=self._resolve_workspace_root(),
                         agent_config=self.agent_config,
-                        sub_agent_name=self.node_config.get("system_prompt"),
+                        sub_agent_name=self.get_node_name(),
                     )
                 tool_instance = self.db_func_tool
             elif tool_type == "context_search_tools":
                 if not self.context_search_tools:
                     self.context_search_tools = ContextSearchTools(
-                        self.agent_config, sub_agent_name=self.node_config.get("system_prompt")
+                        self.agent_config, sub_agent_name=self.get_node_name()
                     )
                 tool_instance = self.context_search_tools
             elif tool_type == "filesystem_tools":

@@ -1,265 +1,129 @@
-# Datasource Configuration
+# Datasources
 
-Configure database connections under `agent.services.datasources`.
-
-## Overview
-
-The runtime services in Datus Agent live under `agent.services` in `agent.yml`. This page focuses on database connections in `services.datasources`. Semantic adapters, BI platforms, and schedulers are documented on their sibling pages.
-
-Key features:
-
-- **Universal Connectivity**: Support for cloud data warehouses (Snowflake, StarRocks), local databases (SQLite, DuckDB), and more
-- **Credential Security**: Environment variable-based credential management (`${ENV_VAR}` syntax)
-- **Default Database**: Mark one database as `default: true` for auto-selection
-- **Plugin Adapters**: Install additional database adapters via `datus-agent configure`
-- **Dynamic Discovery**: Glob pattern-based database discovery for multiple database files
-
-> **Note**: The earlier `services.databases` key has been renamed to `services.datasources`. Rename the key manually in your `agent.yml` — the runtime rejects the old name.
-
-## Configuration Structure
-
-Datasources are configured under `agent.services.datasources`. Each entry is an independent database connection:
+A datasource is a named database connection used by Datus for SQL execution, metadata discovery, and knowledge-base indexing. Configure datasources under `agent.services.datasources` in `agent.yml`.
 
 ```yaml
 agent:
   services:
     datasources:
-      my_snowflake:
-        type: snowflake
-        account: ${SNOWFLAKE_ACCOUNT}
-        username: ${SNOWFLAKE_USER}
-        password: ${SNOWFLAKE_PASSWORD}  # Use private_key, or exactly one of password/private_key_file
-        # private_key: ${SNOWFLAKE_PRIVATE_KEY}
-        # private_key_file: ${SNOWFLAKE_PRIVATE_KEY_FILE}
-        # private_key_file_pwd: ${SNOWFLAKE_PRIVATE_KEY_FILE_PWD}
-        database: ${SNOWFLAKE_DATABASE}  # Optional
-        schema: ${SNOWFLAKE_SCHEMA}      # Optional
-        warehouse: ${SNOWFLAKE_WAREHOUSE}
-        role: ${SNOWFLAKE_ROLE}          # Optional
+      analytics:
+        type: postgresql
+        host: ${POSTGRES_HOST}
+        port: 5432
+        username: ${POSTGRES_USER}
+        password: ${POSTGRES_PASSWORD}
+        database: analytics
+        schema: public
         default: true
-
-      my_duckdb:
-        type: duckdb
-        uri: ./data/analytics.duckdb
-
-    semantic_layer:
-      metricflow: {}
-
-    bi_platforms:
-      superset:
-        type: superset
-        api_base_url: http://localhost:8088
-        username: ${SUPERSET_USER}
-        password: ${SUPERSET_PASSWORD}
-
-    schedulers:
-      airflow_prod:
-        type: airflow
-        api_base_url: ${AIRFLOW_URL}
-        username: ${AIRFLOW_USER}
-        password: ${AIRFLOW_PASSWORD}
-        dags_folder: ${AIRFLOW_DAGS_DIR}
 ```
 
-## Service Sections
+Each key under `datasources` is the datasource name. Names may contain letters, numbers, underscores, and hyphens. Set `default: true` on at most one entry; when only one datasource exists, Datus selects it automatically.
 
-| Section | Purpose | Selector |
-|---------|---------|----------|
-| `services.datasources` | Database connections used by SQL and KB operations | `--datasource` / current database / default database |
-| `services.semantic_layer` | Semantic adapter configuration such as MetricFlow | `semantic_adapter` |
-| `services.bi_platforms` | BI platform credentials and dataset materialization config | `bi_platform` |
-| `services.schedulers` | Scheduler service instances such as Airflow | `scheduler_service` |
+!!! note
+    The configuration path remains `agent.services.datasources`. See [Dosi Semantic Engine](../semantic/dosi_engine.md) for model discovery, and prefer [plugins](../plugin/introduction.md) for integrations such as Airflow.
 
-## Supported Database Types
+## Choose a datasource
 
-### Snowflake
-```yaml
-my_snowflake:
-  type: snowflake
-  account: ${SNOWFLAKE_ACCOUNT}
-  username: ${SNOWFLAKE_USER}
-  password: ${SNOWFLAKE_PASSWORD}      # Use private_key, or exactly one of password/private_key_file
-  # private_key: ${SNOWFLAKE_PRIVATE_KEY}
-  # private_key_file: ${SNOWFLAKE_PRIVATE_KEY_FILE}
-  # private_key_file_pwd: ${SNOWFLAKE_PRIVATE_KEY_FILE_PWD}  # Optional
-  database: ${SNOWFLAKE_DATABASE}    # Optional
-  schema: ${SNOWFLAKE_SCHEMA}        # Optional
-  warehouse: ${SNOWFLAKE_WAREHOUSE}
-  role: ${SNOWFLAKE_ROLE}            # Optional
-  default: true                      # Optional: mark as default
-```
+SQLite and DuckDB are built into Datus. Every other datasource is provided by an independently installable `datus-<type>` adapter. Datus can install a missing adapter when you add the datasource with `/datasource`; you can also install the package explicitly.
 
-Snowflake supports password authentication and key-pair authentication. For hosted/SaaS deployments, prefer
-`private_key` to store the PEM private key as a secret; for local or CI setups with an existing key file, use
-`private_key_file`. When `private_key` is provided, it takes precedence over `private_key_file` and `password`;
-without `private_key`, configure exactly one of `password` or `private_key_file`. Set `private_key_file_pwd`
-when the private key is encrypted. The adapter uses Snowflake JWT authentication internally.
+| Datasource | `type` | Package | Namespace |
+|---|---|---|---|
+| [SQLite](datasources/sqlite.md) | `sqlite` | built in | database file → table |
+| [DuckDB](datasources/duckdb.md) | `duckdb` | built in | database → schema → table |
+| [MySQL](datasources/mysql.md) | `mysql` | `datus-mysql` | database → table |
+| [PostgreSQL](datasources/postgresql.md) | `postgresql` | `datus-postgresql` | database → schema → table |
+| [Amazon Aurora](datasources/aurora.md) | `mysql` / `postgresql` | `datus-mysql` / `datus-postgresql` | same as the selected engine |
+| [Greenplum](datasources/greenplum.md) | `greenplum` | `datus-greenplum` | database → schema → table |
+| [Amazon Redshift](datasources/redshift.md) | `redshift` | `datus-redshift` | database → schema → table |
+| [Amazon Athena](datasources/athena.md) | `athena` | `datus-athena` | catalog → database → table |
+| [Snowflake](datasources/snowflake.md) | `snowflake` | `datus-snowflake` | database → schema → table |
+| [Google BigQuery](datasources/bigquery.md) | `bigquery` | `datus-bigquery` | project → dataset → table |
+| [StarRocks](datasources/starrocks.md) | `starrocks` | `datus-starrocks` | catalog → database → table |
+| [Apache Doris](datasources/doris.md) | `doris` | `datus-doris` | catalog → database → table |
+| [TiDB](datasources/tidb.md) | `tidb` | `datus-tidb` | database → table |
+| [ClickHouse](datasources/clickhouse.md) | `clickhouse` | `datus-clickhouse` | database → table |
+| [Trino](datasources/trino.md) | `trino` | `datus-trino` | catalog → schema → table |
+| [Hive / Inceptor](datasources/hive.md) | `hive` | `datus-hive` | database → table |
+| [Spark SQL](datasources/spark.md) | `spark` | `datus-spark` | database → table |
+| [ClickZetta](datasources/clickzetta.md) | `clickzetta` | `datus-clickzetta` | instance/workspace → schema → table |
+| [Hologres](datasources/hologres.md) | `hologres` | `datus-hologres` | database → schema → table |
+| [MaxCompute](datasources/maxcompute.md) | `maxcompute` | `datus-maxcompute` | project → optional schema → table |
+| [Oracle](datasources/oracle.md) | `oracle` | `datus-oracle` | schema → table |
+| [SAP HANA](datasources/hana.md) | `hana` | `datus-hana` | schema → table; tenant is the connection target |
+| [GaussDB / openGauss](datasources/gaussdb.md) | `gaussdb` | `datus-gaussdb` | database → schema → table |
+| [GaussDB(DWS)](datasources/dws.md) | `dws` | `datus-dws` | database → schema → table |
 
-Snowflake uses a `database` + `schema` namespace. Leave `catalog` unset for Snowflake; catalog filters are for
-catalog-aware engines such as StarRocks.
+Athena and HANA currently require the source-install commands on their pages. Install them before adding the datasource; automatic package installation cannot fetch an unpublished adapter. Aurora reuses the MySQL or PostgreSQL type and package.
 
-### StarRocks
-```yaml
-my_starrocks:
-  type: starrocks
-  host: ${STARROCKS_HOST}
-  port: ${STARROCKS_PORT}
-  username: ${STARROCKS_USER}
-  password: ${STARROCKS_PASSWORD}
-  database: ${STARROCKS_DATABASE}
-  catalog: ${STARROCKS_CATALOG}      # Optional
-```
+## Common profile keys
 
-### SQLite
-```yaml
-my_sqlite:
-  type: sqlite
-  uri: sqlite:////Users/xxx/data/orders.db
-```
+Each datasource page documents only its type-specific connection keys. The following profile keys are handled by Datus and apply to every datasource:
 
-### DuckDB
-```yaml
-my_duckdb:
-  type: duckdb
-  uri: duckdb:////Users/xxx/data/analytics.duckdb
-```
+| Key | Type | Required | Default | Notes |
+|---|---|---:|---|---|
+| `type` | string | yes | — | Adapter type from the table above. |
+| `default` | boolean | no | `false` | Marks this entry as the default datasource. |
 
-### MySQL
-```yaml
-my_mysql:
-  type: mysql
-  host: localhost
-  port: 3306
-  username: ${MYSQL_USER}
-  password: ${MYSQL_PASSWORD}
-  database: analytics
-```
-
-### PostgreSQL
-```yaml
-my_postgresql:
-  type: postgresql
-  host: localhost
-  port: 5432
-  username: ${POSTGRES_USER}
-  password: ${POSTGRES_PASSWORD}
-  database: analytics
-```
-
-### Path Pattern (Multiple Files)
-
-Use glob patterns to auto-discover database files:
+Adapter models reject unknown keys, so copy the field names exactly. Use environment variables for credentials:
 
 ```yaml
-bird_benchmark:
-  type: sqlite
-  path_pattern: benchmark/bird/dev_20240627/dev_databases/**/*.sqlite
-```
-
-Supported patterns: `*.sqlite`, `**/*.sqlite`, `data/2024/*.db`
-
-## Configuration Parameters
-
-### Common Parameters
-
-| Parameter | Required | Description |
-|-----------|----------|-------------|
-| `type` | Yes | Database type: `sqlite`, `duckdb`, `snowflake`, `starrocks`, `mysql`, `postgresql` |
-| `default` | No | Set to `true` to mark as default database |
-| `uri` | For file DBs | Connection URI for SQLite/DuckDB |
-| `host` | For server DBs | Database server hostname |
-| `port` | For server DBs | Database server port |
-| `username` | For server DBs | Database username |
-| `password` | For server DBs | Database password |
-| `database` | No | Database/schema name |
-
-### Database-Specific Parameters
-
-- **Snowflake**: `account`, `warehouse`, `role`, `schema`
-- **StarRocks**: `catalog`
-- **SQLite/DuckDB**: `path_pattern` for glob-based discovery
-- **MySQL/PostgreSQL**: `host`, `port`, `username`, `password`, `database`
-
-## Managing Databases
-
-### Interactive Configuration
-
-Use `datus-agent configure` to add, delete, or manage databases interactively:
-
-```bash
-datus-agent configure
-```
-
-This shows your current models and databases, then offers a menu:
-
-```
-Current Databases:
-┏━━━━━━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━┓
-┃ Name         ┃ Type      ┃ Connection              ┃ Default ┃
-┡━━━━━━━━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━┩
-│ demo         │ duckdb    │ ./demo.duckdb           │ *       │
-│ prod_sf      │ snowflake │ account=my_account      │         │
-└──────────────┴───────────┴─────────────────────────┴─────────┘
-
-What would you like to do?
-  → [add_database] Add a database
-    [delete_database] Delete a database
-    [done] Done
-```
-
-Database adapter plugins are auto-installed when you select an uninstalled type (e.g., snowflake, mysql).
-
-### CLI Commands
-
-```bash
-# List all databases
-datus-agent service list
-
-# Add a database interactively
-datus-agent service add
-
-# Delete a database interactively
-datus-agent service delete
-```
-
-### Specify a Custom Config
-
-```bash
-datus-agent service list --config /path/to/agent.yml
-datus-agent configure --config /path/to/agent.yml
-```
-
-## Default Database Selection
-
-When running CLI commands, specify which database to use:
-
-```bash
-datus-cli --datasource my_duckdb
-datus-agent run --datasource my_snowflake --task "..." --task_db_name ANALYTICS
-```
-
-If `--datasource` is not specified:
-1. If a database has `default: true` → auto-selected
-2. If only one database configured → auto-selected
-3. If multiple without default → shows available list
-
-## Security Considerations
-
-### Credential Management
-```yaml
-# Recommended: Using environment variables
 username: ${DB_USERNAME}
 password: ${DB_PASSWORD}
-
-# Avoid: Hardcoded credentials
-username: "actual_username"
-password: "actual_password"
 ```
 
-## See Also
+`${NAME:-fallback}` supplies a fallback. A missing `${NAME}` expands to a visible missing-value marker and the connection will fail rather than silently using an empty credential.
 
-- [Database Adapters](../adapters/db_adapters.md) - Install plugin adapters for MySQL, Snowflake, StarRocks, and more
-- [Semantic Layer Configuration](semantic_layer.md) - Configure semantic adapters
-- [BI Platforms Configuration](bi_platforms.md) - Configure Superset or Grafana
-- [Scheduler Configuration](schedulers.md) - Configure Airflow services
-- [CLI Commands](../cli-commands.md) - Full CLI reference including configure, init, and service commands
+## File datasource patterns
+
+SQLite and DuckDB can bind one datasource to several files with `path_pattern` instead of `uri`:
+
+```yaml
+agent:
+  services:
+    datasources:
+      benchmark:
+        type: sqlite
+        path_pattern: benchmark/databases/**/*.sqlite
+        database: california_schools  # optional initial file stem
+```
+
+The matched files become databases within one datasource. Datus skips the entry at startup when the pattern matches no files.
+
+## Add, test, and select a datasource
+
+The recommended path is the interactive datasource manager:
+
+```bash
+datus
+```
+
+Run `/datasource` in the CLI. Adding or editing an entry validates its fields, installs a missing adapter, tests connectivity, and writes the result to the active `agent.yml` selected by `--config` or the normal configuration search order. Use `/datasource <name>` to switch the current session.
+
+For a manually edited file, start Datus with the target entry. Connector construction and the initial metadata load surface configuration, network, and authentication failures:
+
+```bash
+datus --config conf/agent.yml --datasource analytics
+```
+
+Project-specific selection belongs in `.datus/config.yml`:
+
+```yaml
+default_datasource: analytics
+```
+
+## Troubleshooting
+
+| Symptom | Cause and fix |
+|---|---|
+| `Unsupported value ... for field datasource` | The selected name is not a key under `agent.services.datasources`. Check spelling and the active config file. |
+| Adapter import or installation error | Install the package shown in the datasource's page into the same Python environment as `datus`. |
+| Unknown or extra field | The installed adapter validates its own schema. Remove the field or use the exact key documented on that datasource page. |
+| Connection succeeds but objects are missing | Check the adapter's namespace fields (`catalog`, `database`, `schema`, or `schema_name`) and the database user's grants. |
+| Credential appears literally as `<MISSING:...>` | Export the referenced environment variable before starting Datus. |
+
+## Related documentation
+
+- [Database adapter architecture](../adapters/db_adapters.md)
+- [SQL policy and deployment-wide read-only mode](sql_policy.md)
+- [Plugin system](../plugin/introduction.md)
+- [CLI reference](../cli/reference.md)

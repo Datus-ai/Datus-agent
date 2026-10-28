@@ -53,6 +53,17 @@ class PrintModeRunner:
         self.scope = getattr(args, "session_scope", None)
         self.stream_thinking = getattr(args, "stream_thinking", False)
         self.plan_mode = getattr(args, "plan_mode", False)
+        # ``--execution-mode``: 'workflow' (default) fails fast on ASK
+        # permissions; 'interactive' streams permission/interaction prompts as
+        # JSON on stdout and reads answers from stdin.
+        self.execution_mode = getattr(args, "execution_mode", None) or "workflow"
+        # Print mode respects the configured / ``--permission-mode`` profile
+        # even in workflow mode (instead of the forced ``dangerous`` used by
+        # unattended flows) — bash and other tools only auto-run when an allow
+        # rule matches; anything ASK fails fast (workflow) or prompts via the
+        # stdin protocol (interactive). ``active_profile_name`` already
+        # reflects ``--permission-mode`` (applied in load_agent_config).
+        self.agent_config.workflow_permission_profile = self.agent_config.active_profile_name
 
         self.catalog, self.database, self.db_schema = self._resolve_database_context(args)
 
@@ -86,7 +97,7 @@ class PrintModeRunner:
             node_id_suffix="_print",
             scope=self.scope,
             session_id=self.session_id,
-            execution_mode="workflow",
+            execution_mode=self.execution_mode,
         )
 
         if getattr(self, "orchestrator_tools", None):
@@ -110,9 +121,11 @@ class PrintModeRunner:
             at_sqls=at_sqls,
             plan_mode=self.plan_mode,
         )
-        if self.plan_mode and hasattr(node_input, "auto_execute_plan"):
-            # Print mode is headless: the plan must be auto-approved so the
-            # run does not block waiting for an interactive confirmation.
+        if self.plan_mode and hasattr(node_input, "auto_execute_plan") and self.execution_mode == "workflow":
+            # Workflow print mode is headless: the plan must be auto-approved
+            # so the run does not block waiting for a confirmation. Under
+            # ``--execution-mode interactive`` the plan confirmation streams
+            # through the stdin/stdout protocol like any other interaction.
             node_input.auto_execute_plan = True
         node.input = node_input
         run_async(self._stream_chat(node))

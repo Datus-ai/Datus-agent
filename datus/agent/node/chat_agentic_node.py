@@ -10,7 +10,7 @@ chat interactions with markdown output, database/filesystem tool support,
 skills, and permissions. This node is fully independent from GenSQLAgenticNode.
 """
 
-from typing import Any, Dict, Literal, Optional
+from typing import ClassVar, Dict, Literal, Optional
 
 from datus.agent.node.agentic_node import AgenticNode
 from datus.agent.node.gen_sql_agentic_node import prepare_template_context
@@ -21,6 +21,7 @@ from datus.schemas.action_history import ActionRole, ActionStatus
 from datus.schemas.chat_agentic_node_models import ChatNodeInput, ChatNodeResult
 from datus.tools.func_tool import ContextSearchTools, DBFuncTool, FilesystemFuncTool, PlatformDocSearchTool
 from datus.tools.func_tool.date_parsing_tools import DateParsingTools
+from datus.tools.func_tool.lineage_tools import LineageTools
 from datus.tools.func_tool.reference_template_tools import ReferenceTemplateTools
 from datus.tools.permission.permission_manager import PermissionManager
 from datus.tools.skill_tools.skill_func_tool import SkillFuncTool
@@ -46,6 +47,11 @@ class ChatAgenticNode(AgenticNode):
 
     DEFAULT_SUBAGENTS = "*"
     result_class = ChatNodeResult
+
+    # Subclasses whose contract is read-only (e.g. artifact ask agents) set this
+    # to True so the unified write-capable ``execute_sql`` tool hard-rejects any
+    # non-read statement at the tool layer. Defaults to False (full SQL access).
+    _db_read_only: bool = False
 
     def __init__(
         self,
@@ -89,6 +95,7 @@ class ChatAgenticNode(AgenticNode):
         self.context_search_tools: Optional[ContextSearchTools] = None
         self.degraded_capabilities: Dict[str, str] = {}
         self.date_parsing_tools: Optional[DateParsingTools] = None
+        self.lineage_tools: Optional[LineageTools] = None
         self.filesystem_func_tool: Optional[FilesystemFuncTool] = None
         self._platform_doc_tool: Optional[PlatformDocSearchTool] = None
         self.reference_template_tools: Optional[ReferenceTemplateTools] = None
@@ -111,9 +118,6 @@ class ChatAgenticNode(AgenticNode):
         # disables it so the agent never pauses for user input.
         self.execution_mode = execution_mode
 
-        # Initialize MCP servers based on configuration
-        self.mcp_servers = self._setup_mcp_servers()
-
         # Setup tools
         self.setup_tools()
         logger.debug(f"ChatAgenticNode tools: {len(self.tools)} tools - {[tool.name for tool in self.tools]}")
@@ -125,30 +129,114 @@ class ChatAgenticNode(AgenticNode):
 
     # ── Tool Setup ──────────────────────────────────────────────────────
 
+    #: Whether ``agentic_nodes[<name>].tools`` narrows what this node builds.
+    #:
+    #: True for a plain chat node. The ask_* subclasses set it False: they run
+    #: their own whitelist over ``self.tools`` *after* this base setup, and that
+    #: design depends on every tool instance existing — the artifact-anchored
+    #: filesystem instance in particular is infrastructure they use whether or
+    #: not ``filesystem_tools`` is exposed to the LLM. Gating construction here
+    #: would leave those attributes None and break the subclass, so the two
+    #: mechanisms must not both act on the same field.
+    HONOURS_CONFIGURED_TOOLS: ClassVar[bool] = True
+
+    def _selected_tool_families(self) -> Optional[set]:
+        """Tool families this node may mount, or ``None`` for "all of them".
+
+        ``None`` is the default and means today's behaviour verbatim: a chat
+        node with no ``tools`` key mounts every family, and the overwhelming
+        majority of chat nodes have no such key. Narrowing that default would be
+        a silent capability regression, so absence must never be read as "none".
+
+        A configured value is a comma-separated list of the same family patterns
+        the other agentic nodes accept (``db_tools``, ``db_tools.*``, and
+        ``db_tools.execute_sql``-style entries all select the ``db_tools``
+        family). Family granularity is what this node acts on; a per-tool suffix
+        still enables its family rather than being dropped on the floor, since
+        dropping it would quietly remove a tool the operator asked for.
+        """
+        if not self.HONOURS_CONFIGURED_TOOLS:
+            return None
+        raw = self.node_config.get("tools") if self.node_config else None
+        if not raw:
+            return None
+        families = set()
+        for pattern in str(raw).split(","):
+            pattern = pattern.strip()
+            if not pattern:
+                continue
+            families.add(pattern.split(".", 1)[0])
+        return families or None
+
+    @staticmethod
+    def _family_enabled(selected: Optional[set], family: str) -> bool:
+        return selected is None or family in selected
+
     def setup_tools(self):
-        """Initialize all tools, binding the DB tool to the active database (if any)."""
+        """Initialize tools, binding the DB tool to the active database (if any).
+
+        Honours ``agentic_nodes[<name>].tools`` the way the five other agentic
+        node classes do. Chat was the one class that ignored it, which mattered
+        beyond tidiness: a host publishing a chat sub-agent strips write-capable
+        tools from that list, and here the strip had no effect — the model was
+        still shown tools it would then be denied at the permission layer.
+        Nothing became writable (the permission profile and the database grants
+        both still refused), but a layer of defence was missing and the denials
+        surfaced as confusing mid-conversation errors.
+        """
+        selected = self._selected_tool_families()
         node_name = self.get_node_name()
-        self.db_func_tool = DBFuncTool(
-            agent_config=self.agent_config,
-            sub_agent_name=node_name,
-            default_database=getattr(self, "active_database", "") or None,
-        )
-        self._setup_context_search_tools()
-        self._setup_reference_template_tools()
-        self._setup_date_parsing_tools()
-        self._setup_filesystem_tools()
-        self._setup_memory_tools()
-        # self.bash_tool was created in AgenticNode.__init__; just surface its
-        # tool in this node's eager tools list (rebuild_tools also re-appends).
-        if self.bash_tool:
-            self.tools.extend(self.bash_tool.available_tools())
-        self._setup_skill_tools()
-        self._setup_sub_agent_task_tool()
+        if self._family_enabled(selected, "db_tools"):
+            self.db_func_tool = DBFuncTool(
+                agent_config=self.agent_config,
+                sub_agent_name=node_name,
+                default_database=getattr(self, "active_database", "") or None,
+                read_only=self._db_read_only,
+                # Same anchor the filesystem tools use, so a path the model got back
+                # from glob resolves identically inside load_file_as_table.
+                filesystem_root=self._resolve_workspace_root(),
+            )
+        if self._family_enabled(selected, "context_search_tools"):
+            self._setup_context_search_tools()
+        if self._family_enabled(selected, "reference_template_tools"):
+            self._setup_reference_template_tools()
+        if self._family_enabled(selected, "date_parsing_tools"):
+            self._setup_date_parsing_tools()
+        if self._family_enabled(selected, "filesystem_tools"):
+            self._setup_filesystem_tools()
+        if self._family_enabled(selected, "lineage_tools"):
+            self._setup_lineage_tools()
+        if self._family_enabled(selected, "memory_tools"):
+            self._setup_memory_tools()
+        # self.bash_tool was created in AgenticNode.__init__, so leaving it in
+        # place is what mounts it — dropping the reference is the only way to
+        # exclude it, and _rebuild_tools re-adds it from the attribute on every
+        # rebuild otherwise.
+        if self._family_enabled(selected, "bash_tools"):
+            if self.bash_tool:
+                self.tools.extend(self.bash_tool.available_tools())
+        else:
+            self.bash_tool = None
+        if self._family_enabled(selected, "skills"):
+            self._setup_skill_tools()
+        if self._family_enabled(selected, "sub_agent_tools"):
+            self._setup_sub_agent_task_tool()
         # Setup ask_user tool for clarification questions (interactive mode only)
+        #
+        # From here down is deliberately ungated: asking the user a question and
+        # reporting a result to an orchestrator are how the node converses and
+        # terminates, not data access an operator would want to scope away.
         if self.execution_mode == "interactive":
             self._setup_ask_user_tool()
+        # No-op unless the request declared an orchestrator origin.
+        self._setup_task_result_tool()
+        # Before the rebuild, not after: the rebuild now mounts this group from
+        # the attribute, so building it afterwards appended a second copy of
+        # every name on the second `setup_tools()` — which the CLI does after a
+        # datasource change. Building first lets the rebuild own the mounting.
+        if self._family_enabled(selected, "platform_doc_tools"):
+            self._setup_platform_doc_tools()
         self._rebuild_tools()
-        self._setup_platform_doc_tools()
 
         # Populate the shared tool_registry eagerly so consumers that inspect
         # categories before the first LLM turn (tests, ``apply_proxy_tools``'
@@ -200,6 +288,22 @@ class ChatAgenticNode(AgenticNode):
         except Exception as e:
             logger.error(f"Failed to setup filesystem tools: {e}")
 
+    def _setup_lineage_tools(self):
+        """Setup static SQL lineage extraction, anchored at the same root as the filesystem tools."""
+        # vscode proxies only filesystem_tools.* to the IDE; lineage would scan the daemon's CWD.
+        if getattr(self.agent_config, "_client_source", None) == "vscode":
+            self.lineage_tools = None
+            return
+        try:
+            self.lineage_tools = LineageTools(
+                self.agent_config,
+                root_path=self._resolve_workspace_root(),
+                path_allowlist=self._resolve_filesystem_allowlist(),
+            )
+            self.tools.extend(self.lineage_tools.available_tools())
+        except Exception as e:
+            logger.error(f"Failed to setup lineage tools: {e}")
+
     def _setup_platform_doc_tools(self):
         """Setup platform documentation search tools."""
         try:
@@ -211,7 +315,7 @@ class ChatAgenticNode(AgenticNode):
     def _setup_skill_tools(self):
         """Setup skill discovery and loading tools with permission control."""
         try:
-            from datus.tools.permission.permission_config import PermissionConfig, PermissionLevel, PermissionRule
+            from datus.tools.permission.permission_config import PermissionConfig
 
             base_config = self.agent_config.permissions_config
             if base_config is not None:
@@ -223,17 +327,9 @@ class ChatAgenticNode(AgenticNode):
                 global_config=base_config,
                 node_overrides=self._get_node_permission_overrides(),
                 active_profile=getattr(self.agent_config, "active_profile_name", None) or "normal",
-            )
-            # Register bash ASK as a persistent rule so ``/profile dangerous``
-            # doesn't silently drop it on rebuild. ``add_persistent_rule``
-            # skips duplicates, so this is safe even if the profile base
-            # already contains the rule.
-            self.permission_manager.add_persistent_rule(
-                PermissionRule(
-                    tool="skills",
-                    pattern="skill_execute_command",
-                    permission=PermissionLevel.ASK,
-                )
+                plugin_bash_rules=getattr(self.agent_config, "plugin_bash_rules", None),
+                project_bash_allows=getattr(self.agent_config, "project_bash_allow", None),
+                project_sql_allows=getattr(self.agent_config, "project_sql_allow", None),
             )
             self.permission_manager.set_permission_callback(self._handle_permission_ask)
 
@@ -241,6 +337,8 @@ class ChatAgenticNode(AgenticNode):
             self.skill_manager = SkillManager(
                 config=skills_config,
                 permission_manager=self.permission_manager,
+                config_mutable=self._resolve_config_mutable(),
+                agent_config=self.agent_config,
             )
             self.skill_func_tool = SkillFuncTool(
                 manager=self.skill_manager,
@@ -252,31 +350,107 @@ class ChatAgenticNode(AgenticNode):
         except Exception as e:
             logger.error(f"Failed to setup skill tools: {e}")
 
+    # ── Lazy re-injection gates ────────────────────────────────────────
+    #
+    # `AgenticNode._ensure_lazy_tools_mounted` re-adds bash, skills, memory and
+    # web on every prompt build and on a snapshot-cache hit — AFTER setup_tools
+    # already decided what this node may have. Without these gates the exclusion
+    # holds only until the first prompt is built, and memory is the worst case:
+    # the base *re-creates* the instance when it finds None, so clearing it in
+    # setup_tools is not enough on its own. The ask_* subclass hit the same
+    # bypass and gates it the same way.
+
+    def _ensure_bash_tool_in_tools(self) -> None:
+        if not self._family_enabled(self._selected_tool_families(), "bash_tools"):
+            return
+        super()._ensure_bash_tool_in_tools()
+
+    def _ensure_skill_tools_in_tools(self) -> None:
+        if not self._family_enabled(self._selected_tool_families(), "skills"):
+            return
+        super()._ensure_skill_tools_in_tools()
+
+    def _ensure_memory_tool_in_tools(self) -> None:
+        if not self._family_enabled(self._selected_tool_families(), "memory_tools"):
+            return
+        super()._ensure_memory_tool_in_tools()
+
+    def _ensure_web_tools_in_tools(self) -> None:
+        selected = self._selected_tool_families()
+        if not self._family_enabled(selected, "web_tool"):
+            # Scrub rather than just skip: the base resolves provider-native
+            # builtins too, and a stale local web tool left in the list would
+            # still be offered to the model.
+            from datus.tools.func_tool.web_tool import WebTool
+
+            web_names = set(WebTool.all_tools_name())
+            self.tools = [t for t in (self.tools or []) if getattr(t, "name", None) not in web_names]
+            self._builtin_web_tools = {"web_search": False, "web_fetch": False}
+            self._web_tool = None
+            return
+        super()._ensure_web_tools_in_tools()
+
     def _rebuild_tools(self):
-        """Rebuild the tools list with current tool instances including skills."""
+        """Rebuild the tools list with current tool instances including skills.
+
+        Every configurable family is re-checked against ``tools`` here, not just
+        tested for "did setup_tools leave an instance behind". Relying on the
+        attribute being None makes the exclusion depend on nothing else ever
+        populating it — an assumption that has already failed twice in this
+        class, once because the base re-creates the memory tool when it finds
+        None, and once because platform docs were mounted after the rebuild that
+        was supposed to own them. Asking the config makes the exclusion a
+        property of the node instead of an accident of ordering.
+        """
+        selected = self._selected_tool_families()
+
+        def enabled(family: str) -> bool:
+            return self._family_enabled(selected, family)
+
         self.tools = []
-        if self.db_func_tool:
+        if self.db_func_tool and enabled("db_tools"):
             self.tools.extend(self.db_func_tool.available_tools())
-        if self.context_search_tools:
+        if self.context_search_tools and enabled("context_search_tools"):
             self.tools.extend(self.context_search_tools.available_tools())
-        if self.reference_template_tools:
+        if self.reference_template_tools and enabled("reference_template_tools"):
             self.tools.extend(self.reference_template_tools.available_tools())
-        if self.date_parsing_tools:
+        if self.date_parsing_tools and enabled("date_parsing_tools"):
             self.tools.extend(self.date_parsing_tools.available_tools())
-        if self.filesystem_func_tool:
+        if self.filesystem_func_tool and enabled("filesystem_tools"):
             self.tools.extend(self.filesystem_func_tool.available_tools())
-        if self.memory_func_tool:
+        if self.lineage_tools and enabled("lineage_tools"):
+            self.tools.extend(self.lineage_tools.available_tools())
+        if self.memory_func_tool and enabled("memory_tools"):
             self.tools.extend(self.memory_func_tool.available_tools())
-        if self.bash_tool:
+        if self.bash_tool and enabled("bash_tools"):
             self.tools.extend(self.bash_tool.available_tools())
-        if self.skill_func_tool:
+        if self.skill_func_tool and enabled("skills"):
             self.tools.extend(self.skill_func_tool.available_tools())
-        if self.sub_agent_task_tool:
+        if self.sub_agent_task_tool and enabled("sub_agent_tools"):
             self.tools.extend(self.sub_agent_task_tool.available_tools())
         if self.ask_user_tool:
             self.tools.extend(self.ask_user_tool.available_tools())
+        # None unless the request declared an orchestrator origin. Must be re-added
+        # here and not only in setup_tools: every rebuild (task-database switch,
+        # skill reload) clears the list, and dropping this one silently strips the
+        # dispatcher's only structured way to learn how the run ended.
+        if getattr(self, "task_result_tool", None):
+            self.tools.extend(self.task_result_tool.available_tools())
+        # Rebuilt here rather than only in setup_tools, where it is mounted
+        # *after* the initial rebuild and so was never re-added by a later one.
+        # `_update_database_connection` rebuilds on a task-database switch, which
+        # silently dropped platform docs from the LLM's surface mid-session.
+        # Gated like the rest: a node that excluded the family must not get it
+        # back on the next rebuild.
+        if self._platform_doc_tool and enabled("platform_doc_tools"):
+            self.tools.extend(self._platform_doc_tool.available_tools())
         # Plan-mode tools (confirm_plan + todo_*) for main agents; no-op for sub-agents.
         self._register_plan_mode_tools()
+        # The rebuilt list holds fresh, unwrapped FunctionTool instances —
+        # force plugin tool transformers to re-apply on the next hook
+        # composition or the policy wrappers silently vanish mid-session
+        # (e.g. after a task-database switch).
+        self._tool_transformers_applied = False
 
     def _update_database_connection(self, database_name: str):
         """Rebuild the DB tool bound to ``database_name`` and remember it as the active database.
@@ -290,6 +464,8 @@ class ChatAgenticNode(AgenticNode):
             agent_config=self.agent_config,
             sub_agent_name=self.get_node_name(),
             default_database=database_name,
+            read_only=self._db_read_only,
+            filesystem_root=self._resolve_workspace_root(),
         )
         self._rebuild_tools()
 
@@ -333,56 +509,6 @@ class ChatAgenticNode(AgenticNode):
             return {"chat": chat_config["permissions"]}
 
         return {}
-
-    # ── MCP Servers ─────────────────────────────────────────────────────
-
-    def _setup_mcp_servers(self) -> Dict[str, Any]:
-        """Set up MCP servers based on configuration."""
-        mcp_servers = {}
-
-        config_value = self.node_config.get("mcp", "")
-        if not config_value:
-            return mcp_servers
-
-        mcp_server_names = [p.strip() for p in config_value.split(",") if p.strip()]
-
-        for server_name in mcp_server_names:
-            try:
-                server = self._setup_mcp_server_from_config(server_name)
-                if server:
-                    mcp_servers[server_name] = server
-
-            except Exception as e:
-                logger.error(f"Failed to setup MCP server '{server_name}': {e}")
-
-        logger.debug(f"Setup {len(mcp_servers)} MCP servers: {list(mcp_servers.keys())}")
-        return mcp_servers
-
-    def _setup_mcp_server_from_config(self, server_name: str) -> Optional[Any]:
-        """Setup MCP server from {agent.home}/conf/.mcp.json using mcp_manager."""
-        try:
-            from datus.tools.mcp_tools.mcp_manager import MCPManager
-
-            mcp_manager = MCPManager(agent_config=self.agent_config)
-            server_config = mcp_manager.get_server_config(server_name)
-
-            if not server_config:
-                logger.warning(f"MCP server '{server_name}' not found in configuration")
-                return None
-
-            server_instance, details = mcp_manager._create_server_instance(server_config)
-
-            if server_instance:
-                logger.debug(f"Added MCP server '{server_name}' from configuration: {details}")
-                return server_instance
-            else:
-                error_msg = details.get("error", "Unknown error")
-                logger.warning(f"Failed to create MCP server '{server_name}': {error_msg}")
-                return None
-
-        except Exception as e:
-            logger.error(f"Failed to setup MCP server '{server_name}' from config: {e}")
-            return None
 
     # ── System Prompt ───────────────────────────────────────────────────
 
@@ -437,6 +563,10 @@ class ChatAgenticNode(AgenticNode):
         )
         context["has_task_tool"] = bool(self.sub_agent_task_tool)
         context["has_ask_user_tool"] = "ask_user" in exposed
+        # Web tools (web_search / web_fetch) are NOT advertised in the system
+        # prompt: their own tool-schema descriptions document usage, and prompt
+        # advertisement can't track per-tool availability (builtin-only vs
+        # local-only, Tavily key absent) without drifting from the real tool set.
         # No per-turn values here: the current date lives in the shared
         # runtime-context block, the current datasource/dialect in the user
         # turn's <system_reminder>, and the permission profile is enforced by

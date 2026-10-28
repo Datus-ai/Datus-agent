@@ -126,8 +126,8 @@ class TestSkillCreatorAgenticNodeTools:
 
     def test_has_unified_filesystem_tools(self, real_agent_config, mock_llm_create):
         """Node exposes a single unified filesystem tool — write scope is
-        enforced by GenerationHooks (``.datus/skills/**``), not by a separate
-        prefixed instance.
+        enforced by the permission layer (``.datus/skills/**``), not by a
+        separate prefixed instance.
         """
         from datus.agent.node.gen_skill_agentic_node import SkillCreatorAgenticNode
 
@@ -190,7 +190,8 @@ class TestSkillCreatorAgenticNodeTools:
         node._populate_tool_registry()
         registry = node.tool_registry.to_dict()
         assert registry.get("write_file") == "filesystem_tools"
-        assert registry.get("read_query") == "db_tools"
+        assert registry.get("execute_sql") == "db_tools"
+        assert "read_query" not in registry
         assert registry.get("load_skill") == "skills"
 
     def test_has_ask_user_tool(self, real_agent_config, mock_llm_create):

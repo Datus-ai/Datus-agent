@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Set, Union
 import pytest
 from pandas import DataFrame
 
-from benchmark.scripts.schema_recall_spider2 import load_gold_tables
+from benchmark.scripts.schema_recall_spider2 import load_gold_tables, spider2_question_file
 from datus.configuration.agent_config import AgentConfig
 from datus.configuration.agent_config_loader import load_agent_config
 from datus.models.base import LLMBaseModel
@@ -28,12 +28,6 @@ def agent_config() -> AgentConfig:
     return load_agent_config(datasource="snowflake")
 
 
-json_path = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-    "benchmark/spider2/spider2-snow/spider2-snow.jsonl",
-)
-
-
 not_matched_databases = {}
 
 
@@ -53,9 +47,9 @@ def test_match_schema(
         check_exists: whether to check if the result exists, if True, skip the task
     """
     # Init gold sql tables
-    gold_sql_tables = load_gold_tables()
+    gold_sql_tables = load_gold_tables(agent_config)
     need_matched_data = []
-    for json_line in load_jsonl_iterator(json_path):
+    for json_line in load_jsonl_iterator(spider2_question_file(agent_config)):
         task_id = json_line["instance_id"]
         if task_id != target_task_id or task_id not in gold_sql_tables:
             continue
@@ -68,8 +62,8 @@ def test_full_match_schema(agent_config: AgentConfig, rag: SchemaWithValueRAG, t
     """Match the schema by llm for all tasks"""
     need_matched_data = []
     # Init gold sql tables
-    gold_sql_tables = load_gold_tables()
-    with open(json_path, "r") as f:
+    gold_sql_tables = load_gold_tables(agent_config)
+    with spider2_question_file(agent_config).open() as f:
         lines = f.readlines()
 
         for line in lines:
@@ -239,14 +233,14 @@ def do_match_recall(
         logger.info(f"Failed to match for {task_id}, error: {traceback.format_exc()}")
 
 
-def test_llm_match_recall():
+def test_llm_match_recall(agent_config: AgentConfig):
     """calculate the matched score of the llm find table result"""
     target_dir = os.path.join(PROJECT_ROOT, "tests/llm_find_tables")
     os.makedirs(target_dir, exist_ok=True)
 
-    gold_sql_tables = load_gold_tables()
+    gold_sql_tables = load_gold_tables(agent_config)
     task_dbs = {}
-    for json_line in load_jsonl_iterator(json_path):
+    for json_line in load_jsonl_iterator(spider2_question_file(agent_config)):
         task_dbs[json_line["instance_id"]] = json_line["db_id"]
 
     match_results = []

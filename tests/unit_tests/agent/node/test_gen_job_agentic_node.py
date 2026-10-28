@@ -71,15 +71,20 @@ class TestGenJobAgenticNodeInit:
 
         check_node_id(GenJobAgenticNode, real_agent_config, "gen_job_node")
 
-    def test_setup_tools_includes_ddl(self, real_agent_config, mock_llm_create):  # audit-noqa
+    def test_setup_tools_includes_execute_sql(self, real_agent_config, mock_llm_create):  # audit-noqa
+        """The unified ``execute_sql`` tool (read + DML + DDL) must be present."""
         from datus.agent.node.gen_job_agentic_node import GenJobAgenticNode
 
-        check_tools_include(GenJobAgenticNode, real_agent_config, "execute_ddl")
+        check_tools_include(GenJobAgenticNode, real_agent_config, "execute_sql")
 
-    def test_setup_tools_includes_execute_write(self, real_agent_config, mock_llm_create):  # audit-noqa
+    def test_setup_tools_excludes_legacy_split_tools(self, real_agent_config, mock_llm_create):  # audit-noqa
+        """The legacy split tools are internal-only and not exposed to the LLM."""
         from datus.agent.node.gen_job_agentic_node import GenJobAgenticNode
+        from tests.unit_tests.agent.node._builtin_node_test_helpers import check_tools_exclude
 
-        check_tools_include(GenJobAgenticNode, real_agent_config, "execute_write")
+        check_tools_exclude(GenJobAgenticNode, real_agent_config, "execute_ddl")
+        check_tools_exclude(GenJobAgenticNode, real_agent_config, "execute_write")
+        check_tools_exclude(GenJobAgenticNode, real_agent_config, "read_query")
 
     def test_setup_tools_includes_transfer_query_result(self, real_agent_config, mock_llm_create):  # audit-noqa
         """gen_job absorbed migration — transfer_query_result is required for cross-DB flows."""
@@ -120,17 +125,16 @@ class TestGenJobAgenticNodeInit:
         check_dynamic_db_func_tool(GenJobAgenticNode, real_agent_config)
 
     def test_tool_registry_keeps_db_write_helpers_under_db_tools(self, real_agent_config, mock_llm_create):
-        """``execute_write`` / ``execute_ddl`` / ``transfer_query_result`` must
-        stay in ``db_tools`` so profile ASK rules fire. They are mounted as
-        method-level wrappers, so the registry must cover the full
+        """``execute_sql`` and ``transfer_query_result`` must stay in ``db_tools``
+        so profile rules / the SQL permission gate fire. ``transfer_query_result``
+        is a method-level wrapper, so the registry must cover the full
         ``DBFuncTool.all_tools_name()`` surface, not just ``available_tools()``."""
         from datus.agent.node.gen_job_agentic_node import GenJobAgenticNode
 
         node = GenJobAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
         node._populate_tool_registry()
         registry = node.tool_registry.to_dict()
-        assert registry.get("execute_ddl") == "db_tools"
-        assert registry.get("execute_write") == "db_tools"
+        assert registry.get("execute_sql") == "db_tools"
         assert registry.get("transfer_query_result") == "db_tools"
 
     def test_system_prompt_requires_explicit_authorization_for_replacement(self, real_agent_config, mock_llm_create):
@@ -200,9 +204,9 @@ class TestGenJobWritePathAcceptance:
             responses=[
                 build_tool_then_response(
                     tool_calls=[
-                        MockToolCall("execute_ddl", {"sql": create_sql}),
+                        MockToolCall("execute_sql", {"sql": create_sql}),
                         MockToolCall(
-                            "execute_write",
+                            "execute_sql",
                             {
                                 "sql": insert_sql,
                                 "min_rows": 1,
@@ -229,7 +233,7 @@ class TestGenJobWritePathAcceptance:
             actions.append(action)
 
         executed_tools = [item["tool"] for item in mock_llm_create.tool_results if item["executed"]]
-        assert executed_tools == ["execute_ddl", "execute_write"]
+        assert executed_tools == ["execute_sql", "execute_sql"]
         query_result = node.db_func_tool.read_query("SELECT school_count FROM job_school_summary")
         assert query_result.success == 1
         assert "school_count" in str(query_result.result)

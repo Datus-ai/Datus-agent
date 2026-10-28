@@ -37,9 +37,14 @@ from typing import TYPE_CHECKING, Any, AsyncGenerator, ClassVar, Dict, Generic, 
 from pydantic import BaseModel
 
 from datus.agent.node.agentic_node import AgenticNode
-from datus.agent.node.visual_artifact._visual_artifact_finalize import FINALIZE_STAGE_TEXT, run_finalize_analysis
+from datus.agent.node.visual_artifact._visual_artifact_finalize import (
+    finalize_stage_text,
+    narrative_outputs_present,
+    run_finalize_analysis,
+)
 from datus.configuration.agent_config import AgentConfig
 from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
+from datus.utils.language_utils import build_fallback_directive
 
 if TYPE_CHECKING:
     from datus.agent.node.stream_run_context import StreamRunContext
@@ -50,7 +55,6 @@ from datus.tools.func_tool._visual_artifact_helpers import (
 )
 from datus.tools.func_tool.semantic_tools import SemanticTools
 from datus.utils.loggings import get_logger
-from datus.utils.message_utils import build_structured_content
 
 logger = get_logger(__name__)
 
@@ -96,12 +100,21 @@ class BaseVisualArtifactAgenticNode(AgenticNode, Generic[InputT, ResultT]):
     #: Default tools when ``agent.yml`` doesn't override ``tools:``.
     #: ``context_search_tools.*`` expands at setup-time into whichever search
     #: helpers the active project actually supports — ``list_subject_tree`` is
-    #: always present, while ``search_metrics`` / ``get_metrics`` /
+    #: always present, while ``search_metrics`` /
     #: ``search_reference_sql`` / etc. only surface when the corresponding
     #: store has indexed content. Without the wildcard, the prompt advertises
     #: metric-discovery tools the LLM can't actually call, so the model
     #: silently falls back to deriving SQL from raw table DDL.
     DEFAULT_TOOLS: ClassVar[str] = "semantic_tools.*, db_tools.*, context_search_tools.*"
+
+    #: No sub-agent delegation. The visual-artifact nodes own the full semantic
+    #: layer (``list_metrics`` / ``query_metrics``) plus db + context-search
+    #: tools, so there is nothing to gain from delegating. Crucially, ``explore``
+    #: (the base ``AgenticNode`` default) lacks the semantic-layer tools, so a
+    #: ``task(type="explore")`` metric-discovery detour silently degrades into
+    #: raw-table exploration — exactly the metrics-first regression we want to
+    #: prevent. Disabling the ``task`` tool here keeps metric derivation in-node.
+    DEFAULT_SUBAGENTS: ClassVar[str] = ""
 
     # ── Construction ──────────────────────────────────────────────────────
 
@@ -255,8 +268,14 @@ class BaseVisualArtifactAgenticNode(AgenticNode, Generic[InputT, ResultT]):
     def _setup_db_tools(self) -> None:
         try:
             self.db_func_tool = DBFuncTool(
+                # Same anchor the filesystem tools use, so a path the model got
+                # from glob resolves identically in load_file_as_table.
+                filesystem_root=self._resolve_workspace_root(),
                 agent_config=self.agent_config,
-                sub_agent_name=self.node_config.get("system_prompt"),
+                # The agentic_nodes KEY, never ``system_prompt`` — that names the
+                # prompt template, and the scope lookup silently returns unfiltered
+                # storage when the name misses (``rag_scope.build_scope_filter``).
+                sub_agent_name=self.get_node_name(),
             )
             self.tools.extend(self.db_func_tool.available_tools())
         except Exception as exc:
@@ -265,11 +284,10 @@ class BaseVisualArtifactAgenticNode(AgenticNode, Generic[InputT, ResultT]):
 
     def _setup_semantic_tools(self) -> None:
         try:
-            adapter_type = self.node_config.get("adapter_type", "metricflow")
             self.semantic_tools = SemanticTools(
                 agent_config=self.agent_config,
-                sub_agent_name=self.node_config.get("system_prompt"),
-                adapter_type=adapter_type,
+                sub_agent_name=self.get_node_name(),
+                runtime_db_context_provider=self._semantic_runtime_db_context,
             )
             self.tools.extend(self.semantic_tools.available_tools())
         except Exception as exc:
@@ -277,9 +295,7 @@ class BaseVisualArtifactAgenticNode(AgenticNode, Generic[InputT, ResultT]):
 
     def _setup_context_search_tools(self) -> None:
         try:
-            self.context_search_tools = ContextSearchTools(
-                self.agent_config, sub_agent_name=self.node_config.get("system_prompt")
-            )
+            self.context_search_tools = ContextSearchTools(self.agent_config, sub_agent_name=self.get_node_name())
             self.tools.extend(self.context_search_tools.available_tools())
         except Exception as exc:
             logger.error("Failed to setup context search tools: %s", exc)
@@ -297,21 +313,24 @@ class BaseVisualArtifactAgenticNode(AgenticNode, Generic[InputT, ResultT]):
                 if not self.semantic_tools:
                     self.semantic_tools = SemanticTools(
                         agent_config=self.agent_config,
-                        sub_agent_name=self.node_config.get("system_prompt"),
-                        adapter_type=self.node_config.get("adapter_type", "metricflow"),
+                        sub_agent_name=self.get_node_name(),
+                        runtime_db_context_provider=self._semantic_runtime_db_context,
                     )
                 tool_instance = self.semantic_tools
             elif tool_type == "db_tools":
                 if not self.db_func_tool:
                     self.db_func_tool = DBFuncTool(
+                        # Same anchor the filesystem tools use, so a path the model got
+                        # from glob resolves identically in load_file_as_table.
+                        filesystem_root=self._resolve_workspace_root(),
                         agent_config=self.agent_config,
-                        sub_agent_name=self.node_config.get("system_prompt"),
+                        sub_agent_name=self.get_node_name(),
                     )
                 tool_instance = self.db_func_tool
             elif tool_type == "context_search_tools":
                 if not self.context_search_tools:
                     self.context_search_tools = ContextSearchTools(
-                        self.agent_config, sub_agent_name=self.node_config.get("system_prompt")
+                        self.agent_config, sub_agent_name=self.get_node_name()
                     )
                 tool_instance = self.context_search_tools
             elif tool_type == "filesystem_tools":
@@ -384,6 +403,14 @@ class BaseVisualArtifactAgenticNode(AgenticNode, Generic[InputT, ResultT]):
         return self._finalize_system_prompt(base_prompt)
 
     def _build_enhanced_message(self, user_input: InputT) -> str:
+        """Enrich the user message with catalog/db/schema + @-referenced context.
+
+        Visual-artifact nodes keep a focused override (they don't run the base
+        plan-mode flow); @Table/@Metric/@Sql/@Knowledge references are rendered
+        through the shared :meth:`AgenticNode._render_at_context_parts`.
+        """
+        from datus.utils.message_utils import build_structured_content
+
         parts: List[str] = []
         catalog = getattr(user_input, "catalog", None)
         database = getattr(user_input, "database", None)
@@ -397,11 +424,39 @@ class BaseVisualArtifactAgenticNode(AgenticNode, Generic[InputT, ResultT]):
         if db_schema:
             parts.append(f"Schema: {db_schema}")
 
+        parts.extend(self._render_at_context_parts(user_input))
+
         if parts:
             return build_structured_content("\n".join(parts), user_message)
         return user_message
 
     # ── Finalize stage ────────────────────────────────────────────────────
+
+    def _artifact_dir(self, artifact_slug: str) -> Path:
+        """Absolute on-disk directory for ``artifact_slug``."""
+        return Path(self.agent_config.project_root).resolve() / self.ARTIFACT_ROOT_DIR_NAME / artifact_slug
+
+    def _finalize_language_directive(self) -> Optional[str]:
+        """The configured response-language section, or ``None`` when unpinned.
+
+        finalize is an independent LLM call with no system prompt, so the
+        directive every agentic node gets injected has to travel into the
+        finalize prompt explicitly. Reuses the same rendered template rather
+        than a second copy of the wording.
+
+        ``_inject_response_language`` now falls back to a minimal directive of
+        its own on a render failure, so the branch below is belt-and-braces: an
+        empty return here would read as "no language pinned" and hand finalize
+        the infer-from-the-user's-prompts branch — wrong whenever the operator
+        pinned a language the user does not write in.
+        """
+        language_raw = getattr(self.agent_config, "language", None)
+        if not language_raw or not str(language_raw).strip():
+            return None
+        directive = self._inject_response_language("").strip()
+        if directive:
+            return directive
+        return build_fallback_directive(str(language_raw).strip())
 
     def _run_finalize(
         self,
@@ -426,8 +481,7 @@ class BaseVisualArtifactAgenticNode(AgenticNode, Generic[InputT, ResultT]):
         the data is unchanged; the deterministic aggregations still run.
         """
         try:
-            project_root = Path(self.agent_config.project_root).resolve()
-            artifact_dir = project_root / self.ARTIFACT_ROOT_DIR_NAME / artifact_slug
+            artifact_dir = self._artifact_dir(artifact_slug)
             queries_dir = artifact_dir / "queries"
             analysis_dir = artifact_dir / "analysis"
             return run_finalize_analysis(
@@ -438,6 +492,7 @@ class BaseVisualArtifactAgenticNode(AgenticNode, Generic[InputT, ResultT]):
                 analysis_dir=analysis_dir,
                 actions=actions,
                 skip_narrative=skip_narrative,
+                language_directive=self._finalize_language_directive(),
                 # ``db_func_tool`` is wired by ``setup_tools`` early in
                 # the run. Passing it through enables the finalize-time
                 # ``key_tables_schema.json`` bake (describe_table snapshot
@@ -445,6 +500,8 @@ class BaseVisualArtifactAgenticNode(AgenticNode, Generic[InputT, ResultT]):
                 # so finalize still runs when this is None (e.g. node was
                 # configured without db tools — unusual but supported).
                 db_func_tool=self.db_func_tool,
+                semantic_tools=self.semantic_tools,
+                context_search_tools=self.context_search_tools,
                 on_progress=on_progress,
             )
         except Exception as exc:
@@ -589,12 +646,27 @@ class BaseVisualArtifactAgenticNode(AgenticNode, Generic[InputT, ResultT]):
         return None
 
     def _binding_tool_action_types(self) -> set:
-        """Tool action types that bind an artifact for this run.
-
-        Used to tell a real "never bound" failure apart from an
-        informational prose answer (which makes no binding attempt).
-        """
+        """Tool action types that bind an artifact for this run."""
         return {f"start_new_{self.ARTIFACT_KIND}", f"bind_existing_{self.ARTIFACT_KIND}"}
+
+    def _build_attempt_action_types(self) -> set:
+        """Tool action types that prove the run actually started building.
+
+        Binding alone doesn't: the system prompt requires a bind on turn 1
+        even for meta-discussion, so a consultative turn ("is this chart
+        worth keeping?") binds, reads, and answers in prose. Only a write
+        into the artifact tree — or a validate attempt — means the model
+        was mid-build and owes a successful ``validate_render``.
+        """
+        return {
+            "write_file",
+            "edit_file",
+            "delete_file",
+            self.QUERY_SAVE_ACTION_TYPE,
+            "save_metric_query",
+            "save_metric_query_template",
+            "validate_render",
+        }
 
     def _missing_binding_error(self) -> str:
         kind = self.ARTIFACT_KIND
@@ -639,6 +711,10 @@ class BaseVisualArtifactAgenticNode(AgenticNode, Generic[InputT, ResultT]):
     # ── Template hooks ─────────────────────────────────────────────────────
 
     async def _before_stream(self, ctx: "StreamRunContext") -> None:
+        # One manager can span several runs (the backend's mid-run-insert
+        # continuation loop reuses it), so record where this run starts:
+        # classification below must not see a previous pass's actions.
+        ctx.extras["artifact_run_action_start"] = ctx.action_history_manager.checkpoint()
         # Bind artifact tools for this run (regenerates artifact id every call).
         self._prepare_artifacts(ctx.user_input)
 
@@ -647,7 +723,11 @@ class BaseVisualArtifactAgenticNode(AgenticNode, Generic[InputT, ResultT]):
         tool_calls = [a for a in all_actions if a.role == ActionRole.TOOL and a.status == ActionStatus.SUCCESS]
         tokens_used = self._extract_total_tokens(all_actions)
 
-        query_actions = [a for a in tool_calls if a.action_type == self.QUERY_SAVE_ACTION_TYPE]
+        query_actions = [
+            a
+            for a in tool_calls
+            if a.action_type in {self.QUERY_SAVE_ACTION_TYPE, "save_metric_query", "save_metric_query_template"}
+        ]
         app_jsx_rel_path: Optional[str] = None
         render_file_count = 0
         for tc in reversed(tool_calls):
@@ -683,15 +763,16 @@ class BaseVisualArtifactAgenticNode(AgenticNode, Generic[InputT, ResultT]):
         )
 
         if app_jsx_rel_path is None:
-            # No render produced. Separate a genuine "forgot to bind / render"
-            # failure from a legitimate informational turn: when the model
-            # never attempted to bind an artifact and answered the user in
-            # prose (e.g. "what changes did I make?"), that's a valid response
-            # — end normally instead of forcing the missing-binding error.
-            binding_attempted = any(a.action_type in self._binding_tool_action_types() for a in all_actions)
-            informational_answer = (
-                self._active_artifact_slug is None and not binding_attempted and bool(response_content.strip())
-            )
+            # No render produced. Separate a genuine "forgot to render" failure
+            # from a legitimate informational turn: a run that never wrote into
+            # the artifact tree and answered the user in prose ("what changes
+            # did I make?", "is this chart worth keeping?") is a valid response
+            # — end normally instead of forcing an artifact error. Binding is
+            # not the discriminator: Hard rule 1 of the system prompt makes the
+            # model bind before any answer, consultative turns included.
+            run_start = int(ctx.extras.get("artifact_run_action_start") or 0)
+            build_attempted = any(a.action_type in self._build_attempt_action_types() for a in all_actions[run_start:])
+            informational_answer = not build_attempted and bool(response_content.strip())
             if informational_answer:
                 if hasattr(result, "success"):
                     result.success = True  # type: ignore[attr-defined]
@@ -759,7 +840,12 @@ class BaseVisualArtifactAgenticNode(AgenticNode, Generic[InputT, ResultT]):
         # Render-only edit (no query saved this run): skip the finalize LLM
         # stage and its per-stage progress bubbles — the only work left is the
         # deterministic schema/key_tables refresh, which needs no narration.
-        skip_narrative = not ctx.extras.get("artifact_data_changed", True)
+        # Only legitimate when a prior finalize left narrative files to reuse;
+        # otherwise (first generation whose queries landed in an earlier turn)
+        # skipping would strand the artifact without chips.
+        skip_narrative = not ctx.extras.get("artifact_data_changed", True) and narrative_outputs_present(
+            self._artifact_dir(slug) / "analysis", artifact_kind=self.ARTIFACT_KIND
+        )
 
         progress_queue: asyncio.Queue = asyncio.Queue()
         loop = asyncio.get_running_loop()
@@ -786,7 +872,7 @@ class BaseVisualArtifactAgenticNode(AgenticNode, Generic[InputT, ResultT]):
             if item is sentinel:
                 break
             stage = int(item) if isinstance(item, int) else 0
-            text = FINALIZE_STAGE_TEXT.get(stage)
+            text = finalize_stage_text(stage, getattr(self.agent_config, "language", None))
             if not text:
                 continue
             yield ActionHistory(

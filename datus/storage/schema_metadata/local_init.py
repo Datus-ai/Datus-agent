@@ -5,12 +5,13 @@
 import asyncio
 from typing import Any, Dict, List, Optional, Set
 
-from datus_db_core import BaseSqlConnector, connector_registry
+from datus_db_core import BaseSqlConnector
 
 from datus.configuration.agent_config import AgentConfig, DbConfig
 from datus.schemas.base import TABLE_TYPE
 from datus.schemas.batch_events import BatchEventEmitter, BatchEventHelper
 from datus.storage.schema_metadata.store import SchemaWithValueRAG
+from datus.tools.db_tools.capabilities import supports_namespace
 from datus.tools.db_tools.db_manager import DBManager
 from datus.utils.constants import DBType
 from datus.utils.loggings import get_logger
@@ -108,15 +109,22 @@ def init_local_schema(
     db_config = agent_config.datasource_configs[ds]
     # A datasource may serve multiple databases (e.g. a glob path_pattern → one per file).
     databases = agent_config.list_databases(ds)
+    if supports_namespace("schema", dialect=db_config.type) and not supports_namespace(
+        "database", dialect=db_config.type
+    ):
+        # Preserve the fixed connection target for filtering and connector
+        # selection. init_other_three_level_schema clears the SQL database
+        # namespace only after selecting the connection.
+        databases = [getattr(db_config, "database", "") or ""]
     if not databases:
         default_database = getattr(db_config, "database", "")
         databases = [default_database] if default_database else []
     if not databases:
         logger.info(f"No databases resolved for datasource {ds} ({db_config.type}); skipping schema init.")
-        table_lineage_store.after_init()
+        table_lineage_store.after_init(build_mode=build_mode)
         event_helper.task_completed(total_items=0, completed_items=0)
         return
-    logger.info(f"Processing datasource {ds} ({db_config.type}) databases: {databases}")
+    logger.debug(f"Processing datasource {ds} ({db_config.type}) databases: {databases}")
     for database in databases:
         if init_database_name and init_database_name != database:
             continue
@@ -155,8 +163,8 @@ def init_local_schema(
                 build_mode=build_mode,
                 event_helper=event_helper,
             )
-    # Create indices after initialization
-    table_lineage_store.after_init()
+    # Build new indices for overwrite, or incrementally index changed fragments.
+    table_lineage_store.after_init(build_mode=build_mode)
     event_helper.task_completed(total_items=0, completed_items=0)
     logger.info("Local schema initialization completed")
 
@@ -179,7 +187,7 @@ def init_sqlite_schema(
         table_type=table_type,
         build_mode=build_mode,
     )
-    logger.info(
+    logger.debug(
         f"Exists data from vector store {database_name}, "
         f"tables={len(all_schema_tables)}, values={len(all_value_tables)}"
     )
@@ -234,7 +242,7 @@ def init_duckdb_schema(
         build_mode=build_mode,
     )
 
-    logger.info(
+    logger.debug(
         f"Exists data from vector store {database_name}, tables={len(all_schema_tables)},values={len(all_value_tables)}"
     )
     sql_connector = db_manager.get_conn(agent_config.current_datasource, database_name)
@@ -245,7 +253,7 @@ def init_duckdb_schema(
             if not table.get("database_name"):
                 table["database_name"] = database_name
 
-        logger.info(f"Found {len(tables)} tables")
+        logger.debug(f"Found {len(tables)} tables")
         store_tables(
             table_lineage_store,
             database_name,
@@ -296,7 +304,10 @@ def init_other_three_level_schema(
         catalog_name = catalog_name or sql_connector.default_catalog()
     elif hasattr(sql_connector, "catalog_name"):
         catalog_name = catalog_name or getattr(sql_connector, "catalog_name", "")
-    if not connector_registry.support_schema(db_type):
+    has_schema = supports_namespace("schema", connector=sql_connector, dialect=db_type)
+    if has_schema and not supports_namespace("database", connector=sql_connector, dialect=db_type):
+        database_name = ""
+    if not has_schema:
         schema_name = ""
     elif not schema_name and hasattr(sql_connector, "schema_name"):
         schema_name = getattr(sql_connector, "schema_name", "")
@@ -310,7 +321,7 @@ def init_other_three_level_schema(
         build_mode=build_mode,
     )
 
-    logger.info(
+    logger.debug(
         f"Exists data from vector store {catalog_name or '[no catalog]'}.{database_name}, "
         f"tables={len(all_schema_tables)}, values={len(all_value_tables)}"
     )
@@ -345,11 +356,11 @@ def init_other_three_level_schema(
                 table["catalog_name"] = catalog_name
             if not table.get("database_name"):
                 table["database_name"] = database_name
-            if not connector_registry.support_schema(db_type):
+            if not has_schema:
                 table["schema_name"] = ""
             elif not table.get("schema_name"):
                 table["schema_name"] = schema_name
-        logger.info(f"Found {len(tables)} tables from {database_name}")
+        logger.debug(f"Found {len(tables)} tables from {database_name}")
         store_tables(
             table_lineage_store,
             database_name,
@@ -370,7 +381,7 @@ def init_other_three_level_schema(
                 view["catalog_name"] = catalog_name
             if not view.get("database_name"):
                 view["database_name"] = database_name
-            if not connector_registry.support_schema(db_type):
+            if not has_schema:
                 view["schema_name"] = ""
             elif not view.get("schema_name"):
                 view["schema_name"] = schema_name
@@ -393,7 +404,7 @@ def init_other_three_level_schema(
                 mv["catalog_name"] = catalog_name
             if not mv.get("database_name"):
                 mv["database_name"] = database_name
-            if not connector_registry.support_schema(db_type):
+            if not has_schema:
                 mv["schema_name"] = ""
             elif not mv.get("schema_name"):
                 mv["schema_name"] = schema_name
@@ -426,7 +437,7 @@ def store_tables(
         return the new tables.
     """
     if not tables:
-        logger.info(f"No schemas of {table_type} to store for {database_name}")
+        logger.debug(f"No schemas of {table_type} to store for {database_name}")
         return
 
     if event_helper:
@@ -439,6 +450,7 @@ def store_tables(
     for table in tables:
         if not table.get("database_name"):
             table["database_name"] = database_name
+        table["table_type"] = table_type
         if not table.get("identifier"):
             table["identifier"] = connector.identifier(
                 catalog_name=table["catalog_name"],
@@ -499,9 +511,9 @@ def store_tables(
         for item in new_values:
             item["table_type"] = table_type
         table_lineage_store.store_batch(new_tables, new_values)
-        logger.info(f"Stored {len(new_tables)} {table_type}s and {len(new_values)} values for {database_name}")
+        logger.debug(f"Stored {len(new_tables)} {table_type}s and {len(new_values)} values for {database_name}")
     else:
-        logger.info(f"No new {table_type}s or values to store for {database_name}")
+        logger.debug(f"No new {table_type}s or values to store for {database_name}")
 
     if event_helper:
         event_helper.group_completed(

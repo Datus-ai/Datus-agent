@@ -1,8 +1,8 @@
-# Contextual Data Engineering: Concepts & Hands-on Tutorial
+# Build a Context-Rich Agent: California Schools
 
-This page is split into two halves. **Part 1** explains the concepts behind Contextual Data Engineering — what it is, why it matters, and how Datus models long-term data context. **Part 2** is a step-by-step walkthrough that puts those concepts into practice with the bundled California Schools dataset, using the `/bootstrap` REPL flow that you will use every day in your own projects.
+This guide first explains how Datus models long-term data context, then applies the idea in a hands-on California Schools tutorial. You will build a knowledge base, give a subagent access to that context, and compare it with a baseline agent.
 
-If you have ten minutes, skip the prose and jump to [Part 2 — Hands-on Tutorial](#part-2--hands-on-tutorial-california-schools).
+If you already understand the concepts, jump to [Part 2 — Hands-on Tutorial](#part-2-hands-on-tutorial-california-schools).
 
 ---
 
@@ -68,7 +68,7 @@ LLMs draft semantic models and metrics from tables and reference SQL, while engi
 
 **Command-driven iteration**
 
-Commands like `/gen_semantic_model`, `/gen_metrics`, and `/gen_sql_summary` create and update assets. The `/catalog` and `/subject` screens support in-place edits.
+Describe the asset to create or update and the main agent delegates to the appropriate subagent automatically. Use `@Agent semantic_modeling` to route one request explicitly, or `/agent semantic_modeling` to select it for consecutive turns.
 
 **Feedback drives continuous improvement**
 
@@ -94,11 +94,7 @@ The subagent's scoped context forms an ideal RL environment (environment + quest
 
 **Datus CLI**
 
-An interactive [CLI for data engineers](../cli/introduction.md) with context-aware compression and search tools. Provides three "magic commands":
-
-- `/` to chat and orchestrate
-- `@` to view and recall context
-- `!` to execute node/tool actions
+An interactive [CLI for data engineers](../cli/introduction.md) with context-aware compression and search tools. Type a question in natural language and Datus routes it to the appropriate agent. Slash commands such as `/datasource` and `/model` manage the session; `@Agent <name>` explicitly routes one turn to a subagent, while `/agent <name>` selects the active subagent for subsequent turns. Press **Tab** on an empty prompt to switch between natural-language, SQL, and Bash input modes.
 
 **Datus Agent**
 
@@ -127,15 +123,13 @@ This walkthrough takes you through the same five outcomes the concepts above des
 3. A baseline benchmark result and a context-rich one to compare
 4. A multi-round evaluation that demonstrates how context evolution improves SQL accuracy
 
-Reading time ≈ 5 minutes; total runtime ≈ 15 minutes (the LLM-driven bootstrap steps are the slow part).
-
 ### Prerequisites
 
 You need:
 
 - `datus` installed (see the [Quick Start Guide](Quickstart.md))
 - An LLM provider configured via `/model` inside `datus`. The picker writes provider credentials into `~/.datus/conf/agent.yml`.
-- The MetricFlow semantic-layer adapter configured via `/services semantic` — the CLI will auto-install the missing `datus-semantic-metricflow` package when the service configuration is saved in `/services`.
+- Dosi is included in the Agent installation.
 
 You do **not** need to download or `cp` anything. The first time `datus` runs without a config, it bootstraps `~/.datus/`:
 
@@ -184,7 +178,7 @@ Inside the REPL:
 > /bootstrap
 
 ──── Datus Bootstrap ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-   Schema   SQL   Template   Semantic   Metrics   Knowledge    (Tab or ←/→ to switch)
+   Schema   SQL   Template   Semantic Modeling    (Tab or ←/→ to switch)
 ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
   Schema
   Crawl the live database schema into the metadata RAG.
@@ -214,9 +208,9 @@ Press **Ctrl+R**. Expected output:
 
 Learn more about [metadata management](../knowledge_base/metadata.md).
 
-### Step 3 — Bootstrap the Semantic Model (Semantic tab)
+### Step 3 — Bootstrap Dosi Semantic Models and Metrics (Semantic Modeling tab)
 
-Switch to the **Semantic** tab and fill in:
+Switch to the **Semantic Modeling** tab and fill in:
 
 ```text
 datasource:    california_schools
@@ -224,68 +218,20 @@ success_story: ~/.datus/benchmark/california_schools/success_story.csv
 overwrite:     [x]
 ```
 
-`success_story.csv` is a CSV of `(question, sql)` pairs that Datus uses as ground truth when drafting MetricFlow semantic models. The file ships with the sample dataset, so the path above resolves directly.
+`success_story.csv` is a CSV of `(question, sql)` pairs that Datus uses as evidence when authoring Dosi datasets, relationships, and metrics. The file ships with the sample dataset, so the path above resolves directly. This authoring flow uses the built-in Dosi engine.
 
 Press **Ctrl+R**. Expected output:
 
 ```text
-⏺ 💬 Running bootstrap task: semantic_model                                                                                                                                          
-
-⏺ gen_semantic_model(~/.datus/benchmark/california_schools/success_story.csv (mode=overwrite))
-  ⎿  Done (15 tool uses · 98.1s)
-⏺ 💬 gen_semantic_model (~/.datus/benchmark/california_schools/success_story.csv (mode=overwrite)):                                                                                  
-
-
-        Semantic Models Generated for california_schools                                                                   
-
-                Analysis Summary                                                                                   
-
- • SQL Queries Analyzed: 2 queries across 2 tables                                                                                                                                   
- • Tables Identified: frpm, schools                                                                                                                                                  
- • Relationship Discovered: frpm.CDSCode → schools.CDSCode (HIGH confidence, via DDL foreign key constraint)     
+⏺ 💬 Running bootstrap task: semantic_modeling
+⏺ semantic_modeling(~/.datus/benchmark/california_schools/success_story.csv)
+  ⎿  Dosi YAML validated and reconciled to the Knowledge Base
+⏺ 💬 semantic_modeling bootstrap completed
 ```
 
-Datus infers dimensions and measures per table and writes MetricFlow YAML to the project's `subject/semantic_models/` directory.
+Datus writes validated Dosi YAML to the project's `subject/semantic_models/` directory and reconciles both semantic objects and metrics to the Knowledge Base.
 
-### Step 4 — Bootstrap Metrics (Metrics tab)
-
-Switch to the **Metrics** tab and fill in:
-
-```text
-datasource:    california_schools
-success_story: ~/.datus/benchmark/california_schools/success_story.csv
-pool_size:     3
-subject_tree:  california_schools/Continuation_School/Free_Rate,california_schools/Charter/Education_Location
-overwrite:     [x]
-```
-
-The `subject_tree` field is a comma-separated list of `domain/layer1/layer2` paths. Datus places every generated metric under one of these leaves so the final knowledge base is browsable by topic.
-
-Press **Ctrl+R**. Expected output (truncated):
-
-```text
-⏺ gen_metrics(~/.datus/benchmark/california_schools/success_story.csv (mode=incremental))
-  ⎿  Done (20 tool uses · 90.0s)
-⏺ 💬 gen_metrics (~/.datus/benchmark/california_schools/success_story.csv (mode=incremental)):                                                                                       
-
-
-                    SQL Analysis Summary                                                                                 
-            Query 1 — Continuation School Free Rate (Ages 5-17)                                                                 
-
-Business Question: What are the eligible free meal rates (ages 5-17) for continuation schools?                                                                                       
-
-Metric Extracted: continuation_school_free_rate_ages_5_17                                                                                                                            
-
- • Type: ratio                                                                                                                                                                       
- • Numerator measure: continuation_school_free_meal_count_ages_5_17 — SUM(CASE WHEN Educational Option Type = 'Continuation School' THEN Free Meal Count (Ages 5-17) ELSE 0 END)     
- • Denominator measure: continuation_school_enrollment_ages_5_17 — SUM(CASE WHEN Educational Option Type = 'Continuation School' THEN Enrollment (Ages 5-17) ELSE 0 END)             
- • Subject tree: california_schools/Continuation_School/Free_Rate                                                                                                                    
- • Status: ✅ Created, validated, dry-run passed, synced to Knowledge Base  
-```
-
-For more on metrics, see the [metrics documentation](../knowledge_base/metrics.md).
-
-### Step 5 — Bootstrap Reference SQL (SQL tab)
+### Step 4 — Bootstrap Reference SQL (SQL tab)
 
 Switch to the **SQL** tab and fill in:
 
@@ -329,7 +275,7 @@ Datus parses every `.sql` file under `sql_dir`, generates a natural-language sum
 
 For more, see the [reference SQL docs](../knowledge_base/reference_sql.md).
 
-### Step 6 — Browse what you built
+### Step 5 — Browse what you built
 
 Still inside the REPL:
 
@@ -343,7 +289,7 @@ You should see the subject tree populated with metrics and SQL summaries:
 
 Use `/catalog` to inspect table/column metadata. These two screens are the primary way you (and the AI) navigate the knowledge base going forward.
 
-### Step 7 — Create two subagents
+### Step 6 — Create two subagents
 
 Open `~/.datus/conf/agent.yml` and append the following two blocks under `agent:` — `agentic_nodes` (defining the two subagents) and `workflow` (defining their orchestration pipelines):
 
@@ -354,7 +300,7 @@ Open `~/.datus/conf/agent.yml` and append the following two blocks under `agent:
       prompt_version: '1.0'
       prompt_language: en
       agent_description: ''
-      tools: db_tools, date_parsing_tools
+      tools: db_tools
       mcp: ''
       rules: []
     datus_schools_context:
@@ -362,7 +308,7 @@ Open `~/.datus/conf/agent.yml` and append the following two blocks under `agent:
       prompt_version: '1.0'
       prompt_language: en
       agent_description: ''
-      tools: context_search_tools, db_tools, date_parsing_tools
+      tools: context_search_tools, db_tools
       mcp: ''
       rules: []
   workflow:
@@ -376,14 +322,15 @@ Open `~/.datus/conf/agent.yml` and append the following two blocks under `agent:
     - output
 ```
 
-The key contrast is `context_search_tools`: only `datus_schools_context` can read the metrics and reference SQL you built in Steps 3–5. That difference is exactly what the next benchmark measures.
+The key contrast is `context_search_tools`: only `datus_schools_context` can read the metrics and reference SQL you built in Steps 2–4. That difference is exactly what the next benchmark measures.
 
 #### Invoking a subagent
 
 `/agent` with no argument opens the TUI (Enter switches the active agent); with a name it switches the default agent to `<name>`:
 
 ```text
-/agent datus_schools_context          # then type your question on the next line
+/agent datus_schools_context
+What's the average SAT score by school type?
 ```
 
 For one-off routing on a single question, use the `@Agent <name>` mention:
@@ -394,7 +341,7 @@ What's the average SAT score by school type? @Agent datus_schools_context
 
 The same subagents can also be served from [Datus-Chat](../web_chatbot/introduction.md).
 
-### Step 8 — Benchmark baseline vs context-rich
+### Step 7 — Benchmark baseline vs context-rich
 
 Outside the REPL, run the baseline first:
 
@@ -428,7 +375,7 @@ datus-agent eval \
 
 Diff `schools1.txt` and `schools2.txt`. The context-rich agent produces more semantically correct SQL, fewer hallucinated columns, and better joins — because it can recall the reference-SQL patterns and metric definitions you built earlier.
 
-### Step 9 — Multi-round benchmark
+### Step 8 — Multi-round benchmark
 
 This is the most powerful demonstration of contextual data engineering — repeated runs that let context evolve:
 
@@ -453,7 +400,7 @@ You have just driven the full Datus loop end-to-end:
 | Component | Outcome |
 |----------|---------|
 | Metadata bootstrap | Schema, column descriptions, sampled rows indexed |
-| Semantic model bootstrap | MetricFlow YAMLs generated from success stories |
+| Semantic model bootstrap | Dosi semantic models generated from success stories |
 | Metrics bootstrap | Business metrics extracted and placed in the subject tree |
 | Reference SQL bootstrap | 19 SQL files summarized, joined, indexed |
 | Subagents | Two scoped agents with deliberately different toolsets |
@@ -463,6 +410,8 @@ You have just driven the full Datus loop end-to-end:
 The same workflow applies to any domain — point `/bootstrap` at your own success stories and SQL directory, and you have a real, evolvable knowledge base in under an hour.
 
 ## Next Steps
+
+To try a different hands-on scenario, return to [Choose Your Getting Started Path](index.md).
 
 <div class="grid cards" markdown>
 

@@ -22,6 +22,8 @@ python -m datus.main benchmark --datasource bird_sqlite --benchmark bird_dev --m
 
 ### Spider2 Benchmark
 
+Prepare the [Spider 2.0-Snow dataset](../../docs/benchmark/benchmark_manual.md#spider2-data) under `{agent.home}/benchmark/spider2/` first. The dataset is not part of the source checkout. Schema recall scripts also need `methods/gold-tables/` from the same Spider2 revision.
+
 ```shell
 # Basic usage
 python -m datus.main benchmark --datasource snowflake --benchmark spider2

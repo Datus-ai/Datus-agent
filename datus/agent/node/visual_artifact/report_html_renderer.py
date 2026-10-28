@@ -64,6 +64,7 @@ _TEMPLATE_PATH = Path(__file__).parent / "templates" / "report_index.html"
 _REPORT_ARTIFACT_DIRS: Dict[str, Tuple[Tuple[str, ...], bool]] = {
     "render": ((".jsx", ".js", ".css", ".json"), True),
     "queries": ((".sql", ".json"), False),
+    "models": ((".yaml", ".yml", ".json"), False),
 }
 
 # Accepted shape for ``report_slug`` — restricting this up front prevents

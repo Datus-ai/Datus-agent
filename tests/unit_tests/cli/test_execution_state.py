@@ -81,6 +81,47 @@ class TestInterruptController:
             ctrl.reset()
             assert ctrl.is_interrupted is False
 
+    def test_interrupt_invokes_registered_cancel_callback(self):
+        ctrl = InterruptController()
+        calls = []
+
+        token = ctrl.register_cancel_callback(lambda: calls.append("cancel"))
+        ctrl.interrupt()
+
+        assert calls == ["cancel"]
+        ctrl.unregister_cancel_callback(token)
+
+    def test_repeated_interrupt_does_not_recancel_active_operation(self):
+        ctrl = InterruptController()
+        calls = []
+
+        token = ctrl.register_cancel_callback(lambda: calls.append("cancel"))
+        ctrl.interrupt()
+        ctrl.interrupt()
+
+        assert calls == ["cancel"]
+        ctrl.unregister_cancel_callback(token)
+
+    def test_late_cancel_callback_runs_immediately(self):
+        ctrl = InterruptController()
+        calls = []
+        ctrl.interrupt()
+
+        token = ctrl.register_cancel_callback(lambda: calls.append("cancel"))
+
+        assert calls == ["cancel"]
+        ctrl.unregister_cancel_callback(token)
+
+    def test_unregistered_cancel_callback_does_not_run(self):
+        ctrl = InterruptController()
+        calls = []
+
+        token = ctrl.register_cancel_callback(lambda: calls.append("cancel"))
+        ctrl.unregister_cancel_callback(token)
+        ctrl.interrupt()
+
+        assert calls == []
+
 
 # ===========================================================================
 # PendingInteraction Tests
@@ -155,6 +196,25 @@ class TestInteractionBrokerInit:
         """Newly created broker has an empty output queue."""
         broker = InteractionBroker()
         assert broker.is_queue_empty() is True
+
+
+class TestInteractionBrokerIsPending:
+    """Tests for InteractionBroker.is_pending()."""
+
+    @pytest.mark.asyncio
+    async def test_is_pending_tracks_one_key_until_answered(self):
+        """is_pending is True only for the waiting key, and turns False once it is answered."""
+        broker = InteractionBroker()
+        task = asyncio.create_task(broker.request([InteractionEvent(content="Go?", choices={"y": "Yes", "n": "No"})]))
+        await asyncio.sleep(0.05)
+        action_id = broker._output_queue.get_nowait().action_id
+
+        assert broker.is_pending(action_id) is True
+        assert broker.is_pending("some-other-key") is False
+
+        assert await broker.submit(action_id, [["y"]]) is True
+        assert await task == [["y"]]
+        assert broker.is_pending(action_id) is False
 
 
 class TestInteractionBrokerRequest:
@@ -238,8 +298,12 @@ class TestInteractionBrokerRequest:
         assert success_action.output["user_choice"] == [["y"]]
 
     @pytest.mark.asyncio
-    async def test_request_cancelled_raises_interaction_cancelled(self):
-        """When the future is cancelled, request() raises InteractionCancelled."""
+    async def test_request_cancelled_propagates_cancelled_error(self):
+        """A cancelled run must stay cancelled: CancelledError, not InteractionCancelled.
+
+        Downgrading it let ``ask_user`` report an ordinary tool failure, so the
+        LLM kept going after ``/chat/stop`` said the run had ended.
+        """
         broker = InteractionBroker()
 
         async def do_request():
@@ -251,7 +315,25 @@ class TestInteractionBrokerRequest:
         # Cancel the task (which cancels the future inside request())
         task.cancel()
 
-        with pytest.raises((InteractionCancelled, asyncio.CancelledError)):
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert task.cancelled()
+        assert not broker.has_pending
+
+    @pytest.mark.asyncio
+    async def test_request_raises_interaction_cancelled_when_broker_closes(self):
+        """Closing the broker cancels the question only — that stays catchable."""
+        broker = InteractionBroker()
+
+        async def do_request():
+            return await broker.request([InteractionEvent(content="Pick one", choices={"a": "A"}, default_choice="a")])
+
+        task = asyncio.create_task(do_request())
+        await asyncio.sleep(0.05)
+
+        broker.close()
+
+        with pytest.raises(InteractionCancelled):
             await task
 
 

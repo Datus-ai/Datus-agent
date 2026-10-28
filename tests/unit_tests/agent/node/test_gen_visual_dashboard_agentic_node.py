@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -31,6 +32,7 @@ from datus.tools.func_tool import (
     DBFuncTool,
     SemanticTools,
 )
+from datus.utils.language_utils import NATIVE_DIRECTIVE_MAP
 from tests.unit_tests.mock_llm_model import (
     MockToolCall,
     build_tool_then_response,
@@ -115,12 +117,13 @@ class TestGenVisualDashboardInit:
         registry = node.tool_registry.to_dict()
         for name in ("read_file", "write_file", "edit_file", "delete_file"):
             assert registry.get(name) == "filesystem_tools"
-        assert registry.get("read_query") == "db_tools"
+        assert registry.get("execute_sql") == "db_tools"
+        assert "read_query" not in registry
         assert "semantic_tools" in registry.values()
 
     def test_metric_discovery_tools_exposed_when_metrics_present(self, real_agent_config, mock_llm_create, monkeypatch):
         """Mirrors the report-node contract: with metrics indexed, the
-        dashboard node must expose ``search_metrics`` and ``get_metrics``
+        dashboard node must expose ``search_metrics``
         so the LLM can discover the metric registry instead of
         re-deriving SQL from raw schema. Also exercises the
         ``context_search_tools.*`` wildcard end-to-end.
@@ -132,7 +135,7 @@ class TestGenVisualDashboardInit:
         node = _make_node(real_agent_config)
         assert isinstance(node.context_search_tools, ContextSearchTools)
         tool_names = {t.name for t in node.tools}
-        assert {"search_metrics", "get_metrics", "list_subject_tree"}.issubset(tool_names)
+        assert {"search_metrics", "list_subject_tree"}.issubset(tool_names)
 
     def test_apply_proxy_tools_keeps_filesystem_tools_unwrapped(self, real_agent_config, mock_llm_create):
         """End-to-end check mirroring the visual report case: web-source
@@ -466,10 +469,10 @@ class TestDashboardHtmlPathStreamMessage:
     def test_post_validate_hook_returns_none_in_non_cli_mode(self, real_agent_config, mock_llm_create):
         from datus.schemas.gen_visual_dashboard_models import GenVisualDashboardNodeResult
 
-        # filesystem_strict flips the node into SaaS/API mode — dashboards
+        # The API/gateway bootstraps disable the compile switch — dashboards
         # then render dynamically through the backend's /dashboard/detail
         # endpoint and never compile a standalone HTML.
-        real_agent_config.filesystem_strict = True
+        real_agent_config.compile_visual_html = False
         node = _make_node(real_agent_config)
         dashboard_slug = "path_msg_saas"
         self._seed_full_dashboard(Path(real_agent_config.project_root), dashboard_slug)
@@ -481,6 +484,25 @@ class TestDashboardHtmlPathStreamMessage:
         assert action is None
         assert result.html_path is None
         assert not (Path(real_agent_config.project_root) / "dashboards" / dashboard_slug / "index.html").exists()
+
+    def test_filesystem_strict_does_not_skip_cli_compile(self, real_agent_config, mock_llm_create):
+        from datus.schemas.gen_visual_dashboard_models import GenVisualDashboardNodeResult
+
+        # Regression: nightly enables agent.filesystem.strict as a safety
+        # switch; that must not be read as an API deployment and silently
+        # skip the compile (the dashboard_html_path action disappeared).
+        real_agent_config.filesystem_strict = True
+        node = _make_node(real_agent_config)
+        dashboard_slug = "path_msg_strict_cli"
+        dash_dir = self._seed_full_dashboard(Path(real_agent_config.project_root), dashboard_slug)
+        node._active_artifact_slug = dashboard_slug
+
+        result = GenVisualDashboardNodeResult(success=True)
+        action = node._post_validate_hook(dashboard_slug, result)
+
+        assert isinstance(action, ActionHistory)
+        assert action.action_type == "dashboard_html_path"
+        assert (dash_dir / "index.html").exists()
 
     def test_post_validate_hook_uses_node_config_overrides(self, real_agent_config, mock_llm_create):
         """``agentic_nodes.gen_visual_dashboard.{web_host,web_port,query_endpoint}``
@@ -674,6 +696,19 @@ async def test_execute_stream_fails_when_validate_render_not_called(real_agent_c
                             }
                         ),
                     ),
+                    # The write is what makes this a half-finished build rather
+                    # than a consultative turn — without it the run is just prose.
+                    MockToolCall(
+                        name="write_file",
+                        arguments=json.dumps(
+                            {
+                                "path": "dashboards/incomplete/render/app.jsx",
+                                "content": (
+                                    "import React from 'react';\nexport default function App() { return null; }\n"
+                                ),
+                            }
+                        ),
+                    ),
                 ],
                 content="started but never validated",
             ),
@@ -693,3 +728,222 @@ async def test_execute_stream_fails_when_validate_render_not_called(real_agent_c
     # ``_active_dashboard_slug`` got captured even though validate_render didn't run.
     assert result["dashboard_slug"] == "incomplete"
     assert "validate_render" in (result.get("error") or "")
+
+
+@pytest.mark.asyncio
+async def test_execute_stream_bound_consultative_turn_ends_normally(real_agent_config, mock_llm_create):
+    """Binding + reading + a prose answer is a valid turn, not an incomplete artifact.
+
+    Hard rule 1 of the system prompt makes the model bind before answering
+    anything — meta-discussion included — so "is this chart worth keeping?"
+    binds, reads the render tree, and replies with options. Nothing was
+    written, so there is no render to validate and no error to surface.
+    """
+    project_root = Path(real_agent_config.project_root)
+    existing_slug = "consult_demo"
+    dash_dir = project_root / "dashboards" / existing_slug
+    (dash_dir / "render").mkdir(parents=True, exist_ok=True)
+    (dash_dir / "render" / "app.jsx").write_text(
+        "import React from 'react';\nexport default function App() { return null; }\n",
+        encoding="utf-8",
+    )
+    (dash_dir / "manifest.json").write_text(
+        f'{{"slug":"{existing_slug}","name":"consult demo","description":"Seeded for a read-only turn.",'
+        '"kind":"dashboard","created_at":"2026-05-14T00:00:00Z"}\n',
+        encoding="utf-8",
+    )
+
+    answer = "That chart tracks a step nobody owns. Three options: drop it, demote it to text, or refocus it."
+    mock_llm_create.reset(
+        responses=[
+            build_tool_then_response(
+                tool_calls=[
+                    MockToolCall(
+                        name="bind_existing_dashboard",
+                        arguments=json.dumps({"dashboard_slug": existing_slug}),
+                    ),
+                    MockToolCall(
+                        name="read_file",
+                        arguments=json.dumps({"path": f"dashboards/{existing_slug}/render/app.jsx"}),
+                    ),
+                ],
+                content=answer,
+            ),
+        ]
+    )
+
+    node = _make_node(real_agent_config)
+    node.input = GenVisualDashboardNodeInput(
+        user_message="this chart doesn't look useful — is it worth keeping?",
+        database="california_schools",
+    )
+    actions = []
+    async for action in node.execute_stream(ActionHistoryManager()):
+        actions.append(action)
+
+    final = actions[-1]
+    assert final.status == ActionStatus.SUCCESS
+    result = final.output
+    assert result["success"] is True
+    assert not result.get("error")
+    assert result["app_jsx_path"] is None
+    assert result["response"] == answer
+
+
+@pytest.mark.asyncio
+async def test_reused_action_manager_does_not_leak_a_prior_runs_write(real_agent_config, mock_llm_create):
+    """A run is classified on its own actions, not on what an earlier pass left behind.
+
+    The backend's mid-run-insert continuation loop calls ``execute_stream``
+    again with the manager the previous pass filled, so a ``write_file`` from
+    pass 1 must not make a pass-2 consultative turn look half-finished.
+    """
+    slug = "reused_mgr"
+    app_jsx = "import React from 'react';\nexport default function App() { return null; }\n"
+    mock_llm_create.reset(
+        responses=[
+            build_tool_then_response(
+                tool_calls=[
+                    MockToolCall(
+                        name="start_new_dashboard",
+                        arguments=json.dumps(
+                            {"slug": slug, "name": slug, "description": "Half-built — unit-test fixture."}
+                        ),
+                    ),
+                    MockToolCall(
+                        name="write_file",
+                        arguments=json.dumps({"path": f"dashboards/{slug}/render/app.jsx", "content": app_jsx}),
+                    ),
+                ],
+                content="wrote the render tree",
+            ),
+            build_tool_then_response(
+                tool_calls=[
+                    MockToolCall(
+                        name="bind_existing_dashboard",
+                        arguments=json.dumps({"dashboard_slug": slug}),
+                    ),
+                    MockToolCall(
+                        name="read_file",
+                        arguments=json.dumps({"path": f"dashboards/{slug}/render/app.jsx"}),
+                    ),
+                ],
+                content="Hold off — that chart tracks a step nobody owns. Drop it, or refocus it?",
+            ),
+        ]
+    )
+
+    node = _make_node(real_agent_config)
+    manager = ActionHistoryManager()
+
+    node.input = GenVisualDashboardNodeInput(user_message="build it", database="california_schools")
+    first = [action async for action in node.execute_stream(manager)]
+    # Pass 1 wrote render files and never validated — still a real failure.
+    assert first[-1].output["success"] is False
+    assert "validate_render" in (first[-1].output.get("error") or "")
+    assert (Path(real_agent_config.project_root) / "dashboards" / slug / "render" / "app.jsx").is_file()
+
+    node.input = GenVisualDashboardNodeInput(
+        user_message="actually hold on — is that chart worth keeping?",
+        database="california_schools",
+    )
+    second = [action async for action in node.execute_stream(manager)]
+
+    final = second[-1]
+    assert final.status == ActionStatus.SUCCESS
+    result = final.output
+    assert result["success"] is True
+    assert not result.get("error")
+    assert result["app_jsx_path"] is None
+
+
+class TestFinalizeLanguageDirective:
+    """The finalize stage is an independent LLM call with no system prompt, so
+    the node has to hand it the response-language directive explicitly —
+    otherwise an English instruction block yields English insights /
+    suggested questions for an artifact the user asked for in Chinese.
+    """
+
+    def test_pinned_language_is_resolved_into_a_directive(self, real_agent_config, mock_llm_create):
+        real_agent_config.language = "zh"
+        node = _make_node(real_agent_config)
+
+        directive = node._finalize_language_directive() or ""
+
+        assert "- Use: Chinese (zh)" in directive
+        # No leading blank lines — it is spliced into a prompt section.
+        assert directive == directive.strip()
+
+    def test_unpinned_language_yields_none(self, real_agent_config, mock_llm_create):
+        real_agent_config.language = None
+        node = _make_node(real_agent_config)
+
+        # None lets the finalize prompt fall back to "follow the language of
+        # the user's prompts in intent.md" instead of pinning a wrong one.
+        assert node._finalize_language_directive() is None
+
+    def test_template_failure_still_pins_the_language(self, real_agent_config, mock_llm_create, monkeypatch):
+        """``_inject_response_language`` swallows a render failure and returns
+        the prompt untouched. Reading that as "unpinned" would silently hand
+        finalize the infer-from-user-prompts branch, which contradicts an
+        operator who pinned a language the user doesn't write in."""
+        real_agent_config.language = "ja"
+        node = _make_node(real_agent_config)
+        monkeypatch.setattr(type(node), "_inject_response_language", lambda self, base: base)
+
+        directive = node._finalize_language_directive()
+
+        assert directive == f"# Response Language\n- Use: Japanese (ja)\n- {NATIVE_DIRECTIVE_MAP['ja']}"
+
+    def test_run_finalize_forwards_the_directive_to_the_llm(self, real_agent_config, mock_llm_create, tmp_path):
+        """End-to-end through ``_run_finalize`` → ``run_finalize_analysis``:
+        the resolved directive must reach the prompt of the independent
+        finalize LLM call, which is the only place it can take effect."""
+        real_agent_config.language = "zh-CN"
+        node = _make_node(real_agent_config)
+        project_root = Path(real_agent_config.project_root)
+        dashboard_dir = project_root / "dashboards" / "lang_probe"
+        _seed_dashboard_on_disk(project_root, "lang_probe")
+        # The response below grounds its quick chips in this slug; without the
+        # template on disk ``consistency_check`` rightly reports them as
+        # unresolvable, and the fixture would not be something finalize could
+        # legally emit.
+        (dashboard_dir / "queries" / "kpi_summary.sql.j2").write_text("SELECT 1 AS v\n", encoding="utf-8")
+
+        model = MagicMock(spec=["generate_with_json_output", "generate"])
+        model.generate_with_json_output.return_value = {
+            # Dashboards carry no insights, so every chip grounds on a query
+            # slug; the contract is 5 entries split 3 quick + 2 deep_dive.
+            "insights": [],
+            "suggested_questions": [
+                {
+                    "question": f"这个看板的{topic}是什么？",
+                    "kind": "quick",
+                    "related_queries": ["kpi_summary"],
+                    "related_insight": None,
+                    "priority": 0.9,
+                }
+                for topic in ("默认时间范围", "可用筛选维度", "指标口径")
+            ]
+            + [
+                {
+                    "question": f"{topic}的原因是什么？",
+                    "kind": "deep_dive",
+                    "related_queries": ["kpi_summary"],
+                    "related_insight": None,
+                    "priority": 0.6,
+                }
+                for topic in ("环比下降", "分组差异")
+            ],
+        }
+        node.model = model
+
+        result = node._run_finalize("lang_probe", [])
+
+        assert result["ok"] is True
+        # A contract-valid response on a well-formed artifact warns about nothing.
+        assert result["warnings"] == []
+        prompt = model.generate_with_json_output.call_args.args[0]
+        assert "Chinese (zh-CN)" in prompt
+        analysis_dir = dashboard_dir / "analysis"
+        assert (analysis_dir / "suggested_questions.json").is_file()

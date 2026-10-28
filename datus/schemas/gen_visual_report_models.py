@@ -14,7 +14,8 @@ from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from datus.schemas.base import BaseInput, BaseResult
+from datus.schemas.at_context import AtContextInput
+from datus.schemas.base import BaseResult
 
 # LLM-supplied slug doubles as the on-disk directory name; constrained
 # to a filesystem-friendly subset so we never need to URL-escape it.
@@ -61,6 +62,8 @@ class QueryResultFile(BaseModel):
     row_count: int = Field(..., ge=0)
     columns: List[QueryColumnMeta] = Field(..., min_length=1)
     rows: List[Dict[str, Any]] = Field(...)
+    sql: Optional[str] = None
+    source: Optional[Dict[str, Any]] = None
 
     @model_validator(mode="after")
     def _row_count_matches(self) -> "QueryResultFile":
@@ -78,7 +81,7 @@ class QueryResultFile(BaseModel):
         return self
 
 
-class GenVisualReportNodeInput(BaseInput):
+class GenVisualReportNodeInput(AtContextInput):
     """Input model for GenVisualReportAgenticNode."""
 
     user_message: str = Field(..., description="User's analysis question (required)")

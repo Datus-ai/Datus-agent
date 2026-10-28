@@ -1,0 +1,407 @@
+from __future__ import annotations
+
+import importlib.util
+import json
+from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
+
+MODULE_PATH = Path(__file__).resolve().parents[3] / "ci" / "verify_nightly_adapter_sources.py"
+MODULE_SPEC = importlib.util.spec_from_file_location("verify_nightly_adapter_sources", MODULE_PATH)
+if MODULE_SPEC is None or MODULE_SPEC.loader is None:
+    raise RuntimeError(f"Unable to load verify_nightly_adapter_sources module from {MODULE_PATH}")
+verify_sources = importlib.util.module_from_spec(MODULE_SPEC)
+MODULE_SPEC.loader.exec_module(verify_sources)
+
+
+# Registration shape a healthy nightly checkout produces, per db_type.
+_PARSER_DIALECTS = {
+    "bigquery": "bigquery",
+    "hologres": "postgres",
+    "gaussdb": "postgres",
+    "dws": "postgres",
+    "maxcompute": "hive",
+    "oracle": "oracle",
+    "tidb": "mysql",
+}
+_IDENTIFIER_PARSER_ADAPTERS = {"bigquery", "hologres", "gaussdb", "dws", "maxcompute"}
+_SQL_NOTES_ADAPTERS = {"bigquery", "hologres", "gaussdb", "dws", "maxcompute", "oracle", "tidb"}
+
+
+class _FakeDistribution:
+    def __init__(self, direct_url: str | None):
+        self.direct_url = direct_url
+
+    def read_text(self, filename: str) -> str | None:
+        assert filename == "direct_url.json"
+        return self.direct_url
+
+
+def _local_distribution(path: Path) -> _FakeDistribution:
+    return _FakeDistribution(json.dumps({"url": path.resolve().as_uri(), "dir_info": {}}))
+
+
+class _FakeDialectOperations:
+    def render_limit(self, sql, limit):
+        return sql
+
+    def render_count(self, sql, alias):
+        return sql
+
+    def quote_identifier(self, name):
+        return name
+
+    def infer_transfer_type(self, series):
+        return "TEXT"
+
+    def write_dataframe(self, connector, table, dataframe, batch_size):
+        return 0
+
+
+def _fake_identifier_parser(_identifier):
+    return {"catalog_name": "", "database_name": "", "schema_name": "", "table_name": "table"}
+
+
+def _identifier_parser_for(db_type):
+    return _fake_identifier_parser if db_type in _IDENTIFIER_PARSER_ADAPTERS else None
+
+
+def test_verify_local_sources_accepts_every_expected_checkout(monkeypatch, tmp_path):
+    external_root = tmp_path / "external"
+    distributions = {
+        name: _local_distribution(external_root / relative_path)
+        for name, relative_path in verify_sources.EXPECTED_LOCAL_PACKAGES.items()
+    }
+    monkeypatch.setattr(verify_sources.metadata, "distribution", distributions.__getitem__)
+
+    assert verify_sources.verify_local_sources(external_root) == []
+
+
+def test_expected_sources_include_the_tidb_checkout_path():
+    """`test_verify_local_sources_accepts_every_expected_checkout` builds its
+    fixtures from this same mapping, so a typo here would pass it unnoticed."""
+    assert verify_sources.EXPECTED_LOCAL_PACKAGES["datus-tidb"] == "datus-db-adapters/datus-tidb"
+
+
+def test_expected_sources_include_the_maxcompute_checkout_path():
+    assert verify_sources.EXPECTED_LOCAL_PACKAGES["datus-maxcompute"] == "datus-db-adapters/datus-maxcompute"
+
+
+def test_expected_sources_include_the_bigquery_checkout_path():
+    assert verify_sources.EXPECTED_LOCAL_PACKAGES["datus-bigquery"] == "datus-db-adapters/datus-bigquery"
+
+
+def test_bigquery_contract_requires_dialect_and_sql_guidance_hooks():
+    contract = verify_sources.DATABASE_ADAPTER_CONTRACTS["datus_bigquery"]
+
+    assert contract.db_type == "bigquery"
+    assert contract.parser_dialect == "bigquery"
+    assert contract.required_hooks == ("get_identifier_parser", "get_sql_generation_notes")
+
+
+def test_maxcompute_contract_requires_dialect_and_sql_guidance_hooks():
+    contract = verify_sources.DATABASE_ADAPTER_CONTRACTS["datus_maxcompute"]
+
+    assert contract.db_type == "maxcompute"
+    assert contract.parser_dialect == "hive"
+    assert contract.required_hooks == ("get_identifier_parser", "get_sql_generation_notes")
+
+
+def test_expected_sources_include_the_dws_checkout_path():
+    assert verify_sources.EXPECTED_LOCAL_PACKAGES["datus-dws"] == "datus-db-adapters/datus-dws"
+
+
+def test_dws_contract_requires_dialect_and_sql_guidance_hooks():
+    contract = verify_sources.DATABASE_ADAPTER_CONTRACTS["datus_dws"]
+
+    assert contract.db_type == "dws"
+    # DWS speaks the PostgreSQL wire protocol, so sqlglot parses it as postgres.
+    assert contract.parser_dialect == "postgres"
+    assert contract.required_hooks == ("get_identifier_parser", "get_sql_generation_notes")
+    # The adapter registers no dialect of its own, so it declares no dialect
+    # operation methods either.
+    assert contract.dialect_operation_methods == ()
+
+
+def test_expected_sources_include_storage_packages():
+    assert verify_sources.EXPECTED_LOCAL_PACKAGES["datus-storage-base"] == ("datus-storage-adapters/datus-storage-base")
+    assert verify_sources.EXPECTED_LOCAL_PACKAGES["datus-storage-postgresql"] == (
+        "datus-storage-adapters/datus-storage-postgresql"
+    )
+
+
+def test_managed_p0_plugins_are_not_required_as_global_packages():
+    assert "datus-sql-policies" not in verify_sources.EXPECTED_LOCAL_PACKAGES
+    assert "datus-superset-plugin" not in verify_sources.EXPECTED_LOCAL_PACKAGES
+
+
+def test_expected_sources_include_new_database_adapters():
+    assert verify_sources.EXPECTED_LOCAL_PACKAGES["datus-bigquery"] == "datus-db-adapters/datus-bigquery"
+    assert verify_sources.EXPECTED_LOCAL_PACKAGES["datus-doris"] == "datus-db-adapters/datus-doris"
+    assert verify_sources.EXPECTED_LOCAL_PACKAGES["datus-hologres"] == "datus-db-adapters/datus-hologres"
+    assert verify_sources.EXPECTED_LOCAL_PACKAGES["datus-maxcompute"] == "datus-db-adapters/datus-maxcompute"
+    assert verify_sources.EXPECTED_LOCAL_PACKAGES["datus-oracle"] == "datus-db-adapters/datus-oracle"
+    assert verify_sources.EXPECTED_LOCAL_PACKAGES["datus-gaussdb"] == "datus-db-adapters/datus-gaussdb"
+
+
+def test_verify_database_adapter_imports_accepts_registered_hooks(monkeypatch):
+    registry = SimpleNamespace(
+        get_metadata=lambda db_type: SimpleNamespace(db_type=db_type),
+        get_parser_dialect=lambda db_type: _PARSER_DIALECTS.get(db_type),
+        get_identifier_parser=_identifier_parser_for,
+        get_sql_generation_notes=lambda db_type: "notes" if db_type in _SQL_NOTES_ADAPTERS else None,
+        get_dialect_operations=lambda db_type: _FakeDialectOperations() if db_type == "oracle" else None,
+    )
+    modules = {
+        "datus_db_core": SimpleNamespace(connector_registry=registry),
+        "datus_bigquery": SimpleNamespace(register=lambda: None),
+        "datus_doris": SimpleNamespace(register=lambda: None),
+        "datus_hologres": SimpleNamespace(register=lambda: None),
+        "datus_maxcompute": SimpleNamespace(register=lambda: None),
+        "datus_gaussdb": SimpleNamespace(register=lambda: None),
+        "datus_oracle": SimpleNamespace(register=lambda: None),
+        "datus_tidb": SimpleNamespace(register=lambda: None),
+        "datus_dws": SimpleNamespace(register=lambda: None),
+    }
+    monkeypatch.setattr(verify_sources.importlib, "import_module", modules.__getitem__)
+
+    assert verify_sources.verify_database_adapter_imports() == []
+
+
+def test_verify_database_adapter_imports_requires_hologres_parser_hook(monkeypatch):
+    registry = SimpleNamespace(
+        get_metadata=lambda db_type: SimpleNamespace(db_type=db_type),
+        get_parser_dialect=lambda db_type: None if db_type == "hologres" else _PARSER_DIALECTS.get(db_type),
+        get_identifier_parser=_identifier_parser_for,
+        get_sql_generation_notes=lambda db_type: "notes" if db_type in _SQL_NOTES_ADAPTERS else None,
+        get_dialect_operations=lambda db_type: _FakeDialectOperations() if db_type == "oracle" else None,
+    )
+    modules = {
+        "datus_db_core": SimpleNamespace(connector_registry=registry),
+        "datus_bigquery": SimpleNamespace(register=lambda: None),
+        "datus_doris": SimpleNamespace(register=lambda: None),
+        "datus_hologres": SimpleNamespace(register=lambda: None),
+        "datus_maxcompute": SimpleNamespace(register=lambda: None),
+        "datus_gaussdb": SimpleNamespace(register=lambda: None),
+        "datus_oracle": SimpleNamespace(register=lambda: None),
+        "datus_tidb": SimpleNamespace(register=lambda: None),
+        "datus_dws": SimpleNamespace(register=lambda: None),
+    }
+    monkeypatch.setattr(verify_sources.importlib, "import_module", modules.__getitem__)
+
+    assert verify_sources.verify_database_adapter_imports() == ["datus_hologres parser dialect is not postgres"]
+
+
+@pytest.mark.parametrize(
+    ("missing_hook", "expected_error"),
+    [
+        (
+            "get_identifier_parser",
+            "datus_hologres did not register get_identifier_parser",
+        ),
+        (
+            "get_sql_generation_notes",
+            "datus_hologres did not register get_sql_generation_notes",
+        ),
+    ],
+)
+def test_verify_database_adapter_imports_requires_hologres_hooks(monkeypatch, missing_hook: str, expected_error: str):
+    registry = SimpleNamespace(
+        get_metadata=lambda db_type: SimpleNamespace(db_type=db_type),
+        get_parser_dialect=lambda db_type: _PARSER_DIALECTS.get(db_type),
+        get_identifier_parser=lambda db_type: (
+            None
+            if db_type not in _IDENTIFIER_PARSER_ADAPTERS
+            or (db_type == "hologres" and missing_hook == "get_identifier_parser")
+            else _fake_identifier_parser
+        ),
+        get_sql_generation_notes=lambda db_type: (
+            None if db_type == "hologres" and missing_hook == "get_sql_generation_notes" else "notes"
+        ),
+        get_dialect_operations=lambda db_type: _FakeDialectOperations() if db_type == "oracle" else None,
+    )
+    modules = {
+        "datus_db_core": SimpleNamespace(connector_registry=registry),
+        "datus_bigquery": SimpleNamespace(register=lambda: None),
+        "datus_doris": SimpleNamespace(register=lambda: None),
+        "datus_hologres": SimpleNamespace(register=lambda: None),
+        "datus_maxcompute": SimpleNamespace(register=lambda: None),
+        "datus_gaussdb": SimpleNamespace(register=lambda: None),
+        "datus_oracle": SimpleNamespace(register=lambda: None),
+        "datus_tidb": SimpleNamespace(register=lambda: None),
+        "datus_dws": SimpleNamespace(register=lambda: None),
+    }
+    monkeypatch.setattr(verify_sources.importlib, "import_module", modules.__getitem__)
+
+    assert verify_sources.verify_database_adapter_imports() == [expected_error]
+
+
+def test_verify_database_adapter_imports_rejects_non_callable_maxcompute_identifier_parser(monkeypatch):
+    registry = SimpleNamespace(
+        get_metadata=lambda db_type: SimpleNamespace(db_type=db_type),
+        get_parser_dialect=lambda db_type: _PARSER_DIALECTS.get(db_type),
+        get_identifier_parser=lambda db_type: object() if db_type == "maxcompute" else _identifier_parser_for(db_type),
+        get_sql_generation_notes=lambda db_type: "notes" if db_type in _SQL_NOTES_ADAPTERS else None,
+        get_dialect_operations=lambda db_type: _FakeDialectOperations() if db_type == "oracle" else None,
+    )
+    modules = {
+        "datus_db_core": SimpleNamespace(connector_registry=registry),
+        "datus_bigquery": SimpleNamespace(register=lambda: None),
+        "datus_doris": SimpleNamespace(register=lambda: None),
+        "datus_hologres": SimpleNamespace(register=lambda: None),
+        "datus_maxcompute": SimpleNamespace(register=lambda: None),
+        "datus_gaussdb": SimpleNamespace(register=lambda: None),
+        "datus_oracle": SimpleNamespace(register=lambda: None),
+        "datus_tidb": SimpleNamespace(register=lambda: None),
+        "datus_dws": SimpleNamespace(register=lambda: None),
+    }
+    monkeypatch.setattr(verify_sources.importlib, "import_module", modules.__getitem__)
+
+    assert verify_sources.verify_database_adapter_imports() == [
+        "datus_maxcompute registered non-callable get_identifier_parser"
+    ]
+
+
+def test_verify_database_adapter_imports_requires_oracle_operations(monkeypatch):
+    registry = SimpleNamespace(
+        get_metadata=lambda db_type: SimpleNamespace(db_type=db_type),
+        get_parser_dialect=lambda db_type: _PARSER_DIALECTS.get(db_type),
+        get_identifier_parser=_identifier_parser_for,
+        get_sql_generation_notes=lambda db_type: "notes" if db_type in _SQL_NOTES_ADAPTERS else None,
+        get_dialect_operations=lambda _db_type: None,
+    )
+    modules = {
+        "datus_db_core": SimpleNamespace(connector_registry=registry),
+        "datus_bigquery": SimpleNamespace(register=lambda: None),
+        "datus_doris": SimpleNamespace(register=lambda: None),
+        "datus_hologres": SimpleNamespace(register=lambda: None),
+        "datus_maxcompute": SimpleNamespace(register=lambda: None),
+        "datus_gaussdb": SimpleNamespace(register=lambda: None),
+        "datus_oracle": SimpleNamespace(register=lambda: None),
+        "datus_tidb": SimpleNamespace(register=lambda: None),
+        "datus_dws": SimpleNamespace(register=lambda: None),
+    }
+    monkeypatch.setattr(verify_sources.importlib, "import_module", modules.__getitem__)
+
+    assert verify_sources.verify_database_adapter_imports() == ["datus_oracle did not register get_dialect_operations"]
+
+
+def test_verify_database_adapter_imports_requires_complete_oracle_operations(monkeypatch):
+    operations = _FakeDialectOperations()
+    operations.render_count = None
+    registry = SimpleNamespace(
+        get_metadata=lambda db_type: SimpleNamespace(db_type=db_type),
+        get_parser_dialect=lambda db_type: _PARSER_DIALECTS.get(db_type),
+        get_identifier_parser=_identifier_parser_for,
+        get_sql_generation_notes=lambda db_type: "notes" if db_type in _SQL_NOTES_ADAPTERS else None,
+        get_dialect_operations=lambda db_type: operations if db_type == "oracle" else None,
+    )
+    modules = {
+        "datus_db_core": SimpleNamespace(connector_registry=registry),
+        "datus_bigquery": SimpleNamespace(register=lambda: None),
+        "datus_doris": SimpleNamespace(register=lambda: None),
+        "datus_hologres": SimpleNamespace(register=lambda: None),
+        "datus_maxcompute": SimpleNamespace(register=lambda: None),
+        "datus_gaussdb": SimpleNamespace(register=lambda: None),
+        "datus_oracle": SimpleNamespace(register=lambda: None),
+        "datus_tidb": SimpleNamespace(register=lambda: None),
+        "datus_dws": SimpleNamespace(register=lambda: None),
+    }
+    monkeypatch.setattr(verify_sources.importlib, "import_module", modules.__getitem__)
+
+    assert verify_sources.verify_database_adapter_imports() == [
+        "datus_oracle dialect operations are missing callable methods: render_count"
+    ]
+
+
+def test_verify_local_sources_does_not_require_registry_semantic_packages(monkeypatch, tmp_path):
+    external_root = tmp_path / "external"
+    distributions = {
+        name: _local_distribution(external_root / relative_path)
+        for name, relative_path in verify_sources.EXPECTED_LOCAL_PACKAGES.items()
+    }
+    monkeypatch.setattr(verify_sources.metadata, "distribution", distributions.__getitem__)
+    assert verify_sources.verify_local_sources(external_root) == []
+
+
+def test_verify_local_sources_rejects_wrong_checkout(monkeypatch, tmp_path):
+    external_root = tmp_path / "external"
+    distributions = {
+        name: _local_distribution(external_root / relative_path)
+        for name, relative_path in verify_sources.EXPECTED_LOCAL_PACKAGES.items()
+    }
+    distributions["datus-db-core"] = _local_distribution(tmp_path / "somewhere-else")
+    monkeypatch.setattr(verify_sources.metadata, "distribution", distributions.__getitem__)
+
+    errors = verify_sources.verify_local_sources(external_root)
+
+    assert len(errors) == 1
+    assert errors[0].startswith("datus-db-core: expected checkout source ")
+    assert errors[0].endswith(f", got {(tmp_path / 'somewhere-else').resolve()}")
+
+
+def test_verify_dosi_runtime_imports_requires_engine_contract(monkeypatch):
+    modules = {
+        "dosi_engine": SimpleNamespace(Engine=object(), validate=lambda _: None),
+        "datus.tools.semantic_tools.dosi": SimpleNamespace(),
+    }
+    monkeypatch.setattr(verify_sources.importlib, "import_module", modules.__getitem__)
+    assert verify_sources.verify_dosi_runtime_imports() == ["dosi-engine is missing render_datus_authoring_spec"]
+
+
+def test_verify_storage_adapter_imports_requires_shared_contract(monkeypatch):
+    shared_fts = SimpleNamespace(FtsSpec=object())
+    modules = {
+        "datus_storage_base.vector.fts": shared_fts,
+        "datus.storage.fts": SimpleNamespace(FtsSpec=shared_fts.FtsSpec),
+        "datus_storage_postgresql.vector": SimpleNamespace(),
+    }
+    monkeypatch.setattr(verify_sources.importlib, "import_module", modules.__getitem__)
+
+    assert verify_sources.verify_storage_adapter_imports() == [
+        "datus-storage-base FTS contract is missing: FtsField, FtsIndexStatus, normalize_fts_spec",
+        "datus-storage-postgresql vector adapter is missing PgvectorBackend",
+    ]
+
+
+def test_verify_storage_adapter_imports_requires_agent_to_reexport_shared_contract(monkeypatch):
+    shared_fts = SimpleNamespace(
+        FtsField=object(),
+        FtsIndexStatus=object(),
+        FtsSpec=object(),
+        normalize_fts_spec=object(),
+    )
+    agent_fts = SimpleNamespace(
+        FtsField=shared_fts.FtsField,
+        FtsIndexStatus=object(),
+        FtsSpec=shared_fts.FtsSpec,
+        normalize_fts_spec=shared_fts.normalize_fts_spec,
+    )
+    modules = {
+        "datus_storage_base.vector.fts": shared_fts,
+        "datus.storage.fts": agent_fts,
+        "datus_storage_postgresql.vector": SimpleNamespace(PgvectorBackend=object()),
+    }
+    monkeypatch.setattr(verify_sources.importlib, "import_module", modules.__getitem__)
+
+    assert verify_sources.verify_storage_adapter_imports() == [
+        "Datus Agent FTS contract does not re-export datus-storage-base: FtsIndexStatus"
+    ]
+
+
+def test_verify_storage_adapter_imports_accepts_agent_shared_contract(monkeypatch):
+    shared_fts = SimpleNamespace(
+        FtsField=object(),
+        FtsIndexStatus=object(),
+        FtsSpec=object(),
+        normalize_fts_spec=object(),
+    )
+    modules = {
+        "datus_storage_base.vector.fts": shared_fts,
+        "datus.storage.fts": shared_fts,
+        "datus_storage_postgresql.vector": SimpleNamespace(PgvectorBackend=object()),
+    }
+    monkeypatch.setattr(verify_sources.importlib, "import_module", modules.__getitem__)
+
+    assert verify_sources.verify_storage_adapter_imports() == []

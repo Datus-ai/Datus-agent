@@ -18,8 +18,8 @@ from datus.prompts.prompt_manager import PromptManager
 from datus.schemas.artifact_manifest import ARTIFACT_SLUG_RE
 from datus.tools.func_tool.context_search import ContextSearchTools
 from datus.tools.func_tool.database import DBFuncTool
-from datus.tools.func_tool.filesystem_tools import FilesystemFuncTool
 from datus.tools.func_tool.memory_tools import MemoryFuncTool
+from datus.tools.func_tool.metric_filesystem_tools import MetricFilesystemFuncTool
 from datus.tools.func_tool.platform_doc_search import PlatformDocSearchTool
 from datus.tools.func_tool.reference_template_tools import ReferenceTemplateTools
 from datus.tools.func_tool.semantic_tools import SemanticTools
@@ -38,7 +38,7 @@ VALID_TOOL_METHODS: dict[str, set[str]] = {
     "semantic_tools": set(SemanticTools.all_tools_name()),
     "reference_template_tools": set(ReferenceTemplateTools.all_tools_name()),
     "date_parsing_tools": {"parse_temporal_expressions"},
-    "filesystem_tools": set(FilesystemFuncTool.all_tools_name()),
+    "filesystem_tools": set(MetricFilesystemFuncTool.all_tools_name()),
     "memory_tools": set(MemoryFuncTool.all_tools_name()),
     "platform_doc_tools": set(PlatformDocSearchTool.all_tools_name()),
 }
@@ -46,6 +46,12 @@ VALID_TOOL_METHODS: dict[str, set[str]] = {
 VALID_TOOL_CATEGORIES = set(VALID_TOOL_METHODS.keys())
 
 BUILTIN_SUBAGENTS = SYS_SUB_AGENTS - HIDDEN_SYS_SUB_AGENTS
+
+
+def _available_builtin_subagents(agent_config: AgentConfig) -> set[str]:
+    """Return user-visible builtins."""
+    return set(BUILTIN_SUBAGENTS)
+
 
 # Curated list of categories surfaced through GET /agent/use_tools' ``tool_types``
 # block. Matches the SaaS editor's whitelist — ``platform_doc_tools`` is a
@@ -64,7 +70,7 @@ _USER_FACING_TOOL_CATEGORIES: tuple[str, ...] = (
 # documented in the ``ask_report`` / ``ask_dashboard`` entries of
 # :data:`SUBAGENT_TOOL_REFERENCE`: the consultant reads ``analysis/`` and
 # ``queries/`` to answer follow-ups but must never mutate the artifact.
-_ASK_AGENT_FILESYSTEM_READ_ONLY: tuple[str, ...] = ("glob", "grep", "read_file")
+_ASK_AGENT_FILESYSTEM_READ_ONLY: tuple[str, ...] = ("glob", "grep", "read_file", "read_image")
 
 # Per-agent-type editor whitelist. Previously the saas frontend
 # (``tool-tree.ts`` ``enableToolGroup``) decided which categories the picker
@@ -89,6 +95,7 @@ _TOOL_CATEGORIES_BY_AGENT_TYPE: dict[str, tuple[str, ...]] = {
         "reference_template_tools",
     ),
     "ask_metrics": _USER_FACING_TOOL_CATEGORIES,
+    "ontology_analyst": _USER_FACING_TOOL_CATEGORIES,
     "ask_report": (
         "db_tools",
         "semantic_tools",
@@ -161,14 +168,27 @@ SUBAGENT_TOOL_REFERENCE: dict[str, dict[str, Any]] = {
     "ask_metrics": {
         "default_tools": [
             "context_search_tools.search_metrics",
-            "context_search_tools.get_metrics",
             "semantic_tools.list_metrics",
-            "semantic_tools.get_dimensions",
+            "semantic_tools.get_metric",
+            "semantic_tools.get_dataset",
             "semantic_tools.query_metrics",
             "semantic_tools.attribution_analyze",
             "context_search_tools.list_subject_tree",
         ],
         "tool_types": _build_tool_types("ask_metrics"),
+    },
+    "ontology_analyst": {
+        "default_tools": [
+            "semantic_tools.describe_concept",
+            "semantic_tools.find_concept_paths",
+            "semantic_tools.select_records",
+            "semantic_tools.list_metrics",
+            "semantic_tools.get_metric",
+            "semantic_tools.query_metrics",
+            "semantic_tools.attribution_analyze",
+            "context_search_tools.search_metrics",
+        ],
+        "tool_types": _build_tool_types("ontology_analyst"),
     },
     # ask_report / ask_dashboard: read-only follow-up consultant for a single
     # visual artifact. Default tools cover data exploration (db_tools read
@@ -183,12 +203,13 @@ SUBAGENT_TOOL_REFERENCE: dict[str, dict[str, Any]] = {
             "db_tools.list_tables",
             "db_tools.describe_table",
             "db_tools.search_table",
-            "db_tools.read_query",
+            "db_tools.execute_sql",
             "semantic_tools.*",
             "context_search_tools.*",
             "reference_template_tools.*",
             "date_parsing_tools.*",
             "filesystem_tools.read_file",
+            "filesystem_tools.read_image",
             "filesystem_tools.glob",
             "filesystem_tools.grep",
         ],
@@ -201,12 +222,13 @@ SUBAGENT_TOOL_REFERENCE: dict[str, dict[str, Any]] = {
             "db_tools.list_tables",
             "db_tools.describe_table",
             "db_tools.search_table",
-            "db_tools.read_query",
+            "db_tools.execute_sql",
             "semantic_tools.*",
             "context_search_tools.*",
             "reference_template_tools.*",
             "date_parsing_tools.*",
             "filesystem_tools.read_file",
+            "filesystem_tools.read_image",
             "filesystem_tools.glob",
             "filesystem_tools.grep",
         ],
@@ -733,7 +755,8 @@ class AgentService:
         """Return agent configuration matching IAgentInfo."""
 
         # 1. Check builtin agents
-        if agent_id in BUILTIN_SUBAGENTS:
+        available_builtins = _available_builtin_subagents(agent_config)
+        if agent_id in available_builtins:
             return Result(
                 success=True,
                 data={
@@ -750,6 +773,8 @@ class AgentService:
                     }
                 },
             )
+        if agent_id in SYS_SUB_AGENTS:
+            return Result(success=False, errorCode="AGENT_NOT_FOUND", errorMessage=f"Agent '{agent_id}' not found")
 
         # 2. Query custom sub-agent from agent.yml (dict keyed by name, treated as id)
         agentic_nodes = agent_config.agentic_nodes or {}
@@ -802,7 +827,7 @@ class AgentService:
                 "type": "builtin",
                 "description": BUILTIN_SUBAGENT_DESCRIPTIONS.get(name, ""),
             }
-            for name in sorted(BUILTIN_SUBAGENTS)
+            for name in sorted(_available_builtin_subagents(agent_config))
         ]
 
         # 2. Custom sub-agents from agent.yml
@@ -815,14 +840,24 @@ class AgentService:
                 "description": _read_description(node),
             }
             for name, node in sorted(agentic_nodes.items())
+            if name not in SYS_SUB_AGENTS
         ]
 
         return Result(success=True, data={"agents": builtin + custom})
 
-    # Map sub-agent type to builtin prompt template base name
+    #: Version stamped on the builtin copy written at create time.
+    #:
+    #: Was ``CreateAgentInput.prompt_version``, which no caller ever set — it was
+    #: the field's own default travelling through the request. The copy and the
+    #: node's later lookup only have to agree with EACH OTHER, and a constant
+    #: says that plainly.
+    _COPIED_TEMPLATE_VERSION = "1.0"
+
+    #: Sub-agent type -> the builtin prompt template it is seeded from.
     _TYPE_TO_TEMPLATE = {
         "gen_sql": "gen_sql_system",
         "ask_metrics": "ask_metrics_system",
+        "ontology_analyst": "ontology_analyst_system",
         "gen_report": "gen_report_system",
         "ask_report": "ask_report_system",
         "ask_dashboard": "ask_dashboard_system",
@@ -862,7 +897,7 @@ class AgentService:
 
         # Check name not taken
         agentic_nodes = agent_config.agentic_nodes or {}
-        if request.name in agentic_nodes or request.name in BUILTIN_SUBAGENTS:
+        if request.name in agentic_nodes or request.name in SYS_SUB_AGENTS:
             return Result(
                 success=False,
                 errorCode="AGENT_ALREADY_EXISTS",
@@ -897,9 +932,26 @@ class AgentService:
         }
         # Bind the subagent to the active datasource (mirrors the wizard so
         # ``SubAgentConfig.is_in_datasource`` can gate task delegation at runtime).
-        # ``request.datasource_id`` wins when set; otherwise fall back to the
-        # AgentConfig's current datasource.
-        datasource = request.datasource_id or getattr(agent_config, "current_datasource", "") or ""
+        # ``request.datasource_id`` wins when set, then ``datasource_name``;
+        # otherwise fall back to the AgentConfig's current datasource.
+        #
+        # The two are the same thing here: a datasource is addressed by its
+        # namespace key in a standalone agent, and the SaaS-side ids the name
+        # form exists for do not reach this service. Honouring it matters
+        # anyway — silently ignoring a field the request set would bind the
+        # agent to a different warehouse than the caller asked for.
+        datasource = (
+            request.datasource_id
+            or (getattr(request, "datasource_name", None) or "")
+            or getattr(agent_config, "current_datasource", "")
+            or ""
+        )
+        if datasource and datasource not in getattr(agent_config, "datasource_configs", {}):
+            return Result(
+                success=False,
+                errorCode="INVALID_DATASOURCE",
+                errorMessage=f"Unknown datasource '{datasource}'",
+            )
         subject_buckets = (
             _classify_subject_paths(
                 agent_config,
@@ -917,10 +969,6 @@ class AgentService:
         )
         if scoped_ctx:
             agent_entry["scoped_context"] = scoped_ctx
-        if request.prompt_template:
-            agent_entry["prompt_template"] = request.prompt_template
-        if request.prompt_version:
-            agent_entry["prompt_version"] = request.prompt_version
         # ask_* agents carry their bound artifact's slug directly on the
         # agentic_nodes entry — the node reads it via ``self.node_config``
         # without any wrapper. The SaaS backend stores the same value under
@@ -939,7 +987,7 @@ class AgentService:
             self._copy_prompt_template(
                 agent_type=request.type or "gen_sql",
                 agent_name=request.name,
-                version=request.prompt_version,
+                version=self._COPIED_TEMPLATE_VERSION,
                 agent_config=agent_config,
             )
         except Exception:
@@ -983,26 +1031,6 @@ class AgentService:
             content = source_path.read_text(encoding="utf-8")
             target_file.write_text(content, encoding="utf-8")
             logger.info(f"Copied prompt template: {source_path.name} -> {target_file}")
-
-    def _save_prompt_template(
-        self,
-        agent_name: str,
-        version: Optional[str],
-        content: str,
-        agent_config: AgentConfig,
-    ) -> None:
-        """Write prompt template content to the project's template file."""
-        if not content:
-            return
-        safe_name = self._sanitize_path_component(agent_name)
-        resolved = self._sanitize_path_component(version or "1.0")
-        template_dir = agent_config.path_manager.datus_home / "template"
-        os.makedirs(template_dir, exist_ok=True)
-        target_file = template_dir / f"{safe_name}_system_{resolved}.j2"
-        if not target_file.resolve().is_relative_to(template_dir.resolve()):
-            raise ValueError(f"Path escapes template directory: {target_file}")
-        target_file.write_text(content, encoding="utf-8")
-        logger.info(f"Saved prompt template: {target_file}")
 
     async def edit_agent(
         self,
@@ -1058,25 +1086,21 @@ class AgentService:
             if channel_error is not None:
                 return channel_error
 
-        # If prompt_template content is provided, save to template file
-        prompt_content = request.prompt_template
-        if prompt_content is not None:
-            version = request.prompt_version or agent.get("prompt_version")
-            try:
-                self._save_prompt_template(
-                    agent_name=request.id,
-                    version=version,
-                    content=prompt_content,
-                    agent_config=agent_config,
-                )
-            except Exception:
-                logger.warning(f"Failed to save prompt template for agent '{request.id}' (non-fatal)", exc_info=True)
-
         # Update only provided fields (name is the dict key and acts as id, so exclude it).
         # API ``description`` lands on the runtime-visible ``agent_description``
         # key; drop any legacy flat ``description`` left over from older edits
         # so the read path doesn't see two competing values.
-        update_data = request.model_dump(exclude={"id", "name", "prompt_template", "channels"}, exclude_none=True)
+        # ``datasource_name`` is not a persisted field — it selects the binding
+        # resolved below. Left in, ``agent.update(update_data)`` would write it
+        # as a bogus top-level key on the sub-agent's yaml. Captured first
+        # because excluding it also hides it from ``scope_touched``: an edit
+        # carrying only this field would then fall through to the no-op return
+        # and report success without moving the binding.
+        datasource_name_input = request.datasource_name
+        update_data = request.model_dump(
+            exclude={"id", "name", "channels", "datasource_name"},
+            exclude_none=True,
+        )
         if "description" in update_data:
             update_data["agent_description"] = update_data.pop("description")
             agent.pop("description", None)
@@ -1099,7 +1123,12 @@ class AgentService:
         # edits are dropped so the read path can't see two competing copies.
         catalogs_input = update_data.pop("catalogs", None)
         subjects_input = update_data.pop("subjects", None)
-        scope_touched = catalogs_input is not None or subjects_input is not None or "scoped_context" in update_data
+        scope_touched = (
+            datasource_name_input is not None
+            or catalogs_input is not None
+            or subjects_input is not None
+            or "scoped_context" in update_data
+        )
         # Tracks deletions applied directly to ``agent`` (the live yaml dict)
         # rather than through ``update_data``. ``agent.update(update_data)``
         # below can't represent a key removal, so we have to bypass the
@@ -1122,7 +1151,28 @@ class AgentService:
             # fall back to "no datasource → all metrics" and silently
             # mis-bucket subjects against a binding that's about to be
             # re-persisted by ``_build_scoped_context``.
-            datasource = getattr(agent_config, "current_datasource", "") or base_ctx.get("datasource") or ""
+            # Request first, then the agent's own saved binding, then the
+            # active datasource. The saved one has to outrank the active one:
+            # ``EditAgentInput`` says an omitted ``datasource_name`` leaves the
+            # binding untouched, so an agent bound to B must not be silently
+            # rebound to A just because someone edited its catalogs while A was
+            # current.
+            datasource = (
+                (datasource_name_input or "")
+                or base_ctx.get("datasource")
+                or getattr(agent_config, "current_datasource", "")
+                or ""
+            )
+
+            # Only the explicit input is validated. A saved binding whose
+            # datasource has since left the config is historical data and falls
+            # through to the active one; a name the caller just typed should not.
+            if datasource_name_input and datasource_name_input not in getattr(agent_config, "datasource_configs", {}):
+                return Result(
+                    success=False,
+                    errorCode="INVALID_DATASOURCE",
+                    errorMessage=f"Unknown datasource '{datasource_name_input}'",
+                )
             subject_buckets = None
             if subjects_input is not None:
                 subject_buckets = _classify_subject_paths(
@@ -1148,7 +1198,7 @@ class AgentService:
             if agent.pop("subjects", None) is not None:
                 agent_dict_mutated = True
 
-        if not update_data and prompt_content is None and not agent_dict_mutated:
+        if not update_data and not agent_dict_mutated:
             return Result(success=True, data={"name": request.id, "id": request.id})
 
         # Merge update data into the agent entry
@@ -1228,7 +1278,7 @@ class AgentService:
         is the source of truth for whether the agent exists).
         """
 
-        if agent_id in BUILTIN_SUBAGENTS:
+        if agent_id in SYS_SUB_AGENTS:
             return Result(
                 success=False,
                 errorCode="BUILTIN_AGENT_IMMUTABLE",

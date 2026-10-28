@@ -255,7 +255,7 @@ class TestBootstrapKb:
         assert response.status_code == 422
 
     def test_bootstrap_kb_invalid_strategy_returns_422(self, client):
-        """strategy must be one of overwrite/check/incremental → 422 for invalid."""
+        """strategy must be one of the supported bootstrap modes."""
         response = client.post(
             "/api/v1/kb/bootstrap",
             json={"components": ["metadata"], "strategy": "invalid_strategy"},

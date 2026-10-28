@@ -81,7 +81,7 @@ http://localhost:8501
     - 点击表名 → 在编辑区打开 *Table Info* 标签页，展示 **Columns**（字段类型 / 是否可空 / 默认值 / PK）、**Indexes**、**Sample data**。
     - 顶部支持搜索与刷新，元数据变更后点刷新立即同步。
 - **Context**：上下文知识树，与 Datus-agent 的 `subject/` 目录对齐：
-    - **Metrics**：MetricFlow 指标定义。
+    - **Metrics**：Dosi 指标定义。
     - **Reference**：Reference SQL 与 Reference Template。
     - **Knowledge**：External Knowledge / Platform Documentation。
 
@@ -93,19 +93,19 @@ Catalog 与 Context 中的任意节点都可以作为 Chat 的引用对象（在
 
 1. **Description**：基本信息（名称、描述、面向场景）。
 2. **Tools**：勾选可用工具 / MCP 工具。
-3. **Objects**：选择该 SubAgent 可见的 **Catalog 范围** 与 **Context 范围**——同样使用上一节的两棵树，勾选到 schema / table / 知识节点级别。底部 *Selected* 区会以 `jeff_shop.*`、`Root.*` 等通配符形式回显。
+3. **Objects**：选择该 SubAgent 可见的 **Catalog 范围** 与 **Context 范围**——同样使用上一节的两棵树，勾选到 schema / table / 知识节点级别。底部 *Selected* 区会以 `sample_shop.*`、`Root.*` 等通配符形式回显。
 4. **Rules**：补充行为规则、Few-shot 示例、对话风格等。
 
 ![创建 SubAgent 向导（Objects 步骤）](../assets/vscode-create-subagent.png)
 
-向导提交后，子代理会写入 Datus-agent 的配置（与 CLI 中的 `/agent` 等价），随即在 Chat 面板的 SubAgent 下拉中可选。Built-in 子代理（`gen_sql`、`gen_metrics`、`gen_dashboard`、`gen_semantic_model`、`gen_report`、`scheduler`、…）只读展示，可在向导中查看其 Tools / Objects / Rules。
+向导提交后，子代理会写入 Datus-agent 的配置（与 CLI 中的 `/agent` 等价），随即在 Chat 面板的 SubAgent 下拉中可选。Built-in 子代理（`gen_sql`、`semantic_modeling`、`gen_dashboard`、`gen_report`、`scheduler`、…）只读展示，可在向导中查看其 Tools / Objects / Rules。
 
 ### 3. Datus Studio Chat 面板
 
 右侧 **Datus Studio** 是与 Datus-agent 对话的主入口，对齐 Web Chatbot 但更贴近 IDE 工作流：
 
 - **普通对话**：自然语言提问，Datus 会生成 SQL、调工具、并把结果以 Markdown / 表格 / 链接渲染回来。
-- **SubAgent 切换**：输入框下方 **Main...** 下拉，选择 `gen_sql`、`gen_dashboard`、`gen_metrics` 或自定义子代理。切换后 Chat 上下文随即接入该子代理的可见范围与规则。
+- **SubAgent 切换**：输入框下方 **Main...** 下拉，选择 `gen_sql`、`gen_dashboard`、`semantic_modeling` 或自定义子代理。切换后 Chat 上下文随即接入该子代理的可见范围与规则。
 - **Datasource 切换**：右下 **数据库** 下拉，无需重启即可切换当前会话的数据源。
 - **Plan mode**：开启后，Datus 会先输出执行计划与 SQL 草稿，等你确认再执行；适合生产数据上的高风险查询。
 - **会话历史**：聊天历史按 `~/.datus/sessions/{project}/` 分项目存储，插件侧边可加载历史会话继续聊或对照查看。

@@ -7,7 +7,7 @@ Unit tests for datus/cli/repl.py.
 
 Tests cover:
 - CommandType enum
-- DatusCLI._parse_command: EXIT, TOOL, SLASH, CHAT, SQL, legacy-prefix UNKNOWN
+- DatusCLI._parse_command: EXIT, SLASH, CHAT, SQL/BASH (input modes + ``!<sql>`` fallback), legacy-prefix UNKNOWN
 - DatusCLI.check_agent_available: ready / initializing / not ready
 - DatasourceCommands._switch: same datasource, switch to different
 - DatusCLI._smart_display_table: empty data, few columns, many columns
@@ -18,13 +18,17 @@ DatusCLI is instantiated via a fully mocked __init__ to avoid prompt_toolkit/
 threading side effects.
 """
 
+import asyncio
 import io
+import threading
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
 from rich.console import Console
 
+from datus.cli.execution_state import ExecutionInterrupted, InterruptController
+from datus.cli.input_modes import InputMode
 from datus.cli.repl import CommandType, DatusCLI
 
 # ---------------------------------------------------------------------------
@@ -46,8 +50,11 @@ def _make_cli(agent_config, available_subagents=None):
     cli.agent = None
     cli.agent_ready = False
     cli.agent_initializing = False
+    cli._closed = False
     cli.startup_warnings = []
     cli.plan_mode_active = False
+    cli.input_mode = InputMode.CHAT
+    cli.tui_app = None
     cli.default_agent = ""
     cli.at_completer = MagicMock()
     cli.db_connector = MagicMock()
@@ -82,7 +89,6 @@ def _make_cli(agent_config, available_subagents=None):
     # Build commands dict referencing the mocks. Keys mirror the canonical
     # slash names wired by ``DatusCLI._build_slash_handler_map``.
     cli.commands = {
-        "!sl": cli.agent_commands.cmd_schema_linking,
         "/catalog": cli.context_commands.cmd_catalog,
         "/tables": cli.metadata_commands.cmd_tables,
         "/datasource": cli.datasource_commands.cmd,
@@ -90,7 +96,6 @@ def _make_cli(agent_config, available_subagents=None):
         "/exit": lambda a: None,
         "/quit": lambda a: None,
         "/rewind": cli.chat_commands.cmd_rewind,
-        "!bash": cli._cmd_bash,
     }
 
     # Status bar provider so _build_prompt_message works in tests
@@ -249,6 +254,94 @@ class TestPreLoadStorage:
         assert len(cli.startup_warnings) == 1
         assert "table cache unavailable" in cli.startup_warnings[0]
 
+    def test_pre_load_storage_no_datasource_is_hint_not_warning(self, cli):
+        # The exact error resolve_datasource_id raises when nothing is selected.
+        scope_error = (
+            "error_code=410007, error_message=Invalid storage argument: "
+            "datasource is required for datasource-scoped storage"
+        )
+        cli.at_completer = SimpleNamespace(
+            reload_data=MagicMock(),
+            table_completer=SimpleNamespace(last_error=scope_error),
+            metric_completer=SimpleNamespace(last_error=scope_error),
+            sql_completer=SimpleNamespace(last_error=scope_error),
+        )
+
+        cli._pre_load_storage()
+
+        # Property: "no datasource selected" is a normal state — it must not
+        # become a startup warning and must never blame the embedding model.
+        assert cli.startup_warnings == []
+        output = " ".join(cli.console.file.getvalue().split())
+        assert "datasource is selected" in output
+        assert "embedding" not in output.lower()
+
+    def test_pre_load_storage_dedupes_identical_completer_errors(self, cli):
+        cli.at_completer = SimpleNamespace(
+            reload_data=MagicMock(),
+            table_completer=SimpleNamespace(last_error="lance cache unavailable"),
+            metric_completer=SimpleNamespace(last_error="lance cache unavailable"),
+            sql_completer=SimpleNamespace(last_error="lance cache unavailable"),
+        )
+
+        cli._pre_load_storage()
+
+        assert len(cli.startup_warnings) == 1
+        assert cli.startup_warnings[0].count("lance cache unavailable") == 1
+
+    def test_pre_load_storage_mixed_causes_keep_real_error(self, cli):
+        scope_error = (
+            "error_code=410007, error_message=Invalid storage argument: "
+            "datasource is required for datasource-scoped storage"
+        )
+        cli.at_completer = SimpleNamespace(
+            reload_data=MagicMock(),
+            table_completer=SimpleNamespace(last_error=scope_error),
+            metric_completer=SimpleNamespace(last_error="lance cache unavailable"),
+            sql_completer=SimpleNamespace(last_error=None),
+        )
+
+        cli._pre_load_storage()
+
+        # Property: one completer's "no datasource selected" state must not
+        # relabel or swallow another completer's real failure.
+        assert len(cli.startup_warnings) == 1
+        assert "lance cache unavailable" in cli.startup_warnings[0]
+        assert "no datasource is selected" not in cli.startup_warnings[0]
+
+    def test_pre_load_storage_mixed_real_causes_get_neutral_headline(self, cli):
+        cli.at_completer = SimpleNamespace(
+            reload_data=MagicMock(),
+            table_completer=SimpleNamespace(last_error="error_code=300019: embedding download failed"),
+            metric_completer=SimpleNamespace(last_error="lance table corrupted"),
+            sql_completer=SimpleNamespace(last_error=None),
+        )
+
+        cli._pre_load_storage()
+
+        # Property: an embedding failure in one completer must not relabel an
+        # unrelated failure in another — mixed batches keep a neutral headline
+        # with every cause in the details.
+        assert len(cli.startup_warnings) == 1
+        warning = cli.startup_warnings[0]
+        assert "Hugging Face" not in warning
+        assert "embedding download failed" in warning
+        assert "lance table corrupted" in warning
+
+    def test_pre_load_storage_embedding_error_keeps_embedding_remediation(self, cli):
+        cli.at_completer = SimpleNamespace(
+            reload_data=MagicMock(),
+            table_completer=SimpleNamespace(last_error="error_code=300019: embedding download failed"),
+            metric_completer=SimpleNamespace(last_error=None),
+            sql_completer=SimpleNamespace(last_error=None),
+        )
+
+        cli._pre_load_storage()
+
+        assert len(cli.startup_warnings) == 1
+        assert "embedding model is unavailable" in cli.startup_warnings[0]
+        assert "Hugging Face" in cli.startup_warnings[0]
+
     def test_background_init_keeps_agent_ready_after_preload_failure(self, cli):
         agent = object()
         cli.args = SimpleNamespace(debug=False)
@@ -292,11 +385,126 @@ class TestCmdExitShutsDownBgSync:
         connector.close.assert_called_once_with()
 
 
+class TestCliBackgroundCleanup:
+    @pytest.fixture
+    def running_cli(self, cli):
+        cli._bg_loop = asyncio.new_event_loop()
+        cli._bg_loop_thread = threading.Thread(target=cli._bg_loop.run_forever, daemon=True)
+        cli._bg_loop_thread.start()
+        cli.bg_sync = MagicMock()
+        try:
+            yield cli
+        finally:
+            cli.close()
+
+    @pytest.mark.parametrize("use_tui", [False, True])
+    @pytest.mark.parametrize("raises", [False, True])
+    def test_run_drains_workers_and_closes_loop_on_every_exit(self, running_cli, use_tui, raises):
+        cli = running_cli
+        entered = threading.Event()
+        release = threading.Event()
+        finished = threading.Event()
+        resource_closed = threading.Event()
+
+        async def background_resource():
+            try:
+                yield
+            finally:
+                await asyncio.to_thread(resource_closed.set)
+
+        resource = background_resource()
+
+        async def open_resource():
+            await anext(resource)
+
+        asyncio.run_coroutine_threadsafe(open_resource(), cli._bg_loop).result(timeout=5)
+
+        def background_work():
+            entered.set()
+            if not release.wait(5):
+                raise TimeoutError("Background worker was not released")
+            finished.set()
+
+        asyncio.run_coroutine_threadsafe(asyncio.to_thread(background_work), cli._bg_loop)
+        assert entered.wait(5)
+        cli.bg_sync.shutdown.side_effect = release.set
+
+        def close_connection():
+            assert finished.is_set(), "Connection closed while a background worker was still using it"
+            assert resource_closed.is_set(), "Connection closed before async resource cleanup finished"
+
+        cli.db_connector.close.side_effect = close_connection
+        cli._use_tui = use_tui
+        cli.tui_app = MagicMock() if use_tui else None
+        cli._run_tui = MagicMock(return_value=0, side_effect=ValueError("UI failed") if raises else None)
+        cli._run_prompt_session = cli._run_tui
+        if raises:
+            with pytest.raises(ValueError, match="UI failed"):
+                cli.run()
+        else:
+            assert cli.run() == 0
+        cli.close()  # Explicit /exit plus run's finally must be idempotent.
+
+        assert finished.is_set()
+        assert not cli._bg_loop_thread.is_alive()
+        assert cli._bg_loop.is_closed()
+        cli.db_connector.close.assert_called_once_with()
+        cli.bg_sync.shutdown.assert_called_once_with()
+
+    def test_initialization_finishing_during_close_does_not_start_more_work(self, running_cli):
+        cli = running_cli
+        entered = threading.Event()
+        release = threading.Event()
+        cli.args = SimpleNamespace(debug=False)
+        cli._pre_load_storage = MagicMock()
+        cli._warm_bang_node = MagicMock()
+
+        def construct_agent(*args):
+            entered.set()
+            if not release.wait(5):
+                raise TimeoutError("Agent constructor was not released")
+            return MagicMock()
+
+        cli.bg_sync.shutdown.side_effect = release.set
+        with patch("datus.agent.agent.Agent", side_effect=construct_agent):
+            cli._async_init_agent()
+            assert entered.wait(5)
+            cli.close()
+
+        assert not cli.agent_ready
+        cli._pre_load_storage.assert_not_called()
+        cli._warm_bang_node.assert_not_called()
+        assert cli._bg_loop.is_closed()
+
+    def test_shutdown_deadline_keeps_connection_open_until_blocking_work_finishes(self, running_cli, monkeypatch):
+        cli = running_cli
+        monkeypatch.setattr("datus.cli.repl._CLI_SHUTDOWN_TIMEOUT", 0.01)
+        entered = threading.Event()
+        release = threading.Event()
+        finished = threading.Event()
+
+        def blocked_work():
+            entered.set()
+            release.wait(5)
+            finished.set()
+
+        asyncio.run_coroutine_threadsafe(asyncio.to_thread(blocked_work), cli._bg_loop)
+        assert entered.wait(5)
+        try:
+            cli.close()
+            cli.db_connector.close.assert_not_called()
+            assert cli._bg_loop.is_closed()
+        finally:
+            release.set()
+            assert finished.wait(5)
+
+
 class TestCommandType:
     def test_all_types_exist(self):
         assert CommandType.SQL.value == "sql"
-        assert CommandType.TOOL.value == "tool"
+        assert CommandType.BASH.value == "bash"
         assert CommandType.SLASH.value == "slash"
+        assert CommandType.BANG.value == "bang"
         assert CommandType.CHAT.value == "chat"
         assert CommandType.EXIT.value == "exit"
         assert CommandType.UNKNOWN.value == "unknown"
@@ -328,17 +536,46 @@ class TestParseCommand:
         assert cmd_type == CommandType.SLASH
         assert cmd == "/exit"
 
-    def test_tool_command_with_args(self, cli):
-        cmd_type, cmd, args = cli._parse_command("!sl find revenue tables")
-        assert cmd_type == CommandType.TOOL
-        assert cmd == "!sl"
-        assert args == "find revenue tables"
+    def test_bang_prefix_dispatches_to_bang_command(self, cli):
+        """``!<tool>`` in chat mode routes to BANG dispatch: the ``!`` is stripped
+        and the remainder becomes the tool/plugin invocation text."""
+        cmd_type, cmd, args = cli._parse_command("!list_tables")
+        assert cmd_type == CommandType.BANG
+        assert cmd == ""
+        assert args == "list_tables"
 
-    def test_tool_command_no_args(self, cli):
-        cmd_type, cmd, args = cli._parse_command("!sl")
-        assert cmd_type == CommandType.TOOL
-        assert cmd == "!sl"
-        assert args == ""
+    def test_bang_prefix_only_strips_leading_bang(self, cli):
+        cmd_type, _, args = cli._parse_command("!  search_table foo")
+        assert cmd_type == CommandType.BANG
+        assert args == "search_table foo"
+
+    def test_bang_prefix_ignored_in_bash_mode(self, cli):
+        """In bash mode a leading ``!`` belongs to the command (history
+        expansion) and must not trigger the BANG dispatch path."""
+        cli.input_mode = InputMode.BASH
+        cmd_type, _, args = cli._parse_command("!ls")
+        assert cmd_type == CommandType.BASH
+        assert args == "!ls"
+
+    def test_sql_mode_routes_plain_text_to_sql(self, cli):
+        """In SQL mode, plain input is executed as SQL rather than chat."""
+        cli.input_mode = InputMode.SQL
+        cmd_type, cmd, args = cli._parse_command("SELECT 1")
+        assert cmd_type == CommandType.SQL
+        assert cmd == ""
+        assert args == "SELECT 1"
+
+    def test_sql_mode_still_allows_slash_commands(self, cli):
+        """Slash commands keep working without leaving SQL mode."""
+        cli.input_mode = InputMode.SQL
+        cmd_type, cmd, _ = cli._parse_command("/tables")
+        assert cmd_type == CommandType.SLASH
+        assert cmd == "/tables"
+
+    def test_sql_mode_bare_exit_still_exits(self, cli):
+        cli.input_mode = InputMode.SQL
+        cmd_type, _, _ = cli._parse_command("exit")
+        assert cmd_type == CommandType.EXIT
 
     def test_slash_catalog_command(self, cli):
         cmd_type, cmd, args = cli._parse_command("/catalog mydb")
@@ -394,30 +631,147 @@ class TestParseCommand:
         assert cmd_type == CommandType.UNKNOWN
         assert hint == "/exit"
 
-    def test_sql_trailing_semicolon_stripped(self, cli):
-        """Trailing semicolon is stripped before parsing."""
-        with patch("datus.cli.repl.parse_sql_type") as mock_parse:
-            from datus.utils.constants import SQLType
-
-            mock_parse.return_value = SQLType.SELECT
-            cmd_type, _, _ = cli._parse_command("SELECT 1;")
+    def test_sql_mode_trailing_semicolon_stripped(self, cli):
+        """Trailing semicolon is stripped before the SQL is handed off."""
+        cli.input_mode = InputMode.SQL
+        cmd_type, _, args = cli._parse_command("SELECT 1;")
         assert cmd_type == CommandType.SQL
+        assert args == "SELECT 1"
+
+    def test_chat_preserves_trailing_semicolon(self, cli):
+        """In chat mode a trailing ``;`` is part of the message (e.g.
+        ``Explain this;``) and must reach the model verbatim, not be stripped."""
+        cmd_type, cmd, args = cli._parse_command("Explain this;")
+        assert cmd_type == CommandType.CHAT
+        assert cmd == cli.default_agent
+        assert args == "Explain this;"
+
+    def test_sql_like_text_is_chat_without_sql_mode(self, cli):
+        """SQL is never auto-detected: outside SQL mode even ``SELECT ...``
+        routes to the model instead of executing against the datasource."""
+        cmd_type, cmd, args = cli._parse_command("SELECT 1")
+        assert cmd_type == CommandType.CHAT
+        assert cmd == cli.default_agent
+        assert args == "SELECT 1"
 
     def test_natural_language_treated_as_chat(self, cli):
-        """Natural language without any prefix still routes to CHAT."""
-        with patch("datus.cli.repl.parse_sql_type") as mock_parse:
-            from datus.utils.constants import SQLType
-
-            mock_parse.return_value = SQLType.UNKNOWN
-            cmd_type, cmd, _ = cli._parse_command("show me the revenue")
+        """Natural language without any prefix routes to CHAT."""
+        cmd_type, cmd, _ = cli._parse_command("show me the revenue")
         assert cmd_type == CommandType.CHAT
         assert cmd == cli.default_agent
 
-    def test_parse_sql_exception_falls_back_to_chat(self, cli):
-        """Exception during parse_sql_type falls back to CHAT."""
-        with patch("datus.cli.repl.parse_sql_type", side_effect=Exception("parse error")):
-            cmd_type, _, _ = cli._parse_command("ambiguous text")
-        assert cmd_type == CommandType.CHAT
+
+# ---------------------------------------------------------------------------
+# Tests: _parse_command in bash mode
+# ---------------------------------------------------------------------------
+
+
+class TestParseCommandBashMode:
+    def test_bash_mode_routes_plain_text_to_bash(self, cli):
+        cli.input_mode = InputMode.BASH
+        cmd_type, cmd, args = cli._parse_command("git status")
+        assert cmd_type == CommandType.BASH
+        assert cmd == ""
+        assert args == "git status"
+
+    def test_bash_mode_still_allows_registered_slash_commands(self, cli):
+        cli.input_mode = InputMode.BASH
+        cmd_type, cmd, _ = cli._parse_command("/help")
+        assert cmd_type == CommandType.SLASH
+        assert cmd == "/help"
+
+    def test_bash_mode_absolute_path_runs_as_bash(self, cli):
+        """``/usr/bin/ls`` is not a registered slash command, so in bash mode
+        it must run as a shell command instead of surfacing as a service route."""
+        cli.input_mode = InputMode.BASH
+        cmd_type, _, args = cli._parse_command("/usr/bin/ls -la")
+        assert cmd_type == CommandType.BASH
+        assert args == "/usr/bin/ls -la"
+
+    def test_bash_mode_keeps_trailing_semicolon(self, cli):
+        """A trailing ``;`` is legal shell syntax and must not be stripped."""
+        cli.input_mode = InputMode.BASH
+        cmd_type, _, args = cli._parse_command("echo hi;")
+        assert cmd_type == CommandType.BASH
+        assert args == "echo hi;"
+
+    def test_bash_mode_skips_legacy_prefix_hints(self, cli):
+        """``.tables`` is a rename hint in chat mode but plain bash input in
+        bash mode (a leading ``.`` is the POSIX source operator)."""
+        cli.input_mode = InputMode.BASH
+        cmd_type, _, args = cli._parse_command(".tables")
+        assert cmd_type == CommandType.BASH
+        assert args == ".tables"
+
+    def test_bash_mode_bare_exit_still_exits(self, cli):
+        cli.input_mode = InputMode.BASH
+        cmd_type, _, _ = cli._parse_command("exit")
+        assert cmd_type == CommandType.EXIT
+
+
+# ---------------------------------------------------------------------------
+# Tests: _set_input_mode / _cycle_input_mode
+# ---------------------------------------------------------------------------
+
+
+class TestSetInputMode:
+    def test_sets_mode_on_and_back(self, cli):
+        assert cli.input_mode is InputMode.CHAT
+        cli._set_input_mode(InputMode.SQL)
+        assert cli.input_mode is InputMode.SQL
+        cli._set_input_mode(InputMode.CHAT)
+        assert cli.input_mode is InputMode.CHAT
+
+    def test_noop_when_value_unchanged(self, cli):
+        # Idempotent: setting the current value is a no-op and does not touch
+        # the (absent) TUI app.
+        cli._set_input_mode(InputMode.CHAT)
+        assert cli.input_mode is InputMode.CHAT
+
+    def test_cycle_order_chat_sql_bash_chat(self, cli):
+        cli._cycle_input_mode()
+        assert cli.input_mode is InputMode.SQL
+        cli._cycle_input_mode()
+        assert cli.input_mode is InputMode.BASH
+        cli._cycle_input_mode()
+        assert cli.input_mode is InputMode.CHAT
+
+    def test_switching_prints_nothing_and_repaints(self, cli):
+        """Mode switches are silent in the scrollback — the coloured prompt,
+        separators and hint line convey the mode. Only a repaint is triggered.
+        (Protects the removal of the 'SQL mode on' / 'Bash mode on' announces.)
+        """
+        cli.tui_app = MagicMock()
+        cli._set_input_mode(InputMode.SQL)
+        cli._set_input_mode(InputMode.BASH)
+        cli._set_input_mode(InputMode.CHAT)
+        assert cli.console.file.getvalue() == ""
+        assert cli.tui_app.invalidate.call_count == 3
+
+
+# ---------------------------------------------------------------------------
+# Tests: SQL / BASH mode dispatch
+# ---------------------------------------------------------------------------
+
+
+class TestDispatchModes:
+    def test_sql_mode_input_dispatches_to_sql_executor(self, cli):
+        cli.input_mode = InputMode.SQL
+        with patch.object(cli, "_execute_sql_mode") as executor:
+            result = cli._dispatch_command_text("SELECT 1")
+        executor.assert_called_once_with("SELECT 1")
+        assert result is None
+        # SQL/bash modes render their own styled block via the chat turn, so
+        # nothing is echoed to the scrollback at dispatch time.
+        assert cli.console.file.getvalue() == ""
+
+    def test_bash_mode_input_dispatches_to_bash_executor(self, cli):
+        cli.input_mode = InputMode.BASH
+        with patch.object(cli, "_execute_bash_mode") as executor:
+            result = cli._dispatch_command_text("git status")
+        executor.assert_called_once_with("git status")
+        assert result is None
+        assert cli.console.file.getvalue() == ""
 
 
 # ---------------------------------------------------------------------------
@@ -544,69 +898,110 @@ class TestSmartDisplayTable:
 
 
 # ---------------------------------------------------------------------------
-# Tests: _execute_sql
+# Tests: _run_manual_sql (execution → exec payload)
 # ---------------------------------------------------------------------------
 
 
-class TestExecuteSql:
-    def test_no_db_connector_prints_error(self, cli):
+class TestRunManualSql:
+    @pytest.mark.parametrize("status", ["unsupported", "incomplete", "error"])
+    def test_native_analysis_failure_returns_error_before_connector_execution(self, cli, monkeypatch, status):
+        from datus.tools.db_tools import connector_registry
+        from datus.utils.constants import SQLType
+
+        analysis = SimpleNamespace(status=status, sql_type=SQLType.SELECT, diagnostic="outside verified subset")
+        monkeypatch.setattr(connector_registry, "get_sql_analyzer", lambda dialect: lambda sql: analysis, raising=False)
+        cli.db_connector.dialect = "native-test"
+        cli.agent_config.policy_context = {"member": "test-member"}
+
+        payload = cli._run_manual_sql("SELECT TOP 1 * FROM private_orders")
+
+        assert payload["success"] is False
+        assert payload["error"] == f"SQL analysis {status}: outside verified subset"
+        cli.db_connector.execute.assert_not_called()
+        assert cli.last_result is None
+
+    def test_no_db_connector_returns_none_and_prints_error(self, cli):
         cli.db_connector = None
-        cli._execute_sql("SELECT 1")
-        output = cli.console.file.getvalue()
-        assert "No database connection" in output
+        payload = cli._run_manual_sql("SELECT 1")
+        assert payload is None
+        assert "No database connection" in cli.console.file.getvalue()
 
-    def test_execute_returns_none_prints_error(self, cli):
+    def test_execute_returns_none_returns_none(self, cli):
         cli.db_connector.execute.return_value = None
-        cli._execute_sql("SELECT 1")
-        output = cli.console.file.getvalue()
-        assert "No result from the query." in output
+        payload = cli._run_manual_sql("SELECT 1")
+        assert payload is None
+        assert "No result from the query." in cli.console.file.getvalue()
 
-    def test_successful_arrow_result_displays_table(self, cli):
+    def test_successful_arrow_result_builds_table_payload(self, cli):
         import pyarrow as pa
 
         table = pa.table({"id": [1, 2], "name": ["Alice", "Bob"]})
-
         mock_result = MagicMock()
         mock_result.success = True
         mock_result.sql_return = table
         mock_result.row_count = 2
         cli.db_connector.execute.return_value = mock_result
 
-        cli._execute_sql("SELECT 1")
-        output = cli.console.file.getvalue()
-        assert "Alice" in output
-        assert "Returned 2 rows" in output
+        payload = cli._run_manual_sql("SELECT id, name FROM users")
+        assert payload["kind"] == "sql"
+        assert payload["success"] is True
+        assert payload["columns"] == ["id", "name"]
+        assert payload["rows"] == [["1", "Alice"], ["2", "Bob"]]
+        assert "2 rows" in payload["meta"]
 
-    def test_sql_error_result_prints_error(self, cli):
+    def test_sql_error_builds_error_payload(self, cli):
         mock_result = MagicMock()
         mock_result.success = False
         mock_result.error = "syntax error near 'BAD'"
         cli.db_connector.execute.return_value = mock_result
 
-        cli._execute_sql("SELECT BAD")
-        output = cli.console.file.getvalue()
-        assert "SQL Error" in output
-        assert "syntax error near 'BAD'" in output
+        payload = cli._run_manual_sql("SELECT BAD")
+        assert payload["success"] is False
+        assert payload["error"] == "syntax error near 'BAD'"
 
-    def test_execute_exception_prints_error(self, cli):
+    def test_execute_exception_builds_error_payload(self, cli):
         cli.db_connector.execute.side_effect = RuntimeError("connection lost")
-        cli._execute_sql("SELECT 1")
-        output = cli.console.file.getvalue()
-        assert "connection lost" in output
+        payload = cli._run_manual_sql("SELECT 1")
+        assert payload["success"] is False
+        assert "connection lost" in payload["error"]
 
-    def test_non_arrow_row_count_positive_shows_update(self, cli):
+    def test_non_arrow_row_count_positive_builds_message_payload(self, cli):
         mock_result = MagicMock()
         mock_result.success = True
         mock_result.row_count = 3
-        # sql_return has no column_names (non-arrow path)
-        del mock_result.sql_return.column_names
+        del mock_result.sql_return.column_names  # non-arrow path
         cli.db_connector.execute.return_value = mock_result
 
-        cli._execute_sql("UPDATE orders SET x=1")
-        output = cli.console.file.getvalue()
-        # Should print update message
-        assert "Update" in output
-        assert "rows in" in output
+        payload = cli._run_manual_sql("UPDATE orders SET x=1")
+        assert payload["success"] is True
+        assert "columns" not in payload
+        assert "3 rows updated" in payload["meta"]
+
+    def test_non_arrow_zero_row_dml_is_success(self, cli):
+        """A successful UPDATE/DELETE matching zero rows has ``row_count == 0``
+        and no arrow payload — it is a success, not a result-format error."""
+        mock_result = MagicMock()
+        mock_result.success = True
+        mock_result.row_count = 0
+        del mock_result.sql_return.column_names  # non-arrow path
+        cli.db_connector.execute.return_value = mock_result
+
+        payload = cli._run_manual_sql("UPDATE orders SET x=1 WHERE 1=0")
+        assert payload["success"] is True
+        assert "0 rows updated" in payload["meta"]
+
+    def test_non_arrow_ddl_without_payload_is_success(self, cli):
+        """Successful DDL can return no ``row_count`` and no payload; it must
+        still be reported as success rather than a format error."""
+        mock_result = MagicMock()
+        mock_result.success = True
+        mock_result.row_count = None
+        mock_result.sql_return = None
+        cli.db_connector.execute.return_value = mock_result
+
+        payload = cli._run_manual_sql("CREATE TABLE t (id INT)")
+        assert payload["success"] is True
+        assert "columns" not in payload
 
     def test_content_set_sql_updates_cli_context_in_place(self, cli):
         """USE/SET SQL updates cli_context in-place, preserving accumulated state."""
@@ -618,13 +1013,11 @@ class TestExecuteSql:
         mock_result.sql_return = "OK"  # truthy, no column_names attr
         cli.db_connector.execute.return_value = mock_result
 
-        # Connector state after USE command
         cli.db_connector.catalog_name = "new_catalog"
         cli.db_connector.database_name = "new_db"
         cli.db_connector.schema_name = "new_schema"
         cli.db_connector.dialect = "snowflake"
 
-        # Set initial context and accumulated state
         cli.cli_context.current_catalog = "old_catalog"
         cli.cli_context.current_db_name = "old_db"
         cli.cli_context.current_schema = "old_schema"
@@ -632,14 +1025,12 @@ class TestExecuteSql:
         original_context = cli.cli_context
 
         with patch("datus.cli.repl.parse_sql_type", return_value=SQLType.CONTENT_SET):
-            cli._execute_sql("USE DATABASE new_db")
+            cli._run_manual_sql("USE DATABASE new_db")
 
-        # Context updated in-place (same object, not replaced)
         assert cli.cli_context is original_context
         assert cli.cli_context.current_catalog == "new_catalog"
         assert cli.cli_context.current_db_name == "new_db"
         assert cli.cli_context.current_schema == "new_schema"
-        # Accumulated state preserved
         assert cli.cli_context.current_logic_db_name == "my_logic_name"
 
     def test_non_content_set_sql_does_not_update_context(self, cli):
@@ -655,26 +1046,152 @@ class TestExecuteSql:
         cli.cli_context.current_db_name = "original_db"
 
         with patch("datus.cli.repl.parse_sql_type", return_value=SQLType.DDL):
-            cli._execute_sql("CREATE TABLE t1 (id INT)")
+            cli._run_manual_sql("CREATE TABLE t1 (id INT)")
 
         assert cli.cli_context.current_db_name == "original_db"
 
 
 # ---------------------------------------------------------------------------
-# Tests: _execute_tool_command
+# Tests: _execute_sql_mode (execution turn dispatch)
 # ---------------------------------------------------------------------------
 
 
-class TestExecuteToolCommand:
-    def test_known_command_called(self, cli):
-        cli.commands["!sl"] = MagicMock()
-        cli._execute_tool_command("!sl", "find revenue")
-        cli.commands["!sl"].assert_called_once_with("find revenue")
+class TestExecuteSqlMode:
+    """``_execute_sql_mode`` runs the SQL through ``run_sql_gate`` (permission +
+    transformers + sql_policy — covered by test_bash_mode) then dispatches the
+    execution turn. The gate is patched here to isolate the dispatch logic."""
 
-    def test_unknown_command_prints_error(self, cli):
-        cli._execute_tool_command("!nonexistent", "args")
-        output = cli.console.file.getvalue()
-        assert "Unknown command" in output
+    @staticmethod
+    def _approve(sql):
+        from datus.cli.bash_mode import SqlGateResult
+
+        return patch("datus.cli.bash_mode.run_sql_gate", return_value=SqlGateResult(sql=sql, approved=True))
+
+    def test_success_dispatches_exec_turn_to_model(self, cli):
+        import pyarrow as pa
+
+        from datus.cli.manual_exec import decode_exec_message
+
+        table = pa.table({"id": [1, 2], "name": ["Alice", "Bob"]})
+        mock_result = MagicMock()
+        mock_result.success = True
+        mock_result.sql_return = table
+        mock_result.row_count = 2
+        cli.db_connector.execute.return_value = mock_result
+
+        with self._approve("SELECT id, name FROM users"):
+            cli._execute_sql_mode("SELECT id, name FROM users")
+
+        # The chat turn is triggered with the marker-encoded execution record,
+        # never as plan-mode.
+        message = cli.chat_commands.execute_chat_command.call_args.args[0]
+        assert cli.chat_commands.execute_chat_command.call_args.kwargs["plan_mode"] is False
+        payload = decode_exec_message(message)
+        assert payload["command"] == "SELECT id, name FROM users"
+        assert payload["columns"] == ["id", "name"]
+
+    def test_sql_error_still_dispatches_to_model(self, cli):
+        from datus.cli.manual_exec import decode_exec_message
+
+        mock_result = MagicMock()
+        mock_result.success = False
+        mock_result.error = "syntax error near 'BAD'"
+        cli.db_connector.execute.return_value = mock_result
+
+        with self._approve("SELECT BAD"):
+            cli._execute_sql_mode("SELECT BAD")
+        message = cli.chat_commands.execute_chat_command.call_args.args[0]
+        payload = decode_exec_message(message)
+        assert payload["success"] is False
+        assert payload["error"] == "syntax error near 'BAD'"
+
+    def test_denied_by_gate_does_not_dispatch(self, cli):
+        from datus.cli.bash_mode import SqlGateResult
+
+        denied = SqlGateResult(sql="DROP TABLE t", approved=False, error="User rejected execution")
+        with patch("datus.cli.bash_mode.run_sql_gate", return_value=denied):
+            cli._execute_sql_mode("DROP TABLE t")
+        cli.chat_commands.execute_chat_command.assert_not_called()
+        assert "✗" in cli.console.file.getvalue()
+
+    def test_gate_rewritten_sql_is_executed(self, cli):
+        """A policy/transformer-rewritten statement is what actually runs."""
+        from datus.cli.bash_mode import SqlGateResult
+        from datus.cli.manual_exec import decode_exec_message
+
+        mock_result = MagicMock()
+        mock_result.success = True
+        mock_result.row_count = 5
+        del mock_result.sql_return.column_names  # non-arrow message path
+        cli.db_connector.execute.return_value = mock_result
+
+        rewritten = "SELECT * FROM t WHERE tenant='acme'"
+        with patch("datus.cli.bash_mode.run_sql_gate", return_value=SqlGateResult(sql=rewritten, approved=True)):
+            cli._execute_sql_mode("SELECT * FROM t")
+        # The connector ran the rewritten SQL, and the exec record shows it.
+        assert cli.db_connector.execute.call_args.kwargs["input_params"]["sql_query"] == rewritten
+        payload = decode_exec_message(cli.chat_commands.execute_chat_command.call_args.args[0])
+        assert payload["command"] == rewritten
+
+    @pytest.mark.parametrize("native_analysis", [False, True])
+    def test_successful_read_applies_result_policy_before_payload(self, cli, monkeypatch, native_analysis):
+        import pyarrow as pa
+
+        if native_analysis:
+            from datus.tools.db_tools import connector_registry
+            from datus.utils.constants import SQLType
+
+            analysis = SimpleNamespace(status="complete", sql_type=SQLType.SELECT)
+            monkeypatch.setattr(
+                connector_registry, "get_sql_analyzer", lambda dialect: lambda sql: analysis, raising=False
+            )
+            cli.db_connector.dialect = "native-test"
+        original = pa.table({"email": ["alice@example.com"]})
+        masked = pa.table({"email": ["a***@example.com"]})
+        mock_result = MagicMock(success=True, sql_return=original, row_count=1)
+        cli.db_connector.execute.return_value = mock_result
+        runtime = MagicMock()
+        runtime.after_read_result.return_value = SimpleNamespace(allowed=True, result=masked)
+
+        with patch("datus.tools.policy_runtime.PolicyRuntime", return_value=runtime):
+            payload = cli._run_manual_sql("SELECT email FROM customers")
+
+        assert payload["rows"] == [["a***@example.com"]]
+        assert cli.last_result.sql_return is masked
+        runtime.after_read_result.assert_called_once()
+
+    def test_result_policy_denial_returns_only_error_payload(self, cli):
+        import pyarrow as pa
+
+        mock_result = MagicMock(
+            success=True,
+            sql_return=pa.table({"email": ["alice@example.com"]}),
+            row_count=1,
+        )
+        cli.db_connector.execute.return_value = mock_result
+        runtime = MagicMock()
+        runtime.after_read_result.return_value = SimpleNamespace(
+            allowed=False,
+            result=None,
+            reason="result denied",
+        )
+
+        with patch("datus.tools.policy_runtime.PolicyRuntime", return_value=runtime):
+            payload = cli._run_manual_sql("SELECT email FROM customers")
+
+        assert payload["success"] is False
+        assert "result denied" in payload["error"]
+        assert "alice@example.com" not in str(payload)
+
+    def test_infra_failure_does_not_dispatch(self, cli):
+        cli.db_connector = None
+        with self._approve("SELECT 1"):
+            cli._execute_sql_mode("SELECT 1")
+        cli.chat_commands.execute_chat_command.assert_not_called()
+
+    def test_empty_sql_is_a_noop(self, cli):
+        cli._execute_sql_mode("   ")
+        cli.chat_commands.execute_chat_command.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -746,60 +1263,72 @@ class TestExecuteChatCommand:
 
 
 # ---------------------------------------------------------------------------
-# Tests: _cmd_bash
+# Tests: _execute_bash_mode (execution turn dispatch)
 # ---------------------------------------------------------------------------
 
 
-class TestCmdBash:
-    def test_empty_args_prints_message(self, cli):
-        cli._cmd_bash("")
+class TestExecuteBashMode:
+    @staticmethod
+    def _run(command, **fields):
+        from datus.cli.bash_mode import BashModeRun
+
+        return BashModeRun(command=command, **fields)
+
+    def test_success_dispatches_exec_turn_to_model(self, cli):
+        from datus.cli.manual_exec import decode_exec_message
+
+        run = self._run("git status", executed=True, success=True, output="On branch main\n", duration=0.05)
+        with patch("datus.cli.bash_mode.run_bash_mode_command", return_value=run) as runner:
+            cli._execute_bash_mode("git status")
+        runner.assert_called_once_with(cli, "git status")
+        message = cli.chat_commands.execute_chat_command.call_args.args[0]
+        assert cli.chat_commands.execute_chat_command.call_args.kwargs["plan_mode"] is False
+        payload = decode_exec_message(message)
+        assert payload["kind"] == "bash"
+        assert payload["command"] == "git status"
+        assert payload["output"] == "On branch main\n"
+        assert payload["success"] is True
+
+    def test_failure_dispatches_failure_payload(self, cli):
+        from datus.cli.manual_exec import decode_exec_message
+
+        run = self._run(
+            "false",
+            executed=True,
+            success=False,
+            output="partial",
+            error="Command exited with code 1",
+            duration=0.01,
+        )
+        with patch("datus.cli.bash_mode.run_bash_mode_command", return_value=run):
+            cli._execute_bash_mode("false")
+        message = cli.chat_commands.execute_chat_command.call_args.args[0]
+        payload = decode_exec_message(message)
+        assert payload["success"] is False
+        assert payload["error"] == "Command exited with code 1"
+
+    def test_denied_prints_reason_and_does_not_dispatch(self, cli):
+        run = self._run(
+            "rm -rf /",
+            executed=False,
+            error=(
+                "PERMISSION_DENIED: Bash command blocked by rule 'rm:*' under the "
+                "'normal' permission profile. STOP retrying this command."
+            ),
+        )
+        with patch("datus.cli.bash_mode.run_bash_mode_command", return_value=run):
+            cli._execute_bash_mode("rm -rf /")
         output = cli.console.file.getvalue()
-        assert "Please provide a bash command." in output
+        # Human-facing denial keeps the reason but drops model-facing boilerplate.
+        assert "blocked by rule 'rm:*'" in output
+        assert "STOP retrying" not in output
+        cli.chat_commands.execute_chat_command.assert_not_called()
 
-    def test_non_whitelisted_command_prints_security_error(self, cli):
-        cli._cmd_bash("rm -rf /tmp/test")
-        output = cli.console.file.getvalue()
-        assert "Security:" in output
-        assert "not in whitelist" in output
-
-    def test_whitelisted_command_executes(self, cli):
-        mock_run_result = MagicMock()
-        mock_run_result.returncode = 0
-        mock_run_result.stdout = "/home/user\n"
-
-        with patch("subprocess.run", return_value=mock_run_result):
-            cli._cmd_bash("pwd")
-
-        output = cli.console.file.getvalue()
-        assert "/home/user" in output
-
-    def test_command_failure_prints_stderr(self, cli):
-        mock_run_result = MagicMock()
-        mock_run_result.returncode = 1
-        mock_run_result.stderr = "no such file"
-
-        with patch("subprocess.run", return_value=mock_run_result):
-            cli._cmd_bash("ls /nonexistent")
-
-        output = cli.console.file.getvalue()
-        assert "Command failed with code 1:" in output
-        assert "no such file" in output
-
-    def test_timeout_prints_error(self, cli):
-        import subprocess
-
-        with patch("subprocess.run", side_effect=subprocess.TimeoutExpired("pwd", 10)):
-            cli._cmd_bash("pwd")
-
-        output = cli.console.file.getvalue()
-        assert "timed out" in output.lower()
-
-    def test_exception_prints_error(self, cli):
-        with patch("subprocess.run", side_effect=OSError("permission denied")):
-            cli._cmd_bash("ls")
-
-        output = cli.console.file.getvalue()
-        assert "Error" in output
+    def test_empty_command_is_a_noop(self, cli):
+        with patch("datus.cli.bash_mode.run_bash_mode_command") as runner:
+            cli._execute_bash_mode("   ")
+        runner.assert_not_called()
+        cli.chat_commands.execute_chat_command.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -812,7 +1341,9 @@ class TestCmdHelp:
         cli._cmd_help("")
         output = cli.console.file.getvalue()
         assert "Datus-CLI Help" in output
-        assert "Tool Commands" in output
+        # SQL is reached via SQL mode now; the help documents it instead of
+        # the old ``!``-prefixed tool commands.
+        assert "SQL mode" in output
 
 
 # ---------------------------------------------------------------------------
@@ -1170,22 +1701,14 @@ class TestParseCommandDefaultAgent:
     def test_bare_text_uses_default_agent(self, cli):
         """Bare natural language text uses ``default_agent``."""
         cli.default_agent = "gen_sql"
-        with patch("datus.cli.repl.parse_sql_type") as mock_parse:
-            from datus.utils.constants import SQLType
-
-            mock_parse.return_value = SQLType.UNKNOWN
-            cmd_type, cmd, args = cli._parse_command("show me the revenue")
+        cmd_type, cmd, args = cli._parse_command("show me the revenue")
         assert cmd_type == CommandType.CHAT
         assert cmd == "gen_sql"
 
     def test_bare_text_default_chat(self, cli):
         """Bare text with ``default_agent=''`` still routes to the chat node."""
         cli.default_agent = ""
-        with patch("datus.cli.repl.parse_sql_type") as mock_parse:
-            from datus.utils.constants import SQLType
-
-            mock_parse.return_value = SQLType.UNKNOWN
-            cmd_type, cmd, _ = cli._parse_command("hello world")
+        cmd_type, cmd, _ = cli._parse_command("hello world")
         assert cmd_type == CommandType.CHAT
         assert cmd == ""
 
@@ -1306,3 +1829,381 @@ class TestRunOnBgLoop:
         except concurrent.futures.CancelledError:
             pass
         assert stopped_cleanly.wait(timeout=1.0)
+
+    def test_interrupt_controller_cancels_parked_bg_task(self, bg_cli):
+        """Interrupt wakes a coroutine parked in an API-like await."""
+        import asyncio
+        import threading
+
+        controller = InterruptController()
+        started = threading.Event()
+        cancelled = threading.Event()
+        finished = threading.Event()
+        raised = {}
+
+        async def waiting_for_api():
+            started.set()
+            try:
+                await asyncio.sleep(30.0)
+            except asyncio.CancelledError:
+                cancelled.set()
+                raise
+
+        def run():
+            try:
+                bg_cli.run_on_bg_loop(waiting_for_api(), interrupt_controller=controller)
+            except BaseException as exc:
+                raised["exception"] = exc
+            finally:
+                finished.set()
+
+        worker = threading.Thread(target=run)
+        worker.start()
+        assert started.wait(timeout=1.0)
+
+        controller.interrupt()
+
+        assert cancelled.wait(timeout=1.0)
+        assert finished.wait(timeout=1.0)
+        worker.join(timeout=1.0)
+        assert isinstance(raised.get("exception"), ExecutionInterrupted)
+        assert controller.is_interrupted is False
+
+        async def next_turn():
+            return "submitted"
+
+        # Reusing the node/controller must not immediately cancel the first
+        # submission after ESC.
+        assert bg_cli.run_on_bg_loop(next_turn(), interrupt_controller=controller) == "submitted"
+
+    def test_external_task_cancel_is_not_user_interrupt(self, bg_cli):
+        """Cancellation without an interrupt flag remains CancelledError."""
+        import asyncio
+        import concurrent.futures
+        import threading
+
+        controller = InterruptController()
+        started = threading.Event()
+        task_holder = {}
+
+        async def externally_cancelled():
+            task_holder["task"] = asyncio.current_task()
+            started.set()
+            await asyncio.sleep(30.0)
+
+        def cancel_from_loop():
+            task_holder["task"].cancel()
+
+        with pytest.raises(concurrent.futures.CancelledError):
+            worker = threading.Thread(
+                target=lambda: (
+                    started.wait(timeout=1.0),
+                    bg_cli._bg_loop.call_soon_threadsafe(cancel_from_loop),
+                )
+            )
+            worker.start()
+            try:
+                bg_cli.run_on_bg_loop(externally_cancelled(), interrupt_controller=controller)
+            finally:
+                worker.join(timeout=1.0)
+
+    def test_early_interrupt_survives_node_controller_reset(self, bg_cli):
+        """A startup reset cannot make a requested cancel look external."""
+        import asyncio
+
+        controller = InterruptController()
+
+        async def interrupt_then_reset():
+            controller.interrupt()
+            # Mirrors execute_stream_with_interactions resetting the reusable
+            # controller at the beginning of a turn.
+            controller.reset()
+            await asyncio.sleep(30.0)
+
+        with pytest.raises(ExecutionInterrupted):
+            bg_cli.run_on_bg_loop(interrupt_then_reset(), interrupt_controller=controller)
+
+
+class TestInterruptAgent:
+    @staticmethod
+    def _setup(cli, *, response_started: bool):
+        controller = MagicMock()
+        node = SimpleNamespace(interrupt_controller=controller)
+        streaming_ctx = SimpleNamespace(
+            has_model_response_started=response_started,
+            editable_user_message="question to edit",
+            request_interrupted_notice=MagicMock(),
+            request_unanswered_rollback=MagicMock(),
+        )
+        cli.chat_commands = SimpleNamespace(
+            current_node=node,
+            current_streaming_ctx=streaming_ctx,
+        )
+        cli.tui_app = MagicMock()
+        return controller
+
+    def test_escape_restores_input_before_first_model_response(self, cli):
+        controller = self._setup(cli, response_started=False)
+
+        cli._interrupt_agent(restore_unanswered_input=True)
+
+        controller.interrupt.assert_called_once_with()
+        cli.tui_app.restore_input_after_dispatch.assert_called_once_with("question to edit")
+        cli.chat_commands.current_streaming_ctx.request_unanswered_rollback.assert_called_once_with()
+        cli.chat_commands.current_streaming_ctx.request_interrupted_notice.assert_not_called()
+
+    def test_escape_only_cancels_after_model_response_started(self, cli):
+        controller = self._setup(cli, response_started=True)
+
+        cli._interrupt_agent(restore_unanswered_input=True)
+
+        controller.interrupt.assert_called_once_with()
+        cli.tui_app.restore_input_after_dispatch.assert_not_called()
+        cli.chat_commands.current_streaming_ctx.request_unanswered_rollback.assert_not_called()
+        cli.chat_commands.current_streaming_ctx.request_interrupted_notice.assert_called_once_with()
+
+    def test_ctrl_c_never_restores_input(self, cli):
+        controller = self._setup(cli, response_started=False)
+
+        cli._interrupt_agent()
+
+        controller.interrupt.assert_called_once_with()
+        cli.tui_app.restore_input_after_dispatch.assert_not_called()
+        cli.chat_commands.current_streaming_ctx.request_unanswered_rollback.assert_not_called()
+        cli.chat_commands.current_streaming_ctx.request_interrupted_notice.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Tests: _call_with_timeout
+# ---------------------------------------------------------------------------
+
+
+def _console_text(cli) -> str:
+    """Console output with wrapping-induced newlines collapsed."""
+    return " ".join(cli.console.file.getvalue().split())
+
+
+class TestCallWithTimeout:
+    def test_returns_result_within_timeout(self):
+        from datus.cli.repl import _call_with_timeout
+
+        assert _call_with_timeout(lambda: 42, 5, "quick call") == 42
+
+    def test_reraises_worker_exception(self):
+        from datus.cli.repl import _call_with_timeout
+
+        def _boom():
+            raise ValueError("boom")
+
+        with pytest.raises(ValueError, match="boom"):
+            _call_with_timeout(_boom, 5, "failing call")
+
+    def test_expiry_unblocks_caller_without_joining_worker(self):
+        import time as time_mod
+
+        from datus.cli.repl import _call_with_timeout
+
+        start = time_mod.monotonic()
+        with pytest.raises(TimeoutError):
+            _call_with_timeout(lambda: time_mod.sleep(2), 0.2, "stuck call")
+        # Property: expiry must unblock the caller promptly. Joining the
+        # worker (the ThreadPoolExecutor.__exit__ behavior this replaces)
+        # would hold the caller for the worker's full 2s runtime.
+        assert time_mod.monotonic() - start < 1.5
+
+    def test_abandoned_success_is_logged_not_raised(self):
+        import time as time_mod
+
+        from datus.cli.repl import _call_with_timeout
+
+        with patch("datus.cli.repl.logger") as mock_logger:
+            with pytest.raises(TimeoutError):
+                _call_with_timeout(lambda: time_mod.sleep(0.3) or "late", 0.05, "late call")
+            deadline = time_mod.monotonic() + 2
+            while not mock_logger.info.called and time_mod.monotonic() < deadline:
+                time_mod.sleep(0.05)
+        assert mock_logger.info.called
+        assert "late call" in mock_logger.info.call_args.args
+
+
+# ---------------------------------------------------------------------------
+# Tests: _init_connection timeout semantics and adapter-install notice
+# ---------------------------------------------------------------------------
+
+
+class TestInitConnectionTimeout:
+    def _wire(self, cli, *, connector=None, first_conn=None, missing=None, install_status=None):
+        from datus.tools.db_tools.db_manager import AdapterInstallStatus
+        from datus.utils.constants import DBType
+
+        if connector is None:
+            connector = SimpleNamespace(
+                dialect=DBType.SQLITE,
+                database_name="demo_db",
+                catalog_name=None,
+                test_connection=MagicMock(return_value=True),
+            )
+        status = install_status or AdapterInstallStatus.NOT_ATTEMPTED
+        cli.agent_config = SimpleNamespace(current_datasource="ds1")
+        cli.db_manager = SimpleNamespace(
+            first_conn_with_name=first_conn or (lambda ds: ("demo_db", connector)),
+            missing_connector_type=lambda ds: missing,
+            adapter_install_status=lambda db_type: status,
+        )
+        return connector
+
+    def test_no_datasource_clears_connector(self, cli):
+        cli.agent_config = SimpleNamespace(current_datasource="")
+
+        cli._init_connection()
+
+        assert cli.db_connector is None
+
+    def test_successful_connection_updates_context(self, cli):
+        connector = self._wire(cli)
+
+        cli._init_connection(timeout_seconds=5)
+
+        assert cli.db_connector is connector
+        assert cli.cli_context.current_db_name == "demo_db"
+        connector.test_connection.assert_called_once_with()
+
+    def test_timeout_unblocks_startup(self, cli):
+        import time as time_mod
+
+        def _stuck(ds):
+            time_mod.sleep(4)
+            return ("db", MagicMock())
+
+        self._wire(cli, first_conn=_stuck)
+
+        start = time_mod.monotonic()
+        cli._init_connection(timeout_seconds=0.5)
+        elapsed = time_mod.monotonic() - start
+
+        # Property: the timeout bounds how long startup blocks. Pre-fix the
+        # executor's __exit__ joined the stuck worker and held startup for
+        # the worker's full runtime despite the expired timeout.
+        assert elapsed < 3.0
+        assert cli.db_connector is None
+        assert "timed out" in _console_text(cli)
+
+    def test_connection_test_timeout_clears_connector(self, cli):
+        import time as time_mod
+
+        connector = SimpleNamespace(
+            dialect=None,
+            database_name="db",
+            catalog_name=None,
+            test_connection=lambda: time_mod.sleep(4) or True,
+        )
+        self._wire(cli, connector=connector)
+
+        start = time_mod.monotonic()
+        cli._init_connection(timeout_seconds=0.5)
+        elapsed = time_mod.monotonic() - start
+
+        assert elapsed < 3.0
+        assert cli.db_connector is None
+        assert "unresponsive" in _console_text(cli)
+
+    def test_missing_adapter_announced_before_connecting(self, cli):
+        seen_before_connect = []
+
+        def _fail(ds):
+            seen_before_connect.append(_console_text(cli))
+            raise RuntimeError("Connector 'oracle' not found")
+
+        self._wire(cli, first_conn=_fail, missing="oracle")
+
+        cli._init_connection(timeout_seconds=5)
+
+        output = _console_text(cli)
+        assert "datus-oracle" in output
+        # Property: the install notice reaches the user before the blocking
+        # connection attempt starts, not after it fails.
+        assert "datus-oracle" in seen_before_connect[0]
+        assert cli.db_connector is None
+
+    def test_no_install_notice_when_connector_registered(self, cli):
+        self._wire(cli, missing=None)
+
+        cli._init_connection(timeout_seconds=5)
+
+        assert "Installing" not in _console_text(cli)
+
+    def test_failed_install_reports_manual_command_not_installing(self, cli):
+        from datus.tools.db_tools.db_manager import AdapterInstallStatus
+
+        def _fail(ds):
+            raise RuntimeError("Connector 'oracle' not found")
+
+        self._wire(cli, first_conn=_fail, missing="oracle", install_status=AdapterInstallStatus.FAILED)
+
+        cli._init_connection(timeout_seconds=5)
+
+        output = _console_text(cli)
+        # Property: once the process-wide memo says the install failed, the
+        # REPL must not claim an install is happening — it must hand the user
+        # the manual command, phrased the way every doc and hint in the
+        # project phrases it (plain pip; uv may be absent on this machine).
+        assert "Installing" not in output
+        assert "Install it manually: pip install datus-oracle" in output
+        # The advice works in-session (the memo path retries import/register),
+        # so it must point at /database, not at a process restart.
+        assert "reconnect with /database" in output
+
+    def test_registered_status_announces_nothing(self, cli):
+        # The connector became available between the missing-probe and the
+        # status read (concurrent install finished): no announcement at all.
+        from datus.tools.db_tools.db_manager import AdapterInstallStatus
+
+        self._wire(cli, missing="oracle", install_status=AdapterInstallStatus.REGISTERED)
+
+        cli._init_connection(timeout_seconds=5)
+
+        output = _console_text(cli)
+        assert "Installing" not in output
+        assert "unavailable" not in output
+        assert "still installing" not in output
+
+    def test_in_progress_install_announced_as_waiting(self, cli):
+        from datus.tools.db_tools.db_manager import AdapterInstallStatus
+
+        self._wire(cli, missing="oracle", install_status=AdapterInstallStatus.INSTALLING)
+
+        cli._init_connection(timeout_seconds=5)
+
+        output = _console_text(cli)
+        assert "still installing" in output
+        assert "Installing database adapter" not in output
+
+    def test_timeout_during_install_blames_install_not_server(self, cli):
+        import time as time_mod
+
+        def _stuck(ds):
+            time_mod.sleep(4)
+            return ("db", MagicMock())
+
+        self._wire(cli, first_conn=_stuck, missing="oracle")
+
+        cli._init_connection(timeout_seconds=0.5)
+
+        output = _console_text(cli)
+        # Property: when an adapter install was just announced, the timeout
+        # must not be misdiagnosed as an unreachable database server.
+        assert "install may still be running" in output
+        assert "running and accessible" not in output
+
+    def test_timeout_without_install_keeps_server_message(self, cli):
+        import time as time_mod
+
+        def _stuck(ds):
+            time_mod.sleep(4)
+            return ("db", MagicMock())
+
+        self._wire(cli, first_conn=_stuck, missing=None)
+
+        cli._init_connection(timeout_seconds=0.5)
+
+        assert "running and accessible" in _console_text(cli)

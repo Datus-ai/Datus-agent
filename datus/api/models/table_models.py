@@ -1,6 +1,6 @@
 """Data models for Table and SemanticModel API endpoints."""
 
-from typing import List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field
 
@@ -50,20 +50,94 @@ class GetTableDetailData(BaseModel):
     table: TableDetailData
 
 
+class GetTablesColumnsInput(BaseModel):
+    """Batch table-columns input (autocomplete prefetch)."""
+
+    tables: list[str] = Field(
+        ...,
+        description="Full table names, e.g. ['db.schema.orders', 'db.schema.users']",
+    )
+    # One batch resolves against one datasource: the dotted names carry no
+    # datasource level, so a mixed batch would be unresolvable.
+    datasource: Optional[str] = Field(
+        None, description="Datasource to resolve these tables against; null means the current one"
+    )
+
+
+class TableColumnBrief(BaseModel):
+    """Slim column shape for autocomplete — no default_value (unused there)."""
+
+    name: str = Field(..., description="Column name")
+    type: str = Field(..., description="Column data type")
+    nullable: bool = Field(..., description="Whether column is nullable")
+    pk: bool = Field(default=False, description="Whether column is primary key")
+
+
+class TableColumns(BaseModel):
+    """Columns for a single table."""
+
+    table: str = Field(..., description="Full table name as requested")
+    columns: list[TableColumnBrief] = Field(..., description="Column information")
+
+
+class GetTablesColumnsData(BaseModel):
+    """Batch table-columns result. Tables that fail to resolve are omitted."""
+
+    tables: list[TableColumns] = Field(..., description="Per-table columns")
+
+
 # ========== SemanticModel Models ==========
+
+
+SEMANTIC_MODEL_FILE_DESCRIPTION = (
+    "Project-relative semantic model file, e.g. subject/semantic_models/<datasource>/<name>.yml"
+)
 
 
 class GetSemanticModelData(BaseModel):
     """Get semantic model result data."""
 
     yaml: str = Field(..., description="SemanticModel YAML content")
+    semantic_model_name: Optional[str] = Field(None, description="Semantic model name declared by the YAML")
+    semantic_model_file: str = Field(..., description=SEMANTIC_MODEL_FILE_DESCRIPTION)
+    revision: str = Field(..., description="SHA-256 revision of the YAML content")
 
 
-class SemanticModelInput(BaseModel):
+class ValidateSemanticModelInput(BaseModel):
+    """Validate semantic model input."""
+
+    semantic_model_file: str = Field(..., description=SEMANTIC_MODEL_FILE_DESCRIPTION)
+    yaml: str = Field(..., description="SemanticModel YAML content")
+    semantic_model_name: Optional[str] = Field(
+        None,
+        description="Optional assertion that the YAML declares this semantic model",
+    )
+
+
+class SaveSemanticModelInput(ValidateSemanticModelInput):
     """Save semantic model input."""
 
-    table: str = Field(..., description="Full table name")
-    yaml: str = Field(..., description="SemanticModel YAML content")
+    expected_revision: Optional[str] = Field(
+        None,
+        description=(
+            "SHA-256 revision returned by the last GET. Omit to skip the concurrency "
+            "check; supply it to reject overwrites of a file changed since it loaded."
+        ),
+    )
+
+
+class PrepareMetricDefinitionsInput(ValidateSemanticModelInput):
+    """A full candidate plus the explicitly changed computation roots."""
+
+    changed_metrics: List[str] = Field(default_factory=list, max_length=1000)
+    rename_from: Optional[str] = None
+    rename_to: Optional[str] = None
+
+
+class PrepareMetricDefinitionsData(BaseModel):
+    valid: bool
+    patches: List[Dict[str, Any]] = Field(default_factory=list)
+    validation: Dict[str, Any] = Field(default_factory=dict)
 
 
 class ValidateSemanticModelData(BaseModel):
@@ -71,3 +145,18 @@ class ValidateSemanticModelData(BaseModel):
 
     valid: bool = Field(..., description="Whether YAML is valid")
     invalid_message: Optional[List[str]] = Field(None, description="Error message if invalid")
+
+
+class SaveSemanticModelData(BaseModel):
+    """Outcome of saving and reconciling one semantic model artifact."""
+
+    status: Literal["synced", "saved_not_synced", "validation_failed", "conflict"]
+    yaml_saved: bool
+    kb_synced: bool
+    semantic_model_name: Optional[str] = None
+    semantic_model_file: str
+    revision: str
+    retryable: bool = False
+    failed_stage: Optional[str] = None
+    validation: Optional[Dict[str, Any]] = None
+    sync: Optional[Dict[str, Any]] = None

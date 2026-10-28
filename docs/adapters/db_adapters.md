@@ -1,376 +1,74 @@
-# Database Adapters
+# Database adapters
 
-Datus Agent supports connecting to various databases through a plugin-based adapter system. This document explains the available adapters, how to install them, and how to configure your database connections.
+Datus uses a registry-based adapter system for database connectivity. SQLite and DuckDB ship with the Agent; every server or cloud warehouse is an independently versioned `datus-<type>` package discovered through the `datus.adapters` entry-point group.
 
-## Overview
+Connection profiles are documented under [Datasources](../configuration/datasources.md). That section is the source of truth for accepted fields, defaults, authentication rules, and namespace behavior; this page explains how adapters are installed and loaded.
 
-Datus uses a modular adapter architecture that allows you to connect to different databases:
+## Installation and discovery
 
-- **Built-in Adapters**: SQLite and DuckDB are included with the core package
-- **Plugin Adapters**: Additional databases (MySQL, Snowflake, StarRocks, etc.) can be installed as separate packages
-
-This design keeps the core package lightweight while allowing you to add support for specific databases as needed.
-
-## Supported Databases
-
-| Database | Package | Installation | Status |
-|----------|---------|-------------|--------|
-| SQLite | Built-in | Included | Ready |
-| DuckDB | Built-in | Included | Ready |
-| MySQL | datus-mysql | `pip install datus-mysql` | Ready |
-| PostgreSQL | datus-postgresql | `pip install datus-postgresql` | Ready |
-| StarRocks | datus-starrocks | `pip install datus-starrocks` | Ready |
-| Snowflake | datus-snowflake | `pip install datus-snowflake` | Ready |
-| ClickZetta | datus-clickzetta | `pip install datus-clickzetta` | Ready |
-| Hive | datus-hive | `pip install datus-hive` | Ready |
-| Spark | datus-spark | `pip install datus-spark` | Ready |
-| ClickHouse | datus-clickhouse | `pip install datus-clickhouse` | Ready |
-| Trino | datus-trino | `pip install datus-trino` | Ready |
-
-## Installation
-
-### Built-in Databases
-
-SQLite and DuckDB are included with Datus Agent and require no additional installation.
-
-### Plugin Adapters
-
-Install the adapter package for your database:
+The `/datasource` manager is the recommended installation path:
 
 ```bash
-# MySQL
-pip install datus-mysql
+datus
+```
 
-# PostgreSQL
+Run `/datasource`, choose a database type, and complete its profile. If the adapter is missing, Datus installs `datus-<type>` into the active interpreter, loads its entry point, validates the profile, and tests the connection before saving it.
+
+For managed environments, install the package explicitly and pin it with the rest of the deployment dependencies:
+
+```bash
 pip install datus-postgresql
-
-# Snowflake
-pip install datus-snowflake
-
-# StarRocks
-pip install datus-starrocks
-
-# ClickZetta
-pip install datus-clickzetta
-
-# Hive
-pip install datus-hive
-
-# Spark
-pip install datus-spark
-
-# ClickHouse
-pip install datus-clickhouse
-
-# Trino
-pip install datus-trino
 ```
 
-Once installed, Datus Agent will automatically detect and load the adapter.
+Installing an adapter registers four related pieces of behavior:
 
-## Configuration
+- its public `type` name, such as `postgresql`;
+- a Pydantic connection model that rejects unknown fields and supplies defaults;
+- a connector factory plus namespace/URI handlers;
+- optional database-specific SQL guidance or skills.
 
-Configure database connections under `agent.services.datasources` in `agent.yml`:
+The adapter must be installed in the same Python environment as the `datus` executable. Installing it into a different virtual environment does not make it discoverable.
 
-```yaml
-agent:
-  services:
-    datasources:
-      mydata:
-        type: sqlite
-        uri: sqlite:///path/to/database.db
+## Runtime flow
+
+```text
+agent.services.datasources.<name>
+        ↓
+Agent keeps common keys and adapter-specific fields
+        ↓
+adapter connection model validates types, defaults, and constraints
+        ↓
+registry creates the connector for <type>
+        ↓
+SQL execution, metadata discovery, and namespace switching
 ```
 
-Each entry under `services.datasources` is one logical database connection.
+Adapter packages own database-specific configuration. Datus owns the surrounding profile name, `type`, `default`, environment-variable expansion, and current-datasource selection. This boundary is why connection fields are documented per datasource instead of in a shared, approximate table.
 
-### SQLite
+## Developing an adapter
 
-```yaml
-mydata:
-  type: sqlite
-  uri: sqlite:///path/to/database.db
-```
+Database adapters live in the [`Datus-ai/datus-db-adapters`](https://github.com/Datus-ai/datus-db-adapters) workspace. A new adapter should:
 
-### DuckDB
+1. depend on `datus-db-core` and reuse `datus-sqlalchemy` when appropriate;
+2. define a strict Pydantic configuration model;
+3. implement the connector contract and declare accurate namespace capabilities;
+4. expose a `datus.adapters` entry point named after the datasource `type`;
+5. pass the shared adapter contract and TPC-H tests;
+6. add one detailed English and Chinese datasource page to this documentation.
 
-```yaml
-analytics:
-  type: duckdb
-  uri: duckdb:///path/to/database.duckdb
-```
-
-### MySQL
-
-```yaml
-production:
-  type: mysql
-  host: localhost
-  port: 3306
-  username: your_username
-  password: your_password
-  database: your_database
-```
-
-### PostgreSQL
-
-```yaml
-production_pg:
-  type: postgresql
-  host: localhost
-  port: 5432
-  username: your_username
-  password: your_password
-  database: your_database
-  schema: public  # optional, default is public
-  sslmode: prefer  # optional, default is prefer
-```
-
-### Snowflake
-
-```yaml
-warehouse:
-  type: snowflake
-  account: your_account
-  username: your_username
-  password: your_password  # Use private_key, or exactly one of password/private_key_file
-  # private_key: |
-  #   -----BEGIN PRIVATE KEY-----
-  #   ...
-  #   -----END PRIVATE KEY-----
-  # private_key_file: /path/to/rsa_key.p8
-  # private_key_file_pwd: optional_key_passphrase
-  warehouse: your_warehouse
-  database: your_database
-  schema: your_schema
-  role: your_role  # optional
-```
-
-Snowflake supports password authentication and key-pair authentication. Configure `private_key`, or exactly one of
-`password` or `private_key_file` when `private_key` is absent. `private_key` takes precedence over
-`private_key_file` and `password`; set `private_key_file_pwd` only when the private key is encrypted. Snowflake uses
-`database` and `schema`; do not set `catalog` for Snowflake.
-
-### StarRocks
-
-```yaml
-analytics:
-  type: starrocks
-  host: localhost
-  port: 9030
-  username: root
-  password: your_password
-  database: your_database
-```
-
-### ClickZetta
-
-```yaml
-lakehouse:
-  type: clickzetta
-  service: CLICKZETTA_SERVICE
-  username: CLICKZETTA_USERNAME
-  password: CLICKZETTA_PASSWORD
-  instance: CLICKZETTA_INSTANCE
-  workspace: CLICKZETTA_WORKSPACE
-  schema: CLICKZETTA_SCHEMA
-  vcluster: CLICKZETTA_VCLUSTER
-```
-
-### Hive
-
-```yaml
-hive_data:
-  type: hive
-  host: 127.0.0.1
-  port: 10000
-  username: hive
-  database: default
-  auth: NONE  # optional: NONE, LDAP, CUSTOM, KERBEROS
-  configuration:  # optional Hive session config
-    hive.execution.engine: spark
-```
-
-### Spark
-
-```yaml
-spark_data:
-  type: spark
-  host: localhost
-  port: 10000
-  username: spark
-  database: default
-  auth_mechanism: NONE  # optional: NONE, PLAIN, KERBEROS
-```
-
-### ClickHouse
-
-```yaml
-analytics:
-  type: clickhouse
-  host: localhost
-  port: 8123
-  username: default
-  password: your_password
-  database: your_database
-```
-
-### Trino
-
-```yaml
-trino_data:
-  type: trino
-  host: localhost
-  port: 8080
-  username: trino
-  catalog: hive
-  schema: default
-  http_scheme: http  # optional: http or https
-```
-
-### Multiple Database Entries
-
-```yaml
-agent:
-  services:
-    datasources:
-      source_db:
-        type: mysql
-        host: source-server
-        username: reader
-        password: password
-        database: source
-
-      target_db:
-        type: snowflake
-        account: your_account
-        username: writer
-        password: password
-        warehouse: compute_wh
-        database: target
-```
-
-## Features by Adapter
-
-### Common Features
-
-All adapters support:
-
-- SQL query execution (SELECT, INSERT, UPDATE, DELETE)
-- DDL operations (CREATE, ALTER, DROP)
-- Metadata retrieval (tables, views, schemas)
-- Sample data retrieval
-- Connection pooling and timeout management
-
-### Adapter-Specific Features
-
-#### MySQL
-- INFORMATION_SCHEMA queries
-- SHOW CREATE TABLE/VIEW support
-- Full CRUD operations
-
-#### PostgreSQL
-- INFORMATION_SCHEMA queries
-- Tables, views, and materialized views support
-- Multi-schema datasource support
-- SSL connection modes (disable, allow, prefer, require, verify-ca, verify-full)
-- SQLAlchemy-based (psycopg2 driver)
-
-#### Snowflake
-- Multi-database and schema support
-- Tables, views, and materialized views
-- Arrow format for efficient data transfer
-- Native SDK integration
-
-#### StarRocks
-- Multi-Catalog support
-- Materialized view support
-- MySQL protocol compatibility
-
-#### ClickZetta
-- Workspace and schema management
-- Volume/Stage file operations
-- Native SDK integration
-
-#### Hive
-- HiveServer2/Thrift protocol connection
-- Hive session configuration support
-- Multiple auth mechanisms (NONE, LDAP, CUSTOM, KERBEROS)
-- Database context switching (USE statement)
-
-#### Spark
-- Spark Thrift Server connection via HiveServer2 protocol
-- Multiple auth mechanisms (NONE, PLAIN, KERBEROS)
-- Spark SQL dialect support
-
-#### ClickHouse
-- HTTP protocol connection
-- No schema layer (databases serve as schemas)
-- ClickHouse-specific DML syntax (ALTER TABLE UPDATE)
-- Lightweight deletes support
-
-#### Trino
-- Three-level hierarchy: catalog → schema → table
-- Cross-catalog query support
-- Built-in TPC-H connector for benchmarking
-- HTTP/HTTPS connection with SSL support
+Use the repository's current reference adapter and testing standard rather than copying an older package unchanged.
 
 ## Troubleshooting
 
-### Adapter Not Found
+| Symptom | Cause and fix |
+|---|---|
+| Adapter is not listed | Install `datus-<type>` into the interpreter that runs `datus`, then reopen `/datasource`. |
+| Installation succeeds but loading fails | Import `datus_<type>` directly to expose missing native libraries or dependency conflicts. |
+| Profile rejects an extra field | Use only the fields on that datasource's page; adapter models intentionally use strict validation. |
+| Metadata hierarchy is wrong | Verify the adapter declares the correct catalog/database/schema capabilities and that the profile uses the documented namespace keys. |
 
-If you see an error like `Connector 'mysql' not found`, make sure you have installed the corresponding adapter package:
+## Next steps
 
-```bash
-pip install datus-mysql
-```
-
-### Connection Issues
-
-Check the following:
-
-1. **Network connectivity**: Ensure you can reach the database server
-2. **Credentials**: Verify username and password are correct
-3. **Port**: Confirm the correct port is specified
-4. **Database name**: Ensure the database exists
-
-### Driver Dependencies
-
-Some adapters require additional system dependencies:
-
-- **MySQL**: Requires `pymysql` (installed automatically)
-- **PostgreSQL**: Requires `psycopg2-binary` (installed automatically)
-- **Snowflake**: Requires `snowflake-connector-python` (installed automatically)
-- **Hive**: Requires `pyhive`, `thrift`, `thrift-sasl`, `pure-sasl` (installed automatically)
-- **Spark**: Requires `pyhive`, `thrift`, `thrift-sasl`, `pure-sasl` (installed automatically)
-- **ClickHouse**: Requires `clickhouse-sqlalchemy` (installed automatically)
-- **Trino**: Requires `trino` (installed automatically)
-
-## Architecture
-
-```text
-datus-agent (Core)
-├── Built-in Adapters
-│   ├── SQLite Connector
-│   └── DuckDB Connector
-│
-└── Plugin System (Entry Points)
-    ├── datus-sqlalchemy (Base layer)
-    │   ├── datus-mysql
-    │   ├── datus-postgresql
-    │   ├── datus-starrocks
-    │   ├── datus-hive
-    │   ├── datus-spark
-    │   ├── datus-clickhouse
-    │   └── datus-trino
-    │
-    └── Native SDK Adapters
-        ├── datus-snowflake
-        └── datus-clickzetta
-```
-
-The adapter system uses Python's entry points mechanism for automatic discovery. When you install an adapter package, it registers itself with Datus Agent and becomes available for use.
-
-## Next Steps
-
-- [Quick Start Guide](../getting_started/Quickstart.md) - Get started with Datus Agent
-- [Configuration Reference](../configuration/introduction.md) - Detailed configuration options
+- [Configure datasources](../configuration/datasources.md)
+- [Use `/datasource` in the CLI](../cli/other_commands.md#datasource)
+- [Configure SQL policy and read-only mode](../configuration/sql_policy.md)

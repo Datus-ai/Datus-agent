@@ -133,12 +133,13 @@ class TestGenVisualReportInit:
         for name in ("read_file", "write_file", "edit_file", "delete_file"):
             assert registry.get(name) == "filesystem_tools"
         # db_tools and semantic_tools also surface under their own categories.
-        assert registry.get("read_query") == "db_tools"
+        assert registry.get("execute_sql") == "db_tools"
+        assert "read_query" not in registry
         assert "semantic_tools" in registry.values()
 
     def test_metric_discovery_tools_exposed_when_metrics_present(self, real_agent_config, mock_llm_create, monkeypatch):
         """When the project has indexed metrics, the visual report node must
-        expose ``search_metrics`` and ``get_metrics`` to the LLM —
+        expose ``search_metrics`` to the LLM —
         otherwise the prompt advertises metric-first discovery while the
         tools are silently missing, and the model falls back to deriving
         SQL from raw table DDL. ``ContextSearchTools`` gates these tools
@@ -154,10 +155,10 @@ class TestGenVisualReportInit:
         node = _make_node(real_agent_config)
         assert isinstance(node.context_search_tools, ContextSearchTools)
         tool_names = {t.name for t in node.tools}
-        # search_metrics + get_metrics prove the metric discovery branch fired.
+        # search_metrics proves the metric discovery branch fired.
         # list_subject_tree is force-included whenever any context_search
         # branch fires, so it's a canary for the wildcard wiring itself.
-        assert {"search_metrics", "get_metrics", "list_subject_tree"}.issubset(tool_names)
+        assert {"search_metrics", "list_subject_tree"}.issubset(tool_names)
 
     def test_apply_proxy_tools_keeps_filesystem_tools_unwrapped(self, real_agent_config, mock_llm_create):
         """End-to-end check on a real node: ``apply_proxy_tools`` invoked
@@ -369,9 +370,9 @@ class TestHtmlPathStreamMessage:
     def test_post_validate_hook_returns_none_in_non_cli_mode(self, real_agent_config, mock_llm_create):
         from datus.schemas.gen_visual_report_models import GenVisualReportNodeResult
 
-        # filesystem_strict flips the node into SaaS/API mode, which renders
+        # The API/gateway bootstraps disable the compile switch: SaaS renders
         # reports dynamically server-side and never compiles a standalone HTML.
-        real_agent_config.filesystem_strict = True
+        real_agent_config.compile_visual_html = False
         node = _make_node(real_agent_config)
         report_slug = "path_msg_saas"
         _seed_render_on_disk(Path(real_agent_config.project_root), report_slug)
@@ -383,6 +384,25 @@ class TestHtmlPathStreamMessage:
         assert action is None
         assert result.html_path is None
         assert not (Path(real_agent_config.project_root) / "reports" / report_slug / "index.html").exists()
+
+    def test_filesystem_strict_does_not_skip_cli_compile(self, real_agent_config, mock_llm_create):
+        from datus.schemas.gen_visual_report_models import GenVisualReportNodeResult
+
+        # Regression: nightly enables agent.filesystem.strict as a safety
+        # switch; that must not be read as an API deployment and silently
+        # skip the compile (the report_html_path action disappeared).
+        real_agent_config.filesystem_strict = True
+        node = _make_node(real_agent_config)
+        report_slug = "path_msg_strict_cli"
+        _seed_render_on_disk(Path(real_agent_config.project_root), report_slug)
+        node._active_artifact_slug = report_slug
+
+        result = GenVisualReportNodeResult(success=True)
+        action = node._post_validate_hook(report_slug, result)
+
+        assert action is not None
+        assert action.action_type == "report_html_path"
+        assert (Path(real_agent_config.project_root) / "reports" / report_slug / "index.html").exists()
 
 
 class _InlineThread:
@@ -516,7 +536,7 @@ async def test_execute_stream_informational_answer_ends_normally(real_agent_conf
 
 @pytest.mark.asyncio
 async def test_execute_stream_bound_but_no_validate_marks_failure(real_agent_config, mock_llm_create):
-    """LLM binds but never calls validate_render → distinct incomplete-artifact failure."""
+    """LLM writes render files but never calls validate_render → incomplete-artifact failure."""
     mock_llm_create.reset(
         responses=[
             build_tool_then_response(
@@ -531,8 +551,21 @@ async def test_execute_stream_bound_but_no_validate_marks_failure(real_agent_con
                             }
                         ),
                     ),
+                    # The write is what makes this a half-finished build rather
+                    # than a consultative turn — without it the run is just prose.
+                    MockToolCall(
+                        name="write_file",
+                        arguments=json.dumps(
+                            {
+                                "path": "reports/halfway/render/app.jsx",
+                                "content": (
+                                    "import React from 'react';\nexport default function App() { return null; }\n"
+                                ),
+                            }
+                        ),
+                    ),
                 ],
-                content="I bound a report but forgot to finalize.",
+                content="I wrote the render tree but forgot to finalize.",
             ),
         ]
     )
@@ -559,3 +592,52 @@ async def test_execute_stream_bound_but_no_validate_marks_failure(real_agent_con
     assert result["name"] == "halfway"
     assert result["description"] == "Bound but never validated — unit-test fixture."
     assert result["created_at"]  # ISO timestamp written by start_new_report
+
+
+@pytest.mark.asyncio
+async def test_execute_stream_bound_consultative_turn_ends_normally(real_agent_config, mock_llm_create):
+    """Binding + reading + a prose answer is a valid turn, not an incomplete artifact.
+
+    Hard rule 1 of the system prompt makes the model bind before answering
+    anything — meta-discussion included — so a "should I keep this section?"
+    question binds, reads the render tree, and replies with options. Nothing
+    was written, so there is no render to validate and no error to surface.
+    """
+    project_root = Path(real_agent_config.project_root)
+    existing_slug = "consult_demo"
+    _seed_render_on_disk(project_root, existing_slug)
+
+    answer = "That section restates the KPI strip. Three options: drop it, merge it, or make it a callout."
+    mock_llm_create.reset(
+        responses=[
+            build_tool_then_response(
+                tool_calls=[
+                    MockToolCall(
+                        name="bind_existing_report",
+                        arguments=json.dumps({"report_slug": existing_slug}),
+                    ),
+                    MockToolCall(
+                        name="read_file",
+                        arguments=json.dumps({"path": f"reports/{existing_slug}/render/app.jsx"}),
+                    ),
+                ],
+                content=answer,
+            ),
+        ]
+    )
+
+    node = _make_node(real_agent_config)
+    node.input = GenVisualReportNodeInput(user_message="is this section worth keeping?")
+
+    actions = []
+    async for action in node.execute_stream(ActionHistoryManager()):
+        actions.append(action)
+
+    final = actions[-1]
+    assert final.status == ActionStatus.SUCCESS
+    result = final.output
+    assert isinstance(result, dict)
+    assert result["success"] is True
+    assert not result.get("error")
+    assert result["app_jsx_path"] is None
+    assert result["response"] == answer

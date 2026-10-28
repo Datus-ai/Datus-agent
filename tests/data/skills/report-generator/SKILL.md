@@ -5,8 +5,6 @@ tags:
   - report
   - export
 version: 1.0.0
-allowed_commands:
-  - "python:scripts/*.py"
 ---
 
 # Report Generator Skill

@@ -21,7 +21,8 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from unittest.mock import MagicMock
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -32,6 +33,7 @@ from datus.api.services.dashboard_service import (
     _validate_params,
 )
 from datus.schemas.gen_visual_dashboard_models import TemplateParamDecl
+from datus.utils.exceptions import ErrorCode
 
 _SAMPLE_SQL_J2 = "SELECT * FROM sales WHERE region = :region;\n"
 _SAMPLE_META = {
@@ -52,6 +54,39 @@ _SAMPLE_MANIFEST = {
     "created_at": "2026-05-20T00:00:00Z",
 }
 _SAMPLE_APP_JSX = "import React from 'react';\nexport default function App() { return null; }\n"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "message, policy_code, expected_code",
+    [
+        ("connector failed", None, "METRIC_QUERY_FAILED"),
+        ("compiler failed", None, "METRIC_QUERY_FAILED"),
+        ("METRIC_MODEL_SNAPSHOT_MISSING", None, "METRIC_MODEL_SNAPSHOT_MISSING"),
+        ("METRIC_MODEL_CHANGED", None, "METRIC_MODEL_CHANGED"),
+        ("read denied", ErrorCode.POLICY_DENIED, "POLICY_DENIED"),
+    ],
+)
+async def test_metric_failure_logs_traceback_only_for_unexpected_errors(
+    monkeypatch, message, policy_code, expected_code
+):
+    from datus.api.services import dashboard_service
+
+    error = ValueError(message)
+    error.code = policy_code
+    monkeypatch.setattr(dashboard_service.asyncio, "to_thread", AsyncMock(side_effect=error))
+    logger = MagicMock()
+    monkeypatch.setattr(dashboard_service, "logger", logger)
+    query = SimpleNamespace(name="sales", datasource="warehouse", parameter_names=lambda: set())
+    meta = SimpleNamespace(slug="sales", datasource="warehouse", params=[])
+    result = await DashboardService(agent_config=MagicMock())._run_metric_query(query, meta, {}, None, None)
+    assert result.success is False
+    assert result.errorCode == expected_code
+    assert result.errorMessage == message
+    if expected_code == "METRIC_QUERY_FAILED":
+        logger.exception.assert_called_once()
+    else:
+        logger.exception.assert_not_called()
 
 
 def _write_dashboard(
@@ -104,6 +139,10 @@ def _patch_executor(monkeypatch, *, captured: dict) -> None:
             captured["datasource"] = datasource
             return _FakeConnector()
 
+        def execute_read_enforced(self, sql, connector, *, datasource="", result_format="list", policy_context=None):
+            captured["policy_context"] = policy_context
+            return connector.execute_query(sql, result_format=result_format)
+
     import datus.tools.func_tool as func_tool_mod
 
     monkeypatch.setattr(func_tool_mod, "DBFuncTool", _FakeDBFuncTool)
@@ -134,6 +173,18 @@ async def test_load_local_template_pair_missing_returns_template_not_found(tmp_p
 
     assert result.success is False
     assert result.errorCode == "TEMPLATE_NOT_FOUND"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("metric_json, message", [("{", "Invalid JSON"), ("{}", "Field required")])
+async def test_load_local_corrupt_metric_returns_template_corrupt(tmp_path, metric_json, message):
+    dashboard = _write_dashboard(tmp_path)
+    (dashboard / "queries/by_region.sql.j2").unlink()
+    (dashboard / "queries/by_region.metric.json").write_text(metric_json, encoding="utf-8")
+    result = await _load_local_template_pair(tmp_path, "demo", "by_region")
+    assert result.success is False
+    assert result.errorCode == "TEMPLATE_CORRUPT"
+    assert message in result.errorMessage
 
 
 @pytest.mark.asyncio
@@ -263,6 +314,25 @@ async def test_run_query_without_published_version_uses_local_template(monkeypat
     # so the connector picks the same datasource binding the LLM saved.
     assert captured["sub_agent_name"] == "gen_visual_dashboard"
     assert captured["datasource"] == "warehouse"
+
+
+@pytest.mark.asyncio
+async def test_run_query_forwards_request_policy_context_to_enforced_read(monkeypatch, tmp_path: Path):
+    _write_dashboard(tmp_path)
+    captured: dict = {}
+    _patch_executor(monkeypatch, captured=captured)
+    policy_context = {"row_filter": {"access_mode": "scoped", "store_ids": [1, 2]}}
+
+    result = await DashboardService(agent_config=MagicMock()).run_query(
+        project_files_root=tmp_path,
+        dashboard_slug="demo",
+        query_slug="by_region",
+        params={"region": "APAC"},
+        policy_context=policy_context,
+    )
+
+    assert result.success is True
+    assert captured["policy_context"] is policy_context
 
 
 @pytest.mark.asyncio
@@ -507,6 +577,9 @@ def _patch_failing_executor(monkeypatch, *, exc: Exception | None = None, exec_r
         def _get_connector(self, datasource):
             return _Connector()
 
+        def execute_read_enforced(self, sql, connector, *, datasource="", result_format="list", policy_context=None):
+            return connector.execute_query(sql, result_format=result_format)
+
     import datus.tools.func_tool as func_tool_mod
 
     monkeypatch.setattr(func_tool_mod, "DBFuncTool", _FakeDBFuncTool)
@@ -642,6 +715,38 @@ async def test_run_query_connector_returns_unsuccessful_envelope(tmp_path: Path,
     assert result.success is False
     assert result.errorCode == "QUERY_EXECUTION_FAILED"
     assert "syntax error" in (result.errorMessage or "")
+
+
+@pytest.mark.asyncio
+async def test_run_query_reports_a_policy_refusal_as_its_own_code(tmp_path: Path, monkeypatch):
+    """A refusal is not a failed query, and the viewer renders it differently.
+
+    Folded into QUERY_EXECUTION_FAILED it arrived as
+    ``query failed: error_code=400002, error_message=<the only useful part>``,
+    which a dashboard then repeated once per panel under a retry button that
+    could not help.
+    """
+    _write_dashboard(tmp_path)
+
+    class _Denied:
+        success = False
+        error = "you have no value for store_id, which this project's row policies filter by."
+        error_code = ErrorCode.POLICY_DENIED.code
+
+    _patch_failing_executor(monkeypatch, exec_result=_Denied())
+
+    result = await DashboardService(agent_config=MagicMock()).run_query(
+        project_files_root=tmp_path,
+        dashboard_slug="demo",
+        query_slug="by_region",
+        params={"region": "APAC"},
+    )
+
+    assert result.success is False
+    assert result.errorCode == "POLICY_DENIED"
+    # Verbatim: no "query failed:" in front of a sentence already written for
+    # whoever is reading it.
+    assert result.errorMessage == _Denied.error
 
 
 @pytest.mark.asyncio

@@ -1,5 +1,11 @@
 agent:
   home: ~/.datus
+  logging:
+    level: INFO  # CLI > DATUS_LOG_LEVEL > this value > INFO
+  # Shared by all tools/datasources in one MCP server. Excess work fails fast.
+  mcp_tool_execution:
+    max_workers: 8
+    max_queue_size: 16
   # Storage layout (refactored):
   #   * ~/.datus/sessions/{project_name}/        — sessions sharded per project
   #   * ~/.datus/data/                           — storage-backend root; each
@@ -82,7 +88,11 @@ agent:
   #
   # Profiles:
   #   normal    — Read-only allowed; all writes prompt; named destructive deny
-  #   auto      — Normal + workspace writes auto; DB writes + destructives prompt (not deny)
+  #   auto      — Normal + workspace writes auto + SQL non-destructive writes
+  #               auto; remaining bash/SQL prompts receive a single-shot AI
+  #               review. Confident low/medium-risk actions auto-run; high or
+  #               critical risk still requires confirmation (and is denied in
+  #               non-interactive runs).
   #   dangerous — Nearly everything auto (writes outside workspace still prompt)
   #
   # User rules in ``rules:`` are evaluated after the profile base, so they
@@ -92,23 +102,145 @@ agent:
   # ---------------------------------------------------------------------------
   # permissions:
   #   profile: normal
+  #   # AI review is enabled by default only for the ``auto`` profile. Static
+  #   # deny rules always win. Omit ``model`` (or use ``default``) to follow
+  #   # the active model; use ``provider/model`` or ``custom/alias`` to give
+  #   # the reviewer a separate model. An explicit model failure fails closed
+  #   # and never falls back to another model.
+  #   # The context and token bounds below cap reviewer cost: history evidence
+  #   # is trimmed to fit ``max_history_bytes`` (the planned action itself is
+  #   # never trimmed), and too small a ``max_completion_tokens`` truncates the
+  #   # structured verdict, which fails closed into a manual prompt.
+  #   # Every reviewed call reports its verdict on the tool call in the CLI
+  #   # ("AI review ✓ passed · low risk · conf 0.92 · <rationale>"), including
+  #   # ones the reviewer auto-allowed; ctrl+o shows the full rationale.
+  #   # auto_review:
+  #   #   enabled: true
+  #   #   model: openai/gpt-5-mini
+  #   #   timeout_seconds: 20
+  #   #   confidence_threshold: 0.8
+  #   #   max_completion_tokens: 1024
+  #   #   max_history_bytes: 24576
+  #   #   max_user_messages: 8
+  #   #   max_prior_actions: 20
   #   # rules:
   #   #   - tool: db_tools
   #   #     pattern: execute_ddl
   #   #     permission: deny
+  #   #
+  #   # Command-level bash rules (optional; profile whitelist applies when
+  #   # omitted). Pattern syntax — no colon = exact command; "prefix:*" =
+  #   # prefix match; "prefix:glob" = prefix + first-argument glob. Decision
+  #   # order: deny (also matches wrapped commands like ``xargs rm``) →
+  #   # safety ceiling (bash -c / sudo / $() / redirection / background & /
+  #   # loops & subshells never auto-allow statically) → ask → allow →
+  #   # default (ask). Two redirections are exempt from that ceiling because
+  #   # they name no path and so cannot do anything the argv could not:
+  #   # file-descriptor duplication (``2>&1``, ``>&2``, ``<&0``) and a
+  #   # ``/dev/null`` target (``2>/dev/null``, ``&>/dev/null``). Any other
+  #   # redirection still requires confirmation. A command chained with
+  #   # ``|``, ``&&``, ``||`` or ``;`` is
+  #   # judged per sub-command: it auto-runs only if every sub-command is
+  #   # allowed, and any denied sub-command blocks the whole chain. A
+  #   # safety-ceiling ASK is still eligible for ``auto_review`` above, which
+  #   # reads the full command text; only unparseable commands always require a
+  #   # person, and safety-ceiling asks are never offered as project grants.
+  #   # The confirmation prompt lists every sub-command that needs approval and
+  #   # offers once / session / project scopes; "project" appends one prefix PER
+  #   # sub-command to ``.datus/config.yml``'s ``bash_allow`` list, so
+  #   # re-running the same chain later does not prompt again.
+  #   # bash_commands:
+  #   #   allow:
+  #   #     - "git status"            # exact: not "git status --short"
+  #   #     - "git log:*"             # prefix: any arguments
+  #   #     - "python:scripts/*.py"   # first arg must match the glob
+  #   #   deny:
+  #   #     - "rm:*"                  # also catches "xargs rm", "find -exec rm"
+  #   #     - "git push:*"            # deny always beats allow
+  #   #   ask:
+  #   #     - "docker:*"              # confirm every call (session approval per bucket)
+  #   #   classifier:                 # deprecated bash-only compatibility override
+  #   #     enabled: false
+  #   #
+  #   # Installed plugins may declare bash rules for their own ``datus <plugin>``
+  #   # namespace (normal/auto only), layered between the profile base and the
+  #   # rules above — a user ``deny`` always beats a plugin ``allow``. A
+  #   # plugin ``ask`` rule can be relaxed per project via the prompt's
+  #   # "allow (project)" choice (or a matching ``bash_allow`` entry in
+  #   # ``.datus/config.yml``): an exact-match grant auto-runs that pattern.
+  #   #
+  #   # Per-class SQL statement rules for ``execute_sql`` (optional; profile
+  #   # defaults apply when omitted). The statement is classified into a kind
+  #   # and gated by its class:
+  #   #   read        — SELECT / SHOW / DESCRIBE / EXPLAIN
+  #   #   write       — INSERT, CREATE, benign DDL (COMMENT/GRANT/ANALYZE/...),
+  #   #                 USE/SET/CALL. NOTE: CALL/EXEC can run arbitrary stored
+  #   #                 procedures — set ``write: ask`` if that matters to you.
+  #   #   destructive — UPDATE, DELETE, MERGE, DROP, TRUNCATE, ALTER, REPLACE
+  #   #   unknown     — unparseable SQL (fail-safe)
+  #   # Profile defaults: normal = read allow, rest ask; auto = read+write
+  #   # allow, destructive/unknown ask; dangerous = everything allow.
+  #   # The confirmation prompt offers once / session / project scopes;
+  #   # "project" appends the statement kind (e.g. ``drop``) to
+  #   # ``.datus/config.yml``'s ``sql_allow`` list, which auto-allows that
+  #   # exact kind in this project from then on.
+  #   # sql_statements:
+  #   #   read: allow
+  #   #   write: ask
+  #   #   destructive: ask
+  #   #   unknown: ask
 
+  # ---------------------------------------------------------------------------
+  # General-purpose bash tool.
+  #   enabled          — master switch; false removes the ``bash`` tool entirely
+  #   allowed_patterns — execution-layer hard whitelist (default ["*"])
+  #   sandbox          — OS-level sandbox wrapped around every command
+  #                      (macOS sandbox-exec / Linux bubblewrap). When enabled,
+  #                      file writes are restricted to the workspace, the
+  #                      session data dir and tmp; file reads to system dirs +
+  #                      the same allowlist. Fail-closed: if no mechanism is
+  #                      available (Windows, Linux without bwrap) commands are
+  #                      rejected. Toggle at runtime with /sandbox on|off.
+  #   sandbox.mode     — "normal" (default) keeps ~/.datus readable and the
+  #                      session data dir writable. "strict" is the
+  #                      multi-tenant tier: workspace + tmp + explicit
+  #                      allowlists ONLY (~/.datus fully blocked) and the
+  #                      child env is reduced to a small allowlist so
+  #                      process-wide secrets never reach commands.
+  #   sandbox.deny_network — cut network access inside the sandbox
+  #                      (bwrap --unshare-net / Seatbelt deny network*).
+  # ---------------------------------------------------------------------------
+  # bash:
+  #   enabled: true
+  #   sandbox:
+  #     enabled: false
+  #     mode: normal          # normal | strict
+  #     allow_read: []        # extra readable dirs (e.g. ~/.gitconfig)
+  #     allow_write: []       # extra writable dirs
+  #     deny_network: false   # true blocks all network inside the sandbox
+
+  # ---------------------------------------------------------------------------
+  # Filesystem tools (read_file / write_file / edit_file / delete_file / glob /
+  # grep) and the scheduler tools' SQL-file lookup.
+  #   strict      — fail-closed on paths outside the project root instead of
+  #                 asking the user (API / gateway surfaces set this; the CLI
+  #                 leaves it false and prompts instead).
+  #   allow_read  — extra absolute dirs readable outside the project root
+  #   allow_write — extra absolute dirs readable AND writable outside it
+  # allow_read/allow_write are the escape hatch for directories a deployment
+  # mounts next to the workspace — e.g. an Airflow DAGs folder the agent must
+  # write DAG files into — without giving up ``strict``. Relative entries are
+  # ignored (they would resolve against the process CWD).
+  # ---------------------------------------------------------------------------
+  # filesystem:
+  #   strict: false
+  #   allow_read: []
+  #   allow_write:
+  #     - /data/airflow/dags
 
   nodes:
     schema_linking:
       matching_rate: fast
-    reasoning:
-      prompt_version: "1.0" # It can be unconfigured, and the latest version is used by default
-      max_table_schemas_length: 4000
-      max_data_details_length: 2000
-      max_context_length: 8000
-      max_value_length: 500
-    reflect:
-      prompt_version: "1.0" # It can be unconfigured, and the latest version is used by default
     output:
       prompt_version: "1.0" # It can be unconfigured, and the latest version is used by default
       check_result: true # Whether to check the results of the previous step, the default value is false
@@ -116,6 +248,10 @@ agent:
       workspace_root: sql2
       max_turns: 25
       prompt_version: "1.0" # It can be unconfigured, and the latest version is used by default
+
+  # Configuration for date_parsing_tools.parse_temporal_expressions.
+  date_parsing:
+    language: en # en/zh
 
   export:
     max_lines: 1000  # Maximum number of exported data rows, default is 1000
@@ -179,14 +315,11 @@ agent:
         username: ${STARROCKS_USER}
         password: ${STARROCKS_PASSWORD}
         database: ${STARROCKS_DATABASE}
-    # Default selection across BI / Scheduler / Semantic follows one rule:
+    # Dosi is the built-in semantic runtime.
+    # Default selection across BI and Scheduler follows one rule:
     # explicit call-site arg → ``./.datus/config.yml`` project pin → YAML
     # ``default: true`` flag → single-entry shortcut → raise on ambiguity.
     # Mark at most one entry per section with ``default: true``.
-    semantic_layer:
-      metricflow: {}
-      # metricflow:                 # alternative: pin as global default
-      #   default: true
     bi_platforms:
       superset:
         type: superset
@@ -260,50 +393,18 @@ agent:
       - gen_sql
       - output
 
-    planB:
-      - schema_linking
-      - gen_sql
-      - execute_sql
-      - reflect
-      - output
-
-  reflection_nodes:
-    schema_linking:
-      - schema_linking
-      - gen_sql
-      - execute_sql
-      - reflect
-    doc_search:
-      - doc_search
-      - gen_sql
-      - execute_sql
-      - reflect
-    simple_regenerate:
-      - execute_sql
-      - reflect
-    reasoning:
-      - reasoning
-      - execute_sql
-      - reflect
-
-  # Workflow configuration with parallel execution and selection
-  workflow:
-    plan: bird_para
-
+    # Workflow configuration with parallel execution and selection
     bird_para:
       - schema_linking
       - parallel:
         - gen_sql
-        - reasoning
+        - gen_sql
       - selection
       - execute_sql
       - output
 
-  # Sub-workflow example
-  workflow:
-    plan: bird_para
-
-    bird_para:
+    # Sub-workflow example
+    multi_approach:
       - schema_linking
       - parallel:
         - subworkflow1
@@ -314,53 +415,63 @@ agent:
       - output
 
     subworkflow1:
-      - search_metrics
       - gen_sql
 
     subworkflow2:
-      - search_metrics
-      - reasoning
+      - gen_sql
 
     subworkflow3:
-      - reasoning
-      - reflect
+      - gen_sql
 
-  # Sub-workflow with config example
-  workflow:
-    plan: bird_para
-
-    bird_para:
+    # Sub-workflow with config example
+    multi_agent:
       - schema_linking
       - parallel:
-        - subworkflow1
-        - subworkflow2
-        - subworkflow3
+        - subworkflow_cfg1
+        - subworkflow_cfg2
+        - subworkflow_cfg3
       - selection
       - execute_sql
       - output
 
-    subworkflow1:
+    subworkflow_cfg1:
       steps:
-      - search_metrics
       - gen_sql
       config: multi/agent1.yaml
 
-    subworkflow2:
+    subworkflow_cfg2:
       steps:
-      - search_metrics
-      - reasoning
+      - gen_sql
       config: multi/agent2.yaml
 
-    subworkflow3:
+    subworkflow_cfg3:
       steps:
-      - reasoning
-      - reflect
+      - gen_sql
       config: multi/agent3.yaml
 
   skills:
     directories:
       - ~/.datus/skills
       - ./skills
+
+  api:
+    # Bounds on the HTTP API's datasource access. All three exist because a
+    # single metadata or SQL round-trip can run for seconds on a real warehouse,
+    # and these requests run on a shared thread pool.
+    #
+    # How long POST /sql/execute waits for its datasource's connector before
+    # giving up with DATASOURCE_BUSY. The connector is shared per datasource and
+    # carries mutable database context, so statements on one datasource run one
+    # at a time; without a bound, a queue would pin worker threads that every
+    # other request needs too. Nothing is executed on timeout, so even a write
+    # is safe to retry.
+    sql_queue_budget_seconds: 30
+    # Largest batch POST /table/columns will accept (autocomplete prefetch).
+    max_prefetch_tables: 500
+    # How long one prefetch batch may spend resolving uncached tables before it
+    # returns what it has. Tables it did not reach are simply omitted, and the
+    # client re-asks per table.
+    prefetch_budget_seconds: 3
 
   autocomplete:
     # After switching / adding / editing a datasource, refresh the LanceDB
@@ -380,13 +491,9 @@ agent:
     # node loads its canonical skills out of the box. Override ``skills:`` here
     # only when you want to narrow or broaden the pattern; omit the key to keep
     # the defaults. Set ``skills: ""`` to explicitly disable skill loading.
-    gen_semantic_model:
+    semantic_modeling:
       model: anthropic
-
-    gen_metrics:
-      model: anthropic
-      max_turns: 40
-      # Default: "gen-metrics, gen-semantic-model"
+      max_turns: 50
 
     gen_sql_summary:
       model: deepseek_v3
@@ -395,7 +502,7 @@ agent:
     gen_sql:
       model: deepseek_v3
       system_prompt: gen_sql
-      tools: db_tools.*, context_search_tools.*
+      tools: db_tools.*, context_search_tools.*, date_parsing_tools.*
       max_turns: 30
 
     gen_table:

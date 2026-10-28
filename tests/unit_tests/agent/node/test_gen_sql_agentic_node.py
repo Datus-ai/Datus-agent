@@ -16,7 +16,7 @@ real PathManager.
 
 import json
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 from uuid import UUID
 
 import pytest
@@ -78,7 +78,48 @@ class TestGenSQLAgenticNodeInit:
         assert isinstance(node.db_func_tool, DBFuncTool)
 
         tool_names = {t.name for t in node.tools}
-        assert {"list_tables", "describe_table", "read_query"} <= tool_names
+        assert {"list_tables", "describe_table", "execute_sql"} <= tool_names
+
+    def test_gen_sql_db_tools_use_input_database(self, real_agent_config, mock_llm_create):
+        """Rebuilt DB tools should route to the physical database on node input."""
+        from datus.agent.node.gen_sql_agentic_node import GenSQLAgenticNode
+
+        node = GenSQLAgenticNode(
+            node_id="test_gen_sql_database",
+            description="Test GenSQL node",
+            node_type=NodeType.TYPE_GEN_SQL,
+            agent_config=real_agent_config,
+            node_name="gen_sql",
+        )
+        node.input = GenSQLNodeInput(user_message="Show all schools", database="california_schools")
+
+        node._setup_db_tools()
+
+        assert node.db_func_tool._default_database == "california_schools"
+
+    def test_gen_sql_setup_tools_refreshes_specific_db_tool_database(self, real_agent_config, mock_llm_create):
+        """Specific db_tools methods should rebuild DBFuncTool with current input database."""
+        from datus.agent.node.gen_sql_agentic_node import GenSQLAgenticNode
+
+        real_agent_config.agentic_nodes["custom_gen_sql_db"] = {
+            "system_prompt": "gen_sql",
+            "tools": "db_tools.read_query",
+            "max_turns": 5,
+        }
+        node = GenSQLAgenticNode(
+            node_id="test_gen_sql_specific_database",
+            description="Test GenSQL node",
+            node_type=NodeType.TYPE_GEN_SQL,
+            agent_config=real_agent_config,
+            node_name="custom_gen_sql_db",
+        )
+        original_db_tool = node.db_func_tool
+
+        node.input = GenSQLNodeInput(user_message="Show all schools", database="california_schools")
+        node.setup_tools()
+
+        assert node.db_func_tool is not original_db_tool
+        assert node.db_func_tool._default_database == "california_schools"
 
     def test_gen_sql_max_turns_from_config(self, real_agent_config, mock_llm_create):
         """max_turns is read from agentic_nodes config (set to 5 in fixture)."""
@@ -273,7 +314,7 @@ class TestGenSQLAgenticNodeExecution:
                 build_tool_then_response(
                     tool_calls=[
                         MockToolCall(
-                            name="read_query",
+                            name="execute_sql",
                             arguments=(
                                 '{"sql": "SELECT cds, AvgScrRead FROM satscores '
                                 'WHERE AvgScrRead IS NOT NULL ORDER BY cds LIMIT 5"}'
@@ -306,7 +347,7 @@ class TestGenSQLAgenticNodeExecution:
         # Verify tool was executed for real
         assert len(mock_llm_create.tool_results) >= 1
         sql_result = mock_llm_create.tool_results[0]
-        assert sql_result["tool"] == "read_query"
+        assert sql_result["tool"] == "execute_sql"
         assert sql_result["executed"] is True
 
         # The output should contain actual data from the california_schools SQLite db
@@ -836,6 +877,33 @@ class TestGenSQLNodeReferenceTemplateToolSetup:
         )
         assert isinstance(node.reference_template_tools, ReferenceTemplateTools)
 
+    def test_reference_template_only_refreshes_internal_db_tool_database(self, real_agent_config, mock_llm_create):
+        """Reference-template-only configs should refresh their internal DBFuncTool."""
+        real_agent_config.agentic_nodes["tpl_only"] = {
+            "system_prompt": "gen_sql",
+            "tools": "reference_template_tools.execute_reference_template",
+            "max_turns": 5,
+        }
+        from datus.agent.node.gen_sql_agentic_node import GenSQLAgenticNode
+        from datus.configuration.node_type import NodeType
+        from datus.tools.func_tool.reference_template_tools import ReferenceTemplateTools
+
+        node = GenSQLAgenticNode(
+            node_id="tpl_only_id",
+            description="Test",
+            node_type=NodeType.TYPE_GEN_SQL,
+            agent_config=real_agent_config,
+            node_name="tpl_only",
+        )
+        original_template_tools = node.reference_template_tools
+
+        node.input = GenSQLNodeInput(user_message="Show all schools", database="california_schools")
+        node.setup_tools()
+
+        assert isinstance(node.reference_template_tools, ReferenceTemplateTools)
+        assert node.reference_template_tools is not original_template_tools
+        assert node.reference_template_tools.db_func_tool._default_database == "california_schools"
+
 
 # ===========================================================================
 # End-to-End Integration: AgenticNode + Hooks + InteractionBroker
@@ -1195,99 +1263,6 @@ class TestEndToEndConfirmPlanInteraction:
         real_agent_config.permissions_config = DANGEROUS
         real_agent_config.active_profile_name = "dangerous"
 
-    # This plan-mode path has an outstanding hang in the broker simulator.
-    # Quarantine keeps the known-bad harness case visible and owned without
-    # polluting nightly/product signals or starving the coverage job budget.
-    @pytest.mark.quarantine
-    @pytest.mark.known_flaky
-    @pytest.mark.skip(reason="Quarantined in ci/flaky-registry.yml: gen-sql-plan-mode-hooks-broker-hang")
-    @pytest.mark.asyncio
-    async def test_e2e_confirm_plan_user_confirms(self, real_agent_config, mock_llm_create, tmp_path):
-        """LLM calls confirm_plan → user submits 'confirm' → plan mode deactivates."""
-        import asyncio
-        import os
-
-        from datus.agent.node.chat_agentic_node import ChatAgenticNode
-
-        cwd = os.getcwd()
-        os.chdir(tmp_path)
-        try:
-            mock_llm_create.reset(
-                responses=[
-                    build_tool_then_response(
-                        tool_calls=[MockToolCall(name="confirm_plan", arguments="{}")],
-                        content="Plan confirmed by the user.",
-                    ),
-                ]
-            )
-
-            node = ChatAgenticNode(
-                node_id="e2e_confirm_plan",
-                description="E2E confirm_plan test",
-                node_type=NodeType.TYPE_CHAT,
-                agent_config=real_agent_config,
-            )
-
-            node.input = ChatNodeInput(
-                user_message="Plan how to summarise the schools dataset",
-                database="california_schools",
-                plan_mode=True,
-            )
-
-            # Pre-seed the plan file so confirm_plan finds content to display.
-            node.activate_plan_mode()
-            assert isinstance(node.plan_file_path, str) and node.plan_file_path
-            assert os.path.exists(node.plan_file_path)
-            with open(node.plan_file_path, "w", encoding="utf-8") as f:
-                f.write("# Plan\n\n- Step 1\n- Step 2\n")
-
-            broker = node._get_or_create_broker()
-
-            async def ui_confirm():
-                for _ in range(300):
-                    await asyncio.sleep(0.02)
-                    if broker.has_pending:
-                        action_id = list(broker._pending.keys())[0]
-                        await broker.submit(action_id, [["confirm"]])
-                        return
-                pytest.fail("Timed out waiting for confirm_plan interaction")
-
-            ui_task = asyncio.create_task(ui_confirm())
-
-            ahm = ActionHistoryManager()
-            actions = []
-            async for action in node.execute_stream_with_interactions(ahm):
-                actions.append(action)
-
-            await ui_task
-
-            confirm_results = [r for r in mock_llm_create.tool_results if r["tool"] == "confirm_plan"]
-            assert len(confirm_results) >= 1
-
-            interactions = [a for a in actions if a.role == ActionRole.INTERACTION]
-            assert any(a.status == ActionStatus.PROCESSING for a in interactions)
-            processing = [a for a in interactions if a.status == ActionStatus.PROCESSING][0]
-            assert processing.input.get("allow_free_text") is True
-            assert "confirm" in processing.input.get("choices", {})
-
-            # Confirm flow must surface a PROCESSING interaction with the
-            # confirm choice + allow_free_text=True.
-            interactions = [a for a in actions if a.role == ActionRole.INTERACTION]
-            processing = [a for a in interactions if a.status == ActionStatus.PROCESSING]
-            assert processing, "no PROCESSING interaction emitted"
-            events = processing[0].input.get("events", []) if isinstance(processing[0].input, dict) else []
-            assert events, "request payload missing events"
-            assert events[0].get("allow_free_text") is True
-            assert "confirm" in events[0].get("choices", {})
-
-            # After confirm, plan mode must be deactivated — but the path
-            # is intentionally retained for re-activation reuse.
-            assert node.plan_mode_active is False
-            assert isinstance(node.plan_file_path, str) and node.plan_file_path
-            assert os.path.exists(node.plan_file_path)
-        finally:
-            os.chdir(cwd)
-
     @pytest.mark.component
     @pytest.mark.llm_harness
     @pytest.mark.asyncio
@@ -1355,321 +1330,6 @@ class TestEndToEndConfirmPlanInteraction:
             node.deactivate_plan_mode()
         finally:
             os.chdir(cwd)
-
-
-# ===========================================================================
-# End-to-End Integration: AgenticNode + GenerationHooks + InteractionBroker
-# ===========================================================================
-
-
-def _create_test_semantic_yaml(file_path: str) -> None:
-    """Create a minimal semantic model YAML file for testing GenerationHooks."""
-    import yaml
-
-    data_source = {
-        "data_source": {
-            "name": "test_table",
-            "sql_table": "test_table",
-            "description": "A test semantic model for unit testing",
-            "dimensions": [
-                {
-                    "name": "test_dim",
-                    "type": "CATEGORICAL",
-                    "description": "A test dimension",
-                    "expr": "test_dim",
-                },
-            ],
-            "measures": [
-                {
-                    "name": "test_measure",
-                    "agg": "SUM",
-                    "description": "A test measure",
-                    "expr": "test_value",
-                },
-            ],
-        },
-    }
-    with open(file_path, "w", encoding="utf-8") as f:
-        yaml.safe_dump(data_source, f, allow_unicode=True, sort_keys=False)
-
-
-class TestEndToEndGenerationHooksInteraction:
-    """End-to-end tests: ChatAgenticNode + GenerationHooks -> LLM calls end_semantic_model_generation ->
-    on_tool_end -> _handle_end_semantic_model_generation -> direct Knowledge Base sync.
-
-    Tests the full production flow for generation hooks interactions:
-    1. ChatAgenticNode is created with a fake end_semantic_model_generation tool
-    2. GenerationHooks is attached via the node's permission_hooks slot
-    3. MockLLM calls end_semantic_model_generation with YAML file path
-    4. GenerationHooks.on_tool_end reads the YAML file and syncs it directly
-    """
-
-    @pytest.mark.asyncio
-    async def test_e2e_generation_hooks_auto_syncs_to_kb(self, real_agent_config, mock_llm_create, tmp_path):
-        """Full flow: LLM calls end_semantic_model_generation -> syncs to KB without a prompt."""
-        import os
-
-        from agents import FunctionTool
-
-        from datus.agent.node.chat_agentic_node import ChatAgenticNode
-        from datus.cli.generation_hooks import GenerationHooks
-
-        # Create a real YAML file under the project subject_dir so GenerationHooks
-        # path containment check accepts it.
-        semantic_dir = real_agent_config.path_manager.semantic_model_path(real_agent_config.current_datasource)
-        yaml_path = os.path.join(str(semantic_dir), "test_semantic_model.yaml")
-        _create_test_semantic_yaml(yaml_path)
-
-        # Create a fake end_semantic_model_generation tool that returns the expected result format
-        async def fake_end_gen(ctx, args_str):
-            return {"success": 1, "result": {"semantic_model_files": [yaml_path]}}
-
-        end_gen_tool = FunctionTool(
-            name="end_semantic_model_generation",
-            description="Complete semantic model generation",
-            params_json_schema={
-                "type": "object",
-                "properties": {
-                    "semantic_model_files": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                    }
-                },
-                "required": ["semantic_model_files"],
-            },
-            on_invoke_tool=fake_end_gen,
-        )
-
-        mock_llm_create.reset(
-            responses=[
-                build_tool_then_response(
-                    tool_calls=[
-                        MockToolCall(
-                            name="end_semantic_model_generation",
-                            arguments=json.dumps({"semantic_model_files": [yaml_path]}),
-                        ),
-                    ],
-                    content="Semantic model generation completed.",
-                ),
-            ]
-        )
-
-        node = ChatAgenticNode(
-            node_id="e2e_gen_approve",
-            description="E2E generation approve test",
-            node_type=NodeType.TYPE_CHAT,
-            agent_config=real_agent_config,
-        )
-
-        # Add the fake generation tool to node tools
-        node.tools.append(end_gen_tool)
-
-        # Attach GenerationHooks via the permission_hooks slot
-        broker = node._get_or_create_broker()
-        generation_hooks = GenerationHooks(broker=broker, agent_config=real_agent_config)
-        node.permission_hooks = generation_hooks
-
-        node.input = ChatNodeInput(
-            user_message="Generate semantic model",
-            database="california_schools",
-        )
-
-        ahm = ActionHistoryManager()
-        actions = []
-        with patch.object(GenerationHooks, "_sync_to_storage", new_callable=AsyncMock) as mock_sync_to_storage:
-            async for action in node.execute_stream_with_interactions(ahm):
-                actions.append(action)
-
-        # Verify the tool was executed
-        end_gen_results = [r for r in mock_llm_create.tool_results if r["tool"] == "end_semantic_model_generation"]
-        assert len(end_gen_results) >= 1
-        assert end_gen_results[0]["executed"] is True
-
-        mock_sync_to_storage.assert_awaited_once_with(yaml_path, "semantic", metric_sqls=None)
-
-        # Direct sync should not create a user interaction.
-        interaction_actions = [a for a in actions if a.role == ActionRole.INTERACTION]
-        assert len(interaction_actions) == 0
-
-    @pytest.mark.asyncio
-    async def test_e2e_generation_hooks_sync_error_logs_without_prompt(
-        self, real_agent_config, mock_llm_create, tmp_path
-    ):
-        """Full flow: sync errors are logged without falling back to a prompt.
-
-        Patches ``datus.cli.generation_hooks.logger.error`` directly instead
-        of relying on pytest's ``caplog`` fixture: ``caplog`` is provided by
-        pytest's logging plugin, which several callers (CI variants, local
-        ``-p no:logging`` runs) disable for noise reasons. The patched mock
-        gives a stable assertion regardless of plugin state.
-        """
-        import os
-        from unittest.mock import MagicMock
-
-        from agents import FunctionTool
-
-        from datus.agent.node.chat_agentic_node import ChatAgenticNode
-        from datus.cli.generation_hooks import GenerationHooks
-
-        # Create a real YAML file under the project subject_dir so GenerationHooks
-        # path containment check accepts it.
-        semantic_dir = real_agent_config.path_manager.semantic_model_path(real_agent_config.current_datasource)
-        yaml_path = os.path.join(str(semantic_dir), "test_semantic_sync_error.yaml")
-        _create_test_semantic_yaml(yaml_path)
-
-        # Create a fake end_semantic_model_generation tool
-        async def fake_end_gen(ctx, args_str):
-            return {"success": 1, "result": {"semantic_model_files": [yaml_path]}}
-
-        end_gen_tool = FunctionTool(
-            name="end_semantic_model_generation",
-            description="Complete semantic model generation",
-            params_json_schema={
-                "type": "object",
-                "properties": {
-                    "semantic_model_files": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                    }
-                },
-                "required": ["semantic_model_files"],
-            },
-            on_invoke_tool=fake_end_gen,
-        )
-
-        mock_llm_create.reset(
-            responses=[
-                build_tool_then_response(
-                    tool_calls=[
-                        MockToolCall(
-                            name="end_semantic_model_generation",
-                            arguments=json.dumps({"semantic_model_files": [yaml_path]}),
-                        ),
-                    ],
-                    content="Semantic model generation completed.",
-                ),
-            ]
-        )
-
-        node = ChatAgenticNode(
-            node_id="e2e_gen_sync_error",
-            description="E2E generation sync error test",
-            node_type=NodeType.TYPE_CHAT,
-            agent_config=real_agent_config,
-        )
-
-        # Add the fake generation tool and attach GenerationHooks
-        node.tools.append(end_gen_tool)
-        broker = node._get_or_create_broker()
-        generation_hooks = GenerationHooks(broker=broker, agent_config=real_agent_config)
-        node.permission_hooks = generation_hooks
-
-        node.input = ChatNodeInput(
-            user_message="Generate semantic model",
-            database="california_schools",
-        )
-
-        ahm = ActionHistoryManager()
-        actions = []
-        recorded_error: MagicMock
-        with (
-            patch.object(
-                GenerationHooks,
-                "_sync_to_storage",
-                new_callable=AsyncMock,
-                side_effect=RuntimeError("sync failed"),
-            ) as mock_sync_to_storage,
-            patch("datus.cli.generation_hooks.logger.error") as recorded_error,
-        ):
-            async for action in node.execute_stream_with_interactions(ahm):
-                actions.append(action)
-
-        # Verify the tool was executed
-        end_gen_results = [r for r in mock_llm_create.tool_results if r["tool"] == "end_semantic_model_generation"]
-        assert len(end_gen_results) >= 1
-        mock_sync_to_storage.assert_awaited_once_with(yaml_path, "semantic", metric_sqls=None)
-
-        interaction_actions = [a for a in actions if a.role == ActionRole.INTERACTION]
-        assert len(interaction_actions) == 0
-        # Find the error log emitted by the end_semantic_model_generation
-        # branch of GenerationHooks. The format string keeps the literal
-        # prefix this test was originally asserting against.
-        logged_messages = [str(call.args[0]) if call.args else "" for call in recorded_error.call_args_list]
-        assert any("Error handling end_semantic_model_generation: sync failed" in msg for msg in logged_messages), (
-            f"expected sync-error log not found; got: {logged_messages}"
-        )
-
-    @pytest.mark.asyncio
-    async def test_e2e_generation_hooks_no_yaml_no_interaction(self, real_agent_config, mock_llm_create, tmp_path):
-        """When end_semantic_model_generation returns no file paths, no interaction is triggered."""
-
-        from agents import FunctionTool
-
-        from datus.agent.node.chat_agentic_node import ChatAgenticNode
-        from datus.cli.generation_hooks import GenerationHooks
-
-        # Tool returns empty file list
-        async def fake_end_gen_empty(ctx, args_str):
-            return {"success": 1, "result": {"semantic_model_files": []}}
-
-        end_gen_tool = FunctionTool(
-            name="end_semantic_model_generation",
-            description="Complete semantic model generation",
-            params_json_schema={
-                "type": "object",
-                "properties": {
-                    "semantic_model_files": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                    }
-                },
-                "required": ["semantic_model_files"],
-            },
-            on_invoke_tool=fake_end_gen_empty,
-        )
-
-        mock_llm_create.reset(
-            responses=[
-                build_tool_then_response(
-                    tool_calls=[
-                        MockToolCall(
-                            name="end_semantic_model_generation",
-                            arguments=json.dumps({"semantic_model_files": []}),
-                        ),
-                    ],
-                    content="No semantic model files generated.",
-                ),
-            ]
-        )
-
-        node = ChatAgenticNode(
-            node_id="e2e_gen_empty",
-            description="E2E generation empty test",
-            node_type=NodeType.TYPE_CHAT,
-            agent_config=real_agent_config,
-        )
-
-        node.tools.append(end_gen_tool)
-        broker = node._get_or_create_broker()
-        generation_hooks = GenerationHooks(broker=broker, agent_config=real_agent_config)
-        node.permission_hooks = generation_hooks
-
-        node.input = ChatNodeInput(
-            user_message="Generate with no output",
-            database="california_schools",
-        )
-
-        ahm = ActionHistoryManager()
-        actions = []
-        async for action in node.execute_stream_with_interactions(ahm):
-            actions.append(action)
-
-        # Tool should have been executed
-        assert len(mock_llm_create.tool_results) >= 1
-
-        # No INTERACTION actions (empty file list = no sync prompt)
-        interaction_actions = [a for a in actions if a.role == ActionRole.INTERACTION]
-        assert len(interaction_actions) == 0
 
 
 # ===========================================================================
@@ -2564,7 +2224,7 @@ class TestGenSQLSetupTools:
         assert isinstance(node.tools, list)
         # Should have at least DB tools
         tool_names = {tool.name for tool in node.tools}
-        assert {"list_tables", "describe_table", "read_query"} <= tool_names
+        assert {"list_tables", "describe_table", "execute_sql"} <= tool_names
 
     def test_setup_tools_with_scoped_context(self, real_agent_config, mock_llm_create):
         """scoped_context config affects context search tool creation."""
@@ -2648,8 +2308,8 @@ class TestGenSQLParseNodeConfig:
             system_prompt="builtin",
             scoped_context=ScopedContext(tables="parent_tables"),
         )
-        with effective_subagent("gen_metrics", override):
-            result = node._parse_node_config(mock_config, "gen_metrics")
+        with effective_subagent("semantic_modeling", override):
+            result = node._parse_node_config(mock_config, "semantic_modeling")
         assert result != {}
         sc = result.get("scoped_context")
         tables = sc.get("tables") if isinstance(sc, dict) else sc.tables
@@ -2832,22 +2492,24 @@ class TestGenSQLSystemPromptToolContext:
         call_kwargs = mock_prompt_manager.render_template.call_args.kwargs
         assert call_kwargs["template_name"] == "gen_sql_system"
         assert "describe_table" in call_kwargs["available_tool_names"]
-        assert "read_query" not in call_kwargs["available_tool_names"]
+        assert "execute_sql" not in call_kwargs["available_tool_names"]
         assert call_kwargs["has_describe_table_tool"] is True
-        assert call_kwargs["has_read_query_tool"] is False
         assert call_kwargs["has_ask_user_tool"] is True
         assert '"sql"' in prompt
         assert '"output"' in prompt
         assert "Do not use `tables`, `explanation`, `mode`, or `validation` as final JSON fields." in prompt
 
-    def test_system_prompt_fallback_preserves_prompt_version(self, real_agent_config, mock_llm_create):
+    def test_system_prompt_fallback_uses_latest_builtin_version(self, real_agent_config, mock_llm_create):
+        # Alias template missing: fall back to the built-in gen_sql_system at its
+        # latest version, ignoring the custom prompt_version (which may not exist
+        # for the built-in template).
         from datus.agent.node.gen_sql_agentic_node import GenSQLAgenticNode
         from datus.prompts.prompt_manager import PromptManager
 
         real_agent_config.agentic_nodes["custom_alias"] = {
             "system_prompt": "custom_alias",
             "tools": "db_tools.describe_table",
-            "prompt_version": "1.1",
+            "prompt_version": "1.0",
             "max_turns": 5,
         }
         node = GenSQLAgenticNode(
@@ -2875,12 +2537,11 @@ class TestGenSQLSystemPromptToolContext:
         first_call = mock_prompt_manager.render_template.call_args_list[0].kwargs
         second_call = mock_prompt_manager.render_template.call_args_list[1].kwargs
         assert first_call["template_name"] == "custom_alias_system"
-        assert first_call["version"] == "1.1"
+        assert first_call["version"] == "1.0"
         assert second_call["template_name"] == "gen_sql_system"
-        assert second_call["version"] == "1.1"
+        assert second_call["version"] is None
         assert '"sql"' in prompt
         assert '"output"' in prompt
-        assert "Do not use `tables`, `explanation`, `mode`, or `validation` as final JSON fields." in prompt
 
     def test_system_prompt_context_uses_actual_tools(self, real_agent_config, mock_llm_create):
         from datus.agent.node.gen_sql_agentic_node import GenSQLAgenticNode
@@ -2907,9 +2568,8 @@ class TestGenSQLSystemPromptToolContext:
 
         call_kwargs = mock_prompt_manager.render_template.call_args.kwargs
         assert "describe_table" in call_kwargs["available_tool_names"]
-        assert "read_query" not in call_kwargs["available_tool_names"]
+        assert "execute_sql" not in call_kwargs["available_tool_names"]
         assert call_kwargs["has_describe_table_tool"] is True
-        assert call_kwargs["has_read_query_tool"] is False
         assert call_kwargs["has_ask_user_tool"] is True
 
     def test_system_prompt_context_includes_configured_mcp_tool_names(self, real_agent_config, mock_llm_create):

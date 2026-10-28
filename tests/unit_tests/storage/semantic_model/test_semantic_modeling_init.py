@@ -1,0 +1,207 @@
+# Copyright 2025-present DatusAI, Inc.
+# Licensed under the Apache License, Version 2.0.
+
+"""Tests for the unified Dosi bootstrap orchestration."""
+
+import csv
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock, call, patch
+
+import pytest
+
+from datus.schemas.semantic_agentic_node_models import SourceQueryEvidence
+from datus.storage.semantic_model.semantic_modeling_init import (
+    SEMANTIC_MODELING_RESPONSE_ACTION_TYPE,
+    _build_batch_prompt,
+    _load_source_queries,
+    _run_semantic_modeling_batch,
+    init_success_story_semantic_modeling_async,
+)
+
+
+def _query(index: int) -> SourceQueryEvidence:
+    return SourceQueryEvidence(
+        question=f"Question {index}",
+        sql=f"SELECT {index}",
+    )
+
+
+def _config() -> MagicMock:
+    config = MagicMock()
+    config.current_db_config.return_value = SimpleNamespace(catalog="", database="db", schema="")
+    config.runtime_db_context.return_value = {}
+    return config
+
+
+def test_csv_batch_keeps_full_sql_and_skips_empty_rows(tmp_path):
+    source = tmp_path / "stories.csv"
+    sql = "SELECT market, SUM(amount) total\nFROM orders GROUP BY market;\nSELECT COUNT(*) FROM orders;"
+    with source.open("w", newline="") as stream:
+        writer = csv.writer(stream)
+        writer.writerow(["question", "sql"])
+        writer.writerows([["Revenue", sql], ["", "SELECT 1"], ["Empty", ""], ["Blank", "  "]])
+
+    queries, error = _load_source_queries(str(source))
+
+    assert not error
+    assert [(query.question, query.sql) for query in queries] == [("Revenue", sql), ("", "SELECT 1")]
+    prompt = _build_batch_prompt(queries)
+    assert sql in prompt and "Question: Revenue" in prompt and "Query 2:" in prompt
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("build_mode", ["overwrite", "incremental"])
+async def test_batches_complete_semantic_modeling_calls_in_groups_of_five(build_mode):
+    config = _config()
+    queries = [_query(index) for index in range(1, 13)]
+    run_batch = AsyncMock(
+        side_effect=[
+            (True, "", {"success": True, "status": "generated", "semantic_models": ["models/domain.yml"]}),
+            (True, "", {"success": True, "status": "generated", "semantic_models": ["models/domain.yml"]}),
+            (True, "", {"success": True, "status": "generated", "semantic_models": ["models/domain.yml"]}),
+        ]
+    )
+    semantic_rag = MagicMock()
+    semantic_rag.get_size.return_value = 3
+    metric_rag = MagicMock()
+    metric_rag.get_metrics_size.return_value = 8
+
+    with (
+        patch(
+            "datus.storage.semantic_model.semantic_modeling_init._load_source_queries",
+            return_value=(queries, ""),
+        ),
+        patch("datus.storage.semantic_model.semantic_modeling_init._prepare_storage"),
+        patch("datus.storage.semantic_model.semantic_modeling_init._run_semantic_modeling_batch", run_batch),
+        patch("datus.storage.semantic_model.semantic_modeling_init.SemanticDatasetRAG", return_value=semantic_rag),
+        patch("datus.storage.semantic_model.semantic_modeling_init.MetricRAG", return_value=metric_rag),
+    ):
+        success, error, result = await init_success_story_semantic_modeling_async(
+            config,
+            "stories.csv",
+            build_mode=build_mode,
+            batch_size=5,
+        )
+
+    assert success is True
+    assert error == ""
+    assert [len(call.args[1]) for call in run_batch.await_args_list] == [5, 5, 2]
+    assert run_batch.await_args_list[0].kwargs["target_hint"] == ""
+    assert run_batch.await_args_list[1].kwargs["target_hint"] == "models/domain.yml"
+    assert all(item.kwargs["authoring_scope"] == "full" for item in run_batch.await_args_list)
+    assert result["batches_completed"] == 3
+    assert result["sql_entries_covered"] == 12
+
+
+@pytest.mark.asyncio
+async def test_datasets_only_scope_is_forwarded_to_every_batch():
+    config = _config()
+    run_batch = AsyncMock(
+        return_value=(True, "", {"success": True, "status": "generated", "semantic_models": ["models/domain.yml"]})
+    )
+    semantic_rag = MagicMock(get_size=MagicMock(return_value=2))
+    metric_rag = MagicMock(get_metrics_size=MagicMock(return_value=4))
+
+    with (
+        patch(
+            "datus.storage.semantic_model.semantic_modeling_init._load_source_queries",
+            return_value=([_query(1)], ""),
+        ),
+        patch("datus.storage.semantic_model.semantic_modeling_init._prepare_storage"),
+        patch("datus.storage.semantic_model.semantic_modeling_init._run_semantic_modeling_batch", run_batch),
+        patch("datus.storage.semantic_model.semantic_modeling_init.SemanticDatasetRAG", return_value=semantic_rag),
+        patch("datus.storage.semantic_model.semantic_modeling_init.MetricRAG", return_value=metric_rag),
+    ):
+        success, error, result = await init_success_story_semantic_modeling_async(
+            config,
+            "stories.csv",
+            authoring_scope="datasets",
+        )
+
+    assert success is True
+    assert error == ""
+    assert result["authoring_scope"] == "datasets"
+    assert run_batch.await_args.kwargs["authoring_scope"] == "datasets"
+
+
+@pytest.mark.asyncio
+async def test_batch_accepts_no_semantic_change_as_idempotent_success():
+    config = _config()
+    node = MagicMock()
+
+    async def execute_stream(_history):
+        yield SimpleNamespace(
+            action_type=SEMANTIC_MODELING_RESPONSE_ACTION_TYPE,
+            status="success",
+            messages="No semantic change is required.",
+            output={
+                "success": True,
+                "status": "skipped",
+                "skip_reason": "no_semantic_change",
+                "semantic_models": [],
+            },
+        )
+
+    node.execute_stream = execute_stream
+    event_helper = MagicMock()
+    with patch(
+        "datus.storage.semantic_model.semantic_modeling_init.SemanticModelingAgenticNode",
+        return_value=node,
+    ):
+        success, error, result = await _run_semantic_modeling_batch(
+            config,
+            [_query(1)],
+            subject_tree=None,
+            target_hint="",
+            event_helper=event_helper,
+            batch_index=0,
+            action_callback=None,
+        )
+
+    assert success is True
+    assert error == ""
+    assert result["status"] == "skipped"
+    assert "Question: Question 1\nSQL:\nSELECT 1" in node.input.user_message
+    event_helper.item_completed.assert_called_once_with("batch-1", sql_count=1)
+
+
+@pytest.mark.asyncio
+async def test_stops_after_first_failed_batch():
+    config = _config()
+    queries = [_query(index) for index in range(1, 13)]
+    run_batch = AsyncMock(
+        side_effect=[
+            (True, "", {"success": True, "status": "generated", "semantic_models": ["models/domain.yml"]}),
+            (False, "no structured result", None),
+        ]
+    )
+
+    with (
+        patch(
+            "datus.storage.semantic_model.semantic_modeling_init._load_source_queries",
+            return_value=(queries, ""),
+        ),
+        patch("datus.storage.semantic_model.semantic_modeling_init._prepare_storage"),
+        patch("datus.storage.semantic_model.semantic_modeling_init._run_semantic_modeling_batch", run_batch),
+    ):
+        success, error, result = await init_success_story_semantic_modeling_async(
+            config,
+            "stories.csv",
+            batch_size=5,
+        )
+
+    assert success is False
+    assert "batch 2/3 failed" in error
+    assert run_batch.await_count == 2
+    assert result["batches_completed"] == 1
+    assert result["sql_entries_covered"] == 5
+
+
+def test_storage_setup_preserves_existing_artifact_projections():
+    from datus.storage.semantic_model.semantic_modeling_init import _prepare_storage
+
+    config = _config()
+
+    _prepare_storage(config)
+
+    assert config.check_init_storage_config.call_args_list == [call("semantic_model"), call("metric")]

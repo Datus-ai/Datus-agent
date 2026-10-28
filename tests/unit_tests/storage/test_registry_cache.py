@@ -101,7 +101,9 @@ class TestGetStorageLRUCache:
             store = get_storage(MetricStorage, "metric", project="my_project", datasource_id="ds1")
 
         assert store.subject_tree is project_tree
-        assert call("my_project", "ds1") in mock_tree.call_args_list
+        # The third component is the table prefix, which joined the cache key so
+        # one process can serve two table sets — "" here, no defaults configured.
+        assert call("my_project", "ds1", "") in mock_tree.call_args_list
 
     def test_datasource_scopes_wrapper_not_backend_namespace(self, reset_global_singletons):
         """Different datasource wrappers share the same project backend namespace."""

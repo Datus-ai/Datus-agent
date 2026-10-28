@@ -4,13 +4,27 @@ The agent configuration defines the core settings for your Datus Agent, includin
 
 ## Configuration Structure
 
+### Logging
+
+Configure process logging in `agent.yml`:
+
+```yaml
+agent:
+  logging:
+    level: INFO     # DEBUG, INFO, WARNING, ERROR, CRITICAL; case insensitive
+```
+
+The level priority is explicit `--log-level` / `--debug` → `DATUS_LOG_LEVEL` → `agent.logging.level` → `INFO`. `--debug` means `--log-level DEBUG`; specifying both is an error. For example, `datus-api --config conf/agent.yml --log-level WARNING` applies WARNING to both API and Agent business logs. The CLI, API, Gateway, MCP server, web chatbot, and benchmark entrypoints share this resolution. API workers inherit the selected level; rebuilding an Agent does not reset it. Embedded applications can call `configure_logging(agent_config=config)` at startup.
+
+The file handler enforces the selected threshold even for third-party loggers. Existing third-party noise suppression remains. Log files use plain text with event fields rendered as key-value pairs; interactive console output writes to stderr. Logging is independent of tracing. Optional `agent.logging.redact` accepts `enabled`, `fields`, and regex `patterns`, with credential-field redaction enabled by default. See [model-call and tool observability](../develop/observability.md#model-calls-and-available-tools) for the collected events and trace controls.
+
 ### LLM Configuration (Two-Tier Provider Model)
 
 LLM selection uses a two-tier system. Most users only need the provider-level configuration; custom entries are for self-hosted or private endpoints.
 
 #### Provider-Level Configuration (Preferred)
 
-Configure credentials under `agent.providers.<name>`. Available models and metadata are loaded from `conf/providers.yml` automatically. Use the [`/model`](../cli/model_command.md) slash command in the CLI to switch between providers and models interactively.
+Configure credentials under `agent.providers.<name>`. Available models and metadata are loaded from `conf/providers.yml` automatically. Use the [`/model`](../cli/other_commands.md#model) slash command in the CLI to switch between providers and models interactively.
 
 ```yaml
 agent:
@@ -88,6 +102,8 @@ agent:
 
 Built-in code → name mapping (injected into the system prompt): `en` → English, `zh` / `zh-cn` → Chinese, `zh-tw` → Traditional Chinese, `ja` → Japanese, `ko` → Korean, `es` → Spanish, `fr` → French, `de` → German, `pt` → Portuguese, `ru` → Russian, `it` → Italian. Unknown codes are used verbatim.
 
+For every mapped code the directive is also restated **in that language**, next to the English name line — a lone English meta-instruction competes with dozens of turns of English schema/SQL tool output, and smaller models drift out of it. Unknown codes keep the English line only.
+
 Chat API requests can override this per task by sending a `language` field in the request body (see [Chat API](../API/chat.md)). CLI usage inherits the yaml default.
 
 ### Models Configuration (Custom Entries) {#models-configuration}
@@ -101,6 +117,7 @@ The `agent.models` section is used for self-hosted or private-deployment LLM end
 - **`base_url`** — API endpoint URL
 - **`api_key`** — API key (supports `${ENV_VAR}` substitution)
 - **`model`** — Model name / SKU
+- **`ssl_verify`** *(optional)* — TLS verification for this endpoint: `true` (default), `false` to disable (discouraged), a path to a CA-bundle PEM, or the CA certificate content inline (a value starting with `-----BEGIN CERTIFICATE-----`) to trust a private/self-signed gateway CA. Takes priority over the `SSL_VERIFY` / `SSL_CERT_FILE` environment variables. See [Private or self-signed certificates](#private-or-self-signed-certificates).
 
 ```yaml
 agent:
@@ -123,6 +140,122 @@ agent:
     api_key: "sk-your-actual-key-here"
     ```
 
+
+### Context capacity and large tool results
+
+Each model request reserves its maximum output and a safety margin of
+`max(2048, ceil(context_length * 0.05))`. All three settings below are optional;
+existing configurations do not need new fields:
+
+| Setting | When omitted |
+| --- | --- |
+| `context_length` | Use existing model specifications or the provider catalogue; fall back to a `262144` (256K) token budget if unknown |
+| `max_tokens` | Use the model's output specification; fall back to `8192` if unknown. Transports with an output cap also leave room for input and the safety margin, so small windows may get a lower default |
+| `tokenizer_ref` | Use LiteLLM counting for known OpenAI models; otherwise reserve UTF-8 bytes, including for private aliases, without downloading a tokenizer |
+
+The fallback window is a local budget assumption, not automatic detection of
+server capacity. Private deployments can override any of these settings. Set
+the actual limit for a smaller window; a larger configured window or a matching
+tokenizer can improve capacity utilization:
+
+```yaml
+agent:
+  models:
+    warehouse_llm:
+      type: openai
+      base_url: https://llm.example.com/v1
+      api_key: ${LLM_API_KEY}
+      model: warehouse-model
+      context_length: 262144
+      max_tokens: 8192
+      tokenizer_ref: /opt/model/tokenizer.json
+```
+
+`context_length` and `max_tokens` must be positive integers. A per-call output
+limit overrides the configured default. `tokenizer_ref` accepts a local Hugging
+Face tokenizer JSON, a Hugging Face tokenizer reference, or `tiktoken:<encoding>`
+when that encoding matches the deployment. Local files must be readable by the
+Datus process. Omitted settings use defaults; explicitly invalid values or a
+tokenizer that cannot be loaded still produce an error.
+Local counting includes serialized messages, instructions, tools and output
+schemas, plus framing allowance; a deployment with different templates or
+routing limits can still reject a request and should be configured accordingly.
+UTF-8 byte estimates can trigger compaction earlier and are not measured provider
+token usage. Output caps above a known maximum are rejected explicitly.
+Remote image URLs and opaque file inputs require extracted content or a provider
+token count; counting only their URL or file ID cannot establish request capacity.
+
+Large tool results are preserved in the session archive; the model receives a
+bounded view and can continue with `read_tool_result`. Original Python tool
+returns and action/UI results retain their existing formats. Source truncation
+and analysis completeness are separate from archive pagination. Disabling
+`agent.compact` does not disable result bounding or the final send check.
+
+The Codex subscription transport has no output-limit field in its wire protocol.
+It retains that protocol and reserves the known model output ceiling, including
+provider catalogue metadata, rather than pretending a smaller requested cap is
+enforced. Standard API transports send the resolved output limit explicitly.
+
+### Private or self-signed certificates {#private-or-self-signed-certificates}
+
+When pointing Datus at an internal LLM gateway or staging endpoint whose TLS
+certificate is signed by a **private CA** (one not in the public trust store),
+requests fail with:
+
+```text
+litellm.InternalServerError: AnthropicException - [SSL: CERTIFICATE_VERIFY_FAILED]
+certificate verify failed: self-signed certificate in certificate chain
+```
+
+The cause is that Python's bundled `certifi` trust store only contains public
+CAs — it does not read the OS trust store — so a private CA is never trusted
+automatically. Point Datus at the CA bundle instead of disabling verification:
+
+```yaml
+agent:
+  models:
+    claude-staging:
+      type: claude
+      base_url: https://ai.internal.example.com
+      api_key: ${ANTHROPIC_API_KEY}
+      model: claude-3-7-sonnet
+      ssl_verify: /etc/ssl/internal-ca.pem   # trust the private CA; verification stays ON
+```
+
+`ssl_verify` also accepts the **CA certificate content inline** (any value
+starting with `-----BEGIN CERTIFICATE-----`), so a private CA can be supplied
+without a file on disk — useful when the config is generated (e.g. from a
+database) rather than deployed alongside a `.pem`:
+
+```yaml
+      ssl_verify: |
+        -----BEGIN CERTIFICATE-----
+        MIIB...snip...IDAQAB
+        -----END CERTIFICATE-----
+```
+
+The native client loads inline content into an in-memory trust store; the
+litellm code path spills it to a temp file in a private per-process directory
+(it only accepts a CA bundle by path).
+
+**Resolution precedence** (first match wins):
+
+```text
+ssl_verify (agent.yml)  →  SSL_VERIFY env  →  SSL_CERT_FILE env  →  certifi default
+```
+
+- `ssl_verify` is the project-level setting and takes priority over the env vars.
+- The standard `SSL_CERT_FILE` / `SSL_VERIFY` environment variables work as a
+  no-config alternative (e.g. when IT provisions the CA path machine-wide).
+- To extract a server's CA chain:
+  `openssl s_client -showcerts -connect host:443 </dev/null | openssl x509 -outform PEM > ca.pem`
+
+!!! warning "Never disable verification"
+    `ssl_verify: false` (or `SSL_VERIFY=false`) turns TLS certificate
+    verification **off** entirely, leaving the connection exposed to
+    man-in-the-middle attacks. **Do not disable verification** — always resolve
+    certificate problems by trusting the CA bundle instead.
+
 ## Supported LLM Providers
 
 Providers are defined in `conf/providers.yml` and activated by adding credentials under `agent.providers`. Use the `/model` command to configure and switch providers interactively.
@@ -136,9 +269,9 @@ Providers are defined in `conf/providers.yml` and activated by adding credential
 | Provider | Typical models | Interface Type | Auth |
 |----------|----------------|----------------|------|
 | `openai` | `gpt-5.2`, `gpt-4.1`, `o3` | `openai` | API key |
-| `deepseek` | `deepseek-chat`, `deepseek-reasoner` | `deepseek` | API key |
+| `deepseek` | `deepseek-v4-pro`, `deepseek-v4-flash` | `deepseek` | API key |
 | `claude` | `claude-sonnet-4-5`, `claude-opus-4-5` | `claude` | API key |
-| `kimi` | `kimi-k2.5`, `kimi-k2-thinking` | `kimi` | API key |
+| `kimi` | `kimi-k3`, `kimi-k2.6` | `kimi` | API key |
 | `qwen` | `qwen3-max`, `qwen3-coder-plus` | `openai` | API key |
 | `gemini` | `gemini-2.5-flash`, `gemini-2.5-pro` | `gemini` | API key |
 | `minimax` | `MiniMax-M2.7`, `MiniMax-M2.5` | `minimax` | API key |
@@ -187,7 +320,7 @@ For OpenAI, DeepSeek, Claude, Kimi, Qwen, Gemini, and OpenRouter, the configurat
 
 The current implementation also auto-applies fixed parameter overrides for a few models:
 
-- `kimi-k2.5`: `temperature: 1.0`, `top_p: 0.95`
+- `kimi-k3`, `kimi-k2.6`: `temperature: 1.0`, `top_p: 0.95`
 - `qwen3-coder-plus`: `temperature: 1.0`, `top_p: 0.95`
 
 ### Provider Configuration Examples
@@ -275,9 +408,10 @@ The runtime currently reads these commonly used fields from `agentic_nodes` entr
 - `workspace_root`
 - `scoped_context`
 - `subagents`
-- `semantic_adapter` for semantic-model and metrics agents
 - `bi_platform` for dashboard agents
 - `scheduler_service` for scheduler agents
+
+Dosi is the built-in semantic engine and needs no engine selection. An old `agent.services.semantic_layer` entry is ignored with a warning.
 
 `scoped_kb_path` is deprecated. New configs use shared global storage with query-time filters instead of per-subagent scoped KB directories.
 
@@ -338,10 +472,8 @@ agent:
       bi_platform: superset
       max_turns: 30
 
-    semantic_metrics:
-      node_class: gen_metrics
+    semantic_modeling:
       model: claude
-      semantic_adapter: metricflow
       max_turns: 30
 
     etl_scheduler:

@@ -18,6 +18,7 @@ from unittest import mock
 
 import pytest
 
+from datus.cli.input_modes import MODE_CHROME, InputMode
 from datus.cli.tui.app import (
     EXIT_SENTINEL,
     DatusApp,
@@ -190,6 +191,115 @@ class TestInputPrompt:
         # Defensive fallback is exercised and still produces a usable prompt.
         assert rendered == [("class:input-prompt", "> ")]
 
+    def test_prompt_shows_red_sql_marker_in_sql_mode(self) -> None:
+        app = DatusApp(
+            status_tokens_fn=lambda: [],
+            dispatch_fn=lambda text: None,
+            input_mode_fn=lambda: "sql",
+        )
+        assert app._get_input_prompt() == [("class:input-prompt.sql", "sql> ")]
+
+    def test_prompt_shows_yellow_bash_marker_in_bash_mode(self) -> None:
+        app = DatusApp(
+            status_tokens_fn=lambda: [],
+            dispatch_fn=lambda text: None,
+            input_mode_fn=lambda: "bash",
+        )
+        assert app._get_input_prompt() == [("class:input-prompt.bash", "bash> ")]
+
+    def test_sql_prompt_takes_precedence_over_busy(self) -> None:
+        app = DatusApp(
+            status_tokens_fn=lambda: [],
+            dispatch_fn=lambda text: None,
+            input_mode_fn=lambda: "sql",
+        )
+        app.agent_running.set()
+        # SQL mode wins over the busy style so the user always sees ``sql>``.
+        assert app._get_input_prompt() == [("class:input-prompt.sql", "sql> ")]
+
+    def test_unknown_mode_falls_back_to_chat_prompt(self) -> None:
+        app = DatusApp(
+            status_tokens_fn=lambda: [],
+            dispatch_fn=lambda text: None,
+            input_mode_fn=lambda: "garbage",
+        )
+        assert app._get_input_prompt() == [("class:input-prompt", "> ")]
+
+    def test_collapsed_paste_prompt_reflects_execution_mode(self) -> None:
+        # Enter still executes in SQL/bash mode even with pasted content
+        # collapsed, so the collapsed prompt must keep the mode marker rather
+        # than misleadingly showing the green chat ``> ``.
+        app = DatusApp(
+            status_tokens_fn=lambda: [],
+            dispatch_fn=lambda text: None,
+            input_mode_fn=lambda: "sql",
+        )
+        app._paste_collapsed = True
+        assert app._get_input_prompt() == [
+            ("class:input-prompt.sql", "sql> "),
+            ("class:input-prompt.hint", "(Ctrl+E to expand) "),
+        ]
+
+    def test_collapsed_paste_prompt_stays_chat_in_chat_mode(self) -> None:
+        app = DatusApp(
+            status_tokens_fn=lambda: [],
+            dispatch_fn=lambda text: None,
+        )
+        app._paste_collapsed = True
+        assert app._get_input_prompt() == [
+            ("class:input-prompt", "> "),
+            ("class:input-prompt.hint", "(Ctrl+E to expand) "),
+        ]
+
+
+class TestModeChrome:
+    """Non-chat modes paint coloured chrome around the input: separators, hint line."""
+
+    @staticmethod
+    def _app_with_mode():
+        state = {"mode": "chat"}
+        app = DatusApp(
+            status_tokens_fn=lambda: [],
+            dispatch_fn=lambda text: None,
+            input_mode_fn=lambda: state["mode"],
+        )
+        return app, state
+
+    def test_plain_separator_uses_static_style(self) -> None:
+        app, _ = self._app_with_mode()
+        sep = app._make_separator()
+        # Plain separators keep a static string style (no per-paint callable).
+        assert sep.style == "class:separator"
+
+    def test_mode_aware_separator_tracks_active_mode(self) -> None:
+        app, state = self._app_with_mode()
+        sep = app._make_separator(mode_aware=True)
+        # Style is a callable re-evaluated every paint.
+        assert callable(sep.style)
+        assert sep.style() == "class:separator"
+        state["mode"] = "sql"
+        assert sep.style() == "class:separator.sql"
+        state["mode"] = "bash"
+        assert sep.style() == "class:separator.bash"
+
+    def test_mode_hint_window_visibility_tracks_mode(self) -> None:
+        app, state = self._app_with_mode()
+        assert bool(app._mode_hint_window.filter()) is False
+        state["mode"] = "sql"
+        assert bool(app._mode_hint_window.filter()) is True
+        state["mode"] = "bash"
+        assert bool(app._mode_hint_window.filter()) is True
+
+    def test_mode_hint_text_follows_mode(self) -> None:
+        app, state = self._app_with_mode()
+        control = app._mode_hint_window.content.content
+        state["mode"] = "sql"
+        tokens = control.text()
+        assert tokens == [("class:sql-mode-hint", MODE_CHROME[InputMode.SQL].hint)]
+        state["mode"] = "bash"
+        tokens = control.text()
+        assert tokens == [("class:bash-mode-hint", MODE_CHROME[InputMode.BASH].hint)]
+
 
 class TestKeyBindingsContract:
     """Verify Enter's dispatch-vs-swallow contract.
@@ -238,6 +348,49 @@ class TestKeyBindingsContract:
 
         buffer.reset.assert_called_once()
         assert tui_app._test_dispatch_log == ["SELECT 1"]
+
+    def test_enter_after_backslash_inserts_newline_not_submit(self, tui_app: DatusApp) -> None:
+        """``\\`` immediately before the cursor + Enter continues the line."""
+        handler = self._enter_handler(tui_app)
+
+        buffer = mock.MagicMock()
+        buffer.complete_state = None
+        buffer.document.char_before_cursor = "\\"
+
+        event = mock.MagicMock()
+        event.app.current_buffer = buffer
+
+        handler(event)
+
+        # The trailing backslash is removed and replaced with a newline; the
+        # input is NOT submitted or reset.
+        buffer.delete_before_cursor.assert_called_once_with(1)
+        buffer.insert_text.assert_called_once_with("\n")
+        buffer.reset.assert_not_called()
+        assert tui_app._test_dispatch_log == []
+
+    def test_enter_backslash_ignored_while_completion_open(self, tui_app: DatusApp) -> None:
+        """With a completion menu open, Enter accepts the pick — the ``\\``
+        newline shortcut must not steal the keypress."""
+        handler = self._enter_handler(tui_app)
+
+        completion = mock.MagicMock()
+        complete_state = mock.MagicMock()
+        complete_state.current_completion = completion
+
+        buffer = mock.MagicMock()
+        buffer.complete_state = complete_state
+        buffer.document.char_before_cursor = "\\"
+        buffer.text = "SELECT \\"
+
+        event = mock.MagicMock()
+        event.app.current_buffer = buffer
+
+        handler(event)
+
+        # Newline shortcut skipped: completion applied, no manual newline.
+        buffer.apply_completion.assert_called_once_with(completion)
+        buffer.insert_text.assert_not_called()
 
     def test_enter_applies_active_completion_and_submits(self, tui_app: DatusApp) -> None:
         """Enter with a highlighted completion applies AND submits in one press.
@@ -411,6 +564,35 @@ def test_set_input_text_replaces_buffer(tui_app: DatusApp) -> None:
 
     # Calling with empty string must clear any prior prefill cleanly.
     tui_app.set_input_text("")
+    assert tui_app.input_buffer.text == ""
+
+
+def test_escape_timeout_is_near_immediate(tui_app: DatusApp) -> None:
+    assert tui_app.application.ttimeoutlen == pytest.approx(0.01)
+
+
+def test_cancelled_input_restores_after_dispatch_and_first_enter_submits(tui_app: DatusApp) -> None:
+    tui_app.agent_running.set()
+    tui_app.restore_input_after_dispatch("edit this")
+
+    # Restoration is intentionally invisible while Enter would still take
+    # the running-agent queue path.
+    assert tui_app.input_buffer.text == ""
+
+    finished = Future()
+    finished.set_result(None)
+    tui_app._on_dispatch_done(finished)
+    assert not tui_app.agent_running.is_set()
+    assert tui_app.input_buffer.text == "edit this"
+
+    from prompt_toolkit.keys import Keys
+
+    handler = _binding_for_key(tui_app, Keys.ControlM)
+    event = mock.MagicMock()
+    event.app.current_buffer = tui_app.input_buffer
+    handler(event)
+
+    assert tui_app._test_dispatch_log == ["edit this"]
     assert tui_app.input_buffer.text == ""
 
 

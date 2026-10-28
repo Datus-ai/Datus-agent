@@ -34,11 +34,13 @@ from datus.agent.node.visual_artifact._visual_artifact_finalize import (
     collect_query_briefs,
     collect_query_previews,
     consistency_check,
+    finalize_stage_text,
     parse_finalize_output,
     run_finalize_analysis,
     run_intent_curation,
     update_manifest_key_tables,
 )
+from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
 from datus.schemas.analysis_artifacts import (
     FinalizeAnalysisOutput,
     Insight,
@@ -530,6 +532,36 @@ class TestBuildFinalizePrompt:
             existing_suggested_questions=None,
         )
 
+    def test_unpinned_language_follows_the_user_prompts(self, report_prompt: str):
+        """finalize has no system prompt, so the language rule must live in the
+        prompt itself — otherwise an English instruction block gets English
+        chips for a Chinese artifact."""
+        assert "## OUTPUT LANGUAGE" in report_prompt
+        assert "SAME language" in report_prompt
+        # The rule has to name the user-visible fields, since slugs / kinds in
+        # the same object must stay machine-readable.
+        assert "`suggested_questions[].question`" in report_prompt
+        assert "`insights[].title`" in report_prompt
+
+    def test_pinned_language_directive_is_inlined(self):
+        directive = "# Response Language\n- Use: Chinese (zh)"
+        prompt = build_finalize_prompt(
+            artifact_kind="dashboard",
+            intent_md="请做一个示例看板",
+            query_briefs=[],
+            query_previews=[],
+            action_history_hints=[],
+            existing_insights=None,
+            existing_suggested_questions=None,
+            language_directive=directive,
+        )
+
+        assert directive in prompt
+        # The pinned branch still carries the field-scope note.
+        assert "`suggested_questions[].question`" in prompt
+        # ...and drops the "infer it from the prompts" fallback.
+        assert "SAME language" not in prompt
+
     def test_prompt_announces_kind_field_in_schema(self, report_prompt: str):
         # Schema section must mention the kind field by name so the LLM
         # actually emits it.
@@ -709,7 +741,7 @@ class TestBakeKeyTablesSchema:
         analysis_dir.mkdir()
         warning = bake_key_tables_schema(
             db_func_tool=None,
-            key_tables=["jeff_shop.raw_orders"],
+            key_tables=["sample_shop.raw_orders"],
             analysis_dir=analysis_dir,
         )
         assert warning is None
@@ -829,7 +861,7 @@ class TestBakeKeyTablesSchema:
         analysis_dir.mkdir()
         tool = _mock_describe_table_tool(
             {
-                "jeff_shop.raw_orders": {
+                "sample_shop.raw_orders": {
                     "result": {
                         "columns": [
                             {"name": "order_id", "type": "bigint", "comment": "primary key"},
@@ -845,7 +877,7 @@ class TestBakeKeyTablesSchema:
         )
         warning = bake_key_tables_schema(
             db_func_tool=tool,
-            key_tables=["jeff_shop.raw_orders"],
+            key_tables=["sample_shop.raw_orders"],
             analysis_dir=analysis_dir,
         )
         assert warning is None
@@ -854,7 +886,7 @@ class TestBakeKeyTablesSchema:
         assert out == {
             "tables": [
                 {
-                    "name": "jeff_shop.raw_orders",
+                    "name": "sample_shop.raw_orders",
                     "description": "canonical orders fact table",
                     "columns": [
                         {
@@ -1169,14 +1201,12 @@ class TestUpdateManifestKeyTables:
 
     def test_missing_manifest_returns_error_string(self, tmp_path: Path):
         err = update_manifest_key_tables(tmp_path / "nope.json", ["Account"])
-        assert err is not None
         assert "manifest missing" in err
 
     def test_corrupt_manifest_returns_error_string(self, tmp_path: Path):
         path = tmp_path / "manifest.json"
         path.write_text("{not-json", encoding="utf-8")
         err = update_manifest_key_tables(path, ["Account"])
-        assert err is not None
         assert "unreadable" in err
 
 
@@ -1375,7 +1405,6 @@ class TestRunIntentCuration:
             _curation_model(returns=RuntimeError("provider 500")),
             path,
         )
-        assert result is not None
         assert "LLM call failed" in result
         assert path.read_text(encoding="utf-8") == _ORIGINAL_INTENT
 
@@ -1383,7 +1412,6 @@ class TestRunIntentCuration:
         path = tmp_path / "intent.md"
         path.write_text(_ORIGINAL_INTENT, encoding="utf-8")
         result = run_intent_curation(_curation_model(returns="   \n  "), path)
-        assert result is not None
         assert "empty body" in result
         assert path.read_text(encoding="utf-8") == _ORIGINAL_INTENT
 
@@ -1396,7 +1424,6 @@ class TestRunIntentCuration:
             _curation_model(returns="I'm sorry, I cannot perform this task."),
             path,
         )
-        assert result is not None
         assert "no '### ' heading" in result
         assert path.read_text(encoding="utf-8") == _ORIGINAL_INTENT
 
@@ -1407,7 +1434,6 @@ class TestRunIntentCuration:
         path.write_text(_ORIGINAL_INTENT, encoding="utf-8")
         tiny = "### [x] mode: y\n> z\n"
         result = run_intent_curation(_curation_model(returns=tiny), path)
-        assert result is not None
         assert "too short" in result
         assert path.read_text(encoding="utf-8") == _ORIGINAL_INTENT
 
@@ -1418,6 +1444,43 @@ class TestRunIntentCuration:
 
 
 class TestRunFinalizeAnalysis:
+    def test_get_metric_result_reaches_finalize_prompt(self, tmp_path: Path):
+        artifact_dir, queries_dir, analysis_dir = _make_artifact_layout(tmp_path)
+        model = Mock(spec=["generate_with_json_output"])
+        model.generate_with_json_output.return_value = _full_finalize_response()
+        actions = [
+            ActionHistory(
+                action_id="metric-success",
+                role=ActionRole.TOOL,
+                action_type="get_metric",
+                input={"function_name": "get_metric", "arguments": {"name": "revenue"}},
+                output={"result": {"name": "revenue"}},
+                status=ActionStatus.SUCCESS,
+            ),
+            ActionHistory(
+                action_id="metric-failed",
+                role=ActionRole.TOOL,
+                action_type="get_metric",
+                input={"function_name": "get_metric", "arguments": {"name": "missing_metric"}},
+                status=ActionStatus.FAILED,
+            ),
+        ]
+
+        run_finalize_analysis(
+            model=model,
+            artifact_kind="report",
+            artifact_dir=artifact_dir,
+            queries_dir=queries_dir,
+            analysis_dir=analysis_dir,
+            actions=actions,
+        )
+
+        prompt = model.generate_with_json_output.call_args.args[0]
+        assert "## SUBJECT-LIBRARY TOOL CALLS (reminder)" in prompt
+        assert '"tool": "get_metric"' in prompt
+        assert '"name": "revenue"' in prompt
+        assert "missing_metric" not in prompt
+
     def test_end_to_end_writes_expected_files(self, tmp_path: Path):
         artifact_dir, queries_dir, analysis_dir = _make_artifact_layout(tmp_path)
 
@@ -1444,6 +1507,28 @@ class TestRunFinalizeAnalysis:
         refs = json.loads((analysis_dir / "subject_refs.json").read_text(encoding="utf-8"))
         assert any(m["path"] == ["Revenue"] and m["name"] == "revenue_by_region" for m in refs["metrics"])
         assert result["subject_refs_count"]["metrics"] == 1
+
+    def test_language_directive_reaches_the_llm_prompt(self, tmp_path: Path):
+        """The node resolves ``agent_config.language`` into a directive; it has
+        to land in the finalize prompt, since this LLM call carries no system
+        prompt of its own."""
+        artifact_dir, queries_dir, analysis_dir = _make_artifact_layout(tmp_path)
+
+        model = Mock(spec=["generate_with_json_output", "generate"])
+        model.generate_with_json_output.return_value = _full_finalize_response()
+
+        run_finalize_analysis(
+            model=model,
+            artifact_kind="report",
+            artifact_dir=artifact_dir,
+            queries_dir=queries_dir,
+            analysis_dir=analysis_dir,
+            actions=[],
+            language_directive="# Response Language\n- Use: Chinese (zh)",
+        )
+
+        prompt = model.generate_with_json_output.call_args.args[0]
+        assert "- Use: Chinese (zh)" in prompt
 
     def test_end_to_end_curates_intent_md_when_present(self, tmp_path: Path):
         """When intent.md exists, finalize triggers run_intent_curation
@@ -2025,6 +2110,7 @@ class TestRunFinalizeSkipNarrative:
         artifact_dir, queries_dir, analysis_dir = _make_artifact_layout(
             tmp_path, sql_body="SELECT region FROM finbench.main.Account"
         )
+        self._seed_existing_narrative(analysis_dir)
 
         result = run_finalize_analysis(
             model=Mock(spec=["generate_with_json_output", "generate"]),
@@ -2044,12 +2130,21 @@ class TestRunFinalizeSkipNarrative:
         manifest = json.loads((artifact_dir / "manifest.json").read_text(encoding="utf-8"))
         assert "finbench.main.Account" in manifest["key_tables"]
 
-    def test_does_not_create_narrative_files_when_absent(self, tmp_path: Path):
-        # No prior insights/suggested_questions on disk: skip must not mint them.
+    def test_runs_llm_anyway_when_no_prior_narrative_on_disk(self, tmp_path: Path):
+        """Skip requested with nothing to reuse → full finalize instead.
+
+        A first generation whose queries landed in an earlier turn reaches
+        finalize with ``artifact_data_changed=False``; honouring the skip
+        would leave the artifact without chips permanently.
+        """
         artifact_dir, queries_dir, analysis_dir = _make_artifact_layout(tmp_path)
 
+        model = Mock(spec=["generate_with_json_output", "generate"])
+        model.generate_with_json_output.return_value = _full_finalize_response()
+        model.generate.return_value = _ORIGINAL_INTENT
+
         result = run_finalize_analysis(
-            model=Mock(spec=["generate_with_json_output", "generate"]),
+            model=model,
             artifact_kind="report",
             artifact_dir=artifact_dir,
             queries_dir=queries_dir,
@@ -2059,5 +2154,120 @@ class TestRunFinalizeSkipNarrative:
         )
 
         assert result["ok"] is True
-        assert not (analysis_dir / "insights.json").exists()
-        assert not (analysis_dir / "suggested_questions.json").exists()
+        assert result.get("skipped_narrative") is None
+        assert model.generate_with_json_output.call_count == 1
+        assert (analysis_dir / "insights.json").is_file()
+        assert (analysis_dir / "suggested_questions.json").is_file()
+
+    def test_dashboard_skip_needs_only_suggested_questions(self, tmp_path: Path):
+        """Dashboards never write insights.json, so its absence must not
+        force a needless LLM re-run on a render-only edit."""
+        artifact_dir, queries_dir, analysis_dir = _make_artifact_layout(tmp_path)
+        sq = json.dumps([{"question": "q?", "kind": "quick"}]) + "\n"
+        (analysis_dir / "suggested_questions.json").write_text(sq, encoding="utf-8")
+
+        model = Mock(spec=["generate_with_json_output", "generate"])
+
+        result = run_finalize_analysis(
+            model=model,
+            artifact_kind="dashboard",
+            artifact_dir=artifact_dir,
+            queries_dir=queries_dir,
+            analysis_dir=analysis_dir,
+            actions=[],
+            skip_narrative=True,
+        )
+
+        assert result["skipped_narrative"] is True
+        assert model.generate_with_json_output.call_count == 0
+        assert (analysis_dir / "suggested_questions.json").read_text(encoding="utf-8") == sq
+
+    def test_report_skip_reruns_when_only_insights_missing(self, tmp_path: Path):
+        """Half-present narrative (suggested_questions but no insights) is not
+        reusable for a report — the chips reference insight ids."""
+        artifact_dir, queries_dir, analysis_dir = _make_artifact_layout(tmp_path)
+        (analysis_dir / "suggested_questions.json").write_text(
+            json.dumps([{"question": "q?", "kind": "quick"}]) + "\n", encoding="utf-8"
+        )
+
+        model = Mock(spec=["generate_with_json_output", "generate"])
+        model.generate_with_json_output.return_value = _full_finalize_response()
+        model.generate.return_value = _ORIGINAL_INTENT
+
+        result = run_finalize_analysis(
+            model=model,
+            artifact_kind="report",
+            artifact_dir=artifact_dir,
+            queries_dir=queries_dir,
+            analysis_dir=analysis_dir,
+            actions=[],
+            skip_narrative=True,
+        )
+
+        assert result["ok"] is True
+        assert model.generate_with_json_output.call_count == 1
+        assert (analysis_dir / "insights.json").is_file()
+
+
+# --------------------------------------------------------------------------- #
+# finalize_stage_text                                                         #
+# --------------------------------------------------------------------------- #
+
+
+class TestFinalizeStageText:
+    def test_unpinned_language_falls_back_to_english(self):
+        assert finalize_stage_text(1) == "Generating insights and follow-up questions..."
+        assert finalize_stage_text(1, None) == "Generating insights and follow-up questions..."
+        assert finalize_stage_text(1, "   ") == "Generating insights and follow-up questions..."
+
+    @pytest.mark.parametrize("code", ["zh", "ZH", "zh-CN", "zh-cn", "zh-TW"])
+    def test_zh_codes_pick_chinese_copy(self, code: str):
+        assert finalize_stage_text(1, code) == "正在生成洞察与后续问题..."
+        assert finalize_stage_text(2, code) == "正在提炼分析意图..."
+        assert finalize_stage_text(3, code) == "正在缓存引用的表结构，即将完成..."
+
+    @pytest.mark.parametrize("code", ["en", "ja", "fr", "custom-lang"])
+    def test_non_zh_codes_pick_english_copy(self, code: str):
+        assert finalize_stage_text(2, code) == "Refining analysis intent..."
+
+    @pytest.mark.parametrize("language", [None, "zh", "en"])
+    def test_unknown_stage_returns_none(self, language):
+        assert finalize_stage_text(0, language) is None
+        assert finalize_stage_text(99, language) is None
+
+
+@pytest.mark.parametrize("skip_narrative", [False, True])
+def test_reference_snapshot_finalization_respects_render_only_edits(tmp_path, skip_narrative):
+    from types import SimpleNamespace
+
+    artifact_dir, queries_dir, analysis_dir = _make_artifact_layout(tmp_path)
+    refs = {"reference_sql": [{"path": ["Sales"], "name": "paid"}]}
+    (queries_dir / "reference.brief.json").write_text(json.dumps({"name": "reference", "uses": refs}))
+    (queries_dir / "reference.sql").write_text("SELECT 1")
+    (analysis_dir / "insights.json").write_text("[]")
+    (analysis_dir / "suggested_questions.json").write_text("[]")
+    model = Mock(spec=["generate_with_json_output", "generate"])
+    model.generate_with_json_output.return_value = _full_finalize_response()
+    context = SimpleNamespace(
+        get_reference_sql=Mock(return_value=SimpleNamespace(success=1, result={"name": "paid", "sql": "SELECT 42"}))
+    )
+
+    result = run_finalize_analysis(
+        model=model,
+        artifact_kind="report",
+        artifact_dir=artifact_dir,
+        queries_dir=queries_dir,
+        analysis_dir=analysis_dir,
+        actions=[],
+        context_search_tools=context,
+        skip_narrative=skip_narrative,
+    )
+
+    assert result["ok"] is True
+    saved = analysis_dir / "reference_sql_snapshots.json"
+    if skip_narrative:
+        context.get_reference_sql.assert_not_called()
+        assert not saved.exists()  # Render-only edits must not invent historical snapshots.
+    else:
+        context.get_reference_sql.assert_called_once_with(subject_path=["Sales"], name="paid")
+        assert json.loads(saved.read_text(encoding="utf-8"))["reference_sql"][0]["sql"] == "SELECT 42"

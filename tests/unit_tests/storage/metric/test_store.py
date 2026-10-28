@@ -6,6 +6,7 @@
 
 import os
 import tempfile
+from unittest.mock import Mock
 
 import pytest
 import yaml
@@ -162,6 +163,54 @@ class TestBatchUpsertMetricsValidation:
         }
         with pytest.raises(ValueError, match="subject_path is required"):
             metric_storage.batch_upsert_metrics([bad_metric])
+
+    def test_resync_overwrites_same_metric_with_changed_semantic_model(self, metric_storage: MetricStorage):
+        """Re-syncing a metric whose owning model was renamed must overwrite the
+        existing row (same name == same id), not raise a name-conflict.
+
+        Metric ids are name-derived, so a same-name write is the same identity;
+        the YAML file is the source of truth on re-sync. Regression for an OSI
+        metric edit failing with 'existing metric id ... has a different
+        semantic_model_name'."""
+        metric = _make_metric(1)
+        metric["name"] = "gross_revenue"
+        metric["semantic_model_name"] = "old_model"
+        metric_storage.batch_store_metrics([metric])
+
+        renamed = _make_metric(1)
+        renamed["name"] = "gross_revenue"
+        renamed["semantic_model_name"] = "new_model"
+        renamed["description"] = "edited description"
+
+        # Must not raise despite the changed semantic_model_name.
+        metric_storage.batch_upsert_metrics([renamed])
+
+        rows = metric_storage.search_all_metrics(subject_path=["Finance", "Revenue", "gross_revenue"])
+        assert len(rows) == 1
+        assert rows[0]["semantic_model_name"] == "new_model"
+        assert rows[0]["description"] == "edited description"
+
+    def test_upsert_still_raises_for_distinct_id_name_collision(self, metric_storage: MetricStorage):
+        """A same-name row with a *different* id and a conflicting definition is
+        a genuine identity collision and must still be rejected."""
+        from datus.storage.metric.store import build_metric_id
+
+        existing = _make_metric(1)
+        existing["name"] = "gross_revenue"
+        existing["semantic_model_name"] = "model_a"
+        metric_storage.batch_store_metrics([existing])
+
+        # Force a legacy-style differing id for the same name to exercise the guard.
+        real_build = build_metric_id
+        with __import__("unittest").mock.patch(
+            "datus.storage.metric.store.build_metric_id",
+            side_effect=lambda subject_path, name: real_build(subject_path, name) + ":legacy",
+        ):
+            incoming = _make_metric(1)
+            incoming["name"] = "gross_revenue"
+            incoming["semantic_model_name"] = "model_b"
+            with pytest.raises(ValueError, match="Metric name conflict within datasource"):
+                metric_storage.batch_upsert_metrics([incoming])
 
 
 # ---------------------------------------------------------------------------
@@ -695,7 +744,7 @@ class TestMetricRAGProvenance:
             build_metric_provenance_rows(
                 [
                     {
-                        "id": "metric:Sales.activity_count",
+                        "id": "metric:Sales.order_count",
                         "source_id": "seed_context.csv:0",
                         "source_context_id": "metric:seed:0",
                     }
@@ -704,15 +753,176 @@ class TestMetricRAGProvenance:
         )
 
         result = rag._enrich_metric_results(
-            [{"id": "metric:Sales.activity_count", "name": "activity_count"}],
+            [{"id": "metric:Sales.order_count", "name": "order_count"}],
             strip_internal_id=True,
         )
 
         assert result == [
             {
-                "name": "activity_count",
+                "name": "order_count",
                 "source_ids": ["seed_context.csv:0"],
                 "source_context_ids": ["metric:seed:0"],
                 "source_metadata": [],
             }
         ]
+
+
+class TestMetricRAGSearch:
+    def _rag(self):
+        from datus.storage.metric.store import MetricRAG
+
+        rag = MetricRAG.__new__(MetricRAG)
+        rag.storage = Mock()
+        rag.datasource_id = ""
+        rag._sub_agent_filter = None
+        rag._provenance_enabled = False
+        return rag
+
+    def test_search_metrics_prefers_exact_name_matches(self):
+        rag = self._rag()
+        exact_metric = {"id": "metric:order_count", "name": "order_count"}
+        vector_metric = {"id": "metric:order_total", "name": "order_total"}
+        rag.storage.search_all_metrics.return_value = [exact_metric, vector_metric]
+        rag.storage.search_metrics.return_value = [vector_metric, exact_metric]
+
+        result = rag.search_metrics("order_count", top_n=2)
+
+        assert result == [exact_metric, vector_metric]
+        rag.storage.search_all_metrics.assert_called_once()
+        rag.storage.search_metrics.assert_called_once()
+
+    def test_search_metrics_does_not_scan_for_natural_language_queries(self):
+        rag = self._rag()
+        vector_metric = {"id": "metric:order_count", "name": "order_count"}
+        rag.storage.search_metrics.return_value = [vector_metric]
+
+        result = rag.search_metrics("show order count by month", top_n=2)
+
+        assert result == [vector_metric]
+        rag.storage.search_all_metrics.assert_not_called()
+        rag.storage.search_metrics.assert_called_once()
+
+    def test_search_metrics_does_not_scan_for_long_queries(self):
+        rag = self._rag()
+        rag.storage.search_metrics.return_value = [{"id": "metric:order_count", "name": "order_count"}]
+
+        result = rag.search_metrics("x" * 121)
+
+        assert result == [{"id": "metric:order_count", "name": "order_count"}]
+        rag.storage.search_all_metrics.assert_not_called()
+        rag.storage.search_metrics.assert_called_once()
+
+    def test_merge_search_results_preserves_distinct_idless_rows(self):
+        from datus.storage.metric.store import MetricRAG
+
+        first = {"name": "order_count", "subject_path": ["commerce"], "description": "Order count by order date"}
+        second = {"name": "order_count", "subject_path": ["commerce"], "description": "Order count by ship date"}
+
+        result = MetricRAG._merge_search_results([first], [second], top_n=5)
+
+        assert result == [first, second]
+
+
+class TestMetricRAGArtifactDelete:
+    class _Rows:
+        def __init__(self, rows):
+            self._rows = rows
+
+        def to_pylist(self):
+            return self._rows
+
+    def test_delete_artifact_rows_uses_sub_agent_scope(self):
+        from datus.storage.metric.store import MetricRAG
+
+        rag = MetricRAG.__new__(MetricRAG)
+        rag.storage = Mock()
+        rag._sub_agent_conditions = Mock(return_value=[])
+
+        rag.delete_artifact_rows("metrics/orders.yml")
+
+        rag._sub_agent_conditions.assert_called_once_with()
+        rag.storage._delete_rows.assert_called_once()
+
+    def test_delete_artifact_rows_ignores_empty_yaml_path(self):
+        from datus.storage.metric.store import MetricRAG
+
+        rag = MetricRAG.__new__(MetricRAG)
+        rag.storage = Mock()
+        rag._sub_agent_conditions = Mock(return_value=[])
+
+        rag.delete_artifact_rows("")
+
+        rag._sub_agent_conditions.assert_not_called()
+        rag.storage._delete_rows.assert_not_called()
+
+    def test_delete_artifact_rows_except_keeps_current_ids(self):
+        from datus.storage.metric.store import MetricRAG
+
+        rag = MetricRAG.__new__(MetricRAG)
+        rag.storage = Mock()
+        rag._sub_agent_conditions = Mock(return_value=[])
+
+        rag.delete_artifact_rows_except("metrics/orders.yml", ["metric:orders"])
+
+        rag._sub_agent_conditions.assert_called_once_with()
+        rag.storage._delete_rows.assert_called_once()
+
+    def test_delete_artifact_rows_except_deletes_all_when_keep_ids_empty(self):
+        from datus.storage.metric.store import MetricRAG
+
+        rag = MetricRAG.__new__(MetricRAG)
+        rag.delete_artifact_rows = Mock()
+
+        rag.delete_artifact_rows_except("metrics/orders.yml", ["", None])
+
+        rag.delete_artifact_rows.assert_called_once_with("metrics/orders.yml")
+
+    def test_list_artifact_rows_returns_empty_for_empty_yaml_path(self):
+        from datus.storage.metric.store import MetricRAG
+
+        rag = MetricRAG.__new__(MetricRAG)
+        rag.storage = Mock()
+
+        assert rag.list_artifact_rows("") == []
+        rag.storage._search_all.assert_not_called()
+
+    def test_list_artifact_rows_returns_storage_rows(self):
+        from datus.storage.metric.store import MetricRAG
+
+        rag = MetricRAG.__new__(MetricRAG)
+        rag.storage = Mock()
+        rag._sub_agent_conditions = Mock(return_value=[])
+        rag.storage._search_all.return_value = self._Rows([{"id": "metric:orders"}])
+
+        assert rag.list_artifact_rows("metrics/orders.yml") == [{"id": "metric:orders"}]
+        rag._sub_agent_conditions.assert_called_once_with()
+        rag.storage._search_all.assert_called_once()
+
+    def test_restore_artifact_rows_ignores_empty_yaml_path(self):
+        from datus.storage.metric.store import MetricRAG
+
+        rag = MetricRAG.__new__(MetricRAG)
+        rag.delete_artifact_rows = Mock()
+        rag.upsert_batch = Mock()
+        rag.create_indices = Mock()
+
+        rag.restore_artifact_rows("", [{"id": "metric:orders"}])
+
+        rag.delete_artifact_rows.assert_not_called()
+        rag.upsert_batch.assert_not_called()
+        rag.create_indices.assert_not_called()
+
+    def test_restore_artifact_rows_replaces_snapshot(self):
+        from datus.storage.metric.store import MetricRAG
+
+        rag = MetricRAG.__new__(MetricRAG)
+        rag.delete_artifact_rows = Mock()
+        rag.upsert_batch = Mock()
+        rag.create_indices = Mock()
+        rows = [{"id": "metric:orders"}]
+
+        rag.restore_artifact_rows("metrics/orders.yml", rows)
+
+        rag.delete_artifact_rows.assert_called_once_with("metrics/orders.yml")
+        rag.upsert_batch.assert_called_once_with(rows)
+        rag.create_indices.assert_called_once_with()

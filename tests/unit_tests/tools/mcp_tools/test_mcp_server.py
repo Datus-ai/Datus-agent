@@ -223,7 +223,7 @@ class TestLightweightDynamicMCPServer:
         tool_names = [t.name for t in tools]
         assert "list_tables" in tool_names
         assert "describe_table" in tool_names
-        assert "read_query" in tool_names
+        assert "execute_sql" in tool_names
 
 
 # =============================================================================

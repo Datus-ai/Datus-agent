@@ -110,7 +110,26 @@ class TestExploreAgenticNodeTools:
         tool_names = [t.name for t in node.tools]
         assert "list_tables" in tool_names
         assert "describe_table" in tool_names
-        assert "read_query" in tool_names
+        assert "execute_sql" in tool_names
+
+    def test_explore_db_tools_use_input_database(self, real_agent_config, mock_llm_create):
+        """Rebuilt DB tools should route to the physical database on node input."""
+        from datus.agent.node.explore_agentic_node import ExploreAgenticNode
+        from datus.schemas.explore_agentic_node_models import ExploreNodeInput
+
+        node = ExploreAgenticNode(
+            node_id="test_explore_tools_database",
+            description="Test Explore node",
+            node_type=NodeType.TYPE_EXPLORE,
+            agent_config=real_agent_config,
+            node_name="explore",
+        )
+        node.input = ExploreNodeInput(user_message="Explore schools", database="california_schools")
+
+        node._setup_db_tools()
+
+        assert node.db_func_tool._default_database == "california_schools"
+        assert node.db_func_tool.read_only is True
 
     def test_explore_has_readonly_filesystem_tools(self, real_agent_config, mock_llm_create):
         """Node should have read-only filesystem tools."""
@@ -186,7 +205,7 @@ class TestExploreAgenticNodeTools:
         )
         node._populate_tool_registry()
         registry = node.tool_registry.to_dict()
-        assert registry.get("read_query") == "db_tools"
+        assert registry.get("execute_sql") == "db_tools"
         assert registry.get("read_file") == "filesystem_tools"
         assert registry.get("parse_temporal_expressions") == "date_parsing_tools"
 
@@ -372,7 +391,7 @@ class TestExploreProductFlowAcceptance:
                         MockToolCall(name="list_tables", arguments={}),
                         MockToolCall(name="describe_table", arguments={"table_name": "satscores"}),
                         MockToolCall(
-                            name="read_query",
+                            name="execute_sql",
                             arguments={"sql": "SELECT cds, AvgScrRead FROM satscores LIMIT 2"},
                         ),
                     ],
@@ -399,7 +418,7 @@ class TestExploreProductFlowAcceptance:
             actions.append(action)
 
         executed_tools = {item["tool"] for item in mock_llm_create.tool_results if item["executed"]}
-        assert {"list_tables", "describe_table", "read_query"} <= executed_tools
+        assert {"list_tables", "describe_table", "execute_sql"} <= executed_tools
         assert "AvgScrRead" in str(mock_llm_create.tool_results)
         assert actions[-1].status == ActionStatus.SUCCESS
         assert node.result.success is True

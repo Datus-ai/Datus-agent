@@ -83,6 +83,21 @@ def test_missing_nodeid_path_is_reported():
     ]
 
 
+def test_class_or_function_exists_checks_every_nodeid_component(tmp_path):
+    test_file = tmp_path / "test_sample.py"
+    test_file.write_text(
+        "class TestThing:\n    def test_present(self):\n        assert True\n",
+        encoding="utf-8",
+    )
+
+    exists = validate_coverage_map.class_or_function_exists
+
+    assert exists(tmp_path, "test_sample.py::TestThing::test_present")
+    assert exists(tmp_path, "test_sample.py::TestThing::test_present[case-1]")
+    assert not exists(tmp_path, "test_sample.py::TestThing::test_renamed")
+    assert not exists(tmp_path, "test_sample.py::TestGone::test_present")
+
+
 def test_p0_requires_deterministic_pr_or_merge_queue_coverage():
     data = minimal_map()
     flow = data["flow_groups"]["onboarding"]["flows"][0]

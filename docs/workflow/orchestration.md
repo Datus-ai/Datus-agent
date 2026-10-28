@@ -11,7 +11,6 @@ A workflow is a sequence of nodes that:
 - **Has a clear purpose**: Each workflow solves specific types of problems
 - **Follows a logical order**: Nodes execute in a predefined sequence
 - **Shares data**: Information flows between nodes through a shared context
-- **Can be adaptive**: Some workflows can modify themselves during execution
 
 ### 2. Workflow Configuration
 
@@ -19,23 +18,13 @@ Datus provides several built-in workflow templates optimized for different use c
 
 ```yaml
 workflow:
-  reflection:
-    - schema_linking
-    - gen_sql
-    - execute_sql
-    - reflect
-    - output
-
   fixed:
     - schema_linking
     - gen_sql
     - execute_sql
     - output
 
-  metric_to_sql:
-    - schema_linking
-    - search_metrics
-    - date_parser
+  gen_sql_agentic:
     - gen_sql
     - execute_sql
     - output
@@ -45,43 +34,7 @@ workflow:
 
 ## Built-in Workflow Types
 
-### 1. Reflection Workflow
-
-**Purpose**: Intelligent, self-improving SQL generation with adaptive behavior
-
-**Node Sequence:**
-```
-Schema Linking → Generate SQL → Execute SQL → Reflect → Output
-```
-
-**Key Features:**
-
-- **Self-assessment**: Reflect node evaluates results and decides next steps
-- **Adaptive**: Can add new nodes dynamically based on execution results
-- **Robust**: Handles complex queries that may require multiple attempts
-
-**Best For:**
-
-- Complex business queries
-- Situations where perfect SQL isn't generated on first try
-- Queries requiring domain knowledge
-
-**Real-world Example:**
-
-```
-User: "Show me quarterly revenue trends by product category,
-       excluding returns and considering seasonal adjustments"
-
-Process:
-1. Schema Linking: Finds orders, products, categories tables
-2. Generate SQL: Creates initial quarterly revenue query
-3. Execute SQL: Runs the query
-4. Reflect: Notices missing seasonal adjustment logic
-5. Add Fix Node: Corrects the query with seasonal calculations
-6. Output: Final results with proper seasonal adjustments
-```
-
-### 2. Fixed Workflow
+### 1. Fixed Workflow
 
 **Purpose**: Deterministic SQL generation with predictable execution path
 
@@ -93,7 +46,7 @@ Schema Linking → Generate SQL → Execute SQL → Output
 **Key Features:**
 
 - **Predictable**: Always follows the same execution path
-- **Fast**: No reflection overhead
+- **Fast**: Uses a direct generation and execution path
 - **Simple**: Easy to understand and debug
 - **Reliable**: Consistent behavior for well-understood problems
 
@@ -116,42 +69,36 @@ Process:
 4. Output: Displays results
 ```
 
-### 3. Metric-to-SQL Workflow
+### 2. Gen SQL Agentic Workflow
 
-**Purpose**: Generate SQL from predefined business metrics
+**Purpose**: Generate SQL with database, semantic-layer, metric-search, and other configured tools.
 
 **Node Sequence:**
-```
-Schema Linking → Search Metrics → Date Parser → Generate SQL → Execute SQL → Output
+```text
+Generate SQL → Execute SQL → Output
 ```
 
 **Key Features:**
 
-- **Metric-driven**: Starts with business metrics rather than raw SQL
-- **Time-aware**: Includes date parsing for temporal queries
-- **Reusable**: Leverages existing metric definitions
-- **Standardized**: Ensures consistent business calculations
+- **Tool-driven**: Uses function tools when metric, date, or documentation context is needed
+- **Configurable**: Tool families can be enabled per agentic node
+- **Interactive**: The model decides which available tools to call
 
 **Best For:**
 
-- Business intelligence and reporting
-- Standardized KPI calculations
-- Time-series analysis
-- Dashboards and regular reports
+- Queries that need semantic metrics or reference SQL
+- Temporal questions when `date_parsing_tools.*` is enabled
+- Complex SQL generation that benefits from iterative tool use
 
 **Real-world Example:**
 
-```
+```text
 User: "Show monthly active users for the last quarter"
-
-Process:
-1. Schema Linking: Finds user_activity table
-2. Search Metrics: Finds "monthly_active_users" metric definition
-3. Date Parser: Determines "last quarter" date range
-4. Generate SQL: Creates query using the metric definition
-5. Execute SQL: Runs the metric calculation
-6. Output: Displays monthly active users by month
 ```
+
+The `gen_sql` agent can search metric definitions through
+`context_search_tools.search_metrics` and parse temporal expressions through
+`date_parsing_tools.parse_temporal_expressions` when those tools are enabled.
 
 ## Workflow Configuration
 
@@ -166,7 +113,6 @@ agent:
 
     custom_analytics:
       - schema_linking
-      - search_metrics
       - gen_sql
       - execute_sql
       - compare
@@ -174,10 +120,8 @@ agent:
 
     data_exploration:
       - schema_linking
-      - doc_search
       - gen_sql
       - execute_sql
-      - reflect
       - output
 ```
 
@@ -196,7 +140,7 @@ agent:
       - schema_linking
       - parallel:
         - gen_sql
-        - reasoning
+        - gen_sql
       - selection
       - execute_sql
       - output
@@ -221,12 +165,10 @@ agent:
       - output
 
     subworkflow1:
-      - search_metrics
       - gen_sql
 
     subworkflow2:
-      - search_metrics
-      - reasoning
+      - gen_sql
 ```
 
 #### Sub-workflows with Custom Configuration
@@ -248,14 +190,12 @@ agent:
 
     agent1_workflow:
       steps:
-        - search_metrics
         - gen_sql
       config: multi/agent1.yaml
 
     agent2_workflow:
       steps:
-        - reasoning
-        - reflect
+        - gen_sql
       config: multi/agent2.yaml
 ```
 
@@ -265,7 +205,7 @@ Workflows can be configured with parameters:
 
 ```bash
 # Use specific workflow
-datus-agent run --datasource <your_datasource> --task "your query" --task_db_name <database> --workflow reflection
+datus-agent run --datasource <your_datasource> --task "your query" --task_db_name <database> --workflow fixed
 
 # Use custom workflow
 datus-agent run --datasource <your_datasource> --task "your query" --task_db_name <database> --workflow custom_analytics
@@ -275,7 +215,7 @@ datus-agent run --datasource <your_datasource> --task "your query" --task_db_nam
 
 | Parameter | Description | Default | Options |
 |-----------|-------------|---------|---------|
-| `--workflow` | Workflow type to execute | `reflection` | `reflection`, `fixed`, `metric_to_sql`, custom |
+| `--workflow` | Workflow type to execute | `fixed` | `fixed`, `empty`, `chat_agentic`, `gen_sql_agentic`, custom |
 | `--datasource` | Database datasource | Required | Any configured datasource |
 | `--task_db_name` | Target database name for the task | Required | Any configured database name |
 | `--task` | Natural language query | Required | Any string |
@@ -292,17 +232,11 @@ datus-agent run --datasource <your_datasource> --task "your query" --task_db_nam
 - Well-understood requirements
 - Performance-critical scenarios
 
-**Use Reflection for Complex Analysis**
+**Use Gen SQL Agentic for Tool-assisted Queries**
 
-- Multi-table joins
-- Business logic implementation
-- Uncertain or exploratory queries
-
-**Use Metric-to-SQL for Standardized Reports**
-
-- KPI calculations
-- Regular business reports
-- Time-series analysis
+- Metric and semantic-layer discovery
+- Temporal queries with date parsing enabled
+- Iterative SQL generation
 
 
 ### Debugging and Monitoring

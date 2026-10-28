@@ -1,15 +1,17 @@
 # yaml-language-server: $schema=https://squidfunk.github.io/mkdocs-material/schema.json
 site_name: Datus Docs
-site_url: https://docs.datus.ai
+site_url: !ENV [DOCS_SITE_URL, "https://docs.datus.ai/"]
 copyright: "© 2025 Datus AI"
 nav:
   - Home:
     - Overview: index.md
     - Getting Started:
-      - Quickstart: getting_started/Quickstart.md
-      - Data Engineering Quickstart: getting_started/data_engineering_quickstart.md
-      - Contextual Data Engineering: getting_started/contextual_data_engineering.md
-      - Dashboard Copilot: getting_started/dashboard_copilot.md
+      - Choose Your Path: getting_started/index.md
+      - Install and First Query: getting_started/Quickstart.md
+      - Build a Context-Rich Agent: getting_started/contextual_data_engineering.md
+      - Scenario Tutorials:
+        - End-to-End Data Engineering: getting_started/data_engineering_quickstart.md
+        - Turn a Dashboard into a Copilot: getting_started/dashboard_copilot.md
     - CLI:
       - Introduction: cli/introduction.md
       - Chat Command: cli/chat_command.md
@@ -18,22 +20,41 @@ nav:
       - MCP Extensions: cli/mcp_extensions.md
       - SQL Execution: cli/sql_execution.md
       - Skill Command: cli/skill_command.md
+      - Package Command: cli/package_command.md
       - Reference: cli/reference.md
       - Plan Mode: cli/plan_mode.md
+      - Other Commands: cli/other_commands.md
     - Subagent:
       - Introduction: subagent/introduction.md
       - Built-in subagents: subagent/builtin_subagents.md
       - Customized subagents: subagent/customized_subagent.md
-      - Generate Dashboard: subagent/gen_dashboard.md
-      - Generate Metrics: subagent/gen_metrics.md
+      - Semantic Modeling: subagent/semantic_modeling.md
       - Ask Metrics: subagent/ask_metrics.md
-      - Generate Semantic Model: subagent/gen_semantic_model.md
-      - Scheduler: subagent/scheduler.md
+      - Ontology Analyst: subagent/ontology_analyst.md
       - Generate SQL Summary: subagent/gen_sql_summary.md
       - Table Generation: subagent/gen_table.md
       - Data Pipeline (ETL + Migration): subagent/gen_job.md
       - HTML Report Generation: subagent/gen_visual_report.md
       - HTML Dashboard Generation: subagent/gen_visual_dashboard.md
+    - Skills:
+      - Introduction: skills/introduction.md
+      - Built-in Skills:
+        - Init: skills/init.md
+        - Build KB: skills/build_kb.md
+        - Dashboard Bootstrap: skills/dashboard_bootstrap.md
+        - Storage Classify: skills/storage_classify.md
+        - Extract Knowledge: skills/extract_knowledge.md
+        - Memory Organization: skills/memory_organization.md
+        - Session Summarize: skills/session_summarize.md
+    - Plugin:
+      - Introduction: plugin/introduction.md
+      - Development: plugin/development.md
+      - Plugin List:
+        - Airflow: plugin/airflow.md
+        - S3: plugin/s3.md
+        - EKS: plugin/eks.md
+        - K8s: plugin/k8s.md
+        - Flink: plugin/flink.md
     - Chatbot: web_chatbot/introduction.md
     - IM Gateway:
       - Introduction: gateway/introduction.md
@@ -43,6 +64,7 @@ nav:
       - Introduction: knowledge_base/introduction.md
       - Platform Documentation: knowledge_base/platform_doc.md
       - Metadata: knowledge_base/metadata.md
+      - Metadata Full-text Search: knowledge_base/metadata_fts.md
       - Semantic Models: knowledge_base/semantic_model.md
       - Metrics: knowledge_base/metrics.md
       - Reference SQL: knowledge_base/reference_sql.md
@@ -57,6 +79,7 @@ nav:
       - Deployment: API/deployment.md
       - Chat: API/chat.md
       - Knowledge Base API: API/knowledge_base.md
+      - Debugging: API/debugging.md
     - Configuration:
       - Introduction: configuration/introduction.md
       - Agent: configuration/agent.md
@@ -64,26 +87,45 @@ nav:
       - Workflow: configuration/workflow.md
       - Benchmark: configuration/benchmark.md
       - SQL Policy: configuration/sql_policy.md
-      - Services:
-        - Datasources: configuration/datasources.md
-        - Semantic Layer: configuration/semantic_layer.md
-        - BI Platforms: configuration/bi_platforms.md
-        - Schedulers: configuration/schedulers.md
+      - Web Tools: configuration/web_tool.md
+      - Image Reading: configuration/image_tool.md
+      - Datasources:
+        - Overview: configuration/datasources.md
+        - SQLite: configuration/datasources/sqlite.md
+        - DuckDB: configuration/datasources/duckdb.md
+        - MySQL: configuration/datasources/mysql.md
+        - PostgreSQL: configuration/datasources/postgresql.md
+        - Amazon Aurora: configuration/datasources/aurora.md
+        - Greenplum: configuration/datasources/greenplum.md
+        - Amazon Redshift: configuration/datasources/redshift.md
+        - Amazon Athena: configuration/datasources/athena.md
+        - Snowflake: configuration/datasources/snowflake.md
+        - Google BigQuery: configuration/datasources/bigquery.md
+        - StarRocks: configuration/datasources/starrocks.md
+        - Apache Doris: configuration/datasources/doris.md
+        - TiDB: configuration/datasources/tidb.md
+        - ClickHouse: configuration/datasources/clickhouse.md
+        - Trino: configuration/datasources/trino.md
+        - Hive: configuration/datasources/hive.md
+        - Spark SQL: configuration/datasources/spark.md
+        - ClickZetta: configuration/datasources/clickzetta.md
+        - Hologres: configuration/datasources/hologres.md
+        - MaxCompute: configuration/datasources/maxcompute.md
+        - Oracle: configuration/datasources/oracle.md
+        - SAP HANA: configuration/datasources/hana.md
+        - GaussDB / openGauss: configuration/datasources/gaussdb.md
+        - GaussDB(DWS): configuration/datasources/dws.md
       - Storage: configuration/storage.md
       - Nodes: configuration/nodes.md
+    - Semantic Engine: semantic/dosi_engine.md
     - Adapters:
       - Database Adapters: adapters/db_adapters.md
-      - Semantic Adapters:
-        - Overview: adapters/semantic_adapters.md
-        - MetricFlow Semantic Adapter: adapters/metricflow_semantic_adapter.md
-        - OSI Semantic Adapter: adapters/osi_semantic_adapter.md
       - BI Adapters: adapters/bi_adapters.md
       - Scheduler Adapters: adapters/scheduler_adapters.md
     - Benchmark:
       - Introduction: benchmark/benchmark_manual.md
     - Integration:
       - MCP: integration/mcp.md
-      - Skills: integration/skills.md
       - Validation: integration/validation.md
       - Auto Memory: integration/memory.md
     - Training:
@@ -96,10 +138,13 @@ nav:
   - Release Notes: release_notes.md
 
 plugins:
-  - search
+  - search:
+      lang: !ENV [DOCS_LOCALE, "en"]
   - mike:
       alias_type: redirect
   - i18n:
+      build_only_locale: !ENV [DOCS_LOCALE, "en"]
+      fallback_to_default: false
       languages:
         - locale: en
           name: English
@@ -110,10 +155,12 @@ plugins:
             Home: 首页
             Overview: 概览
             Getting Started: 入门指南
-            Quickstart: 快速开始
-            Data Engineering Quickstart: 数据工程快速开始
-            Contextual Data Engineering: 上下文数据工程
-            Dashboard Copilot: Dashboard Copilot
+            Choose Your Path: 选择上手路径
+            Install and First Query: 安装并完成第一次提问
+            Build a Context-Rich Agent: 构建上下文增强 Agent
+            Scenario Tutorials: 场景教程
+            End-to-End Data Engineering: 端到端数据工程
+            Turn a Dashboard into a Copilot: 将 Dashboard 变成 Copilot
             CLI: 命令行
             Introduction: 介绍
             Chat Command: 聊天命令
@@ -122,16 +169,18 @@ plugins:
             MCP Extensions: MCP 扩展
             SQL Execution: SQL 执行
             Skill Command: 技能命令
+            Package Command: 打包命令
             Reference: 参考
             Plan Mode: 计划模式
+            Other Commands: 其他命令
             Subagent: Subagent
             Built-in subagents: 内置 subagent
             Customized subagents: 自定义 subagent
-            Generate Dashboard: 生成 Dashboard
+            Semantic Modeling: 语义建模
             Generate Metrics: 生成指标
             Ask Metrics: 指标问答
+            Ontology Analyst: Ontology 分析
             Generate Semantic Model: 生成语义模型
-            Scheduler: 调度器
             Chatbot: chatbot
             IM Gateway: IM 网关
             Slack: Slack
@@ -140,6 +189,7 @@ plugins:
             Knowledge Base: 知识库
             Platform Documentation: 平台文档
             Metadata: 元数据
+            Metadata Full-text Search: 元数据全文检索
             Semantic Models: 语义模型
             Metrics: 指标
             Reference SQL: Reference SQL
@@ -154,16 +204,18 @@ plugins:
             Knowledge Base API: 知识库 API
             Configuration: 配置
             Context Compaction: 上下文压缩
-            Services: 服务
+            Image Reading: 读图
+            Datasources: 数据源
             Databases: 数据库
-            Semantic Layer: 语义层
-            BI Platforms: BI 平台
-            Schedulers: 调度器
+            Amazon Redshift: Amazon Redshift
+            Google BigQuery: Google BigQuery
+            Apache Doris: Apache Doris
+            Spark SQL: Spark SQL
+            GaussDB / openGauss: GaussDB / openGauss
+            GaussDB(DWS): GaussDB(DWS)
             Adapters: 适配器
             Database Adapters: 数据库适配器
-            Semantic Adapters: 语义层适配器
-            MetricFlow Semantic Adapter: MetricFlow 语义适配器
-            OSI Semantic Adapter: OSI 语义适配器
+            Semantic Engine: 语义引擎
             BI Adapters: BI 适配器
             Scheduler Adapters: Scheduler 适配器
             Benchmark: 基准测试
@@ -171,8 +223,23 @@ plugins:
             Integration: 集成
             MCP: MCP
             Skills: Skills
+            Built-in Skills: 内置 Skills
+            Init: 初始化
+            Build KB: 构建知识库
+            Storage Classify: 存储分类
+            Extract Knowledge: 知识提取
+            Memory Organization: 记忆整理
+            Session Summarize: 会话总结
             Validation: 校验
             Auto Memory: 自动记忆
+            Plugin: 插件
+            Plugin List: 插件列表
+            Development: 开发指南
+            Airflow: Airflow
+            S3: S3
+            EKS: EKS
+            K8s: K8s
+            Flink: Flink
             Develop: 开发
             Observability: 可观测性
             VSCode Extension: VSCode 插件
@@ -231,10 +298,10 @@ extra:
 
   alternate:
     - name: English
-      link: /
+      link: !ENV [DOCS_EN_BASE, "/"]
       lang: en
     - name: 中文
-      link: /zh/
+      link: !ENV [DOCS_ZH_BASE, "/zh/"]
       lang: zh
 
   social:
@@ -261,7 +328,9 @@ markdown_extensions:
   - pymdownx.arithmatex:
       generic: true
   - pymdownx.betterem:
-      smart_enable: all
+      # `underscore` keeps smart emphasis for _ / __ but makes * / ** classic,
+      # so `**bold**` renders even when flanked by CJK characters (no spaces).
+      smart_enable: underscore
   - pymdownx.caret
   - pymdownx.details
   - pymdownx.emoji:

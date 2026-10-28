@@ -103,7 +103,7 @@ class TestOpenAIModel:
 
             logger.debug(f"MCP response: {result.get('content', '')}")
         except DatusException as e:
-            if e.error_code == ErrorCode.MODEL_MAX_TURNS_EXCEEDED:
+            if e.code == ErrorCode.MODEL_MAX_TURNS_EXCEEDED:
                 pytest.skip(f"MCP test skipped due to max turns exceeded: {str(e)}")
             else:
                 raise
@@ -221,17 +221,17 @@ class TestKimiModel:
         """Test Kimi model initialization."""
         assert self.model is not None
         assert self.model.model_config is not None
-        assert self.model.model_config.model == "kimi-k2.5"
+        assert self.model.model_config.model == "kimi-k3"
         assert self.model.model_config.base_url == "https://api.moonshot.cn/v1"
 
     def test_generate_basic(self):
         """Test basic text generation functionality."""
         # Kimi/Moonshot API requires temperature=1 for this model; use model config default
-        # kimi-k2.5 is a reasoning model: reasoning_content is injected into content
-        # by sdk_patches when litellm.completion returns empty content.
+        # kimi-k3 may spend part of the output budget on reasoning before it
+        # emits the requested final answer.
         result = self.model.generate(
             "Explain what SQL JOIN does in exactly two sentences.",
-            max_tokens=200,
+            max_tokens=512,
         )
 
         assert result is not None, "Response should not be None"
@@ -285,7 +285,7 @@ class TestKimiModel:
 
             logger.debug(f"MCP response: {result.get('content', '')}")
         except DatusException as e:
-            if e.error_code == ErrorCode.MODEL_MAX_TURNS_EXCEEDED:
+            if e.code == ErrorCode.MODEL_MAX_TURNS_EXCEEDED:
                 pytest.skip(f"MCP test skipped due to max turns exceeded: {str(e)}")
             else:
                 raise
@@ -386,7 +386,7 @@ class TestGeminiModel:
 
             logger.debug(f"MCP response: {result.get('content', '')}")
         except DatusException as e:
-            if e.error_code == ErrorCode.MODEL_MAX_TURNS_EXCEEDED:
+            if e.code == ErrorCode.MODEL_MAX_TURNS_EXCEEDED:
                 pytest.skip(f"MCP test skipped due to max turns exceeded: {str(e)}")
             else:
                 raise

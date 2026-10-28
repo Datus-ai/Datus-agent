@@ -11,6 +11,7 @@ to provide a unified interface for skill operations.
 
 import fnmatch
 import logging
+from pathlib import Path
 from typing import TYPE_CHECKING, List, Optional, Tuple
 from xml.sax.saxutils import escape as xml_escape
 from xml.sax.saxutils import quoteattr as xml_quoteattr
@@ -20,6 +21,7 @@ from datus.tools.skill_tools.skill_config import SkillConfig, SkillMetadata
 from datus.tools.skill_tools.skill_registry import SkillRegistry
 
 if TYPE_CHECKING:
+    from datus.configuration.agent_config import AgentConfig
     from datus.tools.permission.permission_manager import PermissionManager
 
 logger = logging.getLogger(__name__)
@@ -55,6 +57,8 @@ class SkillManager:
         config: Optional[SkillConfig] = None,
         permission_manager: Optional["PermissionManager"] = None,
         registry: Optional[SkillRegistry] = None,
+        config_mutable: bool = True,
+        agent_config: Optional["AgentConfig"] = None,
     ):
         """Initialize the skill manager.
 
@@ -62,10 +66,19 @@ class SkillManager:
             config: Skills configuration
             permission_manager: Permission manager for access control
             registry: Optional pre-configured registry (for testing)
+            config_mutable: Whether the agent config file may be edited in
+                this deployment. When False (chat API / gateway), skills
+                declaring ``requires_mutable_config: true`` are hidden from
+                listings and refused on load.
+            agent_config: Optional request-scoped AgentConfig used when
+                ``config`` is omitted. This keeps plugin skill discovery
+                tenant-local instead of consulting CWD configuration.
         """
-        self.config = config or SkillConfig()
+        self.config = config or SkillConfig.from_dict({}, agent_config=agent_config)
         self.permission_manager = permission_manager
-        self.registry = registry or SkillRegistry(config=self.config)
+        self.registry = registry or SkillRegistry(config=self.config, agent_config=agent_config)
+        self.config_mutable = bool(config_mutable)
+        self.loaded_skill_roots: set[Path] = set()
 
         # Scan directories on initialization
         self.registry.scan_directories()
@@ -124,6 +137,12 @@ class SkillManager:
         # by the hook). See ValidationHook design doc (Part §5.3).
         all_skills = [s for s in all_skills if not s.is_validator()]
 
+        # Hide config-editing setup skills when the runtime config is
+        # immutable (chat API / gateway): the agent must not be pointed at
+        # skills whose whole purpose is editing the agent config file.
+        if not self.config_mutable:
+            all_skills = [s for s in all_skills if not s.requires_mutable_config]
+
         logger.debug(f"Available skills for {node_name}: {[s.name for s in all_skills]}")
         return all_skills
 
@@ -179,6 +198,22 @@ class SkillManager:
                 None,
             )
 
+        # Refuse config-editing setup skills when the runtime config is
+        # read-only. Placed before the scope/authoring bypasses so even a
+        # ``gen_skill`` authoring flow in API mode cannot load one.
+        if not self.config_mutable and skill.requires_mutable_config:
+            logger.warning(
+                "Skill '%s' requires a mutable agent config; refused in read-only config mode",
+                skill_name,
+            )
+            return (
+                False,
+                f"Skill '{skill_name}' walks through editing the agent configuration, "
+                "which is read-only in this deployment. Plugin profiles are managed by "
+                "the administrator — ask them to configure it.",
+                None,
+            )
+
         # Enforce ``allowed_agents`` scope unless an authoring workflow opts
         # out. Matches both the alias and the canonical class name so that
         # aliased subagents still satisfy class-level whitelists.
@@ -208,7 +243,25 @@ class SkillManager:
             return False, f"Failed to load content for skill '{skill_name}'", None
 
         logger.info(f"Loaded skill '{skill_name}' for node '{node_name}'")
+        self.loaded_skill_roots.add(skill.location.resolve())
         return True, f"Skill '{skill_name}' loaded successfully", content
+
+    def format_skill_content(self, skill_name: str, content: str) -> str:
+        """Locate supporting files consistently for injected and manually loaded skills."""
+        try:
+            skill = self.registry.get_skill(skill_name)
+            location = getattr(skill, "location", None)
+        except Exception:
+            logger.debug("Could not locate skill '%s'", skill_name, exc_info=True)
+            return content
+        if not location:
+            return content
+        location = xml_escape(str(Path(location).resolve()))
+        return (
+            f"<skill_location>{location}</skill_location>\n"
+            "<!-- Resolve references/ and scripts/ relative to skill_location; "
+            "read only the supporting files needed for this task. -->\n\n"
+        ) + content
 
     def generate_available_skills_xml(
         self,
@@ -271,11 +324,8 @@ class SkillManager:
                 "in explanations. If the needed skill is absent, delegate to a "
                 "subagent via ``sub_agent_tools.task(type=<subagent>, ...)`` and let "
                 "the subagent load its own skills.\n"
-                "  5. Use ``skill_execute_command`` only for skill-owned scripts "
-                "explicitly permitted by that skill's ``allowed_commands``.\n"
-                "  6. If loaded skill instructions mention a tool that is available "
-                "as a native tool in the current run, call that native tool directly "
-                "instead of routing it through ``skill_execute_command``."
+                "  5. If loaded skill instructions mention a tool that is available "
+                "as a native tool in the current run, call that native tool directly."
             )
         else:
             lines.append(
@@ -435,7 +485,7 @@ class SkillManager:
                 skill_meta = self.registry.get_skill(skill_dir)
                 if skill_meta and skill_meta.location and (skill_meta.location / "SKILL.md").exists():
                     path = skill_meta.location
-                    logger.info(f"Resolved skill name '{skill_dir}' to {path}")
+                    logger.debug(f"Resolved skill name '{skill_dir}' to {path}")
 
             client = self._get_marketplace_client()
             result = client.publish_skill(path, owner=owner)

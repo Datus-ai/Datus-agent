@@ -141,6 +141,12 @@ jobs:
           # other locked dependencies pinned.
           uv lock
           uv lock --locked
+          uv export \
+            --format requirements.txt \
+            --only-group dev \
+            --only-group ci \
+            --locked \
+            --output-file requirements-test.txt
 
       - name: Check release readiness
         env:
@@ -170,7 +176,7 @@ jobs:
             exit 0
           fi
 
-          git add pyproject.toml requirements.txt uv.lock
+          git add pyproject.toml requirements.txt requirements-test.txt uv.lock
           git commit -m "chore: prepare datus-agent ${VERSION} release"
           git push --set-upstream origin "${RELEASE_BRANCH}"
 
@@ -226,3 +232,5 @@ jobs:
     with:
       expected_version: ${{ needs.prepare-release.outputs.version }}
       ref: ${{ needs.prepare-release.outputs.branch }}
+    secrets:
+      RELEASE_BOT_TOKEN: ${{ secrets.RELEASE_BOT_TOKEN }}

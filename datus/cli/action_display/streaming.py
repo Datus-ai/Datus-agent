@@ -23,8 +23,15 @@ from datus.cli.action_display.renderers import (
     is_task_anchor_input,
     parse_task_tool_input,
     render_assistant_response_markdown,
+    resolve_assistant_body,
 )
-from datus.schemas.action_history import SUBAGENT_COMPLETE_ACTION_TYPE, ActionHistory, ActionRole, ActionStatus
+from datus.schemas.action_history import (
+    INTERRUPTED_ACTION_TYPE,
+    SUBAGENT_COMPLETE_ACTION_TYPE,
+    ActionHistory,
+    ActionRole,
+    ActionStatus,
+)
 from datus.utils.loggings import get_logger
 
 if TYPE_CHECKING:
@@ -123,6 +130,28 @@ class InlineStreamingContext:
         self.display = display_instance
         self._history_turns: List[Tuple[str, List[ActionHistory]]] = history_turns or []
         self._current_user_message = current_user_message
+        # Input text restored by ESC when the turn is cancelled before the
+        # model produces anything.  It normally matches
+        # ``_current_user_message`` but callers may replace it with the
+        # pre-transformation text (for example before an @Agent dispatch hint
+        # is appended).
+        self._editable_user_message = current_user_message
+        # Set by the action producer as soon as it observes the first
+        # assistant/tool/interaction event.  This deliberately does not wait
+        # for the refresh thread to paint a delta.
+        self._model_response_started = threading.Event()
+        # Latched by ESC when it wins the race before the first response
+        # event. The chat layer consumes this after async cancellation has
+        # fully unwound, then rolls the entire user turn back.
+        self._unanswered_rollback_requested = threading.Event()
+        # Generic cancellation latch. Unlike the notice event, this remains
+        # set after ``__exit__`` so the chat layer can skip final-response
+        # rendering even after the visible notice has been flushed.
+        self._interrupt_requested = threading.Event()
+        # ESC requests this only when response output has already started.
+        # ``__exit__`` prints the notice after draining the partial response,
+        # preserving the natural output order.
+        self._interrupted_notice_requested = threading.Event()
         self._sync_mode = sync_mode
         self._processed_index = 0
         self._tick = 0
@@ -216,6 +245,44 @@ class InlineStreamingContext:
     def set_event_loop(self, loop: asyncio.AbstractEventLoop) -> None:
         """Set the asyncio event loop for broker.submit calls from daemon thread."""
         self._event_loop = loop
+
+    def set_editable_user_message(self, message: str) -> None:
+        """Set the original input text that ESC may restore for editing."""
+        self._editable_user_message = message
+
+    @property
+    def editable_user_message(self) -> str:
+        """Original user input suitable for restoring into the input buffer."""
+        return self._editable_user_message
+
+    def mark_model_response_started(self) -> None:
+        """Latch that the model has produced an observable response event."""
+        self._model_response_started.set()
+
+    @property
+    def has_model_response_started(self) -> bool:
+        """Whether any model response event has arrived for this turn."""
+        return self._model_response_started.is_set()
+
+    def request_interrupted_notice(self) -> None:
+        """Request an ``Interrupted`` line after partial output is drained."""
+        self._interrupt_requested.set()
+        self._interrupted_notice_requested.set()
+
+    def request_unanswered_rollback(self) -> None:
+        """Latch that ESC cancelled this turn before any model response."""
+        self._interrupt_requested.set()
+        self._unanswered_rollback_requested.set()
+
+    @property
+    def unanswered_rollback_requested(self) -> bool:
+        """Whether this turn should be removed and restored into the editor."""
+        return self._unanswered_rollback_requested.is_set()
+
+    @property
+    def interrupt_requested(self) -> bool:
+        """Whether this streaming turn was cancelled by the user."""
+        return self._interrupt_requested.is_set()
 
     def set_input_collector(self, collector: Callable[[ActionHistory, Console], Optional[List[List[str]]]]) -> None:
         """Set the synchronous input collector callback for INTERACTION actions.
@@ -451,6 +518,10 @@ class InlineStreamingContext:
         self._active_message_id = None
         self._stop_event.clear()
         self._paused = False
+        self._model_response_started.clear()
+        self._unanswered_rollback_requested.clear()
+        self._interrupt_requested.clear()
+        self._interrupted_notice_requested.clear()
         # Fresh turn: forget which response we've already finalized so the
         # next stream's first paired completion triggers the full dedupe
         # + reprint cycle again.
@@ -498,6 +569,10 @@ class InlineStreamingContext:
                 except Exception as exc:  # pragma: no cover - defensive
                     logger.debug("Markdown tail flush on exit failed: %s", exc)
 
+        if self._interrupted_notice_requested.is_set():
+            self._interrupted_notice_requested.clear()
+            self._print_to_append_area("[yellow]Interrupted[/yellow]")
+
         # Unregister
         if self.display._current_context is self:
             self.display._current_context = None
@@ -510,77 +585,7 @@ class InlineStreamingContext:
             # Check for verbose toggle request (Ctrl+O)
             if self._verbose_toggle_event.is_set():
                 self._verbose_toggle_event.clear()
-                self._verbose = not self._verbose
-
-                if self._verbose:
-                    # Entering verbose mode: freeze — show snapshot, stop all Live displays
-                    self._verbose_frozen = True
-                    self._stop_processing_live()
-                    self._stop_subagent_live()
-                    with self._print_lock:
-                        if self._clear_screen_callback is not None:
-                            try:
-                                self._clear_screen_callback()
-                            except Exception as exc:
-                                logger.debug(
-                                    "clear_screen_callback raised in verbose toggle: %s",
-                                    exc,
-                                    exc_info=True,
-                                )
-                        else:
-                            self.display.console.clear()
-                            sys.stdout.write("\033[3J")
-                            sys.stdout.flush()
-                        if self._clear_header_callback is not None:
-                            try:
-                                self._clear_header_callback()
-                            except Exception as exc:
-                                logger.debug(
-                                    "clear_header_callback raised in verbose toggle: %s",
-                                    exc,
-                                    exc_info=True,
-                                )
-                        self.display.console.print(
-                            "[bold bright_black]  \u23af switched to verbose mode (frozen) \u23af[/]"
-                        )
-                    self._reprint_history(verbose=True, show_active_groups=True)
-                    # Do NOT restart any Live displays — screen is frozen
-                else:
-                    # Returning to compact mode: unfreeze — resume real-time processing
-                    self._verbose_frozen = False
-                    self._stop_processing_live()
-                    self._stop_subagent_live()
-                    with self._print_lock:
-                        if self._clear_screen_callback is not None:
-                            try:
-                                self._clear_screen_callback()
-                            except Exception as exc:
-                                logger.debug(
-                                    "clear_screen_callback raised in verbose toggle: %s",
-                                    exc,
-                                    exc_info=True,
-                                )
-                        else:
-                            self.display.console.clear()
-                            sys.stdout.write("\033[3J")
-                            sys.stdout.flush()
-                        if self._clear_header_callback is not None:
-                            try:
-                                self._clear_header_callback()
-                            except Exception as exc:
-                                logger.debug(
-                                    "clear_header_callback raised in compact toggle: %s",
-                                    exc,
-                                    exc_info=True,
-                                )
-                        self.display.console.print("[bold bright_black]  \u23af switched to compact mode \u23af[/]")
-                    self._reprint_history(verbose=self._verbose)
-                    # Restart Live for any remaining active subagent groups.
-                    # In TUI mode the pinned region re-draws from LiveDisplayState
-                    # on its own; explicit re-emission handles non-TUI Rich Live.
-                    if self._subagent_groups:
-                        with self._print_lock:
-                            self._update_subagent_groups_live()
+                self._apply_verbose_toggle()
 
             if not self._paused and not self._verbose_frozen:
                 if self._tui_mode:
@@ -598,12 +603,71 @@ class InlineStreamingContext:
                     self._repaint_live()
             self._stop_event.wait(timeout=0.25)
 
+    # -- verbose toggle (Ctrl+O) -------------------------------------------
+
+    def _clear_screen_for_toggle(self, mode_label: str) -> None:
+        """Wipe the screen and pinned header ahead of a Ctrl+O rebuild.
+
+        Callers hold ``_print_lock``. Callback failures are non-fatal: a stale
+        screen is far better than losing the rebuilt transcript underneath it.
+        """
+        if self._clear_screen_callback is not None:
+            try:
+                self._clear_screen_callback()
+            except Exception as exc:
+                logger.debug("clear_screen_callback raised in %s toggle: %s", mode_label, exc, exc_info=True)
+        else:
+            self.display.console.clear()
+            sys.stdout.write("\033[3J")
+            sys.stdout.flush()
+        if self._clear_header_callback is not None:
+            try:
+                self._clear_header_callback()
+            except Exception as exc:
+                logger.debug("clear_header_callback raised in %s toggle: %s", mode_label, exc, exc_info=True)
+
+    def _apply_verbose_toggle(self) -> None:
+        """Flip the display mode and rebuild the screen for it.
+
+        Verbose freezes the transcript into a static snapshot (all Live
+        displays stay down); compact unfreezes and hands the pinned region back
+        to the Live painter.
+        """
+        self._verbose = not self._verbose
+        # Blank the pinned region through the freeze flag rather than
+        # ``_stop_processing_live``: that would drop ``_processing_action`` and
+        # strand an in-flight tool. Its PROCESSING entry was already consumed
+        # by ``_process_actions`` and the reprinted history slice skips
+        # PROCESSING rows, so nothing would ever redraw the frame — the tool
+        # would silently vanish until it returned. Keeping the state intact
+        # also lets the compact side re-pin it for free.
+        self._verbose_frozen = self._verbose
+        self._repaint_live()
+        mode_label = "verbose" if self._verbose else "compact"
+        banner = "switched to verbose mode (frozen)" if self._verbose else "switched to compact mode"
+        with self._print_lock:
+            self._clear_screen_for_toggle(mode_label)
+            self.display.console.print(f"[bold bright_black]  \u23af {banner} \u23af[/]")
+
+        if self._verbose:
+            # Frozen: no Live display is restarted, so the running tool has to
+            # be part of the static snapshot.
+            self._reprint_history(verbose=True, show_active_groups=True, running_action=self._processing_action)
+            return
+
+        self._reprint_history(verbose=False)
+        # Hand the pinned region back to the Live painter, which redraws the
+        # running-tool frame / subagent rolling window from the state that
+        # survived the freeze.
+        self._repaint_live()
+
     # -- unified reprint history -------------------------------------------
 
     def _reprint_history(
         self,
         verbose: bool,
         show_active_groups: bool = False,
+        running_action: Optional[ActionHistory] = None,
     ) -> None:
         """Unified reprint of all already-processed actions.
 
@@ -614,12 +678,23 @@ class InlineStreamingContext:
             verbose: Whether to render in verbose mode (True=expanded, False=collapsed).
             show_active_groups: If True, render active subagent groups as static output
                 with an "in progress" indicator (used for verbose/frozen snapshot).
+            running_action: Main-agent tool still in flight, if any. Rendered as
+                static output at the end of the snapshot because the reprint
+                replaces the pinned region that normally carries its blinking
+                frame. ``render_action_history`` skips PROCESSING rows, so this
+                is the only way an in-flight tool survives the rebuild.
         """
         with self._print_lock:
             # 1. Render previous turns (with per-turn response rendering)
             if self._history_turns:
 
                 def _render_turn_response(turn_actions: List[ActionHistory]) -> None:
+                    # Interrupted turns contain only a partial trace plus the
+                    # replay marker rendered by ``render_action_history``.
+                    # Never promote their last assistant event to a final
+                    # response during a later live Ctrl+O rebuild.
+                    if any(action.action_type == INTERRUPTED_ACTION_TYPE for action in turn_actions):
+                        return
                     # Prefer the wrapper action (e.g. ``chat_response``) since
                     # ``render_action_history`` already skips it. Fall back to
                     # plain ``response`` for providers that don't emit a
@@ -636,16 +711,26 @@ class InlineStreamingContext:
                         ):
                             continue
                         if a.action_type.endswith("_response") and a.action_type != "response":
-                            wrapper = a
-                            break
+                            if wrapper is None:
+                                wrapper = a
+                            continue
                         if a.action_type == "response" and plain is None:
                             plain = a
-                    chosen = wrapper or plain
-                    if chosen is not None:
-                        self.display.renderer.print_renderables(
-                            self.display.console,
-                            self.display.renderer.render_main_action(chosen, verbose=verbose),
-                        )
+                    # Pick the first candidate that actually carries a body.
+                    # A wrapper whose node result has no text body would
+                    # otherwise render its boilerplate ``messages`` ("chat
+                    # interaction completed successfully") in place of the
+                    # turn's answer, since ``render_action_history`` already
+                    # dropped the plain ``response`` that holds the real text.
+                    body = ""
+                    for candidate in (wrapper, plain):
+                        if candidate is None:
+                            continue
+                        body = resolve_assistant_body(candidate)
+                        if body:
+                            break
+                    if body:
+                        self.display.console.print(render_assistant_response_markdown(body))
 
                 self.display.render_multi_turn_history(
                     self._history_turns, verbose=verbose, per_turn_callback=_render_turn_response
@@ -718,6 +803,14 @@ class InlineStreamingContext:
                             self.display.console,
                             self.display.renderer.render_subagent_action(buffered, verbose=True),
                         )
+                    # The subagent's own in-flight tool lives in the pinned
+                    # rolling window (``_build_subagent_live_lines``), which the
+                    # frozen snapshot replaces — re-emit it as static output.
+                    group_processing = group.get("processing_action")
+                    if group_processing is not None:
+                        self.display.console.print(
+                            self.display.renderer.render_processing(group_processing, _PROCESSING_SYMBOL)
+                        )
                     # Show "in progress" indicator
                     dur_str = ""
                     if group["start_time"]:
@@ -726,6 +819,14 @@ class InlineStreamingContext:
                     self.display.console.print(
                         f"[dim]  \u23bf  \u23f3 in progress ({group['tool_count']} tool uses{dur_str})...[/dim]"
                     )
+            # 5. Re-emit the main-agent tool that is still running, so the
+            # snapshot ends where the user's attention was instead of dropping
+            # the call until it returns.
+            if running_action is not None:
+                self.display.renderer.print_renderables(
+                    self.display.console,
+                    self.display.renderer.render_running_tool(running_action, _PROCESSING_SYMBOL, verbose),
+                )
 
     # -- core processing (async mode) --------------------------------------
 
@@ -742,6 +843,13 @@ class InlineStreamingContext:
             # INTERACTION actions: collect input during live interaction, skip in history
             if action.role == ActionRole.INTERACTION:
                 if action.status == ActionStatus.PROCESSING and self._input_collector:
+                    # An ASK-gated tool (e.g. ``bash``) is already
+                    # pinned as the running "○ 🔧 tool(...)" frame. Clearing it
+                    # to draw the prompt is correct, but the same tool resumes
+                    # execution once approved — capture the frame so we can
+                    # restore it, otherwise a long bash runs with a blank pinned
+                    # region and only appears when it completes.
+                    saved_processing = self._processing_action
                     self._stop_processing_live()
                     self._stop_subagent_live()
                     user_input = self._input_collector(action, self.display.console)
@@ -760,6 +868,11 @@ class InlineStreamingContext:
                     except Exception as e:
                         logger.error(f"Error submitting interaction response: {e}")
                         return
+                    # Approval submitted: the gated tool now proceeds to run.
+                    # Restore its PROCESSING frame so the user sees live progress
+                    # for the (possibly long) execution instead of a blank region.
+                    if saved_processing is not None:
+                        self._update_processing_live(saved_processing)
                     self._processed_index += 1
                     return  # Wait for SUCCESS action to arrive
                 else:
@@ -1515,6 +1628,7 @@ class InlineStreamingContext:
                 delta = raw
         if not delta:
             return
+        self.mark_model_response_started()
         self._markdown_stream_has_streamed = True
         if action.action_id:
             self._markdown_active_stream_ids.add(action.action_id)

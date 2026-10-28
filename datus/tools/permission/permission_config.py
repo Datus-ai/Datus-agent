@@ -13,9 +13,12 @@ Provides:
 
 import fnmatch
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
+
+if TYPE_CHECKING:
+    from datus.tools.permission.bash_rules import BashCommandRules
 
 
 class PermissionLevel(str, Enum):
@@ -29,6 +32,59 @@ class PermissionLevel(str, Enum):
     ALLOW = "allow"
     DENY = "deny"
     ASK = "ask"
+
+
+class AutoReviewConfig(BaseModel):
+    """Configuration for AI review of bash/SQL actions that remain ASK.
+
+    Profiles provide the default ``enabled`` posture.  User configuration is
+    layered field-by-field so setting only a dedicated model does not reset
+    the profile's timeout or confidence threshold.
+    """
+
+    enabled: bool = Field(default=False, description="Review bash/SQL ASK actions with an LLM")
+    model: Optional[str] = Field(
+        default=None,
+        description="Reviewer model reference: provider/model, custom/alias, or omitted for the active model",
+    )
+    timeout_seconds: float = Field(default=20.0, gt=0, le=120)
+    confidence_threshold: float = Field(default=0.8, ge=0.0, le=1.0)
+    max_completion_tokens: int = Field(
+        default=1024,
+        gt=0,
+        le=8192,
+        description="Completion budget for one review; too small truncates the structured verdict",
+    )
+    max_history_bytes: int = Field(
+        default=24 * 1024,
+        gt=0,
+        le=512 * 1024,
+        description="Byte ceiling for the trimmed review history (planned action is never trimmed)",
+    )
+    max_user_messages: int = Field(
+        default=8, gt=0, le=100, description="Most recent trusted user messages included as authorization evidence"
+    )
+    max_prior_actions: int = Field(
+        default=20, gt=0, le=200, description="Most recent prior bash/SQL arguments included as untrusted history"
+    )
+
+    model_config = ConfigDict(extra="forbid")
+
+    @classmethod
+    def from_dict(cls, data: Optional[Dict[str, Any]]) -> Optional["AutoReviewConfig"]:
+        if data is None:
+            return None
+        if not isinstance(data, dict):
+            raise ValueError(f"permissions.auto_review must be a mapping, got {type(data).__name__}")
+        return cls(**data)
+
+    def merge_with(self, override: Optional["AutoReviewConfig"]) -> "AutoReviewConfig":
+        if override is None:
+            return self
+        values = self.model_dump()
+        for field_name in override.model_fields_set:
+            values[field_name] = getattr(override, field_name)
+        return AutoReviewConfig(**values)
 
 
 class PermissionRule(BaseModel):
@@ -79,6 +135,121 @@ class PermissionRule(BaseModel):
         return True
 
 
+# Fine-grained statement kinds (``parse_sql_statement_kind``) mapped to the
+# permission classes ``SqlStatementRules`` gates on. Destructive = statements
+# that irreversibly mutate or remove existing data/schema; REPLACE deletes
+# matched rows before re-inserting, and MERGE carries UPDATE/DELETE semantics
+# in its WHEN MATCHED branches, so both count as destructive.
+_SQL_KIND_TO_CLASS: Dict[str, str] = {
+    "select": "read",
+    "metadata": "read",
+    "explain": "read",
+    "insert": "write",
+    "create": "write",
+    "ddl": "write",
+    "context_set": "write",
+    "update": "destructive",
+    "delete": "destructive",
+    "merge": "destructive",
+    "drop": "destructive",
+    "truncate": "destructive",
+    "alter": "destructive",
+    "replace": "destructive",
+    "unknown": "unknown",
+}
+
+
+def classify_sql_kind(kind: str) -> str:
+    """Map a fine-grained statement kind to its permission class.
+
+    Unmapped kinds fall to ``unknown`` (fail-safe: an unrecognized statement
+    must never inherit a permissive class).
+    """
+    return _SQL_KIND_TO_CLASS.get(kind, "unknown")
+
+
+class SqlStatementRules(BaseModel):
+    """Per-class permission levels for ``db_tools.execute_sql``.
+
+    ``execute_sql`` is the unified SQL entry point, so a single static rule
+    cannot express "reads auto-allow, writes ask, destructive statements
+    always confirm". This model carries one :class:`PermissionLevel` per
+    statement class; the classes are resolved from the concrete statement by
+    ``parse_sql_statement_kind`` + :func:`classify_sql_kind`.
+
+    Configured per profile (``profiles.py``) and user-overridable under
+    ``permissions.sql_statements`` in agent.yml:
+
+        permissions:
+          sql_statements:
+            read: allow        # SELECT / SHOW / DESCRIBE / EXPLAIN
+            write: ask         # INSERT, CREATE, COMMENT/GRANT/..., USE/SET
+            destructive: ask   # UPDATE, DELETE, MERGE, DROP, TRUNCATE, ALTER, REPLACE
+            unknown: ask       # unparseable SQL (fail-safe)
+    """
+
+    read: PermissionLevel = Field(
+        default=PermissionLevel.ALLOW, description="SELECT / SHOW / DESCRIBE / EXPLAIN statements"
+    )
+    write: PermissionLevel = Field(
+        default=PermissionLevel.ASK, description="INSERT, CREATE, benign DDL, and session statements"
+    )
+    destructive: PermissionLevel = Field(
+        default=PermissionLevel.ASK,
+        description="Irreversible statements: UPDATE, DELETE, MERGE, DROP, TRUNCATE, ALTER, REPLACE",
+    )
+    unknown: PermissionLevel = Field(default=PermissionLevel.ASK, description="Unparseable statements (fail-safe)")
+
+    class Config:
+        use_enum_values = True
+
+    @classmethod
+    def from_dict(cls, data: Optional[Dict[str, Any]]) -> Optional["SqlStatementRules"]:
+        """Build from the ``permissions.sql_statements`` YAML block.
+
+        Returns ``None`` when the block is absent so callers can distinguish
+        "not configured" from "configured with defaults". Only keys present in
+        the YAML are passed to the constructor so ``model_fields_set`` records
+        which levels were explicit — ``merge_with`` relies on that to layer
+        user overrides without clobbering profile defaults.
+        """
+        if data is None:
+            return None
+        if not isinstance(data, dict):
+            raise ValueError(f"permissions.sql_statements must be a mapping, got {type(data).__name__}")
+        kwargs: Dict[str, Any] = {}
+        for field_name in ("read", "write", "destructive", "unknown"):
+            if field_name in data:
+                kwargs[field_name] = PermissionLevel(data[field_name])
+        return cls(**kwargs)
+
+    def merge_with(self, override: Optional["SqlStatementRules"]) -> "SqlStatementRules":
+        """Layer another ruleset on top; explicit override fields win.
+
+        Mirrors ``BashCommandRules.merge_with`` scalar semantics: a level from
+        ``override`` replaces this one only when it was explicitly set
+        (tracked via ``model_fields_set``).
+        """
+        if override is None:
+            return self
+        merged = self.model_copy()
+        for field_name in ("read", "write", "destructive", "unknown"):
+            if field_name in override.model_fields_set:
+                setattr(merged, field_name, getattr(override, field_name))
+        return merged
+
+    def level_for_class(self, sql_class: str) -> PermissionLevel:
+        """Permission level for a statement class; unmapped classes fail safe.
+
+        ``use_enum_values`` stores fields as plain strings at runtime, so the
+        value is coerced back to :class:`PermissionLevel` before returning.
+        """
+        value = getattr(self, sql_class, None)
+        if value is None:
+            value = self.unknown
+        return PermissionLevel(value)
+
+
 class PermissionConfig(BaseModel):
     """Unified permission configuration for all tools, MCP, and skills.
 
@@ -103,11 +274,27 @@ class PermissionConfig(BaseModel):
     Attributes:
         rules: List of permission rules evaluated in order
         default_permission: Default permission when no rules match
+        bash_commands: Optional command-level bash rules (see ``bash_rules.py``);
+            consumed by ``PermissionHooks._handle_bash_permission``. When None,
+            the coarse ``bash_tools.bash`` rule governs as before.
+        sql_statements: Optional per-class statement rules for ``execute_sql``;
+            consumed by ``PermissionHooks._handle_sql_permission``. When None,
+            the legacy read-only/ASK gating governs as before.
     """
 
     rules: List[PermissionRule] = Field(default_factory=list, description="Permission rules evaluated in order")
     default_permission: PermissionLevel = Field(
         default=PermissionLevel.ALLOW, description="Default permission when no rules match"
+    )
+    bash_commands: Optional["BashCommandRules"] = Field(
+        default=None, description="Command-level allow/deny/ask rules for the bash tool"
+    )
+    sql_statements: Optional[SqlStatementRules] = Field(
+        default=None, description="Per-class permission levels for execute_sql statements"
+    )
+    auto_review: AutoReviewConfig = Field(
+        default_factory=AutoReviewConfig,
+        description="AI review settings for bash/SQL actions that remain ASK",
     )
 
     class Config:
@@ -134,9 +321,15 @@ class PermissionConfig(BaseModel):
 
         rules = [PermissionRule.from_dict(r) for r in rules_data]
 
+        # Deferred import: bash_rules imports PermissionLevel from this module.
+        from datus.tools.permission.bash_rules import BashCommandRules
+
         return cls(
             default_permission=PermissionLevel(default),
             rules=rules,
+            bash_commands=BashCommandRules.from_dict(data.get("bash_commands")),
+            sql_statements=SqlStatementRules.from_dict(data.get("sql_statements")),
+            auto_review=AutoReviewConfig.from_dict(data.get("auto_review")) or AutoReviewConfig(),
         )
 
     def merge_with(self, override: Optional["PermissionConfig"]) -> "PermissionConfig":
@@ -156,9 +349,46 @@ class PermissionConfig(BaseModel):
         # Override rules are appended (evaluated later, thus higher priority)
         merged_rules = self.rules + override.rules
 
+        # Bash command rules layer: lists concatenate, scalars override only
+        # when explicitly set (see BashCommandRules.merge_with).
+        if self.bash_commands is not None:
+            merged_bash = self.bash_commands.merge_with(override.bash_commands)
+        else:
+            merged_bash = override.bash_commands
+
+        # SQL statement rules layer: per-class levels override only when
+        # explicitly set (see SqlStatementRules.merge_with).
+        if self.sql_statements is not None:
+            merged_sql = self.sql_statements.merge_with(override.sql_statements)
+        else:
+            merged_sql = override.sql_statements
+
+        merged_auto_review = self.auto_review.merge_with(override.auto_review)
+
         # Always use override's default_permission when override is provided
         # This allows overriding just the default without adding rules
         return PermissionConfig(
             default_permission=override.default_permission,
             rules=merged_rules,
+            bash_commands=merged_bash,
+            sql_statements=merged_sql,
+            auto_review=merged_auto_review,
         )
+
+
+# Resolve the forward reference to BashCommandRules. bash_rules imports
+# PermissionLevel from this module, so whichever module finishes importing
+# second completes the rebuild: when this module loads first the import below
+# succeeds; when bash_rules loads first the import raises (bash_rules is
+# mid-initialization) and bash_rules performs the rebuild at its own bottom.
+try:
+    from datus.tools.permission.bash_rules import BashCommandRules
+
+    PermissionConfig.model_rebuild()
+except ImportError as _exc:  # pragma: no cover - depends on import order
+    # Expected only for the circular-import case (bash_rules is
+    # mid-initialization and performs the rebuild at its own bottom). Log so
+    # a genuine import failure in bash_rules is not silently swallowed.
+    from datus.utils.loggings import get_logger
+
+    get_logger(__name__).debug("Deferring PermissionConfig.model_rebuild() to bash_rules: %s", _exc)

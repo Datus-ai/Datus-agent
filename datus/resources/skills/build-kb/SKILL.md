@@ -1,6 +1,6 @@
 ---
 name: build-kb
-description: Build the project's vector-indexed knowledge base from files plus database metadata — optionally scoped to specific files / tables / datasources / domains. Scan the in-scope material, classify it into business domains, explore each domain in parallel with explore subagents, then (after the user confirms a generation manifest) route every artifact to its store via storage-classify, generating semantic_models / metrics / reference_sql (and mining any extra knowledge), and refresh AGENTS.md's KB index. The lightweight /init handles the AGENTS.md inventory plus file-based knowledge/memory; this skill owns the heavy vector-store generation.
+description: Build the project's vector-indexed knowledge base from files plus database metadata — optionally scoped to specific files / tables / datasources / domains. Scan the in-scope material, classify it into business domains, explore each domain's tables and docs in parallel with explore subagents (the validated-query SQL corpus is enumerated directly, no explore needed), then (after the user confirms a generation manifest — or directly, in the same turn, when the user has waived confirmation) route every artifact to its store via storage-classify, generating semantic_models / metrics / reference_sql (and mining any extra knowledge), and refresh AGENTS.md's KB index. The lightweight /init writes the AGENTS.md project map plus the file-based ./knowledge/*.md; this skill owns the heavy vector-store generation.
 tags:
   - build-kb
   - knowledge-base
@@ -8,19 +8,23 @@ tags:
   - metrics
   - reference-sql
   - classify
-version: 1.0.0
+version: 1.1.2
 user_invocable: true
 ---
 
 # Build Knowledge Base
 
-You are building the project's **vector-indexed knowledge base** — `semantic_models`, `metrics`, and `reference_sql` (the LanceDB-backed stores) — from the project's files and database metadata. This is the heavy companion to the lightweight `/init`: `/init` already produces the `AGENTS.md` inventory and the file-based stores (`./knowledge/*.md`, `memory`); **this skill owns the expensive generation** that writes the vector stores and then refreshes `AGENTS.md`'s KB index sections.
+You are building the project's **vector-indexed knowledge base** — `semantic_models`, `metrics`, and `reference_sql` (the LanceDB-backed stores) — from the project's files and database metadata. This is the heavy companion to the lightweight `/init`: `/init` already produces the `AGENTS.md` project map and the file-based `./knowledge/*.md`; **this skill owns the expensive generation** that writes the vector stores and then refreshes `AGENTS.md`'s KB index sections.
 
-This is an orchestration skill running in the main agent context, so you may call `task`, `todo_write`/`todo_list`/`todo_read`/`todo_update`, `ask_user`, `add_memory`/`edit_memory`, the filesystem tools (`glob`, `grep`, `read_file`, `write_file`, `edit_file`), and the database tools (`list_databases`, `list_tables`, `describe_table`, `search_table`, `read_query`).
+This is an orchestration skill running in the main agent context, so you may call `task`, `todo_write`/`todo_list`/`todo_read`/`todo_update`, `ask_user`, `add_memory`/`edit_memory`, the filesystem tools (`glob`, `grep`, `read_file`, `write_file`, `edit_file`), and the database tools (`list_databases`, `list_tables`, `describe_table`, `search_table`, `execute_sql`).
 
-**Routing authority is `storage-classify`.** This skill decides *what to scan and explore within scope*; the `storage-classify` skill owns *which content goes to which store, written with which mechanism*. Do NOT re-invent storage routing rules here — load and follow `storage-classify` in Step 3.
+**Evidence status.** `knowledge/pending-questions.md`, when present, is an unresolved-question list, not a source of confirmed definitions. Exclude it from generation inputs. Its entries may guide verification against primary sources or explicit user confirmations, but must not be promoted to semantic models, metrics, reference SQL, skills, memory or established knowledge as facts. Carry this distinction into delegated exploration and generation prompts.
 
-**Two-phase contract (important).** Heavy generation (`gen_semantic_model` / `gen_metrics` / `gen_sql_summary` / `gen_skill` / `extract-knowledge`) costs tokens and writes real artifacts. So there is a hard **turn boundary** after exploration: you produce a Generation Manifest and then **end your turn**. Do NOT call `ask_user` for this confirmation — just present the manifest and stop. The user confirms or corrects it in their next message; only then do you run Step 3 and Step 4.
+**Routing authority is `storage-classify`.** This skill decides *what to scan and explore within scope*; the `storage-classify` skill owns *which content goes to which store, written with which mechanism*. Do NOT re-invent storage routing rules here — load `storage-classify` in Step 0 and follow it through Steps 2-4 (Step 2 inlines its rules into explore prompts; Step 3 routes every item by them).
+
+**Two-phase contract (important).** Heavy generation (`semantic_modeling` / `gen_sql_summary` / `gen_skill` / `extract-knowledge`) costs tokens and writes real artifacts. So there is a hard **turn boundary** after exploration: you produce a Generation Manifest and then **end your turn**. Do NOT call `ask_user` for this confirmation — just present the manifest and stop. The user confirms or corrects it in their next message; only then do you run Step 3 and Step 4.
+
+**Exception — auto-run (confirmation skip).** When the user explicitly waived confirmation in Step 0 (**auto-run = true**), there is no turn boundary: still **assemble and print the full manifest** (so the choices stay on the record and the dual-route knowledge rows stay visible), but instead of stopping, continue **straight into Step 3 in the same turn**. This is the only way the gate is skipped — never infer it from a bare scope hint or from impatience; default is always to confirm.
 
 ---
 
@@ -29,11 +33,13 @@ This is an orchestration skill running in the main agent context, so you may cal
 **Do NOT call `ask_user` in this step.** The user invokes this skill as `/build-kb <free-text scope hints>` — the hints arrive as an "Additional context from the user" block. Parse them into a concrete scope; when no hints are given, default to the **whole project**.
 
 1. **Parse the scope hints** into any of: in-scope **files** (globs / paths, e.g. `queries/*.sql`), **datasources**, **tables** (e.g. `orders`, `order_items`), and **business domains** (e.g. "only the sales domain"). Free text — interpret generously, e.g. `/build-kb orders + order_items tables and queries/*.sql, sales domain only`.
+   - **Also detect a confirmation-skip opt-out.** If the current invocation's hints explicitly waive the manifest confirmation gate (e.g. "skip confirmation", "no confirm", "auto", "don't stop for confirmation", "直接执行" / "跳过确认" / "不用确认"), set **auto-run = true**. Absent such an explicit signal, **auto-run = false** (the default — always confirm). A bare scope hint is NOT an opt-out; only an explicit waive counts.
 2. **Infer the goal and datasource defaults** the same way `/init` does: read `README.md` (first 3000 chars) or derive a 1-2 sentence goal. For datasources, **default to the currently active datasource** of the session (the one pinned via `--datasource` / `/datasource`, i.e. the project's `default_datasource`); **when multiple datasources are configured, scope to that active one only — do NOT cover all of them** unless the Step 0.1 hints explicitly name other datasources. Hints from Step 0.1 **override** these defaults.
-3. **Reuse `/init`'s inventory when present.** If `./AGENTS.md` exists, read it to reuse the directory map / data-assets inventory rather than re-scanning the whole tree — narrow your scan to the in-scope subset.
+3. **Reuse `/init`'s inventory when present.** If `./AGENTS.md` exists, read it to reuse its `## Directory Map` / `## Core Tables` rather than re-scanning the whole tree — narrow your scan to the in-scope subset.
 4. Use `glob` to scan the in-scope directory tree (top 3 levels). Skip hidden dirs and `__pycache__` / `node_modules` / `.venv`.
+5. **Load routing rules now:** call `load_skill("storage-classify")` and extract its **Decision Tree** and **Per-Store Reference** into a local summary. This must happen before Step 2 so the routing rules can be inlined into every explore subagent prompt — explore subagents run in isolated contexts and cannot load skills themselves.
 
-Record the resolved **goal**, **in-scope datasources**, and the **file/table/domain scope** (with a one-line reason for each) — they become the first rows of the Generation Manifest so the user can correct them at the single confirmation point. If the scope is empty after parsing, state plainly that you are defaulting to the whole project.
+Record the resolved **goal**, **in-scope datasources**, the **file/table/domain scope** (with a one-line reason for each), and the **auto-run** flag — they become the first rows of the Generation Manifest so the user can correct them at the single confirmation point. If the scope is empty after parsing, state plainly that you are defaulting to the whole project.
 
 ---
 
@@ -42,41 +48,46 @@ Record the resolved **goal**, **in-scope datasources**, and the **file/table/dom
 Gather the raw material **inside the resolved scope**, then classify it into a **multi-level taxonomy of business domains / subtopics** (e.g. `sales/orders`, `sales/refunds`, `infra/etl`).
 
 **File side:**
-- Use `glob` / `grep` to collect candidate files **within scope**: `*.sql`, `*.md`, `*.yml` / `*.yaml`, scripts, configs, notebooks.
+- Use `glob` / `grep` to collect candidate files **within scope** — scan **all text files**, judged by content rather than extension. **Skip binary files** (images, executables, archives, compiled artifacts, parquet/db blobs, etc.) and **skip oversized files** (> ~1 MB) — if a large text file is clearly relevant, read its head/batches rather than the whole thing. When unsure whether a file is text, peek at the first bytes (`read_file` head) before committing to it.
 - **Validated-query corpus is special — treat it as enumerable, never as a sample.** When the in-scope material holds a corpus of validated `(question, SQL)` pairs (a queries file, a golden/benchmark set, a saved-query catalog, a dbt/analysis SQL folder), count the total and plan to index **every** pair. Unlike tables (where representative sampling is fine), each validated query is a future few-shot example: one omitted pair is one the runtime can never retrieve. Do **not** curate "representative" patterns here.
+- **Enumerate the SQL corpus directly here — do NOT route it through an `explore` subagent.** You are already reading these files' full text in this step, so build each `(question, SQL)` pair's `reference_sql` manifest row yourself: one row per pair, with the `prompt-seed` inlining the original natural-language question + the complete SQL + any mandatory filter. Handing a `.sql` file to `explore` only makes that subagent re-read the SQL verbatim and echo it back in its `prompt-seed` — a full round-trip of the SQL text through a subagent context for zero added insight. Large corpora: read and enumerate in batches rather than truncating.
 
 **Database side (for each in-scope datasource):**
 - `list_databases` → `list_tables` to enumerate tables/views; restrict to in-scope tables when the scope names them.
-- For representative in-scope tables: `describe_table` for **desc** (column names/types/comments), `search_table` (its `sample_data`) or `read_query("SELECT * FROM <t> LIMIT 5")` for **sample**, and `read_query("SELECT COUNT(*) AS rows, COUNT(DISTINCT <key>) AS card FROM <t>")` for key **statistics** (row count, key-column cardinality). There is no dedicated statistics tool — compute it with `read_query`.
+- For representative in-scope tables: `describe_table` for **desc** (column names/types/comments), `search_table` (its `sample_data`) or `execute_sql("SELECT * FROM <t> LIMIT 5")` for **sample**, and `execute_sql("SELECT COUNT(*) AS rows, COUNT(DISTINCT <key>) AS card FROM <t>")` for key **statistics** (row count, key-column cardinality). There is no dedicated statistics tool — compute it with `execute_sql`.
 - For large databases (>50 in-scope tables), sample representative tables per naming pattern rather than describing every table.
 
-**Classify** every in-scope file and table into the domain taxonomy. A single domain may contain both files and tables.
+**Classify** every in-scope file and table into the domain taxonomy. A single domain may contain both files and tables. Split the classified material into two routes:
+- **Validated-query SQL corpus → handle here.** Enumerate each `(question, SQL)` pair into a `reference_sql` manifest row directly (per the bullet above). These rows skip Step 2.
+- **Tables + documentation → hand to Step 2 `explore`.** Group them under their domain; these are what the explore subagents investigate.
 
-**Record with todos when the taxonomy is large (> 3 domains):** call `todo_write` with one todo per domain — `title` = domain name (≤ 8 words), `content` = the files + tables it covers plus exploration focus notes. Track each domain's progress with `todo_update` (`pending` → `in_progress` → `completed` / `failed`) in the next steps. Skip todos for small scopes (≤ 3 domains) to avoid noise.
+**Record with todos only when Step 2 will fan out more than one `explore` subagent:** call `todo_write` **once**, with one todo per to-be-explored domain — `title` = domain name (≤ 8 words), `content` = the files + tables it covers plus exploration focus notes. Track each domain's exploration with `todo_update` (`pending` → `in_progress` → `completed` / `failed`) in Step 2. This is the **only** `todo_write` in this skill — Step 3 tracks generation through the confirmed manifest, never through new todos. Skip todos entirely when zero or one domain needs exploring (e.g. the scope is only the SQL corpus) — a single explore call is not worth a sidebar list.
 
 ---
 
 ## Step 2 — Explore Each Domain in Parallel (concurrency ≤ 3)
 
-For each domain, delegate a read-only exploration to an `explore` subagent:
+**Explore only what needs investigating — database tables and documentation.** The validated-query SQL corpus was already enumerated into `reference_sql` rows in Step 1; do **NOT** launch an `explore` subagent for `.sql` files or query catalogs (that just round-trips the SQL text through a subagent for no gain). A domain whose only in-scope material is the SQL corpus needs no explore call at all.
+
+For each domain that has tables or docs to investigate, delegate a read-only exploration to an `explore` subagent:
 
 `task(type="explore", prompt=..., description="explore <domain>")`
 
-The `explore` subagent runs in an isolated context — it sees nothing you gathered unless you inline it. The prompt must carry: the **inferred project goal** and the **datasource (+ dialect)** the domain lives in, the domain's file list + table list, and the already-gathered desc / sample / statistic summaries. It must instruct the subagent to **explore read-only and summarize**, returning a **structured result in the storage-classify taxonomy**:
+The `explore` subagent runs in an isolated context — it sees nothing you gathered unless you inline it. The prompt must carry: the **inferred project goal** and the **datasource (+ dialect)** the domain lives in, the domain's file list + table list, the already-gathered desc / sample / statistic summaries, and the **full Decision Tree + Per-Store Reference extracted from `storage-classify` in Step 0**. Inlining the routing rules ensures the subagent's store assignments match what Step 3 will actually execute. It must instruct the subagent to **explore read-only and summarize**, returning a **structured result in the storage-classify taxonomy**:
 
 ```
 subject (the domain)
   → store: one of semantic_models | metrics | reference_sql | knowledge | skills | memory | AGENTS.md | none
     → ref: file path / table name / column name
        rationale: one line — why this store (cite the storage-classify decision-tree branch)
-       prompt-seed: the self-contained seed to hand the downstream generator — not just a bare ref but the context it needs (e.g. table names + the column encodings/intent for gen_semantic_model; the full SQL + the business question + any mandatory filter for gen_sql_summary)
+       prompt-seed: the self-contained seed to hand the downstream generator — not just a bare ref but the context it needs (e.g. table names + the column encodings/intent for semantic_modeling; for a SQL example *discovered in a doc*, the full SQL + the business question + any mandatory filter for gen_sql_summary)
 ```
 
-Coverage focuses on **semantic_models, metrics, reference_sql, and knowledge** — `/init` already wrote the AGENTS.md inventory and the initial knowledge/memory, so here the explorer should surface vector-store candidates plus any **additional** knowledge atoms the corpus reveals (do not re-propose facts `/init` already filed; do not propose other stores beyond memory/AGENTS.md notes).
+Coverage focuses on **semantic_models, metrics, and knowledge** (plus **reference_sql only for SQL newly discovered in docs** — the validated-query corpus was already enumerated in Step 1) — `/init` already wrote the AGENTS.md project map and the initial knowledge files, so here the explorer should surface vector-store candidates plus any **additional** knowledge atoms the corpus reveals (do not re-propose facts `/init` already filed; do not propose other stores beyond memory/AGENTS.md notes).
 
-**For a validated-query corpus, instruct the explorer to enumerate EVERY `(question, SQL)` pair as its own `reference_sql` ref** (not a representative handful), and to carry each pair's **original natural-language question** in the `prompt-seed` (it is the best retrieval key for future questions). Large corpora: have the explorer return the full list in batches rather than truncating.
+**The validated-query corpus is NOT explored here — you enumerated it directly in Step 1.** The only `reference_sql` refs an explorer should return are SQL it *newly discovers* while investigating tables or docs (e.g. an example query embedded in a Markdown doc). For any such discovered SQL, instruct the explorer to carry the **original natural-language question** (if the doc states one) in the `prompt-seed` — it is the best retrieval key for future questions.
 
-**Concurrency rule:** issue at most **3** `task` calls per batch (3 tool calls in one message), wait for the batch to return, then start the next batch. Set the domain's todo to `in_progress` when you launch it and `completed` when it returns. Tell the user (briefly) how many domains were dropped if you cap anything.
+**Concurrency rule:** issue at most **3** `task` calls per batch (3 tool calls in one message), wait for the batch to return, then start the next batch. If Step 1 created todos, set the domain's todo to `in_progress` when you launch it and `completed` when it returns. Tell the user (briefly) how many domains were dropped if you cap anything.
 
 ---
 
@@ -90,49 +101,54 @@ This manifest is the **single user confirmation point** — it must lead with th
    > **In-scope datasources:** <names> — *(from hints / `agent.yml`)*
    > **Scope:** <files / tables / domains, or "whole project (no scope hints given)">
 
-2. Aggregate every explore result, **dedupe** refs that appear under multiple domains, and build a **Generation Manifest** grouped by store, rendered as a Markdown table:
+2. Aggregate every explore result **together with the `reference_sql` rows you enumerated directly in Step 1**, **dedupe** refs that appear under multiple domains, and build a **Generation Manifest** grouped by store, rendered as a Markdown table:
 
    | Subject | Store | Refs | Mechanism | Summary |
    |---------|-------|------|-----------|---------|
-   | sales/orders | semantic_models | `orders`, `order_items` | `task(gen_semantic_model)` | core order facts |
-   | sales/orders | metrics | GMV, AOV | `task(gen_metrics)` | built on orders measures |
+   | sales/orders | semantic_models | `orders`, `order_items` | `task(semantic_modeling)` | core order facts |
+   | sales/orders | metrics | GMV, AOV | `task(semantic_modeling)` | built on orders measures |
    | … | reference_sql | `queries/top_skus.sql` | `task(gen_sql_summary)` | reusable ranking query |
    | … | knowledge | `status` enum on `orders` | `extract-knowledge` (lite) | atomic field-encoding fact |
 
-3. **STOP here.** After printing the resolved scope + manifest, **end your turn**. Do **NOT** call any generation `task`, `extract-knowledge`, `gen_skill`, `add_memory`, or write any store yet. Do **NOT** call `ask_user`. State plainly: *"Reply to confirm, or correct the goal / scope / any manifest row, and I'll run the generation."* Wait for the user's next message.
+   **Dual-route rows must be explicit.** Every `reference_sql` row sourced from a `(question, SQL)` pair that also carries a schema-non-inferable rule must appear a SECOND time as its own `knowledge` row here — that is the dual-route second write (see Step 3 point 4). Listing it makes its extra `extract-knowledge` cost visible so the user can strike it; Step 3 must NOT mine knowledge for any pair not listed as a `knowledge` row.
+
+3. **STOP here — unless auto-run was set in Step 0.**
+   - **Default (auto-run = false):** after printing the resolved scope + manifest, **end your turn**. Do **NOT** call any generation `task`, `extract-knowledge`, `gen_skill`, `add_memory`, or write any store yet. Do **NOT** call `ask_user`. State plainly: *"Reply to confirm, or correct the goal / scope / any manifest row, and I'll run the generation."* Wait for the user's next message.
+   - **Auto-run (auto-run = true):** do not stop. Print the same scope + manifest, add one line noting confirmation was skipped per the user's instruction (so the manifest is still auditable), then proceed directly into Step 3 in this same turn.
 
 ---
 
 ## Step 3 — Route & Generate (next turn, after confirmation; concurrency ≤ 3)
 
-Once the user confirms or corrects the manifest:
+Once the user confirms or corrects the manifest (or immediately, in the same turn, when auto-run was set in Step 0):
 
-1. `load_skill("storage-classify")` and treat its **Decision Tree** + **Per-Store Reference** + **Context Handoff to Subagents** as the routing authority for every item.
+1. Use the **Decision Tree** + **Per-Store Reference** + **Context Handoff to Subagents** from the `storage-classify` rules already loaded in Step 0 as the routing authority for every item.
 2. **Make every delegated prompt self-contained (see storage-classify's *Context Handoff*).** The `explore` subagents that produced these refs are gone, and each generator runs in a fresh context — so inline the **datasource (+ dialect)**, the **business intent**, the **`prompt-seed` the explorer returned**, and the **rules/encodings already gathered** that the artifact must honor. Route each manifest item to its store with the prescribed mechanism:
    - **Light items** → write directly: `memory` via `add_memory` (≤ 2000 bytes); small AGENTS.md notes via `write_file` / `edit_file`.
    - **Heavy items** → delegate (the placeholders below are the *minimum* each prompt must carry):
-     - semantic_models → `task(type="gen_semantic_model", prompt="<datasource> · <table name(s)> · intent · known column encodings / join-key traps>")`
-     - metrics → `task(type="gen_metrics", prompt="<datasource> · metric name + definition · the base semantic model / measure it builds on · any mandatory filter>")`
+     - semantic_models / metrics → `task(type="semantic_modeling", prompt="<datasource> · table(s) · metric definitions if any · intent · column encodings and mandatory filters>")`; combine dependent model and metric rows for the same business domain when practical.
      - reference_sql → `task(type="gen_sql_summary", prompt="<datasource/dialect> · the original natural-language question (if known) · the complete SQL · why it is written this way>")` — **one call per SQL, enumerate the whole corpus**: each query becomes its own `reference_sql` entry; index **every** `(question, SQL)` pair, do not select representatives (recall is driven by coverage). If a manifest row lists several SQLs, expand it into one `gen_sql_summary` call each; never pass multiple queries in a single prompt (they collapse into one mixed, unsearchable entry). Always pass the **original question** when the example came from one — it is the retrieval key future questions match against. The prompt must also instruct the generator explicitly: **"set `search_text` to the original natural-language question verbatim** (trim whitespace, keep its language); only fall back to keyword phrases when no original question exists" — `search_text` is the vector key the runtime embeds, and a user's question matches another question far better than it matches SQL keywords.
      - skills → `task(type="gen_skill", prompt="<skill intent + the concrete steps observed>")`
      - knowledge → run `extract-knowledge` in **lite** mode (do NOT trigger its deep blind-SQL flow); pass the **source (the SQL/doc/table) and the specific fact to mine**, plus the datasource it applies to. Only mine atoms `/init` did not already file — do not duplicate existing `./knowledge/*.md` entries.
-3. **Ordering:** metrics build on semantic models — generate all `semantic_models` items **before** their dependent `metrics` items.
-   - **Dual-route every `(question, SQL)` pair — this is required, not optional.** For each pair: (a) send it to `gen_sql_summary` so the example (with its original question) lands in `reference_sql`, AND (b) feed the same pair to `extract-knowledge` (lite) to mine the non-inferable rule. The example teaches *answer shape* (retrieved later for few-shot); the mined atom teaches *why* (encodings, mandatory filters, term→column mappings). One source, two stores — neither replaces the other.
-4. **Concurrency ≤ 3:** dispatch heavy `task` calls in batches of at most 3, waiting for each batch. Update each item's todo (`in_progress` → `completed` / `failed`) as you go.
+3. **Grouping:** send one coherent `semantic_modeling` request per business domain by default. If the user requests another grouping, follow it. Include dependent datasets, relationships, and metrics in the same request.
+   - **SQL-backed handoff contract:** append the original natural-language question when present and the complete original SQL to the `semantic_modeling` prompt. Do not pass a rewritten summary query, selected CTE fragments, or an inferred replacement.
+   - Do not assume a success-story row has external knowledge beyond its question, SQL, and stored metadata. Missing external knowledge is not a blocker and must not be synthesized.
+4. **Dual-route every `(question, SQL)` pair that appears as a `knowledge` row in the manifest — this is required, not optional.** For each such pair: (a) send it to `gen_sql_summary` so the example (with its original question) lands in `reference_sql`, AND (b) feed the same pair to `extract-knowledge` (lite) to mine the non-inferable rule. The example teaches *answer shape* (retrieved later for few-shot); the mined atom teaches *why* (encodings, mandatory filters, term→column mappings). One source, two stores — neither replaces the other. Mine knowledge ONLY for pairs listed as `knowledge` rows in the manifest — whether the user confirmed them, or auto-run carried the manifest through unconfirmed (see Turn Boundary).
+5. **Concurrency ≤ 3:** dispatch heavy `task` calls in batches of at most 3, waiting for each batch. Do **NOT** create or update todos in this step — the confirmed manifest is the item-level record; narrate per-batch progress briefly and list any failed items in the closing summary.
 
-Do not hand-write semantic_models / metrics / reference_sql YAML yourself — always go through the matching subagent (per storage-classify's Forbidden rules).
+Do not hand-write semantic_models / metrics / reference_sql YAML yourself — use `semantic_modeling` for Dosi semantic assets and the matching reference-SQL owner (per storage-classify's Forbidden rules).
 
 ---
 
 ## Step 4 — Refresh the AGENTS.md KB Index
 
-After all generation completes, update `./AGENTS.md` **last**, following the *AGENTS.md Section Ownership* from `storage-classify`. **Do not rewrite the inventory sections `/init` owns** (`# title` · `## Architecture` · `## Directory Map` · `## Services` · `## Data Assets` · `## Recommended Tools` · `## SQL Conventions`). Use a scoped `edit_file` that touches only the KB index:
+After all generation completes, update `./AGENTS.md` **last**, following the *AGENTS.md Section Ownership* from `storage-classify`. **Do not rewrite the sections `/init` owns** (`# title` · `## Data Architecture` · `## Directory Map` · `## Core Tables` · `## Global Rules` · `## SQL Conventions`). Use a scoped `edit_file` that touches only the KB index:
 
 - **`## Semantic Models` / `## Metrics` / `## Reference SQL` — the vector-index sections you just populated.** `/init` does not write these sections, so **insert each one** (in canonical order) with **what it covers + how many + which tool retrieves it** (these stores are queried by retrieval, not read as files). **Only insert a section if you actually generated content for it** — never write a "none yet" placeholder for a store you produced nothing for:
   - `## Semantic Models` — `N` models (`schools`, `satscores`, `frpm`); retrieve with `search_semantic_model`.
   - `## Metrics` — `N` metrics (`county_avg_sat_math`, `avg_frpm_rate`, …); retrieve with `search_metrics`.
   - `## Reference SQL` — `N` validated queries; retrieve similar `(question → SQL)` examples with `search_reference_sql` before writing new SQL.
-- **`## Knowledge` — append only.** This section is **owned by `extract-knowledge`** and `/init` already filed the initial atoms. If Step 3 mined *additional* knowledge, append one bullet per new `./knowledge/*.md` (`- [<Domain>](knowledge/<slug>.md) — <one-line scope>`), writing the scope line to convey unguessable specifics (exact thresholds, literal filter codes, enum spellings, term→column mappings). **Never overwrite existing entries.**
+- **`## Knowledge` — append only.** This section is **maintained by `/init` and `extract-knowledge`** (see `storage-classify`), and `/init` already filed the initial knowledge files. If Step 3 mined *additional* knowledge, append one bullet per new `./knowledge/*.md` (`- [<Domain>](knowledge/<slug>.md) — <one-line scope>`), writing the scope line to convey unguessable specifics (exact thresholds, literal filter codes, enum spellings, term→column mappings). **Never overwrite existing entries.**
 
 If `./AGENTS.md` does not exist (the user never ran `/init`), create the full file per the *AGENTS.md Section Ownership* — the same skeleton `/init` would have written — then fill the KB index as above. In that fallback only, also induce a `## SQL Conventions` section from the validated-SQL corpus (see below).
 
@@ -163,6 +179,6 @@ Tell the user the KB is built and AGENTS.md's index is refreshed.
 - **Routing lives in `storage-classify`, not here.** When in doubt about which store an item belongs to, defer to its decision tree and disambiguation table.
 - The explore subagent's `subject → store → ref` output is exactly `storage-classify`'s input contract — they dovetail.
 - **Scope is the whole point of this skill vs `/init`.** Honor the resolved scope in every step — never scan, explore, or generate outside it unless the user gave no hints (whole-project default).
-- **`/init` owns the file-based stores; this skill owns the vector stores.** Do not duplicate the AGENTS.md inventory or re-file knowledge/memory `/init` already wrote — only add what the heavy generation produces.
+- **`/init` owns the AGENTS.md project map and the initial knowledge files; this skill owns the vector stores.** Do not duplicate the project map or re-file knowledge `/init` already wrote — only add what the heavy generation produces.
 - Use placeholder comments when you cannot determine something rather than inventing facts.
 - **Do not ask the user anything before the manifest.** Scope is resolved in Step 0 and confirmed at the turn boundary; the manifest is the single confirmation gate, not an `ask_user`. (The only later `ask_user` allowed is the Step 4 guard before wholesale-overwriting an existing `AGENTS.md`.)

@@ -3,7 +3,43 @@
 import pytest
 from pydantic import ValidationError
 
-from datus.api.models.kb_models import BootstrapDocInput
+from datus.api.models.kb_models import BootstrapDocInput, BootstrapKbInput
+
+
+class TestBootstrapKbInput:
+    """Tests for BootstrapKbInput validation."""
+
+    def test_refresh_profile_strategy_accepts_semantic_yaml(self):
+        inp = BootstrapKbInput(
+            components=["semantic_model"],
+            strategy="refresh-profile",
+            success_story="stories.csv",
+            semantic_yaml="semantic/orders.yml",
+        )
+
+        assert inp.strategy == "refresh-profile"
+        assert inp.semantic_yaml == "semantic/orders.yml"
+
+    def test_semantic_modeling_options(self):
+        inp = BootstrapKbInput(
+            components=["semantic_modeling"],
+            success_story="stories.csv",
+            metrics_batch_size=3,
+        )
+
+        assert inp.components == ["semantic_modeling"]
+        assert inp.metrics_batch_size == 3
+
+    def test_semantic_modeling_strategy_contract_describes_artifact_reconcile(self):
+        description = BootstrapKbInput.model_fields["strategy"].description
+
+        assert "compatibility aliases" in description
+        assert "fully reconcile each selected semantic-model YAML" in description
+
+    def test_semantic_modeling_accepts_compatibility_aliases_for_normalization(self):
+        inp = BootstrapKbInput(components=["semantic_modeling", "metrics"])
+
+        assert inp.components == ["semantic_modeling", "metrics"]
 
 
 class TestBootstrapDocInput:

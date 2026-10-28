@@ -10,6 +10,7 @@ Used by CLI print mode and interactive REPL to avoid duplicating node creation l
 
 from typing import TYPE_CHECKING, Literal, Optional
 
+from datus.schemas.at_context import apply_at_context
 from datus.utils.constants import HIDDEN_SYS_SUB_AGENTS, SYS_SUB_AGENTS
 from datus.utils.loggings import get_logger
 
@@ -83,17 +84,10 @@ def create_interactive_node(
     if subagent_name:
         node_class_type = _resolve_node_class_type(subagent_name, agent_config)
 
-        if subagent_name == "gen_semantic_model":
-            from datus.agent.node.gen_semantic_model_agentic_node import GenSemanticModelAgenticNode
+        if subagent_name == "semantic_modeling":
+            from datus.agent.node.semantic_modeling_agentic_node import SemanticModelingAgenticNode
 
-            return GenSemanticModelAgenticNode(
-                agent_config=agent_config, execution_mode=execution_mode, scope=scope, session_id=session_id
-            )
-
-        elif subagent_name == "gen_metrics":
-            from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode
-
-            return GenMetricsAgenticNode(
+            return SemanticModelingAgenticNode(
                 agent_config=agent_config, execution_mode=execution_mode, scope=scope, session_id=session_id
             )
 
@@ -124,6 +118,23 @@ def create_interactive_node(
 
             return GenJobAgenticNode(
                 agent_config=agent_config, execution_mode=execution_mode, scope=scope, session_id=session_id
+            )
+
+        elif subagent_name == "ontology_analyst" or node_class_type == "ontology_analyst":
+            from datus.agent.node.ontology_analyst_agentic_node import OntologyAnalystAgenticNode
+            from datus.configuration.node_type import NodeType
+
+            return OntologyAnalystAgenticNode(
+                node_id=node_id if node_id is not None else f"{subagent_name}{node_id_suffix}",
+                description=f"Ontology question-answering node for {subagent_name}",
+                node_type=NodeType.TYPE_ONTOLOGY_ANALYST,
+                input_data=None,
+                agent_config=agent_config,
+                tools=None,
+                node_name=subagent_name,
+                scope=scope,
+                execution_mode=execution_mode,
+                session_id=session_id,
             )
 
         elif subagent_name == "ask_metrics" or node_class_type == "ask_metrics":
@@ -229,30 +240,6 @@ def create_interactive_node(
                 session_id=session_id,
             )
 
-        elif subagent_name == "gen_dashboard" or node_class_type == "gen_dashboard":
-            from datus.agent.node.gen_dashboard_agentic_node import GenDashboardAgenticNode
-
-            return GenDashboardAgenticNode(
-                agent_config=agent_config,
-                execution_mode=execution_mode,
-                node_id=node_id if node_id is not None else f"{subagent_name}{node_id_suffix}",
-                node_name=subagent_name if node_class_type == "gen_dashboard" else None,
-                scope=scope,
-                session_id=session_id,
-            )
-
-        elif subagent_name == "scheduler" or node_class_type == "scheduler":
-            from datus.agent.node.scheduler_agentic_node import SchedulerAgenticNode
-
-            return SchedulerAgenticNode(
-                agent_config=agent_config,
-                execution_mode=execution_mode,
-                node_id=node_id if node_id is not None else f"{subagent_name}{node_id_suffix}",
-                node_name=subagent_name if node_class_type == "scheduler" else None,
-                scope=scope,
-                session_id=session_id,
-            )
-
         elif subagent_name == "feedback":
             from datus.agent.node.feedback_agentic_node import FeedbackAgenticNode
 
@@ -352,11 +339,20 @@ def create_node_input(
     at_tables=None,
     at_metrics=None,
     at_sqls=None,
+    external_knowledge: Optional[str] = None,
+    context_hints=None,
     prompt_language: str = "en",
     plan_mode: bool = False,
     source_session_id: Optional[str] = None,
 ):
-    """Create node input based on node type.
+    """Create node input for *node*, then attach resolved @-context uniformly.
+
+    The type dispatch lives in :func:`_build_typed_node_input`; @-context
+    (``at_tables`` / ``at_metrics`` / ``at_sqls`` / ``external_knowledge``) is
+    applied here through the single :func:`apply_at_context` choke point so no
+    per-node branch can forget it. Any input inheriting
+    :class:`~datus.schemas.at_context.AtContextInput` picks the context up;
+    others are skipped silently.
 
     Args:
         user_message: The user's message.
@@ -367,27 +363,60 @@ def create_node_input(
         at_tables: @-referenced tables.
         at_metrics: @-referenced metrics.
         at_sqls: @-referenced SQL queries.
+        external_knowledge: @-referenced supplementary knowledge text.
         prompt_language: Language for prompts (default "en").
         plan_mode: Whether to enable plan mode.
         source_session_id: Source session the feedback node should copy from.
             Only consumed by :class:`FeedbackAgenticNode`.
     """
+    node_input = _build_typed_node_input(
+        user_message=user_message,
+        node=node,
+        catalog=catalog,
+        database=database,
+        db_schema=db_schema,
+        scoped_tables=scoped_tables,
+        prompt_language=prompt_language,
+        plan_mode=plan_mode,
+        source_session_id=source_session_id,
+    )
+    return apply_at_context(
+        node_input,
+        schemas=at_tables,
+        metrics=at_metrics,
+        reference_sql=at_sqls,
+        external_knowledge=external_knowledge,
+        context_hints=context_hints,
+    )
+
+
+def _build_typed_node_input(
+    user_message: str,
+    node,
+    catalog: Optional[str] = None,
+    database: Optional[str] = None,
+    db_schema: Optional[str] = None,
+    scoped_tables=None,
+    prompt_language: str = "en",
+    plan_mode: bool = False,
+    source_session_id: Optional[str] = None,
+):
+    """Construct the node-type-specific input object (no @-context wiring)."""
     from datus.agent.node.ask_metrics_agentic_node import AskMetricsAgenticNode
     from datus.agent.node.gen_job_agentic_node import GenJobAgenticNode
-    from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode
     from datus.agent.node.gen_report_agentic_node import GenReportAgenticNode
-    from datus.agent.node.gen_semantic_model_agentic_node import GenSemanticModelAgenticNode
     from datus.agent.node.gen_sql_agentic_node import GenSQLAgenticNode
     from datus.agent.node.gen_table_agentic_node import GenTableAgenticNode
     from datus.agent.node.gen_visual_dashboard_agentic_node import GenVisualDashboardAgenticNode
     from datus.agent.node.gen_visual_report_agentic_node import GenVisualReportAgenticNode
+    from datus.agent.node.ontology_analyst_agentic_node import OntologyAnalystAgenticNode
+    from datus.agent.node.semantic_modeling_agentic_node import SemanticModelingAgenticNode
     from datus.agent.node.sql_summary_agentic_node import SqlSummaryAgenticNode
 
     if isinstance(
         node,
         (
-            GenSemanticModelAgenticNode,
-            GenMetricsAgenticNode,
+            SemanticModelingAgenticNode,
             GenTableAgenticNode,
             GenJobAgenticNode,
         ),
@@ -417,6 +446,16 @@ def create_node_input(
         from datus.schemas.gen_report_agentic_node_models import GenReportNodeInput
 
         return GenReportNodeInput(
+            user_message=user_message,
+            catalog=catalog,
+            database=database,
+            db_schema=db_schema,
+        )
+
+    elif isinstance(node, OntologyAnalystAgenticNode):
+        from datus.schemas.ontology_analyst_agentic_node_models import OntologyAnalystNodeInput
+
+        return OntologyAnalystNodeInput(
             user_message=user_message,
             catalog=catalog,
             database=database,
@@ -461,9 +500,6 @@ def create_node_input(
             catalog=catalog,
             database=database,
             db_schema=db_schema,
-            schemas=at_tables,
-            metrics=at_metrics,
-            reference_sql=at_sqls,
             prompt_language=prompt_language,
             plan_mode=plan_mode,
         )
@@ -513,9 +549,6 @@ def create_node_input(
             catalog=catalog,
             database=database,
             db_schema=db_schema,
-            schemas=at_tables,
-            metrics=at_metrics,
-            reference_sql=at_sqls,
             plan_mode=plan_mode,
         )
 

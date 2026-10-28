@@ -32,7 +32,7 @@ class TestArgumentParser:
         with patch.object(sys, "argv", ["datus"]):
             args = ap.parse_args()
         assert args.db_type == "sqlite"
-        assert args.debug is False
+        assert getattr(args, "debug", False) is False
         assert args.no_color is False
         assert args.datasource == ""
         assert args.print_mode is None
@@ -110,7 +110,7 @@ class TestApplicationRun:
         mock_cli = MagicMock()
         with (
             patch.object(app.arg_parser, "parse_args", return_value=mock_args),
-            patch("datus.cli.main.configure_logging"),
+            patch("datus.cli.main.configure_entrypoint_logging"),
             patch.object(app, "_ensure_project_config"),
             patch.object(app, "_resolve_default_datasource", return_value=""),
             patch("datus.cli.repl.DatusCLI", return_value=mock_cli) as mock_cli_cls,
@@ -127,7 +127,7 @@ class TestApplicationRun:
         )
         with (
             patch.object(app.arg_parser, "parse_args", return_value=mock_args),
-            patch("datus.cli.main.configure_logging"),
+            patch("datus.cli.main.configure_entrypoint_logging"),
             patch.object(app, "_resolve_default_datasource", return_value=""),
             patch("datus.cli.repl.DatusCLI") as mock_cli_cls,
         ):
@@ -144,7 +144,7 @@ class TestApplicationRun:
         )
         with (
             patch.object(app.arg_parser, "parse_args", return_value=mock_args),
-            patch("datus.cli.main.configure_logging"),
+            patch("datus.cli.main.configure_entrypoint_logging"),
             patch.object(app, "_ensure_project_config"),
             patch("datus.cli.repl.DatusCLI") as mock_cli_cls,
         ):
@@ -159,7 +159,7 @@ class TestApplicationRun:
         )
         with (
             patch.object(app.arg_parser, "parse_args", return_value=mock_args),
-            patch("datus.cli.main.configure_logging"),
+            patch("datus.cli.main.configure_entrypoint_logging"),
             patch.object(app, "_ensure_project_config"),
         ):
             with pytest.raises(SystemExit):
@@ -180,7 +180,7 @@ class TestApplicationRun:
         )
         with (
             patch.object(app.arg_parser, "parse_args", return_value=mock_args),
-            patch("datus.cli.main.configure_logging"),
+            patch("datus.cli.main.configure_entrypoint_logging"),
             patch.object(app, "_ensure_project_config"),
         ):
             with pytest.raises(SystemExit):
@@ -202,7 +202,7 @@ class TestApplicationRun:
         )
         with (
             patch.object(app.arg_parser, "parse_args", return_value=mock_args),
-            patch("datus.cli.main.configure_logging"),
+            patch("datus.cli.main.configure_entrypoint_logging"),
             patch.object(app, "_ensure_project_config"),
         ):
             with pytest.raises(SystemExit):
@@ -222,7 +222,7 @@ class TestApplicationRun:
         mock_runner = MagicMock()
         with (
             patch.object(app.arg_parser, "parse_args", return_value=mock_args),
-            patch("datus.cli.main.configure_logging"),
+            patch("datus.cli.main.configure_entrypoint_logging"),
             patch.object(app, "_ensure_project_config") as mock_ensure,
             patch("datus.cli.print_mode.PrintModeRunner", return_value=mock_runner) as MockRunner,
         ):
@@ -240,7 +240,7 @@ class TestApplicationRun:
         mock_cli = MagicMock()
         with (
             patch.object(app.arg_parser, "parse_args", return_value=mock_args),
-            patch("datus.cli.main.configure_logging"),
+            patch("datus.cli.main.configure_entrypoint_logging"),
             patch.object(app, "_ensure_project_config") as mock_ensure,
             patch("datus.cli.repl.DatusCLI", return_value=mock_cli) as MockCLI,
         ):
@@ -256,7 +256,7 @@ class TestApplicationRun:
         )
         with (
             patch.object(app.arg_parser, "parse_args", return_value=mock_args),
-            patch("datus.cli.main.configure_logging"),
+            patch("datus.cli.main.configure_entrypoint_logging"),
             patch.object(app, "_ensure_project_config") as mock_ensure,
             patch.object(app, "_run_web_interface") as mock_web,
         ):
@@ -616,7 +616,7 @@ class TestMain:
 
         with (
             patch.object(sys, "argv", ["datus", "skill", "list"]),
-            patch("datus.cli.main.configure_logging"),
+            patch("datus.cli.main.configure_entrypoint_logging"),
             patch.dict(
                 "sys.modules",
                 {
@@ -630,3 +630,26 @@ class TestMain:
                 main()
         mock_exit.assert_any_call(0)
         mock_skill_cli.run_skill_command.assert_called_once_with(mock_skill_args)
+
+    def test_main_package_subcommand(self):
+        """main() delegates to the package handler when first arg is 'package'.
+
+        Same ``sys.exit`` hazard as the skill test above: it must raise
+        ``SystemExit`` so execution stops at the dispatch instead of falling
+        through into the interactive REPL.
+        """
+        from datus.cli.main import main
+
+        mock_package_cli = MagicMock()
+        mock_package_cli.run_package_command.return_value = 0
+
+        with (
+            patch.object(sys, "argv", ["datus", "package", "--yes"]),
+            patch("datus.cli.main.configure_entrypoint_logging"),
+            patch.dict("sys.modules", {"datus.cli.package_cli": mock_package_cli}),
+            patch("sys.exit", side_effect=SystemExit) as mock_exit,
+        ):
+            with pytest.raises(SystemExit):
+                main()
+        mock_exit.assert_any_call(0)
+        mock_package_cli.run_package_command.assert_called_once_with(["--yes"])

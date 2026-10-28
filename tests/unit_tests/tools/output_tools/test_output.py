@@ -5,6 +5,7 @@
 
 import json
 import os
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from datus.schemas.node_models import OutputInput
@@ -148,6 +149,34 @@ class TestOutputToolExecute:
             data = json.load(f)
         assert data["finished"] is False
 
+    def test_execute_benchmark_profile_writes_only_canonical_files(self, tmp_path: Path) -> None:
+        """The benchmark profile writes only the canonical SQL and CSV files."""
+        tool = OutputTool()
+        input_data = _make_output_input(tmp_path, file_type="all").model_copy(
+            update={"artifact_profile": "benchmark_v1"}
+        )
+        mock_connector = MagicMock()
+
+        with patch.object(tool, "check_sql", return_value=("SELECT id FROM users", "id\n1")):
+            result = tool.execute(input_data, mock_connector)
+
+        assert result.success is True
+        assert (tmp_path / "task_001.sql").read_text() == "SELECT id FROM users"
+        assert (tmp_path / "task_001.csv").read_text() == "id\n1"
+        assert not (tmp_path / "task_001.json").exists()
+
+    def test_execute_failed_benchmark_profile_defers_manifest_to_runner(self, tmp_path: Path) -> None:
+        """Failed benchmark output returns the error and defers manifest writing to the runner."""
+        tool = OutputTool()
+        input_data = _make_output_input(tmp_path, finished=False, error="SQL failed").model_copy(
+            update={"artifact_profile": "benchmark_v1"}
+        )
+
+        result = tool.execute(input_data, MagicMock())
+
+        assert result.success is False
+        assert not (tmp_path / "task_001.json").exists()
+
     def test_execute_creates_output_dir(self, tmp_path):
         new_dir = tmp_path / "subdir" / "output"
         tool = OutputTool()
@@ -258,3 +287,62 @@ class TestOutputToolExecute:
             result = tool.execute(input_data, mock_connector)
 
         assert result.success is True
+
+
+class TestCheckSqlReadOnlyDeployment:
+    """`agent.sql_read_only` on the output tool's revised-SQL check.
+
+    `check_sql` runs the LLM's `revised_sql` straight on the connector, three
+    times over, without going through DBFuncTool — so on a hardened deployment
+    nothing else stands in front of it. Refusing falls back to the original SQL
+    and result, which is what every other failure branch here already does: the
+    revision is an improvement, never a requirement.
+    """
+
+    @staticmethod
+    def _run(revised_sql, sql_read_only, tmp_path):
+        config = MagicMock()
+        config.sql_read_only = sql_read_only
+        tool = OutputTool(agent_config=config)
+        input_data = _make_output_input(tmp_path, check_result=True, sql_result=None)
+        connector = MagicMock()
+        connector.dialect = "sqlite"
+        model = MagicMock()
+        model.generate_with_json_output.return_value = {"is_correct": False, "revised_sql": revised_sql}
+
+        with patch("datus.tools.output_tools.output.gen_prompt", return_value="prompt"):
+            sql, result = tool.check_sql(input_data, connector, model=model)
+        return sql, result, connector, input_data
+
+    def test_a_revised_write_never_reaches_the_connector(self, tmp_path):
+        sql, result, connector, input_data = self._run("DROP TABLE users", sql_read_only=True, tmp_path=tmp_path)
+
+        assert sql == input_data.gen_sql
+        assert result == input_data.sql_result
+        connector.execute.assert_not_called()
+
+    def test_a_revised_read_still_runs(self, tmp_path):
+        _, _, connector, _ = self._run("SELECT id FROM users", sql_read_only=True, tmp_path=tmp_path)
+
+        connector.execute.assert_called_once()
+
+    def test_the_default_is_unchanged(self, tmp_path):
+        """Off is the default, and this path is write-capable by design."""
+        _, _, connector, _ = self._run("DROP TABLE users", sql_read_only=False, tmp_path=tmp_path)
+
+        connector.execute.assert_called_once()
+
+    def test_no_agent_config_is_a_no_op(self, tmp_path):
+        """`OutputTool()` is constructed without a config in several callers, and
+        `getattr(None, ...)` must not become a refusal."""
+        tool = OutputTool()
+        input_data = _make_output_input(tmp_path, check_result=True, sql_result=None)
+        connector = MagicMock()
+        connector.dialect = "sqlite"
+        model = MagicMock()
+        model.generate_with_json_output.return_value = {"is_correct": False, "revised_sql": "DROP TABLE users"}
+
+        with patch("datus.tools.output_tools.output.gen_prompt", return_value="prompt"):
+            tool.check_sql(input_data, connector, model=model)
+
+        connector.execute.assert_called_once()

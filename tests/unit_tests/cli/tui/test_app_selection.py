@@ -66,9 +66,8 @@ def test_mouse_down_begins_selection_and_disengages_sticky_bottom(tui_app: Datus
     assert tui_app._output_at_bottom is True
     tui_app._output_mouse_handler(_click(MouseEventType.MOUSE_DOWN, x=2, y=0))
     assert tui_app._selection.dragging is True
-    assert tui_app._selection.anchor is not None
-    assert tui_app._selection.anchor.line == 0
-    assert tui_app._selection.anchor.column == 2
+    anchor = tui_app._selection.anchor
+    assert (anchor.line, anchor.column) == (0, 2)
     assert tui_app._output_at_bottom is False
 
 
@@ -76,7 +75,6 @@ def test_drag_extends_selection_head(tui_app: DatusApp):
     tui_app._output_mouse_handler(_click(MouseEventType.MOUSE_DOWN, x=0, y=0))
     tui_app._output_mouse_handler(_click(MouseEventType.MOUSE_MOVE, x=5, y=1))
     head = tui_app._selection.head
-    assert head is not None
     assert (head.line, head.column) == (1, 5)
 
 
@@ -87,7 +85,8 @@ def test_mouse_up_with_text_writes_to_clipboard(tui_app: DatusApp, captured_clip
     assert captured_clipboard == ["alpha"]
     assert tui_app._selection.dragging is False
     # Selection is preserved post-release so the highlight stays visible.
-    assert tui_app._selection.range() is not None
+    rng = tui_app._selection.range()
+    assert ((rng[0].line, rng[0].column), (rng[1].line, rng[1].column)) == ((0, 0), (0, 5))
 
 
 def test_mouse_up_with_empty_selection_does_not_write_clipboard(tui_app: DatusApp, captured_clipboard: list[str]):
@@ -295,10 +294,10 @@ def test_scroll_wheel_still_works(tui_app: DatusApp):
     # Push a bigger buffer so there's something to scroll past.
     for _ in range(20):
         tui_app._output_buffer.write("line\n")
-    initial_at_bottom = tui_app._output_at_bottom
+    assert tui_app._output_at_bottom is True
     tui_app._output_mouse_handler(_click(MouseEventType.SCROLL_UP, x=0, y=0, button=MouseButton.NONE))
     # Wheel-up disengages sticky-bottom.
-    assert tui_app._output_at_bottom != initial_at_bottom or initial_at_bottom is False
+    assert tui_app._output_at_bottom is False
 
 
 def test_set_output_scroll_offset_disengages_then_reengages_sticky_bottom(tui_app: DatusApp):

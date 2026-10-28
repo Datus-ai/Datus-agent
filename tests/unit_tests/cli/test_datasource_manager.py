@@ -2,10 +2,16 @@ from unittest.mock import patch
 
 import pytest
 
-from datus.cli.datasource_manager import DatasourceManager
+from datus.cli.datasource_manager import DatasourceManager, serialize_services_section
 from datus.configuration.agent_config import AgentConfig
 from datus.configuration.agent_config_loader import load_agent_config
 from tests.conftest import TEST_CONF_DIR
+
+
+def test_serialize_services_section_uses_current_service_fields(agent_config):
+    services = serialize_services_section(agent_config.services)
+    assert set(services) == {"datasources", "bi_platforms", "schedulers"}
+    assert services["datasources"]
 
 
 @pytest.fixture

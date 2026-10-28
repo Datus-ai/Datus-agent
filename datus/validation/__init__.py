@@ -7,7 +7,7 @@ Validation infrastructure for table-, chart-, dashboard-, dataset-, and
 scheduler job-producing subagents.
 
 This module provides hook-driven validation that fires automatically after
-mutating tool calls (execute_ddl, execute_write, transfer_query_result,
+mutating tool calls (execute_sql writes/DDL, transfer_query_result,
 create_chart, create_dashboard, create_dataset, submit_sql_job, update_job) and
 at the end of an agent run. It separates validation into two layers:
 

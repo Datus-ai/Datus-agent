@@ -669,6 +669,80 @@ class TestExecuteStreamGenReportError:
         last = actions[-1]
         assert last.status == ActionStatus.FAILED
         assert last.action_type == "error"
+        assert "error_code" not in last.output
+
+    @pytest.mark.asyncio
+    async def test_execute_stream_error_carries_model_error_code(self, real_agent_config, mock_llm_create):
+        """A provider rejecting the model name is labelled, so the host can offer to fix the connection."""
+        import litellm
+
+        from datus.agent.node.gen_report_agentic_node import GenReportAgenticNode
+
+        async def _raise_error(*args, **kwargs):
+            raise litellm.BadRequestError(
+                message="The supported API model names are deepseek-flash, deepseek-v4-pro, "
+                "but you passed deepseek-v4-pro-0831.",
+                model="deepseek-v4-pro-0831",
+                llm_provider="deepseek",
+            )
+            yield  # noqa
+
+        node = GenReportAgenticNode(
+            node_id="report_model_error",
+            description="Model error test",
+            node_type=NodeType.TYPE_GEN_REPORT,
+            agent_config=real_agent_config,
+            node_name="gen_report",
+        )
+        node.input = GenReportNodeInput(user_message="Analyze data")
+        mock_llm_create.generate_with_tools_stream = _raise_error
+
+        actions = [action async for action in node.execute_stream(ActionHistoryManager())]
+
+        last = actions[-1]
+        assert last.action_type == "error"
+        assert last.status == ActionStatus.FAILED
+        assert last.output["error_code"] == "MODEL_NOT_FOUND"
+        assert "you passed deepseek-v4-pro-0831" in last.output["error"]
+
+    @pytest.mark.asyncio
+    async def test_execute_stream_error_shows_provider_message_not_raw_body(self, real_agent_config, mock_llm_create):
+        """``Error code: 400 - {<body>}`` reaches the error card as the provider's message alone."""
+        import anthropic
+        import httpx
+
+        from datus.agent.node.gen_report_agentic_node import GenReportAgenticNode
+
+        provider_message = "messages.1.content.0: Input tag 'output_text' found using 'type' does not match"
+        body = {
+            "type": "error",
+            "error": {"type": "invalid_request_error", "message": provider_message},
+            "request_id": "req_011CfWrVfhtGKLrySY9Yuk8j",
+        }
+
+        async def _raise_error(*args, **kwargs):
+            request = httpx.Request("POST", "https://api.anthropic.com/v1/messages")
+            raise anthropic.BadRequestError(
+                f"Error code: 400 - {body}", response=httpx.Response(400, request=request), body=body
+            )
+            yield  # noqa
+
+        node = GenReportAgenticNode(
+            node_id="report_provider_message",
+            description="Provider message test",
+            node_type=NodeType.TYPE_GEN_REPORT,
+            agent_config=real_agent_config,
+            node_name="gen_report",
+        )
+        node.input = GenReportNodeInput(user_message="Analyze data")
+        mock_llm_create.generate_with_tools_stream = _raise_error
+
+        actions = [action async for action in node.execute_stream(ActionHistoryManager())]
+
+        last = actions[-1]
+        assert last.action_type == "error"
+        assert last.output["error"] == provider_message
+        assert "Error code" not in last.messages
 
 
 @pytest.mark.acceptance
@@ -693,7 +767,7 @@ class TestGenReportProductFlowAcceptance:
                     tool_calls=[
                         MockToolCall("describe_table", {"table_name": "satscores"}),
                         MockToolCall(
-                            "read_query",
+                            "execute_sql",
                             {"sql": "SELECT AVG(AvgScrRead) AS avg_read_score FROM satscores"},
                         ),
                     ],
@@ -721,7 +795,7 @@ class TestGenReportProductFlowAcceptance:
             actions.append(action)
 
         executed_tools = {item["tool"] for item in mock_llm_create.tool_results if item["executed"]}
-        assert {"describe_table", "read_query"} <= executed_tools
+        assert {"describe_table", "execute_sql"} <= executed_tools
         assert "avg_read_score" in str(mock_llm_create.tool_results)
         assert actions[-1].status == ActionStatus.SUCCESS
         assert actions[-1].output["success"] is True

@@ -27,6 +27,20 @@ class OpenAIModel(OpenAICompatibleModel):
         """
         super().__init__(model_config, **kwargs)
 
+    def supports_builtin_web_search(self) -> bool:
+        # The hosted ``web_search`` tool is ONLY accepted by the OpenAI Responses
+        # API. ``get_agents_sdk_model`` routes through ``OpenAIResponsesModel``
+        # solely for the canonical ``api.openai.com`` endpoint; a custom base_url
+        # (vLLM, OpenRouter relay, Coding Plan proxy, …) falls back to the LiteLLM
+        # ChatCompletions path, which rejects hosted tools with a ``UserError``.
+        # Gate on the real route so we never inject ``WebSearchTool`` into a
+        # ChatCompletions request — those endpoints use the local Tavily backend.
+        return self.litellm_adapter._is_official_openai()
+
+    def supports_builtin_web_fetch(self) -> bool:
+        # OpenAI Responses has no hosted fetch tool; web_fetch uses the local backend.
+        return False
+
     def _get_api_key(self) -> str:
         """Get OpenAI API key from config or environment."""
         api_key = self.model_config.api_key or os.environ.get("OPENAI_API_KEY")
@@ -52,7 +66,7 @@ class OpenAIModel(OpenAICompatibleModel):
 
         return any(self.model_name.startswith(pattern) for pattern in reasoning_model_patterns)
 
-    def generate(self, prompt: Any, enable_thinking: bool = False, **kwargs) -> str:
+    def generate(self, prompt: Any, enable_thinking: bool | None = None, **kwargs) -> str:
         """Generate response with OpenAI-specific parameter handling.
 
         For reasoning models (o-series), removes unsupported parameters and
@@ -60,7 +74,7 @@ class OpenAIModel(OpenAICompatibleModel):
 
         Args:
             prompt: The input prompt to send to the model
-            enable_thinking: Enable thinking mode for hybrid models (default: False)
+            enable_thinking: Enable thinking mode for hybrid models (default: uses model_config)
             **kwargs: Additional generation parameters
 
         Returns:

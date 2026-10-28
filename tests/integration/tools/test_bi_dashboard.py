@@ -6,7 +6,7 @@
 
 Contains two test classes at different verification levels:
 - TestPartialIntegration: Real Superset API + mocked LLM (nightly)
-- TestE2EIntegration: Full end-to-end with zero mocks (nightly only)
+- TestE2EIntegration: Full end-to-end with zero mocks (manual, ``-m product_e2e``)
 """
 
 import os
@@ -466,16 +466,18 @@ class TestPartialIntegration:
                         yield  # pragma: no cover
 
                 async def _sem_stub(_cfg, *, sqls, platform, dashboard_name, state):
+                    # The unified semantic-modeling stage owns metric authoring
+                    # (stream_bi_metrics was folded into it), so the stub also
+                    # records the generated metric identifiers.
                     state.semantic_ok = True
-                    if False:
-                        yield  # pragma: no cover
-
-                async def _metrics_stub(_cfg, *, sqls, platform, dashboard_name, state):
                     state.metrics.extend(f"{platform}/test/layer{i}.metric_{i}" for i in range(len(sqls)))
                     if False:
                         yield  # pragma: no cover
 
-                async def _save_stub(_cfg, **_kwargs):
+                save_calls: list = []
+
+                async def _save_stub(_cfg, _sink=save_calls, **kwargs):
+                    _sink.append(kwargs)
                     if False:
                         yield  # pragma: no cover
 
@@ -484,7 +486,6 @@ class TestPartialIntegration:
                     patch("datus.cli.bootstrap_bi_commands.stream_bi_metadata", side_effect=_meta_stub),
                     patch("datus.cli.bootstrap_bi_commands.stream_bi_reference_sql", side_effect=_ref_stub),
                     patch("datus.cli.bootstrap_bi_commands.stream_bi_semantic_model", side_effect=_sem_stub),
-                    patch("datus.cli.bootstrap_bi_commands.stream_bi_metrics", side_effect=_metrics_stub),
                     patch("datus.cli.bootstrap_bi_commands.stream_bi_save_subagents", side_effect=_save_stub),
                     patch("datus.cli.bootstrap_bi_commands.SubAgentManager"),
                     patch("datus.cli.bootstrap_bi_commands.configuration_manager"),
@@ -497,6 +498,12 @@ class TestPartialIntegration:
                 assert any("Sub-Agent build successful" in (a.messages or "") for a in actions), (
                     f"Sub-agent build did not complete; got actions: {[a.messages for a in actions]}"
                 )
+                # The identifiers recorded by the unified semantic stage must
+                # reach the saved sub-agent's scoped context.
+                assert len(save_calls) == 1, f"expected one sub-agent save, got {len(save_calls)}"
+                scoped = save_calls[0]["scoped_context"]
+                assert scoped is not None and scoped.metrics, f"scoped context lost the metrics: {scoped}"
+                assert f"{platform}/test/layer0.metric_0" in scoped.metrics
 
                 logger.info(
                     "Partial integration test passed for %s — real Superset extraction: %d charts, "
@@ -608,14 +615,14 @@ class TestE2EIntegration:
                 # Verify bootstrap data via store managers
                 from datus.storage.metric.store import MetricRAG
                 from datus.storage.reference_sql.store import ReferenceSqlRAG
-                from datus.storage.semantic_model.store import SemanticModelRAG
+                from datus.storage.semantic_dataset.store import SemanticDatasetRAG
 
                 total_semantic_model_rows = 0
                 total_metrics_rows = 0
                 total_reference_sql_rows = 0
 
                 for name in [sub_agent_name, attr_name]:
-                    sm_size = SemanticModelRAG(agent_config, sub_agent_name=name).get_size()
+                    sm_size = SemanticDatasetRAG(agent_config, sub_agent_name=name).get_size()
                     m_size = MetricRAG(agent_config, sub_agent_name=name).get_metrics_size()
                     rs_size = ReferenceSqlRAG(agent_config, sub_agent_name=name).get_reference_sql_size()
                     total_semantic_model_rows += sm_size

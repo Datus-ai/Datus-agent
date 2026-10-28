@@ -4,9 +4,12 @@
 """Unit tests for datus/tools/func_tool/filesystem_tools.py"""
 
 from pathlib import Path
+from unittest.mock import Mock
+
+import pytest
 
 from datus.tools.func_tool.filesystem_tools import FilesystemConfig, FilesystemFuncTool
-from datus.tools.func_tool.fs_path_policy import PathZone
+from datus.tools.func_tool.fs_path_policy import PathAllowlist, PathZone
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -36,18 +39,36 @@ class TestFilesystemConfig:
         cfg = FilesystemConfig(root_path=str(tmp_path))
         assert cfg.root_path == str(tmp_path)
 
-    def test_default_allowed_extensions(self):
+    def test_default_max_file_size(self):
         cfg = FilesystemConfig()
-        assert ".py" in cfg.allowed_extensions
-        assert ".txt" in cfg.allowed_extensions
-        assert ".json" in cfg.allowed_extensions
-        # Dashboard artifact templates land as ``<slug>.sql.j2`` — Path.suffix
-        # returns ``.j2`` only, so the bare ``.j2`` entry is what gates them.
-        assert ".j2" in cfg.allowed_extensions
+        assert cfg.max_file_size == 200 * 1024
 
-    def test_custom_allowed_extensions(self):
-        cfg = FilesystemConfig(allowed_extensions=[".py"])
-        assert cfg.allowed_extensions == [".py"]
+    def test_custom_max_file_size(self):
+        cfg = FilesystemConfig(max_file_size=1024)
+        assert cfg.max_file_size == 1024
+
+
+class TestMutationCallback:
+    def test_callback_internal_type_error_is_not_retried(self, tmp_path):
+        callback = Mock(side_effect=TypeError("callback failed"))
+        tool = FilesystemFuncTool(root_path=str(tmp_path), mutation_callback=callback)
+        target = tmp_path / "model.yml"
+
+        with pytest.raises(TypeError, match="callback failed"):
+            tool._notify_mutation(target)
+
+        callback.assert_called_once_with(target)
+
+    def test_zero_argument_callback_is_invoked_once(self, tmp_path):
+        calls = []
+
+        def callback():
+            calls.append("called")
+
+        tool = FilesystemFuncTool(root_path=str(tmp_path), mutation_callback=callback)
+        tool._notify_mutation(tmp_path / "model.yml")
+
+        assert calls == ["called"]
 
 
 # ---------------------------------------------------------------------------
@@ -81,23 +102,59 @@ class TestGetSafePath:
 
 
 # ---------------------------------------------------------------------------
-# FilesystemFuncTool - _is_allowed_file
+# FilesystemFuncTool - extension-agnostic access
 # ---------------------------------------------------------------------------
 
 
-class TestIsAllowedFile:
-    def test_allowed_extension(self, tmp_path):
-        tool = _make_tool(str(tmp_path))
-        assert tool._is_allowed_file(Path("file.py")) is True
+class TestAnyExtensionIsAccessible:
+    """No operation gates on the file extension. Real repositories carry shell
+    scripts, Terraform, notebooks and extension-less dotfiles, and the agent
+    must be able to read back anything it can write.
 
-    def test_disallowed_extension(self, tmp_path):
-        tool = _make_tool(str(tmp_path))
-        assert tool._is_allowed_file(Path("file.exe")) is False
+    The one exception is ``read_file`` on binary tabular formats, which is
+    redirected rather than refused — see :class:`TestTabularFilesRedirect`.
+    """
 
-    def test_no_extension_filter(self, tmp_path):
-        tool = FilesystemFuncTool(root_path=str(tmp_path))
-        tool.config.allowed_extensions = []
-        assert tool._is_allowed_file(Path("file.exe")) is True
+    @pytest.mark.parametrize(
+        "name",
+        ["deploy.sh", "main.tf", "app.scala", "pyproject.toml", "notebook.ipynb", "Dockerfile", ".env"],
+    )
+    def test_read_edit_delete_roundtrip(self, tmp_path, name):
+        tool = _make_tool(str(tmp_path))
+
+        assert tool.write_file(name, "token here\n").success == 1
+
+        read = tool.read_file(name)
+        assert read.success == 1
+        assert read.result == "token here\n"
+
+        assert tool.edit_file(name, "token", "value").success == 1
+        assert (tmp_path / name).read_text() == "value here\n"
+
+        assert tool.delete_file(name).success == 1
+        assert not (tmp_path / name).exists()
+
+    def test_grep_matches_non_source_extensions(self, tmp_path):
+        (tmp_path / "deploy.sh").write_text("export TARGET=prod\n")
+        (tmp_path / "main.tf").write_text('variable "TARGET" {}\n')
+        tool = _make_tool(str(tmp_path))
+
+        result = tool.grep("TARGET")
+
+        assert result.success == 1
+        files = {m["file"] for m in result.result["matches"]}
+        assert files == {"deploy.sh", "main.tf"}
+
+    def test_binary_read_still_rejected(self, tmp_path):
+        """Undecodable content is rejected by the UTF-8 guard, not by a
+        suffix whitelist — so the rejection follows the bytes, not the name."""
+        (tmp_path / "payload.bin").write_bytes(b"\xff\xfe\x00\x01")
+        tool = _make_tool(str(tmp_path))
+
+        result = tool.read_file("payload.bin")
+
+        assert result.success == 0
+        assert "binary" in result.error.lower()
 
 
 # ---------------------------------------------------------------------------
@@ -127,14 +184,6 @@ class TestReadFile:
         result = tool.read_file("mydir")
         assert result.success == 0
         assert "not a file" in result.error.lower()
-
-    def test_read_disallowed_extension(self, tmp_path):
-        f = tmp_path / "binary.exe"
-        f.write_bytes(b"\x00\x01\x02")
-        tool = _make_tool(str(tmp_path))
-        result = tool.read_file("binary.exe")
-        assert result.success == 0
-        assert "not allowed" in result.error.lower()
 
     def test_read_file_too_large(self, tmp_path):
         f = tmp_path / "big.txt"
@@ -237,11 +286,12 @@ class TestWriteFile:
         assert result.success == 1
         assert (tmp_path / "subdir" / "nested" / "file.txt").exists()
 
-    def test_write_disallowed_extension(self, tmp_path):
+    def test_write_arbitrary_extension(self, tmp_path):
+        """write_file accepts any text artifact regardless of extension."""
         tool = _make_tool(str(tmp_path))
-        result = tool.write_file("file.exe", "binary")
-        assert result.success == 0
-        assert "not allowed" in result.error.lower()
+        result = tool.write_file("infra/deploy.sh", "#!/bin/sh\necho hi\n")
+        assert result.success == 1
+        assert (tmp_path / "infra" / "deploy.sh").read_text() == "#!/bin/sh\necho hi\n"
 
     def test_write_path_traversal_classified_external(self, tmp_path):
         """Write with ``../`` escape also classifies EXTERNAL — gating lives
@@ -342,12 +392,13 @@ class TestEditFile:
         result = tool.edit_file("missing.py", "x", "y")
         assert result.success == 0
 
-    def test_edit_disallowed_extension(self, tmp_path):
-        f = tmp_path / "file.exe"
-        f.write_bytes(b"binary")
+    def test_edit_binary_file_rejected(self, tmp_path):
+        f = tmp_path / "payload.bin"
+        f.write_bytes(b"\xff\xfe\x00\x01")
         tool = _make_tool(str(tmp_path))
-        result = tool.edit_file("file.exe", "x", "y")
+        result = tool.edit_file("payload.bin", "x", "y")
         assert result.success == 0
+        assert "binary" in result.error.lower()
 
 
 # ---------------------------------------------------------------------------
@@ -587,6 +638,7 @@ class TestAvailableTools:
         names = [t.name for t in tools]
         assert set(names) == {
             "read_file",
+            "read_image",
             "write_file",
             "edit_file",
             "delete_file",
@@ -596,7 +648,7 @@ class TestAvailableTools:
 
     def test_available_tools_count(self, tmp_path):
         tool = _make_tool(str(tmp_path))
-        assert len(tool.available_tools()) == 6
+        assert len(tool.available_tools()) == 7
 
 
 # ---------------------------------------------------------------------------
@@ -728,6 +780,31 @@ class TestPathZones:
         assert result.success == 0
         assert "not allowed in strict mode" in (result.error or "").lower()
 
+    def test_strict_rejection_names_the_reachable_roots(self, tmp_path):
+        """Seeding a walk at the *parent* of the project root and the DAGs folder.
+
+        Observed in a SaaS session: the model wrote a DAG through the proxied
+        (workspace-anchored) fs path, then globbed the workspace root looking for
+        it and got a bare rejection, so it kept probing. Naming both roots is what
+        lets it retarget instead.
+        """
+        workspace = tmp_path / "ws"
+        project = workspace / "proj" / "files"
+        project.mkdir(parents=True)
+        dags = workspace / "proj" / "dags"
+        dags.mkdir()
+        tool = FilesystemFuncTool(
+            root_path=str(project),
+            current_node="chat",
+            strict=True,
+            path_allowlist=PathAllowlist.from_dict({"allow_write": [str(dags)]}),
+        )
+        result = tool.glob("**/*.py", str(workspace))
+        assert result.success == 0
+        assert str(workspace.resolve()) in (result.error or "")
+        assert str(project.resolve()) in (result.error or "")
+        assert str(dags.resolve()) in (result.error or "")
+
     def test_strict_allows_internal_and_whitelist(self, tmp_path):
         """Strict mode must NOT break project-internal / whitelist access —
         otherwise the API surface could not read its own files."""
@@ -737,6 +814,86 @@ class TestPathZones:
         tool = FilesystemFuncTool(root_path=str(project), current_node="chat", strict=True)
         assert tool.read_file("hello.md").result == "hi"
         assert tool.write_file(".datus/skills/x/SKILL.md", "# skill\n").success == 1
+
+    def test_strict_allows_write_into_allowlisted_root(self, tmp_path):
+        """The DAGs-folder case: strict mode + a configured ``allow_write`` root.
+
+        A deployment mounts a shared directory (Airflow DAGs folder) next to the
+        project workspace; the agent must be able to author files there without
+        the whole surface losing its fail-closed default.
+        """
+        project = tmp_path / "proj"
+        project.mkdir()
+        dags = tmp_path / "services" / "airflow" / "dags" / "ws1" / "proj1"
+        dags.mkdir(parents=True)
+        tool = FilesystemFuncTool(
+            root_path=str(project),
+            current_node="chat",
+            strict=True,
+            path_allowlist=PathAllowlist.from_dict({"allow_write": [str(dags)]}),
+        )
+        target = dags / "daily_job.py"
+        assert tool.write_file(str(target), "print('dag')\n").success == 1
+        assert target.read_text() == "print('dag')\n"
+        # Round-trip through the other mutating/reading ops on the same root.
+        assert tool.read_file(str(target)).result == "print('dag')\n"
+        assert tool.edit_file(str(target), "dag", "dag2").success == 1
+        assert tool.delete_file(str(target)).success == 1
+
+    def test_strict_allowlisted_read_root_rejects_write(self, tmp_path):
+        project = tmp_path / "proj"
+        project.mkdir()
+        shared = tmp_path / "shared"
+        shared.mkdir()
+        (shared / "ref.sql").write_text("select 1")
+        tool = FilesystemFuncTool(
+            root_path=str(project),
+            current_node="chat",
+            strict=True,
+            path_allowlist=PathAllowlist.from_dict({"allow_read": [str(shared)]}),
+        )
+        assert tool.read_file(str(shared / "ref.sql")).result == "select 1"
+        result = tool.write_file(str(shared / "ref.sql"), "select 2")
+        assert result.success == 0
+        assert "read-only" in (result.error or "").lower()
+        assert (shared / "ref.sql").read_text() == "select 1"
+
+    def test_strict_still_rejects_paths_outside_allowlist(self, tmp_path):
+        project = tmp_path / "proj"
+        project.mkdir()
+        dags = tmp_path / "dags"
+        dags.mkdir()
+        tool = FilesystemFuncTool(
+            root_path=str(project),
+            current_node="chat",
+            strict=True,
+            path_allowlist=PathAllowlist.from_dict({"allow_write": [str(dags)]}),
+        )
+        target = tmp_path / "elsewhere.md"
+        result = tool.write_file(str(target), "payload")
+        assert result.success == 0
+        assert "not allowed in strict mode" in (result.error or "").lower()
+        assert not target.exists()
+
+    def test_glob_seeded_at_allowlisted_root_lists_files(self, tmp_path):
+        project = tmp_path / "proj"
+        project.mkdir()
+        dags = tmp_path / "dags"
+        dags.mkdir()
+        (dags / "a_dag.py").write_text("a")
+        (dags / "b_dag.py").write_text("b")
+        tool = FilesystemFuncTool(
+            root_path=str(project),
+            current_node="chat",
+            strict=True,
+            path_allowlist=PathAllowlist.from_dict({"allow_write": [str(dags)]}),
+        )
+        result = tool.glob("*_dag.py", str(dags))
+        assert result.success == 1
+        # Seed is WHITELIST (not EXTERNAL), and reported paths stay absolute
+        # because they cannot be expressed relative to the project root.
+        assert result.result.get("external") is None
+        assert {Path(p).name for p in result.result["files"]} == {"a_dag.py", "b_dag.py"}
 
     def test_glob_external_seed_returns_absolute_paths(self, tmp_path):
         other = tmp_path / "other"
@@ -751,3 +908,196 @@ class TestPathZones:
         files = result.result["files"]
         assert files
         assert all(Path(p).is_absolute() for p in files)
+
+
+class TestTabularFilesRedirect:
+    """``read_file`` on a spreadsheet points at the tool that can actually read it.
+
+    Left to the generic UTF-8 path these fail with "Cannot read binary file",
+    which says the read failed but not what to do instead; in practice the model
+    then retries through bash. The redirect turns a dead end into a one-turn
+    correction.
+    """
+
+    @pytest.mark.parametrize("name", ["book.xlsx", "book.xlsm", "book.xls", "data.parquet"])
+    def test_binary_tabular_read_names_the_alternative(self, tmp_path, name):
+        (tmp_path / name).write_bytes(b"PK\x03\x04binary-ish")
+        tool = _make_tool(str(tmp_path))
+
+        result = tool.read_file(name)
+
+        assert result.success == 0
+        assert "load_file_as_table" in result.error
+
+    @pytest.mark.parametrize("name", ["book.xlsb", "sheet.ods"])
+    def test_formats_nothing_can_read_say_so_in_one_turn(self, tmp_path, name):
+        """Pointing these at load_file_as_table would only spend a round trip to
+        arrive at the same answer, since it rejects them too."""
+        (tmp_path / name).write_bytes(b"PK\x03\x04")
+        tool = _make_tool(str(tmp_path))
+
+        result = tool.read_file(name)
+
+        assert result.success == 0
+        assert "load_file_as_table" not in result.error
+        # Name both conversion targets: the message's whole job is telling the
+        # user what to re-save as, so "mentions one of them" is not the contract.
+        assert ".xlsx" in result.error
+        assert ".csv" in result.error
+
+    def test_extension_match_is_case_insensitive(self, tmp_path):
+        (tmp_path / "BOOK.XLSX").write_bytes(b"PK\x03\x04")
+        tool = _make_tool(str(tmp_path))
+        assert "load_file_as_table" in tool.read_file("BOOK.XLSX").error
+
+    @pytest.mark.parametrize("name", ["data.csv", "data.tsv"])
+    def test_text_tabular_formats_still_read_normally(self, tmp_path, name):
+        """CSV is text: read_file genuinely works and a small one is cheapest to just read."""
+        (tmp_path / name).write_text("a,b\n1,2\n")
+        tool = _make_tool(str(tmp_path))
+
+        result = tool.read_file(name)
+
+        assert result.success == 1
+        assert "1,2" in result.result
+
+    def test_missing_file_still_reports_not_found(self, tmp_path):
+        """Existence is checked first; a redirect for a file that isn't there would mislead."""
+        tool = _make_tool(str(tmp_path))
+        result = tool.read_file("absent.xlsx")
+        assert result.success == 0
+        assert "not found" in result.error.lower()
+        assert "load_file_as_table" not in result.error
+
+    def test_writing_a_spreadsheet_path_is_still_allowed(self, tmp_path):
+        """Only reads are redirected — the write side has no extension gate."""
+        tool = _make_tool(str(tmp_path))
+        assert tool.write_file("out.xlsx", "not really a spreadsheet").success == 1
+
+
+# ---------------------------------------------------------------------------
+# Concurrent mutation of one file
+# ---------------------------------------------------------------------------
+
+
+class TestConcurrentMutationsDoNotLoseUpdates:
+    """Two tool calls editing one file must not silently discard one of the edits.
+
+    The agent framework dispatches tool calls with ``asyncio.gather``, and a measured production
+    run issued two ``edit_file`` calls against ``data/gen.py`` with identical millisecond
+    timestamps. ``edit_file`` was a lock-free read -> replace -> write: both read the original,
+    the second write won, and **both returned "File edited successfully"**. The run then spent
+    five turns and a full regeneration cycle working out why the file still held the old value.
+    """
+
+    def _tool(self, tmp_path):
+        return _make_tool(str(tmp_path))
+
+    def test_parallel_edits_to_one_file_all_land(self, tmp_path):
+        import threading
+
+        tool = self._tool(tmp_path)
+        target = tmp_path / "gen.py"
+        # Zero-padded so no marker is a substring of another: edit_file requires a unique match.
+        markers = [f"SLOT_{i:02d}" for i in range(12)]
+        target.write_text("\n".join(markers), encoding="utf-8")
+
+        results, errors = [], []
+        start = threading.Barrier(len(markers))
+
+        def edit(marker):
+            try:
+                start.wait(timeout=10)
+                results.append(tool.edit_file("gen.py", marker, f"{marker}_DONE"))
+            except Exception as e:  # noqa: BLE001 - surfaced by the assertion below
+                errors.append(e)
+
+        threads = [threading.Thread(target=edit, args=(m,)) for m in markers]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=30)
+
+        assert not errors, errors
+        assert all(r.success == 1 for r in results), [r.error for r in results]
+        # Every edit that reported success has to be in the file. This is the whole contract:
+        # the old code passed the success assertion above and failed this one.
+        content = target.read_text(encoding="utf-8")
+        missing = [m for m in markers if f"{m}_DONE" not in content]
+        assert not missing, f"reported success but the change is not on disk: {missing}"
+
+    def test_an_edit_waits_for_a_semantic_artifact_writer(self, tmp_path):
+        """The two writer paths must exclude each other, not merely share a name.
+
+        `MetricFilesystemFuncTool` subclasses `FilesystemFuncTool`, so one object serves both the
+        semantic-artifact writes (which take the lock under their own name) and the generic
+        `edit_file` it inherits. Separate registries would leave them free to interleave on one
+        file. Asserted through behaviour - the edit must not complete while the artifact lock is
+        held - rather than by comparing the two names for identity.
+        """
+        import threading
+
+        from datus.storage.semantic_model.artifact_file import semantic_artifact_lock
+
+        tool = self._tool(tmp_path)
+        target = tmp_path / "model.yml"
+        target.write_text("version: 1", encoding="utf-8")
+
+        order = []
+        holder_is_in = threading.Event()
+        release_holder = threading.Event()
+
+        def hold_the_artifact_lock():
+            with semantic_artifact_lock(target):
+                holder_is_in.set()
+                release_holder.wait(timeout=10)
+                order.append("released")
+
+        def try_to_edit():
+            holder_is_in.wait(timeout=10)
+            tool.edit_file("model.yml", "version: 1", "version: 2")
+            order.append("edited")
+
+        holder = threading.Thread(target=hold_the_artifact_lock)
+        editor = threading.Thread(target=try_to_edit)
+        holder.start()
+        editor.start()
+
+        editor.join(timeout=0.5)
+        assert editor.is_alive(), "edit_file ran while the artifact lock was held"
+
+        release_holder.set()
+        holder.join(timeout=10)
+        editor.join(timeout=10)
+
+        assert order == ["released", "edited"]
+        assert target.read_text(encoding="utf-8") == "version: 2"
+
+    def test_the_lock_registry_does_not_grow_for_the_life_of_the_process(self, tmp_path):
+        """A sandbox pod edits many files over many sessions; one lock per path forever adds up."""
+        import gc
+
+        from datus.storage.semantic_model import artifact_file
+
+        tool = self._tool(tmp_path)
+        for i in range(50):
+            name = f"f{i}.txt"
+            (tmp_path / name).write_text("x", encoding="utf-8")
+            assert tool.edit_file(name, "x", "y").success == 1
+
+        gc.collect()
+
+        # Nothing holds these locks any more, so the registry must have let them go.
+        assert len(artifact_file._ARTIFACT_LOCKS) == 0, dict(artifact_file._ARTIFACT_LOCKS)
+
+    def test_a_lock_survives_while_it_is_held(self, tmp_path):
+        """Pruning must not hand two threads different locks for one path."""
+        import gc
+
+        from datus.storage.semantic_model import artifact_file
+        from datus.storage.semantic_model.artifact_file import path_mutation_lock
+
+        target = tmp_path / "held.txt"
+        with path_mutation_lock(target):
+            gc.collect()
+            assert str(target.resolve()) in artifact_file._ARTIFACT_LOCKS

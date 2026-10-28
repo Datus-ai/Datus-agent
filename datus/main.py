@@ -1,14 +1,13 @@
 #!/usr/bin/env python3
-
 # Copyright 2025-present DatusAI, Inc.
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
-
 import argparse
 import os
 import sys
 from datetime import datetime
 
+from datus.configuration.logging_config import add_logging_arguments
 from datus.multi_round_benchmark import multi_benchmark, setup_base_parser_args
 from datus.utils.async_utils import setup_windows_policy
 
@@ -22,7 +21,8 @@ from datus.agent.agent import Agent
 from datus.configuration.agent_config_loader import load_agent_config
 from datus.schemas.node_models import SqlTask
 from datus.utils.exceptions import setup_exception_handler
-from datus.utils.loggings import configure_logging, get_logger
+from datus.utils.loggings import configure_entrypoint_logging, get_logger
+from datus.utils.multiprocessing_utils import configure_multiprocessing_start_method
 
 logger = get_logger(__name__)
 
@@ -30,7 +30,7 @@ logger = get_logger(__name__)
 def create_parser() -> argparse.ArgumentParser:
     # Create a parent parser for global options that will be shared across all subcommands
     global_parser = argparse.ArgumentParser(add_help=False)
-    global_parser.add_argument("--debug", action="store_true", help="Enable debug level logging")
+    add_logging_arguments(global_parser)
     global_parser.add_argument("--config", type=str, help="Path to configuration file (default: conf/agent.yml)")
     global_parser.add_argument(
         "--save_llm_trace",
@@ -54,7 +54,7 @@ def create_parser() -> argparse.ArgumentParser:
     # service command
     service_parser = subparsers.add_parser(
         "service",
-        help="Manage services (databases, semantic layer, BI tools, schedulers)",
+        help="Manage services (databases, BI tools, schedulers)",
         parents=[global_parser],
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -181,9 +181,16 @@ def create_parser() -> argparse.ArgumentParser:
     bootstrap_parser.add_argument(
         "--kb_update_strategy",
         type=str,
-        choices=["check", "overwrite", "incremental"],
+        choices=["check", "overwrite", "incremental", "refresh-profile", "sync-yaml"],
         default="check",
-        help="Knowledge base update strategy: check (verify paths and data), overwrite (careful!), or incremental",
+        help=(
+            "Knowledge base update strategy: check (verify paths and data), overwrite (careful!), "
+            "incremental, refresh-profile (semantic_model only; update profile descriptions in an existing YAML), "
+            "or sync-yaml (semantic_model only; re-project authored YAML into the knowledge base with no LLM "
+            "call, defaulting to every file of the active datasource). "
+            "For semantic_modeling, overwrite and incremental are compatibility aliases that fully reconcile each "
+            "selected YAML without clearing sibling artifacts."
+        ),
     )
     bootstrap_parser.add_argument(
         "--components",
@@ -192,13 +199,17 @@ def create_parser() -> argparse.ArgumentParser:
         choices=[
             "metrics",
             "metadata",
+            "semantic_modeling",
             "semantic_model",
             "table_lineage",
             "reference_sql",
             "reference_template",
         ],
         default=["metadata"],
-        help="Knowledge base components to initialize",
+        help=(
+            "Knowledge base components to initialize. semantic_model is a datasets-only semantic_modeling alias; "
+            "metrics and semantic_modeling use full scope. Combined semantic components execute once."
+        ),
     )
     bootstrap_parser.add_argument("--storage_path", type=str, help="Parent directory for all storage components")
     bootstrap_parser.add_argument(
@@ -229,6 +240,13 @@ def create_parser() -> argparse.ArgumentParser:
         help="Number of threads to initialize bootstrap-kb, default is 4",
     )
     bootstrap_parser.add_argument(
+        "--kb_search_mode",
+        type=str,
+        choices=["vector", "fts"],
+        default="",
+        help="Knowledge-base search mode for metadata indexing and runtime retrieval (default: config or vector)",
+    )
+    bootstrap_parser.add_argument(
         "--success_story",
         type=str,
         default="benchmark/semantic_layer/success_story.csv",
@@ -239,15 +257,26 @@ def create_parser() -> argparse.ArgumentParser:
         type=str,
         help="Path to semantic model YAML file",
     )
-    bootstrap_parser.add_argument(
-        "--from_adapter",
-        type=str,
-        help="Pull semantic models and metrics from semantic adapter (e.g., metricflow, dbt, cube)",
-    )
     bootstrap_parser.add_argument("--catalog", type=str, help="Catalog of the success story")
+    bootstrap_parser.add_argument(
+        "--schema_name", type=str, help="Schema name to use for semantic validation/execution"
+    )
     bootstrap_parser.add_argument("--subject_path", type=str, help="Subject path of the success story")
     bootstrap_parser.add_argument(
         "--sql_dir", type=str, help="Directory containing SQL files for reference_sql component"
+    )
+    bootstrap_parser.add_argument(
+        "--from_summaries",
+        action="store_true",
+        help=(
+            "reference_sql only: re-index the committed subject/sql_summaries/*.yaml verbatim "
+            "instead of re-deriving summaries from --sql_dir through the LLM"
+        ),
+    )
+    bootstrap_parser.add_argument(
+        "--summaries_dir",
+        type=str,
+        help="Override the summaries directory used by --from_summaries (default: subject/sql_summaries)",
     )
     bootstrap_parser.add_argument(
         "--template_dir", type=str, help="Directory containing J2 template files for reference_template component"
@@ -268,8 +297,10 @@ def create_parser() -> argparse.ArgumentParser:
         "--metrics-batch-size",
         type=int,
         default=5,
-        help="Number of SQL queries per batch for metrics extraction (default: 5). "
-        "Set to 1 to enable per-query provenance tracking.",
+        help=(
+            "Number of SQL queries per batch for metrics extraction or unified semantic modeling (default: 5). "
+            "Set to 1 to enable per-query provenance tracking for the metrics component."
+        ),
     )
     bootstrap_parser.add_argument(
         "-y",
@@ -460,21 +491,16 @@ def create_parser() -> argparse.ArgumentParser:
             help="Schema linking node strategy",
         )
 
-        node_group.add_argument(
-            "--search_metrics_rate",
-            type=str,
-            choices=["fast", "medium", "slow"],
-            default="fast",
-            help="Search metrics node query strategy",
-        )
-
     # Workflow configuration group (available for run and benchmark)
     for p in [run_parser, benchmark_parser]:
         workflow_group = p.add_argument_group("Workflow Configuration")
         workflow_group.add_argument(
             "--workflow",
             type=str,
-            help="Workflow planning strategy (can be builtin: fixed, reflection, dynamic, empty or custom plan name)",
+            help=(
+                "Workflow planning strategy (can be builtin: fixed, empty, chat_agentic, "
+                "gen_sql_agentic or custom plan name)"
+            ),
         )
         workflow_group.add_argument("--max_steps", type=int, default=20, help="Maximum workflow steps")
         workflow_group.add_argument("--load_cp", type=str, help="Load workflow from checkpoint file")
@@ -483,6 +509,7 @@ def create_parser() -> argparse.ArgumentParser:
 
 
 def main():
+    configure_multiprocessing_start_method()
     parser = create_parser()
     args = parser.parse_args()
 
@@ -491,18 +518,18 @@ def main():
         return 1
 
     if args.action == "service":
-        configure_logging(args.debug, console_output=False)
+        configure_entrypoint_logging(args, console_output=False)
         from datus.cli.service_manager import ServiceManager
 
         return ServiceManager(args.config or "").run(args.command)
 
     if args.action == "skill":
-        configure_logging(args.debug, console_output=False)
+        configure_entrypoint_logging(args, console_output=False)
         from datus.cli.skill_cli import run_skill_command
 
         return run_skill_command(args)
 
-    configure_logging(args.debug)
+    configure_entrypoint_logging(args)
     setup_exception_handler()
 
     if args.action == "multi-round-benchmark":
@@ -558,7 +585,10 @@ def main():
     elif args.action in ("eval", "evaluation", "evaluate"):
         result = agent.evaluation()
     if result:
-        logger.info(f"\nFinal Result: {result}")
+        logger.info("workflow.finished", action=args.action, result_type=type(result).__name__)
+        from rich import print as rich_print
+
+        rich_print(result)
 
     return 0
 

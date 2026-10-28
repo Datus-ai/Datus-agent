@@ -438,27 +438,32 @@ class TestDocumentStoreCreateIndices:
         assert len(results) == 2
 
     def test_create_indices_calls_vector_index(self, doc_store):
-        """create_indices must delegate to the backend's create_vector_index."""
+        """create_indices must delegate to the backend's create_vector_index.
+
+        Every backend builds its vector index at runtime, so the delegation is
+        unconditional -- gating it on the table's class name is what left
+        pgvector deployments running without an index at all.
+        """
         doc_store.store_chunks(_make_chunks(3))
         with patch.object(doc_store.table, "create_vector_index", wraps=doc_store.table.create_vector_index) as mock_vi:
             doc_store.create_indices()
-            mock_vi.assert_called_once()
-            args, kwargs = mock_vi.call_args
-            # First positional arg is the vector column name
-            assert args[0] == "vector"
-            assert kwargs.get("metric") == "cosine"
-            assert kwargs.get("replace") is True
+            assert mock_vi.call_count == 1
+            assert [args[0] for args, _ in mock_vi.call_args_list] == ["vector"]
+            assert [kwargs["metric"] for _, kwargs in mock_vi.call_args_list] == ["cosine"]
+            assert [kwargs["replace"] for _, kwargs in mock_vi.call_args_list] == [True]
 
     def test_create_indices_calls_fts_index(self, doc_store):
         """create_indices must delegate to the backend's create_fts_index."""
         doc_store.store_chunks(_make_chunks(3))
         with patch.object(doc_store.table, "create_fts_index", wraps=doc_store.table.create_fts_index) as mock_fts:
             doc_store.create_indices()
-            mock_fts.assert_called_once()
-            args, kwargs = mock_fts.call_args
-            # field_names is passed positionally from base.create_fts_index
-            field_names = kwargs.get("field_names") or args[0]
-            assert set(field_names) == {"chunk_text", "title", "hierarchy"}
+            expected_call_count = int(getattr(doc_store.table, "supports_fts", lambda: False)())
+            specs = [args[0] for args, _ in mock_fts.call_args_list]
+            assert mock_fts.call_count == expected_call_count
+            assert [[field.name for field in spec.fields] for spec in specs] == [
+                ["title", "hierarchy", "chunk_text"]
+            ] * expected_call_count
+            assert [[field.boost for field in spec.fields] for spec in specs] == [[3.0, 2.0, 1.0]] * expected_call_count
 
 
 # ============================================================

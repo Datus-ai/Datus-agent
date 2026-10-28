@@ -68,7 +68,11 @@ class TestListing:
         built-in subagent is currently picked."""
         app = _build()
         assert app._builtin_names[0] == "chat"
-        assert set(app._builtin_names[1:]) == SYS_SUB_AGENTS - HIDDEN_SYS_SUB_AGENTS
+        assert set(app._builtin_names[1:]) == (SYS_SUB_AGENTS - HIDDEN_SYS_SUB_AGENTS)
+
+    def test_semantic_modeling_is_listed(self):
+        app = _build()
+        assert "semantic_modeling" in app._builtin_names
 
     def test_hidden_builtins_are_excluded(self):
         app = _build()
@@ -366,7 +370,7 @@ class TestEmbeddedPanel:
             panel = app.build_embedded_panel(fut)
             assert isinstance(panel, EmbeddedWizard)
             assert panel.done_future is fut
-            assert app._on_done is not None
+            assert callable(app._on_done)
             # Initial focus is the list window the panel builds.
             assert panel.first_focus is app._list_window
         finally:

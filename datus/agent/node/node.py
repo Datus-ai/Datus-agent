@@ -16,7 +16,6 @@ from datus.configuration.node_type import NodeType
 from datus.models.base import LLMBaseModel
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager
 from datus.schemas.chat_agentic_node_models import ChatNodeInput, ChatNodeResult
-from datus.schemas.date_parser_node_models import DateParserInput, DateParserResult
 from datus.schemas.explore_agentic_node_models import ExploreNodeInput, ExploreNodeResult
 from datus.schemas.feedback_agentic_node_models import FeedbackNodeInput, FeedbackNodeResult
 from datus.schemas.fix_node_models import FixInput
@@ -28,9 +27,7 @@ from datus.schemas.node_models import (
     ExecuteSQLResult,
     OutputInput,
     OutputResult,
-    ReflectionResult,
 )
-from datus.schemas.reason_sql_node_models import ReasoningResult
 from datus.schemas.schema_linking_node_models import SchemaLinkingInput, SchemaLinkingResult
 from datus.tools.db_tools.db_manager import db_manager_instance
 from datus.utils.loggings import get_logger
@@ -63,18 +60,13 @@ class Node(ABC):
             BeginNode,
             ChatAgenticNode,
             CompareNode,
-            DateParserNode,
-            DocSearchNode,
             ExecuteSQLNode,
             FixNode,
             GenSQLAgenticNode,
             HitlNode,
             OutputNode,
             ParallelNode,
-            ReasonSQLNode,
-            ReflectNode,
             SchemaLinkingNode,
-            SearchMetricsNode,
             SelectionNode,
             SubworkflowNode,
         )
@@ -83,22 +75,14 @@ class Node(ABC):
             return SchemaLinkingNode(node_id, description, node_type, input_data, agent_config)
         elif node_type == NodeType.TYPE_EXECUTE_SQL:
             return ExecuteSQLNode(node_id, description, node_type, input_data, agent_config, tools)
-        elif node_type == NodeType.TYPE_REASONING:
-            return ReasonSQLNode(node_id, description, node_type, input_data, agent_config, tools)
-        elif node_type == NodeType.TYPE_DOC_SEARCH:
-            return DocSearchNode(node_id, description, node_type, input_data, agent_config)
         elif node_type == NodeType.TYPE_OUTPUT:
             return OutputNode(node_id, description, node_type, input_data, agent_config)
         elif node_type == NodeType.TYPE_FIX:
             return FixNode(node_id, description, node_type, input_data, agent_config)
-        elif node_type == NodeType.TYPE_REFLECT:
-            return ReflectNode(node_id, description, node_type, input_data, agent_config, tools)
         elif node_type == NodeType.TYPE_HITL:
             return HitlNode(node_id, description, node_type, input_data, agent_config)
         elif node_type == NodeType.TYPE_BEGIN:
             return BeginNode(node_id, description, node_type, input_data, agent_config)
-        elif node_type == NodeType.TYPE_SEARCH_METRICS:
-            return SearchMetricsNode(node_id, description, node_type, input_data, agent_config)
         elif node_type == NodeType.TYPE_PARALLEL:
             return ParallelNode(node_id, description, node_type, input_data, agent_config, tools)
         elif node_type == NodeType.TYPE_SELECTION:
@@ -107,8 +91,6 @@ class Node(ABC):
             return SubworkflowNode(node_id, description, node_type, input_data, agent_config, tools)
         elif node_type == NodeType.TYPE_COMPARE:
             return CompareNode(node_id, description, node_type, input_data, agent_config, tools)
-        elif node_type == NodeType.TYPE_DATE_PARSER:
-            return DateParserNode(node_id, description, node_type, input_data, agent_config)
         elif node_type == NodeType.TYPE_CHAT:
             return ChatAgenticNode(
                 node_id,
@@ -134,10 +116,43 @@ class Node(ABC):
                 is_subagent=is_subagent,
                 session_id=session_id,
             )
+        elif node_type == NodeType.TYPE_SEMANTIC:
+            semantic_node_name = node_name or "semantic_modeling"
+            if semantic_node_name == "semantic_modeling":
+                from datus.agent.node.semantic_modeling_agentic_node import SemanticModelingAgenticNode
+
+                authoring_scope = getattr(input_data, "authoring_scope", "full") if input_data is not None else "full"
+                node = SemanticModelingAgenticNode(
+                    agent_config=agent_config,
+                    execution_mode="workflow",
+                    authoring_scope=authoring_scope,
+                    is_subagent=is_subagent,
+                    session_id=session_id,
+                )
+            else:  # pragma: no cover - guarded above
+                raise AssertionError(f"Unsupported semantic authoring node: {semantic_node_name!r}")
+            if input_data is not None:
+                node.input = input_data
+            return node
         elif node_type == NodeType.TYPE_ASK_METRICS:
             from datus.agent.node.ask_metrics_agentic_node import AskMetricsAgenticNode
 
             return AskMetricsAgenticNode(
+                node_id,
+                description,
+                node_type,
+                input_data,
+                agent_config,
+                tools,
+                node_name,
+                execution_mode="workflow",
+                is_subagent=is_subagent,
+                session_id=session_id,
+            )
+        elif node_type == NodeType.TYPE_ONTOLOGY_ANALYST:
+            from datus.agent.node.ontology_analyst_agentic_node import OntologyAnalystAgenticNode
+
+            return OntologyAnalystAgenticNode(
                 node_id,
                 description,
                 node_type,
@@ -218,34 +233,6 @@ class Node(ABC):
                 is_subagent=is_subagent,
                 session_id=session_id,
             )
-        elif node_type == NodeType.TYPE_GEN_DASHBOARD:
-            from datus.agent.node.gen_dashboard_agentic_node import GenDashboardAgenticNode
-
-            node = GenDashboardAgenticNode(
-                agent_config=agent_config,
-                execution_mode="workflow",
-                node_id=node_id,
-                node_name=node_name,
-                is_subagent=is_subagent,
-                session_id=session_id,
-            )
-            if input_data is not None:
-                node.input = input_data
-            return node
-        elif node_type == NodeType.TYPE_SCHEDULER:
-            from datus.agent.node.scheduler_agentic_node import SchedulerAgenticNode
-
-            node = SchedulerAgenticNode(
-                agent_config=agent_config,
-                execution_mode="workflow",
-                node_id=node_id,
-                node_name=node_name,
-                is_subagent=is_subagent,
-                session_id=session_id,
-            )
-            if input_data is not None:
-                node.input = input_data
-            return node
         elif node_type == NodeType.TYPE_FEEDBACK:
             from datus.agent.node.feedback_agentic_node import FeedbackAgenticNode
 
@@ -405,13 +392,12 @@ class Node(ABC):
             if self.type in NodeType.ACTION_TYPES or self.type in NodeType.CONTROL_TYPES:
                 self.execute()
 
-                # REFLECT type always completes successfully, others check result
                 logger.debug(
                     f"Node.run checking result: type={self.type}, result_type={type(self.result)}, "
                     f"result_is_not_None={self.result is not None}, "
                     f"result_success={getattr(self.result, 'success', 'N/A')}"
                 )
-                if self.type == NodeType.TYPE_REFLECT or (self.result is not None and self.result.success):
+                if self.result is not None and self.result.success:
                     logger.info(f"Node.run calling complete for {self.type}")
                     self.complete(self.result)
                 else:
@@ -439,8 +425,7 @@ class Node(ABC):
                 async for action in self.execute_stream(action_history_manager):
                     yield action
 
-                # REFLECT type always completes successfully, others check result
-                if self.type == NodeType.TYPE_REFLECT or (self.result is not None and self.result.success):
+                if self.result is not None and self.result.success:
                     self.complete(self.result)
                 else:
                     logger.error(f"{self.type} node execution failed: {self.result}")
@@ -504,8 +489,6 @@ class Node(ABC):
                     input_data = OutputInput(**input_data)
                 elif node_dict["type"] == NodeType.TYPE_FIX:
                     input_data = FixInput(**input_data)
-                elif node_dict["type"] == NodeType.TYPE_DATE_PARSER:
-                    input_data = DateParserInput(**input_data)
                 elif node_dict["type"] == NodeType.TYPE_CHAT:
                     input_data = ChatNodeInput(**input_data)
                 elif node_dict["type"] == NodeType.TYPE_GEN_SQL:
@@ -514,20 +497,16 @@ class Node(ABC):
                     from datus.schemas.ask_metrics_agentic_node_models import AskMetricsNodeInput
 
                     input_data = AskMetricsNodeInput(**input_data)
+                elif node_dict["type"] == NodeType.TYPE_ONTOLOGY_ANALYST:
+                    from datus.schemas.ontology_analyst_agentic_node_models import OntologyAnalystNodeInput
+
+                    input_data = OntologyAnalystNodeInput(**input_data)
                 elif node_dict["type"] == NodeType.TYPE_GEN_REPORT:
                     from datus.schemas.gen_report_agentic_node_models import GenReportNodeInput
 
                     input_data = GenReportNodeInput(**input_data)
                 elif node_dict["type"] == NodeType.TYPE_EXPLORE:
                     input_data = ExploreNodeInput(**input_data)
-                elif node_dict["type"] == NodeType.TYPE_GEN_DASHBOARD:
-                    from datus.schemas.gen_dashboard_agentic_node_models import GenDashboardNodeInput
-
-                    input_data = GenDashboardNodeInput(**input_data)
-                elif node_dict["type"] == NodeType.TYPE_SCHEDULER:
-                    from datus.schemas.scheduler_agentic_node_models import SchedulerNodeInput
-
-                    input_data = SchedulerNodeInput(**input_data)
                 elif node_dict["type"] == NodeType.TYPE_GEN_TABLE:
                     from datus.schemas.semantic_agentic_node_models import SemanticNodeInput
 
@@ -558,12 +537,6 @@ class Node(ABC):
                     result_data = ExecuteSQLResult(**result_data)
                 elif node_dict["type"] == NodeType.TYPE_OUTPUT:
                     result_data = OutputResult(**result_data)
-                elif node_dict["type"] == NodeType.TYPE_REFLECT:
-                    result_data = ReflectionResult(**result_data)
-                elif node_dict["type"] == NodeType.TYPE_REASONING:
-                    result_data = ReasoningResult(**result_data)
-                elif node_dict["type"] == NodeType.TYPE_DATE_PARSER:
-                    result_data = DateParserResult(**result_data)
                 elif node_dict["type"] == NodeType.TYPE_CHAT:
                     result_data = ChatNodeResult(**result_data)
                 elif node_dict["type"] == NodeType.TYPE_GEN_SQL:
@@ -572,20 +545,16 @@ class Node(ABC):
                     from datus.schemas.ask_metrics_agentic_node_models import AskMetricsNodeResult
 
                     result_data = AskMetricsNodeResult(**result_data)
+                elif node_dict["type"] == NodeType.TYPE_ONTOLOGY_ANALYST:
+                    from datus.schemas.ontology_analyst_agentic_node_models import OntologyAnalystNodeResult
+
+                    result_data = OntologyAnalystNodeResult(**result_data)
                 elif node_dict["type"] == NodeType.TYPE_GEN_REPORT:
                     from datus.schemas.gen_report_agentic_node_models import GenReportNodeResult
 
                     result_data = GenReportNodeResult(**result_data)
                 elif node_dict["type"] == NodeType.TYPE_EXPLORE:
                     result_data = ExploreNodeResult(**result_data)
-                elif node_dict["type"] == NodeType.TYPE_GEN_DASHBOARD:
-                    from datus.schemas.gen_dashboard_agentic_node_models import GenDashboardNodeResult
-
-                    result_data = GenDashboardNodeResult(**result_data)
-                elif node_dict["type"] == NodeType.TYPE_SCHEDULER:
-                    from datus.schemas.scheduler_agentic_node_models import SchedulerNodeResult
-
-                    result_data = SchedulerNodeResult(**result_data)
                 elif node_dict["type"] == NodeType.TYPE_GEN_TABLE:
                     from datus.schemas.semantic_agentic_node_models import SemanticNodeResult
 

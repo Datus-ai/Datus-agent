@@ -9,22 +9,81 @@ This module defines the input and output models for the SemanticAgenticNode,
 providing structured validation for semantic model generation interactions.
 """
 
-from typing import List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
-from pydantic import ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field
 
-from datus.schemas.base import BaseInput, BaseResult
+from datus.schemas.at_context import AtContextInput
+from datus.schemas.base import BaseResult
 
 
-class SemanticNodeInput(BaseInput):
+class SourceQueryEvidence(BaseModel):
+    """Internal success-story row used to assemble semantic initialization messages."""
+
+    sql: str = Field(..., description="Original SQL from the success-story row")
+    question: str = Field(default="", description="Business question associated with the SQL")
+
+
+def source_query_from_success_story_row(
+    row: Any,
+) -> Optional[SourceQueryEvidence]:
+    """Build structured SQL evidence from one success-story row."""
+    sql = _clean_tabular_cell(row.get("sql"))
+    if not sql:
+        return None
+    return SourceQueryEvidence(
+        sql=sql,
+        question=_clean_tabular_cell(row.get("question")),
+    )
+
+
+def _clean_tabular_cell(value: Any) -> str:
+    if value is None:
+        return ""
+    try:
+        if bool(value != value):
+            return ""
+    except (TypeError, ValueError):
+        pass
+    return str(value).strip()
+
+
+class SemanticNodeInput(AtContextInput):
     """
     Input model for SemanticAgenticNode interactions.
     """
 
     user_message: str = Field(..., description="User's input message")
+    authoring_scope: Literal["datasets", "full"] = Field(
+        default="full",
+        description=(
+            "Semantic-modeling write scope. `datasets` permits only datasets, fields, relationships, and model "
+            "metadata; `full` also permits metric changes."
+        ),
+    )
     catalog: Optional[str] = Field(default=None, description="Database catalog for context")
     database: Optional[str] = Field(default=None, description="Database name for context")
     db_schema: Optional[str] = Field(default=None, description="Database schema for context")
+    semantic_model_name: Optional[str] = Field(
+        default=None,
+        description="Explicit stable semantic model name; takes priority over inferred naming in Ossie mode",
+    )
+    semantic_model_file: Optional[str] = Field(
+        default=None,
+        description="Optional semantic model file hint; the agent must verify it before use",
+    )
+    business_domain: Optional[str] = Field(
+        default=None,
+        description="Business domain used to name a new Ossie semantic model when no explicit name is supplied",
+    )
+    fact_tables: Optional[list[str]] = Field(
+        default=None,
+        description="Fact tables in priority order; the first/core fact table is the stable naming fallback",
+    )
+    dimension_tables: Optional[list[str]] = Field(
+        default=None,
+        description="Dimension tables used by the model; recorded for context but excluded from model naming",
+    )
     max_turns: Optional[int] = Field(default=None, description="Maximum conversation turns; None uses node config")
     workspace_root: Optional[str] = Field(default=None, description="Root directory path for filesystem MCP server")
     prompt_version: Optional[str] = Field(default=None, description="Version for prompt template")
@@ -51,3 +110,49 @@ class SemanticNodeResult(BaseResult):
         default_factory=list, description="List of generated semantic model file paths (single table or multi-table)"
     )
     tokens_used: int = Field(default=0, description="Total tokens used in this interaction")
+
+
+class GenMetricsNodeResult(SemanticNodeResult):
+    """Metric generation result, including an actionable blocked outcome."""
+
+    status: Optional[Literal["generated", "skipped", "blocked"]] = Field(
+        default=None,
+        description="Metric generation outcome; None is reserved for execution errors.",
+    )
+    blocker_code: Optional[
+        Literal[
+            "semantic_model_required",
+            "semantic_model_selection_required",
+            "semantic_model_target_invalid",
+            "semantic_model_inline_in_mapping",
+        ]
+    ] = Field(default=None, description="Actionable prerequisite when status is blocked")
+    skip_reason: Optional[Literal["not_a_metric"]] = Field(
+        default=None,
+        description="Why metric generation was skipped; only non-metric requests may skip in OSI mode.",
+    )
+
+
+class SemanticModelingNodeResult(SemanticNodeResult):
+    """Outcome of unified semantic dataset and metric authoring."""
+
+    business_validation: List[Dict[str, Any]] = Field(
+        default_factory=list,
+        description="Baseline comparisons with query and numerical status; empty means no comparisons were recorded.",
+    )
+    status: Optional[Literal["generated", "skipped", "blocked"]] = Field(
+        default=None,
+        description="Unified semantic-modeling outcome; None is reserved for execution errors.",
+    )
+    blocker_code: Optional[
+        Literal[
+            "semantic_model_required",
+            "semantic_model_selection_required",
+            "semantic_model_target_invalid",
+            "semantic_model_inline_in_mapping",
+        ]
+    ] = Field(default=None, description="Actionable target prerequisite when status is blocked")
+    skip_reason: Optional[Literal["no_semantic_change"]] = Field(
+        default=None,
+        description="The request did not require a semantic dataset, relationship, or metric change.",
+    )

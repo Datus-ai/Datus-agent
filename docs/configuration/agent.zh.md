@@ -4,6 +4,20 @@ Agent 配置定义 Datus Agent 的核心设置，包括默认目标模型与整�
 
 ## 结构
 
+### 日志配置
+
+在 `agent.yml` 中配置进程日志：
+
+```yaml
+agent:
+  logging:
+    level: INFO     # DEBUG、INFO、WARNING、ERROR、CRITICAL；不区分大小写
+```
+
+级别优先级为显式 `--log-level` / `--debug` → `DATUS_LOG_LEVEL` → `agent.logging.level` → `INFO`。`--debug` 等价于 `--log-level DEBUG`，两者不能同时指定。例如，`datus-api --config conf/agent.yml --log-level WARNING` 会同时将 API 和 Agent 业务日志设为 WARNING。CLI、API、Gateway、MCP 服务、Web Chatbot 和 benchmark 使用相同的解析规则；API 子进程继承最终级别，重建 Agent 不会重置级别。嵌入式应用可在启动时调用 `configure_logging(agent_config=config)`。
+
+文件 handler 同样执行级别过滤，第三方库原有的降噪策略继续保留。日志文件统一使用纯文本格式，事件字段以键值对展示；交互式控制台输出到 stderr。日志与 tracing 独立。可选的 `agent.logging.redact` 支持 `enabled`、`fields` 和正则 `patterns`，默认开启凭据字段脱敏。事件及 trace 采集控制详见[可观测性](../develop/observability.zh.md)。
+
 ### 目标模型（target）
 在未单独覆盖时，所有节点默认使用 `target` 指向的 LLM 设置：
 ```yaml
@@ -25,6 +39,8 @@ agent:
 
 内置语言码映射：`en` → English、`zh` / `zh-cn` → Chinese、`zh-tw` → Traditional Chinese、`ja` → Japanese、`ko` → Korean、`es` → Spanish、`fr` → French、`de` → German、`pt` → Portuguese、`ru` → Russian、`it` → Italian。未知代码将原样注入 system prompt，方便扩展。
 
+对映射表内的语言码，除英文的名称行外还会用**该语言本身**再写一遍指令：单独一行英文元指令要和几十轮英文表结构 / SQL 工具输出竞争注意力，小模型容易漂移。未知代码仅保留英文行。
+
 Chat API 请求可通过请求体中的 `language` 字段按任务覆盖该默认值（详见 [Chat API](../API/chat.zh.md)）。CLI 无覆盖参数，直接沿用 yaml 中的默认。
 
 ### 模型提供方（models） {#models-configuration}
@@ -37,6 +53,7 @@ Chat API 请求可通过请求体中的 `language` 字段按任务覆盖该默�
 - `base_url`：接口基础地址
 - `api_key`：访问密钥（支持环境变量）
 - `model`：具体模型名
+- `ssl_verify`（可选）：该端点的 TLS 校验方式。`true`（默认）、`false`（关闭校验，不推荐）、指向 CA 证书包（PEM）的路径，或直接内联 CA 证书内容（以 `-----BEGIN CERTIFICATE-----` 开头的值），以信任私有/自签名网关 CA。优先级高于 `SSL_VERIFY` / `SSL_CERT_FILE` 环境变量。参见[私有或自签名证书](#private-or-self-signed-certificates)。
 
 ```yaml
 agent:
@@ -57,6 +74,102 @@ agent:
     api_key: "sk-your-actual-key-here"
     ```
 
+
+### 上下文容量和大工具结果
+
+每次模型请求都会为最大输出和安全余量预留空间，余量为
+`max(2048, ceil(context_length * 0.05))`。以下三个配置都是可选项，已有配置无需补齐：
+
+| 配置 | 未填写时的行为 |
+| --- | --- |
+| `context_length` | 优先读取已有模型规格或供应商目录；仍未知时按 `262144`（256K）做预算 |
+| `max_tokens` | 优先读取模型输出规格；仍未知时默认 `8192`。支持输出限额的模型还会为输入和安全余量留空间，小窗口的默认输出可能更低 |
+| `tokenizer_ref` | 已知 OpenAI 模型使用 LiteLLM 计数；其他模型（包括自部署别名）按 UTF-8 字节数保守估算，无需下载 tokenizer |
+
+默认窗口是本地预算假设，不代表自动探测到了服务端容量。私有部署可以只覆盖需要调整的项；
+已知实际窗口较小时应配置实际值，窗口较大或提供准确 tokenizer 时可更充分地利用容量：
+
+```yaml
+agent:
+  models:
+    warehouse_llm:
+      type: openai
+      base_url: https://llm.example.com/v1
+      api_key: ${LLM_API_KEY}
+      model: warehouse-model
+      context_length: 262144
+      max_tokens: 8192
+      tokenizer_ref: /opt/model/tokenizer.json
+```
+
+`context_length` 和 `max_tokens` 必须是正整数，单次调用的输出上限优先于配置默认值。
+`tokenizer_ref` 支持本地 Hugging Face tokenizer JSON、Hugging Face tokenizer 引用，
+以及与部署编码一致的 `tiktoken:<encoding>`；本地文件必须能被运行 Datus 的进程读取。
+省略配置会使用默认行为，显式填写无效数值或无法加载的 tokenizer 仍会报错。
+本地计数包含序列化消息、指令、工具定义、
+输出格式和消息格式余量；实际部署的模板或路由限制不同，仍可能拒绝请求，需要据此校准配置。
+UTF-8 字节估算可能提前触发压缩，不等同于供应商返回的实际 token 用量。
+超过已知最大输出的参数会明确报错。
+远程图片和文件引用需要提取内容或使用供应商计数；不能只按 URL 或文件 ID 的长度放行。
+
+大工具结果完整保存在会话归档中，模型收到有限内容，并可通过 `read_tool_result` 续读。
+原始 Python 工具返回和 Action、前端结果保持原有格式。来源截断、分析完整性和归档分页
+分别标记；关闭 `agent.compact` 仍会限制大结果并执行最终发送检查。
+
+Codex 订阅接口的请求协议没有输出上限字段。该路径保留现有协议，按已知的模型最大输出
+（包含供应商目录中的上界）预留容量，不把较小的请求值当作已经生效的限制。
+标准 API 路径会显式发送解析后的输出上限。
+
+### 私有或自签名证书 {#private-or-self-signed-certificates}
+
+当 Datus 连接的是内部 LLM 网关或测试环境，而其 TLS 证书由**私有 CA**（不在公共信任库中）签发时，请求会失败并报错：
+
+```text
+litellm.InternalServerError: AnthropicException - [SSL: CERTIFICATE_VERIFY_FAILED]
+certificate verify failed: self-signed certificate in certificate chain
+```
+
+根因是 Python 自带的 `certifi` 信任库只包含公共 CA，且不会读取操作系统信任库，因此私有 CA 永远不会被自动信任。正确做法是让 Datus 信任该 CA 证书包，而不是关闭校验：
+
+```yaml
+agent:
+  models:
+    claude-staging:
+      type: claude
+      base_url: https://ai.internal.example.com
+      api_key: ${ANTHROPIC_API_KEY}
+      model: claude-3-7-sonnet
+      ssl_verify: /etc/ssl/internal-ca.pem   # 信任私有 CA，校验保持开启
+```
+
+`ssl_verify` 也可直接**内联 CA 证书内容**（任何以 `-----BEGIN CERTIFICATE-----`
+开头的值），无需在磁盘上放置文件——当配置是由程序生成（例如来自数据库）而非与
+`.pem` 一起部署时尤其有用：
+
+```yaml
+      ssl_verify: |
+        -----BEGIN CERTIFICATE-----
+        MIIB...snip...IDAQAB
+        -----END CERTIFICATE-----
+```
+
+原生客户端会把内联内容加载进内存信任库；litellm 代码路径只接受 CA 证书包的路径，
+因此会将其落到一个进程私有目录下、按内容哈希命名的临时文件。
+
+**解析优先级**（取首个命中项）：
+
+```text
+ssl_verify（agent.yml）  →  SSL_VERIFY 环境变量  →  SSL_CERT_FILE 环境变量  →  certifi 默认
+```
+
+- `ssl_verify` 是项目级配置，优先级高于环境变量。
+- 标准的 `SSL_CERT_FILE` / `SSL_VERIFY` 环境变量可作为免配置的替代方案（例如 IT 在机器层面统一下发 CA 路径时）。
+- 提取服务端 CA 证书链：
+  `openssl s_client -showcerts -connect host:443 </dev/null | openssl x509 -outform PEM > ca.pem`
+
+!!! warning "切勿关闭校验"
+    `ssl_verify: false`（或 `SSL_VERIFY=false`）会**完全关闭** TLS 证书校验，使连接暴露于中间人攻击。**请勿关闭校验**，务必通过信任 CA 证书包来解决证书问题。
+
 ## 支持的提供方
 
 初始化/配置向导中的 provider，最终都会写入 `agent.models`，并通过 `agent.target` 指定默认模型。也就是说：
@@ -69,9 +182,9 @@ agent:
 | 提供方 | 典型模型 | 接口类型 | 认证方式 |
 |---|---|---|---|
 | `openai` | `gpt-5.2`、`gpt-4.1`、`o3` | `openai` | API Key |
-| `deepseek` | `deepseek-chat`、`deepseek-reasoner` | `deepseek` | API Key |
+| `deepseek` | `deepseek-v4-pro`、`deepseek-v4-flash` | `deepseek` | API Key |
 | `claude` | `claude-sonnet-4-5`、`claude-opus-4-5` | `claude` | API Key |
-| `kimi` | `kimi-k2.5`、`kimi-k2-thinking` | `kimi` | API Key |
+| `kimi` | `kimi-k3`、`kimi-k2.6` | `kimi` | API Key |
 | `qwen` | `qwen3-max`、`qwen3-coder-plus` | `openai` | API Key |
 | `gemini` | `gemini-2.5-flash`、`gemini-2.5-pro` | `gemini` | API Key |
 | `minimax` | `MiniMax-M2.7`、`MiniMax-M2.5` | `minimax` | API Key |
@@ -119,7 +232,7 @@ api_key: ${OPENAI_API_KEY}
 
 另外，当前实现会对少数模型自动补充固定参数覆盖：
 
-- `kimi-k2.5`：自动设置 `temperature: 1.0`、`top_p: 0.95`
+- `kimi-k3`、`kimi-k2.6`：自动设置 `temperature: 1.0`、`top_p: 0.95`
 - `qwen3-coder-plus`：自动设置 `temperature: 1.0`、`top_p: 0.95`
 
 ### 配置示例
@@ -148,7 +261,7 @@ deepseek:
   type: deepseek
   base_url: https://api.deepseek.com
   api_key: ${DEEPSEEK_API_KEY}
-  model: deepseek-chat
+  model: deepseek-v4-flash
 ```
 
 === "Google Gemini"
@@ -166,7 +279,7 @@ kimi:
   type: kimi
   base_url: https://api.moonshot.cn/v1
   api_key: ${KIMI_API_KEY}
-  model: kimi-k2.5
+  model: kimi-k3
 ```
 
 === "Qwen (Alibaba)"
@@ -243,9 +356,10 @@ codex:
 - `workspace_root`
 - `scoped_context`
 - `subagents`
-- semantic 节点使用的 `semantic_adapter`
 - dashboard agent 使用的 `bi_platform`
 - scheduler 节点使用的 `scheduler_service`
+
+Dosi 是内置语义引擎，无需配置引擎选择。旧的 `agent.services.semantic_layer` 会被忽略并输出警告。
 
 `scoped_kb_path` 已废弃。新配置使用共享的全局存储，并在查询时应用过滤，而不是为每个 subagent 持有独立 scoped KB 目录。
 
@@ -306,10 +420,8 @@ agent:
       bi_platform: superset
       max_turns: 30
 
-    semantic_metrics:
-      node_class: gen_metrics
+    semantic_modeling:
       model: claude
-      semantic_adapter: metricflow
       max_turns: 30
 
     etl_scheduler:
@@ -348,7 +460,7 @@ agent:
       type: deepseek
       base_url: https://api.deepseek.com
       api_key: ${DEEPSEEK_API_KEY}
-      model: deepseek-chat
+      model: deepseek-v4-flash
 
     alibaba_coding:
       type: claude

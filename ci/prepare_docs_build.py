@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Prepare a merged MkDocs config for building tagged docs with main config."""
+"""Prepare a locale-specific MkDocs build from a source ref with the current config."""
 
 from __future__ import annotations
 
@@ -7,6 +7,7 @@ import argparse
 import copy
 import importlib
 import os
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -27,6 +28,7 @@ CONTENT_SENSITIVE_KEYS = (
     "draft_docs",
     "validation",
 )
+LEGACY_CHINESE_DOCS_URL_RE = re.compile(r"https://docs\.datus\.ai/(?P<version>\d+(?:\.\d+)+)/zh/")
 
 
 class MkDocsLoader(yaml.SafeLoader):
@@ -103,7 +105,56 @@ def deep_merge(base: object, override: object) -> object:
     return copy.deepcopy(override)
 
 
-def merge_mkdocs_config(base_config: dict, source_config: dict, source_root: Path) -> dict:
+def default_locale(config: dict) -> str | None:
+    for plugin in config.get("plugins", []):
+        if not isinstance(plugin, dict) or "i18n" not in plugin:
+            continue
+        for language in plugin["i18n"].get("languages", []):
+            if language.get("default"):
+                return str(language["locale"])
+    return None
+
+
+def untranslated_default_pages(docs_dir: Path, locale: str, locales: set[str]) -> list[str]:
+    localized_suffixes = tuple(f".{candidate}.md" for candidate in locales)
+    untranslated = []
+    for page in docs_dir.rglob("*.md"):
+        if page.name.endswith(localized_suffixes):
+            continue
+        localized_page = page.with_name(f"{page.stem}.{locale}{page.suffix}")
+        if not localized_page.exists():
+            untranslated.append(page.relative_to(docs_dir).as_posix())
+    return sorted(untranslated)
+
+
+def add_excluded_docs(config: dict, paths: list[str]) -> None:
+    if not paths:
+        return
+    existing = config.get("exclude_docs") or ""
+    if isinstance(existing, str):
+        patterns = existing.splitlines()
+    else:
+        patterns = [str(pattern) for pattern in existing]
+    config["exclude_docs"] = "\n".join(dict.fromkeys([*patterns, *paths]))
+
+
+def rewrite_legacy_chinese_docs_urls(docs_dir: Path) -> None:
+    for page in docs_dir.rglob("*.md"):
+        content = page.read_text(encoding="utf-8")
+        updated = LEGACY_CHINESE_DOCS_URL_RE.sub(
+            r"https://docs.datus.ai/zh/\g<version>/",
+            content,
+        )
+        if updated != content:
+            page.write_text(updated, encoding="utf-8")
+
+
+def merge_mkdocs_config(
+    base_config: dict,
+    source_config: dict,
+    source_root: Path,
+    locale: str | None = None,
+) -> dict:
     merged = copy.deepcopy(base_config)
 
     for key in CONTENT_SENSITIVE_KEYS:
@@ -125,6 +176,20 @@ def merge_mkdocs_config(base_config: dict, source_config: dict, source_root: Pat
 
     if "edit_uri" in base_config:
         merged["edit_uri"] = copy.deepcopy(base_config["edit_uri"])
+
+    primary_locale = default_locale(base_config)
+    if locale and primary_locale and locale != primary_locale:
+        languages = {
+            str(language["locale"])
+            for plugin in base_config.get("plugins", [])
+            if isinstance(plugin, dict) and "i18n" in plugin
+            for language in plugin["i18n"].get("languages", [])
+        }
+        docs_dir = Path(merged["docs_dir"])
+        add_excluded_docs(
+            merged,
+            untranslated_default_pages(docs_dir, locale, languages),
+        )
 
     return merged
 
@@ -156,7 +221,7 @@ def export_ref(source_ref: str, destination: Path) -> None:
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Prepare a merged MkDocs config for tagged docs builds.")
+    parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--base-config", required=True, type=Path)
     parser.add_argument("--output-root", required=True, type=Path)
     parser.add_argument("--source-ref", required=True)
@@ -182,7 +247,14 @@ def main() -> int:
 
     base_config = load_yaml(args.base_config.resolve())
     source_config = load_yaml(source_root / "mkdocs.yml")
-    merged = merge_mkdocs_config(base_config, source_config, source_root)
+    source_docs_dir = source_root / source_config.get("docs_dir", base_config.get("docs_dir", "docs"))
+    rewrite_legacy_chinese_docs_urls(source_docs_dir)
+    merged = merge_mkdocs_config(
+        base_config,
+        source_config,
+        source_root,
+        locale=os.environ.get("DOCS_LOCALE"),
+    )
     dump_yaml(output_root / "mkdocs.yml", merged)
 
     print(output_root / "mkdocs.yml")

@@ -6,7 +6,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Path
 
-from datus.api.deps import ServiceDep
+from datus.api.deps import AppContextDep, ServiceDep
 from datus.api.models.base_models import Result
 from datus.api.models.cli_models import (
     ExecuteContextData,
@@ -31,9 +31,13 @@ router = APIRouter(prefix="/api/v1", tags=["cli"])
 async def execute_sql(
     request: ExecuteSQLInput,
     svc: ServiceDep,
+    ctx: AppContextDep,
 ) -> Result[ExecuteSQLData]:
     """Execute SQL query directly."""
-    return await svc.cli.execute_sql(request)
+    # The caller's own context, not the service's: DatusService is cached per
+    # project and shared across callers, so its AgentConfig carries no
+    # per-request policy context.
+    return await svc.cli.execute_sql(request, policy_context=ctx.policy_context)
 
 
 @router.post(

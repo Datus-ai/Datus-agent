@@ -106,25 +106,17 @@ class GenSQLAgenticNode(AgenticNode):
             input_data=input_data,
             agent_config=agent_config,
             tools=tools or [],
-            mcp_servers={},  # Initialize empty, will setup after parent init
+            mcp_servers={},
             scope=scope,
             is_subagent=is_subagent,
             session_id=session_id,
-        )
-
-        # Initialize MCP servers based on configuration (after node_config is available)
-        self.mcp_servers = self._setup_mcp_servers()
-
-        # Debug: Log final MCP servers assignment
-        logger.debug(
-            f"GenSQLAgenticNode final mcp_servers: {len(self.mcp_servers)} servers - {list(self.mcp_servers.keys())}"
         )
 
         # Setup tools based on configuration (includes subagent task tool wiring)
         self.setup_tools()
 
         # Setup ask_user tool for clarification questions (interactive mode only)
-        if self.execution_mode == "interactive":
+        if self.execution_mode == "interactive" and not self.ask_user_tool:
             self._setup_ask_user_tool()
 
         logger.debug(f"GenSQLAgenticNode tools: {len(self.tools)} tools - {[tool.name for tool in self.tools]}")
@@ -209,11 +201,20 @@ class GenSQLAgenticNode(AgenticNode):
             database_name: The physical database to bind to.
         """
         self.db_func_tool = DBFuncTool(
+            # Same anchor the filesystem tools use, so a path the model got
+            # from glob resolves identically in load_file_as_table.
+            filesystem_root=self._resolve_workspace_root(),
             agent_config=self.agent_config,
             default_database=database_name,
-            sub_agent_name=self.node_config.get("system_prompt"),
+            # The agentic_nodes KEY, never ``system_prompt`` — that names the
+            # prompt template, and the scope lookup silently returns unfiltered
+            # storage when the name misses (``rag_scope.build_scope_filter``).
+            sub_agent_name=self.get_node_name(),
         )
         self._rebuild_tools()
+
+    def _input_database(self) -> Optional[str]:
+        return getattr(self.input, "database", None) if self.input else None
 
     def _rebuild_tools(self):
         """Rebuild the tools list with current tool instances."""
@@ -251,6 +252,8 @@ class GenSQLAgenticNode(AgenticNode):
             return
 
         self.tools = []
+        self.db_func_tool = None
+        self.reference_template_tools = None
         tools_str = self.node_config.get("tools")
         if not tools_str:
             tools_str = self.DEFAULT_TOOLS
@@ -270,6 +273,9 @@ class GenSQLAgenticNode(AgenticNode):
         if self.sub_agent_task_tool:
             self.tools.extend(self.sub_agent_task_tool.available_tools())
 
+        if self.execution_mode == "interactive":
+            self._setup_ask_user_tool()
+
         # Plan-mode tools (confirm_plan + todo_*) for main agents; no-op for sub-agents.
         self._register_plan_mode_tools()
 
@@ -287,8 +293,12 @@ class GenSQLAgenticNode(AgenticNode):
         """Setup database tools."""
         try:
             self.db_func_tool = DBFuncTool(
+                # Same anchor the filesystem tools use, so a path the model got
+                # from glob resolves identically in load_file_as_table.
+                filesystem_root=self._resolve_workspace_root(),
                 agent_config=self.agent_config,
-                sub_agent_name=self.node_config.get("system_prompt"),
+                default_database=self._input_database(),
+                sub_agent_name=self.get_node_name(),
             )
             self.tools.extend(self.db_func_tool.available_tools())
         except Exception as e:
@@ -305,11 +315,10 @@ class GenSQLAgenticNode(AgenticNode):
     def _setup_semantic_tools(self):
         """Setup semantic tools for metric/dimension exploration."""
         try:
-            adapter_type = self.node_config.get("adapter_type", "metricflow")
             self.semantic_tools = SemanticTools(
                 agent_config=self.agent_config,
-                sub_agent_name=self.node_config.get("system_prompt"),
-                adapter_type=adapter_type,
+                sub_agent_name=self.get_node_name(),
+                runtime_db_context_provider=self._semantic_runtime_db_context,
             )
             self.tools.extend(self.semantic_tools.available_tools())
         except Exception as e:
@@ -320,18 +329,22 @@ class GenSQLAgenticNode(AgenticNode):
 
         If db_tools are not configured but reference_template_tools are requested,
         create an internal-only db_func_tool for execute_reference_template
-        without exposing db_tools (read_query, list_tables, etc.) to the LLM.
+        without exposing db_tools (execute_sql, list_tables, etc.) to the LLM.
         """
         try:
             db_tool = self.db_func_tool
             if not db_tool:
                 db_tool = DBFuncTool(
+                    # Same anchor the filesystem tools use, so a path the model got
+                    # from glob resolves identically in load_file_as_table.
+                    filesystem_root=self._resolve_workspace_root(),
                     agent_config=self.agent_config,
-                    sub_agent_name=self.node_config.get("system_prompt"),
+                    default_database=self._input_database(),
+                    sub_agent_name=self.get_node_name(),
                 )
             self.reference_template_tools = ReferenceTemplateTools(
                 self.agent_config,
-                sub_agent_name=self.node_config.get("system_prompt"),
+                sub_agent_name=self.get_node_name(),
                 db_func_tool=db_tool,
             )
             self.tools.extend(self.reference_template_tools.available_tools())
@@ -360,7 +373,7 @@ class GenSQLAgenticNode(AgenticNode):
         try:
             from datus.tools.func_tool.plan_tools import PlanTool
 
-            session, _ = self._get_or_create_session()
+            session = self._get_or_create_session()
             # Lazy resolver mirrors AgenticNode._get_plan_mode_tools — even
             # though we've already called _get_or_create_session here, future
             # session swaps (rewind / switch) should be picked up too.
@@ -437,22 +450,31 @@ class GenSQLAgenticNode(AgenticNode):
         try:
             if tool_type == "context_search_tools":
                 if not self.context_search_tools:
-                    self.context_search_tools = ContextSearchTools(self.agent_config, self.node_config["system_prompt"])
+                    # Keyword, and the agentic_nodes KEY — the positional form
+                    # is how this one escaped the sweep, and ``system_prompt``
+                    # names a template, not a scope. It was also a bare
+                    # subscript: a node_config without the key raised KeyError.
+                    self.context_search_tools = ContextSearchTools(
+                        self.agent_config, sub_agent_name=self.get_node_name()
+                    )
                 tool_instance = self.context_search_tools
             elif tool_type == "semantic_tools":
                 if not self.semantic_tools:
-                    adapter_type = self.node_config.get("adapter_type", "metricflow")
                     self.semantic_tools = SemanticTools(
                         agent_config=self.agent_config,
-                        sub_agent_name=self.node_config.get("system_prompt"),
-                        adapter_type=adapter_type,
+                        sub_agent_name=self.get_node_name(),
+                        runtime_db_context_provider=self._semantic_runtime_db_context,
                     )
                 tool_instance = self.semantic_tools
             elif tool_type == "db_tools":
                 if not self.db_func_tool:
                     self.db_func_tool = DBFuncTool(
+                        # Same anchor the filesystem tools use, so a path the model got
+                        # from glob resolves identically in load_file_as_table.
+                        filesystem_root=self._resolve_workspace_root(),
                         agent_config=self.agent_config,
-                        sub_agent_name=self.node_config.get("system_prompt"),
+                        default_database=self._input_database(),
+                        sub_agent_name=self.get_node_name(),
                     )
                 tool_instance = self.db_func_tool
             elif tool_type == "date_parsing_tools":
@@ -472,12 +494,16 @@ class GenSQLAgenticNode(AgenticNode):
                     db_tool = self.db_func_tool
                     if not db_tool:
                         db_tool = DBFuncTool(
+                            # Same anchor the filesystem tools use, so a path the model got
+                            # from glob resolves identically in load_file_as_table.
+                            filesystem_root=self._resolve_workspace_root(),
                             agent_config=self.agent_config,
-                            sub_agent_name=self.node_config.get("system_prompt"),
+                            default_database=self._input_database(),
+                            sub_agent_name=self.get_node_name(),
                         )
                     self.reference_template_tools = ReferenceTemplateTools(
                         self.agent_config,
-                        sub_agent_name=self.node_config.get("system_prompt"),
+                        sub_agent_name=self.get_node_name(),
                         db_func_tool=db_tool,
                     )
                 tool_instance = self.reference_template_tools
@@ -498,61 +524,6 @@ class GenSQLAgenticNode(AgenticNode):
                 logger.warning(f"Method '{method_name}' not found in {tool_type}")
         except Exception as e:
             logger.error(f"Failed to setup {tool_type}.{method_name}: {e}")
-
-    def _setup_mcp_server_from_config(self, server_name: str) -> Optional[Any]:
-        """Setup MCP server from {agent.home}/conf/.mcp.json using mcp_manager."""
-        try:
-            from datus.tools.mcp_tools.mcp_manager import MCPManager
-
-            # Use MCPManager to get server config
-            mcp_manager = MCPManager(agent_config=self.agent_config)
-            server_config = mcp_manager.get_server_config(server_name)
-
-            if not server_config:
-                logger.warning(f"MCP server '{server_name}' not found in configuration")
-                return None
-
-            # Create server instance using the manager
-            server_instance, details = mcp_manager._create_server_instance(server_config)
-
-            if server_instance:
-                logger.debug(f"Added MCP server '{server_name}' from configuration: {details}")
-                return server_instance
-            else:
-                error_msg = details.get("error", "Unknown error")
-                logger.warning(f"Failed to create MCP server '{server_name}': {error_msg}")
-                return None
-
-        except Exception as e:
-            logger.error(f"Failed to setup MCP server '{server_name}' from config: {e}")
-            return None
-
-    def _setup_mcp_servers(self) -> Dict[str, Any]:
-        """Set up MCP servers based on configuration."""
-        mcp_servers = {}
-
-        config_value = self.node_config.get("mcp", "")
-        if not config_value:
-            return mcp_servers
-
-        mcp_server_names = [p.strip() for p in config_value.split(",") if p.strip()]
-
-        for server_name in mcp_server_names:
-            try:
-                server = self._setup_mcp_server_from_config(server_name)
-                if server:
-                    mcp_servers[server_name] = server
-
-            except Exception as e:
-                logger.error(f"Failed to setup MCP server '{server_name}': {e}")
-
-        logger.debug(f"Setup {len(mcp_servers)} MCP servers: {list(mcp_servers.keys())}")
-
-        # Debug: Log detailed info about each server
-        for name, server in mcp_servers.items():
-            logger.debug(f"MCP server '{name}': type={type(server)}, instance={server}")
-
-        return mcp_servers
 
     def _get_available_tool_names(self) -> list[str]:
         """Return native tool names plus discoverable MCP tool names."""
@@ -636,7 +607,6 @@ class GenSQLAgenticNode(AgenticNode):
         context["has_task_tool"] = bool(self.sub_agent_task_tool)
         available_tool_names = self._get_available_tool_names()
         context["available_tool_names"] = available_tool_names
-        context["has_read_query_tool"] = "read_query" in available_tool_names
         context["has_describe_table_tool"] = "describe_table" in available_tool_names
         context["has_list_metrics_tool"] = "list_metrics" in available_tool_names
         context["has_query_metrics_tool"] = "query_metrics" in available_tool_names
@@ -666,9 +636,13 @@ class GenSQLAgenticNode(AgenticNode):
             return self._finalize_system_prompt(base_prompt)
 
         except FileNotFoundError:
-            # Template not found - throw DatusException
-            logger.warning(f"Failed to render system prompt '{system_prompt_name}', using the default template instead")
-            base_prompt = pm.render_template(template_name="gen_sql_system", version=prompt_version, **context)
+            # Alias template missing: fall back to the built-in gen_sql_system
+            # at its latest version.
+            logger.warning(
+                f"Failed to render system prompt '{system_prompt_name}' (version={prompt_version}), "
+                "falling back to built-in gen_sql_system"
+            )
+            base_prompt = pm.render_template(template_name="gen_sql_system", version=None, **context)
             return self._finalize_system_prompt(base_prompt)
         except Exception as e:
             # Other template errors - wrap in DatusException
@@ -933,7 +907,7 @@ def prepare_template_context(
         node_config: Node configuration
         has_db_tools: Whether database tools are available
         has_filesystem_tools: Whether filesystem tools are available
-        has_mf_tools: Legacy MetricFlow prompt flag
+        has_mf_tools: Deprecated prompt context flag, retained for callers
         has_context_search_tools: Whether context search tools are available
         has_reference_template_tools: Whether reference template tools are available
         has_parsing_tools: Whether date parsing tools are available

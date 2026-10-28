@@ -605,7 +605,7 @@ class TestSaveQueryTemplate:
         assert "@datus-params" in (result.error or "")
 
     def test_declared_param_never_bound_rejected(self, dashboard_tools: DashboardArtifactTools):
-        # Reproduces the live failure mode from the jeff_shop_business_analysis
+        # Reproduces the live failure mode from the sample_shop_business_analysis
         # ``supply_perishable_pie`` template — header declares ``start_date`` /
         # ``end_date`` but the SQL body ignores both. Without the guard the
         # tool persists a template that silently produces a static snapshot
@@ -755,6 +755,17 @@ export default function App() {
 
 
 class TestValidateRender:
+    def test_missing_source_names_both_query_types_and_save_operations(self, dashboard_tools, project_root):
+        _seed_template(dashboard_tools)
+        (dashboard_tools.queries_dir / "revenue_by_region.sql.j2").unlink()
+        _write_render(project_root, dashboard_tools.dashboard_slug, {"app.jsx": _VALID_APP_JSX})
+        result = dashboard_tools.validate_render()
+        assert result.success == 0
+        assert "revenue_by_region.sql.j2" in result.error
+        assert "revenue_by_region.metric.json" in result.error
+        assert "save_query_template" in result.error
+        assert "save_metric_query_template" in result.error
+
     def test_happy_path(self, dashboard_tools: DashboardArtifactTools, project_root: Path):
         _seed_template(dashboard_tools)
         _write_render(project_root, dashboard_tools.dashboard_slug, {"app.jsx": _VALID_APP_JSX})
@@ -766,6 +777,25 @@ class TestValidateRender:
         # Kind + slug let the frontend refresh the preview immediately.
         assert result.result["artifact_kind"] == "dashboard"
         assert result.result["artifact_slug"] == dashboard_tools.dashboard_slug
+
+    def test_rejects_hook_below_an_early_return(self, dashboard_tools: DashboardArtifactTools, project_root: Path):
+        _seed_template(dashboard_tools)
+        early_return = (
+            "import React from 'react';\n"
+            "import { useDatusArtifact } from '@datus/web-artifact';\n"
+            "export default function App() {\n"
+            "  const { useQuerySql } = useDatusArtifact();\n"
+            "  const { data, loading } = useQuerySql('queries/revenue_by_region', { month_floor: '2026-01' });\n"
+            "  if (loading) return null;\n"
+            "  const rows = React.useMemo(() => data?.rows ?? [], [data]);\n"
+            "  return React.createElement('div', null, rows.length);\n"
+            "}\n"
+        )
+        _write_render(project_root, dashboard_tools.dashboard_slug, {"app.jsx": early_return})
+        result = dashboard_tools.validate_render()
+        assert result.success == 0
+        assert "useMemo() on line 7" in (result.error or "")
+        assert "line 6" in (result.error or "")
 
     def test_rejects_useQuerySql_without_params_arg(self, dashboard_tools: DashboardArtifactTools, project_root: Path):
         _seed_template(dashboard_tools)
@@ -972,6 +1002,17 @@ export default function App() {
 class TestValidateRenderChartCard:
     """Static validation around the runtime-provided ``<ChartCard>``."""
 
+    @pytest.mark.parametrize("extra,success", [("revenue_by_region", 1), ("missing", 0)])
+    def test_validates_additional_declared_sources(
+        self, dashboard_tools: DashboardArtifactTools, project_root: Path, extra, success
+    ):
+        _seed_template(dashboard_tools)
+        source = _CHART_CARD_APP_JSX.replace('chartType="bar"', f'chartType="bar" queryIds={{["queries/{extra}"]}}')
+        _write_render(project_root, dashboard_tools.dashboard_slug, {"app.jsx": source})
+        result = dashboard_tools.validate_render()
+        assert result.success == success, result.error
+        assert ("queryIds" in (result.error or "")) == (not success)
+
     def test_chart_card_happy_path_emits_cards_registry(
         self, dashboard_tools: DashboardArtifactTools, project_root: Path
     ):
@@ -979,7 +1020,9 @@ class TestValidateRenderChartCard:
         _write_render(project_root, dashboard_tools.dashboard_slug, {"app.jsx": _CHART_CARD_APP_JSX})
         result = dashboard_tools.validate_render()
         assert result.success == 1, result.error
-        assert result.result["cards"] == [{"chart_id": "revenue_by_region", "jsx_path": "render/app.jsx"}]
+        assert result.result["cards"] == [
+            {"chart_id": "revenue_by_region", "jsx_path": "render/app.jsx", "kind": "chart"}
+        ]
         # ChartCard's sqlId joins the query-ref set even when the validator
         # has already seen the same slug from useQuerySql.
         assert "queries/revenue_by_region" in result.result["query_refs"]
@@ -1156,13 +1199,12 @@ class TestValidateRenderChartCard:
         # Crucially: NO "spread props" warning when only nested literal spread is present.
         assert not any("spread props" in w for w in warnings)
 
-    def test_chart_card_spread_props_warning_not_error(
+    def test_chart_card_spread_props_require_static_declarations(
         self, dashboard_tools: DashboardArtifactTools, project_root: Path
     ):
         _seed_template(dashboard_tools)
-        # Spread props hide attributes from the regex scanner. The validator
-        # downgrades to a warning + skips the per-prop checks rather than
-        # raising — the LLM occasionally wraps Card props in a helper.
+        # Hidden source props must be expanded before finalization so the
+        # content block can be linked without runtime inference.
         app = (
             "import React from 'react';\n"
             "import { useDatusArtifact, ChartCard } from '@datus/web-artifact';\n"
@@ -1183,9 +1225,171 @@ class TestValidateRenderChartCard:
         )
         _write_render(project_root, dashboard_tools.dashboard_slug, {"app.jsx": app})
         result = dashboard_tools.validate_render()
+        assert result.success == 0
+        assert "spread props" in result.error
+        assert "call site" in result.error
+
+
+# ----------------------------------------------------------------------------- #
+# validate_render — <BlockHandle> static checks                                   #
+# ----------------------------------------------------------------------------- #
+
+
+def _edit_handle_app(handle_attrs: str) -> str:
+    """App whose KPI tile is wrapped in an ``<BlockHandle>`` with ``handle_attrs``."""
+    return (
+        "import React from 'react';\n"
+        "import { useDatusArtifact, BlockHandle } from '@datus/web-artifact';\n"
+        "export default function App() {\n"
+        "  const { useQuerySql } = useDatusArtifact();\n"
+        "  const { data } = useQuerySql('queries/revenue_by_region', { month_floor: '2026-01' });\n"
+        "  return (\n"
+        f"    <BlockHandle {handle_attrs}>\n"
+        "      <div>{data?.rows?.length}</div>\n"
+        "    </BlockHandle>\n"
+        "  );\n"
+        "}\n"
+    )
+
+
+class TestValidateRenderBlockHandle:
+    """Static validation around the runtime-provided ``<BlockHandle>``."""
+
+    def test_edit_handle_happy_path_lands_in_cards_registry(
+        self, dashboard_tools: DashboardArtifactTools, project_root: Path
+    ):
+        _seed_template(dashboard_tools)
+        app = _edit_handle_app(
+            'handleId="kpi_total_revenue" name="Total revenue" kind="kpi" sqlId="queries/revenue_by_region"'
+        )
+        _write_render(project_root, dashboard_tools.dashboard_slug, {"app.jsx": app})
+        result = dashboard_tools.validate_render()
         assert result.success == 1, result.error
-        warnings = result.result.get("warnings", [])
-        assert any("spread props" in w for w in warnings)
+        assert result.result["cards"] == [
+            {"chart_id": "kpi_total_revenue", "jsx_path": "render/app.jsx", "kind": "kpi"}
+        ]
+
+    def test_edit_handle_without_sql_id_is_accepted(self, dashboard_tools: DashboardArtifactTools, project_root: Path):
+        """A static callout has no query behind it — sqlId is optional."""
+        _seed_template(dashboard_tools)
+        app = _edit_handle_app('handleId="insight_panel" name="Auto insights" kind="note"')
+        _write_render(project_root, dashboard_tools.dashboard_slug, {"app.jsx": app})
+        result = dashboard_tools.validate_render()
+        assert result.success == 1, result.error
+        assert result.result["cards"] == [{"chart_id": "insight_panel", "jsx_path": "render/app.jsx", "kind": "note"}]
+
+    def test_edit_handle_defaults_to_note_kind(self, dashboard_tools: DashboardArtifactTools, project_root: Path):
+        _seed_template(dashboard_tools)
+        app = _edit_handle_app('handleId="filter_strip" name="Filters"')
+        _write_render(project_root, dashboard_tools.dashboard_slug, {"app.jsx": app})
+        result = dashboard_tools.validate_render()
+        assert result.success == 1, result.error
+        assert result.result["cards"][0]["kind"] == "note"
+
+    def test_edit_handle_missing_name_rejected(self, dashboard_tools: DashboardArtifactTools, project_root: Path):
+        _seed_template(dashboard_tools)
+        app = _edit_handle_app('handleId="kpi_total_revenue" kind="kpi"')
+        _write_render(project_root, dashboard_tools.dashboard_slug, {"app.jsx": app})
+        result = dashboard_tools.validate_render()
+        assert result.success == 0
+        assert "missing required" in (result.error or "")
+        assert "name" in (result.error or "")
+
+    def test_edit_handle_invalid_handle_id_rejected(self, dashboard_tools: DashboardArtifactTools, project_root: Path):
+        _seed_template(dashboard_tools)
+        app = _edit_handle_app('handleId="KPI-Total" name="Total revenue" kind="kpi"')
+        _write_render(project_root, dashboard_tools.dashboard_slug, {"app.jsx": app})
+        result = dashboard_tools.validate_render()
+        assert result.success == 0
+        assert "KPI-Total" in (result.error or "")
+
+    def test_edit_handle_chart_kind_rejected(self, dashboard_tools: DashboardArtifactTools, project_root: Path):
+        """``kind="chart"`` belongs to ChartCard, which owns the actions menu."""
+        _seed_template(dashboard_tools)
+        app = _edit_handle_app('handleId="revenue_block" name="Revenue" kind="chart"')
+        _write_render(project_root, dashboard_tools.dashboard_slug, {"app.jsx": app})
+        result = dashboard_tools.validate_render()
+        assert result.success == 0
+        assert "'chart'" in (result.error or "")
+        assert "ChartCard" in (result.error or "")
+
+    def test_edit_handle_dangling_sql_id_rejected(self, dashboard_tools: DashboardArtifactTools, project_root: Path):
+        _seed_template(dashboard_tools)
+        app = _edit_handle_app('handleId="kpi_total_revenue" name="Total revenue" sqlId="queries/orphaned_slug"')
+        _write_render(project_root, dashboard_tools.dashboard_slug, {"app.jsx": app})
+        result = dashboard_tools.validate_render()
+        assert result.success == 0
+        assert "orphaned_slug" in (result.error or "")
+        assert "save_query_template" in (result.error or "")
+
+    def test_edit_handle_id_collides_with_chart_id(self, dashboard_tools: DashboardArtifactTools, project_root: Path):
+        """handleId and chartId share one namespace — a collision is an error."""
+        _seed_template(dashboard_tools)
+        second = (
+            "import React from 'react';\n"
+            "import { BlockHandle } from '@datus/web-artifact';\n"
+            "export function Tile() {\n"
+            "  return (\n"
+            '    <BlockHandle handleId="revenue_by_region" name="Total revenue" kind="kpi">\n'
+            "      <div />\n"
+            "    </BlockHandle>\n"
+            "  );\n"
+            "}\n"
+        )
+        _write_render(
+            project_root,
+            dashboard_tools.dashboard_slug,
+            {"app.jsx": _CHART_CARD_APP_JSX, "tile.jsx": second},
+        )
+        result = dashboard_tools.validate_render()
+        assert result.success == 0
+        assert "duplicates" in (result.error or "")
+        assert "revenue_by_region" in (result.error or "")
+
+    def test_edit_handle_forwarded_props_require_static_declaration(
+        self, dashboard_tools: DashboardArtifactTools, project_root: Path
+    ):
+        """A shared KPI-card wrapper forwards handleId / name from its props.
+
+        Finalization must reject the missing static identity/source and give
+        the model a concrete repair direction instead of returning success.
+        """
+        _seed_template(dashboard_tools)
+        shared = (
+            "import React from 'react';\n"
+            "import { BlockHandle } from '@datus/web-artifact';\n"
+            "export function KpiCard({ handleId, label, value, sqlId, params }) {\n"
+            "  return (\n"
+            '    <BlockHandle handleId={handleId} name={label} kind="kpi" sqlId={sqlId} params={params}>\n'
+            "      <div>{value}</div>\n"
+            "    </BlockHandle>\n"
+            "  );\n"
+            "}\n"
+        )
+        app = (
+            "import React from 'react';\n"
+            "import { useDatusArtifact } from '@datus/web-artifact';\n"
+            "import { KpiCard } from './shared/kpi-card';\n"
+            "export default function App() {\n"
+            "  const { useQuerySql } = useDatusArtifact();\n"
+            "  const { data } = useQuerySql('queries/revenue_by_region', { month_floor: '2026-01' });\n"
+            "  const r = data?.rows?.[0] ?? {};\n"
+            "  return (\n"
+            '    <KpiCard handleId="kpi_total_revenue" label="Total revenue" value={r.revenue} '
+            "sqlId=\"queries/revenue_by_region\" params={{ month_floor: '2026-01' }} />\n"
+            "  );\n"
+            "}\n"
+        )
+        _write_render(
+            project_root,
+            dashboard_tools.dashboard_slug,
+            {"app.jsx": app, "shared/kpi-card.jsx": shared},
+        )
+        result = dashboard_tools.validate_render()
+        assert result.success == 0
+        assert "string-literal handleId" in result.error
+        assert "call site" in result.error
+        assert "sqlId" in result.error
 
 
 # ----------------------------------------------------------------------------- #

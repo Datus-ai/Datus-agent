@@ -4,12 +4,6 @@
 
 ## 源码环境
 
-克隆仓库后初始化 submodule：
-
-```bash
-git submodule update --init
-```
-
 使用 Python 3.12。推荐用 `uv` 管理开发环境：
 
 ```bash
@@ -38,11 +32,14 @@ uv run datus-agent --version
 
 `python -m datus.main` 和 `python -m datus.cli.main` 仍可用于底层调试，但不推荐作为面向用户的命令写法。
 
-从干净源码 checkout 构建文档时，需要为 `mkdocs.yml` 提供所需插件：
+英文和中文文档会分别构建，使每个站点拥有独立的搜索索引。从干净源码 checkout 构建时，需要为 `mkdocs.yml` 提供所需插件并指定语言：
 
 ```bash
-uv run --with mkdocs-material --with mike --with mkdocs-static-i18n mkdocs build --strict
+DOCS_LOCALE=en uv run --with mkdocs-material --with mike --with mkdocs-static-i18n mkdocs build --strict --site-dir site/en
+DOCS_LOCALE=zh uv run --with mkdocs-material --with mike --with mkdocs-static-i18n mkdocs build --strict --site-dir site/zh
 ```
+
+英文版本文档发布到 `/<version>/`，中文版本文档发布到 `/zh/<version>/`。
 
 ## 配置
 
@@ -100,11 +97,13 @@ uv run datus-agent check-db --config conf/agent.yml --datasource local_duckdb
 uv run datus --config conf/agent.yml --datasource local_duckdb
 ```
 
-REPL 会自动识别 SQL：
+进入 REPL 后，在空输入行按 **Tab** 切换到 `sql>` 模式，再执行 SQL：
 
 ```text
-> show tables;
-> select * from tree;
+                          # 按 Tab 切换到 SQL 模式
+sql> show tables;
+sql> select * from tree;
+                          # 按 Esc 返回对话模式
 > /help
 ```
 
@@ -212,6 +211,8 @@ uv run datus-agent benchmark \
 
 ### Spider 2.0 Snow
 
+运行此基准测试前，先将 [Spider2 数据](../benchmark/benchmark_manual.zh.md#spider2-data)下载到 `{agent.home}/benchmark/spider2/`。源码仓库不包含这些数据。
+
 配置 Snowflake 数据源。数据源名称可以自定义，示例里使用 `snowflake`。
 
 ```yaml
@@ -254,9 +255,7 @@ Spider metadata 初始化可能需要数小时，因为 benchmark 包含大量�
 
 ### 语义层
 
-MetricFlow 通过 semantic adapter 系统配置，不再需要手动运行 `poetry lock`、`mf setup`，也不需要直接编辑 `~/.metricflow/config.yml`。
-
-至少需要配置一个数据源，并显式配置 MetricFlow semantic adapter：
+Agent 使用内置 Dosi 引擎管理语义模型和指标。只需配置数据源：
 
 ```yaml
 agent:
@@ -265,11 +264,9 @@ agent:
       duckdb:
         type: duckdb
         uri: duckdb:///path/to/duck.db
-    semantic_layer:
-      metricflow: {}
 ```
 
-`/services semantic` TUI 可以添加 `metricflow` 条目；如果缺少适配器包，也会安装 `datus-semantic-metricflow`。
+使用 `uv sync --locked` 安装 Agent 依赖。Dosi 从项目的 `subject/semantic_models/<datasource>/` 目录加载模型。
 
 把 semantic-layer benchmark 数据放到：
 
@@ -290,7 +287,7 @@ uv run datus-agent benchmark \
   --config conf/agent.yml \
   --datasource duckdb \
   --benchmark semantic_layer \
-  --workflow metric_to_sql
+  --workflow gen_sql_agentic
 ```
 
 ## 可观测性
@@ -304,5 +301,5 @@ Observability 配置与 tracing 示例已移到独立的 [可观测性](observab
 - [Agent 配置](../configuration/agent.zh.md)
 - [可观测性](observability.zh.md)
 - [Benchmark 手册](../benchmark/benchmark_manual.zh.md)
-- [语义层配置](../configuration/semantic_layer.zh.md)
+- [Dosi 语义引擎](../semantic/dosi_engine.zh.md)
 - [LLM Trace 使用](../training/llm_trace_usage.zh.md)

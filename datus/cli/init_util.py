@@ -185,8 +185,8 @@ def init_semantic_model(
     from rich.markup import escape
 
     from datus.schemas.batch_events import BatchEvent, BatchStage
+    from datus.storage.semantic_dataset.store import SemanticDatasetRAG
     from datus.storage.semantic_model.semantic_model_init import init_success_story_semantic_model
-    from datus.storage.semantic_model.store import SemanticModelRAG
     from datus.utils.stream_output import StreamOutputManager
 
     if not console:
@@ -260,7 +260,7 @@ def init_semantic_model(
             console.print("[green]Semantic model initialized[/]")
             # Get semantic model count
             try:
-                semantic_rag = SemanticModelRAG(agent_config)
+                semantic_rag = SemanticDatasetRAG(agent_config)
                 result = {"semantic_model_count": semantic_rag.get_size()}
             except Exception:
                 result = {}

@@ -360,6 +360,23 @@ class TestCollectMetricArtifacts:
 
 
 class TestExtractArtifactsFromActionHistory:
+    def test_get_metric_result_counts_as_metric_evidence(self):
+        artifacts = WorkflowArtifacts()
+        tool_calls: dict = {}
+        history = [
+            {
+                "role": "tool",
+                "input": {"function_name": "get_metric", "arguments": {"name": "revenue"}},
+                "output": {"raw_output": {"result": {"name": "revenue", "description": "Total revenue"}}},
+            }
+        ]
+
+        _extract_artifacts_from_action_history(history, artifacts, tool_calls)
+
+        assert tool_calls == {"get_metric": 1}
+        assert artifacts.metrics_names == ["revenue"]
+        assert artifacts.metrics_texts == ["Total revenue"]
+
     def test_write_file_tool(self):
         artifacts = WorkflowArtifacts()
         tool_calls: dict = {}

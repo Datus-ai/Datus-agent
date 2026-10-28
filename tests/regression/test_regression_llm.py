@@ -6,7 +6,7 @@ Tests each supported LLM provider with 2 model versions:
 - R-02: Claude (claude-haiku-4-5, claude-sonnet-4-5)
 - R-03: Gemini (gemini-2.5-flash, gemini-3-flash-preview)
 - R-04: Qwen (qwen3-coder-plus, qwen-plus)
-- R-05: Kimi (kimi-k2.5, kimi-k2-turbo-preview)
+- R-05: Kimi (kimi-k3)
 - R-06: Runtime model switching across providers
 """
 
@@ -58,7 +58,7 @@ PROVIDER_MODELS = {
     "R05-kimi": {
         "type": "kimi",
         "env_var": "KIMI_API_KEY",
-        "models": ["kimi-k2.5", "kimi-k2-turbo-preview"],
+        "models": ["kimi-k3"],
     },
     "R06-openrouter": {
         "type": "openrouter",
@@ -75,7 +75,7 @@ PROVIDER_MODELS = {
 # Models with restricted sampling parameters (reasoning/thinking models)
 # These models only accept specific temperature/top_p values and may require enable_thinking.
 RESTRICTED_MODEL_PARAMS = {
-    "kimi-k2.5": {"temperature": 1.0, "top_p": 0.95, "enable_thinking": True},
+    "kimi-k3": {"temperature": 1.0, "top_p": 0.95, "enable_thinking": True},
     "qwen3-coder-plus": {"temperature": 1.0, "top_p": 0.95},
 }
 

@@ -6,7 +6,7 @@
 
 import re
 from datetime import datetime
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pyarrow as pa
 import pytest
@@ -14,6 +14,7 @@ from datus_storage_base.conditions import eq
 
 from datus.storage.base import BaseEmbeddingStore, StorageBase
 from datus.storage.embedding_models import EmbeddingModel, get_db_embedding_model
+from datus.storage.fts import FtsIndexStatus, FtsSpec
 from datus.storage.schema_metadata import SchemaStorage
 from datus.utils.exceptions import DatusException
 
@@ -554,6 +555,41 @@ class TestSearchRouting:
         assert result.num_rows >= 0
         assert "vector" not in result.column_names
 
+    def test_search_hybrid_success_without_fallback(self, tmp_path):
+        """search() with query_type='hybrid' returns hybrid results when available."""
+        store = self._make_store(tmp_path)
+        table = MagicMock()
+        table.count_rows.return_value = 2
+        table.search_hybrid.return_value = pa.Table.from_pylist(
+            [
+                {"identifier": "id_1", "table_name": "table_1"},
+                {"identifier": "id_2", "table_name": "table_2"},
+            ]
+        )
+        store.table = table
+        store._open_existing_table_for_read = MagicMock(return_value=table)
+        store._ensure_embedding_cache_ready_for_search = MagicMock()
+        store._ensure_table_ready = MagicMock()
+
+        result = store.search("table", query_type="hybrid", top_n=1, allow_hybrid_fallback=False)
+
+        assert result.num_rows == 1
+        assert result.to_pylist()[0]["table_name"] == "table_1"
+
+    def test_search_hybrid_without_fallback_raises(self, tmp_path):
+        """search() with fallback disabled surfaces the hybrid error."""
+        store = self._make_store(tmp_path)
+        table = MagicMock()
+        table.count_rows.return_value = 1
+        table.search_hybrid.side_effect = RuntimeError("fts index missing")
+        store.table = table
+        store._open_existing_table_for_read = MagicMock(return_value=table)
+        store._ensure_embedding_cache_ready_for_search = MagicMock()
+        store._ensure_table_ready = MagicMock()
+
+        with pytest.raises(DatusException, match="fts index missing"):
+            store.search("table", query_type="hybrid", top_n=1, allow_hybrid_fallback=False)
+
 
 # ---------------------------------------------------------------------------
 # table_size
@@ -830,7 +866,7 @@ class TestCreateFtsIndex:
     """Tests for create_fts_index."""
 
     def test_create_fts_index_no_error(self, tmp_path):
-        """create_fts_index should not raise even if index creation fails."""
+        """create_fts_index creates a verified native index."""
         store = SchemaStorage(get_db_embedding_model())
         store.store_batch(
             [
@@ -849,7 +885,7 @@ class TestCreateFtsIndex:
         assert store.table_size() == 1
 
     def test_create_fts_index_with_multiple_fields(self, tmp_path):
-        """create_fts_index with multiple fields should not raise."""
+        """create_fts_index creates one native index per field."""
         store = SchemaStorage(get_db_embedding_model())
         store.store_batch(
             [
@@ -864,8 +900,33 @@ class TestCreateFtsIndex:
                 }
             ]
         )
-        store.create_fts_index(["database_name", "schema_name", "table_name", "definition"])
+        if not getattr(store.table, "supports_fts", lambda: False)():
+            pytest.skip("Backend does not implement the shared FTS capability")
+        spec = FtsSpec.from_names(["database_name", "schema_name", "table_name", "definition"])
+        store.create_fts_index(spec)
         assert store.table_size() == 1
+        assert store.table.fts_index_status(spec) == FtsIndexStatus.READY
+
+    def test_create_fts_index_failure_is_not_swallowed(self, tmp_path):
+        store = SchemaStorage(get_db_embedding_model())
+        store.store_batch(
+            [
+                {
+                    "identifier": "id_1",
+                    "catalog_name": "cat",
+                    "database_name": "db",
+                    "schema_name": "sch",
+                    "table_name": "t",
+                    "table_type": "table",
+                    "definition": "CREATE TABLE t (id INT)",
+                }
+            ]
+        )
+        if not getattr(store.table, "supports_fts", lambda: False)():
+            pytest.skip("Backend does not implement the shared FTS capability")
+        with patch.object(store.table, "create_fts_index", side_effect=RuntimeError("index build failed")):
+            with pytest.raises(DatusException, match="index build failed"):
+                store.create_fts_index(["definition"])
 
 
 # ---------------------------------------------------------------------------
@@ -1037,3 +1098,102 @@ class TestSearchAll:
 
         result = store._search_all(limit=0)
         assert result.num_rows == 0
+
+
+# ---------------------------------------------------------------------------
+# Runtime index creation across backends
+# ---------------------------------------------------------------------------
+
+
+class _RecordingIndexTable:
+    """A non-Lance backend implementing the VectorTable index contract."""
+
+    def __init__(self):
+        self.scalar_index_calls = []
+        self.vector_index_calls = []
+
+    def count_rows(self, where=None):
+        return 128
+
+    def create_scalar_index(self, column):
+        self.scalar_index_calls.append(column)
+
+    def create_vector_index(self, column, metric="cosine", **kwargs):
+        self.vector_index_calls.append((column, metric, kwargs))
+
+
+class _RejectingIndexTable(_RecordingIndexTable):
+    """A backend that refuses index creation, e.g. against a read-only replica."""
+
+    def create_scalar_index(self, column):
+        super().create_scalar_index(column)
+        raise RuntimeError("permission denied")
+
+    def create_vector_index(self, column, metric="cosine", **kwargs):
+        super().create_vector_index(column, metric, **kwargs)
+        raise RuntimeError("permission denied")
+
+
+class TestRuntimeIndexingAcrossBackends:
+    """Whether to build an index is the backend's call, not something base
+    decides from the table's class name."""
+
+    def _make_store(self, table):
+        schema = pa.schema(
+            [
+                pa.field("name", pa.string()),
+                pa.field("vector", pa.list_(pa.float32(), list_size=2)),
+            ]
+        )
+        store = BaseEmbeddingStore(
+            table_name="test_table",
+            embedding_model=_UnavailableEmbeddingModel(),
+            db=_ReadOnlyVectorDb(exists=True, table=table),
+            schema=schema,
+        )
+        store._shared.table = table
+        store._shared.initialized = True
+        return store
+
+    def test_scalar_index_reaches_a_non_lance_backend(self):
+        table = _RecordingIndexTable()
+        store = self._make_store(table)
+
+        store._create_scalar_index("name")
+
+        assert table.scalar_index_calls == ["name"]
+
+    def test_vector_index_reaches_a_non_lance_backend(self):
+        table = _RecordingIndexTable()
+        store = self._make_store(table)
+
+        store.create_vector_index(metric="cosine")
+
+        assert len(table.vector_index_calls) == 1
+        column, metric, _ = table.vector_index_calls[0]
+        assert (column, metric) == ("vector", "cosine")
+
+    def test_index_sizing_travels_as_kwargs_the_backend_may_ignore(self):
+        """A backend with a different index family takes column and metric and
+        drops the rest, so none of the sizing may become a positional argument."""
+        table = _RecordingIndexTable()
+        store = self._make_store(table)
+
+        store.create_vector_index()
+
+        _, _, kwargs = table.vector_index_calls[0]
+        assert "index_type" in kwargs
+        assert "num_partitions" in kwargs
+
+    def test_a_backend_refusing_an_index_does_not_break_its_caller(self):
+        table = _RejectingIndexTable()
+        store = self._make_store(table)
+
+        store._create_scalar_index("name")
+        store.create_vector_index()
+
+        # Refusing is the backend's call to make, so it still gets asked, and
+        # its error stays inside the store rather than failing the ingest that
+        # triggered the index build.
+        assert table.scalar_index_calls == ["name"]
+        assert [call[0] for call in table.vector_index_calls] == ["vector"]

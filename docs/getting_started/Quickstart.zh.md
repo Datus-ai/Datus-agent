@@ -1,19 +1,19 @@
-# 快速开始
+# 安装并完成第一次提问
 
 几分钟上手 Datus Agent：安装 → 配置 → 第一次提问。
 
-!!! tip "完整数仓链路"
-    若需体验分层建模、ETL 生成、Airflow 调度、语义资产与 Superset 仪表盘，请阅读 [数据工程快速开始](./data_engineering_quickstart.zh.md)。
+!!! tip "不确定下一步读哪篇？"
+    可先查看[选择上手路径](index.md)，按你的目标选择对应教程。
 
 ## 1. 安装
 
-Linux / macOS 一键安装（推荐）：
+Linux x86_64/aarch64（glibc 2.28+）或 Apple Silicon macOS 一键安装（推荐）：
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/datus-ai/datus-agent/main/install.sh | sh
 ```
 
-脚本会自动 bootstrap `uv`，在 `~/.datus/venv` 下建独立 venv（缺 Python 3.12 时自动下载），并把 `datus`、`datus-cli`、`datus-api`、`datus-mcp`、`datus-pip` 等 shim 写入 `~/.local/bin`。开新 shell（或 `source ~/.zshrc`）使 PATH 生效。
+脚本会自动 bootstrap `uv`，在 `~/.datus/venv` 下建独立 venv（缺 Python 3.12 时自动下载），并把 `datus`、`datus-cli`、`datus-api`、`datus-mcp`、`datus-pip` 等 shim 写入 `~/.local/bin`。内置 `dosi-engine` 目前只提供上述平台的 wheel。开新 shell（或 `source ~/.zshrc`）使 PATH 生效。
 
 ??? note "其他安装方式"
     **固定版本**（变量传给接收脚本的 shell，不是 `curl`）：
@@ -63,11 +63,11 @@ datus
 | Provider | 默认模型 | 环境变量 |
 |---|---|---|
 | `openai` | `gpt-4.1` | `OPENAI_API_KEY` |
-| `deepseek` | `deepseek-chat` | `DEEPSEEK_API_KEY` |
+| `deepseek` | `deepseek-v4-flash` | `DEEPSEEK_API_KEY` |
 | `claude` | `claude-sonnet-4-5` | `ANTHROPIC_API_KEY` |
 | `gemini` | `gemini-2.5-pro` | `GEMINI_API_KEY` |
 
-完整 provider 列表（含 Kimi / Qwen / GLM / MiniMax、Claude 订阅、Codex OAuth、Coding Plan 等）见 [Model 命令](../cli/model_command.zh.md)。
+完整 provider 列表（含 Kimi / Qwen / GLM / MiniMax、Claude 订阅、Codex OAuth、Coding Plan 等）见 [Model 命令](../cli/other_commands.zh.md#model)。
 
 ### Init（可选）
 
@@ -75,16 +75,21 @@ datus
 
 ## 3. 开始使用
 
-启动后会看到 banner 与提示符 `>`，提示符接受三种输入：
+启动后会看到 banner 与绿色提示符 `>`。在空输入行按 **Tab**，可以依次切换三种输入模式：对话 `>` → `sql>` → `bash>`；按 **Esc** 或 **Ctrl+C** 返回对话模式：
 
-- **斜杠命令** —— `/help`、`/datasource`、`/model`、`/exit` 等
-- **SQL** —— `SELECT …`、`DESCRIBE …`、`SHOW …` 自动识别并对当前数据源执行
-- **自然语言** —— 其余输入交给 agent
+- **对话模式 `>`**（默认）—— 自然语言输入交给 Agent；`/help`、`/datasource`、`/model`、`/exit` 等斜杠命令在每种模式下都可使用。
+- **SQL 模式 `sql>`** —— 提示符和分隔线变为红色，并启用 SQL 语法高亮；输入内容会经过与 Agent 调用 `execute_sql` 相同的权限与 SQL policy 检查。只读查询直接执行，写入和 DDL 会先请求确认。使用 `\` + Enter 可以继续输入下一行。
+- **Bash 模式 `bash>`** —— 提示符变为黄色；输入内容通过与 Agent 相同的权限检查后作为 shell 命令执行。命中 `deny` 规则的命令会被阻止，其他未匹配规则的命令会请求确认。
+
+手动执行 SQL 或 Bash 时，命令行会立即显示并附带 `· running Ns` 状态；完成后会展示包含命令和结果的执行块。执行结果也会作为一轮上下文发送给模型，方便 Agent 接着分析，并随 session 保存，之后可通过 `/resume` 恢复。
 
 ```text title="示例"
 > /tables
-> desc gold_vs_bitcoin
 > Detailed analysis of gold–Bitcoin correlation.
+                          # 在空输入行按 Tab，切换到 SQL 模式
+sql> desc gold_vs_bitcoin
+                          # 再按一次 Tab，切换到 Bash 模式
+bash> git status
 ```
 
 自然语言提问后，Datus 实时流式展示思考、工具调用、SQL 与最终 markdown 报告，底部 pinned 行显示当前正在跑的工具：
@@ -101,8 +106,9 @@ datus
 
 ## 下一步
 
-- **[数据工程快速开始](./data_engineering_quickstart.zh.md)** —— 分层数仓 + Airflow + Superset 端到端
-- **[上下文数据工程](./contextual_data_engineering.md)** —— `@` 引用、知识库与上下文管理
+- **[构建上下文增强 Agent](./contextual_data_engineering.zh.md)** —— 构建知识库，并验证上下文如何提升回答效果
+- **[端到端数据工程](./data_engineering_quickstart.zh.md)** —— 构建分层表、ETL、Airflow DAG 和 Superset Dashboard
+- **[将 Dashboard 变成 Copilot](./dashboard_copilot.zh.md)** —— 将已有 Superset Dashboard 转换成分析子代理
 - **[配置指南](../configuration/introduction.md)** —— 自有数据库与高级配置
 - **[CLI 参考](../cli/introduction.md)** —— 全部命令与选项
-- **[语义层适配器](../adapters/semantic_adapters.md)** —— datus-semantic-metricflow
+- **[语义引擎](../semantic/dosi_engine.zh.md)** —— Dosi 配置与 Agent 集成

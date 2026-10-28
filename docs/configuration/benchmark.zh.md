@@ -7,38 +7,8 @@
 - **Spider2**：多数据库高级评测
 - **Semantic Layer**：业务指标与语义理解评测
 
-## 配置结构
-```yaml
-benchmark:
-  bird_dev:
-    benchmark_path: benchmark/bird/dev_20240627
+## 内置基准测试
 
-  spider2:
-    benchmark_path: benchmark/spider2/spider2-snow
+`bird_dev`、`spider2` 和 `semantic_layer` 的路径固定在 `{agent.home}/benchmark` 下，不需要也不能在 `agent.yml` 中覆盖其 `benchmark_path`。运行 Spider2 前，请[单独下载数据](../benchmark/benchmark_manual.zh.md#spider2-data)。
 
-  semantic_layer:
-    benchmark_path: benchmark/semantic_layer
-```
-
-## BIRD-DEV
-```yaml
-benchmark:
-  bird_dev:
-    benchmark_path: benchmark/bird/dev_20240627
-```
-
-## Spider2
-```yaml
-benchmark:
-  spider2:
-    benchmark_path: benchmark/spider2/spider2-snow
-```
-
-## Semantic Layer
-```yaml
-benchmark:
-  semantic_layer:
-    benchmark_path: benchmark/semantic_layer
-```
-
-更多用法与进阶配置，参见 [Benchmarks](../benchmark/benchmark_manual.md)。
+自定义基准测试可在 `agent.benchmark` 中配置。更多用法参见[基准测试手册](../benchmark/benchmark_manual.zh.md)。

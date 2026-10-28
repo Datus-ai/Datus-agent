@@ -47,16 +47,21 @@ validate_test_home() {
   exit 1
 }
 
+# The CLI exits 0 even when bootstrap reports {'status': 'failed', ...}, so a
+# broken component would only surface later as an empty dataset. Match only the
+# top-level Final Result; debug output can contain expected failed tool attempts
+# that are retried before the bootstrap succeeds.
+bootstrap_result_failed() {
+  grep -Fq "Final Result: {'status': 'failed'"
+}
+
 run_bootstrap_kb() {
-  uv run python - "$@" <<'PY'
-from agents import set_tracing_disabled
-
-set_tracing_disabled(True)
-
-from datus.main import main
-
-raise SystemExit(main())
-PY
+  local output
+  output="$(uv run datus-agent "$@" 2>&1 | tee /dev/stderr)"
+  if bootstrap_result_failed <<< "$output"; then
+    echo "bootstrap-kb reported a failed status: datus-agent $*" >&2
+    exit 1
+  fi
 }
 
 # Clean old data before creating a cacheable, deterministic fixture set.

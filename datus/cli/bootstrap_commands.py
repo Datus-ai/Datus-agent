@@ -27,10 +27,9 @@ from datus.cli.action_display import ActionHistoryDisplay
 from datus.cli.bootstrap_app import BootstrapApp, BootstrapPlan, TaskSpec
 from datus.cli.bootstrap_streams import (
     stream_metadata,
-    stream_metrics,
     stream_reference_sql,
     stream_reference_template,
-    stream_semantic_model,
+    stream_semantic_modeling,
 )
 from datus.cli.bootstrap_subagent import message_action
 from datus.configuration.agent_config import AgentConfig
@@ -141,19 +140,11 @@ class BootstrapCommands:
                 build_mode=bm,
                 subject_tree=subject_tree,
             )
-        if spec.name == "semantic_model":
-            return stream_semantic_model(
+        if spec.name == "semantic_modeling":
+            return stream_semantic_modeling(
                 self.agent_config,
                 datasource=ds,
                 success_story=o.get("success_story", ""),
-                build_mode=bm,
-            )
-        if spec.name == "metrics":
-            return stream_metrics(
-                self.agent_config,
-                datasource=ds,
-                success_story=o.get("success_story", ""),
-                pool_size=pool,
                 build_mode=bm,
                 subject_tree=subject_tree,
             )

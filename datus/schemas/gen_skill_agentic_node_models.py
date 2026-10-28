@@ -14,10 +14,11 @@ from typing import Literal, Optional
 
 from pydantic import Field
 
-from datus.schemas.base import BaseInput, BaseResult
+from datus.schemas.at_context import AtContextInput
+from datus.schemas.base import BaseResult
 
 
-class SkillCreatorNodeInput(BaseInput):
+class SkillCreatorNodeInput(AtContextInput):
     """
     Input model for SkillCreatorAgenticNode interactions.
     """

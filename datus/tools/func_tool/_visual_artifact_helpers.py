@@ -321,6 +321,7 @@ def write_query_brief(
     hypothesis: str,
     uses: SubjectRefs,
     caveats: str,
+    source_selection: Optional[dict] = None,
 ) -> Optional[str]:
     """Write the per-query brief sidecar ``queries/<name>.brief.json``.
 
@@ -336,6 +337,7 @@ def write_query_brief(
             hypothesis=hypothesis,
             uses=uses,
             caveats=caveats,
+            source_selection=source_selection,
         )
     except Exception as exc:
         return f"query brief schema validation failed: {exc}"
@@ -343,7 +345,7 @@ def write_query_brief(
         path = queries_dir / f"{name}.brief.json"
         _atomic_write_text(
             path,
-            json.dumps(brief.model_dump(), ensure_ascii=False, indent=2) + "\n",
+            json.dumps(brief.model_dump(exclude_none=True), ensure_ascii=False, indent=2) + "\n",
         )
         return None
     except Exception as exc:

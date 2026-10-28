@@ -4,7 +4,7 @@
 
 The metadata module is primarily used to enable LLMs to quickly match possible related table definition information and sample data based on user questions.
 
-When you use the `bootstrap-kb` command, we initialize the SQL statements and sample data for creating tables/views/materialized views in the data source you specify into a vector database.
+When you use the `bootstrap-kb` command, we initialize the SQL statements and sample data for creating tables/views/materialized views in the data source you specify into local knowledge-base storage.
 
 This module contains two types of information: **table definition** and **sample data**.
 
@@ -47,6 +47,28 @@ datus-agent bootstrap-kb --datasource <your_datasource> --kb_update_strategy [ch
     - `check`: Check the number of data entries currently constructed
     - `overwrite`: Fully overwrite existing data
     - `incremental`: Incremental update: if existing data has changed, update it and append non-existent data
+- `--kb_search_mode`: Optional metadata search mode. The default is `vector`; set it to `fts` to build full-text metadata from scratch.
+
+### Metadata Search Mode
+
+Metadata search remains on the existing vector store by default, so existing installations do not need to rebuild their data after upgrading.
+
+Set `kb.search.mode` to `fts` to use full-text metadata retrieval without generating embeddings:
+
+```yaml
+kb:
+  search:
+    mode: fts
+```
+
+Choose the mode before building metadata. Switching an existing vector installation to FTS requires a full rebuild:
+
+```bash
+datus-agent bootstrap-kb --datasource <your_datasource> --components metadata \
+  --kb_search_mode fts --kb_update_strategy overwrite
+```
+
+For backend requirements, persistent versus one-time configuration, index verification, incremental updates, mode switching, and troubleshooting, see [Metadata Full-text Search](metadata_fts.md).
 
 ## Usage Examples
 

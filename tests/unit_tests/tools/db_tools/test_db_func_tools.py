@@ -2,6 +2,7 @@
 Test cases for DBFuncTool class in datus/tools/tools.py
 """
 
+import json
 import os
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -120,7 +121,7 @@ class TestDBFuncTool:
         tools = db_func_tool.available_tools()
 
         # Should have base tools plus dialect-specific tools
-        expected_tool_count = 3  # list_tables, describe_table, read_query
+        expected_tool_count = 3  # list_tables, describe_table, execute_sql
         if connector_registry.support_database(mock_connector.dialect):
             expected_tool_count += 1
         if connector_registry.support_schema(mock_connector.dialect):
@@ -130,7 +131,7 @@ class TestDBFuncTool:
 
         # Verify tool names
         tool_names = {tool.name for tool in tools}
-        expected_base_tools = {"list_tables", "describe_table", "read_query"}
+        expected_base_tools = {"list_tables", "describe_table", "execute_sql"}
 
         assert expected_base_tools.issubset(tool_names)
         # Tool presence must exactly match dialect dispatch — no silent branch skipping.
@@ -206,11 +207,11 @@ class TestDBFuncTool:
 
         # Should include tables, views, and materialized views
         expected_result = [
-            {"type": "table", "name": "users"},
-            {"type": "table", "name": "orders"},
-            {"type": "view", "name": "user_view"},
-            {"type": "view", "name": "order_view"},
-            {"type": "materialized_view", "name": "sales_mv"},
+            {"type": "table", "qualified_name": "users"},
+            {"type": "table", "qualified_name": "orders"},
+            {"type": "view", "qualified_name": "user_view"},
+            {"type": "view", "qualified_name": "order_view"},
+            {"type": "materialized_view", "qualified_name": "sales_mv"},
         ]
 
         assert len(result.result) == len(expected_result)
@@ -225,7 +226,7 @@ class TestDBFuncTool:
         result = scoped_db_func_tool.list_tables(include_views=True)
 
         assert result.success == 1
-        assert [item["name"] for item in result.result] == [
+        assert [item["qualified_name"] for item in result.result] == [
             "users",
             "orders",
             "user_view",
@@ -353,7 +354,7 @@ class TestDBFuncTool:
 
         allowed = tool.list_tables(database="analytics", schema_name="schema1", include_views=True)
         assert allowed.success == 1
-        assert [entry["name"] for entry in allowed.result] == ["orders", "users", "view1", "mv1"]
+        assert [entry["qualified_name"] for entry in allowed.result] == ["orders", "users", "view1", "mv1"]
         connector.get_tables.assert_called_with("", "analytics", "schema1")
         connector.get_views.assert_called_with("", "analytics", "schema1")
         connector.get_materialized_views.assert_called_with("", "analytics", "schema1")
@@ -515,15 +516,17 @@ class TestDBFuncTool:
 
     def test_describe_table_includes_semantic_details(self, db_func_tool, mock_connector):
         """Semantic model details should enrich describe_table output."""
-        db_func_tool.has_semantic_models = True
-        db_func_tool._get_semantic_model = Mock(
-            return_value={
-                "semantic_model_name": "orders_model",
-                "description": "Orders semantic model",
-                "dimensions": [{"name": "customer_id", "expr": "customer_id"}],
-                "measures": [{"name": "total_sales"}],
-            }
-        )
+        db_func_tool.has_semantic_datasets = True
+        db_func_tool._semantic_datasets = Mock()
+        db_func_tool._semantic_datasets.get_table_projection.return_value = {
+            "semantic_model_name": "orders_model",
+            "dataset_name": "orders",
+            "source_table": "orders",
+            "description": "Orders semantic model",
+            "fields": [{"name": "customer_id", "expr": "customer_id", "is_dimension": True}],
+            "relationships": [],
+            "alternatives": [],
+        }
 
         result = db_func_tool.describe_table(table_name="orders")
 
@@ -738,7 +741,7 @@ class TestDBFuncTool:
         assert blocked_schema.result == []
 
         allowed_tables = tool.list_tables(catalog="cat1", database="analytics", schema_name="public")
-        assert [entry["name"] for entry in allowed_tables.result] == ["orders"]
+        assert [entry["qualified_name"] for entry in allowed_tables.result] == ["orders"]
 
         blocked_tables = tool.list_tables(catalog="cat1", database="analytics", schema_name="marketing")
         assert blocked_tables.result == []
@@ -847,7 +850,7 @@ class TestDBFuncTool:
                 return 0
 
         monkeypatch.setattr("datus.tools.func_tool.database.SchemaWithValueRAG", StubSchemaRAG)
-        monkeypatch.setattr("datus.tools.func_tool.database.SemanticModelRAG", StubSemanticRAG)
+        monkeypatch.setattr("datus.tools.func_tool.database.SemanticDatasetRAG", StubSemanticRAG)
 
         class DummyModelConfig:
             model = "gpt-4o"
@@ -903,7 +906,7 @@ class TestScopedContextFromSubAgentConfig:
                 return 0
 
         monkeypatch.setattr("datus.tools.func_tool.database.SchemaWithValueRAG", StubSchemaRAG)
-        monkeypatch.setattr("datus.tools.func_tool.database.SemanticModelRAG", StubSemanticRAG)
+        monkeypatch.setattr("datus.tools.func_tool.database.SemanticDatasetRAG", StubSemanticRAG)
 
         class DummyModelConfig:
             model = "gpt-4o"
@@ -947,7 +950,7 @@ class TestScopedContextFromSubAgentConfig:
         """list_tables should only return in-scope tables."""
         result = scoped_tool.list_tables(database="db1", schema_name="schema1")
         assert result.success == 1
-        names = [entry["name"] for entry in result.result]
+        names = [entry["qualified_name"] for entry in result.result]
         assert "orders" in names
         assert "users" not in names
 
@@ -1221,11 +1224,16 @@ class TestDBFuncToolEdgeCases:
             tool = DBFuncTool(mock_connector)
             tools = tool.available_tools()
 
-            expected_tool_count = 3  # list_tables, describe_table, read_query
+            expected_tool_count = 3  # list_tables, describe_table, execute_sql
             if connector_registry.support_database(dialect):
                 expected_tool_count += 1
             if connector_registry.support_schema(dialect):
                 expected_tool_count += 1
+            # import_database_file / check_datasource_quality speak DuckDB directly
+            # (ATTACH, duckdb_tables(), CHECKPOINT), and plan_datasource plans the database they
+            # act on, so the three mount together and only for that dialect.
+            if str(getattr(dialect, "value", dialect)).lower() == "duckdb":
+                expected_tool_count += 3  # plan_datasource, import_database_file, check_datasource_quality
 
             assert len(tools) == expected_tool_count, f"Failed for dialect {dialect}"
 
@@ -1291,6 +1299,43 @@ class TestDBFuncToolIntegration:
             ]
         )
 
+    def _build_csv_sample_batch(self):
+        return FakeRecordBatch(
+            [
+                {
+                    "identifier": "db1.public.orders",
+                    "table_type": "table",
+                    "sample_rows": "id,total\n1,10\n",
+                }
+            ]
+        )
+
+    def _build_metadata_doc_batch(self):
+        return FakeRecordBatch(
+            [
+                {
+                    "catalog_name": "",
+                    "database_name": "db1",
+                    "schema_name": "public",
+                    "table_name": "orders",
+                    "table_type": "table",
+                    "identifier": "db1.public.orders",
+                    "title": "db1.public.orders",
+                    "payload_json": json.dumps(
+                        {
+                            "identifier": "db1.public.orders",
+                            "catalog_name": "",
+                            "database_name": "db1",
+                            "schema_name": "public",
+                            "table_name": "orders",
+                            "table_type": "table",
+                        }
+                    ),
+                    "_score": 3.5,
+                }
+            ]
+        )
+
     def test_search_table_returns_metadata_and_samples(self, db_func_tool):
         """search_table should emit metadata and sample rows when available."""
         db_func_tool.has_schema = True
@@ -1304,39 +1349,88 @@ class TestDBFuncToolIntegration:
 
         assert result.success == 1
         metadata = result.result["metadata"]
-        samples = result.result["sample_data"]
-        assert metadata[0]["table_name"] == "orders"
-        assert isinstance(samples, dict)
-        assert samples["original_rows"] == 1
-        assert "sample_rows" in samples["compressed_data"]
+        assert "sample_data" not in result.result
+        assert metadata[0] == {
+            "table_name": "db1.public.orders",
+            "sample_rows": [{"id": 1, "total": 10}],
+        }
+        assert "_distance" not in metadata[0]
 
     def test_search_table_enriches_semantic_model(self, db_func_tool):
         """When semantic models exist, metadata rows should include enriched context."""
         db_func_tool.has_schema = True
         db_func_tool.schema_rag = Mock()
         db_func_tool.schema_rag.search_similar.return_value = (self._build_metadata_batch(), self._build_sample_batch())
-        db_func_tool.has_semantic_models = True
-        db_func_tool._get_semantic_model = Mock(
-            return_value={
-                "semantic_model_name": "orders_model",
-                "description": "Orders summary",
-                "dimensions": ["order_id"],
-                "measures": ["total_amount"],
-                "identifiers": [],
-            }
-        )
+        db_func_tool.has_semantic_datasets = True
+        db_func_tool._semantic_datasets = Mock()
+        db_func_tool._semantic_datasets.list_datasets.return_value = [
+            {"semantic_model_name": "orders_model", "dataset_name": "orders", "description": "Orders summary"}
+        ]
 
         result = db_func_tool.search_table("orders table")
 
         assert result.success == 1
         metadata = result.result["metadata"]
+        assert metadata[0]["table_name"] == "db1.public.orders"
         assert metadata[0]["description"] == "Orders summary"
-        assert metadata[0]["dimensions"] == ["order_id"]
-        assert metadata[0]["measures"] == ["total_amount"]
-        # sample_data is a compressed empty dict (semantic early-return fires before sample population)
-        assert isinstance(result.result["sample_data"], dict)
-        assert result.result["sample_data"]["original_rows"] == 0
-        db_func_tool._get_semantic_model.assert_called_once()
+        assert metadata[0]["sample_rows"] == [{"id": 1, "total": 10}]
+        assert "semantic_model_name" not in metadata[0]
+        assert "dataset_name" not in metadata[0]
+        assert "sample_data" not in result.result
+        db_func_tool._semantic_datasets.list_datasets.assert_called_once()
+
+    def test_search_table_uses_metadata_fts_rag_entrypoint(self, db_func_tool):
+        """FTS metadata configs should query the metadata search_table API directly."""
+        db_func_tool.agent_config = SimpleNamespace(
+            kb_search=SimpleNamespace(mode="fts"),
+            kb_search_mode="fts",
+        )
+        db_func_tool.has_schema = True
+        db_func_tool.schema_rag = Mock()
+        db_func_tool.schema_rag.search_table.return_value = self._build_metadata_doc_batch()
+        db_func_tool.schema_rag.sample_rows_for_search_results.return_value = self._build_sample_batch()
+        db_func_tool.schema_rag.last_search_info = {
+            "configured_mode": "fts",
+            "index_status": "ready",
+            "index_version": 1,
+        }
+        db_func_tool.schema_rag.search_similar.side_effect = AssertionError("legacy search should not be called")
+
+        result = db_func_tool.search_table("orders table")
+
+        assert result.success == 1
+        metadata = result.result["metadata"]
+        assert metadata[0]["table_name"] == "db1.public.orders"
+        assert "_score" not in metadata[0]
+        assert "_relevance_score" not in metadata[0]
+        assert "_distance" not in metadata[0]
+        assert metadata[0]["sample_rows"] == [{"id": 1, "total": 10}]
+        assert "sample_data" not in result.result
+        assert "retrieval" not in result.result
+        db_func_tool.schema_rag.search_table.assert_called_once_with(
+            "orders table",
+            catalog_name="",
+            database_name="db1",
+            schema_name="",
+            table_type="full",
+            top_n=5,
+        )
+        db_func_tool.schema_rag.sample_rows_for_search_results.assert_called_once()
+        db_func_tool.schema_rag.search_similar.assert_not_called()
+
+    def test_search_table_parses_csv_sample_rows_inline(self, db_func_tool):
+        """Stored CSV sample rows should be returned inline on the matching metadata item."""
+        db_func_tool.has_schema = True
+        db_func_tool.schema_rag = Mock()
+        db_func_tool.schema_rag.search_similar.return_value = (
+            self._build_metadata_batch(),
+            self._build_csv_sample_batch(),
+        )
+
+        result = db_func_tool.search_table("orders table")
+
+        assert result.success == 1
+        assert result.result["metadata"][0]["sample_rows"] == [{"id": "1", "total": "10"}]
 
     def test_tool_transformation_integration(self, db_func_tool):
         """Test that tools can be transformed properly."""
@@ -1395,7 +1489,7 @@ class TestDBFuncToolMultiConnector:
                 return 0
 
         monkeypatch.setattr("datus.tools.func_tool.database.SchemaWithValueRAG", StubSchemaRAG)
-        monkeypatch.setattr("datus.tools.func_tool.database.SemanticModelRAG", StubSemanticRAG)
+        monkeypatch.setattr("datus.tools.func_tool.database.SemanticDatasetRAG", StubSemanticRAG)
 
     @pytest.fixture
     def mock_agent_config(self):
@@ -1404,6 +1498,8 @@ class TestDBFuncToolMultiConnector:
         config.current_datasource = "db1"
         # Return multiple databases to trigger multi-connector mode
         config.current_db_configs.return_value = {"db1": {}, "db2": {}}
+        config.active_plugin_names.return_value = set()
+        config.policy_context = {}
         return config
 
     @pytest.fixture
@@ -1413,6 +1509,8 @@ class TestDBFuncToolMultiConnector:
         config.current_datasource = "db1"
         # Return single database to trigger single connector mode
         config.current_db_configs.return_value = {"db1": {}}
+        config.active_plugin_names.return_value = set()
+        config.policy_context = {}
         return config
 
     def test_single_connector_mode_backward_compatibility(self):
@@ -1669,6 +1767,57 @@ class TestDBFuncToolMultiConnector:
         assert len(result.result) == 2
         mock_connector.get_tables.assert_called_once()
 
+    def test_table_coordinates_use_routed_connector_dialect(self, mock_agent_config, monkeypatch):
+        """Secondary datasource identifiers must be parsed with that datasource's dialect."""
+        from datus.tools.db_tools.db_manager import DBManager
+
+        primary = Mock()
+        primary.dialect = "sqlite"
+        primary.database_name = "local"
+        primary.catalog_name = ""
+        primary.schema_name = ""
+
+        secondary = Mock()
+        secondary.dialect = "flexdb"
+        secondary.database_name = "project_a"
+        secondary.catalog_name = ""
+        secondary.schema_name = ""
+        secondary.get_schema.return_value = [{"name": "id", "type": "BIGINT"}]
+        secondary.get_tables_with_ddl.return_value = [
+            {
+                "identifier": "project_a.orders",
+                "database_name": "project_a",
+                "schema_name": "",
+                "table_name": "orders",
+                "definition": "CREATE TABLE orders (id BIGINT)",
+            }
+        ]
+
+        db_manager = Mock(spec=DBManager)
+        db_manager.get_conn.side_effect = lambda datasource, database="": secondary if datasource == "db2" else primary
+        parse_identifier = Mock(
+            return_value={
+                "catalog_name": "",
+                "database_name": "project_a",
+                "schema_name": "",
+                "table_name": "orders",
+            }
+        )
+        monkeypatch.setattr("datus.tools.func_tool.database.parse_table_name_parts", parse_identifier)
+
+        tool = DBFuncTool(
+            db_manager,
+            agent_config=mock_agent_config,
+            default_datasource="db1",
+        )
+
+        assert tool.describe_table("project_a.orders", datasource="db2").success == 1
+        assert tool.get_table_ddl("project_a.orders", datasource="db2").success == 1
+        assert [item.args for item in parse_identifier.call_args_list] == [
+            ("project_a.orders", "flexdb"),
+            ("project_a.orders", "flexdb"),
+        ]
+
     def test_read_query_with_database_parameter(self, mock_agent_config):
         """Test that read_query accepts database parameter in multi-connector mode."""
         from datus.tools.db_tools.db_manager import DBManager
@@ -1838,3 +1987,83 @@ class TestReadQueryWithSqlFilePath:
         result = db_func_tool._resolve_workspace_root()
         assert result == os.path.expanduser("~/workspace")
         assert "~" not in result
+
+
+class TestPlanDatasource:
+    """``plan_datasource`` is the tool that makes "run report first" affordable.
+
+    It needs no datasource, no connection and no generator on disk - only the DDL - so its
+    failures must arrive as a refusal the model can act on rather than an exception.
+    """
+
+    PLAN_DDL = (
+        "CREATE TABLE customers (customer_id BIGINT PRIMARY KEY, customer_name VARCHAR);"
+        "CREATE TABLE orders (order_id BIGINT PRIMARY KEY, order_no VARCHAR, "
+        "customer_id BIGINT REFERENCES customers(customer_id), order_time TIMESTAMP, "
+        "paid_amount DECIMAL(18,2));"
+    )
+
+    def test_returns_the_plan_text_and_the_knobs_it_used(self, db_func_tool):
+        result = db_func_tool.plan_datasource(self.PLAN_DDL, rows=30_000, months=9)
+
+        assert result.success == 1
+        assert result.result["rows"] == 30_000
+        assert result.result["months"] == 9
+        plan = result.result["plan"]
+        assert "main fact table orders" in plan
+        assert "knobs: months=9" in plan
+
+    def test_a_bad_ddl_is_a_refusal_not_an_exception(self, db_func_tool):
+        result = db_func_tool.plan_datasource("CREATE TABLE", rows=1000)
+
+        assert result.success == 0
+        assert "could not plan this DDL" in result.error
+
+    def test_an_empty_end_date_means_the_default(self, db_func_tool):
+        """The tool signature defaults to "" the way the other database tools do."""
+        result = db_func_tool.plan_datasource(self.PLAN_DDL, rows=5000, end_date="")
+
+        assert result.success == 1
+        assert result.result["end_date"] is None
+
+    def test_a_profile_is_planned_under_and_the_next_step_changes(self, db_func_tool):
+        """The profile was deliberately not an argument, and two measured runs reconstructed the
+        allocation under their candidate profile in reasoning instead. The literal is the text
+        `gen.py` would hold - tuples and a trailing comma included - not only JSON."""
+        literal = '{"trend_mom": 0.0, "columns": {"orders.paid_amount": {"range": (10, 20)}},}'
+        bare = db_func_tool.plan_datasource(self.PLAN_DDL, rows=30_000, months=9)
+        under = db_func_tool.plan_datasource(self.PLAN_DDL, rows=30_000, months=9, profile=literal)
+
+        assert under.success == 1, under.error
+        assert under.result["profile_applied"] is True and bare.result["profile_applied"] is False
+        assert under.result["plan"] != bare.result["plan"], "the profile has to reach the engine"
+        assert "write data/gen.py with exactly this profile" in under.result["next"]
+        assert "profile=" in bare.result["next"], "the bare plan points at the profile call"
+
+    @pytest.mark.parametrize(
+        ("profile", "fragment"),
+        [
+            ("[1, 2]", "must be a dict"),
+            ('{"trend_mom": 0.0', "could not be parsed"),
+            ("__import__('os').system('id')", "could not be parsed"),
+        ],
+    )
+    def test_a_profile_that_is_not_a_dict_literal_is_a_refusal(self, db_func_tool, profile, fragment):
+        result = db_func_tool.plan_datasource(self.PLAN_DDL, rows=5000, profile=profile)
+
+        assert result.success == 0
+        assert fragment in result.error, result.error
+
+    def test_the_tool_returns_the_skeleton_and_the_next_step(self, db_func_tool):
+        """The model follows tool output far more reliably than skill prose.
+
+        Three measured runs read `plan_datasource` and `report` line by line and acted on them,
+        while a bold instruction in SKILL.md was ignored each time - so what to do next belongs in
+        the result, not only in the document.
+        """
+        result = db_func_tool.plan_datasource(self.PLAN_DDL, rows=30_000, months=9)
+
+        assert result.success == 1
+        assert result.result["profile_skeleton"].startswith("PROFILE = {")
+        assert "data/gen.py" in result.result["next"]
+        assert "gen.py report" in result.result["next"]

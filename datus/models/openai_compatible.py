@@ -7,42 +7,87 @@
 import asyncio
 import hashlib
 import json
+import os
 import threading
 import time
-from contextlib import nullcontext
+from contextlib import AsyncExitStack, aclosing, nullcontext
 from datetime import date, datetime
 from pathlib import Path
-from typing import Any, AsyncGenerator, Dict, List, Optional, Union
+from typing import Any, AsyncGenerator, Callable, Dict, List, Optional, Union
 
 import httpx
 import litellm
 import yaml
-from agents import Agent, ModelSettings, Runner, Tool
+from agents import Agent, ModelSettings, Runner, Tool, WebSearchTool
 from agents.exceptions import MaxTurnsExceeded, ModelBehaviorError
 from agents.extensions.memory import AdvancedSQLiteSession
 from agents.mcp import MCPServerStdio
-from agents.run import CallModelData, ModelInputData, RunConfig
 from openai import APIConnectionError, APIError, APITimeoutError, RateLimitError
 from openai.types.shared.reasoning import Reasoning
 from pydantic import AnyUrl
 
 from datus.configuration.agent_config import ModelConfig
 from datus.models.base import LLMBaseModel
-from datus.models.litellm_adapter import LiteLLMAdapter, is_known_non_thinking_model, is_official_openai_endpoint
+from datus.models.litellm_adapter import (
+    LiteLLMAdapter,
+    is_official_anthropic_endpoint,
+    is_official_openai_endpoint,
+)
 from datus.models.mcp_result_extractors import extract_sql_contexts
 from datus.models.mcp_utils import multiple_mcp_servers
+from datus.models.request_capacity import DEFAULT_CONTEXT_LENGTH, DEFAULT_MAX_TOKENS
+from datus.models.tool_result_stream import ToolResultStream
 from datus.observability.manager import get_observability_manager
+from datus.observability.model_call import ModelCall
+from datus.observability.tool_calls import observe_tool_hooks
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager
-from datus.schemas.tool_summary import TOOL_SUMMARY_REGISTRY, looks_like_failure
+from datus.schemas.tool_summary import TOOL_SUMMARY_REGISTRY, detect_tool_failure
 from datus.utils.constants import LLMProvider
 from datus.utils.exceptions import DatusException, ErrorCode
+from datus.utils.image_content import image_result_for_display, redact_image_payloads
 from datus.utils.json_utils import to_str
-from datus.utils.loggings import get_logger
+from datus.utils.loggings import configure_litellm_logging, get_logger
 from datus.utils.resource_utils import read_data_file_text
 from datus.utils.text_utils import LitellmPlaceholderStreamFilter, strip_litellm_placeholder
-from datus.utils.trace_context import build_agents_run_config_kwargs, build_trace_span_attributes
+from datus.utils.trace_context import build_trace_span_attributes
 
 logger = get_logger(__name__)
+
+
+def describe_hosted_tool_item(raw_item: Any) -> Optional[tuple[str, Optional[str], str]]:
+    """Resolve display fields for an OpenAI Responses hosted ``web_search`` run-item.
+
+    The hosted ``web_search`` tool runs server-side, so its run-item is NOT a
+    ``function_call`` and carries no ``name``/``call_id``/``arguments`` — leaving
+    the stream converter to label it ``unknown``. Map it to ``web_search`` and
+    surface the query/url so the CLI/web event stream shows ``web_search(...)``.
+
+    Restricted to ``web_search_call``: the downstream deferred path normalizes
+    every hosted completion through :func:`normalize_search_results`, so other
+    hosted ``*_call`` items (``file_search_call`` / ``image_generation_call`` /
+    ``code_interpreter_call`` …) must NOT be routed here until they get their own
+    completion handling.
+
+    Returns ``(name, call_id, arguments_json)`` for a hosted ``web_search`` item,
+    or ``None`` for anything else (handled by the normal function-call path).
+    """
+    itype = raw_item.get("type") if isinstance(raw_item, dict) else getattr(raw_item, "type", None)
+    if itype != "web_search_call":
+        return None
+    name = itype[: -len("_call")]  # "web_search_call" -> "web_search"
+
+    def _get(obj: Any, key: str) -> Any:
+        return obj.get(key) if isinstance(obj, dict) else getattr(obj, key, None)
+
+    call_id = _get(raw_item, "id") or _get(raw_item, "call_id")
+    action = _get(raw_item, "action")
+    args: dict = {}
+    if action is not None:
+        query = _get(action, "query") or _get(action, "queries") or _get(action, "url")
+        if query:
+            args["query"] = query
+    return name, call_id, json.dumps(args, ensure_ascii=False)
+
 
 # LiteLLM configuration
 # Enable dropping unsupported parameters for providers that don't support them
@@ -56,6 +101,7 @@ litellm.set_verbose = False
 # Suppress "Provider List: ..." debug prints to stdout when LiteLLM encounters
 # model names not in its built-in list (e.g. Coding Plan models like kimi-for-coding)
 litellm.suppress_debug_info = True
+configure_litellm_logging()
 
 # Module-level cache for model specs loaded from conf/providers.yml
 _MODEL_SPECS_CACHE: Optional[Dict[str, Dict[str, int]]] = None
@@ -129,14 +175,32 @@ def _agents_trace_baggage(agent_name: Optional[str]):
 
 
 async def _stream_events_with_trace_baggage(result, agent_name: Optional[str]):
-    with _agents_trace_baggage(agent_name):
-        async for event in result.stream_events():
+    events = result.stream_events().__aiter__()
+    try:
+        while True:
+            with _agents_trace_baggage(agent_name):
+                try:
+                    event = await anext(events)
+                except StopAsyncIteration:
+                    return
             yield event
+    finally:
+        if close := getattr(events, "aclose", None):
+            await close()
 
 
 def classify_openai_compatible_error(error: Exception) -> tuple[ErrorCode, bool]:
     """Classify OpenAI-compatible API errors and return error code and whether it's retryable."""
     error_msg = str(error).lower()
+
+    # TLS certificate failures must be detected first: the litellm SSL error
+    # string contains "internal" (from InternalServerError) and would otherwise
+    # be misclassified as a retryable MODEL_API_ERROR. Not retryable — retrying a
+    # cert mismatch never helps. The dedicated code carries the ssl_verify hint.
+    from datus.utils.ssl_utils import is_ssl_cert_verification_error
+
+    if is_ssl_cert_verification_error(error):
+        return ErrorCode.MODEL_SSL_CERT_ERROR, False
 
     if isinstance(error, APIError):
         # Handle specific HTTP status codes and error types
@@ -183,27 +247,10 @@ def classify_openai_compatible_error(error: Exception) -> tuple[ErrorCode, bool]
 # CLI compact rendering and SSE share a single source of truth.
 
 
-def _detect_tool_failure(output_content: Any) -> bool:
-    """Return True when the tool's output payload signals failure.
-
-    Tools built on :class:`FuncToolResult` report errors via ``success=0`` /
-    non-empty ``error`` instead of raising. The Agents SDK therefore emits a
-    ``tool_call_output_item`` for them and we must inspect the payload to
-    render ✗ (and mark the action FAILED) correctly.
-    """
-    data: Optional[dict] = None
-    if isinstance(output_content, dict):
-        data = output_content
-    elif isinstance(output_content, str):
-        try:
-            parsed = json.loads(output_content)
-        except (TypeError, ValueError):
-            return False
-        if isinstance(parsed, dict):
-            data = parsed
-    if data is None:
-        return False
-    return looks_like_failure(data)
+# Failure detection is shared across all model backends so OpenAI-compatible,
+# Claude-native and Codex render ✗ identically for FuncToolResult(success=0).
+# Kept as a module-level alias for backward-compatible imports.
+_detect_tool_failure = detect_tool_failure
 
 
 class OpenAICompatibleModel(LLMBaseModel):
@@ -226,6 +273,44 @@ class OpenAICompatibleModel(LLMBaseModel):
         self.api_key = self._get_api_key()
         self.base_url = self._get_base_url()
         self.default_headers = dict(self.model_config.default_headers) if self.model_config.default_headers else None
+
+        # Resolve SSL/TLS verification for this endpoint (e.g. a private gateway CA).
+        # When configured, it takes priority over the SSL_VERIFY / SSL_CERT_FILE env
+        # vars (house convention: config first, env fallback). We materialize it into
+        # SSL_VERIFY so litellm honors it across both the agents-SDK LitellmModel path
+        # (whose __init__ accepts no ssl argument) and direct litellm.completion calls.
+        # The native Anthropic client (ClaudeModel) reads self.ssl_verify directly.
+        #
+        # Why a process-level env var and not a per-request kwarg: litellm does NOT
+        # thread a per-call ``ssl_verify`` into the Anthropic provider's HTTP client
+        # (verified — the kwarg is silently ignored), and a scoped set/restore around
+        # each call would break the agents-SDK streaming path (Runner.run_streamed does
+        # its network I/O after returning). A process global is the only mechanism that
+        # works across all paths. Blast radius is limited: ``SSL_VERIFY`` is a
+        # litellm-specific variable that standard libraries (requests/httpx/curl) ignore.
+        from datus.utils.ssl_utils import (
+            is_pem_cert_content,
+            materialize_ca_bundle,
+            resolve_ssl_verify_for_httpx,
+            ssl_verify_to_env,
+        )
+
+        ssl_verify_cfg = getattr(self.model_config, "ssl_verify", None)
+        # Only act on real bool/str config values; a non-(bool|str) (e.g. unset, or a
+        # test double) leaves behavior untouched.
+        if isinstance(ssl_verify_cfg, (bool, str)):
+            # Native httpx path (ClaudeModel reads self.ssl_verify): inline PEM
+            # content -> in-memory SSLContext (no file); else normalized bool/path.
+            self.ssl_verify = resolve_ssl_verify_for_httpx(ssl_verify_cfg)
+            # litellm path only accepts a CA bundle via a file path, so spill inline
+            # PEM content to a temp file; bool/path reuse the already-normalized
+            # self.ssl_verify (avoids a second normalize + duplicate warning).
+            if is_pem_cert_content(ssl_verify_cfg):
+                os.environ["SSL_VERIFY"] = materialize_ca_bundle(ssl_verify_cfg)
+            else:
+                os.environ["SSL_VERIFY"] = ssl_verify_to_env(self.ssl_verify)
+        else:
+            self.ssl_verify = None
 
         # Initialize LiteLLM adapter for unified LLM calls
         self.litellm_adapter = LiteLLMAdapter(
@@ -256,81 +341,34 @@ class OpenAICompatibleModel(LLMBaseModel):
         """Return True only for official OpenAI API endpoints."""
         return is_official_openai_endpoint(self.model_config.type, self.base_url)
 
+    def _supports_cache_write_usage(self) -> bool:
+        """Return whether provider-reported cache writes are billable here."""
+        routed_provider = getattr(self.litellm_adapter, "provider", self.model_config.type)
+        if is_official_openai_endpoint(routed_provider, self.base_url):
+            return True
+        return routed_provider in (LLMProvider.CLAUDE, LLMProvider.ANTHROPIC) and is_official_anthropic_endpoint(
+            self.base_url
+        )
+
     def _default_prompt_cache_retention(self) -> Optional[str]:
-        """Choose a safe default prompt cache retention policy for OpenAI."""
+        """Set known OpenAI retention policies; otherwise defer to the API default."""
         if not self._is_official_openai_api():
             return None
-        if self.model_name.startswith("gpt-5"):
+        # GPT-6 Astra rejects in_memory and requires extended prompt caching.
+        if self.model_name.startswith(("gpt-5", "gpt-6-astra")):
             return "24h"
-        return "in_memory"
+        return None
 
     def _model_supports_reasoning(self) -> bool:
-        """Decide whether ``/effort`` should inject ``Reasoning(effort=…)``.
-
-        Authority chain (permissive by design — new models default to
-        supported, Datus only bails out when it has *positive* evidence the
-        model cannot reason):
-
-        1. Datus-maintained deny-list (:func:`is_known_non_thinking_model`)
-           kicks in first. ``deepseek-chat``, ``moonshot-v1-*`` and the bare
-           ``kimi-k2`` family are the only DeepSeek/Kimi models we treat as
-           non-reasoning; everything else in those providers defaults to
-           supported so LiteLLM's catalog lag on DeepSeek V4 / Kimi K2.x
-           doesn't mute the effort hint.
-        2. LiteLLM's built-in catalog returns ``True`` → accepted.
-        3. LiteLLM raises (unknown provider, self-hosted proxy, …) → accepted
-           under the permissive default.
-        4. LiteLLM returns ``False`` → accepted. New models routinely ship
-           before LiteLLM adds them; ``drop_params=True`` still protects the
-           request at the transport layer. ``_build_agent`` emits a ``skip``
-           warning only when branch 1 explicitly blocks.
-        """
-        provider = self.litellm_adapter.provider
-        if is_known_non_thinking_model(provider, self.model_name):
-            return False
+        """Use LiteLLM's model metadata to decide whether to send reasoning effort."""
         try:
-            if litellm.supports_reasoning(model=self.model_name, custom_llm_provider=provider):
-                return True
+            return bool(litellm.supports_reasoning(model=self.litellm_adapter.litellm_model_name))
         except Exception as e:
             logger.debug(f"litellm.supports_reasoning raised for {self.model_name}: {e}")
+        # Custom OpenAI-compatible endpoints may use model names absent from
+        # LiteLLM's catalog. Keep honoring an explicit /effort choice there;
+        # drop_params still removes unsupported transport parameters.
         return True
-
-    def _native_thinking_extra_body(self) -> Optional[Dict[str, Any]]:
-        """Extra ``extra_body`` payload that activates DeepSeek/Moonshot thinking.
-
-        LiteLLM handles these two providers differently, and both need Datus
-        intervention to land the required fields in the HTTP body:
-
-        - **Moonshot**: its ``get_supported_openai_params`` does not list
-          ``thinking`` or ``reasoning_effort``, so under
-          ``litellm.drop_params=True`` both fields are stripped during param
-          mapping. Pushing ``thinking`` through ``extra_body`` bypasses the
-          filter because the OpenAI client merges ``extra_body`` verbatim into
-          the request body. ``reasoning_effort`` is intentionally NOT added
-          for Moonshot — Kimi K2.x does not accept it and would reject the
-          request.
-        - **DeepSeek**: its transformation *does* recognise both fields but
-          pops ``reasoning_effort`` during mapping (it only keeps ``thinking``
-          internally). Per
-          https://api-docs.deepseek.com/zh-cn/guides/thinking_mode, DeepSeek
-          requires ``reasoning_effort`` alongside ``thinking.type=enabled`` to
-          control depth. Adding ``reasoning_effort`` to ``extra_body`` re-injects
-          it into the final request body after the transformation has run.
-
-        Returns ``None`` for non-DeepSeek/Kimi providers or explicitly
-        non-thinking models (see :func:`is_known_non_thinking_model`).
-        """
-        provider = self.litellm_adapter.provider
-        if provider not in ("deepseek", "kimi"):
-            return None
-        if is_known_non_thinking_model(provider, self.model_name):
-            return None
-        body: Dict[str, Any] = {"thinking": {"type": "enabled"}}
-        if provider == "deepseek":
-            effort = self.litellm_adapter.reasoning_effort_level
-            if effort:
-                body["reasoning_effort"] = effort
-        return body
 
     def _default_prompt_cache_key(self, agent_name: str) -> Optional[str]:
         """Build a stable prompt cache key for requests with shared prefixes."""
@@ -408,16 +446,19 @@ class OpenAICompatibleModel(LLMBaseModel):
                 else:
                     # Max retries reached or non-retryable error. Surface the
                     # upstream message verbatim — the wrapper code/desc is
-                    # often too generic (300002 = "Invalid request format,
-                    # content, or model response") and operators end up
-                    # grepping litellm tracebacks to figure out what really
-                    # broke. Keep ``str(e)`` on the same line so a single
-                    # CloudWatch entry has everything.
+                    # often too generic (300002 covers both a rejected request
+                    # and an unusable response) and operators end up grepping
+                    # litellm tracebacks to figure out what really broke. Keep
+                    # ``str(e)`` on the same line so a single CloudWatch entry
+                    # has everything, and carry it on the exception too: the
+                    # log is not visible to whoever catches this (the CLI
+                    # prints the exception message, and the permission
+                    # reviewer's fail-closed warning quotes it).
                     logger.error(
                         f"API error in {operation_name} after {attempt + 1} attempts: "
                         f"{error_code.code} - {error_code.desc}. upstream={e!s}"
                     )
-                    raise DatusException(error_code)
+                    raise DatusException(error_code, message_args={"error_detail": str(e)})
             except Exception as e:
                 logger.error(f"Unexpected error in {operation_name}: {str(e)}")
                 raise
@@ -467,17 +508,43 @@ class OpenAICompatibleModel(LLMBaseModel):
                     continue
                 else:
                     # Max retries reached or non-retryable error — same
-                    # reasoning as the sync ``_with_retry`` path: append
-                    # the upstream message so a single log line carries
-                    # both the wrapper classification and the raw cause.
+                    # reasoning as the sync ``_with_retry`` path: carry the
+                    # upstream message on both the log line and the exception.
                     logger.error(
                         f"API error in {operation_name} after {attempt + 1} attempts: "
                         f"{error_code.code} - {error_code.desc}. upstream={e!s}"
                     )
-                    raise DatusException(error_code)
+                    raise DatusException(error_code, message_args={"error_detail": str(e)})
             except Exception as e:
                 logger.error(f"Unexpected error in {operation_name}: {str(e)}")
                 raise
+
+    def _suppresses_sampling_params(self) -> bool:
+        """True when the routed provider rejects ``temperature`` / ``top_p``.
+
+        Neither sampling knob is ever sent to Anthropic:
+          * ``top_p`` — rejected alongside ``temperature`` with HTTP 400 /
+            ``invalid_request_error`` (the claude-sonnet-4.x family enforces
+            this strictly).
+          * ``temperature`` — the claude-*-5 family rejects it outright
+            ("`temperature` is deprecated for this model."), which made those
+            models fail EVERY call.
+
+        Gating on the family rather than a per-model spec means a newly
+        released Claude model works on day one instead of 400ing until the
+        catalog catches up. The gate reads the **routed** provider
+        (``litellm_adapter.provider``), not the model class — operators may
+        configure ``type=openai`` with a Claude model name, in which case
+        ``LiteLLMAdapter`` auto-routes to Anthropic and the suppression must
+        still apply. ``anthropic`` is covered as the documented alias of
+        ``claude`` (see :class:`~datus.utils.constants.LLMProvider`) so a
+        routed provider under either spelling is treated the same.
+
+        Every request path must consult this: ``generate`` for completions and
+        ``_build_agent`` for the Agents-SDK tool / streaming path. Anthropic
+        applies its own defaults for both parameters.
+        """
+        return getattr(self.litellm_adapter, "provider", "") in (LLMProvider.CLAUDE, LLMProvider.ANTHROPIC)
 
     def generate(self, prompt: Any, enable_thinking: bool | None = None, **kwargs) -> str:
         """
@@ -512,29 +579,25 @@ class OpenAICompatibleModel(LLMBaseModel):
             if self.default_headers:
                 params["extra_headers"] = self.default_headers
 
-            # Anthropic rejects requests carrying BOTH ``temperature`` and
-            # ``top_p`` with HTTP 400 / ``invalid_request_error`` (the
-            # claude-sonnet-4.x family enforces this strictly). The gate is
-            # the **routed** provider (``litellm_adapter.provider``), not the
-            # model class — operators may configure ``type=openai`` but a
-            # Claude model name, in which case ``LiteLLMAdapter`` auto-routes
-            # to Anthropic; the suppression must still apply or the request
-            # 400s. ``temperature`` wins (mirrors the historical
-            # ``ClaudeModel.generate`` contract); ``top_p`` is dropped
-            # unconditionally for Claude regardless of kwargs / model_config
-            # / non-reasoning default.
             routed_provider = getattr(self.litellm_adapter, "provider", "")
-            suppress_top_p = routed_provider == LLMProvider.CLAUDE
+
+            # Neither sampling knob is ever sent to Anthropic — see
+            # ``_suppresses_sampling_params`` for which providers and why.
+            # Suppression is unconditional, ahead of kwargs and model_config
+            # alike: no caller-supplied value can make such a request valid.
+            suppress_sampling_params = self._suppresses_sampling_params()
+            suppress_top_p = suppress_sampling_params
 
             # Add temperature: priority is kwargs > model_config > default (0.7).
             # An explicit ``None`` in kwargs is the caller's "drop this param"
-            # signal — kept for symmetry with the top_p path even though
-            # Anthropic accepts ``temperature`` alone.
-            if "temperature" in kwargs:
+            # signal, kept symmetric with the top_p path.
+            if suppress_sampling_params:
+                pass
+            elif "temperature" in kwargs:
                 if kwargs["temperature"] is not None:
                     params["temperature"] = kwargs["temperature"]
             elif self.model_config.temperature is not None:
-                # Use temperature from model config (e.g., kimi-k2.5 requires temperature=1)
+                # Use temperature from model config (e.g., kimi-k2.6 requires temperature=1)
                 params["temperature"] = self.model_config.temperature
             elif not hasattr(self, "_uses_completion_tokens_parameter") or not self._uses_completion_tokens_parameter():
                 # Add default temperature only for non-reasoning models
@@ -548,7 +611,7 @@ class OpenAICompatibleModel(LLMBaseModel):
                 if kwargs["top_p"] is not None:
                     params["top_p"] = kwargs["top_p"]
             elif self.model_config.top_p is not None:
-                # Use top_p from model config (e.g., kimi-k2.5 requires top_p=0.95)
+                # Use top_p from model config (e.g., kimi-k2.6 requires top_p=0.95)
                 params["top_p"] = self.model_config.top_p
             elif not hasattr(self, "_uses_completion_tokens_parameter") or not self._uses_completion_tokens_parameter():
                 # Add default top_p only for non-reasoning models
@@ -587,17 +650,37 @@ class OpenAICompatibleModel(LLMBaseModel):
             observability = get_observability_manager()
             span_attributes = {
                 "datus.operation": "llm.generate",
-                "gen_ai.request.model": self.model_name,
-                "gen_ai.request.provider": str(routed_provider) if routed_provider else None,
-                "gen_ai.system": str(routed_provider) if routed_provider else None,
                 "datus.model.litellm_name": params["model"],
+                "openinference.span.kind": "LLM",
+                "llm.model_name": self.model_name,
             }
+            if routed_provider:
+                span_attributes["llm.provider"] = str(routed_provider)
+                span_attributes["llm.system"] = str(routed_provider)
             if observability.content_enabled("prompts"):
-                span_attributes["datus.llm.prompt"] = to_str(observability.redact(messages))
+                span_attributes["input.value"] = json.dumps(observability.redact(messages), default=str)
+                span_attributes["input.mime_type"] = "application/json"
 
-            with observability.span("llm.generate", span_attributes) as span:
+            with (
+                observability.span("llm.generate", span_attributes) as span,
+                ModelCall(
+                    model=self.model_name,
+                    model_impl="litellm",
+                    protocol="chat_completions",
+                    endpoint=params.get("api_base", params.get("base_url")),
+                ) as call,
+            ):
+                call.bind_span(span)
                 # Use LiteLLM for unified provider support
-                response = litellm.completion(messages=messages, **params)
+                uses_completion = "max_completion_tokens" in params or (
+                    hasattr(self, "_uses_completion_tokens_parameter") and self._uses_completion_tokens_parameter()
+                )
+                effective = self.check_request(
+                    {**params, "messages": messages}, "max_completion_tokens" if uses_completion else "max_tokens"
+                )
+                call.request(effective)
+                response = litellm.completion(**effective)
+                call.response(response)
                 message = response.choices[0].message
                 content = strip_litellm_placeholder(message.content)
 
@@ -628,15 +711,14 @@ class OpenAICompatibleModel(LLMBaseModel):
 
                 finish_reason = response.choices[0].finish_reason if response.choices else None
                 response_model = response.model if hasattr(response, "model") else self.model_name
-                _set_observability_span_attribute(span, "gen_ai.response.finish_reason", finish_reason)
-                _set_observability_span_attribute(span, "gen_ai.response.model", response_model)
-                _set_observability_span_attribute(span, "gen_ai.usage.input_tokens", usage_info.get("input_tokens"))
-                _set_observability_span_attribute(span, "gen_ai.usage.output_tokens", usage_info.get("output_tokens"))
-                _set_observability_span_attribute(span, "gen_ai.usage.total_tokens", usage_info.get("total_tokens"))
+                _set_observability_span_attribute(span, "llm.finish_reason", finish_reason)
+                _set_observability_span_attribute(span, "llm.model_name", response_model)
+                _set_observability_span_attribute(span, "llm.token_count.prompt", usage_info.get("input_tokens"))
+                _set_observability_span_attribute(span, "llm.token_count.completion", usage_info.get("output_tokens"))
+                _set_observability_span_attribute(span, "llm.token_count.total", usage_info.get("total_tokens"))
                 if observability.content_enabled("responses"):
-                    _set_observability_span_attribute(
-                        span, "datus.llm.response", to_str(observability.redact(final_content))
-                    )
+                    _set_observability_span_attribute(span, "output.value", to_str(observability.redact(final_content)))
+                    _set_observability_span_attribute(span, "output.mime_type", "text/plain")
                 if reasoning_content and observability.content_enabled("reasoning"):
                     _set_observability_span_attribute(
                         span, "datus.llm.reasoning", to_str(observability.redact(reasoning_content))
@@ -673,6 +755,12 @@ class OpenAICompatibleModel(LLMBaseModel):
         """
         # Set JSON mode
         json_kwargs = kwargs.copy()
+        # ``output_schema`` is understood by schema-capable adapters such as
+        # CodexModel, but it is not a LiteLLM completion parameter. Callers
+        # that need portable structured output include the schema in-band and
+        # validate the returned object; never leak this internal kwarg to the
+        # provider request.
+        json_kwargs.pop("output_schema", None)
         json_kwargs["response_format"] = {"type": "json_object"}
 
         # Pass through enable_thinking if provided
@@ -696,6 +784,88 @@ class OpenAICompatibleModel(LLMBaseModel):
                     pass
 
             return {"error": "Failed to parse JSON response", "raw_response": response_text}
+
+    @staticmethod
+    def _maybe_add_builtin_web_search(tools: Optional[List[Tool]], kwargs: dict) -> Optional[List[Tool]]:
+        """Append the OpenAI hosted ``WebSearchTool`` when the node opts in.
+
+        Only OpenAIModel sets ``supports_builtin_web_search`` (the node then passes
+        ``builtin_web_tools={"web_search": True}``), so this is a no-op for every
+        other OpenAI-compatible provider. The hosted tool is served by the OpenAI
+        Responses API; the local ``web_search`` function tool is suppressed by the
+        node when this is active. Idempotent.
+        """
+        if not (kwargs.get("builtin_web_tools") or {}).get("web_search"):
+            return tools
+        tools = list(tools or [])
+        if not any(isinstance(t, WebSearchTool) for t in tools):
+            tools.append(WebSearchTool())
+        return tools
+
+    @staticmethod
+    def _build_hosted_search_completion(
+        call_id: str,
+        tool_name: str,
+        arguments: str,
+        args_str: str,
+        query: str,
+        sources: List[Dict[str, Any]],
+        start_time: Optional[datetime] = None,
+    ) -> ActionHistory:
+        """Build the completion for a single hosted ``web_search`` call.
+
+        OpenAI's hosted search returns no results on the call item; the only
+        per-call metadata available in-stream is ``action.sources`` (URLs, no
+        titles). We use those as the canonical result and emit the completion
+        immediately so the CLI stops the in-progress spinner as soon as the
+        server-side search returns, rather than pinning it until stream end. The
+        richer ``url_citation`` titles still surface inline in the assistant
+        answer text.
+        """
+        from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
+        from datus.schemas.web_result import normalize_search_results, web_search_short_summary
+
+        canonical = normalize_search_results(query, sources or [])
+        summary = web_search_short_summary(canonical)
+        kwargs: Dict[str, Any] = dict(
+            action_id=f"complete_{call_id}",
+            role=ActionRole.TOOL,
+            messages=f"Tool call: {tool_name}('{args_str}...')",
+            action_type=tool_name,
+            input={"function_name": tool_name, "arguments": arguments},
+            output={
+                "success": True,
+                "raw_output": {"success": True, "result": canonical},
+                "summary": summary,
+                "status_message": summary,
+            },
+            status=ActionStatus.SUCCESS,
+        )
+        if start_time is not None:
+            kwargs["start_time"] = start_time
+        done_action = ActionHistory(**kwargs)
+        done_action.end_time = datetime.now()
+        return done_action
+
+    def summary_capacity_checker(
+        self, instruction: str, prompt: str, item_format: str, output_tokens: int
+    ) -> Callable[[List[Any]], int]:
+        """Include SDK conversion and system-message framing when sizing summaries."""
+        if item_format != "responses":
+            return super().summary_capacity_checker(instruction, prompt, item_format, output_tokens)
+        from datus.models.request_capacity import guard_request
+        from datus.models.summary_chunks import summary_input
+
+        agent = self._build_agent(instruction, str, True, {}, [], max_tokens=output_tokens)
+        capacity = self.request_capacity()
+
+        def check(items: List[Any]) -> int:
+            payload = agent.model.capacity_payload(
+                instruction, summary_input(items, prompt), agent.model_settings, [], None, []
+            )
+            return guard_request(capacity, payload)
+
+        return check
 
     async def generate_with_tools(
         self,
@@ -729,6 +899,7 @@ class OpenAICompatibleModel(LLMBaseModel):
         Returns:
             Dict with content and sql_contexts
         """
+        tools = self._maybe_add_builtin_web_search(tools, kwargs)
         # Use the internal method that returns a Dict
         result = await self._generate_with_tools_internal(
             prompt,
@@ -771,6 +942,7 @@ class OpenAICompatibleModel(LLMBaseModel):
         interrupt_controller=None,
         pending_input_queue=None,
         interaction_broker=None,
+        context_rewriter=None,
         **kwargs,
     ) -> AsyncGenerator[ActionHistory, None]:
         """
@@ -794,6 +966,7 @@ class OpenAICompatibleModel(LLMBaseModel):
         if action_history_manager is None:
             action_history_manager = ActionHistoryManager()
 
+        tools = self._maybe_add_builtin_web_search(tools, kwargs)
         async for action in self._generate_with_tools_stream_internal(
             prompt,
             mcp_servers,
@@ -808,78 +981,10 @@ class OpenAICompatibleModel(LLMBaseModel):
             interrupt_controller=interrupt_controller,
             pending_input_queue=pending_input_queue,
             interaction_broker=interaction_broker,
+            context_rewriter=context_rewriter,
             **kwargs,
         ):
             yield action
-
-    def _build_run_config(
-        self,
-        pending_input_queue=None,
-        session: Optional[AdvancedSQLiteSession] = None,
-        interrupt_controller=None,
-        interaction_broker=None,
-        agent_name: Optional[str] = None,
-    ) -> Optional[RunConfig]:
-        """Build a :class:`RunConfig` carrying our mid-run input filter.
-
-        Returns ``None`` when neither tracing context nor ``pending_input_queue``
-        is wired in — the SDK then runs with its default config and behavior is
-        unchanged.
-
-        The filter is invoked by the SDK before every LLM turn within a
-        ``Runner.run_streamed`` invocation (``agents/run.py`` ~1483). It
-        drains the queue (every queued item, FIFO) and appends each as a
-        structured Responses-API user message, also persisting them onto
-        the session so future runs see them.
-
-        When ``interaction_broker`` is provided, each drained item is also
-        emitted as a USER ``ActionHistory`` via
-        :meth:`InteractionBroker.emit_user_insert`. That makes the
-        injection visible to the TUI's streaming display and to the API
-        SSE consumer at the exact moment it's being flushed to the model.
-
-        All exceptions in the filter body are swallowed: the SDK re-raises
-        uncaught filter errors and aborts the entire run, which we must
-        never let a queue or sqlite hiccup do.
-        """
-        trace_kwargs = build_agents_run_config_kwargs(agent_name=agent_name)
-        if pending_input_queue is None and not trace_kwargs:
-            return None
-
-        async def _filter(data: CallModelData) -> ModelInputData:
-            try:
-                if interrupt_controller is not None and getattr(interrupt_controller, "is_interrupted", False):
-                    return data.model_data
-                pending = pending_input_queue.drain()
-                if not pending:
-                    return data.model_data
-                new_items = list(data.model_data.input)
-                for text in pending:
-                    user_item = {
-                        "type": "message",
-                        "role": "user",
-                        "content": [{"type": "input_text", "text": text}],
-                    }
-                    new_items.append(user_item)
-                    if session is not None:
-                        try:
-                            await session.add_items([user_item])
-                        except Exception:  # noqa: BLE001 — never abort the run on a session write
-                            logger.exception("Failed to persist injected user item; in-memory only.")
-                    if interaction_broker is not None:
-                        try:
-                            interaction_broker.emit_user_insert(text)
-                        except Exception:  # noqa: BLE001 — broker emission is best-effort
-                            logger.exception("Failed to emit user_insert ActionHistory; model still sees the text.")
-                return ModelInputData(input=new_items, instructions=data.model_data.instructions)
-            except Exception:  # noqa: BLE001 — filter exceptions abort the SDK run
-                logger.exception("call_model_input_filter raised; returning original input unchanged.")
-                return data.model_data
-
-        if pending_input_queue is None:
-            return RunConfig(**trace_kwargs)
-
-        return RunConfig(call_model_input_filter=_filter, **trace_kwargs)
 
     def _build_agent(
         self,
@@ -890,6 +995,7 @@ class OpenAICompatibleModel(LLMBaseModel):
         tools: Optional[List[Tool]],
         hooks=None,
         agent_name: str = "default_agent",
+        max_tokens: Optional[int] = None,
     ) -> Agent:
         """Build Agent with consistent configuration for both streaming and non-streaming paths."""
         actual_output_type = output_type
@@ -904,6 +1010,7 @@ class OpenAICompatibleModel(LLMBaseModel):
             )
 
         litellm_model = self.litellm_adapter.get_agents_sdk_model()
+        litellm_model._datus_capacity = self.request_capacity()
 
         # DeepSeek requires "json" keyword in prompt for JSON mode
         final_instruction = instruction
@@ -922,50 +1029,42 @@ class OpenAICompatibleModel(LLMBaseModel):
         # Build ModelSettings with provider-specific configurations
         model_settings_kwargs = {"include_usage": True}
 
-        if self.model_config.temperature is not None:
+        # Same gate the completion path applies (see
+        # ``_suppresses_sampling_params``): a configured value must not reach
+        # Anthropic through the Agents-SDK tool / streaming path either, or a
+        # claude-*-5 tool call 400s on a knob the completion path already drops.
+        suppress_sampling_params = self._suppresses_sampling_params()
+
+        if not suppress_sampling_params and self.model_config.temperature is not None:
             model_settings_kwargs["temperature"] = self.model_config.temperature
 
-        if self.model_config.top_p is not None:
+        if not suppress_sampling_params and self.model_config.top_p is not None:
             model_settings_kwargs["top_p"] = self.model_config.top_p
 
-        # Apply model_specs.max_tokens as a fallback so streaming/tool calls
-        # don't silently rely on each provider's server-side default. If the
-        # spec is unknown, omit the field and let the provider decide.
-        spec_max_tokens = self.max_tokens()
-        if isinstance(spec_max_tokens, int) and spec_max_tokens > 0:
-            model_settings_kwargs["max_tokens"] = spec_max_tokens
+        # Send the same resolved output cap that the capacity check reserves.
+        model_settings_kwargs["max_tokens"] = self.request_capacity().output_limit(max_tokens)
 
         if self.default_headers:
             model_settings_kwargs["extra_headers"] = self.default_headers
+
+        if self._suppresses_sampling_params():
+            # LiteLLM 1.100+ supports per-request Anthropic prompt caching and
+            # injects provider-valid breakpoints after message conversion.
+            existing_extra_args = dict(model_settings_kwargs.get("extra_args") or {})
+            existing_extra_args["enable_prompt_caching"] = True
+            model_settings_kwargs["extra_args"] = existing_extra_args
 
         effort = self.litellm_adapter.reasoning_effort_level
         if effort:
             if self._model_supports_reasoning():
                 model_settings_kwargs["reasoning"] = Reasoning(effort=effort)
                 logger.debug(f"Enabled reasoning (effort={effort}) for model: {self.model_name}")
-                native_thinking = self._native_thinking_extra_body()
-                if native_thinking:
-                    # Must go through ``extra_args["extra_body"]`` (not
-                    # ``ModelSettings.extra_body``). The agents SDK *flattens*
-                    # ``extra_body`` into the acompletion kwargs, which means
-                    # Moonshot's transformation — whose ``get_supported_openai_params``
-                    # list does not include ``thinking`` — would silently drop the
-                    # flag under ``drop_params=True``. Nesting it one level deeper
-                    # keeps ``extra_body={...}`` as a reserved acompletion kwarg,
-                    # which the OpenAI client then merges verbatim into the HTTP
-                    # POST body, bypassing the per-provider supported-params filter.
-                    existing_extra_args = dict(model_settings_kwargs.get("extra_args") or {})
-                    nested_extra_body = dict(existing_extra_args.get("extra_body") or {})
-                    nested_extra_body.update(native_thinking)
-                    existing_extra_args["extra_body"] = nested_extra_body
-                    model_settings_kwargs["extra_args"] = existing_extra_args
-                    logger.debug(f"Added native thinking payload for {self.model_name}: {native_thinking}")
             else:
                 logger.warning(
-                    "Skipping reasoning (effort=%s) for %s: Datus recognises this model "
-                    "as not supporting thinking. Use `/effort off` or switch to a "
+                    "Skipping reasoning (effort=%s) for %s: LiteLLM marks this model "
+                    "as not supporting reasoning. Use `/effort off` or switch to a "
                     "thinking-capable model (gpt-5*, o-series, claude-4*, gemini-2.5*+, "
-                    "deepseek-v4*, deepseek-reasoner, kimi-k2.5+) to silence this warning.",
+                    "deepseek-v4*, deepseek-reasoner, kimi-k2.6+) to silence this warning.",
                     effort,
                     self.model_name,
                 )
@@ -973,11 +1072,20 @@ class OpenAICompatibleModel(LLMBaseModel):
         prompt_cache_retention = self._default_prompt_cache_retention()
         if prompt_cache_retention:
             model_settings_kwargs["prompt_cache_retention"] = prompt_cache_retention
-            prompt_cache_key = self._default_prompt_cache_key(agent_name)
-            if prompt_cache_key:
-                existing_extra_args = model_settings_kwargs.get("extra_args", {})
-                existing_extra_args["prompt_cache_key"] = prompt_cache_key
-                model_settings_kwargs["extra_args"] = existing_extra_args
+        prompt_cache_key = self._default_prompt_cache_key(agent_name)
+        if prompt_cache_key:
+            existing_extra_args = model_settings_kwargs.get("extra_args", {})
+            existing_extra_args["prompt_cache_key"] = prompt_cache_key
+            model_settings_kwargs["extra_args"] = existing_extra_args
+
+        # When the hosted web_search tool is in play, ask the Responses API to
+        # echo the per-call source URLs (``action.sources``). They are a fallback
+        # for the richer url_citation results we read off the assistant message.
+        if tools and any(isinstance(t, WebSearchTool) for t in tools):
+            existing_include = list(model_settings_kwargs.get("response_include") or [])
+            if "web_search_call.action.sources" not in existing_include:
+                existing_include.append("web_search_call.action.sources")
+            model_settings_kwargs["response_include"] = existing_include
 
         agent_kwargs["model_settings"] = ModelSettings(**model_settings_kwargs)
 
@@ -987,8 +1095,7 @@ class OpenAICompatibleModel(LLMBaseModel):
         if tools:
             agent_kwargs["tools"] = tools
 
-        if hooks:
-            agent_kwargs["hooks"] = hooks
+        agent_kwargs["hooks"] = observe_tool_hooks(hooks)
 
         return Agent(**agent_kwargs)
 
@@ -1023,6 +1130,7 @@ class OpenAICompatibleModel(LLMBaseModel):
                     tools=tools,
                     hooks=hooks,
                     agent_name=agent_name,
+                    max_tokens=kwargs.get("max_completion_tokens", kwargs.get("max_tokens")),
                 )
                 run_config = self._build_run_config(agent_name=agent_name)
 
@@ -1132,6 +1240,7 @@ class OpenAICompatibleModel(LLMBaseModel):
         interrupt_controller=None,
         pending_input_queue=None,
         interaction_broker=None,
+        context_rewriter=None,
         **kwargs,
     ) -> AsyncGenerator[ActionHistory, None]:
         """Internal method for tool streaming execution with error handling.
@@ -1146,7 +1255,10 @@ class OpenAICompatibleModel(LLMBaseModel):
 
         async def _stream_operation():
             # Use multiple_mcp_servers context manager with empty dict if no MCP servers
-            async with multiple_mcp_servers(mcp_servers or {}) as connected_servers:
+            async with (
+                multiple_mcp_servers(mcp_servers or {}) as connected_servers,
+                AsyncExitStack() as tool_streams,
+            ):
                 agent_name = kwargs.get("agent_name", "Tools_Agent")
                 agent = self._build_agent(
                     instruction=instruction,
@@ -1156,7 +1268,11 @@ class OpenAICompatibleModel(LLMBaseModel):
                     tools=tools,
                     hooks=hooks,
                     agent_name=agent_name,
+                    max_tokens=kwargs.get("max_completion_tokens", kwargs.get("max_tokens")),
                 )
+
+                tool_stream = ToolResultStream(agent.hooks)
+                agent.hooks = tool_stream
 
                 run_config = self._build_run_config(
                     pending_input_queue=pending_input_queue,
@@ -1164,6 +1280,7 @@ class OpenAICompatibleModel(LLMBaseModel):
                     interrupt_controller=interrupt_controller,
                     interaction_broker=interaction_broker,
                     agent_name=agent_name,
+                    context_rewriter=context_rewriter,
                 )
                 try:
                     with _agents_trace_baggage(agent_name):
@@ -1211,7 +1328,12 @@ class OpenAICompatibleModel(LLMBaseModel):
                         from datus.cli.execution_state import ExecutionInterrupted
 
                         raise ExecutionInterrupted("Interrupted by user")
-                    async for event in _stream_events_with_trace_baggage(result, agent_name):
+                    events = await tool_streams.enter_async_context(
+                        aclosing(
+                            tool_stream.stream_events(_stream_events_with_trace_baggage(result, agent_name), result)
+                        )
+                    )
+                    async for event in events:
                         if interrupt_controller and interrupt_controller.is_interrupted:
                             from datus.cli.execution_state import ExecutionInterrupted
 
@@ -1320,13 +1442,28 @@ class OpenAICompatibleModel(LLMBaseModel):
                             final_assistant_yielded = False
                             raw_item = getattr(event.item, "raw_item", None)
                             if raw_item:
-                                tool_name = getattr(raw_item, "name", None)
+                                # ``raw_item`` may be a dict (e.g. function_call
+                                # replayed from an input list) or an SDK object;
+                                # mirror the tool_call_output_item handling below.
+                                if isinstance(raw_item, dict):
+                                    tool_name = raw_item.get("name")
+                                    arguments = raw_item.get("arguments", "{}")
+                                    call_id = raw_item.get("call_id")
+                                else:
+                                    tool_name = getattr(raw_item, "name", None)
+                                    arguments = getattr(raw_item, "arguments", "{}")
+                                    call_id = getattr(raw_item, "call_id", None)
+                                is_hosted = False
                                 if not tool_name:
-                                    logger.warning(f"Tool call has no name field: {type(raw_item)}, {dir(raw_item)}")
-                                    tool_name = "unknown"
-
-                                arguments = getattr(raw_item, "arguments", "{}")
-                                call_id = getattr(raw_item, "call_id", None)
+                                    hosted = describe_hosted_tool_item(raw_item)
+                                    if hosted:
+                                        tool_name, call_id, arguments = hosted
+                                        is_hosted = True
+                                    else:
+                                        logger.warning(
+                                            f"Tool call has no name field: {type(raw_item)}, {dir(raw_item)}"
+                                        )
+                                        tool_name = "unknown"
 
                                 # Generate call_id if missing
                                 if not call_id:
@@ -1334,6 +1471,7 @@ class OpenAICompatibleModel(LLMBaseModel):
                                     logger.warning(f"Tool call missing call_id, generated: {call_id}")
 
                                 # Try to format arguments
+                                args_dict: dict = {}
                                 try:
                                     args_dict = json.loads(arguments) if arguments else {}
                                     args_str = to_str(args_dict)[:80]
@@ -1362,11 +1500,43 @@ class OpenAICompatibleModel(LLMBaseModel):
                                 action_history_manager.add_action(start_action)
                                 yield start_action
 
+                                # Hosted tools (web_search, …) run server-side and
+                                # emit no ``tool_call_output_item``. The results
+                                # are not on the call item — the richer title+url
+                                # pairs arrive as url_citation annotations on the
+                                # assistant message. Emit the completion right away
+                                # from the call's own ``action.sources`` so the CLI
+                                # stops the in-progress spinner as soon as the
+                                # server-side search returns, rather than pinning it
+                                # until stream end. The citation titles still
+                                # surface inline in the assistant answer text.
+                                if is_hosted:
+                                    temp_tool_calls.pop(call_id, None)
+                                    from datus.schemas.web_result import extract_action_sources, hosted_action_query
+
+                                    raw_action = (
+                                        raw_item.get("action")
+                                        if isinstance(raw_item, dict)
+                                        else getattr(raw_item, "action", None)
+                                    )
+                                    hosted_done = self._build_hosted_search_completion(
+                                        call_id=call_id,
+                                        tool_name=tool_name,
+                                        arguments=arguments,
+                                        args_str=args_str,
+                                        query=str(hosted_action_query(raw_action) or args_dict.get("query") or ""),
+                                        sources=extract_action_sources(raw_action),
+                                        start_time=start_action.start_time,
+                                    )
+                                    if action_history_manager is not None:
+                                        action_history_manager.add_action(hosted_done)
+                                    yield hosted_done
+
                         # Handle tool call completion
                         elif item_type == "tool_call_output_item":
                             tool_output_seen = True
                             raw_item = getattr(event.item, "raw_item", None)
-                            output_content = getattr(event.item, "output", "")
+                            output_content = image_result_for_display(getattr(event.item, "output", ""))
 
                             # Extract call_id from raw_item
                             # raw_item can be either a dict or an object
@@ -1549,17 +1719,18 @@ class OpenAICompatibleModel(LLMBaseModel):
 
         for attempt in range(max_retries):
             try:
-                async for action in _stream_operation():
-                    # Skip actions that were already yielded in previous retry attempts
-                    # (thinking_delta actions share a stream ID and must not be deduped)
-                    if action.action_type != "thinking_delta" and action.action_id in processed_action_ids:
-                        logger.debug(f"Skipping duplicate action: {action.action_id}")
-                        continue
+                async with aclosing(_stream_operation()) as operation:
+                    async for action in operation:
+                        # Skip actions that were already yielded in previous retry attempts
+                        # (thinking_delta actions share a stream ID and must not be deduped)
+                        if action.action_type != "thinking_delta" and action.action_id in processed_action_ids:
+                            logger.debug(f"Skipping duplicate action: {action.action_id}")
+                            continue
 
-                    # Mark this action as processed (skip transient deltas)
-                    if action.action_type != "thinking_delta":
-                        processed_action_ids.add(action.action_id)
-                    yield action
+                        # Mark this action as processed (skip transient deltas)
+                        if action.action_type != "thinking_delta":
+                            processed_action_ids.add(action.action_id)
+                        yield action
                 # If we successfully complete, break out of retry loop
                 break
 
@@ -1633,8 +1804,11 @@ class OpenAICompatibleModel(LLMBaseModel):
         total_tokens = getattr(usage, "total_tokens", 0)
 
         cached_tokens = 0
+        cache_write_tokens = 0
         if hasattr(usage, "input_tokens_details") and usage.input_tokens_details:
             cached_tokens = getattr(usage.input_tokens_details, "cached_tokens", 0)
+            if self._supports_cache_write_usage():
+                cache_write_tokens = getattr(usage.input_tokens_details, "cache_write_tokens", 0)
 
         reasoning_tokens = 0
         if hasattr(usage, "output_tokens_details") and usage.output_tokens_details:
@@ -1642,15 +1816,15 @@ class OpenAICompatibleModel(LLMBaseModel):
 
         cache_hit_rate = round(cached_tokens / input_tokens, 3) if input_tokens > 0 else 0
 
-        context_usage_ratio = 0
-        max_context = self.context_length()
-        if max_context and total_tokens > 0:
-            context_usage_ratio = round(total_tokens / max_context, 3)
-
         # Last model call's input_tokens = real context window usage
         last_call_input_tokens = 0
         if hasattr(usage, "request_usage_entries") and usage.request_usage_entries:
             last_call_input_tokens = getattr(usage.request_usage_entries[-1], "input_tokens", 0)
+
+        context_usage_ratio = 0
+        max_context = self.context_length()
+        if max_context:
+            context_usage_ratio = round(last_call_input_tokens / max_context, 3)
 
         return {
             "requests": getattr(usage, "requests", 0),
@@ -1658,6 +1832,7 @@ class OpenAICompatibleModel(LLMBaseModel):
             "output_tokens": output_tokens,
             "total_tokens": total_tokens,
             "cached_tokens": cached_tokens,
+            "cache_write_tokens": cache_write_tokens,
             "reasoning_tokens": reasoning_tokens,
             "cache_hit_rate": cache_hit_rate,
             "context_usage_ratio": context_usage_ratio,
@@ -1732,14 +1907,14 @@ class OpenAICompatibleModel(LLMBaseModel):
         return _load_model_specs()
 
     def _lookup_spec(self, field: str) -> Optional[int]:
-        """Look up ``field`` in ``model_specs`` with exact-then-longest-prefix matching.
+        """Look up ``field`` in model specs, then the LiteLLM catalogue.
 
         Longest-prefix is important when specs declare both a generic family key
         (e.g. ``gpt-5``) and a more specific variant (e.g. ``gpt-5.3-codex``): the
         generic key would otherwise bleed into unrelated slugs that happen to
-        share a short prefix. Returns None when the field is missing —
-        OpenRouter-cache-only entries do not carry ``max_tokens``, so callers
-        must tolerate absence.
+        share a short prefix. The catalogue fills missing fields, including
+        output limits absent from OpenRouter-cache-only entries. Returns None
+        when neither source knows the field.
         """
         specs = self.model_specs
         exact = specs.get(self.model_name)
@@ -1751,17 +1926,23 @@ class OpenAICompatibleModel(LLMBaseModel):
                 continue
             if self.model_name.startswith(spec_model) and (best_key is None or len(spec_model) > len(best_key)):
                 best_key = spec_model
-        if best_key is None:
-            return None
-        return specs[best_key][field]
+        if best_key is not None:
+            return specs[best_key][field]
+        info = litellm.model_cost.get(
+            self.litellm_adapter.litellm_model_name, litellm.model_cost.get(self.model_name, {})
+        )
+        value = info.get({"context_length": "max_input_tokens", "max_tokens": "max_output_tokens"}.get(field))
+        return value if isinstance(value, int) and value > 0 else None
 
     def max_tokens(self) -> Optional[int]:
-        """Max tokens from model specs with prefix matching, or None if unavailable."""
-        return self._lookup_spec("max_tokens")
+        """Configured output limit or a model default that leaves input headroom."""
+        return self.model_config.max_tokens or self._default_output_limit(
+            self._lookup_spec("max_tokens") or DEFAULT_MAX_TOKENS
+        )
 
     def context_length(self) -> Optional[int]:
-        """Context length from model specs with prefix matching, or None if unavailable."""
-        return self._lookup_spec("context_length")
+        """Configured window, known model specification, or the default budget."""
+        return self.model_config.context_length or self._lookup_spec("context_length") or DEFAULT_CONTEXT_LENGTH
 
     def token_count(self, prompt: str) -> int:
         """
@@ -1848,6 +2029,7 @@ class OpenAICompatibleModel(LLMBaseModel):
                 "reason_content": reasoning_content or "",
                 "output_content": response_content,
             }
+            trace_data = redact_image_payloads(trace_data)
 
             # Save to YAML file named after node ID
             trace_file = trace_dir / f"{self.current_node.id}.yml"

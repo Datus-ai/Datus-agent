@@ -1,0 +1,69 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 400" font-family="'SF Mono','Cascadia Code','JetBrains Mono',Menlo,Consolas,monospace">
+  <style>
+    .win{fill:#171a23;stroke:#2c3040;stroke-width:1}
+    .bar{fill:#1f2330}
+    .ttl{fill:#7d8598;font-size:12px}
+    .prompt{fill:#4ade80;font-size:13px;font-weight:600}
+    .q{fill:#e6e9f0;font-size:13px}
+    .tool{fill:#8ea3c8;font-size:13px}
+    .fn{fill:#c4b5fd}
+    .ok{fill:#4ade80;font-size:12px}
+    .card{fill:#20242f;stroke:#343a4c;stroke-width:1}
+    .rt{fill:#c4b5fd;font-size:13px;font-weight:700}
+    .v{fill:#e6e9f0;font-size:13px}
+    .cur{fill:#4ade80}
+    .s1{animation:k1 14s linear infinite}
+    .s2{animation:k2 14s linear infinite}
+    .s3{animation:k3 14s linear infinite}
+    .s4{animation:k4 14s linear infinite}
+    .s5{animation:k5 14s linear infinite}
+    .s6{animation:k6 14s linear infinite}
+    .blink{animation:blinkc 1.1s steps(1) infinite}
+    @keyframes k1{0%,2%{opacity:0}4.5%,92%{opacity:1}96%,100%{opacity:0}}
+    @keyframes k2{0%,7%{opacity:0}10%,92%{opacity:1}96%,100%{opacity:0}}
+    @keyframes k3{0%,11%{opacity:0}13.5%,92%{opacity:1}96%,100%{opacity:0}}
+    @keyframes k4{0%,14.5%{opacity:0}17%,92%{opacity:1}96%,100%{opacity:0}}
+    @keyframes k5{0%,19%{opacity:0}24%,92%{opacity:1}96%,100%{opacity:0}}
+    @keyframes k6{0%,26%{opacity:0}29%,92%{opacity:1}96%,100%{opacity:0}}
+    @keyframes blinkc{50%{opacity:0}}
+    @media (prefers-reduced-motion:reduce){.s1,.s2,.s3,.s4,.s5,.s6,.blink{animation:none}}
+  </style>
+
+  <rect class="win" x="1" y="1" width="758" height="398" rx="12"/>
+  <path class="bar" d="M1 13 A12 12 0 0 1 13 1 H747 A12 12 0 0 1 759 13 V40 H1 Z"/>
+  <circle cx="24" cy="20" r="6" fill="#ff5f57"/>
+  <circle cx="44" cy="20" r="6" fill="#febc2e"/>
+  <circle cx="64" cy="20" r="6" fill="#28c840"/>
+  <text class="ttl" x="380" y="25" text-anchor="middle">datus</text>
+
+  <g class="s1">
+    <text x="28" y="72"><tspan class="prompt">Datus&gt;</tspan><tspan class="q" dx="8">/bootstrap</tspan></text>
+  </g>
+
+  <g class="s2">
+    <text class="tool" x="28" y="106">&#9210; Crawling schema from datasource california_schools</text>
+    <text class="ok" x="640" y="106">&#10003; 3 tables</text>
+  </g>
+  <g class="s3">
+    <text class="tool" x="28" y="132">&#9210; <tspan class="fn">gen_sql_summary</tspan>(california_schools_1.sql)</text>
+    <text class="ok" x="672" y="132">&#10003;</text>
+  </g>
+  <g class="s4">
+    <text class="tool" x="28" y="158">&#9210; Indexed 13 reference SQL items</text>
+    <text class="ok" x="672" y="158">&#10003;</text>
+  </g>
+
+  <g class="s5">
+    <rect class="card" x="28" y="182" width="704" height="152" rx="8"/>
+    <text class="rt" x="52" y="212">Knowledge Base &#183; subject tree</text>
+    <line x1="52" y1="226" x2="708" y2="226" stroke="#343a4c" stroke-width="1"/>
+    <text class="v" x="52" y="254">SAT_Score/Average &#183; SAT_Score/Excellence_Rate &#183; Enrollment/Total</text>
+    <text class="v" x="52" y="282">FRPM_Enrollment/Rate &#183; Charter/Education_Location &#183; Continuation/Free_Rate</text>
+    <text class="ttl" x="52" y="312">analyst corrections and success stories write back with use</text>
+  </g>
+
+  <g class="s6">
+    <text class="prompt" x="28" y="370">Datus&gt;</text>
+    <rect class="blink cur" x="92" y="358" width="8" height="15"/>
+  </g>
+</svg>

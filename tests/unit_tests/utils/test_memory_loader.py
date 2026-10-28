@@ -37,11 +37,8 @@ class TestHasMemory:
     def test_gen_report_no_memory(self):
         assert has_memory("gen_report") is False
 
-    def test_gen_semantic_model_no_memory(self):
-        assert has_memory("gen_semantic_model") is False
-
-    def test_gen_metrics_no_memory(self):
-        assert has_memory("gen_metrics") is False
+    def test_semantic_modeling_no_memory(self):
+        assert has_memory("semantic_modeling") is False
 
     def test_gen_sql_summary_no_memory(self):
         assert has_memory("gen_sql_summary") is False

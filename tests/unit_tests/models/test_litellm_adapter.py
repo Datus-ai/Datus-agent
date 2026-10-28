@@ -16,6 +16,7 @@ from datus.models.litellm_adapter import (
     LiteLLMAdapter,
     create_litellm_adapter,
     is_known_non_thinking_model,
+    is_official_anthropic_endpoint,
 )
 
 
@@ -216,10 +217,7 @@ class TestGetAgentsSdkModel:
         adapter = LiteLLMAdapter(provider="deepseek", model="deepseek-chat", api_key="key")
         mock_model = MagicMock()
         mock_litellm_model_cls = MagicMock(return_value=mock_model)
-        mock_module = MagicMock()
-        mock_module.LitellmModel = mock_litellm_model_cls
-
-        with patch.dict("sys.modules", {"agents.extensions.models.litellm_model": mock_module}):
+        with patch("datus.models.litellm_model.DatusLitellmModel", mock_litellm_model_cls):
             result = adapter.get_agents_sdk_model()
         assert result is mock_model
         mock_litellm_model_cls.assert_called_once()
@@ -230,10 +228,7 @@ class TestGetAgentsSdkModel:
         headers = {"User-Agent": "datus-agent (cli)"}
         adapter = LiteLLMAdapter(provider="claude", model="claude-sonnet-4", api_key="key", default_headers=headers)
         mock_model = MagicMock()
-        with patch(
-            "datus.models.litellm_cache_control.CacheControlLitellmModel",
-            return_value=mock_model,
-        ) as mock_cls:
+        with patch("datus.models.litellm_model.DatusLitellmModel", return_value=mock_model) as mock_cls:
             adapter.get_agents_sdk_model()
         call_kwargs = mock_cls.call_args
         assert "extra_headers" not in (call_kwargs.kwargs or {})
@@ -511,15 +506,52 @@ class TestIsKnownNonThinkingModel:
         assert is_known_non_thinking_model(None, None) is False
 
 
+class TestIsOfficialAnthropicEndpoint:
+    """Only ``api.anthropic.com`` (or the SDK default, i.e. no base_url) counts as
+    official. Third-party Claude-compatible proxies must be rejected so the
+    hosted ``web_search_20250305`` tool is never injected for them."""
+
+    # NOTE: the param is named ``endpoint`` (not ``base_url``) on purpose. The
+    # ``pytest-base-url`` plugin registers a session-scoped ``base_url`` fixture,
+    # and a same-named parametrize param collides with it (ScopeMismatch).
+    @pytest.mark.parametrize(
+        "endpoint",
+        [
+            None,
+            "",
+            "https://api.anthropic.com",
+            "https://api.anthropic.com/v1",
+            "https://API.Anthropic.com",  # case-insensitive host
+        ],
+    )
+    def test_official_or_default(self, endpoint):
+        assert is_official_anthropic_endpoint(endpoint) is True
+
+    @pytest.mark.parametrize(
+        "endpoint",
+        [
+            "https://api.kimi.com/coding/",  # kimi_coding proxy
+            "https://api.moonshot.ai/anthropic",
+            "https://my-proxy.example.com/v1",
+            "https://anthropic.com.evil.example/v1",  # lookalike host
+            "not-a-url",
+        ],
+    )
+    def test_third_party_proxies_rejected(self, endpoint):
+        assert is_official_anthropic_endpoint(endpoint) is False
+
+
 class TestGetAgentsSdkModelRouting:
-    def test_claude_returns_cache_control_subclass(self):
+    def test_claude_uses_datus_litellm_model(self):
         from agents.extensions.models.litellm_model import LitellmModel
 
-        from datus.models.litellm_cache_control import CacheControlLitellmModel
+        from datus.models.litellm_model import DatusLitellmModel
+        from datus.models.observed_model import ObservedLitellmModel
 
         adapter = LiteLLMAdapter(provider="claude", model="claude-sonnet-4", api_key="sk-test")
         model = adapter.get_agents_sdk_model()
-        assert isinstance(model, CacheControlLitellmModel)
+        assert isinstance(model, DatusLitellmModel)
+        assert isinstance(model, ObservedLitellmModel)
         assert isinstance(model, LitellmModel)
 
     def test_official_openai_returns_responses_model(self):
@@ -568,8 +600,8 @@ class TestGetAgentsSdkModelRouting:
         assert not isinstance(model, OpenAIResponsesModel)
 
     def test_kimi_still_uses_litellm(self):
-        """Kimi/Moonshot relies on sdk_patches.py for reasoning_content echo-back,
-        which only applies on the LiteLLM path. It must not be routed to Responses."""
+        """Kimi/Moonshot reasoning_content replay goes through the LiteLLM path's
+        should_replay_reasoning_content hook. It must not be routed to Responses."""
         from agents.extensions.models.litellm_model import LitellmModel
         from agents.models.openai_responses import OpenAIResponsesModel
 
@@ -577,3 +609,16 @@ class TestGetAgentsSdkModelRouting:
         model = adapter.get_agents_sdk_model()
         assert isinstance(model, LitellmModel)
         assert not isinstance(model, OpenAIResponsesModel)
+
+    @pytest.mark.parametrize(
+        ("provider", "model_name"),
+        [("deepseek", "deepseek-v4-pro"), ("kimi", "kimi-k2.6"), ("claude", "claude-sonnet-5")],
+    )
+    def test_litellm_models_get_reasoning_replay_hook(self, provider, model_name):
+        """Every LiteLLM-path model carries the Datus replay hook so the SDK echoes
+        each turn's own reasoning_content for DeepSeek and Kimi."""
+        from datus.models.reasoning_replay import should_replay_reasoning_content
+
+        adapter = LiteLLMAdapter(provider=provider, model=model_name, api_key="sk-test")
+        model = adapter.get_agents_sdk_model()
+        assert model.should_replay_reasoning_content is should_replay_reasoning_content

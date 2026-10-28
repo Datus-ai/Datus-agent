@@ -4,14 +4,13 @@
 
 """Unit tests for datus.tools.func_tool.generation_evidence."""
 
+import hashlib
+
 from datus.tools.func_tool.generation_evidence import (
     GenerationEvidence,
-    _deduplicate_preserve_order,
     _metadata_from_result,
-    _normalized_metric_alias_map,
     _result_payload,
     _result_success,
-    _sql_contains_base_expr_text,
 )
 
 
@@ -95,49 +94,24 @@ class TestMetadataFromResult:
         assert _metadata_from_result(Obj()) == {}
 
 
-class TestDeduplicatePreserveOrder:
-    def test_removes_duplicates(self):
-        assert _deduplicate_preserve_order(["a", "b", "a", "c"]) == ["a", "b", "c"]
-
-    def test_preserves_order(self):
-        assert _deduplicate_preserve_order(["c", "b", "a"]) == ["c", "b", "a"]
-
-    def test_empty(self):
-        assert _deduplicate_preserve_order([]) == []
-
-
-class TestNormalizedMetricAliasMap:
-    def test_maps_alias_to_canonical(self):
-        result = _normalized_metric_alias_map({"rev_total": "revenue_total"})
-        assert result["rev_total"] == "revenue_total"
-
-    def test_also_maps_normalized_alias(self):
-        result = _normalized_metric_alias_map({"Rev Total": "revenue_total"})
-        assert result.get("rev_total") == "revenue_total"
-
-    def test_skips_non_string_entries(self):
-        result = _normalized_metric_alias_map({1: "canonical", "alias": 2})
-        assert result == {}
-
-    def test_skips_empty_entries(self):
-        result = _normalized_metric_alias_map({"": "canonical", "alias": ""})
-        assert result == {}
-
-
 class TestGenerationEvidence:
     def test_initial_state(self):
         ev = GenerationEvidence()
         assert ev.validation_passed is False
-        assert ev.metric_dry_run_passed is False
+        assert ev.metric_sqls == {}
         assert ev.kb_sync_passed is False
-        assert ev.storage_revision == 0
 
     def test_kb_sync_passed_when_any_kind_set(self):
         ev = GenerationEvidence()
-        ev.mark_kb_sync("metric")
+        ev.mark_kb_sync("metric", ["revenue"])
         assert ev.kb_sync_passed is True
         assert ev.metric_kb_sync_passed is True
-        assert ev.storage_revision == 1
+        assert ev.has_metric_kb_sync(["revenue"])
+        assert not ev.has_metric_kb_sync(["revenue", "orders"])
+        assert not ev.has_metric_kb_sync()
+
+        ev.mark_kb_sync("metric", ["orders"])
+        assert ev.has_metric_kb_sync(["revenue", "orders"])
 
     def test_kb_sync_semantic(self):
         ev = GenerationEvidence()
@@ -148,6 +122,43 @@ class TestGenerationEvidence:
         ev = GenerationEvidence()
         ev.mark_kb_sync()
         assert ev.generic_kb_sync_passed is True
+
+    def test_reset_clears_all_request_evidence_without_replacing_object(self, tmp_path):
+        artifact = tmp_path / "sales.yml"
+        artifact.write_text("semantic_model: sales\n", encoding="utf-8")
+        ev = GenerationEvidence(
+            validation_passed=True,
+            metric_sqls={"revenue": "select 1"},
+            semantic_kb_sync_passed=True,
+            metric_kb_sync_passed=True,
+            metric_kb_sync_metrics={"revenue"},
+            generic_kb_sync_passed=True,
+        )
+        ev.record_semantic_artifact_validation("sales", artifact)
+
+        ev.reset()
+
+        assert ev == GenerationEvidence()
+
+    def test_artifact_mutation_invalidates_publish_evidence(self, tmp_path):
+        artifact = tmp_path / "sales.yml"
+        artifact.write_text("semantic_model: sales\n", encoding="utf-8")
+        ev = GenerationEvidence(
+            validation_passed=True,
+            metric_sqls={"revenue": "select 1"},
+            semantic_kb_sync_passed=True,
+            metric_kb_sync_passed=True,
+            metric_kb_sync_metrics={"revenue"},
+        )
+        ev.record_semantic_artifact_validation("sales", artifact)
+
+        ev.invalidate_artifact_evidence()
+
+        assert ev.validation_passed is False
+        assert ev.metric_sqls == {}
+        assert ev.validated_semantic_artifacts == {}
+        assert ev.kb_sync_passed is False
+        assert ev.metric_kb_sync_metrics == set()
 
     def test_record_validation_result_success(self):
         ev = GenerationEvidence()
@@ -164,23 +175,80 @@ class TestGenerationEvidence:
         ev.record_validation_result({"success": 0, "result": {"valid": True}})
         assert ev.validation_passed is False
 
-    def test_record_metric_dry_run_success(self):
+    def test_semantic_validation_is_bound_to_model_and_file_content(self, tmp_path):
+        artifact = tmp_path / "sales.yml"
+        artifact.write_text("semantic_model: sales\n", encoding="utf-8")
         ev = GenerationEvidence()
-        result = {"success": 1, "result": {"metadata": {}}}
-        ev.record_metric_dry_run(["revenue_total"], result)
-        assert ev.metric_dry_run_passed is True
-        assert "revenue_total" in ev.metric_dry_run_metrics
+        ev.record_validation_result(
+            {
+                "success": 1,
+                "result": {
+                    "valid": True,
+                    "semantic_model_name": "sales",
+                    "semantic_model_file": str(artifact),
+                },
+            }
+        )
+
+        assert ev.semantic_artifact_validation_passed("sales", artifact)
+        assert not ev.semantic_artifact_validation_passed("finance", artifact)
+
+        artifact.write_text("semantic_model: changed\n", encoding="utf-8")
+
+        assert not ev.semantic_artifact_validation_passed("sales", artifact)
+
+    def test_full_validation_satisfies_both_final_scopes(self, tmp_path):
+        artifact = tmp_path / "sales.yml"
+        artifact.write_text("semantic_model: sales\n", encoding="utf-8")
+        ev = GenerationEvidence()
+        ev.record_semantic_artifact_validation("sales", artifact, validation_scope="all")
+
+        assert ev.semantic_artifact_validation_passed("sales", artifact, required_scope="all")
+        assert ev.semantic_artifact_validation_passed("sales", artifact, required_scope="semantic_model")
+
+    def test_compiled_validation_is_bound_to_artifact_contract_and_metric_set(self, tmp_path):
+        artifact = tmp_path / "sales.yml"
+        artifact.write_text("semantic_model: sales\n", encoding="utf-8")
+        metric_digest = "sha256:" + hashlib.sha256(b"revenue").hexdigest()
+        ev = GenerationEvidence()
+
+        assert ev.record_compiled_validation(
+            {
+                "contract_digest": "sha256:" + hashlib.sha256(b"contract").hexdigest(),
+                "artifact_sha256": {str(artifact): "sha256:" + hashlib.sha256(artifact.read_bytes()).hexdigest()},
+                "compiled_metrics": [{"name": "revenue", "kind": "aggregate", "datasets": ["orders"]}],
+                "compiled_metric_digests": {"revenue": metric_digest},
+            },
+            metric_names=["revenue"],
+        )
+        assert ev.compiled_validation_passed(artifact, ["revenue"])
+        assert not ev.compiled_validation_passed(artifact, ["revenue", "orders"])
+        assert ev.compiled_metric_catalog(["revenue"])["revenue"]["datasets"] == ["orders"]
+
+        artifact.write_text("semantic_model: changed\n", encoding="utf-8")
+        assert not ev.compiled_validation_passed(artifact, ["revenue"])
+
+    def test_compiled_validation_rejects_incomplete_digest_evidence(self, tmp_path):
+        artifact = tmp_path / "sales.yml"
+        artifact.write_text("semantic_model: sales\n", encoding="utf-8")
+        ev = GenerationEvidence()
+
+        assert not ev.record_compiled_validation(
+            {
+                "contract_digest": "sha256:" + hashlib.sha256(b"contract").hexdigest(),
+                "artifact_sha256": {
+                    str(artifact.resolve()): "sha256:" + hashlib.sha256(artifact.read_bytes()).hexdigest()
+                },
+                "compiled_metrics": [{"name": "revenue"}],
+                "compiled_metric_digests": {},
+            },
+            metric_names=["revenue"],
+        )
 
     def test_record_metric_dry_run_failure_ignored(self):
         ev = GenerationEvidence()
         ev.record_metric_dry_run(["revenue_total"], {"success": 0})
-        assert ev.metric_dry_run_passed is False
-        assert "revenue_total" not in ev.metric_dry_run_metrics
-
-    def test_record_metric_dry_run_string_metrics(self):
-        ev = GenerationEvidence()
-        ev.record_metric_dry_run("revenue_total", {"success": 1, "result": {"metadata": {}}})
-        assert "revenue_total" in ev.metric_dry_run_metrics
+        assert ev.metric_sqls == {}
 
     def test_record_metric_dry_run_stores_sql_from_metadata(self):
         ev = GenerationEvidence()
@@ -196,91 +264,7 @@ class TestGenerationEvidence:
         }
         result = {"success": 1, "result": {"metadata": {"metric_sqls": metric_sqls}}}
         ev.record_metric_dry_run(["revenue_total"], result)
-        assert ev.metric_sqls["revenue_total"] == "SELECT revenue"
-        assert ev.metric_dry_run_queries[0].get("sql") == "SELECT combined"
-
-    def test_has_metric_dry_run_no_names(self):
-        ev = GenerationEvidence()
-        ev.metric_dry_run_passed = True
-        assert ev.has_metric_dry_run() is True
-
-    def test_has_metric_dry_run_with_names_subset(self):
-        ev = GenerationEvidence()
-        ev.metric_dry_run_passed = True
-        ev.metric_dry_run_metrics = {"a", "b"}
-        assert ev.has_metric_dry_run(["a"]) is True
-        assert ev.has_metric_dry_run(["a", "c"]) is False
-
-    def test_has_metric_dry_run_not_passed(self):
-        ev = GenerationEvidence()
-        ev.metric_dry_run_metrics = {"a"}
-        assert ev.has_metric_dry_run(["a"]) is False
-
-    def test_set_metric_queryability_contracts_filters_invalid(self):
-        ev = GenerationEvidence()
-        contracts = [
-            {"source": "s1", "dimension_hints": ["col_a"], "metric_hints": ["m1"]},
-            {"source": "s2"},  # no dimension_hints or time_group_hints — filtered
-        ]
-        ev.set_metric_queryability_contracts(contracts)
-        assert len(ev.metric_queryability_contracts) == 1
-        assert ev.metric_queryability_contracts[0]["source"] == "s1"
-
-    def test_set_metric_queryability_contracts_deduplicates_metric_hints(self):
-        ev = GenerationEvidence()
-        ev.set_metric_queryability_contracts([{"dimension_hints": ["col_a"], "metric_hints": ["m1", "m1", "m2"]}])
-        assert ev.metric_queryability_contracts[0]["metric_hints"] == ["m1", "m2"]
-
-    def test_set_metric_queryability_contracts_applies_alias_rewrites(self):
-        ev = GenerationEvidence()
-        ev.set_metric_queryability_contracts(
-            [{"dimension_hints": ["col_a"], "metric_hints": ["rev_alias"]}],
-            metric_aliases={"rev_alias": "revenue_total"},
-        )
-        hints = ev.metric_queryability_contracts[0]["metric_hints"]
-        assert "revenue_total" in hints
-        alias_rewrites = ev.metric_queryability_contracts[0].get("metric_alias_rewrites", {})
-        assert alias_rewrites.get("rev_alias") == "revenue_total"
-
-    def test_has_required_queryability_dry_runs_no_contracts(self):
-        ev = GenerationEvidence()
-        assert ev.has_required_queryability_dry_runs() is True
-
-    def test_missing_queryability_contracts_empty_when_satisfied(self):
-        ev = GenerationEvidence()
-        ev.set_metric_queryability_contracts([{"dimension_hints": ["col_a"], "metric_hints": ["revenue_total"]}])
-        ev.record_metric_dry_run(
-            ["revenue_total"],
-            {"success": 1, "result": {"metadata": {}}},
-            dimensions=["col_a"],
-        )
-        missing = ev.missing_queryability_contracts(["revenue_total"])
-        assert missing == []
-
-    def test_missing_queryability_contracts_nonempty_when_unsatisfied(self):
-        ev = GenerationEvidence()
-        ev.set_metric_queryability_contracts([{"dimension_hints": ["col_a"], "metric_hints": ["revenue_total"]}])
-        ev.metric_dry_run_passed = True
-        ev.metric_dry_run_metrics.add("revenue_total")
-        # No dry_run_queries at all -> contract not matched
-        missing = ev.missing_queryability_contracts(["revenue_total"])
-        assert len(missing) == 1
-
-    def test_record_metric_dry_run_time_granularity_explicit(self):
-        ev = GenerationEvidence()
-        result = {"success": 1, "result": {"metadata": {}}}
-        ev.record_metric_dry_run(["rev"], result, time_granularity="month")
-        query = ev.metric_dry_run_queries[0]
-        assert query["time_granularity"] == "month"
-        assert query["time_granularity_explicit"] is True
-
-    def test_record_metric_dry_run_time_granularity_from_dimensions(self):
-        ev = GenerationEvidence()
-        result = {"success": 1, "result": {"metadata": {}}}
-        ev.record_metric_dry_run(["rev"], result, dimensions=["metric_time__month"])
-        query = ev.metric_dry_run_queries[0]
-        assert query["time_granularity"] == "month"
-        assert query["time_granularity_explicit"] is False
+        assert ev.metric_sqls == metric_sqls
 
     def test_record_metric_dry_run_multi_metric_combined_sql_key(self):
         ev = GenerationEvidence()
@@ -294,74 +278,3 @@ class TestGenerationEvidence:
         result = {"success": 1, "result": {"metadata": {"sql": "SELECT 1"}}}
         ev.record_metric_dry_run(["revenue_total"], result)
         assert "revenue_total" in ev.metric_sqls
-
-
-class TestMetricTimeCanonicalizationContract:
-    """Regression: a day-grain dry-run must satisfy a metric_date time-group contract."""
-
-    # MetricFlow day-grain output: groups by metric_time via CAST, no date_trunc.
-    COMPILED_SQL = (
-        "SELECT metric_time, "
-        "CAST(gross_order_value AS DOUBLE) / CAST(NULLIF(order_count, 0) AS DOUBLE) "
-        "AS average_gross_order_value "
-        "FROM ("
-        "  SELECT metric_time, SUM(gross_order_value) AS gross_order_value, "
-        "  SUM(order_count) AS order_count "
-        "  FROM ("
-        "    SELECT CAST(ordered_at AS DATETIME) AS metric_time, "
-        "    order_total / 100.0 AS gross_order_value, 1 AS order_count "
-        "    FROM jeff_shop.raw_orders raw_orders_src_26"
-        "  ) subq_94 "
-        "  GROUP BY metric_time"
-        ") subq_95"
-    )
-
-    def _evidence_with_contract(self):
-        ev = GenerationEvidence()
-        ev.set_metric_queryability_contracts(
-            [
-                {
-                    "source": "sql_1",
-                    "dimension_hints": ["metric_date"],
-                    "metric_hints": ["average_gross_order_value"],
-                    "time_group_hints": [{"alias": "metric_date", "base_expr": "ordered_at", "grain": "day"}],
-                }
-            ]
-        )
-        return ev
-
-    def test_grain_dry_run_satisfies_time_group_contract(self):
-        ev = self._evidence_with_contract()
-        ev.record_metric_dry_run(
-            ["average_gross_order_value"],
-            {"success": 1, "result": {"metadata": {"explain": True, "sql": self.COMPILED_SQL}}},
-            dimensions=["metric_date"],
-            time_granularity="day",
-        )
-        assert ev.has_required_queryability_dry_runs(["average_gross_order_value"]) is True
-        assert ev.missing_queryability_contracts(["average_gross_order_value"]) == []
-
-    def test_grain_dry_run_does_not_satisfy_unrelated_time_column(self):
-        # A metric_time dry-run built from a different base column must not match.
-        ev = self._evidence_with_contract()
-        unrelated_sql = self.COMPILED_SQL.replace("ordered_at", "shipped_at")
-        ev.record_metric_dry_run(
-            ["average_gross_order_value"],
-            {"success": 1, "result": {"metadata": {"explain": True, "sql": unrelated_sql}}},
-            dimensions=["metric_date"],
-            time_granularity="day",
-        )
-        assert ev.has_required_queryability_dry_runs(["average_gross_order_value"]) is False
-
-
-class TestSqlContainsBaseExprText:
-    def test_bare_identifier_matches_standalone_occurrence(self):
-        assert _sql_contains_base_expr_text("SELECT CAST(ordered_at AS DATETIME) AS m", "ordered_at") is True
-
-    def test_bare_identifier_does_not_match_partial_identifier(self):
-        assert _sql_contains_base_expr_text("SELECT preordered_at AS m", "ordered_at") is False
-        assert _sql_contains_base_expr_text("SELECT ordered_at_utc AS m", "ordered_at") is False
-
-    def test_complex_expression_matches_via_substring(self):
-        sql = "SELECT CAST(ordered_at AS DATETIME) AS metric_time GROUP BY metric_time"
-        assert _sql_contains_base_expr_text(sql, "CAST(ordered_at AS DATETIME)") is True

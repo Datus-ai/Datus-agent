@@ -4,21 +4,26 @@
 
 **内置 Subagent**  是集成在 Datus Agent 系统中的专用 AI 助手。每个subagent专注于数据工程自动化的特定方面——分析 SQL、生成语义模型、将查询转换为可复用指标——共同构成从原始 SQL 到具备知识感知的数据产品的闭环工作流。
 
-本文档涵盖十三个核心 subagent：
+本文档涵盖核心 subagent：
 
 1. **[gen_sql_summary](#gen_sql_summary)** — 总结和分类 SQL 查询
-2. **[gen_semantic_model](#gen_semantic_model)** — 生成 MetricFlow 语义模型
-3. **[gen_metrics](#gen_metrics)** — 生成 MetricFlow 指标定义
-4. **[ask_metrics](ask_metrics.zh.md)** — 基于已有语义指标回答 KPI、趋势、分组指标和归因问题
+2. **[semantic_modeling](semantic_modeling.zh.md)** — 创作 Dosi 语义模型和指标
+3. **[ask_metrics](ask_metrics.zh.md)** — 基于已有语义指标回答 KPI、趋势、分组指标和归因问题
+4. **[ontology_analyst](ontology_analyst.zh.md)** — 基于数据源的 Apache Ossie ontology（概念、角色、值域）回答指标和明细问题
 5. **[explore](#explore)** — 只读数据探索和上下文收集
 6. **[gen_sql](#gen_sql)** — 具备深度专业知识的专用 SQL 生成
 7. **[gen_report](#gen_report)** — 灵活的报告生成，支持可配置工具
 8. **[gen_table](gen_table.zh.md)** — 数据库建表（CTAS 或自然语言描述）
 9. **[gen_job](gen_job.zh.md)** — 数据管道执行（单库 ETL 和跨库迁移，含对数校验）
 10. **[gen_skill](#gen_skill)** — skill 创建与优化
-11. **[gen_dashboard](#gen_dashboard)** — Superset 和 Grafana 的 BI 仪表盘 CRUD
-12. **[gen_visual_report](gen_visual_report.zh.md)** — 在 `reports/<slug>/` 下产出自包含的可视化报告
-13. **[scheduler](#scheduler)** — Airflow 作业生命周期管理
+11. **[gen_visual_report](gen_visual_report.zh.md)** — 在 `reports/<slug>/` 下产出自包含的可视化报告
+
+Airflow 调度和外部 BI authoring 由主 agent 直接使用已安装 plugin 完成，
+不再属于内置或自定义 subagent。
+
+在 REPL 中可以直接描述任务，由主 agent 自动派发给合适的 subagent。如需为
+单条消息明确指定，可在请求末尾加 `@Agent <名称>`；`/agent <名称>` 用于切换
+后续消息使用的当前 agent。旧的 `/<subagent> <消息>` 形式不再支持。
 
 ## 配置
 
@@ -27,17 +32,16 @@
 ```yaml
 agent:
   agentic_nodes:
-    gen_semantic_model:
-      model: claude     # 可选：默认使用已配置的模型
-      max_turns: 30     # 可选：默认为 30
-
-    gen_metrics:
+    semantic_modeling:
       model: claude     # 可选：默认使用已配置的模型
       max_turns: 30     # 可选：默认为 30
 
     ask_metrics:
       model: claude     # 可选：默认使用已配置的模型
       max_turns: 12     # 可选：默认为 12
+
+    ontology_analyst:
+      model: claude
 
     gen_sql_summary:
       model: deepseek   # 可选：默认使用已配置的模型
@@ -65,19 +69,10 @@ agent:
     gen_skill:
       max_turns: 30     # 可选：默认为 30
 
-    gen_dashboard:
-      model: claude     # 可选：默认使用已配置的模型
-      max_turns: 30     # 可选：默认为 30
-      bi_platform: superset  # 可选：显式指定平台（仅配置一个 BI 平台时可自动检测）
-
     gen_visual_report:
       model: claude            # 可选：默认使用已配置的模型
       max_turns: 30            # 可选：默认为 30
       report_dist: ~/report_dist  # 可选：HTML 离线编译时使用的本地 dist 目录
-
-    scheduler:
-      model: claude     # 可选：默认使用已配置的模型
-      max_turns: 30     # 可选：默认为 30
 ```
 
 **可选配置参数**：
@@ -88,7 +83,7 @@ agent:
 **内置配置**（无需设置）：
 - **工具**：根据 subagent 类型自动配置
 - **Hooks**：按工作流启用验证和知识库同步
-- **MCP 服务器**：MetricFlow 验证（用于 gen_semantic_model 和 gen_metrics）
+- **语义工具**：`semantic_modeling` 使用内置的 Dosi 校验和查询工具
 - **系统提示**：内置模板；未设置 `prompt_version` 时使用最新可用版本
 - **工作空间**：`~/.datus/data/{datasource}/` 及 subagent 特定子目录
 
@@ -111,10 +106,10 @@ SQL 摘要功能帮助你分析、分类和编目 SQL 查询，用于知识复�
 
 ### 快速开始
 
-启动 SQL 摘要生成 subagent：
+直接描述需求，或在消息末尾指定 SQL 摘要生成 subagent：
 
-```bash
-/gen_sql_summary Analyze this SQL: SELECT SUM(revenue) FROM sales GROUP BY region. (You can also add some description on this SQL)
+```text
+Analyze this SQL: SELECT SUM(revenue) FROM sales GROUP BY region. You can also add a description. @Agent gen_sql_summary
 ```
 
 ### 生成工作流
@@ -151,13 +146,13 @@ graph LR
 在 CLI 模式下通过问题中包含主题树来组织 SQL 摘要：
 
 **带主题树示例：**
-```bash
-/gen_sql_summary Analyze this SQL: SELECT SUM(revenue) FROM sales, subject_tree: sales/reporting/revenue_analysis
+```text
+Analyze this SQL: SELECT SUM(revenue) FROM sales, subject_tree: sales/reporting/revenue_analysis. @Agent gen_sql_summary
 ```
 
 **不带主题树示例：**
-```bash
-/gen_sql_summary Analyze this SQL: SELECT SUM(revenue) FROM sales
+```text
+Analyze this SQL: SELECT SUM(revenue) FROM sales. @Agent gen_sql_summary
 ```
 
 未提供时，agent 会基于知识库中的现有主题树和相似查询自动建议分类。
@@ -201,351 +196,9 @@ tags: "revenue, region, aggregation"       # 逗号分隔的标签
 
 ---
 
-## gen_semantic_model
+## 语义建模
 
-### 概览
-
-语义模型生成功能帮助你通过 AI 助手从数据库表创建 MetricFlow 语义模型。助手分析你的表结构并生成全面的 YAML 配置文件，定义指标、维度和关系。
-
-### 什么是语义模型？
-
-语义模型是定义以下内容的 YAML 配置：
-
-- **度量（Measures）**：指标和聚合（SUM、COUNT、AVERAGE 等）
-- **维度（Dimensions）**：分类和时间属性
-- **标识符（Identifiers）**：用于关系的主键和外键
-- **数据源（Data Source）**：与数据库表的连接
-
-### 快速开始
-
-使用 `datus --datasource <datasource>` 启动 Datus CLI，然后使用subagent命令：
-
-```bash
-/gen_semantic_model generate a semantic model for table <table_name>
-```
-
-### 工作原理
-
-#### 交互式生成
-
-当你请求语义模型时，AI 助手会：
-
-1. 检索你的表的 DDL（结构）
-2. 检查是否已存在语义模型
-3. 生成全面的 YAML 文件
-4. 使用 MetricFlow 验证配置
-5. 验证通过后同步到知识库
-
-#### 生成工作流
-
-```mermaid
-graph LR
-    A[用户请求] --> B[DDL 分析]
-    B --> C[YAML 生成]
-    C --> D[验证]
-    D --> E[知识库同步]
-```
-
-### 验证和同步
-
-发布前，agent 会调用 `validate_semantic()`。如果验证失败，会修改 YAML 并重试。在 interactive 模式下，验证通过后，`end_semantic_model_generation` 会触发自动知识库同步；在 workflow/API 模式下，请使用显式的语义模型同步步骤或工具。
-
-### 语义模型结构
-
-#### 基本模板
-
-```yaml
-data_source:
-  name: table_name                    # 必需：小写加下划线
-  description: "Table description"
-
-  sql_table: schema.table_name        # 对于有 schema 的数据库
-  # OR
-  sql_query: |                        # 对于自定义查询
-    SELECT * FROM table_name
-
-  measures:
-    - name: total_amount              # 必需
-      agg: SUM                        # 必需：SUM|COUNT|AVERAGE|etc.
-      expr: amount_column             # 列或 SQL 表达式
-      create_metric: true             # 自动创建可查询指标
-      description: "Total transaction amount"
-
-  dimensions:
-    - name: created_date
-      type: TIME                      # 必需：TIME|CATEGORICAL
-      type_params:
-        is_primary: true              # 需要一个主时间维度
-        time_granularity: DAY         # TIME 必需：DAY|WEEK|MONTH|etc.
-
-    - name: status
-      type: CATEGORICAL
-      description: "Order status"
-
-  identifiers:
-    - name: order_id
-      type: PRIMARY                   # PRIMARY|FOREIGN|UNIQUE|NATURAL
-      expr: order_id
-
-    - name: customer
-      type: FOREIGN
-      expr: customer_id
-```
-
-### 总结
-
-语义模型生成功能提供：
-
-- ✅ 从表 DDL 自动生成 YAML
-- ✅ 交互式验证和错误修复
-- ✅ 验证通过后同步到知识库
-- ✅ interactive 自动同步，workflow/API 显式同步
-- ✅ 防止重复
-- ✅ MetricFlow 兼容性
-
----
-
-## gen_metrics
-
-### 概览
-
-指标生成功能帮助你将 SQL 查询转换为可复用的 MetricFlow 指标定义。使用 AI 助手，你可以分析 SQL 业务逻辑并自动生成标准化的 YAML 指标配置，组织内可一致查询。
-
-### 什么是指标？
-
-**指标**是基于语义模型构建的可复用业务计算。指标提供：
-
-- **一致的业务逻辑**：一次定义，到处使用
-- **类型安全**：已验证的结构和度量引用
-- **元数据**：显示名称、格式、业务上下文
-- **可组合性**：从简单指标构建复杂指标
-
-**示例**：与其重复编写 `SELECT SUM(revenue) / COUNT(DISTINCT customer_id)`，不如定义一次 `avg_customer_revenue` 指标。
-
-### 快速开始
-
-使用 `datus --datasource <datasource>` 启动 Datus CLI，然后使用指标生成subagent：
-
-```bash
-/gen_metrics Generate a metric from this SQL: SELECT SUM(amount) FROM transactions, the corresponding question is total amount of all transactions
-```
-
-### 工作原理
-
-#### 生成工作流
-
-```mermaid
-graph LR
-    A[用户提供 SQL 和问题] --> B[智能体分析逻辑]
-    B --> C[查找语义模型]
-    C --> D[读取度量]
-    D --> E[检查重复]
-    E --> F[生成指标 YAML]
-    F --> G[写入指标文件]
-    G --> H[验证]
-    H --> I[生成 dry-run SQL]
-    I --> J[同步到知识库]
-```
-
-#### 重要限制
-
-> **⚠️ 仅支持单表查询**
->
-> 当前版本**仅支持从单表 SQL 查询生成指标**。不支持多表 JOIN。
-
-**支持**：
-```sql
-SELECT SUM(revenue) FROM transactions WHERE status = 'completed'
-SELECT COUNT(DISTINCT customer_id) / COUNT(*) FROM orders
-```
-
-**不支持**：
-```sql
-SELECT SUM(o.amount)
-FROM orders o
-JOIN customers c ON o.customer_id = c.id  -- ❌ 不支持 JOIN
-```
-
-### 验证和同步
-
-发布前，agent 会用 `validate_semantic()` 校验 YAML，并用 `query_metrics(..., dry_run=True)` 编译 SQL。在 interactive 模式下，两项检查都通过后，`end_metric_generation` 会触发自动知识库同步；在 workflow/API 模式下，请使用显式的指标同步步骤或工具。
-
-### 主题树分类
-
-在 CLI 模式下通过问题中包含主题树来组织指标：
-
-**带主题树示例：**
-```bash
-/gen_metrics Generate a metric from this SQL: SELECT SUM(amount) FROM transactions, subject_tree: finance/revenue/transactions
-```
-
-**不带主题树示例：**
-```bash
-/gen_metrics Generate a metric from this SQL: SELECT SUM(amount) FROM transactions
-```
-
-未提供时，agent 会基于知识库中的现有指标自动建议分类。
-
-### 使用示例
-
-#### 示例 1：简单聚合
-
-**用户输入**：
-```bash
-/gen_metrics Generate a metric for total order count
-```
-
-**智能体操作**：
-1. 查找 `orders.yml` 语义模型
-2. 读取文件以发现 `order_count` 度量
-3. 生成 MEASURE_PROXY 指标：
-
-```yaml
----
-metric:
-  name: total_orders
-  description: Total number of orders
-  type: measure_proxy
-  type_params:
-    measure: order_count
-  locked_metadata:
-    display_name: "Total Orders"
-    increase_is_good: true
-```
-
-#### 示例 2：转化率
-
-**用户输入**：
-```bash
-/gen_metrics Create a metric from this SQL:
-SELECT
-  COUNT(DISTINCT CASE WHEN status = 'completed' THEN order_id END) /
-  COUNT(DISTINCT order_id) AS completion_rate
-FROM orders
-```
-
-**智能体操作**：
-1. 分析 SQL 逻辑（带条件计数的比率）
-2. 查找 `orders.yml` 并读取度量
-3. 生成带约束的 RATIO 指标：
-
-```yaml
----
-metric:
-  name: order_completion_rate
-  description: Percentage of orders that reached completed status
-  type: ratio
-  type_params:
-    numerator:
-      name: order_count
-      constraint: status = 'completed'
-    denominator: order_count
-  locked_metadata:
-    display_name: "Order Completion Rate"
-    value_format: ".2%"
-    increase_is_good: true
-```
-
-#### 示例 3：复杂计算
-
-**用户输入**：
-```bash
-/gen_metrics Generate average basket size metric:
-SELECT SUM(total_amount) / COUNT(DISTINCT order_id)
-FROM order_items
-```
-
-**智能体操作**：
-1. 定位 `order_items.yml`
-2. 识别为 RATIO（平均值）
-3. 生成指标：
-
-```yaml
----
-metric:
-  name: avg_basket_size
-  description: Average order value (basket size)
-  type: ratio
-  type_params:
-    numerator: total_amount
-    denominator: order_count
-  locked_metadata:
-    display_name: "Average Basket Size"
-    value_format: "$$,.2f"
-    unit: "dollars"
-    increase_is_good: true
-```
-
-### 指标存储方式
-
-#### 文件组织
-
-指标存放在独立文件中，与语义模型文件分离：
-
-- **语义模型**：`{table_name}.yml` —— `data_source` 定义（measures、dimensions、identifiers）
-- **指标**：`metrics/{table_name}_metrics.yml` —— 一个或多个指标定义，使用 YAML 文档分隔符 `---` 分隔
-
-**语义模型文件** (`transactions.yml`)：
-```yaml
-data_source:
-  name: transactions
-  sql_table: transactions
-  measures:
-    - name: revenue
-      agg: SUM
-      expr: amount
-  dimensions:
-    - name: transaction_date
-      type: TIME
-```
-
-**指标文件** (`metrics/transactions_metrics.yml`)：
-```yaml
-metric:
-  name: total_revenue
-  type: measure_proxy
-  type_params:
-    measure: revenue
-
----
-metric:
-  name: avg_transaction_value
-  type: ratio
-  type_params:
-    numerator: revenue
-    denominator: transaction_count
-```
-
-**为什么使用独立文件？**
-- 清晰分离 schema 定义与业务指标
-- 指标可以独立于底层语义模型维护
-- MetricFlow 会把 semantic_models 目录下所有 YAML 文档一起验证
-
-更多细节见 [gen_metrics](gen_metrics.zh.md)。
-
-#### 知识库存储
-
-验证和 dry-run SQL 通过后，指标会同步到知识库，包含：
-
-1. **元数据**：名称、描述、类型、域/层级分类
-2. **LLM 文本**：用于语义搜索的自然语言表示
-3. **引用**：关联的语义模型名称
-4. **时间戳**：创建日期
-
-### 总结
-
-指标生成功能提供：
-
-- ✅ **SQL 到指标转换**：分析 SQL 查询并生成 MetricFlow 指标
-- ✅ **智能类型检测**：自动选择正确的指标类型
-- ✅ **防止重复**：生成前检查现有指标
-- ✅ **主题树支持**：按 domain/layer1/layer2 组织，支持预定义或学习模式
-- ✅ **验证**：MetricFlow 验证确保正确性
-- ✅ **发布门禁**：语义验证和 dry-run SQL 通过后才同步
-- ✅ **知识库集成**：语义搜索以发现指标
-- ✅ **文件管理**：在 `metrics/` 目录下维护独立的指标文件
-
----
+Dosi 语义模型和指标由 [`semantic_modeling`](semantic_modeling.zh.md) 创作。
 
 ## explore
 
@@ -579,7 +232,7 @@ agent:
 | 工具类别 | 工具 | 用途 |
 |---------|------|------|
 | 数据库 | `list_databases`、`list_schemas`、`list_tables`、`search_table`、`describe_table`、`read_query` | Schema 发现和数据采样（只读） |
-| 上下文搜索 | `search_metrics`、`search_reference_sql`、`search_knowledge`、`search_semantic_objects`、`list_subject_tree`、`get_metrics`、`get_reference_sql`、`get_knowledge` | 知识库检索 |
+| 上下文搜索 | `search_metrics`、`search_reference_sql`、`search_semantic_objects`、`list_subject_tree`、`get_reference_sql` | 知识库检索 |
 | 文件系统 | `read_file`、`glob`、`grep` | 只读文件浏览 |
 | 日期解析 | `get_current_date`、`parse_temporal_expressions` | 日期上下文 |
 
@@ -595,10 +248,10 @@ explore subagent 返回简洁的结构化摘要，为其他 agent 消费而优�
 
 ### 使用方式
 
-explore subagent 通常由聊天助手通过 `task(type="explore")` 自动调用，也可手动启动：
+explore subagent 通常由聊天助手通过 `task(type="explore")` 自动调用。如需为单条消息明确指定，可在末尾加 `@Agent explore`：
 
-```bash
-/explore Discover tables related to customer revenue and find relevant metrics
+```text
+查找与客户收入相关的表和指标。@Agent explore
 ```
 
 ---
@@ -663,10 +316,10 @@ gen_sql subagent 以两种格式之一返回结果：
 
 ### 使用方式
 
-gen_sql subagent 通常由聊天助手通过 `task(type="gen_sql")` 自动调用来处理复杂查询，也可手动启动：
+gen_sql subagent 通常由聊天助手通过 `task(type="gen_sql")` 自动调用来处理复杂查询。如需为单条消息明确指定，可在末尾加 `@Agent gen_sql`：
 
-```bash
-/gen_sql Generate a query to calculate customer lifetime value with cohort analysis
+```text
+生成使用 cohort 分析计算客户生命周期价值的查询。@Agent gen_sql
 ```
 
 ---
@@ -732,10 +385,10 @@ gen_report subagent 以结构化报告返回结果：
 
 ### 使用方式
 
-gen_report subagent 可以手动启动，也可以由聊天助手通过 `task(type="gen_report")` 调用：
+gen_report subagent 可以通过 `@Agent gen_report` 为单条消息明确指定，也可以由聊天助手通过 `task(type="gen_report")` 自动调用：
 
-```bash
-/gen_report 分析上季度的收入趋势并提供洞察
+```text
+分析上季度的收入趋势并提供洞察。@Agent gen_report
 ```
 
 ### 自定义报告 Subagent
@@ -751,7 +404,7 @@ agent:
       max_turns: 30
 ```
 
-然后通过 `/attribution_report 分析活动 X 的转化归因` 使用。
+然后输入 `分析活动 X 的转化归因。@Agent attribution_report`。
 
 ---
 
@@ -791,236 +444,25 @@ agent:
 
 ### 使用方式
 
-直接启动：
+为单条消息明确指定：
 
-```bash
-/gen_skill 创建一个在发布前校验每日收入仪表盘的 skill
+```text
+创建一个在发布前校验每日收入仪表盘的 skill。@Agent gen_skill
 ```
 
 也可以由聊天 agent 通过 `task(type="gen_skill")` 自动委派。
 
 ---
 
-## gen_dashboard
+## Plugin 平台操作
 
-### 概览
+Airflow 调度和 Superset 等外部 BI authoring 由主 agent 直接使用已安装 plugin
+及其内置 skill 完成，不能通过 `task()`、斜杠命令、agent API 或自定义 alias
+调用。
 
-gen_dashboard subagent 在 Superset 和 Grafana 上创建、更新和管理 BI 仪表盘。它由聊天 agent 通过 `task(type="gen_dashboard")` 调用，使用 `BIFuncTool` 中的 BI 工具，基于已存在的 serving 表或 SQL dataset 创建 dashboard 资产。
-
-### 关键特性
-
-- **多平台支持**：支持 Apache Superset 和 Grafana；平台可通过 `bi_platform` 显式指定，或从 `agent.services.bi_platforms` 自动检测
-- **动态工具暴露**：工具根据 adapter Mixin 能力动态暴露——只有平台实际支持的操作才作为 LLM 工具出现
-- **只处理已就位的 serving 数据**：数据准备由 `gen_job` / `scheduler` 单独完成；gen_dashboard 负责创建 BI dataset / chart / dashboard 资产
-- **Skill 引导**：平台 skill（`superset-dashboard`、`grafana-dashboard`）提供分步工作流；`bi-validation` 在创建结束后自动运行
-
-### 配置
-
-```yaml
-agent:
-  services:
-    datasources:
-      serving_pg:
-        type: postgresql
-        host: 127.0.0.1
-        port: 5433
-        database: superset_examples
-        schema: bi_public
-        username: "${SERVING_WRITE_USER}"
-        password: "${SERVING_WRITE_PASSWORD}"
-
-    bi_platforms:
-      superset:
-        type: superset
-        api_base_url: "http://localhost:8088"
-        username: "${SUPERSET_USER}"
-        password: "${SUPERSET_PASSWORD}"
-        dataset_db:
-          datasource_ref: serving_pg
-          bi_database_name: examples
-
-  agentic_nodes:
-    gen_dashboard:
-      model: claude           # 可选：默认使用已配置的模型
-      max_turns: 30           # 可选：默认为 30
-      bi_platform: superset   # 可选：只配置一个 BI 平台时可自动检测
-```
-
-**前置条件**：
-- `agent.yml` 中包含 `agent.services.bi_platforms` 配置段及平台凭据
-- 已安装 `datus-bi-superset` 或 `datus-bi-grafana` 包
-
-### 工作原理
-
-```mermaid
-graph LR
-    A[task gen_dashboard] --> C[GenDashboardAgenticNode]
-    C --> D[BIFuncTool.available_tools]
-    D --> E[LLM Function Calling]
-    E -->|Superset| F[list_bi_databases → create_dataset → create_chart → create_dashboard → add_chart_to_dashboard]
-    E -->|Grafana| G[create_dashboard → create_chart]
-    F --> H[ValidationHook.on_end]
-    G --> H
-```
-
-### 可用工具
-
-工具根据平台 adapter 实现的 Mixin 动态暴露：
-
-| 工具 | 所需能力 | 说明 |
-|------|---------|------|
-| `list_dashboards` | 所有 adapter | 列出/搜索仪表盘 |
-| `get_dashboard` | 所有 adapter | 获取仪表盘详情 |
-| `list_charts` | 所有 adapter | 列出仪表盘下的图表 |
-| `get_chart` | 所有 adapter | 获取单个图表或面板详情 |
-| `get_chart_data` | 支持的 adapter | 获取图表查询结果，用于数值校验 |
-| `list_datasets` | 所有 adapter | 列出数据集/数据源 |
-| `create_dashboard` | `DashboardWriteMixin` | 创建仪表盘 |
-| `update_dashboard` | `DashboardWriteMixin` | 更新仪表盘标题/描述 |
-| `delete_dashboard` | `DashboardWriteMixin` | 删除仪表盘 |
-| `create_chart` | `ChartWriteMixin` | 创建图表/面板 |
-| `update_chart` | `ChartWriteMixin` | 更新图表配置 |
-| `add_chart_to_dashboard` | `ChartWriteMixin` | 将图表添加到仪表盘 |
-| `delete_chart` | `ChartWriteMixin` | 删除图表 |
-| `create_dataset` | `DatasetWriteMixin` | 注册数据集 |
-| `list_bi_databases` | `DatasetWriteMixin` | 列出 BI 平台数据库连接 |
-| `delete_dataset` | `DatasetWriteMixin` | 删除数据集 |
-| `get_bi_serving_target` | 已配置 `dataset_db` | 给编排层返回 serving DB 契约 |
-
-### 输出格式
-
-```json
-{
-  "response": "已创建包含 3 个营收趋势图表的销售仪表盘。",
-  "dashboard_result": {
-    "dashboard_id": 42,
-    "url": "http://localhost:8088/superset/dashboard/42/"
-  },
-  "tokens_used": 3210
-}
-```
-
-### 使用方式
-
-gen_dashboard subagent 通常由聊天 agent 通过 `task(type="gen_dashboard")` 自动调用，也可手动启动：
-
-```bash
-/gen_dashboard 创建一个包含按地区划分的营收趋势的销售仪表盘
-```
-
-也可以使用 `gen_dashboard` 节点类创建自定义 subagent：
-
-```yaml
-agent:
-  agentic_nodes:
-    sales_dashboard:
-      node_class: gen_dashboard
-      bi_platform: superset
-      max_turns: 30
-```
-
----
-
-## scheduler
-
-### 概览
-
-scheduler subagent 在 Apache Airflow 上提交、监控、更新和排查定时作业。它由聊天 agent 通过 `task(type="scheduler")` 调用，通过 LLM function calling 提供完整的 Airflow 作业生命周期管理。
-
-### 关键特性
-
-- **完整作业生命周期**：提交、触发、暂停、恢复、更新和删除 Airflow DAG 作业
-- **SQL 和 SparkSQL 支持**：支持提交 SQL 和 SparkSQL 两种作业类型
-- **SQL 文件管理**：提交前可用文件系统工具创建或更新作业 SQL 文件
-- **监控能力**：列出作业运行记录、获取运行日志、排查故障
-- **连接发现**：列出可用的 Airflow 连接，用于作业配置
-
-### 配置
-
-```yaml
-agent:
-  services:
-    schedulers:
-      airflow_prod:
-        type: airflow
-        api_base_url: "${AIRFLOW_URL}"
-        username: "${AIRFLOW_USER}"
-        password: "${AIRFLOW_PASSWORD}"
-        dags_folder: "${AIRFLOW_DAGS_DIR}"
-
-  agentic_nodes:
-    scheduler:
-      model: claude                  # 可选：默认使用已配置的模型
-      max_turns: 30                  # 可选：默认为 30
-      scheduler_service: airflow_prod
-```
-
-**前置条件**：
-- `agent.yml` 中包含 `agent.services.schedulers` 配置段及 Airflow 凭据
-- 已安装 `datus-scheduler-airflow` 包（会自动拉取 `datus-scheduler-core`）
-
-### 工作原理
-
-```mermaid
-graph LR
-    A[chat agent] -->|task type=scheduler| B[SchedulerAgenticNode]
-    B --> C[LLM Function Calling]
-    C --> D[write_file / edit_file]
-    D --> E[submit_sql_job / submit_sparksql_job]
-    C --> F[trigger_scheduler_job]
-    C --> G[pause_job / resume_job]
-    C --> H[list_job_runs / get_run_log]
-```
-
-### 可用工具
-
-| 工具 | 说明 |
-|------|------|
-| `submit_sql_job` | 从 `.sql` 文件提交带 cron 表达式的定时 SQL 作业 |
-| `submit_sparksql_job` | 从 `.sql` 文件提交定时 SparkSQL 作业 |
-| `read_file` / `write_file` / `edit_file` | 读取、创建或更新定时作业使用的 SQL 文件 |
-| `trigger_scheduler_job` | 手动触发一次现有作业运行 |
-| `pause_job` | 暂停定时作业 |
-| `resume_job` | 恢复已暂停的作业 |
-| `delete_job` | 删除定时作业 |
-| `update_job` | 更新作业调度或配置 |
-| `get_scheduler_job` | 获取作业详情和当前状态 |
-| `list_scheduler_jobs` | 列出所有定时作业 |
-| `list_scheduler_connections` | 列出可用的 Airflow 连接 |
-| `list_job_runs` | 列出某作业的近期运行记录 |
-| `get_run_log` | 获取特定作业运行的日志 |
-
-### 输出格式
-
-```json
-{
-  "response": "已提交每日 SQL 作业 'daily_revenue'，每天早上 8:00 运行。",
-  "scheduler_result": {
-    "job_id": "daily_revenue_dag",
-    "status": "active",
-    "schedule": "0 8 * * *"
-  },
-  "tokens_used": 1580
-}
-```
-
-### 使用方式
-
-scheduler subagent 通常由聊天 agent 通过 `task(type="scheduler")` 自动调用，也可手动启动：
-
-```bash
-/scheduler 提交 /opt/sql/daily_revenue.sql 作为每天早上 8 点运行的定时作业，使用 postgres_prod 连接
-```
-
-也可以使用 `scheduler` 节点类创建自定义 subagent：
-
-```yaml
-agent:
-  agentic_nodes:
-    etl_scheduler:
-      node_class: scheduler
-      max_turns: 30
-```
+旧 Node 实现暂时保留在代码中，仅用于兼容。迁移说明见
+[BI Dashboard 节点（旧版兼容）](gen_dashboard.zh.md)和
+[Scheduler 节点（旧版兼容）](scheduler.zh.md)。
 
 ---
 
@@ -1029,18 +471,16 @@ agent:
 | subagent | 用途 | 输出 | 存储位置 | 关键特性 |
 |----------|------|------|----------|----------|
 | `gen_sql_summary` | 总结和分类 SQL 查询 | YAML（SQL 摘要） | `/data/reference_sql` | 主题树分类、自动上下文检索 |
-| `gen_semantic_model` | 从表生成语义模型 | YAML（语义模型） | `/data/semantic_models` | DDL 到 MetricFlow 模型、内置验证 |
-| `gen_metrics` | 从 SQL 生成指标 | YAML（指标） | `/data/semantic_models` | SQL 到 MetricFlow 指标、主题树支持 |
+| `semantic_modeling` | 创作语义模型和指标 | Dosi YAML | `/data/semantic_models` | 统一校验和完整 Knowledge Base 对账 |
 | `ask_metrics` | 回答已有指标问题 | Markdown 报告 | N/A | KPI 数值、趋势、分组结果、归因分析、不退回原始 SQL |
+| `ontology_analyst` | 基于 ontology 回答问题 | Markdown 报告 | N/A | 概念目录、按角色选路径、值域校验、明细查询、不退回原始 SQL |
 | `explore` | 只读数据探索 | 结构化上下文 | N/A | 严格只读、低轮数、三方向探索 |
 | `gen_sql` | 生成优化 SQL | SQL 查询 / SQL 文件 | N/A | 深度 SQL 专长、自动验证、支持文件输出 |
 | `gen_report` | 灵活报告生成 | 结构化报告 | N/A | 工具可配置、可扩展、自定义报告 subagent |
 | `gen_table` | 交互式建表 | DDL + 执行结果 | 数据库 | DDL 确认、CTAS 或自然语言建表 |
 | `gen_job` | 数据管道作业（单库 ETL + 跨库传输） | 作业 / 传输结果 | 源库 + 目标库 | DDL/DML 执行、通过 MigrationTargetMixin 做跨方言类型映射、`transfer_query_result`、源目标不同库时做轻量对账校验 |
 | `gen_skill` | 创建或优化 skill | skill 路径 | skills 目录 | 交互式编写、校验、加载现有 skill |
-| `gen_dashboard` | BI 仪表盘 CRUD（Superset、Grafana） | 仪表盘结果 | BI 平台 | 动态工具暴露、基于已就位 serving 数据、多平台支持 |
 | `gen_visual_report` | 自包含的可视化报告（叙事文档，查询提前烘焙） | `reports/<slug>/`（可执行 SQL + 执行结果 + 报告组件） | 项目根目录 | 按模块独立修改、可基于 metric 或自定义 SQL 生成、CLI 模式直接在浏览器中打开 |
-| `scheduler` | Airflow 作业生命周期管理 | 调度结果 | Airflow | 提交、监控、更新和排障 |
 
 **所有 subagent 的内置特性：**
 - 最小化配置（仅 `model` 和 `max_turns` 可选）

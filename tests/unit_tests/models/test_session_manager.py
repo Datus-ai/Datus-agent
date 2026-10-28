@@ -16,6 +16,7 @@ Tests cover:
 - SessionManager.session_exists: existence check against SQLite data
 - SessionManager.get_session_info: detailed session info retrieval
 - SessionManager.close_all_sessions: cache cleanup
+- SessionManager.save/load_context_state: durable occupancy measurement
 
 NO MOCK EXCEPT LLM. All objects are real backed by real SQLite in tmp_path.
 """
@@ -36,8 +37,192 @@ from datus.models.session_manager import (
     session_matches_agent,
 )
 from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
+from datus.storage.session_state import ContextState
+from datus.utils.async_utils import run_async
 from datus.utils.exceptions import DatusException
 from datus.utils.path_manager import DatusPathManager
+
+
+def _tool_content(call_id, duration, parent=None):
+    return {
+        "tool_call_id": call_id,
+        "parent_action_id": parent,
+        "parts": [
+            {
+                "type": "call-tool-result",
+                "payload": {
+                    "callToolId": call_id,
+                    "toolName": "execute_sql",
+                    "duration": duration,
+                    "shortDesc": "Done",
+                    "result": {"success": 1, "result": {"rows": 1}},
+                },
+            }
+        ],
+    }
+
+
+@pytest.mark.asyncio
+async def test_tool_contents_follow_rewind_rollback_clear_and_compaction(tmp_path):
+    manager = SessionManager(session_dir=str(tmp_path))
+    session_id = "chat_session_content_lifecycle"
+    session = manager.get_session(session_id)
+    for call_id, duration in [("first", 0.329), ("second", 2.5)]:
+        previous = manager.get_max_message_id(session_id)
+        await session.add_items(
+            [
+                {"role": "user", "content": call_id},
+                {"type": "function_call", "call_id": call_id, "name": "execute_sql", "arguments": "{}"},
+                {"type": "function_call_output", "call_id": call_id, "output": "{}"},
+            ]
+        )
+        manager.save_message_contents(session_id, {call_id: _tool_content(call_id, duration)}, previous)
+    rewound = manager.rewind_session(session_id, 1)
+    assert set(manager.get_tool_result_contents(rewound)) == {"first"}
+    assert manager.get_tool_result_contents(rewound)["first"]["duration"] == 0.329
+    checkpoint = manager.checkpoint_turn(session_id)
+    await session.add_items([{"type": "function_call_output", "call_id": "third", "output": "{}"}])
+    manager.save_message_contents(session_id, {"third": _tool_content("third", 1.25)}, checkpoint.max_message_id)
+    manager.rollback_turn(session_id, checkpoint)
+    assert set(manager.get_tool_result_contents(session_id)) == {"first", "second"}
+    await session.replace_items([{"role": "user", "content": "compacted"}])
+    assert manager.get_tool_result_contents(session_id) == {}
+    manager.clear_session(rewound)
+    assert manager.get_tool_result_contents(rewound) == {}
+
+
+@pytest.mark.asyncio
+async def test_nested_tool_contents_are_stored_with_the_outer_task_message(tmp_path):
+    manager = SessionManager(session_dir=str(tmp_path))
+    session_id = "chat_session_nested_contents"
+    session = manager.get_session(session_id)
+    await session.add_items(
+        [
+            {"role": "user", "content": "Run task"},
+            {"type": "function_call", "call_id": "outer", "name": "task", "arguments": "{}"},
+            {"type": "function_call_output", "call_id": "outer", "output": "{}"},
+        ]
+    )
+    records = {
+        "leaf": _tool_content("leaf", 0.125, "inner"),
+        "inner": _tool_content("inner", 1.5, "middle"),
+        "middle": _tool_content("middle", 2.5, "outer"),
+        "outer": _tool_content("outer", 3.5),
+        "orphan": _tool_content("orphan", 99),
+        "cycle": _tool_content("cycle", 1, "cycle"),
+    }
+    manager.save_message_contents(session_id, records)
+    results = manager.get_tool_result_contents(session_id)
+    assert results == {key: records[key]["parts"][0]["payload"] for key in ["leaf", "inner", "middle", "outer"]}
+    copied = manager.copy_session(session_id, "copied")
+    assert manager.get_tool_result_contents(copied) == results
+
+
+@pytest.mark.asyncio
+async def test_multiple_native_tool_contents_stay_out_of_user_messages(tmp_path):
+    manager = SessionManager(session_dir=str(tmp_path))
+    assert manager.get_tool_result_contents("missing_session") == {}
+    manager.save_message_contents("missing_session", {})
+    session_id = "chat_session_native_contents"
+    session = manager.get_session(session_id)
+    assert manager.get_tool_result_contents(session_id) == {}
+    items = [
+        {"role": "user", "content": "question"},
+        {
+            "role": "user",
+            "content": [{"type": "tool_result", "tool_use_id": call_id, "content": "{}"} for call_id in ["a", "b"]],
+        },
+    ]
+    await session.add_items(items)
+    records = {
+        "user": {"text": "question", "parts": [{"type": "markdown", "payload": {"content": "Original question"}}]},
+        "a": _tool_content("a", 0.125),
+        "b": _tool_content("b", 2.5),
+    }
+    manager.save_message_contents(session_id, records)
+    history = manager.get_session_messages(session_id)
+    assert history[0]["message_contents"] == records["user"]["parts"]
+    assert manager.get_tool_result_contents(session_id) == {
+        key: records[key]["parts"][0]["payload"] for key in ["a", "b"]
+    }
+    assert await session.get_items() == items
+    manager.save_message_contents(session_id, records)
+    with sqlite3.connect(os.path.join(manager.session_dir, f"{session_id}.db")) as conn:
+        saved = manager._read_message_contents(conn, session_id)
+    assert sorted(len(parts) for parts in saved.values()) == [1, 2]
+
+
+@pytest.mark.asyncio
+async def test_tool_contents_do_not_attach_to_previous_turns(tmp_path):
+    manager = SessionManager(session_dir=str(tmp_path))
+    session_id = "chat_session_old_contents"
+    session = manager.get_session(session_id)
+    await session.add_items([{"type": "function_call_output", "call_id": "same_id", "output": "{}"}])
+    boundary = manager.get_max_message_id(session_id)
+    manager.save_message_contents(session_id, {"same_id": _tool_content("same_id", 5)}, boundary)
+    assert manager.get_tool_result_contents(session_id) == {}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "{",
+        "null",
+        "42",
+        '"text"',
+        "{}",
+        '[null,42,"text",[]]',
+        '[{"type":"call-tool-result"}]',
+        '[{"type":"call-tool-result","payload":null}]',
+        '[{"type":"call-tool-result","payload":[]}]',
+        '[{"type":"call-tool-result","payload":{"callToolId":[]}}]',
+        '[{"type":"call-tool-result","payload":{"callToolId":{}}}]',
+        '[{"type":"call-tool-result","payload":{"callToolId":42}}]',
+    ],
+)
+async def test_corrupt_tool_content_rows_do_not_hide_valid_results(tmp_path, raw):
+    manager = SessionManager(session_dir=str(tmp_path))
+    session_id = "chat_session_corrupt_contents"
+    session = manager.get_session(session_id)
+    await session.add_items(
+        [
+            {"type": "function_call_output", "call_id": "valid", "output": "{}"},
+            {"type": "function_call_output", "call_id": "corrupt", "output": "{}"},
+        ]
+    )
+    record = _tool_content("valid", 0.329)
+    manager.save_message_contents(session_id, {"valid": record})
+    with sqlite3.connect(os.path.join(manager.session_dir, f"{session_id}.db")) as conn:
+        message_id = conn.execute("SELECT MAX(id) FROM agent_messages WHERE session_id = ?", (session_id,)).fetchone()[
+            0
+        ]
+        conn.execute("INSERT INTO chat_message_contents VALUES (?, ?, ?)", (session_id, message_id, raw))
+    assert manager.get_tool_result_contents(session_id) == {"valid": record["parts"][0]["payload"]}
+
+
+@pytest.mark.asyncio
+async def test_mixed_tool_content_parts_preserve_valid_payloads(tmp_path):
+    manager = SessionManager(session_dir=str(tmp_path))
+    session_id = "chat_session_mixed_contents"
+    await manager.get_session(session_id).add_items(
+        [{"type": "function_call_output", "call_id": "valid", "output": "{}"}]
+    )
+    record = _tool_content("valid", 0.329)
+    record["parts"] = [
+        None,
+        42,
+        [],
+        {"type": "call-tool-result", "payload": None},
+        *record["parts"],
+        {"type": "call-tool-result", "payload": {"callToolId": ""}},
+        {"type": "markdown", "payload": {"callToolId": "ignored"}},
+    ]
+    manager.save_message_contents(session_id, {"valid": record})
+    assert manager.get_tool_result_contents(session_id) == {
+        "valid": _tool_content("valid", 0.329)["parts"][0]["payload"]
+    }
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -225,6 +410,101 @@ class TestSessionManagerExecution:
         session_via_create = sm.create_session("alias-test")
         session_via_get = sm.get_session("alias-test")
         assert session_via_create is session_via_get
+
+    def test_rollback_turn_removes_messages_structure_and_usage_after_checkpoint(self, sm):
+        import asyncio
+
+        session_id = "rollback-unanswered"
+        session = sm.get_session(session_id)
+        asyncio.run(
+            session.add_items(
+                [
+                    {"role": "user", "content": "kept question"},
+                    {"role": "assistant", "content": "kept answer"},
+                ]
+            )
+        )
+        checkpoint = sm.checkpoint_turn(session_id)
+
+        sm.save_message_contents(
+            session_id,
+            {"kept": {"text": "kept question", "parts": [{"type": "markdown", "payload": {"content": "kept"}}]}},
+        )
+
+        asyncio.run(session.add_items([{"role": "user", "content": "cancelled question"}]))
+        sm.save_message_contents(
+            session_id,
+            {
+                "cancelled": {
+                    "text": "cancelled question",
+                    "parts": [{"type": "markdown", "payload": {"content": "cancelled"}}],
+                }
+            },
+            previous_message_id=checkpoint.max_message_id,
+        )
+        db_path = os.path.join(sm.session_dir, f"{session_id}.db")
+        with sqlite3.connect(db_path) as conn:
+            conn.execute(
+                "INSERT INTO turn_usage "
+                "(session_id, branch_id, user_turn_number, total_tokens) VALUES (?, 'main', 2, 99)",
+                (session_id,),
+            )
+            conn.execute(SessionManager._RUNNING_TURN_USAGE_DDL)
+            conn.execute(
+                "INSERT INTO running_turn_usage "
+                "(session_id, user_turn_number, cumulative_json, context_length) "
+                "VALUES (?, 2, '{}', 1000)",
+                (session_id,),
+            )
+            conn.execute(SessionManager._USER_MESSAGE_CONTEXT_DDL)
+            conn.execute(
+                "INSERT INTO user_message_context (session_id, user_turn_number, context_json) VALUES (?, 2, '{}')",
+                (session_id,),
+            )
+            conn.commit()
+
+        sm.rollback_turn(session_id, checkpoint)
+
+        assert asyncio.run(session.get_items()) == [
+            {"role": "user", "content": "kept question"},
+            {"role": "assistant", "content": "kept answer"},
+        ]
+        with sqlite3.connect(db_path) as conn:
+            contents = conn.execute(
+                "SELECT contents_json FROM chat_message_contents WHERE session_id = ?", (session_id,)
+            ).fetchall()
+            assert len(contents) == 1
+            assert json.loads(contents[0][0]) == [{"type": "markdown", "payload": {"content": "kept"}}]
+            assert (
+                conn.execute("SELECT COUNT(*) FROM agent_messages WHERE session_id = ?", (session_id,)).fetchone()[0]
+                == 2
+            )
+            assert (
+                conn.execute("SELECT COUNT(*) FROM message_structure WHERE session_id = ?", (session_id,)).fetchone()[0]
+                == 2
+            )
+            assert (
+                conn.execute(
+                    "SELECT COUNT(*) FROM message_structure s "
+                    "LEFT JOIN agent_messages m ON m.id = s.message_id WHERE m.id IS NULL"
+                ).fetchone()[0]
+                == 0
+            )
+            assert (
+                conn.execute("SELECT COUNT(*) FROM turn_usage WHERE session_id = ?", (session_id,)).fetchone()[0] == 0
+            )
+            assert (
+                conn.execute("SELECT COUNT(*) FROM running_turn_usage WHERE session_id = ?", (session_id,)).fetchone()[
+                    0
+                ]
+                == 0
+            )
+            assert (
+                conn.execute(
+                    "SELECT COUNT(*) FROM user_message_context WHERE session_id = ?", (session_id,)
+                ).fetchone()[0]
+                == 0
+            )
 
     # -- clear_session --
 
@@ -441,6 +721,32 @@ class TestSessionManagerExecution:
         assert info["latest_user_message"] == "Show me an example."
         assert "file_size" in info
         assert info["file_size"] > 0
+
+    def test_get_session_info_orders_user_messages_within_one_second(self, sm):
+        """Messages of one turn share a timestamp, and the scan still has to order them.
+
+        SQLite's ``CURRENT_TIMESTAMP`` has one-second resolution, so a real
+        turn writes every row with the same value. Ordering on the timestamp
+        alone leaves them tied, and the reverse scan that looks for the opening
+        message walks forwards instead — swapping first and latest.
+        """
+        session_id = "same-second"
+        sm.get_session(session_id)
+        _insert_messages(
+            sm.session_dir,
+            session_id,
+            [
+                {"role": "user", "content": "FIRST", "created_at": "2025-01-01T00:00:00"},
+                {"role": "assistant", "content": "answer one", "created_at": "2025-01-01T00:00:00"},
+                {"role": "user", "content": "SECOND", "created_at": "2025-01-01T00:00:00"},
+                {"role": "assistant", "content": "answer two", "created_at": "2025-01-01T00:00:00"},
+            ],
+        )
+
+        info = sm.get_session_info(session_id)
+
+        assert info["first_user_message"] == "FIRST"
+        assert info["latest_user_message"] == "SECOND"
 
     def test_get_session_info_db_path(self, sm):
         """get_session_info returns the correct db_path."""
@@ -1349,6 +1655,298 @@ class TestGetSessionMessages:
         assert assistant_groups, "Anthropic-format assistant turn missing from resume payload"
         assert assistant_groups[0]["content"] == "Hi! 👋 Welcome to Datus."
 
+    def test_native_tool_use_and_result_resume(self, sm):
+        """Claude-native ``tool_use`` blocks and their ``tool_result`` user reply
+        are restored into the assistant group (not flushed as a user bubble).
+
+        Covers the resume dispatch for ``tool_use`` inside assistant content and
+        a ``tool_result``-only user message paired back to its in-flight call.
+        """
+        session_id = f"test_native_tool_{uuid.uuid4().hex[:8]}"
+        sm.get_session(session_id)
+        db_path = os.path.join(sm.session_dir, f"{session_id}.db")
+
+        with sqlite3.connect(db_path) as conn:
+            conn.execute("INSERT OR IGNORE INTO agent_sessions (session_id) VALUES (?)", (session_id,))
+            rows = [
+                (
+                    json.dumps({"role": "user", "content": [{"type": "text", "text": "count rows"}]}),
+                    "2026-05-21T00:00:00",
+                ),
+                (
+                    json.dumps(
+                        {
+                            "role": "assistant",
+                            "content": [
+                                {"type": "text", "text": "Let me query."},
+                                {
+                                    "type": "tool_use",
+                                    "id": "toolu_1",
+                                    "name": "execute_sql",
+                                    "input": {"sql": "SELECT COUNT(*) FROM t"},
+                                },
+                            ],
+                        }
+                    ),
+                    "2026-05-21T00:00:01",
+                ),
+                (
+                    json.dumps(
+                        {
+                            "role": "user",
+                            "content": [
+                                {
+                                    "type": "tool_result",
+                                    "tool_use_id": "toolu_1",
+                                    "content": [{"type": "text", "text": "{'rows': 30000}"}],
+                                }
+                            ],
+                        }
+                    ),
+                    "2026-05-21T00:00:02",
+                ),
+                (
+                    json.dumps({"role": "assistant", "content": [{"type": "text", "text": "There are 30000 rows."}]}),
+                    "2026-05-21T00:00:03",
+                ),
+            ]
+            conn.executemany(
+                "INSERT INTO agent_messages (session_id, message_data, created_at) VALUES (?, ?, ?)",
+                [(session_id, data, ts) for data, ts in rows],
+            )
+            conn.commit()
+
+        messages = sm.get_session_messages(session_id)
+
+        # The tool_result-only user message must NOT surface as a user bubble.
+        user_messages = [m for m in messages if m["role"] == "user"]
+        assert len(user_messages) == 1
+        assert user_messages[0]["content"] == "count rows"
+
+        assistant_groups = [m for m in messages if m["role"] == "assistant"]
+        assert assistant_groups
+        actions = assistant_groups[0].get("actions", [])
+        # A PROCESSING tool_use action and its paired SUCCESS result.
+        tool_call = next(a for a in actions if a.action_id == "toolu_1")
+        assert tool_call.action_type == "execute_sql"
+        complete = next(a for a in actions if a.action_id == "complete_toolu_1")
+        assert complete.status == ActionStatus.SUCCESS
+        assert complete.output == {"rows": 30000}
+
+    def test_native_max_turn_seal_does_not_hide_last_assistant_text(self, sm):
+        """The replay-only max-turn seal follows tool_result in SQLite, but
+        history rendering must keep the model's preceding complete text."""
+        session_id = f"test_native_max_turn_{uuid.uuid4().hex[:8]}"
+        sm.get_session(session_id)
+        db_path = os.path.join(sm.session_dir, f"{session_id}.db")
+        full_text = "First fragment. Second fragment."
+
+        rows = [
+            ({"role": "user", "content": [{"type": "text", "text": "probe"}]}, "2026-05-21T00:00:00"),
+            (
+                {
+                    "role": "assistant",
+                    "content": [
+                        {"type": "text", "text": full_text},
+                        {"type": "tool_use", "id": "toolu_last", "name": "read_query", "input": {}},
+                    ],
+                },
+                "2026-05-21T00:00:01",
+            ),
+            (
+                {
+                    "role": "user",
+                    "content": [{"type": "tool_result", "tool_use_id": "toolu_last", "content": "result"}],
+                },
+                "2026-05-21T00:00:02",
+            ),
+            (
+                {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": "[Agent stopped after reaching max_turns=1; work may remain incomplete.]",
+                        }
+                    ],
+                },
+                "2026-05-21T00:00:03",
+            ),
+        ]
+        with sqlite3.connect(db_path) as conn:
+            conn.execute("INSERT OR IGNORE INTO agent_sessions (session_id) VALUES (?)", (session_id,))
+            conn.executemany(
+                "INSERT INTO agent_messages (session_id, message_data, created_at) VALUES (?, ?, ?)",
+                [(session_id, json.dumps(data), timestamp) for data, timestamp in rows],
+            )
+            conn.commit()
+
+        assistant = next(message for message in sm.get_session_messages(session_id) if message["role"] == "assistant")
+        assert assistant["content"] == full_text
+        assert "max_turns" not in assistant["content"]
+
+    def test_native_resume_joins_all_text_blocks_from_last_assistant_message(self, sm):
+        """Anthropic may interleave multiple text blocks with tool_use blocks;
+        resume must reconstruct the entire assistant message, not its last block."""
+        import asyncio
+
+        session_id = f"test_native_multi_text_{uuid.uuid4().hex[:8]}"
+        session = sm.get_session(session_id)
+        asyncio.run(
+            session.add_items(
+                [
+                    {"role": "user", "content": [{"type": "text", "text": "probe"}]},
+                    {
+                        "role": "assistant",
+                        "content": [
+                            {"type": "text", "text": "First fragment."},
+                            {"type": "tool_use", "id": "toolu_multi", "name": "read_query", "input": {}},
+                            {"type": "text", "text": "Second fragment."},
+                        ],
+                    },
+                    {
+                        "role": "user",
+                        "content": [{"type": "tool_result", "tool_use_id": "toolu_multi", "content": "result"}],
+                    },
+                    {
+                        "role": "assistant",
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": "[Agent stopped after reaching max_turns=1; work may remain incomplete.]",
+                            }
+                        ],
+                    },
+                ]
+            )
+        )
+
+        assistant = next(message for message in sm.get_session_messages(session_id) if message["role"] == "assistant")
+        assert assistant["content"] == "First fragment.\nSecond fragment."
+
+    def test_native_server_web_tool_result_resume(self, sm):
+        """A ``server_tool_use`` block plus inline ``web_search_tool_result`` in
+        the same assistant message restore a tool call and its result."""
+        session_id = f"test_native_web_{uuid.uuid4().hex[:8]}"
+        sm.get_session(session_id)
+        db_path = os.path.join(sm.session_dir, f"{session_id}.db")
+
+        with sqlite3.connect(db_path) as conn:
+            conn.execute("INSERT OR IGNORE INTO agent_sessions (session_id) VALUES (?)", (session_id,))
+            assistant_msg = {
+                "role": "assistant",
+                "content": [
+                    {"type": "server_tool_use", "id": "srv_1", "name": "web_search", "input": {"query": "datus"}},
+                    {
+                        "type": "web_search_tool_result",
+                        "tool_use_id": "srv_1",
+                        "content": [{"type": "text", "text": "search hits"}],
+                    },
+                    {"type": "text", "text": "Found it."},
+                ],
+            }
+            conn.execute(
+                "INSERT INTO agent_messages (session_id, message_data, created_at) VALUES (?, ?, ?)",
+                (
+                    session_id,
+                    json.dumps({"role": "user", "content": [{"type": "text", "text": "search"}]}),
+                    "2026-05-21T00:00:00",
+                ),
+            )
+            conn.execute(
+                "INSERT INTO agent_messages (session_id, message_data, created_at) VALUES (?, ?, ?)",
+                (session_id, json.dumps(assistant_msg), "2026-05-21T00:00:01"),
+            )
+            conn.commit()
+
+        messages = sm.get_session_messages(session_id)
+        assistant_groups = [m for m in messages if m["role"] == "assistant"]
+        assert assistant_groups
+        actions = assistant_groups[0].get("actions", [])
+        srv_call = next(a for a in actions if a.action_id == "srv_1")
+        assert srv_call.action_type == "web_search"
+        assert any(a.action_id == "complete_srv_1" and a.status == ActionStatus.SUCCESS for a in actions)
+
+
+class TestNativeToolHelpers:
+    """Direct unit tests for SessionManager native-tool restore helpers."""
+
+    def test_restore_native_tool_call_builds_processing_action(self, sm):
+        actions: list = []
+        progress: list = []
+        sm._restore_native_tool_call(
+            {"id": "t1", "name": "execute_sql", "input": {"sql": "SELECT 1"}},
+            actions,
+            progress,
+            "2026-05-21T00:00:00",
+        )
+        assert len(actions) == 1
+        assert actions[0].action_id == "t1"
+        assert actions[0].status == ActionStatus.PROCESSING
+        assert actions[0].input["arguments"] == json.dumps({"sql": "SELECT 1"}, ensure_ascii=False)
+        assert progress and progress[0].startswith("✓ Tool call: execute_sql")
+
+    def test_restore_native_tool_call_unserializable_input_defaults_to_empty(self, sm):
+        """A tool input that json.dumps cannot serialize falls back to ``"{}"``
+        instead of crashing the resume."""
+
+        class _Unserializable:
+            pass
+
+        actions: list = []
+        sm._restore_native_tool_call(
+            {"id": "t1", "name": "fetch", "input": {"bad": _Unserializable()}},
+            actions,
+            [],
+            None,
+        )
+        assert actions[0].input["arguments"] == "{}"
+
+    def test_restore_native_tool_call_string_input_and_defaults(self, sm):
+        """A pre-serialized string input is kept verbatim; missing id/created_at
+        fall back to a generated uuid and now()."""
+        actions: list = []
+        sm._restore_native_tool_call({"input": "raw-args"}, actions, [], None)
+        assert actions[0].action_type == "unknown"
+        assert actions[0].input["arguments"] == "raw-args"
+        assert actions[0].action_id  # generated uuid
+
+    def test_attach_native_tool_result_pairs_by_id(self, sm):
+        actions: list = []
+        sm._restore_native_tool_call({"id": "t1", "name": "fetch", "input": {}}, actions, [], None)
+        sm._attach_native_tool_result(actions, "t1", [{"type": "text", "text": "{'k': 1}"}], None)
+        complete = actions[-1]
+        assert complete.action_id == "complete_t1"
+        assert complete.status == ActionStatus.SUCCESS
+        assert complete.output == {"k": 1}
+
+    def test_attach_native_tool_result_falls_back_to_recent_when_no_id(self, sm):
+        actions: list = []
+        sm._restore_native_tool_call({"id": "t1", "name": "fetch", "input": {}}, actions, [], None)
+        sm._attach_native_tool_result(actions, None, "plain string result", None)
+        complete = actions[-1]
+        assert complete.action_id == "complete_t1"
+        assert complete.output == {"result": "plain string result"}
+
+    def test_attach_native_tool_result_noop_without_actions(self, sm):
+        actions: list = []
+        sm._attach_native_tool_result(actions, "t1", "x", None)
+        assert actions == []
+
+    def test_attach_native_tool_result_noop_when_no_match(self, sm):
+        """An id with no matching PROCESSING action appends nothing."""
+        actions: list = []
+        sm._restore_native_tool_call({"id": "t1", "name": "fetch", "input": {}}, actions, [], None)
+        sm._attach_native_tool_result(actions, "nonexistent", "x", None)
+        assert len(actions) == 1  # only the original tool_use
+
+    def test_attach_native_tool_result_serializes_dict_content(self, sm):
+        """Non-list, non-str content is JSON-dumped before parsing."""
+        actions: list = []
+        sm._restore_native_tool_call({"id": "t1", "name": "fetch", "input": {}}, actions, [], None)
+        sm._attach_native_tool_result(actions, "t1", {"nested": "value"}, None)
+        assert actions[-1].output == {"nested": "value"}
+
 
 # ===========================================================================
 # TestParseOutputFromAction (migrated from test_session_loader.py)
@@ -1546,7 +2144,16 @@ class TestGetDetailedUsage:
                 "INSERT INTO turn_usage (session_id, user_turn_number, requests, input_tokens, "
                 "output_tokens, total_tokens, input_tokens_details, output_tokens_details) "
                 "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                (session_id, 1, 2, 1000, 200, 1200, '{"cached_tokens": 500}', '{"reasoning_tokens": 10}'),
+                (
+                    session_id,
+                    1,
+                    2,
+                    1000,
+                    200,
+                    1200,
+                    '{"cached_tokens": 500, "cache_write_tokens": 125}',
+                    '{"reasoning_tokens": 10}',
+                ),
             )
             conn.commit()
 
@@ -1556,9 +2163,13 @@ class TestGetDetailedUsage:
         assert result["total"]["output_tokens"] == 200
         assert result["total"]["total_tokens"] == 1200
         assert result["total"]["cached_tokens"] == 500
+        assert result["total"]["cache_write_tokens"] == 125
         assert result["total"]["requests"] == 2
         assert len(result["turns"]) == 1
-        assert result["turns"][0]["input_tokens_details"] == {"cached_tokens": 500}
+        assert result["turns"][0]["input_tokens_details"] == {
+            "cached_tokens": 500,
+            "cache_write_tokens": 125,
+        }
         assert result["turns"][0]["output_tokens_details"] == {"reasoning_tokens": 10}
 
     def test_multiple_turns_aggregated(self, sm):
@@ -1839,6 +2450,89 @@ class TestCopySession:
         assert [it.get("content") for it in read_items] == ["Q1", "A1", "Q2", "A2"]
 
 
+class TestUserMessageContext:
+    """save_user_message_context + get_session_messages @-context round-trip."""
+
+    def _seed_turn(self, sm_custom, session_id, user_text="gen metrics from raw_customers"):
+        import asyncio
+
+        db_path = os.path.join(sm_custom.session_dir, f"{session_id}.db")
+        session = AdvancedSQLiteSession(session_id=session_id, db_path=db_path, create_tables=True)
+        asyncio.run(
+            session.add_items(
+                [
+                    {"role": "user", "content": user_text},
+                    {"role": "assistant", "content": "done"},
+                ]
+            )
+        )
+
+    def test_round_trip_attaches_at_context_to_user_bubble(self, sm_custom):
+        session_id = "chat_session_atctx01"
+        self._seed_turn(sm_custom, session_id)
+        sm_custom.save_user_message_context(
+            session_id,
+            {"table_paths": ["default_catalog.sample_shop.raw_customers"], "metric_paths": ["m/gmv"]},
+        )
+        users = [m for m in sm_custom.get_session_messages(session_id) if m.get("role") == "user"]
+        assert len(users) == 1
+        assert users[0]["at_context"]["table_paths"] == ["default_catalog.sample_shop.raw_customers"]
+        assert users[0]["at_context"]["metric_paths"] == ["m/gmv"]
+
+    def test_no_context_leaves_user_bubble_without_at_context(self, sm_custom):
+        session_id = "chat_session_atctx02"
+        self._seed_turn(sm_custom, session_id)
+        # Empty context is a no-op — nothing persisted.
+        sm_custom.save_user_message_context(session_id, {})
+        users = [m for m in sm_custom.get_session_messages(session_id) if m.get("role") == "user"]
+        assert len(users) == 1
+        assert "at_context" not in users[0]
+
+    def test_context_maps_to_correct_turn(self, sm_custom):
+        """A second turn's context must not bleed onto the first turn's bubble."""
+        import asyncio
+
+        session_id = "chat_session_atctx03"
+        db_path = os.path.join(sm_custom.session_dir, f"{session_id}.db")
+        session = AdvancedSQLiteSession(session_id=session_id, db_path=db_path, create_tables=True)
+        asyncio.run(
+            session.add_items([{"role": "user", "content": "turn one"}, {"role": "assistant", "content": "a1"}])
+        )
+        # No context for turn 1.
+        asyncio.run(
+            session.add_items([{"role": "user", "content": "turn two"}, {"role": "assistant", "content": "a2"}])
+        )
+        sm_custom.save_user_message_context(session_id, {"table_paths": ["c.d.t2"]})
+
+        users = [m for m in sm_custom.get_session_messages(session_id) if m.get("role") == "user"]
+        assert len(users) == 2
+        assert "at_context" not in users[0]
+        assert users[1]["at_context"]["table_paths"] == ["c.d.t2"]
+
+    def test_missing_side_table_is_graceful(self, sm_custom):
+        """Sessions predating the feature (no side table) read back cleanly."""
+        session_id = "chat_session_atctx04"
+        self._seed_turn(sm_custom, session_id)
+        users = [m for m in sm_custom.get_session_messages(session_id) if m.get("role") == "user"]
+        assert len(users) == 1
+        assert "at_context" not in users[0]
+
+    def test_guard_skips_when_no_new_turn(self, sm_custom):
+        """previous_turn_number == current max => run added no turn => no write."""
+        session_id = "chat_session_atctx05"
+        self._seed_turn(sm_custom, session_id)
+        current = sm_custom.get_max_user_turn_number(session_id)
+        assert current >= 1
+        # Simulate a run that persisted no new user turn: guard must skip.
+        sm_custom.save_user_message_context(session_id, {"table_paths": ["c.d.t"]}, previous_turn_number=current)
+        users = [m for m in sm_custom.get_session_messages(session_id) if m.get("role") == "user"]
+        assert "at_context" not in users[0]
+        # A genuinely new turn (previous < max) writes.
+        sm_custom.save_user_message_context(session_id, {"table_paths": ["c.d.t"]}, previous_turn_number=current - 1)
+        users = [m for m in sm_custom.get_session_messages(session_id) if m.get("role") == "user"]
+        assert users[0]["at_context"]["table_paths"] == ["c.d.t"]
+
+
 # ---------------------------------------------------------------------------
 # Module-level helpers: extract_agent_from_session_id, session_matches_agent
 # ---------------------------------------------------------------------------
@@ -1853,7 +2547,7 @@ class TestExtractAgentFromSessionId:
 
     def test_subagent_prefix(self):
         """Subagent-prefixed ids return the subagent name."""
-        assert extract_agent_from_session_id("gen_metrics_session_abc123") == "gen_metrics"
+        assert extract_agent_from_session_id("sample_agent_session_abc123") == "sample_agent"
 
     def test_multi_underscore_prefix(self):
         """Splits on the last '_session_' so underscores in the agent name survive."""
@@ -1882,22 +2576,22 @@ class TestSessionMatchesAgent:
 
     def test_subagent_match(self):
         """Subagent session matches its own name."""
-        assert session_matches_agent("gen_metrics_session_1", "gen_metrics") is True
+        assert session_matches_agent("sample_agent_session_1", "sample_agent") is True
 
     def test_subagent_does_not_match_chat(self):
         """Subagent session must not surface under the chat filter."""
-        assert session_matches_agent("gen_metrics_session_1", None) is False
-        assert session_matches_agent("gen_metrics_session_1", "chat") is False
+        assert session_matches_agent("sample_agent_session_1", None) is False
+        assert session_matches_agent("sample_agent_session_1", "chat") is False
 
     def test_chat_does_not_match_subagent(self):
         """Chat session must not surface under a subagent filter."""
-        assert session_matches_agent("chat_session_1", "gen_metrics") is False
+        assert session_matches_agent("chat_session_1", "sample_agent") is False
 
     def test_legacy_session_matches_chat(self):
         """Legacy prefix-less sessions are visible to the chat agent."""
         assert session_matches_agent("legacy-id", None) is True
         assert session_matches_agent("legacy-id", "chat") is True
-        assert session_matches_agent("legacy-id", "gen_metrics") is False
+        assert session_matches_agent("legacy-id", "sample_agent") is False
 
 
 # ===========================================================================
@@ -1987,6 +2681,30 @@ class TestSystemPromptSnapshot:
         assert not os.path.exists(self._path(sm_custom, session_id))
         assert sm_custom.load_system_prompt_snapshot(session_id) is None
 
+    def test_delete_session_drops_the_legacy_state_file(self, tmp_path):
+        """A deleted conversation must not leave its plan-mode payload on disk.
+
+        Sessions predating ``session_meta`` keep plan-mode state — including
+        ``plan_file_path`` — in ``{project_data_dir}/state/{session_id}.json``,
+        which lives outside ``session_dir`` and so needs deleting by name.
+        """
+        from datus.utils.path_manager import DatusPathManager
+
+        pm = DatusPathManager(datus_home=tmp_path / "home", project_name="proj")
+        manager = SessionManager(path_manager=pm)
+        session_id = "chat_session_legacystate"
+        manager.get_session(session_id)
+        state_path = pm.agent_state_path(session_id)
+        state_path.write_text(
+            json.dumps({"plan_mode": {"plan_mode_active": True, "plan_file_path": "./.datus/plans/ab12.md"}}),
+            encoding="utf-8",
+        )
+
+        manager.delete_session(session_id)
+
+        assert not state_path.exists()
+        manager.close_all_sessions()
+
     def test_clear_session_drops_snapshot(self, sm_custom):
         """Clearing history is a session rebuild: the frozen prompt must go."""
         session_id = "chat_session_clear"
@@ -2011,3 +2729,298 @@ class TestSystemPromptSnapshot:
         sm_custom.save_system_prompt_snapshot("chat_session_tmp", "P", dict(self.META))
         leftovers = [f for f in os.listdir(sm_custom.session_dir) if f.endswith(".tmp")]
         assert leftovers == []
+
+
+class TestContextStatePersistence:
+    """save/load_context_state: the durable occupancy measurement."""
+
+    def _enable_state_table(self, sm_custom, session_id):
+        """Materialise ``session_meta`` through the public writer."""
+        sm_custom.save_context_state(session_id, ContextState(500))
+
+    def test_writing_a_state_never_creates_the_session_database(self, sm_custom):
+        """No occupancy write may invent a session that ``list_sessions`` reports.
+
+        ``sqlite3.connect`` creates a missing file, and session discovery is
+        purely ``*.db`` filenames — so writing state for an absent session
+        would conjure a session out of nothing.
+        """
+        sm_custom.save_context_state("state_ghost", ContextState(400))
+
+        assert "state_ghost" not in sm_custom.list_sessions()
+        assert not os.path.exists(os.path.join(sm_custom.session_dir, "state_ghost.db"))
+        assert sm_custom.load_context_state("state_ghost") is None
+
+    def test_clearing_an_unknown_session_creates_nothing(self, sm_custom):
+        """``clear_session`` resets occupancy, which must stay a no-op here."""
+        sm_custom.clear_session("state_absent")
+
+        assert sm_custom.list_sessions() == []
+        assert not os.path.exists(os.path.join(sm_custom.session_dir, "state_absent.db"))
+
+    def test_a_rejected_write_is_logged_and_keeps_the_stored_state(self, sm_custom):
+        """A failing write must not propagate through the callers' bookkeeping.
+
+        ``AgenticNode.clear_session`` and the post-response persistence both
+        call through here; a locked or read-only database is an operational
+        condition, not a reason to abort the turn.
+        """
+        session_id = "state_rejected"
+        sm_custom.get_session(session_id)
+        self._enable_state_table(sm_custom, session_id)
+        db_path = os.path.join(sm_custom.session_dir, f"{session_id}.db")
+        with sqlite3.connect(db_path) as conn:
+            conn.execute(
+                "CREATE TRIGGER reject_state BEFORE INSERT ON session_meta "
+                "BEGIN SELECT RAISE(ABORT, 'state rejected'); END"
+            )
+
+        sm_custom.save_context_state(session_id, ContextState(0))
+
+        assert sm_custom.load_context_state(session_id) == ContextState(500)
+
+    def test_clear_session_does_not_surface_a_rejected_state_write(self, sm_custom):
+        """History clearing completes even when the occupancy reset fails."""
+        session_id = "state_reject_clear"
+        session = sm_custom.get_session(session_id)
+        run_async(session.add_items([{"role": "user", "content": "hello"}]))
+        self._enable_state_table(sm_custom, session_id)
+        db_path = os.path.join(sm_custom.session_dir, f"{session_id}.db")
+        with sqlite3.connect(db_path) as conn:
+            conn.execute(
+                "CREATE TRIGGER reject_state_clear BEFORE INSERT ON session_meta "
+                "BEGIN SELECT RAISE(ABORT, 'state rejected'); END"
+            )
+
+        sm_custom.clear_session(session_id)
+
+        assert _count_messages(sm_custom.session_dir, session_id) == 0
+
+
+def test_get_session_messages_hides_the_mid_turn_resume_instruction(sm):
+    """A mid-turn compaction closes the rewritten history with a synthetic
+    ``[DATUS_COMPACT_RESUME]`` user message so the model keeps working. It is
+    not something the user typed and must not render as a user bubble."""
+    import asyncio
+
+    from datus.agent.node.compact_prompts import build_mid_turn_resume_message
+
+    session_id = f"test_resume_marker_{uuid.uuid4().hex[:8]}"
+    session = sm.get_session(session_id)
+    asyncio.run(
+        session.add_items(
+            [
+                {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "analyse refunds"}]},
+                {"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "## Summary"}]},
+                {
+                    "type": "message",
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": build_mid_turn_resume_message()}],
+                },
+                {"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "final answer"}]},
+            ]
+        )
+    )
+
+    messages = sm.get_session_messages(session_id)
+    user_texts = [m["content"] for m in messages if m["role"] == "user"]
+    assert user_texts == ["analyse refunds"]
+    assert not any("DATUS_COMPACT_RESUME" in json.dumps(m, default=str) for m in messages)
+
+
+class TestSessionTitleAcrossSessionRewrites:
+    """The recorded title outlives a compact, follows a copy, and resets on ``/clear``.
+
+    Listing a session shows its first user message. A major compact deletes the
+    history that message lived in, so the title is recorded when it arrives and
+    read back from ``session_meta``. Every path that builds a new session from
+    an old one has to carry that row, or the bug reappears one step later.
+    """
+
+    def _compacted_session(self, sm, session_id, opening_message):
+        """A session a major compact reduced to a single assistant recap."""
+        import asyncio
+
+        session = sm.get_session(session_id)
+        asyncio.run(session.add_items([{"role": "user", "content": opening_message}]))
+        asyncio.run(session.replace_items([{"role": "assistant", "content": "Recap of the conversation."}]))
+        return session
+
+    def test_clearing_history_lets_the_next_message_rename_the_session(self, sm_custom):
+        """``/clear`` restarts the conversation, so the old opening no longer describes it."""
+        import asyncio
+
+        session_id = "chat_session_cleared"
+        session = sm_custom.get_session(session_id)
+        asyncio.run(session.add_items([{"role": "user", "content": "How many buses ran today?"}]))
+
+        sm_custom.clear_session(session_id)
+        asyncio.run(session.add_items([{"role": "user", "content": "Unrelated new topic"}]))
+
+        assert sm_custom.get_session_info(session_id)["first_user_message"] == "Unrelated new topic"
+
+    def test_copying_a_compacted_session_carries_its_title(self, sm_custom):
+        """Switching node type copies a session whose user rows a compact removed."""
+        source_id = "chat_session_tocopy"
+        self._compacted_session(sm_custom, source_id, "How many buses ran today?")
+
+        new_id = sm_custom.copy_session(source_id, "gen_sql")
+
+        assert sm_custom.get_session_info(new_id)["first_user_message"] == "How many buses ran today?"
+
+    def test_rewinding_a_compacted_session_carries_its_title(self, sm_custom):
+        """A rewind keeps the conversation's opening turn, so it keeps its name."""
+        source_id = "chat_session_torewind"
+        self._compacted_session(sm_custom, source_id, "How many buses ran today?")
+
+        new_id = sm_custom.rewind_session(source_id, up_to_user_turn=1)
+
+        assert sm_custom.get_session_info(new_id)["first_user_message"] == "How many buses ran today?"
+
+    def test_copying_a_session_that_never_recorded_a_title_still_works(self, sm_custom):
+        """Sessions older than ``session_meta`` have no row to carry."""
+        source_id = "chat_session_legacycopy"
+        sm_custom.get_session(source_id)
+        _insert_messages(sm_custom.session_dir, source_id, [{"role": "user", "content": "What is SQL?"}])
+
+        new_id = sm_custom.copy_session(source_id, "gen_sql")
+
+        assert sm_custom.get_session_info(new_id)["first_user_message"] == "What is SQL?"
+
+    def test_a_derived_session_can_still_rewrite_its_history(self, sm_custom):
+        """Whatever ``copy_session``/``rewind_session`` cache has to be a Datus session.
+
+        Every compact path calls ``replace_items`` on the object ``get_session``
+        hands back, and ``/clear`` calls ``forget_recorded_title``; neither
+        exists on the SDK base class, so caching one turns the next compact
+        after an agent switch or a rewind into an ``AttributeError``.
+        """
+        import asyncio
+
+        source_id = "chat_session_derivedrewrite"
+        session = sm_custom.get_session(source_id)
+        asyncio.run(session.add_items([{"role": "user", "content": "How many buses ran today?"}]))
+
+        for derived_id in (
+            sm_custom.copy_session(source_id, "gen_sql"),
+            sm_custom.rewind_session(source_id, up_to_user_turn=1),
+        ):
+            derived = sm_custom.get_session(derived_id)
+            asyncio.run(derived.replace_items([{"role": "assistant", "content": "Recap."}]))
+            assert asyncio.run(derived.get_items()) == [{"role": "assistant", "content": "Recap."}]
+            derived.forget_recorded_title()
+
+
+class TestDerivedSessionsDoNotInheritHistoryReadings:
+    """A copy or a rewind produces different history, so readings of the old one stay behind.
+
+    ``session_meta`` holds the durable title next to state that describes the
+    exact history it was measured against. Only the title survives a rewrite,
+    so only the title travels.
+    """
+
+    def _measured_session(self, sm, session_id):
+        """A session with two turns, a recorded occupancy, and plan mode on."""
+        import asyncio
+
+        from datus.models.sqlite_session import SESSION_PLAN_MODE_KEY
+        from datus.storage.session_state import PlanModeState
+
+        session = sm.get_session(session_id)
+        asyncio.run(
+            session.add_items(
+                [
+                    {"role": "user", "content": "How many buses ran today?"},
+                    {"role": "assistant", "content": "412."},
+                ]
+            )
+        )
+        sm.save_context_state(session_id, ContextState(190_000))
+        sm.save_session_meta(
+            session_id,
+            SESSION_PLAN_MODE_KEY,
+            PlanModeState(plan_mode_active=True, plan_file_path="./.datus/plans/ab12.md").to_json(),
+        )
+        return session
+
+    @pytest.mark.parametrize("derive", ["copy", "rewind"])
+    def test_a_derived_session_reports_an_unknown_occupancy(self, sm_custom, derive):
+        """The reading describes the history the derivation just changed.
+
+        Carrying it over makes the first turn of a two-message session compute a
+        near-full window: the compaction gate fires a major pass immediately and
+        the status bar shows a context that is not there.
+        """
+        source_id = "chat_session_measured_" + derive
+        self._measured_session(sm_custom, source_id)
+
+        if derive == "copy":
+            new_id = sm_custom.copy_session(source_id, "gen_sql")
+        else:
+            new_id = sm_custom.rewind_session(source_id, up_to_user_turn=1)
+
+        assert sm_custom.load_context_state(new_id) is None
+
+    @pytest.mark.parametrize("derive", ["copy", "rewind"])
+    def test_a_derived_session_does_not_start_in_plan_mode(self, sm_custom, derive):
+        """Plan mode is a live toggle of the source session's user, not a property of its history."""
+        from datus.models.sqlite_session import SESSION_PLAN_MODE_KEY
+
+        source_id = "chat_session_planned_" + derive
+        self._measured_session(sm_custom, source_id)
+
+        if derive == "copy":
+            new_id = sm_custom.copy_session(source_id, "gen_sql")
+        else:
+            new_id = sm_custom.rewind_session(source_id, up_to_user_turn=1)
+
+        assert sm_custom.load_session_meta(new_id, SESSION_PLAN_MODE_KEY) is None
+
+    @pytest.mark.parametrize("derive", ["copy", "rewind"])
+    def test_a_derived_session_still_keeps_the_title(self, sm_custom, derive):
+        """The one reading that outlives a rewrite still has to travel."""
+        source_id = "chat_session_titled_" + derive
+        self._measured_session(sm_custom, source_id)
+
+        if derive == "copy":
+            new_id = sm_custom.copy_session(source_id, "gen_sql")
+        else:
+            new_id = sm_custom.rewind_session(source_id, up_to_user_turn=1)
+
+        assert sm_custom.get_session_info(new_id)["first_user_message"] == "How many buses ran today?"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("completed", [False, True])
+async def test_plan_review_snapshots_survive_history_without_entering_model_input(tmp_path, completed):
+    manager = SessionManager(session_dir=str(tmp_path))
+    sid = "review_history"
+    session = manager.get_session(sid)
+    items = [
+        {"role": "user", "content": "Plan metrics"},
+        {"type": "function_call", "call_id": "review", "name": "write_semantic_model_plan_file", "arguments": "{}"},
+    ]
+    if completed:
+        items.append({"type": "function_call_output", "call_id": "review", "output": '{"success":1}'})
+    await session.add_items(items)
+    preview = {
+        "filePath": ".datus/semantic-model-plans/a/semantic-model-plan.json",
+        "oldText": "",
+        "newText": "FROZEN_SNAPSHOT",
+    }
+    call = {
+        "type": "call-tool",
+        "payload": {
+            "callToolId": "review",
+            "toolName": "write_semantic_model_plan_file",
+            "preview": preview,
+            "proxied": True,
+        },
+    }
+    manager.save_message_contents(sid, {"review": {"tool_call_id": "review", "parts": [call]}})
+    assert manager.get_tool_call_contents(sid)["review"]["preview"] == preview
+    assert "FROZEN_SNAPSHOT" not in str(await session.get_items())
+    copied = manager.copy_session(sid, "semantic_modeling")
+    assert manager.get_tool_call_contents(copied)["review"]["preview"] == preview
+    await session.replace_items([{"role": "user", "content": "Compacted"}])
+    assert manager.get_tool_call_contents(sid) == {}

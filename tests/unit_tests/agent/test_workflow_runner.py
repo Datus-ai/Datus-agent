@@ -10,7 +10,9 @@ execution paths are mocked.
 """
 
 import argparse
-from unittest.mock import MagicMock, patch
+from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import MagicMock, call, patch
 
 import pytest
 
@@ -27,7 +29,7 @@ from datus.schemas.node_models import SqlTask
 def _make_args(**kwargs):
     defaults = dict(
         max_steps=20,
-        workflow="reflection",
+        workflow="fixed",
         load_cp=None,
         debug=False,
         plan_mode=None,
@@ -38,7 +40,7 @@ def _make_args(**kwargs):
 
 def _make_config():
     cfg = MagicMock()
-    cfg.workflow_plan = "reflection"
+    cfg.workflow_plan = "fixed"
     cfg.get_trajectory_run_dir.return_value = "/tmp/test_traj"
     cfg.check_init_storage_config.return_value = None
     return cfg
@@ -294,7 +296,7 @@ class TestFinalizeWorkflow:
         assert result["steps"] == 3
         assert result["run_id"] == runner.run_id
         assert "save_path" in result
-        mock_wf.save.assert_called_once()
+        mock_wf.save.assert_called_once_with(result["save_path"])
 
     def test_trace_reference_stored_in_metadata(self, tmp_path):
         from datus.observability.reference import TraceReference
@@ -317,6 +319,29 @@ class TestFinalizeWorkflow:
         assert mock_wf.metadata.get("trace_run_id") == "run1"
         assert result["trace_reference"]["trace_id"] == "4bf92f3577b34da6a3ce929d0e0e4736"
 
+    def test_benchmark_workflow_defers_trajectory_to_attempt_finalizer(self, tmp_path: Path) -> None:
+        """Benchmark-profile runs skip the compatibility envelope; the finalizer owns the trajectory."""
+        runner = _make_runner()
+        runner.global_config.current_datasource = "default"
+        runner.global_config.trajectory_run_dir.return_value = tmp_path
+
+        mock_wf = _make_mock_workflow()
+        mock_wf.task.artifact_profile = "benchmark_v1"
+        mock_wf.task.datasource = "analytics"
+        mock_wf.display = MagicMock()
+        mock_wf.save = MagicMock()
+        mock_wf.get_final_result.return_value = {"status": "completed"}
+        runner.workflow = mock_wf
+
+        with patch("datus.agent.workflow_runner.get_trace_reference", return_value=None):
+            result = runner._finalize_workflow(1)
+
+        mock_wf.save.assert_not_called()
+        assert result["save_path"] is None
+        runner.global_config.trajectory_run_dir.assert_called_once_with("analytics", runner.run_id)
+        runner.global_config.get_trajectory_run_dir.assert_not_called()
+        assert runner.last_run_metadata == result
+
 
 # ---------------------------------------------------------------------------
 # run (synchronous)
@@ -324,6 +349,17 @@ class TestFinalizeWorkflow:
 
 
 class TestWorkflowRunnerRun:
+    def test_ensure_prerequisites_vector_checks_database_storage(self):
+        cfg = _make_config()
+        cfg.kb_search = SimpleNamespace(mode="vector")
+        cfg.kb_search_mode = "vector"
+        runner = _make_runner(config=cfg)
+        runner.init_or_load_workflow = MagicMock(return_value=True)
+
+        assert runner._ensure_prerequisites(_make_sql_task(), check_storage=True) is True
+
+        cfg.check_init_storage_config.assert_has_calls([call("database"), call("metrics")])
+
     def test_run_returns_empty_when_prerequisites_fail(self):
         runner = _make_runner()
         # No task, no checkpoint -> _ensure_prerequisites returns False

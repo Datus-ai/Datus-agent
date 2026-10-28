@@ -14,6 +14,7 @@ import jinja2.meta
 
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
+from datus.utils.sql_utils import parse_dialect
 
 logger = get_logger(__name__)
 
@@ -27,6 +28,10 @@ def extract_template_parameters(template_content: str) -> List[Dict[str, str]]:
     Returns:
         List of parameter definitions, e.g. [{"name": "start_date"}, {"name": "end_date"}]
     """
+    # Parse-only: ``env.parse`` builds an AST and never evaluates the template,
+    # so a SandboxedEnvironment would be a semantic no-op here. Rendering of
+    # reference templates happens in ``reference_template_tools``, which is
+    # sandboxed.
     env = jinja2.Environment()
     try:
         ast = env.parse(template_content)
@@ -164,8 +169,10 @@ def _resolve_dimension_columns(template_content: str, quoted_params: set, dialec
     # Replace remaining {{param}} with ASC (safe for ORDER BY / LIMIT)
     sql = re.sub(r"\{\{\s*\w+\s*\}\}", "ASC", sql)
 
-    # Try specified dialect, then fallback chain for backtick support
-    dialects_to_try = [dialect] if dialect else [dialect, "sqlite", "mysql"]
+    # Resolve adapter-defined parser aliases before handing the dialect to
+    # sqlglot (for example, Hologres -> PostgreSQL).
+    parser_dialect = parse_dialect(dialect) if dialect else None
+    dialects_to_try = [parser_dialect] if parser_dialect else [None, "sqlite", "mysql"]
     parsed = None
     for d in dialects_to_try:
         try:
@@ -227,6 +234,8 @@ def validate_template(template_content: str) -> Tuple[bool, str]:
     Returns:
         Tuple of (is_valid, error_message)
     """
+    # Parse-only, same as ``extract_template_parameters`` above: no evaluation
+    # happens, so sandboxing would add nothing.
     env = jinja2.Environment()
     try:
         env.parse(template_content)

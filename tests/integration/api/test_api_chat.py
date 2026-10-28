@@ -104,7 +104,7 @@ def chat_datus_service(chat_agent_config):
 async def chat_client(chat_agent_config, chat_datus_service):
     """AsyncClient wired to the full FastAPI app with real DatusService."""
     import datus.api.deps as deps_mod
-    from datus.api.auth import NoAuthProvider
+    from datus.api.auth import HeaderContextProvider
     from datus.api.deps import init_deps
     from datus.api.service import DatusAPIService, create_app
     from datus.api.services.datus_service_cache import DatusServiceCache
@@ -139,7 +139,7 @@ async def chat_client(chat_agent_config, chat_datus_service):
     # patched module state and shut the cache down cleanly.
     try:
         mod.service = DatusAPIService(agent_args)
-        init_deps(NoAuthProvider(), cache, datasource="bird_school")
+        init_deps(HeaderContextProvider(), cache, datasource="bird_school")
         await cache.get_or_create("default", _factory)
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test", timeout=120.0) as c:

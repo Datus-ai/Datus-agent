@@ -11,6 +11,8 @@ CI-level: zero external dependencies. All I/O and subprocess calls mocked.
 import sys
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from datus.main import create_parser, main
 
 # ---------------------------------------------------------------------------
@@ -184,8 +186,6 @@ class TestCreateParser:
         assert args.pool_size == 4
 
     def test_bootstrap_kb_requires_datasource(self):
-        import pytest
-
         parser = create_parser()
         with pytest.raises(SystemExit):
             parser.parse_args(["bootstrap-kb", "--components", "metadata"])
@@ -195,10 +195,31 @@ class TestCreateParser:
         args = parser.parse_args(["bootstrap-kb", "--datasource", "ds", "--components", "table_lineage"])
         assert args.components == ["table_lineage"]
 
+    def test_bootstrap_kb_accepts_semantic_modeling_component(self):
+        parser = create_parser()
+        args = parser.parse_args(
+            [
+                "bootstrap-kb",
+                "--datasource",
+                "ds",
+                "--components",
+                "semantic_modeling",
+                "--metrics-batch-size",
+                "5",
+            ]
+        )
+        assert args.components == ["semantic_modeling"]
+        assert args.metrics_batch_size == 5
+
     def test_bootstrap_kb_accepts_check_strategy(self):
         parser = create_parser()
         args = parser.parse_args(["bootstrap-kb", "--datasource", "ds", "--kb_update_strategy", "check"])
         assert args.kb_update_strategy == "check"
+
+    def test_bootstrap_kb_accepts_refresh_profile_strategy(self):
+        parser = create_parser()
+        args = parser.parse_args(["bootstrap-kb", "--datasource", "ds", "--kb_update_strategy", "refresh-profile"])
+        assert args.kb_update_strategy == "refresh-profile"
 
     def test_bootstrap_kb_default_components_and_strategy(self):
         parser = create_parser()
@@ -215,8 +236,6 @@ class TestCreateParser:
                 "ds",
                 "--benchmark",
                 "spider2",
-                "--from_adapter",
-                "metricflow",
                 "--semantic_yaml",
                 "/tmp/s.yaml",
                 "--validate-only",
@@ -229,7 +248,6 @@ class TestCreateParser:
             ]
         )
         assert args.benchmark == "spider2"
-        assert args.from_adapter == "metricflow"
         assert args.semantic_yaml == "/tmp/s.yaml"
         assert args.validate_only is True
         assert args.catalog == "main"
@@ -263,7 +281,7 @@ class TestMainServiceAction:
         mock_mgr = MagicMock()
         mock_mgr.run.return_value = 0
         with (
-            patch("datus.main.configure_logging"),
+            patch("datus.main.configure_entrypoint_logging"),
             patch("datus.cli.service_manager.ServiceManager", return_value=mock_mgr),
             patch.object(sys, "argv", ["datus", "service", "list"]),
         ):
@@ -275,7 +293,7 @@ class TestMainSkillAction:
     def test_skill_action_calls_run_skill_command(self):
         mock_run = MagicMock(return_value=0)
         with (
-            patch("datus.main.configure_logging"),
+            patch("datus.main.configure_entrypoint_logging"),
             patch("datus.main.run_skill_command", mock_run, create=True),
             patch.object(sys, "argv", ["datus", "skill", "list"]),
         ):
@@ -292,7 +310,7 @@ class TestMainCheckDbAction:
         mock_config = MagicMock()
 
         with (
-            patch("datus.main.configure_logging"),
+            patch("datus.main.configure_entrypoint_logging"),
             patch("datus.main.setup_exception_handler"),
             patch("datus.main.load_agent_config", return_value=mock_config),
             patch("datus.main.Agent", return_value=mock_agent),
@@ -311,7 +329,7 @@ class TestMainProbeLlmAction:
         mock_config = MagicMock()
 
         with (
-            patch("datus.main.configure_logging"),
+            patch("datus.main.configure_entrypoint_logging"),
             patch("datus.main.setup_exception_handler"),
             patch("datus.main.load_agent_config", return_value=mock_config),
             patch("datus.main.Agent", return_value=mock_agent),
@@ -333,7 +351,7 @@ class TestMainRunAction:
         mock_config.current_datasource = "ns"
 
         with (
-            patch("datus.main.configure_logging"),
+            patch("datus.main.configure_entrypoint_logging"),
             patch("datus.main.setup_exception_handler"),
             patch("datus.main.load_agent_config", return_value=mock_config),
             patch("datus.main.Agent", return_value=mock_agent),
@@ -356,7 +374,7 @@ class TestMainRunAction:
         mock_config.output_dir = "/tmp/output"
 
         with (
-            patch("datus.main.configure_logging"),
+            patch("datus.main.configure_entrypoint_logging"),
             patch("datus.main.setup_exception_handler"),
             patch("datus.main.load_agent_config", return_value=mock_config),
             patch("datus.main.Agent", return_value=mock_agent),
@@ -391,7 +409,7 @@ class TestMainBenchmarkAction:
         mock_config = MagicMock()
 
         with (
-            patch("datus.main.configure_logging"),
+            patch("datus.main.configure_entrypoint_logging"),
             patch("datus.main.setup_exception_handler"),
             patch("datus.main.load_agent_config", return_value=mock_config),
             patch("datus.main.Agent", return_value=mock_agent),
@@ -414,7 +432,7 @@ class TestMainEvalAction:
         mock_config = MagicMock()
 
         with (
-            patch("datus.main.configure_logging"),
+            patch("datus.main.configure_entrypoint_logging"),
             patch("datus.main.setup_exception_handler"),
             patch("datus.main.load_agent_config", return_value=mock_config),
             patch("datus.main.Agent", return_value=mock_agent),
@@ -436,7 +454,7 @@ class TestMainPlatformDocAction:
         mock_bootstrap = MagicMock()
 
         with (
-            patch("datus.main.configure_logging"),
+            patch("datus.main.configure_entrypoint_logging"),
             patch("datus.main.setup_exception_handler"),
             patch("datus.main.load_agent_config", return_value=mock_config),
             patch("datus.agent.agent.bootstrap_platform_doc", mock_bootstrap),
@@ -470,7 +488,7 @@ class TestMainBootstrapKbAction:
         mock_config = MagicMock()
 
         with (
-            patch("datus.main.configure_logging"),
+            patch("datus.main.configure_entrypoint_logging"),
             patch("datus.main.setup_exception_handler"),
             patch("datus.main.load_agent_config", return_value=mock_config),
             patch("datus.main.Agent", return_value=mock_agent),
@@ -493,7 +511,7 @@ class TestMainGenerateDatasetAction:
         mock_config = MagicMock()
 
         with (
-            patch("datus.main.configure_logging"),
+            patch("datus.main.configure_entrypoint_logging"),
             patch("datus.main.setup_exception_handler"),
             patch("datus.main.load_agent_config", return_value=mock_config),
             patch("datus.main.Agent", return_value=mock_agent),

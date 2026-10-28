@@ -10,18 +10,29 @@ import os
 import re
 import sqlite3
 import uuid
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from agents.extensions.memory import AdvancedSQLiteSession
 
+from datus.models.sqlite_session import (
+    CONTEXT_USED_RESET_SQL,
+    DERIVED_SESSION_META_KEYS,
+    MAX_SESSION_TITLE_CHARS,
+    SESSION_CONTEXT_USED_KEY,
+    SESSION_META_TABLE,
+    SESSION_TITLE_KEY,
+    DatusSQLiteSession,
+)
 from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
+from datus.storage.session_state import ContextState
 from datus.utils.async_utils import run_async
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.json_utils import llm_result2json
 from datus.utils.loggings import get_logger
-from datus.utils.message_utils import extract_user_input
+from datus.utils.message_utils import extract_user_input, is_compact_resume_text
 from datus.utils.time_utils import to_utc_iso
 
 logger = get_logger(__name__)
@@ -31,6 +42,15 @@ if TYPE_CHECKING:
 
 
 DEFAULT_CHAT_AGENT = "chat"
+
+
+@dataclass(frozen=True)
+class SessionTurnCheckpoint:
+    """Durable session boundary captured immediately before a new turn."""
+
+    max_message_id: int = 0
+    max_sequence_number: int = 0
+    max_user_turn_number: int = 0
 
 
 def extract_agent_from_session_id(session_id: str) -> str:
@@ -104,6 +124,13 @@ class SessionManager:
             self.session_dir = os.path.join(self.session_dir, resolved_scope)
         os.makedirs(self.session_dir, exist_ok=True)
         self._sessions: Dict[str, AdvancedSQLiteSession] = {}
+        # Kept for cleanup: the legacy per-session JSON state file lives under
+        # ``{project_data_dir}/state/``, outside ``session_dir``, and
+        # ``delete_session`` has to be able to resolve it — otherwise a deleted
+        # conversation leaves its plan-mode payload (``plan_file_path``
+        # included) behind.
+        self._path_manager = path_manager
+        self._agent_config = agent_config
 
     # Shared pattern for validating session IDs.
     # Allows alphanumerics, hyphens, underscores, and dots.
@@ -136,7 +163,7 @@ class SessionManager:
         self._validate_session_id(session_id)
         if session_id not in self._sessions:
             db_path = os.path.join(self.session_dir, f"{session_id}.db")
-            session = AdvancedSQLiteSession(
+            session = DatusSQLiteSession(
                 session_id=session_id,
                 db_path=db_path,
                 create_tables=True,
@@ -169,12 +196,181 @@ class SessionManager:
         session = self.get_session(session_id) if self.session_exists(session_id) else self._sessions.get(session_id)
         if session:
             run_async(session.clear_session())
+            db_path = os.path.join(self.session_dir, f"{session_id}.db")
+            with sqlite3.connect(db_path, timeout=5.0) as conn:
+                conn.execute(self._MESSAGE_CONTENTS_DDL)
+                conn.execute("DELETE FROM chat_message_contents WHERE session_id = ?", (session_id,))
             logger.debug(f"Cleared session: {session_id}")
         else:
             logger.warning(f"Attempted to clear non-existent session: {session_id}")
         # Clearing history is a session rebuild: drop the frozen system prompt
         # so the next turn re-bakes it instead of replaying pre-clear context.
         self.delete_system_prompt_snapshot(session_id)
+        self.save_context_state(session_id, ContextState())
+        self.clear_session_title(session_id)
+
+    def clear_session_title(self, session_id: str) -> None:
+        """Forget the recorded title so the next message renames the session.
+
+        ``/clear`` restarts the conversation, and the old opening message stops
+        describing what follows. Compaction deliberately does *not* come
+        through here: it rewrites history via ``replace_items`` and the same
+        chat continues, so it keeps its title.
+        """
+        self._validate_session_id(session_id)
+        db_path = os.path.join(self.session_dir, f"{session_id}.db")
+        if os.path.exists(db_path):
+            try:
+                with sqlite3.connect(db_path, timeout=5.0) as conn:
+                    if self._table_exists(conn, "session_meta"):
+                        conn.execute(
+                            "DELETE FROM session_meta WHERE session_id = ? AND key = ?",
+                            (session_id, SESSION_TITLE_KEY),
+                        )
+            except sqlite3.Error as exc:
+                logger.warning("Failed to clear the title of session %s: %s", session_id, exc)
+        # A cached session stops recording once it has written a title, so the
+        # row alone is not enough — the live object has to be told as well.
+        forget = getattr(self._sessions.get(session_id), "forget_recorded_title", None)
+        if callable(forget):
+            forget()
+
+    def save_context_state(self, session_id: str, state: ContextState) -> None:
+        """Store the measured occupancy beside the transactional history.
+
+        See :meth:`save_session_meta` for the ghost-session and write-failure
+        guarantees this inherits.
+        """
+        self.save_session_meta(session_id, SESSION_CONTEXT_USED_KEY, str(state.last_call_input_tokens))
+
+    def load_context_state(self, session_id: str) -> Optional[ContextState]:
+        """Read the durable measurement, or ``None`` when none was recorded.
+
+        ``None`` and a recorded zero are different answers: the first lets the
+        caller fall through to the legacy JSON mirror, the second is a session
+        whose reading a rewrite has invalidated.
+        """
+        raw = self.load_session_meta(session_id, SESSION_CONTEXT_USED_KEY)
+        if raw is None:
+            return None
+        try:
+            return ContextState(max(0, int(raw)))
+        except (TypeError, ValueError):
+            logger.warning("Ignoring unreadable occupancy %r for session %s", raw, session_id)
+            return ContextState()
+
+    def checkpoint_turn(self, session_id: str) -> Optional[SessionTurnCheckpoint]:
+        """Capture the SQLite boundary before dispatching a model turn.
+
+        The database can legitimately not exist yet for a brand-new node; in
+        that case the empty checkpoint still identifies everything written by
+        the upcoming turn.
+        """
+        self._validate_session_id(session_id)
+        db_path = os.path.join(self.session_dir, f"{session_id}.db")
+        if not os.path.exists(db_path):
+            return SessionTurnCheckpoint()
+
+        try:
+            with sqlite3.connect(db_path, timeout=5.0) as conn:
+                max_message_id = 0
+                max_sequence_number = 0
+                max_user_turn_number = 0
+                if self._table_exists(conn, "agent_messages"):
+                    row = conn.execute(
+                        "SELECT COALESCE(MAX(id), 0) FROM agent_messages WHERE session_id = ?",
+                        (session_id,),
+                    ).fetchone()
+                    max_message_id = int(row[0] or 0) if row else 0
+                if self._table_exists(conn, "message_structure"):
+                    row = conn.execute(
+                        "SELECT COALESCE(MAX(sequence_number), 0), "
+                        "COALESCE(MAX(user_turn_number), 0) "
+                        "FROM message_structure WHERE session_id = ?",
+                        (session_id,),
+                    ).fetchone()
+                    if row:
+                        max_sequence_number = int(row[0] or 0)
+                        max_user_turn_number = int(row[1] or 0)
+                return SessionTurnCheckpoint(
+                    max_message_id=max_message_id,
+                    max_sequence_number=max_sequence_number,
+                    max_user_turn_number=max_user_turn_number,
+                )
+        except sqlite3.Error as exc:
+            logger.warning("Failed to checkpoint session %s before turn: %s", session_id, exc)
+            # Never substitute an empty boundary for a failed read: doing so
+            # could make a later rollback delete pre-existing history.
+            return None
+
+    def rollback_turn(self, session_id: str, checkpoint: Optional[SessionTurnCheckpoint]) -> None:
+        """Atomically remove everything persisted after *checkpoint*.
+
+        ``AdvancedSQLiteSession.pop_item`` only removes ``agent_messages`` and
+        leaves orphaned ``message_structure`` metadata. This repository-owned
+        rollback deletes both sides, along with usage rows for the cancelled
+        turn, so the next model call observes the exact pre-turn session.
+        """
+        self._validate_session_id(session_id)
+        if checkpoint is None:
+            logger.warning("Skipping unanswered-turn rollback for %s: no safe checkpoint", session_id)
+            return
+        db_path = os.path.join(self.session_dir, f"{session_id}.db")
+        if not os.path.exists(db_path):
+            return
+
+        try:
+            with sqlite3.connect(db_path, timeout=5.0) as conn:
+                conn.execute("BEGIN IMMEDIATE")
+                if self._table_exists(conn, "message_structure"):
+                    conn.execute(
+                        "DELETE FROM message_structure "
+                        "WHERE session_id = ? AND "
+                        "(sequence_number > ? OR message_id IN ("
+                        "SELECT id FROM agent_messages WHERE session_id = ? AND id > ?"
+                        "))",
+                        (
+                            session_id,
+                            checkpoint.max_sequence_number,
+                            session_id,
+                            checkpoint.max_message_id,
+                        ),
+                    )
+                if self._table_exists(conn, "chat_message_contents"):
+                    conn.execute(
+                        "DELETE FROM chat_message_contents WHERE session_id = ? AND message_id > ?",
+                        (session_id, checkpoint.max_message_id),
+                    )
+                if self._table_exists(conn, "agent_messages"):
+                    conn.execute(
+                        "DELETE FROM agent_messages WHERE session_id = ? AND id > ?",
+                        (session_id, checkpoint.max_message_id),
+                    )
+                if self._table_exists(conn, "turn_usage"):
+                    conn.execute(
+                        "DELETE FROM turn_usage WHERE session_id = ? AND user_turn_number > ?",
+                        (session_id, checkpoint.max_user_turn_number),
+                    )
+                if self._table_exists(conn, "user_message_context"):
+                    conn.execute(
+                        "DELETE FROM user_message_context WHERE session_id = ? AND user_turn_number > ?",
+                        (session_id, checkpoint.max_user_turn_number),
+                    )
+                if self._table_exists(conn, "running_turn_usage"):
+                    conn.execute("DELETE FROM running_turn_usage WHERE session_id = ?", (session_id,))
+                conn.execute(SESSION_META_TABLE)
+                conn.execute(CONTEXT_USED_RESET_SQL, (session_id, SESSION_CONTEXT_USED_KEY))
+                conn.commit()
+        except sqlite3.Error as exc:
+            logger.warning("Failed to roll back unanswered turn for session %s: %s", session_id, exc)
+
+    @staticmethod
+    def _table_exists(conn: sqlite3.Connection, table_name: str) -> bool:
+        row = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
+            (table_name,),
+        ).fetchone()
+        return row is not None
 
     # ------------------------------------------------------------------
     # System-prompt snapshot persistence
@@ -296,6 +492,35 @@ class SessionManager:
         # The frozen system prompt belongs to the deleted conversation.
         self.delete_system_prompt_snapshot(session_id)
 
+        # So does the legacy JSON state mirror, which sessions predating
+        # ``session_meta`` still carry.
+        self._delete_agent_state_file(session_id)
+
+    def _delete_agent_state_file(self, session_id: str) -> None:
+        """Remove a session's legacy JSON state mirror (best-effort, idempotent).
+
+        Sessions created before plan mode and the occupancy reading moved into
+        ``session_meta`` keep a ``{project_data_dir}/state/{session_id}.json``
+        file. It sits outside ``session_dir``, so nothing else in this class
+        reaches it.
+        """
+        try:
+            from datus.utils.path_manager import get_path_manager
+
+            path = get_path_manager(path_manager=self._path_manager, agent_config=self._agent_config).agent_state_path(
+                session_id
+            )
+        except Exception as exc:  # noqa: BLE001 — cleanup must never fail a delete
+            logger.debug("agent_state_path unavailable for session %s: %s", session_id, exc)
+            return
+        try:
+            os.remove(path)
+            logger.debug(f"Deleted legacy session state file: {path}")
+        except FileNotFoundError:
+            pass
+        except OSError as exc:
+            logger.warning("Failed to remove session state file %s: %s", path, exc)
+
     def copy_session(self, source_session_id: str, target_node_name: str) -> str:
         """Copy a session to a new one with a different node-name prefix.
 
@@ -358,12 +583,18 @@ class SessionManager:
             except sqlite3.OperationalError:
                 pass
 
+            # Carry the title over: a compacted source has no user rows left
+            # for the copy's own scan to find, so without this the new session
+            # would list as untitled.
+            meta_rows = self._read_session_meta(cursor, source_session_id)
+            content_rows = self._read_message_contents(src_conn, source_session_id)
+
         # Materialize tables in the new DB first (short-lived session is released
         # before bulk inserts), then use a single raw connection with executemany
         # for all writes. Avoids two concurrent connections on the same file and
         # is substantially faster for long histories.
         new_db_path = os.path.join(self.session_dir, f"{new_session_id}.db")
-        AdvancedSQLiteSession(session_id=new_session_id, db_path=new_db_path, create_tables=True)
+        DatusSQLiteSession(session_id=new_session_id, db_path=new_db_path, create_tables=True)
 
         with sqlite3.connect(new_db_path, timeout=5.0) as new_conn:
             new_conn.execute(
@@ -393,10 +624,19 @@ class SessionManager:
                 "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 [(new_session_id, *row) for row in turn_usage_rows],
             )
+            self._write_session_meta(new_conn, new_session_id, meta_rows)
+            new_conn.execute(self._MESSAGE_CONTENTS_DDL)
+            new_conn.executemany(
+                "INSERT OR REPLACE INTO chat_message_contents VALUES (?, ?, ?)",
+                [(new_session_id, message_id, json.dumps(parts)) for message_id, parts in content_rows.items()],
+            )
             new_conn.commit()
 
-        # Cache a fresh session pointing at the populated DB (tables already exist).
-        self._sessions[new_session_id] = AdvancedSQLiteSession(
+        # Cache a fresh session pointing at the populated DB (tables already
+        # exist). Must be a ``DatusSQLiteSession``: the rest of the process
+        # calls ``replace_items`` / ``forget_recorded_title`` on whatever
+        # ``get_session`` hands back, and the SDK base class has neither.
+        self._sessions[new_session_id] = DatusSQLiteSession(
             session_id=new_session_id, db_path=new_db_path, create_tables=False
         )
 
@@ -488,7 +728,10 @@ class SessionManager:
 
         # Create the new session database
         new_db_path = os.path.join(self.session_dir, f"{new_session_id}.db")
-        new_session = AdvancedSQLiteSession(session_id=new_session_id, db_path=new_db_path, create_tables=True)
+        # ``DatusSQLiteSession`` for the same reason as in ``copy_session``:
+        # the cached object is what every later caller gets from
+        # ``get_session``, and it has to carry the Datus-owned methods.
+        new_session = DatusSQLiteSession(session_id=new_session_id, db_path=new_db_path, create_tables=True)
         # Store in cache
         self._sessions[new_session_id] = new_session
 
@@ -522,6 +765,16 @@ class SessionManager:
                 structure_rows = [row for row in cursor.fetchall() if row[0] in kept_message_ids]
             except sqlite3.OperationalError:
                 pass
+
+            # The recorded title is the conversation's opening message, which a
+            # rewind keeps by definition, so it stays correct for the new
+            # session — and it is the only copy left once the source has been
+            # compacted.
+            meta_rows = self._read_session_meta(cursor, source_session_id)
+            content_rows = self._read_message_contents(src_conn, source_session_id)
+            content_rows = {
+                message_id: parts for message_id, parts in content_rows.items() if message_id in kept_message_ids
+            }
 
         # Insert session record, messages, message_structure, and turn_usage into the new DB.
         # Preserve agent_messages.id so message_structure.message_id references remain valid.
@@ -571,6 +824,12 @@ class SessionManager:
                     "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     (new_session_id, *usage_row),
                 )
+            self._write_session_meta(new_conn, new_session_id, meta_rows)
+            new_conn.execute(self._MESSAGE_CONTENTS_DDL)
+            new_conn.executemany(
+                "INSERT OR REPLACE INTO chat_message_contents VALUES (?, ?, ?)",
+                [(new_session_id, message_id, json.dumps(parts)) for message_id, parts in content_rows.items()],
+            )
             new_conn.commit()
 
         logger.info(
@@ -753,12 +1012,17 @@ class SessionManager:
                     )
 
                 # Get latest user message (need to check all messages to find the most recent user message)
+                # ``id DESC`` is not cosmetic: SQLite's CURRENT_TIMESTAMP has
+                # one-second resolution and a whole turn lands inside one
+                # second, so ordering on the timestamp alone leaves the rows
+                # tied and the reversed() scan below walks them forwards —
+                # swapping the first and latest user message.
                 cursor.execute(
                     """
                     SELECT message_data, created_at
                     FROM agent_messages
                     WHERE session_id = ?
-                    ORDER BY created_at DESC
+                    ORDER BY created_at DESC, id DESC
                     """,
                     (session_id,),
                 )
@@ -793,7 +1057,10 @@ class SessionManager:
                         role = message_json.get("role", "")
                         if role == "user":
                             content = extract_user_input(message_json.get("content", ""))
-                            first_user_message = content
+                            # Same cap as the stored title, so a session does
+                            # not render at a different length depending on
+                            # which of the two sources answered.
+                            first_user_message = (content or "")[:MAX_SESSION_TITLE_CHARS]
                             first_user_message_at = created_at
                             break
                     except (json.JSONDecodeError, TypeError):
@@ -807,6 +1074,22 @@ class SessionManager:
                         "first_user_message_at": first_user_message_at,
                     }
                 )
+
+                # A major compact clears the history the scan above walks, so
+                # on a compacted session it finds either no user rows at all or
+                # a mid-conversation one that would silently retitle the chat.
+                # The recorded title predates every rewrite and wins. Sessions
+                # older than the table have none and keep the scanned value.
+                # Guarded on its own: the handler below discards the whole
+                # metadata dict, and a title is not worth losing a session's
+                # timestamps and message count over.
+                try:
+                    recorded_title = self._read_session_title(conn, session_id)
+                except sqlite3.Error as exc:
+                    logger.debug("Could not read the title of session %s: %s", session_id, exc)
+                    recorded_title = None
+                if recorded_title:
+                    session_metadata["first_user_message"] = recorded_title
 
         except Exception as e:
             logger.debug(f"Could not get session metadata for {session_id}: {e}")
@@ -832,6 +1115,96 @@ class SessionManager:
             **session_metadata,
         }
 
+    def _read_session_title(self, conn: sqlite3.Connection, session_id: str) -> Optional[str]:
+        """Return the recorded title, or ``None`` when the session has none.
+
+        Reuses the caller's connection: ``get_session_info`` has the database
+        open already, and listing sessions calls it once per row.
+        """
+        if not self._table_exists(conn, "session_meta"):
+            return None
+        row = conn.execute(
+            "SELECT value FROM session_meta WHERE session_id = ? AND key = ?",
+            (session_id, SESSION_TITLE_KEY),
+        ).fetchone()
+        if not row:
+            return None
+        return (row[0] or "").strip() or None
+
+    @staticmethod
+    def _read_session_meta(cursor: sqlite3.Cursor, session_id: str) -> list:
+        """Read the metadata a derived session may inherit, or none for a database without it.
+
+        Restricted to :data:`DERIVED_SESSION_META_KEYS`: a copy or a rewind
+        produces a session with different history, so every reading that
+        describes the source's history has to be left behind rather than
+        carried over. New keys opt in there deliberately.
+        """
+        try:
+            placeholders = ", ".join("?" * len(DERIVED_SESSION_META_KEYS))
+            cursor.execute(
+                f"SELECT key, value FROM session_meta WHERE session_id = ? AND key IN ({placeholders})",
+                (session_id, *DERIVED_SESSION_META_KEYS),
+            )
+            return cursor.fetchall()
+        except sqlite3.OperationalError:
+            return []
+
+    @staticmethod
+    def _write_session_meta(conn: sqlite3.Connection, session_id: str, rows: list) -> None:
+        """Attach metadata rows read from a source session to a derived one."""
+        if not rows:
+            return
+        conn.execute(SESSION_META_TABLE)
+        conn.executemany(
+            "INSERT OR IGNORE INTO session_meta (session_id, key, value) VALUES (?, ?, ?)",
+            [(session_id, *row) for row in rows],
+        )
+
+    def save_session_meta(self, session_id: str, key: str, value: str) -> None:
+        """Upsert one metadata value beside the session's history.
+
+        Never creates the database, matching :meth:`save_context_state`:
+        ``sqlite3.connect`` would materialise an empty file that
+        ``list_sessions`` then reports as a session. A caller writing before
+        the first message is expected to write again once the session exists.
+        Write failures are logged rather than raised — metadata is auxiliary
+        to whatever the caller was actually doing.
+        """
+        self._validate_session_id(session_id)
+        db_path = os.path.join(self.session_dir, f"{session_id}.db")
+        if not os.path.exists(db_path):
+            return
+        try:
+            with sqlite3.connect(db_path, timeout=5.0) as conn:
+                conn.execute(SESSION_META_TABLE)
+                conn.execute(
+                    "INSERT INTO session_meta (session_id, key, value) VALUES (?, ?, ?) "
+                    "ON CONFLICT(session_id, key) DO UPDATE SET value = excluded.value",
+                    (session_id, key, value),
+                )
+        except sqlite3.Error as exc:
+            logger.warning("Failed to save session meta %r for %s: %s", key, session_id, exc)
+
+    def load_session_meta(self, session_id: str, key: str) -> Optional[str]:
+        """Read one metadata value, or ``None`` when it was never written."""
+        self._validate_session_id(session_id)
+        db_path = os.path.join(self.session_dir, f"{session_id}.db")
+        if not os.path.exists(db_path):
+            return None
+        try:
+            with sqlite3.connect(db_path, timeout=5.0) as conn:
+                if not self._table_exists(conn, "session_meta"):
+                    return None
+                row = conn.execute(
+                    "SELECT value FROM session_meta WHERE session_id = ? AND key = ?",
+                    (session_id, key),
+                ).fetchone()
+        except sqlite3.Error as exc:
+            logger.warning("Failed to read session meta %r for %s: %s", key, session_id, exc)
+            return None
+        return row[0] if row else None
+
     def get_detailed_usage(self, session_id: str) -> Dict[str, Any]:
         """Query turn_usage table and return aggregated + per-turn token usage.
 
@@ -845,7 +1218,14 @@ class SessionManager:
         self._validate_session_id(session_id)
         db_path = os.path.join(self.session_dir, f"{session_id}.db")
         empty_result = {
-            "total": {"requests": 0, "input_tokens": 0, "output_tokens": 0, "total_tokens": 0, "cached_tokens": 0},
+            "total": {
+                "requests": 0,
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "total_tokens": 0,
+                "cached_tokens": 0,
+                "cache_write_tokens": 0,
+            },
             "turns": [],
             "turn_count": 0,
             "running": None,
@@ -859,6 +1239,7 @@ class SessionManager:
             "output_tokens": 0,
             "total_tokens": 0,
             "cached_tokens": 0,
+            "cache_write_tokens": 0,
         }
         turns: List[Dict[str, Any]] = []
 
@@ -894,6 +1275,8 @@ class SessionManager:
 
                     cached = inp_detail_dict.get("cached_tokens", 0)
                     total["cached_tokens"] += cached or 0
+                    cache_write = inp_detail_dict.get("cache_write_tokens", 0)
+                    total["cache_write_tokens"] += cache_write or 0
 
                     turns.append(
                         {
@@ -918,6 +1301,7 @@ class SessionManager:
             total["output_tokens"] += int(cumulative.get("output_tokens", 0) or 0)
             total["total_tokens"] += int(cumulative.get("total_tokens", 0) or 0)
             total["cached_tokens"] += int(cumulative.get("cached_tokens", 0) or 0)
+            total["cache_write_tokens"] += int(cumulative.get("cache_write_tokens", 0) or 0)
 
         return {"total": total, "turns": turns, "turn_count": len(turns), "running": running}
 
@@ -1026,6 +1410,261 @@ class SessionManager:
             "updated_at": to_utc_iso(updated_at) if updated_at else None,
         }
 
+    # ------------------------------------------------------------------
+    # Per-user-turn @-context (table/metric/sql/knowledge references)
+    # ------------------------------------------------------------------
+    #
+    # The SDK's ``agent_messages`` table only stores the enhanced prompt text,
+    # from which structured @-references can't be recovered. This side table —
+    # written by the API layer once a turn is persisted, never read back into
+    # the LLM — lets ``get_history`` echo the exact references a user attached
+    # so the front-end can re-render them. Keyed by ``user_turn_number`` (the
+    # SDK's canonical per-turn id) so it survives gaps (turns with no refs).
+
+    _USER_MESSAGE_CONTEXT_DDL = (
+        "CREATE TABLE IF NOT EXISTS user_message_context ("
+        "session_id TEXT NOT NULL, "
+        "user_turn_number INTEGER NOT NULL, "
+        "context_json TEXT NOT NULL, "
+        "created_at TIMESTAMP, "
+        "PRIMARY KEY (session_id, user_turn_number)"
+        ")"
+    )
+
+    _MESSAGE_CONTENTS_DDL = (
+        "CREATE TABLE IF NOT EXISTS chat_message_contents ("
+        "session_id TEXT NOT NULL, message_id INTEGER NOT NULL, contents_json TEXT NOT NULL, "
+        "PRIMARY KEY (session_id, message_id))"
+    )
+
+    def get_max_message_id(self, session_id: str) -> int:
+        self._validate_session_id(session_id)
+        db_path = os.path.join(self.session_dir, f"{session_id}.db")
+        if not os.path.isfile(db_path):
+            return 0
+        with sqlite3.connect(db_path, timeout=5.0) as conn:
+            row = conn.execute(
+                "SELECT COALESCE(MAX(id), 0) FROM agent_messages WHERE session_id = ?", (session_id,)
+            ).fetchone()
+            return int(row[0])
+
+    def save_message_contents(self, session_id: str, contents: Dict[str, dict], previous_message_id: int = 0) -> None:
+        """Save structured user content and streamed tool results outside model input.
+
+        Tool results match persisted result rows by call ID. Nested results are
+        attached to the outer task result so existing copy/rewind/rollback
+        handling for chat_message_contents preserves the entire task's display.
+        """
+        self._validate_session_id(session_id)
+        db_path = os.path.join(self.session_dir, f"{session_id}.db")
+        if not os.path.isfile(db_path):
+            return
+        with sqlite3.connect(db_path, timeout=5.0) as conn:
+            conn.execute(self._MESSAGE_CONTENTS_DDL)
+            rows = conn.execute(
+                "SELECT id, message_data FROM agent_messages WHERE session_id = ? AND id > ? ORDER BY id",
+                (session_id, previous_message_id),
+            ).fetchall()
+            records = [record for record in contents.values() if record.get("persist", True)]
+            pending = [record for record in records if not record.get("tool_call_id")]
+            tools = {record["tool_call_id"]: record for record in records if record.get("tool_call_id")}
+            result_rows: Dict[str, int] = {}
+            persisted: Dict[int, list] = {}
+            last_user_message_id = None
+            for message_id, raw in rows:
+                message = json.loads(raw)
+                if message.get("type") in ("function_call", "function_call_output") and message.get("call_id"):
+                    result_rows[message["call_id"]] = message_id
+                blocks = message.get("content")
+                if isinstance(blocks, list):
+                    for block in blocks:
+                        if (
+                            isinstance(block, dict)
+                            and block.get("type")
+                            in ("tool_use", "tool_result", "web_search_tool_result", "web_fetch_tool_result")
+                            and (block.get("tool_use_id") or block.get("id"))
+                        ):
+                            result_rows[block.get("tool_use_id") or block["id"]] = message_id
+                if message.get("role") != "user":
+                    continue
+                last_user_message_id = message_id
+                text = extract_user_input(message.get("content", "")).strip()
+                for index, record in enumerate(pending):
+                    if record["text"].strip() == text:
+                        persisted[message_id] = list(record["parts"])
+                        pending.pop(index)
+                        break
+            for call_id, record in tools.items():
+                owner = call_id
+                seen = set()
+                while owner not in result_rows and owner in tools and owner not in seen:
+                    seen.add(owner)
+                    owner = tools[owner].get("parent_action_id")
+                if owner in result_rows:
+                    persisted.setdefault(result_rows[owner], []).extend(record["parts"])
+                elif last_user_message_id is not None and any(
+                    part.get("type") == "call-tool" and part.get("payload", {}).get("preview")
+                    for part in record["parts"]
+                ):
+                    # The SDK may not save a pending tool call before interruption.
+                    # Anchor its display-only review to this turn's user message;
+                    # history replays it as an assistant card, never as user input.
+                    persisted.setdefault(last_user_message_id, []).extend(record["parts"])
+            conn.executemany(
+                "INSERT OR REPLACE INTO chat_message_contents VALUES (?, ?, ?)",
+                [
+                    (session_id, message_id, json.dumps(parts, ensure_ascii=False))
+                    for message_id, parts in persisted.items()
+                ],
+            )
+
+    def get_tool_result_contents(self, session_id: str) -> Dict[str, dict]:
+        return self._get_tool_display_contents(session_id, "call-tool-result")
+
+    def get_tool_call_contents(self, session_id: str) -> Dict[str, dict]:
+        return self._get_tool_display_contents(session_id, "call-tool")
+
+    def _get_tool_display_contents(self, session_id: str, content_type: str) -> Dict[str, dict]:
+        """Only replay display content whose owning model message still exists."""
+        self._validate_session_id(session_id)
+        db_path = os.path.join(self.session_dir, f"{session_id}.db")
+        if not os.path.isfile(db_path):
+            return {}
+        with sqlite3.connect(db_path, timeout=5.0) as conn:
+            try:
+                rows = conn.execute(
+                    "SELECT c.contents_json FROM chat_message_contents c "
+                    "JOIN agent_messages m ON m.id = c.message_id AND m.session_id = c.session_id "
+                    "WHERE c.session_id = ? ORDER BY c.message_id",
+                    (session_id,),
+                ).fetchall()
+            except sqlite3.OperationalError:
+                return {}
+        results = {}
+        for (raw,) in rows:
+            try:
+                parts = json.loads(raw)
+            except (json.JSONDecodeError, TypeError, UnicodeDecodeError):
+                continue
+            if not isinstance(parts, list):
+                continue
+            for part in parts:
+                if not isinstance(part, dict) or part.get("type") != content_type:
+                    continue
+                payload = part.get("payload")
+                if not isinstance(payload, dict):
+                    continue
+                call_id = payload.get("callToolId")
+                if isinstance(call_id, str) and call_id:
+                    results[call_id] = payload
+        return results
+
+    @staticmethod
+    def _read_message_contents(conn, session_id: str) -> Dict[int, list]:
+        try:
+            rows = conn.execute(
+                "SELECT message_id, contents_json FROM chat_message_contents WHERE session_id = ?", (session_id,)
+            ).fetchall()
+        except sqlite3.OperationalError:
+            return {}
+        return {message_id: json.loads(parts) for message_id, parts in rows}
+
+    def get_max_user_turn_number(self, session_id: str) -> int:
+        """Return the highest ``user_turn_number`` recorded, or 0 when none/no DB.
+
+        ``user_turn_number`` is session-global and monotonic (assigned by the
+        SDK across every branch), so callers use it to detect whether a run
+        actually persisted a new user turn. Captured before a run and compared
+        after — see :meth:`save_user_message_context`.
+        """
+        self._validate_session_id(session_id)
+        db_path = os.path.join(self.session_dir, f"{session_id}.db")
+        if not os.path.exists(db_path):
+            return 0
+        try:
+            with sqlite3.connect(db_path, timeout=5.0) as conn:
+                row = conn.execute(
+                    "SELECT MAX(user_turn_number) FROM message_structure WHERE session_id = ?",
+                    (session_id,),
+                ).fetchone()
+        except sqlite3.OperationalError:
+            return 0
+        return int(row[0]) if row and row[0] is not None else 0
+
+    def save_user_message_context(
+        self, session_id: str, context: Dict[str, Any], previous_turn_number: int = -1
+    ) -> None:
+        """Persist a turn's @-context against its ``user_turn_number``.
+
+        Call after the turn's user message is persisted by the SDK. The turn is
+        resolved as ``MAX(user_turn_number)``. ``previous_turn_number`` is the
+        value captured *before* the run: the write only happens when the new max
+        strictly exceeds it, so a run that persisted no new user turn (e.g. a
+        node type that emits no user message, or a failed/cancelled turn) can
+        never mis-attach this run's context onto the previous turn's bubble.
+
+        ``user_turn_number`` is session-global monotonic, so a bare ``MAX`` is
+        the right turn even across rewind/fork branches — no ``branch_id``
+        filter is needed. No-op when *context* is empty or the session DB /
+        turn isn't there yet.
+        """
+        if not context:
+            return
+        self._validate_session_id(session_id)
+        db_path = os.path.join(self.session_dir, f"{session_id}.db")
+        if not os.path.exists(db_path):
+            return
+        payload = json.dumps(context, ensure_ascii=False)
+        try:
+            with sqlite3.connect(db_path, timeout=5.0) as conn:
+                row = conn.execute(
+                    "SELECT MAX(user_turn_number) FROM message_structure WHERE session_id = ?",
+                    (session_id,),
+                ).fetchone()
+                turn_number = row[0] if row else None
+                if turn_number is None or int(turn_number) <= previous_turn_number:
+                    # No new user turn was persisted this run — don't attach.
+                    return
+                conn.execute(self._USER_MESSAGE_CONTEXT_DDL)
+                conn.execute(
+                    "INSERT OR REPLACE INTO user_message_context "
+                    "(session_id, user_turn_number, context_json, created_at) VALUES (?, ?, ?, ?)",
+                    (session_id, int(turn_number), payload, datetime.now(timezone.utc)),
+                )
+                conn.commit()
+        except sqlite3.OperationalError as exc:
+            logger.debug(f"save_user_message_context failed for {session_id}: {exc}")
+
+    @staticmethod
+    def _read_user_message_context(conn: sqlite3.Connection, session_id: str) -> Dict[int, Dict[str, Any]]:
+        """Return ``{user_turn_number: context_dict}`` for a session, ``{}`` if absent."""
+        try:
+            rows = conn.execute(
+                "SELECT user_turn_number, context_json FROM user_message_context WHERE session_id = ?",
+                (session_id,),
+            ).fetchall()
+        except sqlite3.OperationalError:
+            return {}
+        result: Dict[int, Dict[str, Any]] = {}
+        for turn_number, context_json in rows:
+            try:
+                result[int(turn_number)] = json.loads(context_json) if context_json else {}
+            except (json.JSONDecodeError, TypeError, ValueError):
+                continue
+        return result
+
+    @staticmethod
+    def _read_message_turn_map(conn: sqlite3.Connection, session_id: str) -> Dict[int, int]:
+        """Return ``{agent_messages.id: user_turn_number}`` from message_structure."""
+        try:
+            rows = conn.execute(
+                "SELECT message_id, user_turn_number FROM message_structure WHERE session_id = ?",
+                (session_id,),
+            ).fetchall()
+        except sqlite3.OperationalError:
+            return {}
+        return {int(mid): int(turn) for mid, turn in rows if mid is not None and turn is not None}
+
     @staticmethod
     def _parse_final_output(actions: List[ActionHistory], current_assistant_group: Dict) -> Optional[ActionHistory]:
         """Try to parse sql/output from the last assistant action's messages and update assistant group.
@@ -1113,20 +1752,29 @@ class SessionManager:
                 cursor = conn.cursor()
                 cursor.execute(
                     """
-                    SELECT message_data, created_at
+                    SELECT id, message_data, created_at
                     FROM agent_messages
                     WHERE session_id = ?
                     ORDER BY created_at, id
                     """,
                     (session_id,),
                 )
+                rows = cursor.fetchall()
+
+                # Side-table @-context (table/metric/sql/knowledge refs) keyed by
+                # user_turn_number, plus the message_id -> turn map to attach each
+                # to the right user bubble. Empty when the session predates the
+                # feature or carried no references.
+                turn_map = self._read_message_turn_map(conn, session_id)
+                context_map = self._read_user_message_context(conn, session_id)
+                content_map = self._read_message_contents(conn, session_id)
 
                 # Aggregate consecutive assistant messages
                 current_assistant_group = None
                 assistant_progress = []
                 current_actions = []  # Collect ActionHistory objects for detailed view
 
-                for message_data, created_at in cursor.fetchall():
+                for row_id, message_data, created_at in rows:
                     # Normalize SQLite naive UTC timestamp for outward-facing fields.
                     created_at_iso = to_utc_iso(created_at)
                     try:
@@ -1136,6 +1784,30 @@ class SessionManager:
 
                         # Handle user messages
                         if role == "user":
+                            raw_user_content = message_json.get("content", "")
+                            # Claude-native format carries tool RESULTS as user
+                            # messages with ``tool_result`` blocks. Those are not
+                            # real user turns: pair each with its in-flight
+                            # tool_use action (so the resumed transcript shows the
+                            # tool output) and do NOT flush/emit a user bubble —
+                            # otherwise every tool round splits the assistant
+                            # group and renders an empty user message.
+                            if isinstance(raw_user_content, list):
+                                tool_results = [
+                                    b
+                                    for b in raw_user_content
+                                    if isinstance(b, dict) and b.get("type") == "tool_result"
+                                ]
+                                has_user_text = any(
+                                    isinstance(b, dict) and b.get("type") in ("text", "input_text", "output_text")
+                                    for b in raw_user_content
+                                )
+                                if tool_results and not has_user_text:
+                                    for tr in tool_results:
+                                        self._attach_native_tool_result(
+                                            current_actions, tr.get("tool_use_id"), tr.get("content"), created_at
+                                        )
+                                    continue
                             # Before adding user message, flush any pending assistant group
                             if current_assistant_group:
                                 final_action = self._parse_final_output(current_actions, current_assistant_group)
@@ -1155,14 +1827,26 @@ class SessionManager:
 
                             # Add user message (extract original user input from structured content)
                             content = extract_user_input(message_json.get("content", ""))
-                            messages.append(
-                                {
-                                    "role": "user",
-                                    "content": content,
-                                    "timestamp": created_at_iso,
-                                    "created_at": created_at_iso,
-                                }
-                            )
+                            # A mid-turn compaction leaves a synthetic "resume"
+                            # instruction as a user message so the model keeps
+                            # working. It is not something the user typed — skip
+                            # it so the transcript shows no phantom user bubble.
+                            if is_compact_resume_text(content):
+                                continue
+                            user_msg: Dict[str, Any] = {
+                                "role": "user",
+                                "content": content,
+                                "timestamp": created_at_iso,
+                                "created_at": created_at_iso,
+                            }
+                            # Attach the turn's resolved @-context (if any) so the
+                            # front-end can re-render referenced tables/metrics/etc.
+                            turn_no = turn_map.get(row_id)
+                            if turn_no is not None and turn_no in context_map:
+                                user_msg["at_context"] = context_map[turn_no]
+                            if row_id in content_map:
+                                user_msg["message_contents"] = content_map[row_id]
+                            messages.append(user_msg)
                             continue
 
                         # Handle function calls (tool calls)
@@ -1223,11 +1907,17 @@ class SessionManager:
                                     last_action = current_actions[-1]
 
                                 # Extract output directly from message_json
-                                output_text = message_json.get("output", "")
+                                from datus.utils.image_content import image_result_for_display
+
+                                output_text = image_result_for_display(message_json.get("output", ""))
 
                                 # Try to parse as Python literal (the output is stored as string repr of dict)
                                 output_data = {}
-                                if output_text:
+                                if isinstance(output_text, dict):
+                                    output_data = output_text
+                                elif output_text:
+                                    if not isinstance(output_text, str):
+                                        output_text = json.dumps(output_text, ensure_ascii=False)
                                     try:
                                         # Try ast.literal_eval first (safer than eval)
                                         output_data = ast.literal_eval(output_text)
@@ -1259,6 +1949,21 @@ class SessionManager:
                         if role == "assistant":
                             # Assistant message - aggregate consecutive ones
                             content_array = message_json.get("content", [])
+                            had_prior_assistant_text = any(
+                                action.role == ActionRole.ASSISTANT for action in current_actions
+                            )
+                            assistant_message_text = "\n".join(
+                                str(item.get("text", ""))
+                                for item in content_array
+                                if isinstance(item, dict)
+                                and item.get("type") in ("output_text", "text")
+                                and item.get("text")
+                                and not (
+                                    had_prior_assistant_text
+                                    and str(item.get("text", "")).startswith("[Agent stopped after reaching max_turns=")
+                                )
+                            )
+                            assistant_text_recorded = False
 
                             for item in content_array:
                                 if not isinstance(item, dict):
@@ -1287,8 +1992,17 @@ class SessionManager:
                                             "created_at": created_at_iso,
                                         }
 
+                                    # This is an internal replay-safety marker,
+                                    # not model output. If the exhausted final
+                                    # turn also emitted text before tool_use, do
+                                    # not let the marker become the last assistant
+                                    # action and overwrite that real text on resume.
+                                    if not assistant_message_text or assistant_text_recorded:
+                                        continue
+                                    assistant_text_recorded = True
+
                                     # Add to progress
-                                    assistant_progress.append(f"💭Thinking: {text}")
+                                    assistant_progress.append(f"💭Thinking: {assistant_message_text}")
 
                                     # Create ActionHistory for thinking (use response_id from provider)
                                     response_id = message_json.get("provider_data", {}).get(
@@ -1297,10 +2011,10 @@ class SessionManager:
                                     thinking_action = ActionHistory(
                                         action_id=response_id,
                                         role=ActionRole.ASSISTANT,
-                                        messages=text,
+                                        messages=assistant_message_text,
                                         action_type="thinking",
                                         input=None,
-                                        output={"raw_output": text},
+                                        output={"raw_output": assistant_message_text},
                                         status=ActionStatus.SUCCESS,
                                         start_time=(
                                             datetime.fromisoformat(created_at) if created_at else datetime.now()
@@ -1308,6 +2022,31 @@ class SessionManager:
                                         end_time=(datetime.fromisoformat(created_at) if created_at else datetime.now()),
                                     )
                                     current_actions.append(thinking_action)
+
+                                # Native tool calls live inside the assistant
+                                # content as tool_use / server_tool_use blocks.
+                                if item_type in ("tool_use", "server_tool_use"):
+                                    if not current_assistant_group:
+                                        current_assistant_group = {
+                                            "role": "assistant",
+                                            "content": "",
+                                            "timestamp": created_at_iso,
+                                            "created_at": created_at_iso,
+                                        }
+                                    self._restore_native_tool_call(
+                                        item, current_actions, assistant_progress, created_at
+                                    )
+
+                                # Server-side web tools return their result inline
+                                # in the same assistant message (not as a user
+                                # tool_result), keyed by tool_use_id.
+                                if item_type in ("web_search_tool_result", "web_fetch_tool_result"):
+                                    self._attach_native_tool_result(
+                                        current_actions,
+                                        item.get("tool_use_id"),
+                                        item.get("content"),
+                                        created_at,
+                                    )
 
                     except (json.JSONDecodeError, TypeError) as e:
                         logger.debug(f"Skipping malformed message: {e}")
@@ -1331,6 +2070,103 @@ class SessionManager:
             logger.exception(f"Failed to load session messages for {session_id}: {e}")
 
         return messages
+
+    def _restore_native_tool_call(
+        self,
+        item: Dict[str, Any],
+        current_actions: List[ActionHistory],
+        assistant_progress: List[str],
+        created_at: Optional[str],
+    ) -> None:
+        """Build a PROCESSING tool action from a Claude-native content block.
+
+        ``ClaudeModel``'s OAuth path persists tool calls as ``tool_use`` /
+        ``server_tool_use`` blocks INSIDE the assistant message content (not as
+        flat ``function_call`` messages). Without restoring them here, the
+        resumed TUI shows assistant text but drops every tool-call card. Mirrors
+        the ``function_call`` branch's ActionHistory shape so the renderer treats
+        native and OpenAI sessions identically.
+        """
+        tool_name = item.get("name", "unknown")
+        tool_input = item.get("input", {})
+        try:
+            arguments = json.dumps(tool_input, ensure_ascii=False) if not isinstance(tool_input, str) else tool_input
+        except (TypeError, ValueError):
+            arguments = "{}"
+        assistant_progress.append(f"✓ Tool call: {tool_name}({arguments[:60]})")
+        action = ActionHistory(
+            action_id=item.get("id", str(uuid.uuid4())),
+            role=ActionRole.TOOL,
+            messages=f"Tool call: {tool_name}",
+            action_type=tool_name,
+            input={"function_name": tool_name, "arguments": arguments},
+            output=None,
+            status=ActionStatus.PROCESSING,
+            start_time=datetime.fromisoformat(created_at) if created_at else datetime.now(),
+        )
+        current_actions.append(action)
+
+    def _attach_native_tool_result(
+        self,
+        current_actions: List[ActionHistory],
+        tool_use_id: Optional[str],
+        raw_content: Any,
+        created_at: Optional[str],
+    ) -> None:
+        """Pair a Claude-native tool result with its in-flight tool_use action.
+
+        Mirrors the ``function_call_output`` path but for Anthropic blocks
+        (``tool_result`` in a user message, or ``web_search_tool_result`` /
+        ``web_fetch_tool_result`` inline in an assistant message), so the resumed
+        transcript renders the tool's output card instead of dropping it.
+        """
+        if not current_actions:
+            return
+        if isinstance(raw_content, list):
+            output_text = " ".join(p.get("text", "") for p in raw_content if isinstance(p, dict)).strip()
+        elif isinstance(raw_content, str):
+            output_text = raw_content
+        else:
+            output_text = json.dumps(raw_content, ensure_ascii=False) if raw_content is not None else ""
+
+        # Match by tool_use_id; fall back to the most recent in-flight tool call
+        # only when no id is available (mirrors function_call_output).
+        match = None
+        if tool_use_id:
+            for cand in reversed(current_actions):
+                if cand.action_id == tool_use_id and cand.status == ActionStatus.PROCESSING:
+                    match = cand
+                    break
+        else:
+            for cand in reversed(current_actions):
+                if cand.status == ActionStatus.PROCESSING and cand.role == ActionRole.TOOL:
+                    match = cand
+                    break
+        if match is None:
+            return
+
+        output_data = {}
+        if output_text:
+            try:
+                output_data = ast.literal_eval(output_text)
+            except (ValueError, SyntaxError):
+                try:
+                    output_data = json.loads(output_text)
+                except json.JSONDecodeError:
+                    output_data = {"result": output_text}
+
+        success_action = ActionHistory(
+            action_id="complete_" + (tool_use_id or match.action_id),
+            role=ActionRole.TOOL,
+            messages=f"Tool result: {match.action_type}",
+            action_type=match.action_type,
+            input=match.input,
+            output=output_data,
+            status=ActionStatus.SUCCESS,
+            start_time=match.start_time,
+            end_time=datetime.fromisoformat(created_at) if created_at else datetime.now(),
+        )
+        current_actions.append(success_action)
 
     def close_all_sessions(self) -> None:
         """Close all active sessions."""

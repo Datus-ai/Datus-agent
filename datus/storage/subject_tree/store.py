@@ -5,12 +5,13 @@ using the pluggable RDB backend abstraction.
 """
 
 import fnmatch
+import re
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 import pyarrow as pa
-from datus_storage_base.conditions import and_, in_, like
+from datus_storage_base.conditions import Node, and_, in_, like
 from datus_storage_base.rdb.base import ColumnDef, IndexDef, TableDefinition, UniqueViolationError, WhereOp
 
 from datus.storage import BaseEmbeddingStore
@@ -30,6 +31,23 @@ SUBJECT_PATH_COLUMN_NAME = "subject_path"
 NAME_COLUMN_NAME = "name"
 CREATED_AT_COLUMN_NAME = "created_at"
 ROOT_PARENT_ID = -1  # Used instead of NULL to ensure UNIQUE constraint works for root nodes
+
+# Characters that carry no meaning in a subject node name — two names that
+# differ only by these (or by case) denote the same subject area.
+_NODE_NAME_NOISE_RE = re.compile(r"[\s_\-/\\.·、,，]+")
+
+
+def normalize_subject_node_name(name: str) -> str:
+    """Comparison key for subject node names.
+
+    Case-folded with separators/punctuation removed, so ``Marketing``,
+    ``marketing``, ``market_ing`` and ``Marketing `` all collapse onto one
+    node instead of fragmenting a subject area into near-duplicate siblings.
+    Genuinely different names (``营销`` vs ``营销分析``) still stay distinct —
+    merging those needs a curated tree (``bootstrap-kb --subject_tree``).
+    """
+    return _NODE_NAME_NOISE_RE.sub("", str(name or "").strip()).casefold()
+
 
 _SUBJECT_NODES_TABLE = TableDefinition(
     table_name="subject_nodes",
@@ -130,7 +148,20 @@ class SubjectTreeStore:
         logger.info("SubjectTreeStore initialized")
 
     def _migrate_null_parents(self):
-        """Migrate existing NULL parent_id values to ROOT_PARENT_ID (-1)."""
+        """Migrate existing NULL parent_id values to ROOT_PARENT_ID (-1).
+
+        Reads before writing. This runs on *every* construction, so an unconditional
+        UPDATE puts a write on the path of consumers that only ever read — a role
+        holding just SELECT cannot construct the store at all, and everyone else pays
+        for a statement that almost always matches nothing.
+        """
+        legacy_rows = self._table.query(
+            SubjectNodeRecord,
+            where=[("parent_id", WhereOp.IS_NULL, None)],
+            columns=["node_id"],
+        )
+        if not legacy_rows:
+            return
         self._table.update(
             {"parent_id": ROOT_PARENT_ID},
             where=[("parent_id", WhereOp.IS_NULL, None)],
@@ -181,7 +212,7 @@ class SubjectTreeStore:
             node_id = self._table.insert(record)
 
             created_node = self.get_node(node_id)
-            logger.info(f"Created node: {self.get_full_path(node_id)} (node_id={node_id})")
+            logger.debug(f"Created node: {self.get_full_path(node_id)} (node_id={node_id})")
             return created_node
 
         except UniqueViolationError as e:
@@ -548,15 +579,39 @@ class SubjectTreeStore:
         return parent_id
 
     def _find_child_by_name(self, parent_id: Optional[int], name: str) -> Optional[Dict[str, Any]]:
-        """Find a child node by name under a specific parent."""
+        """Find a child node by name under a specific parent.
+
+        Matching is exact first, then normalized (case-folded, separators and
+        surrounding whitespace ignored). Subject paths are largely written by
+        an LLM one entry at a time, so without the normalized pass a single
+        area accumulates siblings like ``Marketing`` / ``marketing`` /
+        ``marketing_`` — each splitting the same content into its own subtree.
+        """
         db_parent_id = ROOT_PARENT_ID if parent_id is None else parent_id
-        where = {"parent_id": db_parent_id, "name": name, "datasource_id": self.datasource_id}
         rows = self._table.query(
             SubjectNodeRecord,
-            where=where,
+            where={"parent_id": db_parent_id, "name": name, "datasource_id": self.datasource_id},
         )
         if rows:
             return _node_to_dict(rows[0])
+
+        target = normalize_subject_node_name(name)
+        if not target:
+            return None
+        siblings = self._table.query(
+            SubjectNodeRecord,
+            where={"parent_id": db_parent_id, "datasource_id": self.datasource_id},
+        )
+        for row in siblings or []:
+            node = _node_to_dict(row)
+            if normalize_subject_node_name(node.get("name", "")) == target:
+                logger.info(
+                    "Reusing subject node %r for equivalent name %r (parent=%s)",
+                    node.get("name"),
+                    name,
+                    parent_id,
+                )
+                return node
         return None
 
     def rename(self, old_path: List[str], new_path: List[str]) -> bool:
@@ -809,7 +864,7 @@ class BaseSubjectEmbeddingStore(BaseEmbeddingStore):
         # Upsert the batch using the parent class method
         if batch_data:
             self.upsert_batch(batch_data, on_column=on_column)
-            logger.info(f"Successfully upserted {len(batch_data)} items in batch")
+            logger.debug(f"Successfully upserted {len(batch_data)} items in batch")
 
     def search_with_subject_filter(
         self,
@@ -1185,7 +1240,11 @@ class BaseSubjectEmbeddingStore(BaseEmbeddingStore):
         return True
 
     def list_entries(
-        self, node_id: int, name: Optional[str] = None, limit: Optional[int] = None
+        self,
+        node_id: int,
+        name: Optional[str] = None,
+        limit: Optional[int] = None,
+        extra_conditions: Optional[List[Node]] = None,
     ) -> List[Dict[str, Any]]:
         """Get storage entries by subject node ID and entry name.
 
@@ -1197,6 +1256,10 @@ class BaseSubjectEmbeddingStore(BaseEmbeddingStore):
             node_id: Subject node ID (parent node in the subject tree)
             name: Entry name (e.g., metric name or SQL name)
             limit: Maximum number of results to return (default: None)
+            extra_conditions: Additional filter conditions, ANDed with the rest.
+                Callers reading on behalf of a scoped sub-agent must pass that
+                RAG's ``_sub_agent_conditions()``; this method applies no scope
+                of its own, so omitting them returns every entry under the node.
 
         Returns:
             List of entries matching the criteria, enriched with subject_path
@@ -1225,6 +1288,9 @@ class BaseSubjectEmbeddingStore(BaseEmbeddingStore):
 
             if name:
                 conditions.append(eq(NAME_COLUMN_NAME, name))
+
+            if extra_conditions:
+                conditions.extend(extra_conditions)
 
             where_clause = None if len(conditions) == 0 else and_(*conditions)
             # Execute search

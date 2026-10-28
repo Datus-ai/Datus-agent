@@ -3123,7 +3123,11 @@ class TestGetToolOutputPreview:
             ActionRole.TOOL,
             ActionStatus.SUCCESS,
             input_data={"function_name": "search_table"},
-            output_data={"raw_output": '{"metadata": [{"t": 1}, {"t": 2}], "sample_data": [{"r": 1}]}'},
+            output_data={
+                "raw_output": (
+                    '{"metadata": [{"table_name": "orders", "sample_rows": [{"id": 1}]}, {"table_name": "customers"}]}'
+                )
+            },
         )
         tc = _build_search_table(action, verbose=False)
         assert "2 tables" in tc.compact_result

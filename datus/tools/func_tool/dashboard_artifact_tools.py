@@ -44,6 +44,8 @@ from datus.schemas.gen_visual_dashboard_models import (
     parse_datus_params_header,
 )
 from datus.tools.func_tool._artifact_filesystem_base import ArtifactFilesystemFuncTool
+from datus.tools.func_tool._jsx_hooks_lint import format_hook_order_issues
+from datus.tools.func_tool._visual_artifact_cards import scan_render_cards
 from datus.tools.func_tool._visual_artifact_helpers import (
     append_intent_section,
     coerce_uses_arg,
@@ -52,6 +54,7 @@ from datus.tools.func_tool._visual_artifact_helpers import (
     write_query_brief,
 )
 from datus.tools.func_tool.base import FuncToolResult, trans_to_function_tool
+from datus.tools.func_tool.metric_artifact_tools import MetricArtifactToolsMixin
 from datus.tools.func_tool.report_artifact_tools import (
     _DEFAULT_EXPORT_RE,
     _IMPORT_PATH_RE,
@@ -78,7 +81,7 @@ _MAX_PARAMS_META_BYTES = 64 * 1024  # 64 KB hard cap per params.json
 # dashboard always parameterizes its queries.
 _USE_QUERY_SQL_LITERAL_RE = re.compile(
     r"""
-    useQuerySql\s*\(\s*
+    useQuery(?:Sql)?\s*\(\s*
     ['"]([^'"\\\n]+)['"]                 # 1: sqlId literal
     \s*,\s*
     (\{[^{}]*(?:\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}[^{}]*)*\})  # 2: params object literal (depth ≤ 3)
@@ -89,7 +92,7 @@ _USE_QUERY_SQL_LITERAL_RE = re.compile(
 
 # A useQuerySql call with only one argument — the dashboard subagent rejects
 # this; pass an explicit params object (use `{}` when the template takes none).
-_USE_QUERY_SQL_NO_PARAMS_RE = re.compile(r"useQuerySql\s*\(\s*['\"][^'\"\\\n]+['\"]\s*\)")
+_USE_QUERY_SQL_NO_PARAMS_RE = re.compile(r"useQuery(?:Sql)?\s*\(\s*['\"][^'\"\\\n]+['\"]\s*\)")
 
 # Property keys in the params object literal — only static string / bare
 # identifier keys are statically checked. Computed keys or spread syntax
@@ -118,82 +121,6 @@ _PARAMS_SHORTHAND_KEY_RE = re.compile(
     """,
     re.VERBOSE | re.IGNORECASE,
 )
-
-
-# ``<ChartCard ... >`` opening tag, including the self-closing form
-# ``<ChartCard ... />``. Group 1 captures the prop block. The attribute
-# block is matched as a sequence of "atom" tokens (plain non-special
-# chars, quoted strings, balanced brace expressions) so attributes whose
-# values contain ``>`` — ``title={<Icon />}`` or
-# ``titleRight={<span>a > b</span>}`` — are not truncated at the first
-# stray angle bracket. Brace expressions are recognised up to depth 3,
-# enough for ``style={{ color: '#fff' }}`` / nested JSX expressions.
-_CHART_CARD_OPEN_RE = re.compile(
-    r"""
-    <ChartCard\b
-    (
-      (?:
-        [^'"{}<>]                                          # plain char
-        | '[^'\\]*(?:\\.[^'\\]*)*'                         # 'single-quoted'
-        | "[^"\\]*(?:\\.[^"\\]*)*"                         # "double-quoted"
-        | \{ (?: [^{}] | \{ (?: [^{}] | \{[^{}]*\} )* \} )* \}   # {balanced braces, depth ≤ 3}
-      )*
-    )
-    /?\s*>
-    """,
-    re.VERBOSE | re.DOTALL,
-)
-
-
-# Top-level JSX spread attribute: ``{...rest}`` sitting between other
-# attributes. The match is anchored on a whitespace boundary so nested
-# spreads inside JSX expressions (e.g. ``style={{...defaults}}``) — where
-# the inner ``{`` is preceded by another ``{``, not whitespace — do not
-# false-positive into "ChartCard uses spread props".
-_CHART_CARD_SPREAD_RE = re.compile(r"(?<=\s)\{\s*\.{3}")
-
-
-# Per-attribute extraction inside a ``<ChartCard ... >`` opening tag. Captures
-# only the three required string-literal props the validator audits
-# (``chartId``, ``sqlId``, ``chartType``); other props are ignored here and
-# checked by the runtime / typescript at viewer time.
-_CHART_CARD_STR_ATTR_RE = re.compile(
-    r"""\b(chartId|sqlId|chartType)\s*=\s*['"]([^'"]+)['"]""",
-)
-
-
-# ``chartId`` shape — same slug grammar used elsewhere in the artifact path
-# (dashboard slug, query slug). Caps at 64 to keep the validate_render
-# cards-registry payload compact.
-_CHART_ID_RE = re.compile(r"^[a-z0-9_]{1,64}$")
-
-
-# ChartCard's chartType enum.
-_VALID_CHART_TYPES: Set[str] = {
-    # recharts native chart components
-    "bar",
-    "line",
-    "area",
-    "pie",
-    "scatter",
-    "radar",
-    "composed",
-    "radial-bar",
-    "treemap",
-    "funnel",
-    # Not recharts-native but common in BI dashboards; rendered via
-    # custom SVG / RadialBarChart subsets. Declaring the type lets the
-    # edit-time LLM see the intent without forcing every BI chart into
-    # the catch-all ``custom`` bucket.
-    "gauge",
-    "heatmap",
-    "waterfall",
-    # Tabular + single-value cards.
-    "table",
-    "kpi",
-    # Escape hatch for hand-rolled visuals that don't match any of the above.
-    "custom",
-}
 
 
 # --------------------------------------------------------------------------- #
@@ -417,7 +344,7 @@ class DashboardFilesystemFuncTool(ArtifactFilesystemFuncTool):
 # --------------------------------------------------------------------------- #
 
 
-class DashboardArtifactTools:
+class DashboardArtifactTools(MetricArtifactToolsMixin):
     """LLM-facing tools that produce the dashboard artifact tree.
 
     Lifecycle mirrors :class:`ReportArtifactTools`:
@@ -444,9 +371,11 @@ class DashboardArtifactTools:
         agent_config,
         db_func_tool,
         user_message: str = "",
+        semantic_tools=None,
     ) -> None:
         self.agent_config = agent_config
         self._db_func_tool = db_func_tool
+        self._semantic_tools = semantic_tools
         # See ReportArtifactTools.__init__ for the rationale — mirror logic.
         self._user_message = user_message or ""
 
@@ -475,6 +404,7 @@ class DashboardArtifactTools:
             # ``additionalProperties: true`` JSON schema this produces; we
             # validate keys + types ourselves once the call lands.
             trans_to_function_tool(self.save_query_template, strict_mode=False),
+            trans_to_function_tool(self.save_metric_query_template, strict_mode=False),
             trans_to_function_tool(self.validate_render),
         ]
 
@@ -699,6 +629,8 @@ class DashboardArtifactTools:
         uses: Optional[Dict[str, Any]] = None,
         caveats: str = "",
         datasource: str = "",
+        fallback_reason: str = "",
+        candidate_metrics: Optional[List[Dict[str, Any]]] = None,
     ) -> FuncToolResult:
         """
         Persist a parameterized Jinja2 SQL template after a trial render,
@@ -798,6 +730,23 @@ class DashboardArtifactTools:
                     "If you don't have a hypothesis, skip the query."
                 ),
             )
+        if self._semantic_tools is not None and not fallback_reason.strip():
+            return FuncToolResult(
+                success=0,
+                error="Use the single-metric save tool whenever it meets the need. SQL fallback requires fallback_reason and candidate_metrics after checking metric capabilities.",
+            )
+        source_selection = (
+            {"reason": fallback_reason.strip(), "candidate_metrics": candidate_metrics or []}
+            if fallback_reason.strip()
+            else None
+        )
+        if source_selection is not None:
+            from datus.schemas.analysis_artifacts import SqlSourceSelection
+
+            try:
+                SqlSourceSelection.model_validate(source_selection)
+            except ValueError as exc:
+                return FuncToolResult(success=0, error=f"Invalid SQL source selection: {exc}")
         try:
             uses_obj = coerce_uses_arg(uses)
         except ValueError as exc:
@@ -887,8 +836,19 @@ class DashboardArtifactTools:
 
         ds_label = datasource or getattr(self._db_func_tool, "_default_datasource", "") or "default"
 
+        # Pre-flight EXPLAIN row-count guard on the trial-rendered SQL: reject a
+        # runaway template (e.g. a cross-join cartesian product) from its
+        # optimizer estimate before it executes. Fail-open when unmeasurable.
+        oversize = self._db_func_tool.guard_estimated_rows(rendered_sql, connector)
+        if oversize is not None:
+            return oversize
+
         try:
-            execute_result = connector.execute_query(rendered_sql, result_format="list")
+            # Enforced-read path: apply SQL policy + multi-statement rejection
+            # to the trial render so a runaway template can't OOM the engine.
+            execute_result = self._db_func_tool.execute_read_enforced(
+                rendered_sql, connector, datasource=datasource, result_format="list"
+            )
         except Exception as exc:
             logger.exception("save_query_template trial execute crashed", extra={"name": name})
             return FuncToolResult(success=0, error=f"Trial query execution failed: {exc}")
@@ -980,9 +940,11 @@ class DashboardArtifactTools:
             hypothesis=hypothesis.strip(),
             uses=uses_obj,
             caveats=caveats.strip() if caveats else "",
+            source_selection=source_selection,
         )
         if brief_err:
             return FuncToolResult(success=0, error=brief_err)
+        (self.queries_dir / f"{name}.metric.json").unlink(missing_ok=True)
 
         manifest_warning = upsert_manifest_after_save(
             self.dashboard_dir / "manifest.json",
@@ -1024,6 +986,11 @@ class DashboardArtifactTools:
         * Every ``import`` / ``export ... from`` path is either a bare
           specifier in the allowed list or a relative path that resolves
           to a file under ``render/``.
+        * Card ids and query sources must be statically declared at the call
+          site. Dynamic ids/sources and spread card props block finalization;
+          shared KPI components should contain only the visual body.
+        * No ``use*()`` hook call sits below a ``return`` in the same function
+          — the Rules-of-Hooks violation that renders as a blank artifact.
 
         Returns:
             FuncToolResult.result on success::
@@ -1044,6 +1011,10 @@ class DashboardArtifactTools:
         not_bound = self._require_active("validate_render")
         if not_bound is not None:
             return not_bound
+
+        metric_error = self._validate_metric_queries("dashboard")
+        if metric_error:
+            return FuncToolResult(success=0, error=metric_error)
 
         # Manifest must exist before render-tree validation — it's part
         # of the artifact contract that the list pages / IDE rely on.
@@ -1123,85 +1094,48 @@ class DashboardArtifactTools:
                     success=0,
                     error=f"queries/{meta_path.name} is corrupt or off-spec: {exc}",
                 )
-            # Make sure the .sql.j2 sibling exists.
-            if not (self.queries_dir / f"{slug}.sql.j2").is_file():
+            # Require exactly one SQL or metric sibling source.
+            sql_exists = (self.queries_dir / f"{slug}.sql.j2").is_file()
+            metric_path = self.queries_dir / f"{slug}.metric.json"
+            if metric_path.is_file():
+                from datus.schemas.metric_artifact_query import MetricQueryFile
+
+                try:
+                    metric = MetricQueryFile.model_validate_json(metric_path.read_text(encoding="utf-8"))
+                    if (
+                        sql_exists
+                        or metric.name != slug
+                        or metric.parameter_names() != {p.name for p in meta_obj.params}
+                    ):
+                        raise ValueError("metric identity, parameters or exclusive source do not match")
+                except ValueError as exc:
+                    return FuncToolResult(success=0, error=f"Invalid metric query {slug}: {exc}")
+            if not sql_exists and not metric_path.is_file():
                 return FuncToolResult(
                     success=0,
-                    error=f"queries/{slug}.params.json has no sibling {slug}.sql.j2 — re-run save_query_template.",
+                    error=(
+                        f"queries/{slug}.params.json has no sibling {slug}.sql.j2 or {slug}.metric.json — "
+                        "re-run save_query_template or save_metric_query_template."
+                    ),
                 )
 
         module_keys: Set[str] = set(modules.keys())
-        issues: List[str] = []
-        warnings: List[str] = []
-        query_refs: Set[str] = set()
-        # chartId → render-file rel-path of its first declaration. Used to
-        # detect duplicates across the whole render/ tree; the validate_render
-        # result also exposes this as the cards-registry for downstream
-        # consumers, and both require global uniqueness.
-        chart_ids_seen: Dict[str, str] = {}
+
+        # <ChartCard> / <BlockHandle> audit — shared with the report
+        # validator so the two kinds can't drift on id shape, uniqueness
+        # or the kind enum.
+        cards = scan_render_cards(
+            modules,
+            query_exists=lambda slug: slug in templates,
+            missing_query_hint="a template not produced via save_query_template",
+            require_static_sources=True,
+        )
+        issues: List[str] = list(cards.issues)
+        warnings: List[str] = list(cards.warnings)
+        query_refs: Set[str] = set(cards.query_refs)
 
         for key, mod in modules.items():
             source = mod["source"]
-
-            # ---- <ChartCard ... > opening tags — required props + enums.
-            for cc_match in _CHART_CARD_OPEN_RE.finditer(source):
-                attrs = cc_match.group(1) or ""
-                attr_values: Dict[str, str] = {name: value for name, value in _CHART_CARD_STR_ATTR_RE.findall(attrs)}
-
-                # Spread props (``<ChartCard {...rest}>``) hide attributes from
-                # static inspection. Surface as a warning, then bail on the
-                # rest of the checks for this match to avoid false positives.
-                if _CHART_CARD_SPREAD_RE.search(attrs):
-                    warnings.append(
-                        f"render/{mod['rel']}: <ChartCard> uses spread props — static "
-                        "validation of chartId / sqlId / chartType is deferred to runtime."
-                    )
-                    continue
-
-                missing = [k for k in ("chartId", "sqlId", "chartType") if k not in attr_values]
-                if missing:
-                    issues.append(
-                        f"render/{mod['rel']}: <ChartCard> is missing required string-literal "
-                        f"props: {missing}. Each ChartCard must declare chartId, sqlId, and "
-                        "chartType up front."
-                    )
-                    continue
-
-                chart_id = attr_values["chartId"]
-                sql_id = attr_values["sqlId"]
-                chart_type = attr_values["chartType"]
-
-                if not _CHART_ID_RE.fullmatch(chart_id):
-                    issues.append(
-                        f"render/{mod['rel']}: <ChartCard chartId={chart_id!r}> must match {_CHART_ID_RE.pattern}."
-                    )
-                elif chart_id in chart_ids_seen:
-                    issues.append(
-                        f"render/{mod['rel']}: <ChartCard chartId={chart_id!r}> duplicates the "
-                        f"chartId already declared in render/{chart_ids_seen[chart_id]}. chartId "
-                        "must be globally unique across the dashboard."
-                    )
-                else:
-                    chart_ids_seen[chart_id] = mod["rel"]
-
-                slug = extract_query_slug(sql_id)
-                if slug is None:
-                    issues.append(
-                        f"render/{mod['rel']}: <ChartCard sqlId={sql_id!r}> is not a valid queries/<slug> reference."
-                    )
-                else:
-                    query_refs.add(f"queries/{slug}")
-                    if slug not in templates:
-                        issues.append(
-                            f"render/{mod['rel']}: <ChartCard sqlId='queries/{slug}'> points to a "
-                            "template not produced via save_query_template."
-                        )
-
-                if chart_type not in _VALID_CHART_TYPES:
-                    issues.append(
-                        f"render/{mod['rel']}: <ChartCard chartType={chart_type!r}> is not one of "
-                        f"{sorted(_VALID_CHART_TYPES)}."
-                    )
 
             # ---- 1-arg useQuerySql calls (no params) — always rejected.
             for match in _USE_QUERY_SQL_NO_PARAMS_RE.finditer(source):
@@ -1283,6 +1217,9 @@ class DashboardArtifactTools:
                     f"{sorted(ALLOWED_BARE_MODULES)} or relative paths under render/ are allowed."
                 )
 
+            # ---- Rules of Hooks: no hook call below an early return
+            issues.extend(format_hook_order_issues(mod["rel"], source))
+
         if not _DEFAULT_EXPORT_RE.search(modules["app"]["source"]):
             issues.append(
                 "render/app.jsx must include an `export default` (the renderer mounts the "
@@ -1312,11 +1249,11 @@ class DashboardArtifactTools:
             for k in unreferenced
         )
 
-        # Cards registry derived from the validated <ChartCard> instances.
-        # Sorted by chartId for stable wire output. Downstream consumers
-        # (publish wire payload, future static-edit APIs) read this off the
+        # Cards registry derived from the validated <ChartCard> /
+        # <BlockHandle> instances. Downstream consumers (publish wire
+        # payload, future static-edit APIs) read this off the
         # validate_render result rather than re-walking the AST.
-        cards_registry = [{"chart_id": cid, "jsx_path": f"render/{rel}"} for cid, rel in sorted(chart_ids_seen.items())]
+        cards_registry = cards.registry()
 
         return FuncToolResult(
             result={

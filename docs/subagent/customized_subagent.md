@@ -23,7 +23,7 @@ The wizard currently supports two custom node styles:
 - `gen_sql` (default)
 - `gen_report`
 
-If you want advanced aliases such as `explore`, `gen_table`, `gen_skill`, `gen_dashboard`, or `scheduler`, edit `agent.yml` manually.
+If you want advanced aliases such as `explore`, `gen_table`, or `gen_skill`, edit `agent.yml` manually. Scheduling and external BI operations are handled directly by the main agent through installed plugins and cannot be exposed through a custom subagent alias.
 
 ## Wizard Fields
 
@@ -129,16 +129,14 @@ Example:
 ```yaml
 agent:
   agentic_nodes:
-    sales_dashboard:
-      node_class: gen_dashboard
+    schema_explorer:
+      node_class: explore
       model: claude
-      bi_platform: superset
-      max_turns: 30
-
-    etl_scheduler:
-      node_class: scheduler
-      model: claude
-      max_turns: 30
+      max_turns: 15
 ```
+
+Legacy configurations whose `node_class` is `gen_dashboard` or `scheduler`
+are not listed or instantiated. Ask the main agent to use the corresponding
+Superset or Airflow plugin instead.
 
 See [Subagent Guide](./introduction.md) and [Built-in subagents](./builtin_subagents.md) for the supported node classes and runtime behavior.

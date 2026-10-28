@@ -1,10 +1,17 @@
-# Data Engineering Quickstart
+# End-to-End Data Engineering
 
-This guide walks through a complete local Datus workflow using the open DAComp
+This scenario tutorial walks through a complete local Datus workflow using the open DAComp
 data-engineering dataset. You will inspect the warehouse design, build layered
 tables interactively in a local DuckDB workbench file, generate ETL jobs,
 produce marts data, submit a daily Airflow job, and publish the result to
 Superset.
+
+!!! info "What this tutorial starts from"
+    This guide starts with source data and creates a new pipeline and dashboard. If you already have a Superset dashboard and want to turn it into analysis agents, follow [Turn a Dashboard into a Copilot](dashboard_copilot.md). If this is your first time using Datus, complete [Install and First Query](Quickstart.md) first.
+
+This guide uses Datus plugins to work with Airflow and Superset. Datus
+datasources handle SQL execution and data movement, while the plugins discover,
+create, run, and inspect resources through the Airflow and Superset APIs.
 
 The local open-source quickstart does **not** require Iceberg, MinIO, or S3.
 The SaaS Studio tour uses a managed DuckDB + Iceberg lakehouse instead; see
@@ -38,7 +45,7 @@ unzip -o datus-de-lever-quickstart-v1.zip
 unzip -o datus-data-engineering-quickstart-stack-v1.zip
 
 export DACOMP_HOME="$(pwd)/datus-de-lever-quickstart"
-export DATUS_QUICKSTART_STACK="$(pwd)/datus-data-engineering-quickstart-stack"
+export DATUS_QUICKSTART_STACK="$(pwd)/data-engineering-quickstart-stack"
 cp "$DACOMP_HOME/lever_start.duckdb" "$DACOMP_HOME/lever_workbench.duckdb"
 cd "$DACOMP_HOME"
 
@@ -73,24 +80,54 @@ Read those first so the prompts you give to the agent stay aligned with the inte
 
 The downloaded stack includes the local demo services used by this walkthrough.
 
-Start Superset:
+The Superset Database named `examples` connects to PostgreSQL as
+`postgres:5432/superset_examples`. The Superset plugin uses that
+credential-free connection identity to find the matching Datus datasource.
+Expose the endpoint to the host and make the Compose service name resolvable
+before starting Superset:
 
 ```bash
+(
+set -e
 cd "$DATUS_QUICKSTART_STACK/superset"
+
+cat > docker-compose.override.yml <<'YAML'
+services:
+  postgres:
+    ports:
+      - "5432:5432"
+YAML
+
+if grep -qE '(^|[[:space:]])postgres([[:space:]]|$)' /etc/hosts && \
+   ! grep -qxE '[[:space:]]*127\.0\.0\.1[[:space:]]+postgres[[:space:]]*' /etc/hosts; then
+  echo 'Conflicting /etc/hosts entry for postgres; replace it with: 127.0.0.1 postgres' >&2
+  exit 1
+fi
+grep -qxE '[[:space:]]*127\.0\.0\.1[[:space:]]+postgres[[:space:]]*' /etc/hosts || \
+  echo '127.0.0.1 postgres' | sudo tee -a /etc/hosts
+
 docker compose up -d
+)
 ```
+
+The host's port 5432 must be available. This walkthrough uses
+`postgres:5432` so Datus and Superset report the same connection identity.
 
 Start Airflow:
 
 ```bash
+(
+set -e
 cd "$DATUS_QUICKSTART_STACK/airflow"
 docker compose up -d
+)
 ```
 
 Default local endpoints:
 
 - Superset: `http://127.0.0.1:8088`, username `admin`, password `admin`
 - Airflow: `http://127.0.0.1:8080`, username `admin`, password `admin`
+- PostgreSQL serving database: `postgres:5432/superset_examples`, username/password `superset/superset`
 
 For this quickstart, the Superset compose file uses local demo defaults for the
 metadata database and admin user.
@@ -99,15 +136,46 @@ The Airflow compose file mounts `${DACOMP_HOME}` into the container and exposes
 an Airflow connection named `duckdb_dacomp_lever`, which points to
 `/workspace/lever_workbench.duckdb`.
 
-## Step 3: Configure `agent.yml`
+Keep the local demo credentials out of `agent.yml` even though they are public
+defaults. Export them in every shell that runs Datus:
 
-Merge the following service configuration into the existing `agent:` section in
+```bash
+export AIRFLOW_PASSWORD=admin
+export SUPERSET_PASSWORD=admin
+export SUPERSET_PG_PASSWORD=superset
+```
+
+## Step 3: Install and Configure the Plugins
+
+Install both plugins from the Datus Plugins Git repository into the same
+environment as Datus. The Superset plugin includes the
+`superset-dashboard-authoring` skill used later in this guide:
+
+```bash
+datus plugin install "git:https://github.com/Datus-ai/Datus-Plugins.git#subdirectory=datus-airflow-plugin"
+datus plugin install "git:https://github.com/Datus-ai/Datus-Plugins.git#subdirectory=datus-superset-plugin"
+datus plugin info airflow
+datus plugin info superset
+```
+
+To update both plugins from their recorded Git sources:
+
+```bash
+datus plugin upgrade airflow
+datus plugin upgrade superset
+```
+
+Merge the following configuration into the existing `agent:` section in
 `~/.datus/conf/agent.yml`. Keep any existing `agent.providers` settings; the
 `/model` command uses those credentials. The paths use the `DACOMP_HOME` and `DATUS_QUICKSTART_STACK`
 environment variables from Step 0.
 
 ```yaml
 agent:
+  filesystem:
+    allow_write:
+      - "${DATUS_QUICKSTART_STACK}/airflow/dags"
+
   services:
     datasources:
       lever_duckdb:
@@ -116,51 +184,70 @@ agent:
         default: true
       superset_serving:
         type: postgresql
-        host: 127.0.0.1
-        port: 5433
+        host: postgres
+        port: 5432
         database: superset_examples
         schema: public
         username: superset
-        password: superset
+        password: ${SUPERSET_PG_PASSWORD}
 
-    bi_platforms:
-      superset:
-        type: superset
-        api_base_url: http://127.0.0.1:8088
-        username: admin
-        password: admin
-        dataset_db:
-          datasource_ref: superset_serving
-          bi_database_name: examples
-
-    schedulers:
-      airflow_prod:
-        type: airflow
+  plugins:
+    airflow:
+      local:
+        default: true
         api_base_url: http://127.0.0.1:8080/api/v1
+        api_version: auto
         username: admin
-        password: admin
+        password: ${AIRFLOW_PASSWORD}
+        verify_ssl: true
+        timeout: 30
         dags_folder: "${DATUS_QUICKSTART_STACK}/airflow/dags"
-        connections:
-          duckdb_dacomp_lever: DAComp Lever DuckDB
+        dag_id_prefix: daily_lever_
+        allow_commands: dags,tasks,version,health
 
-    semantic_layer:
-      metricflow:
-        type: metricflow
-
-  agentic_nodes:
-    gen_dashboard:
-      bi_platform: superset
-    scheduler:
-      scheduler_service: airflow_prod
+    superset:
+      local:
+        default: true
+        api_base_url: http://127.0.0.1:8088
+        auth_mode: login
+        username: admin
+        password: ${SUPERSET_PASSWORD}
+        provider: db
+        verify_ssl: "true"
+        timeout: "30"
 ```
 
-Then start Datus with the `lever_duckdb` datasource, which points at the
-writable workbench file:
+`filesystem.allow_write` authorizes the agent to publish a DAG into the host
+directory mounted by Airflow. The `dags_folder` value tells the agent where to
+publish the runtime copy. DAG discovery, triggering, run inspection, and log
+retrieval go through the Airflow plugin under main-agent control.
+
+Enable both profiles for this project, then start the chat session:
 
 ```bash
 cd "$DACOMP_HOME"
-datus-cli --datasource lever_duckdb
+datus plugin enable airflow --profile local
+datus plugin enable superset --profile local
+datus --datasource lever_duckdb
 ```
+
+Verify both services through the main agent rather than running plugin commands
+yourself:
+
+```text
+Using the enabled local profiles, ask the Airflow plugin for its server version and health, then ask the Superset plugin for health and the available databases. Perform read-only checks only and report any connectivity or authentication error.
+```
+
+Always configure and enable plugins before launching Datus. Plugin skills and
+environment context are prepared when a session starts; restart the session
+after changing a profile. The selected `lever_duckdb` datasource points at the
+writable workbench file.
+
+The quickstart injects `duckdb_dacomp_lever` through Airflow's
+`AIRFLOW_CONN_DUCKDB_DACOMP_LEVER` environment variable. Environment-provided
+connections are available to `BaseHook` at task runtime but are not returned by
+Airflow's REST connection endpoint. Step 6 validates this connection by running
+the DAG.
 
 If the CLI says no model is configured, configure one before continuing:
 
@@ -171,8 +258,6 @@ If the CLI says no model is configured, configure one before continuing:
 Choose a provider/model and enter credentials if prompted. `/model` writes
 provider credentials under `agent.providers` in `~/.datus/conf/agent.yml` and
 writes the active provider/model for this project to `./.datus/config.yml`.
-
-Here `dags_folder` is the host-side directory where Datus writes generated DAG files. The Airflow compose file mounts that directory into the Airflow container as `/opt/airflow/dags`, so newly generated DAGs are picked up automatically.
 
 ## Step 4: Create the Required Staging Tables
 
@@ -190,7 +275,14 @@ This walkthrough builds a narrow but complete dependency chain for
 `marts.lever__requisition_enhanced`. Use `docs/data_contract.yaml` as the source
 of truth for field selection, renames, and business logic.
 
-Ask the agent to create the staging tables required by the `source_models`
+First ask the agent to inspect the physical source columns. This prevents a
+source-to-target rename from being mistaken for a missing field:
+
+```text
+Inspect the schemas and sample rows for raw.requisition, raw.user, raw.requisition_posting, and raw.requisition_offer. Before generating SQL, confirm these source-to-target renames from the physical columns: raw.requisition.id to requisition_id, name to requisition_name, creator_id to creator_user_id, owner_id to owner_user_id, and hiring_manager_id to hiring_manager_user_id; raw.user.id to user_id, name to user_name, and external_directory_id to external_directory_user_id. Do not create NULL placeholders for columns that exist in the source tables.
+```
+
+Then ask the agent to create the staging tables required by the `source_models`
 listed for `lever__requisition_enhanced` and
 `intermediate.int_lever__requisition_users`. The agent will route the request to
 the table-generation workflow:
@@ -234,41 +326,76 @@ The intended order is always:
 staging -> intermediate -> marts
 ```
 
-After the marts table is built, validate it directly:
+After the marts table is built, validate every layer and the dashboard
+dimensions:
 
 ```sql
-SELECT COUNT(*) FROM marts.lever__requisition_enhanced;
+SELECT 'stg_user' AS model, COUNT(*) AS row_count FROM staging.stg_lever__user
+UNION ALL
+SELECT 'stg_requisition', COUNT(*) FROM staging.stg_lever__requisition
+UNION ALL
+SELECT 'stg_requisition_posting', COUNT(*) FROM staging.stg_lever__requisition_posting
+UNION ALL
+SELECT 'stg_requisition_offer', COUNT(*) FROM staging.stg_lever__requisition_offer
+UNION ALL
+SELECT 'int_requisition_users', COUNT(*) FROM intermediate.int_lever__requisition_users
+UNION ALL
+SELECT 'marts_requisition_enhanced', COUNT(*) FROM marts.lever__requisition_enhanced;
+
+SELECT
+  COUNT(*) AS total_rows,
+  COUNT(status) AS rows_with_status,
+  COUNT(team) AS rows_with_team,
+  COUNT(location) AS rows_with_location,
+  SUM(count_postings) AS posting_links,
+  SUM(count_offers) AS offer_links
+FROM marts.lever__requisition_enhanced;
 ```
 
-## Step 6: Submit a Daily Airflow Job
+Every model must be non-empty, and `rows_with_status`, `rows_with_team`,
+`rows_with_location`, `posting_links`, and `offer_links` must all be greater
+than zero. With the version 1 quickstart package, the marts table contains 146
+rows. If dimensions are unexpectedly all NULL, return to the schema inspection
+above and correct the source-column mappings before continuing.
 
-Ask the agent to operationalize a daily marts refresh. The Airflow quickstart environment already exposes the `duckdb_dacomp_lever` connection.
-
-Submit a daily SQL job at 8 AM that rebuilds the same contract-derived chain:
+Finally, preserve the exact statements that succeeded. The scheduled DAG will
+read this file from the `/workspace` mount instead of regenerating SQL:
 
 ```text
-Submit a daily SQL job named daily_lever_requisition_enhanced that refreshes staging.stg_lever__requisition, staging.stg_lever__user, staging.stg_lever__requisition_posting, staging.stg_lever__requisition_offer, intermediate.int_lever__requisition_users, and marts.lever__requisition_enhanced at 8am every day using the duckdb_dacomp_lever connection. Use the SQL generated and validated from docs/data_contract.yaml in the previous steps.
+Collect the exact SQL statements that successfully created the staging, intermediate, and marts schemas and built the four staging tables, intermediate.int_lever__requisition_users, and marts.lever__requisition_enhanced. Keep them in dependency order and write them to ./jobs/daily_lever_requisition_enhanced.sql. Do not replace validated statements with newly invented SQL. Execute the saved file once against lever_duckdb and confirm it reproduces the same non-zero validation results.
 ```
 
-Then trigger it once for validation:
+## Step 6: Publish and Run a Daily Airflow DAG
+
+The Airflow plugin lists DAGs, inspects source and import errors, triggers runs,
+and retrieves run state, task state, and logs. The agent publishes the new DAG
+through its filesystem tools and then uses the plugin to validate and run it.
+
+For this local stack, publishing means writing the generated file into the
+allowlisted host directory mounted at `/opt/airflow/dags`. Ask the agent to
+author, publish, and validate the DAG:
 
 ```text
-Trigger daily_lever_requisition_enhanced once now and show me the latest run status
+Use the Airflow plugin with profile local and follow its airflow skill. Create ./dags/daily_lever_requisition_enhanced.py for DAG id daily_lever_requisition_enhanced with schedule 0 8 * * *, catchup disabled, and a fixed timezone-aware start date. At runtime, read /workspace/jobs/daily_lever_requisition_enhanced.sql, resolve the duckdb_dacomp_lever Airflow connection with BaseHook, reconstruct the DuckDB SQLAlchemy URL from the connection schema or host, and execute the validated SQL inside a committed transaction. Keep the project source file, then use the filesystem tools to write identical content to the local profile's configured dags_folder. Confirm the two files are identical. Wait until the Airflow plugin reports the DAG, check import errors and DAG details, then trigger it once and wait for completion. After the wait finishes, read the latest run again and show the final dag_run_id and state. If it fails, inspect task states and logs before reporting the error.
 ```
+
+The publish and trigger operations may require confirmation. The same agent
+prompt performs the required read-back checks; if you want to repeat them, ask
+the agent to list the matching DAG, import errors, DAG details, and latest run
+through the Airflow plugin.
 
 What to expect:
 
-- a DAG file appears under `${DATUS_QUICKSTART_STACK}/airflow/dags`
-- the same file is visible inside the Airflow container as `/opt/airflow/dags/<dag_id>.py`
-- Airflow returns a `job_id`
-- the job becomes visible in the Airflow UI
+- the maintained source is `$DACOMP_HOME/dags/daily_lever_requisition_enhanced.py`
+- an identical runtime copy appears under `${DATUS_QUICKSTART_STACK}/airflow/dags`
+- the same file is visible inside Airflow as `/opt/airflow/dags/daily_lever_requisition_enhanced.py`
+- Airflow reports the `dag_id`, a successful `dag_run_id`, and run state
 
 ## Step 7: Promote the Marts Table to the Superset Serving DB
 
 The marts table above was built through the `lever_duckdb` datasource. Before
-dashboard generation can create Superset assets, copy that table into the
-BI-registered `superset_serving` Postgres datasource referenced by
-`dataset_db.datasource_ref`. These names are Datus datasource names from
+the Superset plugin can create assets, copy that table into the
+`superset_serving` Postgres datasource. These names are Datus datasource names from
 `agent.yml`, not physical database or catalog names inside DuckDB or Postgres.
 
 ```text
@@ -276,22 +403,55 @@ Please copy the source table marts.lever__requisition_enhanced from the lever_du
 ```
 
 The transfer tool creates `public.lever__requisition_enhanced` from the source
-result columns if it does not already exist.
+result columns if it does not already exist. For the version 1 package, both
+the source and target should report 146 rows.
 
-After this step, the table exists in the same database Superset knows as
-`bi_database_name: examples`.
+After this step, the table exists in the PostgreSQL database registered in
+Superset as `examples`. Because both sides identify it as
+`postgres:5432/superset_examples`, the plugin can resolve it uniquely to the
+`superset_serving` Datus datasource.
 
-## Step 8: Create a Superset Dashboard
+## Step 8: Create a Superset Dashboard with the Plugin
 
-Once the marts table exists in `superset_serving`, ask the agent to build the dashboard.
+Once the marts table exists in `superset_serving`, ask the agent to use the
+plugin's authoring skill.
 
 ```text
-Please create a requisition operations dashboard in Superset from public.lever__requisition_enhanced. Include KPI tiles for total requisitions, open requisitions, requisitions with postings, requisitions with offers, and total requested headcount. Add charts by status, team, location, employment_status, count_postings, and count_offers.
+Use the Superset plugin with profile local and follow the superset-dashboard-authoring skill. Keep this quickstart dashboard to exactly three charts: a total requisitions KPI, requisitions by status, and requisitions by team. Discover the Superset Database named examples and resolve its credential-free connection identity uniquely to the superset_serving Datus datasource. Validate public.lever__requisition_enhanced and the three planned queries on that Datus datasource first. Register the table as a physical Superset Dataset, then create the requisition operations dashboard and its three charts. Reuse matching Dataset, Dashboard, or Chart resources left by an earlier attempt instead of creating duplicates. Store only non-sensitive Dataset, Dashboard, and Chart request bodies in project-local JSON files. Never persist authentication or login request bodies, tokens, cookies, passwords, or other secrets. Use the typed CLI commands, and inspect the installed OpenAPI schema only if a typed request is rejected. Every chart must contain matching params and query_context JSON strings. Attach all three charts and update a complete position_json layout so the dashboard is not blank. Read the Database, Dataset, Dashboard, and Charts back, confirm that the Database connection still identifies postgres:5432/superset_examples, and run the KPI query plus one grouped chart query. Return the Database, Dataset, Dashboard, and Chart IDs plus the dashboard URL.
 ```
 
-Data preparation is a separate ETL / scheduler step. Dashboard generation
-expects the table or SQL dataset to already be available in the BI-registered
-database.
+Data preparation is a separate ETL / scheduled-workflow step. Dashboard generation
+expects the table or SQL dataset to already be available in the database known
+to Superset. Superset create/update/query operations are confirmation-gated by
+the plugin.
+
+The same agent prompt reads the created resources back and runs representative
+chart queries. To repeat verification, give the returned IDs back to the main
+agent and ask it to inspect the Database, table metadata, Dashboard, Charts,
+and chart data through the Superset plugin. Never copy example IDs from this
+page.
+
+The dashboard should contain three charts. The total-requisitions chart query
+should return 146, the status and team queries should return more than one
+group, and the Database connection should identify
+`postgres:5432/superset_examples`.
+
+This smaller example should normally finish within the main agent's default 50
+turns. If Datus still reports `Max turns (50) exceeded`, temporarily merge this
+override into `~/.datus/conf/agent.yml` to raise the main `chat` agent limit to
+80:
+
+```yaml
+agent:
+  agentic_nodes:
+    chat:
+      max_turns: 80
+```
+
+Restart Datus after saving the configuration, then run this step again. Remove
+the override after the task succeeds to restore the default. This setting only
+changes the maximum number of tool-assisted reasoning turns in one task; it
+does not resume an interrupted task automatically.
 
 ## Step 9: Verify the End-to-End Result
 
@@ -299,8 +459,9 @@ You should now have:
 
 - `staging`, `intermediate`, and `marts` schemas in `lever_workbench.duckdb`
 - `marts.lever__requisition_enhanced` built from raw data through staging and intermediate layers
-- a daily Airflow job visible in the scheduler UI
-- a Superset dashboard URL returned by the dashboard generation flow
+- the validated SQL and maintained DAG source under `$DACOMP_HOME/jobs` and `$DACOMP_HOME/dags`
+- a successful daily Airflow DAG run visible in the Airflow UI
+- Superset Database, Dataset, Dashboard, and Chart IDs plus a dashboard URL
 
 ## SaaS Studio Tour Variant
 
@@ -311,6 +472,11 @@ DuckDB + Iceberg lakehouse:
 - shared read-only raw namespace: `lake.demo_raw`
 - per-workspace writable namespace: `lake.ws_<workspace_id>`
 - SaaS Airflow connection: `duckdb_lever_workbench`
+
+The hosted platform supplies managed Airflow/Superset plugin profiles and its
+own DAG deployment channel. Do not carry the local `filesystem.allow_write` or
+Compose-mounted DAG path into SaaS. Plugin operations still discover, trigger,
+and verify the managed resources; the namespace rules below remain unchanged.
 
 Every user should run the tour in a separate workspace. The backend renders the
 seeded `docs/data_contract.yaml` for that workspace, so outputs target
@@ -328,6 +494,12 @@ Do not use unqualified physical schemas such as `raw.*`, `staging.*`,
 `intermediate.*`, or `marts.*` in the SaaS tour. Those names are logical layers
 only; the physical write boundary is the workspace namespace.
 
-If a demo project or Airflow DAG was generated before the workspace-namespace
-change, reset or recreate the demo project and regenerate the job so the DAG
-uses `lake.ws_<workspace_id>` instead of an old hard-coded namespace.
+When the workspace namespace changes, recreate the demo project and regenerate
+the DAG so it uses the current `lake.ws_<workspace_id>` namespace.
+
+## Next Steps
+
+- [Turn a Dashboard into a Copilot](dashboard_copilot.md) — build analysis subagents from an existing Superset dashboard.
+- [Build a Context-Rich Agent](contextual_data_engineering.md) — build reusable context and compare answer quality.
+- [Plugins](../plugin/introduction.md) — configure Airflow, Superset, and other integrations.
+- [Choose Your Getting Started Path](index.md) — compare all getting-started guides.

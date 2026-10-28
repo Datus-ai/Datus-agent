@@ -32,17 +32,26 @@ PACKAGE_NAMES = (
     "datus-mysql",
     "datus-clickhouse",
     "datus-starrocks",
+    "datus-bigquery",
+    "datus-doris",
+    "datus-hologres",
+    "datus-maxcompute",
+    "datus-oracle",
     "datus-trino",
     "datus-greenplum",
     "datus-hive",
     "datus-spark",
+    "datus-gaussdb",
+    "datus-tidb",
+    "datus-dws",
     "datus-bi-core",
     "datus-bi-superset",
     "datus-bi-grafana",
     "datus-scheduler-core",
     "datus-scheduler-airflow",
-    "datus-semantic-core",
-    "datus-semantic-metricflow",
+    "dosi-engine",
+    "datus-storage-base",
+    "datus-storage-postgresql",
 )
 
 
@@ -124,6 +133,7 @@ def env_value(name: str) -> str:
 def init_manifest(args: argparse.Namespace) -> None:
     repo_root = Path(args.repo_root).resolve()
     external_root = Path(args.external_repos_root).resolve()
+    tested_sha = git_output(repo_root, "rev-parse", "HEAD")
     manifest = {
         "schema_version": 1,
         "generated_at": utc_now(),
@@ -134,7 +144,11 @@ def init_manifest(args: argparse.Namespace) -> None:
             "run_number": env_value("GITHUB_RUN_NUMBER"),
             "run_attempt": env_value("GITHUB_RUN_ATTEMPT"),
             "ref": env_value("GITHUB_REF"),
-            "sha": env_value("GITHUB_SHA") or git_output(repo_root, "rev-parse", "HEAD"),
+            # ``GITHUB_SHA`` identifies the workflow trigger.  A manual run may
+            # check out a different ``datus_agent_ref``, so the release gate
+            # must key its evidence to the commit that was actually tested.
+            "sha": tested_sha,
+            "workflow_sha": env_value("GITHUB_SHA"),
             "event_name": env_value("GITHUB_EVENT_NAME"),
             "datus_agent_ref": env_value("DATUS_AGENT_REF"),
             "nightly_group_filter": env_value("NIGHTLY_GROUP_FILTER"),
@@ -160,7 +174,9 @@ def init_manifest(args: argparse.Namespace) -> None:
             repo_info(external_root / "datus-db-adapters"),
             repo_info(external_root / "datus-bi-adapters"),
             repo_info(external_root / "datus-scheduler-adapters"),
-            repo_info(external_root / "datus-semantic-adapter"),
+            repo_info(external_root / "datus-storage-adapters"),
+            repo_info(external_root / "Datus-Plugins"),
+            repo_info(external_root / "datus-sql-policies"),
         ],
         "packages": [package_info(name) for name in PACKAGE_NAMES],
         "compose_projects": [],

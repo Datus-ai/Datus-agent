@@ -6,6 +6,8 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from jinja2.exceptions import SecurityError
+from jinja2.sandbox import SandboxedEnvironment
 
 from datus.prompts.prompt_manager import (
     PromptManager,
@@ -371,3 +373,113 @@ class TestPlanModeSystemTemplate:
         assert "Plan mode is still active" in rendered
         assert "auto-approved" in rendered
         assert "Do NOT call `ask_user`" in rendered
+
+
+class TestPromptTemplateSandbox:
+    """The user template dir is writable AND takes precedence over the built-in
+    templates, so PromptManager renders untrusted input. These pin the sandbox
+    and, just as importantly, the three settings that must NOT change with it.
+    """
+
+    def test_env_is_sandboxed(self, tmp_path):
+        manager = _make_manager(tmp_path, path_manager=DatusPathManager(tmp_path / "tenant_home"))
+
+        assert isinstance(manager._get_env(), SandboxedEnvironment)
+
+    def test_chained_unsafe_attribute_raises_security_error(self, tmp_path):
+        manager = _make_manager(tmp_path, path_manager=DatusPathManager(tmp_path / "tenant_home"))
+        _write_template(
+            manager.user_templates_dir,
+            "evil",
+            "1.0",
+            "{{ ''.__class__.__mro__[1].__subclasses__() }}",
+        )
+
+        with pytest.raises(SecurityError):
+            manager.render_template("evil", "1.0")
+
+    def test_globals_walk_on_context_object_raises_security_error(self, tmp_path):
+        """The escape that matters in this process: reaching a module's globals
+        from an object the caller handed the template. Those globals hold live
+        datasource and model credentials.
+        """
+        manager = _make_manager(tmp_path, path_manager=DatusPathManager(tmp_path / "tenant_home"))
+        _write_template(manager.user_templates_dir, "evil_globals", "1.0", "{{ ctx.__init__.__globals__ }}")
+
+        with pytest.raises(SecurityError):
+            manager.render_template("evil_globals", "1.0", ctx=SimpleNamespace(safe="ok"))
+
+    def test_attr_filter_escape_is_neutralized(self, tmp_path):
+        """``|attr`` (CVE-2025-27516's vector) does not raise under the lenient
+        Undefined this env keeps — each hop returns an undefined rather than the
+        real object. It yields nothing either way, which is what matters; assert
+        the neutralization rather than an exception that never comes.
+        """
+        manager = _make_manager(tmp_path, path_manager=DatusPathManager(tmp_path / "tenant_home"))
+        _write_template(manager.user_templates_dir, "evil_attr", "1.0", "[{{ ''|attr('__class__') }}]")
+
+        assert manager.render_template("evil_attr", "1.0") == "[]"
+
+    def test_single_unsafe_attribute_renders_empty_instead_of_leaking(self, tmp_path):
+        """Under the *lenient* Undefined this env keeps, one unsafe attribute
+        yields an undefined that stringifies to "" rather than raising. Nothing
+        leaks either way; this pins the interaction so a future ``undefined=``
+        change is caught by a test instead of in production.
+        """
+        manager = _make_manager(tmp_path, path_manager=DatusPathManager(tmp_path / "tenant_home"))
+        _write_template(manager.user_templates_dir, "probe", "1.0", "[{{ ''.__class__ }}]")
+
+        assert manager.render_template("probe", "1.0") == "[]"
+
+    def test_lenient_undefined_is_preserved(self, tmp_path):
+        """Guard against over-tightening: the shipped templates reference
+        variables their callers do not always pass, so a missing variable must
+        keep rendering empty rather than raising.
+        """
+        manager = _make_manager(tmp_path, path_manager=DatusPathManager(tmp_path / "tenant_home"))
+        _write_template(manager.default_templates_dir, "loose", "1.0", "a{{ never_passed }}b")
+
+        assert manager.render_template("loose", "1.0") == "ab"
+
+    def test_trim_and_lstrip_blocks_are_preserved(self, tmp_path):
+        manager = _make_manager(tmp_path, path_manager=DatusPathManager(tmp_path / "tenant_home"))
+        _write_template(
+            manager.default_templates_dir,
+            "blocks",
+            "1.0",
+            "start\n    {% if flag %}\nkept\n    {% endif %}\nend",
+        )
+
+        assert manager.render_template("blocks", "1.0", flag=True) == "start\nkept\nend"
+
+    def test_macro_import_still_resolves(self, tmp_path):
+        """The loader must survive the swap: three shipped templates use
+        ``{% import %}`` to call macros from _osi_dialect_map.j2.
+        """
+        manager = _make_manager(tmp_path, path_manager=DatusPathManager(tmp_path / "tenant_home"))
+        (manager.default_templates_dir / "_macros.j2").write_text(
+            "{% macro shout(word) %}{{ word|upper }}{% endmacro %}", encoding="utf-8"
+        )
+        _write_template(
+            manager.default_templates_dir,
+            "uses_macro",
+            "1.0",
+            "{% import '_macros.j2' as m %}{{ m.shout('hi') }}",
+        )
+
+        assert manager.render_template("uses_macro", "1.0") == "HI"
+
+    def test_safe_context_object_methods_still_work(self, tmp_path):
+        """Shipped templates call .items()/.get()/.strftime() on context objects;
+        the sandbox must not block those.
+        """
+        manager = _make_manager(tmp_path, path_manager=DatusPathManager(tmp_path / "tenant_home"))
+        _write_template(
+            manager.default_templates_dir,
+            "safe_calls",
+            "1.0",
+            "{% for k, v in mapping.items() %}{{ k }}={{ v }};{% endfor %}{{ row.get('x', 'na') }}",
+        )
+
+        rendered = manager.render_template("safe_calls", "1.0", mapping={"a": 1}, row={"x": "ok"})
+        assert rendered == "a=1;ok"

@@ -31,6 +31,16 @@ class CreateAgentInput(BaseModel):
 
     name: str = Field(..., min_length=1, description="Agent name (unique within workspace)")
     datasource_id: str = Field(default="", description="Datasource ID this agent is bound to")
+    # Same binding by namespace name instead of id. A web client picking the
+    # datasource out of the catalog tree only ever sees the namespace name, and
+    # `catalogs` below is scoped to it — the ids live on the saas side.
+    datasource_name: Optional[str] = Field(
+        default=None,
+        description=(
+            "Datasource namespace name this agent is bound to, resolved against the project's "
+            "bindings. Ignored when `datasource_id` is given; both omitted means the project's primary."
+        ),
+    )
     type: str = Field(
         default="gen_sql", description="Node class: gen_sql / gen_report / ask_report / ask_dashboard / ..."
     )
@@ -44,9 +54,6 @@ class CreateAgentInput(BaseModel):
         ),
     )
     description: Optional[str] = Field(default=None, description="Agent description")
-    prompt_template: Optional[str] = Field(default=None, description="System prompt content")
-    prompt_version: Optional[str] = Field(default="1.0", description="Prompt version (None = latest)")
-    prompt_language: str = Field(default="en", description="Prompt language")
     tools: Optional[List[str]] = Field(default=None, description="Tool names")
     mcp: Optional[List[str]] = Field(default_factory=list, description="MCP tool names")
     skills: Optional[List[str]] = Field(default_factory=list, description="Skills pattern filter")
@@ -160,9 +167,6 @@ class EditAgentInput(BaseModel):
     id: str = Field(..., description="Agent id to edit")
     name: Optional[str] = Field(default=None, description="Agent name to edit")
     description: Optional[str] = None
-    prompt_template: Optional[str] = Field(default=None, alias="system_prompt")
-    prompt_version: Optional[str] = Field(default=None, description="Prompt version (None = latest)")
-    prompt_language: Optional[str] = None
     tools: Optional[List[str]] = None
     mcp: Optional[List[str]] = None
     skills: Optional[List[str]] = None
@@ -171,6 +175,15 @@ class EditAgentInput(BaseModel):
     catalogs: Optional[List[str]] = Field(
         default=None,
         description="Catalog access patterns (e.g., 'production_db.*', 'production_db.public.*')",
+    )
+    # `catalogs` above is matched against exactly one datasource, so re-pointing
+    # the agent at another one has to travel with the patterns that describe it.
+    datasource_name: Optional[str] = Field(
+        default=None,
+        description=(
+            "Datasource namespace name to re-bind this agent to, resolved against the project's "
+            "bindings. Omit to leave the binding untouched."
+        ),
     )
     subjects: Optional[List[str]] = Field(
         default=None, description="Subject access patterns (e.g., 'Finance.Revenue.*')"

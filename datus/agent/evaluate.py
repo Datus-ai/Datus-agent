@@ -30,13 +30,12 @@ def setup_node_input(node, workflow):
 def update_context_from_node(node: Node, workflow: Workflow) -> Dict:
     if (
         node.type in NodeType.ACTION_TYPES
-        or node.type == NodeType.TYPE_REFLECT
         or node.type == NodeType.TYPE_PARALLEL
         or node.type == NodeType.TYPE_SELECTION
         or node.type == NodeType.TYPE_SUBWORKFLOW
     ):
         result = node.update_context(workflow)
-        logger.info(f"update_context_from_node: node_type={node.type}, result={result}")
+        logger.debug("node.context_updated", node_type=node.type, result_type=type(result).__name__)
         return result
     else:
         logger.warning(f"Unknown node type for context updating: {node.type}")

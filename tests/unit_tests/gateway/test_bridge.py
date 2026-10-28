@@ -309,7 +309,10 @@ class TestChannelBridge:
 
         call_args = task_manager.start_chat.call_args
         request = call_args.args[1]
-        assert request.database == "prod"
+        # Channel datasource override selects the connection profile via ``datasource``,
+        # never ``database`` (which would mis-set the connection's physical database).
+        assert request.datasource == "prod"
+        assert request.database is None
         assert call_args.kwargs.get("sub_agent_id") == "agent_x"
 
     @pytest.mark.asyncio
@@ -1208,7 +1211,9 @@ class TestVerboseLevels:
                                 "toolName": "search_table",
                                 "duration": 1.5,
                                 "shortDesc": "",
-                                "result": {"metadata": [1], "sample_data": [1, 2]},
+                                "result": {
+                                    "metadata": [{"table_name": "orders", "sample_rows": [{"id": 1}, {"id": 2}]}]
+                                },
                             },
                         )
                     ],

@@ -44,6 +44,8 @@ from datus.schemas.gen_visual_report_models import (
     extract_query_slug,
 )
 from datus.tools.func_tool._artifact_filesystem_base import ArtifactFilesystemFuncTool
+from datus.tools.func_tool._jsx_hooks_lint import format_hook_order_issues
+from datus.tools.func_tool._visual_artifact_cards import scan_render_cards
 from datus.tools.func_tool._visual_artifact_helpers import (
     append_intent_section,
     coerce_uses_arg,
@@ -52,6 +54,7 @@ from datus.tools.func_tool._visual_artifact_helpers import (
     write_query_brief,
 )
 from datus.tools.func_tool.base import FuncToolResult, trans_to_function_tool
+from datus.tools.func_tool.metric_artifact_tools import MetricArtifactToolsMixin
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
@@ -63,7 +66,7 @@ _MAX_QUERY_BYTES = 5 * 1024 * 1024  # 5 MB hard cap per query result file
 # Catches every literal-string argument to useQuerySql(...). Template strings
 # and dynamic expressions are intentionally skipped (the system prompt allows
 # them for enumerable filter selectors that resolve at runtime).
-_USE_QUERY_SQL_LITERAL_RE = re.compile(r"useQuerySql\s*\(\s*['\"]([^'\"\\\n]+)['\"]\s*\)")
+_USE_QUERY_SQL_LITERAL_RE = re.compile(r"useQuery(?:Sql)?\s*\(\s*['\"]([^'\"\\\n]+)['\"]\s*\)")
 
 # Catches both `import ... from '<path>'` and `export ... from '<path>'`
 # variants. Side-effect imports `import './foo'` are matched via the
@@ -102,14 +105,18 @@ ALLOWED_BARE_MODULES: frozenset[str] = frozenset(
 )
 
 
-def _atomic_write_text(path: Path, content: str) -> None:
-    """Write text atomically via tempfile + rename, on the same filesystem."""
+def _atomic_write_text(path: Path, content: str, *, overwrite: bool = True) -> None:
+    """Publish complete text atomically; optionally refuse to replace an existing file."""
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp_path = tempfile.mkstemp(prefix=path.name + ".", dir=str(path.parent))
     try:
-        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="") as fh:
             fh.write(content)
-        os.replace(tmp_path, path)
+        if overwrite:
+            os.replace(tmp_path, path)
+        else:
+            os.link(tmp_path, path)
+            os.unlink(tmp_path)
     except Exception:
         if os.path.exists(tmp_path):
             try:
@@ -274,7 +281,7 @@ class ReportFilesystemFuncTool(ArtifactFilesystemFuncTool):
 # --------------------------------------------------------------------------- #
 
 
-class ReportArtifactTools:
+class ReportArtifactTools(MetricArtifactToolsMixin):
     """LLM-facing tools that produce the report artifact tree.
 
     Lifecycle:
@@ -302,9 +309,11 @@ class ReportArtifactTools:
         agent_config,
         db_func_tool,
         user_message: str = "",
+        semantic_tools=None,
     ) -> None:
         self.agent_config = agent_config
         self._db_func_tool = db_func_tool
+        self._semantic_tools = semantic_tools
         # Raw user prompt that drove this node invocation — appended to
         # analysis/intent.md verbatim when the artifact is created / bound,
         # so the file becomes the authoritative log of what the user asked
@@ -342,6 +351,7 @@ class ReportArtifactTools:
             # which ``Dict[str, Any]`` emits. We validate the shape
             # ourselves via :func:`coerce_uses_arg` once the call lands.
             trans_to_function_tool(self.save_query, strict_mode=False),
+            trans_to_function_tool(self.save_metric_query, strict_mode=False),
             trans_to_function_tool(self.validate_render),
         ]
 
@@ -569,6 +579,8 @@ class ReportArtifactTools:
         uses: Optional[Dict[str, Any]] = None,
         caveats: str = "",
         datasource: str = "",
+        fallback_reason: str = "",
+        candidate_metrics: Optional[List[Dict[str, Any]]] = None,
     ) -> FuncToolResult:
         """
         Run a read-only SQL, persist the SQL text, the result, AND the per-query brief sidecar.
@@ -660,6 +672,23 @@ class ReportArtifactTools:
                     "If you don't have a hypothesis, skip the query."
                 ),
             )
+        if self._semantic_tools is not None and not fallback_reason.strip():
+            return FuncToolResult(
+                success=0,
+                error="Use the single-metric save tool whenever it meets the need. SQL fallback requires fallback_reason and candidate_metrics after checking metric capabilities.",
+            )
+        source_selection = (
+            {"reason": fallback_reason.strip(), "candidate_metrics": candidate_metrics or []}
+            if fallback_reason.strip()
+            else None
+        )
+        if source_selection is not None:
+            from datus.schemas.analysis_artifacts import SqlSourceSelection
+
+            try:
+                SqlSourceSelection.model_validate(source_selection)
+            except ValueError as exc:
+                return FuncToolResult(success=0, error=f"Invalid SQL source selection: {exc}")
         try:
             uses_obj = coerce_uses_arg(uses)
         except ValueError as exc:
@@ -673,8 +702,21 @@ class ReportArtifactTools:
 
         ds_label = datasource or getattr(self._db_func_tool, "_default_datasource", "") or "default"
 
+        # Pre-flight EXPLAIN row-count guard: reject a runaway query (e.g. a
+        # cross-join cartesian product) from its optimizer estimate before it
+        # executes and OOMs the DB backend. Fail-open when unmeasurable.
+        oversize = self._db_func_tool.guard_estimated_rows(sql, connector)
+        if oversize is not None:
+            return oversize
+
         try:
-            execute_result = connector.execute_query(sql, result_format="list")
+            # Route through the shared enforced-read path so SQL policy
+            # (row caps / rewrites / denials) and multi-statement rejection
+            # apply here too — a bare connector.execute_query would let an
+            # unbounded statement reach the engine and OOM the DB backend.
+            execute_result = self._db_func_tool.execute_read_enforced(
+                sql, connector, datasource=datasource, result_format="list"
+            )
         except Exception as exc:
             logger.exception("save_query execute_query crashed", extra={"name": name})
             return FuncToolResult(success=0, error=f"Query execution failed: {exc}")
@@ -766,9 +808,11 @@ class ReportArtifactTools:
             hypothesis=hypothesis.strip(),
             uses=uses_obj,
             caveats=caveats.strip() if caveats else "",
+            source_selection=source_selection,
         )
         if brief_err:
             return FuncToolResult(success=0, error=brief_err)
+        (self.queries_dir / f"{name}.metric.json").unlink(missing_ok=True)
 
         # Manifest upsert (datasources union-add + updated_at bump). Soft
         # failure — log warning, expose in result, but don't fail the
@@ -813,6 +857,14 @@ class ReportArtifactTools:
             ``@datus/web-artifact``), OR
           - a relative path that resolves to a file under ``render/``.
         * No file escapes ``render/`` via ``../`` import.
+        * Card ids and query sources must be statically declared at the call
+          site. Dynamic ids/sources and spread card props block finalization;
+          shared KPI components should contain only the visual body.
+        * No ``use*()`` hook call sits below a ``return`` in the same function
+          — the Rules-of-Hooks violation that renders as a blank artifact.
+        * Every ``<ChartCard>`` / ``<BlockHandle>`` declares its required
+          props, and their ids share one globally-unique namespace (see
+          ``_visual_artifact_cards``).
 
         Returns:
             FuncToolResult.result on success::
@@ -823,6 +875,9 @@ class ReportArtifactTools:
                     "app_jsx_path": "reports/<id>/render/app.jsx",
                     "render_files": ["render/app.jsx", "render/kpi-banner.jsx", ...],
                     "query_refs": ["queries/foo", "queries/bar"],
+                    "cards": [
+                        {"chart_id": "revenue_trend", "jsx_path": "render/trend.jsx", "kind": "chart"},
+                    ],
                     "warnings": ["render/legacy.jsx is unreachable from app.jsx"],
                 }
 
@@ -836,6 +891,10 @@ class ReportArtifactTools:
         not_bound = self._require_active("validate_render")
         if not_bound is not None:
             return not_bound
+
+        metric_error = self._validate_metric_queries("report")
+        if metric_error:
+            return FuncToolResult(success=0, error=metric_error)
 
         # Manifest must exist before render-tree validation — it's part of
         # the artifact contract that the list pages / IDE rely on. For
@@ -906,8 +965,21 @@ class ReportArtifactTools:
             }
 
         module_keys: Set[str] = set(modules.keys())
-        issues: List[str] = []
-        query_refs: Set[str] = set()
+
+        # <ChartCard> / <BlockHandle> audit — shared with the dashboard
+        # validator so the two kinds can't drift on id shape, uniqueness
+        # or the kind enum. Reports carry the same card primitives, and a
+        # duplicated id breaks the same way: two blocks pin an identical
+        # chip and the second silently de-dupes away.
+        cards = scan_render_cards(
+            modules,
+            query_exists=lambda slug: (self.queries_dir / f"{slug}.json").is_file(),
+            missing_query_hint="a query not produced via save_query",
+            require_static_sources=True,
+        )
+        issues: List[str] = list(cards.issues)
+        card_warnings: List[str] = list(cards.warnings)
+        query_refs: Set[str] = set(cards.query_refs)
 
         for key, mod in modules.items():
             source = mod["source"]
@@ -950,6 +1022,9 @@ class ReportArtifactTools:
                     f"{sorted(ALLOWED_BARE_MODULES)} or relative paths under render/ are allowed."
                 )
 
+            # ---- Rules of Hooks: no hook call below an early return
+            issues.extend(format_hook_order_issues(mod["rel"], source))
+
         if not _DEFAULT_EXPORT_RE.search(modules["app"]["source"]):
             issues.append(
                 "render/app.jsx must include an `export default` (the renderer mounts the "
@@ -975,7 +1050,7 @@ class ReportArtifactTools:
             reachable.add(k)
             stack.extend(modules[k]["imports"])
         unreferenced = sorted(modules.keys() - reachable)
-        warnings = [
+        warnings = card_warnings + [
             f"render/{modules[k]['rel']} is not imported by render/app.jsx (directly or transitively)"
             for k in unreferenced
         ]
@@ -988,6 +1063,7 @@ class ReportArtifactTools:
                 "manifest_path": manifest_path.relative_to(self._project_root).as_posix(),
                 "render_files": [f"render/{modules[k]['rel']}" for k in sorted(modules.keys())],
                 "query_refs": sorted(query_refs),
+                "cards": cards.registry(),
                 "warnings": warnings,
             }
         )

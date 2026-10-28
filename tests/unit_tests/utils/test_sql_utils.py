@@ -6,26 +6,43 @@ from datus.tools.db_tools import connector_registry
 from datus.utils.constants import DBType, SQLType
 from datus.utils.json_utils import llm_result2json
 from datus.utils.sql_utils import (
+    _WIDEST_FIELD_ORDER,
+    READ_ONLY_MULTI_STATEMENT,
+    READ_ONLY_NON_READ,
+    READ_ONLY_WRITABLE_PRAGMA,
     _fallback_sql_type,
     _first_statement,
     _is_escaped,
     _match_dollar_tag,
     _metadata_pattern,
+    deployment_read_only_refusal,
     extract_table_names,
     format_sql_to_pretty,
+    is_single_statement,
+    looks_like_sql_file_ref,
     metadata_identifier,
     normalize_sql,
     parse_context_switch,
     parse_dialect,
     parse_metadata_from_ddl,
     parse_read_dialect,
+    parse_sql_statement_kind,
     parse_sql_type,
     parse_table_name_parts,
     parse_table_names_parts,
+    read_workspace_sql_file,
     strip_sql_comments,
+    table_name_field_order,
+    validate_read_only_sql,
 )
 
-_CONNECTOR_REGISTRY_SNAPSHOT_ATTRS = ("_capabilities", "_uri_builders", "_context_resolvers")
+_CONNECTOR_REGISTRY_SNAPSHOT_ATTRS = (
+    "_connectors",
+    "_metadata",
+    "_capabilities",
+    "_uri_builders",
+    "_context_resolvers",
+)
 
 
 def _snapshot_connector_registry():
@@ -611,6 +628,24 @@ def test_extract_table_names():
         assert set(extract_table_names(sql_two_part, dialect=dialect, ignore_empty=True)) == {"foo.bar"}
 
 
+def test_extract_table_names_adapter_hook_honors_ignore_empty(monkeypatch):
+    monkeypatch.setattr(
+        connector_registry,
+        "get_parser_dialect",
+        lambda dialect: "hive" if dialect == "flexdb" else None,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        connector_registry,
+        "get_identifier_parser",
+        lambda dialect: (lambda identifier: identifier) if dialect == "flexdb" else None,
+        raising=False,
+    )
+
+    assert extract_table_names("SELECT * FROM orders", dialect="flexdb") == ["..orders"]
+    assert extract_table_names("SELECT * FROM orders", dialect="flexdb", ignore_empty=True) == ["orders"]
+
+
 def test_parse_full_tables():
     table_meta = parse_table_name_parts("test.abc", dialect=DBType.DUCKDB)
     assert table_meta["schema_name"] == "test"
@@ -647,12 +682,12 @@ SELECT
 FROM gold_vs_bitcoin"""
     assert parse_sql_type(sql, dialect=DBType.DUCKDB) == SQLType.SELECT
     assert (
-        parse_sql_type("show create table `default_catalog`.`ac_manage`.`v_udata_ac_info`", dialect="starrocks")
+        parse_sql_type("show create table `default_catalog`.`analytics`.`sample_events`", dialect="starrocks")
         == SQLType.METADATA_SHOW
     )
 
     assert (
-        parse_sql_type("select * from `default_catalog`.`ac_manage`.`v_udata_ac_info`", dialect="starrocks")
+        parse_sql_type("select * from `default_catalog`.`analytics`.`sample_events`", dialect="starrocks")
         == SQLType.SELECT
     )
 
@@ -673,6 +708,19 @@ FROM gold_vs_bitcoin"""
     assert parse_sql_type("USE test", dialect="mysql") == SQLType.CONTENT_SET
     assert parse_sql_type("USE test", dialect="starrocks") == SQLType.CONTENT_SET
     assert parse_sql_type(" USE test ", dialect="snowflake") == SQLType.CONTENT_SET
+
+
+@pytest.mark.parametrize(
+    ("sql", "violation", "sql_type"),
+    [
+        ("SELECT 1", None, SQLType.SELECT),
+        ("SELECT 1; DROP TABLE orders", READ_ONLY_MULTI_STATEMENT, SQLType.UNKNOWN),
+        ("DROP TABLE orders", READ_ONLY_NON_READ, SQLType.DDL),
+        ("PRAGMA foreign_keys = OFF", READ_ONLY_WRITABLE_PRAGMA, SQLType.METADATA_SHOW),
+    ],
+)
+def test_validate_read_only_sql(sql, violation, sql_type):
+    assert validate_read_only_sql(sql, "sqlite") == (violation, sql_type)
 
 
 def test_parse_sql_type_with():
@@ -720,7 +768,7 @@ def test_parse_sql_type_with():
                      vplayerid,
                      sum(roundcnt) roundcnt,
                      sum(roundtime) roundtime
-              from dws_jordass_mode_roundrecord_di
+              from sample_activity_daily
               where ((dtstatdate between '20240326' and '20240409')
                   or (dtstatdate between '20240528' and '20240611'))
                 and mode in (401,402,403,101,102,103,603)
@@ -750,7 +798,7 @@ def test_parse_sql_type_with():
                ) a
                    left join (
               select dtstatdate,vplayerid
-              from dws_jordass_login_di
+              from sample_login_daily
               where ((dtstatdate between '20240326' and '20240404')
                   or (dtstatdate between '20240528' and '20240606'))
                 and platid =255
@@ -759,7 +807,7 @@ def test_parse_sql_type_with():
                              on a.vplayerid = b1.vplayerid and date_add(a.dtstatdate,1) = b1.dtstatdate
                    left join (
               select dtstatdate,vplayerid
-              from dws_jordass_login_di
+              from sample_login_daily
               where ((dtstatdate between '20240326' and '20240409') or (dtstatdate between '20240528' and '20240611'))
                 and platid =255
               group by dtstatdate,vplayerid
@@ -1060,6 +1108,15 @@ class TestParseReadDialect:
     def test_whitespace_trimmed(self):
         assert parse_read_dialect("  postgres  ") == "postgres"
 
+    def test_adapter_registered_parser_dialect(self, monkeypatch):
+        monkeypatch.setattr(
+            connector_registry,
+            "get_parser_dialect",
+            lambda dialect: "hive" if dialect == "flexdb" else None,
+            raising=False,
+        )
+        assert parse_read_dialect("flexdb") == "hive"
+
 
 # ---------------------------------------------------------------------------
 # parse_dialect
@@ -1070,6 +1127,15 @@ class TestParseDialect:
     def test_postgres(self):
         assert parse_dialect("postgres") == "postgres"
         assert parse_dialect("postgresql") == "postgres"
+
+    def test_adapter_registered_parser_dialect(self, monkeypatch):
+        monkeypatch.setattr(
+            connector_registry,
+            "get_parser_dialect",
+            lambda dialect: "hive" if dialect == "flexdb" else None,
+            raising=False,
+        )
+        assert parse_dialect("flexdb") == "hive"
 
     def test_tsql(self):
         assert parse_dialect("mssql") == "tsql"
@@ -1452,6 +1518,49 @@ class TestParseTableNamePartsExtended:
         result = parse_table_name_parts("extra.catalog.db.schema.table", dialect="snowflake")
         assert result["table_name"] == "table"
 
+    def test_adapter_identifier_parser_handles_flexible_namespaces(self, monkeypatch):
+        def parser(identifier):
+            parts = identifier.split(".")
+            return {
+                "catalog_name": "",
+                "database_name": parts[0] if len(parts) > 1 else "",
+                "schema_name": parts[1] if len(parts) == 3 else "",
+                "table_name": parts[-1],
+            }
+
+        connector_registry.register_handlers("flexdb", capabilities={"database", "schema"})
+        monkeypatch.setattr(
+            connector_registry,
+            "get_parser_dialect",
+            lambda dialect: "hive" if dialect == "flexdb" else None,
+            raising=False,
+        )
+        monkeypatch.setattr(
+            connector_registry,
+            "get_identifier_parser",
+            lambda dialect: parser if dialect == "flexdb" else None,
+            raising=False,
+        )
+
+        assert parse_table_name_parts("project_a.orders", "flexdb") == {
+            "catalog_name": "",
+            "database_name": "project_a",
+            "schema_name": "",
+            "table_name": "orders",
+        }
+        assert parse_table_name_parts("project_a.analytics.orders", "flexdb")["schema_name"] == "analytics"
+
+    def test_adapter_identifier_parser_must_return_complete_contract(self, monkeypatch):
+        monkeypatch.setattr(
+            connector_registry,
+            "get_identifier_parser",
+            lambda dialect: (lambda identifier: {"table_name": identifier}) if dialect == "flexdb" else None,
+            raising=False,
+        )
+
+        with pytest.raises(ValueError, match="must return"):
+            parse_table_name_parts("orders", "flexdb")
+
     def test_unknown_dialect_fallback(self):
         # Unknown dialect falls through to default behavior
         result = parse_table_name_parts("a.b.c.d", dialect="unknown_dialect_xyz")
@@ -1565,3 +1674,624 @@ class TestParseMetadataFromDDLExtended:
         assert result["table"]["name"] == "t"
         name_col = next(c for c in result["columns"] if c["name"] == "name")
         assert name_col == {"name": "name", "type": "VARCHAR(100)"}
+
+
+class TestLooksLikeSqlFileRef:
+    """``looks_like_sql_file_ref`` separates a .sql path from inline SQL."""
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "sql/session_1/query.sql",
+            "query.sql",
+            "  sql/q.sql  ",  # surrounding whitespace is stripped
+        ],
+    )
+    def test_recognizes_bare_sql_path(self, text):
+        assert looks_like_sql_file_ref(text) is True
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "SELECT * FROM users",  # inline SQL has whitespace
+            "SELECT 1",
+            "create table t (id int)",
+            "my file.sql",  # embedded space → not a bare path
+            "line1\nquery.sql",  # newline → not a single token
+            "users",  # no .sql suffix
+            "",
+            "   ",
+        ],
+    )
+    def test_rejects_non_file_text(self, text):
+        assert looks_like_sql_file_ref(text) is False
+
+
+class TestReadWorkspaceSqlFile:
+    """``read_workspace_sql_file`` reads workspace-relative .sql safely."""
+
+    def test_reads_relative_file(self, tmp_path):
+        (tmp_path / "sql").mkdir()
+        (tmp_path / "sql" / "q.sql").write_text("SELECT 1")
+        assert read_workspace_sql_file("sql/q.sql", str(tmp_path)) == "SELECT 1"
+
+    def test_absolute_path_raises_value_error(self, tmp_path):
+        with pytest.raises(ValueError):
+            read_workspace_sql_file("/etc/passwd", str(tmp_path))
+
+    def test_dotdot_traversal_raises_value_error(self, tmp_path):
+        with pytest.raises(ValueError):
+            read_workspace_sql_file("../../etc/passwd", str(tmp_path))
+
+    def test_missing_file_raises_file_not_found(self, tmp_path):
+        with pytest.raises(FileNotFoundError):
+            read_workspace_sql_file("sql/missing.sql", str(tmp_path))
+
+
+class TestParseSqlStatementKind:
+    """Fine-grained statement kinds for the execute_sql permission gate."""
+
+    @pytest.mark.parametrize(
+        "sql,expected",
+        [
+            # Kinds identical to parse_sql_type values.
+            ("SELECT * FROM t", "select"),
+            ("WITH cte AS (SELECT 1) SELECT * FROM cte", "select"),
+            ("VALUES (1), (2)", "select"),
+            ("SHOW TABLES", "metadata"),
+            ("DESCRIBE t", "metadata"),
+            ("EXPLAIN SELECT 1", "explain"),
+            ("INSERT INTO t VALUES (1)", "insert"),
+            ("UPDATE t SET a = 1", "update"),
+            ("DELETE FROM t WHERE id = 1", "delete"),
+            ("MERGE INTO t USING s ON t.id = s.id WHEN MATCHED THEN UPDATE SET a = 1", "merge"),
+            ("USE analytics", "context_set"),
+            ("SET search_path = public", "context_set"),
+            # DDL refined by leading keyword.
+            ("CREATE TABLE t (id INT)", "create"),
+            ("CREATE OR REPLACE VIEW v AS SELECT 1", "create"),
+            ("CREATE TABLE t AS SELECT * FROM s", "create"),
+            ("ALTER TABLE t ADD COLUMN b INT", "alter"),
+            ("DROP TABLE t", "drop"),
+            ("DROP VIEW IF EXISTS v", "drop"),
+            ("TRUNCATE TABLE t", "truncate"),
+            # Benign DDL stays in the coarse ddl bucket.
+            ("COMMENT ON TABLE t IS 'x'", "ddl"),
+            ("GRANT SELECT ON t TO alice", "ddl"),
+            ("ANALYZE t", "ddl"),
+            # sqlglot models VACUUM as a generic Command → CONTENT_SET; a
+            # benign maintenance command in the write class is acceptable.
+            ("VACUUM", "context_set"),
+        ],
+    )
+    def test_kind_classification(self, sql, expected):
+        assert parse_sql_statement_kind(sql, "duckdb") == expected
+
+    def test_rename_counts_as_alter(self):
+        assert parse_sql_statement_kind("RENAME TABLE t TO u", "mysql") == "alter"
+
+    def test_replace_into_is_its_own_kind(self):
+        """REPLACE deletes matched rows before inserting — must not be 'insert'."""
+        assert parse_sql_statement_kind("REPLACE INTO t VALUES (1)", "mysql") == "replace"
+
+    def test_cte_fronted_insert_is_insert(self):
+        """A WITH-fronted INSERT classifies by the real statement, not 'WITH'."""
+        assert parse_sql_statement_kind("WITH src AS (SELECT 1 AS a) INSERT INTO t SELECT * FROM src", "") == "insert"
+
+    def test_multi_statement_classifies_first_only(self):
+        """First-statement semantics: the tool layer's multi-statement
+        rejection is the backstop for trailing statements."""
+        assert parse_sql_statement_kind("SELECT 1; DROP TABLE t", "") == "select"
+
+    def test_leading_comment_ignored(self):
+        assert parse_sql_statement_kind("-- cleanup\nDROP TABLE t", "") == "drop"
+
+    def test_empty_and_garbage_fall_to_unknown(self):
+        assert parse_sql_statement_kind("", "") == "unknown"
+        assert parse_sql_statement_kind("   ", "") == "unknown"
+        assert parse_sql_statement_kind("FROBNICATE THE WIDGETS", "") == "unknown"
+
+    def test_no_dialect_works_for_common_statements(self):
+        """The permission hook has no dialect; the fallback must still split."""
+        assert parse_sql_statement_kind("DROP TABLE t", "") == "drop"
+        assert parse_sql_statement_kind("TRUNCATE TABLE t", "") == "truncate"
+        assert parse_sql_statement_kind("SELECT 1", "") == "select"
+
+    def test_case_insensitive_keywords(self):
+        assert parse_sql_statement_kind("drop table t", "") == "drop"
+        assert parse_sql_statement_kind("Truncate Table t", "") == "truncate"
+
+
+class TestTableNameFieldOrder:
+    """``table_name_field_order`` is the shape contract shared by the parser and
+    by every caller that *emits* a dotted identifier (scope tokens, metadata
+    identifiers)."""
+
+    def test_mysql_has_no_schema_level(self):
+        assert table_name_field_order("mysql") == ["database_name", "table_name"]
+
+    def test_starrocks_puts_catalog_first(self):
+        assert table_name_field_order("starrocks") == ["catalog_name", "database_name", "table_name"]
+
+    def test_postgres_family_resolves_through_parse_dialect(self):
+        """``postgresql`` maps to the ``postgres`` parser dialect; capabilities
+        must still resolve or the order silently degrades to the widest shape."""
+        assert table_name_field_order("postgresql") == ["database_name", "schema_name", "table_name"]
+
+    def test_sqlite_is_two_segments(self):
+        assert table_name_field_order(DBType.SQLITE) == ["database_name", "table_name"]
+
+    def test_duckdb_keeps_its_schema_level(self):
+        assert table_name_field_order(DBType.DUCKDB) == ["database_name", "schema_name", "table_name"]
+
+    def test_capability_less_dialect_falls_back_to_widest_shape(self):
+        """A dialect that declares no namespaces (adapter absent) must not
+        collapse to a bare table name — a qualified prefix has to land in a
+        namespace field so callers keep the segments they were given."""
+        assert table_name_field_order("frobnicate") == [
+            "catalog_name",
+            "database_name",
+            "schema_name",
+            "table_name",
+        ]
+
+    def test_blank_dialect_is_accepted(self):
+        assert table_name_field_order("") == list(_WIDEST_FIELD_ORDER)
+
+    @pytest.mark.parametrize(
+        "dialect",
+        ["mysql", "starrocks", "postgresql", "snowflake", DBType.SQLITE, DBType.DUCKDB, "frobnicate"],
+    )
+    def test_parse_right_aligns_onto_the_declared_order(self, dialect):
+        """Cross-component contract: a token built with one segment per field
+        parses back with every literal in the field it was emitted for. This is
+        what keeps emitted scope tokens matchable."""
+        order = table_name_field_order(dialect)
+        token = ".".join(field.removesuffix("_name") for field in order)
+
+        parsed = parse_table_name_parts(token, dialect=dialect)
+
+        assert parsed == {
+            "catalog_name": "catalog" if "catalog_name" in order else "",
+            "database_name": "database" if "database_name" in order else "",
+            "schema_name": "schema" if "schema_name" in order else "",
+            "table_name": "table",
+        }
+
+    @pytest.mark.parametrize("dialect", ["mysql", "starrocks", "postgresql", DBType.DUCKDB])
+    def test_short_token_right_aligns_and_leaves_the_leading_field_empty(self, dialect):
+        """The failure mode the order exists to prevent: one segment short and
+        every literal shifts left by a field."""
+        order = table_name_field_order(dialect)
+
+        parsed = parse_table_name_parts("x.*", dialect=dialect)
+
+        assert parsed[order[-2]] == "x"
+        assert parsed["table_name"] == "*"
+        for field in order[:-2]:
+            assert parsed[field] == ""
+
+
+class TestStripSqlCommentsRespectsLiterals:
+    """A comment marker inside a string literal is not a comment.
+
+    The regex version cut `SELECT 'a--b' FROM t` down to `SELECT 'a` — and
+    `execute_ddl` / `execute_write` run the *stripped* text, so the truncation
+    reached the database rather than staying a parsing detail.
+    """
+
+    @pytest.mark.parametrize(
+        "sql",
+        [
+            "SELECT 'a--b' FROM t",
+            "SELECT 'a/*b*/c' FROM t",
+            'SELECT "col--x" FROM t',
+            "SELECT 'it''s--ok' FROM t",
+            "INSERT INTO t VALUES ('x;y')",
+            "SELECT $$a--b$$",
+            "COMMENT ON TABLE t IS 'a/*b*/c'",
+        ],
+    )
+    def test_markers_inside_literals_survive(self, sql):
+        assert strip_sql_comments(sql) == sql
+
+    @pytest.mark.parametrize(
+        "sql,expected",
+        [
+            ("SELECT 1 -- trailing\nFROM t", "SELECT 1  \nFROM t"),
+            ("SELECT /* mid */ 1", "SELECT   1"),
+            ("SELECT 1 -- unterminated", "SELECT 1  "),
+            ("SELECT /* unterminated 1", "SELECT  "),
+        ],
+    )
+    def test_real_comments_are_still_removed(self, sql, expected):
+        assert strip_sql_comments(sql) == expected
+
+    def test_a_semicolon_in_a_literal_is_not_a_second_statement(self):
+        assert is_single_statement("SELECT 'a;b' FROM t") is True
+        assert is_single_statement("SELECT 1; SELECT 2") is False
+
+
+class TestValidateReadOnlySql:
+    """The shared gate behind ``agent.sql_read_only``.
+
+    Both ``DBFuncTool._validate_read_sql`` and the ``POST /sql/execute`` route
+    call this, so a hole here is a hole in every SQL entry point at once. The
+    contract is fail-closed: it returns a reason unless the input is provably a
+    single read statement.
+    """
+
+    @pytest.mark.parametrize(
+        "sql",
+        [
+            "SELECT 1",
+            "select id, name from users where status = 'active'",
+            "  SELECT 1  ",
+            "SELECT 1;",
+            "SELECT 1 ;  ",
+            "-- leading comment\nSELECT 1",
+            "/* block */ SELECT 1",
+            "WITH t AS (SELECT 1) SELECT * FROM t",
+            "SELECT 1 UNION SELECT 2",
+            "(SELECT 1)",
+            "EXPLAIN SELECT 1",
+            "SHOW TABLES",
+            "DESCRIBE users",
+            "PRAGMA table_info(users)",
+        ],
+    )
+    def test_single_read_statements_are_allowed(self, sql):
+        violation, sql_type = validate_read_only_sql(sql, "sqlite")
+
+        assert violation is None
+        assert sql_type in (SQLType.SELECT, SQLType.METADATA_SHOW, SQLType.EXPLAIN)
+
+    @pytest.mark.parametrize(
+        "sql",
+        [
+            "INSERT INTO users VALUES (1)",
+            "UPDATE users SET name = 'x'",
+            "DELETE FROM users",
+            "DROP TABLE users",
+            "CREATE TABLE t (a int)",
+            "ALTER TABLE users ADD COLUMN a int",
+            "TRUNCATE TABLE users",
+            "CREATE TABLE t AS SELECT 1",
+            "GRANT SELECT ON users TO bob",
+            "USE other_db",
+            "SET search_path = evil",
+            "CALL some_proc()",
+        ],
+    )
+    def test_write_statements_are_refused(self, sql):
+        violation, _ = validate_read_only_sql(sql, "sqlite")
+
+        assert violation == READ_ONLY_NON_READ
+
+    @pytest.mark.parametrize(
+        "sql",
+        [
+            "SELECT 1; DROP TABLE users",
+            "SELECT 1;DROP TABLE users",
+            "SELECT 1; DROP TABLE users;",
+            "  SELECT 1 ;  DELETE FROM users  ",
+            "-- c\nSELECT 1; DROP TABLE users",
+            "SELECT 1; SELECT 2",
+        ],
+    )
+    def test_multi_statement_input_is_refused(self, sql):
+        """The regression that motivates checking statement count HERE rather
+        than delegating to ``parse_sql_type``, which classifies only the first
+        statement and would read these as harmless SELECTs."""
+        violation, _ = validate_read_only_sql(sql, "sqlite")
+
+        assert violation == READ_ONLY_MULTI_STATEMENT
+
+    def test_semicolon_inside_a_string_literal_is_not_a_second_statement(self):
+        """Quote-aware splitting: a naive ``";" in sql`` check would refuse this
+        valid single query."""
+        violation, sql_type = validate_read_only_sql("SELECT 'a;b' AS c", "sqlite")
+
+        assert violation is None
+        assert sql_type == SQLType.SELECT
+
+    @pytest.mark.parametrize(
+        "sql",
+        [
+            "PRAGMA journal_mode=WAL",
+            "PRAGMA journal_mode = WAL",
+            "pragma synchronous=OFF",
+        ],
+    )
+    def test_writable_pragma_is_refused_despite_classifying_as_metadata(self, sql):
+        """``PRAGMA x=y`` parses as METADATA_SHOW but mutates the database, so
+        the read-only type check alone would let it through."""
+        violation, sql_type = validate_read_only_sql(sql, "sqlite")
+
+        assert violation == READ_ONLY_WRITABLE_PRAGMA
+        assert sql_type == SQLType.METADATA_SHOW
+
+    @pytest.mark.parametrize("sql", ["", "   ", "-- just a comment", "/* only a block comment */"])
+    def test_empty_and_comment_only_input_is_refused(self, sql):
+        """Nothing to prove read-only about, so fail closed rather than passing
+        an empty string down to the connector. Refused as an unclassifiable
+        statement type, not as a shape violation -- there is no statement.
+
+        ``None`` is deliberately not covered: the parameter is typed ``str`` and
+        the helper raises ``TypeError`` on it. That is out of contract and fails
+        loudly rather than open, which is the acceptable direction here."""
+        violation, sql_type = validate_read_only_sql(sql, "sqlite")
+
+        assert violation == READ_ONLY_NON_READ
+        assert sql_type == SQLType.UNKNOWN
+
+    @pytest.mark.parametrize("sql", ["not sql at all", "SELCT 1", "}{"])
+    def test_unparseable_input_is_refused(self, sql):
+        """Fail-closed: text the parser cannot classify lands on UNKNOWN, which
+        is not a read-only type, so it is refused rather than forwarded."""
+        violation, sql_type = validate_read_only_sql(sql, "sqlite")
+
+        assert violation == READ_ONLY_NON_READ
+        assert sql_type not in (SQLType.SELECT, SQLType.METADATA_SHOW, SQLType.EXPLAIN)
+
+    @pytest.mark.parametrize("dialect", ["sqlite", "duckdb", "mysql", "postgresql", "starrocks", "snowflake", ""])
+    def test_the_verdict_does_not_depend_on_the_dialect(self, dialect):
+        """Every deployment dialect must agree on the two cases that matter, so
+        hardening cannot be dialect-specific in practice."""
+        assert validate_read_only_sql("SELECT 1", dialect)[0] is None
+        assert validate_read_only_sql("DROP TABLE users", dialect)[0] == READ_ONLY_NON_READ
+
+    def test_returns_the_parsed_type_alongside_the_verdict(self):
+        """Callers log the type; it must be the real one, not a placeholder."""
+        assert validate_read_only_sql("DROP TABLE users", "sqlite")[1] == SQLType.DDL
+        assert validate_read_only_sql("INSERT INTO t VALUES (1)", "sqlite")[1] == SQLType.INSERT
+
+
+class TestDeploymentReadOnlyRefusal:
+    """The guard for paths that reach a connector without going through
+    ``DBFuncTool`` — the workflow ``execute_sql`` node and the output tool's
+    revised-SQL check.
+
+    Those bypass every tool-layer gate, so before this the deployment-wide
+    switch did not apply to them at all, and `POST /workflows/run` makes that
+    pipeline API-reachable.
+    """
+
+    class _Config:
+        def __init__(self, sql_read_only):
+            self.sql_read_only = sql_read_only
+
+    def test_the_switch_off_is_a_no_op(self):
+        """The default posture must be untouched — this runs on the workflow
+        path, which is write-capable by design."""
+        assert deployment_read_only_refusal(self._Config(False), "DROP TABLE t", "sqlite") is None
+
+    def test_a_config_without_the_attribute_is_a_no_op(self):
+        """Duck-typed on purpose: several of these callers take host-supplied or
+        partially built configs."""
+        assert deployment_read_only_refusal(object(), "DROP TABLE t", "sqlite") is None
+
+    @pytest.mark.parametrize("value", ["false", "no", "off", "0", ""])
+    def test_a_yaml_string_false_stays_off(self, value):
+        """`bool("false")` is True, so a naive cast here would refuse every
+        write on a deployment that never asked to be read-only."""
+        assert deployment_read_only_refusal(self._Config(value), "DROP TABLE t", "sqlite") is None
+
+    @pytest.mark.parametrize("sql", ["SELECT 1", "SHOW TABLES", "EXPLAIN SELECT 1", "DESCRIBE users"])
+    def test_reads_still_run_when_hardened(self, sql):
+        assert deployment_read_only_refusal(self._Config(True), sql, "sqlite") is None
+
+    @pytest.mark.parametrize(
+        "sql",
+        [
+            "INSERT INTO t VALUES (1)",
+            "UPDATE t SET a = 1",
+            "DELETE FROM t",
+            "DROP TABLE t",
+            "CREATE TABLE t2 (a int)",
+            "TRUNCATE TABLE t",
+        ],
+    )
+    def test_writes_are_refused_when_hardened(self, sql):
+        refusal = deployment_read_only_refusal(self._Config(True), sql, "sqlite")
+
+        assert "agent.sql_read_only" in (refusal or "")
+
+    @pytest.mark.parametrize("value", [True, "true", "yes", "on", "1"])
+    def test_a_yaml_string_true_turns_it_on(self, value):
+        refusal = deployment_read_only_refusal(self._Config(value), "DROP TABLE t", "sqlite")
+
+        assert "agent.sql_read_only" in (refusal or "")
+
+    def test_a_write_smuggled_behind_a_read_is_refused(self):
+        """`parse_sql_type` reads only the first statement, so this arrives as a
+        SELECT; the shared shape check is what catches it."""
+        refusal = deployment_read_only_refusal(self._Config(True), "SELECT 1; DROP TABLE t", "sqlite")
+
+        assert "agent.sql_read_only" in (refusal or "")
+
+    def test_unparseable_input_is_refused(self):
+        """Fail closed: a dialect syntax sqlglot cannot place must not become an
+        unchecked statement."""
+        refusal = deployment_read_only_refusal(self._Config(True), "%%not sql%%", "sqlite")
+
+        assert "agent.sql_read_only" in (refusal or "")
+
+    def test_the_message_names_the_detected_type(self):
+        """An operator reading the refusal should not have to re-parse the SQL
+        to learn what was rejected."""
+        refusal = deployment_read_only_refusal(self._Config(True), "DROP TABLE t", "sqlite")
+
+        assert "ddl" in refusal
+
+
+class TestValidateReadOnlySqlExplain:
+    """`EXPLAIN ANALYZE <write>` executes the write.
+
+    That is what ANALYZE means in postgres and mysql: the plan is measured by
+    running the statement. Classifying the whole thing as EXPLAIN and stopping
+    there let `EXPLAIN ANALYZE DELETE FROM orders` through every gate built on
+    this helper — the tool path, `POST /sql/execute`, the MCP surface and the
+    workflow guard — on a deployment whose entire promise is that no non-read
+    statement may run.
+    """
+
+    _DIALECTS = ("postgres", "mysql", "sqlite", "duckdb", "")
+
+    @pytest.mark.parametrize("dialect", _DIALECTS)
+    @pytest.mark.parametrize(
+        "sql",
+        [
+            "EXPLAIN SELECT * FROM t",
+            "EXPLAIN ANALYZE SELECT * FROM t",
+            "EXPLAIN QUERY PLAN SELECT 1",
+            "EXPLAIN VERBOSE SELECT 1",
+            "EXPLAIN (ANALYZE, BUFFERS) SELECT 1",
+        ],
+    )
+    def test_explaining_a_read_is_still_allowed(self, sql, dialect):
+        """The gate must not cost a read-only caller its query plans."""
+        violation, _ = validate_read_only_sql(sql, dialect)
+
+        assert violation is None
+
+    @pytest.mark.parametrize("dialect", _DIALECTS)
+    @pytest.mark.parametrize(
+        "sql",
+        [
+            "EXPLAIN ANALYZE DELETE FROM orders",
+            "EXPLAIN ANALYZE INSERT INTO t VALUES (1)",
+            "EXPLAIN ANALYZE UPDATE t SET a = 1",
+            "EXPLAIN ANALYZE DROP TABLE t",
+            "EXPLAIN ANALYZE TRUNCATE TABLE t",
+        ],
+    )
+    def test_explain_analyze_of_a_write_is_refused(self, sql, dialect):
+        violation, _ = validate_read_only_sql(sql, dialect)
+
+        assert violation == READ_ONLY_NON_READ
+
+    @pytest.mark.parametrize(
+        "sql",
+        [
+            "EXPLAIN (ANALYZE, BUFFERS) DELETE FROM orders",
+            "EXPLAIN ANALYSE DELETE FROM orders",
+            "explain analyze delete from orders",
+            "EXPLAIN   ANALYZE   DELETE FROM orders",
+            "EXPLAIN VERBOSE INSERT INTO t VALUES (1)",
+            "EXPLAIN FORMAT=JSON DELETE FROM orders",
+        ],
+    )
+    def test_every_spelling_of_the_options_is_stripped(self, sql):
+        """The option list is matched textually across dialects. Deciding on the
+        ANALYZE keyword alone would mean enumerating every spelling correctly
+        forever, and getting that wrong fails open."""
+        violation, _ = validate_read_only_sql(sql, "postgres")
+
+        assert violation == READ_ONLY_NON_READ
+
+    def test_explaining_a_write_is_refused_even_without_analyze(self):
+        """Conservative on purpose. Plain `EXPLAIN DELETE` only plans on
+        postgres, but a read-only caller has no need to explain a write, and
+        refusing on the inner statement rather than on an option keyword is the
+        rule that cannot fail open."""
+        violation, _ = validate_read_only_sql("EXPLAIN DELETE FROM orders", "postgres")
+
+        assert violation == READ_ONLY_NON_READ
+
+    def test_the_refusal_names_the_inner_statement(self):
+        """`explain` would tell an operator nothing about what was attempted."""
+        _, sql_type = validate_read_only_sql("EXPLAIN ANALYZE DELETE FROM orders", "postgres")
+
+        assert sql_type == SQLType.DELETE
+
+    @pytest.mark.parametrize("sql", ["EXPLAIN", "EXPLAIN   ", "EXPLAIN ANALYZE"])
+    def test_an_explain_with_nothing_to_explain_is_refused(self, sql):
+        """Fail closed: nothing was classified, so nothing was cleared."""
+        violation, _ = validate_read_only_sql(sql, "postgres")
+
+        assert violation == READ_ONLY_NON_READ
+
+    def test_a_write_smuggled_after_an_explain_is_still_multi_statement(self):
+        """The shape check runs first and stays the answer."""
+        violation, _ = validate_read_only_sql("EXPLAIN SELECT 1; DROP TABLE t", "postgres")
+
+        assert violation == READ_ONLY_MULTI_STATEMENT
+
+
+class TestValidateReadOnlySqlDataModifyingCte:
+    """A statement that reads at the root can still write inside it.
+
+    PostgreSQL data-modifying CTEs are a SELECT on the outside::
+
+        WITH deleted AS (DELETE FROM orders RETURNING *) SELECT * FROM deleted
+
+    Classifying by root node alone called that a read and let it through every
+    gate built on this helper — while it deletes the rows.
+    """
+
+    @pytest.mark.parametrize(
+        "sql",
+        [
+            "WITH deleted AS (DELETE FROM orders RETURNING *) SELECT * FROM deleted",
+            "WITH ins AS (INSERT INTO t VALUES (1) RETURNING *) SELECT * FROM ins",
+            "WITH upd AS (UPDATE t SET a = 1 RETURNING *) SELECT * FROM upd",
+        ],
+    )
+    def test_a_write_inside_a_cte_is_refused(self, sql):
+        violation, _ = validate_read_only_sql(sql, "postgres")
+
+        assert violation == READ_ONLY_NON_READ
+
+    def test_it_is_refused_behind_an_explain_too(self):
+        """Both holes compose: EXPLAIN ANALYZE of a data-modifying CTE runs the
+        write and reads as a plain EXPLAIN of a SELECT."""
+        sql = "EXPLAIN ANALYZE WITH d AS (DELETE FROM orders RETURNING *) SELECT * FROM d"
+
+        violation, _ = validate_read_only_sql(sql, "postgres")
+
+        assert violation == READ_ONLY_NON_READ
+
+    @pytest.mark.parametrize(
+        "sql",
+        [
+            "WITH ok AS (SELECT 1) SELECT * FROM ok",
+            "WITH a AS (SELECT 1), b AS (SELECT 2) SELECT * FROM a JOIN b ON TRUE",
+            "SELECT * FROM t",
+            "EXPLAIN SELECT 1",
+        ],
+    )
+    def test_ordinary_reads_are_untouched(self, sql):
+        """The walk must not cost a read-only caller its ordinary CTEs — they
+        are how most non-trivial analytics queries are written."""
+        violation, _ = validate_read_only_sql(sql, "postgres")
+
+        assert violation is None
+
+    @pytest.mark.parametrize("dialect", ["postgres", "starrocks", "not_a_dialect", "totally-made-up", ""])
+    def test_the_walk_survives_a_dialect_sqlglot_does_not_know(self, dialect):
+        """The raw dialect name used to go straight to `parse_one`, so a name
+        sqlglot rejects raised, the walk was skipped, and the CTE went through —
+        the check silently did not apply to exactly the deployments whose
+        dialect the classifier already has to work around."""
+        sql = "WITH deleted AS (DELETE FROM orders RETURNING *) SELECT * FROM deleted"
+
+        violation, _ = validate_read_only_sql(sql, dialect)
+
+        assert violation == READ_ONLY_NON_READ
+
+    @pytest.mark.parametrize("dialect", ["postgres", "not_a_dialect"])
+    def test_an_unknown_dialect_does_not_refuse_ordinary_reads(self, dialect):
+        """The retry must widen coverage, not turn every read into a refusal."""
+        violation, _ = validate_read_only_sql("WITH ok AS (SELECT 1) SELECT * FROM ok", dialect)
+
+        assert violation is None
+
+    def test_unparseable_input_is_still_refused_for_being_unclassifiable(self):
+        """The walk answers False on input it cannot parse, deliberately: the
+        type check already refuses it, and claiming "embeds a write" would make
+        the reported reason wrong."""
+        violation, sql_type = validate_read_only_sql("%%not sql%%", "postgres")
+
+        assert violation == READ_ONLY_NON_READ
+        assert sql_type not in (SQLType.SELECT, SQLType.METADATA_SHOW, SQLType.EXPLAIN)

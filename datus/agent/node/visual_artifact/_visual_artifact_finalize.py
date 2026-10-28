@@ -74,19 +74,41 @@ _JINJA_INTERP_RE = re.compile(r"\{\{.*?\}\}", re.DOTALL)
 # User-visible status text for each finalize stage. The node streams these
 # via a single chat bubble (CREATE then UPDATE_MESSAGE on the same id) so
 # the user sees the bubble's content swap stage-to-stage while finalize's
-# 10-15 s of LLM + describe_table work runs.
-FINALIZE_STAGE_TEXT = {
-    1: "Generating insights and follow-up questions...",
-    2: "Refining analysis intent...",
-    3: "Caching referenced table schemas, almost done...",
+# 10-15 s of LLM + describe_table work runs. Keyed by language so the
+# bubble matches the pinned ``agent_config.language`` — the finalize
+# *outputs* already follow it (see ``language_directive``), and an
+# English-only bubble over a Chinese artifact reads as a glitch.
+FINALIZE_STAGE_TEXT: Dict[str, Dict[int, str]] = {
+    "en": {
+        1: "Generating insights and follow-up questions...",
+        2: "Refining analysis intent...",
+        3: "Caching referenced table schemas, almost done...",
+    },
+    "zh": {
+        1: "正在生成洞察与后续问题...",
+        2: "正在提炼分析意图...",
+        3: "正在缓存引用的表结构，即将完成...",
+    },
 }
+
+
+def finalize_stage_text(stage: int, language: Optional[str] = None) -> Optional[str]:
+    """Resolve the status line for ``stage`` in the configured language.
+
+    ``language`` is ``agent_config.language`` as-is: any ``zh*`` code picks
+    the Chinese copy; everything else — including unpinned — falls back to
+    English. Unknown stages return ``None`` (caller skips the bubble).
+    """
+    code = (language or "").strip().lower()
+    table = FINALIZE_STAGE_TEXT["zh"] if code.startswith("zh") else FINALIZE_STAGE_TEXT["en"]
+    return table.get(stage)
 
 
 # Subject-library-aware tool names whose action history we surface as
 # "reminder cards" in the finalize prompt — limits the LLM's chance of
 # forgetting a subject asset it actually consulted earlier in the loop.
 SUBJECT_TOOL_NAMES = {
-    "get_metrics",
+    "get_metric",
     "query_metrics",
     "read_reference_sql",
     "list_subject_tree",
@@ -107,6 +129,7 @@ def build_finalize_prompt(
     action_history_hints: List[Dict[str, Any]],
     existing_insights: Optional[List[Dict[str, Any]]],
     existing_suggested_questions: Optional[List[Dict[str, Any]]],
+    language_directive: Optional[str] = None,
 ) -> str:
     """Compose the single-shot finalize prompt.
 
@@ -114,6 +137,13 @@ def build_finalize_prompt(
     chatty: the LLM has to emit one strict JSON object matching
     :class:`FinalizeAnalysisOutput`, so we want every constraint visible
     in one place.
+
+    ``language_directive`` is the rendered ``response_language`` section
+    when ``agent_config.language`` pins one. finalize is an independent
+    LLM call with no system prompt, so the directive every agentic node
+    gets injected has to be restated here or the model answers an
+    English prompt in English — regardless of the language the user (and
+    therefore the artifact) actually uses.
     """
     is_dashboard = artifact_kind == "dashboard"
     sections: List[str] = []
@@ -194,6 +224,26 @@ def build_finalize_prompt(
         "output. The schema rejects quick questions with no grounding, and a "
         "post-validation check warns when the distribution drifts off-target."
     )
+
+    sections.append("## OUTPUT LANGUAGE")
+    audience_note = (
+        "This applies to `insights[].title`, `insights[].summary` and "
+        "`suggested_questions[].question` — they are shown to the user verbatim "
+        "(the questions become clickable chips beside the artifact). Everything "
+        "machine-read stays exactly as specified above: `insights[].id` and the "
+        "query slugs in `evidence_queries` / `related_queries`, the `kind` "
+        "values, and every JSON key."
+    )
+    if language_directive:
+        sections.append(f"{language_directive}\n\n{audience_note}")
+    else:
+        sections.append(
+            "Write the user-facing strings in the SAME language the user wrote "
+            "the prompts in RAW USER PROMPTS below — Chinese prompts get Chinese "
+            "questions, Japanese prompts get Japanese questions. Do NOT switch "
+            "to English just because these instructions are in English; the "
+            f"artifact itself is authored in the user's language.\n\n{audience_note}"
+        )
 
     sections.append("## RAW USER PROMPTS (intent.md)")
     sections.append(intent_md.strip() or "(empty)")
@@ -289,7 +339,11 @@ def collect_query_previews(queries_dir: Path, *, max_rows: int = 5) -> List[Dict
     previews: List[Dict[str, Any]] = []
     if not queries_dir.is_dir():
         return previews
-    for sql_path in sorted(queries_dir.glob("*.sql")) + sorted(queries_dir.glob("*.sql.j2")):
+    for sql_path in (
+        sorted(queries_dir.glob("*.sql"))
+        + sorted(queries_dir.glob("*.sql.j2"))
+        + sorted(queries_dir.glob("*.metric.json"))
+    ):
         # ``foo.sql.j2`` → slug ``foo``; ``foo.sql`` → slug ``foo``.
         slug = sql_path.name.split(".", 1)[0]
         # Report result file shape.
@@ -397,6 +451,22 @@ def load_existing_finalize_output(
     return _load("insights.json"), _load("suggested_questions.json")
 
 
+def narrative_outputs_present(analysis_dir: Path, *, artifact_kind: str) -> bool:
+    """True when a prior finalize's LLM-authored files are on disk.
+
+    ``skip_narrative`` means "reuse what's already there". With nothing to
+    reuse — a first generation split across turns (queries saved in an
+    earlier run, ``validate_render`` landing in a later render-only one), or
+    a prior finalize whose LLM call failed and cleaned up after itself — the
+    skip would strand the artifact without chips permanently, so callers
+    upgrade to a full finalize instead.
+    """
+    if not (analysis_dir / "suggested_questions.json").is_file():
+        return False
+    # Dashboards never write insights.json — insights are report-only.
+    return artifact_kind != "report" or (analysis_dir / "insights.json").is_file()
+
+
 def parse_finalize_output(raw: Any, *, artifact_kind: str) -> FinalizeAnalysisOutput:
     """Validate the LLM's response against :class:`FinalizeAnalysisOutput`.
 
@@ -463,9 +533,8 @@ def aggregate_subject_refs(queries_dir: Path) -> SubjectRefs:
 
     First-occurrence wins per dedup key, preserving the order the LLM
     declared assets in across queries. The ``ask_*`` consultant
-    reading the resulting file uses each ``(path, name)`` to call
-    ``get_metrics`` / ``get_reference_sql`` for the canonical
-    definition; no other metadata is snapshotted here because the
+    reading the resulting file uses each ``(path, name)`` to identify
+    the asset; no other metadata is snapshotted here because the
     subject library is the source of truth.
     """
     metrics: Dict[Tuple[Tuple[str, ...], str], SubjectAssetRef] = {}
@@ -630,6 +699,14 @@ def aggregate_referenced_tables(queries_dir: Path) -> List[str]:
             logger.warning("Failed to read %s for key_tables aggregation: %s", tpl_path, exc)
             continue
         tables.update(_extract_tables_from_one_sql(text))
+    from datus.schemas.metric_artifact_query import MetricQueryFile
+
+    for metric_path in sorted(queries_dir.glob("*.metric.json")):
+        try:
+            metric = MetricQueryFile.model_validate_json(metric_path.read_text(encoding="utf-8"))
+            tables.update(metric.metric_tables)
+        except (OSError, ValueError) as exc:
+            logger.warning("Cannot read metric source %s: %s", metric_path, exc)
     return _dedupe_table_references(tables)
 
 
@@ -1186,8 +1263,11 @@ def run_finalize_analysis(
     analysis_dir: Path,
     actions: Iterable[ActionHistory],
     db_func_tool: Optional[Any] = None,
+    semantic_tools: Optional[Any] = None,
+    context_search_tools: Optional[Any] = None,
     on_progress: Optional[Callable[[int], None]] = None,
     skip_narrative: bool = False,
+    language_directive: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Top-level orchestrator. Returns a result dict::
 
@@ -1237,11 +1317,23 @@ def run_finalize_analysis(
     ``suggested_questions.json`` are left in place (NOT deleted — they're
     still valid), and the deterministic aggregations below still run so the
     ask_* consultant's indices stay fresh. The result carries
-    ``skipped_narrative: True`` and ``ok: True``.
+    ``skipped_narrative: True`` and ``ok: True``. The skip is ignored when
+    there is nothing on disk to reuse (see
+    :func:`narrative_outputs_present`) — a full finalize runs instead.
     """
     warnings: List[str] = []
     output: Optional[FinalizeAnalysisOutput] = None
     llm_error: Optional[str] = None
+
+    if skip_narrative and not narrative_outputs_present(analysis_dir, artifact_kind=artifact_kind):
+        # Nothing on disk to preserve — honouring the skip would leave this
+        # artifact without insights / suggested questions for good. Callers
+        # pre-check the same way (so the progress bubbles are wired up); this
+        # is the belt-and-suspenders side for direct callers.
+        logger.info(
+            "Narrative skip requested for %s but prior outputs are missing; running the LLM stage.", analysis_dir
+        )
+        skip_narrative = False
 
     if not skip_narrative:
         intent_md = load_intent_md(analysis_dir)
@@ -1258,6 +1350,7 @@ def run_finalize_analysis(
             action_history_hints=action_hints,
             existing_insights=existing_insights,
             existing_suggested_questions=existing_sq,
+            language_directive=language_directive,
         )
 
         if on_progress is not None:
@@ -1304,6 +1397,21 @@ def run_finalize_analysis(
     # attribution index and key_tables hint to work with, even when the
     # narrative-side outputs are missing.
     refs = aggregate_subject_refs(queries_dir)
+    from datus.agent.node.visual_artifact._insight_snapshot import bake_metric_snapshots
+
+    snapshot_error = bake_metric_snapshots(artifact_dir, refs, semantic_tools, artifact_kind=artifact_kind)
+    if snapshot_error:
+        warnings.append(snapshot_error)
+    # A render-only edit must not backfill an old artifact with today's SQL.
+    if not skip_narrative:
+        from datus.agent.node.visual_artifact._insight_snapshot import bake_reference_sql_snapshots
+
+        reference_error = bake_reference_sql_snapshots(
+            artifact_dir, refs, context_search_tools, artifact_kind=artifact_kind
+        )
+        if reference_error:
+            warnings.append(reference_error)
+
     write_err = write_subject_refs(analysis_dir, refs)
     if write_err:
         warnings.append(write_err)

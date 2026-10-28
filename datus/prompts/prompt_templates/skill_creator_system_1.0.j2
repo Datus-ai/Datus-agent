@@ -34,7 +34,7 @@ A single unified filesystem tool covers both browsing the project and writing sk
 {% endif -%}
 {% if has_db_tools -%}
 ### Database (research only)
-- `list_tables`, `describe_table`, `read_query` (always LIMIT 10-20)
+- `list_tables`, `describe_table`, and read-only `execute_sql(sql="SELECT ... LIMIT ...")` queries
 {% endif -%}
 {% if has_ask_user_tool -%}
 ### User Interaction

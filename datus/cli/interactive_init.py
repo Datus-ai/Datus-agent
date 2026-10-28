@@ -27,7 +27,7 @@ from datus.cli.init_util import detect_db_connectivity
 from datus.cli.provider_auth_flows import configure_claude_subscription, configure_codex_oauth
 from datus.configuration.agent_config import AgentConfig
 from datus.configuration.project_config import ProjectOverride, ProjectTarget, save_project_override
-from datus.utils.loggings import configure_logging, get_logger, print_rich_exception
+from datus.utils.loggings import configure_entrypoint_logging, get_logger, print_rich_exception
 from datus.utils.path_manager import get_path_manager
 from datus.utils.path_utils import safe_rmtree
 from datus.utils.resource_utils import copy_data_file, read_data_file_text
@@ -69,8 +69,8 @@ class InteractiveInit:
                 },
                 "nodes": {
                     "schema_linking": {"matching_rate": "fast"},
-                    "date_parser": {"language": "en"},
                 },
+                "date_parsing": {"language": "en"},
             }
         }
         # Staged project-level target; written to ``./.datus/config.yml`` at
@@ -714,7 +714,6 @@ class ReferenceSqlStreamHandler:
 def init_metadata_and_log_result(datasource_name: str, config_path: str, console: Console):
     from datus.configuration.agent_config_loader import load_agent_config
     from datus.storage.schema_metadata.local_init import init_local_schema
-    from datus.storage.schema_metadata.store import SchemaWithValueRAG
     from datus.tools.db_tools.db_manager import db_manager_instance
 
     agent_config = load_agent_config(reload=True, config=config_path)
@@ -724,7 +723,14 @@ def init_metadata_and_log_result(datasource_name: str, config_path: str, console
 
     with console.status(f"→ Initializing metadata for {datasource_name} with path `{storage_path}`..."):
         try:
-            if kb_update_strategy == "overwrite":
+            from datus.storage.kb_retrieval import metadata_fts_enabled
+            from datus.storage.schema_metadata import create_metadata_rag
+
+            if metadata_fts_enabled(agent_config):
+                metadata_store = create_metadata_rag(agent_config)
+                if kb_update_strategy == "overwrite":
+                    metadata_store.truncate()
+            elif kb_update_strategy == "overwrite":
                 agent_config.save_storage_config("database")
                 from datus.storage.backend_holder import create_vector_connection
 
@@ -735,10 +741,11 @@ def init_metadata_and_log_result(datasource_name: str, config_path: str, console
                     logger.info("Dropped existing schema_metadata and schema_value tables")
                 finally:
                     db.close()
+                metadata_store = create_metadata_rag(agent_config)
             else:
                 agent_config.check_init_storage_config("database")
+                metadata_store = create_metadata_rag(agent_config)
 
-            metadata_store = SchemaWithValueRAG(agent_config)
             db_manager = db_manager_instance(agent_config.datasource_configs)
             init_local_schema(
                 metadata_store,
@@ -904,7 +911,9 @@ def do_init_sql_and_log_result(
 
 def main():
     """Entry point for the interactive init command."""
-    configure_logging(console_output=False)
+    import argparse
+
+    configure_entrypoint_logging(argparse.Namespace(), console_output=False)
     init = InteractiveInit()
     return init.run()
 

@@ -26,7 +26,9 @@ import uvicorn
 
 from datus import __version__
 from datus.configuration.agent_config_loader import parse_config_path
-from datus.utils.loggings import configure_logging, get_logger
+from datus.configuration.logging_config import add_logging_arguments, resolve_logging_arguments
+from datus.utils.loggings import configure_entrypoint_logging, get_logger
+from datus.utils.multiprocessing_utils import configure_multiprocessing_start_method
 
 logger = get_logger(__name__)
 
@@ -93,7 +95,7 @@ def _daemon_worker(args: argparse.Namespace, agent_args: argparse.Namespace, pid
     os.setsid()
     os.umask(0)
 
-    configure_logging(args.debug, log_dir=str(log_file.parent), console_output=False)
+    configure_entrypoint_logging(args, log_dir=str(log_file.parent), console_output=False)
     _redirect_stdio(log_file)
     _write_pid_file(pid_file, os.getpid())
 
@@ -161,6 +163,9 @@ def _build_agent_args(args: argparse.Namespace) -> argparse.Namespace:
         interactive=args.interactive,
         output_dir=args.output_dir,
         log_level=args.log_level,
+        log_level_source=getattr(args, "log_level_source", "default"),
+        log_redact=getattr(args, "log_redact", {}),
+        _logging_resolved=True,
         stream_thinking=args.stream_thinking,
     )
 
@@ -176,6 +181,7 @@ def _run_server(args: argparse.Namespace, agent_args: argparse.Namespace) -> Non
             port=args.port,
             reload=True,
             log_level=args.log_level.lower(),
+            log_config=None,
             access_log=True,
         )
         return
@@ -187,6 +193,7 @@ def _run_server(args: argparse.Namespace, agent_args: argparse.Namespace) -> Non
             port=args.port,
             workers=args.workers,
             log_level=args.log_level.lower(),
+            log_config=None,
             access_log=True,
         )
         return
@@ -198,6 +205,7 @@ def _run_server(args: argparse.Namespace, agent_args: argparse.Namespace) -> Non
         port=args.port,
         workers=1,
         log_level=args.log_level.lower(),
+        log_config=None,
         access_log=True,
     )
     server = uvicorn.Server(config)
@@ -213,7 +221,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--port", type=int, default=8000, help="Port to bind the server to (default: 8000)")
     parser.add_argument("--reload", action="store_true", help="Enable auto-reload for development")
     parser.add_argument("--workers", type=int, default=1, help="Number of worker processes (default: 1)")
-    parser.add_argument("--debug", action="store_true", help="Enable debug logging")
+    add_logging_arguments(parser)
 
     # Configuration
     parser.add_argument(
@@ -235,14 +243,6 @@ def _build_parser() -> argparse.ArgumentParser:
         default=os.getenv("DATUS_OUTPUT_DIR", "./output"),
         help="Output directory for results (default: ./output)",
     )
-    parser.add_argument(
-        "--log-level",
-        dest="log_level",
-        type=str,
-        default=os.getenv("DATUS_LOG_LEVEL", "INFO"),
-        choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
-        help="Log level (default: INFO or DATUS_LOG_LEVEL env var)",
-    )
 
     # Agent
     parser.add_argument("--max_steps", type=int, default=20, help="Maximum workflow steps")
@@ -254,8 +254,9 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         choices=["web", "vscode"],
         help=(
-            "Default proxy tool source shortcut. 'vscode' -> proxy filesystem_tools.*, "
-            "'web' -> proxy write_file/edit_file. "
+            "Default proxy tool source shortcut. 'vscode' -> proxy filesystem_tools.* and no "
+            "server-side bash, 'web' -> proxy write_file/edit_file/delete_file with a "
+            "server-side bash restricted to datus commands. "
             "Overridable per request via ChatInput.source."
         ),
     )
@@ -303,19 +304,14 @@ def _build_parser() -> argparse.ArgumentParser:
 
 def main():
     """Main entry point for starting the Datus Agent API server."""
-    if hasattr(multiprocessing, "set_start_method"):
-        try:
-            multiprocessing.set_start_method("spawn", force=True)
-        except RuntimeError:
-            pass
+    configure_multiprocessing_start_method()
 
     parser = _build_parser()
     args = parser.parse_args()
 
     # --debug is a shortcut for --log-level DEBUG; unify early so all
     # downstream consumers (uvicorn, configure_logging, agent_args) agree.
-    if args.debug:
-        args.log_level = "DEBUG"
+    resolve_logging_arguments(args)
 
     # Resolve defaults for pid/log
     default_pid, default_log = _default_paths(args.config or "")
@@ -323,14 +319,14 @@ def main():
     log_file = Path(args.daemon_log_file) if args.daemon_log_file else default_log
 
     if args.action in {"status", "stop"}:
-        configure_logging(args.debug)
+        configure_entrypoint_logging(args)
         if args.action == "status":
             raise SystemExit(_status(pid_file))
         if args.action == "stop":
             raise SystemExit(_stop(pid_file))
 
     if args.action == "restart":
-        configure_logging(args.debug)
+        configure_entrypoint_logging(args)
         _stop(pid_file)
         # fall-through to start
 
@@ -356,7 +352,7 @@ def main():
             print(f"Already running (pid={pid})", file=sys.stderr)
             raise SystemExit(0)
 
-        configure_logging(args.debug, log_dir=str(log_file.parent), console_output=False)
+        configure_entrypoint_logging(args, log_dir=str(log_file.parent), console_output=False)
         logger.info(
             f"Starting Datus Agent API server (daemon) on {args.host}:{args.port} | "
             f"Workers: {args.workers}, Debug: {args.debug}"
@@ -378,7 +374,7 @@ def main():
             daemon_process.join()
             os._exit(1)
     else:
-        configure_logging(args.debug)
+        configure_entrypoint_logging(args)
 
     logger.info(f"Starting Datus Agent API server on {args.host}:{args.port}")
     logger.info(f"Workers: {args.workers}, Reload: {args.reload}, Debug: {args.debug}")

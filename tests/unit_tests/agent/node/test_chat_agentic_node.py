@@ -31,6 +31,8 @@ from datus.schemas.action_history import ActionHistoryManager, ActionRole, Actio
 from datus.schemas.chat_agentic_node_models import ChatNodeInput, ChatNodeResult
 from tests.unit_tests.mock_llm_model import MockToolCall, build_simple_response, build_tool_then_response
 
+LINEAGE_TOOL_NAMES = {"upsert_lineage", "delete_lineage", "query_lineage"}
+
 # ===========================================================================
 # ChatAgenticNode Inheritance Tests
 # ===========================================================================
@@ -270,13 +272,13 @@ class TestChatAgenticNodeToolSetup:
         assert isinstance(node.bash_tool, BashTool)
 
         # ``["*"]`` pattern: tool is exposed; per-call gating is handled by
-        # the PermissionManager ``bash_tools.execute_command`` ASK rule.
+        # the PermissionManager ``bash_tools.bash`` ASK rule.
         tool_names = [t.name for t in node.tools]
-        assert "execute_command" in tool_names
+        assert "bash" in tool_names
 
         # Permission category mapping is mandatory — without it, the ASK rule
         # added in ``profiles._NORMAL_RULES`` would never fire.
-        assert node.tool_registry.get("execute_command") == "bash_tools"
+        assert node.tool_registry.get("bash") == "bash_tools"
 
     def test_context_search_failure_does_not_remove_db_tools(self, real_agent_config, mock_llm_create):
         """Embedding/context setup failures should only remove context tools."""
@@ -755,26 +757,6 @@ class TestChatAgenticNodeSystemPrompt:
         assert "Ask user tool (`ask_user`)" in prompt
         assert "call `ask_user` FIRST" in prompt
 
-    def test_prompt_keeps_gen_report_explicit_only(self, real_agent_config, mock_llm_create):
-        """Chat routing must not automatically choose legacy gen_report."""
-        from datus.agent.node.chat_agentic_node import ChatAgenticNode
-
-        node = ChatAgenticNode(
-            node_id="test_prompt_gen_report_explicit_only",
-            description="Test gen_report routing",
-            node_type=NodeType.TYPE_CHAT,
-            agent_config=real_agent_config,
-            execution_mode="interactive",
-        )
-
-        prompt = node._get_system_prompt()
-
-        assert 'Use `task(type="gen_report", prompt="...")` only when the user explicitly asks' in prompt
-        assert "Only when the user explicitly names `gen_report`" in prompt
-        assert "Do NOT automatically route metric attribution" in prompt
-        assert "delegate metric attribution and root cause analysis to a specialized report subagent" not in prompt
-        assert "The question needs a deeper narrative report for why a metric changed" not in prompt
-
     def test_get_system_prompt_fallback_on_missing_template(self, real_agent_config, mock_llm_create):
         """_get_system_prompt falls back to chat_system when configured template is missing."""
         from datus.agent.node.chat_agentic_node import ChatAgenticNode
@@ -939,7 +921,7 @@ class TestChatAgenticNodeExecuteStreamErrors:
 
         async def raising_stream(*args, **kwargs):
             raise RuntimeError("Simulated LLM failure")
-            yield  # noqa: unreachable - makes this an async generator
+            yield  # unreachable - makes this an async generator
 
         mock_llm_create.generate_with_tools_stream = raising_stream
 
@@ -984,7 +966,7 @@ class TestChatAgenticNodeExecuteStreamErrors:
 
         async def cancel_stream(*args, **kwargs):
             raise ExecutionInterrupted("Ctrl+C")
-            yield  # noqa: unreachable
+            yield  # unreachable - makes this an async generator
 
         mock_llm_create.generate_with_tools_stream = cancel_stream
 
@@ -1015,7 +997,7 @@ class TestChatAgenticNodeExecuteStreamErrors:
 
         async def interrupt_stream(*args, **kwargs):
             raise ExecutionInterrupted("Ctrl+C pressed")
-            yield  # noqa: unreachable
+            yield  # unreachable - makes this an async generator
 
         mock_llm_create.generate_with_tools_stream = interrupt_stream
 
@@ -1721,6 +1703,83 @@ class TestChatAgenticNodeRebuildTools:
         tool_names = [t.name for t in node.tools]
         assert "ask_user" in tool_names
 
+    def test_orchestrator_origin_survives_rebuild(self, real_agent_config, mock_llm_create):
+        """setup_tools() ends in _rebuild_tools(), which clears the list — so a tool
+        only appended by its own _setup_* helper never reaches the model. That is
+        exactly how submit_task_result shipped inert."""
+        from datus.agent.node.chat_agentic_node import ChatAgenticNode
+
+        real_agent_config._request_origin = "orchestrator"
+        node = ChatAgenticNode(
+            node_id="test_rebuild_task_result",
+            description="Test rebuild with submit_task_result",
+            node_type=NodeType.TYPE_CHAT,
+            agent_config=real_agent_config,
+        )
+
+        assert "submit_task_result" in [t.name for t in node.tools]
+
+        # A mid-session rebuild (task-database switch, skill reload) must keep it.
+        node._rebuild_tools()
+        assert "submit_task_result" in [t.name for t in node.tools]
+
+    def test_submit_task_result_does_not_prompt(self, real_agent_config, mock_llm_create):
+        """It is the channel the run reports through, so it must never ASK.
+
+        The ``tools`` bucket has no ALLOW rule matching it, so without the
+        injected one it falls to ``default=ASK`` and a finished dispatch stops
+        to ask permission to say it finished. Asserting the resolved level, not
+        the rule's presence: rules are last-match-wins while the injection
+        inserts at the front, so "the rule is there" does not imply it decides.
+        """
+        from datus.agent.node.chat_agentic_node import ChatAgenticNode
+        from datus.tools.permission.permission_config import PermissionLevel
+
+        real_agent_config._request_origin = "orchestrator"
+        node = ChatAgenticNode(
+            node_id="test_task_result_permission",
+            description="Test submit_task_result permission",
+            node_type=NodeType.TYPE_CHAT,
+            agent_config=real_agent_config,
+        )
+
+        assert (
+            node.permission_manager.check_permission("tools", "submit_task_result", node.get_node_name())
+            == PermissionLevel.ALLOW
+        )
+
+    def test_ordinary_chat_never_sees_submit_task_result(self, real_agent_config, mock_llm_create):
+        from datus.agent.node.chat_agentic_node import ChatAgenticNode
+
+        real_agent_config._request_origin = None
+        node = ChatAgenticNode(
+            node_id="test_rebuild_no_task_result",
+            description="Test rebuild without submit_task_result",
+            node_type=NodeType.TYPE_CHAT,
+            agent_config=real_agent_config,
+        )
+
+        node._rebuild_tools()
+        assert "submit_task_result" not in [t.name for t in node.tools]
+
+    def test_rebuild_tools_resets_transformer_flag(self, real_agent_config, mock_llm_create):
+        """Rebuilding replaces wrapped FunctionTools with fresh unwrapped ones,
+        so plugin tool transformers must re-apply on the next hook composition
+        (e.g. after a mid-session task-database switch)."""
+        from datus.agent.node.chat_agentic_node import ChatAgenticNode
+
+        node = ChatAgenticNode(
+            node_id="test_rebuild_flag",
+            description="Test rebuild resets transformer flag",
+            node_type=NodeType.TYPE_CHAT,
+            agent_config=real_agent_config,
+        )
+        node._tool_transformers_applied = True
+
+        node._rebuild_tools()
+
+        assert node._tool_transformers_applied is False
+
     def test_rebuild_tools_with_no_optional_components(self, real_agent_config, mock_llm_create):
         """_rebuild_tools works when optional tool components are None."""
         from datus.agent.node.chat_agentic_node import ChatAgenticNode
@@ -1857,20 +1916,6 @@ class TestChatAgenticNodeExecutionMode:
 class TestChatAgenticNodeNoBITools:
     """Verify ChatAgenticNode no longer has BI tools (moved to GenDashboardAgenticNode)."""
 
-    def test_no_bi_func_tool_attribute(self, real_agent_config, mock_llm_create):
-        """Chat node should not have a bi_func_tool attribute."""
-        from datus.agent.node.chat_agentic_node import ChatAgenticNode
-        from datus.configuration.node_type import NodeType
-
-        node = ChatAgenticNode(
-            node_id="test_no_bi",
-            description="Test no BI tools",
-            node_type=NodeType.TYPE_CHAT,
-            agent_config=real_agent_config,
-        )
-
-        assert not hasattr(node, "bi_func_tool")
-
     def test_no_bi_tool_names_in_tools_list(self, real_agent_config, mock_llm_create):
         """Chat node tools list should not contain any BI tool names."""
         from datus.agent.node.chat_agentic_node import ChatAgenticNode
@@ -1903,20 +1948,6 @@ class TestChatAgenticNodeNoBITools:
         tool_names = {tool.name for tool in node.tools}
         assert tool_names.isdisjoint(bi_tool_names), f"Chat node still has BI tools: {tool_names & bi_tool_names}"
 
-    def test_no_setup_bi_tools_method(self, real_agent_config, mock_llm_create):
-        """Chat node should not have _setup_bi_tools method."""
-        from datus.agent.node.chat_agentic_node import ChatAgenticNode
-        from datus.configuration.node_type import NodeType
-
-        node = ChatAgenticNode(
-            node_id="test_no_method",
-            description="Test no BI method",
-            node_type=NodeType.TYPE_CHAT,
-            agent_config=real_agent_config,
-        )
-
-        assert not hasattr(node, "_setup_bi_tools")
-
 
 # ===========================================================================
 # Scheduler Tools Removed from Chat Node Tests
@@ -1925,19 +1956,6 @@ class TestChatAgenticNodeNoBITools:
 
 class TestChatAgenticNodeNoSchedulerTools:
     """Verify ChatAgenticNode no longer has scheduler tools (moved to SchedulerAgenticNode)."""
-
-    def test_no_scheduler_tools_attribute(self, real_agent_config, mock_llm_create):
-        """Chat node should not have a scheduler_tools attribute."""
-        from datus.agent.node.chat_agentic_node import ChatAgenticNode
-
-        node = ChatAgenticNode(
-            node_id="test_no_scheduler",
-            description="Test no scheduler tools",
-            node_type=NodeType.TYPE_CHAT,
-            agent_config=real_agent_config,
-        )
-
-        assert not hasattr(node, "scheduler_tools")
 
     def test_no_scheduler_tool_names_in_tools_list(self, real_agent_config, mock_llm_create):
         """Chat node tools list should not contain any scheduler tool names."""
@@ -1969,15 +1987,368 @@ class TestChatAgenticNodeNoSchedulerTools:
             f"Chat node still has scheduler tools: {tool_names & scheduler_tool_names}"
         )
 
-    def test_no_setup_scheduler_tools_method(self, real_agent_config, mock_llm_create):
-        """Chat node should not have _setup_scheduler_tools method."""
+
+# ===========================================================================
+# agentic_nodes[<name>].tools
+# ===========================================================================
+
+
+class TestChatAgenticNodeHonoursConfiguredTools:
+    """`ChatAgenticNode` was the one agentic node class that ignored `tools`.
+
+    The five others (gen_sql, gen_report, ask_metrics, and the two artifact
+    bases) read `node_config.get("tools")` and build only what it names. Chat
+    mounted every family unconditionally, so a host that publishes a chat
+    sub-agent and strips write-capable tools from that list got no effect from
+    the strip: the model was still shown tools the permission layer would then
+    deny.
+    """
+
+    @staticmethod
+    def _node(real_agent_config, tools=None):
+        """Build a chat node with `tools` set to *tools*, or removed entirely.
+
+        The shared fixture's `chat` entry declares a narrow `tools` list, so a
+        test for the no-key default has to delete the key rather than just leave
+        the argument out.
+        """
         from datus.agent.node.chat_agentic_node import ChatAgenticNode
 
-        node = ChatAgenticNode(
-            node_id="test_no_scheduler_method",
-            description="Test no scheduler method",
+        chat_entry = dict((real_agent_config.agentic_nodes or {}).get("chat") or {})
+        if tools is None:
+            chat_entry.pop("tools", None)
+        else:
+            chat_entry["tools"] = tools
+        real_agent_config.agentic_nodes = {
+            **(real_agent_config.agentic_nodes or {}),
+            "chat": chat_entry,
+        }
+        return ChatAgenticNode(
+            node_id="test_tools",
+            description="Test configured tools",
             node_type=NodeType.TYPE_CHAT,
             agent_config=real_agent_config,
         )
 
-        assert not hasattr(node, "_setup_scheduler_tools")
+    @staticmethod
+    def _families(node):
+        """The tool families actually mounted, by instance attribute."""
+        return {
+            "db_tools": node.db_func_tool is not None,
+            "context_search_tools": node.context_search_tools is not None,
+            "reference_template_tools": node.reference_template_tools is not None,
+            "date_parsing_tools": node.date_parsing_tools is not None,
+            "filesystem_tools": node.filesystem_func_tool is not None,
+            "memory_tools": node.memory_func_tool is not None,
+            "bash_tools": node.bash_tool is not None,
+            "lineage_tools": node.lineage_tools is not None,
+        }
+
+    def test_no_tools_key_mounts_everything(self, real_agent_config, mock_llm_create):
+        """The default must not change. Chat nodes without a `tools` key are the
+        overwhelming majority, so narrowing this would be a silent capability
+        regression rather than a policy change anyone asked for."""
+        node = self._node(real_agent_config)
+
+        families = self._families(node)
+        assert families["db_tools"] is True
+        assert families["filesystem_tools"] is True
+        assert families["bash_tools"] is True
+
+    def test_an_empty_tools_value_is_treated_as_absent(self, real_agent_config, mock_llm_create):
+        """`tools: ""` is a missing value, not a request for no tools — reading
+        it as "none" would strip a node its operator never meant to strip."""
+        node = self._node(real_agent_config, tools="")
+
+        assert self._families(node) == self._families(self._node(real_agent_config))
+
+    def test_a_narrow_list_excludes_the_other_families(self, real_agent_config, mock_llm_create):
+        """The acceptance case: a db-only chat node must not carry filesystem or
+        bash tools."""
+        node = self._node(real_agent_config, tools="db_tools.*")
+
+        families = self._families(node)
+        assert families["db_tools"] is True
+        assert families["filesystem_tools"] is False
+        assert families["bash_tools"] is False
+        assert families["context_search_tools"] is False
+
+    def test_excluded_families_stay_out_of_available_tools(self, real_agent_config, mock_llm_create):
+        """Instance attributes are the mechanism; the tool list the LLM sees is
+        the thing that actually matters."""
+        node = self._node(real_agent_config, tools="db_tools.*")
+
+        names = {tool.name for tool in node.tools}
+        assert names, "a db-only node should still expose the db tools"
+        for excluded in ("read_file", "write_file", "glob", "bash"):
+            assert excluded not in names
+
+    def test_lineage_tool_is_mounted_by_default_and_survives_a_rebuild(self, real_agent_config, mock_llm_create):
+        """`/init` relies on the main chat agent having the lineage tools; a
+        task-database switch rebuilds the tool list, which must not drop them."""
+        node = self._node(real_agent_config)
+
+        assert LINEAGE_TOOL_NAMES <= {tool.name for tool in node.tools}
+        node._rebuild_tools()
+        assert LINEAGE_TOOL_NAMES <= {tool.name for tool in node.tools}
+
+    def test_lineage_tool_follows_the_configured_families(self, real_agent_config, mock_llm_create):
+        excluded = self._node(real_agent_config, tools="db_tools.*")
+        assert excluded.lineage_tools is None
+        assert not LINEAGE_TOOL_NAMES & {tool.name for tool in excluded.tools}
+
+        selected = self._node(real_agent_config, tools="lineage_tools.*")
+        assert sorted(tool.name for tool in selected.tools if tool.name in LINEAGE_TOOL_NAMES) == sorted(
+            LINEAGE_TOOL_NAMES
+        )
+
+    @pytest.mark.parametrize("tools", [None, "lineage_tools.*"])
+    def test_lineage_tool_is_never_exposed_to_vscode_sessions(self, real_agent_config, mock_llm_create, tools):
+        """vscode proxies only filesystem tools to the IDE, so a server-side lineage
+        scan would read the daemon's CWD instead of the user's workspace."""
+        real_agent_config._client_source = "vscode"
+        node = self._node(real_agent_config, tools=tools)
+
+        assert node.lineage_tools is None
+        assert not LINEAGE_TOOL_NAMES & {tool.name for tool in node.tools}
+        node._rebuild_tools()
+        assert not LINEAGE_TOOL_NAMES & {tool.name for tool in node.tools}
+
+    def test_lineage_tool_stays_mounted_for_web_sessions(self, real_agent_config, mock_llm_create):
+        real_agent_config._client_source = "web"
+        node = self._node(real_agent_config)
+
+        assert LINEAGE_TOOL_NAMES <= {tool.name for tool in node.tools}
+
+    def test_bash_is_dropped_even_though_init_built_it(self, real_agent_config, mock_llm_create):
+        """`bash_tool` is created in `AgenticNode.__init__`, not in
+        `setup_tools`, and `_rebuild_tools` re-adds it from the attribute on
+        every rebuild. Clearing the attribute is the only thing that keeps it
+        out — leaving it set would let a later rebuild resurrect it."""
+        node = self._node(real_agent_config, tools="db_tools.*")
+
+        assert node.bash_tool is None
+
+        node._rebuild_tools()
+
+        assert all(tool.name != "bash" for tool in node.tools)
+
+    def test_several_families_can_be_selected(self, real_agent_config, mock_llm_create):
+        node = self._node(real_agent_config, tools="db_tools.*, filesystem_tools.*")
+
+        families = self._families(node)
+        assert families["db_tools"] is True
+        assert families["filesystem_tools"] is True
+        assert families["bash_tools"] is False
+
+    def test_a_per_tool_pattern_still_enables_its_family(self, real_agent_config, mock_llm_create):
+        """Other node classes accept `context_search_tools.list_subject_tree`.
+        This node acts at family granularity, so the suffix selects the family
+        rather than being dropped — dropping it would silently remove a tool the
+        operator explicitly asked for."""
+        node = self._node(real_agent_config, tools="db_tools.execute_sql")
+
+        families = self._families(node)
+        assert families["db_tools"] is True
+        assert families["filesystem_tools"] is False
+
+    def test_an_unknown_family_selects_nothing_rather_than_everything(self, real_agent_config, mock_llm_create):
+        """Fail closed. A typo that fell back to "all tools" would hand a
+        published sub-agent the full surface its author meant to narrow."""
+        node = self._node(real_agent_config, tools="no_such_tools.*")
+
+        families = self._families(node)
+        assert families["db_tools"] is False
+        assert families["filesystem_tools"] is False
+        assert families["bash_tools"] is False
+
+    def test_the_ask_subclasses_opt_out(self):
+        """`BaseArtifactAskAgenticNode` inherits this setup but runs its own
+        whitelist over `self.tools` *after* it, and that design needs every tool
+        instance to exist — the artifact-anchored filesystem instance is
+        infrastructure it uses whether or not `filesystem_tools` is exposed.
+
+        Letting both mechanisms narrow on the same field left those attributes
+        None and broke the subclass, which is why the opt-out is explicit rather
+        than implied by overriding `setup_tools`.
+        """
+        from datus.agent.node.base_artifact_ask_agentic_node import BaseArtifactAskAgenticNode
+        from datus.agent.node.chat_agentic_node import ChatAgenticNode
+
+        assert ChatAgenticNode.HONOURS_CONFIGURED_TOOLS is True
+        assert BaseArtifactAskAgenticNode.HONOURS_CONFIGURED_TOOLS is False
+
+    def test_opting_out_ignores_a_configured_list(self, real_agent_config, mock_llm_create):
+        """The flag, not the class name, is what disables the narrowing."""
+        from datus.agent.node.chat_agentic_node import ChatAgenticNode
+
+        node = self._node(real_agent_config, tools="db_tools.*")
+        assert node.filesystem_func_tool is None
+
+        with patch.object(ChatAgenticNode, "HONOURS_CONFIGURED_TOOLS", False):
+            unrestricted = self._node(real_agent_config, tools="db_tools.*")
+
+        # The list is ignored entirely, not partly: same surface as no key at all.
+        assert self._families(unrestricted) == self._families(self._node(real_agent_config))
+
+    def test_exclusions_survive_the_lazy_prompt_build_mount(self, real_agent_config, mock_llm_create):
+        """`AgenticNode._ensure_lazy_tools_mounted` re-adds bash, skills, memory
+        and web on every prompt build and on a snapshot-cache hit — after
+        `setup_tools` already decided what this node may have.
+
+        Without gating those too, the exclusion holds only until the first
+        prompt is built. Memory is the worst case: the base *re-creates* the
+        instance when it finds None, so clearing it in `setup_tools` does not
+        survive on its own.
+        """
+        node = self._node(real_agent_config, tools="db_tools.*")
+
+        node._ensure_lazy_tools_mounted()
+
+        names = {tool.name for tool in node.tools}
+        for resurrected in ("add_memory", "edit_memory", "web_fetch", "bash", "load_skill"):
+            assert resurrected not in names
+
+    def test_the_default_still_gets_the_lazy_tools(self, real_agent_config, mock_llm_create):
+        """The gates must not cost an ungated node its lazily mounted tools —
+        they are how a normal chat node gets bash, skills, memory and web at
+        all."""
+        node = self._node(real_agent_config)
+
+        node._ensure_lazy_tools_mounted()
+
+        names = {tool.name for tool in node.tools}
+        # `web_fetch` included deliberately: web is gated here too, so a
+        # regression that stops mounting it for an unconfigured node would
+        # otherwise pass — the exclusion test only proves configured nodes do
+        # not receive it.
+        for expected in ("add_memory", "bash", "load_skill", "web_fetch"):
+            assert expected in names
+
+    def test_a_selected_family_survives_the_lazy_mount(self, real_agent_config, mock_llm_create):
+        """Gating is per family, not a blanket "narrowed nodes get nothing lazy"."""
+        node = self._node(real_agent_config, tools="db_tools.*, memory_tools.*")
+
+        node._ensure_lazy_tools_mounted()
+
+        names = {tool.name for tool in node.tools}
+        assert "add_memory" in names
+        assert "bash" not in names
+
+    #: The genuine `PlatformDocSearchTool` builds fine in tests but exposes
+    #: nothing — there is no indexed docstore for the fixture project — so
+    #: assertions about its tool names pass whether or not the code under test
+    #: mounts it. These tests patch the constructor so the group has a name to
+    #: be wrong about, which is also what a deployment with indexed docs looks
+    #: like.
+    _DOC_TOOL_NAME = "search_document"
+
+    @classmethod
+    def _doc_tool_stub(cls, *_args, **_kwargs):
+        stub = MagicMock()
+        tool = MagicMock()
+        tool.name = cls._DOC_TOOL_NAME
+        stub.available_tools.return_value = [tool]
+        return stub
+
+    @classmethod
+    def _patch_platform_doc(cls):
+        """Patch the constructor, so a node built inside this context has a
+        platform-doc group with a real name — what a deployment with indexed
+        docs looks like."""
+        return patch(
+            "datus.agent.node.chat_agentic_node.PlatformDocSearchTool",
+            side_effect=cls._doc_tool_stub,
+        )
+
+    @classmethod
+    def _stub_platform_doc(cls, node):
+        """Attach a non-empty platform-doc group to an already-built node."""
+        node._platform_doc_tool = cls._doc_tool_stub()
+        return cls._DOC_TOOL_NAME
+
+    def test_platform_doc_tools_survive_a_rebuild(self, real_agent_config, mock_llm_create):
+        """`_setup_platform_doc_tools` mounts *after* the initial
+        `_rebuild_tools`, and the rebuild never re-added it — so a task-database
+        switch, which rebuilds, silently dropped platform docs from the LLM's
+        surface mid-session.
+        """
+        node = self._node(real_agent_config)
+        name = self._stub_platform_doc(node)
+
+        node._rebuild_tools()
+
+        assert name in {tool.name for tool in node.tools}
+
+    def test_the_rebuild_does_not_duplicate_platform_doc_tools(self, real_agent_config, mock_llm_create):
+        """Setup mounts it once after the first rebuild; later rebuilds mount it
+        from the attribute. Neither path may double-count."""
+        node = self._node(real_agent_config)
+        name = self._stub_platform_doc(node)
+
+        node._rebuild_tools()
+        node._rebuild_tools()
+
+        assert [tool.name for tool in node.tools].count(name) == 1
+
+    def test_an_excluded_platform_doc_family_stays_out_across_a_rebuild(self, real_agent_config, mock_llm_create):
+        """The re-add is gated like everything else — otherwise the rebuild
+        would hand the family back to a node that excluded it."""
+        node = self._node(real_agent_config, tools="db_tools.*")
+        assert node._platform_doc_tool is None
+        # Even if something later populated the attribute, the gate holds.
+        name = self._stub_platform_doc(node)
+
+        node._rebuild_tools()
+
+        assert name not in {tool.name for tool in node.tools}
+
+    @pytest.mark.parametrize(
+        ("attribute", "family", "tool_name"),
+        [
+            ("skill_func_tool", "skills", "load_skill"),
+            ("memory_func_tool", "memory_tools", "add_memory"),
+            ("filesystem_func_tool", "filesystem_tools", "read_file"),
+            ("bash_tool", "bash_tools", "bash"),
+        ],
+    )
+    def test_a_populated_instance_cannot_reinstate_an_excluded_family(
+        self, real_agent_config, mock_llm_create, attribute, family, tool_name
+    ):
+        """`_rebuild_tools` asks the config, not just whether the attribute is set.
+
+        Testing "did setup_tools leave it None" would make the exclusion depend
+        on nothing else ever populating the attribute — an assumption that has
+        already failed twice here: the base re-creates the memory tool when it
+        finds None, and platform docs were mounted after the rebuild meant to
+        own them. This pins the stronger property: whatever populates the
+        instance, an excluded family stays out.
+        """
+        node = self._node(real_agent_config, tools="db_tools.*")
+
+        stub = MagicMock()
+        tool = MagicMock()
+        tool.name = tool_name
+        stub.available_tools.return_value = [tool]
+        setattr(node, attribute, stub)
+
+        node._rebuild_tools()
+
+        assert tool_name not in {t.name for t in node.tools}
+
+    def test_a_second_setup_tools_does_not_duplicate_platform_doc_tools(self, real_agent_config, mock_llm_create):
+        """The CLI calls `setup_tools()` again after a datasource change.
+
+        Once the rebuild started mounting this group from the attribute,
+        building it *after* the rebuild appended a second copy of every name on
+        that second call. The fixture's real doc tool exposes nothing, so the
+        duplication is invisible without patching the constructor — the same
+        emptiness that made an earlier version of these tests vacuous.
+        """
+        with self._patch_platform_doc():
+            node = self._node(real_agent_config)
+            assert [t.name for t in node.tools].count(self._DOC_TOOL_NAME) == 1
+
+            node.setup_tools()
+
+            assert [t.name for t in node.tools].count(self._DOC_TOOL_NAME) == 1

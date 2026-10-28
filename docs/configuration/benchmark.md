@@ -12,15 +12,16 @@ Datus Agent currently supports the following benchmark datasets:
 
 ## Benchmark Configuration Structure
 
-Configure benchmarks in the `benchmark` section of your configuration file:
+Configure custom benchmarks in the `agent.benchmark` section of your configuration file:
 
 ```yaml
-benchmark:
-  custom_bird:                       # Custom benchmark datasource
-    benchmark_path: benchmark/custom_bird/dev_data
+agent:
+  benchmark:
+    custom_bird:                     # Custom benchmark dataset
+      benchmark_path: benchmark/custom_bird/dev_data
 
-  custom_spider:
-    benchmark_path: path/to/spider/data
+    custom_spider:
+      benchmark_path: path/to/spider/data
 ```
 
 ## BIRD-DEV Benchmark
@@ -29,6 +30,6 @@ The BIRD (Big Bench for Large-scale Database Grounded Text-to-SQL Evaluation) be
 
 ### Pre-configured Built-in Benchmarks
 
-The `bird_dev`, `spider2`, and `semantic_layer` benchmarks are built-in and their paths are pre-configured in the system. You do not need (and cannot) override their `benchmark_path` in `agent.yml`.
+The `bird_dev`, `spider2`, and `semantic_layer` benchmarks are built-in and their paths are pre-configured under `{agent.home}/benchmark`. You do not need (and cannot) override their `benchmark_path` in `agent.yml`. [Download Spider2 data separately](../benchmark/benchmark_manual.md#spider2-data) before running its benchmark.
 
 For detailed usage instructions and advanced custom configuration options, see the [Benchmarks](../benchmark/benchmark_manual.md) chapter.

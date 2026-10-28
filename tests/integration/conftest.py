@@ -12,9 +12,14 @@ that load from tests/conf/agent.yml — mirroring the real agent startup flow.
 import copy
 import os
 import shutil
+import subprocess
+import sys
 import time
 from argparse import Namespace
+from dataclasses import dataclass
+from importlib import metadata
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -31,6 +36,179 @@ SKILLS_DIR = TESTS_ROOT / "data" / "skills"
 # Real LLM integration test paths
 REAL_SKILLS_DIR = Path.home() / ".datus" / "skills"
 REAL_SQLITE_DB = Path.home() / ".datus" / "benchmark" / "california_schools" / "california_schools.sqlite"
+
+
+@dataclass(frozen=True)
+class RequiredPostgresqlStorage:
+    """Provisioned PostgreSQL RDB + pgvector test environments."""
+
+    rdb_config: Any
+    vector_config: Any
+
+
+@dataclass(frozen=True)
+class P0ExternalSources:
+    """Source checkouts required by the deterministic P0 integration suites."""
+
+    storage_adapters: Path
+    sql_policies: Path
+    datus_plugins: Path
+
+    @property
+    def superset_plugin(self) -> Path:
+        return self.datus_plugins / "datus-superset-plugin"
+
+
+@dataclass(frozen=True)
+class ManagedPluginRuntime:
+    """Isolated managed plugin store exercised through fresh CLI processes."""
+
+    home: Path
+    datus_executable: Path
+
+    def run(
+        self,
+        *args: str,
+        check: bool = True,
+        cwd: Path | None = None,
+        timeout: float | None = None,
+    ) -> subprocess.CompletedProcess[str]:
+        env = os.environ.copy()
+        # Isolating HOME must not also discard uv's dependency/build cache;
+        # otherwise every managed source install re-downloads its wheelhouse.
+        env.setdefault("UV_CACHE_DIR", str(Path.home() / ".cache" / "uv"))
+        env["HOME"] = str(self.home)
+        command = [str(self.datus_executable), *args]
+        try:
+            completed = subprocess.run(
+                command,
+                check=False,
+                capture_output=True,
+                text=True,
+                env=env,
+                cwd=cwd or self.home,
+                timeout=timeout,
+            )
+        except subprocess.TimeoutExpired as exc:
+            # pytest runs with --showlocals. Do not retain provider credentials
+            # in a traceback frame when a managed command times out.
+            env.clear()
+            raise subprocess.TimeoutExpired(
+                exc.cmd,
+                exc.timeout,
+                output=exc.output,
+                stderr=exc.stderr,
+            ) from None
+
+        if check and completed.returncode != 0:
+            # ``subprocess.run(check=True)`` retains the full environment in
+            # its failing frame, which --showlocals would publish to CI logs.
+            env.clear()
+            raise subprocess.CalledProcessError(
+                completed.returncode,
+                completed.args,
+                output=completed.stdout,
+                stderr=completed.stderr,
+            )
+        return completed
+
+    def install(self, source: Path) -> subprocess.CompletedProcess[str]:
+        return self.run("plugin", "install", f"src:{source}")
+
+
+def _entry_points_for(group: str, name: str) -> list[Any]:
+    entry_points = metadata.entry_points()
+    if hasattr(entry_points, "select"):
+        return list(entry_points.select(group=group, name=name))
+    return [entry_point for entry_point in entry_points.get(group, []) if entry_point.name == name]
+
+
+def _required_test_environment(group: str, name: str):
+    matches = _entry_points_for(group, name)
+    if len(matches) != 1:
+        pytest.fail(
+            f"P0 requires exactly one {group}:{name} entry point, found {len(matches)}",
+            pytrace=False,
+        )
+    try:
+        return matches[0].load()()
+    except Exception as exc:  # noqa: BLE001 - fail with the external provider's concrete error.
+        pytest.fail(f"P0 could not load {group}:{name}: {exc}", pytrace=False)
+
+
+@pytest.fixture(scope="session")
+def required_postgresql_storage() -> RequiredPostgresqlStorage:
+    """Start real PostgreSQL and pgvector providers, failing instead of skipping."""
+    rdb_environment = _required_test_environment("datus.storage.rdb.testing", "postgresql")
+    vector_environment = _required_test_environment("datus.storage.vector.testing", "postgresql")
+    started = []
+    try:
+        for environment in (rdb_environment, vector_environment):
+            started.append(environment)
+            environment.setup()
+        rdb_config = rdb_environment.get_config()
+        vector_config = vector_environment.get_config()
+        if rdb_config.backend_type != "postgresql" or vector_config.backend_type != "postgresql":
+            pytest.fail(
+                "P0 PostgreSQL providers must both report backend_type=postgresql",
+                pytrace=False,
+            )
+        yield RequiredPostgresqlStorage(rdb_config=rdb_config, vector_config=vector_config)
+    except Exception as exc:
+        pytest.fail(f"P0 PostgreSQL/pgvector setup failed: {exc}", pytrace=False)
+    finally:
+        teardown_errors = []
+        for environment in reversed(started):
+            try:
+                environment.teardown()
+            except Exception as exc:  # noqa: BLE001 - report every provider cleanup error.
+                teardown_errors.append(str(exc))
+        if teardown_errors:
+            pytest.fail(f"P0 PostgreSQL/pgvector teardown failed: {'; '.join(teardown_errors)}", pytrace=False)
+
+
+def _resolve_external_root() -> Path:
+    configured = os.environ.get("EXTERNAL_REPOS_ROOT")
+    if configured:
+        return Path(configured).expanduser().resolve()
+
+    repo_root = Path(__file__).resolve().parents[2]
+    for candidate in repo_root.parents:
+        if (candidate / "datus-storage-adapters").is_dir() and (candidate / "Datus-Plugins").is_dir():
+            return candidate
+    pytest.fail("P0 external repository root was not found; set EXTERNAL_REPOS_ROOT", pytrace=False)
+
+
+@pytest.fixture(scope="session")
+def p0_external_sources() -> P0ExternalSources:
+    """Require the three P0 source checkouts used by Nightly."""
+    root = _resolve_external_root()
+    sources = P0ExternalSources(
+        storage_adapters=root / "datus-storage-adapters",
+        sql_policies=root / "datus-sql-policies",
+        datus_plugins=root / "Datus-Plugins",
+    )
+    required = {
+        "datus-storage-adapters": sources.storage_adapters,
+        "datus-sql-policies": sources.sql_policies,
+        "Datus-Plugins": sources.datus_plugins,
+        "datus-superset-plugin": sources.superset_plugin,
+    }
+    missing = [f"{name} ({path})" for name, path in required.items() if not path.is_dir()]
+    if missing:
+        pytest.fail(f"P0 external source checkout(s) missing: {', '.join(missing)}", pytrace=False)
+    return sources
+
+
+@pytest.fixture
+def managed_plugin_runtime(tmp_path) -> ManagedPluginRuntime:
+    """Return a clean managed store; every command runs in a new process."""
+    executable = Path(sys.executable).with_name("datus")
+    if not executable.is_file():
+        pytest.fail(f"Datus CLI executable not found beside test Python: {executable}", pytrace=False)
+    home = tmp_path / "home"
+    home.mkdir()
+    return ManagedPluginRuntime(home=home, datus_executable=executable)
 
 
 # ── AgentConfig fixtures ──
@@ -128,31 +306,10 @@ def skill_manager(skill_config) -> SkillManager:
 
 
 def pytest_collection_modifyitems(items):
-    """Automatically mark all tests under integration/ with the 'integration' marker.
-
-    Also reorder gen_* agent tests to respect logical dependencies:
-    semantic_model → metrics
-    (metrics reference measures defined in semantic models)
-    """
+    """Automatically mark all tests under integration/ with the 'integration' marker."""
     for item in items:
         if "integration" in str(item.fspath) and "unit_tests" not in str(item.fspath):
             item.add_marker(pytest.mark.integration)
-
-    # Reorder gen_* agent tests by dependency (lower = runs first)
-    gen_test_order = {
-        "test_gen_semantic_model_agentic": 0,
-        "test_gen_metrics_agentic": 1,
-    }
-
-    gen_items = [(i, item) for i, item in enumerate(items) if item.fspath.purebasename in gen_test_order]
-    if gen_items:
-        indices = [i for i, _ in gen_items]
-        sorted_gen = sorted(
-            [item for _, item in gen_items],
-            key=lambda x: (gen_test_order[x.fspath.purebasename], x.name),
-        )
-        for idx, item in zip(indices, sorted_gen):
-            items[idx] = item
 
 
 @pytest.fixture
@@ -239,15 +396,18 @@ NIGHTLY_SUB_AGENT_NAMES = ["nightly_test", "nightly_n7_test"]
 
 
 @pytest.fixture
-def nightly_agent_config() -> AgentConfig:
+def nightly_agent_config(tmp_path) -> AgentConfig:
     """Load acceptance config for nightly sub-agent tests.
 
     Function-scoped with deepcopy of agentic_nodes to prevent test mutations
-    from leaking into the configuration_manager cache.
+    from leaking into the configuration_manager cache. The SQLite benchmark
+    datasource is also function-scoped so adapters that create support tables
+    cannot mutate the shared ``~/benchmark`` fixture.
     """
-    from tests.conftest import load_acceptance_config
+    from tests.conftest import isolate_bird_sqlite_databases, load_acceptance_config
 
     config = load_acceptance_config(datasource="bird_school")
+    isolate_bird_sqlite_databases(config, tmp_path, ("california_schools",))
     config.rag_base_path = "tests/data"
     config.agentic_nodes = copy.deepcopy(config.agentic_nodes)
     return config

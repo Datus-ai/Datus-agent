@@ -3,8 +3,7 @@ Explorer service for catalog and subject tree management.
 """
 
 import asyncio
-import os
-from typing import List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Tuple
 
 from datus.api.models.base_models import Result
 from datus.api.models.explorer_models import (
@@ -18,13 +17,19 @@ from datus.api.models.explorer_models import (
     MetricInfo,
     MetricPreviewData,
     MetricPreviewInput,
+    ReconcileSubjectData,
+    ReconcileSubjectInput,
     ReferenceSQLInfo,
     ReferenceSQLInput,
     RenameSubjectInput,
     SubjectListData,
     SubjectNode,
+    SubjectPathInput,
 )
 from datus.utils.loggings import get_logger
+
+if TYPE_CHECKING:
+    from datus.configuration.agent_config import AgentConfig
 
 logger = get_logger(__name__)
 
@@ -36,19 +41,36 @@ class ExplorerService:
     directories, metrics, and reference SQL.
     """
 
-    def __init__(self, agent_config):
+    def __init__(
+        self,
+        agent_config: "AgentConfig",
+        sub_agent_name: Optional[str] = None,
+        semantic_model_path_provider: Optional[Callable[[], Optional[str]]] = None,
+    ) -> None:
         """Initialize ExplorerService.
 
         Args:
             agent_config: Agent configuration object
+            sub_agent_name: Restrict the knowledge-base reads to this sub-agent's
+                ``scoped_context``. ``None`` (the default) reads everything,
+                which is the existing single-tenant behaviour.
+
+                Must be the ``agentic_nodes`` key, never an entry's ``id``:
+                ``AgentConfig.sub_agent_config`` is a plain lookup on that
+                mapping, so an ``id`` misses, yields ``{}``, and the scope
+                filter degrades to "no filter" — unrestricted results with a
+                200, not an error. Callers resolve id -> key before this point.
+            semantic_model_path_provider: Select a request-local model file for
+                Dosi metric reads and previews, such as a Semantic Hub snapshot.
         """
         self.agent_config = agent_config
+        self.sub_agent_name = sub_agent_name
+        self._semantic_model_path_provider = semantic_model_path_provider
         self.datasource_id = str(agent_config.current_datasource or "").strip()
         logger.info("ExplorerService initialized")
 
         self.metric_rag = None
         self.reference_sql_rag = None
-        self.semantic_model_rag = None
         self.subject_tree_store = None
         if not self.datasource_id:
             logger.info("ExplorerService initialized without datasource; subject tree is empty until one is selected")
@@ -57,11 +79,12 @@ class ExplorerService:
         from datus.storage.metric.store import MetricRAG
         from datus.storage.reference_sql.store import ReferenceSqlRAG
         from datus.storage.registry import get_subject_tree_store
-        from datus.storage.semantic_model.store import SemanticModelRAG
 
-        self.metric_rag = MetricRAG(agent_config, datasource_id=self.datasource_id)
-        self.reference_sql_rag = ReferenceSqlRAG(agent_config, datasource_id=self.datasource_id)
-        self.semantic_model_rag = SemanticModelRAG(agent_config, datasource_id=self.datasource_id)
+        # ``sub_agent_name`` is the second positional parameter of all three;
+        # passing datasource_id by keyword alone silently skipped it, which is
+        # why these reads were unscoped no matter what the caller asked for.
+        self.metric_rag = MetricRAG(agent_config, sub_agent_name, datasource_id=self.datasource_id)
+        self.reference_sql_rag = ReferenceSqlRAG(agent_config, sub_agent_name, datasource_id=self.datasource_id)
         self.subject_tree_store = get_subject_tree_store(
             project=agent_config.project_name,
             datasource_id=self.datasource_id,
@@ -77,154 +100,241 @@ class ExplorerService:
                 message_args={"error_message": "No datasource is selected; select a datasource first"},
             )
 
+    def _semantic_runtime(self):
+        """Resolve the embedded Dosi runtime, or None if unavailable.
+
+        The runtime reads/writes the YAML source of truth (the authoring
+        surface is a backend-only API, not an agent/LLM tool).
+        """
+        from datus.tools.func_tool.semantic_tools import SemanticTools
+
+        try:
+            return SemanticTools(
+                self.agent_config,
+                self.sub_agent_name,
+                semantic_model_path_provider=self._semantic_model_path_provider,
+            ).runtime
+        except Exception as e:  # noqa: BLE001 - report unavailable runtime at the call site
+            logger.warning(f"Dosi runtime unavailable: {e}")
+            return None
+
+    def _metric_is_in_scope(self, subject_path: List[str]) -> bool:
+        """Whether this service's sub-agent may see the metric at ``subject_path``.
+
+        Unscoped services see everything, so this is only a real check when a
+        sub-agent is set.
+
+        Needed because the semantic runtime reads the YAML source of truth,
+        which knows nothing about ``scoped_context``. Handing it a metric name
+        straight from the request would answer with a metric the caller is not
+        scoped to, even though the KB row for it is filtered out everywhere
+        else. Resolve the name through the scoped ``MetricRAG`` first, so the
+        runtime is only ever asked about metrics the caller may see.
+        """
+        if not self.sub_agent_name:
+            return True
+        if not subject_path or self.subject_tree_store is None or self.metric_rag is None:
+            return False
+        parent_path = subject_path[:-1]
+        metric_name = subject_path[-1]
+        if not parent_path:
+            return False
+        parent_node = self.subject_tree_store.get_node_by_path(parent_path)
+        if not parent_node:
+            return False
+        rows = self.metric_rag.storage.list_entries(
+            parent_node["node_id"],
+            name=metric_name,
+            extra_conditions=self.metric_rag._sub_agent_conditions(),
+        )
+        return bool(rows)
+
+    def _semantic_agent_required_rejection(self) -> "Result[dict]":
+        """Reject KB-only semantic edits that cannot preserve YAML consistency."""
+        from datus.agent.node.semantic_authoring import semantic_authoring_unavailable_message
+        from datus.api.models.config_models import ErrorCode
+
+        return Result[dict](
+            success=False,
+            errorCode=ErrorCode.PROVIDER_CONFIG_ERROR,
+            errorMessage=semantic_authoring_unavailable_message(self.agent_config),
+        )
+
+    @staticmethod
+    def _metric_name_from_yaml(yaml_text: str) -> Optional[str]:
+        """Extract the metric name from an OSI metric YAML node."""
+        import yaml
+
+        try:
+            doc = yaml.safe_load(yaml_text)
+        except yaml.YAMLError:
+            return None
+        if not isinstance(doc, dict):
+            return None
+        return doc.get("name")
+
+    def _sync_file_to_kb(self, file_path: str) -> dict:
+        """Re-index an OSI semantic source file into the Knowledge Base.
+
+        The authoring runtime only writes the YAML file; the KB is a derived
+        index that must be re-synced through the OSI vectorizer. Authoring is
+        Dosi-only, so this always runs the OSI sync.
+        """
+        from datus.tools.func_tool.generation_tools import GenerationTools
+
+        return GenerationTools(self.agent_config).sync_osi_to_db(file_path)
+
+    @staticmethod
+    def _is_metric_absent_error(exc: Exception) -> bool:
+        """Whether a delete failure means the metric simply isn't in the source
+        file (benign file/KB drift) rather than a real I/O / lock / parse failure.
+
+        Dosi raises a not-found error whose message contains ``was not found``.
+        Anything else is a real failure and must not be treated
+        as "already gone", or we would drop the KB row while the file still
+        holds the metric (the file is the source of truth)."""
+        return isinstance(exc, FileNotFoundError) or "was not found" in str(exc)
+
+    def _author_metric(
+        self,
+        parent_path: List[str],
+        metric_yaml: str,
+        *,
+        create: bool,
+        metric_name: Optional[str] = None,
+    ) -> "Result[dict]":
+        """Validate + write a metric to its source file, then re-index the KB.
+
+        Shared orchestration for create/edit: the runtime owns file
+        placement/structure (source of truth), this method handles name
+        resolution, the validation gate (jsonschema + profile parse inside the
+        runtime write, before persisting), the KB re-sync, and rollback so the
+        file and the KB never drift (a failed create is deleted, a failed edit
+        is restored).
+
+        Runs synchronously (file I/O + KB embedding); callers off the event loop
+        should invoke it via ``asyncio.to_thread``.
+        """
+        from datus.api.models.config_models import ErrorCode
+
+        runtime = self._semantic_runtime()
+        if runtime is None:
+            return Result[dict](
+                success=False,
+                errorCode=ErrorCode.PROVIDER_CONFIG_ERROR,
+                errorMessage="Dosi runtime is not available; cannot author this metric.",
+            )
+
+        name = metric_name or self._metric_name_from_yaml(metric_yaml)
+        if not name:
+            return Result[dict](
+                success=False,
+                errorCode=ErrorCode.INVALID_PARAMETERS,
+                errorMessage="No metric name found in YAML content.",
+            )
+
+        # An edit needs the prior source to recover from a later KB failure.
+        previous_source = None
+        if not create:
+            try:
+                previous_source = runtime.read_metric_source(name, subject_path=parent_path)
+            except Exception as e:  # noqa: BLE001
+                return Result[dict](
+                    success=False,
+                    errorCode=ErrorCode.TOOL_EXECUTION_ERROR,
+                    errorMessage=f"Failed to read metric source before edit: {e}",
+                )
+
+        # Write the file. The runtime validates fully inside write (raises
+        # before persisting).
+        try:
+            # Empty parent_path (root-level metric) means "no categorization" —
+            # pass None so the runtime does not inject an empty subject tag.
+            mutation = runtime.write_metric_source(name, metric_yaml, subject_path=(parent_path or None), create=create)
+        except Exception as e:  # noqa: BLE001 - surface runtime write/validation errors
+            logger.error(f"Failed to write metric source: {e}")
+            return Result[dict](
+                success=False,
+                errorCode=ErrorCode.INVALID_PARAMETERS,
+                errorMessage=str(e),
+            )
+
+        # Re-index the changed file into the KB. On failure, undo the write so
+        # the file and the KB stay consistent.
+        try:
+            sync_result = self._sync_file_to_kb(mutation.file_path)
+        except Exception as e:  # noqa: BLE001
+            self._rollback_metric_write(runtime, name, parent_path, create, previous_source)
+            return Result[dict](
+                success=False,
+                errorCode=ErrorCode.TOOL_EXECUTION_ERROR,
+                errorMessage=f"Failed to sync metric to Knowledge Base: {e}",
+            )
+        if not sync_result.get("success", False):
+            self._rollback_metric_write(runtime, name, parent_path, create, previous_source)
+            return Result[dict](
+                success=False,
+                errorCode=ErrorCode.TOOL_EXECUTION_ERROR,
+                errorMessage=sync_result.get("error", "Failed to sync metric to Knowledge Base"),
+            )
+
+        logger.info(f"Successfully {'created' if create else 'edited'} metric: {name}")
+        return Result[dict](success=True, data={})
+
+    @staticmethod
+    def _rollback_metric_write(runtime, name, parent_path, create, previous_source) -> None:
+        """Undo a metric write after a failed validation or KB re-sync."""
+        try:
+            if create:
+                runtime.delete_metric_source(name, subject_path=parent_path)
+            elif previous_source is not None:
+                # Restore the exact prior content; subject_path=None so no tag is re-injected.
+                runtime.write_metric_source(name, previous_source.text, subject_path=None, create=False)
+        except Exception as rollback_error:  # noqa: BLE001
+            logger.error(f"Rollback of metric '{name}' failed; file and KB may be inconsistent: {rollback_error}")
+
+    @staticmethod
+    def _restore_deleted_metric(runtime, previous_source) -> None:
+        """Restore a metric when the matching KB deletion fails."""
+        if previous_source is None:
+            return
+        try:
+            runtime.restore_metric_source(previous_source)
+        except Exception as rollback_error:  # noqa: BLE001
+            logger.error(
+                f"Rollback of deleted metric '{previous_source.name}' failed; "
+                f"file and KB may be inconsistent: {rollback_error}"
+            )
+
+    def _semantic_runtime_db_context(self, request=None) -> dict:
+        """Build runtime DB context for semantic runtime API calls."""
+        context = {}
+        if self.datasource_id:
+            context["datasource"] = self.datasource_id
+
+        db_config = None
+        try:
+            db_config = self.agent_config.current_db_config(self.datasource_id)
+        except Exception as e:
+            logger.debug("Unable to read current DB config for semantic API context: %s", e)
+
+        catalog = getattr(request, "catalog", None) or getattr(db_config, "catalog", "") or ""
+        database = getattr(request, "database", None) or getattr(db_config, "database", "") or ""
+        schema = getattr(request, "db_schema", None) or getattr(db_config, "schema", "") or ""
+        if catalog:
+            context["catalog"] = str(catalog).strip()
+        if database:
+            context["database"] = str(database).strip()
+        if schema:
+            context["schema"] = str(schema).strip()
+            context["db_schema"] = str(schema).strip()
+        return {key: value for key, value in context.items() if value}
+
     def _gen_reference_sql_id(self, sql: str) -> str:
         """Generate a stable identifier for reference SQL entries."""
         from datus.storage.reference_sql.init_utils import gen_reference_sql_id
 
         return gen_reference_sql_id(sql)
-
-    def _get_semantic_file_path(
-        self,
-        catalog_name: Optional[str],
-        database_name: Optional[str],
-        schema_name: Optional[str],
-        table_name: Optional[str],
-    ) -> tuple:
-        """Get semantic file path from parameters.
-
-        Args:
-            catalog_name: Optional catalog name
-            database_name: Optional database name
-            schema_name: Optional schema name
-            table_name: Optional table name (semantic model name)
-
-        Returns:
-            tuple: (semantic_file_path, error_message)
-                If successful, error_message is None
-                If failed, semantic_file_path is empty string
-        """
-        from datus.storage.semantic_model.store import SemanticModelRAG
-
-        try:
-            semantic_rag = SemanticModelRAG(self.agent_config, datasource_id=self.datasource_id)
-            current_db_config = self.agent_config.current_db_config()
-
-            # Use provided params or fall back to current DB config
-            semantic_models = semantic_rag.get_semantic_model(
-                catalog_name=catalog_name or current_db_config.catalog or "",
-                database_name=database_name or current_db_config.database or "",
-                schema_name=schema_name or current_db_config.schema or "",
-                table_name=table_name or "",
-            )
-
-            if not semantic_models or len(semantic_models) == 0:
-                return "", "No semantic model found for provided parameters"
-
-            semantic_file_path = semantic_models[0].get("semantic_file_path", "")
-
-            if not semantic_file_path:
-                return "", "Semantic model has no file path"
-
-            if not os.path.exists(semantic_file_path):
-                return "", f"Semantic file not found: {semantic_file_path}"
-
-            return semantic_file_path, None
-
-        except Exception as e:
-            return "", f"Failed to get semantic file path: {str(e)}"
-
-    def _update_metric_in_yaml_docs(
-        self,
-        yaml_documents: list,
-        metric_name: str,
-        new_metric_data: dict,
-    ) -> tuple:
-        """Update metric in YAML documents list.
-
-        Args:
-            yaml_documents: List of YAML documents
-            metric_name: Name of the metric to update
-            new_metric_data: New metric data
-
-        Returns:
-            tuple: (updated_documents, error_message)
-                If successful, error_message is None
-                If failed, returns original documents
-        """
-        metric_found = False
-
-        for idx, doc in enumerate(yaml_documents):
-            if not doc:
-                continue
-
-            metric = doc.get("metric", {})
-            if metric.get("name") == metric_name:
-                # Update this document with new metric data
-                yaml_documents[idx] = {"metric": new_metric_data}
-                metric_found = True
-                break
-
-        if not metric_found:
-            return yaml_documents, f"Metric '{metric_name}' not found in YAML file"
-
-        return yaml_documents, None
-
-    def _write_yaml_atomic(
-        self,
-        file_path: str,
-        documents: list,
-    ) -> Optional[str]:
-        """Write YAML documents atomically.
-
-        Args:
-            file_path: Path to the YAML file
-            documents: List of YAML documents to write
-
-        Returns:
-            error_message if failed, None if successful
-        """
-        import shutil
-        import tempfile
-
-        import yaml
-
-        temp_file = None
-        try:
-            # Create temp file in same directory as target file
-            temp_file = tempfile.NamedTemporaryFile(
-                mode="w",
-                encoding="utf-8",
-                delete=False,
-                dir=os.path.dirname(file_path),
-                suffix=".tmp",
-            )
-
-            # Write all documents with explicit document separators
-            yaml.dump_all(
-                documents,
-                temp_file,
-                default_flow_style=False,
-                allow_unicode=True,
-                sort_keys=False,
-                explicit_start=True,  # Adds "---" separator
-            )
-
-            temp_file.close()
-
-            # Atomic rename (overwrites original file)
-            shutil.move(temp_file.name, file_path)
-
-            return None  # Success
-
-        except Exception as e:
-            # Clean up temp file on error
-            if temp_file and os.path.exists(temp_file.name):
-                try:
-                    os.unlink(temp_file.name)
-                except Exception:
-                    pass
-
-            return f"Failed to write YAML file: {str(e)}"
 
     async def get_subject_list(self) -> Result[SubjectListData]:
         """Get nested subject tree structure.
@@ -268,7 +378,13 @@ class ExplorerService:
                     # Then, add metrics as children if they exist
                     if node_id:
                         try:
-                            metrics = self.metric_rag.storage.list_entries(node_id)
+                            # Scoped: `list_entries` applies no sub-agent filter
+                            # of its own, so reading it bare would list every
+                            # metric under the node regardless of the caller's
+                            # scope -- on the very route this scoping exists for.
+                            metrics = self.metric_rag.storage.list_entries(
+                                node_id, extra_conditions=self.metric_rag._sub_agent_conditions()
+                            )
                             for metric in metrics:
                                 metric_name = metric.get("name", "")
                                 if metric_name:
@@ -284,7 +400,9 @@ class ExplorerService:
 
                         # Add reference SQLs as children if they exist
                         try:
-                            ref_sqls = self.reference_sql_rag.reference_sql_storage.list_entries(node_id)
+                            ref_sqls = self.reference_sql_rag.reference_sql_storage.list_entries(
+                                node_id, extra_conditions=self.reference_sql_rag._sub_agent_conditions()
+                            )
                             for ref_sql in ref_sqls:
                                 sql_name = ref_sql.get("name", "")
                                 if sql_name:
@@ -297,6 +415,18 @@ class ExplorerService:
                                     child_nodes.append(sql_node)
                         except Exception as ex:
                             logger.debug(f"No reference SQL found for node {node_id}: {ex}")
+
+                    # A scoped caller should not learn the shape of the tree
+                    # outside its scope. Once the entry lists above are filtered,
+                    # a directory with no surviving children holds nothing this
+                    # caller may see, so listing its name would leak the
+                    # taxonomy of another sub-agent's knowledge base.
+                    #
+                    # Only when scoped: unscoped callers are the project's own
+                    # owners, and empty directories are real structure they
+                    # created and expect to see.
+                    if self.sub_agent_name and not child_nodes:
+                        continue
 
                     # Create directory SubjectNode
                     subject_node = SubjectNode(
@@ -445,11 +575,18 @@ class ExplorerService:
 
             # Handle different types of subjects
             if request.type == SubjectNodeType.DIRECTORY:
+                node = self.subject_tree_store.get_node_by_path(request.subject_path)
+                if node:
+                    descendants = self.subject_tree_store.get_descendants(node["node_id"])
+                    candidate_node_ids = [node["node_id"]] + [item["node_id"] for item in descendants]
+                    if any(self.metric_rag.storage.list_entries(node_id) for node_id in candidate_node_ids):
+                        return self._semantic_agent_required_rejection()
                 # Rename directory in subject tree
                 self.subject_tree_store.rename(request.subject_path, request.new_subject_path)
             elif request.type == SubjectNodeType.METRIC:
-                # Rename metric entry
-                self.metric_rag.storage.rename(request.subject_path, request.new_subject_path)
+                # A KB-only rename would leave the YAML metric name and subject
+                # path unchanged. semantic_modeling owns this source-aware edit.
+                return self._semantic_agent_required_rejection()
             elif request.type == SubjectNodeType.REFERENCE_SQL:
                 # Rename reference SQL entry
                 self.reference_sql_rag.reference_sql_storage.rename(request.subject_path, request.new_subject_path)
@@ -473,86 +610,10 @@ class ExplorerService:
                 errorMessage=str(e),
             )
 
-    @staticmethod
-    def _metric_db_to_yaml(metric_data: dict) -> dict:
-        """Convert metric from DB format to YAML format.
-
-        Reverse of _sync_semantic_to_db metric processing logic.
-
-        Args:
-            metric_data: Metric data from LanceDB
-
-        Returns:
-            Dict in YAML format with 'metric' key
-        """
-        yaml_metric = {
-            "name": metric_data.get("name"),
-            "description": metric_data.get("description", ""),
-            "type": metric_data.get("metric_type", ""),
-        }
-
-        # Rebuild subject_path as locked_metadata.tags
-        subject_path = metric_data.get("subject_path", [])
-        if subject_path:
-            yaml_metric["locked_metadata"] = {"tags": [f"subject_tree: {'/'.join(subject_path)}"]}
-
-        # Rebuild type_params based on metric_type
-        metric_type = metric_data.get("metric_type", "")
-        measure_expr = metric_data.get("measure_expr", "")
-        base_measures = metric_data.get("base_measures", [])
-
-        type_params = {}
-
-        if metric_type == "measure_proxy":
-            if base_measures:
-                if len(base_measures) == 1:
-                    type_params["measure"] = base_measures[0]
-                else:
-                    type_params["measures"] = base_measures
-        elif metric_type == "ratio":
-            if len(base_measures) >= 2:
-                type_params["numerator"] = {"name": base_measures[0]}
-                type_params["denominator"] = {"name": base_measures[1]}
-            elif len(base_measures) == 1:
-                type_params["numerator"] = {"name": base_measures[0]}
-        elif metric_type in ["expr", "cumulative"]:
-            if base_measures:
-                type_params["measures"] = base_measures
-            if measure_expr:
-                type_params["expr"] = measure_expr
-        elif metric_type == "derived":
-            if base_measures:
-                type_params["metrics"] = base_measures
-            if measure_expr:
-                type_params["expr"] = measure_expr
-        elif metric_type == "simple":
-            # Simple metrics reference a single measure
-            if base_measures:
-                if len(base_measures) == 1:
-                    type_params["measure"] = base_measures[0]
-                else:
-                    type_params["measures"] = base_measures
-
-        if type_params:
-            yaml_metric["type_params"] = type_params
-
-        return {"metric": yaml_metric}
-
     async def get_metric(self, subject_path: List[str]) -> Result[MetricInfo]:
-        """Get metric info with YAML.
-
-        Retrieves metric from LanceDB and converts to YAML format.
-
-        Args:
-            subject_path: subject path
-
-        Returns:
-            Result[MetricInfo] with metric name and YAML content
-        """
+        """Read the authored OSI YAML for a metric visible in the Knowledge Base."""
         try:
             self._require_datasource()
-            import yaml
-
             from datus.api.models.config_models import ErrorCode
 
             logger.info(f"Getting metric at path: {subject_path}")
@@ -568,9 +629,10 @@ class ExplorerService:
             parent_path = subject_path[:-1] if len(subject_path) > 1 else []
             metric_name = subject_path[-1]
 
-            # Get metric from LanceDB
+            # The KB row remains the access-control gate: it enforces the full
+            # subject_path match and sub-agent scoping. The file is the source
+            # of truth for the returned YAML.
             metrics_detail = self.metric_rag.get_metrics_detail(parent_path, metric_name)
-
             if not metrics_detail:
                 return Result[MetricInfo](
                     success=False,
@@ -578,24 +640,39 @@ class ExplorerService:
                     errorMessage=f"Metric not found: {metric_name}",
                 )
 
-            # Convert DB object to YAML format
-            metric_data = metrics_detail[0]
-            yaml_dict = self._metric_db_to_yaml(metric_data)
+            # Source of truth is the OSI YAML file: read it back through the
+            # Dosi runtime so the result reflects the authored metric.
+            runtime = self._semantic_runtime()
+            if runtime is None:
+                return Result[MetricInfo](
+                    success=False,
+                    errorCode=ErrorCode.PROVIDER_CONFIG_ERROR,
+                    errorMessage="Dosi runtime is not available; cannot read metric source.",
+                )
+            try:
+                source = await asyncio.to_thread(runtime.read_metric_source, metric_name, subject_path=parent_path)
+            except Exception as e:  # noqa: BLE001 - preserve the source-file error
+                return Result[MetricInfo](
+                    success=False,
+                    errorCode=ErrorCode.TOOL_EXECUTION_ERROR,
+                    errorMessage=f"Failed to read metric source: {e}",
+                )
+            from pathlib import Path
 
-            # Convert to YAML string
-            metric_yaml = yaml.dump(
-                yaml_dict,
-                default_flow_style=False,
-                allow_unicode=True,
-                sort_keys=False,
-            )
+            from datus.agent.node.semantic_authoring import osi_semantic_models_root
+
+            source_file = None
+            root = osi_semantic_models_root(self.agent_config)
+            if root is not None:
+                try:
+                    relative = Path(source.file_path).resolve().relative_to(root.resolve())
+                    source_file = (Path("subject") / "semantic_models" / relative).as_posix()
+                except ValueError:
+                    pass
 
             return Result[MetricInfo](
                 success=True,
-                data=MetricInfo(
-                    name=metric_name,
-                    yaml=metric_yaml,
-                ),
+                data=MetricInfo(name=metric_name, yaml=source.text, semantic_model_file=source_file),
             )
 
         except Exception as e:
@@ -608,7 +685,7 @@ class ExplorerService:
                 errorMessage=str(e),
             )
 
-    async def get_metric_dimensions(self, subject_path: List[str]) -> Result[MetricDimensionsData]:
+    async def get_metric_dimensions(self, request: SubjectPathInput) -> Result[MetricDimensionsData]:
         """List the queryable dimensions of a saved metric.
 
         Powers the preview panel's dimension picker, so the user only chooses
@@ -619,39 +696,67 @@ class ExplorerService:
         try:
             self._require_datasource()
 
-            if not subject_path:
+            if not request.subject_path:
                 return Result[MetricDimensionsData](
                     success=False,
                     errorCode=ErrorCode.PROVIDER_CONFIG_ERROR,
                     errorMessage="Subject path cannot be empty",
                 )
 
-            metric_name = subject_path[-1]
-
-            from datus.tools.func_tool.semantic_tools import SemanticTools
-
-            tools = SemanticTools(self.agent_config)
-            adapter = tools.adapter
-            if adapter is None:
+            if not self._metric_is_in_scope(request.subject_path):
                 return Result[MetricDimensionsData](
                     success=False,
                     errorCode=ErrorCode.PROVIDER_CONFIG_ERROR,
-                    errorMessage="Semantic adapter is not available; cannot load dimensions.",
+                    errorMessage=f"Metric not found: {'/'.join(request.subject_path)}",
                 )
 
-            dimensions = await adapter.get_dimensions(metric_name=metric_name)
+            metric_name = request.subject_path[-1]
+
+            from datus.tools.func_tool.semantic_tools import (
+                SemanticTools,
+                extract_time_query_capabilities,
+            )
+
+            runtime_db_context = self._semantic_runtime_db_context(request)
+            # `sub_agent_name` is the second POSITIONAL parameter here too, so
+            # the keyword-only call skipped it and built an unscoped instance.
+            tools = SemanticTools(
+                self.agent_config,
+                self.sub_agent_name,
+                runtime_db_context_provider=lambda: runtime_db_context,
+                semantic_model_path_provider=self._semantic_model_path_provider,
+            )
+            runtime = tools.runtime
+            if runtime is None:
+                return Result[MetricDimensionsData](
+                    success=False,
+                    errorCode=ErrorCode.PROVIDER_CONFIG_ERROR,
+                    errorMessage="Dosi runtime is not available; cannot load dimensions.",
+                )
+
+            dimensions = await runtime.get_dimensions(metric_name=metric_name)
+            time_capabilities = extract_time_query_capabilities(dimensions)
             items = [
                 MetricDimensionItem(
                     name=d.name,
                     type=getattr(d, "type", None),
                     description=getattr(d, "description", None),
                     is_primary_key=getattr(d, "is_primary_key", None),
+                    required=getattr(d, "required", False),
+                    required_reason=getattr(d, "required_reason", None),
+                    recommended=d.recommended,
+                    recommendation_source=d.recommendation_source,
                 )
                 for d in (dimensions or [])
             ]
             return Result[MetricDimensionsData](
                 success=True,
-                data=MetricDimensionsData(metric=metric_name, dimensions=items),
+                data=MetricDimensionsData(
+                    metric=metric_name,
+                    dimensions=items,
+                    time_axis_required=any(getattr(d, "time_axis_required", False) for d in dimensions or []),
+                    **time_capabilities,
+                ),
             )
 
         except Exception as e:
@@ -662,16 +767,88 @@ class ExplorerService:
                 errorMessage=str(e),
             )
 
-    async def preview_metric(self, request: MetricPreviewInput) -> Result[MetricPreviewData]:
-        """Compile a saved metric into runnable SQL via the semantic adapter.
+    def _narrow_by_metric_policy(
+        self,
+        tools,
+        metric_name: str,
+        where: Optional[str],
+        policy_context: Optional[Dict[str, Any]],
+        context_filter: Optional[str] = None,
+    ) -> Tuple[Optional[str], Optional[str]]:
+        """Add any metric row policy's condition to the query's filters.
+
+        Runs the same transformer chain the agent's ``query_metrics`` goes
+        through, via the node-free entry point — there is no node here.
+        Returns ``(where, context_filter)``: unchanged when no policy matches
+        or none is configured; raises ``ToolTransformDenied`` when a
+        transformer refuses. Both filters are handed over and read back
+        because a policy scoping the calculation population (the rows a
+        window metric ranks against) belongs in ``context_filter``, not
+        ``where``, which a window query evaluates after ranking.
+        """
+        from datus.tools.middleware import transform_tool_args
+
+        # Falsy, not ``is None``: ``AppContext.policy_context`` defaults to an
+        # empty dict, so the route always passes one. Testing identity would
+        # let that empty dict shadow a context pinned on the config — and an
+        # empty context is the strictest reading there is, so a single-node
+        # deployment would find its own previews refused.
+        effective = policy_context or getattr(self.agent_config, "policy_context", None)
+
+        request_args: Dict[str, Any] = {"metrics": [metric_name], "where": where}
+        if context_filter:
+            request_args["context_filter"] = context_filter
+        args = transform_tool_args(
+            "query_metrics",
+            request_args,
+            # The registry a direct caller does not have: manifests declare
+            # these as ``semantic_tools.query_metrics``.
+            category="semantic_tools",
+            # Lazy: reading the metric catalogue costs a runtime round trip,
+            # and a project with no policy plugin has nothing to spend it on.
+            context=lambda: {
+                "agent_config": self.agent_config,
+                "policy_context": dict(effective) if isinstance(effective, dict) else {},
+                "metric_datasets": tools.metric_datasets(),
+            },
+            active_plugin_names=(
+                self.agent_config.active_plugin_names() if hasattr(self.agent_config, "active_plugin_names") else None
+            ),
+        )
+        # Default to the original: the contract lets a transformer return any
+        # dict, and reading a missing key as "no filter" would widen the query.
+        narrowed = args.get("where", where)
+        narrowed_context = args.get("context_filter", context_filter)
+        if narrowed != where or narrowed_context != context_filter:
+            logger.info(f"Metric policy narrowed the preview of '{metric_name}'")
+        return narrowed, narrowed_context
+
+    async def preview_metric(
+        self, request: MetricPreviewInput, policy_context: Optional[Dict[str, Any]] = None
+    ) -> Result[MetricPreviewData]:
+        """Compile a saved metric into runnable SQL via the semantic runtime.
 
         Uses dry-run so nothing executes here: the frontend hands the returned
         SQL to the existing SQL-result panel, which runs it and renders the
         table / chart. Only already-saved (registered) metrics are supported.
-        When requested dimensions aren't supported, returns a structured
-        ``preflight_error`` (with the metric's valid dimensions) instead of SQL.
+        When the runtime rejects the query — unsupported dimensions, or a
+        validation failure such as a grain with no time dimension to hang it on
+        — returns a structured ``preflight_error`` instead of SQL.
+
+        A metric row policy narrows the query here, before the compile. It has
+        to be here and not at execution time: the policy matches on the
+        datasets a metric reads, and once the runtime has compiled there is
+        only SQL left, where that dataset is no longer visible. The SQL this
+        returns is therefore the query the caller would actually run — which
+        matters because it is also the SQL shown in the preview panel.
+
+        Every caller of this method reaches the runtime by a direct Python call
+        rather than the agent's tool loop, so the transformer that enforces
+        those policies for ``query_metrics`` never wrapped them. ``policy_context``
+        falls back to the one on the config for callers that pin it there.
         """
         from datus.api.models.config_models import ErrorCode
+        from datus.tools.middleware import ToolTransformDenied
 
         try:
             self._require_datasource()
@@ -683,19 +860,58 @@ class ExplorerService:
                     errorMessage="Subject path cannot be empty",
                 )
 
+            if not self._metric_is_in_scope(request.subject_path):
+                return Result[MetricPreviewData](
+                    success=False,
+                    errorCode=ErrorCode.PROVIDER_CONFIG_ERROR,
+                    errorMessage=f"Metric not found: {'/'.join(request.subject_path)}",
+                )
+
             metric_name = request.subject_path[-1]
 
             from datus.tools.func_tool.semantic_tools import SemanticTools
 
-            tools = SemanticTools(self.agent_config)
-            if tools.adapter is None:
+            runtime_db_context = self._semantic_runtime_db_context(request)
+            # `sub_agent_name` is the second POSITIONAL parameter here too, so
+            # the keyword-only call skipped it and built an unscoped instance.
+            tools = SemanticTools(
+                self.agent_config,
+                self.sub_agent_name,
+                runtime_db_context_provider=lambda: runtime_db_context,
+                semantic_model_path_provider=self._semantic_model_path_provider,
+            )
+            if tools.runtime is None:
                 return Result[MetricPreviewData](
                     success=False,
                     errorCode=ErrorCode.PROVIDER_CONFIG_ERROR,
-                    errorMessage="Semantic adapter is not available; cannot preview this metric.",
+                    errorMessage="Dosi runtime is not available; cannot preview this metric.",
                 )
 
-            # query_metrics is sync (it wraps an async adapter call); run it off
+            try:
+                # Off the loop: building the transformer context reads the
+                # runtime's metric catalogue, and ``metric_datasets`` resolves
+                # that synchronously — on the loop thread it would park the
+                # whole API process for the length of a runtime round trip.
+                # Same reason the compile below is handed to a thread.
+                where, context_filter = await asyncio.to_thread(
+                    self._narrow_by_metric_policy,
+                    tools,
+                    metric_name,
+                    request.where,
+                    policy_context,
+                    request.context_filter,
+                )
+            except ToolTransformDenied as exc:
+                # The transformer declines rather than guesses when it cannot
+                # resolve which datasets a metric reads. Its own words name what
+                # is unresolvable, so they go out as-is.
+                return Result[MetricPreviewData](
+                    success=False,
+                    errorCode=ErrorCode.POLICY_DENIED,
+                    errorMessage=str(exc),
+                )
+
+            # query_metrics is sync (it wraps an async runtime call); run it off
             # the event loop. dry_run renders SQL and runs the dimension preflight
             # without executing anything.
             func_result = await asyncio.to_thread(
@@ -705,10 +921,11 @@ class ExplorerService:
                 time_start=request.time_start,
                 time_end=request.time_end,
                 time_granularity=request.time_granularity,
-                where=request.where,
+                where=where,
                 limit=request.limit,
                 order_by=request.order_by or None,
                 dry_run=True,
+                context_filter=context_filter,
             )
 
             if func_result.success == 1:
@@ -724,29 +941,40 @@ class ExplorerService:
                         errorCode=ErrorCode.PROVIDER_CONFIG_ERROR,
                         errorMessage=f"Failed to compile SQL for metric '{metric_name}'.",
                     )
-                # The datasource id (logical key) is not a physical database; return the
-                # bound datasource's real default database so callers can run the SQL as-is.
-                # Pin the lookup to this service's datasource_id (not the implicit "current")
-                # so a multi-datasource config can never return another datasource's database.
-                database = self.agent_config.current_db_config(self.datasource_id).database or None
+                # Return the same runtime database context used to compile the SQL.
+                database = (
+                    runtime_db_context.get("database")
+                    or self.agent_config.current_db_config(self.datasource_id).database
+                    or None
+                )
                 return Result[MetricPreviewData](
                     success=True,
                     data=MetricPreviewData(metric=metric_name, sql=sql, database=database),
                 )
 
-            # A dimension preflight failure carries structured detail; surface it
-            # so the UI can guide the user instead of showing a raw error.
+            # A structured rejection — unsupported dimensions, or the runtime's
+            # query validation (e.g. a grain with no time dimension in the
+            # group-by) — carries fields the UI can act on. Surface them instead
+            # of flattening the whole thing into an error string.
             detail = func_result.result
-            if isinstance(detail, dict) and detail.get("invalid_dimensions") is not None:
+            if isinstance(detail, dict) and (
+                detail.get("invalid_dimensions") is not None or detail.get("code") is not None
+            ):
                 return Result[MetricPreviewData](
                     success=True,
                     data=MetricPreviewData(
                         metric=metric_name,
                         preflight_error=MetricDimensionPreflight(
-                            message=func_result.error or "Some dimensions are not supported by this metric.",
+                            message=func_result.error
+                            or detail.get("message")
+                            or "This metric cannot be previewed with the requested arguments.",
+                            code=detail.get("code"),
                             invalid_dimensions=detail.get("invalid_dimensions") or [],
                             common_dimensions=detail.get("common_dimensions") or [],
                             suggested_metric_groups=detail.get("suggested_metric_groups") or [],
+                            required_dimensions=detail.get("required_dimensions") or [],
+                            required_time_granularity=detail.get("required_time_granularity"),
+                            suggested_retry=detail.get("suggested_retry"),
                         ),
                     ),
                 )
@@ -808,7 +1036,12 @@ class ExplorerService:
                 )
 
             # Get reference SQL entries
-            sql_entries = self.reference_sql_rag.reference_sql_storage.list_entries(node_id, name=sql_name)
+            # Scoped, for the same reason as get_subject_list: without the
+            # sub-agent conditions this returns the SQL body of any reference
+            # SQL the caller can name, in or out of scope.
+            sql_entries = self.reference_sql_rag.reference_sql_storage.list_entries(
+                node_id, name=sql_name, extra_conditions=self.reference_sql_rag._sub_agent_conditions()
+            )
 
             if not sql_entries or len(sql_entries) == 0:
                 return Result[ReferenceSQLInfo](
@@ -893,25 +1126,6 @@ class ExplorerService:
                 errorMessage=str(e),
             )
 
-    def _validate_metric_yaml(self, yaml_content: str, file_path: str) -> Tuple[bool, List[str]]:
-        """Validate metric YAML content using metricflow when available.
-
-        Args:
-            yaml_content: The YAML content to validate
-            file_path: The target file path (used to determine filename)
-
-        Returns:
-            Tuple of (is_valid, error_messages)
-        """
-        from datus.api.utils.semantic_validation import validate_semantic_yaml
-
-        return validate_semantic_yaml(
-            yaml_content=yaml_content,
-            file_path=file_path,
-            datus_home=self.agent_config.home,
-            datasource=self.agent_config.current_datasource,
-        )
-
     async def create_metric(self, request: EditMetricInput) -> Result[dict]:
         """Create a new metric from YAML.
 
@@ -924,125 +1138,15 @@ class ExplorerService:
         """
         try:
             self._require_datasource()
-            import yaml
-
-            from datus.api.models.config_models import ErrorCode
-            from datus.cli.generation_hooks import GenerationHooks
 
             logger.info(f"Creating metric at parent path: {request.subject_path}")
 
-            # subject_path is the parent directory
+            # subject_path is the parent directory; the metric name is taken from
+            # the YAML. Authoring goes through the runtime (the YAML file is
+            # the source of truth), then the changed file is re-indexed into
+            # the KB.
             parent_path = request.subject_path if request.subject_path else []
-
-            # Step 1: Parse YAML to extract metric name (only one document allowed)
-            try:
-                doc = yaml.safe_load(request.yaml)
-            except yaml.YAMLError as e:
-                return Result[dict](
-                    success=False,
-                    errorCode=ErrorCode.INVALID_PARAMETERS,
-                    errorMessage=f"Invalid YAML format: {str(e)}",
-                )
-
-            if not doc or "metric" not in doc:
-                return Result[dict](
-                    success=False,
-                    errorCode=ErrorCode.INVALID_PARAMETERS,
-                    errorMessage="No metric document found in YAML content",
-                )
-
-            metric_name = doc.get("metric", {}).get("name")
-            if not metric_name:
-                return Result[dict](
-                    success=False,
-                    errorCode=ErrorCode.INVALID_PARAMETERS,
-                    errorMessage="No metric name found in YAML content. Ensure 'metric.name' is defined.",
-                )
-
-            # Step 1.5: Override subject_tree tag with request.subject_path if present
-            if parent_path:
-                metric_data = doc.get("metric", {})
-                locked_metadata = metric_data.get("locked_metadata", {})
-                tags = locked_metadata.get("tags", [])
-
-                # Check if there's a subject_tree tag and override it
-                new_subject_tree_value = f"subject_tree: {'/'.join(parent_path)}"
-                has_subject_tree = False
-                for i, tag in enumerate(tags):
-                    if isinstance(tag, str) and tag.startswith("subject_tree:"):
-                        tags[i] = new_subject_tree_value
-                        has_subject_tree = True
-                        break
-
-                # If subject_tree tag exists, update the document
-                if has_subject_tree:
-                    locked_metadata["tags"] = tags
-                    metric_data["locked_metadata"] = locked_metadata
-                    doc["metric"] = metric_data
-                    # Update request.yaml with modified content
-                    request.yaml = yaml.dump(
-                        doc,
-                        default_flow_style=False,
-                        allow_unicode=True,
-                        sort_keys=False,
-                    )
-
-            # Step 2: Check if metric already exists in database
-
-            existing_metrics = self.metric_rag.get_metrics_detail(parent_path, metric_name)
-            if existing_metrics:
-                return Result[dict](
-                    success=False,
-                    errorCode=ErrorCode.INVALID_PARAMETERS,
-                    errorMessage=f"Metric '{metric_name}' already exists at path: {'/'.join(parent_path)}",
-                )
-
-            # Step 3: Determine file path. Use the agent_config's own path_manager so
-            # the project_root/subject anchoring propagates to derived paths.
-            semantic_dir = self.agent_config.path_manager.semantic_model_path(self.agent_config.current_datasource)
-            file_path = os.path.join(str(semantic_dir), "metrics", f"{metric_name}.yml")
-
-            # Step 4: Check for file conflict
-            if os.path.exists(file_path):
-                return Result[dict](
-                    success=False,
-                    errorCode=ErrorCode.INVALID_PARAMETERS,
-                    errorMessage=f"File already exists: {file_path}",
-                )
-
-            # Step 4: Validate YAML
-            is_valid, error_messages = self._validate_metric_yaml(request.yaml, file_path)
-            if not is_valid:
-                return Result[dict](
-                    success=False,
-                    errorCode=ErrorCode.INVALID_PARAMETERS,
-                    errorMessage=f"YAML validation failed: {'; '.join(error_messages)}",
-                )
-
-            # Step 5: Write YAML file
-            with open(file_path, "w", encoding="utf-8") as f:
-                f.write(request.yaml)
-
-            # Step 6: Sync to database
-            sync_result = GenerationHooks._sync_semantic_to_db(
-                file_path=file_path,
-                agent_config=self.agent_config,
-                include_semantic_objects=False,
-                include_metrics=True,
-            )
-
-            if not sync_result.get("success", False):
-                # Rollback: delete the file if sync failed
-                if os.path.exists(file_path):
-                    os.remove(file_path)
-                return Result[dict](
-                    success=False,
-                    errorCode=ErrorCode.PROVIDER_CONFIG_ERROR,
-                    errorMessage=sync_result.get("error", "Failed to sync metric to database"),
-                )
-
-            logger.info(f"Successfully created metric: {metric_name}")
-            return Result[dict](success=True, data={})
+            return await asyncio.to_thread(self._author_metric, parent_path, request.yaml, create=True)
 
         except Exception as e:
             logger.error(f"Failed to create metric: {e}")
@@ -1068,10 +1172,8 @@ class ExplorerService:
         """
         try:
             self._require_datasource()
-            import yaml
 
             from datus.api.models.config_models import ErrorCode
-            from datus.cli.generation_hooks import GenerationHooks
 
             logger.info(f"Editing metric at path: {request.subject_path}")
 
@@ -1082,117 +1184,18 @@ class ExplorerService:
                     errorMessage="Subject path cannot be empty",
                 )
 
-            # Extract parent path and metric name
+            # Extract parent path and metric name, then author in place through
+            # the Dosi runtime (source of truth), preserving datasets and
+            # sibling metrics in the same OSI file.
             parent_path = request.subject_path[:-1] if len(request.subject_path) > 1 else []
             metric_name = request.subject_path[-1]
-
-            # Step 1: Check if metric exists
-            existing_metrics = self.metric_rag.get_metrics_detail(parent_path, metric_name)
-            if not existing_metrics:
-                return Result[dict](
-                    success=False,
-                    errorCode=ErrorCode.PROVIDER_CONFIG_ERROR,
-                    errorMessage=f"Metric not found: {metric_name}",
-                )
-
-            # Step 2: Get yaml_path from metric data
-            metric_data = existing_metrics[0]
-            yaml_path = metric_data.get("yaml_path", "")
-
-            if not yaml_path:
-                return Result[dict](
-                    success=False,
-                    errorCode=ErrorCode.PROVIDER_CONFIG_ERROR,
-                    errorMessage=f"Metric '{metric_name}' has no yaml_path",
-                )
-
-            if not os.path.exists(yaml_path):
-                return Result[dict](
-                    success=False,
-                    errorCode=ErrorCode.PROVIDER_CONFIG_ERROR,
-                    errorMessage=f"YAML file not found: {yaml_path}",
-                )
-
-            # Step 3: Read existing YAML file as multi-document
-            with open(yaml_path, "r", encoding="utf-8") as f:
-                original_content = f.read()
-
-            yaml_documents = list(yaml.safe_load_all(original_content))
-
-            # Step 4: Parse the new metric YAML from request (only one document allowed)
-            try:
-                new_doc = yaml.safe_load(request.yaml)
-            except yaml.YAMLError as e:
-                return Result[dict](
-                    success=False,
-                    errorCode=ErrorCode.INVALID_PARAMETERS,
-                    errorMessage=f"Invalid YAML format: {str(e)}",
-                )
-
-            if not new_doc or "metric" not in new_doc:
-                return Result[dict](
-                    success=False,
-                    errorCode=ErrorCode.INVALID_PARAMETERS,
-                    errorMessage="No metric document found in YAML content",
-                )
-
-            # Step 5: Update only the specific metric document in the existing YAML
-            new_metric_data = new_doc.get("metric")
-            updated_documents, error_msg = self._update_metric_in_yaml_docs(
-                yaml_documents, metric_name, new_metric_data
+            return await asyncio.to_thread(
+                self._author_metric,
+                parent_path,
+                request.yaml,
+                create=False,
+                metric_name=metric_name,
             )
-
-            if error_msg:
-                return Result[dict](
-                    success=False,
-                    errorCode=ErrorCode.PROVIDER_CONFIG_ERROR,
-                    errorMessage=error_msg,
-                )
-
-            # Step 6: Write updated documents atomically
-            write_error = self._write_yaml_atomic(yaml_path, updated_documents)
-            if write_error:
-                return Result[dict](
-                    success=False,
-                    errorCode=ErrorCode.PROVIDER_CONFIG_ERROR,
-                    errorMessage=write_error,
-                )
-
-            # Step 7: Validate the updated file
-            with open(yaml_path, "r", encoding="utf-8") as f:
-                updated_content = f.read()
-
-            is_valid, error_messages = self._validate_metric_yaml(updated_content, yaml_path)
-            if not is_valid:
-                # Rollback: restore original content if validation failed
-                with open(yaml_path, "w", encoding="utf-8") as f:
-                    f.write(original_content)
-                return Result[dict](
-                    success=False,
-                    errorCode=ErrorCode.INVALID_PARAMETERS,
-                    errorMessage=f"YAML validation failed: {'; '.join(error_messages)}",
-                )
-
-            # Step 8: Sync to database
-            sync_result = GenerationHooks._sync_semantic_to_db(
-                file_path=yaml_path,
-                agent_config=self.agent_config,
-                include_semantic_objects=False,
-                include_metrics=True,
-            )
-
-            if not sync_result.get("success", False):
-                # Rollback: restore original content if sync failed
-                with open(yaml_path, "w", encoding="utf-8") as f:
-                    f.write(original_content)
-                return Result[dict](
-                    success=False,
-                    errorCode=ErrorCode.PROVIDER_CONFIG_ERROR,
-                    errorMessage=sync_result.get("error", "Failed to sync metric to database"),
-                )
-
-            logger.info(f"Successfully edited metric: {metric_name}")
-            return Result[dict](success=True, data={})
 
         except Exception as e:
             logger.error(f"Failed to edit metric: {e}")
@@ -1205,9 +1208,7 @@ class ExplorerService:
             )
 
     async def edit_semantic_model(self, request: EditSemanticModelInput) -> Result[dict]:
-        """Edit a semantic model entry (table or column).
-
-        Updates the vector DB and syncs changes back to the YAML file.
+        """Reject direct semantic-object edits in favor of YAML-first authoring.
 
         Args:
             request: Edit semantic model input with entry_id and update_values
@@ -1217,32 +1218,7 @@ class ExplorerService:
         """
         try:
             self._require_datasource()
-            from datus.api.models.config_models import ErrorCode
-
-            logger.info(f"Editing semantic model entry: {request.entry_id}")
-
-            if not request.entry_id:
-                return Result[dict](
-                    success=False,
-                    errorCode=ErrorCode.INVALID_PARAMETERS,
-                    errorMessage="entry_id cannot be empty",
-                )
-
-            if not request.update_values:
-                return Result[dict](
-                    success=False,
-                    errorCode=ErrorCode.INVALID_PARAMETERS,
-                    errorMessage="update_values cannot be empty",
-                )
-
-            self.semantic_model_rag.storage.update_entry(
-                entry_id=request.entry_id,
-                update_values=request.update_values,
-                extra_conditions=self.semantic_model_rag._sub_agent_conditions(),
-            )
-
-            logger.info(f"Successfully updated semantic model entry: {request.entry_id}")
-            return Result[dict](success=True, data={})
+            return self._semantic_agent_required_rejection()
 
         except Exception as e:
             logger.error(f"Failed to edit semantic model: {e}")
@@ -1253,6 +1229,113 @@ class ExplorerService:
                 errorCode=ErrorCode.PROVIDER_CONFIG_ERROR,
                 errorMessage=str(e),
             )
+
+    async def reconcile_subject(self, request: ReconcileSubjectInput) -> Result[ReconcileSubjectData]:
+        """Re-project changed semantic YAML and drop what deleted files projected."""
+        from datus.storage.semantic_model.reconcile import reconcile_semantic_artifacts
+
+        try:
+            outcome = await asyncio.to_thread(reconcile_semantic_artifacts, self.agent_config, request.paths)
+        except Exception as e:
+            logger.error(f"Failed to reconcile subject tree: {e}")
+            from datus.api.models.config_models import ErrorCode
+
+            return Result[ReconcileSubjectData](
+                success=False,
+                errorCode=ErrorCode.TOOL_EXECUTION_ERROR,
+                errorMessage=str(e),
+            )
+        return Result[ReconcileSubjectData](
+            success=True,
+            data=ReconcileSubjectData(
+                synced_files=outcome.synced_files,
+                pruned_files=outcome.pruned_files,
+                removed_subject_paths=outcome.removed_subject_paths,
+                failures=outcome.failures,
+            ),
+        )
+
+    async def _delete_metric_source_and_kb(
+        self, runtime: Any, parent_path: List[str], metric_name: str
+    ) -> Optional["Result[dict]"]:
+        """Delete a metric from its source file, then its KB row.
+
+        Returns ``None`` on success, else the failed ``Result``.
+        """
+        from datus.api.models.config_models import ErrorCode
+
+        # The source file is authoritative. A KB-only delete would allow the
+        # metric to reappear on the next reconcile.
+        if runtime is None:
+            return Result[dict](
+                success=False,
+                errorCode=ErrorCode.PROVIDER_CONFIG_ERROR,
+                errorMessage="Dosi runtime is not available; cannot remove metric source.",
+            )
+        touched_files = self._metric_yaml_paths(parent_path, metric_name)
+        previous_source = None
+        try:
+            previous_source = await asyncio.to_thread(runtime.read_metric_source, metric_name)
+            touched_files.add(previous_source.file_path)
+        except Exception as e:  # noqa: BLE001
+            if not self._is_metric_absent_error(e):
+                return Result[dict](
+                    success=False,
+                    errorCode=ErrorCode.TOOL_EXECUTION_ERROR,
+                    errorMessage=f"Failed to read metric source before deletion: {e}",
+                )
+        try:
+            mutation = await asyncio.to_thread(runtime.delete_metric_source, metric_name, subject_path=parent_path)
+            touched_files.update(getattr(mutation, "affected_paths", None) or [])
+            if getattr(mutation, "file_path", None):
+                touched_files.add(mutation.file_path)
+        except Exception as e:  # noqa: BLE001
+            # Only a genuine "not found" is a benign fallback to KB
+            # cleanup (file/KB drift). Real failures (I/O, lock, parse)
+            # must fail the request, or the file keeps the metric while
+            # the KB row is dropped and it "revives" on the next
+            # re-index — breaking the YAML-source-of-truth invariant.
+            if not self._is_metric_absent_error(e):
+                logger.error(f"Failed to delete metric from source file: {e}")
+                return Result[dict](
+                    success=False,
+                    errorCode=ErrorCode.TOOL_EXECUTION_ERROR,
+                    errorMessage=f"Failed to remove metric from source file: {e}",
+                )
+            logger.warning(f"Metric already absent from source file, continuing to KB cleanup: {e}")
+
+        try:
+            result = self.metric_rag.delete_metric(parent_path, metric_name)
+        except Exception:  # noqa: BLE001
+            self._restore_deleted_metric(runtime, previous_source)
+            raise
+        if not result.get("success", False):
+            self._restore_deleted_metric(runtime, previous_source)
+            return Result[dict](
+                success=False,
+                errorCode=ErrorCode.PROVIDER_CONFIG_ERROR,
+                errorMessage=result.get("message", f"Failed to delete metric: {metric_name}"),
+            )
+        # A deleted metric means the KB no longer matches the last projection.
+        self._forget_projection_digests(touched_files)
+        return None
+
+    def _metric_yaml_paths(self, parent_path: List[str], metric_name: str) -> set:
+        # Scoped like delete_metric; the runtime source path covers a row that
+        # has no usable yaml_path in the KB.
+        try:
+            rows = self.metric_rag.search_all_metrics(
+                subject_path=[*parent_path, metric_name], select_fields=["yaml_path"]
+            )
+        except Exception:  # noqa: BLE001 - only used to invalidate digests
+            return set()
+        return {row["yaml_path"] for row in rows if row.get("yaml_path")}
+
+    def _forget_projection_digests(self, yaml_paths: set) -> None:
+        from datus.storage.semantic_model.sync_state import forget_digests
+
+        if yaml_paths:
+            forget_digests(self.agent_config, self.datasource_id, yaml_paths)
 
     async def delete_subject(self, request: DeleteSubjectInput) -> Result[dict]:
         """Delete subject from the subject tree.
@@ -1296,23 +1379,53 @@ class ExplorerService:
                 # Get all descendant nodes
                 descendants = self.subject_tree_store.get_descendants(node_id)
 
-                # Delete all entries for this node and its descendants
                 all_node_ids = [node_id] + [d["node_id"] for d in descendants]
+                node_paths = {nid: self.subject_tree_store.get_full_path(nid) for nid in all_node_ids}
+                # Enumerate with the same scope ``delete_metric`` applies, or a row
+                # it cannot see fails every retry after its source is already gone.
+                sub_agent_conditions = self.metric_rag._sub_agent_conditions()
+                metrics_by_node = {
+                    nid: self.metric_rag.storage.list_entries(nid, extra_conditions=sub_agent_conditions)
+                    for nid in all_node_ids
+                }
+
+                # A scoped caller must not drop a directory whose out-of-scope
+                # metrics would stay in YAML and revive it on the next re-index.
+                if self.metric_rag._sub_agent_filter:
+                    from datus.storage.datasource_scope import datasource_condition
+
+                    in_datasource = [datasource_condition(self.metric_rag.datasource_id)]
+                    if any(
+                        len(self.metric_rag.storage.list_entries(nid, extra_conditions=in_datasource))
+                        > len(metrics_by_node[nid])
+                        for nid in all_node_ids
+                    ):
+                        return Result[dict](
+                            success=False,
+                            errorCode=ErrorCode.INVALID_PARAMETERS,
+                            errorMessage=(
+                                f"Directory {'/'.join(request.subject_path)} contains metrics "
+                                "outside this subagent's scope"
+                            ),
+                        )
+
+                # Metrics live in the YAML source of truth, so each one goes
+                # through the same file-then-KB delete as a single metric.
+                runtime = self._semantic_runtime() if any(metrics_by_node.values()) else None
 
                 for nid in all_node_ids:
-                    # Get the path for this node to pass to delete methods
-                    node_path = self.subject_tree_store.get_full_path(nid)
+                    node_path = node_paths[nid]
 
-                    # Delete metrics
-                    try:
-                        metrics = self.metric_rag.storage.list_entries(nid)
-                        for metric in metrics:
-                            metric_name = metric.get("name", "")
-                            if metric_name:
-                                self.metric_rag.delete_metric(node_path, metric_name)
-                                logger.info(f"Deleted metric '{metric_name}' from node {nid}")
-                    except Exception as ex:
-                        logger.debug(f"Error deleting metrics for node {nid}: {ex}")
+                    # A failure stops before the tree node goes, so a retry
+                    # resumes instead of leaving metrics under a missing directory.
+                    for metric in metrics_by_node[nid]:
+                        metric_name = metric.get("name", "")
+                        if not metric_name:
+                            continue
+                        failure = await self._delete_metric_source_and_kb(runtime, node_path, metric_name)
+                        if failure is not None:
+                            return failure
+                        logger.info(f"Deleted metric '{metric_name}' from node {nid}")
 
                     # Delete reference_sqls
                     try:
@@ -1349,13 +1462,9 @@ class ExplorerService:
                 parent_path = request.subject_path[:-1] if len(request.subject_path) > 1 else []
                 metric_name = request.subject_path[-1]
 
-                result = self.metric_rag.delete_metric(parent_path, metric_name)
-                if not result.get("success", False):
-                    return Result[dict](
-                        success=False,
-                        errorCode=ErrorCode.PROVIDER_CONFIG_ERROR,
-                        errorMessage=result.get("message", f"Failed to delete metric: {metric_name}"),
-                    )
+                failure = await self._delete_metric_source_and_kb(self._semantic_runtime(), parent_path, metric_name)
+                if failure is not None:
+                    return failure
 
                 logger.info(f"Successfully deleted metric: {metric_name}")
                 return Result[dict](success=True, data={})

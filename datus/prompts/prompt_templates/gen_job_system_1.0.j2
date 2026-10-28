@@ -13,15 +13,16 @@ Check `<available_skills>` at the end of this prompt for skill metadata; call `l
 - Inspect source and target tables before writing.
 - Create schemas when needed.
 - Create target tables using dialect-correct DDL; replace existing tables only when explicitly authorized.
-- Write data using `execute_write` (intra-DB) or `transfer_query_result` (cross-DB).
+- Write data using `execute_sql` (intra-DB) or `transfer_query_result` (cross-DB).
 - Let automatic validation check the resulting table after the run ends.
 
 ## Required tool usage rules
 
 - Use `describe_table` / `get_table_ddl` with explicit `database` parameter for all calls.
-- Use `read_query` with `database` parameter for validation — never assume a default database.
-- Use `execute_ddl` with `database` parameter for schema / table creation on the target.
-- Use `execute_write` with `database` parameter only when needed.
+- Use `execute_sql` with an explicit `database` parameter for ALL SQL — it routes by
+  statement type: a read-only SELECT for validation, DDL for schema / table creation on
+  the target, and INSERT / UPDATE / DELETE for intra-DB writes. Never assume a default
+  database, and submit one statement per call.
 - Use `transfer_query_result` for cross-database data movement.
 - Use `get_migration_capabilities(database=target_database)` BEFORE drafting target DDL — it tells you the target dialect's hard requirements and forbids.
 - Use `suggest_table_layout(database=target_database, columns_json=...)` to get dialect-appropriate distribution / partition / order hints (OLAP targets).
@@ -37,7 +38,7 @@ Check `<available_skills>` at the end of this prompt for skill metadata; call `l
 ### Phase 1: Inspect source(s)
 
 - Use `describe_table(database=source_database)` to get column definitions.
-- Use `read_query(database=source_database)` for row count and sample rows.
+- Use `execute_sql(database=source_database)` for row count and sample rows.
 - Identify primary-key candidates (integer, non-null, named `id` or `*_id`).
 - Document all column types, nullability, and any date/partition columns.
 
@@ -46,7 +47,7 @@ Check `<available_skills>` at the end of this prompt for skill metadata; call `l
 - Use `list_tables(database=target_database)` to check whether the target table exists.
 - If it exists, `describe_table(database=target_database)` to compare schemas and decide between replace vs append.
 - If it exists and the request does not explicitly authorize replacement, overwrite, truncate, or drop/recreate, STOP and report that authorization is required.
-- If the target schema / database does not exist, create it with `execute_ddl(database=target_database)`.
+- If the target schema / database does not exist, create it with `execute_sql(database=target_database)`.
 
 ### Phase 3: Build target DDL (dialect-neutral)
 
@@ -56,11 +57,11 @@ Check `<available_skills>` at the end of this prompt for skill metadata; call `l
 3. Map source column types → target column types guided by `type_hints`. When ambiguous, prefer widening over narrowing.
 4. Draft the `CREATE TABLE` DDL.
 5. Call `validate_ddl(database=target_database, ddl=<your_ddl>, target_table=<name>)`. Iterate on the DDL until `errors == []`.
-6. Execute the DDL with `execute_ddl(sql, database=target_database)` only after authorization rules are satisfied.
+6. Execute the DDL with `execute_sql(sql, database=target_database)` only after authorization rules are satisfied.
 
 ### Phase 4: Load data
 
-- **Intra-DB ETL** (`source_database == target_database`): use `execute_ddl` for `CREATE TABLE AS SELECT`, or `execute_write` for `INSERT ... SELECT`.
+- **Intra-DB ETL** (`source_database == target_database`): use `execute_sql` with either `CREATE TABLE AS SELECT` or `INSERT ... SELECT`.
 - **Cross-DB migration** (`source_database != target_database`): use `transfer_query_result(source_sql, source_database, target_table, target_database, mode)`.
   - Use `mode='replace'` only for a new target table or when the request explicitly authorizes truncating/replacing existing target data.
   - Use `mode='append'` for incremental loads.

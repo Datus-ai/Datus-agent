@@ -50,8 +50,13 @@ logger = get_logger(__name__)
 _PKG_PREFIXES: dict[str, Tuple[str, str]] = {
     "bi_platforms": ("datus-bi-", "datus_bi_"),
     "schedulers": ("datus-scheduler-", "datus_scheduler_"),
-    "semantic_layer": ("datus-semantic-", "datus_semantic_"),
 }
+
+# Some adapters need an install extra to provide their query backend. Keep the
+# import module unchanged so registration still targets the adapter itself.
+_PACKAGE_OVERRIDES: dict[Tuple[str, str], str] = {}
+
+_REQUIRED_IMPORTS: dict[Tuple[str, str], Tuple[str, ...]] = {}
 
 
 # Entry-point group each section's adapter packages register under.
@@ -65,7 +70,6 @@ _PKG_PREFIXES: dict[str, Tuple[str, str]] = {
 _EP_GROUPS: dict[str, str] = {
     "bi_platforms": "datus.bi_adapters",
     "schedulers": "datus.schedulers",
-    "semantic_layer": "datus.semantic_adapters",
 }
 
 
@@ -101,7 +105,8 @@ def package_for(section: str, adapter_type: str) -> Tuple[str, str]:
     if not type_token:
         raise ValueError("adapter_type must be a non-empty string")
     pkg_prefix, import_prefix = prefixes
-    return f"{pkg_prefix}{type_token}", f"{import_prefix}{type_token}"
+    package = _PACKAGE_OVERRIDES.get((section, type_token), f"{pkg_prefix}{type_token}")
+    return package, f"{import_prefix}{type_token}"
 
 
 def is_adapter_installed(section: str, adapter_type: str) -> bool:
@@ -110,8 +115,10 @@ def is_adapter_installed(section: str, adapter_type: str) -> bool:
         _, import_name = package_for(section, adapter_type)
     except ValueError:
         return False
+    type_token = (adapter_type or "").strip().lower()
+    required_imports = _REQUIRED_IMPORTS.get((section, type_token), (import_name,))
     try:
-        return importlib.util.find_spec(import_name) is not None
+        return all(importlib.util.find_spec(name) is not None for name in required_imports)
     except (ImportError, ValueError):
         # ``find_spec`` raises ``ValueError`` on partially-initialized
         # parent packages and ``ImportError`` when an ancestor is
@@ -275,18 +282,6 @@ def hot_reload_adapter(section: str, adapter_type: str) -> bool:
                 discover()
             except Exception as exc:  # pragma: no cover - defensive
                 logger.debug("adapter_registry.discover_adapters() raised: %s", exc)
-    elif section == "semantic_layer":
-        try:
-            from datus.tools.semantic_tools.registry import semantic_adapter_registry
-        except ImportError:
-            return registered
-        discover = getattr(semantic_adapter_registry, "discover_adapters", None)
-        if callable(discover):
-            try:
-                discover()
-            except Exception as exc:  # pragma: no cover - defensive
-                logger.debug("semantic_adapter_registry.discover_adapters() raised: %s", exc)
-
     return registered
 
 

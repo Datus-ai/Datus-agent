@@ -7,15 +7,16 @@
 import base64
 import json
 import os
+import re
 import time
 import uuid
-from contextlib import nullcontext
+from contextlib import aclosing, nullcontext
 from typing import Any, AsyncGenerator, Dict, List, Optional, Union
+from urllib.parse import urlparse
 
-from agents import Agent, ModelSettings, Runner, SQLiteSession, Tool
+from agents import Agent, ModelSettings, Runner, SQLiteSession, Tool, WebSearchTool
 from agents.exceptions import MaxTurnsExceeded
 from agents.mcp import MCPServerStdio
-from agents.models.openai_responses import OpenAIResponsesModel
 from agents.run import RunConfig
 
 from datus.auth.oauth_config import CODEX_API_BASE_URL
@@ -24,9 +25,15 @@ from datus.configuration.agent_config import ModelConfig
 from datus.models.base import LLMBaseModel
 from datus.models.mcp_result_extractors import extract_sql_contexts
 from datus.models.mcp_utils import multiple_mcp_servers
+from datus.models.observed_model import ObservedResponsesModel
+from datus.models.request_capacity import ContextCapacityError
 from datus.observability.manager import get_observability_manager
+from datus.observability.model_call import current_model_call, native_model_call
+from datus.observability.tool_calls import observe_tool_hooks
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
+from datus.schemas.tool_summary import detect_tool_failure
 from datus.utils.exceptions import DatusException, ErrorCode
+from datus.utils.image_content import image_result_for_display
 from datus.utils.loggings import get_logger
 from datus.utils.trace_context import build_agents_run_config_kwargs, build_trace_span_attributes
 
@@ -35,6 +42,26 @@ logger = get_logger(__name__)
 # Fallback values when providers.yml / OpenRouter cache do not cover a codex slug.
 _CODEX_DEFAULT_CONTEXT_LENGTH = 192000
 _CODEX_DEFAULT_MAX_TOKENS = 16384
+
+# The Responses API requires a ``name`` alongside a ``json_schema`` text format
+# and accepts only ``[a-zA-Z0-9_-]`` in it, capped at 64 characters.
+_SCHEMA_NAME_ALLOWED = re.compile(r"[^a-zA-Z0-9_-]")
+_SCHEMA_NAME_MAX_LENGTH = 64
+_SCHEMA_NAME_FALLBACK = "structured_response"
+
+
+def _json_schema_format_name(output_schema: Dict[str, Any], explicit: Optional[str] = None) -> str:
+    """Derive a Responses-API-legal ``text.format.name`` for a JSON schema.
+
+    Prefers an explicit caller-supplied name, then the schema's ``title``
+    (Pydantic's ``model_json_schema()`` always sets it to the model class
+    name), then a generic fallback. Illegal characters collapse to ``_``
+    because omitting the field — or sending an unsanitized one — makes the
+    provider reject the whole request with HTTP 400.
+    """
+    candidate = explicit or (output_schema.get("title") if isinstance(output_schema, dict) else None)
+    sanitized = _SCHEMA_NAME_ALLOWED.sub("_", str(candidate)).strip("_") if candidate else ""
+    return (sanitized or _SCHEMA_NAME_FALLBACK)[:_SCHEMA_NAME_MAX_LENGTH]
 
 
 def _agents_trace_baggage(agent_name: Optional[str]):
@@ -46,12 +73,21 @@ def _agents_trace_baggage(agent_name: Optional[str]):
 
 
 async def _stream_events_with_trace_baggage(result, agent_name: Optional[str]):
-    with _agents_trace_baggage(agent_name):
-        async for event in result.stream_events():
+    events = result.stream_events().__aiter__()
+    try:
+        while True:
+            with _agents_trace_baggage(agent_name):
+                try:
+                    event = await anext(events)
+                except StopAsyncIteration:
+                    return
             yield event
+    finally:
+        if close := getattr(events, "aclose", None):
+            await close()
 
 
-class _CodexResponsesModel(OpenAIResponsesModel):
+class _CodexResponsesModel(ObservedResponsesModel):
     """OpenAIResponsesModel subclass that fixes Codex returning output:[] in response.completed.
 
     Codex streams correct items via response.output_item.done events but sends an empty
@@ -64,26 +100,31 @@ class _CodexResponsesModel(OpenAIResponsesModel):
     yielding so the SDK run loop can persist them to the session.
     """
 
+    _datus_impl = "codex"
+
     async def stream_response(self, *args, **kwargs):  # type: ignore[override]
         from openai.types.responses import ResponseCompletedEvent, ResponseOutputItemDoneEvent, ResponseReasoningItem
 
         collected: list = []
-        async for event in super().stream_response(*args, **kwargs):
-            if isinstance(event, ResponseOutputItemDoneEvent):
-                # Reasoning items are reference-only ({type, id}) and cannot be replayed
-                # when store=False — the server never persisted them. Exclude from the
-                # injected output so they are not written to the SQLite session, while
-                # still yielding the raw event for streaming display.
-                #
-                # We do NOT request/replay encrypted reasoning here: cache reuse is
-                # driven by an accepted prompt_cache_key (see _codex_model_settings),
-                # and replaying reasoning would only enlarge each resent request.
-                if not isinstance(event.item, ResponseReasoningItem):
-                    collected.append(event.item)
-            elif isinstance(event, ResponseCompletedEvent) and not event.response.output and collected:
-                patched_response = event.response.model_copy(update={"output": list(collected)})
-                event = event.model_copy(update={"response": patched_response})
-            yield event
+        async with aclosing(super().stream_response(*args, **kwargs)) as stream:
+            async for event in stream:
+                if isinstance(event, ResponseOutputItemDoneEvent):
+                    # Reasoning items are reference-only ({type, id}) and cannot be replayed
+                    # when store=False — the server never persisted them. Exclude from the
+                    # injected output so they are not written to the SQLite session, while
+                    # still yielding the raw event for streaming display.
+                    #
+                    # We do NOT request/replay encrypted reasoning here: cache reuse is
+                    # driven by an accepted prompt_cache_key (see _codex_model_settings),
+                    # and replaying reasoning would only enlarge each resent request.
+                    if not isinstance(event.item, ResponseReasoningItem):
+                        collected.append(event.item)
+                elif isinstance(event, ResponseCompletedEvent) and not event.response.output and collected:
+                    patched_response = event.response.model_copy(update={"output": list(collected)})
+                    event = event.model_copy(update={"response": patched_response})
+                    if call := current_model_call():
+                        call.record_tool_calls(patched_response.output)
+                yield event
 
 
 class CodexModel(LLMBaseModel):
@@ -94,6 +135,10 @@ class CodexModel(LLMBaseModel):
     - The Responses API format (POST /responses) instead of Chat Completions
     - A different base URL (chatgpt.com/backend-api/codex)
     """
+
+    # The subscription protocol has no output-limit field. Reserve the known
+    # model ceiling without introducing unsupported wire parameters.
+    supports_output_limit = False
 
     def __init__(self, model_config: ModelConfig, **kwargs):
         super().__init__(model_config)
@@ -107,6 +152,26 @@ class CodexModel(LLMBaseModel):
         # conversation (with a real timestamp) and reused for every LLM call so
         # the backend routes them to one cache node. See _stable_prompt_cache_key.
         self._prompt_cache_keys: Dict[str, str] = {}
+
+    def _is_official_chatgpt_host(self) -> bool:
+        """Return whether this model targets the official ChatGPT Codex host."""
+        try:
+            hostname = (urlparse(self._base_url).hostname or "").lower() if self._base_url else ""
+        except Exception:
+            return False
+        return hostname == "chatgpt.com"
+
+    def supports_builtin_web_search(self) -> bool:
+        # OpenAI Responses API exposes a hosted ``web_search`` tool, but only the
+        # official ChatGPT Codex backend (``chatgpt.com/backend-api/codex``) honors
+        # it. A custom ``base_url`` points at a third-party relay that may not
+        # support the hosted tool, so gate on the official host and fall back to
+        # the local Tavily backend otherwise.
+        return self._is_official_chatgpt_host()
+
+    def supports_builtin_web_fetch(self) -> bool:
+        # OpenAI Responses has no hosted fetch tool; web_fetch uses the local backend.
+        return False
 
     @staticmethod
     def _resolve_config_api_key(api_key: str | None) -> str | None:
@@ -157,7 +222,9 @@ class CodexModel(LLMBaseModel):
     def _get_responses_model(self) -> _CodexResponsesModel:
         """Create a _CodexResponsesModel for use with the Agent SDK."""
         async_client = self._get_async_client()
-        return _CodexResponsesModel(model=self.model_name, openai_client=async_client)
+        model = _CodexResponsesModel(model=self.model_name, openai_client=async_client)
+        model._datus_capacity = self.request_capacity()
+        return model
 
     def _refresh_client_token(self):
         """Refresh the token on existing clients."""
@@ -261,20 +328,41 @@ class CodexModel(LLMBaseModel):
         return ModelSettings(
             store=False,
             include_usage=True,
+            # Mirror the OpenAI Responses path: when the hosted web_search tool
+            # runs, echo the per-call source URLs (``action.sources``) so they are
+            # available as a fallback for the richer url_citation results.
+            response_include=["web_search_call.action.sources"],
             extra_args={"prompt_cache_key": key},
             extra_headers=extra_headers,
         )
 
     @staticmethod
     def _consume_stream_text(stream) -> str:
-        """Consume a streaming response and return the full output text."""
+        """Consume a streaming response and return the full output text.
+
+        The terminal ``response.completed`` event is preferred when it actually
+        carries text, but it is NOT trusted blindly: against a ChatGPT-account
+        Codex endpoint that event arrives with ``output_text == ""`` and
+        ``output == []`` even after the model streamed a complete answer over
+        ``response.output_text.delta``. Returning the empty terminal value there
+        discarded the whole response — callers saw an empty string, and
+        ``generate_with_json_output`` turned that into a ``JSONDecodeError``
+        (surfaced as a bogus "HTTP 400"), so every structured call against such
+        an endpoint failed. Fall back to the accumulated deltas instead.
+        """
         collected = []
         for event in stream:
+            if call := current_model_call():
+                call.stream_event()
+                response = getattr(event, "response", None)
+                if response is not None:
+                    call.usage(getattr(response, "usage", None))
+                    call.record_tool_calls(getattr(response, "output", None))
             event_type = getattr(event, "type", None)
             if event_type == "response.completed":
                 response = getattr(event, "response", None)
-                if response:
-                    return getattr(response, "output_text", "")
+                final_text = getattr(response, "output_text", "") if response else ""
+                return final_text or "".join(collected)
             elif event_type == "response.output_text.delta":
                 collected.append(getattr(event, "delta", ""))
         return "".join(collected)
@@ -290,6 +378,30 @@ class CodexModel(LLMBaseModel):
             return prompt
         # Wrap string/other types into a user message list
         return [{"role": "user", "content": str(prompt)}]
+
+    def _generate_direct_response(self, create_kwargs, *, json_output=False, retry_of=None):
+        create_kwargs = self.check_request(create_kwargs, "max_output_tokens")
+        client = self._get_client()
+        with native_model_call(
+            model=self.model_name,
+            model_impl="codex",
+            protocol="responses",
+            endpoint=getattr(client, "base_url", None),
+            params=create_kwargs,
+        ) as call:
+            if retry_of:
+                call.fields["retry_of"] = retry_of
+            stream = client.responses.create(**create_kwargs)
+            call.response(stream, streaming=True)
+            try:
+                text = self._consume_stream_text(stream)
+            finally:
+                close = getattr(stream, "close", None)
+                if callable(close):
+                    close()
+            result = json.loads(text) if json_output else text
+            call.output(result)
+            return result
 
     def generate(self, prompt: Any, enable_thinking: bool = False, **kwargs) -> str:
         """Generate a response via the Codex Responses API.
@@ -316,8 +428,9 @@ class CodexModel(LLMBaseModel):
             create_kwargs["instructions"] = instructions
 
         try:
-            stream = self._get_client().responses.create(**create_kwargs)
-            return self._consume_stream_text(stream)
+            return self._generate_direct_response(create_kwargs)
+        except ContextCapacityError:
+            raise
         except Exception as e:
             from openai import AuthenticationError
 
@@ -326,8 +439,9 @@ class CodexModel(LLMBaseModel):
                 self.oauth_manager.refresh_tokens()
                 self._refresh_client_token()
                 try:
-                    stream = self._get_client().responses.create(**create_kwargs)
-                    return self._consume_stream_text(stream)
+                    return self._generate_direct_response(
+                        create_kwargs, retry_of=getattr(e, "_datus_model_call_id", None)
+                    )
                 except AuthenticationError as retry_e:
                     raise DatusException(
                         ErrorCode.MODEL_AUTHENTICATION_ERROR,
@@ -369,6 +483,10 @@ class CodexModel(LLMBaseModel):
             create_kwargs["text"] = {
                 "format": {
                     "type": "json_schema",
+                    # Required by the Responses API: without it every
+                    # schema-mode request fails with HTTP 400
+                    # "Missing required parameter: 'text.format.name'".
+                    "name": _json_schema_format_name(output_schema, kwargs.get("output_schema_name")),
                     "schema": output_schema,
                 }
             }
@@ -376,8 +494,9 @@ class CodexModel(LLMBaseModel):
             create_kwargs["text"] = {"format": {"type": "json_object"}}
 
         try:
-            stream = self._get_client().responses.create(**create_kwargs)
-            return json.loads(self._consume_stream_text(stream))
+            return self._generate_direct_response(create_kwargs, json_output=True)
+        except ContextCapacityError:
+            raise
         except json.JSONDecodeError as e:
             raise DatusException(
                 ErrorCode.MODEL_INVALID_RESPONSE,
@@ -391,8 +510,9 @@ class CodexModel(LLMBaseModel):
                 self.oauth_manager.refresh_tokens()
                 self._refresh_client_token()
                 try:
-                    stream = self._get_client().responses.create(**create_kwargs)
-                    return json.loads(self._consume_stream_text(stream))
+                    return self._generate_direct_response(
+                        create_kwargs, json_output=True, retry_of=getattr(e, "_datus_model_call_id", None)
+                    )
                 except AuthenticationError as retry_e:
                     raise DatusException(
                         ErrorCode.MODEL_AUTHENTICATION_ERROR,
@@ -436,8 +556,9 @@ class CodexModel(LLMBaseModel):
                 agent_kwargs["mcp_servers"] = list(connected_servers.values())
             if tools:
                 agent_kwargs["tools"] = tools
-            if kwargs.get("hooks"):
-                agent_kwargs["hooks"] = kwargs["hooks"]
+            if (kwargs.get("builtin_web_tools") or {}).get("web_search") and self.supports_builtin_web_search():
+                agent_kwargs["tools"] = [*(agent_kwargs.get("tools") or []), WebSearchTool()]
+            agent_kwargs["hooks"] = observe_tool_hooks(kwargs.get("hooks"))
 
             agent = Agent(**agent_kwargs)
 
@@ -457,6 +578,8 @@ class CodexModel(LLMBaseModel):
 
             try:
                 result = await _run_streamed_to_completion(agent, prompt)
+            except ContextCapacityError:
+                raise
             except MaxTurnsExceeded as e:
                 raise DatusException(ErrorCode.MODEL_MAX_TURNS_EXCEEDED, message_args={"max_turns": max_turns}) from e
             except Exception as e:
@@ -502,9 +625,19 @@ class CodexModel(LLMBaseModel):
         action_history_manager: Optional[ActionHistoryManager] = None,
         hooks=None,
         interrupt_controller=None,
+        pending_input_queue=None,
+        interaction_broker=None,
+        context_rewriter=None,
         **kwargs,
     ) -> AsyncGenerator[ActionHistory, None]:
-        """Generate response with streaming and tool support via the Codex Responses API."""
+        """Generate response with streaming and tool support via the Codex Responses API.
+
+        ``pending_input_queue`` and ``interaction_broker`` are named explicitly
+        rather than read out of ``**kwargs``: the base signature ends in
+        ``**kwargs``, so a provider that forgets to forward them loses mid-run
+        message insertion without any error — the queue then only drains at the
+        run boundary via the chat layer's auto-continuation.
+        """
         if action_history_manager is None:
             action_history_manager = ActionHistoryManager()
 
@@ -524,13 +657,23 @@ class CodexModel(LLMBaseModel):
                 agent_kwargs["mcp_servers"] = list(connected_servers.values())
             if tools:
                 agent_kwargs["tools"] = tools
-            if hooks:
-                agent_kwargs["hooks"] = hooks
+            if (kwargs.get("builtin_web_tools") or {}).get("web_search") and self.supports_builtin_web_search():
+                agent_kwargs["tools"] = [*(agent_kwargs.get("tools") or []), WebSearchTool()]
+            agent_kwargs["hooks"] = observe_tool_hooks(hooks)
 
             agent = Agent(**agent_kwargs)
 
-            run_config_kwargs = build_agents_run_config_kwargs(agent_name=agent_kwargs["name"])
-            run_config = RunConfig(**run_config_kwargs) if run_config_kwargs else None
+            # Carries the mid-run input filter as well as the trace kwargs, so a
+            # message typed while this run is streaming reaches the model at the
+            # next turn boundary instead of waiting for the whole run to finish.
+            run_config = self._build_run_config(
+                pending_input_queue=pending_input_queue,
+                session=session,
+                interrupt_controller=interrupt_controller,
+                interaction_broker=interaction_broker,
+                agent_name=agent_kwargs["name"],
+                context_rewriter=context_rewriter,
+            )
             with _agents_trace_baggage(agent_kwargs["name"]):
                 result = Runner.run_streamed(
                     agent, input=prompt, max_turns=max_turns, session=session, run_config=run_config
@@ -640,13 +783,25 @@ class CodexModel(LLMBaseModel):
                             if raw_item:
                                 # Normalize access: raw_item can be dict (Responses API) or object
                                 if isinstance(raw_item, dict):
-                                    tool_name = raw_item.get("name", "unknown")
+                                    tool_name = raw_item.get("name")
                                     call_id = raw_item.get("call_id")
                                     arguments = raw_item.get("arguments", "{}")
                                 else:
-                                    tool_name = getattr(raw_item, "name", "unknown")
+                                    tool_name = getattr(raw_item, "name", None)
                                     call_id = getattr(raw_item, "call_id", None)
                                     arguments = getattr(raw_item, "arguments", "{}")
+                                is_hosted = False
+                                if not tool_name:
+                                    # Server-side hosted tools (web_search_call, …) carry no
+                                    # name/arguments; resolve a friendly label + query.
+                                    from datus.models.openai_compatible import describe_hosted_tool_item
+
+                                    hosted = describe_hosted_tool_item(raw_item)
+                                    if hosted:
+                                        tool_name, call_id, arguments = hosted
+                                        is_hosted = True
+                                    else:
+                                        tool_name = "unknown"
                                 if not call_id:
                                     call_id = f"tool_{uuid.uuid4().hex[:8]}"
                                 args_str = str(arguments)[:80]
@@ -669,9 +824,37 @@ class CodexModel(LLMBaseModel):
                                 action_history_manager.add_action(action)
                                 yield action
 
+                                # Hosted tools run server-side with no separate
+                                # output item. Emit the completion immediately —
+                                # keyed off the call's own ``action.sources`` — so
+                                # the CLI stops the in-progress spinner as soon as
+                                # the server-side search returns, instead of
+                                # leaving it pinned until stream end. The richer
+                                # ``url_citation`` titles still surface inline in
+                                # the assistant answer text.
+                                if is_hosted:
+                                    temp_tool_calls.pop(call_id, None)
+                                    from datus.schemas.web_result import extract_action_sources, hosted_action_query
+
+                                    raw_action = (
+                                        raw_item.get("action")
+                                        if isinstance(raw_item, dict)
+                                        else getattr(raw_item, "action", None)
+                                    )
+                                    hosted_done = self._build_hosted_search_completion(
+                                        call_id=call_id,
+                                        tool_name=tool_name,
+                                        arguments=arguments,
+                                        args_str=args_str,
+                                        query=str(hosted_action_query(raw_action) or ""),
+                                        sources=extract_action_sources(raw_action),
+                                    )
+                                    action_history_manager.add_action(hosted_done)
+                                    yield hosted_done
+
                         elif item_type == "tool_call_output_item":
                             raw_item = getattr(event.item, "raw_item", None)
-                            output_content = getattr(event.item, "output", "")
+                            output_content = image_result_for_display(getattr(event.item, "output", ""))
                             if raw_item:
                                 # raw_item can be a dict (Responses API) or Pydantic model (Chat Completions)
                                 if isinstance(raw_item, dict):
@@ -687,17 +870,24 @@ class CodexModel(LLMBaseModel):
                                 args_display = tool_info["args_display"] if tool_info else ""
                                 arguments = tool_info["arguments"] if tool_info else "{}"
 
+                                # FuncToolResult(success=0) returns normally rather than
+                                # raising, so inspect the payload instead of hardcoding
+                                # SUCCESS — otherwise a rejected write renders a green ✓.
+                                tool_failed = detect_tool_failure(output_content)
                                 action = ActionHistory(
                                     action_id=f"complete_{call_id}",
                                     role=ActionRole.TOOL,
                                     messages=f"Tool call: {tool_name}('{args_display}...')",
                                     action_type=tool_name,
                                     input={"function_name": tool_name, "arguments": arguments},
-                                    output={"success": True, "raw_output": output_content},
-                                    status=ActionStatus.SUCCESS,
+                                    output={"success": not tool_failed, "raw_output": output_content},
+                                    status=ActionStatus.FAILED if tool_failed else ActionStatus.SUCCESS,
                                 )
                                 action_history_manager.add_action(action)
                                 yield action
+
+            except ContextCapacityError:
+                raise
             except MaxTurnsExceeded as e:
                 raise DatusException(ErrorCode.MODEL_MAX_TURNS_EXCEEDED, message_args={"max_turns": max_turns}) from e
             except Exception as e:
@@ -748,6 +938,43 @@ class CodexModel(LLMBaseModel):
             action_history_manager.add_action(final_action)
             yield final_action
 
+    @staticmethod
+    def _build_hosted_search_completion(
+        call_id: str,
+        tool_name: str,
+        arguments: str,
+        args_str: str,
+        query: str,
+        sources: List[dict],
+    ) -> ActionHistory:
+        """Build the completion for a single hosted ``web_search`` call.
+
+        The hosted call item carries no results; the only per-call metadata
+        available in-stream is ``action.sources`` (URLs, no titles). We use those
+        as the canonical result and emit the completion immediately so the CLI
+        stops the in-progress spinner as soon as the server-side search returns.
+        The richer ``url_citation`` titles still surface inline in the assistant
+        answer text.
+        """
+        from datus.schemas.web_result import normalize_search_results, web_search_short_summary
+
+        canonical = normalize_search_results(query, sources or [])
+        summary = web_search_short_summary(canonical)
+        return ActionHistory(
+            action_id=f"complete_{call_id}",
+            role=ActionRole.TOOL,
+            messages=f"Tool call: {tool_name}('{args_str}...')",
+            action_type=tool_name,
+            input={"function_name": tool_name, "arguments": arguments},
+            output={
+                "success": True,
+                "raw_output": {"success": True, "result": canonical},
+                "summary": summary,
+                "status_message": summary,
+            },
+            status=ActionStatus.SUCCESS,
+        )
+
     def _extract_usage_info(self, source) -> dict:
         """Extract usage info from an SDK ``RunResult`` or ``Usage`` object.
 
@@ -778,8 +1005,11 @@ class CodexModel(LLMBaseModel):
         total_tokens = _int(getattr(usage, "total_tokens", 0))
 
         cached_tokens = 0
+        cache_write_tokens = 0
         if hasattr(usage, "input_tokens_details") and usage.input_tokens_details:
             cached_tokens = _int(getattr(usage.input_tokens_details, "cached_tokens", 0))
+            if self._is_official_chatgpt_host():
+                cache_write_tokens = _int(getattr(usage.input_tokens_details, "cache_write_tokens", 0))
 
         reasoning_tokens = 0
         if hasattr(usage, "output_tokens_details") and usage.output_tokens_details:
@@ -796,8 +1026,8 @@ class CodexModel(LLMBaseModel):
 
         context_usage_ratio = 0
         max_context = self.context_length()
-        if max_context and total_tokens > 0:
-            context_usage_ratio = round(total_tokens / max_context, 3)
+        if max_context:
+            context_usage_ratio = round(last_call_input_tokens / max_context, 3)
 
         return {
             "requests": _int(getattr(usage, "requests", 0)),
@@ -805,6 +1035,7 @@ class CodexModel(LLMBaseModel):
             "output_tokens": output_tokens,
             "total_tokens": total_tokens,
             "cached_tokens": cached_tokens,
+            "cache_write_tokens": cache_write_tokens,
             "reasoning_tokens": reasoning_tokens,
             "cache_hit_rate": cache_hit_rate,
             "context_usage_ratio": context_usage_ratio,
@@ -854,10 +1085,10 @@ class CodexModel(LLMBaseModel):
 
     def max_tokens(self) -> Optional[int]:
         """Return the max output tokens for the current model."""
-        value = self._lookup_spec("max_tokens")
+        value = self.model_config.max_tokens or self._lookup_spec("max_tokens")
         return value if value is not None else _CODEX_DEFAULT_MAX_TOKENS
 
     def context_length(self) -> Optional[int]:
         """Return the context length for the current model."""
-        value = self._lookup_spec("context_length")
+        value = self.model_config.context_length or self._lookup_spec("context_length")
         return value if value is not None else _CODEX_DEFAULT_CONTEXT_LENGTH

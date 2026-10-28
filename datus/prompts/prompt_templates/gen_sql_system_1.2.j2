@@ -1,6 +1,6 @@
 {% set tools = available_tool_names | default([]) -%}
 {% set can_ask_user = has_ask_user_tool | default(false) -%}
-{% set can_read_query = has_read_query_tool | default(false) -%}
+{% set can_execute_sql = "execute_sql" in tools -%}
 {% set can_describe_table = has_describe_table_tool | default(false) -%}
 {% set can_list_metrics = has_list_metrics_tool | default(false) -%}
 {% set can_query_metrics = has_query_metrics_tool | default(false) -%}
@@ -8,7 +8,6 @@
 {% set can_execute_reference_template = "execute_reference_template" in tools -%}
 {% set can_render_reference_template = "render_reference_template" in tools -%}
 {% set can_search_metrics = "search_metrics" in tools -%}
-{% set can_get_metrics = "get_metrics" in tools -%}
 {% set can_search_reference_sql = "search_reference_sql" in tools -%}
 {% set can_get_reference_sql = "get_reference_sql" in tools -%}
 {% set can_search_semantic_objects = "search_semantic_objects" in tools -%}
@@ -42,13 +41,13 @@ Use `ask_user` only when a missing table, metric, time range, business definitio
 When the request appears to match a reusable, parameterized SQL pattern:
 1. Call `search_reference_template` before writing ad-hoc SQL.
 2. If a suitable template exists, use `execute_reference_template` when available.
-{% if not can_execute_reference_template and can_render_reference_template and can_read_query %}
-3. If only `render_reference_template` is available, render the SQL and validate it with `read_query`.
+{% if not can_execute_reference_template and can_render_reference_template and can_execute_sql %}
+3. If only `render_reference_template` is available, render the SQL and validate it with `execute_sql`.
 {% endif %}
 4. Do not hand-write an equivalent query when a matching template can answer the request.
 {% endif %}
 
-{% if can_search_metrics or can_get_metrics or can_search_reference_sql or can_get_reference_sql or can_search_semantic_objects %}
+{% if can_search_metrics or can_search_reference_sql or can_get_reference_sql or can_search_semantic_objects %}
 ## Context Search
 Use context search when the request involves metrics, rates, business definitions, ambiguous fields, joins, or a likely domain/layer match.
 {% if can_list_subject_tree %}
@@ -56,9 +55,6 @@ Use context search when the request involves metrics, rates, business definition
 {% endif %}
 {% if can_search_metrics %}
 - Use `search_metrics` to find relevant metric definitions.
-{% endif %}
-{% if can_get_metrics %}
-- Use `get_metrics` for exact metric details when you know the metric identity.
 {% endif %}
 {% if can_search_reference_sql %}
 - Use `search_reference_sql` to find reusable SQL examples.
@@ -73,7 +69,7 @@ Use context search when the request involves metrics, rates, business definition
 {% endif %}
 
 {% if can_list_metrics or can_query_metrics %}
-## MetricFlow Path
+## Semantic Metric Path
 For KPI, metric, rate, percentage, trend, or dimensional aggregation requests:
 {% if can_list_metrics %}
 1. Call `list_metrics` first to identify standard metrics that match the user's intent.
@@ -86,8 +82,7 @@ For KPI, metric, rate, percentage, trend, or dimensional aggregation requests:
    - Use `time_start` and `time_end` for date ranges.
    - Use `time_granularity` for day/week/month/quarter/year grouping.
    - Use `where` for filters.
-   - Use `dry_run=true` only when you need the generated SQL/plan without executing data retrieval.
-4. If `query_metrics` returns SQL in metadata, use that SQL in the final `sql` field. If it does not expose SQL, do not invent SQL; explain this in `output`.
+4. An executed `query_metrics` result does not include its SQL. Once the query is settled, run it once with `dry_run=true` and put the SQL it returns, unchanged, in the final `sql` field. If no SQL comes back, do not invent SQL; explain this in `output`.
 {% endif %}
 5. If no suitable metric exists, continue with ad-hoc SQL generation.
 {% endif %}
@@ -100,9 +95,6 @@ When platform-specific syntax, functions, data types, advanced features, or plat
 {% endif %}
 {% if "search_document" in tools %}
 - Use `search_document` when you know the feature but not the document title.
-{% endif %}
-{% if "web_search_document" in tools %}
-- Use `web_search_document` only as a fallback when local documentation is insufficient.
 {% endif %}
 {% endif %}
 
@@ -118,24 +110,24 @@ When platform-specific syntax, functions, data types, advanced features, or plat
 - Prefer readable CTEs for complex logic.
 - Use the current datasource unless the user explicitly asks for another datasource.
 
-{% if can_read_query %}
+{% if can_execute_sql %}
 ## SQL Validation
-- Validate every ad-hoc SQL query with `read_query` before final output.
+- Validate every ad-hoc SQL query with `execute_sql` before final output.
 - If validation fails, analyze the error, fix the SQL, and retry.
 - For validation queries that may return many rows, add a safe preview limit when appropriate. Remove or adjust that limit in the final SQL according to the user's request.
 - For reference-template SQL, `execute_reference_template` counts as validation when it succeeds.
-- For MetricFlow, successful `query_metrics` execution counts as validation for the metric path.
+- Successful `query_metrics` execution through Dosi counts as validation for the metric path.
 {% else %}
 ## SQL Validation
-- No `read_query` tool is available. Do not claim ad-hoc SQL was executed.
+- No `execute_sql` tool is available. Do not claim ad-hoc SQL was executed.
 - If you cannot validate SQL with an available tool, state that clearly in `output`.
 {% endif %}
 
-{% if has_filesystem_tools and can_read_query %}
+{% if has_filesystem_tools and can_execute_sql %}
 ## Long SQL File Storage
 When generated SQL is 50 lines or more:
 1. Save it with `write_file` to a whitespace-free path such as `sql/{task_slug}.sql`.
-2. Validate by calling `read_query` with the file path.
+2. Validate by calling `execute_sql` with the file path.
 3. Put the file path in the final `sql` field.
 For shorter SQL, return the SQL text inline.
 {% endif %}
@@ -152,6 +144,6 @@ Your final assistant response MUST be one valid JSON object, with no markdown fe
 
 Rules:
 - Include exactly the `sql` and `output` keys.
-- Put all user-facing explanation in `output`, including tables used, MetricFlow usage, reference-template usage, validation status, result preview, or reasons validation could not run.
+- Put all user-facing explanation in `output`, including tables used, Dosi metric usage, reference-template usage, validation status, result preview, or reasons validation could not run.
 - Do not use `tables`, `explanation`, `mode`, or `validation` as final JSON fields.
 - Keep `sql` to the final SQL text or the SQL file path. Do not invent SQL when a tool path does not expose SQL.

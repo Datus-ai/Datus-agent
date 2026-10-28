@@ -13,23 +13,17 @@ import pytest
 from datus.cli.action_display.tool_content import (
     ToolCallContent,
     ToolCallContentBuilder,
-    _build_analyze_columns,
-    _build_analyze_metric_candidates,
-    _build_analyze_relationships,
     _build_ask_user,
     _build_attribution_analyze,
+    _build_bash,
     _build_check_exists,
     _build_describe_table,
     _build_doc_search_result,
-    _build_end_generation,
-    _build_end_metric_generation,
-    _build_execute_command,
     _build_generate_sql_summary_id,
     _build_get_detail,
-    _build_get_dimensions,
     _build_get_document,
+    _build_get_metric,
     _build_get_metrics,
-    _build_get_multiple_ddl,
     _build_get_reference_sql,
     _build_glob,
     _build_grep,
@@ -41,6 +35,9 @@ from datus.cli.action_display.tool_content import (
     _build_list_tables,
     _build_load_skill,
     _build_parse_dates,
+    _build_profile_semantic_model_evidence,
+    _build_publish_metrics,
+    _build_publish_semantic_model,
     _build_query_metrics,
     _build_read_file,
     _build_read_query,
@@ -56,6 +53,8 @@ from datus.cli.action_display.tool_content import (
     _build_todo_update,
     _build_todo_write,
     _build_validate_semantic,
+    _build_web_fetch,
+    _build_web_search,
     _build_write_file,
     _format_csv_preview,
     _format_describe_table_output_verbose,
@@ -66,10 +65,13 @@ from datus.cli.action_display.tool_content import (
     extract_args,
     format_generic_preview,
     format_output_verbose,
+    format_review_line,
     make_base_content,
     parse_output_data,
+    tool_specific_args_summary,
 )
 from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
+from datus.schemas.tool_summary import TOOL_SUMMARY_REGISTRY
 
 
 def _make(
@@ -130,6 +132,22 @@ class TestSharedHelpers:
 
     def test_calc_duration_no_end(self):
         assert calc_duration(_make()) == ""
+
+    def test_format_running_duration_seconds(self):
+        from datus.cli.action_display.tool_content import format_running_duration
+
+        assert format_running_duration(datetime.now() - timedelta(seconds=3)) == "3s"
+
+    def test_format_running_duration_minutes(self):
+        from datus.cli.action_display.tool_content import format_running_duration
+
+        assert format_running_duration(datetime.now() - timedelta(seconds=61)) == "1m1s"
+
+    def test_format_running_duration_none_and_future(self):
+        from datus.cli.action_display.tool_content import format_running_duration
+
+        assert format_running_duration(None) == "0s"
+        assert format_running_duration(datetime.now() + timedelta(seconds=5)) == "0s"
 
     def test_extract_args_dict(self):
         a = _make(input_data={"function_name": "f", "arguments": {"a": 1, "b": "x"}})
@@ -361,30 +379,35 @@ class TestBuildSearchTable:
     def test_compact(self):
         a = _make(
             input_data={"function_name": "search_table"},
-            output_data={"metadata": [1, 2], "sample_data": [3]},
-        )
-        tc = _build_search_table(a, verbose=False)
-        assert "2 tables" in tc.compact_result
-        assert "1 sample row" in tc.compact_result
-
-    def test_compact_with_compressed_sample_data(self):
-        a = _make(
-            input_data={"function_name": "search_table"},
             output_data={
-                "metadata": [1, 2],
-                "sample_data": {
-                    "original_rows": 1,
-                    "original_columns": ["sample_rows"],
-                    "is_compressed": False,
-                    "compressed_data": "index,sample_rows\n0,[{'id': 1}]",
-                    "removed_columns": [],
-                    "compression_type": "none",
-                },
+                "metadata": [
+                    {"table_name": "orders", "sample_rows": [{"id": 1}]},
+                    {"table_name": "customers"},
+                ]
             },
         )
         tc = _build_search_table(a, verbose=False)
         assert "2 tables" in tc.compact_result
         assert "1 sample row" in tc.compact_result
+
+    def test_compact_with_func_tool_envelope_and_inline_sample_rows(self):
+        a = _make(
+            input_data={"function_name": "search_table"},
+            output_data={
+                "raw_output": {
+                    "success": 1,
+                    "error": None,
+                    "result": {
+                        "metadata": [
+                            {"table_name": "orders", "sample_rows": [{"id": 1}, {"id": 2}]},
+                            {"table_name": "customers", "sample_rows": [{"id": 3}]},
+                        ]
+                    },
+                }
+            },
+        )
+        tc = _build_search_table(a, verbose=False)
+        assert tc.compact_result == "2 tables and 3 sample rows"
 
     def test_compact_no_data(self):
         a = _make(input_data={"function_name": "search_table"})
@@ -797,6 +820,51 @@ class TestBuildWriteFile:
         tc = _build_write_file(a, verbose=True)
         assert tc.args_lines == []
 
+    def test_compact_soft_failure_flips_mark_and_shows_error(self):
+        """FuncToolResult(success=0) with no raised exception (status SUCCESS)
+        must still render ✗ and surface the error, not a fabricated
+        'wrote N lines' from the input content."""
+        a = _make(
+            status=ActionStatus.SUCCESS,
+            input_data={
+                "function_name": "write_file",
+                "arguments": {"path": "infra/x.sh", "content": "#!/bin/sh\necho hi"},
+            },
+            output_data={"raw_output": '{"success": 0, "error": "File type not allowed: infra/x.sh"}'},
+        )
+        tc = _build_write_file(a, verbose=False)
+        assert tc.status_mark == "✗"
+        assert tc.compact_result == "File type not allowed: infra/x.sh"
+        assert "wrote" not in tc.compact_result
+
+    def test_compact_error_only_payload_flips_mark(self):
+        """An error-only payload (no success field) is also a failure."""
+        a = _make(
+            input_data={
+                "function_name": "write_file",
+                "arguments": {"path": "x.sql", "content": "SELECT 1"},
+            },
+            output_data={"raw_output": '{"error": "Permission denied: x.sql"}'},
+        )
+        tc = _build_write_file(a, verbose=False)
+        assert tc.status_mark == "✗"
+        assert tc.compact_result == "Permission denied: x.sql"
+
+    def test_compact_failed_status_shows_error(self):
+        """When the backend already marked the action FAILED, the compact line
+        reflects the failure rather than fabricating a write count."""
+        a = _make(
+            status=ActionStatus.FAILED,
+            input_data={
+                "function_name": "write_file",
+                "arguments": {"path": "x.sql", "content": "SELECT 1"},
+            },
+            output_data={"raw_output": '{"success": 0, "error": "disk full"}'},
+        )
+        tc = _build_write_file(a, verbose=False)
+        assert tc.status_mark == "✗"
+        assert "wrote" not in (tc.compact_result or "")
+
 
 # ── Builder registry: new tools registered ────────────────────────
 
@@ -1151,56 +1219,233 @@ class TestBuildSearchSemanticObjects:
 
 @pytest.mark.ci
 class TestBuildListMetricsSemantic:
-    def test_compact(self):
-        a = _make(
+    def _envelope(self, items, **envelope):
+        payload = {"items": items, "total": None, "has_more": False, "extra": None}
+        payload.update(envelope)
+        return _make(
             input_data={"function_name": "list_metrics"},
-            output_data={"result": [{"name": "m1"}, {"name": "m2"}, {"name": "m3"}]},
+            output_data={"raw_output": json.dumps({"success": 1, "result": payload})},
+        )
+
+    def test_compact_counts_the_paginated_envelope(self):
+        """list_metrics answers with a FuncToolListResult, never a bare list.
+
+        Counting it as a list finds no items at all, so every call — however
+        many metrics it returned — reported zero.
+        """
+        a = self._envelope([{"name": f"m{i}"} for i in range(3)])
+        tc = _build_list_metrics_semantic(a, verbose=False)
+        assert tc.compact_result == "3 metrics"
+
+    def test_compact_reports_the_next_page(self):
+        a = self._envelope(
+            [{"name": f"m{i}"} for i in range(20)],
+            total=78,
+            has_more=True,
+            extra={"next_offset": 60},
         )
         tc = _build_list_metrics_semantic(a, verbose=False)
-        assert "3 metrics" in tc.compact_result
+        assert tc.compact_result == "20/78 metrics · more from 60"
+
+    def test_compact_distinguishes_an_empty_page(self):
+        tc = _build_list_metrics_semantic(self._envelope([]), verbose=False)
+        assert tc.compact_result == "no metrics"
+
+    def test_verbose_lists_every_metric_with_its_description(self):
+        """Verbose is the mode opened to see what came back, so it shows all of
+        it — a metric left out sends the reader to the raw JSON instead."""
+        items = [{"name": f"metric_{i}", "kind": "aggregate", "description": f"desc {i}"} for i in range(30)]
+        tc = _build_list_metrics_semantic(self._envelope(items), verbose=True)
+        rendered = "\n".join(tc.output_lines)
+        for i in range(30):
+            assert f"metric_{i}" in rendered
+            assert f"desc {i}" in rendered
+
+    def test_verbose_gives_a_composite_its_whole_formula(self):
+        """The formula is the decomposition — the reason to open verbose on a
+        scorecard — so the cell wraps it rather than clipping it."""
+        formula = "kp_store_fault * 0.15 + kp_store_issue * 0.1 + kp_top_issue * 0.2 + kp_over7d * 0.1"
+        items = [
+            {"name": "area_score", "kind": "expression", "derive_family": "compose", "derive_expr": formula},
+            {"name": "rank_it", "kind": "ratio", "derive_family": "window", "derive_base": "area_score"},
+        ]
+        tc = _build_list_metrics_semantic(self._envelope(items), verbose=True)
+        rendered = " ".join(" ".join(line.split()) for line in tc.output_lines)
+        assert "…" not in rendered
+        for term in formula.split(" + "):
+            assert term in rendered
+        assert "window of area_score" in rendered
 
 
 @pytest.mark.ci
-class TestBuildGetDimensions:
-    def test_compact(self):
-        a = _make(
-            input_data={"function_name": "get_dimensions"},
-            output_data={"raw_output": '{"success": 1, "result": ["dim1", "dim2"]}'},
+class TestBuildListMetricsText:
+    """list_metrics now answers with text; the envelope tests above are the
+    records written before it did."""
+
+    def _page(self, text):
+        return _make(
+            input_data={"function_name": "list_metrics"},
+            output_data={"raw_output": json.dumps({"success": 1, "result": text})},
         )
-        tc = _build_get_dimensions(a, verbose=False)
-        assert "2 dimensions" in tc.compact_result
+
+    def test_compact_counts_the_metric_lines(self):
+        page = "Sales:\n- orders -- Order count\n- revenue -- Net revenue\nFinance:\n- margin"
+        assert _build_list_metrics_semantic(self._page(page), verbose=False).compact_result == "3 metrics"
+
+    def test_compact_reports_the_next_page(self):
+        page = "Sales:\n" + "\n".join(f"- m{i}" for i in range(20))
+        page += "\nmore: 20 of 78 metrics shown; call again with offset=60"
+        tc = _build_list_metrics_semantic(self._page(page), verbose=False)
+        assert tc.compact_result == "20/78 metrics · more from 60"
+
+    def test_compact_distinguishes_an_empty_page(self):
+        assert _build_list_metrics_semantic(self._page("no metrics"), verbose=False).compact_result == "no metrics"
+
+    def test_verbose_shows_the_page_as_returned(self):
+        page = "Sales:\n- orders -- Order count"
+        rendered = "\n".join(_build_list_metrics_semantic(self._page(page), verbose=True).output_lines)
+        assert "Sales:" in rendered
+        assert "- orders -- Order count" in rendered
+
+
+@pytest.mark.ci
+class TestBuildGetMetric:
+    def test_compact_reads_the_metric_detail_shape(self):
+        """get_metric returns one metric's detail dict, never a bare list.
+
+        Reading ``result`` as the list of dimensions leaves the compact line
+        empty for every real response, which is what a caller actually sees.
+        """
+        a = _make(
+            input_data={"function_name": "get_metric"},
+            output_data={
+                "raw_output": '{"success": 1, "result": {"name": "revenue", "kind": "aggregate", '
+                '"dimensions": [{"name": "region"}, {"name": "channel"}]}}'
+            },
+        )
+        tc = _build_get_metric(a, verbose=False)
+        # The header already carries the metric name, and dimension names do not
+        # fit a one-line result — the counts are what differ between the parallel
+        # get_metric calls an agent fires.
+        assert tc.compact_result == "2 dims"
+
+    def test_compact_counts_the_required_dimensions(self):
+        """The one field that changes a query's meaning without failing it, so
+        it earns room on the compact line even when dimension names do not."""
+        a = _make(
+            input_data={"function_name": "get_metric"},
+            output_data={
+                "raw_output": json.dumps(
+                    {
+                        "success": 1,
+                        "result": {
+                            "name": "area_score",
+                            "dimensions": [{"name": f"d{i}"} for i in range(6)],
+                            "required_dimensions": ["cell.brand", "cell.area"],
+                        },
+                    }
+                )
+            },
+        )
+        tc = _build_get_metric(a, verbose=False)
+        assert tc.compact_result == "6 dims · 2 required"
+
+    def test_verbose_marks_a_required_dimension_over_its_recommendation(self):
+        """The two signals disagree on a scorecard: the adapter infers a market
+        code is a poor grouping choice while the metric cannot be computed
+        without it. Showing "not advised" would name the one dimension the
+        query is refused without."""
+        a = _make(
+            input_data={"function_name": "get_metric"},
+            output_data={
+                "raw_output": json.dumps(
+                    {
+                        "success": 1,
+                        "result": {
+                            "name": "area_score",
+                            "required_dimensions": ["cell.brand"],
+                            "dimensions": [
+                                {"name": "cell.brand", "recommended": False},
+                                {"name": "cell.month", "recommended": True, "recommendation_source": "inferred:time"},
+                            ],
+                        },
+                    }
+                )
+            },
+        )
+        tc = _build_get_metric(a, verbose=True)
+        rendered = [" ".join(line.split()) for line in tc.output_lines]
+        assert any(line.startswith("cell.brand required") for line in rendered)
+        assert not any("not advised" in line for line in rendered)
+
+    def test_compact_reports_unresolved_dimensions(self):
+        a = _make(
+            input_data={"function_name": "get_metric"},
+            output_data={
+                "raw_output": '{"success": 1, "result": {"name": "revenue", "dimensions_error": "planner down"}}'
+            },
+        )
+        tc = _build_get_metric(a, verbose=False)
+        assert tc.compact_result == "no dims"
+
+    def test_compact_stays_empty_without_a_result(self):
+        a = _make(
+            input_data={"function_name": "get_metric"},
+            output_data={"raw_output": '{"success": 0, "error": "Unknown metric"}'},
+        )
+        tc = _build_get_metric(a, verbose=False)
+        assert not tc.compact_result
 
 
 @pytest.mark.ci
 class TestBuildQueryMetrics:
-    def test_compact_with_metadata_rows(self):
+    @staticmethod
+    def _action(text, verbose_args=None):
+        input_data = {"function_name": "query_metrics"}
+        if verbose_args is not None:
+            input_data["arguments"] = verbose_args
+        return _make(input_data=input_data, output_data={"raw_output": json.dumps({"success": 1, "result": text})})
+
+    def test_compact_reports_rows_and_columns(self):
+        tc = _build_query_metrics(self._action("result_id: query_metrics:1\nrows: 2\n\na\n1\n2"), verbose=False)
+        assert tc.compact_result == "2 rows × 1 col"
+
+    def test_compact_discloses_a_truncated_preview(self):
+        """The row count is what the query produced, not what came back.
+
+        A result trimmed from 32 rows to 21 read as a complete 32, so a caller
+        could total a column and be wrong with nothing having failed.
+        """
+        text = "\n".join(
+            ["result_id: query_metrics:1", "rows: 32", "", "m,d,v"]
+            + ["1,2,3"] * 10
+            + ["... 12 rows omitted"]
+            + ["1,2,3"] * 10
+        )
+        tc = _build_query_metrics(self._action(text), verbose=False)
+        assert tc.compact_result == "32 rows × 3 cols · preview 20"
+
+    def test_compact_of_a_dry_run_says_the_query_completed(self):
         a = _make(
             input_data={"function_name": "query_metrics"},
             output_data={
-                "raw_output": '{"success": 1, "result": {"columns": ["a"], '
-                '"data": "a\\n1\\n2", "metadata": {"row_count": 2}}}'
+                "raw_output": '{"success": 1, "result": {"columns": ["sql"], "metadata": {"sql": "SELECT 1"}}}'
             },
         )
         tc = _build_query_metrics(a, verbose=False)
-        assert "2 rows" in tc.compact_result
+        assert tc.compact_result == "query completed"
 
-    def test_compact_fallback(self):
-        a = _make(
-            input_data={"function_name": "query_metrics"},
-            output_data={"raw_output": '{"success": 1, "result": {"columns": ["a"], "data": "a\\n1"}}'},
+    def test_verbose_shows_the_report_lines_and_rows(self):
+        text = (
+            "result_id: query_metrics:1\nrows: 30\nwarning where_unread: where was not read; hint: move it\n\n"
+            "a,b\n1,2\n... 28 rows omitted\n3,4"
         )
-        tc = _build_query_metrics(a, verbose=False)
-        assert "Query completed" in tc.compact_result
-
-    def test_verbose_csv_preview(self):
-        a = _make(
-            input_data={"function_name": "query_metrics", "arguments": {"metrics": ["revenue"]}},
-            output_data={
-                "raw_output": '{"success": 1, "result": {"columns": ["a", "b"], '
-                '"data": "a,b\\n1,2\\n3,4", "metadata": {}}}'
-            },
-        )
-        tc = _build_query_metrics(a, verbose=True)
+        tc = _build_query_metrics(self._action(text, verbose_args={"metrics": ["revenue"]}), verbose=True)
+        rendered = "\n".join(tc.output_lines)
+        assert "30 rows × 2 cols · preview 2" in rendered
+        assert "warning where_unread: where was not read; hint: move it" in rendered
+        assert "result_id" not in rendered
+        assert "omitted" not in rendered
         assert any("data" in line for line in tc.output_lines)
 
 
@@ -1212,18 +1457,49 @@ class TestBuildValidateSemantic:
             output_data={"raw_output": '{"success": 1, "result": {"valid": true, "issues": []}}'},
         )
         tc = _build_validate_semantic(a, verbose=False)
-        assert "Valid" in tc.compact_result
+        assert tc.compact_result == "valid"
 
-    def test_compact_invalid(self):
+    def test_compact_keeps_warnings_on_a_valid_model(self):
+        """A valid model still reports what it warned about.
+
+        A relationship whose target is not unique silently fans a join out, and
+        a bare "valid" drops exactly the finding a caller would have acted on.
+        """
+        a = _make(
+            input_data={"function_name": "validate_semantic"},
+            output_data={
+                "raw_output": '{"success": 1, "result": {"valid": true, "issues": '
+                '[{"severity": "warning", "message": "a"}, {"severity": "warning", "message": "b"}]}}'
+            },
+        )
+        tc = _build_validate_semantic(a, verbose=False)
+        assert tc.compact_result == "valid · 2 warnings"
+
+    def test_compact_invalid_counts_errors_not_every_issue(self):
+        """Warnings are not errors. Counting the whole issue list called a
+        model with one error and one warning "2 validation errors"."""
         a = _make(
             input_data={"function_name": "validate_semantic"},
             output_data={
                 "raw_output": '{"success": 1, "result": {"valid": false, "issues": '
-                '[{"severity": "error", "message": "bad"}, {"severity": "warn", "message": "meh"}]}}'
+                '[{"severity": "error", "message": "bad"}, {"severity": "warning", "message": "meh"}]}}'
             },
         )
         tc = _build_validate_semantic(a, verbose=False)
-        assert "2 validation errors" in tc.compact_result
+        assert tc.compact_result == "1 error"
+
+    def test_verbose_shows_each_issue_message(self):
+        a = _make(
+            input_data={"function_name": "validate_semantic"},
+            output_data={
+                "raw_output": '{"success": 1, "result": {"valid": true, "issues": '
+                '[{"severity": "warning", "message": "relationship_target_not_unique on kpi_cell"}]}}'
+            },
+        )
+        tc = _build_validate_semantic(a, verbose=True)
+        rendered = " ".join(" ".join(line.split()) for line in tc.output_lines)
+        assert "valid · 1 warning" in rendered
+        assert "relationship_target_not_unique on kpi_cell" in rendered
 
 
 @pytest.mark.ci
@@ -1232,12 +1508,14 @@ class TestBuildAttributionAnalyze:
         a = _make(
             input_data={"function_name": "attribution_analyze"},
             output_data={
-                "raw_output": '{"success": 1, "result": {"dimension_ranking": ["d1", "d2"], '
-                '"selected_dimensions": ["d1"], "top_dimension_values": []}}'
+                "raw_output": '{"success": 1, "result": {'
+                '"implementation": "generic", "strategy": "term_wise", '
+                '"per_dimension": {"d1": {"values": [], "non_additive": false}}, '
+                '"warnings": [{"code": "dimension_analysis_failed", "dimension": "d2"}]}}'
             },
         )
         tc = _build_attribution_analyze(a, verbose=False)
-        assert "1 dimensions analyzed" in tc.compact_result
+        assert tc.compact_result == "generic term_wise, 1/2 dimensions usable, 1 failed, 1 warning"
 
 
 # ── Filesystem tools ──────────────────────────────────────────────
@@ -1332,6 +1610,123 @@ class TestBuildGetDocument:
         assert "3 chunks" in tc.compact_result
 
 
+# ── Web tools ─────────────────────────────────────────────────────
+
+
+@pytest.mark.ci
+class TestBuildWebSearch:
+    def test_compact(self):
+        a = _make(
+            input_data={"function_name": "web_search"},
+            output_data={
+                "raw_output": {
+                    "success": True,
+                    "result": {
+                        "query": "duckdb release",
+                        "result_count": 2,
+                        "results": [
+                            {"title": "DuckDB", "url": "https://duckdb.org", "snippet": "db", "age": None},
+                            {"title": "Notes", "url": "https://x.io", "snippet": "", "age": "2d"},
+                        ],
+                    },
+                }
+            },
+        )
+        tc = _build_web_search(a, verbose=False)
+        assert "2 web results" in tc.compact_result
+        assert "DuckDB" in tc.compact_result
+
+    def test_verbose_lists_results(self):
+        a = _make(
+            input_data={"function_name": "web_search"},
+            output_data={
+                "raw_output": {
+                    "success": True,
+                    "result": {
+                        "query": "duckdb release",
+                        "result_count": 1,
+                        "results": [
+                            "not-a-dict-row",  # skipped by the builder
+                            {"title": "DuckDB", "url": "https://duckdb.org", "snippet": "fast db", "age": "2d"},
+                        ],
+                    },
+                }
+            },
+        )
+        tc = _build_web_search(a, verbose=True)
+        blob = "\n".join(tc.output_lines)
+        assert "query" in blob and "duckdb release" in blob
+        assert "DuckDB" in blob
+        assert "https://duckdb.org" in blob
+        assert "fast db" in blob
+        assert "2d" in blob
+
+    def test_error_when_result_missing(self):
+        a = _make(
+            status=ActionStatus.FAILED,
+            input_data={"function_name": "web_search"},
+            output_data={"raw_output": {"success": False, "error": "boom"}, "error": "boom"},
+        )
+        tc = _build_web_search(a, verbose=False)
+        # No canonical result dict -> error path surfaces the error message.
+        assert "boom" in tc.compact_result
+
+
+@pytest.mark.ci
+class TestBuildWebFetch:
+    def test_compact(self):
+        a = _make(
+            input_data={"function_name": "web_fetch"},
+            output_data={
+                "raw_output": {
+                    "success": True,
+                    "result": {
+                        "url": "https://duckdb.org",
+                        "title": "DuckDB",
+                        "content": "hello world",
+                        "truncated": False,
+                        "char_count": 11,
+                    },
+                }
+            },
+        )
+        tc = _build_web_fetch(a, verbose=False)
+        assert "DuckDB" in tc.compact_result
+        assert "11" in tc.compact_result
+
+    def test_verbose_shows_title_url_and_content(self):
+        a = _make(
+            input_data={"function_name": "web_fetch"},
+            output_data={
+                "raw_output": {
+                    "success": True,
+                    "result": {
+                        "url": "https://duckdb.org",
+                        "title": "DuckDB",
+                        "content": "line one\nline two",
+                        "truncated": True,
+                        "char_count": 17,
+                    },
+                }
+            },
+        )
+        tc = _build_web_fetch(a, verbose=True)
+        blob = "\n".join(tc.output_lines)
+        assert "DuckDB" in blob
+        assert "https://duckdb.org" in blob
+        assert "truncated" in blob
+        assert "line one" in blob and "line two" in blob
+
+    def test_error_when_result_missing(self):
+        a = _make(
+            status=ActionStatus.FAILED,
+            input_data={"function_name": "web_fetch"},
+            output_data={"raw_output": {"success": False, "error": "nope"}, "error": "nope"},
+        )
+        tc = _build_web_fetch(a, verbose=False)
+        assert "nope" in tc.compact_result
+
+
 # ── Plan tools ────────────────────────────────────────────────────
 
 
@@ -1416,28 +1811,28 @@ class TestBuildCheckExists:
 
 
 @pytest.mark.ci
-class TestBuildEndGeneration:
+class TestBuildPublishSemanticModel:
     def test_compact(self):
         a = _make(
-            input_data={"function_name": "end_semantic_model_generation"},
+            input_data={"function_name": "publish_semantic_model"},
             output_data={
                 "raw_output": '{"success": 1, "result": '
                 '{"message": "done", "semantic_model_files": ["a.yml", "b.yml"]}}'
             },
         )
-        tc = _build_end_generation(a, verbose=False)
+        tc = _build_publish_semantic_model(a, verbose=False)
         assert "2 semantic models generated" in tc.compact_result
 
 
 @pytest.mark.ci
-class TestBuildEndMetricGeneration:
+class TestBuildPublishMetrics:
     def test_compact(self):
         a = _make(
-            input_data={"function_name": "end_metric_generation"},
+            input_data={"function_name": "publish_metrics"},
             output_data={"raw_output": '{"success": 1, "result": {"message": "done"}}'},
         )
-        tc = _build_end_metric_generation(a, verbose=False)
-        assert "Metric generated" in tc.compact_result
+        tc = _build_publish_metrics(a, verbose=False)
+        assert "Metrics published" in tc.compact_result
 
 
 @pytest.mark.ci
@@ -1496,95 +1891,22 @@ class TestBuildParseDates:
 # ── Semantic model generation tools ───────────────────────────────
 
 
-@pytest.mark.ci
-class TestBuildAnalyzeRelationships:
+class TestBuildProfileSemanticModelEvidence:
     def test_compact(self):
-        a = _make(
-            input_data={"function_name": "analyze_table_relationships"},
-            output_data={
-                "raw_output": '{"success": 1, "result": {"relationships": ['
-                '{"source_table": "a", "target_table": "b"}], "summary": "ok"}}'
+        payload = {
+            "success": 1,
+            "result": {
+                "data_profiled": True,
+                "tables": {"orders": {}, "customers": {}},
+                "summary": "ok",
             },
-        )
-        tc = _build_analyze_relationships(a, verbose=False)
-        assert "1 relationships found" in tc.compact_result
-
-
-@pytest.mark.ci
-class TestBuildGetMultipleDdl:
-    def test_compact(self):
+        }
         a = _make(
-            input_data={"function_name": "get_multiple_tables_ddl"},
-            output_data={
-                "raw_output": '{"success": 1, "result": ['
-                '{"table_name": "t1", "definition": "CREATE TABLE t1 (id INT)"},'
-                '{"table_name": "t2", "definition": "CREATE TABLE t2 (id INT)"}]}'
-            },
+            input_data={"function_name": "profile_semantic_model_evidence"},
+            output_data={"raw_output": json.dumps(payload)},
         )
-        tc = _build_get_multiple_ddl(a, verbose=False)
-        assert "2 DDLs retrieved" in tc.compact_result
-
-    def test_verbose_shows_ddl(self):
-        a = _make(
-            input_data={"function_name": "get_multiple_tables_ddl", "arguments": {"tables": ["t1"]}},
-            output_data={
-                "raw_output": '{"success": 1, "result": ['
-                '{"table_name": "t1", "definition": "CREATE TABLE t1 (id INT)"}]}'
-            },
-        )
-        tc = _build_get_multiple_ddl(a, verbose=True)
-        assert any("t1" in line for line in tc.output_lines)
-        assert any("CREATE TABLE" in line for line in tc.output_lines)
-
-    def test_verbose_shows_error(self):
-        a = _make(
-            input_data={"function_name": "get_multiple_tables_ddl", "arguments": {"tables": ["t1"]}},
-            output_data={"raw_output": '{"success": 1, "result": [{"table_name": "t1", "error": "not found"}]}'},
-        )
-        tc = _build_get_multiple_ddl(a, verbose=True)
-        assert any("not found" in line for line in tc.output_lines)
-
-
-@pytest.mark.ci
-class TestBuildAnalyzeColumns:
-    def test_compact(self):
-        a = _make(
-            input_data={"function_name": "analyze_column_usage_patterns"},
-            output_data={
-                "raw_output": '{"success": 1, "result": {"column_patterns": '
-                '{"col1": {"usage_count": 5}, "col2": {"usage_count": 3}}, "summary": "ok"}}'
-            },
-        )
-        tc = _build_analyze_columns(a, verbose=False)
-        assert "2 columns analyzed" in tc.compact_result
-
-
-@pytest.mark.ci
-class TestBuildAnalyzeMetricCandidates:
-    def test_compact(self):
-        a = _make(
-            input_data={"function_name": "analyze_metric_candidates_from_history"},
-            output_data={
-                "raw_output": '{"success": 1, "result": {'
-                '"metric_candidates": [{"name": "paid_arppu"}, {"name": "gross_margin_rate"}], '
-                '"base_measures": [{"name": "paid_amount"}], "summary": "ok"}}'
-            },
-        )
-        tc = _build_analyze_metric_candidates(a, verbose=False)
-        assert "2 metric candidates, 1 base measure" in tc.compact_result
-
-    def test_compact_with_derived_datasource(self):
-        a = _make(
-            input_data={"function_name": "analyze_metric_candidates_from_history"},
-            output_data={
-                "raw_output": '{"success": 1, "result": {'
-                '"metric_candidates": [{"name": "time_count"}], '
-                '"base_measures": [{"name": "count_rows"}], '
-                '"derived_datasource_recommendations": [{"name": "rank_data"}]}}'
-            },
-        )
-        tc = _build_analyze_metric_candidates(a, verbose=False)
-        assert "1 metric candidate, 1 base measure, 1 derived datasource" in tc.compact_result
+        tc = _build_profile_semantic_model_evidence(a, verbose=False)
+        assert tc.compact_result == TOOL_SUMMARY_REGISTRY.summarize_dict(payload, "profile_semantic_model_evidence")
 
 
 # ── Skill tools ───────────────────────────────────────────────────
@@ -1592,13 +1914,77 @@ class TestBuildAnalyzeMetricCandidates:
 
 @pytest.mark.ci
 class TestBuildExecuteCommand:
-    def test_compact(self):
+    def test_compact_success_shows_first_lines(self):
+        """Successful command surfaces the real output, first lines first (claude-style)."""
         a = _make(
-            input_data={"function_name": "execute_command"},
-            output_data={"raw_output": '{"success": 1, "result": "output text"}'},
+            input_data={"function_name": "bash"},
+            output_data={"raw_output": '{"success": 1, "result": "line one\\nline two"}'},
         )
-        tc = _build_execute_command(a, verbose=False)
-        assert "Command executed" in tc.compact_result
+        tc = _build_bash(a, verbose=False)
+        assert tc.compact_result_lines == ["line one", "line two"]
+        assert tc.compact_result_overflow == 0
+        assert tc.compact_result == "line one"  # single-line degrade
+        assert tc.status_mark == "✓"
+
+    def test_compact_folds_beyond_three_lines(self):
+        """More than COMPACT_MAX_LINES output lines fold into an overflow count."""
+        out = "\\n".join(f"line{i}" for i in range(10))
+        a = _make(
+            input_data={"function_name": "bash"},
+            output_data={"raw_output": f'{{"success": 1, "result": "{out}"}}'},
+        )
+        tc = _build_bash(a, verbose=False)
+        assert tc.compact_result_lines == ["line0", "line1", "line2"]
+        assert tc.compact_result_overflow == 7
+
+    def test_compact_archived_output_shows_preview_not_marker(self):
+        """Oversized (archived) output shows the marker preview, never the raw marker."""
+        from datus.utils.tool_archive import build_archived_marker
+
+        marker = build_archived_marker("/tmp/000001_bash_ab.txt", "hello world preview")
+        a = _make(
+            input_data={"function_name": "bash"},
+            output_data={"raw_output": json.dumps({"success": 1, "result": marker})},
+        )
+        tc = _build_bash(a, verbose=False)
+        assert any("hello world preview" in line for line in tc.compact_result_lines)
+        assert all("[DATUS_ARCHIVED]" not in line for line in tc.compact_result_lines)
+        assert any("read_file" in line for line in tc.compact_result_lines)
+
+    def test_compact_success_no_output_falls_back_to_label(self):
+        a = _make(
+            input_data={"function_name": "bash"},
+            output_data={"raw_output": '{"success": 1, "result": ""}'},
+        )
+        tc = _build_bash(a, verbose=False)
+        assert tc.compact_result == "Command executed"
+        assert tc.compact_result_lines == []
+
+    def test_compact_failure_shows_stderr_reason(self):
+        """Non-zero exit: the stderr reason is visible (no 'exited with code' prefix)."""
+        a = _make(
+            input_data={"function_name": "bash"},
+            output_data={
+                "raw_output": (
+                    '{"success": 0, "error": "Command exited with code 1", '
+                    '"result": "run\\n[stderr]\\nfoo: command not found"}'
+                )
+            },
+        )
+        tc = _build_bash(a, verbose=False)
+        assert tc.compact_result_lines == ["run", "foo: command not found"]
+        assert all("exited with code" not in line for line in tc.compact_result_lines)
+        assert tc.status_mark == "✗"
+
+    def test_compact_failure_strips_exception_prefix(self):
+        """Exception path with no captured output: strip 'Command execution failed: '."""
+        a = _make(
+            input_data={"function_name": "bash"},
+            output_data={"raw_output": '{"success": 0, "error": "Command execution failed: [Errno 2] boom"}'},
+        )
+        tc = _build_bash(a, verbose=False)
+        assert tc.compact_result == "[Errno 2] boom"
+        assert tc.status_mark == "✗"
 
 
 @pytest.mark.ci
@@ -1617,7 +2003,7 @@ class TestBuildLoadSkill:
         a = _make(
             input_data={"function_name": "load_skill"},
             output_data={
-                "raw_output": '{"success": 0, "error": "Skill \'gen_metrics\' not found"}',
+                "raw_output": '{"success": 0, "error": "Skill \'missing-skill\' not found"}',
             },
         )
         tc = _build_load_skill(a, verbose=False)
@@ -1630,7 +2016,9 @@ class TestBuildLoadSkill:
         a = _make(
             input_data={"function_name": "load_skill"},
             output_data={
-                "raw_output": ('{"success": 0, "error": "Skill \'gen-metrics\' is not available for agent \'chat\'"}'),
+                "raw_output": (
+                    '{"success": 0, "error": "Skill \'private-skill\' is not available for agent \'chat\'"}'
+                ),
             },
         )
         tc = _build_load_skill(a, verbose=False)
@@ -1727,7 +2115,7 @@ class TestAllToolsRegistered:
         "search_semantic_objects",
         # Semantic
         "list_metrics",
-        "get_dimensions",
+        "get_metric",
         "query_metrics",
         "validate_semantic",
         "attribution_analyze",
@@ -1740,7 +2128,8 @@ class TestAllToolsRegistered:
         # Platform doc
         "list_document_nav",
         "get_document",
-        "web_search_document",
+        "web_search",
+        "web_fetch",
         # Plan
         "todo_read",
         "todo_write",
@@ -1748,19 +2137,15 @@ class TestAllToolsRegistered:
         # Generation
         "check_semantic_object_exists",
         "check_semantic_model_exists",
-        "end_semantic_model_generation",
-        "end_metric_generation",
+        "publish_semantic_model",
+        "publish_metrics",
         "generate_sql_summary_id",
         # Date
         "parse_temporal_expressions",
         # Semantic discovery
-        "analyze_table_relationships",
-        "get_multiple_tables_ddl",
-        "analyze_column_usage_patterns",
-        "analyze_metric_candidates_from_history",
+        "profile_semantic_model_evidence",
         # Skill
-        "execute_command",
-        "skill_execute_command",
+        "bash",
         "load_skill",
         # Interaction
         "ask_user",
@@ -2006,6 +2391,14 @@ class TestToolArgsFormatters:
         fmt = _TOOL_ARGS_FORMATTERS["describe_table"]
         assert fmt(self._args(table_name="orders")) == '"orders"'
 
+    def test_bash_positional_no_key_prefix(self):
+        """bash shows the bare command value, not a ``command:`` prefix."""
+        from datus.cli.action_display.tool_content import _TOOL_ARGS_FORMATTERS
+
+        fmt = _TOOL_ARGS_FORMATTERS["bash"]
+        assert fmt(self._args(command="sleep 5")) == '"sleep 5"'
+        assert "command:" not in fmt(self._args(command="ls -la"))
+
     def test_grep_kw_args(self):
         from datus.cli.action_display.tool_content import _TOOL_ARGS_FORMATTERS
 
@@ -2017,12 +2410,6 @@ class TestToolArgsFormatters:
 
         fmt = _TOOL_ARGS_FORMATTERS["list_databases"]
         assert fmt({}) == ""
-
-    def test_skill_execute_command_kw(self):
-        from datus.cli.action_display.tool_content import _TOOL_ARGS_FORMATTERS
-
-        fmt = _TOOL_ARGS_FORMATTERS["skill_execute_command"]
-        assert fmt(self._args(skill_name="s", command="c")) == 'skill_name: "s", command: "c"'
 
 
 @pytest.mark.ci
@@ -2059,3 +2446,213 @@ class TestBuilderPostProcessing:
         )
         tc = builder.build(action, verbose=False)
         assert "bad thing" in tc.compact_result
+
+
+@pytest.mark.ci
+class TestReviewLine:
+    """One-line AI permission-review summary drawn above the result row."""
+
+    @staticmethod
+    def _review(**overrides):
+        payload = {
+            "outcome": "auto_allowed",
+            "decision": "allow",
+            "risk_level": "low",
+            "user_authorization": "medium",
+            "confidence": 0.92,
+            "rationale": "dependency install, scoped to the workspace, reversible",
+        }
+        payload.update(overrides)
+        return payload
+
+    def test_passed_verdict(self):
+        line = format_review_line(self._review())
+        assert line == (
+            "AI review ✓ passed · low risk · conf 0.92 · dependency install, scoped to the workspace, reversible"
+        )
+
+    def test_flagged_verdict_names_the_human_override(self):
+        """An approved-despite-flagged run must not read as a clean pass."""
+        line = format_review_line(self._review(decision="ask", risk_level="high", outcome="user_approved"))
+        assert "✗ flagged" in line
+        assert "high risk" in line
+        assert "user approved" in line
+
+    def test_auto_allowed_does_not_claim_a_human_approved(self):
+        assert "user approved" not in format_review_line(self._review())
+
+    def test_unavailable_verdict_says_so_once(self):
+        line = format_review_line({"outcome": "user_approved", "decision": "unavailable"})
+        assert line == "AI review ? unavailable · user approved"
+
+    def test_long_rationale_truncated_in_compact_but_not_verbose(self):
+        rationale = "x" * 400
+        compact = format_review_line(self._review(rationale=rationale))
+        verbose = format_review_line(self._review(rationale=rationale), verbose=True)
+        assert "..." in compact and len(compact) < 200
+        assert rationale in verbose
+
+    def test_rationale_within_the_prompted_budget_is_not_truncated(self):
+        """The display budget must not be tighter than what the reviewer is
+        asked for, or every compliant verdict would still show "..."."""
+        from datus.cli.action_display.tool_content import _REVIEW_RATIONALE_MAX
+
+        rationale = "deletes build/ in the workspace, artifacts regenerable"
+        assert len(rationale) <= _REVIEW_RATIONALE_MAX
+        assert rationale in format_review_line(self._review(rationale=rationale))
+
+    def test_common_row_fits_a_120_column_terminal(self):
+        """Budget rationale: the row the user sees most must not wrap.
+
+        The overwhelming majority of rendered reviews are auto-allowed
+        low/medium verdicts, so that shape is the one held to 120 columns
+        (the renderer prepends a 5-column gutter). A flagged/critical verdict,
+        or one carrying "user approved", is longer and may wrap — those are the
+        rare, high-attention rows where wrapping costs little.
+        """
+        from datus.cli.action_display.tool_content import _REVIEW_RATIONALE_MAX
+
+        common_prefix = format_review_line(
+            {"decision": "allow", "risk_level": "low", "confidence": 0.97, "rationale": ""}
+        )
+        assert 5 + len(common_prefix) + len(" \u00b7 ") + _REVIEW_RATIONALE_MAX <= 120
+
+    def test_display_budget_matches_what_the_prompt_asks_for(self):
+        """Guard against the two drifting apart on a later edit."""
+        from datus.cli.action_display.tool_content import _REVIEW_RATIONALE_MAX
+        from datus.tools.permission.auto_reviewer import _REVIEW_SYSTEM_PROMPT
+
+        assert f"about {_REVIEW_RATIONALE_MAX} characters" in _REVIEW_SYSTEM_PROMPT
+
+    def test_multiline_rationale_collapses_to_one_line(self):
+        line = format_review_line(self._review(rationale="first\nsecond   third"))
+        assert "\n" not in line
+        assert "first second third" in line
+
+    @pytest.mark.parametrize("review", [None, {}, "not a dict", 42])
+    def test_missing_or_malformed_review_yields_empty(self, review):
+        assert format_review_line(review) == ""
+
+    def test_partial_payload_omits_absent_fields(self):
+        """A verdict without risk/confidence still renders a usable line."""
+        line = format_review_line({"outcome": "auto_allowed", "decision": "allow", "rationale": "fine"})
+        assert line == "AI review ✓ passed · fine"
+
+
+@pytest.mark.ci
+class TestBuilderReviewLine:
+    def test_reviewed_action_populates_review_line(self):
+        builder = ToolCallContentBuilder()
+        action = _make(
+            input_data={"function_name": "bash", "arguments": {"command": "npm ci"}},
+            output_data={
+                "success": True,
+                "permission_review": {"decision": "allow", "risk_level": "low", "rationale": "safe"},
+            },
+        )
+        assert "AI review ✓ passed" in builder.build(action, verbose=False).review_line
+
+    def test_unreviewed_action_leaves_review_line_empty(self):
+        builder = ToolCallContentBuilder()
+        action = _make(
+            input_data={"function_name": "bash", "arguments": {"command": "npm ci"}},
+            output_data={"success": True},
+        )
+        assert builder.build(action, verbose=False).review_line == ""
+
+    def test_review_line_does_not_disturb_the_result_rows(self):
+        """The review row is a separate field, so bash's line/overflow accounting
+        for its own output is unaffected."""
+        builder = ToolCallContentBuilder()
+        raw = json.dumps({"success": 1, "result": "\n".join(f"line {i}" for i in range(10))})
+        args = {"function_name": "bash", "arguments": {"command": "ls"}}
+        plain = builder.build(_make(input_data=args, output_data={"raw_output": raw}), verbose=False)
+        reviewed = builder.build(
+            _make(
+                input_data=args,
+                output_data={
+                    "raw_output": raw,
+                    "permission_review": {"decision": "allow", "rationale": "safe"},
+                },
+            ),
+            verbose=False,
+        )
+        assert plain.compact_result_overflow == 7
+        assert reviewed.compact_result_lines == plain.compact_result_lines
+        assert reviewed.compact_result_overflow == plain.compact_result_overflow
+
+
+@pytest.mark.ci
+class TestSemanticToolHeaders:
+    """The ``tool(...)`` header for the five semantic tools.
+
+    Without a registered formatter these fell to the generic fallback, which
+    takes the first two non-empty args — for ``list_metrics`` that is the paging
+    pair, the least informative thing the call carries — and quotes every value,
+    so a list of metrics rendered as its Python repr.
+    """
+
+    def _header(self, function_name, arguments):
+        a = _make(input_data={"function_name": function_name, "arguments": json.dumps(arguments)})
+        tc = ToolCallContentBuilder().build(a, verbose=False)
+        return tc.args_summary
+
+    def test_list_metrics_hides_the_default_page(self):
+        assert self._header("list_metrics", {"limit": 200, "offset": 0}) == ""
+
+    def test_list_metrics_shows_the_path_and_a_real_offset(self):
+        assert self._header("list_metrics", {"path": ["Finance", "Revenue"]}) == '"Finance/Revenue"'
+        assert self._header("list_metrics", {"limit": 20, "offset": 40}) == "offset: 40"
+
+    def test_get_metric_names_the_metric_positionally(self):
+        assert self._header("get_metric", {"name": "area_score"}) == '"area_score"'
+
+    def test_query_metrics_shows_what_was_measured_and_how_it_was_cut(self):
+        header = self._header(
+            "query_metrics",
+            {
+                "metrics": ["area_score"],
+                "dimensions": ["metric_time", "kpi_cell.merge_area_name", "kpi_cell.merge_brand_name"],
+                "time_granularity": "month",
+                "time_start": "2026-08-01",
+                "time_end": "2026-09-01",
+            },
+        )
+        # ``metric_time`` renders as the grain it was asked at, the dataset
+        # prefixes drop, and a whole calendar month collapses to the month.
+        assert header == '"area_score" by month × merge_area_name, merge_brand_name · 2026-08'
+
+    def test_query_metrics_keeps_a_window_that_is_not_a_whole_month(self):
+        header = self._header(
+            "query_metrics",
+            {"metrics": ["revenue"], "time_start": "2026-08-01", "time_end": "2026-08-15"},
+        )
+        assert header == '"revenue" · 2026-08-01→2026-08-15'
+
+    def test_query_metrics_counts_the_other_metrics(self):
+        header = self._header("query_metrics", {"metrics": ["a", "b", "c"], "dimensions": ["region"]})
+        assert header == '"a" +2 by region'
+
+    def test_validate_semantic_hides_the_default_scope(self):
+        assert self._header("validate_semantic", {"scope": "all"}) == ""
+        assert self._header("validate_semantic", {"scope": "semantic_model"}) == '"semantic_model"'
+
+    def test_a_formatter_showing_nothing_is_not_a_fallback(self):
+        """An empty header is a decision, not a failure to find one.
+
+        Treating "" as "no formatter matched" handed the line straight back to
+        the generic fallback the formatter exists to replace — which is how
+        ``list_metrics(limit: "200", offset: "0")`` survived having a formatter.
+        """
+        assert (
+            tool_specific_args_summary(
+                _make(input_data={"function_name": "list_metrics", "arguments": json.dumps({"limit": 200})})
+            )
+            == ""
+        )
+        assert (
+            tool_specific_args_summary(
+                _make(input_data={"function_name": "no_such_tool", "arguments": json.dumps({"a": 1})})
+            )
+            is None
+        )
