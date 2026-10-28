@@ -1472,17 +1472,18 @@ class SessionManager:
             persisted: Dict[int, list] = {}
             for message_id, raw in rows:
                 message = json.loads(raw)
-                if message.get("type") == "function_call_output" and message.get("call_id"):
+                if message.get("type") in ("function_call", "function_call_output") and message.get("call_id"):
                     result_rows[message["call_id"]] = message_id
                 blocks = message.get("content")
                 if isinstance(blocks, list):
                     for block in blocks:
                         if (
                             isinstance(block, dict)
-                            and block.get("type") in ("tool_result", "web_search_tool_result", "web_fetch_tool_result")
-                            and block.get("tool_use_id")
+                            and block.get("type")
+                            in ("tool_use", "tool_result", "web_search_tool_result", "web_fetch_tool_result")
+                            and (block.get("tool_use_id") or block.get("id"))
                         ):
-                            result_rows[block["tool_use_id"]] = message_id
+                            result_rows[block.get("tool_use_id") or block["id"]] = message_id
                 if message.get("role") != "user":
                     continue
                 text = extract_user_input(message.get("content", "")).strip()
@@ -1508,6 +1509,12 @@ class SessionManager:
             )
 
     def get_tool_result_contents(self, session_id: str) -> Dict[str, dict]:
+        return self._get_tool_display_contents(session_id, "call-tool-result")
+
+    def get_tool_call_contents(self, session_id: str) -> Dict[str, dict]:
+        return self._get_tool_display_contents(session_id, "call-tool")
+
+    def _get_tool_display_contents(self, session_id: str, content_type: str) -> Dict[str, dict]:
         """Only replay display content whose owning model message still exists."""
         self._validate_session_id(session_id)
         db_path = os.path.join(self.session_dir, f"{session_id}.db")
@@ -1532,7 +1539,7 @@ class SessionManager:
             if not isinstance(parts, list):
                 continue
             for part in parts:
-                if not isinstance(part, dict) or part.get("type") != "call-tool-result":
+                if not isinstance(part, dict) or part.get("type") != content_type:
                     continue
                 payload = part.get("payload")
                 if not isinstance(payload, dict):

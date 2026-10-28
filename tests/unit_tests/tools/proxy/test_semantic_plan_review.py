@@ -240,3 +240,42 @@ async def test_prepared_snapshot_streams_on_the_same_card_before_a_decision(tmp_
     written = {path.name: path.read_text() for path in tmp_path.rglob("semantic-model-plan.json")}
     assert written == ({"semantic-model-plan.json": preview["newText"]} if accept else {})
     assert not node.tool_review_previews
+
+
+@pytest.mark.asyncio
+async def test_feedback_is_a_review_outcome_and_never_commits(tmp_path):
+    node = node_for(tmp_path)
+    apply_semantic_plan_review(node)
+    running, preview = await start_review(node)
+    await node.tool_channel.publish(
+        "call-1", {"success": 0, "result": {"review_status": "changes_requested", "feedback": "Remove refund_amount"}}
+    )
+    result = await running
+    assert result["success"] == 1
+    assert result["result"]["review_status"] == "changes_requested"
+    assert result["result"]["feedback"] == "Remove refund_amount"
+    assert not (tmp_path / preview["filePath"]).exists()
+    running, revised = await start_review(node, "revised", "call-2")
+    assert revised["oldText"] == ""
+    assert revised["previousText"] == preview["newText"]
+    assert revised["newText"] != preview["newText"]
+    await node.tool_channel.publish("call-2", {"success": 1})
+    assert (await running)["success"] == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "decision",
+    [
+        {"success": 1, "result": {"review_status": "changes_requested", "feedback": "remove it"}},
+        {"success": 0, "result": {"review_status": "changes_requested", "feedback": "  "}},
+        {"success": 0, "result": {"review_status": "changes_requested", "feedback": ["bad"]}},
+    ],
+)
+async def test_invalid_review_decisions_cannot_write(tmp_path, decision):
+    node = node_for(tmp_path)
+    apply_semantic_plan_review(node)
+    running, preview = await start_review(node)
+    await node.tool_channel.publish("call-1", decision)
+    assert (await running)["success"] == 0
+    assert not (tmp_path / preview["filePath"]).exists()

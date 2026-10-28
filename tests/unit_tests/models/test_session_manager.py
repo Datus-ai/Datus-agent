@@ -2988,3 +2988,39 @@ class TestDerivedSessionsDoNotInheritHistoryReadings:
             new_id = sm_custom.rewind_session(source_id, up_to_user_turn=1)
 
         assert sm_custom.get_session_info(new_id)["first_user_message"] == "How many buses ran today?"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("completed", [False, True])
+async def test_plan_review_snapshots_survive_history_without_entering_model_input(tmp_path, completed):
+    manager = SessionManager(session_dir=str(tmp_path))
+    sid = "review_history"
+    session = manager.get_session(sid)
+    items = [
+        {"role": "user", "content": "Plan metrics"},
+        {"type": "function_call", "call_id": "review", "name": "write_semantic_model_plan_file", "arguments": "{}"},
+    ]
+    if completed:
+        items.append({"type": "function_call_output", "call_id": "review", "output": '{"success":1}'})
+    await session.add_items(items)
+    preview = {
+        "filePath": ".datus/semantic-model-plans/a/semantic-model-plan.json",
+        "oldText": "",
+        "newText": "FROZEN_SNAPSHOT",
+    }
+    call = {
+        "type": "call-tool",
+        "payload": {
+            "callToolId": "review",
+            "toolName": "write_semantic_model_plan_file",
+            "preview": preview,
+            "proxied": True,
+        },
+    }
+    manager.save_message_contents(sid, {"review": {"tool_call_id": "review", "parts": [call]}})
+    assert manager.get_tool_call_contents(sid)["review"]["preview"] == preview
+    assert "FROZEN_SNAPSHOT" not in str(await session.get_items())
+    copied = manager.copy_session(sid, "semantic_modeling")
+    assert manager.get_tool_call_contents(copied)["review"]["preview"] == preview
+    await session.replace_items([{"role": "user", "content": "Compacted"}])
+    assert manager.get_tool_call_contents(sid) == {}

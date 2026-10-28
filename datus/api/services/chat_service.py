@@ -437,6 +437,7 @@ class ChatService:
             session_manager = SessionManager(session_dir=self._session_dir, scope=user_id)
             raw_messages = session_manager.get_session_messages(session_id)
             tool_results = session_manager.get_tool_result_contents(session_id)
+            tool_calls = session_manager.get_tool_call_contents(session_id)
 
             if not raw_messages:
                 return Result[ChatHistoryData](success=True, data=ChatHistoryData())
@@ -510,6 +511,10 @@ class ChatService:
             # after conversion so expanded Subagent results are restored too.
             for message in sse_messages:
                 for part in message.content:
+                    if part.type == "call-tool":
+                        saved_call = tool_calls.get(part.payload.get("callToolId"))
+                        if saved_call is not None:
+                            part.payload.update(saved_call)
                     if part.type == "call-tool-result":
                         saved = tool_results.get(part.payload.get("callToolId"))
                         if saved is not None:

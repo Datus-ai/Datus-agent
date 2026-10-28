@@ -912,3 +912,82 @@ async def test_resume_stream_is_scoped_to_the_task_owner(user, status):
             "/api/v1/chat/resume", json={"session_id": task.session_id}, headers={"x-user": user}
         )
     assert response.status_code == status
+
+
+class TestSemanticPlanReviewDecisions:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("status", ["accepted", "changes_requested", "cancelled"])
+    async def test_review_delivery_is_idempotent_and_cancellation_stops_the_turn(self, status):
+        import asyncio
+        from types import SimpleNamespace
+
+        from datus.api.services.chat_task_manager import ChatTaskManager
+        from datus.tools.proxy.semantic_plan_review import SemanticPlanReviewContext
+
+        channel = ToolResultChannel()
+        context = SemanticPlanReviewContext(channel, set(), previews={"review": {"newText": "frozen"}})
+        task = SimpleNamespace(
+            node=SimpleNamespace(scope="owner", tool_channel=channel, semantic_plan_review_context=context),
+            events=[],
+            condition=asyncio.Condition(),
+            tool_result_contents={},
+        )
+        svc = _mock_svc(task)
+        svc.task_manager.stop_task = AsyncMock(return_value=True)
+        svc.task_manager._push_event = AsyncMock(
+            side_effect=lambda task, event: ChatTaskManager._push_event(svc.task_manager, task, event)
+        )
+
+        # AsyncMock does not await a coroutine returned by its sync side effect.
+        async def push(task, event):
+            await ChatTaskManager._push_event(svc.task_manager, task, event)
+
+        svc.task_manager._push_event.side_effect = push
+        decision = {"review_status": status}
+        if status == "changes_requested":
+            decision["feedback"] = "Remove refund_amount"
+        request = ToolResultInput(
+            session_id="session",
+            call_tool_id="review",
+            tool_result=ToolResult(success=int(status == "accepted"), result=decision),
+        )
+        auth = SimpleNamespace(user_id="owner")
+        first = await submit_tool_result(request, svc, auth)
+        second = await submit_tool_result(request, svc, auth)
+        assert first.success and second.success
+        assert first.data.status == second.data.status == "received"
+        if status == "cancelled":
+            svc.task_manager.stop_task.assert_awaited_once_with("session")
+            assert task.events[0].data.payload.content[0].payload["result"]["result"]["review_status"] == "cancelled"
+        else:
+            svc.task_manager.stop_task.assert_not_awaited()
+            assert await channel.wait_for("review", timeout=1) == request.tool_result.model_dump()
+        conflicting = ToolResultInput(
+            session_id="session",
+            call_tool_id="review",
+            tool_result=ToolResult(
+                success=0, result={"review_status": "cancelled" if status != "cancelled" else "accepted"}
+            ),
+        )
+        assert (await submit_tool_result(conflicting, svc, auth)).errorCode == "REVIEW_ALREADY_RESOLVED"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("feedback", ["", "  ", ["metric"], "x" * 4001])
+    async def test_invalid_feedback_leaves_the_review_waiting(self, feedback):
+        from types import SimpleNamespace
+
+        from datus.tools.proxy.semantic_plan_review import SemanticPlanReviewContext
+
+        channel = ToolResultChannel()
+        context = SemanticPlanReviewContext(channel, set(), previews={"review": {}})
+        task = SimpleNamespace(
+            node=SimpleNamespace(scope="owner", tool_channel=channel, semantic_plan_review_context=context)
+        )
+        request = ToolResultInput(
+            session_id="session",
+            call_tool_id="review",
+            tool_result=ToolResult(success=0, result={"review_status": "changes_requested", "feedback": feedback}),
+        )
+        response = await submit_tool_result(request, _mock_svc(task), SimpleNamespace(user_id="owner"))
+        assert response.errorCode == "INVALID_REVIEW"
+        assert not context.decisions

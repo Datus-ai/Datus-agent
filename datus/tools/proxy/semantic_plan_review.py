@@ -18,6 +18,8 @@ class SemanticPlanReviewContext:
     channel: ToolResultChannel
     proxied_tool_names: set[str]
     previews: dict[str, dict[str, Any]] = field(default_factory=dict)
+    previous_proposals: dict[str, str] = field(default_factory=dict)
+    decisions: dict[str, dict[str, Any]] = field(default_factory=dict)
 
 
 def apply_semantic_plan_review(node: Any, *, context: SemanticPlanReviewContext | None = None) -> None:
@@ -49,7 +51,12 @@ def apply_semantic_plan_review(node: Any, *, context: SemanticPlanReviewContext 
             return prepared.model_dump()
 
         call_id = tool_ctx.tool_call_id
-        previews[call_id] = prepared.preview()
+        preview = prepared.preview()
+        previous = context.previous_proposals.get(prepared.path)
+        if previous is not None:
+            preview["previousText"] = previous
+        context.previous_proposals[prepared.path] = prepared.new_text
+        previews[call_id] = preview
         try:
             node.action_bus.put(
                 ActionHistory(
@@ -58,11 +65,26 @@ def apply_semantic_plan_review(node: Any, *, context: SemanticPlanReviewContext 
                     role=ActionRole.TOOL,
                     status=ActionStatus.PROCESSING,
                     input={"function_name": PLAN_WRITER, "arguments": args},
-                    output={"preview": prepared.preview()},
+                    output={"preview": preview},
                 )
             )
             decision = await context.channel.wait_for(call_id, timeout=DEFAULT_RESULT_TIMEOUT)
-            if not isinstance(decision, dict) or decision.get("success") != 1:
+            review = decision.get("result") if isinstance(decision, dict) else None
+            status = review.get("review_status") if isinstance(review, dict) else None
+            if status == "changes_requested" and decision.get("success") == 0:
+                feedback = review.get("feedback")
+                if not isinstance(feedback, str) or not feedback.strip() or len(feedback) > 4000:
+                    return FuncToolResult(
+                        success=0, error="Review feedback must contain 1-4000 characters"
+                    ).model_dump()
+                return FuncToolResult(
+                    result={
+                        "review_status": "changes_requested",
+                        "feedback": feedback.strip(),
+                        "next_action": "Revise the plan to address this feedback and submit it with this tool for review. Do not author the model before the revised plan is accepted.",
+                    }
+                ).model_dump()
+            if status not in (None, "accepted") or not isinstance(decision, dict) or decision.get("success") != 1:
                 return FuncToolResult(
                     success=0,
                     error="User cancelled the plan proposal. Do not author the model or retry unchanged. Wait for feedback, then submit a revised plan with this tool.",
@@ -74,7 +96,9 @@ def apply_semantic_plan_review(node: Any, *, context: SemanticPlanReviewContext 
             return result.model_dump()
         except (TimeoutError, RuntimeError):
             return FuncToolResult(
-                success=0, error="Plan review expired or was stopped; no plan was written."
+                success=0,
+                error="Plan review expired or was stopped; no plan was written.",
+                result={"review_status": "expired"},
             ).model_dump()
         finally:
             previews.pop(call_id, None)

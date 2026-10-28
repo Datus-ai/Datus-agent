@@ -31,7 +31,11 @@ A successful result with `review_status: "applied"` means the runtime applied it
 permission policy: CLI and noninteractive calls execute directly under the built-in
 profiles; web auto/dangerous calls also execute directly. Only web normal uses the
 preview and Accept/Cancel confirmation. Custom permission rules still apply.
-For either successful status, continue without a second `ask_user` approval. Do not
+Only `accepted` and `applied` allow authoring. A `changes_requested` result is a
+completed review, not approval: consume its `feedback`, revise the proposal, and
+call `write_semantic_model_plan_file` again. Do not ask for the same feedback with
+`ask_user` and do not author until that revision is accepted.
+For accepted/applied status, continue without a second `ask_user` approval. Do not
 claim human approval for an automatically applied plan. On cancellation,
 expiry or write conflict, do not author or automatically resubmit the unchanged plan.
 Wait for feedback, then submit the revision through the same tool. These runtime review
