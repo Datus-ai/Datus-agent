@@ -340,6 +340,8 @@ flow_groups:
         quality_sensitive: false
         docs:
           - docs/configuration/datasources.md
+          - docs/configuration/datasources/athena.md
+          - docs/configuration/datasources/aurora.md
           - docs/configuration/datasources/bigquery.md
           - docs/configuration/datasources/clickhouse.md
           - docs/configuration/datasources/clickzetta.md
@@ -348,6 +350,7 @@ flow_groups:
           - docs/configuration/datasources/dws.md
           - docs/configuration/datasources/gaussdb.md
           - docs/configuration/datasources/greenplum.md
+          - docs/configuration/datasources/hana.md
           - docs/configuration/datasources/hive.md
           - docs/configuration/datasources/hologres.md
           - docs/configuration/datasources/maxcompute.md

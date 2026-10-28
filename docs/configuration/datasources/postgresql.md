@@ -5,24 +5,11 @@ The PostgreSQL adapter connects through the PostgreSQL wire protocol with psycop
 ## Install
 
 ```bash
-pip install datus-postgresql
+pip install --upgrade 'datus-postgresql>=0.1.11' \
+  'datus-sqlalchemy>=0.1.12' 'datus-db-core>=0.1.10' 'SQLAlchemy==2.0.23'
 ```
 
-Certificate and AWS authentication fields below target the upcoming `datus-postgresql>=0.1.10`, `datus-sqlalchemy>=0.1.10`, and `datus-db-core>=0.1.8`. These versions are not yet published. Until release, install the corresponding source packages; older published adapters only expose `sslmode` and rely on libpq certificate files/environment.
-
-Before release, install all three compatible source packages into the Agent environment. The following pinned adapter revision includes the documented TLS/AWS fields. Replace the Python path with the environment used to run Datus:
-
-```bash
-git clone https://github.com/Datus-ai/datus-db-adapters.git
-git -C datus-db-adapters checkout 66fadf1bffc1710c6b85e4149d6bb08d3458d464
-uv pip install --python /path/to/Datus-agent/.venv/bin/python \
-  -e ./datus-db-adapters/datus-db-core \
-  -e ./datus-db-adapters/datus-sqlalchemy \
-  -e './datus-db-adapters/datus-postgresql[aws]' \
-  'SQLAlchemy==2.0.23'
-```
-
-The `aws` extra installs the SDK used by IAM/Secrets Manager; it is optional for ordinary password connections. SQLAlchemy remains pinned to the Agent's `2.0.23`. After source installation, use `uv run --no-sync` when launching through uv; a normal sync can restore the older core from the Agent lockfile.
+These published versions include the certificate and AWS authentication fields below. For IAM or Secrets Manager, install the optional `aws` extra as shown in the [Aurora guide](aurora.md#install). Older adapters may expose only `sslmode` and rely on libpq certificate files/environment. Install into the Agent environment, restart after upgrading shared packages, and use `uv run --no-sync` when launching from a checkout after installation.
 
 ## Connection profile
 
@@ -45,7 +32,7 @@ agent:
 ## Parameters
 
 | Key | Type | Required | Default | Notes |
-|---|---|---:|---|---|
+| --- | --- | --: | --- | --- |
 | `host` | string | no | `127.0.0.1` | PostgreSQL server host. |
 | `port` | integer | no | `5432` | PostgreSQL wire-protocol port. |
 | `username` | string | yes | — | Login role. |
@@ -61,7 +48,9 @@ agent:
 | `secret_ref` | string | no | — | Secrets Manager name/ARN; mutually exclusive with inline password and IAM. |
 | `secret_cache_ttl_seconds` | integer | no | `300` | Secret refresh interval, 1–86400 seconds. |
 | `connect_timeout_seconds` | integer | no | — | Optional positive DBAPI connection timeout. |
-| `timeout_seconds` | integer | no | `30` | Connection and pool timeout. |
+| `timeout_seconds` | integer | no | `30` | Pool, socket-operation, and default query deadline. |
+| `read_timeout_seconds` | integer | no | — | Positive connection-checkout deadline override. |
+| `query_timeout_seconds` | integer | no | — | Positive server statement-timeout override. |
 
 ## TLS and namespaces
 
@@ -78,12 +67,12 @@ These fields accept file paths, not inline PEM. Without `sslrootcert`, ordinary 
 
 ### AWS authentication
 
-Install `datus-postgresql[aws]>=0.1.10` after release (or the source package with its `aws` extra before release). Keep database TLS trust in `sslrootcert`; `aws.ca_bundle` only affects AWS HTTPS APIs. Use the SDK credential chain or an AWS shared profile, including SDK-managed role refresh; do not paste temporary AWS credentials into the datasource.
+Install the `aws` extra with the compatible published packages listed in the [Aurora guide](aurora.md#install). Keep database TLS trust in `sslrootcert`; `aws.ca_bundle` only affects AWS HTTPS APIs. Use the SDK credential chain or an AWS shared profile, including SDK-managed role refresh; do not paste temporary AWS credentials into the datasource. Full Aurora MySQL/PostgreSQL profiles, IAM prerequisites, Secret rotation, and failover behavior are documented in [Amazon Aurora](aurora.md).
 
 For RDS/Aurora IAM, omit `password` and `secret_ref` and add:
 
 ```yaml
-aurora: true  # Only for Aurora endpoints
+aurora: true # Only for Aurora endpoints
 auth_mode: iam
 aws:
   region: us-east-1
@@ -110,7 +99,7 @@ Run `/databases`, `/schemas`, and `/tables`. This distinguishes a working login 
 ## Troubleshooting
 
 | Symptom | Cause and fix |
-|---|---|
+| --- | --- |
 | `password authentication failed` | Check the role/password and matching `pg_hba.conf` rule. |
 | `no pg_hba.conf entry` | Permit the Datus client address and choose the intended TLS/auth rule. |
 | Certificate verification fails | On 0.1.10+, set `sslrootcert` to the issuing CA file and match `host` to the certificate. Older packages use libpq's standard files/environment. |
