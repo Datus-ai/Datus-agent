@@ -454,6 +454,7 @@ def _run_pytest_suite(
     log(f"{suite_name} pytest basetemp: {basetemp}")
 
     env = os.environ.copy()
+    env["DATUS_TEST_STORAGE_BACKENDS"] = "sqlite+lance"
     # Nested runner regressions may execute from a temporary project. Keep our
     # reporting plugin importable there as well as in xdist workers.
     repo_root = str(Path(__file__).resolve().parents[1])

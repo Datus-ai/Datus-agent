@@ -74,14 +74,23 @@ evidence checks.
 
 ## Release P0
 
-`ci/harness/p0.yml` explicitly lists six groups and 23 required nodeids: the
-15 deterministic core journeys, three real-model SQL tasks, PostgreSQL reconcile,
+`ci/harness/p0.yml` explicitly lists six groups and 24 required nodeids: the
+15 deterministic core journeys, three real-model SQL tasks, PostgreSQL reconcile and feedback CRUD,
 SQL-policy enforcement through HTTP, real-model semantic authoring, managed
 Superset export and real-model dashboard creation. Initialization/tool-wiring contracts
 run as components; fixed-result BI orchestration remains ordinary Nightly coverage.
 P0 cases cannot skip, xfail, disappear from collection or finish without execution.
 `ci/p0_plan.py` verifies reports from a fresh `ci/p0-execution.*` directory.
 Unknown filters that select no test groups fail before execution.
+
+PR and merge queue explicitly select `DATUS_TEST_STORAGE_BACKENDS=sqlite+lance`;
+installed external adapter entry points cannot add service-backed unit tests to
+these gates. Feedback CRUD always has a local SQLite acceptance case. The same
+business assertions run against PostgreSQL in the required P0 storage group,
+sharing its PostgreSQL/pgvector session providers with semantic KB reconcile.
+Full Nightly and release P0 require both cases to pass; missing `testcontainers`,
+provider errors and service startup failures fail the group. Storage/configuration
+and dependency changes also select this group for targeted product validation.
 
 Release Candidate Validation builds distributions once, then passes that artifact
 and its source SHA to Nightly's `p0` profile. This profile installs published
@@ -92,8 +101,9 @@ adapter/plugin versions. Full Nightly continues source-installing repository mai
 The candidate harness runs outside the checkout, with the wheel installed in a
 clean environment. `ci/release_artifact.py` checks distribution hashes, the import
 location and the installed runtime/resource payload against the wheel, then records
-all resolved package versions. P0 prepares local SQLite fixtures and Superset only;
-it does not build the full KB, frontend assets, browser environment or cloud adapters.
+all resolved package versions. P0 prepares small SQLite fixtures; its service-backed
+groups start PostgreSQL/pgvector and Superset as needed. It does not build the full
+KB, frontend assets, browser environment or cloud adapters.
 Publish And Finalize Release depends on candidate validation and downloads those
 same distributions, verifies their hashes and publishes them without rebuilding.
 

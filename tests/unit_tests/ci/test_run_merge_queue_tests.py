@@ -89,6 +89,19 @@ def test_run_suite_fails_loudly_on_missing_target(tmp_path, monkeypatch, run_mer
     assert result["targets"] == []
 
 
+def test_merge_queue_selects_local_storage_even_with_external_backends_configured(monkeypatch, run_merge_queue_tests):
+    calls = []
+
+    def run(command, **kwargs):
+        calls.append(kwargs["env"])
+        return run_merge_queue_tests.subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setenv("DATUS_TEST_STORAGE_BACKENDS", "postgresql+postgresql")
+    monkeypatch.setattr(run_merge_queue_tests.subprocess, "run", run)
+    assert run_merge_queue_tests.run_command(["pytest"], suite_name="acceptance-unit", timeout=10) == 0
+    assert calls[0]["DATUS_TEST_STORAGE_BACKENDS"] == "sqlite+lance"
+
+
 @pytest.mark.parametrize("name,expected", [("impacted-unit", 0), ("acceptance-unit", 5)])
 def test_empty_collection_is_allowed_only_for_additional_tests(
     name, expected, tmp_path, monkeypatch, run_merge_queue_tests

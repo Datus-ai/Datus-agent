@@ -193,6 +193,7 @@ def build_pytest_command(
 def run_command(command: Sequence[str], *, suite_name: str, timeout: int) -> int:
     log(f"Running {suite_name}: {' '.join(command)}")
     env = os.environ.copy()
+    env["DATUS_TEST_STORAGE_BACKENDS"] = "sqlite+lance"
     # Match the PR runner: a runner invoked inside pytest must only clean its
     # own child namespace, never the active outer pytest/xdist directories.
     env[PYTEST_BASETEMP_ENV] = str(suite_pytest_basetemp(suite_name) / "_nested-runners")

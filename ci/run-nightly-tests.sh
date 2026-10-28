@@ -1868,6 +1868,7 @@ NIGHTLY_DEDICATED_SUITE_DESELECTS=(
   --deselect tests/integration/plugins/test_dashboard_bootstrap_plugin.py
   --deselect tests/integration/plugins/test_sql_policy_plugin.py
   --deselect tests/integration/storage/test_postgresql_semantic_kb.py
+  --deselect tests/integration/storage/test_postgresql_feedback_store.py
   --deselect tests/integration/tools/test_bi_grafana.py
   --deselect tests/integration/tools/test_reference_template.py
   --deselect tests/integration/adapters/test_postgresql.py

@@ -1434,6 +1434,20 @@ execution:
       paths: [datus/tools/, datus/storage/, datus/utils/, datus/configuration/]
       unit_targets: [tests/unit_tests/tools/, tests/unit_tests/agent/node/]
       live_targets: [tests/integration/agent/test_core_live.py]
+    - id: storage-backends
+      paths:
+        - datus/storage/
+        - datus/configuration/agent_config.py
+        - pyproject.toml
+        - uv.lock
+        - tests/helpers/storage_acceptance.py
+        - tests/unit_tests/storage/test_feedback_store.py
+        - tests/integration/storage/test_postgresql_feedback_store.py
+        - tests/integration/storage/test_postgresql_semantic_kb.py
+      live_targets:
+        - tests/integration/agent/test_core_live.py
+        - tests/integration/storage/test_postgresql_feedback_store.py::test_postgresql_feedback_storage_write_read_update_and_delete
+      nightly_groups: [P0 PostgreSQL Agent Storage Contracts]
     - id: chat-lifecycle
       paths: [datus/api/, datus/cli/, datus/schemas/, tests/integration/api/test_api_chat.py]
       unit_targets: [tests/unit_tests/api/, tests/unit_tests/cli/]

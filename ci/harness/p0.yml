@@ -17,6 +17,7 @@ groups:
   P0 PostgreSQL Agent Storage Contracts:
     nodeids:
       - tests/integration/storage/test_postgresql_semantic_kb.py::test_postgresql_semantic_kb_reconcile_is_idempotent
+      - tests/integration/storage/test_postgresql_feedback_store.py::test_postgresql_feedback_storage_write_read_update_and_delete
   P0 SQL Policy Plugin Contracts:
     nodeids:
       - tests/integration/plugins/test_sql_policy_plugin.py::test_managed_sql_policy_enforces_sql_semantic_and_api_reads

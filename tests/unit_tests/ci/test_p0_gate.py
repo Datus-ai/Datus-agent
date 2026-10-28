@@ -35,6 +35,35 @@ def test_p0_filter_selects_explicit_groups():
         selected_groups(load_profile(), "^P0 DOES_NOT_EXIST$")
 
 
+def test_required_postgresql_provider_cannot_skip_missing_dependencies(monkeypatch):
+    from tests.integration import conftest
+
+    def missing_dependency():
+        raise ModuleNotFoundError("No module named 'testcontainers'")
+
+    provider = SimpleNamespace(load=missing_dependency)
+    monkeypatch.setattr(conftest, "_entry_points_for", lambda *args: [provider])
+    with pytest.raises(pytest.fail.Exception, match="could not load.*testcontainers"):
+        conftest._required_test_environment("datus.storage.rdb.testing", "postgresql")
+
+
+def test_required_postgresql_setup_failure_cleans_both_providers(monkeypatch):
+    from tests.integration import conftest
+
+    calls = []
+
+    def vector_setup():
+        raise RuntimeError("Docker unavailable")
+
+    rdb = SimpleNamespace(setup=lambda: None, teardown=lambda: calls.append("rdb"))
+    vector = SimpleNamespace(setup=vector_setup, teardown=lambda: calls.append("vector"))
+    monkeypatch.setattr(conftest, "_required_test_environment", lambda group, name: rdb if ".rdb." in group else vector)
+    fixture = conftest.required_postgresql_storage.__wrapped__()
+    with pytest.raises(pytest.fail.Exception, match="setup failed.*Docker unavailable"):
+        next(fixture)
+    assert calls == ["vector", "rdb"]
+
+
 @pytest.mark.parametrize("outcome", ["passed", "skipped", "xfailed", "failed", "not_executed"])
 def test_p0_requires_successful_execution_of_every_planned_case(tmp_path, outcome):
     path = tmp_path / "execution.json"
