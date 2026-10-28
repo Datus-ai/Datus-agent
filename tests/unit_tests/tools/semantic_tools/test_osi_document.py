@@ -4,12 +4,14 @@
 import json
 
 import pytest
+import yaml
 
 from datus.tools.semantic_tools.osi_document import load_osi_document
 from datus.utils.exceptions import DatusException
 
 
-def test_load_osi_document_reads_core_fields_and_datus_hints(tmp_path):
+@pytest.mark.parametrize("flat", [False, True])
+def test_load_osi_document_reads_core_fields_and_datus_hints(tmp_path, flat):
     model = tmp_path / "orders.yml"
     model.write_text(
         """
@@ -42,6 +44,10 @@ semantic_model:
 """.lstrip(),
         encoding="utf-8",
     )
+
+    if flat:
+        source = yaml.safe_load(model.read_text())
+        model.write_text(yaml.safe_dump({"version": source["version"], **source["semantic_model"][0]}))
 
     document = load_osi_document(str(model), "orders_model")
 

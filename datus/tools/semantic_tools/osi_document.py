@@ -19,6 +19,7 @@ from typing import Any
 
 import yaml
 
+from datus.tools.semantic_tools.dosi.model import iter_semantic_models
 from datus.tools.semantic_tools.metric_identity import validate_metric_uid, validate_unique_metric_uids
 from datus.utils.exceptions import DatusException, ErrorCode
 
@@ -341,12 +342,7 @@ def load_osi_document(path: str, semantic_model_name: str) -> OsiDocument:
     for document in documents:
         if not isinstance(document, dict):
             continue
-        models = document.get("semantic_model") or []
-        if isinstance(models, dict):
-            models = [models]
-        for model in models:
-            if not isinstance(model, dict):
-                continue
+        for model in iter_semantic_models(document):
             name = str(model.get("name") or "")
             if name:
                 available.add(name)

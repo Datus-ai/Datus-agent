@@ -50,9 +50,18 @@ def load_document(path: str | Path) -> dict[str, Any]:
 
 
 def iter_semantic_models(document: dict[str, Any]) -> Iterator[dict[str, Any]]:
-    for model in document.get("semantic_model") or []:
-        if isinstance(model, dict):
-            yield model
+    """Read model objects from flat documents and legacy wrappers without rewriting them."""
+    if "semantic_model" not in document:
+        if "datasets" in document:
+            yield document
+        return
+    models = document["semantic_model"]
+    if isinstance(models, dict):
+        yield models
+    elif isinstance(models, list):
+        for model in models:
+            if isinstance(model, dict):
+                yield model
 
 
 def document_model_names(document: dict[str, Any]) -> list[str]:
