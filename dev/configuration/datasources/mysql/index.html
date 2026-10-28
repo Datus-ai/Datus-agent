@@ -3399,6 +3399,12 @@
       
         
       
+        
+      
+        
+      
+        
+      
     
     
     
@@ -3713,6 +3719,34 @@
   
   
     <li class="md-nav__item">
+      <a href="../aurora/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Amazon Aurora
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../greenplum/" class="md-nav__link">
         
   
@@ -3749,6 +3783,34 @@
     
   
     Amazon Redshift
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../athena/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Amazon Athena
   
 
     
@@ -4113,6 +4175,34 @@
     
   
     Oracle
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../hana/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    SAP HANA
   
 
     
@@ -5058,8 +5148,10 @@
 <h1 id="mysql-datasource">MySQL datasource<a class="headerlink" href="#mysql-datasource" title="Permanent link">&para;</a></h1>
 <p>The MySQL adapter connects through PyMySQL and exposes MySQL databases as Datus databases. There is no separate schema level.</p>
 <h2 id="install">Install<a class="headerlink" href="#install" title="Permanent link">&para;</a></h2>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>pip<span class="w"> </span>install<span class="w"> </span>datus-mysql
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>pip<span class="w"> </span>install<span class="w"> </span>--upgrade<span class="w"> </span><span class="s1">'datus-mysql&gt;=0.1.10'</span><span class="w"> </span><span class="se">\</span>
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="w">  </span><span class="s1">'datus-sqlalchemy&gt;=0.1.12'</span><span class="w"> </span><span class="s1">'datus-db-core&gt;=0.1.10'</span><span class="w"> </span><span class="s1">'SQLAlchemy==2.0.23'</span>
 </span></code></pre></div>
+<p>These published versions include the TLS and AWS authentication fields below. For Aurora password, IAM, and Secrets Manager profiles, follow the <a href="../aurora/">Aurora guide</a>; IAM and Secrets Manager need the adapter's optional <code>aws</code> extra. Install into the Agent environment and restart Datus after upgrading shared packages.</p>
 <h2 id="connection-profile">Connection profile<a class="headerlink" href="#connection-profile" title="Permanent link">&para;</a></h2>
 <div class="language-yaml highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="nt">agent</span><span class="p">:</span>
 </span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">  </span><span class="nt">services</span><span class="p">:</span>
@@ -5141,15 +5233,97 @@
 <td>integer</td>
 <td style="text-align: right;">no</td>
 <td><code>30</code></td>
-<td>Connection timeout.</td>
+<td>Pool checkout and default driver connect/read/write timeout.</td>
+</tr>
+<tr>
+<td><code>connect_timeout_seconds</code></td>
+<td>integer</td>
+<td style="text-align: right;">no</td>
+<td>—</td>
+<td>Positive connection-timeout override.</td>
+</tr>
+<tr>
+<td><code>read_timeout_seconds</code> / <code>write_timeout_seconds</code></td>
+<td>integer</td>
+<td style="text-align: right;">no</td>
+<td>—</td>
+<td>Positive socket read/write timeout overrides.</td>
+</tr>
+<tr>
+<td><code>query_timeout_seconds</code></td>
+<td>integer</td>
+<td style="text-align: right;">no</td>
+<td>—</td>
+<td>Optional positive server-side SELECT deadline; otherwise preserve the server setting.</td>
+</tr>
+<tr>
+<td><code>ssl_ca</code></td>
+<td>string</td>
+<td style="text-align: right;">no</td>
+<td>—</td>
+<td>Database CA file; required for Aurora/IAM.</td>
+</tr>
+<tr>
+<td><code>ssl_cert</code> / <code>ssl_key</code></td>
+<td>string</td>
+<td style="text-align: right;">no</td>
+<td>—</td>
+<td>Client certificate and key; supply both together.</td>
+</tr>
+<tr>
+<td><code>ssl_verify_cert</code> / <code>ssl_verify_identity</code></td>
+<td>boolean</td>
+<td style="text-align: right;">no</td>
+<td>unset</td>
+<td>Certificate and hostname checks; require <code>ssl_ca</code> when enabled. Aurora/IAM enables both and rejects explicit <code>false</code>.</td>
+</tr>
+<tr>
+<td><code>aurora</code></td>
+<td>boolean</td>
+<td style="text-align: right;">no</td>
+<td><code>false</code></td>
+<td>Require verified TLS and check recognized Aurora cluster writer endpoints.</td>
+</tr>
+<tr>
+<td><code>auth_mode</code></td>
+<td>string</td>
+<td style="text-align: right;">no</td>
+<td><code>password</code></td>
+<td><code>password</code> or AWS RDS <code>iam</code>.</td>
+</tr>
+<tr>
+<td><code>aws</code></td>
+<td>object</td>
+<td style="text-align: right;">no</td>
+<td>SDK defaults</td>
+<td><code>region</code>, <code>profile</code>, and AWS HTTPS <code>ca_bundle</code>.</td>
+</tr>
+<tr>
+<td><code>secret_ref</code></td>
+<td>string</td>
+<td style="text-align: right;">no</td>
+<td>—</td>
+<td>Secrets Manager name/ARN in password mode; cannot include an inline password or IAM.</td>
+</tr>
+<tr>
+<td><code>secret_cache_ttl_seconds</code></td>
+<td>integer</td>
+<td style="text-align: right;">no</td>
+<td><code>300</code></td>
+<td>Secret cache lifetime, 1–86400 seconds.</td>
 </tr>
 </tbody>
 </table>
 <h2 id="namespace-and-authentication">Namespace and authentication<a class="headerlink" href="#namespace-and-authentication" title="Permanent link">&para;</a></h2>
-<p>Objects are addressed as <code>database.table</code>. The adapter requires a username; an empty password is valid for servers that permit it. The current profile schema does not expose MySQL TLS certificate options, so unknown keys such as <code>ssl_ca</code> are rejected.</p>
+<p>Objects are addressed as <code>database.table</code>. The adapter requires a username; an empty password is valid for ordinary password-authenticated servers that permit it. For verified TLS, add these settings to the datasource:</p>
+<div class="language-yaml highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="nt">ssl_ca</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">/absolute/path/mysql-ca.pem</span>
+</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="nt">ssl_verify_cert</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
+</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="nt">ssl_verify_identity</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
+</span></code></pre></div>
+<p>For mutual TLS, also supply both <code>ssl_cert</code> and <code>ssl_key</code>. MySQL uses file paths; <code>aws.ca_bundle</code> configures AWS API trust separately. <a href="../aurora/">Aurora</a> uses the same <code>mysql</code> type with <code>aurora: true</code> and supports password, IAM, or Secret-backed password authentication. IAM cannot include <code>password</code> or <code>secret_ref</code>.</p>
 <p>For metadata discovery, grant the configured user access to every database Datus should inspect. Restrict the account to read-only SQL privileges when Datus must not modify data.</p>
 <h2 id="verify-the-connection">Verify the connection<a class="headerlink" href="#verify-the-connection" title="Permanent link">&para;</a></h2>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>datus<span class="w"> </span>--config<span class="w"> </span>conf/agent.yml<span class="w"> </span>--datasource<span class="w"> </span>mysql_prod
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>datus<span class="w"> </span>--config<span class="w"> </span>conf/agent.yml<span class="w"> </span>--datasource<span class="w"> </span>mysql_prod
 </span></code></pre></div>
 <p>Run <code>/databases</code> and <code>/tables</code> to verify both connectivity and metadata permissions.</p>
 <h2 id="troubleshooting">Troubleshooting<a class="headerlink" href="#troubleshooting" title="Permanent link">&para;</a></h2>
