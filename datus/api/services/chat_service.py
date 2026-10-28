@@ -450,10 +450,16 @@ class ChatService:
                 os.path.join(session_manager.session_dir, session_id) if _is_safe_session_id(session_id) else None
             )
             subagent_runs: Dict[str, List[List[ActionHistory]]] = {}
+            pending_review_messages: List[SSEMessagePayload] = []
 
             for idx, msg in enumerate(raw_messages):
                 role = msg.get("role", "")
                 if role == "user":
+                    # Interrupted tool calls have no SDK row and are anchored to
+                    # the user turn. Replay them after that turn's saved actions.
+                    sse_messages.extend(pending_review_messages)
+                    event_id += len(pending_review_messages)
+                    pending_review_messages = []
                     content = msg.get("content", "")
                     if content:
                         at_ctx_raw = msg.get("at_context")
@@ -489,12 +495,11 @@ class ChatService:
                         )
                         event_id += 1
                         for part in interrupted_reviews:
-                            sse_messages.append(
+                            pending_review_messages.append(
                                 SSEMessagePayload(
                                     message_id=str(uuid.uuid4()), role="assistant", content=[IMessageContent(**part)]
                                 )
                             )
-                            event_id += 1
                 elif role == "assistant":
                     if "actions" in msg:
                         payloads, event_id = _actions_to_payloads(
@@ -520,6 +525,8 @@ class ChatService:
                             )
                         )
                         event_id += 1
+
+            sse_messages.extend(pending_review_messages)
 
             # Restore the canonical streamed result, including its duration,
             # after conversion so expanded Subagent results are restored too.
