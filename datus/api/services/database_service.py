@@ -42,6 +42,7 @@ from datus.storage.semantic_model.artifact_file import (
 )
 from datus.tools.db_tools.capabilities import supports_namespace
 from datus.tools.db_tools.db_manager import DBManager
+from datus.tools.semantic_tools.dosi.model import iter_semantic_models
 from datus.utils.config_utils import coerce_positive_int, coerce_positive_seconds
 from datus.utils.exceptions import DatusException
 from datus.utils.exceptions import ErrorCode as DbErrorCode
@@ -115,17 +116,11 @@ class DatasourceService:
 
     @staticmethod
     def _validate_dosi_semantic_yaml(yaml_content: str) -> tuple[bool, List[str]]:
-        try:
-            document = yaml.safe_load(yaml_content)
-        except yaml.YAMLError as exc:
-            return False, [str(exc)]
-        if not isinstance(document, dict):
-            return False, ["YAML document must be an object"]
         from datus.tools.semantic_tools.dosi.authoring import validate_dosi_document
         from datus.tools.semantic_tools.exceptions import SemanticCoreException
 
         try:
-            validate_dosi_document(document)
+            validate_dosi_document(yaml_content)
             return True, []
         except SemanticCoreException as exc:
             return False, [str(exc)]
@@ -866,16 +861,14 @@ class DatasourceService:
             document = yaml.safe_load(yaml_content)
         except yaml.YAMLError as exc:
             return None, False, str(exc)
-        models = document.get("semantic_model") if isinstance(document, dict) else None
-        if not isinstance(models, list) or len(models) != 1 or not isinstance(models[0], dict):
-            return None, False, "OSI YAML must contain exactly one semantic_model object"
-        model_name = str(models[0].get("name") or "").strip()
+        models = list(iter_semantic_models(document)) if isinstance(document, dict) else []
+        if len(models) != 1:
+            return None, False, "OSI YAML must declare exactly one semantic model"
+        model = models[0]
+        model_name = str(model.get("name") or "").strip()
         if not model_name:
-            return None, False, "semantic_model[0].name is required"
-        metrics = models[0].get("metrics")
-        if metrics is not None and not isinstance(metrics, list):
-            return None, False, "semantic_model[0].metrics must be a list"
-        return model_name, bool(metrics), None
+            return None, False, "Semantic model name is required"
+        return model_name, bool(model.get("metrics")), None
 
     @staticmethod
     def _revision_matches(expected_revision: str, current_revision: str) -> bool:
@@ -895,6 +888,9 @@ class DatasourceService:
         del semantic_model_path
 
         is_valid, errors = self._validate_dosi_semantic_yaml(request.yaml)
+        if not is_valid:
+            return False, errors, None, False
+
         model_name, has_metrics, identity_error = self._osi_candidate_identity(request.yaml)
         if identity_error:
             errors = [*errors, identity_error]
@@ -951,11 +947,9 @@ class DatasourceService:
             declared_name = None
             try:
                 document = yaml.safe_load(yaml_content)
-                declared = document.get("semantic_model") if isinstance(document, dict) else None
-                if isinstance(declared, list) and len(declared) == 1 and isinstance(declared[0], dict):
-                    declared_name = str(declared[0].get("name") or "").strip() or declared_name
-                elif isinstance(declared, dict):
-                    declared_name = str(declared.get("name") or "").strip() or declared_name
+                models = list(iter_semantic_models(document)) if isinstance(document, dict) else []
+                if len(models) == 1:
+                    declared_name = str(models[0].get("name") or "").strip() or None
             except yaml.YAMLError:
                 pass
 

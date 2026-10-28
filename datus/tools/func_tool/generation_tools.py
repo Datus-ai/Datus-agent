@@ -34,6 +34,7 @@ from datus.storage.semantic_dataset.store import (
 )
 from datus.tools.func_tool.base import FuncToolResult, trans_to_function_tool
 from datus.tools.func_tool.generation_evidence import GenerationEvidence
+from datus.tools.semantic_tools.dosi.model import document_model_names
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
 from datus.utils.path_manager import get_path_manager
@@ -686,13 +687,7 @@ class GenerationTools:
         """Return semantic-model names declared by one OSI artifact."""
         names: List[str] = []
         for doc in self._iter_yaml_docs(osi_path):
-            semantic_models = doc.get("semantic_model")
-            if isinstance(semantic_models, list):
-                for model in semantic_models:
-                    if isinstance(model, dict) and isinstance(model.get("name"), str):
-                        names.append(model["name"])
-            elif isinstance(semantic_models, dict) and isinstance(semantic_models.get("name"), str):
-                names.append(semantic_models["name"])
+            names.extend(document_model_names(doc))
         return self._dedupe_strings(names)
 
     def extract_osi_dataset_names(self, semantic_model_path: str) -> List[str]:
