@@ -6,11 +6,9 @@
 
 Contains two test classes at different verification levels:
 - TestPartialIntegration: Real Superset API + mocked LLM (nightly)
-- TestE2EIntegration: Full end-to-end with zero mocks (manual, ``-m product_e2e``)
+- Current BI creation is verified through GenDashboardAgenticNode in test_gen_dashboard_agentic.py
 """
 
-import csv
-import io
 import os
 import re
 from typing import Any, Dict, List, Tuple
@@ -22,7 +20,6 @@ from rich.console import Console
 
 from datus.cli.bootstrap_bi_commands import BootstrapBiCommands
 from datus.cli.bootstrap_bi_picker import BootstrapBiPicker, BootstrapBiPlan, DashboardCliOptions
-from datus.cli.bootstrap_bi_subagents import build_sub_agent_name
 from datus.configuration.agent_config import AgentConfig
 from datus.configuration.agent_config_loader import load_agent_config
 from datus.tools.bi_tools.dashboard_assembler import ChartSelection, DashboardAssembler
@@ -132,16 +129,7 @@ def agent_config(tmp_path_factory) -> AgentConfig:
         "isolation (got 0 substitutions — semantic_model / dashboard paths "
         "would resolve to the real workspace)"
     )
-    document = yaml.safe_load(content)
-    document["agent"]["services"]["datasources"]["superset"].update(
-        host=os.environ.get("SUPERSET_POSTGRES_HOST", "127.0.0.1"),
-        port=os.environ.get("SUPERSET_POSTGRES_PORT", "5433"),
-        username="superset",
-        password="superset",
-        database="superset_examples",
-        schema="public",
-    )
-    tmp_cfg.write_text(yaml.safe_dump(document, sort_keys=False))
+    tmp_cfg.write_text(content)
 
     config = load_agent_config(config=str(tmp_cfg), datasource="superset", reload=True, force=True, yes=True)
 
@@ -527,233 +515,3 @@ class TestPartialIntegration:
             finally:
                 if hasattr(bi_adapter, "close"):
                     bi_adapter.close()
-
-
-# ============================================================================
-# True E2E Integration Tests (No Mocks)
-# ============================================================================
-
-
-class TestE2EIntegration:
-    """Pure end-to-end integration tests with NO mocks.
-
-    Validates the COMPLETE workflow: real Superset API, real LLM API,
-    real file system, real database operations.
-
-    SLOW (2-5 min per dashboard), EXPENSIVE ($0.05-0.20/run), requires full env setup.
-    """
-
-    @pytest.mark.nightly
-    @pytest.mark.product_e2e
-    @pytest.mark.timeout(600)
-    @pytest.mark.asyncio
-    async def test_complete_workflow(
-        self,
-        bi_picker: BootstrapBiPicker,
-        bi_commands: BootstrapBiCommands,
-        agent_config: AgentConfig,
-        input_data: List[Dict[str, Any]],
-    ):
-        """TRUE END-TO-END: dashboard extraction -> sub-agent bootstrap -> verification.
-
-        Storage is already isolated in a tmp dir via the `agent_config` fixture
-        (home: redirected to tmp_path_factory), so no cleanup is needed here —
-        the storage starts empty for every test module run.
-        """
-        test_results = []
-
-        for dashboard_item in input_data:
-            platform = dashboard_item["platform"]
-            dialect = dashboard_item.get("dialect", "postgresql")
-            bi_adapter = _create_adapter(bi_picker, agent_config, dashboard_item)
-
-            test_result = {
-                "platform": platform,
-                "dashboard_url": dashboard_item["dashboard_url"],
-                "status": "running",
-                "error": None,
-                "dashboard_name": None,
-                "charts_processed": 0,
-                "sub_agents": [],
-                "tables": 0,
-                "semantic_model_rows": 0,
-                "metrics_rows": 0,
-                "reference_sql_rows": 0,
-            }
-
-            try:
-                dashboard, chart_selections, charts, datasets = _extract_and_select_charts(
-                    bi_picker, bi_adapter, dashboard_item
-                )
-
-                sub_agent_name = build_sub_agent_name(platform, dashboard.name or "")
-                attr_name = f"{sub_agent_name}_attribution"
-
-                result = _assemble(bi_adapter, dashboard, chart_selections, datasets, dialect)
-
-                # Drive the full streaming pipeline end-to-end.
-                plan = BootstrapBiPlan(
-                    options=DashboardCliOptions(
-                        platform=platform,
-                        dashboard_url=dashboard_item["dashboard_url"],
-                        api_base_url=dashboard_item["api_base_url"],
-                        auth_params=None,
-                        dialect=dialect,
-                    ),
-                    adapter=bi_adapter,
-                    dashboard=dashboard,
-                    dashboard_id=bi_adapter.parse_dashboard_id(dashboard_item["dashboard_url"]),
-                    chart_selections_ref=chart_selections,
-                    chart_selections_metrics=chart_selections,
-                    assembled=result,
-                    pool_size=2,
-                )
-                actions: list = []
-                await bi_commands._run_plan(plan, actions)
-
-                # Verify 2 sub-agents created
-                if sub_agent_name not in agent_config.agentic_nodes:
-                    raise AssertionError(f"Main sub-agent '{sub_agent_name}' was not persisted")
-                if attr_name not in agent_config.agentic_nodes:
-                    raise AssertionError(f"Attribution sub-agent '{attr_name}' was not persisted")
-                attr_node = agent_config.agentic_nodes[attr_name]
-                assert attr_node.get("node_class") == "gen_report", (
-                    f"Attribution sub-agent should have node_class='gen_report', got '{attr_node.get('node_class')}'"
-                )
-
-                # Verify bootstrap data via store managers
-                from datus.storage.metric.store import MetricRAG
-                from datus.storage.reference_sql.store import ReferenceSqlRAG
-                from datus.storage.semantic_dataset.store import SemanticDatasetRAG
-
-                total_semantic_model_rows = 0
-                total_metrics_rows = 0
-                total_reference_sql_rows = 0
-
-                for name in [sub_agent_name, attr_name]:
-                    sm_size = SemanticDatasetRAG(agent_config, sub_agent_name=name).get_size()
-                    m_size = MetricRAG(agent_config, sub_agent_name=name).get_metrics_size()
-                    rs_size = ReferenceSqlRAG(agent_config, sub_agent_name=name).get_reference_sql_size()
-                    total_semantic_model_rows += sm_size
-                    total_metrics_rows += m_size
-                    total_reference_sql_rows += rs_size
-                    logger.info(
-                        "Sub-agent '%s': semantic_model=%d, metrics=%d, reference_sql=%d",
-                        name,
-                        sm_size,
-                        m_size,
-                        rs_size,
-                    )
-
-                test_result["semantic_model_rows"] = total_semantic_model_rows
-                test_result["metrics_rows"] = total_metrics_rows
-                test_result["reference_sql_rows"] = total_reference_sql_rows
-
-                # Verify file artifacts
-                sql_dir = agent_config.path_manager.dashboard_path() / platform
-                sql_files = list(sql_dir.glob("*.sql"))
-                assert len(sql_files) >= 1, "SQL files should exist"
-                csv_files = list(sql_dir.glob("*.csv"))
-                assert len(csv_files) >= 1, "CSV files should exist"
-
-                # Reload persisted sub-agents and query their generated metrics.
-                # Source-table aggregates are an independent business oracle.
-                from datus.configuration.agent_config_loader import configuration_manager
-                from datus.tools.db_tools import DBManager
-                from datus.tools.func_tool.semantic_tools import SemanticTools
-                from datus.utils.query_result_text import parse_query_result_text
-
-                manager = bi_commands._configuration_manager or configuration_manager()
-                reloaded = load_agent_config(
-                    config=str(manager.config_path), datasource="superset", reload=True, force=True, yes=True
-                )
-                available = set(reloaded.agentic_nodes)
-                assert {sub_agent_name, attr_name} <= available
-                assert reloaded.agentic_nodes[attr_name]["node_class"] == "gen_report"
-                database_manager = DBManager(reloaded.services.datasources)
-                try:
-                    oracle = database_manager.get_conn("superset").execute_query(
-                        "SELECT SUM(revenue) AS revenue, SUM(orders) AS orders FROM public.datus_nightly_bi_sales",
-                        result_format="list",
-                    )
-                    assert oracle.success, oracle.error
-                    expected = [float(value) for value in oracle.sql_return[0].values()]
-                    semantic = SemanticTools(reloaded, sub_agent_name=attr_name)
-                    catalog = semantic.list_metrics(limit=100, offset=0)
-                    assert catalog.success == 1, catalog.error
-                    names = [
-                        line[2:].split(" -- ", 1)[0] for line in catalog.result.splitlines() if line.startswith("- ")
-                    ]
-                    assert names, catalog.result
-                    observed = []
-                    for metric in names:
-                        queried = semantic.query_metrics(metrics=[metric])
-                        assert queried.success == 1, queried.error
-                        cached = semantic.get_cached_query_metrics_result(
-                            parse_query_result_text(queried.result).result_id
-                        )
-                        rows = list(csv.DictReader(io.StringIO(cached["csv"])))
-                        assert len(rows) == 1, rows
-                        observed.extend(float(value) for value in rows[0].values())
-                    for value in expected:
-                        assert any(actual == pytest.approx(value) for actual in observed), (expected, observed)
-                finally:
-                    database_manager.close()
-
-                # Update test result
-                test_result["dashboard_name"] = dashboard.name
-                test_result["charts_processed"] = len(chart_selections)
-                test_result["sub_agents"] = [sub_agent_name, attr_name]
-                test_result["tables"] = len(result.tables)
-
-                bootstrap_failures = []
-                if total_semantic_model_rows == 0:
-                    bootstrap_failures.append("semantic_model")
-                if total_metrics_rows == 0:
-                    bootstrap_failures.append("metrics")
-                if total_reference_sql_rows == 0:
-                    bootstrap_failures.append("reference_sql")
-
-                if bootstrap_failures:
-                    error_msg = (
-                        f"Bootstrap data missing: {', '.join(bootstrap_failures)} have 0 total rows across sub-agents"
-                    )
-                    test_result["status"] = "failed"
-                    test_result["error"] = error_msg
-                else:
-                    test_result["status"] = "passed"
-
-            except Exception as e:
-                test_result["status"] = "failed"
-                test_result["error"] = str(e)
-
-            finally:
-                test_results.append(test_result)
-                if hasattr(bi_adapter, "close"):
-                    bi_adapter.close()
-
-        # Structured summary via logger (use pytest --log-cli-level=INFO to surface).
-        passed_tests = [r for r in test_results if r["status"] == "passed"]
-        failed_tests = [r for r in test_results if r["status"] == "failed"]
-        logger.info(
-            "BI dashboard integration summary — total=%d passed=%d failed=%d",
-            len(test_results),
-            len(passed_tests),
-            len(failed_tests),
-        )
-        for result in passed_tests:
-            logger.info(
-                "PASSED: %s - %s (%d charts, %d tables); bootstrap semantic_model=%d metrics=%d reference_sql=%d",
-                result["platform"],
-                result["dashboard_name"],
-                result["charts_processed"],
-                result["tables"],
-                result["semantic_model_rows"],
-                result["metrics_rows"],
-                result["reference_sql_rows"],
-            )
-        for result in failed_tests:
-            logger.error("FAILED: %s - %s", result["platform"], result["error"])
-
-        failed = [r for r in test_results if r["status"] == "failed"]
-        assert not failed, f"Dashboard tests failed: {[r['error'] for r in failed]}"

@@ -44,7 +44,7 @@ def test_documentation_changes_have_no_remote_model_requirement():
     "node,group",
     [
         ("semantic_modeling", "P0 Dosi Semantic Modeling E2E"),
-        ("gen_dashboard", "P0 Dashboard Bootstrap Skill E2E"),
+        ("gen_dashboard", "P0 BI Product E2E"),
         ("scheduler", "Airflow Nightly Tests"),
     ],
 )

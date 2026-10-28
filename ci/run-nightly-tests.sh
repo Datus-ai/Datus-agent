@@ -102,7 +102,7 @@ COMPOSE_FILES=(
 )
 
 COMPOSE_GROUPS=(
-  "P0 Dashboard Bootstrap Skill E2E"
+  "P0 BI Product E2E"
   "BI Orchestration Contracts"
   "Grafana Nightly Tests"
   "Airflow Nightly Tests"
@@ -509,7 +509,7 @@ compose_project_slug() {
   local group_name="$1"
 
   case "$group_name" in
-    "P0 Dashboard Bootstrap Skill E2E" | "BI Orchestration Contracts") echo "superset" ;;
+    "P0 BI Product E2E" | "BI Orchestration Contracts") echo "superset" ;;
     "Grafana Nightly Tests") echo "grafana" ;;
     "Airflow Nightly Tests") echo "airflow" ;;
     "PostgreSQL Adapter Tests") echo "postgresql" ;;
@@ -567,7 +567,7 @@ cleanup_all_compose() {
   local project_name
   for group_name in "${COMPOSE_GROUPS[@]}"; do
     case "$group_name" in
-      "P0 Dashboard Bootstrap Skill E2E" | "BI Orchestration Contracts") compose_file="$SUPERSET_COMPOSE" ;;
+      "P0 BI Product E2E" | "BI Orchestration Contracts") compose_file="$SUPERSET_COMPOSE" ;;
       "Grafana Nightly Tests") compose_file="$GRAFANA_COMPOSE" ;;
       "Airflow Nightly Tests") compose_file="$AIRFLOW_COMPOSE" ;;
       "PostgreSQL Adapter Tests") compose_file="$POSTGRES_COMPOSE" ;;
@@ -712,7 +712,7 @@ nightly_trace_expected_for_group() {
       "Reference Template Nightly Tests" | \
       "Web UI Nightly Tests" | \
       "Product E2E Nightly Tests" | \
-      "P0 Dashboard Bootstrap Skill E2E" | \
+      "P0 BI Product E2E" | \
       "Grafana Nightly Tests" | \
       "Airflow Nightly Tests" | \
       "Provider Health Tests")
@@ -1192,7 +1192,7 @@ compose_host_port_specs() {
   local group_name="$1"
 
   case "$group_name" in
-    "P0 Dashboard Bootstrap Skill E2E" | "BI Orchestration Contracts")
+    "P0 BI Product E2E" | "BI Orchestration Contracts")
       printf 'Superset web:%s\nSuperset PostgreSQL:%s\n' "${SUPERSET_PORT:-18088}" "${SUPERSET_POSTGRES_PORT:-15433}"
       ;;
     "Grafana Nightly Tests")
@@ -1548,7 +1548,7 @@ wait_for_compose_client_readiness() {
   local airflow_base
 
   case "$group_name" in
-    "P0 Dashboard Bootstrap Skill E2E" | "BI Orchestration Contracts")
+    "P0 BI Product E2E" | "BI Orchestration Contracts")
       wait_for_http_readiness "Superset" "${SUPERSET_URL%/}/health" 300
       ;;
     "Grafana Nightly Tests")
@@ -1727,7 +1727,7 @@ run_p0_group() {
     env DATUS_TEST_LAYER=nightly uv run python -m pytest "${nodeids[@]}"
     -p ci.pytest_fail_on_skip_plugin --fail-on-skip --tb=short --verbose
     --timeout=600 --timeout-method=thread "--basetemp=${NIGHTLY_PYTEST_BASETEMP}/${slug}")
-  if [ "$group_name" = "P0 Dashboard Bootstrap Skill E2E" ]; then
+  if [ "$group_name" = "P0 BI Product E2E" ]; then
     run_compose_suite "$group_name" "$SUPERSET_COMPOSE" "postgres:300" "superset:1200" -- "${command[@]}"
   else
     run_logged "$group_name" "${command[@]}"
@@ -1754,7 +1754,7 @@ if [ -n "${PRODUCT_TEST_BASE_REF:-}" ]; then
   if [[ " ${PRODUCT_E2E_ROOTS[*]} " == *"test_init_live.py::test_qwen_scoped_init_supplements_existing_documents"* ]]; then
     export DATUS_RUN_LIVE_INIT=1
   fi
-  if [[ "$NIGHTLY_GROUP_FILTER" == *"Dashboard"* ]]; then
+  if [[ "$NIGHTLY_GROUP_FILTER" == *"BI Product"* ]]; then
     DASHBOARD_MARK_EXPR="nightly"
   fi
   log "Required product evaluation groups: $NIGHTLY_GROUP_FILTER"
@@ -1895,9 +1895,9 @@ run_logged "Product E2E Nightly Tests" run_with_agent_home "$NIGHTLY_HOME" "$NIG
 # Scheduled Nightly and release P0 run the explicit Superset export/bootstrap
 # contracts. A targeted evaluation also retains the other affected node cases.
 if [ -n "${PRODUCT_TEST_BASE_REF:-}" ]; then
-  run_compose_suite "P0 Dashboard Bootstrap Skill E2E" "$SUPERSET_COMPOSE" "postgres:300" "superset:1200" -- run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run python -m pytest -m "$DASHBOARD_MARK_EXPR" tests/integration/plugins/test_dashboard_bootstrap_plugin.py tests/integration/agent/test_gen_dashboard_agentic.py tests/integration/tools/test_bi_dashboard.py -p ci.pytest_fail_on_skip_plugin --fail-on-skip --tb=short --verbose --timeout=600 --timeout-method=thread
+  run_compose_suite "P0 BI Product E2E" "$SUPERSET_COMPOSE" "postgres:300" "superset:1200" -- run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run python -m pytest -m "$DASHBOARD_MARK_EXPR" tests/integration/plugins/test_dashboard_bootstrap_plugin.py tests/integration/agent/test_gen_dashboard_agentic.py tests/integration/tools/test_bi_dashboard.py -p ci.pytest_fail_on_skip_plugin --fail-on-skip --tb=short --verbose --timeout=600 --timeout-method=thread
 else
-  run_p0_group "P0 Dashboard Bootstrap Skill E2E"
+  run_p0_group "P0 BI Product E2E"
 fi
 run_compose_suite "BI Orchestration Contracts" "$SUPERSET_COMPOSE" "postgres:300" "superset:1200" -- run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run python -m pytest tests/integration/tools/test_bi_dashboard.py::TestPartialIntegration::test_workflow_without_llm --tb=short --verbose --timeout=600 --timeout-method=thread
 

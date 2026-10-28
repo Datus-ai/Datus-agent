@@ -119,19 +119,20 @@ flow_groups:
               - tests/unit_tests/tools/skill_tools/test_create_subagent_skill.py
               - tests/unit_tests/tools/func_tool/test_bi_tools.py
           nightly:
-            status: covered
+            status: partial
             nodeids:
               - tests/integration/plugins/test_dashboard_bootstrap_plugin.py::test_dashboard_bootstrap_installs_plugin_and_exports_verified_superset_queries
               - tests/unit_tests/agent/node/test_gen_dashboard_agentic_node.py::TestGenDashboardToolSetup
               - tests/integration/tools/test_bi_dashboard.py::TestPartialIntegration::test_workflow_without_llm
-              - tests/integration/tools/test_bi_dashboard.py::TestE2EIntegration::test_complete_workflow
+              - tests/integration/agent/test_gen_dashboard_agentic.py::TestGenDashboardAgenticExecution::test_creates_a_persisted_queryable_dashboard
               - tests/integration/tools/test_bi_grafana.py
             notes: >
               The P0 Superset path installs the managed plugin from source, verifies a real
-              dashboard SQL export manifest and checksums, then runs real-model BI authoring.
-              The generated sub-agent configuration is reloaded and its metrics queried against
-              independent source-table aggregates. Component tests cover node/tool initialization;
-              ordinary BI integration retains fixed-result orchestration coverage.
+              dashboard SQL export manifest and checksums. P0 also creates a real dashboard
+              through GenDashboardAgenticNode, reloads its persisted resources, and compares
+              chart data with source-table aggregates. Full skill-driven bootstrap through
+              reference SQL, metrics and sub-agent persistence remains a coverage gap.
+              Compatibility orchestration retains fixed-result integration coverage.
               See ci/cross-repo-harness.md.
           weekly_benchmark:
             status: not_applicable
@@ -484,7 +485,7 @@ flow_groups:
             status: covered
             nodeids:
               - tests/integration/tools/test_bi_dashboard.py::TestPartialIntegration::test_workflow_without_llm
-              - tests/integration/tools/test_bi_dashboard.py::TestE2EIntegration::test_complete_workflow
+              - tests/integration/agent/test_gen_dashboard_agentic.py::TestGenDashboardAgenticExecution::test_creates_a_persisted_queryable_dashboard
               - tests/integration/tools/test_bi_grafana.py
               - tests/integration/agent/test_scheduler_agentic.py
               - tests/integration/adapters/test_starrocks.py
@@ -1399,7 +1400,7 @@ flow_groups:
 
 execution:
   description: >
-    core_nodeids are mandatory executed tests, independent of change selection.
+    core_nodeids are mandatory executed tests for code profiles, independent of impact selection.
     PR and merge-queue runners check collected nodeids and successful outcomes;
     missing, skipped, xfailed, crashed or unexecuted core cases fail the gate.
     A flow marked partial retains useful test references outside the fixed gate;
@@ -1462,7 +1463,7 @@ execution:
     - id: node-gen_dashboard
       paths: [datus/agent/node/gen_dashboard_agentic_node.py, tests/integration/agent/test_gen_dashboard_agentic.py]
       live_targets: [tests/integration/agent/test_gen_dashboard_agentic.py]
-      nightly_groups: [P0 Dashboard Bootstrap Skill E2E]
+      nightly_groups: [P0 BI Product E2E]
     - id: node-gen_visual_report
       paths: [datus/agent/node/gen_visual_report_agentic_node.py, tests/integration/agent/test_gen_visual_report_agentic.py]
       live_targets: [tests/integration/agent/test_gen_visual_report_agentic.py]

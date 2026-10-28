@@ -23,8 +23,8 @@ groups:
   P0 Dosi Semantic Modeling E2E:
     nodeids:
       - tests/integration/agent/test_semantic_modeling_agentic.py::test_semantic_modeling_authors_one_queryable_dosi_model_with_real_llm
-  P0 Dashboard Bootstrap Skill E2E:
+  P0 BI Product E2E:
     service: superset
     nodeids:
       - tests/integration/plugins/test_dashboard_bootstrap_plugin.py::test_dashboard_bootstrap_installs_plugin_and_exports_verified_superset_queries
-      - tests/integration/tools/test_bi_dashboard.py::TestE2EIntegration::test_complete_workflow
+      - tests/integration/agent/test_gen_dashboard_agentic.py::TestGenDashboardAgenticExecution::test_creates_a_persisted_queryable_dashboard

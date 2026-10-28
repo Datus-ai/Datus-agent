@@ -37,9 +37,10 @@ cross-repository integration contract changes.
 ## Dashboard Bootstrap Nightly Scope
 
 The P0 Superset group selects the two explicit nodeids in `ci/harness/p0.yml`:
-managed plugin installation with verified SQL export, and real-model BI bootstrap.
-Bootstrap must persist reloadable sub-agents and query their generated metrics
-against independently computed source-table aggregates. It requires provider
+managed plugin installation with verified SQL export, and real-model dashboard creation.
+Creation runs through GenDashboardAgenticNode, reloads persisted dashboard/chart
+objects through the BI adapter, and compares chart data with independently computed
+source-table aggregates. Full skill-driven bootstrap remains a documented coverage gap. It requires provider
 credentials. Fixed-result orchestration runs in the ordinary BI group; node/tool
 initialization is covered by the component suite.
 
