@@ -1,7 +1,7 @@
 # Project basic information configuration, required.
 [project]
 name = "datus-agent"
-version = "0.4.3"
+version = "0.4.4rc1"
 description = "AI-powered SQL Agent for data engineering (Compiled Version)"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -23,7 +23,7 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
 ]
 dependencies = [
-    "datus-db-core>=0.1.7",
+    "datus-db-core>=0.1.10",
     "datus-storage-base>=0.1.5,<0.2.0",
     "python-dotenv==1.2.2",
     # 2.1.4 caps numpy<2, which fastembed needs from Python 3.13 on; the split
