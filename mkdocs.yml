@@ -95,8 +95,10 @@ nav:
         - DuckDB: configuration/datasources/duckdb.md
         - MySQL: configuration/datasources/mysql.md
         - PostgreSQL: configuration/datasources/postgresql.md
+        - Amazon Aurora: configuration/datasources/aurora.md
         - Greenplum: configuration/datasources/greenplum.md
         - Amazon Redshift: configuration/datasources/redshift.md
+        - Amazon Athena: configuration/datasources/athena.md
         - Snowflake: configuration/datasources/snowflake.md
         - Google BigQuery: configuration/datasources/bigquery.md
         - StarRocks: configuration/datasources/starrocks.md
@@ -110,6 +112,7 @@ nav:
         - Hologres: configuration/datasources/hologres.md
         - MaxCompute: configuration/datasources/maxcompute.md
         - Oracle: configuration/datasources/oracle.md
+        - SAP HANA: configuration/datasources/hana.md
         - GaussDB / openGauss: configuration/datasources/gaussdb.md
         - GaussDB(DWS): configuration/datasources/dws.md
       - Storage: configuration/storage.md
