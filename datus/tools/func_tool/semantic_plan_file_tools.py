@@ -405,6 +405,7 @@ class SemanticPlanFileTools:
             # Reserve the identity even if this proposal is rejected, so feedback
             # revises the same plan rather than minting another directory.
             self._plan_ids[model_name] = plan_id
+            self._revisions[model_name] = revision
             return PreparedSemanticPlan(
                 model_name,
                 relative_path.as_posix(),
@@ -446,7 +447,7 @@ class SemanticPlanFileTools:
                     atomic_write_text(target, prepared.new_text)
             except OSError as exc:
                 return FuncToolResult(success=0, error=f"Could not write semantic plan: {exc}")
-            self._revisions[prepared.model_name] = prepared.revision
+            self._revisions[prepared.model_name] = max(self._revisions.get(prepared.model_name, 0), prepared.revision)
             return FuncToolResult(
                 result={"path": prepared.path, "revision": prepared.revision, "counts": prepared.counts}
             )

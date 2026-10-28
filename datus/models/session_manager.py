@@ -1470,21 +1470,24 @@ class SessionManager:
             tools = {record["tool_call_id"]: record for record in records if record.get("tool_call_id")}
             result_rows: Dict[str, int] = {}
             persisted: Dict[int, list] = {}
+            last_user_message_id = None
             for message_id, raw in rows:
                 message = json.loads(raw)
-                if message.get("type") == "function_call_output" and message.get("call_id"):
+                if message.get("type") in ("function_call", "function_call_output") and message.get("call_id"):
                     result_rows[message["call_id"]] = message_id
                 blocks = message.get("content")
                 if isinstance(blocks, list):
                     for block in blocks:
                         if (
                             isinstance(block, dict)
-                            and block.get("type") in ("tool_result", "web_search_tool_result", "web_fetch_tool_result")
-                            and block.get("tool_use_id")
+                            and block.get("type")
+                            in ("tool_use", "tool_result", "web_search_tool_result", "web_fetch_tool_result")
+                            and (block.get("tool_use_id") or block.get("id"))
                         ):
-                            result_rows[block["tool_use_id"]] = message_id
+                            result_rows[block.get("tool_use_id") or block["id"]] = message_id
                 if message.get("role") != "user":
                     continue
+                last_user_message_id = message_id
                 text = extract_user_input(message.get("content", "")).strip()
                 for index, record in enumerate(pending):
                     if record["text"].strip() == text:
@@ -1499,6 +1502,14 @@ class SessionManager:
                     owner = tools[owner].get("parent_action_id")
                 if owner in result_rows:
                     persisted.setdefault(result_rows[owner], []).extend(record["parts"])
+                elif last_user_message_id is not None and any(
+                    part.get("type") == "call-tool" and part.get("payload", {}).get("preview")
+                    for part in record["parts"]
+                ):
+                    # The SDK may not save a pending tool call before interruption.
+                    # Anchor its display-only review to this turn's user message;
+                    # history replays it as an assistant card, never as user input.
+                    persisted.setdefault(last_user_message_id, []).extend(record["parts"])
             conn.executemany(
                 "INSERT OR REPLACE INTO chat_message_contents VALUES (?, ?, ?)",
                 [
@@ -1508,6 +1519,12 @@ class SessionManager:
             )
 
     def get_tool_result_contents(self, session_id: str) -> Dict[str, dict]:
+        return self._get_tool_display_contents(session_id, "call-tool-result")
+
+    def get_tool_call_contents(self, session_id: str) -> Dict[str, dict]:
+        return self._get_tool_display_contents(session_id, "call-tool")
+
+    def _get_tool_display_contents(self, session_id: str, content_type: str) -> Dict[str, dict]:
         """Only replay display content whose owning model message still exists."""
         self._validate_session_id(session_id)
         db_path = os.path.join(self.session_dir, f"{session_id}.db")
@@ -1532,7 +1549,7 @@ class SessionManager:
             if not isinstance(parts, list):
                 continue
             for part in parts:
-                if not isinstance(part, dict) or part.get("type") != "call-tool-result":
+                if not isinstance(part, dict) or part.get("type") != content_type:
                     continue
                 payload = part.get("payload")
                 if not isinstance(payload, dict):

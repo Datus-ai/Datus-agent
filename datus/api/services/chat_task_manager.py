@@ -1406,12 +1406,20 @@ class ChatTaskManager:
         if isinstance(event.data, SSEMessageData):
             for part in event.data.payload.content:
                 call_id = part.payload.get("callToolId")
-                if part.type == "call-tool-result" and call_id:
-                    task.tool_result_contents[f"tool-result:{call_id}"] = {
-                        "tool_call_id": call_id,
-                        "parent_action_id": event.data.payload.parent_action_id,
-                        "parts": [copy.deepcopy(part.model_dump())],
-                    }
+                if call_id and (
+                    part.type == "call-tool-result" or (part.type == "call-tool" and part.payload.get("preview"))
+                ):
+                    key = f"tool-result:{call_id}"
+                    record = task.tool_result_contents.setdefault(
+                        key,
+                        {
+                            "tool_call_id": call_id,
+                            "parent_action_id": event.data.payload.parent_action_id,
+                            "parts": [],
+                        },
+                    )
+                    record["parts"] = [p for p in record["parts"] if p["type"] != part.type]
+                    record["parts"].append(copy.deepcopy(part.model_dump()))
         logger.debug(f"Pushing event: {event}")
         async with task.condition:
             task.events.append(event)
