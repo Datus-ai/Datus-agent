@@ -122,15 +122,17 @@ flow_groups:
             status: covered
             nodeids:
               - tests/integration/plugins/test_dashboard_bootstrap_plugin.py::test_dashboard_bootstrap_installs_plugin_and_exports_verified_superset_queries
-              - tests/integration/agent/test_gen_dashboard_agentic.py::TestGenDashboardAgenticInit
+              - tests/unit_tests/agent/node/test_gen_dashboard_agentic_node.py::TestGenDashboardToolSetup
               - tests/integration/tools/test_bi_dashboard.py::TestPartialIntegration::test_workflow_without_llm
+              - tests/integration/tools/test_bi_dashboard.py::TestE2EIntegration::test_complete_workflow
               - tests/integration/tools/test_bi_grafana.py
             notes: >
               The P0 Superset path installs the managed plugin from source, verifies a real
-              dashboard SQL export manifest and checksums, checks node/tool initialization,
-              and exercises BI orchestration with fixed generation results. Superset real-model
-              workflows are manual evaluations; nightly does not guarantee model adherence
-              to the skill's confirmation boundary. See ci/cross-repo-harness.md.
+              dashboard SQL export manifest and checksums, then runs real-model BI authoring.
+              The generated sub-agent configuration is reloaded and its metrics queried against
+              independent source-table aggregates. Component tests cover node/tool initialization;
+              ordinary BI integration retains fixed-result orchestration coverage.
+              See ci/cross-repo-harness.md.
           weekly_benchmark:
             status: not_applicable
             notes: >
@@ -482,6 +484,7 @@ flow_groups:
             status: covered
             nodeids:
               - tests/integration/tools/test_bi_dashboard.py::TestPartialIntegration::test_workflow_without_llm
+              - tests/integration/tools/test_bi_dashboard.py::TestE2EIntegration::test_complete_workflow
               - tests/integration/tools/test_bi_grafana.py
               - tests/integration/agent/test_scheduler_agentic.py
               - tests/integration/adapters/test_starrocks.py
@@ -825,7 +828,7 @@ flow_groups:
           nightly:
             status: covered
             nodeids:
-              - tests/integration/agent/test_gen_dashboard_agentic.py::TestGenDashboardAgenticInit
+              - tests/unit_tests/agent/node/test_gen_dashboard_agentic_node.py::TestGenDashboardToolSetup
               - tests/integration/agent/test_scheduler_agentic.py
               - tests/integration/tools/test_bi_grafana.py
               - tests/integration/agent/test_gen_table_agentic.py

@@ -19,7 +19,7 @@ the real-model questions additionally assess tool selection and reasoning.
 ## Selection and evidence
 
 `coverage-map.yml` contains mandatory `execution.core_nodeids` and impact rules.
-The fixed core runs regardless of the PR diff. Changes to models include their
+The fixed core runs for code changes. Changes to models include their
 cross-module consumers; changes to nodes also select the corresponding live suite.
 Merge groups use their event's base SHA, covering all included PRs.
 
@@ -54,8 +54,48 @@ Each executed pytest group writes a report under a fresh
 file/nodeid against successful test outcomes across product and dedicated groups;
 deselected or unexecuted targets fail even when other product tests pass.
 Reports and `ci/product-execution-coverage.json` are uploaded with Nightly artifacts.
-Without `product_test_base_ref`, normal Nightly scope is unchanged. Real LLMs
-are not required in every merge-group run.
+Without `product_test_base_ref`, Nightly runs the complete P0 manifest alongside
+the broader adapter, provider, UI and product suites. Real LLMs are not required
+in merge-group runs.
+
+## Documentation merge groups
+
+`ci/harness/gate_profile.py` recognizes ordinary documentation, image assets,
+README translations and MkDocs navigation. Changes to flow `docs` lists in the
+coverage map also qualify, but retain the entire CI unit suite. Changes to runtime
+files, prompts, skills, dependencies, workflow code, execution rules or coverage
+claims select the full gate. Mixed and unknown changes also retain the full gate.
+
+The documentation gate builds English and Chinese docs strictly. The workflow
+also retains release metadata and strict coverage-map checks. It skips runtime
+acceptance and fixture preparation. The profile and the checks actually executed
+are recorded in `ci/gate-coverage.json`; code profiles retain mandatory core-test
+evidence checks.
+
+## Release P0
+
+`ci/harness/p0.yml` explicitly lists six groups and 23 required nodeids: the
+15 deterministic core journeys, three real-model SQL tasks, PostgreSQL reconcile,
+SQL-policy enforcement through HTTP, real-model semantic authoring, managed
+Superset export and real-model BI bootstrap. Initialization/tool-wiring contracts
+run as components; fixed-result BI orchestration remains ordinary Nightly coverage.
+P0 cases cannot skip, xfail, disappear from collection or finish without execution.
+`ci/p0_plan.py` verifies reports from a fresh `ci/p0-execution.*` directory.
+Unknown filters that select no test groups fail before execution.
+
+Release Candidate Validation builds distributions once, then passes that artifact
+and its source SHA to Nightly's `p0` profile. This profile installs published
+adapter pins from `ci/requirements-p0.txt`; the profile's pinned source checkouts
+supply managed plugins and service fixtures. Review both manifests when updating
+adapter/plugin versions. Full Nightly continues source-installing repository main.
+
+The candidate harness runs outside the checkout, with the wheel installed in a
+clean environment. `ci/release_artifact.py` checks distribution hashes, the import
+location and the installed runtime/resource payload against the wheel, then records
+all resolved package versions. P0 prepares local SQLite fixtures and Superset only;
+it does not build the full KB, frontend assets, browser environment or cloud adapters.
+Publish And Finalize Release depends on candidate validation and downloads those
+same distributions, verifies their hashes and publishes them without rebuilding.
 
 Local commands (the complete gate requires the Linux Dosi package):
 

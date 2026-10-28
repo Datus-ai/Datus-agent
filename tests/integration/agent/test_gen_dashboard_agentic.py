@@ -6,8 +6,8 @@
 Integration tests for GenDashboardAgenticNode.
 
 Tests the BI dashboard subagent with real Superset (Docker).
-Initialization contracts use a fake model in nightly. Real-model execution is
-available for manual evaluation with ``-m product_e2e``.
+Initialization and tool wiring are covered by the deterministic component suite.
+Real Superset/model execution is available with ``-m product_e2e``.
 Requires:
 - Superset running on localhost:8088 (docker compose -f ../datus-bi-adapters/datus-bi-superset/tests/integration/docker-compose.yml up -d)
 - datus-bi-superset package installed
@@ -16,7 +16,6 @@ Requires:
 
 import copy
 import os
-from unittest.mock import patch
 
 import pytest
 import requests
@@ -71,66 +70,6 @@ def dashboard_agent_config():
     )
 
     return config
-
-
-@pytest.fixture
-def mock_dashboard_model():
-    """Keep node/tool initialization independent of provider credentials and APIs."""
-    from tests.unit_tests.mock_llm_model import MockLLMModel
-
-    with patch("datus.models.base.LLMBaseModel.create_model", return_value=MockLLMModel()):
-        yield
-
-
-@pytest.mark.nightly
-@pytest.mark.usefixtures("mock_dashboard_model")
-class TestGenDashboardAgenticInit:
-    """Integration tests for GenDashboardAgenticNode initialization with real Superset."""
-
-    def test_node_initialization_with_bi_tools(self, dashboard_agent_config):
-        """Node initializes with BI tools connected to real Superset."""
-        from datus.agent.node.gen_dashboard_agentic_node import GenDashboardAgenticNode
-
-        node = GenDashboardAgenticNode(
-            agent_config=dashboard_agent_config,
-            execution_mode="workflow",
-        )
-
-        assert node.get_node_name() == "gen_dashboard"
-        assert node.execution_mode == "workflow"
-        assert node.bi_func_tool is not None, "BI func tool should be initialized with real Superset"
-
-        tool_names = [tool.name for tool in node.tools]
-        logger.info(f"GenDashboard node initialized with {len(node.tools)} tools: {tool_names}")
-
-        # Read tools should always be present
-        assert "list_dashboards" in tool_names, f"Missing list_dashboards, got: {tool_names}"
-        assert "get_dashboard" in tool_names, f"Missing get_dashboard, got: {tool_names}"
-        assert "list_charts" in tool_names, f"Missing list_charts, got: {tool_names}"
-        assert "get_chart" in tool_names, f"Missing get_chart, got: {tool_names}"
-        assert "get_chart_data" in tool_names, f"Missing get_chart_data, got: {tool_names}"
-        assert "list_datasets" in tool_names, f"Missing list_datasets, got: {tool_names}"
-
-        # Write tools should be present (Superset adapter supports all mixins)
-        assert "create_dashboard" in tool_names, f"Missing create_dashboard, got: {tool_names}"
-        assert "create_chart" in tool_names, f"Missing create_chart, got: {tool_names}"
-        assert "create_dataset" in tool_names, f"Missing create_dataset, got: {tool_names}"
-
-    def test_no_db_or_filesystem_tools(self, dashboard_agent_config):
-        """GenDashboard node should NOT expose DB or filesystem tools."""
-        from datus.agent.node.gen_dashboard_agentic_node import GenDashboardAgenticNode
-
-        node = GenDashboardAgenticNode(
-            agent_config=dashboard_agent_config,
-            execution_mode="workflow",
-        )
-
-        tool_names = [tool.name for tool in node.tools]
-        assert "list_tables" not in tool_names
-        assert "describe_table" not in tool_names
-        assert "read_query" not in tool_names
-        assert "read_file" not in tool_names
-        assert "write_file" not in tool_names
 
 
 @pytest.mark.nightly

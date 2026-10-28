@@ -232,6 +232,10 @@ def test_dosi_authoring_validates_reconciles_and_queries_without_llm(
     assert len(rows) == 1
     assert float(rows[0]["revenue"]) == 450.0
 
+    from datus.cli.bootstrap_bi_streams import _validate_semantic_model_sync
+
+    assert _validate_semantic_model_sync(config) == (True, None)
+
     semantic_rag = SemanticDatasetRAG(config)
     metric_rag = MetricRAG(config)
     assert semantic_rag.get_size() == 1
@@ -331,3 +335,14 @@ async def test_semantic_modeling_authors_one_queryable_dosi_model_with_real_llm(
     metric_catalog = node.semantic_tools.list_metrics(limit=50, offset=0)
     assert metric_catalog.success == 1, metric_catalog.error
     assert "school_count" in _catalog_names(metric_catalog.result)
+
+    # Query the generated metric independently of the agent's final response.
+    result = node.semantic_tools.query_metrics(metrics=["school_count"])
+    assert result.success == 1, result.error
+    cached = node.semantic_tools.get_cached_query_metrics_result(parse_query_result_text(result.result).result_id)
+    rows = list(csv.DictReader(io.StringIO(cached["csv"])))
+    assert len(rows) == 1
+    connector = node.db_func_tool.connector
+    oracle = connector.execute_query("SELECT COUNT(*) AS school_count FROM schools", result_format="list")
+    assert oracle.success, oracle.error
+    assert float(rows[0]["school_count"]) == oracle.sql_return[0]["school_count"]

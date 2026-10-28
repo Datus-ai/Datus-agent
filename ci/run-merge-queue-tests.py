@@ -23,6 +23,7 @@ from typing import Any, Sequence
 REPO_ROOT = Path(__file__).resolve().parents[1]
 OUT_DIR = REPO_ROOT / "ci"
 sys.path.insert(0, str(REPO_ROOT))
+from ci.harness.gate_profile import repository_profile  # noqa: E402
 from ci.harness.test_plan import changed_files, verify_gate  # noqa: E402
 
 DEFAULT_REPORT = OUT_DIR / "merge-queue-results.json"
@@ -302,6 +303,44 @@ def main(argv: Sequence[str] | None = None) -> int:
             if not args.suite and (args.base_ref or os.environ.get("GITHUB_EVENT_NAME") == "merge_group")
             else None
         )
+        profile = repository_profile(changed, args.base_ref) if changed is not None else {"profile": "code"}
+        if profile["profile"] == "docs":
+            log(f"Documentation gate: {profile['reason']}")
+            results = [
+                {
+                    "suite": "docs-build",
+                    "exit_code": run_command(
+                        [sys.executable, "ci/check_docs.py"], suite_name="docs", timeout=args.timeout
+                    ),
+                }
+            ]
+            if profile["ci_tests"]:
+                results.append(
+                    run_suite(
+                        "docs-ci",
+                        {
+                            "targets": ["tests/unit_tests/ci/"],
+                            "mark_expr": "not nightly and not quarantine",
+                            "junit_xml": OUT_DIR / "test-results-merge-docs-ci.xml",
+                            "extra_args": ["--timeout=120", "--dist=loadfile", "-n", "auto"],
+                        },
+                        timeout=args.timeout,
+                    )
+                )
+            write_report(results)
+            (OUT_DIR / "gate-coverage.json").write_text(
+                json.dumps(
+                    {
+                        **profile,
+                        "status": "success" if all(r["exit_code"] == 0 for r in results) else "failure",
+                        "required_checks": [r["suite"] for r in results],
+                        "results": results,
+                    },
+                    indent=2,
+                )
+                + "\n"
+            )
+            return int(any(r["exit_code"] != 0 for r in results))
         suites = suite_definitions(changed)
         selected_names = args.suite or list(suites)
         results = [run_suite(name, suites[name], timeout=args.timeout) for name in selected_names]

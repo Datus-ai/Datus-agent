@@ -41,7 +41,18 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  validate-candidate:
+    uses: ./.github/workflows/release-candidate.yml
+    with:
+      ref: ${{ inputs.ref || github.ref_name }}
+      expected_version: ${{ inputs.version }}
+      check_adapter_latest: ${{ inputs.check_adapter_latest }}
+      check_tag_available: false
+    secrets:
+      RELEASE_BOT_TOKEN: ${{ secrets.RELEASE_BOT_TOKEN }}
+
   publish:
+    needs: validate-candidate
     name: Build, publish, and finalize stable releases
     runs-on: ubuntu-latest
     environment:
@@ -56,7 +67,7 @@ jobs:
       - name: Checkout release ref
         uses: actions/checkout@v4
         with:
-          ref: ${{ env.RELEASE_REF }}
+          ref: ${{ needs.validate-candidate.outputs.source_sha }}
           fetch-depth: 0
           persist-credentials: false
 
@@ -130,8 +141,17 @@ jobs:
             echo "Tag ${TAG_NAME} already points to the release commit"
           fi
 
-      - name: Build release distributions
-        run: python -m build --outdir dist-release
+      - name: Download validated candidate distributions
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.validate-candidate.outputs.artifact_name }}
+          path: validated-candidate
+
+      - name: Verify and stage validated distributions
+        run: |
+          python ci/release_artifact.py verify --dist validated-candidate --source-sha "$(git rev-parse HEAD)"
+          mkdir -p dist-release
+          cp validated-candidate/*.whl validated-candidate/*.tar.gz dist-release/
 
       - name: Validate release distributions
         run: python -m twine check dist-release/*

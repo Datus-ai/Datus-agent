@@ -15,6 +15,16 @@ on:
         required: false
         default: ""
         type: string
+      test_profile:
+        description: "full cross-repository Nightly or p0 candidate-wheel validation"
+        required: false
+        default: full
+        type: string
+      candidate_artifact:
+        description: "Distribution artifact from this workflow run; required by p0"
+        required: false
+        default: ""
+        type: string
       nightly_group_filter:
         description: "Optional regex for NIGHTLY_GROUP_FILTER. Leave empty to run the full nightly suite."
         required: false
@@ -29,6 +39,16 @@ on:
         type: string
       product_test_base_ref:
         description: "Compare base for targeted real-model product evaluation."
+        required: false
+        default: ""
+        type: string
+      test_profile:
+        description: "full cross-repository Nightly or p0 candidate-wheel validation"
+        required: false
+        default: full
+        type: string
+      candidate_artifact:
+        description: "Distribution artifact from this workflow run; required by p0"
         required: false
         default: ""
         type: string
@@ -62,6 +82,7 @@ jobs:
       DATUS_AGENT_REF: ${{ inputs.datus_agent_ref || github.ref_name }}
       NIGHTLY_GROUP_FILTER: ${{ inputs.nightly_group_filter || '' }}
       PRODUCT_TEST_BASE_REF: ${{ inputs.product_test_base_ref || '' }}
+      NIGHTLY_PROFILE: ${{ inputs.test_profile || 'full' }}
       DATUS_TEST_RUN_ID: datus-agent-${{ github.run_id }}-${{ github.run_attempt }}
       # DB, BI, scheduler, and storage adapter checkouts are installed after
       # the locked sync. Do not let later `uv run` commands restore their
@@ -73,6 +94,55 @@ jobs:
         with:
           ref: ${{ env.DATUS_AGENT_REF }}
           persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: |
+            uv.lock
+            pyproject.toml
+
+      - name: Resolve P0 source pins
+        id: p0_sources
+        env:
+          CANDIDATE_ARTIFACT: ${{ inputs.candidate_artifact }}
+        run: |
+          case "$NIGHTLY_PROFILE" in
+            full) ;;
+            p0)
+              test -n "$CANDIDATE_ARTIFACT" || { echo "P0 requires a candidate artifact"; exit 1; }
+              if [ -n "$NIGHTLY_GROUP_FILTER" ] || [ -n "$PRODUCT_TEST_BASE_REF" ]; then
+                echo "P0 requires the complete manifest; filters/base refs cannot narrow it"
+                exit 1
+              fi
+              ;;
+            *) echo "Unknown Nightly profile: $NIGHTLY_PROFILE"; exit 1 ;;
+          esac
+          uv run --no-project --with pyyaml python ci/p0_plan.py --github-output "$GITHUB_OUTPUT"
+
+      - name: Download candidate distributions
+        if: ${{ inputs.test_profile == 'p0' }}
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.candidate_artifact }}
+          path: dist-release-candidate
+
+      - name: Install candidate wheel and published P0 dependencies
+        if: ${{ inputs.test_profile == 'p0' }}
+        env:
+          CANDIDATE_ARTIFACT: ${{ inputs.candidate_artifact }}
+        run: |
+          test -n "$CANDIDATE_ARTIFACT" || { echo "P0 requires a candidate distribution artifact"; exit 1; }
+          wheel_requirement="$(python3 ci/release_artifact.py requirement --dist dist-release-candidate --source-sha "$(git rev-parse HEAD)")"
+          uv venv --clear .venv
+          uv pip install -r ci/requirements-p0.txt "$wheel_requirement"
+          uv pip check
 
       - name: Fetch product validation base
         if: ${{ inputs.product_test_base_ref != '' }}
@@ -92,6 +162,7 @@ jobs:
           echo "Checked out commit: $(git rev-parse HEAD)"
 
       - name: Checkout datus-db-adapters main
+        if: ${{ inputs.test_profile != 'p0' }}
         uses: actions/checkout@v4
         with:
           repository: Datus-ai/datus-db-adapters
@@ -103,11 +174,12 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: Datus-ai/datus-bi-adapters
-          ref: main
+          ref: ${{ inputs.test_profile == 'p0' && steps.p0_sources.outputs.bi_adapters || 'main' }}
           path: external/datus-bi-adapters
           persist-credentials: false
 
       - name: Checkout datus-scheduler-adapters main
+        if: ${{ inputs.test_profile != 'p0' }}
         uses: actions/checkout@v4
         with:
           repository: Datus-ai/datus-scheduler-adapters
@@ -119,7 +191,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: Datus-ai/datus-storage-adapters
-          ref: main
+          ref: ${{ inputs.test_profile == 'p0' && steps.p0_sources.outputs.storage_adapters || 'main' }}
           path: external/datus-storage-adapters
           persist-credentials: false
 
@@ -127,7 +199,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: Datus-ai/Datus-Plugins
-          ref: main
+          ref: ${{ inputs.test_profile == 'p0' && steps.p0_sources.outputs.plugins || 'main' }}
           path: external/Datus-Plugins
           persist-credentials: false
 
@@ -145,7 +217,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: Datus-ai/datus-sql-policies
-          ref: main
+          ref: ${{ inputs.test_profile == 'p0' && steps.p0_sources.outputs.sql_policies || 'main' }}
           path: external/datus-sql-policies
           persist-credentials: false
           token: ${{ secrets.RELEASE_BOT_TOKEN }}
@@ -156,6 +228,7 @@ jobs:
       # Restore the extracted libraries before `Install dependencies` packages
       # the adapter, so a cache hit needs no rebuild or reinstall.
       - name: Restore GaussDB vendored libpq cache
+        if: ${{ inputs.test_profile != 'p0' }}
         id: gaussdb-vendor-cache
         uses: actions/cache/restore@v4
         with:
@@ -171,6 +244,7 @@ jobs:
           echo "Disk usage: $(df -h /tmp | tail -1 | awk '{print $5, $4}')"
 
       - name: Compute knowledge base cache key
+        if: ${{ inputs.test_profile != 'p0' }}
         id: kb-cache-key
         run: |
           set -euo pipefail
@@ -208,20 +282,8 @@ jobs:
           )"
           echo "key=${RUNNER_OS}-kb-v6-datus_agent_nightly-${digest}" >> "$GITHUB_OUTPUT"
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v5
-        with:
-          enable-cache: true
-          cache-dependency-glob: |
-            uv.lock
-            pyproject.toml
-
       - name: Install dependencies
+        if: ${{ inputs.test_profile != 'p0' }}
         run: |
           uv sync --locked --group ci
           # No --upgrade: keep the locked framework packages; adapters only add
@@ -323,6 +385,7 @@ jobs:
       # openGauss image), so this runs after the Docker runtime check; the
       # adapter was already installed without the libraries, so reinstall it.
       - name: Vendor GaussDB client libpq
+        if: ${{ inputs.test_profile != 'p0' }}
         id: gaussdb-vendor
         run: |
           set -euo pipefail
@@ -350,7 +413,7 @@ jobs:
       # Only a freshly fetched, fully verified set is saved; the verification
       # step above already failed the job for anything incomplete.
       - name: Save GaussDB vendored libpq cache
-        if: steps.gaussdb-vendor.outputs.fetched == '1' && steps.gaussdb-vendor-cache.outputs.cache-hit != 'true'
+        if: inputs.test_profile != 'p0' && steps.gaussdb-vendor.outputs.fetched == '1' && steps.gaussdb-vendor-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
         with:
           path: external/datus-db-adapters/datus-gaussdb/datus_gaussdb/_vendor/x86_64
@@ -463,11 +526,13 @@ jobs:
           echo "SPARK_UI_HOST_PORT=24040" >> $GITHUB_ENV
 
       - name: Set up Node.js
+        if: ${{ inputs.test_profile != 'p0' }}
         uses: actions/setup-node@v6
         with:
           node-version: '22'
 
       - name: Prepare local Web UI assets
+        if: ${{ inputs.test_profile != 'p0' }}
         run: |
           chatbot_root="$RUNNER_TEMP/datus-chatbot-${{ github.run_id }}-${{ github.run_attempt }}"
           mkdir -p "$chatbot_root"
@@ -488,6 +553,7 @@ jobs:
           echo "DATUS_WEB_E2E_ARTIFACT_DIR=$GITHUB_WORKSPACE/test-results/web-e2e" >> "$GITHUB_ENV"
 
       - name: Restore knowledge base cache
+        if: ${{ inputs.test_profile != 'p0' }}
         id: kb-cache
         uses: actions/cache/restore@v4
         with:
@@ -495,6 +561,7 @@ jobs:
           key: ${{ steps.kb-cache-key.outputs.key }}
 
       - name: Validate knowledge base cache
+        if: ${{ inputs.test_profile != 'p0' }}
         id: kb-cache-state
         run: |
           set -euo pipefail
@@ -543,7 +610,7 @@ jobs:
 
       - name: Build test data
         id: build-test-data
-        if: steps.kb-cache-state.outputs.needs-build == 'true'
+        if: inputs.test_profile != 'p0' && steps.kb-cache-state.outputs.needs-build == 'true'
         run: |
           echo "Building test data before running nightly tests..."
           chmod +x build_scripts/build_test_data.sh
@@ -567,7 +634,7 @@ jobs:
           echo "Test data build completed"
 
       - name: Save knowledge base cache
-        if: steps.kb-cache-state.outputs.needs-build == 'true' && steps.build-test-data.outcome == 'success'
+        if: inputs.test_profile != 'p0' && steps.kb-cache-state.outputs.needs-build == 'true' && steps.build-test-data.outcome == 'success'
         uses: actions/cache/save@v4
         with:
           path: ${{ github.workspace }}/.datus_test_data/data
@@ -583,6 +650,16 @@ jobs:
             echo "FEISHU_WEBHOOK_URL is not set or empty"
           fi
 
+      - name: Stage candidate-wheel harness outside the checkout
+        if: ${{ inputs.test_profile == 'p0' }}
+        run: |
+          uv run --no-sync python -I ci/release_artifact.py verify-install \
+            --dist dist-release-candidate --source-sha "$(git rev-parse HEAD)" \
+            --checkout "$GITHUB_WORKSPACE" --output "$GITHUB_WORKSPACE/p0-installed-artifact.json"
+          p0_root="$RUNNER_TEMP/datus-release-p0-${{ github.run_id }}-${{ github.run_attempt }}"
+          uv run --no-sync python ci/stage_p0.py "$GITHUB_WORKSPACE" "$p0_root"
+          echo "P0_TEST_ROOT=$p0_root" >> "$GITHUB_ENV"
+
       - name: Run nightly tests
         id: nightly_tests
         timeout-minutes: 150
@@ -592,7 +669,18 @@ jobs:
           LANGFUSE_TRACING_ENABLED: "true"
           NIGHTLY_REQUIRE_LANGFUSE_TRACING: "1"
         run: |
+          test_root="${P0_TEST_ROOT:-$GITHUB_WORKSPACE}"
+          cd "$test_root"
+          set +e
           ci/run-nightly-tests.sh
+          status=$?
+          if [ "$test_root" != "$GITHUB_WORKSPACE" ]; then
+            for path in test_output_nightly_*.log nightly-*.json nightly-*.jsonl provider-coverage-manifest.json; do
+              [ ! -f "$path" ] || cp "$path" "$GITHUB_WORKSPACE/"
+            done
+            cp -R ci/p0-execution* "$GITHUB_WORKSPACE/ci/"
+          fi
+          exit "$status"
 
       - name: Stop nightly services
         if: always()
@@ -610,6 +698,9 @@ jobs:
           path: |
             test_output_nightly_*.log
             nightly-manifest.json
+            p0-installed-artifact.json
+            ci/p0-execution*/
+            ci/p0-execution-coverage.json
             ci/product-test-plan.json
             ci/product-execution.*/
             ci/product-execution-coverage.json

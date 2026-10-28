@@ -50,7 +50,7 @@ def changed_files(base_ref: str | None = None) -> list[str]:
             "sha"
         )
     if not base_ref:
-        base_ref = "upstream/main"
+        base_ref = "origin/main" if os.getenv("GITHUB_ACTIONS") == "true" else "upstream/main"
     result = subprocess.run(
         ["git", "diff", "--name-only", f"{base_ref}...HEAD"],
         cwd=ROOT,

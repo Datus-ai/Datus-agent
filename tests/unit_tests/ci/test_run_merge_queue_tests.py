@@ -180,3 +180,44 @@ def test_main_runs_selected_suite_and_writes_report(tmp_path, monkeypatch, run_m
         }
     ]
     assert '"status": "success"' in (out_dir / "merge-queue-results.json").read_text(encoding="utf-8")
+
+
+@pytest.mark.component
+@pytest.mark.parametrize("ci_tests,docs_exit", [(False, 0), (True, 0), (False, 1)])
+def test_documentation_gate_runs_and_records_its_required_checks(
+    ci_tests, docs_exit, tmp_path, monkeypatch, run_merge_queue_tests
+):
+    real_root = run_merge_queue_tests.REPO_ROOT
+    out = tmp_path / "ci"
+    out.mkdir()
+    (out / "check_docs.py").write_text(
+        f"from pathlib import Path\nPath('docs-built.txt').write_text('en,zh')\nraise SystemExit({docs_exit})\n"
+    )
+    tests = tmp_path / "tests/unit_tests/ci"
+    tests.mkdir(parents=True)
+    (tests / "test_docs_contract.py").write_text(
+        "from pathlib import Path\ndef test_ci_contract():\n"
+        "    Path('ci-executed.txt').write_text('passed')\n"
+        "    assert Path('docs-built.txt').read_text() == 'en,zh'\n"
+    )
+    (tmp_path / "pytest.ini").write_text("[pytest]\n")
+    monkeypatch.setattr(run_merge_queue_tests, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(run_merge_queue_tests, "OUT_DIR", out)
+    monkeypatch.setattr(run_merge_queue_tests, "DEFAULT_REPORT", out / "merge-queue-results.json")
+    monkeypatch.setattr(run_merge_queue_tests, "PYTEST_BASETEMP", tmp_path / "pytest-temp")
+    monkeypatch.setattr(run_merge_queue_tests, "changed_files", lambda *_: ["docs/index.md"])
+    monkeypatch.setattr(
+        run_merge_queue_tests,
+        "repository_profile",
+        lambda *_: {"profile": "docs", "ci_tests": ci_tests, "reason": "documentation registration"},
+    )
+    monkeypatch.setenv("PYTHONPATH", str(real_root))
+    monkeypatch.setenv("PYTEST_XDIST_AUTO_NUM_WORKERS", "2")
+    monkeypatch.delenv("PYTEST_ADDOPTS", raising=False)
+    assert run_merge_queue_tests.main(["--base-ref", "HEAD"]) == docs_exit
+    report = json.loads((out / "gate-coverage.json").read_text())
+    assert report["required_checks"] == ["docs-build", *(["docs-ci"] if ci_tests else [])]
+    assert report["status"] == ("success" if docs_exit == 0 else "failure")
+    assert (tmp_path / "docs-built.txt").read_text() == "en,zh"
+    if ci_tests:
+        assert (tmp_path / "ci-executed.txt").read_text() == "passed"

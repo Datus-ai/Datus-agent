@@ -267,22 +267,61 @@ def test_nightly_runs_postgresql_storage_adapter_tests_from_checkout():
 
 
 def test_nightly_runs_p0_contracts_without_reruns_or_skips():
-    script = NIGHTLY_SCRIPT.read_text(encoding="utf-8")
-    logical_lines = script.replace("\\\n", " ").splitlines()
+    from ci.p0_plan import load_profile
 
-    for group in (
-        "P0 PostgreSQL Agent Storage Contracts",
-        "P0 SQL Policy Plugin Contracts",
-        "P0 Dosi Semantic Modeling E2E",
-        "P0 Dashboard Bootstrap Skill E2E",
-    ):
-        command = next(line for line in logical_lines if line.startswith("run_") and f'"{group}"' in line)
+    harness = "\n".join(
+        [
+            "set -uo pipefail",
+            "test_exit_code=0",
+            'run_logged() { printf "%s\\n" "$@"; }',
+            'run_compose_suite() { printf "%s\\n" "$@"; }',
+            _bash_function_source("run_p0_group"),
+            'run_p0_group "$1"',
+            'exit "$test_exit_code"',
+        ]
+    )
+    for group, config in load_profile()["groups"].items():
+        result = subprocess.run(
+            ["bash", "-c", harness, "p0-group", group],
+            cwd=REPO_ROOT,
+            env={
+                **os.environ,
+                "NIGHTLY_HOME": "/tmp/p0-home",
+                "NIGHTLY_PYTEST_BASETEMP": "/tmp/p0-temp",
+                "SUPERSET_COMPOSE": "/tmp/superset.yml",
+                "UV_NO_SYNC": "1",
+            },
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        command = result.stdout.splitlines()
         assert "--fail-on-skip" in command
+        assert "DATUS_TEST_LAYER=nightly" in command
+        assert set(config["nodeids"]) <= set(command)
         assert "--reruns" not in command
-        assert "uv run python -m pytest" in command
 
-    assert '"P0 PostgreSQL Agent Storage Contracts"' in script.split("DOCKER_GROUPS=(", maxsplit=1)[1]
-    assert '"P0 Dashboard Bootstrap Skill E2E"' in script.split("COMPOSE_GROUPS=(", maxsplit=1)[1]
+
+def test_nightly_filter_requires_a_matching_group():
+    harness = "\n".join(
+        [
+            "set -uo pipefail",
+            f'REPO_ROOT="{REPO_ROOT}"',
+            "LOG_FILE=/dev/null",
+            'NIGHTLY_GROUP_FILTER="$1"',
+            _bash_function_source("validate_nightly_group_filter"),
+            "validate_nightly_group_filter",
+        ]
+    )
+    for pattern, expected in [("^P0 ", 0), ("^P0 DOES_NOT_EXIST$", 1), ("[", 1)]:
+        result = subprocess.run(
+            ["bash", "-c", harness, "filter", pattern],
+            cwd=REPO_ROOT,
+            env={**os.environ, "UV_NO_SYNC": "1"},
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode == expected, result.stderr
 
 
 def test_nightly_tracebacks_do_not_publish_local_credentials():
@@ -304,8 +343,9 @@ def test_release_candidate_reuses_p0_nightly_on_the_release_ref():
     assert "NIGHTLY_GROUP_FILTER: ${{ inputs.nightly_group_filter || '' }}" in nightly
     assert "uses: ./.github/workflows/run-nightly.yml" in release
     assert "if: ${{ github.event_name != 'pull_request' }}" in release
-    assert "datus_agent_ref: ${{ inputs.ref || github.ref }}" in release
-    assert "nightly_group_filter: '^P0 '" in release
+    assert "datus_agent_ref: ${{ needs.package-smoke.outputs.source_sha }}" in release
+    assert "test_profile: p0" in release
+    assert "candidate_artifact: ${{ needs.package-smoke.outputs.artifact_name }}" in release
     assert "secrets: inherit" not in release
     assert "RELEASE_BOT_TOKEN: ${{ secrets.RELEASE_BOT_TOKEN }}" in release
     assert "uses: ./.github/workflows/release-candidate.yml" in prepare

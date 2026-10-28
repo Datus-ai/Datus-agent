@@ -9,6 +9,8 @@ Contains two test classes at different verification levels:
 - TestE2EIntegration: Full end-to-end with zero mocks (manual, ``-m product_e2e``)
 """
 
+import csv
+import io
 import os
 import re
 from typing import Any, Dict, List, Tuple
@@ -130,7 +132,16 @@ def agent_config(tmp_path_factory) -> AgentConfig:
         "isolation (got 0 substitutions — semantic_model / dashboard paths "
         "would resolve to the real workspace)"
     )
-    tmp_cfg.write_text(content)
+    document = yaml.safe_load(content)
+    document["agent"]["services"]["datasources"]["superset"].update(
+        host=os.environ.get("SUPERSET_POSTGRES_HOST", "127.0.0.1"),
+        port=os.environ.get("SUPERSET_POSTGRES_PORT", "5433"),
+        username="superset",
+        password="superset",
+        database="superset_examples",
+        schema="public",
+    )
+    tmp_cfg.write_text(yaml.safe_dump(document, sort_keys=False))
 
     config = load_agent_config(config=str(tmp_cfg), datasource="superset", reload=True, force=True, yes=True)
 
@@ -601,12 +612,10 @@ class TestE2EIntegration:
                 await bi_commands._run_plan(plan, actions)
 
                 # Verify 2 sub-agents created
-                assert sub_agent_name in agent_config.agentic_nodes, (
-                    f"Main sub-agent '{sub_agent_name}' not found in agentic_nodes"
-                )
-                assert attr_name in agent_config.agentic_nodes, (
-                    f"Attribution sub-agent '{attr_name}' not found in agentic_nodes"
-                )
+                if sub_agent_name not in agent_config.agentic_nodes:
+                    raise AssertionError(f"Main sub-agent '{sub_agent_name}' was not persisted")
+                if attr_name not in agent_config.agentic_nodes:
+                    raise AssertionError(f"Attribution sub-agent '{attr_name}' was not persisted")
                 attr_node = agent_config.agentic_nodes[attr_name]
                 assert attr_node.get("node_class") == "gen_report", (
                     f"Attribution sub-agent should have node_class='gen_report', got '{attr_node.get('node_class')}'"
@@ -646,6 +655,50 @@ class TestE2EIntegration:
                 assert len(sql_files) >= 1, "SQL files should exist"
                 csv_files = list(sql_dir.glob("*.csv"))
                 assert len(csv_files) >= 1, "CSV files should exist"
+
+                # Reload persisted sub-agents and query their generated metrics.
+                # Source-table aggregates are an independent business oracle.
+                from datus.configuration.agent_config_loader import configuration_manager
+                from datus.tools.db_tools import DBManager
+                from datus.tools.func_tool.semantic_tools import SemanticTools
+                from datus.utils.query_result_text import parse_query_result_text
+
+                manager = bi_commands._configuration_manager or configuration_manager()
+                reloaded = load_agent_config(
+                    config=str(manager.config_path), datasource="superset", reload=True, force=True, yes=True
+                )
+                available = set(reloaded.agentic_nodes)
+                assert {sub_agent_name, attr_name} <= available
+                assert reloaded.agentic_nodes[attr_name]["node_class"] == "gen_report"
+                database_manager = DBManager(reloaded.services.datasources)
+                try:
+                    oracle = database_manager.get_conn("superset").execute_query(
+                        "SELECT SUM(revenue) AS revenue, SUM(orders) AS orders FROM public.datus_nightly_bi_sales",
+                        result_format="list",
+                    )
+                    assert oracle.success, oracle.error
+                    expected = [float(value) for value in oracle.sql_return[0].values()]
+                    semantic = SemanticTools(reloaded, sub_agent_name=attr_name)
+                    catalog = semantic.list_metrics(limit=100, offset=0)
+                    assert catalog.success == 1, catalog.error
+                    names = [
+                        line[2:].split(" -- ", 1)[0] for line in catalog.result.splitlines() if line.startswith("- ")
+                    ]
+                    assert names, catalog.result
+                    observed = []
+                    for metric in names:
+                        queried = semantic.query_metrics(metrics=[metric])
+                        assert queried.success == 1, queried.error
+                        cached = semantic.get_cached_query_metrics_result(
+                            parse_query_result_text(queried.result).result_id
+                        )
+                        rows = list(csv.DictReader(io.StringIO(cached["csv"])))
+                        assert len(rows) == 1, rows
+                        observed.extend(float(value) for value in rows[0].values())
+                    for value in expected:
+                        assert any(actual == pytest.approx(value) for actual in observed), (expected, observed)
+                finally:
+                    database_manager.close()
 
                 # Update test result
                 test_result["dashboard_name"] = dashboard.name

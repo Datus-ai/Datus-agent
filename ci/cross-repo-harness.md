@@ -17,6 +17,7 @@ scope are local repository contracts.
 | Adapter merge queue checks | Adapter repository | Service-backed integration that is too heavy for every PR commit. |
 | Datus-agent merge queue | Datus-agent | Deterministic product acceptance across core Datus chains. |
 | Datus-agent nightly | Datus-agent | Cross-repository source-checkout compatibility in realistic product flows. |
+| Release P0 | Datus-agent | Candidate wheel with published adapter pins and explicitly pinned plugin/service fixtures. |
 | Weekly/manual benchmark | datus-benchmark | Product quality trend tracking and evaluator health. |
 
 ## Adapter Required Check Documents
@@ -35,12 +36,12 @@ cross-repository integration contract changes.
 
 ## Dashboard Bootstrap Nightly Scope
 
-The P0 Superset group gates four deterministic checks: managed plugin installation
-and real SQL export integrity, two dashboard-node/tool initialization contracts,
-and BI orchestration with fixed generation results. It selects `nightly and not
-product_e2e` from the three dashboard test files. These files are excluded from
-the broad nightly groups, so their three real-model workflows do not run again
-through Product E2E. The deterministic checks do not require provider credentials.
+The P0 Superset group selects the two explicit nodeids in `ci/harness/p0.yml`:
+managed plugin installation with verified SQL export, and real-model BI bootstrap.
+Bootstrap must persist reloadable sub-agents and query their generated metrics
+against independently computed source-table aggregates. It requires provider
+credentials. Fixed-result orchestration runs in the ordinary BI group; node/tool
+initialization is covered by the component suite.
 
 Real-model dashboard workflows are explicit evaluations when changing a skill,
 prompt, or model. They are not warn-only nightly checks. With the normal integration
@@ -54,6 +55,8 @@ uv run pytest -m product_e2e \
   tests/integration/tools/test_bi_dashboard.py
 ```
 
-Evaluation failures retain pytest's nonzero exit status. A green P0 Superset gate
-proves the deterministic contracts, not that a model will always honor the skill's
-confirmation boundary.
+Evaluation failures retain pytest's nonzero exit status. The complete P0 manifest
+runs in both daily Nightly and release-candidate validation. The latter installs
+the candidate wheel and published dependency pins, while daily Nightly tests
+repository-main source compatibility. See `ci/harness/README.md` for artifact
+identity, execution evidence and profile-specific environment preparation.
