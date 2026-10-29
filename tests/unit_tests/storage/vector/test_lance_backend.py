@@ -4,17 +4,117 @@
 
 """Tests for LanceDB vector backend covering table, database, and backend operations."""
 
+import json
 import unittest.mock
 from unittest.mock import MagicMock
 
+import httpx
 import lancedb
+import pandas as pd
 import pyarrow as pa
 import pytest
 from datus_storage_base.conditions import and_, eq, in_
+from openai import OpenAI
 
 from datus.storage.fts import FtsField, FtsIndexStatus, FtsSpec
 from datus.storage.vector.lance_backend import LanceVectorBackend, LanceVectorDatabase, LanceVectorTable
 from datus.utils.exceptions import DatusException
+
+
+class TestOpenAIEmbeddingPersistence:
+    @pytest.mark.parametrize(
+        ("model_name", "policy", "width", "reject_dimensions"),
+        [
+            ("resizable-custom", True, 4, False),
+            ("resizable-custom", False, 8, False),
+            ("resizable-custom", None, 8, False),
+            ("text-embedding-3-small", False, 8, True),
+            ("text-embedding-3-small", None, 4, False),
+        ],
+    )
+    def test_create_reopen_search_preserves_request_policy(
+        self, tmp_path, monkeypatch, model_name, policy, width, reject_dimensions
+    ):
+        result = self._check_round_trip(tmp_path, monkeypatch, model_name, policy, width, reject_dimensions)
+        assert result.to_pylist()[0]["id"] == 7
+
+    @pytest.mark.parametrize("model_name", ["resizable-custom", "text-embedding-3-small"])
+    def test_legacy_metadata_retains_automatic_policy(self, tmp_path, monkeypatch, model_name):
+        width = 8 if model_name == "resizable-custom" else 4
+        result = self._check_round_trip(tmp_path, monkeypatch, model_name, None, width, False, legacy=True)
+        assert result.to_pylist()[0]["id"] == 7
+
+    @staticmethod
+    def _check_round_trip(tmp_path, monkeypatch, model_name, policy, width, reject_dimensions, legacy=False):
+        from datus.storage.embedding_openai import OpenAIEmbeddings
+
+        requests = []
+
+        def respond(request):
+            payload = json.loads(request.content)
+            requests.append(payload)
+            if reject_dimensions and "dimensions" in payload:
+                return httpx.Response(400, json={"error": {"message": "dimensions is unsupported"}})
+            response_width = payload.get("dimensions", 8)
+            return httpx.Response(
+                200,
+                json={
+                    "object": "list",
+                    "model": model_name,
+                    "data": [
+                        {"object": "embedding", "index": index, "embedding": [1.0] * response_width}
+                        for index, _ in enumerate(payload["input"])
+                    ],
+                    "usage": {"prompt_tokens": 1, "total_tokens": 1},
+                },
+            )
+
+        with httpx.Client(transport=httpx.MockTransport(respond)) as http_client:
+            monkeypatch.setattr(
+                "datus.storage.embedding_openai.OpenAI",
+                lambda **kwargs: OpenAI(**kwargs, http_client=http_client, max_retries=0),
+            )
+            embedding = OpenAIEmbeddings(
+                name=model_name,
+                dim=width,
+                send_dimensions=policy,
+                api_key="local-test-only",
+                base_url="https://embedding.example.invalid/v1",
+            )
+            assert embedding.generate_embeddings(["direct query"]) == [[1.0] * width]
+            db_path = str(tmp_path / "vectors")
+            db = LanceVectorDatabase(lancedb.connect(db_path))
+            schema = pa.schema([("id", pa.int64()), ("text", pa.string()), ("vector", pa.list_(pa.float32(), width))])
+            table = db.create_table(
+                "documents", schema=schema, embedding_function=embedding, vector_column="vector", source_column="text"
+            )
+            table.add(pd.DataFrame([{"id": 7, "text": "document", "vector": [1.0] * width}]))
+            table_name = "documents"
+            if legacy:
+                raw_db = lancedb.connect(db_path)
+                persisted_schema = raw_db.open_table(table_name).schema
+                metadata = dict(persisted_schema.metadata)
+                functions = json.loads(metadata[b"embedding_functions"])
+                for function in functions:
+                    function["model"].pop("send_dimensions", None)
+                metadata[b"embedding_functions"] = json.dumps(functions).encode()
+                legacy_table = raw_db.create_table("legacy_documents", schema=persisted_schema.with_metadata(metadata))
+                legacy_table.add(pd.DataFrame([{"id": 7, "text": "document", "vector": [1.0] * width}]))
+                table_name = "legacy_documents"
+
+            reopened = LanceVectorDatabase(lancedb.connect(db_path)).open_table(table_name)
+            result = reopened.search_vector("stored query", vector_column="vector", top_n=1)
+
+            assert [request["input"] for request in requests] == [["direct query"], ["stored query"]]
+            expected_dimensions = (
+                width if policy is True or (policy is None and model_name.startswith("text-embedding-3-")) else None
+            )
+            if expected_dimensions is None:
+                assert all("dimensions" not in request for request in requests)
+            else:
+                assert all(request["dimensions"] == expected_dimensions for request in requests)
+            return result
+
 
 # ---------------------------------------------------------------------------
 # LanceVectorTable tests
@@ -481,6 +581,7 @@ class TestWrapEmbedding:
         mock_model = MagicMock()
         mock_model.name = "text-embedding-3-small"
         mock_model.dim = 1536
+        mock_model.send_dimensions = None
         mock_model.base_url = None
         mock_model.api_key = "test-key"
         mock_model.use_azure = False

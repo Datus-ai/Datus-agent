@@ -50,6 +50,11 @@ class EmbeddingModel:
         batch_size: int = 64,
         send_dimensions: Optional[bool] = None,
     ):
+        if dim_size is not None and dim_size <= 0:
+            raise DatusException(
+                ErrorCode.COMMON_CONFIG_ERROR,
+                message=f"Embedding model '{model_name}' requires a positive dim_size.",
+            )
         self.registry_name = registry_name
         self.model_name = model_name
         self._dim_size = dim_size
@@ -273,7 +278,12 @@ def init_embedding_models(
             continue
         if "model_name" not in config:
             continue
-        model_key = (config["model_name"], config["dim_size"], config.get("send_dimensions"))
+        model_key = (
+            config["model_name"],
+            config["dim_size"],
+            config.get("send_dimensions"),
+            config.get("target_model"),
+        )
         if model_key in models:
             target_model = models[model_key]
         else:

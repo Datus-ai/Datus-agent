@@ -236,6 +236,45 @@ def embedding_api(monkeypatch):
 
 
 class TestCustomEmbeddingCompatibility:
+    def test_stores_with_different_provider_routes_do_not_share_a_model(self, embedding_api, monkeypatch):
+        monkeypatch.setattr(embedding_models, "EMBEDDING_MODELS", {})
+        first = ModelConfig(
+            type="openai", model="chat-a", api_key="local-test-a", base_url="https://first.example.invalid/v1"
+        )
+        second = ModelConfig(
+            type="openai", model="chat-b", api_key="local-test-b", base_url="https://second.example.invalid/v1"
+        )
+        shared = {"registry_name": "openai", "model_name": "vendor/custom-model", "dim_size": 4}
+        models = embedding_models.init_embedding_models(
+            {
+                "embedding_device_type": "cpu",
+                "database": {**shared, "target_model": "first"},
+                "document": {**shared, "target_model": "second"},
+                "metric": {**shared, "target_model": "second"},
+            },
+            {"first": first, "second": second},
+            first,
+        )
+
+        assert models["database"] is not models["document"]
+        assert models["document"] is models["metric"]
+        for store, host in [("database", "first.example.invalid"), ("document", "second.example.invalid")]:
+            assert models[store].model.generate_embeddings(["query"]) == [[1.0] * 4]
+            assert models[store].model._openai_client.base_url.host == host
+
+    @pytest.mark.parametrize("dim_size", [0, -1])
+    def test_storage_initialization_rejects_nonpositive_custom_widths(self, dim_size, monkeypatch):
+        monkeypatch.setattr(embedding_models, "EMBEDDING_MODELS", {})
+        with pytest.raises(DatusException, match="positive dim_size"):
+            embedding_models.init_embedding_models(
+                {
+                    "embedding_device_type": "cpu",
+                    "database": {"registry_name": "openai", "model_name": "vendor/custom-model", "dim_size": dim_size},
+                },
+                {},
+                None,
+            )
+
     @pytest.mark.parametrize("send_dimensions", [False, True])
     def test_environment_credentials_keep_the_custom_request_policy(self, embedding_api, monkeypatch, send_dimensions):
         monkeypatch.setenv("OPENAI_API_KEY", "local-test-only")

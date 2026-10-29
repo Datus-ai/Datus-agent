@@ -72,6 +72,15 @@ class OpenAIEmbeddings(BaseModel, EmbeddingFunction):
             "text-embedding-3-small",
         ]
 
+    @staticmethod
+    def should_send_dimensions(model_name: str, dim: Optional[int], policy: Optional[bool] = None) -> bool:
+        """Resolve the effective request policy, including models that cannot resize."""
+        if model_name == "text-embedding-ada-002" or dim is None:
+            return False
+        if policy is not None:
+            return policy
+        return model_name in {"text-embedding-3-small", "text-embedding-3-large"}
+
     @cached_property
     def _ndims(self):
         if self.name == "text-embedding-ada-002":
@@ -103,10 +112,7 @@ class OpenAIEmbeddings(BaseModel, EmbeddingFunction):
                 "input": valid_texts,
                 "model": self.name,
             }
-            send_dimensions = self.send_dimensions
-            if send_dimensions is None:
-                send_dimensions = self.name in self.model_names()
-            if self.name != "text-embedding-ada-002" and self.dim is not None and send_dimensions:
+            if self.should_send_dimensions(self.name, self.dim, self.send_dimensions):
                 kwargs["dimensions"] = self.dim
 
             logger.debug(f"Calling OpenAI API: model={self.name}, text_count={len(valid_texts)}")
