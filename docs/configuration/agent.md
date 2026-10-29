@@ -149,7 +149,7 @@ existing configurations do not need new fields:
 
 | Setting | When omitted |
 | --- | --- |
-| `context_length` | Use existing model specifications or the provider catalogue; fall back to a `262144` (256K) token budget if unknown |
+| `context_length` | Use existing model specifications or the provider catalogue; fall back to a `1048576` (1M) token budget if unknown |
 | `max_tokens` | Use the model's output specification; fall back to `8192` if unknown. Transports with an output cap also leave room for input and the safety margin, so small windows may get a lower default |
 | `tokenizer_ref` | Use LiteLLM counting for known OpenAI models; otherwise reserve UTF-8 bytes, including for private aliases, without downloading a tokenizer |
 

@@ -1352,7 +1352,7 @@ class TestModelSpecsAndTokenLimits:
     def test_unknown_model_has_default_context_length(self):
         cfg = _make_model_config(model="unknown-model-xyz")
         model = _make_model(cfg)
-        assert model.context_length() == 262144
+        assert model.context_length() == 1048576
 
     def test_deepseek_chat_specs(self):
         cfg = _make_model_config(model="deepseek-chat")
@@ -1426,7 +1426,7 @@ class TestModelSpecsOpenRouterCacheMerge:
         ):
             cfg = _make_model_config(model="only-id-no-ctx")
             model = _make_model(cfg)
-            assert model.context_length() == 262144
+            assert model.context_length() == 1048576
 
     def test_lookup_uses_longest_prefix_match(self):
         """A short generic prefix must not preempt a more specific one on the same slug."""
