@@ -68,7 +68,9 @@ def test_custom_model_capacity_settings_are_independently_optional(context, outp
     assert model.check_request({**request, "max_tokens": 256})["max_tokens"] == 256
 
 
-@pytest.mark.parametrize("context,output,expected_output", [(65536, 12000, 12000), (4096, 8192, 1024)])
+@pytest.mark.parametrize(
+    "context,output,expected_output", [(65536, 12000, 12000), (2097152, 12000, 12000), (4096, 8192, 1024)]
+)
 def test_catalogue_specs_precede_defaults_for_both_sdk_and_request_budget(
     monkeypatch, context, output, expected_output
 ):
@@ -142,7 +144,9 @@ async def test_custom_model_without_new_settings_reaches_transport_and_retains_c
         usage={"prompt_tokens": 10, "completion_tokens": 2, "total_tokens": 12},
     )
     with patch("litellm.acompletion", new_callable=AsyncMock, return_value=response) as send:
-        result = await model.generate_with_tools("Inspect the schema", max_turns=1)
+        # Requests above the former 256K fallback must reach the transport.
+        prompt = "Inspect the schema.\n" + "column_name " * 25000
+        result = await model.generate_with_tools(prompt, max_turns=1)
         assert result["content"] == "done"
         assert send.await_args.kwargs["max_tokens"] == DEFAULT_MAX_TOKENS
         send.reset_mock()
