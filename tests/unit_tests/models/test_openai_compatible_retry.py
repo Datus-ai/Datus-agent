@@ -119,10 +119,12 @@ class TestWithRetryAsyncModelBehaviorError:
         assert sleep_delays[2] == 4.0
 
 
-@pytest.mark.acceptance
 class TestStreamMidStreamFallbackError:
+    """Exercise the configured retry behavior for interrupted model streams."""
+
     @pytest.fixture
     def stream_mocks(self, mock_model, monkeypatch):
+        """Mock SDK calls and backoff while retaining the production stream loop."""
         mock_model.model_config.max_retry = 3
         mock_model.model_config.retry_interval = 2.0
         mock_model.model_config.save_llm_trace = False
@@ -137,6 +139,7 @@ class TestStreamMidStreamFallbackError:
 
     @staticmethod
     def _error():
+        """Wrap a real connection error in LiteLLM's streaming exception."""
         return MidStreamFallbackError(
             message="Response payload is not completed",
             model="test-model",
@@ -146,9 +149,11 @@ class TestStreamMidStreamFallbackError:
 
     @staticmethod
     def _result(error=None):
+        """Build a stream that emits text before completing or raising an error."""
         result = SimpleNamespace(is_complete=False, final_output="complete", cancel=MagicMock())
 
         async def events():
+            """Emit a text delta before exposing the stream's terminal outcome."""
             yield SimpleNamespace(
                 type="raw_response_event",
                 data=SimpleNamespace(type="response.output_text.delta", delta="partial" if error else "complete"),
@@ -162,6 +167,7 @@ class TestStreamMidStreamFallbackError:
 
     @staticmethod
     async def _actions(model):
+        """Consume the public streaming API through completion or failure."""
         return [
             action
             async for action in model.generate_with_tools_stream(
@@ -171,6 +177,7 @@ class TestStreamMidStreamFallbackError:
 
     @pytest.mark.asyncio
     async def test_stream_retries_after_midstream_connection_error(self, mock_model, stream_mocks):
+        """Recover from a truncated stream and notify the caller of the retry."""
         runner, sleep = stream_mocks
         runner.side_effect = [self._result(self._error()), self._result()]
 
@@ -185,6 +192,7 @@ class TestStreamMidStreamFallbackError:
 
     @pytest.mark.asyncio
     async def test_stream_raises_midstream_error_after_configured_attempts(self, mock_model, stream_mocks):
+        """Preserve the original error after the configured attempts and backoff."""
         runner, sleep = stream_mocks
         error = self._error()
         runner.side_effect = [self._result(error) for _ in range(3)]
