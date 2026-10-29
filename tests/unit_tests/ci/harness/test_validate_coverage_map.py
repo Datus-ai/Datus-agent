@@ -64,6 +64,15 @@ def test_minimal_map_with_gap_issue_is_valid():
     assert [flow.flow_id for flow in flows] == ["onboarding.quickstart"]
 
 
+def test_coverage_map_gate_rejects_stale_unit_ownership():
+    data = minimal_map()
+    data["execution"] = {
+        "unit_rules": [{"id": "stale", "paths": ["datus/example.py"], "targets": ["tests/unit_tests/no_such_test.py"]}]
+    }
+    errors, _ = validate(data)
+    assert errors == ["unit_rules.stale: unit target does not exist: tests/unit_tests/no_such_test.py"]
+
+
 def test_missing_docs_path_is_reported():
     errors, _ = validate(minimal_map(docs=["docs/missing.md"]))
 

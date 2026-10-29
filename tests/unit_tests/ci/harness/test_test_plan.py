@@ -8,7 +8,15 @@ import sys
 import pytest
 import yaml
 
-from ci.harness.test_plan import ROOT, check_execution, check_product_execution, impact_plan
+from ci.harness.test_plan import (
+    ROOT,
+    check_execution,
+    check_product_execution,
+    impact_plan,
+    load_map,
+    unit_test_plan,
+    validate_unit_rules,
+)
 
 pytestmark = pytest.mark.acceptance
 
@@ -82,11 +90,165 @@ def test_merge_group_changes_use_the_event_base(monkeypatch, tmp_path):
 
 
 def test_impact_targets_exist():
-    from ci.harness.test_plan import load_map
-
-    for rule in load_map()["execution"]["impact_rules"]:
-        for target in rule.get("unit_targets", []) + rule.get("live_targets", []):
+    data = load_map()
+    assert validate_unit_rules(data) == []
+    for rule in data["execution"]["impact_rules"]:
+        for target in rule.get("live_targets", []):
             assert (ROOT / target.split("::", 1)[0]).exists(), (rule["id"], target)
+
+
+@pytest.mark.parametrize(
+    "source,expected",
+    [
+        (
+            "datus/mcp_server.py",
+            {
+                "tests/unit_tests/test_mcp_server.py",
+                "tests/unit_tests/utils/test_mcp_decorators.py",
+                "tests/unit_tests/utils/test_mcp_execution.py",
+                "tests/unit_tests/tools/mcp_tools/",
+                "tests/unit_tests/api/services/test_mcp_service.py",
+            },
+        ),
+        (
+            "datus/configuration/logging_config.py",
+            {
+                "tests/unit_tests/configuration/test_logging_config.py",
+                "tests/unit_tests/utils/test_loggings.py",
+                "tests/unit_tests/observability/test_privacy.py",
+            },
+        ),
+        (
+            "datus/cli/language_commands.py",
+            {"tests/unit_tests/cli/test_language_commands.py", "tests/unit_tests/cli/test_language_app.py"},
+        ),
+    ],
+)
+def test_leaf_changes_select_their_owners_and_consumers(source, expected):
+    plan = unit_test_plan([source])
+    assert set(plan["targets"]) == expected
+    assert plan["selections"][0]["matched_path"] == source
+
+
+def test_specific_units_preserve_additive_live_and_service_requirements():
+    plan = impact_plan(["datus/storage/reference_template/store.py"])
+    assert "tests/unit_tests/storage/reference_template/" in plan["unit_targets"]
+    assert "tests/unit_tests/tools/func_tool/test_reference_template_tools.py" in plan["unit_targets"]
+    assert "tests/integration/agent/test_core_live.py" in plan["live_targets"]
+    assert "P0 PostgreSQL Agent Storage Contracts" in plan["nightly_groups"]
+
+
+def test_longest_package_owner_keeps_connector_consumers():
+    plan = unit_test_plan(["./datus/tools/db_tools/sqlite_connector.py"])
+    assert plan["targets"] == [
+        "tests/unit_tests/agent/node/test_gen_sql_agentic_node.py",
+        "tests/unit_tests/tools/db_tools/",
+        "tests/unit_tests/tools/func_tool/test_database.py",
+    ]
+    assert plan["selections"][0]["matched_path"] == "datus/tools/db_tools/"
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "tests/conftest.py",
+        "tests/unit_tests/conftest.py",
+        "tests/helpers/shared.py",
+        "tests/conf/agent.yml",
+        "pytest.ini",
+    ],
+)
+def test_shared_test_infrastructure_selects_all_unit_consumers(path):
+    assert unit_test_plan([path])["targets"] == ["tests/unit_tests/"]
+
+
+def test_unknown_runtime_module_retains_a_visible_full_suite_fallback():
+    plan = unit_test_plan(["datus/new_runtime/module.py"])
+    assert plan["targets"] == ["tests/unit_tests/"]
+    assert plan["selections"][0]["fallback"] is True
+
+
+def test_multiple_changes_preserve_each_owner_and_collapse_children():
+    plan = unit_test_plan(
+        ["datus/gateway/runtime.py", "tests/unit_tests/gateway/test_runtime.py", "datus/mcp_server.py"]
+    )
+    assert "tests/unit_tests/gateway/" in plan["targets"]
+    assert "tests/unit_tests/test_mcp_server.py" in plan["targets"]
+    assert len(plan["targets"]) == 6
+
+
+@pytest.mark.parametrize("support", ["conftest.py", "helpers.py", "fixtures/input.json"])
+def test_changed_test_support_collects_its_actual_consumers(tmp_path, monkeypatch, support):
+    from ci.harness import test_plan
+
+    monkeypatch.setattr(test_plan, "ROOT", tmp_path)
+    package = tmp_path / "tests/unit_tests/example"
+    package.mkdir(parents=True)
+    (package / "conftest.py").write_text("import pytest\n@pytest.fixture\ndef answer(): return 42\n")
+    (package / "test_consumers.py").write_text("def test_answer(answer): assert answer == 42\n")
+    (tmp_path / "pytest.ini").write_text("[pytest]\n")
+    changed = package / support
+    changed.parent.mkdir(exist_ok=True)
+    if support != "conftest.py":
+        changed.write_text("{}" if changed.suffix == ".json" else "ANSWER = 42\n")
+    plan = unit_test_plan([changed.relative_to(tmp_path).as_posix()])
+    assert plan["targets"] == ["tests/unit_tests/example/"]
+    result = subprocess.run(
+        [sys.executable, "-m", "pytest", *plan["targets"], "-q"],
+        cwd=tmp_path,
+        env={**os.environ, "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1", "PYTEST_ADDOPTS": ""},
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "1 passed" in result.stdout
+
+
+def test_unit_rule_validation_rejects_ambiguous_owners_and_stale_targets(tmp_path):
+    (tmp_path / "tests/unit_tests/example").mkdir(parents=True)
+    rule = {"id": "owner", "paths": ["datus/example/"], "targets": ["tests/unit_tests/example/"]}
+    data = {"execution": {"unit_rules": [rule, {**rule, "id": "duplicate"}], "impact_rules": []}}
+    assert "duplicate source path" in "\n".join(validate_unit_rules(data, tmp_path))
+    rule["targets"] = ["tests/unit_tests/missing.py"]
+    data["execution"]["unit_rules"] = [rule]
+    assert "unit target does not exist" in "\n".join(validate_unit_rules(data, tmp_path))
+
+
+@pytest.mark.parametrize(
+    "override,error",
+    [
+        ({"id": ""}, "missing rule id"),
+        ({"paths": []}, "expected a non-empty list"),
+        ({"paths": ["../outside/"]}, "unsafe path"),
+        ({"targets": ["tests/unit_tests/example"]}, "trailing slash"),
+        ({"targets": ["tests/unit_tests/"]}, "requires a rationale"),
+    ],
+)
+def test_invalid_unit_configuration_fails_before_test_execution(tmp_path, override, error):
+    (tmp_path / "tests/unit_tests/example").mkdir(parents=True)
+    rule = {"id": "owner", "paths": ["datus/example/"], "targets": ["tests/unit_tests/example/"], **override}
+    data = {"execution": {"unit_rules": [rule], "impact_rules": []}}
+    assert error in "\n".join(validate_unit_rules(data, tmp_path))
+
+
+def test_product_rules_cannot_reintroduce_broad_unit_unions():
+    data = load_map()
+    data["execution"]["impact_rules"].append(
+        {"id": "broad", "paths": ["datus/"], "unit_targets": ["tests/unit_tests/"]}
+    )
+    with pytest.raises(ValueError, match="move unit_targets into unit_rules"):
+        unit_test_plan(["datus/mcp_server.py"], data)
+
+
+def test_shared_sql_changes_keep_permission_and_execution_consumers():
+    targets = unit_test_plan(["datus/utils/sql_utils.py"])["targets"]
+    assert {
+        "tests/unit_tests/utils/test_sql_utils.py",
+        "tests/unit_tests/tools/permission/",
+        "tests/unit_tests/tools/func_tool/test_database.py",
+        "tests/unit_tests/agent/node/test_gen_sql_agentic_node.py",
+    } <= set(targets)
 
 
 def _map():

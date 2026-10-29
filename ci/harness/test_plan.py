@@ -22,9 +22,123 @@ def core_targets(data: dict | None = None) -> list[str]:
     return list(dict.fromkeys(n.split("::", 1)[0] for n in (data or load_map())["execution"]["core_nodeids"]))
 
 
+def normalize_path(path: str) -> str:
+    return path.replace("\\", "/").removeprefix("./")
+
+
+def collapse_targets(targets: Iterable[str]) -> list[str]:
+    """Keep parent directories without narrowing pytest collection to explicit children."""
+    unique = list(dict.fromkeys(targets))
+    directories = [target for target in unique if target.endswith("/")]
+    return [
+        target for target in unique if not any(target != parent and target.startswith(parent) for parent in directories)
+    ]
+
+
+def validate_unit_rules(data: dict, repo_root: Path = ROOT) -> list[str]:
+    """Reject ambiguous rules and stale targets before silently losing test coverage."""
+    rules = data.get("execution", {}).get("unit_rules")
+    if not isinstance(rules, list) or not rules:
+        return ["execution.unit_rules: expected a non-empty list of ownership rules"]
+    errors, ids, paths = [], set(), set()
+    for rule in rules:
+        if not isinstance(rule, dict):
+            errors.append("unit_rules: expected a rule mapping")
+            continue
+        rule_id = rule.get("id")
+        if not isinstance(rule_id, str) or not rule_id:
+            errors.append(f"unit_rules: missing rule id: {rule_id!r}")
+            continue
+        if rule_id in ids:
+            errors.append(f"unit_rules: missing or duplicate rule id: {rule_id!r}")
+        ids.add(rule_id)
+        for field in ("paths", "targets"):
+            values = rule.get(field)
+            if not isinstance(values, list) or not values or not all(isinstance(p, str) and p for p in values):
+                errors.append(f"unit_rules.{rule_id}.{field}: expected a non-empty list of paths")
+                continue
+            for path in values:
+                if path.startswith("/") or ".." in Path(path).parts:
+                    errors.append(f"unit_rules.{rule_id}.{field}: unsafe path: {path}")
+                if field == "paths":
+                    if path in paths:
+                        errors.append(f"unit_rules.{rule_id}: duplicate source path: {path}")
+                    paths.add(path)
+                elif not path.startswith("tests/unit_tests/") or not (repo_root / path.split("::", 1)[0]).exists():
+                    errors.append(f"unit_rules.{rule_id}: unit target does not exist: {path}")
+                elif (repo_root / path).is_dir() and not path.endswith("/"):
+                    errors.append(f"unit_rules.{rule_id}: directory target needs a trailing slash: {path}")
+        if (
+            isinstance(rule.get("targets"), list)
+            and "tests/unit_tests/" in rule["targets"]
+            and not rule.get("rationale")
+        ):
+            errors.append(f"unit_rules.{rule_id}: full-suite selection requires a rationale")
+    for rule in data.get("execution", {}).get("impact_rules", []):
+        if "unit_targets" in rule:
+            errors.append(f"impact_rules.{rule['id']}: move unit_targets into unit_rules")
+    return errors
+
+
+def unit_test_plan(changed: Iterable[str], data: dict | None = None) -> dict:
+    """Choose the most specific owner plus its explicit consumer tests for each path.
+
+    Product/nightly rules remain additive in ``impact_plan``. They must not
+    broaden a leaf module's unit selection merely because they share a flow.
+    """
+    data = data or load_map()
+    errors = validate_unit_rules(data)
+    if errors:
+        raise ValueError("Invalid unit ownership rules:\n" + "\n".join(errors))
+    rules = data["execution"]["unit_rules"]
+    selections = []
+    for path in sorted({normalize_path(p) for p in changed}):
+        if path.startswith("tests/unit_tests/"):
+            if Path(path).name.startswith("test_") and path.endswith(".py"):
+                targets, rule_id = [path], "changed-test"
+            else:
+                # conftest and ordinary helper modules affect their subtree.
+                # Fixture assets can live below a fixtures/ directory with no
+                # tests of its own; select the closest enclosing test package.
+                parent = Path(path).parent
+                while (
+                    Path(path).name != "conftest.py"
+                    and parent != Path("tests/unit_tests")
+                    and not any((ROOT / parent).glob("test_*.py"))
+                ):
+                    parent = parent.parent
+                targets, rule_id = [parent.as_posix() + "/"], "test-support"
+            selections.append({"path": path, "rule": rule_id, "targets": targets, "fallback": False})
+            continue
+        matches = [
+            (len(prefix), prefix, rule)
+            for rule in rules
+            for prefix in rule["paths"]
+            if path == prefix or (prefix.endswith("/") and path.startswith(prefix))
+        ]
+        if matches:
+            _, prefix, rule = max(matches, key=lambda match: match[0])
+            selections.append(
+                {
+                    "path": path,
+                    "rule": rule["id"],
+                    "matched_path": prefix,
+                    "targets": rule["targets"],
+                    "fallback": rule.get("fallback", False),
+                }
+            )
+        else:
+            selections.append({"path": path, "rule": None, "targets": [], "fallback": False})
+    return {
+        "targets": collapse_targets(sorted({t for s in selections for t in s["targets"]})),
+        "selections": selections,
+    }
+
+
 def impact_plan(changed: Iterable[str], data: dict | None = None) -> dict:
-    files = sorted(set(changed))
-    rules = (data or load_map())["execution"]["impact_rules"]
+    data = data or load_map()
+    files = sorted({normalize_path(p) for p in changed})
+    rules = data["execution"]["impact_rules"]
     matched = [
         r
         for r in rules
@@ -35,7 +149,7 @@ def impact_plan(changed: Iterable[str], data: dict | None = None) -> dict:
     return {
         "changed_files": files,
         "reasons": [r["id"] for r in matched],
-        "unit_targets": sorted({p for r in matched for p in r.get("unit_targets", [])}),
+        "unit_targets": unit_test_plan(files, data)["targets"],
         "live_targets": sorted({p for r in matched for p in r.get("live_targets", [])}),
         "nightly_groups": sorted({p for r in matched for p in r.get("nightly_groups", [])}),
     }
