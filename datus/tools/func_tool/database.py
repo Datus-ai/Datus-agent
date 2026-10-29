@@ -509,6 +509,21 @@ class DBFuncTool:
         """Get the primary/default connector (for backward compatibility)."""
         return self._primary_connector
 
+    def get_sql_generation_context(self, datasource: Optional[str] = None, database: str = "") -> Dict[str, Any]:
+        """Resolve non-secret SQL hints from the same connector used by DB tools."""
+        # A reminder naming the bound datasource is not a per-tool override:
+        # retain its currently selected physical database (e.g. /database).
+        target = None if datasource == self._default_datasource else datasource
+        connector = self._get_connector(target, database)
+        context = {}
+        getter = getattr(connector, "get_sql_generation_context", None)
+        if callable(getter):
+            hints = getter(database_name=database or self._active_database_of(connector))
+            if isinstance(hints, dict):
+                context.update(hints)
+        context["database"] = database or self._active_database_of(connector)
+        return context
+
     def quote_sql_identifier(
         self,
         name: str,
