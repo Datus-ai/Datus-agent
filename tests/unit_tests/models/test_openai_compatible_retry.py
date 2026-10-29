@@ -3,23 +3,27 @@
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
 """
-Unit tests for ModelBehaviorError retry logic in OpenAICompatibleModel.
+Unit tests for retry logic in OpenAICompatibleModel.
 
 Covers:
 - _with_retry_async: ModelBehaviorError retry + exhaust
-- generate_with_tools: temperature/top_p propagation from model_config
+- streaming: MidStreamFallbackError retry + exhaust
 
 CI level: zero external deps, mock all SDK interactions.
 """
 
 import logging
-from unittest.mock import AsyncMock, MagicMock, patch
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
+import httpx
 import pytest
 from agents.exceptions import ModelBehaviorError
-from openai import APIError
+from litellm.exceptions import MidStreamFallbackError
+from openai import APIConnectionError, APIError
 
 from datus.models.openai_compatible import OpenAICompatibleModel
+from datus.schemas.action_history import ActionHistoryManager
 from datus.utils.exceptions import DatusException
 
 
@@ -113,6 +117,84 @@ class TestWithRetryAsyncModelBehaviorError:
         assert sleep_delays[0] == 1.0
         assert sleep_delays[1] == 2.0
         assert sleep_delays[2] == 4.0
+
+
+@pytest.mark.acceptance
+class TestStreamMidStreamFallbackError:
+    @pytest.fixture
+    def stream_mocks(self, mock_model, monkeypatch):
+        mock_model.model_config.max_retry = 3
+        mock_model.model_config.retry_interval = 2.0
+        mock_model.model_config.save_llm_trace = False
+        monkeypatch.setattr(mock_model, "_build_agent", lambda **kwargs: SimpleNamespace(hooks=None))
+        monkeypatch.setattr(mock_model, "_build_run_config", lambda **kwargs: None)
+        monkeypatch.setattr(mock_model, "_extract_and_distribute_token_usage", AsyncMock())
+        runner = MagicMock()
+        sleep = AsyncMock()
+        monkeypatch.setattr("datus.models.openai_compatible.Runner.run_streamed", runner)
+        monkeypatch.setattr("datus.models.openai_compatible.asyncio.sleep", sleep)
+        return runner, sleep
+
+    @staticmethod
+    def _error():
+        return MidStreamFallbackError(
+            message="Response payload is not completed",
+            model="test-model",
+            llm_provider="openai",
+            original_exception=APIConnectionError(request=httpx.Request("POST", "https://api.test.com/v1")),
+        )
+
+    @staticmethod
+    def _result(error=None):
+        result = SimpleNamespace(is_complete=False, final_output="complete", cancel=MagicMock())
+
+        async def events():
+            yield SimpleNamespace(
+                type="raw_response_event",
+                data=SimpleNamespace(type="response.output_text.delta", delta="partial" if error else "complete"),
+            )
+            result.is_complete = True
+            if error:
+                raise error
+
+        result.stream_events = events
+        return result
+
+    @staticmethod
+    async def _actions(model):
+        return [
+            action
+            async for action in model.generate_with_tools_stream(
+                prompt="test", action_history_manager=ActionHistoryManager()
+            )
+        ]
+
+    @pytest.mark.asyncio
+    async def test_stream_retries_after_midstream_connection_error(self, mock_model, stream_mocks):
+        runner, sleep = stream_mocks
+        runner.side_effect = [self._result(self._error()), self._result()]
+
+        actions = await self._actions(mock_model)
+
+        assert runner.call_count == 2
+        sleep.assert_awaited_once_with(2.0)
+        notifications = [action for action in actions if action.action_type == "retry_notification"]
+        assert len(notifications) == 1
+        assert "Connection interrupted" in notifications[0].messages
+        assert actions[-1].output["raw_output"] == "complete"
+
+    @pytest.mark.asyncio
+    async def test_stream_raises_midstream_error_after_configured_attempts(self, mock_model, stream_mocks):
+        runner, sleep = stream_mocks
+        error = self._error()
+        runner.side_effect = [self._result(error) for _ in range(3)]
+
+        with pytest.raises(MidStreamFallbackError) as exc_info:
+            await self._actions(mock_model)
+
+        assert exc_info.value is error
+        assert runner.call_count == 3
+        assert sleep.await_args_list == [call(2.0), call(4.0)]
 
 
 class _FakeAPIError(APIError):
