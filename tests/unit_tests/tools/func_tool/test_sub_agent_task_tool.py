@@ -2641,6 +2641,94 @@ class TestProxyToolPropagation:
         assert task_tool._parent_node is None
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "node_name", ["semantic_modeling", "gen_sql_summary", "gen_visual_report", "gen_visual_dashboard", "gen_sql"]
+    )
+    @pytest.mark.parametrize("tool_name", ["write_file", "edit_file", "delete_file"])
+    async def test_web_forwarded_file_call_uses_the_child_executor(self, task_tool, node_name, tool_name):
+        from agents import FunctionTool
+
+        from datus.api.services.action_sse_converter import action_to_sse_event
+        from datus.schemas.action_bus import ActionBus
+        from datus.tools.proxy.tool_result_channel import ToolResultChannel
+        from datus.tools.registry.tool_registry import ToolRegistry
+
+        parent = SimpleNamespace(proxy_tool_patterns=[tool_name], tool_channel=ToolResultChannel(), session_id=None)
+        task_tool.set_parent_node(parent)
+        bus = ActionBus()
+        task_tool.set_action_bus(bus)
+        original = FunctionTool(
+            name=tool_name,
+            description="File operation",
+            params_json_schema={"type": "object"},
+            on_invoke_tool=AsyncMock(return_value={"success": 1}),
+        )
+        node = MagicMock()
+        node.agent_config = SimpleNamespace(_client_source="web")
+        node.get_node_name.return_value = node_name
+        node.tools = [original]
+        node.tool_registry = ToolRegistry({tool_name: "filesystem_tools"})
+        node.proxied_tool_names = set()
+        action = ActionHistory(
+            action_id="child-file-call",
+            role=ActionRole.TOOL,
+            action_type=tool_name,
+            input={"function_name": tool_name, "arguments": {"path": "artifact.yml"}},
+            status=ActionStatus.PROCESSING,
+        )
+
+        async def stream(_history):
+            yield action
+
+        node.execute_stream_with_interactions = stream
+        with (
+            patch.object(task_tool, "_create_node", return_value=node),
+            patch.object(task_tool, "_build_node_input", return_value=Mock()),
+        ):
+            await task_tool.task(type=node_name, prompt="author a file")
+
+        forwarded = bus._queue.get_nowait()
+        event = action_to_sse_event(forwarded, 1, forwarded.action_id, proxied_tool_names={tool_name})
+        client_executes = node_name == "gen_sql"
+        assert event.data.payload.content[0].payload["proxied"] is client_executes
+        assert (node.tools[0] is original) is (not client_executes)
+        assert action.input == {"function_name": tool_name, "arguments": {"path": "artifact.yml"}}
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("owner", [False, True])
+    async def test_web_nested_forwarding_keeps_the_original_executor(self, task_tool, owner):
+        from datus.api.services.action_sse_converter import action_to_sse_event
+        from datus.schemas.action_bus import ActionBus
+
+        action = ActionHistory(
+            action_id="deep-file-call",
+            role=ActionRole.TOOL,
+            action_type="write_file",
+            input={"function_name": "write_file", "arguments": {"path": "artifact.yml"}, "_proxied": owner},
+            status=ActionStatus.PROCESSING,
+        )
+        for _ in range(3):
+            bus = ActionBus()
+            task_tool.set_action_bus(bus)
+            node = MagicMock()
+            node.agent_config = SimpleNamespace(_client_source="web")
+            node.proxied_tool_names = set() if owner else {"write_file"}
+
+            async def stream(_history, child_action=action):
+                yield child_action
+
+            node.execute_stream_with_interactions = stream
+            with (
+                patch.object(task_tool, "_create_node", return_value=node),
+                patch.object(task_tool, "_build_node_input", return_value=Mock()),
+            ):
+                await task_tool.task(type="gen_sql", prompt="forward nested activity")
+            action = bus._queue.get_nowait()
+
+        event = action_to_sse_event(action, 1, action.action_id, proxied_tool_names=set() if owner else {"write_file"})
+        assert event.data.payload.content[0].payload["proxied"] is owner
+
+    @pytest.mark.asyncio
     async def test_apply_proxy_tools_called_when_parent_has_patterns(self, task_tool):
         """When parent node has proxy_tool_patterns, apply_proxy_tools is called on the sub-agent node."""
         from datus.tools.proxy.tool_result_channel import ToolResultChannel

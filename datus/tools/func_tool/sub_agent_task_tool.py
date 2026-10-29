@@ -904,6 +904,17 @@ class SubAgentTaskTool:
                         # intact so child-local accounting (for example,
                         # _extract_total_tokens) can still find depth=0 actions.
                         forwarded_action = action.model_copy()
+                        if (
+                            getattr(node.agent_config, "_client_source", None) == "web"
+                            and action.role == ActionRole.TOOL
+                            and isinstance(action.input, dict)
+                            and "_proxied" not in action.input
+                        ):
+                            # Preserve the producing node's executor through parent forwarding.
+                            forwarded_action.input = {
+                                **action.input,
+                                "_proxied": action.input.get("function_name") in node.proxied_tool_names,
+                            }
                         forwarded_action.depth = 1
                         if call_id:
                             forwarded_action.parent_action_id = call_id
