@@ -1161,7 +1161,7 @@ class DBFuncTool:
     # agent-facing tool surface. ``to_function_tool`` converts a bound method into
     # a Tool; ``available_tools`` assembles the runtime list. Neither is a tool
     # itself. Mirrors ``FilesystemFuncTool._BASE_TOOL_FRAMEWORK_METHODS``.
-    _FRAMEWORK_METHODS: frozenset = frozenset({"available_tools", "to_function_tool"})
+    _FRAMEWORK_METHODS: frozenset = frozenset({"available_tools", "to_function_tool", "get_sql_generation_context"})
 
     # Internal statement-dispatch targets of the unified ``execute_sql`` entry
     # point. ``execute_sql`` detects the statement type and routes to these by
