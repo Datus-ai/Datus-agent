@@ -9,24 +9,22 @@ All tests are CI-level: zero external dependencies, zero network access.
 All external calls (AgentConfig, tools, FastMCP) are mocked.
 """
 
-from collections.abc import Callable, Iterator
-from typing import Any
 import asyncio
 import threading
 from collections import OrderedDict
+from collections.abc import Callable, Iterator
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from datus.mcp_server import DatusMCPServer, ToolContext, ToolContextManager
 from datus.mcp_server import DatusMCPServer, LightweightDynamicMCPServer, ToolContext, ToolContextManager
 from datus.tools.func_tool.base import FuncToolResult
 from datus.tools.func_tool.database import DBFuncTool
 from datus.tools.func_tool.reference_template_tools import ReferenceTemplateTools
-from datus.utils.mcp_decorators import ToolClassConfig
 from datus.utils.exceptions import DatusException, ErrorCode
-from datus.utils.mcp_decorators import MCPToolConfig, create_dynamic_tool_wrapper
+from datus.utils.mcp_decorators import MCPToolConfig, ToolClassConfig, create_dynamic_tool_wrapper
 from datus.utils.mcp_execution import MCPToolExecutor
 
 # =============================================================================
