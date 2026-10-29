@@ -1754,7 +1754,7 @@ if [ -n "${PRODUCT_TEST_BASE_REF:-}" ]; then
   if [[ " ${PRODUCT_E2E_ROOTS[*]} " == *"test_init_live.py::test_qwen_scoped_init_supplements_existing_documents"* ]]; then
     export DATUS_RUN_LIVE_INIT=1
   fi
-  if [[ "$NIGHTLY_GROUP_FILTER" == *"BI Product"* ]]; then
+  if [[ "P0 BI Product E2E" =~ $NIGHTLY_GROUP_FILTER ]]; then
     DASHBOARD_MARK_EXPR="nightly"
   fi
   log "Required product evaluation groups: $NIGHTLY_GROUP_FILTER"

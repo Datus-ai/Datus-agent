@@ -232,5 +232,6 @@ def test_documentation_gate_runs_and_records_its_required_checks(
     assert report["required_checks"] == ["docs-build", *(["docs-ci"] if ci_tests else [])]
     assert report["status"] == ("success" if docs_exit == 0 else "failure")
     assert (tmp_path / "docs-built.txt").read_text() == "en,zh"
-    if ci_tests:
-        assert (tmp_path / "ci-executed.txt").read_text() == "passed"
+    assert {path.name: path.read_text() for path in tmp_path.glob("ci-executed.txt")} == (
+        {"ci-executed.txt": "passed"} if ci_tests else {}
+    )

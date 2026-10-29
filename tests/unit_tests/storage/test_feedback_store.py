@@ -16,4 +16,4 @@ def _storage_backend_environment() -> BackendTestConfig:
 
 @pytest.mark.acceptance
 def test_feedback_storage_write_read_update_and_delete(real_agent_config):
-    assert_feedback_storage_crud(real_agent_config.project_name)
+    assert assert_feedback_storage_crud(real_agent_config.project_name) == {"feedback": None, "task": None}

@@ -344,5 +344,5 @@ async def test_semantic_modeling_authors_one_queryable_dosi_model_with_real_llm(
     assert len(rows) == 1
     connector = node.db_func_tool.connector
     oracle = connector.execute_query("SELECT COUNT(*) AS school_count FROM schools", result_format="list")
-    assert oracle.success, oracle.error
+    assert oracle.success is True, oracle.error
     assert float(rows[0]["school_count"]) == oracle.sql_return[0]["school_count"]

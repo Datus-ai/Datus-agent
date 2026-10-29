@@ -9,8 +9,8 @@ from datus.storage.feedback.store import FeedbackStore
 from datus.storage.task.store import TaskStore
 
 
-def assert_feedback_storage_crud(project: str) -> None:
-    """Verify both feedback tables through their public storage interfaces."""
+def assert_feedback_storage_crud(project: str) -> dict[str, object]:
+    """Verify public CRUD behavior and return both final persisted values."""
     feedback_task_id = f"task-feedback-{uuid4().hex}"
     chat_task_id = f"task-chat-{uuid4().hex}"
 
@@ -34,3 +34,4 @@ def assert_feedback_storage_crud(project: str) -> None:
     assert task_store.get_feedback(chat_task_id)["user_feedback"] == "success"
     assert task_store.delete_feedback(chat_task_id) is True
     assert task_store.get_feedback(chat_task_id) is None
+    return {"feedback": feedback_store.get_feedback(feedback_task_id), "task": task_store.get_feedback(chat_task_id)}

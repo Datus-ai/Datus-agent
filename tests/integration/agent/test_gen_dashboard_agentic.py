@@ -157,7 +157,7 @@ class TestGenDashboardAgenticExecution:
                 )
             )
             actions = [action async for action in node.execute_stream(history)]
-            assert node.result.success, node.result.error
+            assert node.result.success is True, node.result.error
             assert actions[-1].status == "success"
             successful = {action.action_type for action in actions if action.status == "success"}
             assert {"create_dashboard", "create_chart"} <= successful, successful
@@ -191,7 +191,7 @@ class TestGenDashboardAgenticExecution:
                 "SELECT region, SUM(revenue) AS revenue FROM public.datus_nightly_bi_sales GROUP BY region",
                 result_format="list",
             )
-            assert oracle.success, oracle.error
+            assert oracle.success is True, oracle.error
             expected = sorted((str(row["region"]), float(row["revenue"])) for row in oracle.sql_return)
             assert actual == expected
         finally:

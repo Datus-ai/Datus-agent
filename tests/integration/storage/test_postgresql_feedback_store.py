@@ -27,6 +27,6 @@ def test_postgresql_feedback_storage_write_read_update_and_delete(
             ),
             data_dir=str(tmp_path),
         )
-        assert_feedback_storage_crud(postgresql_agent_config.project_name)
+        assert assert_feedback_storage_crud(postgresql_agent_config.project_name) == {"feedback": None, "task": None}
     finally:
         reset_backends()

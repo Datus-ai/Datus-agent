@@ -98,3 +98,34 @@ def test_map_comparison_uses_the_real_git_base(tmp_path):
 def test_unknown_or_empty_change_set_keeps_the_runtime_gate():
     assert select_profile([])["profile"] == "code"
     assert select_profile([MAP_PATH])["profile"] == "code"
+
+
+@pytest.mark.parametrize(
+    "source,expected",
+    [("datus/resources/skills/init/SKILL.md", "code"), ("docs/old.md", "docs")],
+)
+def test_renames_classify_the_removed_path_as_well_as_the_destination(tmp_path, monkeypatch, source, expected):
+    from ci.harness import test_plan
+
+    def git(*args):
+        return subprocess.check_output(["git", *args], cwd=tmp_path, text=True, stderr=subprocess.PIPE).strip()
+
+    git("init")
+    git("config", "user.name", "Gate Test")
+    git("config", "user.email", "test@example.invalid")
+    git("config", "commit.gpgsign", "false")
+    git("config", "diff.renames", "true")
+    original = tmp_path / source
+    original.parent.mkdir(parents=True)
+    original.write_text("Shared content retained by the rename.\n")
+    git("add", ".")
+    git("commit", "-m", "base")
+    base = git("rev-parse", "HEAD")
+    destination = "docs/new.md"
+    (tmp_path / "docs").mkdir(exist_ok=True)
+    git("mv", source, destination)
+    git("commit", "-m", "rename into documentation")
+    monkeypatch.setattr(test_plan, "ROOT", tmp_path)
+    changed = test_plan.changed_files(base)
+    assert set(changed) == {source, destination}
+    assert repository_profile(changed, base, root=tmp_path)["profile"] == expected

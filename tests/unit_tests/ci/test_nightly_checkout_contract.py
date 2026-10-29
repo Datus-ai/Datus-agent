@@ -22,6 +22,38 @@ def _bash_function_source(name: str) -> str:
     return script[start:end]
 
 
+@pytest.mark.parametrize(
+    "node,expected",
+    [("gen_dashboard", "nightly"), ("semantic_modeling", "nightly and not product_e2e")],
+)
+def test_targeted_service_selection_keeps_dashboard_product_cases(node, expected):
+    from ci.harness.test_plan import impact_plan
+
+    plan = impact_plan([f"datus/agent/node/{node}_agentic_node.py"])
+    groups = ["Product E2E Nightly Tests", *plan["nightly_groups"]]
+    group_filter = "^(" + "|".join(re.escape(group) for group in groups) + ")$"
+    script = NIGHTLY_SCRIPT.read_text(encoding="utf-8")
+    assignment = script.index('    DASHBOARD_MARK_EXPR="nightly"')
+    start = script.rfind("\n  if ", 0, assignment)
+    end = script.index("\n  fi", assignment) + len("\n  fi")
+    result = subprocess.run(
+        [
+            "bash",
+            "-eu",
+            "-c",
+            'DASHBOARD_MARK_EXPR="nightly and not product_e2e"\n'
+            + script[start:end]
+            + '\nprintf "%s" "$DASHBOARD_MARK_EXPR"',
+        ],
+        env={**os.environ, "NIGHTLY_GROUP_FILTER": group_filter},
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == expected
+
+
 def test_targeted_group_records_executed_pytest_results(tmp_path):
     source = tmp_path / "test_product.py"
     source.write_text("def test_product(): assert 2 + 2 == 4\n")
