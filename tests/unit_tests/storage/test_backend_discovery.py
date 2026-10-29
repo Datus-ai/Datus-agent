@@ -40,6 +40,22 @@ def _make_mock_vector_env(backend_type="postgresql", params=None):
 
 
 class TestDiscoverTestBackends:
+    def test_local_selection_avoids_external_plugin_loading(self):
+        with patch("tests.unit_tests.storage._backend_discovery._discover_via_entry_points") as discover:
+            assert [backend.id for backend in discover_test_backends("sqlite+lance")] == ["sqlite+lance"]
+        discover.assert_not_called()
+
+    def test_explicit_selection_keeps_only_requested_backends(self):
+        postgresql = BackendTestSpec(rdb_type="postgresql", vector_type="postgresql")
+        with patch("tests.unit_tests.storage._backend_discovery._discover_via_entry_points", return_value=[postgresql]):
+            assert discover_test_backends("postgresql+postgresql") == [postgresql]
+
+    @pytest.mark.parametrize("selection", ["", "missing+missing", "sqlite+lance,missing+missing"])
+    def test_unknown_or_empty_selection_fails(self, selection):
+        with patch("tests.unit_tests.storage._backend_discovery._discover_via_entry_points", return_value=[]):
+            with pytest.raises(ValueError, match="Unknown or empty"):
+                discover_test_backends(selection)
+
     def test_always_includes_default(self):
         with patch(
             "tests.unit_tests.storage._backend_discovery._discover_via_entry_points",

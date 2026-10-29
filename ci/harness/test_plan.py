@@ -42,7 +42,7 @@ def impact_plan(changed: Iterable[str], data: dict | None = None) -> dict:
 
 
 def changed_files(base_ref: str | None = None) -> list[str]:
-    """Use the event base SHA, including every PR in a merge group."""
+    """Include every PR in a merge group and both sides of renamed paths."""
     if base_ref is None:
         event_file = os.environ.get("GITHUB_EVENT_PATH")
         event = json.loads(Path(event_file).read_text()) if event_file else {}
@@ -50,9 +50,9 @@ def changed_files(base_ref: str | None = None) -> list[str]:
             "sha"
         )
     if not base_ref:
-        base_ref = "upstream/main"
+        base_ref = "origin/main" if os.getenv("GITHUB_ACTIONS") == "true" else "upstream/main"
     result = subprocess.run(
-        ["git", "diff", "--name-only", f"{base_ref}...HEAD"],
+        ["git", "diff", "--no-renames", "--name-only", f"{base_ref}...HEAD"],
         cwd=ROOT,
         capture_output=True,
         text=True,

@@ -144,6 +144,7 @@ def test_filter_existing_paths_drops_missing_files(tmp_path):
 
 def test_run_pytest_suite_isolates_nested_runner_basetemp(tmp_path, monkeypatch):
     calls = []
+    monkeypatch.setenv("DATUS_TEST_STORAGE_BACKENDS", "postgresql+postgresql")
 
     class FakeProcess:
         pid = 12345
@@ -175,6 +176,7 @@ def test_run_pytest_suite_isolates_nested_runner_basetemp(tmp_path, monkeypatch)
     assert calls[0]["command"][:3] == [run_pr_tests.sys.executable, "-m", "pytest"]
     assert f"--basetemp={suite_basetemp}" in calls[0]["command"]
     assert calls[0]["env"][run_pr_tests.PYTEST_BASETEMP_ENV] == str(suite_basetemp / "_nested-runners")
+    assert calls[0]["env"]["DATUS_TEST_STORAGE_BACKENDS"] == "sqlite+lance"
 
 
 def test_merge_and_parse_junit_results_across_multiple_suites(tmp_path):

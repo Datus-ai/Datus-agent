@@ -36,6 +36,16 @@ def test_chat_service_changes_select_the_api_lifecycle():
     assert "tests/integration/api/test_api_chat.py" in plan["live_targets"]
 
 
+@pytest.mark.parametrize("path", ["datus/storage/feedback/store.py", "pyproject.toml", "uv.lock"])
+def test_storage_changes_select_required_postgresql_acceptance(path):
+    plan = impact_plan([path])
+    assert "P0 PostgreSQL Agent Storage Contracts" in plan["nightly_groups"]
+    assert (
+        "tests/integration/storage/test_postgresql_feedback_store.py::"
+        "test_postgresql_feedback_storage_write_read_update_and_delete"
+    ) in plan["live_targets"]
+
+
 def test_documentation_changes_have_no_remote_model_requirement():
     assert impact_plan(["docs/index.md"])["live_targets"] == []
 
@@ -44,7 +54,7 @@ def test_documentation_changes_have_no_remote_model_requirement():
     "node,group",
     [
         ("semantic_modeling", "P0 Dosi Semantic Modeling E2E"),
-        ("gen_dashboard", "P0 Dashboard Bootstrap Skill E2E"),
+        ("gen_dashboard", "P0 BI Product E2E"),
         ("scheduler", "Airflow Nightly Tests"),
     ],
 )

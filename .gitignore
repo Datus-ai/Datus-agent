@@ -55,6 +55,9 @@ ci/gate-coverage.json
 ci/product-test-plan.json
 ci/product-execution.*/
 ci/product-execution-coverage.json
+ci/p0-execution.*/
+ci/p0-execution-coverage.json
+p0-installed-artifact.json
 ci/merge-queue-results.json
 ci/diff-cover.json
 ci/diff-cover-report.*
