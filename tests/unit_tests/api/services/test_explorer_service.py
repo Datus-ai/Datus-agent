@@ -1059,10 +1059,19 @@ class TestExplorerServiceOSIAuthoring:
         assert result.success is False
         assert "was not found" in result.errorMessage
 
-    async def test_get_metric_returns_osi_native_yaml(self, real_agent_config, tmp_path, monkeypatch):
+    @pytest.mark.parametrize("shape", ["flat", "mapping", "list"])
+    async def test_get_metric_returns_osi_native_yaml(self, real_agent_config, tmp_path, monkeypatch, shape):
         import yaml
 
         runtime = self._osi_runtime(tmp_path)
+        model_file = tmp_path / "sample_shop" / "sample_shop.yml"
+        document = yaml.safe_load(model_file.read_text())
+        model = document["semantic_model"][0]
+        if shape == "flat":
+            document = {"version": document["version"], **model}
+        elif shape == "mapping":
+            document["semantic_model"] = model
+        model_file.write_text(yaml.safe_dump(document))
         svc = ExplorerService(agent_config=real_agent_config)
         self._wire(svc, monkeypatch, runtime)
 
@@ -1072,6 +1081,7 @@ class TestExplorerServiceOSIAuthoring:
         # OSI shape, not the Legacy reconstruction (no type/locked_metadata).
         assert node["expression"]["dialects"][0]["dialect"] == "STARROCKS"
         assert "type" not in node and "locked_metadata" not in node
+        assert yaml.safe_load(model_file.read_text()) == document
 
     async def test_get_metric_reports_source_read_failure(self, real_agent_config, tmp_path, monkeypatch):
         from types import SimpleNamespace

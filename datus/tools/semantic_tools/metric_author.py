@@ -27,6 +27,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 import yaml
 
 from .authoring import MetricMutationResult, MetricSource
+from .dosi.model import iter_semantic_models
 from .exceptions import SemanticCoreException
 from .models import ValidationIssue, ValidationResult
 
@@ -48,12 +49,12 @@ class _MetricLocation:
     file_path: str
     docs: List[Any]  # every YAML document in the file
     doc_index: int
-    model_index: int  # index within docs[doc_index]["semantic_model"]
+    model_index: int  # index in iter_semantic_models(docs[doc_index])
     metric_index: int  # index within model["metrics"]
 
     @property
     def model(self) -> Dict[str, Any]:
-        return self.docs[self.doc_index]["semantic_model"][self.model_index]
+        return _core_model(self.docs[self.doc_index], self.model_index)
 
     @property
     def node(self) -> Dict[str, Any]:
@@ -84,12 +85,13 @@ def _iter_core_models(docs: List[Any]):
     for doc_index, doc in enumerate(docs):
         if not isinstance(doc, dict):
             continue
-        models = doc.get("semantic_model")
-        if not isinstance(models, list):
-            continue
-        for model_index, model in enumerate(models):
-            if isinstance(model, dict):
-                yield doc_index, model_index, model
+        for model_index, model in enumerate(iter_semantic_models(doc)):
+            yield doc_index, model_index, model
+
+
+def _core_model(doc: Dict[str, Any], model_index: int) -> Dict[str, Any]:
+    """Resolve the authored model without changing its document envelope."""
+    return list(iter_semantic_models(doc))[model_index]
 
 
 def _dump_yaml(obj: Any) -> str:
@@ -153,9 +155,12 @@ def default_validate_document(doc: Dict[str, Any]) -> None:
     Dosi injects its full document validator. This structural check keeps
     ``MetricAuthor`` usable on its own.
     """
-    models = doc.get("semantic_model")
-    if not isinstance(models, list) or not models:
-        raise MetricAuthoringError("document must contain a non-empty 'semantic_model' list")
+    models = list(iter_semantic_models(doc))
+    if not models:
+        raise MetricAuthoringError("document must contain a semantic model")
+    wrapped = doc.get("semantic_model")
+    if isinstance(wrapped, list) and any(not isinstance(model, dict) for model in wrapped):
+        raise MetricAuthoringError("each 'semantic_model' entry must be a mapping")
     for model in models:
         if not isinstance(model, dict):
             raise MetricAuthoringError("each 'semantic_model' entry must be a mapping")
@@ -325,7 +330,7 @@ class MetricAuthor:
                     "semantic model, or ensure exactly one semantic model exists."
                 )
             file_path, docs, doc_index, model_index = target
-            docs[doc_index]["semantic_model"][model_index].setdefault("metrics", []).append(node)
+            _core_model(docs[doc_index], model_index).setdefault("metrics", []).append(node)
 
         self._validate_document(docs[doc_index])
         _atomic_write(file_path, docs)
@@ -333,7 +338,7 @@ class MetricAuthor:
             name=metric_name,
             format=FORMAT,
             file_path=file_path,
-            semantic_model=str(docs[doc_index]["semantic_model"][model_index].get("name") or "") or None,
+            semantic_model=str(_core_model(docs[doc_index], model_index).get("name") or "") or None,
             created=create,
             affected_paths=[file_path],
         )
@@ -367,7 +372,8 @@ class MetricAuthor:
             # resolve one, else wrap it in a minimal single-model document.
             existing = self._locate(name) if name else None
             if existing is not None:
-                model = json_clone(existing.model)
+                doc = json_clone(existing.docs[existing.doc_index])
+                model = _core_model(doc, existing.model_index)
                 replaced = False
                 for idx, metric in enumerate(model.get("metrics") or []):
                     if isinstance(metric, dict) and metric.get("name") == name:
@@ -380,7 +386,8 @@ class MetricAuthor:
                 target = self._model_owning_dataset(_datus_hints(node).get("dataset")) or self._sole_model()
                 if target is not None:
                     _file_path, docs, doc_index, model_index = target
-                    model = json_clone(docs[doc_index]["semantic_model"][model_index])
+                    doc = json_clone(docs[doc_index])
+                    model = _core_model(doc, model_index)
                     model.setdefault("metrics", []).append(node)
                 else:
                     model = {
@@ -388,8 +395,8 @@ class MetricAuthor:
                         "datasets": [],
                         "metrics": [node],
                     }
+                    doc = {"version": self._schema_version, "semantic_model": [model]}
 
-            doc = {"version": self._schema_version, "semantic_model": [model]}
             self._validate_document(doc)
         except Exception as exc:  # noqa: BLE001 - surface any validation failure to the caller
             return ValidationResult(
