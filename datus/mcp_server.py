@@ -656,13 +656,6 @@ class ToolContextManager:
         )
 
     def close_all(self):
-        for cache_key, context in list(self._contexts.items()):
-            try:
-                context.close()
-                logger.info(f"Closed ToolContext for {cache_key}")
-            except Exception as e:
-                logger.warning(f"Error closing context {cache_key}: {e}")
-        self._contexts.clear()
         """Retire contexts without waiting for initialization or driver cleanup."""
         with self._lock:
             self._closed = True

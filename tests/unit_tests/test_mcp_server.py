@@ -502,6 +502,36 @@ class TestToolContextManagerCloseAll:
         assert context_manager._contexts == {}
         assert await asyncio.to_thread(closed.wait, 2)
 
+    @pytest.mark.asyncio
+    async def test_close_all_defers_close_while_context_is_pinned(self, context_manager):
+        """Shutdown must not tear down a context that a request or worker still pins.
+
+        ``close_all`` only drops cache ownership. The connector closes after the
+        last ``release()``, through the cleanup worker, and the live-context
+        index drains only then.
+        """
+        closed = threading.Event()
+        ctx = _make_tool_context("ns1")
+        ctx.tools["db_tool"] = SimpleNamespace(connector=SimpleNamespace(close=closed.set))
+        context_manager._contexts["ns1:"] = ctx
+        ctx.acquire()  # an in-flight request / submitted worker
+
+        context_manager.close_all()
+
+        assert context_manager._contexts == {}
+        assert not closed.is_set(), "close_all closed a connector still pinned by a user"
+        assert ctx.tools, "close_all cleared the tools of a pinned context"
+        assert id(ctx) in context_manager._live_contexts, "pinned context was not tracked for deferred cleanup"
+
+        ctx.release()
+
+        assert await asyncio.to_thread(closed.wait, 2)
+        for _ in range(200):
+            if not context_manager._live_contexts:
+                break
+            await asyncio.sleep(0.01)
+        assert not context_manager._live_contexts, "retired context was not drained after its last release"
+
 
 class TestDynamicContextLifetime:
     @pytest.mark.asyncio
