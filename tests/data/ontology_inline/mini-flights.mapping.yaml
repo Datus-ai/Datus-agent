@@ -1,0 +1,131 @@
+# The smallest ontology that still needs everything M3 arm A / C / H does.
+#
+# Two entities, two value types, two parallel edges, two derived metrics. It
+# exists to be the minimal lowering golden: fixtures/ossie-flights is the
+# adversarial sample and fixtures/aviation is the fan-out regression net, but
+# neither shows arms A/C/H in isolation small enough to read in one screen.
+#
+# The point of the shape: `average_departure_delay` and
+# `average_inbound_departure_delay` aggregate THE SAME COLUMN
+# (Flight.departure_delay). They differ only in which of the two parallel edges
+# correlates them to an Airport -- departs_from for the airport a flight left,
+# arrives_at for the airport it is heading to. Ground handling genuinely asks
+# the second one: "how late did today's inbound flights leave their origins?"
+#
+# So lowering must emit two metrics whose SQL is byte-identical and keep them
+# distinguishable by path alone. Drop the correlation path and they collapse
+# into one metric, and the model is silently wrong. See model.yaml for what
+# the lowered form looks like, and for the one thing core OSI cannot hold.
+#
+# LAYOUT -- this is the single-file form of an Ossie mapping document
+# (apache/ossie#458, with the inline `document` refs proposed on dev@): the
+# mapping is the root, and its two references carry the ontology and the
+# semantic model inline. It is the layout docs/reference/ontology.md leads
+# with. fixtures/ossie-flights covers the three-file form, fixtures/aviation
+# the three-file form over a hand-written model.
+
+version: 0.2.0.dev0
+name: mini_flights_mapping
+description: Two airports' worth of ontology, kept small enough to read whole.
+
+ontology_ref:
+  name: MiniFlights
+  document:
+    version: 0.2.0.dev0
+    name: MiniFlights
+    description: Two airports' worth of ontology, kept small enough to read whole.
+
+    ontology:
+      - concept: AirportCode
+        type: ValueType
+        extends: [String]
+      - concept: Delay
+        description: Minutes a flight left after its scheduled departure.
+        type: ValueType
+        extends: [Decimal]
+
+      - concept: Airport
+        type: EntityType
+        identify_by: [code]
+        relationships:
+          - name: code
+            roles: [{concept: AirportCode}]
+            multiplicity: OneToOne
+            verbalizes: ["{Airport} is identified by {AirportCode}"]
+          - name: average_departure_delay
+            roles: [{concept: Delay}]
+            multiplicity: ManyToOne
+            verbalizes: ["{Airport} has average- departure {Delay}"]
+            derived_by:
+              - "Delay == AVG[Flight.departure_delay WHERE Airport == Flight.departs_from GROUP BY Airport]"
+          - name: average_inbound_departure_delay
+            roles: [{concept: Delay}]
+            multiplicity: ManyToOne
+            verbalizes: ["{Airport} has average- inbound departure {Delay}"]
+            derived_by:
+              - "Delay == AVG[Flight.departure_delay WHERE Airport == Flight.arrives_at GROUP BY Airport]"
+
+      - concept: Flight
+        type: EntityType
+        identify_by: [id]
+        relationships:
+          - name: id
+            roles: [{concept: Integer}]
+            multiplicity: OneToOne
+            verbalizes: ["{Flight} is identified by {Integer}"]
+          - name: departs_from
+            roles: [{concept: Airport}]
+            multiplicity: ManyToOne
+            verbalizes: ["{Flight} departs from {Airport}"]
+          - name: arrives_at
+            roles: [{concept: Airport}]
+            multiplicity: ManyToOne
+            verbalizes: ["{Flight} arrives at {Airport}"]
+          - name: departure_delay
+            roles: [{concept: Delay}]
+            multiplicity: ManyToOne
+            verbalizes: ["{Flight} has {Delay} on departure"]
+
+semantic_model_ref:
+  name: mini_flights_model
+  document:
+    version: 0.2.0.dev0
+    name: mini_flights_model
+    datasets:
+      - name: AIRPORT
+        source: main.airports
+        fields:
+          - name: code
+            expression: {dialects: [{dialect: ANSI_SQL, expression: code}]}
+      - name: FLIGHT
+        source: main.flights
+        fields:
+          - name: id
+            expression: {dialects: [{dialect: ANSI_SQL, expression: id}]}
+          - name: origin_code
+            expression: {dialects: [{dialect: ANSI_SQL, expression: origin_code}]}
+          - name: dest_code
+            expression: {dialects: [{dialect: ANSI_SQL, expression: dest_code}]}
+          - name: dep_delay
+            expression: {dialects: [{dialect: ANSI_SQL, expression: dep_delay}]}
+
+concept_mappings:
+  - concept: Airport
+    object_mappings:
+      - referent_mappings: [{relationship: code, expression: AIRPORT.code}]
+  - concept: Flight
+    object_mappings:
+      - referent_mappings: [{relationship: id, expression: FLIGHT.id}]
+    link_mappings:
+      - object_mapping: {referent_mappings: [{relationship: id, expression: FLIGHT.id}]}
+        children:
+          - object_mapping:
+              concept: Airport
+              referent_mappings: [{relationship: code, expression: FLIGHT.origin_code}]
+            relationship: departs_from
+          - object_mapping:
+              concept: Airport
+              referent_mappings: [{relationship: code, expression: FLIGHT.dest_code}]
+            relationship: arrives_at
+          - object_mapping: {concept: Delay, expression: FLIGHT.dep_delay}
+            relationship: departure_delay

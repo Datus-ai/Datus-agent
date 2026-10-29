@@ -28,9 +28,9 @@ the previous round already has its ``function_call_output`` and no tool is
 running. On the first call, the SDK may not have persisted its new input yet;
 the model adapter acknowledges that input if compaction persists it first.
 
-The compactor never raises into the SDK loop: any failure keeps the current
-view and, after ``max_failures`` consecutive failures, disables itself for the
-rest of the run.
+Soft compaction failures keep the current view and, after ``max_failures``
+consecutive failures, disable summarization for the rest of the run. Capacity,
+archive and persistence errors stop preparation before an unsafe model call.
 """
 
 from __future__ import annotations
@@ -41,6 +41,7 @@ from typing import TYPE_CHECKING, Any, Callable, Dict, List, Literal, Optional, 
 from agents import AgentHooks
 
 from datus.agent.node.compact_prompts import build_mid_turn_resume_message, is_mid_turn_resume_text
+from datus.models.request_capacity import ContextCapacityError, RequestCapacity
 from datus.utils.loggings import get_logger
 
 if TYPE_CHECKING:
@@ -48,10 +49,16 @@ if TYPE_CHECKING:
 
 logger = get_logger(__name__)
 
+TOOL_RESULT_READ_INSTRUCTIONS = (
+    "\nTool results may be bounded views of immutable session archives. "
+    "Use read_tool_result with result_id, section and next_cursor to read more. "
+    "A record_ref reads a large record in text segments. has_more only describes captured content; "
+    "source_truncated, source_has_more=true or source_complete=false means the source itself is incomplete. "
+    "Do not claim complete coverage from a preview or a single page."
+)
+
 ItemFormat = Literal["responses", "anthropic"]
 
-#: Upper bound on the output-token headroom reserved when judging occupancy.
-MAX_OUTPUT_RESERVE_TOKENS = 20480
 #: Fallback headroom when the model does not expose ``max_tokens``.
 DEFAULT_OUTPUT_RESERVE_TOKENS = 8192
 
@@ -305,7 +312,10 @@ class MidTurnCompactor(AgentHooks):
         self._turn_state = turn_state if turn_state is not None else {}
         self._request_tools: List[Any] = []
         self._instruction_rebuilt = False
+        self._init_instruction = ""
         self.pending_user_turns = 0
+        self._output_tokens: Optional[int] = None
+        self._capacity_pressure: Optional[int] = None
         self._max_failures = max(1, int(max_failures))
         self._warned_no_context_length = False
         self.reset()
@@ -345,11 +355,89 @@ class MidTurnCompactor(AgentHooks):
     def system_instruction(self) -> str:
         return self._system_instruction
 
-    def set_request_context(self, instruction: str, tools: Optional[List[Any]]) -> None:
+    def set_request_context(
+        self, instruction: str, tools: Optional[List[Any]], output_tokens: Optional[int] = None
+    ) -> None:
         if not self._instruction_rebuilt:
             self._system_instruction = instruction or ""
         if tools is not None:
             self._request_tools = tools
+        capacity = self._capacity()
+        self._output_tokens = capacity.output_limit(output_tokens) if capacity is not None else output_tokens
+        self._add_result_instructions()
+
+    def _add_result_instructions(self) -> None:
+        # Runtime state is not part of the persisted system-prompt snapshot.
+        # Refresh it after every tool turn and after rebuilding on compaction.
+        if self._init_instruction:
+            self._system_instruction = self._system_instruction.replace(self._init_instruction, "")
+        init_context = getattr(self._node, "_init_context", None)
+        self._init_instruction = (
+            init_context.prompt_context(self._node._get_tool_result_store()) if init_context is not None else ""
+        )
+        self._system_instruction += self._init_instruction
+        if any(isinstance(tool, dict) and tool.get("name") == "read_tool_result" for tool in self._request_tools):
+            if TOOL_RESULT_READ_INSTRUCTIONS not in self._system_instruction:
+                self._system_instruction += TOOL_RESULT_READ_INSTRUCTIONS
+
+    def _prepare_tool_results(self, view: List[Any], *, force: bool = False) -> List[Any]:
+        from datus.utils.tool_result_store import ACTIVE_RESULT_STORE, ToolResultStore
+        from datus.utils.tool_result_view import project_tool_results
+
+        getter = getattr(self._node, "_get_tool_result_store", None)
+        store = getter() if callable(getter) else None
+        if not isinstance(store, ToolResultStore):
+            capacity = self._capacity()
+            return (
+                project_tool_results(view, None, force=force, counter=capacity.count) if capacity is not None else view
+            )
+        ACTIVE_RESULT_STORE.set(store)
+        return project_tool_results(view, store, force=force)
+
+    def _capacity(self) -> Optional[RequestCapacity]:
+        from datus.models.base import LLMBaseModel
+
+        model = getattr(self._node, "model", None)
+        capacity = model.request_capacity() if isinstance(model, LLMBaseModel) else None
+        return capacity if isinstance(capacity, RequestCapacity) else None
+
+    def _check(self, view: List[Any]) -> None:
+        capacity = self._capacity()
+        if capacity is not None:
+            capacity.check(
+                {"instructions": self._system_instruction, "input": view, "tools": self._request_tools},
+                self._output_tokens,
+            )
+
+    async def _prepare(self, view: List[Any], item_format: ItemFormat) -> Optional[List[Any]]:
+        projected = self._prepare_tool_results(view)
+        try:
+            self._check(projected)
+        except ContextCapacityError as exc:
+            if exc.reason != "CONTEXT_LIMIT_EXCEEDED":
+                raise
+            projected = self._prepare_tool_results(projected, force=True)
+        self._capacity_pressure = None
+        try:
+            self._check(projected)
+        except ContextCapacityError as exc:
+            if exc.reason != "CONTEXT_LIMIT_EXCEEDED":
+                raise
+            self._capacity_pressure = exc.budget.get("input_tokens")
+        try:
+            rewritten = await self._maybe_compact(projected, item_format=item_format)
+        except ContextCapacityError:
+            raise
+        except Exception:
+            logger.exception("Soft compaction failed; checking the preserved result view.")
+            self._record_failure()
+            rewritten = None
+        finally:
+            self._capacity_pressure = None
+        final = rewritten if rewritten is not None else projected
+        # Independent of the soft compactor's switches and failure breaker.
+        self._check(final)
+        return final if final is not view else None
 
     def anchor_turn(self, items: List[Any]) -> None:
         if self._turn_request is None:
@@ -396,7 +484,7 @@ class MidTurnCompactor(AgentHooks):
         return False
 
     async def rewrite_sdk_input(self, raw: List[Any]) -> List[Any]:
-        """Return the input the model should see for this call. Never raises."""
+        """Return a bounded model view, or raise a terminal preparation error."""
         try:
             if self._overlay_is_stale(raw):
                 logger.warning("Mid-turn compaction overlay no longer matches the run input; resetting it.")
@@ -404,7 +492,9 @@ class MidTurnCompactor(AgentHooks):
             self.anchor_turn(raw)
             view = self.view_of(raw)
             try:
-                new_view = await self._maybe_compact(view, item_format="responses")
+                new_view = await self._prepare(view, item_format="responses")
+            except ContextCapacityError:
+                raise
             except Exception:  # noqa: BLE001 — keep the current view on any failure
                 logger.exception("Mid-turn compaction failed; keeping the current context view.")
                 self._record_failure()
@@ -418,6 +508,8 @@ class MidTurnCompactor(AgentHooks):
             self._prev_view_len = len(view)
             self._calls += 1
             return view
+        except ContextCapacityError:
+            raise
         except Exception:  # noqa: BLE001 — the filter must never abort the SDK run
             logger.exception("Context rewriter failed; passing the input through unchanged.")
             self._calls += 1
@@ -431,7 +523,9 @@ class MidTurnCompactor(AgentHooks):
         """Return a replacement message list, or ``None`` to keep ``messages``."""
         new_view: Optional[List[Any]] = None
         try:
-            new_view = await self._maybe_compact(messages, item_format="anthropic")
+            new_view = await self._prepare(messages, item_format="anthropic")
+        except ContextCapacityError:
+            raise
         except Exception:  # noqa: BLE001 — never break the native loop
             logger.exception("Mid-turn compaction failed on the native path; keeping messages.")
             self._record_failure()
@@ -466,6 +560,8 @@ class MidTurnCompactor(AgentHooks):
         is newer than the last rewrite, plus everything appended since that
         call (``view[tail_start:]``). Otherwise estimates the whole view.
         """
+        if self._capacity_pressure is not None:
+            return self._capacity_pressure, len(view)
         running = getattr(self._node, "running_turn_usage", None)
         requests = int(getattr(running, "requests", 0) or 0) if running is not None else 0
         fresh = (
@@ -508,6 +604,7 @@ class MidTurnCompactor(AgentHooks):
             first_call=self._calls == 0,
             archive_history=self._calls == 0 and not self._turn_state.get("history_archived", False),
             pending_user_turns=self.pending_user_turns,
+            output_tokens=self._output_tokens,
         )
         if self._calls == 0 and isinstance(result, dict) and result.get("success"):
             self._turn_state["history_archived"] = True
@@ -533,6 +630,7 @@ class MidTurnCompactor(AgentHooks):
         if mode == "major" and self._refresh_instruction is not None:
             try:
                 self._system_instruction = self._refresh_instruction()
+                self._add_result_instructions()
                 self._instruction_rebuilt = True
             except Exception:
                 logger.exception("Failed to refresh system instructions after compaction")

@@ -72,6 +72,7 @@ _NORMAL_RULES = [
     # static SQL lineage read. ``upsert_lineage`` / ``delete_lineage`` write the project file
     # lineage/lineage.json (deleting sources, saving inline SQL), so they fall through to ASK.
     _rule("lineage_tools", "query_lineage", PermissionLevel.ALLOW),
+    _rule("tool_result_tools", "read_tool_result", PermissionLevel.ALLOW),
     # db read. ``execute_sql`` is the unified SQL entry point; its gating is
     # handled dynamically per statement class in
     # ``PermissionHooks._handle_sql_permission`` driven by each profile's
@@ -307,6 +308,7 @@ NORMAL = PermissionConfig(
 # posture, so forcing them to switch to ``dangerous`` just to remove one
 # chart is hostile. ASK still gates each call via the broker.
 _AUTO_EXTRA_RULES = [
+    _rule("semantic_tools", "write_semantic_model_plan_file", PermissionLevel.ALLOW),
     # workspace writes — ALLOW promotes the INTERNAL × write decision in
     # ``_handle_filesystem_zone`` so the auto profile no longer falls through
     # to ``default=ASK`` like normal does. EXTERNAL paths are still gated by

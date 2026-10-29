@@ -1,0 +1,336 @@
+model: model.yaml
+cases:
+- id: metrics.totals
+  capabilities:
+  - metrics.core
+  targets:
+  - hive
+  - inceptor
+  query:
+    metrics:
+    - revenue
+    - order_count
+    - unique_customers
+    - avg_order_value
+  expected:
+    columns:
+    - revenue
+    - order_count
+    - unique_customers
+    - avg_order_value
+    rows:
+    - - '30.50'
+      - 4
+      - 2
+      - '7.625'
+    types:
+    - decimal
+    - int
+    - int
+    - decimal
+    ordered: false
+- id: metrics.label_groups
+  capabilities:
+  - metrics.core
+  targets:
+  - hive
+  - inceptor
+  query:
+    metrics:
+    - revenue
+    - order_count
+    group_by:
+    - field: orders.label
+  expected:
+    columns:
+    - label
+    - revenue
+    - order_count
+    rows:
+    - - 中文
+      - '30.50'
+      - 2
+    - - English
+      - '0'
+      - 1
+    - - null
+      - null
+      - 1
+    types:
+    - text
+    - decimal
+    - int
+    ordered: false
+- id: metrics.join_unmatched
+  capabilities:
+  - metrics.joins
+  targets:
+  - hive
+  - inceptor
+  query:
+    metrics:
+    - revenue
+    - order_count
+    group_by:
+    - field: customers.region
+  expected:
+    columns:
+    - region
+    - revenue
+    - order_count
+    rows:
+    - - 北区
+      - '30.50'
+      - 2
+    - - 南区
+      - '0'
+      - 1
+    - - null
+      - null
+      - 1
+    types:
+    - text
+    - decimal
+    - int
+    ordered: false
+- id: metrics.multidataset
+  capabilities:
+  - metrics.joins
+  targets:
+  - hive
+  - inceptor
+  query:
+    metrics:
+    - revenue
+    - customer_count
+  expected:
+    columns:
+    - revenue
+    - customer_count
+    rows:
+    - - '30.50'
+      - 2
+    types:
+    - decimal
+    - int
+    ordered: false
+- id: metrics.date_boundaries
+  capabilities:
+  - metrics.dates
+  targets:
+  - hive
+  - inceptor
+  query:
+    metrics:
+    - elapsed_hours
+    - elapsed_minutes
+    - elapsed_seconds
+    - elapsed_days
+  expected:
+    columns:
+    - elapsed_hours
+    - elapsed_minutes
+    - elapsed_seconds
+    - elapsed_days
+    rows:
+    - - 1
+      - 22
+      - 1320
+      - 1
+    types:
+    - decimal
+    - decimal
+    - decimal
+    - decimal
+    ordered: false
+- id: metrics.day_bucket
+  capabilities:
+  - metrics.dates
+  targets:
+  - hive
+  - inceptor
+  query:
+    metrics:
+    - started_day
+  expected:
+    columns:
+    - started_day
+    rows:
+    - - '2024-02-29'
+    types:
+    - date
+    ordered: false
+- id: metrics.running_revenue
+  capabilities:
+  - metrics.windows
+  targets:
+  - hive
+  - inceptor
+  query:
+    metrics:
+    - running_revenue
+    group_by:
+    - field: orders.order_date
+      grain: month
+  expected:
+    columns:
+    - order_date__month
+    - running_revenue
+    rows:
+    - - '2024-01-01'
+      - '30.50'
+    - - '2024-02-01'
+      - '30.50'
+    types:
+    - date
+    - decimal
+    ordered: false
+- id: metrics.rolling_revenue
+  capabilities:
+  - metrics.windows
+  targets:
+  - hive
+  - inceptor
+  query:
+    metrics:
+    - rolling_revenue
+    group_by:
+    - field: orders.order_date
+      grain: month
+  expected:
+    columns:
+    - order_date__month
+    - rolling_revenue
+    rows:
+    - - '2024-01-01'
+      - '30.50'
+    - - '2024-02-01'
+      - '30.50'
+    types:
+    - date
+    - decimal
+    ordered: false
+- id: metrics.previous_revenue
+  capabilities:
+  - metrics.windows
+  targets:
+  - hive
+  - inceptor
+  query:
+    metrics:
+    - previous_revenue
+    group_by:
+    - field: orders.order_date
+      grain: month
+  expected:
+    columns:
+    - order_date__month
+    - previous_revenue
+    rows:
+    - - '2024-01-01'
+      - null
+    - - '2024-02-01'
+      - '30.50'
+    types:
+    - date
+    - decimal
+    ordered: false
+- id: metrics.null_negated
+  capabilities:
+  - query.nulls
+  targets:
+  - hive
+  - inceptor
+  query:
+    metrics:
+    - order_count
+    where_sql: NOT (orders.label IS NOT DISTINCT FROM '中文')
+  expected:
+    columns:
+    - order_count
+    rows:
+    - - 2
+    types:
+    - int
+    ordered: false
+- id: metrics.null_distinct
+  capabilities:
+  - query.nulls
+  targets:
+  - hive
+  - inceptor
+  query:
+    metrics:
+    - order_count
+    where_sql: orders.label IS DISTINCT FROM '中文'
+  expected:
+    columns:
+    - order_count
+    rows:
+    - - 2
+    types:
+    - int
+    ordered: false
+- id: metrics.external_source
+  capabilities:
+  - storage.tables
+  targets:
+  - hive
+  - inceptor
+  query:
+    metrics:
+    - external_revenue
+  expected:
+    columns:
+    - external_revenue
+    rows:
+    - - '30.50'
+    types:
+    - decimal
+    ordered: false
+- id: metrics.calendar_buckets
+  capabilities:
+  - metrics.dates
+  targets:
+  - hive
+  - inceptor
+  query:
+    metrics:
+    - started_week
+    - started_month
+    - started_quarter
+    - started_year
+  expected:
+    columns:
+    - started_week
+    - started_month
+    - started_quarter
+    - started_year
+    rows:
+    - - '2024-02-26'
+      - '2024-02-01'
+      - '2024-01-01'
+      - '2024-01-01'
+    types:
+    - date
+    - date
+    - date
+    - date
+    ordered: false
+- id: metrics.date_column_difference
+  capabilities:
+  - metrics.dates
+  targets:
+  - hive
+  - inceptor
+  query:
+    metrics:
+    - days_from_dates
+  expected:
+    columns:
+    - days_from_dates
+    rows:
+    - - 1
+    types:
+    - decimal
+    ordered: false

@@ -134,4 +134,6 @@ jobs:
           name: merge-queue-results
           path: |
             ci/merge-queue-results.json
+            ci/gate-coverage.json
+            ci/test-results-*.execution.json
             ci/test-results-merge-*.xml

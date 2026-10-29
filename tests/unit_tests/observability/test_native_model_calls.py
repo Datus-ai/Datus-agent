@@ -3,7 +3,7 @@
 
 import json
 from types import SimpleNamespace
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 import anthropic
 import httpx
@@ -11,8 +11,11 @@ import pytest
 from openai import OpenAI
 from opentelemetry import trace
 
+from datus.configuration.agent_config import ModelConfig
 from datus.models.claude_model import ClaudeModel
 from datus.models.codex_model import CodexModel
+
+pytestmark = pytest.mark.component
 
 
 @pytest.fixture
@@ -74,6 +77,14 @@ def test_codex_direct_requests_and_auth_retry_keep_each_raw_id(native_exporter, 
     )
     model = CodexModel.__new__(CodexModel)
     model.model_name = "test-model"
+    model.model_config = ModelConfig(
+        type="codex",
+        api_key="test",
+        model="test-model",
+        context_length=262144,
+        max_tokens=8192,
+        tokenizer_ref="tiktoken:o200k_base",
+    )
     model._get_client = lambda: client
     model._refresh_client_token = lambda: None
     model.oauth_manager = SimpleNamespace(refresh_tokens=Mock())
@@ -94,13 +105,19 @@ def test_codex_direct_requests_and_auth_retry_keep_each_raw_id(native_exporter, 
 
 
 def _claude(client, async_client=None):
-    model = ClaudeModel.__new__(ClaudeModel)
-    model.model_name = "claude-test"
-    model.use_native_api = True
-    model._is_oauth_token = False
+    config = ModelConfig(
+        type="claude",
+        api_key="test",
+        model="claude-test",
+        context_length=32768,
+        max_tokens=100,
+        tokenizer_ref="tiktoken:o200k_base",
+        use_native_api=True,
+    )
+    with patch.object(ClaudeModel, "_init_anthropic_client"):
+        model = ClaudeModel(config)
     model.anthropic_client = client
     model.async_anthropic_client = async_client
-    model.max_tokens = lambda: 100
     return model
 
 

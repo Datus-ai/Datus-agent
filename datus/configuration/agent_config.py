@@ -430,6 +430,17 @@ class ModelConfig:
     #   str   -> path to a CA bundle (PEM) to additionally trust (e.g. a private gateway CA)
     # When set, takes priority over the SSL_VERIFY / SSL_CERT_FILE environment variables.
     ssl_verify: Optional[Union[bool, str]] = None
+    context_length: Optional[int] = None
+    max_tokens: Optional[int] = None
+    tokenizer_ref: Optional[str] = None
+
+    def __post_init__(self) -> None:
+        for name in ("context_length", "max_tokens"):
+            value = getattr(self, name)
+            if value is not None and (isinstance(value, bool) or not isinstance(value, int) or value <= 0):
+                raise ValueError(f"{name} must be a positive integer")
+        if self.tokenizer_ref is not None and (not isinstance(self.tokenizer_ref, str) or not self.tokenizer_ref):
+            raise ValueError("tokenizer_ref must be a non-empty tokenizer path or reference")
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -771,6 +782,7 @@ class AgentConfig:
     knowledge_base: Dict[str, Any]
     logging: LoggingConfig
     observability: ObservabilityConfig
+    mcp_tool_execution: Dict[str, int]
 
     def __init__(self, nodes: Dict[str, NodeConfig], **kwargs):
         """
@@ -785,6 +797,13 @@ class AgentConfig:
             )
         # Resolve home early so dependent helpers can use a stable path manager.
         self.home = kwargs.get("home", "~/.datus")
+        mcp_execution_raw = kwargs.get("mcp_tool_execution")
+        if mcp_execution_raw is not None and not isinstance(mcp_execution_raw, Mapping):
+            logger.warning(
+                "agent.mcp_tool_execution must be a mapping; got %s. Using defaults.",
+                type(mcp_execution_raw).__name__,
+            )
+        self.mcp_tool_execution = dict(mcp_execution_raw) if isinstance(mcp_execution_raw, Mapping) else {}
         # project_name must be computed before _set_path_manager so shard-aware
         # directories (sessions/, data/) bind to the right project.  When the
         # user explicitly sets ``agent.project_name`` in YAML we must validate
@@ -2893,14 +2912,14 @@ def resolve_env(value: str) -> str:
     return re.sub(pattern, replace_env, value)
 
 
-def _db_config_to_dosi_profile(db_config: Optional[DbConfig]) -> Optional[Dict[str, str]]:
+def _db_config_to_dosi_profile(db_config: Optional[DbConfig]) -> Optional[Dict[str, Any]]:
     if not db_config:
         return None
 
     raw = db_config.to_dict()
     extra = raw.get("extra")
     dosi_db_config = {
-        key: str(value)
+        key: value
         for key, value in raw.items()
         if value is not None and value != "" and key not in ("extra", "path_pattern", "default")
     }
@@ -2909,7 +2928,7 @@ def _db_config_to_dosi_profile(db_config: Optional[DbConfig]) -> Optional[Dict[s
         for key, value in extra.items():
             if value is None or value == "":
                 continue
-            dosi_db_config.setdefault(key, str(value))
+            dosi_db_config.setdefault(key, value)
     return dosi_db_config
 
 
@@ -2931,9 +2950,9 @@ _RUNTIME_DB_CONTEXT_ALIASES = {
 
 
 def _apply_runtime_db_context_to_dosi_profile(
-    db_config: Optional[Dict[str, str]],
+    db_config: Optional[Dict[str, Any]],
     runtime_db_context: Optional[Mapping[str, Any]],
-) -> Optional[Dict[str, str]]:
+) -> Optional[Dict[str, Any]]:
     result = dict(db_config or {})
 
     for canonical_key, aliases in _RUNTIME_DB_CONTEXT_ALIASES.items():
@@ -3079,6 +3098,9 @@ def load_model_config(data: dict) -> ModelConfig:
         auth_type=data.get("auth_type", "api_key"),
         use_native_api=data.get("use_native_api", False),
         ssl_verify=_load_ssl_verify(data),
+        context_length=data.get("context_length"),
+        max_tokens=data.get("max_tokens"),
+        tokenizer_ref=data.get("tokenizer_ref"),
     )
 
 

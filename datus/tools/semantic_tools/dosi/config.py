@@ -17,7 +17,7 @@ class DosiConfig(BaseModel):
     model_config = ConfigDict(extra="allow")
 
     datasource: Optional[str] = None
-    timeout_seconds: int = Field(default=30)
+    timeout_seconds: float = Field(default=30, gt=0)
     service_type: str = "dosi"
     # Path to the OSI semantic model file (.yaml/.yml/.json). Takes precedence
     # over semantic_models_path.
@@ -34,3 +34,18 @@ class DosiConfig(BaseModel):
     dialect: Optional[str] = None
     # Per-profile connection-pool cap inside the engine.
     pool_size: int = 8
+    # Apache Ossie ontology loaded beside the model (model-first). Set per
+    # engine handle when a mapping names its ontology by name only.
+    ontology_path: Optional[str] = None
+    # Project-wide directory of ontologies and mapping documents (Datus
+    # convention: subject/ontology). A mapping joins this datasource when its
+    # semantic_model_ref.iri names one of its model files. Unset means
+    # ontologies are not loaded at all, which keeps every non-ontology agent
+    # on the plain model.
+    ontology_dir: Optional[str] = None
+    # An Ossie mapping document (apache/ossie#458) binding the model to its
+    # ontology. Set per engine handle by the registry, like ontology_path.
+    mapping_path: Optional[str] = None
+    # Local files that mapping reaches by relative iri; the engine reads them,
+    # so their edits rebuild it. Set by the registry with mapping_path.
+    mapping_references: list[str] = Field(default_factory=list)

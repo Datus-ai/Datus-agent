@@ -271,12 +271,7 @@ class SemanticModelingAgenticNode(SemanticAuthoringAgenticNode):
             logger.error("Failed to setup semantic-modeling filesystem tools: %s", exc)
 
     def _setup_semantic_plan_file_tool(self) -> None:
-        """Expose plan persistence only when the workflow explicitly requests the tool."""
-        configured = self.node_config.get("tools") or ""
-        patterns = configured.split(",") if isinstance(configured, str) else configured
-        if "semantic_tools.write_semantic_model_plan_file" not in {pattern.strip() for pattern in patterns}:
-            return
-
+        """Expose plan persistence for optional planning workflows."""
         from datus.tools.func_tool.semantic_plan_file_tools import SemanticPlanFileTools
 
         # Semantic models are authored under project_root even when a VS Code
@@ -400,6 +395,7 @@ class SemanticModelingAgenticNode(SemanticAuthoringAgenticNode):
                 "semantic_model_required",
                 "semantic_model_selection_required",
                 "semantic_model_target_invalid",
+                "semantic_model_inline_in_mapping",
             }:
                 raise RuntimeError("status='blocked' requires a supported semantic-model blocker_code.")
             if self._target_was_mutated():

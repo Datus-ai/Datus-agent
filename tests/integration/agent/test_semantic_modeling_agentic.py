@@ -27,8 +27,14 @@ from datus.storage.metric.store import MetricRAG
 from datus.storage.registry import clear_storage_registry, configure_storage_defaults, get_storage_defaults
 from datus.storage.semantic_dataset.store import SemanticDatasetRAG
 from datus.utils.path_manager import DatusPathManager
+from datus.utils.query_result_text import parse_query_result_text
 
 pytestmark = [pytest.mark.nightly, pytest.mark.product_e2e]
+
+
+def _catalog_names(page: str) -> set[str]:
+    """Metric names on a ``list_metrics`` page: one ``- name -- description`` line each."""
+    return {line[2:].split(" -- ", 1)[0] for line in page.splitlines() if line.startswith("- ")}
 
 
 def _use_dosi(agent_config, project_root):
@@ -180,6 +186,7 @@ def _revenue_metric() -> dict:
     }
 
 
+@pytest.mark.acceptance
 def test_dosi_authoring_validates_reconciles_and_queries_without_llm(
     tmp_path,
     monkeypatch,
@@ -211,7 +218,7 @@ def test_dosi_authoring_validates_reconciles_and_queries_without_llm(
 
     catalog = node.semantic_tools.list_metrics(limit=20, offset=0)
     assert catalog.success == 1, catalog.error
-    assert {item["name"] for item in catalog.result["items"]} == {"revenue"}
+    assert _catalog_names(catalog.result) == {"revenue"}
 
     dry_run = node.semantic_tools.query_metrics(metrics=["revenue"], dry_run=True)
     assert dry_run.success == 1, dry_run.error
@@ -219,7 +226,7 @@ def test_dosi_authoring_validates_reconciles_and_queries_without_llm(
 
     live = node.semantic_tools.query_metrics(metrics=["revenue"])
     assert live.success == 1, live.error
-    cached = node.semantic_tools.get_cached_query_metrics_result(live.result["result_id"])
+    cached = node.semantic_tools.get_cached_query_metrics_result(parse_query_result_text(live.result).result_id)
     assert cached["columns"] == ["revenue"]
     rows = list(csv.DictReader(io.StringIO(cached["csv"])))
     assert len(rows) == 1
@@ -323,4 +330,4 @@ async def test_semantic_modeling_authors_one_queryable_dosi_model_with_real_llm(
     assert model_path.is_file()
     metric_catalog = node.semantic_tools.list_metrics(limit=50, offset=0)
     assert metric_catalog.success == 1, metric_catalog.error
-    assert "school_count" in {item["name"] for item in metric_catalog.result["items"]}
+    assert "school_count" in _catalog_names(metric_catalog.result)

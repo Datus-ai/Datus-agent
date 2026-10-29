@@ -352,6 +352,29 @@ class OsiSemanticModelTargetTools:
         }
 
     @staticmethod
+    def _public_mapping(mapping: Dict[str, Any]) -> Dict[str, Any]:
+        return {key: mapping[key] for key in ("semantic_model_name", "mapping_file") if mapping.get(key)}
+
+    def _inline_mapping_message(self, mappings: List[Dict[str, Any]]) -> str:
+        from datus.agent.node.semantic_authoring import inline_mapping_message
+
+        datasource = str(getattr(self.agent_config, "current_datasource", "") or "default").strip() or "default"
+        return inline_mapping_message(datasource, mappings)
+
+    def _requested_inline_mapping(self, semantic_model_file: str) -> List[Dict[str, Any]]:
+        """Inline-model mapping documents a bind selector names, by project path or absolute path."""
+        selector = str(semantic_model_file or "").strip().replace("\\", "/")
+        if not selector:
+            return []
+        absolute = Path(selector).expanduser().resolve(strict=False) if Path(selector).is_absolute() else None
+        return [
+            mapping
+            for mapping in self._inventory().get("inline_mapping_models") or []
+            if selector == mapping["mapping_file"]
+            or (absolute is not None and absolute == Path(mapping["absolute_path"]).resolve(strict=False))
+        ]
+
+    @staticmethod
     def _public_issue(issue: Dict[str, Any]) -> Dict[str, Any]:
         return {
             key: issue[key]
@@ -456,6 +479,7 @@ class OsiSemanticModelTargetTools:
             repairable_models = inventory["recoverable_models"]
             issues = inventory["issues"]
             discovery_warnings = inventory["discovery_warnings"]
+            inline_mappings = inventory.get("inline_mapping_models") or []
             if models and issues:
                 status, code = "partial", None
             elif models:
@@ -464,23 +488,27 @@ class OsiSemanticModelTargetTools:
                 status, code = "repairable", None
             elif issues:
                 status, code = "invalid", "semantic_model_target_invalid"
+            elif inline_mappings:
+                status, code = "inline_in_mapping", "semantic_model_inline_in_mapping"
             else:
                 status, code = "missing", "semantic_model_required"
-            return FuncToolResult(
-                result={
-                    "status": status,
-                    "code": code,
-                    "count": len(models),
-                    "files_scanned": inventory["files_scanned"],
-                    "semantic_models": [self._public_candidate(model) for model in models],
-                    "repairable_semantic_models": [self._public_candidate(model) for model in repairable_models],
-                    "issues": [self._public_issue(issue) for issue in issues],
-                    "discovery_warnings": [self._public_issue(warning) for warning in discovery_warnings],
-                    "bound_target": (
-                        self._public_candidate(self.target_state.bound) if self.target_state.bound is not None else None
-                    ),
-                }
-            )
+            result = {
+                "status": status,
+                "code": code,
+                "count": len(models),
+                "files_scanned": inventory["files_scanned"],
+                "semantic_models": [self._public_candidate(model) for model in models],
+                "repairable_semantic_models": [self._public_candidate(model) for model in repairable_models],
+                "issues": [self._public_issue(issue) for issue in issues],
+                "discovery_warnings": [self._public_issue(warning) for warning in discovery_warnings],
+                "bound_target": (
+                    self._public_candidate(self.target_state.bound) if self.target_state.bound is not None else None
+                ),
+            }
+            if inline_mappings:
+                result["inline_mapping_models"] = [self._public_mapping(mapping) for mapping in inline_mappings]
+                result["guidance"] = self._inline_mapping_message(inline_mappings)
+            return FuncToolResult(result=result)
         except Exception as exc:
             return FuncToolResult(success=0, error=f"Failed to list OSI semantic models: {exc}")
 
@@ -501,6 +529,14 @@ class OsiSemanticModelTargetTools:
                 return self._bind_failure(
                     "semantic_model_selection_required",
                     "Provide semantic_model_file or semantic_model_name from the live inventory.",
+                )
+
+            requested_mappings = self._requested_inline_mapping(semantic_model_file)
+            if requested_mappings:
+                return self._bind_failure(
+                    "semantic_model_inline_in_mapping",
+                    self._inline_mapping_message(requested_mappings),
+                    inline_mapping_models=[self._public_mapping(mapping) for mapping in requested_mappings],
                 )
 
             requested_path: Optional[Path] = None
@@ -536,6 +572,13 @@ class OsiSemanticModelTargetTools:
                     return self._bind_failure(
                         "semantic_model_target_invalid",
                         "The requested OSI semantic-model file is not present in the live YAML inventory.",
+                    )
+                inline_mappings = inventory.get("inline_mapping_models") or []
+                if not inventory["models"] and not inventory["issues"] and inline_mappings:
+                    return self._bind_failure(
+                        "semantic_model_inline_in_mapping",
+                        self._inline_mapping_message(inline_mappings),
+                        inline_mapping_models=[self._public_mapping(mapping) for mapping in inline_mappings],
                     )
                 if not inventory["models"] and not inventory["issues"]:
                     return self._bind_failure(

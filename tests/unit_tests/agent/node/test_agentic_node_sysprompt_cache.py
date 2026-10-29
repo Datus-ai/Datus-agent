@@ -509,6 +509,22 @@ class TestSnapshotMeta:
 
 
 class TestDatasourceReminder:
+    def test_adapter_namespace_hint_reaches_the_live_reminder(self, session_manager):
+        services = SimpleNamespace(datasources={"main": SimpleNamespace(type="hana")})
+        cfg = _agent_config(current_datasource="main", services=services)
+        connector = SimpleNamespace(
+            database_name="HXE",
+            get_sql_generation_context=lambda **_: {
+                "namespace_hint": "SQL object names use schema.table; do not prefix SQL object names with the tenant."
+            },
+        )
+        node = _SnapshotNode(session_manager, cfg, db_func_tool=SimpleNamespace(connector=connector))
+        line = node._build_datasource_reminder(SimpleNamespace(db_schema="APP"))
+        assert "database: HXE" in line
+        assert "schema: APP" in line
+        assert "SQL object names use schema.table" in line
+        assert "do not prefix SQL object names with the tenant" in line
+
     def test_requires_db_tool(self, session_manager):
         cfg = _agent_config(current_datasource="main")
         without = _SnapshotNode(session_manager, cfg, db_func_tool=None)

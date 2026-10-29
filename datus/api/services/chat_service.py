@@ -437,6 +437,7 @@ class ChatService:
             session_manager = SessionManager(session_dir=self._session_dir, scope=user_id)
             raw_messages = session_manager.get_session_messages(session_id)
             tool_results = session_manager.get_tool_result_contents(session_id)
+            tool_calls = session_manager.get_tool_call_contents(session_id)
 
             if not raw_messages:
                 return Result[ChatHistoryData](success=True, data=ChatHistoryData())
@@ -449,10 +450,16 @@ class ChatService:
                 os.path.join(session_manager.session_dir, session_id) if _is_safe_session_id(session_id) else None
             )
             subagent_runs: Dict[str, List[List[ActionHistory]]] = {}
+            pending_review_messages: List[SSEMessagePayload] = []
 
             for idx, msg in enumerate(raw_messages):
                 role = msg.get("role", "")
                 if role == "user":
+                    # Interrupted tool calls have no SDK row and are anchored to
+                    # the user turn. Replay them after that turn's saved actions.
+                    sse_messages.extend(pending_review_messages)
+                    event_id += len(pending_review_messages)
+                    pending_review_messages = []
                     content = msg.get("content", "")
                     if content:
                         at_ctx_raw = msg.get("at_context")
@@ -469,17 +476,30 @@ class ChatService:
                         from datus.cli.manual_exec import exec_to_markdown
 
                         content = exec_to_markdown(content)
+                        parts = msg.get("message_contents") or []
+                        user_parts = [
+                            part for part in parts if part.get("type") not in ("call-tool", "call-tool-result")
+                        ]
+                        interrupted_reviews = [
+                            part for part in parts if part.get("type") in ("call-tool", "call-tool-result")
+                        ]
                         sse_messages.append(
                             SSEMessagePayload(
                                 message_id=str(uuid.uuid4()),
                                 role="user",
-                                content=[IMessageContent(**part) for part in msg["message_contents"]]
-                                if msg.get("message_contents")
+                                content=[IMessageContent(**part) for part in user_parts]
+                                if user_parts
                                 else [IMessageContent(type="markdown", payload={"content": content})],
                                 at_context=at_context,
                             )
                         )
                         event_id += 1
+                        for part in interrupted_reviews:
+                            pending_review_messages.append(
+                                SSEMessagePayload(
+                                    message_id=str(uuid.uuid4()), role="assistant", content=[IMessageContent(**part)]
+                                )
+                            )
                 elif role == "assistant":
                     if "actions" in msg:
                         payloads, event_id = _actions_to_payloads(
@@ -506,10 +526,16 @@ class ChatService:
                         )
                         event_id += 1
 
+            sse_messages.extend(pending_review_messages)
+
             # Restore the canonical streamed result, including its duration,
             # after conversion so expanded Subagent results are restored too.
             for message in sse_messages:
                 for part in message.content:
+                    if part.type == "call-tool":
+                        saved_call = tool_calls.get(part.payload.get("callToolId"))
+                        if saved_call is not None:
+                            part.payload.update(saved_call)
                     if part.type == "call-tool-result":
                         saved = tool_results.get(part.payload.get("callToolId"))
                         if saved is not None:

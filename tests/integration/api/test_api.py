@@ -183,15 +183,8 @@ class TestAPI:
                 "mode": "async",
             },
         )
-        # The route handler catches HTTPException(400) and re-raises as 500
-        assert resp.status_code in (
-            400,
-            500,
-        ), f"Expected 400 or 500 for async without SSE header, got {resp.status_code}"
-        data = resp.json()
-        assert "event-stream" in data.get("detail", "").lower() or resp.status_code == 500, (
-            "Error should mention event-stream requirement"
-        )
+        assert resp.status_code == 400
+        assert "event-stream" in resp.json()["detail"].lower()
 
     @pytest.mark.asyncio
     async def test_stream_workflow(self, authenticated_client):

@@ -41,6 +41,20 @@ class DimensionInfo(BaseModel):
         None,
         description="How the grouping recommendation was declared or inferred",
     )
+    definition: Optional[str] = Field(
+        None,
+        description=(
+            "A fixed field's declaration, e.g. 'fixed(order_count, users.user_id)': a "
+            "per-entity value read from rows of its own; absent for an ordinary field"
+        ),
+    )
+    params: Optional[List[Dict[str, Any]]] = Field(
+        None,
+        description=(
+            "Query-time parameters the fixed fields this dimension is or reads take "
+            "from their base metrics, each naming the metric that declares it (declared_on)"
+        ),
+    )
 
 
 class SemanticModelInfo(BaseModel):
@@ -249,6 +263,8 @@ class AttributionWarning(BaseModel):
 class AttributionResult(BaseModel):
     """Unified attribution result returned by native and generic implementations."""
 
+    execution_info: List[Dict[str, Any]] = Field(default_factory=list)
+
     metric: str
     implementation: Literal["dosi", "generic"]
     strategy: AttributionStrategy
@@ -315,6 +331,16 @@ class SemanticValidationError(BaseModel):
     suggested_retry: Optional[Dict[str, Any]] = Field(
         None, description="Concrete query_metrics kwargs the caller can retry with"
     )
+    candidates: List[str] = Field(
+        default_factory=list,
+        description="Valid alternatives the engine named, e.g. a correctly rooted concept path",
+    )
+    hint: Optional[str] = Field(None, description="Engine retry hint, e.g. the group-by to use instead")
+    detail: Optional[Dict[str, Any]] = Field(
+        None,
+        description="Code-specific engine payload, e.g. value_not_in_domain violations with their allowed values",
+    )
+    condition: Optional[str] = Field(None, description="The query condition the error is about, as SQL")
     message: str = Field("", description="Human-readable explanation")
 
 

@@ -75,9 +75,7 @@ async def test_catalog_command(catalog_agent_config: AgentConfig, catalog_db_man
         pilot.app.set_focus(tree)
         await pilot.pause()
 
-        # WORKAROUND: Directly call the action method instead of simulating a key press.
-        # This bypasses a bug in the screen's on_key method.
-        catalog_screen.action_cursor_down()
+        await pilot.press("down")
         tree.select_node(tree.cursor_node)
         await pilot.pause()
 
@@ -90,7 +88,7 @@ async def test_catalog_command(catalog_agent_config: AgentConfig, catalog_db_man
         await pilot.pause(1)  # Wait for the tree to expand and children to load asynchronously.
 
         # The database node should now have children (tables).
-        catalog_screen.action_cursor_down()
+        await pilot.press("down")
         await pilot.pause()
 
         first_table_node = tree.cursor_node

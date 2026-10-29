@@ -1,0 +1,192 @@
+version: 0.2.0.dev0
+semantic_model:
+- name: hs2_metrics
+  datasets:
+  - name: orders
+    source: '{{db_name}}.orders'
+    primary_key:
+    - order_id
+    fields:
+    - name: order_id
+      expression:
+        dialects:
+        - dialect: ANSI_SQL
+          expression: order_id
+    - name: label
+      expression:
+        dialects:
+        - dialect: ANSI_SQL
+          expression: label
+    - name: order_date
+      expression:
+        dialects:
+        - dialect: ANSI_SQL
+          expression: order_date
+      dimension:
+        is_time: true
+    - name: amount
+      expression:
+        dialects:
+        - dialect: ANSI_SQL
+          expression: amount
+    - name: customer_id
+      expression:
+        dialects:
+        - dialect: ANSI_SQL
+          expression: customer_id
+  - name: customers
+    source: '{{db_name}}.customers'
+    primary_key:
+    - customer_id
+    fields:
+    - name: customer_id
+      expression:
+        dialects:
+        - dialect: ANSI_SQL
+          expression: customer_id
+    - name: region
+      expression:
+        dialects:
+        - dialect: ANSI_SQL
+          expression: region
+  - name: clock
+    source: '{{db_name}}.clock'
+    primary_key:
+    - id
+    fields:
+    - name: id
+      expression:
+        dialects:
+        - dialect: ANSI_SQL
+          expression: id
+    - name: started_at
+      expression:
+        dialects:
+        - dialect: ANSI_SQL
+          expression: started_at
+    - name: ended_at
+      expression:
+        dialects:
+        - dialect: ANSI_SQL
+          expression: ended_at
+  - name: external_orders
+    source: '{{db_name}}.external_orders'
+    fields:
+    - name: amount
+      expression:
+        dialects:
+        - dialect: ANSI_SQL
+          expression: amount
+  relationships:
+  - name: orders_to_customers
+    from: orders
+    to: customers
+    from_columns:
+    - customer_id
+    to_columns:
+    - customer_id
+  metrics:
+  - name: revenue
+    expression:
+      dialects:
+      - dialect: ANSI_SQL
+        expression: SUM(orders.amount)
+  - name: order_count
+    expression:
+      dialects:
+      - dialect: ANSI_SQL
+        expression: COUNT(orders.order_id)
+  - name: unique_customers
+    expression:
+      dialects:
+      - dialect: ANSI_SQL
+        expression: COUNT(DISTINCT orders.customer_id)
+  - name: avg_order_value
+    expression:
+      dialects:
+      - dialect: ANSI_SQL
+        expression: SUM(orders.amount) / COUNT(orders.order_id)
+  - name: customer_count
+    expression:
+      dialects:
+      - dialect: ANSI_SQL
+        expression: COUNT(customers.customer_id)
+  - name: started_day
+    expression:
+      dialects:
+      - dialect: ANSI_SQL
+        expression: MAX(DATE_TRUNC('day',clock.started_at))
+  - name: elapsed_hours
+    expression:
+      dialects:
+      - dialect: ANSI_SQL
+        expression: SUM(DATEDIFF('hour',clock.started_at,clock.ended_at))
+  - name: elapsed_minutes
+    expression:
+      dialects:
+      - dialect: ANSI_SQL
+        expression: SUM(DATEDIFF('minute',clock.started_at,clock.ended_at))
+  - name: elapsed_seconds
+    expression:
+      dialects:
+      - dialect: ANSI_SQL
+        expression: SUM(DATEDIFF('second',clock.started_at,clock.ended_at))
+  - name: elapsed_days
+    expression:
+      dialects:
+      - dialect: ANSI_SQL
+        expression: SUM(DATEDIFF('day',clock.started_at,clock.ended_at))
+  - name: running_revenue
+    expression:
+      dialects:
+      - dialect: ANSI_SQL
+        expression: SUM(orders.amount)
+    custom_extensions:
+    - vendor_name: DATUS
+      data: '{"v": "1.2", "window": {"type": "cumulative", "function": "sum"}}'
+  - name: rolling_revenue
+    expression:
+      dialects:
+      - dialect: ANSI_SQL
+        expression: SUM(orders.amount)
+    custom_extensions:
+    - vendor_name: DATUS
+      data: '{"v": "1.2", "window": {"type": "rolling", "function": "sum", "periods": 2}}'
+  - name: previous_revenue
+    expression:
+      dialects:
+      - dialect: ANSI_SQL
+        expression: SUM(orders.amount)
+    custom_extensions:
+    - vendor_name: DATUS
+      data: '{"v": "1.2", "window": {"offset": {"count": 1, "granularity": "month"}, "calculation": "value"}}'
+  - name: external_revenue
+    expression:
+      dialects:
+      - dialect: ANSI_SQL
+        expression: SUM(external_orders.amount)
+  - name: started_week
+    expression:
+      dialects:
+      - dialect: ANSI_SQL
+        expression: MAX(DATE_TRUNC('week',clock.started_at))
+  - name: started_month
+    expression:
+      dialects:
+      - dialect: ANSI_SQL
+        expression: MAX(DATE_TRUNC('month',clock.started_at))
+  - name: started_quarter
+    expression:
+      dialects:
+      - dialect: ANSI_SQL
+        expression: MAX(DATE_TRUNC('quarter',clock.started_at))
+  - name: started_year
+    expression:
+      dialects:
+      - dialect: ANSI_SQL
+        expression: MAX(DATE_TRUNC('year',clock.started_at))
+  - name: days_from_dates
+    expression:
+      dialects:
+      - dialect: ANSI_SQL
+        expression: SUM(DATEDIFF('day',CAST(clock.started_at AS DATE),CAST(clock.ended_at AS DATE)))

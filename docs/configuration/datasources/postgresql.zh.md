@@ -5,24 +5,11 @@ PostgreSQL adapter 通过 PostgreSQL wire protocol 与 psycopg2 连接，保留�
 ## 安装
 
 ```bash
-pip install datus-postgresql
+pip install --upgrade 'datus-postgresql>=0.1.11' \
+  'datus-sqlalchemy>=0.1.12' 'datus-db-core>=0.1.10' 'SQLAlchemy==2.0.23'
 ```
 
-下述证书和 AWS 认证字段面向待发布的 `datus-postgresql>=0.1.10`、`datus-sqlalchemy>=0.1.10`、`datus-db-core>=0.1.8`。这些版本尚未发布；发布前需安装对应源码包。较旧公开版本只暴露 `sslmode`，证书仍需通过 libpq 标准文件或环境配置。
-
-发布前可把以下三个兼容源码包安装到 Agent 环境。固定的 adapter 提交包含本页的 TLS／AWS 字段；请把 Python 路径替换为实际运行 Datus 的环境：
-
-```bash
-git clone https://github.com/Datus-ai/datus-db-adapters.git
-git -C datus-db-adapters checkout 66fadf1bffc1710c6b85e4149d6bb08d3458d464
-uv pip install --python /path/to/Datus-agent/.venv/bin/python \
-  -e ./datus-db-adapters/datus-db-core \
-  -e ./datus-db-adapters/datus-sqlalchemy \
-  -e './datus-db-adapters/datus-postgresql[aws]' \
-  'SQLAlchemy==2.0.23'
-```
-
-`aws` extra 安装 IAM／Secrets Manager 所需 SDK，普通密码连接可省略。SQLAlchemy 保持 Agent 固定的 `2.0.23`。源码安装后通过 uv 启动时使用 `uv run --no-sync`，普通同步可能按 Agent 锁文件重新安装旧 core。
+这些已发布版本包含下述证书和 AWS 认证字段。IAM 或 Secrets Manager 需要安装可选 `aws` extra，命令见 [Aurora 指南](aurora.zh.md#install)。较旧 adapter 可能只暴露 `sslmode`，证书仍需通过 libpq 标准文件或环境配置。请安装到 Agent 环境，升级共享包后重启；安装后从源码 checkout 通过 uv 启动时使用 `uv run --no-sync`。
 
 ## 连接配置
 
@@ -45,7 +32,7 @@ agent:
 ## 参数
 
 | 字段 | 类型 | 必填 | 默认值 | 说明 |
-|---|---|---:|---|---|
+| --- | --- | --: | --- | --- |
 | `host` | string | 否 | `127.0.0.1` | PostgreSQL 服务地址。 |
 | `port` | integer | 否 | `5432` | PostgreSQL wire-protocol 端口。 |
 | `username` | string | 是 | — | 登录 role。 |
@@ -61,7 +48,9 @@ agent:
 | `secret_ref` | string | 否 | — | Secrets Manager 名称/ARN；不能与内联密码或 IAM 同用。 |
 | `secret_cache_ttl_seconds` | integer | 否 | `300` | Secret 刷新周期，1–86400 秒。 |
 | `connect_timeout_seconds` | integer | 否 | — | 可选正整数 DBAPI 建连超时。 |
-| `timeout_seconds` | integer | 否 | `30` | 连接与连接池超时秒数。 |
+| `timeout_seconds` | integer | 否 | `30` | 连接池、socket 操作和默认查询截止时间。 |
+| `read_timeout_seconds` | integer | 否 | — | 正整数连接借出截止时间覆盖值。 |
+| `query_timeout_seconds` | integer | 否 | — | 正整数服务端 statement timeout 覆盖值。 |
 
 ## TLS 与命名空间
 
@@ -78,12 +67,12 @@ sslrootcert: /absolute/path/postgresql-ca.pem
 
 ### AWS 认证
 
-发布后安装 `datus-postgresql[aws]>=0.1.10`，发布前可安装源码包的 `aws` extra。数据库 TLS 信任使用 `sslrootcert`；`aws.ca_bundle` 只影响 AWS HTTPS API。使用 SDK 凭据链或 AWS shared profile，包括由 SDK 自动刷新的 role；不要把临时 AWS 凭据粘贴到 datasource。
+请按 [Aurora 指南](aurora.zh.md#install)安装带 `aws` extra 的兼容已发布包。数据库 TLS 信任使用 `sslrootcert`；`aws.ca_bundle` 只影响 AWS HTTPS API。使用 SDK 凭据链或 AWS shared profile，包括由 SDK 自动刷新的 role；不要把临时 AWS 凭据粘贴到 datasource。完整 Aurora MySQL/PostgreSQL 配置、IAM 前提、Secret 轮换和故障切换行为见 [Amazon Aurora](aurora.zh.md)。
 
 RDS/Aurora IAM 配置应省略 `password` 与 `secret_ref`，并增加：
 
 ```yaml
-aurora: true  # 仅 Aurora endpoint 设置
+aurora: true # 仅 Aurora endpoint 设置
 auth_mode: iam
 aws:
   region: us-east-1
@@ -110,7 +99,7 @@ datus --config conf/agent.yml --datasource warehouse_pg
 ## 故障排查
 
 | 现象 | 原因与处理 |
-|---|---|
+| --- | --- |
 | `password authentication failed` | 检查 role/password 与匹配的 `pg_hba.conf` 规则。 |
 | `no pg_hba.conf entry` | 放行 Datus 客户端地址，并选择正确的 TLS/认证规则。 |
 | 证书校验失败 | 0.1.10 起可通过 `sslrootcert` 提供签发 CA 文件，并让 `host` 匹配证书；旧包使用 libpq 标准文件/环境。 |

@@ -10,6 +10,11 @@ on:
         required: false
         default: ""
         type: string
+      product_test_base_ref:
+        description: "Compare base for a targeted real-model product evaluation of datus_agent_ref. Empty keeps normal nightly scope."
+        required: false
+        default: ""
+        type: string
       nightly_group_filter:
         description: "Optional regex for NIGHTLY_GROUP_FILTER. Leave empty to run the full nightly suite."
         required: false
@@ -19,6 +24,11 @@ on:
     inputs:
       datus_agent_ref:
         description: "Datus-agent branch, tag, or SHA to test."
+        required: false
+        default: ""
+        type: string
+      product_test_base_ref:
+        description: "Compare base for targeted real-model product evaluation."
         required: false
         default: ""
         type: string
@@ -51,6 +61,7 @@ jobs:
     env:
       DATUS_AGENT_REF: ${{ inputs.datus_agent_ref || github.ref_name }}
       NIGHTLY_GROUP_FILTER: ${{ inputs.nightly_group_filter || '' }}
+      PRODUCT_TEST_BASE_REF: ${{ inputs.product_test_base_ref || '' }}
       DATUS_TEST_RUN_ID: datus-agent-${{ github.run_id }}-${{ github.run_attempt }}
       # DB, BI, scheduler, and storage adapter checkouts are installed after
       # the locked sync. Do not let later `uv run` commands restore their
@@ -62,6 +73,17 @@ jobs:
         with:
           ref: ${{ env.DATUS_AGENT_REF }}
           persist-credentials: false
+
+      - name: Fetch product validation base
+        if: ${{ inputs.product_test_base_ref != '' }}
+        env:
+          PRODUCT_BASE: ${{ inputs.product_test_base_ref }}
+        run: |
+          if [ "$(git rev-parse --is-shallow-repository)" = "true" ]; then
+            git fetch --no-tags --unshallow origin
+          fi
+          git fetch --no-tags origin "$PRODUCT_BASE"
+          echo "PRODUCT_TEST_BASE_REF=$(git rev-parse FETCH_HEAD)" >> "$GITHUB_ENV"
 
       - name: Record Datus-agent checkout
         run: |
@@ -588,6 +610,9 @@ jobs:
           path: |
             test_output_nightly_*.log
             nightly-manifest.json
+            ci/product-test-plan.json
+            ci/product-execution.*/
+            ci/product-execution-coverage.json
             nightly-failure-classification.json
             provider-coverage-manifest.json
             nightly-trace-references.jsonl

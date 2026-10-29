@@ -39,7 +39,7 @@ def _registry(allowed_until: str = "2999-01-01") -> dict:
             {
                 "id": "quarantined-harness-test",
                 "type": "test",
-                "nodeid": "tests/unit_tests/agent/node/test_gen_sql_agentic_node.py::TestEndToEndPlanModeHooksInteraction::test_e2e_plan_mode_user_selects_manual",
+                "nodeid": "tests/unit_tests/agent/node/test_gen_sql_agentic_node.py::TestEndToEndConfirmPlanInteraction::test_e2e_confirm_plan_user_provides_feedback",
                 "owner": "agent-runtime",
                 "layer": "harness_correctness",
                 "reason": "Known deterministic harness hang.",
@@ -56,7 +56,7 @@ def test_validate_registry_accepts_owned_unexpired_entries():
 
     assert registry.test_nodeids == {
         "tests/integration/models/test_other_models.py::TestKimiModel::test_generate_with_mcp",
-        "tests/unit_tests/agent/node/test_gen_sql_agentic_node.py::TestEndToEndPlanModeHooksInteraction::test_e2e_plan_mode_user_selects_manual",
+        "tests/unit_tests/agent/node/test_gen_sql_agentic_node.py::TestEndToEndConfirmPlanInteraction::test_e2e_confirm_plan_user_provides_feedback",
     }
     assert [entry_id for entry_id, _pattern in registry.log_patterns] == ["async-pending-task"]
 

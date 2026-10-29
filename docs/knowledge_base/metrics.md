@@ -113,8 +113,11 @@ search_metrics(
     top_n=5,
 )
 
-# Discover queryable dimensions and the metric's primary time axis.
+# How each metric is computed, what it reads, and its time grains.
 get_metric(name="bank_failure_count")
+
+# The fields of a dataset a metric reads, with their definitions.
+get_dataset(name="bank_failures")
 
 # Execute both metrics by year.
 query_metrics(
@@ -125,22 +128,68 @@ query_metrics(
 )
 ```
 
+### What the discovery tools return
+
+Each discovery tool answers with text, one fact per line, and leaves out what an object does not have.
+
+- `list_metrics` lists metrics grouped under their subject path, one `- name -- description` line each. When the page is not the whole catalog, a last `more:` line gives the `offset` to call again with.
+- `get_metric` describes one metric:
+    - `expr`: how it is computed from other metrics or fields. An aggregate (`COUNT(DISTINCT orders.customer_id)`), a filter (`base FILTER (WHERE condition)`), a compose's arithmetic, a level-of-detail declaration, or a window's base.
+    - `datasets`: the datasets it reads. `dimension_datasets`: the datasets whose fields it can be grouped and filtered by, written `name(f1, f2)` when only some fields qualify.
+    - `window` and `compares_across`: a window metric's rule, and the dimensions a ranking or share compares across.
+    - `params`: each parameter as `name type = default [domain] -- meaning`, with `[declared_on metric]` when a member or a fixed value it reads declares it.
+    - `required`: the dimensions every query of it must group by. `requires_time_axis: true`: the query must also group by `metric_time` at a grain.
+    - `time`: `metric_time` and its grains, finest first; `none` for a metric whose table has no time field.
+- `get_dataset` describes one dataset: a header line with its description, `source`, `time` field and primary key, then one line per field. A column is `- name`; a computed field is `- expression AS name`; a fixed field is `- fixed(base, keys) AS name`, a value computed per key over rows of its own. Marks in brackets give a time field's format, a field that is not a dimension, and the dataset a fixed field reads. A last `relationships:` block lists each relationship as `cardinality dataset on column=column`.
+
 `query_metrics` accepts these current parameters:
 
 | Parameter | Meaning |
 | --- | --- |
 | `metrics` | One or more exact metric names. |
-| `dimensions` | Fields returned by `get_metric`; with Dosi, `metric_time` selects the primary time axis. Prefer `recommended=true` for automatic grouping, while `recommended=false` remains explicitly queryable. |
-| `time_start`, `time_end` | Optional half-open time range: start is inclusive and end is exclusive. Use ISO dates (`YYYY-MM-DD`). |
+| `dimensions` | Fields as `dataset.field`, from the datasets `get_metric` lists under `dimension_datasets` (`get_dataset` shows their fields). `metric_time` selects the metric's time axis, with `time_granularity` for its grain. |
+| `time_start`, `time_end` | Optional half-open time range: start is inclusive and end is exclusive. Use ISO dates (`YYYY-MM-DD`). Every metric and every fixed field applies it on its own table's time field. |
 | `time_granularity` | `day`, `week`, `month`, `quarter`, or `year`. |
 | `where` | Optional filter expression without the `WHERE` keyword. A condition on a selected metric (`revenue > 1000`) filters the result rows after aggregation, like `HAVING`; in a query with a window metric, a condition on group-by fields only also filters the result, so the kept rows keep the ranks and partition counts of the whole population. Every other condition filters rows before aggregation. |
-| `context_filter` | Optional filter that always applies before aggregation. It scopes the population a window metric ranks, counts or weighs: `where="market = 'North'"` shows North's rank among all markets, `context_filter="market = 'North'"` ranks North's rows against each other. |
+| `context_filter` | Optional scope every number obeys, applied before aggregation in every part of the query that can read its columns; a part that cannot is listed in the result's `warnings`. It scopes the population a window metric ranks, counts or weighs: `where="market = 'North'"` shows North's rank among all markets, `context_filter="market = 'North'"` ranks North's rows against each other. It also scopes the rows a fixed level-of-detail value is computed over, which `where` does not. |
 | `order_by` | Result columns to sort; prefix a name with `-` for descending order. |
 | `limit` | Maximum rows, used only when the user asks for Top N, a preview, or another explicit row limit. |
-| `params` | Bindings for the parameters a metric declares (`get_metric` returns them as `params`), by name. A list binds several values in one query and returns one column per value: `{"k": [1, 7]}` yields `<metric>__k_1` and `<metric>__k_7`. Omitted parameters take their defaults. |
-| `dry_run` | Return compiled SQL without executing the metric query; a configured warehouse dry-run provider also validates the SQL. |
+| `params` | Bindings for the parameters `get_metric` lists under `params`, by name: the metric's own, its members', and those of the fixed values it reads. A list binds several values in one query and returns one column per value: `{"k": [1, 7]}` yields `<metric>__k_1` and `<metric>__k_7`. Omitted parameters take their defaults. |
+| `dry_run` | Return compiled SQL without executing the metric query; a configured warehouse dry-run provider also validates the SQL. The result carries the query's `warnings`, as an executed query does. |
 
 For example, to include all of January 2024, use `time_start="2024-01-01"` and `time_end="2024-02-01"`.
+
+An executed query returns text: a `result_id` line, a `rows` line with the row count, one line for each thing to report (a `warning` or `info` from the engine, a `note` on `IN (...)` values that matched no row, a `column` line mapping a column named after a parameter binding to its metric), then a blank line and the rows as CSV. A long result shows its first and last rows around a `... N rows omitted` line; the complete result is cached, `get_query_metrics_result` pages it, and it is what the final answer uses. The text leaves out the compiled SQL; a `dry_run` returns it.
+
+### Where a condition goes
+
+Each condition of a question goes in one place:
+
+- `time_start`/`time_end`: the period. Every metric and every fixed field (a per-entity value such as a customer's order count) applies it on its own table's time field. A metric or fixed field whose table has no time field is read whole, and the result's `warnings` say so; a metric whose `get_metric` shows `time: none` reads such a table, so query it without `time_start`/`time_end`.
+- `context_filter`: a scope every number obeys, such as one platform or one campaign. Every part of the query applies it where it can read the columns; a part that cannot is listed in `warnings`.
+- `where`: the result rows. A condition on a field never changes a fixed field's value; a condition on a selected metric filters after aggregation. A snapshot table's version day goes here.
+
+A fixed value that must not follow the period, such as a first purchase day or a lifetime total, is read by putting the question's dates in `where`, on the date field of the metric's own table, instead of `time_start`/`time_end`: the dates pick the rows the metric counts and leave every fixed value over all history.
+
+```python
+query_metrics(
+    metrics=["active_customers"],
+    dimensions=["visits.customer_first_order_day"],
+    where="visits.visit_date >= '2024-01-01' AND visits.visit_date < '2024-02-01'",
+)
+```
+
+The positions differ only where a value depends on rows outside its own group: a fixed level-of-detail value, an `include`/`exclude` grain, or a window. `get_metric` and `get_dataset` show each of them. `get_dataset` writes a fixed field as `fixed(order_count, customers.customer_id) AS name` (one value per customer; `fixed(revenue)` is one value for the whole table); a level-of-detail metric states its declaration in `expr`; a window metric has a `window` line. `query_metrics` returns `warnings` for a condition a part could not read, so a dry run shows a misplaced condition before the query runs.
+
+| Part | How the positions act on it |
+| --- | --- |
+| Fixed value | The period lands on its own table's time field, and `context_filter` narrows it where it can read the columns; `where` does not. A condition on the fixed field itself goes in `where`. A fixed field whose base takes window parameters reads the window bound in `params`. |
+| `include`, `exclude` | Every position narrows it. |
+| Period-over-period and running windows | Dates go in `time_start`/`time_end`; in `where` they cut the lookback and the compared value comes back empty. |
+| Moving windows | `time_start`/`time_end`, `context_filter` and `where` give the same numbers. |
+| Ranks | `where` on a grouped field keeps the value among all rows; `context_filter` computes it within the subset. |
+
+For "each region's share of the whole company in January", the company total should change with January but not with the region, so January goes in `time_start`/`time_end` and the region in `where`.
 
 ## Creating and updating metrics
 

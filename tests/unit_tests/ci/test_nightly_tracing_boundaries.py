@@ -51,7 +51,11 @@ def test_nightly_broad_suites_do_not_collect_unit_tests():
         "Provider Health Tests",
     ):
         line = _pytest_script_line_containing(suite_name)
-        assert '"${NIGHTLY_PYTEST_ROOTS[@]}"' in line
+        if suite_name == "Product E2E Nightly Tests":
+            assert '"${PRODUCT_E2E_ROOTS[@]}"' in line
+            assert 'PRODUCT_E2E_ROOTS=("${NIGHTLY_PYTEST_ROOTS[@]}")' in script
+        else:
+            assert '"${NIGHTLY_PYTEST_ROOTS[@]}"' in line
         assert " tests/ " not in line
 
 

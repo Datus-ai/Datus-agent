@@ -127,6 +127,9 @@ class MockLLMModel(LLMBaseModel):
                 api_key="mock-api-key",
                 model="mock-model",
                 base_url="http://localhost:0",
+                context_length=128000,
+                max_tokens=8192,
+                tokenizer_ref="tiktoken:cl100k_base",
             )
         super().__init__(model_config)
         self._responses = list(responses or [])

@@ -124,6 +124,29 @@ class TestCreateInteractiveNode:
         mock_init.assert_called_once()
         assert mock_init.call_args[1]["node_name"] == "custom_metric_agent"
 
+    @patch(
+        "datus.agent.node.ontology_analyst_agentic_node.OntologyAnalystAgenticNode.__init__",
+        return_value=None,
+    )
+    def test_ontology_analyst(self, mock_init):
+        config = _mock_agent_config()
+        create_interactive_node("ontology_analyst", config, node_id_suffix="_cli")
+        mock_init.assert_called_once()
+        call_kwargs = mock_init.call_args[1]
+        assert call_kwargs["node_id"] == "ontology_analyst_cli"
+        assert call_kwargs["node_type"] == NodeType.TYPE_ONTOLOGY_ANALYST
+        assert call_kwargs["node_name"] == "ontology_analyst"
+
+    @patch(
+        "datus.agent.node.ontology_analyst_agentic_node.OntologyAnalystAgenticNode.__init__",
+        return_value=None,
+    )
+    def test_type_driven_custom_ontology_analyst(self, mock_init):
+        config = _mock_agent_config(agentic_nodes={"flight_ops": {"type": "ontology_analyst"}})
+        create_interactive_node("flight_ops", config)
+        mock_init.assert_called_once()
+        assert mock_init.call_args[1]["node_name"] == "flight_ops"
+
     @patch("datus.agent.node.ask_metrics_agentic_node.AskMetricsAgenticNode.__init__", return_value=None)
     def test_type_driven_custom_ask_metrics(self, mock_init):
         config = _mock_agent_config(agentic_nodes={"custom_metric_agent": {"type": "ask_metrics"}})
@@ -390,6 +413,59 @@ class TestNodeAskMetricsWiring:
         assert isinstance(node.result, AskMetricsNodeResult)
         assert node.result.response == "Revenue was 10."
 
+    @patch(
+        "datus.agent.node.ontology_analyst_agentic_node.OntologyAnalystAgenticNode.__init__",
+        return_value=None,
+    )
+    def test_new_instance_routes_ontology_analyst(self, mock_init):
+        node = Node.new_instance(
+            node_id="ontology_node",
+            description="ontology QA",
+            node_type=NodeType.TYPE_ONTOLOGY_ANALYST,
+            input_data=None,
+            agent_config=_mock_agent_config(),
+            tools=[],
+            node_name="flight_ops",
+        )
+        assert node.__class__.__name__ == "OntologyAnalystAgenticNode"
+        assert mock_init.call_args.args[2] == NodeType.TYPE_ONTOLOGY_ANALYST
+        assert mock_init.call_args.kwargs["execution_mode"] == "workflow"
+
+    @patch(
+        "datus.agent.node.ontology_analyst_agentic_node.OntologyAnalystAgenticNode.__init__",
+        return_value=None,
+    )
+    def test_from_dict_converts_ontology_analyst_input_and_result(self, mock_init):
+        from datus.schemas.ontology_analyst_agentic_node_models import (
+            OntologyAnalystNodeInput,
+            OntologyAnalystNodeResult,
+        )
+
+        node = Node.from_dict(
+            {
+                "id": "ontology_node",
+                "description": "ontology QA",
+                "type": NodeType.TYPE_ONTOLOGY_ANALYST,
+                "input": {"user_message": "Open P1 alerts into JFK?", "database": "flights"},
+                "status": "completed",
+                "result": {"success": True, "response": "A007, A011"},
+                "start_time": None,
+                "end_time": None,
+                "dependencies": [],
+                "metadata": {},
+            },
+            agent_config=_mock_agent_config(),
+        )
+        assert isinstance(mock_init.call_args.args[3], OntologyAnalystNodeInput)
+        assert isinstance(node.result, OntologyAnalystNodeResult)
+        assert node.result.response == "A007, A011"
+
+    def test_node_type_input_uses_ontology_analyst_model(self):
+        from datus.schemas.ontology_analyst_agentic_node_models import OntologyAnalystNodeInput
+
+        result = NodeType.type_input(NodeType.TYPE_ONTOLOGY_ANALYST, {"user_message": "Open alerts"})
+        assert isinstance(result, OntologyAnalystNodeInput)
+
     def test_node_type_input_uses_ask_metrics_model(self):
         result = NodeType.type_input(NodeType.TYPE_ASK_METRICS, {"user_message": "Show revenue"})
 
@@ -461,6 +537,13 @@ class TestCreateNodeInput:
                 "metric answer",
                 {"catalog": "cat", "database": "db"},
                 {"user_message": "metric answer", "catalog": "cat", "database": "db"},
+            ),
+            (
+                "datus.agent.node.ontology_analyst_agentic_node",
+                "OntologyAnalystAgenticNode",
+                "open alerts",
+                {"catalog": "cat", "database": "db"},
+                {"user_message": "open alerts", "catalog": "cat", "database": "db"},
             ),
             (
                 "datus.agent.node.feedback_agentic_node",

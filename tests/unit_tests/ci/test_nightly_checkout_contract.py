@@ -22,6 +22,52 @@ def _bash_function_source(name: str) -> str:
     return script[start:end]
 
 
+def test_targeted_group_records_executed_pytest_results(tmp_path):
+    source = tmp_path / "test_product.py"
+    source.write_text("def test_product(): assert 2 + 2 == 4\n")
+    (tmp_path / "pytest.ini").write_text("[pytest]\n")
+    reports = tmp_path / "reports"
+    reports.mkdir()
+    env = {
+        **os.environ,
+        "REPO_ROOT": str(REPO_ROOT),
+        "PRODUCT_EXECUTION_DIR": str(reports),
+        "NIGHTLY_PYTEST_BASETEMP": str(tmp_path / "collection"),
+        "LOG_FILE": str(tmp_path / "nightly.log"),
+        "NIGHTLY_TRACE_REFERENCES_FILE": str(tmp_path / "traces.jsonl"),
+        "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1",
+    }
+    env.pop("PYTEST_ADDOPTS", None)
+    harness = "\n".join(
+        [
+            "set -uo pipefail",
+            "test_exit_code=0",
+            "log() { :; }",
+            "utc_now() { echo now; }",
+            "nightly_trace_expected_for_group() { return 1; }",
+            "manifest_record_collection() { :; }",
+            "manifest_record_suite() { :; }",
+            _bash_function_source("command_contains_pytest"),
+            _bash_function_source("collect_pytest_suite"),
+            _bash_function_source("run_logged_unfiltered"),
+            'run_logged_unfiltered "P0 Dosi Semantic Modeling E2E" "$1" -m pytest "$2" -q',
+            'exit "$test_exit_code"',
+        ]
+    )
+    result = subprocess.run(
+        ["bash", "-c", harness, "product-group", sys.executable, str(source)],
+        cwd=tmp_path,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    report = json.loads((reports / "P0_Dosi_Semantic_Modeling_E2E.json").read_text())
+    assert report["collected"] == ["test_product.py::test_product"]
+    assert report["outcomes"] == {"test_product.py::test_product": "passed"}
+
+
 def test_nightly_preserves_checkout_packages_after_locked_sync():
     workflow = WORKFLOW.read_text(encoding="utf-8")
 
@@ -266,18 +312,60 @@ def test_release_candidate_reuses_p0_nightly_on_the_release_ref():
     assert "RELEASE_BOT_TOKEN: ${{ secrets.RELEASE_BOT_TOKEN }}" in prepare
 
 
-def test_every_adapter_suite_is_deselected_from_the_main_nightly_run():
+def test_every_adapter_suite_is_excluded_from_the_main_nightly_run():
     """An adapter suite with its own compose lifecycle must be excluded from the
     generic nightly command, or it runs a second time with no container up and
     fails on connection rather than skipping."""
     script = NIGHTLY_SCRIPT.read_text(encoding="utf-8")
-    deselect_block = script.split("NIGHTLY_DEDICATED_SUITE_DESELECTS=(", maxsplit=1)[1].split("\n)", maxsplit=1)[0]
+    exclude_blocks = [
+        script.split(f"{name}=(", maxsplit=1)[1].split(")", maxsplit=1)[0]
+        for name in ("NIGHTLY_DEDICATED_SUITE_DESELECTS", "NIGHTLY_OPTIONAL_CLOUD_IGNORES")
+    ]
 
     pattern = r"tests/integration/adapters/test_\w+\.py"
-    deselected = set(re.findall(pattern, deselect_block))
+    excluded = set(re.findall(pattern, "\n".join(exclude_blocks)))
     referenced = set(re.findall(pattern, script))
 
-    assert referenced <= deselected, f"adapter suites missing a --deselect: {sorted(referenced - deselected)}"
+    assert referenced <= excluded, f"adapter suites missing an exclusion: {sorted(referenced - excluded)}"
+
+
+@pytest.mark.parametrize("group", ["Main Nightly Tests", "Product E2E Nightly Tests", "Provider Health Tests"])
+def test_strict_broad_collection_excludes_unprovisioned_cloud_acceptance(tmp_path, group):
+    """Use the runner's actual exclusion arguments before pytest imports opt-in modules."""
+    script = NIGHTLY_SCRIPT.read_text(encoding="utf-8")
+    command = next(line for line in script.splitlines() if line.startswith("run_") and f'"{group}"' in line)
+    assert '"${NIGHTLY_OPTIONAL_CLOUD_IGNORES[@]}"' in command
+    declaration = next(line for line in script.splitlines() if line.startswith("NIGHTLY_OPTIONAL_CLOUD_IGNORES=("))
+    cloud_dir = tmp_path / "tests/integration/adapters"
+    cloud_dir.mkdir(parents=True)
+    (cloud_dir / "test_snowflake_secrets.py").write_text(
+        "from tests.nightly_requirements import require_opt_in_env\n"
+        "require_opt_in_env('ADAPTERS_SNOWFLAKE_SECRETS', 'README.md')\n"
+    )
+    (tmp_path / "tests/integration/test_ready.py").write_text("def test_ready():\n    assert True\n")
+    result = subprocess.run(
+        [
+            "bash",
+            "-c",
+            declaration + '\n"$1" -m pytest tests/integration "${NIGHTLY_OPTIONAL_CLOUD_IGNORES[@]}" '
+            "--noconftest -c /dev/null --collect-only -q",
+            "cloud-collection",
+            sys.executable,
+        ],
+        cwd=tmp_path,
+        env={
+            "PATH": os.defpath,
+            "PYTHONPATH": str(REPO_ROOT),
+            "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1",
+            "DATUS_STRICT_NIGHTLY_REQUIREMENTS": "1",
+        },
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "test_ready.py::test_ready" in result.stdout
+    assert "1 test collected" in result.stdout
 
 
 def test_nightly_runs_doris_agent_contract_from_checkout():

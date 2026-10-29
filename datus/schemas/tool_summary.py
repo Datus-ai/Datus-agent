@@ -27,6 +27,7 @@ import json
 from typing import Any, Callable, Dict, Optional
 
 from datus.utils.loggings import get_logger
+from datus.utils.query_result_text import parse_query_result_text
 
 logger = get_logger(__name__)
 
@@ -502,6 +503,12 @@ def _fmt_write_query(result: Any) -> str:
 
 
 def _fmt_list_metrics(result: Any) -> str:
+    """The text page list_metrics answers with: one ``- name`` line per metric,
+    a ``more:`` line when there is another page. Older records hold the envelope."""
+    if isinstance(result, str):
+        n = sum(1 for line in result.splitlines() if line.startswith("- "))
+        base = pluralize(n, "metric")
+        return f"{base}+" if any(line.startswith("more: ") for line in result.splitlines()) else base
     return _envelope_with_label(result, "metric", "metrics")
 
 
@@ -517,6 +524,10 @@ def _fmt_get_metric(result: Any) -> str:
 
 
 def _fmt_query_metrics(result: Any) -> str:
+    """An executed result's shape: from its text, or from the envelope older records hold."""
+    parsed = parse_query_result_text(result)
+    if parsed is not None:
+        return f"{parsed.row_count}r × {len(parsed.columns)}c"
     if isinstance(result, dict):
         cols = result.get("columns")
         data = result.get("data")
@@ -1257,6 +1268,7 @@ def _register_builtins(registry: ToolSummaryRegistry) -> None:
         "list_metrics": _fmt_list_metrics,
         "get_metric": _fmt_get_metric,
         "query_metrics": _fmt_query_metrics,
+        "select_records": _fmt_query_metrics,
         "validate_semantic": _fmt_validate_semantic,
         "attribution_analyze": _fmt_attribution_analyze,
         "search_metrics": _fmt_search_metrics,

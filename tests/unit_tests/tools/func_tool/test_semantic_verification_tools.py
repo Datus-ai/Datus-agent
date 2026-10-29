@@ -50,21 +50,21 @@ def setup_verifier(tmp_path):
         assert "limit" not in kwargs and "dry_run" not in kwargs
         metric = metrics[0]
         rows = [dict(row) for row in connection.execute(sql_by_metric[metric])]
-        cache[metric] = {"data": rows, "columns": list(rows[0]) if rows else ["market", metric]}
-        # The presentation deliberately omits groups; comparison must use full rows.
-        return FuncToolResult(
-            result={
-                "result_id": metric,
-                "data": rows[:1],
-                "metadata": {
-                    "time_dimensions": {
-                        name: kwargs.get("time_granularity")
-                        for name in kwargs.get("dimensions", [])
-                        if name == "metric_time"
-                    }
-                },
-            }
-        )
+        columns = list(rows[0]) if rows else ["market", metric]
+        cache[metric] = {
+            "data": rows,
+            "columns": columns,
+            "metadata": {
+                "time_dimensions": {
+                    name: kwargs.get("time_granularity")
+                    for name in kwargs.get("dimensions", [])
+                    if name == "metric_time"
+                }
+            },
+        }
+        # The text deliberately previews one group; comparison must use full rows.
+        preview = [",".join(columns)] + [",".join(str(row[c]) for c in columns) for row in rows[:1]]
+        return FuncToolResult(result=f"result_id: {metric}\nrows: {len(rows)}\n\n" + "\n".join(preview))
 
     artifact = tmp_path / "model.yml"
     artifact.write_text("semantic_model: []")
@@ -172,15 +172,14 @@ def test_result_key_mapping_and_parameterized_output_aliases(setup_verifier):
     cache = {}
 
     def query(**kwargs):
-        response = original(**kwargs)
-        cached = state.semantic.get_cached_query_metrics_result(response.result["result_id"])
+        original(**kwargs)
+        cached = state.semantic.get_cached_query_metrics_result("good")
         cache.update(
             columns=["Market", "good__brand_KFC"],
             data=[{"Market": row["market"], "good__brand_KFC": row["good"]} for row in cached["data"]],
+            metadata={"outputs": [{"metric": "good", "column": "good__brand_KFC"}]},
         )
-        return FuncToolResult(
-            result={"result_id": "aliased", "metadata": {"outputs": [{"metric": "good", "column": "good__brand_KFC"}]}}
-        )
+        return FuncToolResult(result="result_id: aliased\nrows: 1\n\nMarket,good__brand_KFC\nNorth,1")
 
     state.semantic.query_metrics.side_effect = query
     reader = state.semantic.get_cached_query_metrics_result

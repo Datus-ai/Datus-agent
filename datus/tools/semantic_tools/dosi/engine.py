@@ -11,6 +11,8 @@ import glob
 import os
 import re
 import threading
+import warnings
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional
 
@@ -24,6 +26,9 @@ from datus.tools.semantic_tools.dosi.model import (
     load_document,
 )
 from datus.tools.semantic_tools.exceptions import SemanticCoreException
+from datus.utils.loggings import get_logger
+
+logger = get_logger(__name__)
 
 _INSTALL_HINT = "dosi-engine is missing; reinstall datus-agent from its lockfile"
 
@@ -31,6 +36,8 @@ _INSTALL_HINT = "dosi-engine is missing; reinstall datus-agent from its lockfile
 # Per-metric fragments, not whole models. Datus excludes this directory from
 # both of its own model walks.
 _METRIC_FRAGMENT_DIR = "metrics"
+
+_MODEL_SUFFIXES = ("*.yaml", "*.yml", "*.json")
 
 
 def _normalize_sqlite_source(source: str) -> str:
@@ -76,7 +83,7 @@ def resolve_model_files(config: DosiConfig) -> list[str]:
     if models_dir:
         candidates = sorted(
             path
-            for ext in ("*.yaml", "*.yml", "*.json")
+            for ext in _MODEL_SUFFIXES
             for path in glob.glob(os.path.join(models_dir, "**", ext), recursive=True)
             if _METRIC_FRAGMENT_DIR not in os.path.relpath(path, models_dir).split(os.sep)
         )
@@ -86,6 +93,19 @@ def resolve_model_files(config: DosiConfig) -> list[str]:
     raise SemanticCoreException(
         "Dosi requires semantic_model_path (an OSI model file) or semantic_models_path (a directory containing one)"
     )
+
+
+def has_model_files(config: DosiConfig) -> bool:
+    """Whether the configuration resolves to at least one plain OSI model file.
+
+    False for a datasource without model files of its own: its only models
+    are the ones Ossie mapping documents carry inline, so it must load the
+    ontology directory, or it has no model at all.
+    """
+    try:
+        return bool(resolve_model_files(config))
+    except SemanticCoreException:
+        return False
 
 
 def resolve_model_file(config: DosiConfig) -> str:
@@ -104,6 +124,234 @@ def resolve_model_file(config: DosiConfig) -> str:
             f"{len(candidates)} model files in {models_dir!r}; set semantic_model_path to select one"
         )
     raise AssertionError("multiple models cannot resolve from semantic_model_path")
+
+
+def resolve_ontology_files(config: DosiConfig) -> list[str]:
+    """Every file directly in ``config.ontology_dir``, in a stable order.
+
+    The directory is project-wide (``subject/ontology/``) and flat: one
+    ontology may span several datasources, so it is not grouped by one. A
+    missing directory means there is no ontology, which is not an error here:
+    only the ontology-aware agent turns that into one.
+    """
+    ontology_dir = config.ontology_dir
+    if not ontology_dir or not os.path.isdir(ontology_dir):
+        return []
+    return sorted(
+        path for ext in _MODEL_SUFFIXES for path in glob.glob(os.path.join(ontology_dir, ext)) if os.path.isfile(path)
+    )
+
+
+def _load_quietly(path: str) -> Optional[dict[str, Any]]:
+    """A YAML/JSON document as a mapping, or None when it is not one."""
+    try:
+        document = load_document(path)
+    except (OSError, TypeError, ValueError, yaml.YAMLError):
+        return None
+    return document
+
+
+def document_kind(document: Optional[dict[str, Any]]) -> str:
+    """``mapping``, ``ontology``, ``model`` or ``other``, by structure.
+
+    The same rule the engine applies (apache/ossie#458): a mapping has all of
+    ``concept_mappings``, ``ontology_ref`` and ``semantic_model_ref``; an
+    ontology has an ``ontology:`` list; a model is flat (``name`` +
+    ``datasets``) or the ``semantic_model:`` wrapper. Never the file name.
+    """
+    if not isinstance(document, dict):
+        return "other"
+    if all(key in document for key in ("concept_mappings", "ontology_ref", "semantic_model_ref")):
+        return "mapping"
+    if isinstance(document.get("ontology"), list):
+        return "ontology"
+    if "semantic_model" in document or ("name" in document and "datasets" in document):
+        return "model"
+    return "other"
+
+
+def _ref(document: dict[str, Any], key: str) -> dict[str, Any]:
+    ref = document.get(key)
+    return ref if isinstance(ref, dict) else {}
+
+
+@dataclass(frozen=True)
+class OntologyBinding:
+    """How one engine loads its ontology: through one Ossie mapping document.
+
+    ``model_file`` is None when the mapping carries its semantic model inline,
+    so the mapping alone is the engine's input. ``ontology_path`` is set only
+    when the mapping names its ontology without ``iri`` or ``document``, and
+    the planner found it by name. ``references`` are the local files the
+    mapping reaches by relative ``iri``; the engine reads them itself, so they
+    belong to its inputs.
+    """
+
+    model_file: Optional[str]
+    ontology_path: Optional[str] = None
+    mapping_path: Optional[str] = None
+    references: tuple[str, ...] = ()
+
+
+def _local_iri(base_file: str, ref: dict[str, Any]) -> Optional[str]:
+    """The file a relative ``iri`` names, resolved against ``base_file``'s directory.
+
+    An absolute path is not one: the binding would then depend on where the
+    project lives, not on where the mapping sits beside the models.
+    """
+    iri = ref.get("iri")
+    if not isinstance(iri, str) or not iri or "://" in iri or os.path.isabs(iri):
+        return None
+    return os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(base_file)), iri))
+
+
+def _is_within(path: str, directory: str) -> bool:
+    directory = os.path.normpath(os.path.abspath(directory))
+    try:
+        return os.path.commonpath([path, directory]) == directory
+    except ValueError:  # different drives on Windows
+        return False
+
+
+def _misdirected(target: str, models_dir: Optional[str]) -> bool:
+    """Whether a model ``iri`` this datasource does not load points where no datasource would bind it.
+
+    Datasources are the existing directories beside ``models_dir``. A target in
+    another one is that datasource's to bind, and a file of ``models_dir`` this
+    runtime leaves out (a pinned model's sibling) is skipped; a missing file of
+    this datasource, or a target in no existing datasource's directory (a
+    misspelled one included), is reported.
+    """
+    if not models_dir:
+        return False
+    models_dir = os.path.normpath(os.path.abspath(models_dir))
+    if _is_within(target, models_dir):
+        return not os.path.isfile(target)
+    root = os.path.dirname(models_dir)
+    if target == root or not _is_within(target, root):
+        return True
+    return not os.path.isdir(os.path.join(root, os.path.relpath(target, root).split(os.sep)[0]))
+
+
+def plan_ontologies(
+    model_files: list[str], ontology_files: list[str], models_dir: Optional[str] = None
+) -> tuple[dict[str, OntologyBinding], list[str]]:
+    """Bind this datasource's model files, and every self-contained mapping, to their ontologies.
+
+    ``ontology_files`` is the project-wide ontology directory: ontologies and
+    the mapping documents (apache/ossie#458) that tie each one to semantic
+    models, possibly of several datasources. Returns ``(engine key ->
+    binding, unpaired files)``. The key is the model file, or the mapping file
+    for a mapping whose model is inline.
+
+    - A mapping reaches its model by a relative ``semantic_model_ref.iri``.
+      It belongs to this datasource when that file is one of
+      ``model_files``; a target in another datasource's directory is that
+      datasource's, and is skipped. A missing file under ``models_dir``, a
+      target outside every datasource's directory, or a mapping without a
+      local ``iri``, is reported.
+    - A mapping carrying its model inline (``semantic_model_ref.document``)
+      belongs to no datasource in particular: it is an engine of its own on
+      whichever datasource loads the directory.
+    - Its ontology is resolved by the engine (inline or ``iri``), else here
+      by name among the ontology documents.
+    - Anything ambiguous (two mappings onto one model, an ontology name
+      nothing carries) is reported rather than guessed, and so is any file
+      that is neither a mapping nor an ontology some mapping uses. File names
+      never matter.
+    """
+    documents = {path: _load_quietly(path) for path in ontology_files}
+    kinds = {path: document_kind(doc) for path, doc in documents.items()}
+    ontologies_by_name: dict[str, list[str]] = {}
+    for path, kind in kinds.items():
+        if kind == "ontology":
+            ontologies_by_name.setdefault(str(documents[path].get("name") or ""), []).append(path)
+    models = {os.path.normpath(os.path.abspath(model)): model for model in model_files}
+
+    bindings: dict[str, OntologyBinding] = {}
+    unpaired: list[str] = []
+    consumed: set[str] = set()
+    claims: dict[str, list[str]] = {}
+    for path in sorted(p for p, k in kinds.items() if k == "mapping"):
+        document = documents[path]
+        ontology_ref = _ref(document, "ontology_ref")
+        model_ref = _ref(document, "semantic_model_ref")
+        references = tuple(ref for ref in (_local_iri(path, ontology_ref), _local_iri(path, model_ref)) if ref)
+        # The engine follows the iri itself; the file it lands on is this
+        # mapping's, not a stray one to report. Mappings of other datasources
+        # consume their ontology too.
+        consumed.update(references)
+        ontology_path = None
+        if "document" not in ontology_ref and "iri" not in ontology_ref:
+            named = ontologies_by_name.get(str(ontology_ref.get("name") or ""), [])
+            if len(named) == 1:
+                ontology_path = named[0]
+                consumed.add(os.path.normpath(os.path.abspath(ontology_path)))
+        if "document" in model_ref:
+            model_file = None
+        else:
+            target = _local_iri(path, model_ref)
+            if target is None:
+                unpaired.append(path)
+                continue
+            model_file = models.get(target)
+            if model_file is None:
+                if _misdirected(target, models_dir):
+                    unpaired.append(path)
+                continue
+        if "document" not in ontology_ref and "iri" not in ontology_ref and ontology_path is None:
+            unpaired.append(path)
+            continue
+        key = model_file or path
+        claims.setdefault(key, []).append(path)
+        bindings[key] = OntologyBinding(
+            model_file=model_file, ontology_path=ontology_path, mapping_path=path, references=references
+        )
+    for key, mappings in claims.items():
+        if len(mappings) > 1:
+            # One engine loads one mapping document; never pick one silently.
+            del bindings[key]
+            unpaired.extend(mappings)
+
+    unpaired.extend(
+        p for p, k in kinds.items() if k != "mapping" and os.path.normpath(os.path.abspath(p)) not in consumed
+    )
+    return bindings, sorted(unpaired)
+
+
+def datasource_has_ontology(models_dir: str, ontology_dir: str) -> bool:
+    """Whether a mapping in ``ontology_dir`` binds a model of ``models_dir``, or carries one inline."""
+    config = DosiConfig(semantic_models_path=models_dir, ontology_dir=ontology_dir)
+    ontology_files = resolve_ontology_files(config)
+    if not ontology_files:
+        return False
+    model_files = resolve_model_files(config) if has_model_files(config) else []
+    bindings, _ = plan_ontologies(model_files, ontology_files, models_dir)
+    return bool(bindings)
+
+
+def binding_supports_ontology(binding: Any = None) -> bool:
+    """Whether the installed binding answers ontology questions natively.
+
+    Loading an ontology predates this; ``describe`` and ``paths`` on the
+    engine are what the ontology agent needs, and arrive together.
+    """
+    try:
+        engine_cls = getattr(binding or load_binding(), "Engine", None)
+    except SemanticCoreException:
+        return False
+    return callable(getattr(engine_cls, "describe", None)) and callable(getattr(engine_cls, "paths", None))
+
+
+def binding_supports_mapping_documents(binding: Any = None) -> bool:
+    """Whether the installed binding loads Ossie mapping documents
+    (apache/ossie#458): its ``Engine`` takes ``mapping_path``."""
+    try:
+        engine_cls = getattr(binding or load_binding(), "Engine", None)
+    except SemanticCoreException:
+        return False
+    signature = getattr(engine_cls, "__text_signature__", None) or ""
+    return "mapping_path" in signature
 
 
 def load_binding() -> Any:
@@ -195,6 +443,53 @@ class EngineHandle:
             return None
         return _normalize_sqlite_source(str(source))
 
+    def _ontology_signature(self) -> Optional[tuple[int, ...]]:
+        """An edited ontology, mapping or file it references rebuilds the engine, like an edited model."""
+        signature: list[int] = []
+        for path in (self._config.ontology_path, self._config.mapping_path):
+            if not path:
+                continue
+            try:
+                stat = os.stat(path)
+            except OSError as exc:
+                raise SemanticCoreException(f"cannot read ontology {path!r}: {exc}") from exc
+            signature += [stat.st_mtime_ns, stat.st_size]
+        for path in self._config.mapping_references:
+            # A referenced file may be missing (deleted, or not written yet);
+            # the engine then fails to load, and its appearing rebuilds it.
+            try:
+                stat = os.stat(path)
+            except OSError:
+                signature += [-1, -1]
+            else:
+                signature += [stat.st_mtime_ns, stat.st_size]
+        return tuple(signature) or None
+
+    @property
+    def ontology_path(self) -> Optional[str]:
+        """The ontology file a mapping names without iri, if any; the engine loads it beside the mapping."""
+        return self._config.ontology_path
+
+    @property
+    def mapping_path(self) -> Optional[str]:
+        """The Ossie mapping document this engine loads, if any."""
+        return self._config.mapping_path
+
+    @property
+    def inputs(self) -> tuple[Optional[str], Optional[str], list[str]]:
+        """The ontology-side files this engine was planned with; a change re-creates the handle."""
+        return self._config.ontology_path, self._config.mapping_path, self._config.mapping_references
+
+    @property
+    def has_ontology(self) -> bool:
+        """Whether this engine loads an ontology through a mapping document."""
+        return bool(self._config.ontology_path or self._config.mapping_path)
+
+    @property
+    def ontology_source(self) -> Optional[str]:
+        """The file an ontology error should name: the mapping, else the ontology."""
+        return self._config.mapping_path or self._config.ontology_path
+
     def _sqlite_signature(self) -> Optional[float]:
         source = self._sqlite_source()
         if source is None:
@@ -231,7 +526,7 @@ class EngineHandle:
         except OSError as exc:
             raise SemanticCoreException(f"cannot read semantic model {model_file!r}: {exc}") from exc
         with self._lock:
-            signature = (stat.st_mtime_ns, stat.st_size, self._sqlite_signature())
+            signature = (stat.st_mtime_ns, stat.st_size, self._sqlite_signature(), self._ontology_signature())
             if self._engine is None or signature != self._model_signature:
                 # A changed SQLite source must reopen the engine connection.
                 self._engine = self._build(config, model_file)
@@ -250,12 +545,47 @@ class EngineHandle:
         if findings:
             raise SemanticCoreException(legacy_window_error(findings))
         try:
-            return binding.Engine(
-                model_path=model_file,
-                connections=self._runtime_connections(config),
-                pool_size=config.pool_size,
-            )
+            ontology_kwargs: dict[str, Any] = {}
+            if config.ontology_path:
+                ontology_kwargs["ontology_path"] = config.ontology_path
+            if config.mapping_path:
+                ontology_kwargs["mapping_path"] = config.mapping_path
+            # A mapping that carries its model inline is the engine's only
+            # input; naming it as the model too would give the model twice.
+            model_kwargs = {} if model_file == config.mapping_path else {"model_path": model_file}
+            if not ontology_kwargs:
+                return binding.Engine(
+                    model_path=model_file,
+                    connections=self._runtime_connections(config),
+                    pool_size=config.pool_size,
+                )
+            # Ontology lowering reports constructs it keeps as text (``note:``)
+            # as RuntimeWarnings, which reach a CLI user's terminal on every
+            # load. The same notes are on ``Engine.warnings``; log them instead.
+            with warnings.catch_warnings(record=True) as lowering_notes:
+                warnings.simplefilter("always", RuntimeWarning)
+                engine = binding.Engine(
+                    connections=self._runtime_connections(config),
+                    pool_size=config.pool_size,
+                    **model_kwargs,
+                    **ontology_kwargs,
+                )
+            for note in lowering_notes:
+                logger.debug("Ontology %s: %s", self.ontology_source, note.message)
+            return engine
+        except TypeError as exc:
+            if config.mapping_path and "mapping_path" in str(exc):
+                raise SemanticCoreException(
+                    f"{config.mapping_path!r} is an Ossie mapping document, and the installed "
+                    "dosi-engine cannot load one; upgrade dosi-engine"
+                ) from exc
+            raise
         except binding.OsiError as exc:
+            if self.has_ontology:
+                raise SemanticCoreException(
+                    f"Dosi failed to load model {model_file!r} with ontology {self.ontology_source!r}: "
+                    f"[{getattr(exc, 'code', '')}] {exc}"
+                ) from exc
             raise SemanticCoreException(f"Dosi failed to load model {model_file!r}: {exc}") from exc
 
     def _runtime_connections(self, config: DosiConfig) -> Optional[dict[str, dict[str, Any]]]:
@@ -309,6 +639,8 @@ class EngineRegistry:
         self._lock = threading.Lock()
         self._signature: tuple[tuple[str, int, int], ...] = ()
         self._handles: dict[str, EngineHandle] = {}
+        self._keys: list[str] = []
+        self._unpaired_ontologies: list[str] = []
 
     @staticmethod
     def _file_signature(path: str) -> Optional[tuple[str, int, int]]:
@@ -325,17 +657,61 @@ class EngineRegistry:
     ) -> tuple[tuple[tuple[str, int, int], ...], tuple[tuple[str, EngineHandle], ...]]:
         """Return a stable file signature and matching engine handles."""
         with self._lock:
-            entries = [(path, self._file_signature(path)) for path in resolve_model_files(self._config)]
+            ontology_files = resolve_ontology_files(self._config)
+            no_model_files: Optional[SemanticCoreException] = None
+            try:
+                model_paths = resolve_model_files(self._config)
+            except SemanticCoreException as exc:
+                # A datasource whose only model lives inline in a mapping
+                # document has no model files at all.
+                if not ontology_files:
+                    raise
+                no_model_files = exc
+                model_paths = []
+            entries = [(path, self._file_signature(path)) for path in model_paths]
             files = [path for path, entry_signature in entries if entry_signature is not None]
-            if not files:
-                raise SemanticCoreException("no readable OSI model file resolved for this datasource")
-            signature = tuple(entry_signature for _, entry_signature in entries if entry_signature is not None)
+            # Adding, removing or renaming an ontology file re-plans the handles;
+            # content edits are caught per handle by EngineHandle.get. A
+            # mapping's references live in its content, so ontology files
+            # are re-planned on every content change too.
+            signature = tuple(entry_signature for _, entry_signature in entries if entry_signature is not None) + tuple(
+                entry for entry in (self._file_signature(path) for path in ontology_files) if entry is not None
+            )
             if signature != self._signature:
+                bindings, unpaired = plan_ontologies(files, ontology_files, self._config.semantic_models_path)
+                self._unpaired_ontologies = unpaired
+                # Model files first, in catalog order; then the engines whose
+                # only input is a mapping document.
+                keys = files + sorted(key for key, b in bindings.items() if b.model_file is None)
                 previous = self._handles
-                self._handles = {
-                    path: previous.get(path)
-                    or EngineHandle(self._config.model_copy(update={"semantic_model_path": path}))
-                    for path in files
-                }
+                handles: dict[str, EngineHandle] = {}
+                for key in keys:
+                    bound = bindings.get(key)
+                    update = {
+                        "semantic_model_path": key,
+                        "ontology_path": bound.ontology_path if bound else None,
+                        "mapping_path": bound.mapping_path if bound else None,
+                        "mapping_references": list(bound.references) if bound else [],
+                    }
+                    kept = previous.get(key)
+                    if kept is not None and kept.inputs == (
+                        update["ontology_path"],
+                        update["mapping_path"],
+                        update["mapping_references"],
+                    ):
+                        handles[key] = kept
+                    else:
+                        handles[key] = EngineHandle(self._config.model_copy(update=update))
+                self._handles = handles
+                self._keys = keys
                 self._signature = signature
-            return self._signature, tuple((path, self._handles[path]) for path in files)
+            if not self._keys:
+                if no_model_files is not None:
+                    raise no_model_files
+                raise SemanticCoreException("no readable OSI model file resolved for this datasource")
+            return self._signature, tuple((key, self._handles[key]) for key in self._keys)
+
+    def unpaired_ontologies(self) -> list[str]:
+        """Ontology-directory files the last snapshot could not bind (see plan_ontologies)."""
+        with self._lock:
+            return list(self._unpaired_ontologies)

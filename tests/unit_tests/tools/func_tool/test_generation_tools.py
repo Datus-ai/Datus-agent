@@ -115,7 +115,8 @@ class TestAvailableTools:
         assert len(tools) == 4
 
 
-def test_sync_projects_extension_uid_without_mutating_yaml(generation_tools, tmp_path):
+@pytest.mark.parametrize("flat", [False, True])
+def test_sync_projects_extension_uid_without_mutating_yaml(generation_tools, tmp_path, flat):
     target = tmp_path / "sales.yml"
     uid = "tz4a98xxat96iws9zmbrgj3a"
     target.write_text(
@@ -149,14 +150,20 @@ def test_sync_projects_extension_uid_without_mutating_yaml(generation_tools, tmp
             }
         )
     )
+    if flat:
+        source = json.loads(target.read_text())
+        target.write_text(json.dumps({"version": source["version"], **source["semantic_model"][0]}))
     original = target.read_bytes()
     generation_tools.metric_rag.list_artifact_rows.return_value = []
-    result = generation_tools.sync_osi_to_db(str(target), include_semantic_objects=False, compiled_metric_catalog=None)
+    generation_tools.semantic_dataset_rag.list_artifact_rows.return_value = []
+    result = generation_tools.sync_osi_to_db(str(target), compiled_metric_catalog=None)
     assert result["success"], result
     rows = {row["name"]: row for row in generation_tools.metric_rag.upsert_batch.call_args.args[0]}
     assert rows["revenue"]["uid"] == uid
     assert rows["revenue"]["id"] == "metric:revenue"
     assert rows["order_count"]["uid"] == ""
+    dataset_rows = generation_tools.semantic_dataset_rag.upsert_batch.call_args.args[0]
+    assert any(row["kind"] == "dataset" and row["dataset_name"] == "orders" for row in dataset_rows)
     assert target.read_bytes() == original
 
 

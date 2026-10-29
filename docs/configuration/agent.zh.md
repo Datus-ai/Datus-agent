@@ -74,6 +74,52 @@ agent:
     api_key: "sk-your-actual-key-here"
     ```
 
+
+### 上下文容量和大工具结果
+
+每次模型请求都会为最大输出和安全余量预留空间，余量为
+`max(2048, ceil(context_length * 0.05))`。以下三个配置都是可选项，已有配置无需补齐：
+
+| 配置 | 未填写时的行为 |
+| --- | --- |
+| `context_length` | 优先读取已有模型规格或供应商目录；仍未知时按 `262144`（256K）做预算 |
+| `max_tokens` | 优先读取模型输出规格；仍未知时默认 `8192`。支持输出限额的模型还会为输入和安全余量留空间，小窗口的默认输出可能更低 |
+| `tokenizer_ref` | 已知 OpenAI 模型使用 LiteLLM 计数；其他模型（包括自部署别名）按 UTF-8 字节数保守估算，无需下载 tokenizer |
+
+默认窗口是本地预算假设，不代表自动探测到了服务端容量。私有部署可以只覆盖需要调整的项；
+已知实际窗口较小时应配置实际值，窗口较大或提供准确 tokenizer 时可更充分地利用容量：
+
+```yaml
+agent:
+  models:
+    warehouse_llm:
+      type: openai
+      base_url: https://llm.example.com/v1
+      api_key: ${LLM_API_KEY}
+      model: warehouse-model
+      context_length: 262144
+      max_tokens: 8192
+      tokenizer_ref: /opt/model/tokenizer.json
+```
+
+`context_length` 和 `max_tokens` 必须是正整数，单次调用的输出上限优先于配置默认值。
+`tokenizer_ref` 支持本地 Hugging Face tokenizer JSON、Hugging Face tokenizer 引用，
+以及与部署编码一致的 `tiktoken:<encoding>`；本地文件必须能被运行 Datus 的进程读取。
+省略配置会使用默认行为，显式填写无效数值或无法加载的 tokenizer 仍会报错。
+本地计数包含序列化消息、指令、工具定义、
+输出格式和消息格式余量；实际部署的模板或路由限制不同，仍可能拒绝请求，需要据此校准配置。
+UTF-8 字节估算可能提前触发压缩，不等同于供应商返回的实际 token 用量。
+超过已知最大输出的参数会明确报错。
+远程图片和文件引用需要提取内容或使用供应商计数；不能只按 URL 或文件 ID 的长度放行。
+
+大工具结果完整保存在会话归档中，模型收到有限内容，并可通过 `read_tool_result` 续读。
+原始 Python 工具返回和 Action、前端结果保持原有格式。来源截断、分析完整性和归档分页
+分别标记；关闭 `agent.compact` 仍会限制大结果并执行最终发送检查。
+
+Codex 订阅接口的请求协议没有输出上限字段。该路径保留现有协议，按已知的模型最大输出
+（包含供应商目录中的上界）预留容量，不把较小的请求值当作已经生效的限制。
+标准 API 路径会显式发送解析后的输出上限。
+
 ### 私有或自签名证书 {#private-or-self-signed-certificates}
 
 当 Datus 连接的是内部 LLM 网关或测试环境，而其 TLS 证书由**私有 CA**（不在公共信任库中）签发时，请求会失败并报错：

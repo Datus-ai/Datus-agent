@@ -4,6 +4,8 @@
 
 Run it with the `/build-kb` command inside the REPL.
 
+`knowledge/pending-questions.md`, when present, contains unresolved questions from init. It is excluded from generation inputs and must not be treated as confirmed definitions. Verify any relevant interpretation against primary sources or explicit user confirmation first.
+
 ## What it does
 
 - Scans the configured datasources (tables, schemas, relationships).
