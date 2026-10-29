@@ -15,6 +15,19 @@ providers:
       nodeids:
         - tests/integration/models/test_other_models.py::TestOpenAIModel
 
+  atlas:
+    required_env:
+      - ATLASCLOUD_API_KEY
+    deterministic:
+      inherits_from: openai
+      nodeids:
+        - tests/unit_tests/models/test_openai_model.py::TestOpenAIModel
+        - tests/unit_tests/models/test_openai_compatible.py::TestOpenAICompatibleModelInit
+        - tests/unit_tests/configuration/test_agent_config.py::TestProviderConfigurationDispatch
+    live_provider_health:
+      mode: not-tested
+      nodeids: []
+
   deepseek:
     required_env:
       - DEEPSEEK_API_KEY
