@@ -2671,6 +2671,9 @@ class AgenticNode(Node):
             # Read by ask_report / ask_dashboard nodes to resolve the
             # bound artifact directory at startup.
             "artifact_slug",
+            # Read by gen_visual_report to resolve the offline renderer
+            # bundle path (falls back to the unpkg CDN when unset).
+            "report_dist",
         ]
         for attr in direct_attributes:
             # Handle both dict and object access patterns
