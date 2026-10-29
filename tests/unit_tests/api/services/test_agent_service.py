@@ -120,7 +120,7 @@ class TestValidateToolsForAgentType:
     def test_non_artifact_ask_agents_unrestricted(self):
         """Other agent types fall back to the syntactic _validate_tools
         check only — this helper returns empty for them."""
-        for agent_type in ("chat", "gen_sql", "gen_report", "ask_metrics"):
+        for agent_type in ("chat", "gen_sql", "gen_visual_report", "ask_metrics"):
             assert _validate_tools_for_agent_type(["filesystem_tools.write_file"], agent_type) == []
             assert _validate_tools_for_agent_type(["filesystem_tools.*"], agent_type) == []
 
@@ -303,22 +303,19 @@ class TestConstants:
         for framework_method in ("set_tool_context", "get_actions", "call_action"):
             assert framework_method not in catalog
 
-    def test_tool_reference_gen_report_has_saas_defaults(self):
-        """gen_report defaults to semantic.* + context_search.list_subject_tree."""
-        entry = SUBAGENT_TOOL_REFERENCE["gen_report"]
+    def test_tool_reference_gen_visual_report_has_saas_defaults(self):
+        """The report editor exposes the tools needed to produce report artifacts."""
+        entry = SUBAGENT_TOOL_REFERENCE["gen_visual_report"]
         assert entry["default_tools"] == [
             "semantic_tools.*",
-            "context_search_tools.list_subject_tree",
+            "db_tools.*",
+            "context_search_tools.*",
         ]
-        # gen_report exposes db / semantic / context_search plus date_parsing
-        # and reference_template — the 5-category surface the saas editor's
-        # else-branch rendered before the per-type whitelist moved server-side.
         assert set(entry["tool_types"].keys()) == {
             "db_tools",
             "semantic_tools",
             "context_search_tools",
-            "date_parsing_tools",
-            "reference_template_tools",
+            "filesystem_tools",
         }
 
     def test_tool_reference_ask_metrics_has_narrow_defaults(self):
@@ -426,23 +423,20 @@ class TestGetUseTools:
             assert list(payload.keys()) == ["tools"]
             assert payload["tools"] == sorted(VALID_TOOL_METHODS[category])
 
-    def test_gen_report_returns_correct_defaults(self):
-        """gen_report's default_tools is a curated subset, not the full wildcard list."""
-        result = AgentService.get_use_tools("gen_report")
+    def test_gen_visual_report_returns_correct_defaults(self):
+        """The report editor exposes the tools needed to produce report artifacts."""
+        result = AgentService.get_use_tools("gen_visual_report")
         assert result.success is True
         assert result.data["default_tools"] == [
             "semantic_tools.*",
-            "context_search_tools.list_subject_tree",
+            "db_tools.*",
+            "context_search_tools.*",
         ]
-        # gen_report's 5-category surface mirrors the saas editor's else
-        # branch — no filesystem_tools because the type has no filesystem
-        # defaults and the picker historically excluded it.
         assert set(result.data["tool_types"].keys()) == {
             "db_tools",
             "semantic_tools",
             "context_search_tools",
-            "date_parsing_tools",
-            "reference_template_tools",
+            "filesystem_tools",
         }
 
     def test_tool_reference_ontology_analyst_matches_the_node_defaults(self):
@@ -485,7 +479,7 @@ class TestGetUseTools:
         result = AgentService.get_use_tools(agent_type)
         assert result.success is True
         tool_types = result.data["tool_types"]
-        # ask_* surfaces 6 categories — the 5 from gen_report's else-branch
+        # ask_* surfaces 6 categories — the 5 from gen_visual_report's else-branch
         # plus filesystem_tools restricted to the read-only methods.
         assert set(tool_types.keys()) == {
             "db_tools",
@@ -856,6 +850,20 @@ class TestGetAgent:
 @pytest.mark.asyncio
 class TestCreateAgent:
     """Tests for create_agent — agent creation with YAML persistence."""
+
+    async def test_removed_report_type_returns_migration_error(self, real_agent_config, agent_yml_with_singleton):
+        from datus.api.models.agent_models import CreateAgentInput
+
+        original_config = agent_yml_with_singleton.read_text(encoding="utf-8")
+        result = await AgentService().create_agent(
+            CreateAgentInput(name="legacy_report", type="gen_report"), real_agent_config
+        )
+
+        assert result.success is False
+        assert result.errorCode == "INVALID_AGENT_TYPE"
+        assert "Subagent 'gen_report' does not exist" in result.errorMessage
+        assert "Use 'gen_visual_report' instead" in result.errorMessage
+        assert agent_yml_with_singleton.read_text(encoding="utf-8") == original_config
 
     async def test_create_agent_success(self, real_agent_config, agent_yml_with_singleton):
         """create_agent creates a new custom agent."""

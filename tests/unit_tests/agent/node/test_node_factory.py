@@ -41,22 +41,24 @@ class TestResolveNodeClassType:
         assert _resolve_node_class_type("my_agent", config) is None
 
     def test_returns_node_class(self):
-        config = _mock_agent_config(agentic_nodes={"my_agent": {"node_class": "gen_report"}})
-        assert _resolve_node_class_type("my_agent", config) == "gen_report"
+        config = _mock_agent_config(agentic_nodes={"my_agent": {"node_class": "gen_visual_report"}})
+        assert _resolve_node_class_type("my_agent", config) == "gen_visual_report"
 
     def test_returns_type_when_node_class_missing(self):
         config = _mock_agent_config(agentic_nodes={"my_agent": {"type": "ask_metrics"}})
         assert _resolve_node_class_type("my_agent", config) == "ask_metrics"
 
     def test_node_class_takes_precedence_over_type(self):
-        config = _mock_agent_config(agentic_nodes={"my_agent": {"node_class": "gen_report", "type": "ask_metrics"}})
-        assert _resolve_node_class_type("my_agent", config) == "gen_report"
+        config = _mock_agent_config(
+            agentic_nodes={"my_agent": {"node_class": "gen_visual_report", "type": "ask_metrics"}}
+        )
+        assert _resolve_node_class_type("my_agent", config) == "gen_visual_report"
 
     def test_pydantic_model_dump(self):
         node_config = MagicMock()
-        node_config.model_dump.return_value = {"node_class": "gen_report"}
+        node_config.model_dump.return_value = {"node_class": "gen_visual_report"}
         config = _mock_agent_config(agentic_nodes={"my_agent": node_config})
-        assert _resolve_node_class_type("my_agent", config) == "gen_report"
+        assert _resolve_node_class_type("my_agent", config) == "gen_visual_report"
 
 
 # ---------------------------------------------------------------------------
@@ -65,6 +67,27 @@ class TestResolveNodeClassType:
 
 
 class TestCreateInteractiveNode:
+    @pytest.mark.parametrize("type_field", ["node_class", "type"])
+    def test_old_report_config_explains_how_to_migrate(self, type_field):
+        config = _mock_agent_config(agentic_nodes={"legacy_report": {type_field: "gen_report"}})
+
+        with pytest.raises(ValueError, match="does not exist.*Use 'gen_visual_report' instead") as exc:
+            create_interactive_node("legacy_report", config)
+
+        assert "legacy_report" in str(exc.value)
+
+    def test_old_builtin_report_explains_how_to_migrate(self):
+        with pytest.raises(ValueError, match="gen_visual_report"):
+            create_interactive_node("gen_report", _mock_agent_config())
+
+    def test_old_workflow_report_recommends_visual_report(self):
+        with pytest.raises(ValueError, match="does not exist.*Use 'gen_visual_report' instead"):
+            Node.new_instance("report", "Report", "gen_report")
+
+    def test_old_workflow_input_recommends_visual_report(self):
+        with pytest.raises(ValueError, match="does not exist.*Use 'gen_visual_report' instead"):
+            NodeType.type_input("gen_report", {})
+
     @patch(
         "datus.agent.node.semantic_modeling_agentic_node.SemanticModelingAgenticNode.__init__",
         return_value=None,
@@ -97,14 +120,14 @@ class TestCreateInteractiveNode:
             session_id=None,
         )
 
-    @patch("datus.agent.node.gen_report_agentic_node.GenReportAgenticNode.__init__", return_value=None)
-    def test_gen_report(self, mock_init):
+    @patch("datus.agent.node.gen_visual_report_agentic_node.GenVisualReportAgenticNode.__init__", return_value=None)
+    def test_gen_visual_report(self, mock_init):
         config = _mock_agent_config()
-        create_interactive_node("gen_report", config, node_id_suffix="_cli")
+        create_interactive_node("gen_visual_report", config, node_id_suffix="_cli")
         mock_init.assert_called_once()
         call_kwargs = mock_init.call_args[1]
-        assert call_kwargs["node_id"] == "gen_report_cli"
-        assert call_kwargs["node_type"] == "gen_report"
+        assert call_kwargs["node_id"] == "gen_visual_report_cli"
+        assert call_kwargs["node_type"] == "gen_visual_report"
 
     @patch("datus.agent.node.ask_metrics_agentic_node.AskMetricsAgenticNode.__init__", return_value=None)
     def test_ask_metrics(self, mock_init):
@@ -156,9 +179,9 @@ class TestCreateInteractiveNode:
         assert call_kwargs["node_type"] == "ask_metrics"
         assert call_kwargs["node_name"] == "custom_metric_agent"
 
-    @patch("datus.agent.node.gen_report_agentic_node.GenReportAgenticNode.__init__", return_value=None)
-    @patch("datus.agent.node.node_factory._resolve_node_class_type", return_value="gen_report")
-    def test_config_driven_gen_report(self, mock_resolve, mock_init):
+    @patch("datus.agent.node.gen_visual_report_agentic_node.GenVisualReportAgenticNode.__init__", return_value=None)
+    @patch("datus.agent.node.node_factory._resolve_node_class_type", return_value="gen_visual_report")
+    def test_config_driven_gen_visual_report(self, mock_resolve, mock_init):
         config = _mock_agent_config()
         create_interactive_node("custom_agent", config)
         mock_init.assert_called_once()
@@ -525,8 +548,8 @@ class TestCreateNodeInput:
                 {"user_message": "create table", "catalog": "cat", "database": "db"},
             ),
             (
-                "datus.agent.node.gen_report_agentic_node",
-                "GenReportAgenticNode",
+                "datus.agent.node.gen_visual_report_agentic_node",
+                "GenVisualReportAgenticNode",
                 "report",
                 {"catalog": "cat", "database": "db"},
                 {"user_message": "report", "catalog": "cat", "database": "db"},

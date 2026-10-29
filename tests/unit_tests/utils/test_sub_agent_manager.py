@@ -192,7 +192,7 @@ class TestSaveAgentNew:
         result = manager.save_agent(config)
         assert Path(result["prompt_path"]).name == "agent_x_system_1.0.j2"
 
-    def test_gen_report_node_uses_gen_report_template(self, tmp_path):
+    def test_gen_visual_report_node_uses_gen_visual_report_template(self, tmp_path):
         manager, _, _ = _build_manager(tmp_path)
         # Track which source template was used
         calls = []
@@ -205,11 +205,11 @@ class TestSaveAgentNew:
         manager._prompt_manager.copy_to = tracking_copy_to
         config = SubAgentConfig(
             system_prompt="report_agent",
-            node_class="gen_report",
+            node_class="gen_visual_report",
             scoped_context=ScopedContext(tables="t"),
         )
         manager.save_agent(config)
-        assert "gen_report_system" in calls
+        assert "gen_visual_report_system" in calls
 
     def test_gen_sql_node_uses_gen_sql_system_template(self, tmp_path):
         manager, _, _ = _build_manager(tmp_path)

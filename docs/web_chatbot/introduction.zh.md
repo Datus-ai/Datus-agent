@@ -56,7 +56,7 @@ Show me total revenue by product category for the last month
 可用列表来自内置 subagent 以及当前数据库下 `agent.agentic_nodes` 中定义的自定义条目。常见示例包括：
 
 - `gen_sql`
-- `gen_report`
+- `gen_visual_report`
 - `semantic_modeling`
 - `gen_dashboard`
 - `scheduler`

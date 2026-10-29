@@ -98,7 +98,7 @@ Catalog 与 Context 中的任意节点都可以作为 Chat 的引用对象（在
 
 ![创建 SubAgent 向导（Objects 步骤）](../assets/vscode-create-subagent.png)
 
-向导提交后，子代理会写入 Datus-agent 的配置（与 CLI 中的 `/agent` 等价），随即在 Chat 面板的 SubAgent 下拉中可选。Built-in 子代理（`gen_sql`、`semantic_modeling`、`gen_dashboard`、`gen_report`、`scheduler`、…）只读展示，可在向导中查看其 Tools / Objects / Rules。
+向导提交后，子代理会写入 Datus-agent 的配置（与 CLI 中的 `/agent` 等价），随即在 Chat 面板的 SubAgent 下拉中可选。Built-in 子代理（`gen_sql`、`semantic_modeling`、`gen_dashboard`、`gen_visual_report`、`scheduler`、…）只读展示，可在向导中查看其 Tools / Objects / Rules。
 
 ### 3. Datus Studio Chat 面板
 

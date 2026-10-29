@@ -18,10 +18,12 @@ The wizard writes two things:
 1. A new entry under `agent.agentic_nodes`
 2. A prompt template file named like `{agent_name}_system_{prompt_version}.j2`
 
+`gen_report` is no longer available. Configurations referencing it return a subagent-not-found error and recommend `gen_visual_report`.
+
 The wizard currently supports two custom node styles:
 
 - `gen_sql` (default)
-- `gen_report`
+- `gen_visual_report`
 
 If you want advanced aliases such as `explore`, `gen_table`, or `gen_skill`, edit `agent.yml` manually. Scheduling and external BI operations are handled directly by the main agent through installed plugins and cannot be exposed through a custom subagent alias.
 
@@ -30,7 +32,7 @@ If you want advanced aliases such as `explore`, `gen_table`, or `gen_skill`, edi
 ### Step 1: Basic Info
 
 - `system_prompt`: the subagent name and config key
-- `node_class`: `gen_sql` or `gen_report`
+- `node_class`: `gen_sql`, `gen_visual_report`, or `gen_visual_dashboard`
 - `agent_description`: short description shown in previews and task-tool descriptions
 
 ### Step 2: Tools and MCP
@@ -89,7 +91,7 @@ agent:
   agentic_nodes:
     finance_report:
       system_prompt: finance_report
-      node_class: gen_report
+      node_class: gen_visual_report
       prompt_version: "1.0"
       prompt_language: en
       agent_description: "Finance reporting assistant"
@@ -122,7 +124,7 @@ That means:
 
 ## Advanced Manual Configuration
 
-The wizard covers the common `gen_sql` and `gen_report` cases. For more advanced setups, edit `agent.yml` directly.
+The wizard covers the common `gen_sql` and `gen_visual_report` cases. For more advanced setups, edit `agent.yml` directly.
 
 Example:
 

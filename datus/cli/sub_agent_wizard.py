@@ -520,11 +520,10 @@ class SubAgentWizard:
         self.name_buffer.on_text_changed += self._update_previews
         self.description_area = TextArea(text="", multiline=True, wrap_lines=True, style="class:textarea")
         self.description_area.buffer.on_text_changed += self._update_previews
-        # Node class selection (gen_sql / gen_report / gen_visual_report / gen_visual_dashboard)
+        # Node class selection (gen_sql / gen_visual_report / gen_visual_dashboard)
         self.node_class_radio = RadioList(
             values=[
                 ("gen_sql", "gen_sql - SQL generation (default)"),
-                ("gen_report", "gen_report - Report/analysis generation"),
                 ("gen_visual_report", "gen_visual_report - Structured report artifact (manifest + queries)"),
                 (
                     "gen_visual_dashboard",
@@ -1705,9 +1704,7 @@ class SubAgentWizard:
         # Select template based on node_class for preview
         node_class = self.data.node_class or "gen_sql"
         preview_template = self._parse_template_name(node_class)
-        if node_class == "gen_report":
-            fallback_template = "gen_report_system"
-        elif node_class == "gen_visual_report":
+        if node_class == "gen_visual_report":
             fallback_template = "gen_visual_report_system"
         elif node_class == "gen_visual_dashboard":
             fallback_template = "gen_visual_dashboard_system"
@@ -1737,9 +1734,7 @@ class SubAgentWizard:
           to the default system template for the currently-selected node_class. If they
           switch back to the original node_class, the custom template is picked up again.
         """
-        if node_class == "gen_report":
-            default_template = "gen_report_system"
-        elif node_class == "gen_visual_report":
+        if node_class == "gen_visual_report":
             default_template = "gen_visual_report_system"
         elif node_class == "gen_visual_dashboard":
             default_template = "gen_visual_dashboard_system"

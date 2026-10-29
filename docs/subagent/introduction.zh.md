@@ -27,7 +27,7 @@ Subagent 可以是：
 2. `gen_sql`：专用 SQL 生成
 3. `ask_metrics`：使用已有语义指标回答问题
 4. `ontology_analyst`：基于数据源的 ontology 回答指标和明细问题（仅在存在 ontology 时提供）
-5. `gen_report`：结构化报告生成
+5. `gen_visual_report`：结构化报告生成
 6. `semantic_modeling`：统一的 Dosi 语义模型和指标创作
 7. `gen_sql_summary`：SQL 摘要生成
 8. `gen_table`：交互式建表
@@ -46,7 +46,7 @@ agent 直接使用已安装 plugin 及其内置 skill 完成。代码中暂时�
 
 自定义 subagent 配置在 `agent.agentic_nodes` 下。
 
-统一 agent TUI（`/agent` 或 `/subagent`）Custom Tab 的向导当前可以创建 `gen_sql` 风格或 `gen_report` 风格的自定义 subagent。如果你想把仍可用的专用节点类别名成一个自定义入口，例如 `explore`、`gen_table`、`gen_skill`，需要直接手工编辑 `agent.yml`。指向旧调度或外部 BI 节点类的自定义 alias 会被忽略。
+统一 agent TUI（`/agent` 或 `/subagent`）Custom Tab 的向导当前可以创建 `gen_sql` 风格或 `gen_visual_report` 风格的自定义 subagent。如果你想把仍可用的专用节点类别名成一个自定义入口，例如 `explore`、`gen_table`、`gen_skill`，需要直接手工编辑 `agent.yml`。指向旧调度或外部 BI 节点类的自定义 alias 会被忽略。
 
 示例：
 
@@ -54,7 +54,7 @@ agent 直接使用已安装 plugin 及其内置 skill 完成。代码中暂时�
 agent:
   agentic_nodes:
     finance_report:
-      node_class: gen_report
+      node_class: gen_visual_report
       model: claude
       system_prompt: finance_report
       prompt_version: "1.0"
@@ -146,7 +146,7 @@ graph LR
 |------|------|
 | `explore` | 收集 schema、样本数据、知识库或文件上下文 |
 | `gen_sql` | 执行更深的多步 SQL 推理 |
-| `gen_report` | 生成结构化分析报告 |
+| `gen_visual_report` | 生成结构化分析报告 |
 | `semantic_modeling` | 创作 Dosi 语义模型和指标 |
 | `gen_sql_summary` | 把 SQL 总结为可复用知识 |
 | `gen_table` | 交互式创建表 |

@@ -12,11 +12,10 @@ This document covers the core subagents:
 4. **[ontology_analyst](ontology_analyst.md)** — Answers metric and record questions over a datasource's Apache Ossie ontology (concepts, roles, value domains)
 5. **[explore](#explore)** — Read-only data exploration and context gathering
 6. **[gen_sql](#gen_sql)** — Specialized SQL generation with deep expertise
-7. **[gen_report](#gen_report)** — Flexible report generation with configurable tools
-8. **[gen_table](gen_table.md)** — Database table creation via CTAS or natural language
-9. **[gen_job](gen_job.md)** — Data pipeline execution (single-database ETL AND cross-database migration with reconciliation)
-10. **[gen_skill](#gen_skill)** — Skill creation and optimization
-11. **[gen_visual_report](gen_visual_report.md)** — Self-contained visual report under `reports/<slug>/`
+7. **[gen_table](gen_table.md)** — Database table creation via CTAS or natural language
+8. **[gen_job](gen_job.md)** — Data pipeline execution (single-database ETL AND cross-database migration with reconciliation)
+9. **[gen_skill](#gen_skill)** — Skill creation and optimization
+10. **[gen_visual_report](gen_visual_report.md)** — Self-contained visual report under `reports/<slug>/`
 
 Airflow scheduling and external BI authoring are handled directly by the main
 agent through installed plugins. They are not built-in or custom subagents.
@@ -55,11 +54,6 @@ agent:
     gen_sql:
       model: claude     # Optional: defaults to configured model
       max_turns: 30     # Optional: defaults to 30
-
-    gen_report:
-      model: claude     # Optional: defaults to configured model
-      max_turns: 30     # Optional: defaults to 30
-      tools: "semantic_tools.*, context_search_tools.list_subject_tree"  # Optional: defaults to semantic + context tools
 
     gen_table:
       max_turns: 20     # Optional: defaults to 20
@@ -325,89 +319,6 @@ Generate a query to calculate customer lifetime value with cohort analysis. @Age
 
 ---
 
-## gen_report
-
-### Overview
-
-The gen_report subagent is a flexible report generation assistant that combines semantic tools, database tools, and context search capabilities to produce structured reports. It can be used directly or extended by specialized report nodes for domain-specific reporting tasks (e.g., attribution analysis).
-
-### Key Features
-
-- **Configurable tools**: Supports `semantic_tools.*`, `db_tools.*`, and `context_search_tools.*` via configuration
-- **Flexible output**: Generates structured report content with SQL queries and analysis
-- **Extensible**: Can be subclassed for specialized report types
-- **Configuration-driven**: Tool setup and system prompts are driven by `agent.yml` configuration
-
-### Configuration
-
-```yaml
-agent:
-  agentic_nodes:
-    gen_report:
-      model: claude           # Optional: defaults to configured model
-      max_turns: 30           # Optional: defaults to 30
-      tools: "semantic_tools.*, db_tools.*, context_search_tools.list_subject_tree"  # Optional: customize available tools
-```
-
-**Tool patterns:**
-
-| Pattern | Description |
-|---------|-------------|
-| `semantic_tools.*` | All semantic tools (search metrics, semantic objects, etc.) |
-| `db_tools.*` | All database tools (list tables, describe table, read query, etc.) |
-| `context_search_tools.*` | All context search tools (search knowledge, reference SQL, etc.) |
-| `semantic_tools.search_metrics` | A specific semantic tool method |
-| `context_search_tools.list_subject_tree` | A specific context search method |
-
-Default tools (when not configured): `semantic_tools.*, context_search_tools.list_subject_tree`
-
-### How It Works
-
-```mermaid
-graph LR
-    A[User question + context] --> B[Analyze requirements]
-    B --> C[Search knowledge base]
-    C --> D[Query database]
-    D --> E[Generate report]
-    E --> F[Return structured result]
-```
-
-### Output Format
-
-The gen_report subagent returns results as a structured report:
-
-```json
-{
-  "report": "Structured report content with analysis...",
-  "response": "Summary explanation...",
-  "tokens_used": 2345
-}
-```
-
-### Usage
-
-The gen_report subagent can be selected explicitly for one message with `@Agent gen_report`, or invoked automatically by the chat agent via `task(type="gen_report")`:
-
-```text
-Analyze the revenue trend for the last quarter and provide insights. @Agent gen_report
-```
-
-### Custom Report Subagents
-
-You can create custom subagents that use the gen_report node class by configuring them in `agent.yml`:
-
-```yaml
-agent:
-  agentic_nodes:
-    attribution_report:
-      node_class: gen_report
-      tools: "semantic_tools.*, db_tools.*, context_search_tools.*"
-      max_turns: 30
-```
-
-Then ask `Analyze the conversion attribution for campaign X. @Agent attribution_report`.
-
----
 
 ## gen_skill
 
@@ -478,7 +389,6 @@ compatibility only. See [BI Dashboard Node (Legacy)](gen_dashboard.md) and
 | `ontology_analyst` | Answer questions over an ontology | Markdown report | N/A | Concept catalog, role-aware paths, value-domain checks, record queries, no raw SQL fallback |
 | `explore` | Read-only data exploration | Structured context | N/A | Strictly read-only, fast turn budget, three exploration directions |
 | `gen_sql` | Generate optimized SQL | SQL query / SQL file | N/A | Deep SQL expertise, auto-validation, file-based output |
-| `gen_report` | Flexible report generation | Structured report | N/A | Configurable tools, extensible, custom report subagents |
 | `gen_table` | Create tables interactively | DDL + execution result | Database | DDL confirmation, CTAS or natural-language schema creation |
 | `gen_job` | Data pipeline jobs (intra-DB ETL + cross-DB transfer) | Job / transfer result | Source + target databases | DDL/DML execution, cross-dialect type mapping via MigrationTargetMixin, `transfer_query_result`, lightweight reconciliation when source != target |
 | `gen_skill` | Create or optimize skills | Skill path | Skills directory | Interactive authoring, validation, skill loading |

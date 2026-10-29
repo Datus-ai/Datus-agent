@@ -12,11 +12,10 @@
 4. **[ontology_analyst](ontology_analyst.zh.md)** — 基于数据源的 Apache Ossie ontology（概念、角色、值域）回答指标和明细问题
 5. **[explore](#explore)** — 只读数据探索和上下文收集
 6. **[gen_sql](#gen_sql)** — 具备深度专业知识的专用 SQL 生成
-7. **[gen_report](#gen_report)** — 灵活的报告生成，支持可配置工具
-8. **[gen_table](gen_table.zh.md)** — 数据库建表（CTAS 或自然语言描述）
-9. **[gen_job](gen_job.zh.md)** — 数据管道执行（单库 ETL 和跨库迁移，含对数校验）
-10. **[gen_skill](#gen_skill)** — skill 创建与优化
-11. **[gen_visual_report](gen_visual_report.zh.md)** — 在 `reports/<slug>/` 下产出自包含的可视化报告
+7. **[gen_table](gen_table.zh.md)** — 数据库建表（CTAS 或自然语言描述）
+8. **[gen_job](gen_job.zh.md)** — 数据管道执行（单库 ETL 和跨库迁移，含对数校验）
+9. **[gen_skill](#gen_skill)** — skill 创建与优化
+10. **[gen_visual_report](gen_visual_report.zh.md)** — 在 `reports/<slug>/` 下产出自包含的可视化报告
 
 Airflow 调度和外部 BI authoring 由主 agent 直接使用已安装 plugin 完成，
 不再属于内置或自定义 subagent。
@@ -54,11 +53,6 @@ agent:
     gen_sql:
       model: claude     # 可选：默认使用已配置的模型
       max_turns: 30     # 可选：默认为 30
-
-    gen_report:
-      model: claude     # 可选：默认使用已配置的模型
-      max_turns: 30     # 可选：默认为 30
-      tools: "semantic_tools.*, context_search_tools.list_subject_tree"  # 可选：默认使用语义+上下文工具
 
     gen_table:
       max_turns: 20     # 可选：默认为 20
@@ -324,89 +318,6 @@ gen_sql subagent 通常由聊天助手通过 `task(type="gen_sql")` 自动调用
 
 ---
 
-## gen_report
-
-### 概览
-
-gen_report subagent 是一个灵活的报告生成助手，结合语义工具、数据库工具和上下文搜索功能来生成结构化报告。它可以直接使用，也可以被特定领域的报告节点扩展（如归因分析）。
-
-### 关键特性
-
-- **可配置工具**：通过配置支持 `semantic_tools.*`、`db_tools.*` 和 `context_search_tools.*`
-- **灵活输出**：生成包含 SQL 查询和分析的结构化报告内容
-- **可扩展**：可以被子类化用于特定报告类型
-- **配置驱动**：工具设置和系统提示由 `agent.yml` 配置驱动
-
-### 配置
-
-```yaml
-agent:
-  agentic_nodes:
-    gen_report:
-      model: claude           # 可选：默认使用已配置的模型
-      max_turns: 30           # 可选：默认为 30
-      tools: "semantic_tools.*, db_tools.*, context_search_tools.list_subject_tree"  # 可选：自定义可用工具
-```
-
-**工具模式：**
-
-| 模式 | 描述 |
-|------|------|
-| `semantic_tools.*` | 所有语义工具（搜索指标、语义对象等） |
-| `db_tools.*` | 所有数据库工具（列出表、描述表、读取查询等） |
-| `context_search_tools.*` | 所有上下文搜索工具（搜索知识、参考 SQL 等） |
-| `semantic_tools.search_metrics` | 指定的语义工具方法 |
-| `context_search_tools.list_subject_tree` | 指定的上下文搜索方法 |
-
-默认工具（未配置时）：`semantic_tools.*, context_search_tools.list_subject_tree`
-
-### 工作原理
-
-```mermaid
-graph LR
-    A[用户问题 + 上下文] --> B[分析需求]
-    B --> C[搜索知识库]
-    C --> D[查询数据库]
-    D --> E[生成报告]
-    E --> F[返回结构化结果]
-```
-
-### 输出格式
-
-gen_report subagent 以结构化报告返回结果：
-
-```json
-{
-  "report": "包含分析的结构化报告内容...",
-  "response": "摘要说明...",
-  "tokens_used": 2345
-}
-```
-
-### 使用方式
-
-gen_report subagent 可以通过 `@Agent gen_report` 为单条消息明确指定，也可以由聊天助手通过 `task(type="gen_report")` 自动调用：
-
-```text
-分析上季度的收入趋势并提供洞察。@Agent gen_report
-```
-
-### 自定义报告 Subagent
-
-你可以在 `agent.yml` 中配置使用 gen_report 节点类的自定义 subagent：
-
-```yaml
-agent:
-  agentic_nodes:
-    attribution_report:
-      node_class: gen_report
-      tools: "semantic_tools.*, db_tools.*, context_search_tools.*"
-      max_turns: 30
-```
-
-然后输入 `分析活动 X 的转化归因。@Agent attribution_report`。
-
----
 
 ## gen_skill
 
@@ -476,7 +387,6 @@ Airflow 调度和 Superset 等外部 BI authoring 由主 agent 直接使用已�
 | `ontology_analyst` | 基于 ontology 回答问题 | Markdown 报告 | N/A | 概念目录、按角色选路径、值域校验、明细查询、不退回原始 SQL |
 | `explore` | 只读数据探索 | 结构化上下文 | N/A | 严格只读、低轮数、三方向探索 |
 | `gen_sql` | 生成优化 SQL | SQL 查询 / SQL 文件 | N/A | 深度 SQL 专长、自动验证、支持文件输出 |
-| `gen_report` | 灵活报告生成 | 结构化报告 | N/A | 工具可配置、可扩展、自定义报告 subagent |
 | `gen_table` | 交互式建表 | DDL + 执行结果 | 数据库 | DDL 确认、CTAS 或自然语言建表 |
 | `gen_job` | 数据管道作业（单库 ETL + 跨库传输） | 作业 / 传输结果 | 源库 + 目标库 | DDL/DML 执行、通过 MigrationTargetMixin 做跨方言类型映射、`transfer_query_result`、源目标不同库时做轻量对账校验 |
 | `gen_skill` | 创建或优化 skill | skill 路径 | skills 目录 | 交互式编写、校验、加载现有 skill |

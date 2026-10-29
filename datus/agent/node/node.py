@@ -31,6 +31,7 @@ from datus.schemas.node_models import (
 from datus.schemas.schema_linking_node_models import SchemaLinkingInput, SchemaLinkingResult
 from datus.tools.db_tools.db_manager import db_manager_instance
 from datus.utils.loggings import get_logger
+from datus.utils.node_utils import validate_node_class
 
 logger = get_logger(__name__)
 
@@ -56,6 +57,8 @@ class Node(ABC):
         is_subagent: bool = False,
         session_id: Optional[str] = None,
     ):
+        validate_node_class(node_type, node_name or node_id)
+
         from datus.agent.node import (
             BeginNode,
             ChatAgenticNode,
@@ -164,10 +167,10 @@ class Node(ABC):
                 is_subagent=is_subagent,
                 session_id=session_id,
             )
-        elif node_type == NodeType.TYPE_GEN_REPORT:
-            from datus.agent.node.gen_report_agentic_node import GenReportAgenticNode
+        elif node_type == NodeType.TYPE_GEN_VISUAL_REPORT:
+            from datus.agent.node.gen_visual_report_agentic_node import GenVisualReportAgenticNode
 
-            return GenReportAgenticNode(
+            return GenVisualReportAgenticNode(
                 node_id,
                 description,
                 node_type,
@@ -501,10 +504,10 @@ class Node(ABC):
                     from datus.schemas.ontology_analyst_agentic_node_models import OntologyAnalystNodeInput
 
                     input_data = OntologyAnalystNodeInput(**input_data)
-                elif node_dict["type"] == NodeType.TYPE_GEN_REPORT:
-                    from datus.schemas.gen_report_agentic_node_models import GenReportNodeInput
+                elif node_dict["type"] == NodeType.TYPE_GEN_VISUAL_REPORT:
+                    from datus.schemas.gen_visual_report_models import GenVisualReportNodeInput
 
-                    input_data = GenReportNodeInput(**input_data)
+                    input_data = GenVisualReportNodeInput(**input_data)
                 elif node_dict["type"] == NodeType.TYPE_EXPLORE:
                     input_data = ExploreNodeInput(**input_data)
                 elif node_dict["type"] == NodeType.TYPE_GEN_TABLE:
@@ -549,10 +552,10 @@ class Node(ABC):
                     from datus.schemas.ontology_analyst_agentic_node_models import OntologyAnalystNodeResult
 
                     result_data = OntologyAnalystNodeResult(**result_data)
-                elif node_dict["type"] == NodeType.TYPE_GEN_REPORT:
-                    from datus.schemas.gen_report_agentic_node_models import GenReportNodeResult
+                elif node_dict["type"] == NodeType.TYPE_GEN_VISUAL_REPORT:
+                    from datus.schemas.gen_visual_report_models import GenVisualReportNodeResult
 
-                    result_data = GenReportNodeResult(**result_data)
+                    result_data = GenVisualReportNodeResult(**result_data)
                 elif node_dict["type"] == NodeType.TYPE_EXPLORE:
                     result_data = ExploreNodeResult(**result_data)
                 elif node_dict["type"] == NodeType.TYPE_GEN_TABLE:

@@ -299,6 +299,117 @@ async def test_execute_stream_end_to_end(real_agent_config, mock_llm_create):
     assert result["created_at"] == "2026-05-13T00:00:00Z"
 
 
+@pytest.mark.acceptance
+@pytest.mark.asyncio
+@pytest.mark.timeout(30)
+@pytest.mark.parametrize("entrypoint", ["cli", "api", "bi", "workflow", "task"])
+async def test_report_entrypoints_produce_readable_report(real_agent_config, mock_llm_create, tmp_path, entrypoint):
+    """Existing entrypoints still complete a report with real tools and files."""
+    from datus.agent.node.node import Node
+    from datus.agent.node.node_factory import create_interactive_node, create_node_input
+    from datus.api.models.agent_models import CreateAgentInput
+    from datus.api.services.agent_service import AgentService
+    from datus.api.services.report_service import ReportService
+    from datus.cli.bootstrap_bi_subagents import stream_bi_save_subagents
+    from datus.configuration.agent_config_loader import ConfigurationManager, configuration_manager
+    from datus.schemas.agent_models import ScopedContext
+    from datus.tools.func_tool.sub_agent_task_tool import SubAgentTaskTool
+    from datus.utils.sub_agent_manager import SubAgentManager
+    from tests.unit_tests.cli.test_chat_commands import _make_chat_commands
+
+    slug = "school_summary"
+    config = real_agent_config
+    config.permissions_config = config._init_permissions_config({"profile": "auto"})
+    mock_llm_create.reset(
+        responses=[
+            build_tool_then_response(
+                tool_calls=[
+                    MockToolCall("start_new_report", {"slug": slug, "name": "Schools", "description": "School counts"}),
+                    MockToolCall(
+                        "save_query",
+                        {
+                            "name": "school_count",
+                            "sql": "SELECT COUNT(*) AS school_count FROM schools",
+                            "goal": "Count schools",
+                            "hypothesis": "The school table has records",
+                            "fallback_reason": "No configured metric counts schools",
+                        },
+                    ),
+                    MockToolCall(
+                        "write_file",
+                        {
+                            "path": f"reports/{slug}/render/app.jsx",
+                            "content": _APP_JSX_TEMPLATE.format(title="Schools", data_ref="queries/school_count"),
+                        },
+                    ),
+                    MockToolCall("validate_render", {}),
+                ],
+                content="The school report is ready.",
+            )
+        ]
+    )
+    question = "Create a school count report."
+    if entrypoint == "task":
+        delegated = await SubAgentTaskTool(agent_config=config).task(
+            type="gen_visual_report", prompt=question, description="School count report"
+        )
+        assert delegated.success == 1, delegated.error
+        result = delegated.result
+    else:
+        name = "gen_visual_report"
+        if entrypoint in {"api", "bi"}:
+            config_file = tmp_path / "agent.yml"
+            config_file.write_text("agent:\n  agentic_nodes: {}\n", encoding="utf-8")
+            manager = configuration_manager(str(config_file), reload=True)
+            if entrypoint == "api":
+                name = "school_report"
+                created = await AgentService().create_agent(
+                    CreateAgentInput(name=name, type="gen_visual_report"), config
+                )
+                assert created.success, created.errorMessage
+            else:
+                name = "school_dashboard_attribution"
+                subagents = SubAgentManager(manager, config.current_datasource, config)
+                saved = [
+                    action
+                    async for action in stream_bi_save_subagents(
+                        config,
+                        sub_agent_name="school_dashboard",
+                        description="Schools",
+                        scoped_context=ScopedContext(tables="schools"),
+                        sub_agent_manager=subagents,
+                    )
+                ]
+                assert saved[-1].status == ActionStatus.SUCCESS
+            config.agentic_nodes = ConfigurationManager(str(config_file)).get("agentic_nodes")
+
+        if entrypoint == "cli":
+            node = _make_chat_commands(config)._create_new_node(subagent_name=name)
+        elif entrypoint == "workflow":
+            node = Node.new_instance("school_report", "Schools", NodeType.TYPE_GEN_VISUAL_REPORT, agent_config=config)
+        else:
+            node = create_interactive_node(name, config)
+        node.input = create_node_input(question, node)
+        if entrypoint == "workflow":
+            node = Node.from_dict(json.loads(json.dumps(node.to_dict())), config)
+        actions = [action async for action in node.execute_stream(ActionHistoryManager())]
+        assert actions[-1].status == ActionStatus.SUCCESS, mock_llm_create.tool_results
+        result = actions[-1].output
+        if entrypoint == "workflow":
+            restored = Node.from_dict(json.loads(json.dumps(node.to_dict(), default=str)), config)
+            result = restored.result.model_dump()
+
+    root = Path(config.project_root)
+    assert (root / result["app_jsx_path"]).is_file()
+    assert (root / result["html_path"]).is_file()
+    assert result["query_count"] == 1
+    detail = await ReportService().get_detail(project_files_root=root, report_slug=result["report_slug"])
+    assert detail.success, detail.errorMessage
+    files = {file.path: file.content for file in detail.data.files}
+    assert "render/app.jsx" in files
+    assert json.loads(files["queries/school_count.json"])["row_count"] == 1
+
+
 class TestReportDistResolution:
     """Verify the CLI flag → node_config priority for offline asset overrides."""
 

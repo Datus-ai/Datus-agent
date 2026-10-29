@@ -27,7 +27,7 @@ The currently exposed built-in set is:
 2. `gen_sql`: specialized SQL generation
 3. `ask_metrics`: answer questions using existing semantic metrics
 4. `ontology_analyst`: answer metric and record questions over the datasource's ontology (offered only when one exists)
-5. `gen_report`: structured report generation
+5. `gen_visual_report`: structured report generation
 6. `semantic_modeling`: unified Dosi semantic-model and metric authoring
 7. `gen_sql_summary`: SQL summary generation
 8. `gen_table`: interactive table creation
@@ -47,7 +47,7 @@ See [Built-in subagents](./builtin_subagents.md) for details.
 
 Custom subagents are configured under `agent.agentic_nodes`.
 
-The unified agent TUI (`/agent` or `/subagent`) Custom-tab wizard currently creates `gen_sql`-style or `gen_report`-style custom subagents. If you want to alias more specialized available node classes such as `explore`, `gen_table`, or `gen_skill`, edit `agent.yml` manually. Custom aliases of the legacy scheduling and external-BI node classes are ignored.
+The unified agent TUI (`/agent` or `/subagent`) Custom-tab wizard currently creates `gen_sql`-style or `gen_visual_report`-style custom subagents. If you want to alias more specialized available node classes such as `explore`, `gen_table`, or `gen_skill`, edit `agent.yml` manually. Custom aliases of the legacy scheduling and external-BI node classes are ignored.
 
 Example:
 
@@ -55,7 +55,7 @@ Example:
 agent:
   agentic_nodes:
     finance_report:
-      node_class: gen_report
+      node_class: gen_visual_report
       model: claude
       system_prompt: finance_report
       prompt_version: "1.0"
@@ -147,7 +147,7 @@ Important behavior:
 |------|---------|
 | `explore` | Gather schema, sample data, knowledge, or file context |
 | `gen_sql` | Generate SQL with deeper multi-step reasoning |
-| `gen_report` | Produce structured reports and analysis |
+| `gen_visual_report` | Produce structured reports and analysis |
 | `semantic_modeling` | Author Dosi semantic models and metrics |
 | `gen_sql_summary` | Summarize SQL into reusable knowledge |
 | `gen_table` | Create tables interactively |

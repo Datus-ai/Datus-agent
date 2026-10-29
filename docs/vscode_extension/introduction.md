@@ -98,7 +98,7 @@ The **Agents** section in the lower-left lists every subagent for the current pr
 
 ![Add SubAgent wizard (Objects step)](../assets/vscode-create-subagent.png)
 
-Submitting the wizard writes the subagent into Datus-agent's configuration (equivalent to `/agent` in the CLI) and immediately makes it selectable from the SubAgent dropdown in the Chat panel. Built-in subagents (`gen_sql`, `semantic_modeling`, `gen_dashboard`, `gen_report`, `scheduler`, …) are read-only — you can inspect their Tools / Objects / Rules in the wizard but cannot edit them.
+Submitting the wizard writes the subagent into Datus-agent's configuration (equivalent to `/agent` in the CLI) and immediately makes it selectable from the SubAgent dropdown in the Chat panel. Built-in subagents (`gen_sql`, `semantic_modeling`, `gen_dashboard`, `gen_visual_report`, `scheduler`, …) are read-only — you can inspect their Tools / Objects / Rules in the wizard but cannot edit them.
 
 ### 3. Datus Studio Chat Panel
 

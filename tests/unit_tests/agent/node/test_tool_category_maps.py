@@ -128,7 +128,7 @@ class TestPopulateToolRegistry:
     def test_task_tool_registered_outside_chat(self):
         """The historical bug: only chat declared ``sub_agent_tools``, so the
         ``task`` tool fell into the catch-all (default ASK) on gen_sql,
-        gen_report, feedback and the visual artifact nodes. Declaration-site
+        gen_visual_report, feedback and the visual artifact nodes. Declaration-site
         categories make the mapping node-independent."""
         node = _bare_node()
         node.sub_agent_task_tool = _group("sub_agent_tools", "task")
