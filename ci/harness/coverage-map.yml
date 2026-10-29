@@ -1567,7 +1567,7 @@ execution:
       paths: [datus/validation/]
       targets: [tests/unit_tests/validation/]
     - id: ci
-      paths: [ci/]
+      paths: [ci/, .github/workflows/]
       targets: [tests/unit_tests/ci/]
     - id: datus
       paths: [datus/]
@@ -1741,41 +1741,57 @@ execution:
       targets:
         - tests/unit_tests/agent/node/test_ask_metrics_agentic_node.py
         - tests/unit_tests/agent/node/test_agentic_node.py
+        - tests/unit_tests/agent/node/test_node.py
+        - tests/unit_tests/agent/node/test_schema_linking.py
     - id: node-compare_agentic_node
       paths: [datus/agent/node/compare_agentic_node.py]
       targets:
         - tests/unit_tests/agent/node/test_compare_agentic_node.py
         - tests/unit_tests/agent/node/test_agentic_node.py
+        - tests/unit_tests/agent/node/test_node.py
+        - tests/unit_tests/agent/node/test_schema_linking.py
     - id: node-explore_agentic_node
       paths: [datus/agent/node/explore_agentic_node.py]
       targets:
         - tests/unit_tests/agent/node/test_explore_agentic_node.py
         - tests/unit_tests/agent/node/test_agentic_node.py
+        - tests/unit_tests/agent/node/test_node.py
+        - tests/unit_tests/agent/node/test_schema_linking.py
     - id: node-feedback_agentic_node
       paths: [datus/agent/node/feedback_agentic_node.py]
       targets:
         - tests/unit_tests/agent/node/test_feedback_agentic_node.py
         - tests/unit_tests/agent/node/test_agentic_node.py
+        - tests/unit_tests/agent/node/test_node.py
+        - tests/unit_tests/agent/node/test_schema_linking.py
     - id: node-gen_dashboard_agentic_node
       paths: [datus/agent/node/gen_dashboard_agentic_node.py]
       targets:
         - tests/unit_tests/agent/node/test_gen_dashboard_agentic_node.py
         - tests/unit_tests/agent/node/test_agentic_node.py
+        - tests/unit_tests/agent/node/test_node.py
+        - tests/unit_tests/agent/node/test_schema_linking.py
     - id: node-gen_job_agentic_node
       paths: [datus/agent/node/gen_job_agentic_node.py]
       targets:
         - tests/unit_tests/agent/node/test_gen_job_agentic_node.py
         - tests/unit_tests/agent/node/test_agentic_node.py
+        - tests/unit_tests/agent/node/test_node.py
+        - tests/unit_tests/agent/node/test_schema_linking.py
     - id: node-gen_report_agentic_node
       paths: [datus/agent/node/gen_report_agentic_node.py]
       targets:
         - tests/unit_tests/agent/node/test_gen_report_agentic_node.py
         - tests/unit_tests/agent/node/test_agentic_node.py
+        - tests/unit_tests/agent/node/test_node.py
+        - tests/unit_tests/agent/node/test_schema_linking.py
     - id: node-gen_table_agentic_node
       paths: [datus/agent/node/gen_table_agentic_node.py]
       targets:
         - tests/unit_tests/agent/node/test_gen_table_agentic_node.py
         - tests/unit_tests/agent/node/test_agentic_node.py
+        - tests/unit_tests/agent/node/test_node.py
+        - tests/unit_tests/agent/node/test_schema_linking.py
         - tests/unit_tests/agent/node/test_deliverable_node.py
         - tests/unit_tests/agent/node/test_node_base.py
     - id: node-gen_visual_dashboard_agentic_node
@@ -1783,26 +1799,36 @@ execution:
       targets:
         - tests/unit_tests/agent/node/test_gen_visual_dashboard_agentic_node.py
         - tests/unit_tests/agent/node/test_agentic_node.py
+        - tests/unit_tests/agent/node/test_node.py
+        - tests/unit_tests/agent/node/test_schema_linking.py
     - id: node-gen_visual_report_agentic_node
       paths: [datus/agent/node/gen_visual_report_agentic_node.py]
       targets:
         - tests/unit_tests/agent/node/test_gen_visual_report_agentic_node.py
         - tests/unit_tests/agent/node/test_agentic_node.py
+        - tests/unit_tests/agent/node/test_node.py
+        - tests/unit_tests/agent/node/test_schema_linking.py
     - id: node-ontology_analyst_agentic_node
       paths: [datus/agent/node/ontology_analyst_agentic_node.py]
       targets:
         - tests/unit_tests/agent/node/test_ontology_analyst_agentic_node.py
         - tests/unit_tests/agent/node/test_agentic_node.py
+        - tests/unit_tests/agent/node/test_node.py
+        - tests/unit_tests/agent/node/test_schema_linking.py
     - id: node-scheduler_agentic_node
       paths: [datus/agent/node/scheduler_agentic_node.py]
       targets:
         - tests/unit_tests/agent/node/test_scheduler_agentic_node.py
         - tests/unit_tests/agent/node/test_agentic_node.py
+        - tests/unit_tests/agent/node/test_node.py
+        - tests/unit_tests/agent/node/test_schema_linking.py
     - id: node-sql_summary_agentic_node
       paths: [datus/agent/node/sql_summary_agentic_node.py]
       targets:
         - tests/unit_tests/agent/node/test_sql_summary_agentic_node.py
         - tests/unit_tests/agent/node/test_agentic_node.py
+        - tests/unit_tests/agent/node/test_node.py
+        - tests/unit_tests/agent/node/test_schema_linking.py
     - id: chat-lifecycle
       paths:
         - datus/api/services/chat_task_manager.py

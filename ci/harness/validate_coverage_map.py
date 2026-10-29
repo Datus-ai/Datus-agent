@@ -19,7 +19,7 @@ import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT))
-from ci.harness.test_plan import validate_unit_rules  # noqa: E402
+from ci.harness.test_plan import load_map, validate_unit_rules  # noqa: E402
 
 DEFAULT_COVERAGE_MAP = Path("ci/harness/coverage-map.yml")
 DEFAULT_REPORT_MD = Path("ci/harness/coverage-map-report.md")
@@ -59,8 +59,7 @@ def utc_now() -> str:
 
 
 def read_yaml(path: Path) -> dict[str, Any]:
-    with path.open(encoding="utf-8") as handle:
-        data = yaml.safe_load(handle) or {}
+    data = load_map(path) or {}
     if not isinstance(data, dict):
         raise ValueError(f"{path} must contain a YAML mapping")
     return data

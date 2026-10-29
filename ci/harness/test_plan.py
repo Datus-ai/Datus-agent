@@ -14,8 +14,44 @@ ROOT = Path(__file__).resolve().parents[2]
 MAP = ROOT / "ci/harness/coverage-map.yml"
 
 
+class _UniqueKeySafeLoader(yaml.SafeLoader):
+    def construct_document(self, node: yaml.Node) -> dict:
+        self._check_unique_keys(node, set())
+        return super().construct_document(node)
+
+    def _check_unique_keys(self, node: yaml.Node, visited: set[int]) -> None:
+        if id(node) in visited:
+            return
+        visited.add(id(node))
+        if isinstance(node, yaml.MappingNode):
+            keys = set()
+            for key_node, value_node in node.value:
+                # Check explicit keys before SafeLoader flattens YAML merges, so
+                # an override of an inherited key remains valid.
+                key = "<<" if key_node.tag == "tag:yaml.org,2002:merge" else self.construct_object(key_node, deep=True)
+                try:
+                    duplicate = key in keys
+                    keys.add(key)
+                except TypeError as exc:
+                    raise yaml.constructor.ConstructorError(
+                        "while constructing a mapping", node.start_mark, "found unhashable key", key_node.start_mark
+                    ) from exc
+                if duplicate:
+                    raise yaml.constructor.ConstructorError(
+                        "while constructing a mapping",
+                        node.start_mark,
+                        f"found duplicate key {key!r}",
+                        key_node.start_mark,
+                    )
+                self._check_unique_keys(value_node, visited)
+        elif isinstance(node, yaml.SequenceNode):
+            for child in node.value:
+                self._check_unique_keys(child, visited)
+
+
 def load_map(path: Path = MAP) -> dict:
-    return yaml.safe_load(path.read_text())
+    with path.open(encoding="utf-8") as handle:
+        return yaml.load(handle, Loader=_UniqueKeySafeLoader)  # noqa: S506 - custom safe loader.
 
 
 def core_targets(data: dict | None = None) -> list[str]:

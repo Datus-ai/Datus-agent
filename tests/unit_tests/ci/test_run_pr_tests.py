@@ -377,6 +377,7 @@ def test_emit_reports_produces_only_cobertura_xml(tmp_path):
 
 
 def test_ci_output_overrides_verbose_uncaptured_project_defaults(tmp_path, monkeypatch):
+    monkeypatch.delenv("PYTEST_ADDOPTS", raising=False)
     (tmp_path / "pytest.ini").write_text("[pytest]\naddopts = -s -vv\nlog_cli = true\n")
     (tmp_path / "conftest.py").write_text(
         "import json\nfrom pathlib import Path\n"

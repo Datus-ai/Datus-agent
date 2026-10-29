@@ -107,6 +107,8 @@ def test_impact_targets_exist():
                 "tests/unit_tests/agent/node/test_agentic_node.py",
                 "tests/unit_tests/agent/node/test_deliverable_node.py",
                 "tests/unit_tests/agent/node/test_node_base.py",
+                "tests/unit_tests/agent/node/test_node.py",
+                "tests/unit_tests/agent/node/test_schema_linking.py",
             },
         ),
         (
@@ -137,6 +139,45 @@ def test_leaf_changes_select_their_owners_and_consumers(source, expected):
     plan = unit_test_plan([source])
     assert set(plan["targets"]) == expected
     assert plan["selections"][0]["matched_path"] == source
+
+
+def test_node_owners_retain_required_generic_node_contracts():
+    data = load_map()
+    required = ["tests/unit_tests/agent/node/test_node.py", "tests/unit_tests/agent/node/test_schema_linking.py"]
+    for source in (ROOT / "datus/agent/node").glob("*.py"):
+        targets = unit_test_plan([source.relative_to(ROOT).as_posix()], data)["targets"]
+        for node_test in required:
+            assert any(node_test == t or (t.endswith("/") and node_test.startswith(t)) for t in targets), source
+
+
+@pytest.mark.parametrize("source", [".github/workflows/run-nightly.yml", ".github/workflows/prepare-release.yml"])
+def test_workflow_changes_select_ci_contract_tests(source):
+    assert unit_test_plan([source])["targets"] == ["tests/unit_tests/ci/"]
+    assert impact_plan([source])["unit_targets"] == ["tests/unit_tests/ci/"]
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "execution:\n  unit_rules: []\n  unit_rules: []\n",
+        "unit_rules:\n- paths: [datus/a.py]\n  paths: [datus/b.py]\n",
+        "unit_rules:\n- targets: [tests/a.py]\n  targets: [tests/b.py]\n",
+        "execution:\n  <<: {unit_rules: [], unit_rules: []}\n",
+    ],
+)
+def test_map_loader_rejects_duplicate_keys_before_rule_validation(tmp_path, source):
+    path = tmp_path / "map.yml"
+    path.write_text(source)
+    with pytest.raises(yaml.constructor.ConstructorError, match="duplicate key"):
+        load_map(path)
+
+
+def test_map_loader_preserves_standard_yaml_aliases_and_merge_overrides(tmp_path):
+    path = tmp_path / "map.yml"
+    path.write_text(
+        "defaults: &defaults {paths: [datus/a.py], targets: [tests/a.py]}\nrule:\n  <<: *defaults\n  paths: [datus/b.py]\n"
+    )
+    assert load_map(path)["rule"] == {"paths": ["datus/b.py"], "targets": ["tests/a.py"]}
 
 
 def test_specific_units_preserve_additive_live_and_service_requirements():

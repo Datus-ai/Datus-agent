@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib.util
 from pathlib import Path
 
+import pytest
 import yaml
 
 MODULE_PATH = Path(__file__).resolve().parents[4] / "ci" / "harness" / "validate_coverage_map.py"
@@ -71,6 +72,13 @@ def test_coverage_map_gate_rejects_stale_unit_ownership():
     }
     errors, _ = validate(data)
     assert errors == ["unit_rules.stale: unit target does not exist: tests/unit_tests/no_such_test.py"]
+
+
+def test_validator_reader_rejects_duplicate_ownership_keys(tmp_path):
+    path = tmp_path / "map.yml"
+    path.write_text("execution:\n  unit_rules: []\n  unit_rules: []\n")
+    with pytest.raises(yaml.constructor.ConstructorError, match="duplicate key"):
+        validate_coverage_map.read_yaml(path)
 
 
 def test_missing_docs_path_is_reported():
