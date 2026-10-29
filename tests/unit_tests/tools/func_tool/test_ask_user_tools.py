@@ -601,3 +601,48 @@ class TestAskUserToolMultiSelect:
         assert result.success == 1
         answers = json.loads(result.result)
         assert answers[0]["answer"] == ["MySQL", "SQLite"]
+
+
+class TestAskUserToolTimeout:
+    """A subagent's unanswered question must not block the parent turn (#1142)."""
+
+    @pytest.mark.asyncio
+    async def test_unanswered_question_times_out(self, broker):
+        tool = AskUserTool(broker=broker, timeout=0.05)
+
+        result = await asyncio.wait_for(
+            tool.ask_user(questions=[{"question": "Never answered?", "options": ["A", "B"]}]),
+            timeout=1.0,
+        )
+
+        assert result.success == 0
+        assert "timed out" in result.error.lower()
+        assert broker.has_pending is False
+
+    @pytest.mark.asyncio
+    async def test_concurrent_subagents_one_answered_one_times_out(self, broker):
+        """Regression for #1142: two concurrent subagents share one broker."""
+        answered_tool = AskUserTool(broker=broker)
+        unanswered_tool = AskUserTool(broker=broker, timeout=0.5)
+
+        answered_task = asyncio.create_task(
+            answered_tool.ask_user(questions=[{"question": "answered?", "options": ["A", "B"]}])
+        )
+        unanswered_task = asyncio.create_task(
+            unanswered_tool.ask_user(questions=[{"question": "unanswered?", "options": ["A", "B"]}])
+        )
+
+        actions = []
+        while len(actions) < 2:
+            actions.append(await asyncio.wait_for(broker._output_queue.get(), timeout=1.0))
+        target = next(a for a in actions if a.input["events"][0]["content"] == "answered?")
+        assert await broker.submit(target.action_id, [["1"]]) is True
+
+        answered_result = await asyncio.wait_for(answered_task, timeout=1.0)
+        unanswered_result = await asyncio.wait_for(unanswered_task, timeout=1.0)
+
+        assert answered_result.success == 1
+        assert json.loads(answered_result.result)[0]["answer"] == "A"
+        assert unanswered_result.success == 0
+        assert "timed out" in unanswered_result.error.lower()
+        assert broker.has_pending is False

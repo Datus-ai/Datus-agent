@@ -761,10 +761,42 @@ class ChatTaskManager:
         # own snapshot when its stream closes, which on a cancel or a crash is
         # before this method's ``finally`` runs — so keep a copy to bill from.
         last_usage = None
+        start_time = datetime.now()
+        action_count = 0
+        # ``end`` terminates the SSE stream. Emit it exactly once on every exit
+        # path — normal completion, node error, or cancellation — so a client
+        # that saw a ``session`` event is never left waiting forever (#1142).
+        end_emitted = False
+
+        async def _emit_end_event() -> None:
+            nonlocal event_id, end_emitted
+            if end_emitted:
+                return
+            token_kwargs: dict = {}
+            try:
+                node_ref = task.node
+                if node_ref is not None:
+                    token_kwargs = _usage_kwargs(await node_ref.get_last_turn_usage() or last_usage)
+            except Exception:
+                logger.debug("Failed to extract turn token usage for end event", exc_info=True)
+
+            end_data = SSEEndData(
+                session_id=session_id,
+                llm_session_id=getattr(task.node, "session_id", None),
+                total_events=event_id,
+                action_count=action_count,
+                duration=(datetime.now() - start_time).total_seconds(),
+                **token_kwargs,
+            )
+            task.end_usage = end_data.model_dump()
+            await self._push_event(
+                task,
+                SSEEvent(id=event_id, event="end", data=end_data, timestamp=now_utc_iso()),
+            )
+            event_id += 1
+            end_emitted = True
 
         try:
-            start_time = datetime.now()
-
             # Snapshot the turn counter BEFORE the run so the @-context persist
             # below only fires when this run actually adds a new user turn.
             pre_turn_number = await asyncio.to_thread(self._max_user_turn_number, agent_config, session_id, user_id)
@@ -1128,26 +1160,7 @@ class ChatTaskManager:
             await self._persist_message_contents(task, agent_config, node.session_id, user_id)
 
             # 7. End event
-            token_kwargs: dict = {}
-            try:
-                token_kwargs = _usage_kwargs(await node.get_last_turn_usage() or last_usage)
-            except Exception:
-                logger.debug("Failed to extract turn token usage for end event", exc_info=True)
-
-            end_data = SSEEndData(
-                session_id=session_id,
-                llm_session_id=node.session_id,
-                total_events=event_id,
-                action_count=action_count,
-                duration=(datetime.now() - start_time).total_seconds(),
-                **token_kwargs,
-            )
-            task.end_usage = end_data.model_dump()
-            await self._push_event(
-                task,
-                SSEEvent(id=event_id, event="end", data=end_data, timestamp=now_utc_iso()),
-            )
-            event_id += 1
+            await _emit_end_event()
 
             if turn_error is not None:
                 task.status = "error"
@@ -1179,6 +1192,15 @@ class ChatTaskManager:
             event_id += 1
 
         finally:
+            # The try body can exit through an exception or a cancel before the
+            # normal end-event step. Close the stream here too, before
+            # ``_settle_turn`` reads ``task.end_usage``.
+            try:
+                await _emit_end_event()
+            except asyncio.CancelledError:
+                logger.warning("End event emission cancelled for session %s", session_id)
+            except Exception:
+                logger.warning("Failed to emit end event for session %s", session_id, exc_info=True)
             if task.status != "completed" and task.node is not None:
                 await self._persist_message_contents(task, agent_config, task.node.session_id, user_id)
             trace_stack.close()

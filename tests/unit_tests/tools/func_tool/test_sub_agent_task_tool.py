@@ -1492,6 +1492,30 @@ class TestInteractionBrokerPassthrough:
         task_tool._inject_broker(node, parent_broker)
         assert node.interaction_broker is parent_broker
 
+    def test_inject_broker_caps_subagent_ask_user_wait(self, task_tool, monkeypatch):
+        """A subagent's ask_user gets a finite HITL timeout (issue #1142).
+
+        An unanswered question is forwarded to the parent broker and would
+        otherwise block the subagent — and therefore the parent turn — forever.
+        """
+        import datus.tools.func_tool.sub_agent_task_tool as sub_agent_module
+        from datus.cli.execution_state import InteractionBroker
+        from datus.tools.func_tool.ask_user_tools import AskUserTool
+
+        monkeypatch.setattr(sub_agent_module, "_subagent_ask_user_timeout_seconds", lambda: 7.5)
+        parent_broker = InteractionBroker()
+        node = MagicMock()
+        node.interaction_broker = InteractionBroker()
+        node.ask_user_tool = AskUserTool(broker=InteractionBroker())
+        node.hooks = None
+        node.permission_hooks = None
+        node.plan_hooks = None
+
+        task_tool._inject_broker(node, parent_broker)
+
+        assert node.ask_user_tool._broker is parent_broker
+        assert node.ask_user_tool._hitl_timeout == 7.5
+
     def test_inject_broker_updates_hooks(self, task_tool):
         """_inject_broker updates broker on hooks (e.g. PermissionHooks)."""
         from datus.cli.execution_state import InteractionBroker

@@ -285,11 +285,22 @@ class InteractionBroker:
         self._output_queue.put_nowait(action)
         logger.debug(f"InteractionBroker: send queued action_type={action_type}")
 
-    async def request(self, events: List["InteractionEvent"]) -> List[List[str]]:
-        """Request user input. Blocks until user responds.
+    async def request(
+        self,
+        events: List["InteractionEvent"],
+        timeout: Optional[float] = None,
+    ) -> List[List[str]]:
+        """Request user input. Blocks until the user responds or ``timeout`` elapses.
 
         Args:
             events: One or more InteractionEvent objects.
+            timeout: Maximum seconds to wait for a response. ``None`` (the
+                default) waits forever. A subagent must pass a finite value:
+                its question is forwarded to the parent's broker, but the user
+                may never see or answer it while another subagent is streaming.
+                Because the parent turn cannot finish until every concurrent
+                tool call returns, an unbounded wait here hangs the whole
+                ``chat/stream`` response (issue #1142).
 
         Returns:
             ``List[List[str]]`` — one inner list per event.
@@ -297,8 +308,9 @@ class InteractionBroker:
 
         Raises:
             InteractionCancelled: The question itself was cancelled — the broker
-                was closed, or the user dismissed it (ESC submits ``[[""]]``).
-                Callers turn this into a tool-level "cancelled" result.
+                was closed, the user dismissed it (ESC submits ``[[""]]``), or
+                ``timeout`` elapsed. Callers turn this into a tool-level
+                "cancelled" result.
             asyncio.CancelledError: The whole run is being cancelled. Propagates
                 untouched so the task actually dies; see the handler below.
         """
@@ -355,7 +367,22 @@ class InteractionBroker:
         logger.debug(f"InteractionBroker: request queued with action_id={action_id}")
 
         try:
-            result = await future
+            if timeout is None:
+                result = await future
+            else:
+                try:
+                    result = await asyncio.wait_for(future, timeout)
+                except asyncio.TimeoutError:
+                    # ``wait_for`` cancelled the future; drop the pending entry so
+                    # a late ``submit()`` cannot resolve a question nobody waits on.
+                    with self._lock:
+                        self._pending.pop(action_id, None)
+                    logger.warning(
+                        "InteractionBroker: action_id=%s timed out after %ss with no user response",
+                        action_id,
+                        timeout,
+                    )
+                    raise InteractionCancelled(f"Timed out waiting for user response after {timeout:g}s")
             logger.debug(f"InteractionBroker: received response for action_id={action_id}: {result}")
             return result
         except asyncio.CancelledError:
