@@ -197,8 +197,9 @@ def test_main_runs_selected_suite_and_writes_report(tmp_path, monkeypatch, run_m
 
 @pytest.mark.component
 @pytest.mark.parametrize("ci_tests,docs_exit", [(False, 0), (True, 0), (False, 1)])
+@pytest.mark.parametrize("trigger", ["explicit-base", "merge_group", "workflow_dispatch"])
 def test_documentation_gate_runs_and_records_its_required_checks(
-    ci_tests, docs_exit, tmp_path, monkeypatch, run_merge_queue_tests
+    ci_tests, docs_exit, trigger, tmp_path, monkeypatch, run_merge_queue_tests
 ):
     real_root = run_merge_queue_tests.REPO_ROOT
     out = tmp_path / "ci"
@@ -226,8 +227,10 @@ def test_documentation_gate_runs_and_records_its_required_checks(
     )
     monkeypatch.setenv("PYTHONPATH", str(real_root))
     monkeypatch.setenv("PYTEST_XDIST_AUTO_NUM_WORKERS", "2")
+    monkeypatch.setenv("GITHUB_EVENT_NAME", trigger)
     monkeypatch.delenv("PYTEST_ADDOPTS", raising=False)
-    assert run_merge_queue_tests.main(["--base-ref", "HEAD"]) == docs_exit
+    arguments = ["--base-ref", "HEAD"] if trigger == "explicit-base" else []
+    assert run_merge_queue_tests.main(arguments) == docs_exit
     report = json.loads((out / "gate-coverage.json").read_text())
     assert report["required_checks"] == ["docs-build", *(["docs-ci"] if ci_tests else [])]
     assert report["status"] == ("success" if docs_exit == 0 else "failure")

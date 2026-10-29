@@ -294,14 +294,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         choices=("acceptance-unit", "acceptance-integration"),
         help="Run one suite. Defaults to all merge queue suites.",
     )
-    parser.add_argument("--base-ref", help="Compare ref for affected merge-group tests")
+    parser.add_argument("--base-ref", help="Compare ref for the gate profile and affected tests")
     parser.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT_SECONDS, help="Per-suite timeout in seconds")
     args = parser.parse_args(argv)
 
     try:
         changed = (
             changed_files(args.base_ref)
-            if not args.suite and (args.base_ref or os.environ.get("GITHUB_EVENT_NAME") == "merge_group")
+            if not args.suite
+            and (args.base_ref or os.environ.get("GITHUB_EVENT_NAME") in {"merge_group", "workflow_dispatch"})
             else None
         )
         profile = repository_profile(changed, args.base_ref) if changed is not None else {"profile": "code"}
