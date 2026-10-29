@@ -1776,6 +1776,8 @@ execution:
       targets:
         - tests/unit_tests/agent/node/test_gen_table_agentic_node.py
         - tests/unit_tests/agent/node/test_agentic_node.py
+        - tests/unit_tests/agent/node/test_deliverable_node.py
+        - tests/unit_tests/agent/node/test_node_base.py
     - id: node-gen_visual_dashboard_agentic_node
       paths: [datus/agent/node/gen_visual_dashboard_agentic_node.py]
       targets:

@@ -101,6 +101,15 @@ def test_impact_targets_exist():
     "source,expected",
     [
         (
+            "datus/agent/node/gen_table_agentic_node.py",
+            {
+                "tests/unit_tests/agent/node/test_gen_table_agentic_node.py",
+                "tests/unit_tests/agent/node/test_agentic_node.py",
+                "tests/unit_tests/agent/node/test_deliverable_node.py",
+                "tests/unit_tests/agent/node/test_node_base.py",
+            },
+        ),
+        (
             "datus/mcp_server.py",
             {
                 "tests/unit_tests/test_mcp_server.py",
