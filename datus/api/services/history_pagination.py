@@ -16,7 +16,6 @@ from typing import TYPE_CHECKING, Any, Optional
 
 from datus.api.models.cli_models import ChatHistoryPageData
 from datus.models.session_manager import SessionManager, extract_user_input, is_compact_resume_text
-from datus.utils.config_utils import coerce_positive_int
 
 if TYPE_CHECKING:
     from datus.api.services.chat_service import ChatService
@@ -238,11 +237,10 @@ def get_history_page(
     limit: Optional[int],
     cursor: Optional[str],
     turn: Optional[int] = None,
+    inline_chars: int = 8000,
 ):
-    config = getattr(service.agent_config, "api_config", {}) or {}
-    max_turns = min(coerce_positive_int(config.get("max_history_turns"), 50), 100)
-    page_size = min(coerce_positive_int(limit, coerce_positive_int(config.get("default_history_turns"), 10)), max_turns)
-    inline_limit = min(coerce_positive_int(config.get("history_inline_chars"), 8000), 16000)
+    page_size = limit if limit is not None else 10
+    inline_limit = inline_chars
     manager = SessionManager(session_dir=service._session_dir, scope=user_id)
     try:
         window, has_more, next_cursor, total_turns, turns = _window(manager, session_id, page_size, cursor, turn)

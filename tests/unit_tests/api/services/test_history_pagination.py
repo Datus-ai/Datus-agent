@@ -255,6 +255,24 @@ def test_http_history_page_and_content_are_scoped_validated_and_uncached(history
         assert (
             client.get("/api/v1/chat/history/page", params={"session_id": "chat_http", "limit": 101}).status_code == 422
         )
+        custom = client.get(
+            "/api/v1/chat/history/page", params={"session_id": "chat_http", "limit": 1, "inline_chars": 64}
+        )
+        assert custom.status_code == 200
+        preview = next(
+            p["payload"]["result"]["historyContent"]["preview"]
+            for m in custom.json()["data"]["messages"]
+            for p in m["content"]
+            if p["type"] == "call-tool-result"
+        )
+        assert preview == "x" * 64
+        for size in (0, 16001):
+            assert (
+                client.get(
+                    "/api/v1/chat/history/page", params={"session_id": "chat_http", "inline_chars": size}
+                ).status_code
+                == 422
+            )
         assert client.get("/api/v1/chat/history/content", params={**params, "session_id": "other"}).status_code == 400
         app.dependency_overrides[get_app_context] = lambda: SimpleNamespace(user_id="bob")
         assert client.get("/api/v1/chat/history/content", params=params).status_code == 404
@@ -354,3 +372,11 @@ def test_subagent_offsets_count_each_output_once_and_only_use_prior_calls_in_the
     )
     manager = SessionManager(session_dir=_service._session_dir, scope="alice")
     assert subagent_run_offsets(manager, "chat_offsets", start_id) == {"gen_job_session_child": 1}
+
+
+def test_client_requested_page_size_can_exceed_fifty_turns(history):
+    service, write = history
+    write("chat_custom_size", [message for number in range(61) for message in turn(number)])
+    page = get_history_page(service, "chat_custom_size", "alice", 60, None)
+    assert questions(page) == [f"question {number}" for number in range(1, 61)]
+    assert page.has_more

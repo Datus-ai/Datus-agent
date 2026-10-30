@@ -151,7 +151,8 @@ pkill -f "datus/api/server.py"
 `GET /api/v1/chat/history/page?session_id=...` returns the latest 10 complete
 persisted user turns, ordered oldest to newest. Pass `next_cursor` back as
 `cursor` to read earlier turns; `has_more` indicates whether another page exists.
-`limit` may be supplied (1–100, clamped to the configured server maximum).
+Clients supply `limit` (1–100, default 10) and `inline_chars` (1–16000, default
+8000) per request to control page size and tool-content preview length.
 `total_turns` reports the global count; `turns` contains this page's user-message
 IDs, one-based global indices, and short question previews. Tool-result-only
 user records and synthetic compact-resume instructions do not count as turns.
@@ -176,6 +177,6 @@ cache or new database migration is required. Changed or removed content returns
 execution; live resumed calls still follow the existing tool review flow.
 
 The legacy `/api/v1/chat/history` endpoint retains its full-history contract.
-Under `agent.api`, configure `default_history_turns` (10), `max_history_turns`
-(50), and `history_inline_chars` (8000). These settings affect browser transport,
-not the model's context or persisted session contents.
+The browser sends page size and preview length; no Agent YAML configuration is
+needed. These request parameters affect browser transport, not the model's
+context or persisted session contents.

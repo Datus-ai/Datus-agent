@@ -455,10 +455,6 @@ agent:
       - ./skills
 
   api:
-    # Browser transport limits only; these do not change the model context.
-    default_history_turns: 10
-    max_history_turns: 50
-    history_inline_chars: 8000
     # Bounds on the HTTP API's datasource access. All three exist because a
     # single metadata or SQL round-trip can run for seconds on a real warehouse,
     # and these requests run on a shared thread pool.

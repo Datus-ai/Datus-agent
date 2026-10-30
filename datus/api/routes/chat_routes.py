@@ -398,15 +398,16 @@ async def get_chat_history_page(
     svc: ServiceDep,
     ctx: AppContextDep,
     session_id: str = Query(...),
-    limit: Optional[int] = Query(None, ge=1, le=100),
+    limit: int = Query(10, ge=1, le=100),
     cursor: Optional[str] = Query(None, max_length=2048),
     turn: Optional[int] = Query(None, ge=1),
+    inline_chars: int = Query(8000, ge=1, le=16000),
 ) -> Result[ChatHistoryPageData]:
     from datus.api.services.history_pagination import HistoryChangedError, get_history_page
 
     try:
         data = await asyncio.wait_for(
-            asyncio.to_thread(get_history_page, svc.chat, session_id, ctx.user_id, limit, cursor, turn),
+            asyncio.to_thread(get_history_page, svc.chat, session_id, ctx.user_id, limit, cursor, turn, inline_chars),
             timeout=_FUSE_IO_TIMEOUT,
         )
         return Result(success=True, data=data)
