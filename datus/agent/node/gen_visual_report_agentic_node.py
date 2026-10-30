@@ -5,8 +5,7 @@
 """
 GenVisualReportAgenticNode — visualizable report generation.
 
-Replacement track for the legacy ``gen_report`` subagent. Instead of
-returning a Markdown blob, this node produces a React-JSX report artifact
+This node produces a React-JSX report artifact
 under ``<project_root>/reports/<slug>/``:
 
 * ``render/app.jsx`` — the React entry module the LLM authors (default export);

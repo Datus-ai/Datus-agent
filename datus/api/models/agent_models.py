@@ -42,7 +42,7 @@ class CreateAgentInput(BaseModel):
         ),
     )
     type: str = Field(
-        default="gen_sql", description="Node class: gen_sql / gen_report / ask_report / ask_dashboard / ..."
+        default="gen_sql", description="Node class: gen_sql / gen_visual_report / ask_report / ask_dashboard / ..."
     )
     artifact_slug: Optional[str] = Field(
         default=None,

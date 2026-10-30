@@ -55,6 +55,14 @@ def test_merge_group_expands_fixed_suites_with_shared_impact_selection(run_merge
     assert {"tests/unit_tests/models/", "tests/unit_tests/observability/", "tests/unit_tests/validation/"} <= targets
 
 
+def test_merge_group_uses_the_same_leaf_owners_as_prs(run_merge_queue_tests):
+    from ci.harness.test_plan import unit_test_plan
+
+    changed = ["datus/mcp_server.py", "datus/cli/language_commands.py"]
+    suite = run_merge_queue_tests.suite_definitions(changed)["impacted-unit"]
+    assert suite["targets"] == unit_test_plan(changed)["targets"]
+
+
 def test_build_pytest_command_includes_marker_junit_and_extra_args(tmp_path, run_merge_queue_tests):
     junit_xml = tmp_path / "results.xml"
 

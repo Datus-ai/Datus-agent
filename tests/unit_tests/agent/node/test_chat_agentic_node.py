@@ -1996,7 +1996,7 @@ class TestChatAgenticNodeNoSchedulerTools:
 class TestChatAgenticNodeHonoursConfiguredTools:
     """`ChatAgenticNode` was the one agentic node class that ignored `tools`.
 
-    The five others (gen_sql, gen_report, ask_metrics, and the two artifact
+    The five others (gen_sql, gen_visual_report, ask_metrics, and the two artifact
     bases) read `node_config.get("tools")` and build only what it names. Chat
     mounted every family unconditionally, so a host that publishes a chat
     sub-agent and strips write-capable tools from that list got no effect from

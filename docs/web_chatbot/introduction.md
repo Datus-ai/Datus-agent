@@ -57,10 +57,9 @@ Access specialized subagents for different tasks directly from the web interface
 The available list comes from built-in subagents plus any custom entries under `agent.agentic_nodes` for the current database. Common examples include:
 
 - `gen_sql`
-- `gen_report`
+- `gen_visual_report`
 - `semantic_modeling`
-- `gen_dashboard`
-- `scheduler`
+- `gen_visual_dashboard`
 
 **How to Use**:
 

@@ -333,7 +333,7 @@ superset_world_bank_s
 superset_world_bank_s_attribution
 ```
 
-主节点使用内置 `gen_sql` 行为，归因节点使用内置 `gen_report` 行为。两个节点共享相同的 `superset-pg` 成功 scoped context，并使用对应的内置 prompt templates。
+主节点使用内置 `gen_sql` 行为，归因节点使用内置 `gen_visual_report` 行为。两个节点共享相同的 `superset-pg` 成功 scoped context，并使用对应的内置 prompt templates。
 
 成功的最终报告类似：
 

@@ -1421,18 +1421,673 @@ execution:
     - tests/integration/api/test_chat_acceptance.py::test_chat_http_sql_multiturn_history_and_delete
     - tests/integration/api/test_chat_acceptance.py::test_chat_history_is_isolated_by_user
     - tests/integration/api/test_chat_acceptance.py::test_stop_releases_session_for_the_next_request
+  unit_rules:
+    - id: datus-agent-node
+      paths:
+        - datus/agent/node/
+      targets:
+        - tests/unit_tests/agent/
+        - tests/unit_tests/api/
+        - tests/unit_tests/cli/
+        - tests/unit_tests/models/
+        - tests/unit_tests/storage/
+        - tests/unit_tests/tools/
+        - tests/unit_tests/utils/
+      rationale: Node factories, inheritance and shared session/result hooks require package-level coverage.
+    - id: datus-agent
+      paths:
+        - datus/agent/
+      targets:
+        - tests/unit_tests/agent/
+        - tests/unit_tests/api/
+        - tests/unit_tests/cli/
+        - tests/unit_tests/configuration/
+        - tests/unit_tests/models/
+        - tests/unit_tests/storage/
+        - tests/unit_tests/test_main.py
+        - tests/unit_tests/tools/
+        - tests/unit_tests/utils/
+    - id: datus-api-auth
+      paths:
+        - datus/api/auth/
+      targets:
+        - tests/unit_tests/api/
+    - id: datus-api-hooks
+      paths:
+        - datus/api/hooks/
+      targets:
+        - tests/unit_tests/api/
+    - id: datus-api-models
+      paths:
+        - datus/api/models/
+      targets:
+        - tests/unit_tests/agent/node/test_gen_visual_report_agentic_node.py
+        - tests/unit_tests/api/
+        - tests/unit_tests/gateway/
+        - tests/unit_tests/tools/
+    - id: datus-api-routes
+      paths:
+        - datus/api/routes/
+      targets:
+        - tests/unit_tests/api/
+    - id: datus-api-services
+      paths:
+        - datus/api/services/
+      targets:
+        - tests/unit_tests/agent/
+        - tests/unit_tests/api/
+        - tests/unit_tests/configuration/
+        - tests/unit_tests/models/
+        - tests/unit_tests/tools/
+    - id: datus-api-utils
+      paths: [datus/api/utils/]
+      targets: [tests/unit_tests/api/utils/]
+    - id: datus-api
+      paths:
+        - datus/api/
+      targets:
+        - tests/unit_tests/agent/
+        - tests/unit_tests/api/
+        - tests/unit_tests/configuration/
+        - tests/unit_tests/gateway/
+        - tests/unit_tests/models/
+        - tests/unit_tests/tools/
+        - tests/unit_tests/utils/
+    - id: datus-auth
+      paths:
+        - datus/auth/
+      targets:
+        - tests/unit_tests/auth/
+        - tests/unit_tests/cli/
+        - tests/unit_tests/models/
+    - id: datus-cli-action_display
+      paths:
+        - datus/cli/action_display/
+      targets:
+        - tests/unit_tests/cli/
+    - id: datus-cli-screen
+      paths: [datus/cli/screen/]
+      targets: [tests/unit_tests/cli/screen/]
+    - id: datus-cli-tui
+      paths:
+        - datus/cli/tui/
+      targets:
+        - tests/unit_tests/cli/
+    - id: datus-cli-web
+      paths:
+        - datus/cli/web/
+      targets:
+        - tests/unit_tests/cli/
+        - tests/unit_tests/configuration/
+    - id: datus-cli
+      paths:
+        - datus/cli/
+      targets:
+        - tests/unit_tests/agent/
+        - tests/unit_tests/api/
+        - tests/unit_tests/cli/
+        - tests/unit_tests/configuration/
+        - tests/unit_tests/models/
+        - tests/unit_tests/test_main.py
+        - tests/unit_tests/tools/
+        - tests/unit_tests/utils/
+    - id: datus-conf
+      paths: [datus/conf/]
+      targets: [tests/unit_tests/configuration/]
+    - id: datus-configuration
+      paths:
+        - datus/configuration/
+      targets:
+        - tests/unit_tests/
+      fallback: true
+      rationale: Configuration types and package exports are shared by every runtime layer.
+    - id: datus-gateway
+      paths:
+        - datus/gateway/
+      targets:
+        - tests/unit_tests/configuration/
+        - tests/unit_tests/gateway/
+        - tests/unit_tests/utils/
+    - id: datus-models
+      paths:
+        - datus/models/
+      targets:
+        - tests/unit_tests/agent/node/
+        - tests/unit_tests/api/
+        - tests/unit_tests/cli/
+        - tests/unit_tests/models/
+        - tests/unit_tests/observability/
+        - tests/unit_tests/test_saas_adaptation.py
+        - tests/unit_tests/tools/
+        - tests/unit_tests/utils/
+    - id: datus-observability
+      paths:
+        - datus/observability/
+      targets:
+        - tests/unit_tests/agent/
+        - tests/unit_tests/api/
+        - tests/unit_tests/models/
+        - tests/unit_tests/observability/
+        - tests/unit_tests/utils/
+    - id: datus-prompts
+      paths:
+        - datus/prompts/
+      targets:
+        - tests/unit_tests/agent/node/
+        - tests/unit_tests/configuration/
+        - tests/unit_tests/prompts/
+    - id: datus-schemas
+      paths:
+        - datus/schemas/
+      targets:
+        - tests/unit_tests/
+      fallback: true
+      rationale: Shared payloads and package re-exports cross runtime boundaries; file-level independence is not established.
+    - id: datus-storage-document
+      paths:
+        - datus/storage/document/
+      targets:
+        - tests/unit_tests/api/
+        - tests/unit_tests/storage/
+        - tests/unit_tests/tools/
+    - id: datus-storage-feedback
+      paths: [datus/storage/feedback/]
+      targets: [tests/unit_tests/storage/feedback/]
+    - id: datus-storage-metric
+      paths:
+        - datus/storage/metric/
+      targets:
+        - tests/unit_tests/agent/
+        - tests/unit_tests/api/
+        - tests/unit_tests/storage/
+        - tests/unit_tests/test_saas_adaptation.py
+    - id: datus-storage-rdb
+      paths:
+        - datus/storage/rdb/
+      targets:
+        - tests/unit_tests/ci/
+        - tests/unit_tests/configuration/
+        - tests/unit_tests/storage/
+    - id: datus-storage-reference_sql
+      paths:
+        - datus/storage/reference_sql/
+      targets:
+        - tests/unit_tests/agent/
+        - tests/unit_tests/api/
+        - tests/unit_tests/cli/
+        - tests/unit_tests/storage/
+        - tests/unit_tests/test_saas_adaptation.py
+        - tests/unit_tests/tools/
+    - id: datus-storage-schema_metadata
+      paths:
+        - datus/storage/schema_metadata/
+      targets:
+        - tests/unit_tests/agent/
+        - tests/unit_tests/cli/
+        - tests/unit_tests/storage/
+    - id: datus-storage-semantic_model
+      paths:
+        - datus/storage/semantic_model/
+      targets:
+        - tests/unit_tests/api/
+        - tests/unit_tests/cli/
+        - tests/unit_tests/storage/
+        - tests/unit_tests/test_saas_adaptation.py
+        - tests/unit_tests/tools/
+    - id: datus-storage-task
+      paths:
+        - datus/storage/task/
+      targets:
+        - tests/unit_tests/api/
+        - tests/unit_tests/storage/task/
+    - id: datus-storage-vector
+      paths:
+        - datus/storage/vector/
+      targets:
+        - tests/unit_tests/storage/
+    - id: datus-storage
+      paths:
+        - datus/storage/
+      targets:
+        - tests/unit_tests/agent/
+        - tests/unit_tests/api/
+        - tests/unit_tests/ci/
+        - tests/unit_tests/cli/
+        - tests/unit_tests/configuration/
+        - tests/unit_tests/models/
+        - tests/unit_tests/storage/
+        - tests/unit_tests/test_saas_adaptation.py
+        - tests/unit_tests/tools/
+    - id: datus-tools-bi_tools
+      paths:
+        - datus/tools/bi_tools/
+      targets:
+        - tests/unit_tests/cli/
+        - tests/unit_tests/tools/bi_tools/
+    - id: datus-tools-date_tools
+      paths: [datus/tools/date_tools/]
+      targets: [tests/unit_tests/tools/date_tools/]
+    - id: datus-tools-func_tool
+      paths:
+        - datus/tools/func_tool/
+      targets:
+        - tests/unit_tests/agent/
+        - tests/unit_tests/api/
+        - tests/unit_tests/cli/
+        - tests/unit_tests/configuration/
+        - tests/unit_tests/models/
+        - tests/unit_tests/plugins/
+        - tests/unit_tests/schemas/
+        - tests/unit_tests/storage/
+        - tests/unit_tests/test_mcp_server.py
+        - tests/unit_tests/test_real_agent_config_sqlite_fixture.py
+        - tests/unit_tests/tools/
+        - tests/unit_tests/utils/
+        - tests/unit_tests/validation/
+    - id: datus-tools-llms_tools
+      paths:
+        - datus/tools/llms_tools/
+      targets:
+        - tests/unit_tests/api/
+        - tests/unit_tests/tools/llms_tools/
+    - id: datus-tools-output_tools
+      paths: [datus/tools/output_tools/]
+      targets: [tests/unit_tests/tools/output_tools/]
+    - id: datus-tools-proxy
+      paths:
+        - datus/tools/proxy/
+      targets:
+        - tests/unit_tests/agent/
+        - tests/unit_tests/api/
+        - tests/unit_tests/cli/
+        - tests/unit_tests/tools/
+    - id: datus-tools-registry
+      paths:
+        - datus/tools/registry/
+      targets:
+        - tests/unit_tests/agent/
+        - tests/unit_tests/api/
+        - tests/unit_tests/cli/
+        - tests/unit_tests/models/
+        - tests/unit_tests/tools/
+    - id: datus-tools-search_tools
+      paths:
+        - datus/tools/search_tools/
+      targets:
+        - tests/unit_tests/tools/
+    - id: datus-tools-semantic_tools
+      paths:
+        - datus/tools/semantic_tools/
+      targets:
+        - tests/unit_tests/agent/
+        - tests/unit_tests/api/
+        - tests/unit_tests/ci/
+        - tests/unit_tests/tools/
+    - id: datus-tools-skill_tools
+      paths:
+        - datus/tools/skill_tools/
+      targets:
+        - tests/unit_tests/agent/
+        - tests/unit_tests/cli/
+        - tests/unit_tests/tools/skill_tools/
+        - tests/unit_tests/validation/
+    - id: datus-tools
+      paths:
+        - datus/tools/
+      targets:
+        - tests/unit_tests/agent/
+        - tests/unit_tests/api/
+        - tests/unit_tests/ci/
+        - tests/unit_tests/cli/
+        - tests/unit_tests/configuration/
+        - tests/unit_tests/models/
+        - tests/unit_tests/plugins/
+        - tests/unit_tests/schemas/
+        - tests/unit_tests/storage/
+        - tests/unit_tests/test_mcp_server.py
+        - tests/unit_tests/test_real_agent_config_sqlite_fixture.py
+        - tests/unit_tests/test_saas_adaptation.py
+        - tests/unit_tests/tools/
+        - tests/unit_tests/utils/
+        - tests/unit_tests/validation/
+    - id: datus-utils
+      paths:
+        - datus/utils/
+      targets:
+        - tests/unit_tests/agent/
+        - tests/unit_tests/api/
+        - tests/unit_tests/auth/
+        - tests/unit_tests/cli/
+        - tests/unit_tests/configuration/
+        - tests/unit_tests/gateway/
+        - tests/unit_tests/models/
+        - tests/unit_tests/observability/
+        - tests/unit_tests/plugins/
+        - tests/unit_tests/prompts/
+        - tests/unit_tests/schemas/
+        - tests/unit_tests/storage/
+        - tests/unit_tests/test_mcp_server.py
+        - tests/unit_tests/test_saas_adaptation.py
+        - tests/unit_tests/tools/
+        - tests/unit_tests/utils/
+        - tests/unit_tests/validation/
+    - id: datus-validation
+      paths:
+        - datus/validation/
+      targets:
+        - tests/unit_tests/agent/
+        - tests/unit_tests/validation/
+    - id: ci
+      paths: [ci/, .github/workflows/]
+      targets: [tests/unit_tests/ci/]
+    - id: datus
+      paths: [datus/]
+      targets: [tests/unit_tests/]
+      fallback: true
+      rationale: Unknown runtime modules retain full unit coverage until an owner is added.
+    - id: shared-test-infrastructure
+      paths:
+        - tests/conftest.py
+        - tests/helpers/
+        - tests/conf/
+        - tests/data/
+        - pytest.ini
+      targets: [tests/unit_tests/]
+      rationale: Shared fixtures, test configuration and datasets can affect every unit package.
+    - id: dependencies
+      paths:
+        - pyproject.toml
+        - uv.lock
+        - requirements.txt
+        - requirements-test.txt
+      targets: [tests/unit_tests/]
+      rationale: Dependency and pytest configuration changes affect all runtime contracts.
+    - id: runtime-config
+      paths:
+        - conf/
+        - datus/configuration/agent_config.py
+        - datus/configuration/agent_config_loader.py
+      targets:
+        - tests/unit_tests/
+      fallback: true
+      rationale: Runtime configuration, loading and overrides affect all agent, API, CLI, storage and model consumers.
+    - id: mcp-runtime
+      paths:
+        - datus/mcp_server.py
+        - datus/utils/mcp_decorators.py
+        - datus/utils/mcp_execution.py
+      targets:
+        - tests/unit_tests/api/services/test_mcp_service.py
+        - tests/unit_tests/test_mcp_server.py
+        - tests/unit_tests/tools/mcp_tools/
+        - tests/unit_tests/utils/test_mcp_decorators.py
+        - tests/unit_tests/utils/test_mcp_execution.py
+        - tests/unit_tests/utils/test_windows_compatibility.py
+    - id: entrypoints
+      paths:
+        - datus/entrypoints.py
+        - datus/utils/multiprocessing_utils.py
+      targets:
+        - tests/unit_tests/
+      fallback: true
+      rationale: Console entrypoints and multiprocessing policy initialize shared process state across application surfaces.
+    - id: agent-main
+      paths:
+        - datus/main.py
+      targets:
+        - tests/unit_tests/
+      fallback: true
+      rationale: The process entrypoint wires shared initialization and dispatches into every agent surface.
+    - id: benchmark-main
+      paths: [datus/multi_round_benchmark.py]
+      targets: [tests/unit_tests/test_multi_round_benchmark.py]
+    - id: plugins
+      paths:
+        - datus/plugins/
+      targets:
+        - tests/unit_tests/agent/
+        - tests/unit_tests/cli/
+        - tests/unit_tests/configuration/
+        - tests/unit_tests/plugins/
+        - tests/unit_tests/tools/
+    - id: shared-plugin-registry
+      paths:
+        - datus/plugins/base.py
+        - datus/plugins/registry.py
+        - datus/plugins/activation.py
+        - datus/plugins/runtime_context.py
+      targets: [tests/unit_tests/]
+      rationale: Plugin registration and activation configure process-wide policy and runtime behavior.
+    - id: logging
+      paths:
+        - datus/configuration/logging_config.py
+        - datus/utils/loggings.py
+      targets:
+        - tests/unit_tests/agent/node/test_node.py
+        - tests/unit_tests/agent/node/test_schema_linking.py
+        - tests/unit_tests/configuration/test_logging_config.py
+        - tests/unit_tests/observability/test_capability_evidence.py
+        - tests/unit_tests/observability/test_privacy.py
+        - tests/unit_tests/schemas/test_input_result.py
+        - tests/unit_tests/storage/test_storage.py
+        - tests/unit_tests/test_saas_adaptation.py
+        - tests/unit_tests/tools/func_tool/test_read_image.py
+        - tests/unit_tests/utils/test_loggings.py
+    - id: ssl
+      paths:
+        - datus/utils/ssl_utils.py
+      targets:
+        - tests/unit_tests/tools/db_tools/test_db_manager.py
+        - tests/unit_tests/utils/test_ssl_utils.py
+    - id: image-content
+      paths:
+        - datus/utils/image_content.py
+      targets:
+        - tests/unit_tests/models/test_image_model_roundtrip.py
+        - tests/unit_tests/models/test_request_capacity.py
+        - tests/unit_tests/tools/func_tool/test_read_image.py
+        - tests/unit_tests/tools/mcp_tools/test_mcp_registration.py
+    - id: mcp-api
+      paths:
+        - datus/api/services/mcp_service.py
+        - datus/api/models/mcp_models.py
+        - datus/api/routes/mcp_routes.py
+      targets:
+        - tests/unit_tests/api/services/test_datus_service.py
+        - tests/unit_tests/api/services/test_mcp_service.py
+        - tests/unit_tests/api/services/test_services_init.py
+        - tests/unit_tests/test_mcp_server.py
+    - id: cli-styles
+      paths:
+        - datus/cli/cli_styles.py
+      targets:
+        - tests/unit_tests/cli/screen/
+        - tests/unit_tests/cli/test_cli_styles.py
+        - tests/unit_tests/cli/test_language_app.py
+        - tests/unit_tests/cli/test_list_selector_app.py
+        - tests/unit_tests/cli/tui/
+    - id: cli-language
+      paths:
+        - datus/cli/language_commands.py
+        - datus/cli/language_app.py
+      targets:
+        - tests/unit_tests/cli/test_language_app.py
+        - tests/unit_tests/cli/test_language_commands.py
+    - id: mcp-model-results
+      paths:
+        - datus/models/mcp_result_extractors.py
+        - datus/models/mcp_utils.py
+      targets:
+        - tests/unit_tests/models/test_mcp_result_extractors.py
+        - tests/unit_tests/models/test_mcp_utils.py
+        - tests/unit_tests/tools/mcp_tools/
+    - id: model-runtime
+      paths:
+        - datus/models/base.py
+        - datus/models/openai_compatible.py
+        - datus/models/litellm_adapter.py
+        - datus/models/sdk_patches.py
+        - datus/models/observed_model.py
+      targets:
+        - tests/unit_tests/agent/node/
+        - tests/unit_tests/models/
+        - tests/unit_tests/observability/
+        - tests/unit_tests/tools/
+    - id: reference-templates
+      paths:
+        - datus/tools/func_tool/reference_template_tools.py
+        - datus/storage/reference_template/
+      targets:
+        - tests/unit_tests/agent/node/test_chat_agentic_node.py
+        - tests/unit_tests/agent/node/test_gen_sql_agentic_node.py
+        - tests/unit_tests/agent/node/test_sql_summary_agentic_node.py
+        - tests/unit_tests/agent/node/test_tool_category_maps.py
+        - tests/unit_tests/storage/reference_template/
+        - tests/unit_tests/test_mcp_server.py
+        - tests/unit_tests/tools/func_tool/test_reference_template_tools.py
+    - id: database-connectors
+      paths:
+        - datus/tools/db_tools/
+      targets:
+        - tests/unit_tests/agent/
+        - tests/unit_tests/api/
+        - tests/unit_tests/cli/
+        - tests/unit_tests/storage/
+        - tests/unit_tests/test_saas_adaptation.py
+        - tests/unit_tests/tools/
+        - tests/unit_tests/utils/
+        - tests/unit_tests/validation/
+    - id: mcp-clients
+      paths:
+        - datus/tools/mcp_tools/
+      targets:
+        - tests/unit_tests/agent/node/test_agentic_node.py
+        - tests/unit_tests/agent/node/test_chat_agentic_node.py
+        - tests/unit_tests/agent/node/test_gen_sql_agentic_node.py
+        - tests/unit_tests/models/test_mcp_utils.py
+        - tests/unit_tests/tools/mcp_tools/
+    - id: permissions
+      paths:
+        - datus/tools/permission/
+      targets:
+        - tests/unit_tests/agent/
+        - tests/unit_tests/api/
+        - tests/unit_tests/cli/
+        - tests/unit_tests/configuration/
+        - tests/unit_tests/models/
+        - tests/unit_tests/tools/
+    - id: chat-lifecycle
+      paths:
+        - datus/api/services/chat_task_manager.py
+        - datus/api/services/chat_service.py
+        - datus/api/routes/chat_routes.py
+        - datus/cli/chat_commands.py
+      targets:
+        - tests/unit_tests/api/
+        - tests/unit_tests/cli/
+    - id: skill-payloads
+      paths:
+        - datus/resources/skills/
+      targets:
+        - tests/unit_tests/agent/node/test_agentic_node_skills.py
+        - tests/unit_tests/agent/node/test_skill_creator_agentic_node.py
+        - tests/unit_tests/tools/skill_tools/
+    - id: datasource-skill
+      paths: [datus/resources/skills/gen-datasource/]
+      targets:
+        - tests/unit_tests/tools/skill_tools/test_gen_datasource_bundle.py
+        - tests/unit_tests/tools/skill_tools/test_gen_datasource_engine.py
+    - id: sql-classification
+      paths:
+        - datus/utils/sql_utils.py
+      targets:
+        - tests/unit_tests/agent/node/test_gen_sql_agentic_node.py
+        - tests/unit_tests/api/services/test_cli_service_policy.py
+        - tests/unit_tests/tools/func_tool/test_database.py
+        - tests/unit_tests/tools/func_tool/test_hana_adapter.py
+        - tests/unit_tests/tools/permission/
+        - tests/unit_tests/tools/test_sql_guard.py
+        - tests/unit_tests/utils/test_adapter_sql_analysis.py
+        - tests/unit_tests/utils/test_sql_utils.py
+    - id: filesystem-paths
+      paths:
+        - datus/utils/path_utils.py
+        - datus/utils/path_manager.py
+      targets:
+        - tests/unit_tests/agent/node/test_agentic_node_persistence.py
+        - tests/unit_tests/agent/node/test_compact_archive_paths.py
+        - tests/unit_tests/api/
+        - tests/unit_tests/cli/
+        - tests/unit_tests/configuration/
+        - tests/unit_tests/models/
+        - tests/unit_tests/plugins/
+        - tests/unit_tests/prompts/
+        - tests/unit_tests/storage/
+        - tests/unit_tests/test_saas_adaptation.py
+        - tests/unit_tests/tools/
+        - tests/unit_tests/utils/
+    - id: shared-schema-contracts
+      paths:
+        - datus/schemas/base.py
+        - datus/schemas/node_models.py
+        - datus/schemas/agent_models.py
+        - datus/schemas/action_history.py
+      targets: [tests/unit_tests/]
+      rationale: Shared payloads and scope models cross tool, storage, agent, API and CLI boundaries.
+    - id: shared-runtime-types
+      paths:
+        - datus/utils/constants.py
+        - datus/utils/exceptions.py
+      targets: [tests/unit_tests/]
+      rationale: Runtime enums and exceptions are public contracts used throughout the application.
+    - id: database-execution
+      paths:
+        - datus/tools/func_tool/database.py
+      targets:
+        - tests/unit_tests/agent/node/
+        - tests/unit_tests/api/services/test_database_service.py
+        - tests/unit_tests/cli/test_chat_commands.py
+        - tests/unit_tests/test_mcp_server.py
+        - tests/unit_tests/test_real_agent_config_sqlite_fixture.py
+        - tests/unit_tests/tools/
+        - tests/unit_tests/utils/
+    - id: tool-framework
+      paths:
+        - datus/tools/func_tool/base.py
+      targets:
+        - tests/unit_tests/agent/node/
+        - tests/unit_tests/api/
+        - tests/unit_tests/cli/
+        - tests/unit_tests/models/
+        - tests/unit_tests/schemas/
+        - tests/unit_tests/storage/
+        - tests/unit_tests/test_mcp_server.py
+        - tests/unit_tests/tools/
+        - tests/unit_tests/utils/
+        - tests/unit_tests/validation/
+    - id: storage-framework
+      paths:
+        - datus/storage/base.py
+        - datus/storage/registry.py
+        - datus/storage/backend_holder.py
+        - datus/storage/storage_cfg.py
+      targets:
+        - tests/unit_tests/agent/node/
+        - tests/unit_tests/api/
+        - tests/unit_tests/cli/
+        - tests/unit_tests/configuration/
+        - tests/unit_tests/storage/
+        - tests/unit_tests/test_saas_adaptation.py
+        - tests/unit_tests/tools/func_tool/
   impact_rules:
     - id: model-runtime
       paths: [datus/models/, conf/, pyproject.toml, uv.lock]
-      unit_targets: [tests/unit_tests/models/, tests/unit_tests/observability/, tests/unit_tests/agent/node/]
       live_targets: [tests/integration/agent/test_core_live.py]
     - id: agent-runtime
       paths: [datus/agent/, datus/prompts/, datus/resources/skills/]
-      unit_targets: [tests/unit_tests/agent/, tests/unit_tests/models/]
       live_targets: [tests/integration/agent/test_core_live.py]
     - id: tools-and-context
       paths: [datus/tools/, datus/storage/, datus/utils/, datus/configuration/]
-      unit_targets: [tests/unit_tests/tools/, tests/unit_tests/agent/node/]
       live_targets: [tests/integration/agent/test_core_live.py]
     - id: storage-backends
       paths:
@@ -1450,11 +2105,9 @@ execution:
       nightly_groups: [P0 PostgreSQL Agent Storage Contracts]
     - id: chat-lifecycle
       paths: [datus/api/, datus/cli/, datus/schemas/, tests/integration/api/test_api_chat.py]
-      unit_targets: [tests/unit_tests/api/, tests/unit_tests/cli/]
       live_targets: [tests/integration/agent/test_core_live.py, tests/integration/api/test_api_chat.py]
     - id: ci-selection
       paths: [ci/, .github/workflows/]
-      unit_targets: [tests/unit_tests/ci/]
     - id: node-semantic_modeling
       paths: [datus/agent/node/semantic_modeling_agentic_node.py, tests/integration/agent/test_semantic_modeling_agentic.py]
       live_targets: [tests/integration/agent/test_semantic_modeling_agentic.py]

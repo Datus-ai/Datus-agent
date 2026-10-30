@@ -11,6 +11,7 @@ from datus.configuration.agent_config_loader import ConfigurationManager
 from datus.prompts.prompt_manager import PromptManager
 from datus.schemas.agent_models import SubAgentConfig
 from datus.utils.loggings import get_logger
+from datus.utils.node_utils import validate_node_class
 
 logger = get_logger(__name__)
 
@@ -53,6 +54,7 @@ class SubAgentManager:
             previous_name: Existing agent name when updating/renaming.
         """
 
+        validate_node_class(config.node_class, config.system_prompt)
         agents = dict(self.list_agents())
         previous_config: Optional[Dict[str, Any]] = None
         previous_key = previous_name or config.system_prompt
@@ -105,9 +107,7 @@ class SubAgentManager:
     def _write_prompt_template(self, config: SubAgentConfig) -> str:
         # Select source template based on node_class
         node_class = config.node_class or "gen_sql"
-        if node_class == "gen_report":
-            source_template = "gen_report_system"
-        elif node_class == "gen_visual_report":
+        if node_class == "gen_visual_report":
             source_template = "gen_visual_report_system"
         elif node_class == "gen_visual_dashboard":
             source_template = "gen_visual_dashboard_system"
