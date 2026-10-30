@@ -7,7 +7,12 @@ from types import SimpleNamespace
 import pytest
 
 from datus.api.services.chat_service import ChatService
-from datus.api.services.history_pagination import HistoryChangedError, get_history_content, get_history_page
+from datus.api.services.history_pagination import (
+    HistoryChangedError,
+    get_history_content,
+    get_history_page,
+    subagent_run_offsets,
+)
 from datus.models.session_manager import SessionManager
 
 
@@ -317,3 +322,35 @@ def test_shared_provider_response_ids_still_produce_distinct_stable_history_ids(
     ids = [message.message_id for message in first.messages]
     assert len(ids) == len(set(ids))
     assert ids == [message.message_id for message in second.messages]
+
+
+def test_subagent_offsets_count_each_output_once_and_only_use_prior_calls_in_the_same_session(history):
+    _service, write = history
+    task_call = {"type": "function_call", "call_id": "prior", "name": "task", "arguments": "{}"}
+    path = write(
+        "chat_offsets",
+        [
+            task_call,
+            task_call,
+            tool("prior", "task", {"session_id": "gen_job_session_child"})[1],
+            *tool("sql", "execute_sql", {"session_id": "gen_job_session_ignored"}),
+            tool("future", "task", {"session_id": "gen_job_session_future"})[1],
+            tool("foreign", "task", {"session_id": "gen_job_session_foreign"})[1],
+        ],
+    )
+    with sqlite3.connect(path) as conn:
+        for row in tool("foreign", "task", {"session_id": "gen_job_session_foreign"}):
+            conn.execute(
+                "INSERT INTO agent_messages(session_id,message_data,created_at) VALUES(?,?,?)",
+                ("other_session", json.dumps(row), "2026-10-30 01:00:00"),
+            )
+        start_id = conn.execute("SELECT MAX(id)+1 FROM agent_messages").fetchone()[0]
+    write(
+        "chat_offsets",
+        [
+            {**task_call, "call_id": "future"},
+            tool("prior", "task", {"session_id": "gen_job_session_child"})[1],
+        ],
+    )
+    manager = SessionManager(session_dir=_service._session_dir, scope="alice")
+    assert subagent_run_offsets(manager, "chat_offsets", start_id) == {"gen_job_session_child": 1}

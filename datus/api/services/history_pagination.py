@@ -74,12 +74,13 @@ def subagent_run_offsets(manager: SessionManager, session_id: str, start_id: int
     with _connect(_db_path(manager, session_id)) as conn:
         rows = conn.execute(
             "SELECT json_extract(o.message_data, '$.output') FROM agent_messages o "
-            "JOIN agent_messages c ON c.session_id=o.session_id "
-            "AND json_extract(c.message_data, '$.call_id')=json_extract(o.message_data, '$.call_id') "
             "WHERE o.session_id=? AND o.id<? AND json_extract(o.message_data, '$.type')='function_call_output' "
+            "AND json_extract(o.message_data, '$.call_id') IN ("
+            "SELECT json_extract(c.message_data, '$.call_id') FROM agent_messages c "
+            "WHERE c.session_id=? AND c.id<? "
             "AND json_extract(c.message_data, '$.type')='function_call' "
-            "AND json_extract(c.message_data, '$.name')='task' ORDER BY o.id",
-            (session_id, start_id),
+            "AND json_extract(c.message_data, '$.name')='task') ORDER BY o.id",
+            (session_id, start_id, session_id, start_id),
         )
         native_rows = conn.execute(
             "SELECT json_extract(r.value,'$.content') FROM agent_messages m, json_each(m.message_data,'$.content') r "
