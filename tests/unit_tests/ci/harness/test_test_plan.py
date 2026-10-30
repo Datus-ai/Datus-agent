@@ -158,6 +158,23 @@ def test_leaf_changes_select_their_owners_and_consumers(source, expected):
     ]
     + [
         (
+            f"datus/resources/skills/{skill}/SKILL.md",
+            {"tests/unit_tests/agent/node/test_agentic_node_skills.py"},
+        )
+        for skill in ("gen-table", "grafana-dashboard", "superset-dashboard")
+    ]
+    + [
+        (
+            f"datus/utils/{module}.py",
+            {
+                "tests/unit_tests/agent/node/test_agentic_node_persistence.py",
+                "tests/unit_tests/agent/node/test_compact_archive_paths.py",
+            },
+        )
+        for module in ("path_manager", "path_utils")
+    ]
+    + [
+        (
             f"datus/agent/node/{node}_agentic_node.py",
             {"tests/unit_tests/agent/node/test_build_success_result_fallbacks.py"},
         )

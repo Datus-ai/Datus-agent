@@ -1848,6 +1848,7 @@ execution:
       paths: [datus/resources/skills/]
       targets:
         - tests/unit_tests/tools/skill_tools/
+        - tests/unit_tests/agent/node/test_agentic_node_skills.py
         - tests/unit_tests/agent/node/test_skill_creator_agentic_node.py
     - id: datasource-skill
       paths: [datus/resources/skills/gen-datasource/]
@@ -1872,6 +1873,8 @@ execution:
         - tests/unit_tests/utils/
         - tests/unit_tests/configuration/
         - tests/unit_tests/storage/
+        - tests/unit_tests/agent/node/test_agentic_node_persistence.py
+        - tests/unit_tests/agent/node/test_compact_archive_paths.py
         - tests/unit_tests/tools/func_tool/test_fs_path_policy.py
         - tests/unit_tests/tools/func_tool/test_filesystem_tools.py
     - id: shared-schema-contracts
