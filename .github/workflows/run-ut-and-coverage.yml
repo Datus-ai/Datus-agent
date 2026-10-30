@@ -179,7 +179,9 @@ jobs:
             ci/diff-cover-report.md
             ci/test-report.md
             ci/product-test-plan.json
+            ci/unit-test-plan.json
             ci/gate-coverage.json
+            ci/test-results-*.xml
             ci/test-results-*.execution.json
           if-no-files-found: error
           retention-days: 7

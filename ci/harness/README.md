@@ -6,7 +6,7 @@
 | `tests/integration/api/test_chat_acceptance.py` | Code PRs and code merge groups | Real FastAPI routes, task manager, chat service and model transport. Covers SQL, follow-up, history, session listing/deletion, user isolation, stop and subsequent reuse. |
 | `test_dosi_authoring_validates_reconciles_and_queries_without_llm` in `test_semantic_modeling_agentic.py` | Code PRs and code merge groups; existing dedicated Nightly group | Real Dosi authoring, validation, reconciliation and metric execution. No external model required. |
 | Capacity, image round-trip and native observability model contracts | Code PRs and code merge groups | Real initialized adapters and SDK paths with external IO replaced. Includes nested JSON tool schemas and native model calls. |
-| Remaining affected unit tests | PR diff and entire merge-group diff | PR and merge queue share source-to-test mapping plus cross-module dependency rules. A model change includes observability and node consumers. Harness-marked files remain in the fixed list, enforced by `test_harness_alignment.py`. |
+| Remaining affected unit tests | PR diff and entire merge-group diff | PR and merge queue share unit ownership rules and explicit consumers. Shared model adapters include observability and node consumers. Harness-marked files remain in the fixed list, enforced by `test_harness_alignment.py`. |
 | `tests/integration/agent/test_core_live.py` | Scheduled Nightly; explicit branch evaluation | Real LLM answers independent business questions: total 350 and East-region total 150. Checks SQL tool results and answers through Chat, then runs GenSQL and independently executes its generated query. Credentials missing means failure. |
 | Existing node-specific real-model suites | Scheduled Nightly and affected branch evaluation | The live plan expands for nodes, models, configuration, prompts, skills, tools, storage, context, API and CLI changes. Semantic modeling, Superset and Airflow retain dedicated service setup. Init evaluates the ordinary scoped case; the large-catalog scale case remains opt-in. |
 
@@ -18,10 +18,40 @@ the real-model questions additionally assess tool selection and reasoning.
 
 ## Selection and evidence
 
-`coverage-map.yml` contains mandatory `execution.core_nodeids` and impact rules.
-The fixed core runs for code changes. Changes to models include their
-cross-module consumers; changes to nodes also select the corresponding live suite.
-Merge groups use their event's base SHA, covering all included PRs.
+`coverage-map.yml` contains mandatory `execution.core_nodeids`, unit ownership
+rules and additive product impact rules. The fixed core runs for code changes.
+For each changed source file, `execution.unit_rules` selects the exact file or
+longest matching directory prefix, including the consumers listed by that owner.
+Node factories, inherited hooks and shared session/result behavior retain the
+node package and its cross-package consumers. Shared startup, configuration and
+payload owners retain full unit coverage. Localized MCP, logging and SSL owners
+keep their explicit, audited consumers. Shared model adapters still include
+observability and node consumers. Unknown
+runtime modules retain the full unit fallback, and full-suite rules document why
+they are needed. Rule validation rejects stale targets and ambiguous source paths.
+
+Strict map validation and a fixed acceptance test audit every Python module under
+`datus/` against every `tests/unit_tests/**/test_*.py` consumer. The audit parses
+imports (including function-local imports), package re-exports and literal dynamic
+import or mock paths without importing application code. An omitted consumer or
+unowned module fails CI with its source path, owner and test file. Conditional
+re-exports retain every visible origin. This is a conservative reference check,
+not proof of runtime coverage: computed imports, dependency injection and factory
+dispatch still require the wider ownership boundaries above. Adding a narrow
+rule requires retaining both the visible consumers and those shared contracts.
+
+Changed unit tests select themselves; conftest, helper modules and fixture assets
+select their enclosing test package. Shared test configuration and datasets select
+the full unit suite. Parent directories subsume child targets without restricting
+pytest collection. Both runners use the same selector and enumerate both sides of
+renames. Merge groups use their event's base SHA, covering all included PRs.
+
+`execution.impact_rules` independently unions live targets and provisioned nightly
+groups. Narrowing unit ownership does not remove those product requirements.
+The PR artifact includes `ci/unit-test-plan.json` with each changed path's owner,
+targets and fallback decision, JUnit timings, and execution reports containing
+suite wall time. CI logs also report the 30 slowest test phases. Full unit tests
+continue to run in Nightly.
 
 Both runners load `ci.pytest_gate_plugin`, which records selected nodeids and
 actual execution outcomes, including xdist reports. `ci/gate-coverage.json`

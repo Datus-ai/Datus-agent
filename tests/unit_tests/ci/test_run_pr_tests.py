@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import importlib.util
 import io
+import json
+import subprocess
 from pathlib import Path
 
 import defusedxml.ElementTree as ET
@@ -13,6 +15,13 @@ if MODULE_SPEC is None or MODULE_SPEC.loader is None:
     raise AssertionError(f"Unable to load run-pr-tests from {MODULE_PATH}")
 run_pr_tests = importlib.util.module_from_spec(MODULE_SPEC)
 MODULE_SPEC.loader.exec_module(run_pr_tests)
+
+
+def _targets_cover(targets, *references):
+    return all(
+        any(reference == t or (t.endswith("/") and reference.startswith(t)) for t in targets)
+        for reference in references
+    )
 
 
 def test_select_impacted_unit_tests_maps_source_prefixes():
@@ -31,14 +40,13 @@ def test_select_impacted_unit_tests_includes_changed_unit_tests_and_dedupes():
     impacted = run_pr_tests.select_impacted_unit_tests(
         [
             "./tests/unit_tests/tools/test_registry.py",
-            "datus/tools/registry.py",
-            "datus/tools/search.py",
+            "tests/unit_tests/tools/test_registry.py",
+            "tests/unit_tests/tools/conftest.py",
             "ci/run-pr-tests.py",
         ]
     )
 
     assert set(impacted) == {
-        "tests/unit_tests/agent/node/",
         "tests/unit_tests/tools/",
         "tests/unit_tests/ci/",
     }
@@ -47,18 +55,17 @@ def test_select_impacted_unit_tests_includes_changed_unit_tests_and_dedupes():
 def test_select_impacted_unit_tests_collapses_parent_directory_over_child_files():
     impacted = run_pr_tests.select_impacted_unit_tests(
         [
-            "datus/storage/knowledge_provenance.py",
-            "datus/storage/metric/store.py",
+            "tests/unit_tests/storage/conftest.py",
             "tests/unit_tests/storage/metric/test_metric_init.py",
             "tests/unit_tests/storage/metric/test_store.py",
             "tests/unit_tests/storage/test_knowledge_provenance.py",
         ]
     )
 
-    assert set(impacted) == {"tests/unit_tests/agent/node/", "tests/unit_tests/tools/", "tests/unit_tests/storage/"}
+    assert impacted == ["tests/unit_tests/storage/"]
 
 
-def test_select_impacted_unit_tests_maps_db_tools_to_db_tools_tests():
+def test_select_impacted_unit_tests_retains_connector_and_shared_consumers():
     impacted = run_pr_tests.select_impacted_unit_tests(
         [
             "datus/tools/db_tools/sqlite_connector.py",
@@ -66,10 +73,15 @@ def test_select_impacted_unit_tests_maps_db_tools_to_db_tools_tests():
         ]
     )
 
-    assert set(impacted) == {"tests/unit_tests/agent/node/", "tests/unit_tests/tools/"}
+    assert _targets_cover(
+        impacted,
+        "tests/unit_tests/tools/db_tools/",
+        "tests/unit_tests/tools/func_tool/test_database.py",
+        "tests/unit_tests/agent/node/test_gen_sql_agentic_node.py",
+    )
 
 
-def test_select_impacted_unit_tests_maps_prompt_and_resource_paths_without_full_suite():
+def test_select_impacted_unit_tests_keeps_prompt_node_and_skill_consumers():
     impacted = run_pr_tests.select_impacted_unit_tests(
         [
             "datus/prompts/prompt_templates/semantic_modeling_system_1.0.j2",
@@ -77,15 +89,15 @@ def test_select_impacted_unit_tests_maps_prompt_and_resource_paths_without_full_
         ]
     )
 
-    assert set(impacted) == {
-        "tests/unit_tests/agent/",
-        "tests/unit_tests/models/",
+    assert _targets_cover(
+        impacted,
+        "tests/unit_tests/agent/node/",
         "tests/unit_tests/prompts/",
         "tests/unit_tests/tools/skill_tools/",
-    }
+    )
 
 
-def test_select_impacted_unit_tests_includes_consumers_and_specific_subpackages():
+def test_select_impacted_unit_tests_retains_cross_package_consumers():
     impacted = run_pr_tests.select_impacted_unit_tests(
         [
             "datus/agent/node/gen_sql_agentic_node.py",
@@ -98,16 +110,19 @@ def test_select_impacted_unit_tests_includes_consumers_and_specific_subpackages(
         ]
     )
 
-    assert set(impacted) == {
-        "tests/unit_tests/agent/",
-        "tests/unit_tests/models/",
+    assert _targets_cover(
+        impacted,
+        "tests/unit_tests/agent/node/",
+        "tests/unit_tests/agent/test_workflow.py",
         "tests/unit_tests/api/",
         "tests/unit_tests/cli/",
-        "tests/unit_tests/tools/",
+        "tests/unit_tests/tools/func_tool/",
+        "tests/unit_tests/tools/skill_tools/",
+        "tests/unit_tests/tools/db_tools/",
         "tests/unit_tests/storage/metric/",
         "tests/unit_tests/storage/semantic_model/",
         "tests/unit_tests/validation/",
-    }
+    )
 
 
 def test_select_impacted_unit_tests_maps_non_python_files_to_parent_directory():
@@ -118,10 +133,7 @@ def test_select_impacted_unit_tests_maps_non_python_files_to_parent_directory():
         ]
     )
 
-    assert impacted == [
-        "tests/unit_tests/tools/fixtures/",
-        "tests/unit_tests/fixtures/",
-    ]
+    assert impacted == ["tests/unit_tests/"]
 
 
 def test_filter_existing_paths_drops_missing_files(tmp_path):
@@ -347,6 +359,8 @@ def test_parallel_suite_writes_failure_report_when_a_worker_crashes(tmp_path, mo
     assert results["failed"] + results["errors"] == 1
     assert "worker" in results["failures"][0]["text"]
     assert "TIMEOUT" not in log.getvalue()
+    execution = json.loads(Path(str(junit) + ".execution.json").read_text())
+    assert execution["duration_seconds"] > 0
 
 
 def test_serial_suite_ignores_dist_mode(tmp_path):
@@ -369,6 +383,28 @@ def test_emit_reports_produces_only_cobertura_xml(tmp_path):
 
     cov_reports = [arg for arg in command if arg.startswith("--cov-report")]
     assert cov_reports == [f"--cov-report=xml:{run_pr_tests.DEFAULT_COVERAGE_XML}"]
+
+
+def test_ci_output_overrides_verbose_uncaptured_project_defaults(tmp_path, monkeypatch):
+    monkeypatch.delenv("PYTEST_ADDOPTS", raising=False)
+    (tmp_path / "pytest.ini").write_text("[pytest]\naddopts = -s -vv\nlog_cli = true\n")
+    (tmp_path / "conftest.py").write_text(
+        "import json\nfrom pathlib import Path\n"
+        "def pytest_sessionstart(session):\n"
+        "    Path(__file__).with_name('options.json').write_text(json.dumps({"
+        "'verbosity': session.config.get_verbosity('test_cases'), 'capture': session.config.option.capture}))\n"
+    )
+    (tmp_path / "test_sample.py").write_text("def test_pass():\n    print('test output')\n    assert True\n")
+    monkeypatch.setattr(run_pr_tests, "DEFAULT_COVERAGE_DB", str(tmp_path / ".coverage"))
+    monkeypatch.setattr(run_pr_tests, "DEFAULT_PYTEST_BASETEMP", str(tmp_path / "temp"))
+    log = io.StringIO()
+    assert (
+        run_pr_tests._run_pytest_suite(
+            [str(tmp_path)], str(tmp_path / "results.xml"), log, suite_name="output", emit_reports=False
+        )
+        == 0
+    )
+    assert json.loads((tmp_path / "options.json").read_text()) == {"verbosity": 0, "capture": "fd"}
 
 
 def test_suppressed_reports_disable_cov_output(tmp_path):
@@ -441,6 +477,48 @@ def test_find_compare_branch_caches_resolved_explicit_base_ref(monkeypatch):
     assert run_pr_tests.find_compare_branch("upstream/main") == "upstream/main"
     assert run_pr_tests.find_compare_branch("upstream/main") == "upstream/main"
     assert calls == ["upstream/main"]
+
+
+def test_selection_report_preserves_owners_even_when_a_fallback_subsumes_them(tmp_path, monkeypatch):
+    monkeypatch.setattr(run_pr_tests, "OUT_DIR", str(tmp_path))
+    monkeypatch.setattr(run_pr_tests, "list_changed_files", lambda base: ["datus/mcp_server.py", "datus/new_module.py"])
+    assert run_pr_tests.resolve_impacted_unit_tests("main") == ["tests/unit_tests/"]
+    plan = json.loads((tmp_path / "unit-test-plan.json").read_text())
+    assert [selection["rule"] for selection in plan["selections"]] == ["mcp-runtime", "datus"]
+    assert plan["selections"][1]["fallback"] is True
+
+
+def test_pr_diff_includes_both_owners_of_a_renamed_module(tmp_path, monkeypatch):
+    from ci.harness import test_plan
+
+    def git(*args):
+        return subprocess.check_output(
+            ["git", "-c", "core.hooksPath=/dev/null", "-c", "commit.gpgsign=false", *args],
+            cwd=tmp_path,
+            text=True,
+            stderr=subprocess.STDOUT,
+        ).strip()
+
+    git("init")
+    git("config", "user.email", "mapping-test@example.invalid")
+    git("config", "user.name", "Mapping Test")
+    old = tmp_path / "datus/models/mcp_utils.py"
+    old.parent.mkdir(parents=True)
+    old.write_text("VALUE = 42\n")
+    git("add", ".")
+    git("commit", "-m", "base")
+    base = git("rev-parse", "HEAD")
+    new = tmp_path / "datus/utils/mcp_execution.py"
+    new.parent.mkdir()
+    git("mv", old.relative_to(tmp_path).as_posix(), new.relative_to(tmp_path).as_posix())
+    git("commit", "-m", "move")
+    monkeypatch.setattr(test_plan, "ROOT", tmp_path)
+    monkeypatch.setattr(run_pr_tests, "find_compare_branch", lambda ref: base)
+    changed = run_pr_tests.list_changed_files("base")
+    assert set(changed) == {"datus/models/mcp_utils.py", "datus/utils/mcp_execution.py"}
+    targets = run_pr_tests.select_impacted_unit_tests(changed)
+    assert "tests/unit_tests/models/test_mcp_utils.py" in targets
+    assert "tests/unit_tests/utils/test_mcp_execution.py" in targets
 
 
 def test_main_returns_test_exit_code(monkeypatch):
