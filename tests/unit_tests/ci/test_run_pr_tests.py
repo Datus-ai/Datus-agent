@@ -17,9 +17,11 @@ run_pr_tests = importlib.util.module_from_spec(MODULE_SPEC)
 MODULE_SPEC.loader.exec_module(run_pr_tests)
 
 
-def _assert_targets_cover(targets, *references):
-    for reference in references:
-        assert any(reference == t or (t.endswith("/") and reference.startswith(t)) for t in targets), reference
+def _targets_cover(targets, *references):
+    return all(
+        any(reference == t or (t.endswith("/") and reference.startswith(t)) for t in targets)
+        for reference in references
+    )
 
 
 def test_select_impacted_unit_tests_maps_source_prefixes():
@@ -71,7 +73,7 @@ def test_select_impacted_unit_tests_retains_connector_and_shared_consumers():
         ]
     )
 
-    _assert_targets_cover(
+    assert _targets_cover(
         impacted,
         "tests/unit_tests/tools/db_tools/",
         "tests/unit_tests/tools/func_tool/test_database.py",
@@ -87,7 +89,7 @@ def test_select_impacted_unit_tests_keeps_prompt_node_and_skill_consumers():
         ]
     )
 
-    _assert_targets_cover(
+    assert _targets_cover(
         impacted,
         "tests/unit_tests/agent/node/",
         "tests/unit_tests/prompts/",
@@ -108,7 +110,7 @@ def test_select_impacted_unit_tests_retains_cross_package_consumers():
         ]
     )
 
-    _assert_targets_cover(
+    assert _targets_cover(
         impacted,
         "tests/unit_tests/agent/node/",
         "tests/unit_tests/agent/test_workflow.py",

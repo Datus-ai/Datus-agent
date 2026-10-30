@@ -250,12 +250,14 @@ class TestRedirectStdio:
         log_dir = tmp_path / "logs" / "subdir"
         log_file = log_dir / "test.log"
 
-        with patch("datus.api.main.os.dup2") as mock_dup2:
+        with patch("datus.api.main.os.dup2") as mock_dup2, patch("datus.api.main.sys.stdin") as mock_stdin:
+            mock_stdin.fileno.return_value = 0
             _redirect_stdio(log_file)
 
         assert log_dir.exists()
         assert log_file.exists()
         assert mock_dup2.call_count == 3
+        assert mock_dup2.call_args_list[0].args[1] == 0
 
 
 class TestDefaultPaths:
