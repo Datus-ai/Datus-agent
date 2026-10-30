@@ -1335,6 +1335,7 @@ class SubAgentTaskTool:
                 "description",
                 "created_at",
                 "finalize_warnings",
+                "finalize_error",
             ):
                 if key in output:
                     result[key] = output[key]

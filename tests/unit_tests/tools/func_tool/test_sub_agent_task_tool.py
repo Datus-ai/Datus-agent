@@ -1001,6 +1001,26 @@ class TestConvertToFuncResult:
             "session_id": "ask-metrics-session",
         }
 
+    def test_rendered_report_preserves_finalization_error(self, task_tool):
+        from datus.schemas.gen_visual_report_models import GenVisualReportNodeResult
+
+        report = GenVisualReportNodeResult(
+            success=True,
+            response="The rendered report is ready; analysis could not be finalized.",
+            report_slug="schools",
+            app_jsx_path="reports/schools/render/app.jsx",
+            finalize_warnings=["Analysis is incomplete."],
+            finalize_error="Analysis schema validation failed.",
+        )
+
+        result = task_tool._convert_to_func_result(report.model_dump(), session_id="report-session")
+
+        assert result.success == 1
+        assert result.result["report_slug"] == "schools"
+        assert result.result["app_jsx_path"] == "reports/schools/render/app.jsx"
+        assert result.result["finalize_warnings"] == ["Analysis is incomplete."]
+        assert result.result["finalize_error"] == "Analysis schema validation failed."
+
     def test_visual_dashboard_result_preserves_documented_fields(self, task_tool):
         """``GenVisualDashboardNodeResult.model_dump()`` carries
         ``dashboard_slug``, ``app_jsx_path``, ``render_file_count``,

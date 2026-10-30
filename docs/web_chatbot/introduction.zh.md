@@ -58,8 +58,7 @@ Show me total revenue by product category for the last month
 - `gen_sql`
 - `gen_visual_report`
 - `semantic_modeling`
-- `gen_dashboard`
-- `scheduler`
+- `gen_visual_dashboard`
 
 **使用方式**：
 

@@ -9,7 +9,7 @@ from typing import Any, Dict, Optional
 
 def validate_node_class(node_class: Optional[str], node_name: str) -> None:
     """Reject removed node classes and recommend the supported subagent."""
-    if (node_class or node_name) == "gen_report":
+    if node_class == "gen_report" or node_name == "gen_report":
         raise ValueError(
             f"Subagent 'gen_report' does not exist (configured for '{node_name}'). Use 'gen_visual_report' instead."
         )

@@ -67,14 +67,21 @@ class TestResolveNodeClassType:
 
 
 class TestCreateInteractiveNode:
-    @pytest.mark.parametrize("type_field", ["node_class", "type"])
-    def test_old_report_config_explains_how_to_migrate(self, type_field):
-        config = _mock_agent_config(agentic_nodes={"legacy_report": {type_field: "gen_report"}})
+    @pytest.mark.parametrize(
+        "name,type_field,node_class",
+        [
+            ("legacy_report", "node_class", "gen_report"),
+            ("legacy_report", "type", "gen_report"),
+            ("gen_report", "node_class", "gen_sql"),
+        ],
+    )
+    def test_old_report_config_explains_how_to_migrate(self, name, type_field, node_class):
+        config = _mock_agent_config(agentic_nodes={name: {type_field: node_class}})
 
         with pytest.raises(ValueError, match="does not exist.*Use 'gen_visual_report' instead") as exc:
-            create_interactive_node("legacy_report", config)
+            create_interactive_node(name, config)
 
-        assert "legacy_report" in str(exc.value)
+        assert name in str(exc.value)
 
     def test_old_builtin_report_explains_how_to_migrate(self):
         with pytest.raises(ValueError, match="gen_visual_report"):

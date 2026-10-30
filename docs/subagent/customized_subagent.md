@@ -20,10 +20,11 @@ The wizard writes two things:
 
 `gen_report` is no longer available. Configurations referencing it return a subagent-not-found error and recommend `gen_visual_report`.
 
-The wizard currently supports two custom node styles:
+The wizard currently supports three custom node styles:
 
 - `gen_sql` (default)
 - `gen_visual_report`
+- `gen_visual_dashboard`
 
 If you want advanced aliases such as `explore`, `gen_table`, or `gen_skill`, edit `agent.yml` manually. Scheduling and external BI operations are handled directly by the main agent through installed plugins and cannot be exposed through a custom subagent alias.
 
@@ -124,7 +125,7 @@ That means:
 
 ## Advanced Manual Configuration
 
-The wizard covers the common `gen_sql` and `gen_visual_report` cases. For more advanced setups, edit `agent.yml` directly.
+The wizard covers `gen_sql`, `gen_visual_report`, and `gen_visual_dashboard`. For more advanced setups, edit `agent.yml` directly.
 
 Example:
 

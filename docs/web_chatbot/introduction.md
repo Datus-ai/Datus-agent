@@ -59,8 +59,7 @@ The available list comes from built-in subagents plus any custom entries under `
 - `gen_sql`
 - `gen_visual_report`
 - `semantic_modeling`
-- `gen_dashboard`
-- `scheduler`
+- `gen_visual_dashboard`
 
 **How to Use**:
 

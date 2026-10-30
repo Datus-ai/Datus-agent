@@ -27,13 +27,13 @@ The currently exposed built-in set is:
 2. `gen_sql`: specialized SQL generation
 3. `ask_metrics`: answer questions using existing semantic metrics
 4. `ontology_analyst`: answer metric and record questions over the datasource's ontology (offered only when one exists)
-5. `gen_visual_report`: structured report generation
+5. `gen_visual_report`: self-contained visual report under `reports/<slug>/`
 6. `semantic_modeling`: unified Dosi semantic-model and metric authoring
 7. `gen_sql_summary`: SQL summary generation
 8. `gen_table`: interactive table creation
 9. `gen_job`: data pipeline jobs (single-database ETL AND cross-database migration)
 10. `gen_skill`: skill creation and optimization
-11. `gen_visual_report`: self-contained visual report under `reports/<slug>/`
+11. `gen_visual_dashboard`: parameterized visual dashboard under `dashboards/<slug>/`
 
 Airflow scheduling and external BI operations such as Superset authoring are
 not subagent types. The main agent performs them directly with installed
@@ -47,7 +47,7 @@ See [Built-in subagents](./builtin_subagents.md) for details.
 
 Custom subagents are configured under `agent.agentic_nodes`.
 
-The unified agent TUI (`/agent` or `/subagent`) Custom-tab wizard currently creates `gen_sql`-style or `gen_visual_report`-style custom subagents. If you want to alias more specialized available node classes such as `explore`, `gen_table`, or `gen_skill`, edit `agent.yml` manually. Custom aliases of the legacy scheduling and external-BI node classes are ignored.
+The unified agent TUI (`/agent` or `/subagent`) Custom-tab wizard creates custom subagents using `gen_sql`, `gen_visual_report`, or `gen_visual_dashboard`. If you want to alias more specialized available node classes such as `explore`, `gen_table`, or `gen_skill`, edit `agent.yml` manually. Custom aliases of the legacy scheduling and external-BI node classes are ignored.
 
 Example:
 
@@ -147,13 +147,13 @@ Important behavior:
 |------|---------|
 | `explore` | Gather schema, sample data, knowledge, or file context |
 | `gen_sql` | Generate SQL with deeper multi-step reasoning |
-| `gen_visual_report` | Produce structured reports and analysis |
+| `gen_visual_report` | Produce a self-contained visual report under `reports/<slug>/` |
 | `semantic_modeling` | Author Dosi semantic models and metrics |
 | `gen_sql_summary` | Summarize SQL into reusable knowledge |
 | `gen_table` | Create tables interactively |
 | `gen_job` | Build data pipeline jobs (single-database ETL or cross-database migration) |
 | `gen_skill` | Create or optimize skills |
-| `gen_visual_report` | Produce a self-contained visual report under `reports/<slug>/` |
+| `gen_visual_dashboard` | Produce a parameterized visual dashboard under `dashboards/<slug>/` |
 | Custom names | Any discoverable custom subagent defined in `agent.yml` |
 
 For Airflow or external BI work, ask the main agent to use the installed

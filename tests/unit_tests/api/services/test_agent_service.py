@@ -851,13 +851,14 @@ class TestGetAgent:
 class TestCreateAgent:
     """Tests for create_agent — agent creation with YAML persistence."""
 
-    async def test_removed_report_type_returns_migration_error(self, real_agent_config, agent_yml_with_singleton):
+    @pytest.mark.parametrize("name,node_class", [("legacy_report", "gen_report"), ("gen_report", "gen_sql")])
+    async def test_removed_report_type_returns_migration_error(
+        self, real_agent_config, agent_yml_with_singleton, name, node_class
+    ):
         from datus.api.models.agent_models import CreateAgentInput
 
         original_config = agent_yml_with_singleton.read_text(encoding="utf-8")
-        result = await AgentService().create_agent(
-            CreateAgentInput(name="legacy_report", type="gen_report"), real_agent_config
-        )
+        result = await AgentService().create_agent(CreateAgentInput(name=name, type=node_class), real_agent_config)
 
         assert result.success is False
         assert result.errorCode == "INVALID_AGENT_TYPE"

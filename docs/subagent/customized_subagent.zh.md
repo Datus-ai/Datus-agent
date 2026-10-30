@@ -20,10 +20,11 @@
 
 `gen_report` 已移除。旧配置引用它时会直接报 subagent 不存在，并提示使用 `gen_visual_report`。
 
-当前向导支持两类自定义节点：
+当前向导支持三类自定义节点：
 
 - `gen_sql`（默认）
 - `gen_visual_report`
+- `gen_visual_dashboard`
 
 如果你希望创建更高级的 alias，例如 `explore`、`gen_table`、`gen_skill`，需要手工编辑 `agent.yml`。调度和外部 BI 操作由主 agent 直接使用已安装 plugin 完成，不能通过自定义 subagent alias 暴露。
 
@@ -124,7 +125,7 @@ agent:
 
 ## 高级手工配置
 
-向导覆盖的是最常见的 `gen_sql` 和 `gen_visual_report` 场景。更高级的配置请直接编辑 `agent.yml`。
+向导支持 `gen_sql`、`gen_visual_report` 和 `gen_visual_dashboard`。更高级的配置请直接编辑 `agent.yml`。
 
 例如：
 
