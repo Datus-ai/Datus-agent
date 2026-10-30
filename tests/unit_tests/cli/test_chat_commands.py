@@ -1479,11 +1479,13 @@ class TestEdgeCases:
     def test_prompt_builder_uses_connector_database_when_input_database_empty(self, real_agent_config, mock_llm_create):
         """AgenticNode prompt fallback works if the node has an initialized connector."""
         from datus.schemas.chat_agentic_node_models import ChatNodeInput
+        from datus.tools.func_tool.database import DBFuncTool
 
         cmds = _make_chat_commands(real_agent_config)
         node = cmds._create_new_node()
-        node.db_func_tool._primary_connector = MagicMock()
-        node.db_func_tool._primary_connector.database_name = "connector_db"
+        connector = MagicMock()
+        connector.database_name = "connector_db"
+        node.db_func_tool = DBFuncTool(connector)
 
         message = node._build_enhanced_message(ChatNodeInput(user_message="有哪些表"))
 

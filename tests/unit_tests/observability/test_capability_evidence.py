@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, Mock
 
 import httpx
 import pytest
+import structlog
 from agents import Agent, RunConfig, Runner
 from openai import AsyncOpenAI, BadRequestError
 from opentelemetry.sdk.trace import SpanLimits, TracerProvider
@@ -16,6 +17,15 @@ from datus.models.observed_model import ObservedResponsesModel, _ObservedAsyncSt
 from datus.observability.compaction import compact_started, observe_compaction
 from datus.observability.model_call import ModelCall, capability_event, model_phase, observation_run
 from datus.observability.tool_calls import observe_tool_hooks
+
+
+@pytest.fixture(autouse=True)
+def fresh_observability_loggers(monkeypatch):
+    """Capture events even when earlier tests cached a different logging configuration."""
+    from datus.observability import compaction, model_call, tool_calls
+
+    for module in (compaction, model_call, tool_calls):
+        monkeypatch.setattr(module, "logger", structlog.get_logger(module.__name__))
 
 
 def definition(name, description="Test"):
