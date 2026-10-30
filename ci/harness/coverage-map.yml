@@ -1562,6 +1562,7 @@ execution:
       paths: [datus/tools/skill_tools/]
       targets:
         - tests/unit_tests/tools/skill_tools/
+        - tests/unit_tests/agent/node/test_agentic_node_skills.py
         - tests/unit_tests/agent/node/test_tool_category_maps.py
     - id: datus-tools
       paths: [datus/tools/]

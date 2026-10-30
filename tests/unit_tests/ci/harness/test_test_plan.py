@@ -162,6 +162,13 @@ def test_leaf_changes_select_their_owners_and_consumers(source, expected):
     ]
     + [
         (
+            f"datus/tools/skill_tools/{module}.py",
+            {"tests/unit_tests/agent/node/test_agentic_node_skills.py"},
+        )
+        for module in ("skill_manager", "skill_func_tool", "skill_config")
+    ]
+    + [
+        (
             f"datus/resources/skills/{skill}/SKILL.md",
             {"tests/unit_tests/agent/node/test_agentic_node_skills.py"},
         )
