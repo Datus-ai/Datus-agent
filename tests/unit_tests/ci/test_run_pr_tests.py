@@ -40,6 +40,7 @@ def test_select_impacted_unit_tests_includes_changed_unit_tests_and_dedupes():
     )
 
     assert set(impacted) == {
+        "tests/unit_tests/agent/node/test_tool_category_maps.py",
         "tests/unit_tests/tools/",
         "tests/unit_tests/ci/",
     }

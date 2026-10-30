@@ -191,6 +191,28 @@ def test_specific_owners_retain_shared_contract_consumers(source, consumers):
     assert impact_plan([source])["unit_targets"] == plan["targets"]
 
 
+@pytest.mark.parametrize(
+    "source",
+    [
+        "datus/tools/func_tool/bash_tool.py",
+        "datus/tools/func_tool/dashboard_artifact_tools.py",
+        "datus/tools/func_tool/report_artifact_tools.py",
+        "datus/tools/func_tool/reference_template_tools.py",
+        "datus/tools/func_tool/database.py",
+        "datus/tools/skill_tools/skill_func_tool.py",
+        "datus/tools/base.py",
+        "datus/tools/registry/tool_registry.py",
+        "datus/agent/node/agentic_node.py",
+        "datus/agent/node/feedback_agentic_node.py",
+    ],
+)
+def test_tool_category_owners_retain_permission_routing_contracts(source):
+    contract = "tests/unit_tests/agent/node/test_tool_category_maps.py"
+    plan = unit_test_plan([source])
+    assert any(contract == t or (t.endswith("/") and contract.startswith(t)) for t in plan["targets"])
+    assert impact_plan([source])["unit_targets"] == plan["targets"]
+
+
 def test_node_owners_retain_required_generic_node_contracts():
     data = load_map()
     required = ["tests/unit_tests/agent/node/test_node.py", "tests/unit_tests/agent/node/test_schema_linking.py"]

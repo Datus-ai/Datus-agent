@@ -1535,7 +1535,9 @@ execution:
       targets: [tests/unit_tests/tools/date_tools/]
     - id: datus-tools-func_tool
       paths: [datus/tools/func_tool/]
-      targets: [tests/unit_tests/tools/func_tool/]
+      targets:
+        - tests/unit_tests/tools/func_tool/
+        - tests/unit_tests/agent/node/test_tool_category_maps.py
     - id: datus-tools-llms_tools
       paths: [datus/tools/llms_tools/]
       targets: [tests/unit_tests/tools/llms_tools/]
@@ -1547,7 +1549,9 @@ execution:
       targets: [tests/unit_tests/tools/proxy/]
     - id: datus-tools-registry
       paths: [datus/tools/registry/]
-      targets: [tests/unit_tests/tools/registry/]
+      targets:
+        - tests/unit_tests/tools/registry/
+        - tests/unit_tests/agent/node/test_tool_category_maps.py
     - id: datus-tools-search_tools
       paths: [datus/tools/search_tools/]
       targets: [tests/unit_tests/tools/search_tools/]
@@ -1556,10 +1560,14 @@ execution:
       targets: [tests/unit_tests/tools/semantic_tools/]
     - id: datus-tools-skill_tools
       paths: [datus/tools/skill_tools/]
-      targets: [tests/unit_tests/tools/skill_tools/]
+      targets:
+        - tests/unit_tests/tools/skill_tools/
+        - tests/unit_tests/agent/node/test_tool_category_maps.py
     - id: datus-tools
       paths: [datus/tools/]
-      targets: [tests/unit_tests/tools/]
+      targets:
+        - tests/unit_tests/tools/
+        - tests/unit_tests/agent/node/test_tool_category_maps.py
     - id: datus-utils
       paths: [datus/utils/]
       targets: [tests/unit_tests/utils/]
@@ -1719,6 +1727,7 @@ execution:
         - tests/unit_tests/test_mcp_server.py
         - tests/unit_tests/agent/node/test_chat_agentic_node.py
         - tests/unit_tests/agent/node/test_gen_sql_agentic_node.py
+        - tests/unit_tests/agent/node/test_tool_category_maps.py
     - id: database-connectors
       paths: [datus/tools/db_tools/]
       targets:
@@ -1765,6 +1774,7 @@ execution:
       paths: [datus/agent/node/feedback_agentic_node.py]
       targets:
         - tests/unit_tests/agent/node/test_feedback_agentic_node.py
+        - tests/unit_tests/agent/node/test_tool_category_maps.py
         - tests/unit_tests/agent/node/test_build_success_result_fallbacks.py
         - tests/unit_tests/agent/node/test_agentic_node.py
         - tests/unit_tests/agent/node/test_node.py
