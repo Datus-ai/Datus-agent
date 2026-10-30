@@ -192,7 +192,7 @@ def test_leaf_changes_select_their_owners_and_consumers(source, expected):
             f"datus/agent/node/{node}_agentic_node.py",
             {"tests/unit_tests/agent/node/test_build_success_result_fallbacks.py"},
         )
-        for node in ("compare", "explore", "feedback", "gen_report", "sql_summary")
+        for node in ("compare", "explore", "feedback", "sql_summary")
     ],
 )
 def test_specific_owners_retain_shared_contract_consumers(source, consumers):

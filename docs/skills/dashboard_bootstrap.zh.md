@@ -39,7 +39,7 @@ Skill 会依次完成以下选择：
 当 Agent 配置可修改时，最后一步会按旧流程的命名与工具模式新增或更新两个节点：
 
 - `<platform>_<dashboard>` 使用 `gen_sql` 以及数据库和 context-search tools。
-- `<platform>_<dashboard>_attribution` 使用 `gen_report` 以及 semantic attribution tools。
+- `<platform>_<dashboard>_attribution` 使用 `gen_visual_report` 以及 semantic attribution tools。
 
 两个节点都只绑定 active datasource 上成功生成的 tables，以及精确的 metric/reference-SQL subject references。Metric scope 使用已同步 Dosi model 中的 `<metric.subject_path>.<metric.name>`；reference-SQL scope 使用已生成 SQL summary 中的 `<subject_tree>.<name>`。只写 subject path 会选中整个 subtree，不能用于 Dashboard 的精确条目选择。通用 `create-subagent` skill 会先在同步后的 subject trees 中解析这些 references，再修改 `agent.agentic_nodes`、保留其他节点，并在写入后重新校验 YAML。runtime 将配置标记为只读时，该 skill 不可发现，流程会跳过持久化，但不会把 context 构建判为失败。
 

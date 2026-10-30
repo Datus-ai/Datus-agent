@@ -66,7 +66,7 @@ def test_dashboard_bootstrap_skill_routes_to_builtin_owners():
     assert "Never hand-write their YAML or index rows" in body
 
 
-def test_dashboard_bootstrap_optionally_creates_legacy_shaped_subagents_last():
+def test_dashboard_bootstrap_optionally_creates_scoped_subagents_last():
     _, body = _parts()
 
     assert "Inspect the skills available to the current main agent for `create-subagent`" in body
@@ -75,9 +75,9 @@ def test_dashboard_bootstrap_optionally_creates_legacy_shaped_subagents_last():
     assert "<platform>_<dashboard>" in body
     assert "<base-name>_attribution" in body
     assert "node_class: gen_sql" in body
-    assert "node_class: gen_report" in body
+    assert "node_class: gen_visual_report" in body
     assert "context_search_tools,db_tools.search_table,db_tools.describe_table,db_tools.execute_sql" in body
-    assert "semantic_tools,context_search_tools.list_subject_tree" in body
+    assert "semantic_tools.*,db_tools.*,context_search_tools.*" in body
     assert "successful active-datasource artifacts" in body
     assert "creation failure does not invalidate context already built" in body
     assert "<metric.subject_path>.<metric.name>" in body

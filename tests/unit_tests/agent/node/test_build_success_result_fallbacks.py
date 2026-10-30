@@ -30,7 +30,6 @@ from datus.agent.node.chat_agentic_node import ChatAgenticNode
 from datus.agent.node.compare_agentic_node import CompareAgenticNode
 from datus.agent.node.explore_agentic_node import ExploreAgenticNode
 from datus.agent.node.feedback_agentic_node import FeedbackAgenticNode
-from datus.agent.node.gen_report_agentic_node import GenReportAgenticNode
 from datus.agent.node.gen_skill_agentic_node import SkillCreatorAgenticNode
 from datus.agent.node.gen_sql_agentic_node import GenSQLAgenticNode
 from datus.agent.node.sql_summary_agentic_node import SqlSummaryAgenticNode
@@ -393,39 +392,7 @@ class TestGenSQLCollectFinalResponseFallback:
 
 
 # ---------------------------------------------------------------------------
-# GenReportAgenticNode (lines 481, 487, 499, 517, 522)
 # ---------------------------------------------------------------------------
-
-
-class TestGenReportBuildSuccessResultFallback:
-    def test_falls_back_to_content_key(self):
-        node = _bare_node(GenReportAgenticNode, agent_config=None)
-        # No JSON report → ``_extract_report_from_response`` returns (None, None).
-        node._extract_report_from_response = lambda _out: (None, None)  # type: ignore[assignment]
-        node._extract_report_result = lambda _actions: None  # type: ignore[assignment]
-        ctx = _ctx(last_successful_output={"content": "plain report body"})
-        result = node._build_success_result(ctx)
-        assert "plain report body" in result.response
-
-    def test_uses_extracted_report_when_parser_surfaces_one(self):
-        node = _bare_node(GenReportAgenticNode, agent_config=None)
-        node._extract_report_from_response = lambda _out: ("parsed report", {"title": "T"})  # type: ignore[assignment]
-        node._extract_report_result = lambda _actions: None  # type: ignore[assignment]
-        ctx = _ctx(last_successful_output={"content": "raw json"})
-        result = node._build_success_result(ctx)
-        assert result.response == "parsed report"
-        # When ``_extract_report_result`` returns nothing, the parser's
-        # metadata fills ``report_result``.
-        assert result.report_result == {"title": "T"}
-
-    def test_coerces_non_string_response_content(self):
-        node = _bare_node(GenReportAgenticNode, agent_config=None)
-        node._extract_report_from_response = lambda _out: (None, None)  # type: ignore[assignment]
-        node._extract_report_result = lambda _actions: None  # type: ignore[assignment]
-        ctx = _ctx(response_content={"shape": "dict"})
-        result = node._build_success_result(ctx)
-        assert isinstance(result.response, str)
-        assert "shape" in result.response
 
 
 # ---------------------------------------------------------------------------

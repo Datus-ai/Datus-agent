@@ -277,9 +277,9 @@ def _step_report_dist(console: Console, raw: Dict) -> Optional[Path]:
     configured = ""
     nodes = raw.get("agentic_nodes")
     if isinstance(nodes, dict):
-        gen_report = nodes.get("gen_visual_report")
-        if isinstance(gen_report, dict) and isinstance(gen_report.get("report_dist"), str):
-            configured = gen_report["report_dist"]
+        gen_visual_report = nodes.get("gen_visual_report")
+        if isinstance(gen_visual_report, dict) and isinstance(gen_visual_report.get("report_dist"), str):
+            configured = gen_visual_report["report_dist"]
     while True:
         answer = prompt_input(
             console,

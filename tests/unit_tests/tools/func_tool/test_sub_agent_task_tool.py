@@ -426,6 +426,18 @@ class TestInheritPendingInputQueue:
 
 @pytest.mark.ci
 class TestResolveNodeType:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("type_field", ["node_class", "type"])
+    async def test_old_report_task_returns_migration_error(self, task_tool, mock_agent_config, type_field):
+        mock_agent_config.agentic_nodes["legacy_report"] = {type_field: "gen_report"}
+
+        result = await task_tool.task(type="legacy_report", prompt="Create a sales report", description="Sales")
+
+        assert result.success == 0
+        assert "legacy_report" in result.error
+        assert "Subagent 'gen_report' does not exist" in result.error
+        assert "Use 'gen_visual_report' instead" in result.error
+
     def test_gen_sql_with_config(self, task_tool):
         """gen_sql resolves to TYPE_GEN_SQL using config key."""
         node_type, node_name = task_tool._resolve_node_type("gen_sql")
@@ -671,7 +683,7 @@ class TestResolveNodeType:
         """A built-in parent owns no memory of its own — as a main agent it uses
         the shared ``chat`` memory, so its sub-agents inherit ``chat``."""
         parent = MagicMock()
-        parent.get_node_name.return_value = "gen_report"
+        parent.get_node_name.return_value = "gen_visual_report"
         task_tool._parent_node = parent
         assert task_tool._resolve_inherited_memory_node("gen_sql") == "chat"
 
@@ -689,7 +701,6 @@ class TestResolveNodeType:
             "chat": NodeType.TYPE_CHAT,
             "ask_metrics": NodeType.TYPE_ASK_METRICS,
             "ontology_analyst": NodeType.TYPE_ONTOLOGY_ANALYST,
-            "gen_report": NodeType.TYPE_GEN_REPORT,
             "gen_visual_report": NodeType.TYPE_GEN_VISUAL_REPORT,
             "gen_visual_dashboard": NodeType.TYPE_GEN_VISUAL_DASHBOARD,
             "semantic": NodeType.TYPE_SEMANTIC,
@@ -771,14 +782,6 @@ class TestBuildTaskDescription:
         assert "gen_job" in haystack
         assert "migration" in haystack
         assert "cross-database migration" in haystack
-
-    def test_gen_report_description_is_explicit_only(self, task_tool):
-        """The task tool must not advertise gen_report as automatic root-cause routing."""
-        desc = task_tool._build_task_description()
-        assert "Legacy Markdown report subagent" in desc
-        assert "Use only when the user explicitly asks to use the gen_report subagent" in desc
-        assert "do not automatically route attribution" in desc
-        assert "Use when the question involves metric attribution" not in desc
 
 
 # ── node creation (fresh per invocation) ──────────────────────────
@@ -997,6 +1000,26 @@ class TestConvertToFuncResult:
             "tokens_used": 25,
             "session_id": "ask-metrics-session",
         }
+
+    def test_rendered_report_preserves_finalization_error(self, task_tool):
+        from datus.schemas.gen_visual_report_models import GenVisualReportNodeResult
+
+        report = GenVisualReportNodeResult(
+            success=True,
+            response="The rendered report is ready; analysis could not be finalized.",
+            report_slug="schools",
+            app_jsx_path="reports/schools/render/app.jsx",
+            finalize_warnings=["Analysis is incomplete."],
+            finalize_error="Analysis schema validation failed.",
+        )
+
+        result = task_tool._convert_to_func_result(report.model_dump(), session_id="report-session")
+
+        assert result.success == 1
+        assert result.result["report_slug"] == "schools"
+        assert result.result["app_jsx_path"] == "reports/schools/render/app.jsx"
+        assert result.result["finalize_warnings"] == ["Analysis is incomplete."]
+        assert result.result["finalize_error"] == "Analysis schema validation failed."
 
     def test_visual_dashboard_result_preserves_documented_fields(self, task_tool):
         """``GenVisualDashboardNodeResult.model_dump()`` carries
@@ -2025,7 +2048,10 @@ class TestBuiltinNodeInheritsExecutionMode:
         [
             ("gen_sql", "datus.agent.node.gen_sql_agentic_node.GenSQLAgenticNode.__init__"),
             ("ask_metrics", "datus.agent.node.ask_metrics_agentic_node.AskMetricsAgenticNode.__init__"),
-            ("gen_report", "datus.agent.node.gen_report_agentic_node.GenReportAgenticNode.__init__"),
+            (
+                "gen_visual_report",
+                "datus.agent.node.gen_visual_report_agentic_node.GenVisualReportAgenticNode.__init__",
+            ),
             ("gen_skill", "datus.agent.node.gen_skill_agentic_node.SkillCreatorAgenticNode.__init__"),
         ],
     )
@@ -3014,14 +3040,16 @@ class TestSessionPersistence:
 
     @pytest.mark.asyncio
     async def test_resume_prefix_mismatch_returns_error(self, task_tool):
-        """type='gen_sql' with a session_id from gen_report must be rejected."""
+        """type='gen_sql' with a session_id from gen_visual_report must be rejected."""
         node = _build_persistent_mock_node()
         with patch.object(task_tool, "_create_node", return_value=node):
             with patch.object(task_tool, "_build_node_input", return_value=Mock()):
-                result = await task_tool.task(type="gen_sql", prompt="x", session_id="gen_report_session_xx123456")
+                result = await task_tool.task(
+                    type="gen_sql", prompt="x", session_id="gen_visual_report_session_xx123456"
+                )
         assert result.success == 0
         assert "belongs to subagent type" in result.error
-        assert "gen_report" in result.error
+        assert "gen_visual_report" in result.error
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("blank", ["", "   "])

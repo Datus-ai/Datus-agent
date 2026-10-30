@@ -52,12 +52,12 @@ ACTIVE_TEMPLATES = [
     "chat_system_1.2.j2",
     "gen_sql_system_1.2.j2",
     "explore_system_1.0.j2",
-    "gen_report_system_1.0.j2",
     "ask_metrics_system_1.0.j2",
 ]
 # Deliverable templates never inlined the datasource selection; they are held
 # to the same no-volatile-variables bar but don't point to <system_reminder>.
 DELIVERABLE_TEMPLATES = [
+    "gen_visual_report_system_1.0.j2",
     "gen_table_system_1.0.j2",
     "gen_dashboard_system_1.0.j2",
     "gen_job_system_1.0.j2",

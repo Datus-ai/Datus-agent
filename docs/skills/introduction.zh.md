@@ -202,7 +202,7 @@ Chat 会展示权限允许的已发现技能，供 `load_skill` 按需加载，�
 agentic_nodes:
   # 在单个 Subagent 中混合使用 tools + mcp + skills
   school_report:
-    node_class: gen_report
+    node_class: gen_visual_report
     tools: db_tools.*, context_search_tools.*
     mcp: filesystem
     skills: "report-*, data-*"
@@ -221,7 +221,7 @@ agentic_nodes:
     model: deepseek
 ```
 
-`skills` 字段接受逗号分隔的 glob 模式列表。只有名称匹配至少一个模式的技能才会对该 Subagent 可用。`node_class` 字段支持两个值：`gen_sql`（默认）和 `gen_report`。
+`skills` 字段接受逗号分隔的 glob 模式列表。只有名称匹配至少一个模式的技能才会对该 Subagent 可用。`node_class` 字段支持 `gen_sql`（默认）、`gen_visual_report` 和 `gen_visual_dashboard`。
 
 当 Subagent 配置了 `skills` 时：
 
@@ -239,7 +239,7 @@ skills:
 
 agentic_nodes:
   attribution_report:
-    node_class: gen_report
+    node_class: gen_visual_report
     tools: db_tools.*
     skills: "report-generator"
     model: deepseek

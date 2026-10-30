@@ -337,7 +337,7 @@ codex:
 
 这部分配置会被用于：
 
-- `chat`、`explore`、`gen_sql`、`gen_report`、`gen_dashboard`、`scheduler` 等内置 agentic 节点
+- `chat`、`explore`、`gen_sql`、`gen_visual_report`、`gen_dashboard`、`scheduler` 等内置 agentic 节点
 - 通过统一 agent TUI（`/agent` 或 `/subagent`）创建的自定义 subagent
 - 把自定义名称 alias 到某个内置节点类的高级手工配置
 
@@ -347,7 +347,7 @@ codex:
 
 - `model`：引用 `agent.models` 中的 provider key
 - `system_prompt`：subagent 名称 / 提示词模板基名
-- `node_class`：要使用的节点实现，例如 `gen_sql`、`gen_report`、`explore`、`gen_table`、`gen_skill`、`gen_dashboard`、`scheduler`
+- `node_class`：要使用的节点实现，例如 `gen_sql`、`gen_visual_report`、`explore`、`gen_table`、`gen_skill`、`gen_dashboard`、`scheduler`
 - `prompt_version`、`prompt_language`
 - `agent_description`
 - `tools`、`mcp`、`skills`
@@ -399,7 +399,7 @@ agent:
       subagents: "*"
 
     finance_report:
-      node_class: gen_report
+      node_class: gen_visual_report
       model: claude
       system_prompt: finance_report
       prompt_version: "1.0"

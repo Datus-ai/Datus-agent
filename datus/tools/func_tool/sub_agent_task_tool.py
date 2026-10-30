@@ -37,6 +37,7 @@ from datus.tools.func_tool.base import FuncToolResult, parse_tool_args, write_ba
 from datus.utils.constants import SYS_SUB_AGENTS
 from datus.utils.loggings import get_logger
 from datus.utils.memory_loader import resolve_memory_node
+from datus.utils.node_utils import validate_node_class
 
 if TYPE_CHECKING:
     from datus.agent.node.agentic_node import AgenticNode
@@ -52,7 +53,6 @@ NODE_CLASS_MAP = {
     "chat": NodeType.TYPE_CHAT,
     "ask_metrics": NodeType.TYPE_ASK_METRICS,
     "ontology_analyst": NodeType.TYPE_ONTOLOGY_ANALYST,
-    "gen_report": NodeType.TYPE_GEN_REPORT,
     "gen_visual_report": NodeType.TYPE_GEN_VISUAL_REPORT,
     "gen_visual_dashboard": NodeType.TYPE_GEN_VISUAL_DASHBOARD,
     "semantic": NodeType.TYPE_SEMANTIC,
@@ -109,13 +109,6 @@ BUILTIN_SUBAGENT_DESCRIPTIONS = {
         "back to raw SQL. Prompt: provide the question directly. "
         "Returns JSON with {response, markdown_report, tokens_used}."
     ),
-    "gen_report": (
-        "Legacy Markdown report subagent. Use only when the user explicitly asks to use "
-        "the gen_report subagent; do not automatically route attribution, root-cause, "
-        "trend explanation, or report requests here. "
-        "Prompt: provide the user's explicit gen_report request and any supplied context. "
-        "Returns JSON with {response, report_result, tokens_used}."
-    ),
     "gen_visual_report": (
         "Produce a visualizable report artifact under "
         "<project_root>/reports/<id>/ (render/*.jsx + queries/<slug>.sql/.json). "
@@ -134,7 +127,7 @@ BUILTIN_SUBAGENT_DESCRIPTIONS = {
         "Prompt: provide the analytical question and any context (time range, scope, "
         "metrics of interest); the agent will discover data, save queries via save_query, "
         "write_file the render/*.jsx components, then finalize with validate_render. "
-        "Returns JSON with {response, report_id, app_jsx_path, render_file_count, "
+        "Returns JSON with {response, report_slug, app_jsx_path, render_file_count, "
         "html_path, query_count, tokens_used}."
     ),
     "gen_visual_dashboard": (
@@ -526,21 +519,6 @@ class SubAgentTaskTool:
                 is_subagent=True,
                 session_id=session_id,
             )
-        elif subagent_type == "gen_report":
-            from datus.agent.node.gen_report_agentic_node import GenReportAgenticNode
-
-            return GenReportAgenticNode(
-                node_id=f"task_gen_report_{uuid.uuid4().hex[:8]}",
-                description="Report generation node for gen_report",
-                node_type="gen_report",
-                input_data=None,
-                agent_config=self.agent_config,
-                tools=None,
-                node_name="gen_report",
-                execution_mode=self._resolve_execution_mode(),
-                is_subagent=True,
-                session_id=session_id,
-            )
         elif subagent_type == "gen_visual_report":
             from datus.agent.node.gen_visual_report_agentic_node import GenVisualReportAgenticNode
 
@@ -625,10 +603,6 @@ class SubAgentTaskTool:
         if subagent_type == "explore":
             return NodeType.TYPE_EXPLORE, "explore"
 
-        # Built-in gen_report type
-        if subagent_type == "gen_report":
-            return NodeType.TYPE_GEN_REPORT, "gen_report"
-
         if subagent_type == "ask_metrics":
             return NodeType.TYPE_ASK_METRICS, "ask_metrics"
 
@@ -664,6 +638,7 @@ class SubAgentTaskTool:
             node_class = sub_config.get("node_class") or sub_config.get("type")
         else:
             node_class = getattr(sub_config, "node_class", None) or getattr(sub_config, "type", None)
+        validate_node_class(node_class, subagent_type)
         node_type = NODE_CLASS_MAP.get(node_class or "gen_sql", NodeType.TYPE_GEN_SQL)
         return node_type, subagent_type
 
@@ -1193,15 +1168,6 @@ class SubAgentTaskTool:
                 user_message=prompt,
             )
 
-        from datus.agent.node.gen_report_agentic_node import GenReportAgenticNode
-
-        if isinstance(node, GenReportAgenticNode):
-            from datus.schemas.gen_report_agentic_node_models import GenReportNodeInput
-
-            return GenReportNodeInput(
-                user_message=prompt,
-            )
-
         from datus.agent.node.gen_visual_report_agentic_node import GenVisualReportAgenticNode
 
         if isinstance(node, GenVisualReportAgenticNode):
@@ -1334,17 +1300,6 @@ class SubAgentTaskTool:
                 }
             )
 
-        # Report result: has 'report_result' key
-        report_result = output.get("report_result")
-        if report_result is not None:
-            return _wrap(
-                {
-                    "response": response,
-                    "report_result": report_result,
-                    "tokens_used": tokens,
-                }
-            )
-
         if "markdown_report" in output:
             return _wrap(
                 {
@@ -1365,6 +1320,26 @@ class SubAgentTaskTool:
                     "tokens_used": tokens,
                 }
             )
+
+        if "report_slug" in output:
+            result = {"response": response, "tokens_used": tokens}
+            for key in (
+                "report_slug",
+                "app_jsx_path",
+                "render_file_count",
+                "html_path",
+                "query_count",
+                "artifact_kind",
+                "artifact_mode",
+                "name",
+                "description",
+                "created_at",
+                "finalize_warnings",
+                "finalize_error",
+            ):
+                if key in output:
+                    result[key] = output[key]
+            return _wrap(result)
 
         # Visual dashboard results carry the documented fields
         # (``dashboard_slug``, ``app_jsx_path``, ``render_file_count``,

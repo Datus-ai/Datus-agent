@@ -20,7 +20,6 @@ from datus.schemas.chat_agentic_node_models import ChatNodeInput
 from datus.schemas.explore_agentic_node_models import ExploreNodeInput
 from datus.schemas.feedback_agentic_node_models import FeedbackNodeInput
 from datus.schemas.gen_dashboard_agentic_node_models import GenDashboardNodeInput
-from datus.schemas.gen_report_agentic_node_models import GenReportNodeInput
 from datus.schemas.gen_skill_agentic_node_models import SkillCreatorNodeInput
 from datus.schemas.gen_sql_agentic_node_models import GenSQLNodeInput
 from datus.schemas.gen_visual_dashboard_models import GenVisualDashboardNodeInput
@@ -38,7 +37,6 @@ SUBAGENT_INPUTS = [
     SemanticNodeInput,
     ExploreNodeInput,
     AskMetricsNodeInput,
-    GenReportNodeInput,
     GenVisualReportNodeInput,
     GenVisualDashboardNodeInput,
     GenDashboardNodeInput,

@@ -2875,7 +2875,7 @@ class AgenticNode(Node):
 
         Only activates if 'skills' is explicitly set in node_config.
         ChatAgenticNode overrides skill setup in its own setup_tools(), so this primarily
-        serves other AgenticNode subclasses (GenReport, GenMetrics, etc.).
+        serves other AgenticNode subclasses.
 
         If skill_manager was not created (e.g. no global 'skills:' section in agent.yml),
         creates one with default SkillConfig (same behavior as ChatAgenticNode).
@@ -3843,7 +3843,7 @@ class AgenticNode(Node):
         - Calls ``model.generate_with_tools_stream`` with the current
           ``ctx.user_prompt`` and per-node-configured tools / hooks.
         - Routes every emitted action through ``_maybe_rewrite_stream_action``
-          so subclasses can re-shape items mid-flight (used by GenReport).
+          so subclasses can re-shape items mid-flight.
         - Updates ``ctx.response_content`` / ``ctx.last_successful_output``
           from assistant chunks (skipping ``is_thinking`` items so the
           model's internal monologue never lands in the final response) and
@@ -3989,8 +3989,7 @@ class AgenticNode(Node):
     def _maybe_rewrite_stream_action(self, action: ActionHistory, ctx: "StreamRunContext") -> Optional[ActionHistory]:
         """Hook: optionally replace a streamed action before it is yielded.
 
-        Return a replacement :class:`ActionHistory` to substitute it (used by
-        GenReport to swap JSON payloads for rendered markdown in real time)
+        Return a replacement :class:`ActionHistory` to substitute it,
         or ``None`` (default) to keep the original action unchanged.
         """
         return None
