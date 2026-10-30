@@ -302,9 +302,37 @@ class BashTool:
     @classmethod
     def _resolve_bash(cls) -> Optional[str]:
         if not cls._bash_path_resolved:
-            cls._bash_path_cache = shutil.which("bash")
+            cls._bash_path_cache = shutil.which("bash") or cls._bash_from_known_locations()
             cls._bash_path_resolved = True
         return cls._bash_path_cache
+
+    @staticmethod
+    def _bash_from_known_locations() -> Optional[str]:
+        """Find bash.exe in the default Git for Windows install directories.
+
+        Used when ``bash`` is not on PATH: some programs start datus with a
+        minimal PATH that omits Git even though Git is installed. Returns None
+        on non-Windows systems and when no candidate file exists.
+        """
+        if os.name != "nt":
+            return None
+
+        def env_dir(var: str, default: str) -> str:
+            # Treat an empty value like an unset one: "" is not a usable base
+            # directory and would make os.path.join produce a relative path.
+            return os.environ.get(var) or default
+
+        candidates = [
+            os.path.join(env_dir("ProgramFiles", r"C:\Program Files"), "Git", "bin", "bash.exe"),
+            os.path.join(env_dir("ProgramFiles(x86)", r"C:\Program Files (x86)"), "Git", "bin", "bash.exe"),
+            os.path.join(env_dir("LOCALAPPDATA", ""), "Programs", "Git", "bin", "bash.exe"),
+        ]
+        # LOCALAPPDATA has no default: when unset, the joined candidate is a
+        # relative path, which the absolute-path check below rejects.
+        for candidate in candidates:
+            if os.path.isabs(candidate) and os.path.isfile(candidate):
+                return candidate
+        return None
 
     def _shell_prefix(self) -> str:
         """Hardening prefix prepended to every ``bash -c`` command.
