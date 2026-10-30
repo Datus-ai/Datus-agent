@@ -116,9 +116,10 @@ def _user_turn_rows(
         "SELECT id,message_data FROM agent_messages WHERE session_id=? AND id<=? "
         "AND json_extract(message_data,'$.role')='user' AND ("
         "json_type(message_data,'$.content')!='array' OR "
-        "NOT EXISTS(SELECT 1 FROM json_each(message_data,'$.content') WHERE json_extract(value,'$.type')='tool_result') "
+        "NOT EXISTS(SELECT 1 FROM json_each(message_data,'$.content') "
+        "WHERE type='object' AND json_extract(value,'$.type')='tool_result') "
         "OR EXISTS(SELECT 1 FROM json_each(message_data,'$.content') "
-        "WHERE json_extract(value,'$.type') IN ('text','input_text','output_text'))) ORDER BY id "
+        "WHERE type='object' AND json_extract(value,'$.type') IN ('text','input_text','output_text'))) ORDER BY id "
         + ("DESC" if descending else "ASC"),
         (session_id, snapshot),
     )

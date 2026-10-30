@@ -536,3 +536,36 @@ def test_bounded_subagent_runs_preserve_an_implicit_initial_assistant_run(histor
     calls = {p.payload["callToolId"] for m in page.messages for p in m.content if p.type == "call-tool"}
     assert ("implicit" if target == 1 else "prompted") in calls
     assert ("prompted" if target == 1 else "implicit") not in calls
+
+
+@pytest.mark.parametrize("has_tool_result", [False, True])
+@pytest.mark.parametrize("subagent", [False, True])
+def test_history_turn_boundaries_ignore_non_object_content_blocks(history, has_tool_result, subagent):
+    service, write = history
+    content = [
+        "plain provider text",
+        7,
+        True,
+        None,
+        ["nested", "array"],
+        {"type": "input_text", "text": "mixed question"},
+    ]
+    if has_tool_result:
+        content.insert(0, {"type": "tool_result", "tool_use_id": "other", "content": "ignored"})
+    child = "gen_job_session_mixed" if subagent else None
+    if subagent:
+        write("chat_mixed_blocks", [*turn(0), *tool("task", "task", {"session_id": child})])
+        write(
+            child,
+            [{"role": "user", "content": content}, *tool("mixed_child_tool", "execute_sql", "done")],
+            parent="chat_mixed_blocks",
+        )
+    else:
+        write("chat_mixed_blocks", [{"role": "user", "content": content}])
+    page = get_history_page(service, "chat_mixed_blocks", "alice", 1, None)
+    assert page.total_turns == 1
+    if subagent:
+        calls = {p.payload["callToolId"] for m in page.messages for p in m.content if p.type == "call-tool"}
+        assert "mixed_child_tool" in calls
+    else:
+        assert questions(page) == ["mixed question"]
