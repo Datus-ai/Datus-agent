@@ -1618,6 +1618,7 @@ execution:
         - datus/entrypoints.py
         - datus/utils/multiprocessing_utils.py
       targets:
+        - tests/unit_tests/utils/test_windows_compatibility.py
         - tests/unit_tests/test_main.py
         - tests/unit_tests/cli/test_main.py
         - tests/unit_tests/cli/test_core_entrypoint_acceptance.py
@@ -1747,6 +1748,7 @@ execution:
       paths: [datus/agent/node/compare_agentic_node.py]
       targets:
         - tests/unit_tests/agent/node/test_compare_agentic_node.py
+        - tests/unit_tests/agent/node/test_build_success_result_fallbacks.py
         - tests/unit_tests/agent/node/test_agentic_node.py
         - tests/unit_tests/agent/node/test_node.py
         - tests/unit_tests/agent/node/test_schema_linking.py
@@ -1754,6 +1756,7 @@ execution:
       paths: [datus/agent/node/explore_agentic_node.py]
       targets:
         - tests/unit_tests/agent/node/test_explore_agentic_node.py
+        - tests/unit_tests/agent/node/test_build_success_result_fallbacks.py
         - tests/unit_tests/agent/node/test_agentic_node.py
         - tests/unit_tests/agent/node/test_node.py
         - tests/unit_tests/agent/node/test_schema_linking.py
@@ -1761,6 +1764,7 @@ execution:
       paths: [datus/agent/node/feedback_agentic_node.py]
       targets:
         - tests/unit_tests/agent/node/test_feedback_agentic_node.py
+        - tests/unit_tests/agent/node/test_build_success_result_fallbacks.py
         - tests/unit_tests/agent/node/test_agentic_node.py
         - tests/unit_tests/agent/node/test_node.py
         - tests/unit_tests/agent/node/test_schema_linking.py
@@ -1782,6 +1786,7 @@ execution:
       paths: [datus/agent/node/gen_report_agentic_node.py]
       targets:
         - tests/unit_tests/agent/node/test_gen_report_agentic_node.py
+        - tests/unit_tests/agent/node/test_build_success_result_fallbacks.py
         - tests/unit_tests/agent/node/test_agentic_node.py
         - tests/unit_tests/agent/node/test_node.py
         - tests/unit_tests/agent/node/test_schema_linking.py
@@ -1826,6 +1831,7 @@ execution:
       paths: [datus/agent/node/sql_summary_agentic_node.py]
       targets:
         - tests/unit_tests/agent/node/test_sql_summary_agentic_node.py
+        - tests/unit_tests/agent/node/test_build_success_result_fallbacks.py
         - tests/unit_tests/agent/node/test_agentic_node.py
         - tests/unit_tests/agent/node/test_node.py
         - tests/unit_tests/agent/node/test_schema_linking.py
@@ -1852,9 +1858,11 @@ execution:
       paths: [datus/utils/sql_utils.py]
       targets:
         - tests/unit_tests/utils/test_sql_utils.py
+        - tests/unit_tests/utils/test_adapter_sql_analysis.py
         - tests/unit_tests/tools/test_sql_guard.py
         - tests/unit_tests/tools/permission/
         - tests/unit_tests/tools/func_tool/test_database.py
+        - tests/unit_tests/tools/func_tool/test_hana_adapter.py
         - tests/unit_tests/agent/node/test_gen_sql_agentic_node.py
     - id: filesystem-paths
       paths:

@@ -141,6 +141,35 @@ def test_leaf_changes_select_their_owners_and_consumers(source, expected):
     assert plan["selections"][0]["matched_path"] == source
 
 
+@pytest.mark.parametrize(
+    "source,consumers",
+    [
+        (source, {"tests/unit_tests/utils/test_windows_compatibility.py"})
+        for source in ("datus/entrypoints.py", "datus/utils/multiprocessing_utils.py")
+    ]
+    + [
+        (
+            "datus/utils/sql_utils.py",
+            {
+                "tests/unit_tests/utils/test_adapter_sql_analysis.py",
+                "tests/unit_tests/tools/func_tool/test_hana_adapter.py",
+            },
+        )
+    ]
+    + [
+        (
+            f"datus/agent/node/{node}_agentic_node.py",
+            {"tests/unit_tests/agent/node/test_build_success_result_fallbacks.py"},
+        )
+        for node in ("compare", "explore", "feedback", "gen_report", "sql_summary")
+    ],
+)
+def test_specific_owners_retain_shared_contract_consumers(source, consumers):
+    plan = unit_test_plan([source])
+    assert consumers <= set(plan["targets"])
+    assert impact_plan([source])["unit_targets"] == plan["targets"]
+
+
 def test_node_owners_retain_required_generic_node_contracts():
     data = load_map()
     required = ["tests/unit_tests/agent/node/test_node.py", "tests/unit_tests/agent/node/test_schema_linking.py"]
