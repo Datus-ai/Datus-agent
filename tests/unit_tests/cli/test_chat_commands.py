@@ -1561,8 +1561,8 @@ class TestEdgeCases:
 
         cmds = _make_chat_commands(real_agent_config)
         node = cmds._create_new_node()
-        node.db_func_tool._primary_connector = MagicMock()
-        node.db_func_tool._primary_connector.database_name = "connector_db"
+        # Bind both the primary connector and the SQL-context routing path.
+        node.db_func_tool._init_single_db_connector(MagicMock(database_name="connector_db"))
 
         message = node._build_enhanced_message(ChatNodeInput(user_message="有哪些表"))
 
