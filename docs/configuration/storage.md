@@ -120,6 +120,26 @@ database:
     export OPENAI_API_KEY="your_openai_api_key"
     ```
 
+### Custom OpenAI-compatible Embeddings
+
+Custom model names are supported when `dim_size` declares their output vector width. By default, Datus omits the optional API `dimensions` parameter for custom models; configuring a vector width does not imply that the provider supports resizing embeddings.
+
+```yaml
+storage:
+  database:
+    registry_name: openai
+    model_name: kinfra-text-embedding-0.6b
+    dim_size: 1024                  # Example: replace with the provider's actual output width
+    target_model: custom_provider  # Model config containing the API key and base_url
+    send_dimensions: false         # Optional: explicitly omit API dimensions
+```
+
+Omit `send_dimensions` (or use `null`) for automatic selection: `text-embedding-3-small` and `text-embedding-3-large` send the configured dimension, while custom names omit it. Set `send_dimensions: true` only when the provider supports the parameter, such as an Azure deployment alias backed by a resizable embedding model. Set it to `false` to omit the parameter even for an OpenAI v3 model; `dim_size` must then match the native output width. `text-embedding-ada-002` stays fixed at 1536 dimensions and never sends the parameter.
+
+Without a positive configured `dim_size`, a custom model's width cannot be inferred. Changing a model's output width requires rebuilding any existing vector index with the new width.
+
+For all OpenAI-compatible models, initialization rejects a non-null probe vector whose width differs from the configured `dim_size`. This also applies to built-in model names: when `send_dimensions: false`, configure the provider's native width; `text-embedding-ada-002` requires 1536.
+
 ### Sentence Transformers (Local)
 
 For local embedding models:
