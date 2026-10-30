@@ -660,3 +660,20 @@ class ChatHistoryData(BaseModel):
     """Chat history data."""
 
     messages: List[SSEMessagePayload] = Field(default_factory=list, description="chat history messages")
+
+
+class ChatHistoryTurn(BaseModel):
+    """A user-turn anchor in the full session (one-based index)."""
+
+    message_id: str
+    index: int
+    text: str = ""
+
+
+class ChatHistoryPageData(ChatHistoryData):
+    """A bounded window of complete user turns, oldest to newest."""
+
+    has_more: bool = False
+    next_cursor: Optional[str] = None
+    total_turns: int = 0
+    turns: List[ChatHistoryTurn] = Field(default_factory=list)

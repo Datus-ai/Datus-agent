@@ -9,6 +9,7 @@ read from disk each time (no in-memory state).
 import json
 import os
 import uuid
+from collections import Counter
 from typing import Any, AsyncGenerator, Callable, Dict, List, Optional
 
 from datus.agent.node.chat_agentic_node import ChatAgenticNode
@@ -91,13 +92,24 @@ def _is_safe_session_id(session_id: str) -> bool:
     return ".." not in session_id
 
 
-def _load_subagent_runs(session_dir: str, sub_session_id: str) -> List[List[ActionHistory]]:
+def _load_subagent_runs(
+    session_dir: str, sub_session_id: str, *, skip: int = 0, count: Optional[int] = None
+) -> List[List[ActionHistory]]:
     """A subagent session's stored actions, one list per prompt it received."""
     # SessionManager() creates its directory, so check for the file before building one.
     if not os.path.isfile(os.path.join(session_dir, f"{sub_session_id}.db")):
         return []
     try:
-        raw_messages = SessionManager(session_dir=session_dir).get_session_messages(sub_session_id)
+        manager = SessionManager(session_dir=session_dir)
+        bounds = {}
+        if count is not None:
+            from datus.api.services.history_pagination import subagent_run_window
+
+            window = subagent_run_window(manager, sub_session_id, skip, count)
+            if window is None:
+                return []
+            bounds = {"min_id": window[0], "max_id": window[1]}
+        raw_messages = manager.get_session_messages(sub_session_id, **bounds)
     except Exception as e:
         logger.warning(f"Failed to read subagent session {sub_session_id} for history: {e}")
         return []
@@ -146,6 +158,7 @@ def _actions_to_payloads(
     messages: List[ActionHistory],
     event_id: int,
     expand_subagent: Optional[Callable[[str, ActionHistory], List[ActionHistory]]] = None,
+    id_prefix: Optional[str] = None,
 ) -> tuple[List[SSEMessagePayload], int]:
     """Convert one stored assistant group into history payloads.
 
@@ -164,7 +177,7 @@ def _actions_to_payloads(
         if a.role == ActionRole.TOOL and a.status != ActionStatus.PROCESSING
     }
     replayed_ask_user_ids: set[str] = set()
-    for action in messages:
+    for action_index, action in enumerate(messages):
         if action.role == ActionRole.TOOL and action.status != ActionStatus.PROCESSING:
             if action.action_id.removeprefix("complete_") in replayed_ask_user_ids:
                 # Folded into the card, but it still counts as a tool result.
@@ -172,13 +185,24 @@ def _actions_to_payloads(
                 continue
         if expand_subagent and _is_task_result(action):
             call_id = action.action_id.removeprefix("complete_")
-            sub_payloads, event_id = _actions_to_payloads(expand_subagent(call_id, action), event_id)
+            sub_payloads, event_id = _actions_to_payloads(
+                expand_subagent(call_id, action),
+                event_id,
+                id_prefix=f"{id_prefix}:{call_id}" if id_prefix else None,
+            )
             sse_messages.extend(sub_payloads)
         sse_event = None
-        if _is_ask_user_call(action) and action.action_id in tool_results:
-            sse_event = answered_ask_user_to_sse_event(
-                action, tool_results[action.action_id], event_id, str(uuid.uuid4())
+        message_id = (
+            str(
+                uuid.uuid5(
+                    uuid.NAMESPACE_URL, f"{id_prefix}:{action_index}:{action.action_id}:{action.role}:{action.status}"
+                )
             )
+            if id_prefix
+            else str(uuid.uuid4())
+        )
+        if _is_ask_user_call(action) and action.action_id in tool_results:
+            sse_event = answered_ask_user_to_sse_event(action, tool_results[action.action_id], event_id, message_id)
             if sse_event:
                 replayed_ask_user_ids.add(action.action_id)
         if sse_event is None:
@@ -186,7 +210,7 @@ def _actions_to_payloads(
             sse_event = action_to_sse_event(
                 action,
                 event_id,
-                str(uuid.uuid4()),
+                message_id,
                 include_user_message=True,
                 include_final_response=include_final_response,
             )
@@ -430,14 +454,17 @@ class ChatService:
             logger.error(f"Failed to compact session {session_id}: {e}")
             return Result[CompactSessionData](success=False, errorCode="SESSION_COMPACT_ERROR", errorMessage=str(e))
 
-    def get_history(self, session_id: str, user_id: Optional[str] = None) -> Result[ChatHistoryData]:
+    def get_history(
+        self, session_id: str, user_id: Optional[str] = None, *, window: Optional[tuple[int, int]] = None
+    ) -> Result[ChatHistoryData]:
         """Get chat history messages for a session."""
         try:
             # Use SessionManager to get messages from SQLite
             session_manager = SessionManager(session_dir=self._session_dir, scope=user_id)
-            raw_messages = session_manager.get_session_messages(session_id)
-            tool_results = session_manager.get_tool_result_contents(session_id)
-            tool_calls = session_manager.get_tool_call_contents(session_id)
+            bounds = {"min_id": window[0], "max_id": window[1]} if window else {}
+            raw_messages = session_manager.get_session_messages(session_id, **bounds)
+            tool_results = session_manager.get_tool_result_contents(session_id, **bounds)
+            tool_calls = session_manager.get_tool_call_contents(session_id, **bounds)
 
             if not raw_messages:
                 return Result[ChatHistoryData](success=True, data=ChatHistoryData())
@@ -450,9 +477,27 @@ class ChatService:
                 os.path.join(session_manager.session_dir, session_id) if _is_safe_session_id(session_id) else None
             )
             subagent_runs: Dict[str, List[List[ActionHistory]]] = {}
+            if window and subagent_dir:
+                from datus.api.services.history_pagination import subagent_run_offsets
+
+                run_counts = Counter(
+                    child_id
+                    for msg in raw_messages
+                    for action in msg.get("actions", [])
+                    if _is_task_result(action)
+                    and (child_id := _subagent_session_id(action))
+                    and _is_safe_session_id(child_id)
+                )
+                if run_counts:
+                    offsets = subagent_run_offsets(session_manager, session_id, window[0])
+                    for child_id, count in run_counts.items():
+                        subagent_runs[child_id] = _load_subagent_runs(
+                            subagent_dir, child_id, skip=offsets.get(child_id, 0), count=count
+                        )
             pending_review_messages: List[SSEMessagePayload] = []
 
             for idx, msg in enumerate(raw_messages):
+                stable_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"{session_id}:{msg.get('source_id', idx)}"))
                 role = msg.get("role", "")
                 if role == "user":
                     # Interrupted tool calls have no SDK row and are anchored to
@@ -485,7 +530,7 @@ class ChatService:
                         ]
                         sse_messages.append(
                             SSEMessagePayload(
-                                message_id=str(uuid.uuid4()),
+                                message_id=stable_id if window else str(uuid.uuid4()),
                                 role="user",
                                 content=[IMessageContent(**part) for part in user_parts]
                                 if user_parts
@@ -497,7 +542,13 @@ class ChatService:
                         for part in interrupted_reviews:
                             pending_review_messages.append(
                                 SSEMessagePayload(
-                                    message_id=str(uuid.uuid4()), role="assistant", content=[IMessageContent(**part)]
+                                    message_id=str(
+                                        uuid.uuid5(uuid.NAMESPACE_URL, f"{stable_id}:{len(pending_review_messages)}")
+                                    )
+                                    if window
+                                    else str(uuid.uuid4()),
+                                    role="assistant",
+                                    content=[IMessageContent(**part)],
                                 )
                             )
                 elif role == "assistant":
@@ -505,6 +556,7 @@ class ChatService:
                         payloads, event_id = _actions_to_payloads(
                             msg["actions"],
                             event_id,
+                            id_prefix=f"{session_id}:{msg.get('source_id', idx)}" if window else None,
                             expand_subagent=(
                                 (
                                     lambda call_id, result_action: _subagent_run_actions(
@@ -519,7 +571,7 @@ class ChatService:
                     elif msg.get("content"):
                         sse_messages.append(
                             SSEMessagePayload(
-                                message_id=str(uuid.uuid4()),
+                                message_id=stable_id if window else str(uuid.uuid4()),
                                 role="assistant",
                                 content=[IMessageContent(type="markdown", payload={"content": msg["content"]})],
                             )
