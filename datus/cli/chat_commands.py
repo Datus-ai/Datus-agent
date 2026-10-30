@@ -15,7 +15,7 @@ import re
 import subprocess
 import threading
 from collections.abc import Iterator
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from typing import TYPE_CHECKING, Any, Callable, List, Optional, Tuple
 
 from rich.panel import Panel
@@ -429,6 +429,7 @@ class ChatCommands:
         message: str,
         plan_mode: bool = False,
         subagent_name: Optional[str] = None,
+        init_context=None,
     ):
         """Execute a chat command in interactive REPL mode.
 
@@ -439,14 +440,25 @@ class ChatCommands:
         hook), drain those messages and feed them into a fresh run so they
         are not silently dropped.
         """
+        if init_context is not None:
+            # One normal run in the current session. Late input remains queued
+            # for the next user turn; it must not restart an exhausted init budget.
+            try:
+                self._execute_chat(
+                    message,
+                    plan_mode=plan_mode,
+                    subagent_name=subagent_name,
+                    interactive=True,
+                    init_context=init_context,
+                )
+            except BaseException as exc:
+                init_context._stop(f"Init execution stopped: {type(exc).__name__}: {exc}")
+                raise
+            return
+
         current_message = message
         while True:
-            self._execute_chat(
-                current_message,
-                plan_mode=plan_mode,
-                subagent_name=subagent_name,
-                interactive=True,
-            )
+            self._execute_chat(current_message, plan_mode=plan_mode, subagent_name=subagent_name, interactive=True)
 
             node = self.current_node
             queue = node.pending_input_queue if node is not None else None
@@ -497,6 +509,7 @@ class ChatCommands:
         plan_mode: bool = False,
         subagent_name: Optional[str] = None,
         interactive: bool = True,
+        init_context=None,
     ):
         """Core chat execution logic shared by interactive and non-interactive modes."""
         if not message.strip():
@@ -504,6 +517,9 @@ class ChatCommands:
             return
 
         editable_message = message
+        init_resources = ExitStack()
+        current_node = None
+        execution_interrupted = False
         try:
             # Manual-execution turns (SQL/bash run from the input bar) carry a
             # marker-encoded payload whose command may legitimately contain
@@ -600,6 +616,9 @@ class ChatCommands:
                 current_node._update_database_connection(active_db)
             from datus.utils.trace_context import build_chat_trace_context
 
+            if init_context is not None:
+                init_resources.enter_context(init_context.activate(current_node))
+
             trace_ctx = build_chat_trace_context(
                 session_id=current_node.session_id,
                 llm_session_id=current_node.session_id,
@@ -647,7 +666,6 @@ class ChatCommands:
                 session_manager = current_node.session_manager
                 session_checkpoint = session_manager.checkpoint_turn(current_node.session_id)
                 output_checkpoint = None
-                execution_interrupted = False
 
                 async def run_chat_stream():
                     """Run chat stream — INTERACTION actions flow into incremental_actions."""
@@ -659,6 +677,8 @@ class ChatCommands:
                         action_stream = current_node.execute_stream_with_interactions(
                             action_history_manager=self.cli.actions
                         )
+                        if init_context is not None:
+                            action_stream = init_context.stream(action_stream)
                         async for action in action_stream:
                             if action.role in {
                                 ActionRole.ASSISTANT,
@@ -806,8 +826,13 @@ class ChatCommands:
                     # ESC-time latch, rather than the exception path, is the
                     # authoritative rollback decision.
                     rollback_unanswered = bool(getattr(streaming_ctx, "unanswered_rollback_requested", False))
-                    turn_interrupted = execution_interrupted or bool(
-                        getattr(streaming_ctx, "interrupt_requested", False)
+                    execution_interrupted = (
+                        execution_interrupted
+                        or rollback_unanswered
+                        or bool(
+                            getattr(streaming_ctx, "interrupt_requested", False)
+                            or current_node.interrupt_controller.is_interrupted
+                        )
                     )
                     if rollback_unanswered:
                         self._rollback_unanswered_turn(
@@ -822,7 +847,7 @@ class ChatCommands:
                         )
                         current_node.interrupt_controller.reset()
                         return
-                    if turn_interrupted:
+                    if execution_interrupted:
                         # Partial output (and the Interrupted notice) has
                         # already been flushed by the streaming context. Do
                         # not reinterpret the last intermediate/tool action as
@@ -944,9 +969,11 @@ class ChatCommands:
                             interrupt_controller=current_node.interrupt_controller,
                         )
                     except KeyboardInterrupt:
+                        execution_interrupted = True
                         current_node.interrupt_controller.interrupt()
                         logger.info("KeyboardInterrupt caught, execution interrupted gracefully")
                     except ExecutionInterrupted:
+                        execution_interrupted = True
                         current_node._drop_running_turn_usage_on_exit = True
                         if current_node.pending_input_queue is not None:
                             current_node.pending_input_queue.clear()
@@ -1015,10 +1042,23 @@ class ChatCommands:
 
         except Exception as e:
             logger.error(f"Chat error: {str(e)}")
+            if init_context is not None:
+                init_context._stop(f"Init chat failed: {e}")
             self.console.print(f"[red]Error:[/] {str(e)}")
             if _is_model_config_error(e):
                 self.console.print("[yellow]Hint: Use /model to configure or switch your model.[/]")
         finally:
+            init_resources.close()
+            if init_context is not None:
+                controller = getattr(current_node, "interrupt_controller", None)
+                queue = getattr(current_node, "pending_input_queue", None)
+                pending = queue.snapshot() if queue is not None else []
+                init_context.record_user_updates(pending)
+                init_context.finish_execution(
+                    getattr(current_node, "result", None),
+                    interrupted=execution_interrupted or bool(controller is not None and controller.is_interrupted),
+                    pending_input=bool(pending),
+                )
             # Drop the in-progress reference so a later sidebar reflow does
             # not replay actions from a turn that has already finished.
             self._current_incremental_actions = None

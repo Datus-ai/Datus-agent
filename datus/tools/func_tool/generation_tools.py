@@ -34,6 +34,7 @@ from datus.storage.semantic_dataset.store import (
 )
 from datus.tools.func_tool.base import FuncToolResult, trans_to_function_tool
 from datus.tools.func_tool.generation_evidence import GenerationEvidence
+from datus.tools.semantic_tools.dosi.model import document_model_names
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
 from datus.utils.path_manager import get_path_manager
@@ -686,13 +687,7 @@ class GenerationTools:
         """Return semantic-model names declared by one OSI artifact."""
         names: List[str] = []
         for doc in self._iter_yaml_docs(osi_path):
-            semantic_models = doc.get("semantic_model")
-            if isinstance(semantic_models, list):
-                for model in semantic_models:
-                    if isinstance(model, dict) and isinstance(model.get("name"), str):
-                        names.append(model["name"])
-            elif isinstance(semantic_models, dict) and isinstance(semantic_models.get("name"), str):
-                names.append(semantic_models["name"])
+            names.extend(document_model_names(doc))
         return self._dedupe_strings(names)
 
     def extract_osi_dataset_names(self, semantic_model_path: str) -> List[str]:
@@ -1374,6 +1369,7 @@ class GenerationTools:
                     "subject_path": subject_path,
                     "semantic_model_name": semantic_model_name,
                     "id": build_metric_id(subject_path, metric_name),
+                    "uid": getattr(metric, "uid", "") or "",
                     "description": getattr(metric, "description", "") or "",
                     "metric_type": (
                         metric_type
@@ -1606,6 +1602,17 @@ class GenerationTools:
         except Exception as e:
             logger.error(f"Error syncing OSI metrics to DB: {e}", exc_info=True)
             return {"success": False, "error": str(e)}
+
+    def metric_names_needing_uid_sync(self, metric_file: str, metric_uids: Dict[str, str]) -> List[str]:
+        """Find selected-artifact identities missing or stale in the scoped KB."""
+        if not metric_uids:
+            return []
+        rows = self.metric_rag.storage.search_all(
+            where=And([*_rag_scope_conditions(self.metric_rag), eq("yaml_path", metric_file)]),
+            select_fields=["name", "uid"],
+        )
+        existing = {normalize_metric_name(row["name"]): row.get("uid") for row in rows}
+        return [name for name, uid in metric_uids.items() if existing.get(normalize_metric_name(name)) != uid]
 
     def sync_osi_to_db(
         self,

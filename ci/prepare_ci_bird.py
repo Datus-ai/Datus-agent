@@ -9,9 +9,11 @@ import shutil
 import sqlite3
 from pathlib import Path
 
+import datus
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SOURCE_DIR = REPO_ROOT / "tests" / "data" / "ci_bird"
-CALIFORNIA_SOURCE = REPO_ROOT / "datus" / "sample_data" / "california_schools" / "california_schools.sqlite"
+CALIFORNIA_SOURCE = Path(datus.__file__).parent / "sample_data" / "california_schools" / "california_schools.sqlite"
 GENERATED_DATABASES = ("card_games", "financial", "toxicology")
 
 

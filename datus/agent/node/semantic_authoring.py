@@ -60,6 +60,67 @@ def osi_semantic_model_directory(agent_config: Any = None) -> Optional[Path]:
     return _osi_semantic_model_dir(agent_config)
 
 
+def _ontology_dir(agent_config: Any = None) -> Optional[Path]:
+    """Return the project's ontology directory when resolvable."""
+    ontology_dir = getattr(getattr(agent_config, "path_manager", None), "ontology_dir", None)
+    if ontology_dir is None:
+        return None
+    try:
+        return Path(ontology_dir).expanduser()
+    except TypeError:
+        return None
+
+
+def inline_mapping_models(agent_config: Any = None) -> list[Dict[str, Any]]:
+    """Ossie mapping documents that carry their semantic model inline.
+
+    Such a model lives inside ``semantic_model_ref.document`` of a file under
+    ``subject/ontology/``, next to the ontology it maps. It is a document of
+    its own, tied to no datasource, so every datasource loads it. OSI
+    authoring edits flat model files only, so these models are readable by
+    every agent but not authorable by semantic_modeling.
+    """
+    from datus.tools.semantic_tools.dosi.engine import document_kind
+
+    ontology_dir = _ontology_dir(agent_config)
+    if ontology_dir is None or not ontology_dir.is_dir():
+        return []
+    found: list[Dict[str, Any]] = []
+    paths = sorted(
+        path for pattern in ("*.yml", "*.yaml", "*.json") for path in ontology_dir.glob(pattern) if path.is_file()
+    )
+    for path in paths:
+        try:
+            document = yaml.safe_load(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, yaml.YAMLError):
+            continue
+        if document_kind(document if isinstance(document, dict) else None) != "mapping":
+            continue
+        model_ref = document.get("semantic_model_ref")
+        if not isinstance(model_ref, dict) or not isinstance(model_ref.get("document"), dict):
+            continue
+        found.append(
+            {
+                "semantic_model_name": str(model_ref.get("name") or model_ref["document"].get("name") or ""),
+                "mapping_file": f"subject/ontology/{path.name}",
+                "absolute_path": str(path.resolve(strict=False)),
+            }
+        )
+    return found
+
+
+def inline_mapping_message(datasource: str, mappings: Iterable[Dict[str, Any]]) -> str:
+    """Guidance returned when semantic_modeling meets models it cannot author."""
+    files = ", ".join(str(mapping.get("mapping_file")) for mapping in mappings) or "<none>"
+    return (
+        f"The semantic model of datasource {datasource!r} is inline in the Ossie mapping document(s) {files}. "
+        "semantic_modeling authors flat OSI model files only and cannot edit inside a mapping document, and it "
+        "must not create a separate model file beside it. Stop without editing any file and return "
+        "status 'blocked' with blocker_code 'semantic_model_inline_in_mapping'; tell the caller that the mapping "
+        "document (ontology, concept_params and metrics in one file) has to be edited directly."
+    )
+
+
 def osi_semantic_models_root(agent_config: Any = None) -> Optional[Path]:
     """Return the semantic-model root shared by every datasource.
 
@@ -154,8 +215,8 @@ def _dataset_table_references(agent_config: Any, dataset: Dict[str, Any], datase
 
 
 def validate_osi_authoring_document(document: Any) -> Optional[str]:
-    """Validate a Dosi semantic-model document."""
-    if not isinstance(document, dict):
+    """Validate a Dosi document or its unmodified YAML source text."""
+    if not isinstance(document, (dict, str)):
         return "YAML document must be an object"
     from datus.tools.semantic_tools.dosi.authoring import validate_dosi_document
     from datus.tools.semantic_tools.exceptions import SemanticCoreException
@@ -183,6 +244,7 @@ def inspect_osi_semantic_model_inventory(agent_config: Any = None) -> Dict[str, 
             "issues": [],
             "discovery_warnings": [],
             "files_scanned": 0,
+            "inline_mapping_models": inline_mapping_models(agent_config),
         }
 
     datasource = str(getattr(agent_config, "current_datasource", "") or "default").strip() or "default"
@@ -425,6 +487,7 @@ def inspect_osi_semantic_model_inventory(agent_config: Any = None) -> Dict[str, 
         "issues": issues,
         "discovery_warnings": discovery_warnings,
         "files_scanned": len(paths),
+        "inline_mapping_models": inline_mapping_models(agent_config),
     }
 
 
@@ -581,6 +644,48 @@ def plan_osi_semantic_model_target(
 ) -> Dict[str, Any]:
     """Resolve a stable Ossie model name and file from authoring intent.
 
+    Reusing or repairing an existing plain model is always allowed. A new model
+    file is refused when the datasource also has a mapping that carries its own
+    model: the new file would become a second engine for the datasource and
+    change which model every non-ontology agent loads.
+    """
+    inventory = inventory if inventory is not None else inspect_osi_semantic_model_inventory(agent_config)
+    target = _resolve_osi_semantic_model_target(
+        agent_config,
+        semantic_model_name=semantic_model_name,
+        business_domain=business_domain,
+        fact_tables=fact_tables,
+        dimension_tables=dimension_tables,
+        inventory=inventory,
+    )
+    inline_mappings = inventory.get("inline_mapping_models") or []
+    if not inline_mappings or target.get("ambiguous") or target.get("exists"):
+        return target
+    datasource = str(getattr(agent_config, "current_datasource", "") or "default").strip() or "default"
+    return {
+        "ambiguous": True,
+        "code": "semantic_model_inline_in_mapping",
+        "matched_by": "inline_mapping",
+        "reason": inline_mapping_message(datasource, inline_mappings),
+        "candidates": [
+            {"semantic_model_name": mapping["semantic_model_name"], "semantic_model_file": mapping["mapping_file"]}
+            for mapping in inline_mappings
+        ],
+        "dimension_tables": target.get("dimension_tables") or [],
+    }
+
+
+def _resolve_osi_semantic_model_target(
+    agent_config: Any = None,
+    semantic_model_name: str = "",
+    business_domain: str = "",
+    fact_tables: Optional[Iterable[str]] = None,
+    dimension_tables: Optional[Iterable[str]] = None,
+    *,
+    inventory: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Resolve the target name and file, reused or new, without the inline-mapping check.
+
     An explicit name always wins. Without one, an existing model containing the
     core fact table is reused to keep its durable name. A new model is named by
     business domain when available, then by the first/core fact table. The
@@ -589,7 +694,6 @@ def plan_osi_semantic_model_target(
     """
     facts = [str(value).strip() for value in (fact_tables or []) if str(value).strip()]
     dimensions = [str(value).strip() for value in (dimension_tables or []) if str(value).strip()]
-    inventory = inventory if inventory is not None else inspect_osi_semantic_model_inventory(agent_config)
     duplicate_models = [issue for issue in inventory["issues"] if issue.get("code") == "duplicate_semantic_model_name"]
     existing_models = inventory["models"]
     named_models = [*existing_models, *inventory["recoverable_models"], *duplicate_models]
@@ -754,29 +858,51 @@ def required_authoring_skills(agent_config: Any, node_name: str) -> str:
     return "dosi-semantic-authoring" if node_name == "semantic_modeling" else ""
 
 
+def prepare_authoring_references(cache_dir: Path) -> Path:
+    """Materialize runtime-owned references without writing to the installed package."""
+    from datus.storage.semantic_model.artifact_file import atomic_write_text
+    from datus.tools.semantic_tools.dosi.authoring_spec import authoring_reference_documents
+
+    documents = authoring_reference_documents()
+    digest = hashlib.sha256(json.dumps(documents, sort_keys=True).encode("utf-8")).hexdigest()
+    reference_dir = (cache_dir / digest).resolve()
+    for filename, content in documents.items():
+        path = reference_dir / filename
+        if not path.exists() or path.read_text(encoding="utf-8") != content:
+            atomic_write_text(path, content)
+    return reference_dir
+
+
 def render_required_authoring_skill(
     skill_name: str,
     content: str,
     *,
     include_osi_core: bool = False,
+    reference_dir: Optional[Path] = None,
 ) -> str:
-    """Append the active native specs to the Dosi authoring skill."""
+    """Append compact core shapes and a complete active capability directory."""
     if skill_name != "dosi-semantic-authoring":
         return content
 
     from datus.tools.semantic_tools.dosi.authoring_spec import (
-        authoring_spec_text,
-        datus_extension_authoring_spec_text,
+        authoring_overview_text,
+        compact_authoring_spec_text,
     )
     from datus.tools.semantic_tools.dosi.engine import datus_extension_version
 
     rendered_skill = content.replace(_DATUS_EXTENSION_VERSION_TOKEN, datus_extension_version())
-    extension_spec = datus_extension_authoring_spec_text("<osi_dialect>")
+    extension_spec = authoring_overview_text()
     sections = [rendered_skill]
+    if reference_dir is not None:
+        sections.append(
+            f"## Authoring reference directory\n\n`{reference_dir}`\n\n"
+            "Use read_file with this absolute directory plus the directory entry's reference filename. "
+            "Full references: osi-core.yaml and datus.yaml. Read linked related_references when using combined capabilities."
+        )
     if include_osi_core:
-        core_spec = authoring_spec_text("<osi_dialect>")
-        sections.append(f"## Active OSI Core authoring specification\n\n```yaml\n{core_spec.rstrip()}\n```")
-    sections.append(f"## Active DATUS extension authoring specification\n\n```yaml\n{extension_spec.rstrip()}\n```")
+        core_spec = compact_authoring_spec_text("<osi_dialect>")
+        sections.append(f"## OSI Core reference shapes\n\n```yaml\n{core_spec.rstrip()}\n```")
+    sections.append(f"## Active DATUS capability directory\n\n```yaml\n{extension_spec.rstrip()}\n```")
     return "\n\n".join(sections)
 
 

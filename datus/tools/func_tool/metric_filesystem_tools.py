@@ -2,6 +2,7 @@
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
+import copy
 import json
 import re
 from pathlib import Path
@@ -11,9 +12,16 @@ import yaml
 
 from datus.storage.metric.store import normalize_metric_name
 from datus.storage.semantic_model.artifact_file import atomic_write_text, semantic_artifact_lock
-from datus.tools.func_tool.base import FuncToolResult
+from datus.tools.func_tool.base import FuncToolResult, tool_schema
 from datus.tools.func_tool.filesystem_tools import FilesystemFuncTool
 from datus.tools.func_tool.fs_path_policy import PathZone, ResolvedPath
+from datus.tools.semantic_tools.metric_identity import (
+    ensure_metric_uid,
+    metric_definitions,
+    metric_uid,
+    prepare_metric_uids,
+    validate_metric_uids,
+)
 from datus.utils.memory_loader import apply_single_replacement
 
 if TYPE_CHECKING:
@@ -25,8 +33,7 @@ class MetricFilesystemFuncTool(FilesystemFuncTool):
     """Filesystem tool variant for OSI semantic-model and metric authoring.
 
     Exposes narrow upsert/delete tools for metrics and datasets so authoring
-    can repair required fields or add query-backed datasets without rewriting
-    relationships or model metadata.
+    can update definitions without rewriting relationships or model metadata.
     """
 
     def __init__(
@@ -72,19 +79,26 @@ class MetricFilesystemFuncTool(FilesystemFuncTool):
                 names.append(name)
         return names
 
-    def upsert_osi_datasets(self, path: str, datasets_json: str) -> FuncToolResult:
+    @tool_schema(strict_mode=False)
+    def upsert_osi_datasets(self, path: str, datasets_json: List[Dict[str, Any]] | str) -> FuncToolResult:
         """Create or update datasets in a planned OSI semantic-model file.
 
-        The input is a JSON array of complete OSI dataset objects. Query-backed
-        datasets may provide generated SQL directly in ``source``; the DATUS
-        query-source extension is added automatically. A missing planned file
-        is created with the first non-empty dataset batch.
+        Pass datasets_json as a non-empty array of complete OSI dataset objects,
+        not an encoded string. Legacy JSON-encoded array strings remain accepted.
+        By default,
+        ``source`` is a qualified physical table or view; this does not require
+        a primary or unique key. Follow the authoring skill's source-selection
+        rules for a specific native capability gap or an explicit user request
+        for a query-backed source. Such datasets provide a complete SELECT in
+        ``source``; the DATUS query-source extension is added automatically.
+        A missing planned file is created with the first non-empty dataset batch.
         Existing datasets are replaced by ``name`` and new datasets are appended.
         Relationships, metrics, and model metadata are preserved.
 
         Args:
             path: Existing, planned OSI semantic-model YAML file.
-            datasets_json: JSON array containing OSI dataset objects.
+            datasets_json: Non-empty array of OSI dataset objects. Prefer a structured
+                array; a JSON-encoded array string is accepted for legacy callers.
         """
         resolved = self._classify(path)
         policy_error = self._reject_write_policy(resolved)
@@ -93,9 +107,11 @@ class MetricFilesystemFuncTool(FilesystemFuncTool):
         target_path = resolved.resolved
 
         try:
-            incoming_datasets = json.loads(datasets_json)
+            incoming_datasets = (
+                json.loads(datasets_json) if isinstance(datasets_json, str) else copy.deepcopy(datasets_json)
+            )
         except (TypeError, json.JSONDecodeError) as exc:
-            return FuncToolResult(success=0, error=f"datasets_json must be a valid JSON array: {exc}")
+            return FuncToolResult(success=0, error=f"datasets_json is not a valid JSON-encoded array string: {exc}")
         if not isinstance(incoming_datasets, list) or not incoming_datasets:
             return FuncToolResult(success=0, error="datasets_json must be a non-empty JSON array")
 
@@ -190,7 +206,11 @@ class MetricFilesystemFuncTool(FilesystemFuncTool):
                 model["datasets"] = existing_datasets
                 validation_error = self._validate_osi_document(document)
                 if validation_error:
-                    return FuncToolResult(success=0, error=f"Invalid OSI dataset update: {validation_error}")
+                    return FuncToolResult(
+                        success=0,
+                        error=f"Invalid OSI dataset update: {validation_error}",
+                        result={"written": False, "semantic_model_file": resolved.display},
+                    )
                 serialized = yaml.safe_dump(document, allow_unicode=True, sort_keys=False)
                 try:
                     if self.osi_target_state is not None:
@@ -229,9 +249,8 @@ class MetricFilesystemFuncTool(FilesystemFuncTool):
         """Delete explicitly named datasets from a planned OSI semantic model.
 
         Only ``semantic_model[0].datasets`` is changed. Relationships, metrics,
-        and model metadata are deliberately preserved so the authoring LLM can
-        resolve any resulting semantic validation errors according to the
-        user's intent instead of following hard-coded cascade rules. Missing
+        and model metadata are preserved. Resolve live references first: the
+        complete candidate must validate before deletion is written. Missing
         names are successful no-ops, allowing retries to republish the final
         YAML and clean stale Knowledge Base rows.
 
@@ -304,7 +323,11 @@ class MetricFilesystemFuncTool(FilesystemFuncTool):
                 model["datasets"] = remaining_datasets
                 validation_error = self._validate_osi_document(document)
                 if validation_error:
-                    return FuncToolResult(success=0, error=f"Invalid OSI dataset deletion: {validation_error}")
+                    return FuncToolResult(
+                        success=0,
+                        error=f"Invalid OSI dataset deletion: {validation_error}",
+                        result={"written": False, "semantic_model_file": resolved.display},
+                    )
                 serialized = yaml.safe_dump(document, allow_unicode=True, sort_keys=False)
                 try:
                     if self.osi_target_state is not None:
@@ -365,18 +388,27 @@ class MetricFilesystemFuncTool(FilesystemFuncTool):
         )
         return extensions
 
-    def upsert_osi_metrics(self, path: str, metrics_json: str) -> FuncToolResult:
+    @tool_schema(strict_mode=False)
+    def upsert_osi_metrics(self, path: str, metrics_json: List[Dict[str, Any]] | str) -> FuncToolResult:
         """Create or update metrics in an existing OSI semantic-model file.
 
-        The input is a JSON array of OSI metric objects. Existing metrics are
+        Pass metrics_json as a non-empty array of complete OSI metric objects,
+        not an encoded string. Legacy JSON-encoded array strings remain accepted.
+        Existing metrics are
         replaced by ``name`` and new metrics are appended. Identical metrics
         leave the file bytes unchanged but still enter this request's exact
         publish scope. The tool only owns the ``metrics`` collection, so
         datasets, fields, relationships, and model metadata remain unchanged.
+        Metric UIDs are assigned by the host and preserved on updates.
+        Every object must include aggregate SQL in ``expression``. ``derive``
+        and ``window`` do not auto-generate it: follow the authoring skill's
+        complete examples. Include dependencies first or in this same batch;
+        if validation rejects a batch, none of its members are written.
 
         Args:
             path: Existing OSI semantic-model YAML file under the project workspace.
-            metrics_json: JSON array containing complete OSI metric objects.
+            metrics_json: Non-empty array of complete OSI metric objects. Prefer a
+                structured array; a JSON-encoded array string is accepted for legacy callers.
         """
         resolved = self._classify(path)
         policy_error = self._reject_write_policy(resolved)
@@ -384,9 +416,11 @@ class MetricFilesystemFuncTool(FilesystemFuncTool):
             return policy_error
 
         try:
-            incoming_metrics = json.loads(metrics_json)
+            incoming_metrics = (
+                json.loads(metrics_json) if isinstance(metrics_json, str) else copy.deepcopy(metrics_json)
+            )
         except (TypeError, json.JSONDecodeError) as exc:
-            return FuncToolResult(success=0, error=f"metrics_json must be a valid JSON array: {exc}")
+            return FuncToolResult(success=0, error=f"metrics_json is not a valid JSON-encoded array string: {exc}")
         if not isinstance(incoming_metrics, list) or not incoming_metrics:
             return FuncToolResult(success=0, error="metrics_json must be a non-empty JSON array")
 
@@ -456,6 +490,20 @@ class MetricFilesystemFuncTool(FilesystemFuncTool):
             created: List[str] = []
             updated: List[str] = []
             unchanged: List[str] = []
+            try:
+                for name, metric in incoming_by_name.items():
+                    previous = existing_metrics[metric_indexes[name]] if name in metric_indexes else None
+                    ensure_metric_uid(metric, previous if previous is not None else {})
+                validate_metric_uids(
+                    [
+                        metric
+                        for metric in existing_metrics
+                        if str(metric.get("name") or "").strip() not in incoming_by_name
+                    ]
+                    + list(incoming_by_name.values())
+                )
+            except ValueError as exc:
+                return FuncToolResult(success=0, error=f"Invalid OSI metric identity: {exc}")
             for name, metric in incoming_by_name.items():
                 if name in metric_indexes:
                     index = metric_indexes[name]
@@ -473,7 +521,11 @@ class MetricFilesystemFuncTool(FilesystemFuncTool):
                 model["metrics"] = existing_metrics
                 validation_error = self._validate_osi_document(document)
                 if validation_error:
-                    return FuncToolResult(success=0, error=f"Invalid OSI metric update: {validation_error}")
+                    return FuncToolResult(
+                        success=0,
+                        error=f"Invalid OSI metric update: {validation_error}",
+                        result={"written": False, "semantic_model_file": resolved.display},
+                    )
 
                 serialized = yaml.safe_dump(document, allow_unicode=True, sort_keys=False)
                 try:
@@ -508,8 +560,8 @@ class MetricFilesystemFuncTool(FilesystemFuncTool):
 
         Missing names are treated as already absent so interrupted or repeated
         cleanup can still be published to the Knowledge Base. This tool does
-        not infer dependencies or cascade to other metrics; run semantic
-        validation after the edit and decide the next change from its result.
+        not cascade to other metrics. Resolve live references first; the complete
+        candidate must validate before deletion is written.
 
         Args:
             path: Bound OSI semantic-model YAML file under the project workspace.
@@ -596,7 +648,11 @@ class MetricFilesystemFuncTool(FilesystemFuncTool):
                 model["metrics"] = remaining_metrics
                 validation_error = self._validate_osi_document(document)
                 if validation_error:
-                    return FuncToolResult(success=0, error=f"Invalid OSI metric deletion: {validation_error}")
+                    return FuncToolResult(
+                        success=0,
+                        error=f"Invalid OSI metric deletion: {validation_error}",
+                        result={"written": False, "semantic_model_file": resolved.display},
+                    )
                 serialized = yaml.safe_dump(document, allow_unicode=True, sort_keys=False)
                 try:
                     self.osi_target_state.record_artifact_snapshot(target_path, original_content)
@@ -651,7 +707,7 @@ class MetricFilesystemFuncTool(FilesystemFuncTool):
             state.record_artifact_rollback(rollback_content)
         return True
 
-    def _validate_osi_document(self, document: Dict[str, Any]) -> Optional[str]:
+    def _validate_osi_document(self, document: Dict[str, Any] | str) -> Optional[str]:
         from datus.agent.node.semantic_authoring import (
             validate_osi_authoring_document,
         )
@@ -722,9 +778,21 @@ class OsiSemanticModelFilesystemFuncTool(MetricFilesystemFuncTool):
 
             if not isinstance(document, dict):
                 return FuncToolResult(success=0, error="OSI semantic model root must be a YAML object")
-            validation_error = self._validate_osi_document(document)
+            try:
+                identities_changed = prepare_metric_uids(document, original_document or {})
+            except ValueError as exc:
+                return FuncToolResult(success=0, error=f"Invalid OSI metric identity: {exc}")
+            # Validate the edit before any reserialization can hide duplicate keys.
+            validation_error = self._validate_osi_document(new_content)
+            if not validation_error and identities_changed:
+                new_content = yaml.safe_dump(document, allow_unicode=True, sort_keys=False)
+                validation_error = self._validate_osi_document(new_content)
             if validation_error:
-                return FuncToolResult(success=0, error=f"Invalid OSI semantic model edit: {validation_error}")
+                return FuncToolResult(
+                    success=0,
+                    error=f"Invalid OSI semantic model edit: {validation_error}",
+                    result={"written": False, "semantic_model_file": resolved.display},
+                )
             try:
                 if self.osi_target_state is not None:
                     self.osi_target_state.record_artifact_snapshot(target_path, content.encode("utf-8"))
@@ -732,6 +800,16 @@ class OsiSemanticModelFilesystemFuncTool(MetricFilesystemFuncTool):
             except OSError as exc:
                 return FuncToolResult(success=0, error=f"Cannot update {resolved.display}: {exc}")
             self._notify_mutation(target_path)
+            if self.osi_target_state is not None:
+                before_metrics = metric_definitions(original_document)
+                after_metrics = metric_definitions(document)
+                changed_metrics = [
+                    (after_metrics.get(key) or before_metrics[key])["name"]
+                    for key in sorted(before_metrics.keys() | after_metrics.keys())
+                    if before_metrics.get(key) != after_metrics.get(key)
+                ]
+                if changed_metrics:
+                    self.osi_target_state.record_metric_touch(target_path, new_content.encode("utf-8"), changed_metrics)
             if self.osi_target_state is not None and self.osi_target_state.planned is not None:
                 before = self._dataset_definitions(original_document)
                 after = self._dataset_definitions(document)
@@ -759,6 +837,22 @@ class OsiSemanticModelFilesystemFuncTool(MetricFilesystemFuncTool):
 
 class SemanticModelingFilesystemFuncTool(OsiSemanticModelFilesystemFuncTool):
     """Combined OSI surface for one dataset-and-metric authoring run."""
+
+    def ensure_metric_uids(self, path: str) -> Dict[str, str]:
+        """Host-only preparation before final validation; never an LLM tool."""
+        target_path = self._classify(path).resolved
+        with semantic_artifact_lock(target_path):
+            self._require_metric_revision(target_path)
+            original_content = target_path.read_bytes()
+            document = yaml.safe_load(original_content)
+            changed = prepare_metric_uids(document)
+            if changed:
+                serialized = yaml.safe_dump(document, allow_unicode=True, sort_keys=False)
+                self.osi_target_state.record_artifact_snapshot(target_path, original_content)
+                atomic_write_text(target_path, serialized)
+                self._notify_mutation(target_path)
+                self.osi_target_state.record_metric_touch(target_path, serialized.encode("utf-8"), changed)
+            return {metric["name"]: metric_uid(metric) for metric in metric_definitions(document).values()}
 
     @staticmethod
     def _query_source_extensions(value: Any) -> List[Dict[str, Any]]:
@@ -800,5 +894,14 @@ class SemanticModelingFilesystemFuncTool(OsiSemanticModelFilesystemFuncTool):
         ]
 
     def edit_file(self, path: str, old_string: str, new_string: str) -> FuncToolResult:  # type: ignore[override]
-        """Edit relationships or model metadata on the once-selected target."""
+        """Replace one exact text occurrence on the selected target, validating before writing.
+
+        Prefer dataset/metric upserts for those objects; use this for relationships or metadata.
+        A failed whole-model validation writes nothing.
+
+        Args:
+            path: Path of the once-selected semantic model.
+            old_string: Exact, nonempty text that occurs once in the current file.
+            new_string: Replacement text for that occurrence.
+        """
         return super().edit_file(path=path, old_string=old_string, new_string=new_string)

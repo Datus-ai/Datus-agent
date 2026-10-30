@@ -8,6 +8,7 @@ from unittest.mock import Mock, patch
 
 import pytest
 
+from datus.tools.func_tool.base import FuncToolResult
 from datus.tools.func_tool.database import DBFuncTool
 from datus.utils.exceptions import DatusException
 
@@ -1977,6 +1978,26 @@ class TestDBFuncToolExecuteSql:
             mock_sem.return_value.get_size.return_value = 0
             return DBFuncTool(connector)
 
+    @pytest.mark.asyncio
+    async def test_readonly_schema_tracks_instance_policy_without_changing_write_instances(self):
+        from datus.tools.func_tool.base import FuncToolResult
+
+        tool = self._make_tool()
+        writable = tool.to_function_tool(tool.execute_sql)
+        assert {"min_rows", "max_rows"} <= writable.params_json_schema["properties"].keys()
+        assert "INSERT" in writable.description
+        tool._read_only = True
+        readonly = tool.to_function_tool(tool.execute_sql)
+        assert not {"min_rows", "max_rows"} & readonly.params_json_schema["properties"].keys()
+        assert "INSERT" not in readonly.description and "read-only" in readonly.description
+        tool.read_query = Mock(return_value=FuncToolResult(result=[{"n": 1}]))
+        rejected = await readonly.on_invoke_tool(None, '{"sql":"SELECT 1", "max_rows":10}')
+        assert rejected["success"] == 0
+        tool.read_query.assert_not_called()
+        result = await readonly.on_invoke_tool(None, '{"sql":"SELECT 1"}')
+        assert result["success"] == 1
+        assert {"min_rows", "max_rows"} <= writable.params_json_schema["properties"].keys()
+
     def test_select_routes_to_read_query(self):
         mock_connector = Mock()
         mock_connector.dialect = "sqlite"
@@ -2543,6 +2564,26 @@ class TestDBFuncToolExecuteReadEnforced:
         assert result.success is False
         assert "denied by policy" in result.error
         connector.execute_query.assert_not_called()
+
+    def test_reference_read_cannot_pass_after_policy_limit_or_result_truncation(self):
+        connector = self._connector()
+        tool = self._make_tool(connector)
+        runtime = Mock()
+        runtime.before_sql_read.return_value = SimpleNamespace(
+            allowed=True, sql="SELECT 1 AS n LIMIT 1", applied_policies=["row_limit"]
+        )
+        with patch("datus.tools.policy_runtime.PolicyRuntime", return_value=runtime):
+            result = tool.read_query("SELECT 1 AS n", compress=False)
+        assert not result.success and "rewrote the reference SQL" in result.error
+        connector.execute_query.assert_not_called()
+
+        runtime.before_sql_read.return_value = SimpleNamespace(allowed=True, sql=None, applied_policies=[])
+        runtime.after_read_result.return_value = SimpleNamespace(
+            allowed=True, result=[], applied_policies=["row_limit"]
+        )
+        with patch("datus.tools.policy_runtime.PolicyRuntime", return_value=runtime):
+            result = tool.read_query("SELECT 1 AS n", compress=False)
+        assert not result.success and "transformed the reference result" in result.error
 
     def test_policy_rewrite_to_non_read_is_rejected(self):
         connector = self._connector()
@@ -3262,3 +3303,91 @@ class TestHeaderRowNormalisation:
         """Not folded into "unspecified": nothing sends -1 by accident, and
         silently auto-detecting would hide a caller bug."""
         assert self._capture(tmp_path, header_row=-1)["header_row"] == -1
+
+
+@pytest.mark.asyncio
+async def test_registered_sql_timeout_is_structured_and_late_worker_cannot_replace_it(monkeypatch):
+    """Exercise the real sync invoker; timing out must not wait for its worker."""
+    import asyncio
+    import threading
+    from types import SimpleNamespace
+
+    monkeypatch.setattr("datus.tools.func_tool.database.SQL_TOOL_TIMEOUT_SECONDS", 0.03)
+    started = threading.Event()
+    release = threading.Event()
+    finished = threading.Event()
+
+    class SlowDatabaseTool(DBFuncTool):
+        def __init__(self):
+            self.agent_config = SimpleNamespace(sql_read_only=False)
+            self._read_only = False
+
+        def _excluded_tool_params(self):
+            return set()
+
+        def execute_sql(self, sql: str) -> FuncToolResult:
+            started.set()
+            try:
+                release.wait(timeout=2)
+                return FuncToolResult(result={"rows": [1]})
+            finally:
+                finished.set()
+
+    db = SlowDatabaseTool()
+    tool = db.to_function_tool(db.execute_sql)
+    context = SimpleNamespace()
+    try:
+        result = await asyncio.wait_for(tool.on_invoke_tool(context, '{"sql":"SELECT 1"}'), timeout=1)
+        assert started.is_set()
+        assert not release.is_set()
+        assert result["success"] == 0
+        assert result["result"] is None
+        assert "timed out" in result["error"]
+        assert "0.03 seconds" in result["error"]
+        assert context._datus_tool_status == "timeout"
+        release.set()
+        assert await asyncio.to_thread(finished.wait, 1)
+        assert result["success"] == 0
+    finally:
+        release.set()
+
+
+@pytest.mark.asyncio
+async def test_registered_sql_preserves_real_failure_and_parent_cancellation():
+    import asyncio
+    from types import SimpleNamespace
+
+    class AsyncDatabaseTool(DBFuncTool):
+        def __init__(self):
+            self.agent_config = SimpleNamespace(sql_read_only=False)
+            self._read_only = False
+            self.wait = False
+            self.raise_timeout = False
+            self.started = asyncio.Event()
+
+        def _excluded_tool_params(self):
+            return set()
+
+        async def execute_sql(self, sql: str) -> FuncToolResult:
+            self.started.set()
+            if self.wait:
+                await asyncio.Event().wait()
+            if self.raise_timeout:
+                raise TimeoutError("driver read timed out")
+            return FuncToolResult(success=0, error="Unknown column 'join_key' in 'on clause'")
+
+    db = AsyncDatabaseTool()
+    tool = db.to_function_tool(db.execute_sql)
+    result = await tool.on_invoke_tool(None, '{"sql":"SELECT missing"}')
+    assert result["success"] == 0
+    assert result["error"] == "Unknown column 'join_key' in 'on clause'"
+    db.raise_timeout = True
+    with pytest.raises(TimeoutError, match="driver read timed out"):
+        await tool.on_invoke_tool(None, '{"sql":"SELECT 1"}')
+    db.wait = True
+    db.started.clear()
+    pending = asyncio.create_task(tool.on_invoke_tool(None, '{"sql":"SELECT 1"}'))
+    await db.started.wait()
+    pending.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await pending

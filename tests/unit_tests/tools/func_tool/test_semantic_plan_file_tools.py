@@ -7,16 +7,15 @@
 import json
 import re
 from concurrent.futures import ThreadPoolExecutor
-from threading import Barrier, Lock
-from time import sleep
-from uuid import UUID
+from threading import Barrier
 
 import pytest
 
 from datus.tools.func_tool.semantic_plan_file_tools import SemanticPlanFileTools
 
 
-def test_writes_reviewable_plan_without_semantic_model_mutation(tmp_path):
+@pytest.mark.parametrize("structured", [False, True])
+def test_writes_reviewable_plan_without_semantic_model_mutation(tmp_path, structured):
     tool = SemanticPlanFileTools(tmp_path)
     plan = {
         "summary": "orders -> revenue",
@@ -68,7 +67,7 @@ def test_writes_reviewable_plan_without_semantic_model_mutation(tmp_path):
         ],
     }
 
-    result = tool.write_semantic_model_plan_file("sales_model", json.dumps(plan))
+    result = tool.write_semantic_model_plan_file("sales_model", plan if structured else json.dumps(plan))
 
     assert result.success == 1
     assert re.fullmatch(
@@ -210,34 +209,23 @@ def test_rejects_graph_references_and_shapes_without_overwriting(tmp_path, inval
     assert tool.write_semantic_model_plan_file("sales_model", '{"summary":"second"}').result["revision"] == 2
 
 
-def test_concurrent_first_writes_share_plan_id(tmp_path, monkeypatch):
+def test_concurrent_first_writes_share_plan_id(tmp_path):
     tool = SemanticPlanFileTools(tmp_path)
     start = Barrier(2)
-    call_lock = Lock()
-    uuid_calls = 0
-
-    def slow_uuid4():
-        nonlocal uuid_calls
-        with call_lock:
-            uuid_calls += 1
-            value = uuid_calls
-        sleep(0.05)
-        return UUID(int=value)
-
-    monkeypatch.setattr("datus.tools.func_tool.semantic_plan_file_tools.uuid4", slow_uuid4)
 
     def write(summary):
         start.wait(timeout=2)
-        return tool.write_semantic_model_plan_file("sales_model", json.dumps({"summary": summary}))
+        return tool.write_semantic_model_plan_file("sales_model", {"summary": summary})
 
     with ThreadPoolExecutor(max_workers=2) as executor:
         first, second = executor.map(write, ("first", "second"))
 
     assert first.success == second.success == 1
     assert first.result["path"] == second.result["path"]
-    assert uuid_calls == 1
-    revision = tool.write_semantic_model_plan_file("sales_model", '{"summary":"revised"}')
+    assert {first.result["revision"], second.result["revision"]} == {1, 2}
+    revision = tool.write_semantic_model_plan_file("sales_model", {"summary": "revised"})
     assert revision.result["path"] == first.result["path"]
+    assert revision.result["revision"] == 3
 
 
 def test_rejects_symlinked_plan_directory_outside_workspace(tmp_path):
@@ -252,3 +240,115 @@ def test_rejects_symlinked_plan_directory_outside_workspace(tmp_path):
 
     assert result.success == 0
     assert not (outside / "sales_model").exists()
+
+
+def test_direct_cli_write_and_later_instance_share_plan_identity(tmp_path):
+    initial = SemanticPlanFileTools(tmp_path).write_semantic_model_plan_file("sales", {"summary": "first"})
+    revised = SemanticPlanFileTools(tmp_path).write_semantic_model_plan_file("sales", {"summary": "second"})
+    assert revised.result["path"] == initial.result["path"]
+    assert revised.result["revision"] == 2
+    assert revised.result["review_status"] == "applied"
+
+
+def _commit_plan_in_worker(root, prepared, started, results):
+    started.set()
+    result = SemanticPlanFileTools(root).commit(prepared)
+    results.put((result.success, result.error))
+
+
+def test_commit_waits_for_another_process_and_rechecks_baseline(tmp_path):
+    import multiprocessing
+
+    from datus.tools.func_tool.semantic_plan_file_tools import fcntl
+
+    if fcntl is None:
+        pytest.skip("Cross-process advisory locks require POSIX")
+
+    writer = SemanticPlanFileTools(tmp_path)
+    saved = writer.write_semantic_model_plan_file("sales", {"summary": "accepted"})
+    prepared = writer.prepare("sales", {"summary": "proposal"})
+    target = tmp_path / saved.result["path"]
+    context = multiprocessing.get_context("spawn")
+    started = context.Event()
+    results = context.Queue()
+    worker = context.Process(target=_commit_plan_in_worker, args=(tmp_path, prepared, started, results))
+    with target.with_name(f".{target.name}.lock").open("a+") as lock_file:
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        worker.start()
+        try:
+            assert started.wait(10)
+            worker.join(0.2)
+            assert worker.is_alive()
+            assert target.read_text() == prepared.old_text
+            target.write_text("concurrent worker content")
+        finally:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+
+    try:
+        success, error = results.get(timeout=10)
+        worker.join(10)
+        assert worker.exitcode == 0
+        assert success == 0
+        assert "changed during review" in error
+        assert target.read_text() == "concurrent worker content"
+    finally:
+        if worker.is_alive():
+            worker.terminate()
+            worker.join(10)
+        results.close()
+
+
+def test_first_proposals_from_separate_sessions_share_one_accepted_baseline(tmp_path):
+    first_writer = SemanticPlanFileTools(tmp_path)
+    second_writer = SemanticPlanFileTools(tmp_path)
+    first = first_writer.prepare("sales", {"summary": "one"})
+    second = second_writer.prepare("sales", {"summary": "two"})
+    assert first.old_text is second.old_text is None
+    assert first.path == second.path
+    assert first_writer.commit(first).success == 1
+    rejected = second_writer.commit(second)
+    assert rejected.success == 0
+    assert "changed during review" in rejected.error
+    assert [p.read_text() for p in tmp_path.rglob("semantic-model-plan.json")] == [first.new_text]
+    feedback = second_writer.prepare("sales", {"summary": "feedback"})
+    assert feedback.path == first.path
+    assert feedback.old_text == first.new_text
+    assert feedback.revision == 2
+    assert second_writer.commit(feedback).success == 1
+
+
+def test_existing_random_plan_identity_is_preserved(tmp_path):
+    from uuid import uuid4
+
+    writer = SemanticPlanFileTools(tmp_path)
+    prepared = writer.prepare("sales", {"summary": "existing"})
+    legacy_id = uuid4().hex
+    legacy_path = tmp_path / ".datus/semantic-model-plans" / legacy_id / "semantic-model-plan.json"
+    graph = json.loads(prepared.new_text)
+    graph["plan"]["id"] = legacy_id
+    legacy_path.parent.mkdir(parents=True)
+    legacy_path.write_text(json.dumps(graph))
+    updated = SemanticPlanFileTools(tmp_path).prepare("sales", {"summary": "feedback"})
+    assert updated.path == legacy_path.relative_to(tmp_path).as_posix()
+    assert updated.old_text == legacy_path.read_text()
+    assert updated.revision == 2
+    assert writer.commit(updated).success == 1
+
+
+def test_commit_rejects_another_plan_identity_accepted_for_the_same_model(tmp_path):
+    from dataclasses import replace
+    from uuid import uuid4
+
+    writer = SemanticPlanFileTools(tmp_path)
+    pending = writer.prepare("sales", {"summary": "pending before identity convergence"})
+    legacy_id = uuid4().hex
+    graph = json.loads(pending.new_text)
+    graph["plan"]["id"] = legacy_id
+    old_pending = replace(
+        pending,
+        path=f".datus/semantic-model-plans/{legacy_id}/semantic-model-plan.json",
+        new_text=json.dumps(graph),
+    )
+    assert writer.commit(pending).success == 1
+    assert writer.commit(old_pending).success == 0
+    assert [p.read_text() for p in tmp_path.rglob("semantic-model-plan.json")] == [pending.new_text]

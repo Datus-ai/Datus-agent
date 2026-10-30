@@ -109,6 +109,13 @@ def init_local_schema(
     db_config = agent_config.datasource_configs[ds]
     # A datasource may serve multiple databases (e.g. a glob path_pattern → one per file).
     databases = agent_config.list_databases(ds)
+    if supports_namespace("schema", dialect=db_config.type) and not supports_namespace(
+        "database", dialect=db_config.type
+    ):
+        # Preserve the fixed connection target for filtering and connector
+        # selection. init_other_three_level_schema clears the SQL database
+        # namespace only after selecting the connection.
+        databases = [getattr(db_config, "database", "") or ""]
     if not databases:
         default_database = getattr(db_config, "database", "")
         databases = [default_database] if default_database else []
@@ -298,6 +305,8 @@ def init_other_three_level_schema(
     elif hasattr(sql_connector, "catalog_name"):
         catalog_name = catalog_name or getattr(sql_connector, "catalog_name", "")
     has_schema = supports_namespace("schema", connector=sql_connector, dialect=db_type)
+    if has_schema and not supports_namespace("database", connector=sql_connector, dialect=db_type):
+        database_name = ""
     if not has_schema:
         schema_name = ""
     elif not schema_name and hasattr(sql_connector, "schema_name"):

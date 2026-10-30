@@ -124,6 +124,18 @@ def count_images(value: Any) -> int:
     return count
 
 
+def image_blocks(value: Any) -> list[dict]:
+    """Collect protocol image blocks from messages and tool-result content."""
+    blocks: list[dict] = []
+
+    def collect(block: dict) -> dict:
+        blocks.append(block)
+        return block
+
+    _map_image_content(value, collect)
+    return blocks
+
+
 def replace_images(value: Any, message: str = IMAGE_OMITTED) -> Any:
     """Replace protocol image blocks with text, preserving tool-call pairing."""
     return _map_image_content(

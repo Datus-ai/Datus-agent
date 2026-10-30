@@ -27,6 +27,7 @@ import json
 from typing import Any, Callable, Dict, Optional
 
 from datus.utils.loggings import get_logger
+from datus.utils.query_result_text import parse_query_result_text
 
 logger = get_logger(__name__)
 
@@ -502,6 +503,12 @@ def _fmt_write_query(result: Any) -> str:
 
 
 def _fmt_list_metrics(result: Any) -> str:
+    """The text page list_metrics answers with: one ``- name`` line per metric,
+    a ``more:`` line when there is another page. Older records hold the envelope."""
+    if isinstance(result, str):
+        n = sum(1 for line in result.splitlines() if line.startswith("- "))
+        base = pluralize(n, "metric")
+        return f"{base}+" if any(line.startswith("more: ") for line in result.splitlines()) else base
     return _envelope_with_label(result, "metric", "metrics")
 
 
@@ -517,6 +524,10 @@ def _fmt_get_metric(result: Any) -> str:
 
 
 def _fmt_query_metrics(result: Any) -> str:
+    """An executed result's shape: from its text, or from the envelope older records hold."""
+    parsed = parse_query_result_text(result)
+    if parsed is not None:
+        return f"{parsed.row_count}r × {len(parsed.columns)}c"
     if isinstance(result, dict):
         cols = result.get("columns")
         data = result.get("data")
@@ -670,18 +681,6 @@ def _fmt_publish_metrics(result: Any) -> str:
 def _fmt_generate_sql_summary_id(result: Any) -> str:
     if isinstance(result, str) and result:
         return f"id: {result}"
-    return ""
-
-
-def _fmt_inspect_semantic_sources(result: Any) -> str:
-    if isinstance(result, dict):
-        tables = result.get("tables")
-        relationships = result.get("relationships")
-        if isinstance(tables, list) and isinstance(relationships, list):
-            return f"{len(tables)} tables, {len(relationships)} rels"
-        summary = result.get("summary")
-        if isinstance(summary, str) and summary:
-            return summary
     return ""
 
 
@@ -1269,6 +1268,7 @@ def _register_builtins(registry: ToolSummaryRegistry) -> None:
         "list_metrics": _fmt_list_metrics,
         "get_metric": _fmt_get_metric,
         "query_metrics": _fmt_query_metrics,
+        "select_records": _fmt_query_metrics,
         "validate_semantic": _fmt_validate_semantic,
         "attribution_analyze": _fmt_attribution_analyze,
         "search_metrics": _fmt_search_metrics,
@@ -1280,7 +1280,6 @@ def _register_builtins(registry: ToolSummaryRegistry) -> None:
         "publish_semantic_model": _fmt_publish_semantic_model,
         "publish_metrics": _fmt_publish_metrics,
         "generate_sql_summary_id": _fmt_generate_sql_summary_id,
-        "inspect_semantic_sources": _fmt_inspect_semantic_sources,
         "profile_semantic_model_evidence": _fmt_profile_semantic_model_evidence,
         # Scheduler tools
         "submit_sql_job": _fmt_submit_sql_job,

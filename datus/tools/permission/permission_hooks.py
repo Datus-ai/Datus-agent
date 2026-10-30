@@ -218,6 +218,7 @@ class FilesystemPolicy:
     # with, otherwise the hook would prompt (or fail) on a path the tool is
     # perfectly willing to write.
     allowlist: Optional[PathAllowlist] = None
+    allowlist_provider: Optional[Callable[[], Optional[PathAllowlist]]] = None
 
 
 class CompositeHooks(AgentHooks):
@@ -328,12 +329,13 @@ class PermissionHooks(AgentHooks):
             proxied_tool_names: Optional set of tool names that
                 :func:`datus.tools.proxy.proxy_tool.apply_proxy_tools` wrapped
                 with stdin-driven proxies. When provided, ``on_tool_start``
-                skips ALL permission checks (DENY/ASK/zone) for these tools —
-                the external caller (e.g. ``print_mode`` stdin protocol) owns
-                secondary confirmation, so the agent must not double-prompt or
-                block proxied calls. Passing the same set reference held by the
-                node lets late ``apply_proxy_tools`` invocations be observed
-                without rebuilding the hook.
+                skips permission checks for externally executed proxies — the
+                external caller (e.g. ``print_mode`` stdin protocol) owns
+                secondary confirmation. Server-side semantic plan writers
+                still enforce permission rules before their preview review.
+                Passing the same set reference held by the node lets late
+                ``apply_proxy_tools`` invocations be observed without rebuilding
+                the hook.
             project_root: Workspace root used to resolve a ``.sql`` file
                 reference passed to ``execute_sql``. The SQL permission gate
                 reads the file (same logic as the tool) so a read-only ``.sql``
@@ -517,11 +519,14 @@ class PermissionHooks(AgentHooks):
         if tool_name in self._PLAN_MODE_BYPASS_TOOLS:
             return
 
-        # Short-circuit proxied tools: their execution is delegated to the
-        # external caller via the stdin proxy channel, which owns secondary
-        # confirmation. Re-checking the profile here would either double-prompt
-        # (ASK) or block calls the caller already authorised (DENY).
-        if self.proxied_tool_names and tool_name in self.proxied_tool_names:
+        # External proxies own their permission handling. Semantic plans are
+        # written server-side: their separate preview approval must not bypass
+        # custom ASK/DENY rules.
+        if (
+            self.proxied_tool_names
+            and tool_name in self.proxied_tool_names
+            and tool_name != "write_semantic_model_plan_file"
+        ):
             logger.debug("Tool '%s' is proxied; skipping permission check", tool_name)
             return
 
@@ -740,7 +745,7 @@ class PermissionHooks(AgentHooks):
                 current_node=policy.current_node,
                 datus_home=policy.datus_home,
                 session_data_dir=policy.session_data_dir,
-                allowlist=policy.allowlist,
+                allowlist=policy.allowlist_provider() if policy.allowlist_provider else policy.allowlist,
             )
         except Exception as e:
             logger.debug(f"classify_path failed for {tool_name} path={path_arg!r}: {e}")

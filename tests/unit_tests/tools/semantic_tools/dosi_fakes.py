@@ -233,7 +233,10 @@ class ModelError(OsiError):
 
 
 class QueryError(OsiError):
-    pass
+    def __init__(self, message, *, condition=None, missing_dimensions=(), **kwargs):
+        super().__init__(message, **kwargs)
+        self.condition = condition
+        self.missing_dimensions = list(missing_dimensions)
 
 
 class NotComputableError(OsiError):
@@ -278,6 +281,41 @@ class FakeEngine:
 
     def metrics(self) -> List[Dict[str, Any]]:
         return [dict(r) for r in METRIC_ROWS]
+
+    def metric(self, name: str) -> Dict[str, Any]:
+        """``Engine.metric``: one metric in full, ``expr`` and all."""
+        # From this engine's own catalog, so a test that swaps metrics() is described too.
+        rows = self.metrics()
+        row = next((r for r in rows if r["name"] == name), None)
+        if row is None:
+            raise QueryError(
+                f"no metric named {name!r}",
+                code="unknown_metric",
+                candidates=[r["name"] for r in rows],
+            )
+        return {
+            **dict(row),
+            "expr": f"SUM(orders.{name})",
+            "dimension_datasets": [{"name": "orders"}],
+            "compares_across": None,
+            "time_granularities": ["day", "week", "month", "quarter", "year"],
+            "requires_time_axis": name in self.time_axis_metrics,
+        }
+
+    def dataset(self, name: str) -> Dict[str, Any]:
+        """``Engine.dataset``: one dataset's fields and relationships."""
+        row = next((r for r in DATASET_ROWS if r["name"] == name), None)
+        if row is None:
+            raise QueryError(
+                f"no dataset named {name!r}",
+                code="unknown_dataset",
+                candidates=[r["name"] for r in DATASET_ROWS],
+            )
+        return {
+            "name": name,
+            "source": row.get("source", name),
+            "fields": [{"name": "id"}],
+        }
 
     def dimensions(self, metric: Optional[str] = None) -> List[Dict[str, Any]]:
         self.dimension_calls.append(metric)
@@ -372,6 +410,159 @@ class FakeEngine:
         return copy.deepcopy(ATTRIBUTE_RESULT)
 
 
+# Ontology payloads follow the Dosi MCP ``describe`` / ``paths`` JSON, which the
+# Python binding returns verbatim (aviation example, trimmed).
+ONTOLOGY_CATALOG = {
+    "ontology": "Aviation",
+    "description": "Flights between airports, with delays and alerts.",
+    "concepts": [
+        {"name": "Airport", "identity": ["code"], "out": 0, "in": 4, "props": 4, "root": True},
+        {"name": "Flight", "identity": ["id"], "out": 5, "in": 3, "props": 11, "root": True},
+        {"name": "Delay", "identity": ["id"], "out": 1, "in": 0, "props": 4, "root": True},
+        {"name": "FlightAlert", "identity": ["id"], "out": 1, "in": 0, "props": 7, "root": True},
+    ],
+}
+
+ONTOLOGY_CONCEPTS = {
+    "FlightAlert": {
+        "concept": "FlightAlert",
+        "identity": ["id"],
+        "root": "flight_alerts",
+        "properties": [
+            {"path": "FlightAlert.id", "type_name": "AlertId", "base": "String"},
+            {
+                "path": "FlightAlert.status",
+                "type_name": "AlertStatus",
+                "base": "String",
+                "domain": ["OPEN", "RESOLVED"],
+            },
+            {"path": "FlightAlert.created_at", "type_name": "DateTime", "base": "DateTime", "is_time": True},
+        ],
+        "links": [{"name": "flight", "role": "flight", "to": "Flight", "multiplicity": "ManyToOne", "no_join": False}],
+        "incoming": [],
+        "groupable_metrics": [{"group_by": "FlightAlert.id", "metrics": ["alert_count"]}],
+        "time_dimensions_reachable": ["FlightAlert.created_at", "FlightAlert.flight.scheduled_departure"],
+    },
+    "Delay": {
+        "concept": "Delay",
+        "identity": ["id"],
+        "root": "delays",
+        "properties": [{"path": "Delay.minutes", "type_name": "NrMinutes", "base": "Integer"}],
+        "links": [{"name": "flight", "role": "flight", "to": "Flight", "multiplicity": "ManyToOne", "no_join": False}],
+        "incoming": [],
+        "groupable_metrics": [{"group_by": "Delay.id", "metrics": ["delayed_flights"]}],
+        "time_dimensions_reachable": ["Delay.flight.scheduled_departure"],
+    },
+}
+
+ONTOLOGY_PATHS = {
+    "paths": [
+        {"path": "Flight.arrives_at", "roles": ["destination"], "hops": 1, "multiplicity": "ManyToOne"},
+        {"path": "Flight.departs_from", "roles": ["origin"], "hops": 1, "multiplicity": "ManyToOne"},
+    ],
+    "equivalences": [
+        {
+            "a": "Flight.departs_from",
+            "b": "Flight.follows_route.origin",
+            "declared_by": "Flight.follows_route.origin == origin",
+        }
+    ],
+    "max_hops": 3,
+}
+
+SELECT_RESULT = {
+    "dialect": "duckdb",
+    "sql": "SELECT flight_alerts.alert_id AS alert_id FROM main.flight_alerts AS flight_alerts",
+    "columns": ["alert_id", "priority"],
+    "rows": [{"alert_id": "A007", "priority": "P1"}, {"alert_id": "A011", "priority": "P1"}],
+    "row_count": 2,
+    "requested_columns": [
+        {"requested": "FlightAlert.id", "column": "alert_id"},
+        {"requested": "FlightAlert.priority", "column": "priority"},
+    ],
+}
+
+
+class FakeOntologyEngine(FakeEngine):
+    """A binding Engine that also answers ontology calls (``describe``/``paths``/``select``)."""
+
+    def __init__(
+        self,
+        model_path: Optional[str] = None,
+        model_text: Optional[str] = None,
+        connections: Optional[Dict[str, Dict[str, Any]]] = None,
+        pool_size: int = 8,
+        *,
+        ontology_path: Optional[str] = None,
+        ontology_text: Optional[str] = None,
+        mapping_path: Optional[str] = None,
+        mapping_text: Optional[str] = None,
+    ) -> None:
+        # A mapping that carries its model inline is loaded with no model_path.
+        super().__init__(
+            model_path=model_path or mapping_path,
+            model_text=model_text,
+            connections=connections,
+            pool_size=pool_size,
+        )
+        self.ontology_path = ontology_path
+        self.mapping_path = mapping_path
+        self.given_model_path = model_path
+        self.describe_calls: List[Optional[str]] = []
+        self.paths_calls: List[tuple] = []
+        self.select_calls: List[Dict[str, Any]] = []
+        self.compile_select_calls: List[Dict[str, Any]] = []
+
+    @property
+    def has_ontology(self) -> bool:
+        return bool(self.ontology_path or self.mapping_path)
+
+    def ontology_info(self) -> Optional[Dict[str, Any]]:
+        if not self.has_ontology:
+            return None
+        mappings = ["aviation_mapping"] if self.mapping_path else []
+        return {"name": "Aviation", "description": "", "mappings": mappings, "source_path": self.ontology_path}
+
+    def _require_ontology(self) -> None:
+        if not self.has_ontology:
+            raise QueryError("load an ontology to describe concepts", code="ontology_required")
+
+    def describe(self, name: Optional[str] = None) -> Dict[str, Any]:
+        self.describe_calls.append(name)
+        if name is None:
+            if not self.has_ontology:
+                return {"model": "m", "datasets": [], "metrics": []}
+            return copy.deepcopy(ONTOLOGY_CATALOG)
+        self._require_ontology()
+        if name not in ONTOLOGY_CONCEPTS:
+            raise QueryError(f"unknown concept {name!r}", code="unknown_concept", candidates=sorted(ONTOLOGY_CONCEPTS))
+        return copy.deepcopy(ONTOLOGY_CONCEPTS[name])
+
+    def paths(self, source: str, target: str) -> Dict[str, Any]:
+        self.paths_calls.append((source, target))
+        self._require_ontology()
+        return copy.deepcopy(ONTOLOGY_PATHS)
+
+    def compile_select(self, query, dialect=None, connection=None, pretty=False, dws_mode=None):
+        self.compile_select_calls.append({"query": query, "dialect": dialect, "connection": connection})
+        if self.fail_with is not None:
+            raise self.fail_with
+        return {
+            "dialect": dialect or "duckdb",
+            "sql": SELECT_RESULT["sql"],
+            "outputs": [],
+            "requested_columns": copy.deepcopy(SELECT_RESULT["requested_columns"]),
+        }
+
+    def select(self, query, dialect=None, connection=None, timeout_secs=None, db_path=None):
+        self.select_calls.append(
+            {"query": query, "dialect": dialect, "connection": connection, "timeout_secs": timeout_secs}
+        )
+        if self.fail_with is not None:
+            raise self.fail_with
+        return copy.deepcopy(SELECT_RESULT)
+
+
 def default_validate(model_text: str, metric_names: Optional[List[str]] = None) -> Dict[str, Any]:
     names = metric_names or [row["name"] for row in METRIC_ROWS]
     compiled_metrics = [dict(row) for row in METRIC_ROWS if row["name"] in names]
@@ -385,7 +576,7 @@ def default_validate(model_text: str, metric_names: Optional[List[str]] = None) 
     }
 
 
-def build_fake_module() -> types.ModuleType:
+def build_fake_module(*, ontology: bool = False) -> types.ModuleType:
     """Build a module object mirroring the real ``dosi_engine`` surface.
 
     Not installed into ``sys.modules`` here — the conftest installs it per
@@ -394,7 +585,7 @@ def build_fake_module() -> types.ModuleType:
     """
     module = types.ModuleType("dosi_engine")
     module.__dosi_fake__ = True
-    module.Engine = FakeEngine
+    module.Engine = FakeOntologyEngine if ontology else FakeEngine
     module.validate = default_validate
     module.SPEC_VERSION = "0.2.0.dev0"
     module.DATUS_EXT_VERSION = "1.2"

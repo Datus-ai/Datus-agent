@@ -3,6 +3,7 @@
 import pytest
 
 from datus.tools.permission.permission_config import PermissionConfig, PermissionLevel
+from datus.tools.permission.permission_manager import PermissionManager
 from datus.tools.permission.profiles import (
     AUTO,
     DANGEROUS,
@@ -65,6 +66,13 @@ class TestNormalProfile:
         assert _resolve(config, "filesystem_tools", "delete_osi_metrics") == PermissionLevel.ASK
         assert _resolve(config, "filesystem_tools", "delete_osi_datasets") == PermissionLevel.ASK
         assert _resolve(config, "tools", "todo_write") == PermissionLevel.ASK
+
+    def test_lineage_reads_allowed_and_writes_ask(self):
+        """Reading the project lineage graph is free; saving into or deleting from
+        lineage/lineage.json is a project write and asks like any other."""
+        assert _resolve(NORMAL, "lineage_tools", "query_lineage") == PermissionLevel.ALLOW
+        assert _resolve(NORMAL, "lineage_tools", "upsert_lineage") == PermissionLevel.ASK
+        assert _resolve(NORMAL, "lineage_tools", "delete_lineage") == PermissionLevel.ASK
 
     def test_named_destructive_denied(self):
         """Normal DENYs named destructive BI and scheduler tools."""
@@ -166,6 +174,11 @@ class TestAutoProfile:
         assert _resolve(config, "filesystem_tools", "upsert_osi_metrics") == PermissionLevel.ALLOW
         assert _resolve(config, "filesystem_tools", "delete_osi_metrics") == PermissionLevel.ASK
         assert _resolve(config, "filesystem_tools", "delete_osi_datasets") == PermissionLevel.ASK
+
+    def test_lineage_analysis_allowed_delete_asks(self):
+        assert _resolve(AUTO, "lineage_tools", "query_lineage") == PermissionLevel.ALLOW
+        assert _resolve(AUTO, "lineage_tools", "upsert_lineage") == PermissionLevel.ALLOW
+        assert _resolve(AUTO, "lineage_tools", "delete_lineage") == PermissionLevel.ASK
 
     def test_bi_write_allowed_delete_asks(self):
         """Auto downgrades NORMAL's DENY on destructives to ASK — user is
@@ -549,3 +562,14 @@ class TestLoadFileAsTablePermission:
         """The rule is tool-specific, not a `db_tools` wildcard."""
         assert _resolve(NORMAL, "db_tools", "execute_sql") == PermissionLevel.ASK
         assert _resolve(NORMAL, "db_tools", "transfer_query_result") == PermissionLevel.ASK
+
+
+@pytest.mark.parametrize(
+    "profile,permission",
+    [("normal", PermissionLevel.ALLOW), ("auto", PermissionLevel.ALLOW), ("dangerous", PermissionLevel.ALLOW)],
+)
+def test_writer_obeys_profiles_without_the_web_adapter(profile, permission):
+    manager = PermissionManager(get_profile(profile), active_profile=profile)
+    assert (
+        manager.check_permission("semantic_tools", "write_semantic_model_plan_file", "semantic_modeling") == permission
+    )

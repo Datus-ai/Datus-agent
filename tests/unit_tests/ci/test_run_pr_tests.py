@@ -37,10 +37,11 @@ def test_select_impacted_unit_tests_includes_changed_unit_tests_and_dedupes():
         ]
     )
 
-    assert impacted == [
+    assert set(impacted) == {
+        "tests/unit_tests/agent/node/",
         "tests/unit_tests/tools/",
         "tests/unit_tests/ci/",
-    ]
+    }
 
 
 def test_select_impacted_unit_tests_collapses_parent_directory_over_child_files():
@@ -54,7 +55,7 @@ def test_select_impacted_unit_tests_collapses_parent_directory_over_child_files(
         ]
     )
 
-    assert impacted == ["tests/unit_tests/storage/"]
+    assert set(impacted) == {"tests/unit_tests/agent/node/", "tests/unit_tests/tools/", "tests/unit_tests/storage/"}
 
 
 def test_select_impacted_unit_tests_maps_db_tools_to_db_tools_tests():
@@ -65,7 +66,7 @@ def test_select_impacted_unit_tests_maps_db_tools_to_db_tools_tests():
         ]
     )
 
-    assert impacted == ["tests/unit_tests/tools/db_tools/"]
+    assert set(impacted) == {"tests/unit_tests/agent/node/", "tests/unit_tests/tools/"}
 
 
 def test_select_impacted_unit_tests_maps_prompt_and_resource_paths_without_full_suite():
@@ -76,13 +77,15 @@ def test_select_impacted_unit_tests_maps_prompt_and_resource_paths_without_full_
         ]
     )
 
-    assert impacted == [
+    assert set(impacted) == {
+        "tests/unit_tests/agent/",
+        "tests/unit_tests/models/",
         "tests/unit_tests/prompts/",
         "tests/unit_tests/tools/skill_tools/",
-    ]
+    }
 
 
-def test_select_impacted_unit_tests_prefers_specific_subpackage_mappings():
+def test_select_impacted_unit_tests_includes_consumers_and_specific_subpackages():
     impacted = run_pr_tests.select_impacted_unit_tests(
         [
             "datus/agent/node/gen_sql_agentic_node.py",
@@ -95,15 +98,16 @@ def test_select_impacted_unit_tests_prefers_specific_subpackage_mappings():
         ]
     )
 
-    assert impacted == [
-        "tests/unit_tests/agent/node/",
-        "tests/unit_tests/api/services/",
+    assert set(impacted) == {
+        "tests/unit_tests/agent/",
+        "tests/unit_tests/models/",
+        "tests/unit_tests/api/",
+        "tests/unit_tests/cli/",
+        "tests/unit_tests/tools/",
         "tests/unit_tests/storage/metric/",
         "tests/unit_tests/storage/semantic_model/",
-        "tests/unit_tests/tools/func_tool/",
-        "tests/unit_tests/tools/skill_tools/",
         "tests/unit_tests/validation/",
-    ]
+    }
 
 
 def test_select_impacted_unit_tests_maps_non_python_files_to_parent_directory():
@@ -140,6 +144,7 @@ def test_filter_existing_paths_drops_missing_files(tmp_path):
 
 def test_run_pytest_suite_isolates_nested_runner_basetemp(tmp_path, monkeypatch):
     calls = []
+    monkeypatch.setenv("DATUS_TEST_STORAGE_BACKENDS", "postgresql+postgresql")
 
     class FakeProcess:
         pid = 12345
@@ -171,6 +176,7 @@ def test_run_pytest_suite_isolates_nested_runner_basetemp(tmp_path, monkeypatch)
     assert calls[0]["command"][:3] == [run_pr_tests.sys.executable, "-m", "pytest"]
     assert f"--basetemp={suite_basetemp}" in calls[0]["command"]
     assert calls[0]["env"][run_pr_tests.PYTEST_BASETEMP_ENV] == str(suite_basetemp / "_nested-runners")
+    assert calls[0]["env"]["DATUS_TEST_STORAGE_BACKENDS"] == "sqlite+lance"
 
 
 def test_merge_and_parse_junit_results_across_multiple_suites(tmp_path):
@@ -228,6 +234,7 @@ def test_run_tests_treats_empty_impacted_collection_as_success(tmp_path, monkeyp
     monkeypatch.setattr(run_pr_tests, "DEFAULT_COVERAGE_DB", str(tmp_path / ".coverage"))
     monkeypatch.setattr(run_pr_tests, "resolve_impacted_unit_tests", lambda base_ref: ["tests/unit_tests/"])
     monkeypatch.setattr(run_pr_tests, "merge_junit_results", lambda junit_xml_paths: None)
+    monkeypatch.setattr(run_pr_tests, "verify_gate", lambda *args: 0)
 
     exit_codes = iter([0, 5])
     monkeypatch.setattr(
@@ -300,7 +307,46 @@ def test_parallel_suite_emits_dist_mode_after_workers(tmp_path, monkeypatch):
     )
 
     worker_flag = command.index("-n")
-    assert command[worker_flag : worker_flag + 4] == ["-n", "4", "--dist", "loadfile"]
+    assert command[worker_flag : worker_flag + 5] == ["-n", "4", "--max-worker-restart=0", "--dist", "loadfile"]
+
+
+def test_parallel_suite_writes_failure_report_when_a_worker_crashes(tmp_path, monkeypatch):
+    """Completed file scopes must not strand loadfile's worker recovery queue."""
+    (tmp_path / "pytest.ini").write_text("[pytest]\n")
+    (tmp_path / "test_large.py").write_text(
+        "import time, pytest\n@pytest.mark.parametrize('item', range(80))\ndef test_large(item): time.sleep(0.005)\n"
+    )
+    for index in range(8):
+        (tmp_path / f"test_small_{index}.py").write_text(
+            "import pytest\n@pytest.mark.parametrize('item', range(4))\ndef test_small(item): pass\n"
+        )
+    (tmp_path / "test_crash.py").write_text(
+        "import os, pytest\n"
+        "@pytest.mark.parametrize('item', range(3))\n"
+        "def test_crash(item):\n"
+        "    if item == 1: os._exit(17)\n"
+    )
+    monkeypatch.chdir(tmp_path)
+    # The synthetic nested pytest owns its temp directory and plugins. Nightly's
+    # outer --basetemp can be a parent of tmp_path and is invalid in this cwd.
+    monkeypatch.delenv("PYTEST_ADDOPTS", raising=False)
+    monkeypatch.setattr(run_pr_tests, "PARALLEL_WORKERS", "2")
+    monkeypatch.setattr(run_pr_tests, "TEST_CMD_TIMEOUT", 15)
+    monkeypatch.setattr(run_pr_tests, "DEFAULT_PYTEST_BASETEMP", str(tmp_path / "pytest-temp"))
+    monkeypatch.setattr(run_pr_tests, "DEFAULT_COVERAGE_DB", str(tmp_path / ".coverage"))
+    monkeypatch.setattr(run_pr_tests, "DEFAULT_COVERAGE_XML", str(tmp_path / "coverage.xml"))
+    junit = tmp_path / "results.xml"
+    log = io.StringIO()
+
+    exit_code = run_pr_tests._run_pytest_suite(
+        [str(tmp_path)], str(junit), log, suite_name="worker crash regression", parallel=True, dist="loadfile"
+    )
+
+    assert exit_code == 1, log.getvalue()
+    results = run_pr_tests.parse_test_results(str(junit))
+    assert results["failed"] + results["errors"] == 1
+    assert "worker" in results["failures"][0]["text"]
+    assert "TIMEOUT" not in log.getvalue()
 
 
 def test_serial_suite_ignores_dist_mode(tmp_path):
@@ -343,6 +389,7 @@ def test_run_tests_runs_acceptance_parallel_with_per_file_distribution(tmp_path,
     monkeypatch.setattr(run_pr_tests, "DEFAULT_COVERAGE_DB", str(tmp_path / ".coverage"))
     monkeypatch.setattr(run_pr_tests, "resolve_impacted_unit_tests", lambda base_ref: ["tests/unit_tests/"])
     monkeypatch.setattr(run_pr_tests, "merge_junit_results", lambda junit_xml_paths: None)
+    monkeypatch.setattr(run_pr_tests, "verify_gate", lambda *args: 0)
 
     suite_calls = []
 

@@ -105,14 +105,18 @@ ALLOWED_BARE_MODULES: frozenset[str] = frozenset(
 )
 
 
-def _atomic_write_text(path: Path, content: str) -> None:
-    """Write text atomically via tempfile + rename, on the same filesystem."""
+def _atomic_write_text(path: Path, content: str, *, overwrite: bool = True) -> None:
+    """Publish complete text atomically; optionally refuse to replace an existing file."""
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp_path = tempfile.mkstemp(prefix=path.name + ".", dir=str(path.parent))
     try:
-        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="") as fh:
             fh.write(content)
-        os.replace(tmp_path, path)
+        if overwrite:
+            os.replace(tmp_path, path)
+        else:
+            os.link(tmp_path, path)
+            os.unlink(tmp_path)
     except Exception:
         if os.path.exists(tmp_path):
             try:

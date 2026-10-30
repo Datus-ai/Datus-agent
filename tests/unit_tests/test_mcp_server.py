@@ -9,12 +9,23 @@ All tests are CI-level: zero external dependencies, zero network access.
 All external calls (AgentConfig, tools, FastMCP) are mocked.
 """
 
+import asyncio
+import threading
+from collections import OrderedDict
+from collections.abc import Callable, Iterator
+from types import SimpleNamespace
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from datus.mcp_server import ToolContext, ToolContextManager
+from datus.mcp_server import DatusMCPServer, LightweightDynamicMCPServer, ToolContext, ToolContextManager
 from datus.tools.func_tool.base import FuncToolResult
+from datus.tools.func_tool.database import DBFuncTool
+from datus.tools.func_tool.reference_template_tools import ReferenceTemplateTools
+from datus.utils.exceptions import DatusException, ErrorCode
+from datus.utils.mcp_decorators import MCPToolConfig, ToolClassConfig, create_dynamic_tool_wrapper
+from datus.utils.mcp_execution import MCPToolExecutor
 
 # =============================================================================
 # Fixtures
@@ -131,10 +142,72 @@ def mock_config_manager():
 def context_manager(mock_config_manager):
     with patch("datus.mcp_server.configuration_manager", return_value=mock_config_manager):
         mgr = ToolContextManager(config_path=None, max_size=5)
-    return mgr
+    try:
+        yield mgr
+    finally:
+        mgr.close_all()
+        mgr.tool_executor.shutdown()
 
 
 class TestToolContextManagerInit:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("mode", ["dynamic", "static"])
+    async def test_startup_applies_quoted_execution_capacity(self, mode):
+        settings = {"max_workers": "1", "max_queue_size": "0"}
+        if mode == "dynamic":
+            manager_config = SimpleNamespace(
+                get=lambda key, default=None: settings if key == "mcp_tool_execution" else default
+            )
+            with patch("datus.mcp_server.configuration_manager", return_value=manager_config):
+                owner = ToolContextManager()
+            executor = owner.tool_executor
+            close = owner.close_all
+        else:
+            with (
+                patch("datus.mcp_server.load_agent_config", return_value=SimpleNamespace(mcp_tool_execution=settings)),
+                patch.object(DatusMCPServer, "_init_tools"),
+                patch.object(DatusMCPServer, "_register_tools"),
+            ):
+                owner = DatusMCPServer("test")
+            executor = owner._tool_executor
+            close = owner.close
+        started = asyncio.Event()
+        release = threading.Event()
+        loop = asyncio.get_running_loop()
+
+        def block():
+            loop.call_soon_threadsafe(started.set)
+            release.wait(2)
+
+        task = asyncio.create_task(executor.run(block))
+        try:
+            await asyncio.wait_for(started.wait(), 2)
+            with pytest.raises(DatusException) as caught:
+                await executor.run(lambda: "excess")
+            assert caught.value.code == ErrorCode.TOOL_EXECUTION_FAILED
+        finally:
+            release.set()
+            await task
+            close()
+            executor.shutdown()
+
+    @pytest.mark.parametrize("mode", ["dynamic", "static"])
+    @pytest.mark.parametrize("execution", [{"workers": 2}, {"max_workers": "invalid"}, {"max_workers": True}])
+    def test_startup_reports_invalid_execution_settings(self, mode, execution):
+        with pytest.raises(DatusException) as caught:
+            if mode == "dynamic":
+                manager_config = SimpleNamespace(
+                    get=lambda key, default=None: execution if key == "mcp_tool_execution" else default
+                )
+                with patch("datus.mcp_server.configuration_manager", return_value=manager_config):
+                    ToolContextManager()
+            else:
+                with patch(
+                    "datus.mcp_server.load_agent_config", return_value=SimpleNamespace(mcp_tool_execution=execution)
+                ):
+                    DatusMCPServer("test")
+        assert caught.value.code == ErrorCode.COMMON_CONFIG_ERROR
+
     def test_available_datasources(self, context_manager):
         datasources = context_manager.available_datasources
         assert "ns1" in datasources
@@ -176,6 +249,73 @@ class TestToolContextManagerInit:
 
 
 class TestToolContextManagerGetOrCreate:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("lookup", ["get", "lease", "worker"])
+    async def test_cached_context_does_not_wait_for_stalled_initialization(self, context_manager, lookup):
+        cached = _make_tool_context("healthy")
+        context_manager._contexts["healthy:"] = cached
+        context_manager.tool_executor.shutdown()
+        context_manager.tool_executor = MCPToolExecutor(max_workers=1, max_queue_size=0)
+        started = asyncio.Event()
+        release = threading.Event()
+        loop = asyncio.get_running_loop()
+
+        def create(datasource, subagent):
+            loop.call_soon_threadsafe(started.set)
+            release.wait(2)
+            return _make_tool_context(datasource)
+
+        async def query_cached():
+            if lookup == "get":
+                return await context_manager.get_or_create_context("healthy")
+            if lookup == "lease":
+                async with context_manager.use_context("healthy") as context:
+                    return context
+            context = await asyncio.to_thread(context_manager._get_or_create_context, "healthy", None, True)
+            context.release()
+            return context
+
+        with patch.object(context_manager, "_create_context", side_effect=create):
+            initialization = asyncio.create_task(context_manager.get_or_create_context("slow"))
+            cached_task = None
+            try:
+                await asyncio.wait_for(started.wait(), 2)
+                cached_task = asyncio.create_task(query_cached())
+                done, _ = await asyncio.wait([cached_task], timeout=0.2)
+                assert cached_task in done, "cached context waited on stalled initialization"
+                assert await cached_task is cached
+            finally:
+                release.set()
+                await initialization
+                if cached_task is not None:
+                    await asyncio.gather(cached_task, return_exceptions=True)
+
+    @pytest.mark.asyncio
+    async def test_context_initialization_does_not_block_and_survives_cancellation(self, context_manager):
+        loop = asyncio.get_running_loop()
+        started = asyncio.Event()
+        release = threading.Event()
+        ctx = _make_tool_context("slow")
+
+        def create(datasource, subagent):
+            loop.call_soon_threadsafe(started.set)
+            release.wait(1)
+            return ctx
+
+        with patch.object(context_manager, "_create_context", side_effect=create) as factory:
+            task = asyncio.create_task(context_manager.get_or_create_context("slow"))
+            try:
+                await asyncio.wait_for(started.wait(), 2)
+                assert not task.done(), "context initialization blocked the event loop"
+                task.cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await task
+            finally:
+                release.set()
+                await asyncio.gather(task, return_exceptions=True)
+            assert await context_manager.get_or_create_context("slow") is ctx
+            assert factory.call_count == 1
+
     @pytest.mark.asyncio
     async def test_creates_context_on_miss(self, context_manager):
         mock_ctx = _make_tool_context("ns1")
@@ -235,6 +375,111 @@ class TestToolContextManagerGetOrCreate:
         assert keys[-1] == "ns_a:"
 
 
+@pytest.fixture(params=["dynamic", "static"])
+def initialize_mcp_tools(
+    request: pytest.FixtureRequest, context_manager: ToolContextManager
+) -> Iterator[Callable[[list[ToolClassConfig]], dict[str, Any]]]:
+    agent_config = _make_agent_config("ns1")
+
+    def initialize(registry: list[ToolClassConfig]) -> dict[str, Any]:
+        with patch("datus.mcp_server.get_tool_registry", return_value=registry):
+            if request.param == "dynamic":
+                return context_manager._create_context("ns1", subagent="agent1").tools
+            return DatusMCPServer("ns1", sub_agent="agent1").tools
+
+    with (
+        patch("datus.mcp_server.load_agent_config", return_value=agent_config),
+        patch("datus.mcp_server.FastMCP"),
+        patch.object(DatusMCPServer, "_register_tools"),
+    ):
+        yield initialize
+
+
+@pytest.fixture
+def reference_template_dependencies() -> Iterator[tuple[MagicMock, list[ToolClassConfig]]]:
+    database_tool = MagicMock(spec=DBFuncTool)
+    database_tool.read_query.return_value = FuncToolResult(result=[{"product_id": 42}])
+    registry = [
+        ToolClassConfig("db_tool", DBFuncTool, "has_db_tools"),
+        ToolClassConfig("reference_template_tool", ReferenceTemplateTools, "has_reference_template_tools"),
+    ]
+    with (
+        patch("datus.tools.func_tool.reference_template_tools.ReferenceTemplateRAG") as store_class,
+        patch.object(DBFuncTool, "create_dynamic", return_value=database_tool),
+        patch.object(DBFuncTool, "create_static", return_value=database_tool),
+    ):
+        store_class.return_value.get_reference_template_size.return_value = 1
+        store_class.return_value.get_reference_template_detail.return_value = [
+            {
+                "name": "product_lookup",
+                "template": "SELECT {{ product_id }} AS product_id",
+                "parameters": '[{"name": "product_id"}]',
+            }
+        ]
+        yield database_tool, registry
+
+
+class TestMCPReferenceTemplateExecution:
+    @pytest.mark.parametrize("template_first", [False, True], ids=["database-first", "template-first"])
+    def test_initialized_template_executes_with_database_tool(
+        self,
+        initialize_mcp_tools: Callable[[list[ToolClassConfig]], dict[str, Any]],
+        reference_template_dependencies: tuple[MagicMock, list[ToolClassConfig]],
+        template_first: bool,
+    ) -> None:
+        database_tool, registry = reference_template_dependencies
+        if template_first:
+            registry = list(reversed(registry))
+        tools = initialize_mcp_tools(registry)
+        template_tool = tools["reference_template_tool"]
+
+        result = template_tool.execute_reference_template(
+            subject_path=["retail", "products"],
+            name="product_lookup",
+            params='{"product_id": 42}',
+            datasource="ns1",
+        )
+
+        assert result.success == 1, result.error
+        assert result.result["rendered_sql"] == "SELECT 42 AS product_id"
+        assert result.result["query_result"] == [{"product_id": 42}]
+        assert template_tool.db_func_tool is tools["db_tool"] is database_tool
+        database_tool.read_query.assert_called_once_with("SELECT 42 AS product_id", datasource="ns1")
+        assert "execute_reference_template" in {tool.name for tool in template_tool.available_tools()}
+
+    @pytest.mark.parametrize("missing_tool", ["db_tool", "reference_template_tool"])
+    @pytest.mark.parametrize("failure_mode", ["unregistered", "initialization-failed"])
+    def test_unavailable_dependency_preserves_remaining_tools(
+        self,
+        initialize_mcp_tools: Callable[[list[ToolClassConfig]], dict[str, Any]],
+        reference_template_dependencies: tuple[MagicMock, list[ToolClassConfig]],
+        missing_tool: str,
+        failure_mode: str,
+    ) -> None:
+        database_tool, registry = reference_template_dependencies
+        missing_class = next(entry.tool_class for entry in registry if entry.name == missing_tool)
+        if failure_mode == "unregistered":
+            registry = [entry for entry in registry if entry.name != missing_tool]
+        with (
+            patch.object(missing_class, "create_dynamic", side_effect=RuntimeError("Tool unavailable")),
+            patch.object(missing_class, "create_static", side_effect=RuntimeError("Tool unavailable")),
+        ):
+            tools = initialize_mcp_tools(registry)
+
+        assert tools.get(missing_tool) is None
+        if missing_tool == "db_tool":
+            template_tool = tools["reference_template_tool"]
+            assert template_tool.db_func_tool is None
+            result = template_tool.render_reference_template(
+                ["retail", "products"], "product_lookup", '{"product_id": 42}'
+            )
+            assert result.success == 1, result.error
+            assert result.result["rendered_sql"] == "SELECT 42 AS product_id"
+        else:
+            assert tools["db_tool"] is database_tool
+        database_tool.read_query.assert_not_called()
+
+
 class TestToolContextManagerCloseAll:
     def test_close_all_clears_contexts(self, context_manager):
         ctx = _make_tool_context("ns1")
@@ -242,12 +487,318 @@ class TestToolContextManagerCloseAll:
         context_manager.close_all()
         assert context_manager._contexts == {}
 
-    def test_close_all_handles_close_error(self, context_manager):
-        ctx = MagicMock()
-        ctx.close.side_effect = Exception("error")
+    @pytest.mark.asyncio
+    async def test_close_all_handles_close_error(self, context_manager):
+        closed = threading.Event()
+        ctx = _make_tool_context("ns1")
+
+        def fail_close():
+            closed.set()
+            raise RuntimeError("connector close failed")
+
+        ctx.tools["db_tool"] = SimpleNamespace(connector=SimpleNamespace(close=fail_close))
         context_manager._contexts["ns1:"] = ctx
-        context_manager.close_all()  # Should not raise
+        context_manager.close_all()
         assert context_manager._contexts == {}
+        assert await asyncio.to_thread(closed.wait, 2)
+
+    @pytest.mark.asyncio
+    async def test_close_all_defers_close_while_context_is_pinned(self, context_manager):
+        """Shutdown must not tear down a context that a request or worker still pins.
+
+        ``close_all`` only drops cache ownership. The connector closes after the
+        last ``release()``, through the cleanup worker, and the live-context
+        index drains only then.
+        """
+        closed = threading.Event()
+        ctx = _make_tool_context("ns1")
+        ctx.tools["db_tool"] = SimpleNamespace(connector=SimpleNamespace(close=closed.set))
+        context_manager._contexts["ns1:"] = ctx
+        ctx.acquire()  # an in-flight request / submitted worker
+
+        context_manager.close_all()
+
+        assert context_manager._contexts == {}
+        assert not closed.is_set(), "close_all closed a connector still pinned by a user"
+        assert ctx.tools, "close_all cleared the tools of a pinned context"
+        assert id(ctx) in context_manager._live_contexts, "pinned context was not tracked for deferred cleanup"
+
+        ctx.release()
+
+        assert await asyncio.to_thread(closed.wait, 2)
+        for _ in range(200):
+            if not context_manager._live_contexts:
+                break
+            await asyncio.sleep(0.01)
+        assert not context_manager._live_contexts, "retired context was not drained after its last release"
+
+
+class TestDynamicContextLifetime:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("transport", ["http", "sse"])
+    async def test_transport_keeps_context_alive_before_tool_dispatch(self, context_manager, transport):
+        entered = asyncio.Event()
+        release = asyncio.Event()
+        closed = threading.Event()
+        context = _make_tool_context("a")
+        tool = SimpleNamespace(connector=SimpleNamespace(close=closed.set))
+        context.tools["db_tool"] = tool
+        context_manager._max_size = 1
+        server = LightweightDynamicMCPServer.__new__(LightweightDynamicMCPServer)
+        server._context_manager = context_manager
+        server._started = True
+        server._sse_sessions = {}
+
+        async def send(message):
+            pass
+
+        async def dispatch(scope, receive, send):
+            if server._get_context().datasource != "a":
+                return
+            if transport == "sse":
+                await send(
+                    {
+                        "type": "http.response.body",
+                        "body": b"event: endpoint\ndata: /messages/?session_id=abc123\n\n",
+                    }
+                )
+            entered.set()
+            await release.wait()
+            assert server._get_context().db_tool is tool
+            assert not closed.is_set()
+
+        server._session_manager = SimpleNamespace(handle_request=dispatch)
+        server._sse_app = dispatch
+        task = None
+        with patch.object(
+            context_manager,
+            "_create_context",
+            side_effect=lambda ds, sa: context if ds == "a" else _make_tool_context(ds),
+        ):
+            try:
+                task = asyncio.create_task(server.handle_request({}, None, send, "a", transport=transport))
+                await asyncio.wait_for(entered.wait(), 2)
+                await server.handle_request({}, None, send, "b", transport=transport)
+                assert not closed.is_set(), "eviction closed a context still owned by its transport"
+                assert server._sse_sessions == {"http": {}, "sse": {"abc123": context}}[transport]
+                release.set()
+                await task
+                assert await asyncio.to_thread(closed.wait, 2)
+                assert server._sse_sessions == {}
+            finally:
+                release.set()
+                if task is not None:
+                    await asyncio.gather(task, return_exceptions=True)
+
+    @pytest.mark.asyncio
+    async def test_eviction_keeps_cancelled_requests_worker_context_alive(self, context_manager):
+        loop = asyncio.get_running_loop()
+        started = asyncio.Event()
+        release = threading.Event()
+        closed = threading.Event()
+        finished = threading.Event()
+        healthy_at_return = []
+
+        class Tools:
+            connector = SimpleNamespace(close=closed.set)
+
+            def query(self) -> dict:
+                loop.call_soon_threadsafe(started.set)
+                release.wait(2)
+                healthy_at_return.append(not closed.is_set())
+                finished.set()
+                return {"ok": True}
+
+        context_manager._max_size = 1
+        context_a = _make_tool_context("a")
+        context_a.tools["db_tool"] = Tools()
+        context_b = _make_tool_context("b")
+        server = LightweightDynamicMCPServer.__new__(LightweightDynamicMCPServer)
+        server._context_manager = context_manager
+        server._started = True
+        wrapper = create_dynamic_tool_wrapper(
+            "query",
+            Tools.query,
+            MCPToolConfig(),
+            server._get_context,
+            "db_tool",
+            "has_db_tools",
+            lambda result: result,
+            executor=context_manager.tool_executor,
+        )
+
+        async def dispatch(scope, receive, send):
+            if server._get_context().datasource == "a":
+                await wrapper()
+
+        server._session_manager = SimpleNamespace(handle_request=dispatch)
+        task = None
+        with patch.object(
+            context_manager, "_create_context", side_effect=lambda ds, sa: {"a": context_a, "b": context_b}[ds]
+        ):
+            try:
+                task = asyncio.create_task(server.handle_request({}, None, None, "a"))
+                await asyncio.wait_for(started.wait(), 2)
+                await server.handle_request({}, None, None, "b")
+                assert not closed.is_set(), "eviction closed a connector still used by a worker"
+                task.cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await task
+                assert not closed.is_set(), "request cancellation closed the running worker's connector"
+                release.set()
+                assert await asyncio.to_thread(finished.wait, 2)
+                assert await asyncio.to_thread(closed.wait, 2)
+                assert healthy_at_return == [True]
+            finally:
+                release.set()
+                if task is not None:
+                    await asyncio.gather(task, return_exceptions=True)
+                context_manager.close_all()
+                context_manager.tool_executor.shutdown()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("transport", ["http", "sse"])
+    async def test_shutdown_does_not_wait_for_cancelled_initialization(self, mock_config_manager, transport):
+        loop = asyncio.get_running_loop()
+        entered = asyncio.Event()
+        started = asyncio.Event()
+        stop = asyncio.Event()
+        release = threading.Event()
+        closed = threading.Event()
+        context = _make_tool_context("slow")
+        context.tools["db_tool"] = SimpleNamespace(connector=SimpleNamespace(close=closed.set))
+
+        with (
+            patch("datus.mcp_server.configuration_manager", return_value=mock_config_manager),
+            patch.object(LightweightDynamicMCPServer, "_register_tools"),
+        ):
+            server = LightweightDynamicMCPServer()
+
+        def create(datasource, subagent):
+            loop.call_soon_threadsafe(started.set)
+            release.wait(2)
+            return context
+
+        async def serve():
+            async with server.lifespan_context(transport):
+                entered.set()
+                await stop.wait()
+
+        lifecycle = asyncio.create_task(serve())
+        initialization = None
+        with patch.object(server._context_manager, "_create_context", side_effect=create):
+            try:
+                await asyncio.wait_for(entered.wait(), 2)
+                initialization = asyncio.create_task(server._context_manager.get_or_create_context("slow"))
+                await asyncio.wait_for(started.wait(), 2)
+                initialization.cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await initialization
+                stop.set()
+                done, _ = await asyncio.wait([lifecycle], timeout=0.2)
+                assert lifecycle in done, "shutdown waited for the blocked initialization lock"
+                await lifecycle
+            finally:
+                stop.set()
+                release.set()
+                await asyncio.wait_for(lifecycle, 2)
+                if initialization is not None:
+                    await asyncio.gather(initialization, return_exceptions=True)
+            assert await asyncio.to_thread(closed.wait, 2), "late initialization leaked its connector"
+            assert not server._context_manager._contexts
+
+    @pytest.mark.asyncio
+    async def test_cancelled_context_acquisition_releases_its_late_pin(self, context_manager):
+        loop = asyncio.get_running_loop()
+        started = asyncio.Event()
+        release = threading.Event()
+        closed = threading.Event()
+        context = _make_tool_context("a")
+        context.tools["db_tool"] = SimpleNamespace(connector=SimpleNamespace(close=closed.set))
+        context_manager._max_size = 1
+
+        def create(datasource, subagent):
+            if datasource == "a":
+                loop.call_soon_threadsafe(started.set)
+                release.wait(2)
+                return context
+            return _make_tool_context(datasource)
+
+        async def request():
+            async with context_manager.use_context("a"):
+                raise AssertionError("cancelled request must not resume")
+
+        task = asyncio.create_task(request())
+        with patch.object(context_manager, "_create_context", side_effect=create):
+            try:
+                await asyncio.wait_for(started.wait(), 2)
+                task.cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await task
+                release.set()
+                await context_manager.get_or_create_context("b")
+                assert await asyncio.to_thread(closed.wait, 2), "abandoned request retained its context pin"
+            finally:
+                release.set()
+                await asyncio.gather(task, return_exceptions=True)
+                context_manager.close_all()
+                context_manager.tool_executor.shutdown()
+
+    @pytest.mark.asyncio
+    async def test_async_tool_keeps_context_pinned_after_its_request_finishes(self, context_manager):
+        started = asyncio.Event()
+        release = asyncio.Event()
+        closed = threading.Event()
+
+        class Tools:
+            connector = SimpleNamespace(close=closed.set)
+
+            async def query(self) -> dict:
+                started.set()
+                await release.wait()
+                assert not closed.is_set()
+                return {"ok": True}
+
+        context = _make_tool_context("a")
+        context.tools["db_tool"] = Tools()
+        context_manager._max_size = 1
+        from datus.mcp_server import _current_tool_context
+
+        wrapper = create_dynamic_tool_wrapper(
+            "query",
+            Tools.query,
+            MCPToolConfig(),
+            _current_tool_context.get,
+            "db_tool",
+            "has_db_tools",
+            lambda result: result,
+            executor=context_manager.tool_executor,
+        )
+        task = None
+        with patch.object(
+            context_manager,
+            "_create_context",
+            side_effect=lambda ds, sa: context if ds == "a" else _make_tool_context(ds),
+        ):
+            try:
+                async with context_manager.use_context("a") as current:
+                    token = _current_tool_context.set(current)
+                    try:
+                        task = asyncio.create_task(wrapper())
+                        await asyncio.wait_for(started.wait(), 2)
+                    finally:
+                        _current_tool_context.reset(token)
+                await context_manager.get_or_create_context("b")
+                assert not closed.is_set()
+                release.set()
+                assert await task == {"ok": True}
+                assert await asyncio.to_thread(closed.wait, 2)
+            finally:
+                release.set()
+                if task is not None:
+                    await asyncio.gather(task, return_exceptions=True)
+                context_manager.close_all()
+                context_manager.tool_executor.shutdown()
 
 
 # =============================================================================
@@ -304,3 +855,515 @@ class TestGetContext:
             assert result is ctx
         finally:
             _current_tool_context.reset(token)
+
+
+class _PublicationManagerContract:
+    """Legacy publication cache API (Datus-backend 987e92e, mcp_mount.py).
+
+    In particular, eviction and shutdown call ToolContext.close() directly.
+    Configuration/policy loading remains asynchronous and request-scoped.
+    """
+
+    def __init__(self, contexts):
+        self.contexts = contexts
+        self.cached = None
+        self.lookups = []
+        self.closed = threading.Event()
+
+    async def get_or_create_context(self, datasource, subagent=None):
+        self.lookups.append((datasource, subagent))
+        await asyncio.sleep(0)
+        context = self.contexts[datasource]
+        if self.cached is not None and self.cached is not context:
+            self.cached.close()
+        self.cached = context
+        return context
+
+    def close_all(self):
+        if self.cached is not None:
+            self.cached.close()
+        self.cached = None
+        self.closed.set()
+
+
+def _build_publication_server(manager):
+    # The deployed backend swaps this constructor and checks manager identity.
+    with patch("datus.mcp_server.ToolContextManager", return_value=manager):
+        server = LightweightDynamicMCPServer()
+    assert server._context_manager is manager
+    return server
+
+
+class _PublicationCacheContract:
+    """Publication cache order: read, await policy I/O, then publish/evict."""
+
+    def __init__(self, max_size=2):
+        self.contexts = OrderedDict()
+        self.max_size = max_size
+        self.created = []
+
+    async def create(self, datasource, subagent):
+        context = _make_tool_context(datasource, subagent)
+        self.created.append(context)
+        return context
+
+    async def refresh(self, context):
+        pass
+
+    async def get_or_create_context(self, datasource, subagent=None):
+        key = (datasource, subagent)
+        cached = self.contexts.get(key)
+        if cached is not None:
+            self.contexts.move_to_end(key)
+            await self.refresh(cached)
+            return cached
+        context = await self.create(datasource, subagent)
+        await self.refresh(context)
+        self.contexts[key] = context
+        self.contexts.move_to_end(key)
+        while len(self.contexts) > self.max_size:
+            _, evicted = self.contexts.popitem(last=False)
+            evicted.close()
+        return context
+
+    def close_all(self):
+        for context in self.contexts.values():
+            context.close()
+        self.contexts.clear()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("phase", ["create", "refresh"])
+@pytest.mark.parametrize("cancel", [False, True])
+async def test_publication_cached_request_is_independent_of_stalled_lookup(phase, cancel):
+    manager = _PublicationCacheContract()
+    server = _build_publication_server(manager)
+    adapter = server._execution_manager
+    entered, release = asyncio.Event(), asyncio.Event()
+
+    async def request(key):
+        async with adapter.use_context(key) as context:
+            return context
+
+    if phase == "refresh":
+        await request("A")
+    cached_b = await request("B")
+    original = getattr(manager, phase)
+
+    async def stalled(*args):
+        key = args[0].datasource if phase == "refresh" else args[0]
+        if key == "A":
+            entered.set()
+            await release.wait()
+        return await original(*args)
+
+    setattr(manager, phase, stalled)
+    task = asyncio.create_task(request("A"))
+    try:
+        await asyncio.wait_for(entered.wait(), 2)
+        if cancel:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+        assert task.cancelled() is cancel
+        assert await asyncio.wait_for(request("B"), 1) is cached_b
+        assert not release.is_set(), "B only completed after A was released"
+    finally:
+        release.set()
+        await asyncio.gather(task, *tuple(adapter._lookups), return_exceptions=True)
+        adapter.close_all()
+        adapter.tool_executor.shutdown()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("fail_refresh", [False, True])
+async def test_publication_refresh_keeps_evicted_context_alive(fail_refresh):
+    manager = _PublicationCacheContract(max_size=1)
+    server = _build_publication_server(manager)
+    adapter = server._execution_manager
+    entered, release = asyncio.Event(), asyncio.Event()
+    closed = threading.Event()
+    healthy = []
+    async with adapter.use_context("A") as context:
+        context.tools["db_tool"] = SimpleNamespace(connector=SimpleNamespace(close=closed.set))
+
+    async def refresh(current):
+        if current is context:
+            entered.set()
+            await release.wait()
+            healthy.append(not closed.is_set())
+            if fail_refresh:
+                raise ValueError("policy refresh failed")
+
+    manager.refresh = refresh
+
+    async def request_a():
+        async with adapter.use_context("A") as current:
+            assert current is context
+            assert not closed.is_set(), "lookup pin was not transferred to the request"
+
+    task = asyncio.create_task(request_a())
+    try:
+        await asyncio.wait_for(entered.wait(), 2)
+        async with asyncio.timeout(1):
+            async with adapter.use_context("B"):
+                pass
+        # Any premature cleanup must have run before checking the connector.
+        await asyncio.wrap_future(adapter._lifetimes._pool.submit(lambda: None))
+        assert not closed.is_set()
+        release.set()
+        if fail_refresh:
+            with pytest.raises(ValueError, match="policy refresh failed"):
+                await task
+        else:
+            await task
+        assert healthy == [True], "eviction closed a context during policy I/O"
+        assert await asyncio.to_thread(closed.wait, 2), "evicted context retained a lookup pin"
+    finally:
+        release.set()
+        await asyncio.gather(task, *tuple(adapter._lookups), return_exceptions=True)
+        adapter.close_all()
+        adapter.tool_executor.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_publication_same_key_waiters_share_initialization_after_cancellation():
+    manager = _PublicationCacheContract()
+    server = _build_publication_server(manager)
+    adapter = server._execution_manager
+    entered, release = asyncio.Event(), asyncio.Event()
+    waiting = asyncio.Event()
+    original_create = manager.create
+
+    async def create(*args):
+        entered.set()
+        await release.wait()
+        return await original_create(*args)
+
+    manager.create = create
+
+    async def request():
+        async with adapter.use_context("A") as context:
+            return context
+
+    async def waiting_request():
+        waiting.set()
+        return await request()
+
+    first = asyncio.create_task(request())
+    second = None
+    try:
+        await asyncio.wait_for(entered.wait(), 2)
+        first.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await first
+        second = asyncio.create_task(waiting_request())
+        await asyncio.wait_for(waiting.wait(), 2)
+        release.set()
+        context = await asyncio.wait_for(second, 2)
+        assert manager.created == [context], "concurrent cache misses created duplicate connectors"
+    finally:
+        release.set()
+        await asyncio.gather(first, *([second] if second else []), *tuple(adapter._lookups), return_exceptions=True)
+        adapter.close_all()
+        adapter.tool_executor.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_publication_lookup_recreates_a_closed_cache_entry():
+    manager = _PublicationCacheContract(max_size=1)
+    server = _build_publication_server(manager)
+    adapter = server._execution_manager
+    closed = threading.Event()
+    try:
+        async with adapter.use_context("A") as original:
+            original.tools["db_tool"] = SimpleNamespace(connector=SimpleNamespace(close=closed.set))
+        async with adapter.use_context("B"):
+            pass
+        assert await asyncio.to_thread(closed.wait, 2)
+        # Keep a reference to the closed context, as other callers may do.
+        async with adapter.use_context("A") as replacement:
+            assert replacement is not original
+            assert replacement is manager.contexts[("A", None)]
+    finally:
+        adapter.close_all()
+        adapter.tool_executor.shutdown()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("transport", ["http", "sse"])
+async def test_publication_manager_constructs_and_dispatches_requests(transport):
+    context = _make_tool_context("version:user", "analyst")
+    closed = threading.Event()
+    context.tools["db_tool"] = SimpleNamespace(connector=SimpleNamespace(close=closed.set))
+    manager = _PublicationManagerContract({context.datasource: context})
+    server = _build_publication_server(manager)
+    observed = []
+
+    async def dispatch(scope, receive, send):
+        observed.append(server._get_context())
+
+    async with server.lifespan_context(transport):
+        if transport == "http":
+            server._session_manager = SimpleNamespace(handle_request=dispatch)
+        else:
+            server._sse_app = dispatch
+        await server.handle_request({}, None, None, "version:user", "analyst", transport)
+    assert observed == [context]
+    assert manager.lookups == [("version:user", "analyst")]
+    assert await asyncio.to_thread(manager.closed.wait, 2)
+    assert await asyncio.to_thread(closed.wait, 2)
+
+
+@pytest.mark.asyncio
+async def test_static_close_retains_cancelled_workers_connector():
+    from datus.utils.mcp_decorators import ToolClassConfig, mcp_tool
+
+    loop = asyncio.get_running_loop()
+    started = asyncio.Event()
+    release = threading.Event()
+    closed = threading.Event()
+    healthy = []
+
+    class Tools:
+        connector = SimpleNamespace(close=closed.set)
+
+        @classmethod
+        def create_static(cls, *args):
+            return cls()
+
+        @mcp_tool()
+        def query(self) -> dict:
+            loop.call_soon_threadsafe(started.set)
+            release.wait(3)
+            healthy.append(not closed.is_set())
+            return {"ok": True}
+
+    with (
+        patch("datus.mcp_server.load_agent_config", return_value=SimpleNamespace(mcp_tool_execution={})),
+        patch("datus.mcp_server.get_tool_registry", return_value=[ToolClassConfig("db_tool", Tools, "has_db_tools")]),
+    ):
+        server = DatusMCPServer("test")
+    task = asyncio.create_task(server.mcp.call_tool("query", {}))
+    try:
+        await asyncio.wait_for(started.wait(), 2)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        server.close()
+        server.close()
+        assert not closed.is_set(), "shutdown closed a connector still used by a cancelled worker"
+        release.set()
+        assert await asyncio.to_thread(closed.wait, 2)
+        assert healthy == [True]
+    finally:
+        release.set()
+        await asyncio.gather(task, return_exceptions=True)
+        server.close()
+
+
+@pytest.mark.asyncio
+async def test_static_connector_cleanup_does_not_block_request_loop():
+    loop = asyncio.get_running_loop()
+    close_started = asyncio.Event()
+    release_close = threading.Event()
+    closed = threading.Event()
+
+    def close():
+        loop.call_soon_threadsafe(close_started.set)
+        release_close.wait(2)
+        closed.set()
+
+    with (
+        patch("datus.mcp_server.load_agent_config", return_value=SimpleNamespace(mcp_tool_execution={})),
+        patch.object(DatusMCPServer, "_init_tools"),
+        patch.object(DatusMCPServer, "_register_tools"),
+    ):
+        server = DatusMCPServer("test")
+    server.tools["db_tool"] = SimpleNamespace(connector=SimpleNamespace(close=close))
+    try:
+        server.close()
+        await asyncio.wait_for(close_started.wait(), 2)
+        assert not closed.is_set(), "close blocked the event loop until connector cleanup finished"
+    finally:
+        release_close.set()
+        assert await asyncio.to_thread(closed.wait, 2)
+
+
+@pytest.mark.asyncio
+async def test_publication_eviction_and_shutdown_retain_cancelled_worker():
+    from datus.utils.mcp_decorators import ToolClassConfig, mcp_tool
+
+    loop = asyncio.get_running_loop()
+    started = asyncio.Event()
+    release = threading.Event()
+    closed = threading.Event()
+    healthy = []
+
+    class Tools:
+        connector = SimpleNamespace(close=closed.set)
+
+        @mcp_tool()
+        def query(self) -> dict:
+            loop.call_soon_threadsafe(started.set)
+            release.wait(3)
+            healthy.append(not closed.is_set())
+            return {"ok": True}
+
+    context = _make_tool_context("version:user-a")
+    context.tools["db_tool"] = Tools()
+    other = _make_tool_context("version:user-b")
+    manager = _PublicationManagerContract({context.datasource: context, other.datasource: other})
+    with patch("datus.mcp_server.get_tool_registry", return_value=[ToolClassConfig("db_tool", Tools, "has_db_tools")]):
+        server = _build_publication_server(manager)
+
+    async def dispatch(scope, receive, send):
+        if server._get_context() is context:
+            await server.mcp.call_tool("query", {})
+
+    task = None
+    try:
+        async with server.lifespan_context("sse"):
+            server._sse_app = dispatch
+            task = asyncio.create_task(server.handle_request({}, None, None, context.datasource, transport="sse"))
+            await asyncio.wait_for(started.wait(), 2)
+            await server.handle_request({}, None, None, other.datasource, transport="sse")
+            assert not closed.is_set(), "legacy LRU eviction invalidated a running worker"
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+        assert not closed.is_set(), "legacy shutdown invalidated a cancelled worker"
+        release.set()
+        assert await asyncio.to_thread(closed.wait, 2)
+        assert await asyncio.to_thread(manager.closed.wait, 2)
+        assert healthy == [True]
+    finally:
+        release.set()
+        if task is not None:
+            await asyncio.gather(task, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("fail", [False, True])
+async def test_publication_cancelled_lookup_is_drained_after_shutdown(fail):
+    started = asyncio.Event()
+    release = asyncio.Event()
+    closed = threading.Event()
+    context = _make_tool_context("version:user")
+    context.tools["db_tool"] = SimpleNamespace(connector=SimpleNamespace(close=closed.set))
+    manager = _PublicationManagerContract({context.datasource: context})
+    get_context = manager.get_or_create_context
+
+    async def delayed_lookup(datasource, subagent=None):
+        started.set()
+        await release.wait()
+        if fail:
+            raise ValueError("publication lookup failed")
+        return await get_context(datasource, subagent)
+
+    manager.get_or_create_context = delayed_lookup
+    server = _build_publication_server(manager)
+    task = None
+    try:
+        async with server.lifespan_context("sse"):
+            task = asyncio.create_task(server.handle_request({}, None, None, context.datasource, transport="sse"))
+            await asyncio.wait_for(started.wait(), 2)
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+        assert not manager.closed.is_set(), "close_all raced an unfinished legacy cache lookup"
+        release.set()
+        assert await asyncio.to_thread(manager.closed.wait, 2)
+        assert closed.is_set() == (not fail), "late lookup did not release its connector"
+    finally:
+        release.set()
+        if task is not None:
+            await asyncio.gather(task, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_publication_rejects_lookup_after_shutdown():
+    manager = _PublicationManagerContract({})
+    server = _build_publication_server(manager)
+    async with server.lifespan_context("sse"):
+        pass
+    with pytest.raises(RuntimeError, match="closed"):
+        async with server._execution_manager.use_context("version:user"):
+            pytest.fail("closed manager admitted a new request")
+    assert manager.lookups == []
+    assert await asyncio.to_thread(manager.closed.wait, 2)
+
+
+@pytest.mark.asyncio
+async def test_publication_shutdown_keeps_cached_context_alive_during_policy_refresh():
+    started = asyncio.Event()
+    release = asyncio.Event()
+    closed = threading.Event()
+    healthy = []
+    context = _make_tool_context("version:user")
+    context.tools["db_tool"] = SimpleNamespace(connector=SimpleNamespace(close=closed.set))
+    manager = _PublicationManagerContract({context.datasource: context})
+    get_context = manager.get_or_create_context
+
+    async def refresh_lookup(datasource, subagent=None):
+        if manager.cached is not None:
+            started.set()
+            await release.wait()
+            healthy.append(not closed.is_set())
+        return await get_context(datasource, subagent)
+
+    manager.get_or_create_context = refresh_lookup
+    server = _build_publication_server(manager)
+    async with server.lifespan_context("sse"):
+        async with server._execution_manager.use_context(context.datasource):
+            pass
+        task = asyncio.create_task(server.handle_request({}, None, None, context.datasource, transport="sse"))
+        await asyncio.wait_for(started.wait(), 2)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+    try:
+        # Drain any cleanup already queued by shutdown before resuming refresh.
+        barrier = server._execution_manager._lifetimes._pool.submit(lambda: None)
+        await asyncio.wrap_future(barrier)
+        release.set()
+        assert await asyncio.to_thread(manager.closed.wait, 2)
+        assert await asyncio.to_thread(closed.wait, 2)
+        assert healthy == [True], "shutdown closed the context during legacy policy refresh"
+    finally:
+        release.set()
+
+
+@pytest.mark.asyncio
+async def test_publication_cancelled_lookup_releases_pin_before_later_eviction():
+    started = asyncio.Event()
+    release = asyncio.Event()
+    closed = threading.Event()
+    context = _make_tool_context("version:user-a")
+    context.tools["db_tool"] = SimpleNamespace(connector=SimpleNamespace(close=closed.set))
+    other = _make_tool_context("version:user-b")
+    manager = _PublicationManagerContract({context.datasource: context, other.datasource: other})
+    get_context = manager.get_or_create_context
+
+    async def delayed_lookup(datasource, subagent=None):
+        if datasource == context.datasource:
+            started.set()
+            await release.wait()
+        return await get_context(datasource, subagent)
+
+    manager.get_or_create_context = delayed_lookup
+    server = _build_publication_server(manager)
+    async with server.lifespan_context("sse"):
+        task = asyncio.create_task(server.handle_request({}, None, None, context.datasource, transport="sse"))
+        try:
+            await asyncio.wait_for(started.wait(), 2)
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+            release.set()
+            async with server._execution_manager.use_context(other.datasource):
+                pass
+            assert await asyncio.to_thread(closed.wait, 2), "abandoned lookup leaked a context pin"
+        finally:
+            release.set()
+            await asyncio.gather(task, return_exceptions=True)
+    assert await asyncio.to_thread(manager.closed.wait, 2)

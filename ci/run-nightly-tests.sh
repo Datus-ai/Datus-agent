@@ -25,6 +25,7 @@ NIGHTLY_TRACE_DIAGNOSTICS_FINALIZED=0
 test_exit_code=0
 last_command_exit_code=0
 NIGHTLY_GROUP_FILTER="${NIGHTLY_GROUP_FILTER:-}"
+NIGHTLY_PROFILE="${NIGHTLY_PROFILE:-full}"
 GAUSSDB_TLS_HOST_DIR=""
 AGENT_TEST_CONFIG="${AGENT_TEST_CONFIG:-tests/conf/agent.yml}"
 DATUS_TEST_PROJECT_NAME="${DATUS_TEST_PROJECT_NAME:-datus_agent_nightly}"
@@ -45,6 +46,9 @@ AGENT_TEST_CONFIG_BACKUP="${AGENT_TEST_CONFIG_BACKUP:-${TMPDIR:-/tmp}/datus-agen
 export LOG_FILE NIGHTLY_MANIFEST_FILE NIGHTLY_FAILURE_CLASSIFICATION_FILE PROVIDER_COVERAGE_MANIFEST_FILE NIGHTLY_TRACE_REFERENCES_FILE NIGHTLY_TRACE_SUMMARY_FILE NIGHTLY_PROCESS_DIAGNOSTICS_FILE NIGHTLY_HOME NIGHTLY_PROJECT_ROOT UNIT_TEST_HOME NIGHTLY_PYTEST_BASETEMP NIGHTLY_STARTED_AT EXTERNAL_REPOS_ROOT UV_CACHE_DIR
 
 NIGHTLY_PYTEST_ROOTS=(tests/integration tests/regression)
+# This cloud acceptance has no credentialed nightly group yet. Ignore it before
+# import so strict collection does not require its explicitly opt-in credentials.
+NIGHTLY_OPTIONAL_CLOUD_IGNORES=(--ignore tests/integration/adapters/test_snowflake_secrets.py)
 
 default_repo_root() {
   local explicit_root="$1"
@@ -98,7 +102,8 @@ COMPOSE_FILES=(
 )
 
 COMPOSE_GROUPS=(
-  "P0 Dashboard Bootstrap Skill E2E"
+  "P0 BI Product E2E"
+  "BI Orchestration Contracts"
   "Grafana Nightly Tests"
   "Airflow Nightly Tests"
   "PostgreSQL Adapter Tests"
@@ -346,6 +351,25 @@ validate_nightly_group_filter() {
     echo "Invalid NIGHTLY_GROUP_FILTER regex: $NIGHTLY_GROUP_FILTER" | tee -a "$LOG_FILE" >&2
     return 1
   fi
+  local matched=0 group_name
+  while IFS= read -r group_name; do
+    if [[ "$group_name" =~ $NIGHTLY_GROUP_FILTER ]]; then
+      matched=1
+    fi
+  done < <(uv run python - <<'GROUPS'
+import re
+from pathlib import Path
+from ci.p0_plan import load_profile
+source = Path("ci/run-nightly-tests.sh").read_text()
+groups = set(re.findall(r'^run_(?:logged(?:_warn_only)?|compose_suite) "([^"]+)"', source, re.M))
+groups.update(load_profile()["groups"])
+print("\n".join(sorted(groups)))
+GROUPS
+  )
+  if [ "$matched" -ne 1 ]; then
+    echo "NIGHTLY_GROUP_FILTER selected no test groups: $NIGHTLY_GROUP_FILTER" >&2
+    return 1
+  fi
   return 0
 }
 
@@ -485,7 +509,7 @@ compose_project_slug() {
   local group_name="$1"
 
   case "$group_name" in
-    "P0 Dashboard Bootstrap Skill E2E") echo "superset" ;;
+    "P0 BI Product E2E" | "BI Orchestration Contracts") echo "superset" ;;
     "Grafana Nightly Tests") echo "grafana" ;;
     "Airflow Nightly Tests") echo "airflow" ;;
     "PostgreSQL Adapter Tests") echo "postgresql" ;;
@@ -543,7 +567,7 @@ cleanup_all_compose() {
   local project_name
   for group_name in "${COMPOSE_GROUPS[@]}"; do
     case "$group_name" in
-      "P0 Dashboard Bootstrap Skill E2E") compose_file="$SUPERSET_COMPOSE" ;;
+      "P0 BI Product E2E" | "BI Orchestration Contracts") compose_file="$SUPERSET_COMPOSE" ;;
       "Grafana Nightly Tests") compose_file="$GRAFANA_COMPOSE" ;;
       "Airflow Nightly Tests") compose_file="$AIRFLOW_COMPOSE" ;;
       "PostgreSQL Adapter Tests") compose_file="$POSTGRES_COMPOSE" ;;
@@ -688,7 +712,7 @@ nightly_trace_expected_for_group() {
       "Reference Template Nightly Tests" | \
       "Web UI Nightly Tests" | \
       "Product E2E Nightly Tests" | \
-      "P0 Dashboard Bootstrap Skill E2E" | \
+      "P0 BI Product E2E" | \
       "Grafana Nightly Tests" | \
       "Airflow Nightly Tests" | \
       "Provider Health Tests")
@@ -897,6 +921,8 @@ if [ "${NIGHTLY_FORCE_ADAPTER_ENV:-1}" = "1" ]; then
   export CLICKHOUSE_USER=default_user
   export CLICKHOUSE_PASSWORD=default_test
   export CLICKHOUSE_DATABASE=default_test
+  # Compose uses HTTP; let the adapter's HTTP defaults apply.
+  unset CLICKHOUSE_PROTOCOL CLICKHOUSE_VERIFY CLICKHOUSE_CA_CERT
 
   export STARROCKS_QUERY_HOST_PORT="${STARROCKS_QUERY_HOST_PORT:-29030}"
   export STARROCKS_HTTP_HOST_PORT="${STARROCKS_HTTP_HOST_PORT:-28030}"
@@ -930,6 +956,7 @@ if [ "${NIGHTLY_FORCE_ADAPTER_ENV:-1}" = "1" ]; then
   export TRINO_USER=trino
   export TRINO_PASSWORD=
   export TRINO_HTTP_SCHEME=http
+  unset TRINO_VERIFY TRINO_CA_CERT
 
   export GREENPLUM_HOST_PORT="${GREENPLUM_HOST_PORT:-15434}"
   export GREENPLUM_HOST=localhost
@@ -967,6 +994,12 @@ run_logged_unfiltered() {
   local started_at
   started_at="$(utc_now)"
   collect_pytest_suite "$group_name" "$@"
+  if [ -n "${PRODUCT_EXECUTION_DIR:-}" ] && command_contains_pytest "$@"; then
+    set -- "$@" -p ci.pytest_gate_plugin --gate-report "${PRODUCT_EXECUTION_DIR}/${group_name//[^A-Za-z0-9_-]/_}.json"
+  fi
+  if [ -n "${P0_EXECUTION_DIR:-}" ] && [[ "$group_name" == "P0 "* ]] && command_contains_pytest "$@"; then
+    set -- "$@" -p ci.pytest_gate_plugin --gate-report "${P0_EXECUTION_DIR}/${group_name//[^A-Za-z0-9_-]/_}.json"
+  fi
   local trace_expected=0
   if nightly_trace_expected_for_group "$group_name"; then
     trace_expected=1
@@ -1159,7 +1192,7 @@ compose_host_port_specs() {
   local group_name="$1"
 
   case "$group_name" in
-    "P0 Dashboard Bootstrap Skill E2E")
+    "P0 BI Product E2E" | "BI Orchestration Contracts")
       printf 'Superset web:%s\nSuperset PostgreSQL:%s\n' "${SUPERSET_PORT:-18088}" "${SUPERSET_POSTGRES_PORT:-15433}"
       ;;
     "Grafana Nightly Tests")
@@ -1453,12 +1486,69 @@ wait_for_doris_client_readiness() {
   return 0
 }
 
+wait_for_trino_client_readiness() {
+  local timeout_seconds="${1:-300}"
+  local deadline=$((SECONDS + timeout_seconds))
+  local probe_output="${RUNNER_TEMP:-${TMPDIR:-/tmp}}/datus-trino-readiness-${GITHUB_RUN_ID:-$$}.log"
+  local remaining_seconds
+
+  while [ "$SECONDS" -lt "$deadline" ]; do
+    remaining_seconds=$((deadline - SECONDS))
+    if python3 - "$remaining_seconds" <<'PYTRINO' >"$probe_output" 2>&1; then
+import os
+import signal
+import subprocess
+import sys
+
+probe = """
+from datus_trino import TrinoConnector
+from datus_trino.testing import config_from_env
+
+conn = TrinoConnector(config_from_env())
+try:
+    if not conn.test_connection():
+        raise RuntimeError("Trino readiness query failed")
+finally:
+    conn.close()
+"""
+# Bound uv startup, the driver query and cleanup together. A separate process
+# group lets expiry stop both uv and its Python child on Linux and macOS.
+process = subprocess.Popen(["uv", "run", "--no-sync", "python", "-c", probe], start_new_session=True)
+try:
+    status = process.wait(timeout=float(sys.argv[1]))
+except subprocess.TimeoutExpired:
+    try:
+        os.killpg(process.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+    process.wait()
+    print("Trino readiness attempt exceeded the remaining deadline", file=sys.stderr)
+    status = 124
+sys.exit(status)
+PYTRINO
+      log "Trino client readiness probe succeeded"
+      return 0
+    fi
+    remaining_seconds=$((deadline - SECONDS))
+    if [ "$remaining_seconds" -gt 0 ]; then
+      sleep "$((remaining_seconds < 5 ? remaining_seconds : 5))"
+    fi
+  done
+
+  echo "Timed out waiting for Trino client readiness" | tee -a "$LOG_FILE" >&2
+  if [ -s "$probe_output" ]; then
+    sed 's/^/  /' "$probe_output" | tee -a "$LOG_FILE"
+  fi
+  test_exit_code=1
+  return 1
+}
+
 wait_for_compose_client_readiness() {
   local group_name="$1"
   local airflow_base
 
   case "$group_name" in
-    "P0 Dashboard Bootstrap Skill E2E")
+    "P0 BI Product E2E" | "BI Orchestration Contracts")
       wait_for_http_readiness "Superset" "${SUPERSET_URL%/}/health" 300
       ;;
     "Grafana Nightly Tests")
@@ -1488,7 +1578,7 @@ wait_for_compose_client_readiness() {
       wait_for_http_readiness "TiDB" "http://${TIDB_HOST:-127.0.0.1}:${TIDB_STATUS_HOST_PORT:-20080}/status" 300
       ;;
     "Trino Adapter Tests")
-      wait_for_http_readiness "Trino" "http://${TRINO_HOST:-127.0.0.1}:${TRINO_PORT:-8080}/v1/info" 300
+      wait_for_trino_client_readiness 300
       ;;
     "Greenplum Adapter Tests")
       wait_for_tcp_readiness "Greenplum" "${GREENPLUM_HOST:-localhost}" "${GREENPLUM_PORT:-5432}" 300
@@ -1619,6 +1709,74 @@ run_compose_suite() {
   return 0
 }
 
+# Every P0 command and verifier reads the same explicit nodeid manifest.
+run_p0_group() {
+  local group_name="$1"
+  local nodeids=() slug
+  slug="${group_name//[^A-Za-z0-9_-]/_}"
+  local nodeid
+  while IFS= read -r nodeid; do
+    nodeids+=("$nodeid")
+  done < <(uv run python ci/p0_plan.py --group "$group_name")
+  if [ "${#nodeids[@]}" -eq 0 ]; then
+    echo "P0 group has no nodeids: $group_name" >&2
+    test_exit_code=1
+    return 0
+  fi
+  local command=(run_with_agent_home "${NIGHTLY_HOME}/p0/${slug}/home" "${NIGHTLY_HOME}/p0/${slug}/workspace"
+    env DATUS_TEST_LAYER=nightly uv run python -m pytest "${nodeids[@]}"
+    -p ci.pytest_fail_on_skip_plugin --fail-on-skip --tb=short --verbose
+    --timeout=600 --timeout-method=thread "--basetemp=${NIGHTLY_PYTEST_BASETEMP}/${slug}")
+  if [ "$group_name" = "P0 BI Product E2E" ]; then
+    run_compose_suite "$group_name" "$SUPERSET_COMPOSE" "postgres:300" "superset:1200" -- "${command[@]}"
+  else
+    run_logged "$group_name" "${command[@]}"
+  fi
+}
+
+# Reuse the normal Nightly environments for an explicit branch evaluation.
+# Dedicated node suites must retain their service setup instead of being
+# silently deselected from the broad product group.
+PRODUCT_E2E_ROOTS=("${NIGHTLY_PYTEST_ROOTS[@]}")
+PRODUCT_REQUIRED_ARGS=()
+PRODUCT_EXECUTION_DIR=""
+DASHBOARD_MARK_EXPR="nightly and not product_e2e"
+if [ -n "${PRODUCT_TEST_BASE_REF:-}" ]; then
+  uv run python ci/plan-product-tests.py --base-ref "$PRODUCT_TEST_BASE_REF" --output ci/product-test-plan.json || exit 1
+  mapfile -t PRODUCT_E2E_ROOTS < <(uv run python -c 'import json,sys; sys.stdout.write("\n".join(json.load(open("ci/product-test-plan.json"))["live_targets"]))')
+  if [ "${#PRODUCT_E2E_ROOTS[@]}" -eq 0 ]; then
+    echo "ERROR: No real-model product cases selected for the requested comparison."
+    exit 1
+  fi
+  PRODUCT_EXECUTION_DIR=$(mktemp -d "${REPO_ROOT}/ci/product-execution.XXXXXX") || exit 1
+  NIGHTLY_GROUP_FILTER=$(uv run python -c 'import json,re; p=json.load(open("ci/product-test-plan.json")); print("^("+"|".join(re.escape(g) for g in ["Product E2E Nightly Tests", *p["nightly_groups"]])+")$")')
+  PRODUCT_REQUIRED_ARGS=(-p ci.pytest_fail_on_skip_plugin --fail-on-skip)
+  if [[ " ${PRODUCT_E2E_ROOTS[*]} " == *"test_init_live.py::test_qwen_scoped_init_supplements_existing_documents"* ]]; then
+    export DATUS_RUN_LIVE_INIT=1
+  fi
+  if [[ "P0 BI Product E2E" =~ $NIGHTLY_GROUP_FILTER ]]; then
+    DASHBOARD_MARK_EXPR="nightly"
+  fi
+  log "Required product evaluation groups: $NIGHTLY_GROUP_FILTER"
+fi
+
+if [ "$NIGHTLY_PROFILE" = "p0" ]; then
+  if [ -n "$NIGHTLY_GROUP_FILTER" ] || [ -n "${PRODUCT_TEST_BASE_REF:-}" ]; then
+    echo "The p0 profile requires its complete manifest; filters/base refs cannot narrow it" >&2
+    exit 1
+  fi
+  NIGHTLY_GROUP_FILTER=$(uv run python -c 'import re; from ci.p0_plan import load_profile; print("^("+"|".join(re.escape(g) for g in load_profile()["groups"])+")$")') || exit 1
+  export DATUS_TEST_BIRD_ROOT="${NIGHTLY_HOME}/p0-bird/dev_databases"
+  uv run python ci/prepare_ci_bird.py "$DATUS_TEST_BIRD_ROOT" || exit 1
+elif [ "$NIGHTLY_PROFILE" != "full" ]; then
+  echo "Unknown NIGHTLY_PROFILE: $NIGHTLY_PROFILE" >&2
+  exit 1
+fi
+P0_EXECUTION_DIR=""
+if [ -z "${PRODUCT_TEST_BASE_REF:-}" ] && uv run python ci/p0_plan.py --filter "$NIGHTLY_GROUP_FILTER" >/dev/null 2>&1; then
+  P0_EXECUTION_DIR=$(mktemp -d "${REPO_ROOT}/ci/p0-execution.XXXXXX") || exit 1
+fi
+
 NIGHTLY_STARTED_AT="$(utc_now)"
 export NIGHTLY_STARTED_AT
 rm -f "$NIGHTLY_TRACE_REFERENCES_FILE" "$NIGHTLY_TRACE_SUMMARY_FILE" "$NIGHTLY_PROCESS_DIAGNOSTICS_FILE"
@@ -1688,14 +1846,11 @@ run_logged "Gen Agent Tests" run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJE
   --deselect tests/integration/agent/test_semantic_modeling_agentic.py::test_semantic_modeling_authors_one_queryable_dosi_model_with_real_llm \
   --tb=short --verbose --timeout=600 --timeout-method=thread --reruns 1 --reruns-delay 5
 
-run_logged "P0 PostgreSQL Agent Storage Contracts" run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run python -m pytest tests/integration/storage/test_postgresql_semantic_kb.py -p ci.pytest_fail_on_skip_plugin --fail-on-skip --tb=short --verbose --timeout=300 --timeout-method=thread
-
-run_logged "P0 SQL Policy Plugin Contracts" run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run python -m pytest tests/integration/plugins/test_sql_policy_plugin.py -p ci.pytest_fail_on_skip_plugin --fail-on-skip --tb=short --verbose --timeout=300 --timeout-method=thread
-
-run_logged "P0 Dosi Semantic Modeling E2E" run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run python -m pytest \
-  tests/integration/agent/test_semantic_modeling_agentic.py::test_dosi_authoring_validates_reconciles_and_queries_without_llm \
-  tests/integration/agent/test_semantic_modeling_agentic.py::test_semantic_modeling_authors_one_queryable_dosi_model_with_real_llm \
-  -p ci.pytest_fail_on_skip_plugin --fail-on-skip --tb=short --verbose --timeout=600 --timeout-method=thread
+run_p0_group "P0 Core Product Contracts"
+run_p0_group "P0 Core Real Model"
+run_p0_group "P0 PostgreSQL Agent Storage Contracts"
+run_p0_group "P0 SQL Policy Plugin Contracts"
+run_p0_group "P0 Dosi Semantic Modeling E2E"
 
 run_logged "Reference Template Nightly Tests" run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run pytest -m nightly tests/integration/tools/test_reference_template.py --tb=short --verbose --timeout=600 --timeout-method=thread --reruns 1 --reruns-delay 5
 
@@ -1713,6 +1868,7 @@ NIGHTLY_DEDICATED_SUITE_DESELECTS=(
   --deselect tests/integration/plugins/test_dashboard_bootstrap_plugin.py
   --deselect tests/integration/plugins/test_sql_policy_plugin.py
   --deselect tests/integration/storage/test_postgresql_semantic_kb.py
+  --deselect tests/integration/storage/test_postgresql_feedback_store.py
   --deselect tests/integration/tools/test_bi_grafana.py
   --deselect tests/integration/tools/test_reference_template.py
   --deselect tests/integration/adapters/test_postgresql.py
@@ -1729,17 +1885,26 @@ NIGHTLY_DEDICATED_SUITE_DESELECTS=(
   --deselect tests/regression/test_regression_web_e2e.py
 )
 
-run_logged "Main Nightly Tests" run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run pytest -m "nightly and not provider_health and not product_e2e" "${NIGHTLY_PYTEST_ROOTS[@]}" "${NIGHTLY_DEDICATED_SUITE_DESELECTS[@]}" --tb=short --verbose --timeout=300 --timeout-method=thread --reruns 1 --reruns-delay 5 --dist=loadscope -n auto
+if [ -z "${PRODUCT_TEST_BASE_REF:-}" ]; then
+  NIGHTLY_DEDICATED_SUITE_DESELECTS+=(--deselect tests/integration/agent/test_core_live.py)
+fi
 
-run_logged "Product E2E Nightly Tests" run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run pytest -m "nightly and product_e2e and not provider_health" "${NIGHTLY_PYTEST_ROOTS[@]}" "${NIGHTLY_DEDICATED_SUITE_DESELECTS[@]}" --tb=short --verbose --timeout=600 --timeout-method=thread --reruns 1 --reruns-delay 5
+run_logged "Main Nightly Tests" run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run pytest -m "nightly and not provider_health and not product_e2e" "${NIGHTLY_PYTEST_ROOTS[@]}" "${NIGHTLY_DEDICATED_SUITE_DESELECTS[@]}" "${NIGHTLY_OPTIONAL_CLOUD_IGNORES[@]}" --tb=short --verbose --timeout=300 --timeout-method=thread --reruns 1 --reruns-delay 5 --dist=loadscope -n auto
 
-# Gate deterministic Superset contracts only. Real-model dashboard workflows
-# remain available for explicit evaluation; see ci/cross-repo-harness.md.
-run_compose_suite "P0 Dashboard Bootstrap Skill E2E" "$SUPERSET_COMPOSE" "postgres:300" "superset:1200" -- run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run python -m pytest -m "nightly and not product_e2e" tests/integration/plugins/test_dashboard_bootstrap_plugin.py tests/integration/agent/test_gen_dashboard_agentic.py tests/integration/tools/test_bi_dashboard.py -p ci.pytest_fail_on_skip_plugin --fail-on-skip --tb=short --verbose --timeout=600 --timeout-method=thread
+run_logged "Product E2E Nightly Tests" run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run pytest -m "nightly and product_e2e and not provider_health" "${PRODUCT_E2E_ROOTS[@]}" "${PRODUCT_REQUIRED_ARGS[@]}" "${NIGHTLY_DEDICATED_SUITE_DESELECTS[@]}" "${NIGHTLY_OPTIONAL_CLOUD_IGNORES[@]}" --tb=short --verbose --timeout=600 --timeout-method=thread --reruns 1 --reruns-delay 5
+
+# Scheduled Nightly and release P0 run the explicit Superset export/bootstrap
+# contracts. A targeted evaluation also retains the other affected node cases.
+if [ -n "${PRODUCT_TEST_BASE_REF:-}" ]; then
+  run_compose_suite "P0 BI Product E2E" "$SUPERSET_COMPOSE" "postgres:300" "superset:1200" -- run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run python -m pytest -m "$DASHBOARD_MARK_EXPR" tests/integration/plugins/test_dashboard_bootstrap_plugin.py tests/integration/agent/test_gen_dashboard_agentic.py tests/integration/tools/test_bi_dashboard.py -p ci.pytest_fail_on_skip_plugin --fail-on-skip --tb=short --verbose --timeout=600 --timeout-method=thread
+else
+  run_p0_group "P0 BI Product E2E"
+fi
+run_compose_suite "BI Orchestration Contracts" "$SUPERSET_COMPOSE" "postgres:300" "superset:1200" -- run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run python -m pytest tests/integration/tools/test_bi_dashboard.py::TestPartialIntegration::test_workflow_without_llm --tb=short --verbose --timeout=600 --timeout-method=thread
 
 run_compose_suite "Grafana Nightly Tests" "$GRAFANA_COMPOSE" "postgres:300" "grafana:600" -- run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run pytest -m nightly tests/integration/tools/test_bi_grafana.py --tb=short --verbose --timeout=300 --timeout-method=thread --reruns 1 --reruns-delay 5
 
-run_compose_suite "Airflow Nightly Tests" "$AIRFLOW_COMPOSE" "airflow:900" -- run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run pytest -m nightly tests/integration/agent/test_scheduler_agentic.py --tb=short --verbose --timeout=600 --timeout-method=thread --reruns 1 --reruns-delay 5
+run_compose_suite "Airflow Nightly Tests" "$AIRFLOW_COMPOSE" "airflow:900" -- run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run pytest -m nightly tests/integration/agent/test_scheduler_agentic.py "${PRODUCT_REQUIRED_ARGS[@]}" --tb=short --verbose --timeout=600 --timeout-method=thread --reruns 1 --reruns-delay 5
 
 run_logged "PostgreSQL Storage Adapter Tests" env DATUS_TEST_LAYER=nightly uv run --no-sync pytest "$STORAGE_ADAPTERS_ROOT/datus-storage-postgresql/tests" --tb=short --verbose --timeout=300 --timeout-method=thread
 run_compose_suite "PostgreSQL Adapter Tests" "$POSTGRES_COMPOSE" "postgres:300" -- run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run pytest -m nightly tests/integration/adapters/test_postgresql.py --tb=short --verbose --timeout=300 --timeout-method=thread
@@ -1754,9 +1919,17 @@ run_compose_suite "Hive Adapter Tests" "$HIVE_COMPOSE" "hive-metastore:600" "hiv
 run_compose_suite "Spark Adapter Tests" "$SPARK_COMPOSE" "spark-thrift:900" -- run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run pytest -m nightly tests/integration/adapters/test_spark.py --tb=short --verbose --timeout=300 --timeout-method=thread
 run_compose_suite "GaussDB Adapter Tests" "$GAUSSDB_COMPOSE" "gaussdb:600" -- run_gaussdb_adapter_tests
 
-run_logged_warn_only "Provider Health Tests" run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run pytest -m "nightly and provider_health" "${NIGHTLY_PYTEST_ROOTS[@]}" --tb=short --verbose --timeout=300 --timeout-method=thread --reruns 1 --reruns-delay 5
+run_logged_warn_only "Provider Health Tests" run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run pytest -m "nightly and provider_health" "${NIGHTLY_PYTEST_ROOTS[@]}" "${NIGHTLY_OPTIONAL_CLOUD_IGNORES[@]}" --tb=short --verbose --timeout=300 --timeout-method=thread --reruns 1 --reruns-delay 5
 
 run_logged_unfiltered "Flaky Log Classification" uv run python ci/check_flaky_registry.py --registry ci/flaky-registry.yml --log-file "$LOG_FILE" --warn-only
+
+if [ -n "$P0_EXECUTION_DIR" ]; then
+  run_logged_unfiltered "P0 Execution Evidence" uv run python ci/p0_plan.py --filter "$NIGHTLY_GROUP_FILTER" --verify "$P0_EXECUTION_DIR"
+fi
+
+if [ -n "${PRODUCT_EXECUTION_DIR:-}" ]; then
+  run_logged_unfiltered "Product Execution Evidence" uv run python ci/plan-product-tests.py --verify-execution "$PRODUCT_EXECUTION_DIR"
+fi
 
 manifest_finalize
 provider_coverage_finalize

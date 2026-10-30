@@ -23,6 +23,7 @@ import json
 import shutil
 import sys
 import uuid
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional
 
@@ -100,8 +101,8 @@ def chat_datus_service(chat_agent_config):
     return DatusService(agent_config=chat_agent_config, project_id="chat_integration_test")
 
 
-@pytest_asyncio.fixture(scope="module")
-async def chat_client(chat_agent_config, chat_datus_service):
+@asynccontextmanager
+async def chat_http_client(chat_agent_config, chat_datus_service, *, config_path="tests/conf/agent.yml"):
     """AsyncClient wired to the full FastAPI app with real DatusService."""
     import datus.api.deps as deps_mod
     from datus.api.auth import HeaderContextProvider
@@ -110,8 +111,8 @@ async def chat_client(chat_agent_config, chat_datus_service):
     from datus.api.services.datus_service_cache import DatusServiceCache
 
     agent_args = argparse.Namespace(
-        datasource="bird_school",
-        config="tests/conf/agent.yml",
+        datasource=chat_agent_config.current_datasource or "bird_school",
+        config=config_path,
         max_steps=20,
         workflow="fixed",
         load_cp=None,
@@ -139,7 +140,7 @@ async def chat_client(chat_agent_config, chat_datus_service):
     # patched module state and shut the cache down cleanly.
     try:
         mod.service = DatusAPIService(agent_args)
-        init_deps(HeaderContextProvider(), cache, datasource="bird_school")
+        init_deps(HeaderContextProvider(), cache, datasource=chat_agent_config.current_datasource or "bird_school")
         await cache.get_or_create("default", _factory)
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test", timeout=120.0) as c:
@@ -156,6 +157,12 @@ async def chat_client(chat_agent_config, chat_datus_service):
         ) = saved_deps
         # Shut the cache down last so if it raises the globals are already restored.
         await cache.shutdown()
+
+
+@pytest_asyncio.fixture(scope="module")
+async def chat_client(chat_agent_config, chat_datus_service):
+    async with chat_http_client(chat_agent_config, chat_datus_service) as client:
+        yield client
 
 
 # ---------------------------------------------------------------------------

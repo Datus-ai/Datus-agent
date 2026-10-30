@@ -69,7 +69,7 @@ class ArtifactFilesystemFuncTool(FilesystemFuncTool):
         # ARTIFACT_SLUG_PATTERN in datus.schemas.artifact_manifest.
         slug = r"[a-z0-9_]{1,80}"
         cls._RENDER_PATH_RE = re.compile(rf"^{root}/{slug}/render(?:/.+)?$")
-        cls._QUERIES_PATH_RE = re.compile(rf"^{root}/{slug}/queries/.+$")
+        cls._QUERIES_PATH_RE = re.compile(rf"^{root}/{slug}/(?:queries|models)(?:/.+)?$")
 
     # ── Path classification ──────────────────────────────────────────────
 
@@ -102,7 +102,7 @@ class ArtifactFilesystemFuncTool(FilesystemFuncTool):
 
     def _queries_write_reject(self) -> str:
         return (
-            f"Files under {self.ARTIFACT_ROOT_DIR_NAME}/<id>/queries/ must not be written directly. "
+            f"Files under {self.ARTIFACT_ROOT_DIR_NAME}/<id>/queries/ or models/ must not be written directly. "
             f"Use the `{self.SAVE_QUERY_TOOL_NAME}` tool — it runs the SQL and persists the artifact files."
         )
 

@@ -1,6 +1,6 @@
 """
 Test cases for datus/tools/func_tool/base.py
-Focuses on trans_to_function_tool parameter filtering for LLM-hallucinated arguments.
+Focuses on trans_to_function_tool argument validation for LLM tool calls.
 """
 
 import asyncio
@@ -31,7 +31,7 @@ from datus.tools.registry.tool_registry import ToolRegistry
 
 
 class TestTransToFunctionTool:
-    """Tests for trans_to_function_tool and its parameter filtering logic."""
+    """Tests for trans_to_function_tool and its argument validation."""
 
     def _make_tool_from_method(self, method):
         """Helper to create a FunctionTool from a bound method."""
@@ -65,6 +65,79 @@ class TestTransToFunctionTool:
         with pytest.raises(UserError, match="additionalProperties should not be set"):
             trans_to_function_tool(ParameterTool().query)
 
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("encoded", [False, True])
+    async def test_declared_array_and_boolean_arguments_execute_and_replay_canonically(self, encoded):
+        class MetadataTool:
+            def inspect(self, tables: list[str], include_views: Optional[bool] = None) -> FuncToolResult:
+                return FuncToolResult(result={"tables": tables, "include_views": include_views})
+
+        expected = {"tables": ["orders", "customers"], "include_views": False}
+        arguments = {k: json.dumps(v) for k, v in expected.items()} if encoded else expected
+        raw = json.dumps(arguments)
+        context = SimpleNamespace(tool_arguments=raw, tool_call={"arguments": raw})
+        result = await trans_to_function_tool(MetadataTool().inspect).on_invoke_tool(context, raw)
+        assert result["success"] == 1 and result["result"] == expected
+        assert json.loads(context.tool_arguments) == expected
+        assert context.tool_call["arguments"] == context.tool_arguments
+
+    @pytest.mark.asyncio
+    async def test_text_and_ambiguous_argument_types_preserve_their_values(self):
+        class TextTool:
+            @tool_schema(strict_mode=False)
+            def inspect(
+                self, text: str, choice: str | list[str], flag: str | bool, payload: dict[str, Any]
+            ) -> FuncToolResult:
+                return FuncToolResult(result={"text": text, "choice": choice, "flag": flag, "payload": payload})
+
+        arguments = {
+            "text": "SELECT 'false', '[1, 2]'",
+            "choice": '["orders"]',
+            "flag": "false",
+            "payload": {"tables": '["orders"]', "enabled": "false"},
+        }
+        result = await trans_to_function_tool(TextTool().inspect).on_invoke_tool(None, json.dumps(arguments))
+        assert result["success"] == 1 and result["result"] == arguments
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "arguments",
+        [
+            {"tables": "orders", "enabled": "true"},
+            {"tables": '{"name":"orders"}', "enabled": "true"},
+            {"tables": "[123]", "enabled": "true"},
+            {"tables": '["orders"]', "enabled": "yes"},
+            {"tables": '["orders"]', "enabled": 1},
+        ],
+    )
+    async def test_encoded_arguments_still_require_strict_validation(self, arguments):
+        class MetadataTool:
+            called = False
+
+            def inspect(self, tables: list[str], enabled: bool) -> FuncToolResult:
+                self.called = True
+                return FuncToolResult(result=tables)
+
+        instance = MetadataTool()
+        result = await trans_to_function_tool(instance.inspect).on_invoke_tool(None, json.dumps(arguments))
+        assert result["success"] == 0 and result["result"]["argument_errors"]
+        assert instance.called is False
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("value", [[123], "one-id"])
+    async def test_wrong_array_types_return_parameter_locations_without_execution(self, value):
+        class EvidenceTool:
+            called = False
+
+            def expand(self, output_ids: list[str]) -> FuncToolResult:
+                self.called = True
+                return FuncToolResult(result=output_ids)
+
+        instance = EvidenceTool()
+        result = await trans_to_function_tool(instance.expand).on_invoke_tool(None, json.dumps({"output_ids": value}))
+        assert not instance.called and result["success"] == 0
+        assert result["result"]["argument_errors"][0]["parameter"].startswith("output_ids")
+
     @pytest.mark.parametrize("declared_strict", [True, False])
     @pytest.mark.parametrize("override_strict", [True, False])
     def test_explicit_schema_mode_overrides_method_declaration(self, declared_strict, override_strict):
@@ -78,23 +151,28 @@ class TestTransToFunctionTool:
         assert tool.params_json_schema.get("additionalProperties", True) is not override_strict
 
     @pytest.mark.asyncio
-    async def test_filters_unexpected_parameters(self):
-        """LLM-hallucinated parameters should be filtered out silently."""
+    async def test_rejects_unknown_parameters_without_executing(self):
+        """A mistyped filter must not disappear from a successful query."""
 
         class FakeTool:
+            called = False
+
             def search_table(self, query_text: str, top_n: int = 5) -> FuncToolResult:
+                self.called = True
                 return FuncToolResult(result={"query_text": query_text, "top_n": top_n})
 
         fake = FakeTool()
         tool = self._make_tool_from_method(fake.search_table)
 
         # Simulate LLM sending an extra 'database_type' parameter
-        args = json.dumps({"query_text": "test query", "database_type": "sqlite"})
+        unknown = {"database_type": "sqlite", "fake_filter": "x"}
+        args = json.dumps({"query_text": "test query", **unknown})
         result = await tool.on_invoke_tool(None, args)
 
-        assert result["success"] == 1
-        assert result["result"]["query_text"] == "test query"
-        assert result["result"]["top_n"] == 5
+        assert result["success"] == 0
+        assert all(name in result["error"] for name in unknown)
+        assert result["result"] is None
+        assert not fake.called
 
     @pytest.mark.asyncio
     async def test_valid_parameters_pass_through(self):
@@ -385,23 +463,6 @@ class TestTransToFunctionTool:
         assert fake.called is False
         assert tool_ctx.tool_arguments == "{}"
         assert raw_tool_call.arguments == "{}"
-
-    @pytest.mark.asyncio
-    async def test_multiple_extra_params_all_filtered(self):
-        """Multiple hallucinated parameters should all be filtered out."""
-
-        class FakeTool:
-            def simple(self, name: str) -> FuncToolResult:
-                return FuncToolResult(result=name)
-
-        fake = FakeTool()
-        tool = self._make_tool_from_method(fake.simple)
-
-        args = json.dumps({"name": "test", "fake1": 1, "fake2": "x", "fake3": True})
-        result = await tool.on_invoke_tool(None, args)
-
-        assert result["success"] == 1
-        assert result["result"] == "test"
 
     @pytest.mark.asyncio
     async def test_excluded_parameters_are_not_exposed(self):

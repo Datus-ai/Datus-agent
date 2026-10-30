@@ -9,13 +9,14 @@
 1. **[gen_sql_summary](#gen_sql_summary)** — 总结和分类 SQL 查询
 2. **[semantic_modeling](semantic_modeling.zh.md)** — 创作 Dosi 语义模型和指标
 3. **[ask_metrics](ask_metrics.zh.md)** — 基于已有语义指标回答 KPI、趋势、分组指标和归因问题
-4. **[explore](#explore)** — 只读数据探索和上下文收集
-5. **[gen_sql](#gen_sql)** — 具备深度专业知识的专用 SQL 生成
-6. **[gen_report](#gen_report)** — 灵活的报告生成，支持可配置工具
-7. **[gen_table](gen_table.zh.md)** — 数据库建表（CTAS 或自然语言描述）
-8. **[gen_job](gen_job.zh.md)** — 数据管道执行（单库 ETL 和跨库迁移，含对数校验）
-9. **[gen_skill](#gen_skill)** — skill 创建与优化
-10. **[gen_visual_report](gen_visual_report.zh.md)** — 在 `reports/<slug>/` 下产出自包含的可视化报告
+4. **[ontology_analyst](ontology_analyst.zh.md)** — 基于数据源的 Apache Ossie ontology（概念、角色、值域）回答指标和明细问题
+5. **[explore](#explore)** — 只读数据探索和上下文收集
+6. **[gen_sql](#gen_sql)** — 具备深度专业知识的专用 SQL 生成
+7. **[gen_report](#gen_report)** — 灵活的报告生成，支持可配置工具
+8. **[gen_table](gen_table.zh.md)** — 数据库建表（CTAS 或自然语言描述）
+9. **[gen_job](gen_job.zh.md)** — 数据管道执行（单库 ETL 和跨库迁移，含对数校验）
+10. **[gen_skill](#gen_skill)** — skill 创建与优化
+11. **[gen_visual_report](gen_visual_report.zh.md)** — 在 `reports/<slug>/` 下产出自包含的可视化报告
 
 Airflow 调度和外部 BI authoring 由主 agent 直接使用已安装 plugin 完成，
 不再属于内置或自定义 subagent。
@@ -38,6 +39,9 @@ agent:
     ask_metrics:
       model: claude     # 可选：默认使用已配置的模型
       max_turns: 12     # 可选：默认为 12
+
+    ontology_analyst:
+      model: claude
 
     gen_sql_summary:
       model: deepseek   # 可选：默认使用已配置的模型
@@ -469,6 +473,7 @@ Airflow 调度和 Superset 等外部 BI authoring 由主 agent 直接使用已�
 | `gen_sql_summary` | 总结和分类 SQL 查询 | YAML（SQL 摘要） | `/data/reference_sql` | 主题树分类、自动上下文检索 |
 | `semantic_modeling` | 创作语义模型和指标 | Dosi YAML | `/data/semantic_models` | 统一校验和完整 Knowledge Base 对账 |
 | `ask_metrics` | 回答已有指标问题 | Markdown 报告 | N/A | KPI 数值、趋势、分组结果、归因分析、不退回原始 SQL |
+| `ontology_analyst` | 基于 ontology 回答问题 | Markdown 报告 | N/A | 概念目录、按角色选路径、值域校验、明细查询、不退回原始 SQL |
 | `explore` | 只读数据探索 | 结构化上下文 | N/A | 严格只读、低轮数、三方向探索 |
 | `gen_sql` | 生成优化 SQL | SQL 查询 / SQL 文件 | N/A | 深度 SQL 专长、自动验证、支持文件输出 |
 | `gen_report` | 灵活报告生成 | 结构化报告 | N/A | 工具可配置、可扩展、自定义报告 subagent |

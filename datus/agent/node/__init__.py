@@ -18,6 +18,7 @@ __all__ = [
     "CompareAgenticNode",
     "SemanticModelingAgenticNode",
     "AskMetricsAgenticNode",
+    "OntologyAnalystAgenticNode",
     "GenReportAgenticNode",
     "ExploreAgenticNode",
     "SkillCreatorAgenticNode",
@@ -43,6 +44,7 @@ from .gen_report_agentic_node import GenReportAgenticNode
 from .gen_skill_agentic_node import SkillCreatorAgenticNode
 from .gen_sql_agentic_node import GenSQLAgenticNode
 from .hitl_node import HitlNode
+from .ontology_analyst_agentic_node import OntologyAnalystAgenticNode
 from .output_node import OutputNode
 from .parallel_node import ParallelNode
 from .scheduler_agentic_node import SchedulerAgenticNode

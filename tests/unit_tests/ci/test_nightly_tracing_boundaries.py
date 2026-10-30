@@ -51,7 +51,11 @@ def test_nightly_broad_suites_do_not_collect_unit_tests():
         "Provider Health Tests",
     ):
         line = _pytest_script_line_containing(suite_name)
-        assert '"${NIGHTLY_PYTEST_ROOTS[@]}"' in line
+        if suite_name == "Product E2E Nightly Tests":
+            assert '"${PRODUCT_E2E_ROOTS[@]}"' in line
+            assert 'PRODUCT_E2E_ROOTS=("${NIGHTLY_PYTEST_ROOTS[@]}")' in script
+        else:
+            assert '"${NIGHTLY_PYTEST_ROOTS[@]}"' in line
         assert " tests/ " not in line
 
 
@@ -63,17 +67,16 @@ def test_nightly_pytest_commands_set_explicit_test_layer():
         and any(wrapper in command for wrapper in ("run_logged", "run_compose_suite", "run_with_agent_home"))
     ]
 
-    assert len(pytest_commands) == 25
+    assert pytest_commands
     assert any("tests/integration/adapters/test_doris.py" in command for command in pytest_commands)
     assert any("tests/integration/adapters/test_gaussdb.py" in command for command in pytest_commands)
     assert any("tests/integration/adapters/test_tidb.py" in command for command in pytest_commands)
-    for group in (
-        "P0 PostgreSQL Agent Storage Contracts",
-        "P0 SQL Policy Plugin Contracts",
-        "P0 Dosi Semantic Modeling E2E",
-        "P0 Dashboard Bootstrap Skill E2E",
-    ):
-        assert any(group in command for command in pytest_commands)
+    from ci.p0_plan import load_profile
+
+    script = _nightly_script_text()
+    for group in load_profile()["groups"]:
+        assert f'run_p0_group "{group}"' in script
+    assert 'env DATUS_TEST_LAYER=nightly uv run python -m pytest "${nodeids[@]}"' in script
     for command in pytest_commands:
         expected_layer = "unit" if "Full Unit Tests" in command else "nightly"
         assert f"env DATUS_TEST_LAYER={expected_layer}" in command

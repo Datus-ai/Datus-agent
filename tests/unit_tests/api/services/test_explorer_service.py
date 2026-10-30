@@ -511,6 +511,59 @@ class TestExplorerServiceMetricDimensions:
         assert result.success is False
         assert "runtime is not available" in result.errorMessage
 
+    async def test_required_dimensions_are_serialized_for_preview(self, real_agent_config, monkeypatch):
+        """The API keeps runtime requirements on the dimension objects."""
+        from unittest.mock import AsyncMock
+
+        from datus.tools.semantic_tools.models import DimensionInfo
+
+        runtime = MagicMock()
+        runtime.get_dimensions = AsyncMock(
+            return_value=[
+                DimensionInfo(name="orders.status", required=True, required_reason="metric_definition"),
+                DimensionInfo(name="customers.region"),
+            ]
+        )
+        self._patch_runtime(monkeypatch, runtime=runtime)
+        service = ExplorerService(agent_config=real_agent_config)
+        result = await service.get_metric_dimensions(SubjectPathInput(subject_path=["Finance", "revenue"]))
+        assert result.success is True
+        dimensions = result.model_dump()["data"]["dimensions"]
+        assert [(d["name"], d["required"], d["required_reason"]) for d in dimensions] == [
+            ("orders.status", True, "metric_definition"),
+            ("customers.region", False, None),
+        ]
+
+    @pytest.mark.parametrize("axis_required", [False, True])
+    async def test_time_axis_requirement_is_serialized(self, real_agent_config, monkeypatch, axis_required):
+        from unittest.mock import AsyncMock
+
+        from datus.tools.semantic_tools.models import DimensionInfo
+
+        runtime = MagicMock()
+        runtime.get_dimensions = AsyncMock(
+            return_value=[
+                DimensionInfo(
+                    name="metric_time",
+                    type="time",
+                    is_primary_time=True,
+                    time_axis_required=axis_required,
+                    required=axis_required,
+                    required_reason="time_axis" if axis_required else None,
+                    time_granularities=["month", "year"],
+                ),
+            ]
+        )
+        self._patch_runtime(monkeypatch, runtime=runtime)
+        service = ExplorerService(agent_config=real_agent_config)
+        result = await service.get_metric_dimensions(SubjectPathInput(subject_path=["Finance", "revenue"]))
+        assert result.success is True
+        data = result.model_dump()["data"]
+        assert data["time_axis_required"] is axis_required
+        assert data["time_dimension"] == "metric_time"
+        assert data["time_granularities"] == ["month", "year"]
+        assert data["dimensions"][0]["required"] is axis_required
+
     async def test_maps_dimension_fields(self, real_agent_config, monkeypatch):
         """Runtime DimensionInfo objects are mapped onto the response model."""
         from types import SimpleNamespace
@@ -1006,10 +1059,19 @@ class TestExplorerServiceOSIAuthoring:
         assert result.success is False
         assert "was not found" in result.errorMessage
 
-    async def test_get_metric_returns_osi_native_yaml(self, real_agent_config, tmp_path, monkeypatch):
+    @pytest.mark.parametrize("shape", ["flat", "mapping", "list"])
+    async def test_get_metric_returns_osi_native_yaml(self, real_agent_config, tmp_path, monkeypatch, shape):
         import yaml
 
         runtime = self._osi_runtime(tmp_path)
+        model_file = tmp_path / "sample_shop" / "sample_shop.yml"
+        document = yaml.safe_load(model_file.read_text())
+        model = document["semantic_model"][0]
+        if shape == "flat":
+            document = {"version": document["version"], **model}
+        elif shape == "mapping":
+            document["semantic_model"] = model
+        model_file.write_text(yaml.safe_dump(document))
         svc = ExplorerService(agent_config=real_agent_config)
         self._wire(svc, monkeypatch, runtime)
 
@@ -1019,6 +1081,7 @@ class TestExplorerServiceOSIAuthoring:
         # OSI shape, not the Legacy reconstruction (no type/locked_metadata).
         assert node["expression"]["dialects"][0]["dialect"] == "STARROCKS"
         assert "type" not in node and "locked_metadata" not in node
+        assert yaml.safe_load(model_file.read_text()) == document
 
     async def test_get_metric_reports_source_read_failure(self, real_agent_config, tmp_path, monkeypatch):
         from types import SimpleNamespace

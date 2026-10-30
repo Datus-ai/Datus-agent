@@ -1,7 +1,13 @@
+import json
 import os
 import re
+import signal
 import subprocess
+import sys
+import time
 from pathlib import Path
+
+import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 WORKFLOW = REPO_ROOT / ".github" / "workflows" / "run-nightly.yml"
@@ -16,6 +22,84 @@ def _bash_function_source(name: str) -> str:
     return script[start:end]
 
 
+@pytest.mark.parametrize(
+    "node,expected",
+    [("gen_dashboard", "nightly"), ("semantic_modeling", "nightly and not product_e2e")],
+)
+def test_targeted_service_selection_keeps_dashboard_product_cases(node, expected):
+    from ci.harness.test_plan import impact_plan
+
+    plan = impact_plan([f"datus/agent/node/{node}_agentic_node.py"])
+    groups = ["Product E2E Nightly Tests", *plan["nightly_groups"]]
+    group_filter = "^(" + "|".join(re.escape(group) for group in groups) + ")$"
+    script = NIGHTLY_SCRIPT.read_text(encoding="utf-8")
+    assignment = script.index('    DASHBOARD_MARK_EXPR="nightly"')
+    start = script.rfind("\n  if ", 0, assignment)
+    end = script.index("\n  fi", assignment) + len("\n  fi")
+    result = subprocess.run(
+        [
+            "bash",
+            "-eu",
+            "-c",
+            'DASHBOARD_MARK_EXPR="nightly and not product_e2e"\n'
+            + script[start:end]
+            + '\nprintf "%s" "$DASHBOARD_MARK_EXPR"',
+        ],
+        env={**os.environ, "NIGHTLY_GROUP_FILTER": group_filter},
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == expected
+
+
+def test_targeted_group_records_executed_pytest_results(tmp_path):
+    source = tmp_path / "test_product.py"
+    source.write_text("def test_product(): assert 2 + 2 == 4\n")
+    (tmp_path / "pytest.ini").write_text("[pytest]\n")
+    reports = tmp_path / "reports"
+    reports.mkdir()
+    env = {
+        **os.environ,
+        "REPO_ROOT": str(REPO_ROOT),
+        "PRODUCT_EXECUTION_DIR": str(reports),
+        "NIGHTLY_PYTEST_BASETEMP": str(tmp_path / "collection"),
+        "LOG_FILE": str(tmp_path / "nightly.log"),
+        "NIGHTLY_TRACE_REFERENCES_FILE": str(tmp_path / "traces.jsonl"),
+        "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1",
+    }
+    env.pop("PYTEST_ADDOPTS", None)
+    harness = "\n".join(
+        [
+            "set -uo pipefail",
+            "test_exit_code=0",
+            "log() { :; }",
+            "utc_now() { echo now; }",
+            "nightly_trace_expected_for_group() { return 1; }",
+            "manifest_record_collection() { :; }",
+            "manifest_record_suite() { :; }",
+            _bash_function_source("command_contains_pytest"),
+            _bash_function_source("collect_pytest_suite"),
+            _bash_function_source("run_logged_unfiltered"),
+            'run_logged_unfiltered "P0 Dosi Semantic Modeling E2E" "$1" -m pytest "$2" -q',
+            'exit "$test_exit_code"',
+        ]
+    )
+    result = subprocess.run(
+        ["bash", "-c", harness, "product-group", sys.executable, str(source)],
+        cwd=tmp_path,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    report = json.loads((reports / "P0_Dosi_Semantic_Modeling_E2E.json").read_text())
+    assert report["collected"] == ["test_product.py::test_product"]
+    assert report["outcomes"] == {"test_product.py::test_product": "passed"}
+
+
 def test_nightly_preserves_checkout_packages_after_locked_sync():
     workflow = WORKFLOW.read_text(encoding="utf-8")
 
@@ -24,6 +108,106 @@ def test_nightly_preserves_checkout_packages_after_locked_sync():
     assert "uv run --no-sync python ci/verify_nightly_adapter_sources.py" in workflow
     assert "uv pip check" in workflow
     assert "uv run --no-sync playwright install --with-deps chromium" in workflow
+
+
+@pytest.mark.parametrize("force", [None, "1", "0"])
+@pytest.mark.parametrize("verify,ca_cert", [("true", "/runner/private-ca.pem"), ("false", None)])
+def test_nightly_clickhouse_profile_matches_selected_endpoint(force, verify, ca_cert):
+    """Forced compose runs use HTTP; explicit external profiles retain TLS settings."""
+    script = NIGHTLY_SCRIPT.read_text(encoding="utf-8")
+    start = script.index('if [ "${NIGHTLY_FORCE_ADAPTER_ENV:-1}" = "1" ]; then')
+    end = script.index("\nfi\n", start) + len("\nfi\n")
+    profile = {
+        "CLICKHOUSE_HOST": "clickhouse.example.com",
+        "CLICKHOUSE_PORT": "18443",
+        "CLICKHOUSE_USER": "tls_user",
+        "CLICKHOUSE_PASSWORD": "test_password",
+        "CLICKHOUSE_DATABASE": "analytics",
+        "CLICKHOUSE_PROTOCOL": "https",
+        "CLICKHOUSE_VERIFY": verify,
+        "CLICKHOUSE_CA_CERT": ca_cert,
+    }
+    environment = {"PATH": os.defpath, **{key: value for key, value in profile.items() if value is not None}}
+    if force is not None:
+        environment["NIGHTLY_FORCE_ADAPTER_ENV"] = force
+    environment["CLICKHOUSE_HTTP_HOST_PORT"] = "38123"
+    harness = f"""set -eu
+{script[start:end]}
+"$1" - <<'PY'
+import json
+import os
+print(json.dumps({{key: os.environ.get(key) for key in {tuple(profile)!r}}}))
+PY
+"""
+    result = subprocess.run(
+        ["bash", "-c", harness, "nightly-profile-test", sys.executable],
+        check=True,
+        capture_output=True,
+        text=True,
+        env=environment,
+    )
+    expected = profile
+    if force != "0":
+        expected = {
+            "CLICKHOUSE_HOST": "127.0.0.1",
+            "CLICKHOUSE_PORT": "38123",
+            "CLICKHOUSE_USER": "default_user",
+            "CLICKHOUSE_PASSWORD": "default_test",
+            "CLICKHOUSE_DATABASE": "default_test",
+            "CLICKHOUSE_PROTOCOL": None,
+            "CLICKHOUSE_VERIFY": None,
+            "CLICKHOUSE_CA_CERT": None,
+        }
+    assert json.loads(result.stdout) == expected
+
+
+@pytest.mark.parametrize("force", [None, "1", "0"])
+@pytest.mark.parametrize("verify,ca_cert", [("true", "/runner/private-ca.pem"), ("false", None)])
+def test_nightly_trino_profile_matches_selected_endpoint(force, verify, ca_cert):
+    """Forced compose runs use HTTP; explicit external profiles retain TLS settings."""
+    script = NIGHTLY_SCRIPT.read_text(encoding="utf-8")
+    start = script.index('if [ "${NIGHTLY_FORCE_ADAPTER_ENV:-1}" = "1" ]; then')
+    end = script.index("\nfi\n", start) + len("\nfi\n")
+    profile = {
+        "TRINO_HOST": "trino.example.com",
+        "TRINO_PORT": "18443",
+        "TRINO_USER": "tls_user",
+        "TRINO_PASSWORD": "test_password",
+        "TRINO_HTTP_SCHEME": "https",
+        "TRINO_VERIFY": verify,
+        "TRINO_CA_CERT": ca_cert,
+    }
+    environment = {"PATH": os.defpath, **{key: value for key, value in profile.items() if value is not None}}
+    if force is not None:
+        environment["NIGHTLY_FORCE_ADAPTER_ENV"] = force
+    environment["TRINO_HOST_PORT"] = "38123"
+    harness = f"""set -eu
+{script[start:end]}
+"$1" - <<'PY'
+import json
+import os
+print(json.dumps({{key: os.environ.get(key) for key in {tuple(profile)!r}}}))
+PY
+"""
+    result = subprocess.run(
+        ["bash", "-c", harness, "nightly-profile-test", sys.executable],
+        check=True,
+        capture_output=True,
+        text=True,
+        env=environment,
+    )
+    expected = profile
+    if force != "0":
+        expected = {
+            "TRINO_HOST": "127.0.0.1",
+            "TRINO_PORT": "38123",
+            "TRINO_USER": "trino",
+            "TRINO_PASSWORD": "",
+            "TRINO_HTTP_SCHEME": "http",
+            "TRINO_VERIFY": None,
+            "TRINO_CA_CERT": None,
+        }
+    assert json.loads(result.stdout) == expected
 
 
 def test_nightly_feishu_notification_drains_response_and_has_timeout():
@@ -115,22 +299,61 @@ def test_nightly_runs_postgresql_storage_adapter_tests_from_checkout():
 
 
 def test_nightly_runs_p0_contracts_without_reruns_or_skips():
-    script = NIGHTLY_SCRIPT.read_text(encoding="utf-8")
-    logical_lines = script.replace("\\\n", " ").splitlines()
+    from ci.p0_plan import load_profile
 
-    for group in (
-        "P0 PostgreSQL Agent Storage Contracts",
-        "P0 SQL Policy Plugin Contracts",
-        "P0 Dosi Semantic Modeling E2E",
-        "P0 Dashboard Bootstrap Skill E2E",
-    ):
-        command = next(line for line in logical_lines if line.startswith("run_") and f'"{group}"' in line)
+    harness = "\n".join(
+        [
+            "set -uo pipefail",
+            "test_exit_code=0",
+            'run_logged() { printf "%s\\n" "$@"; }',
+            'run_compose_suite() { printf "%s\\n" "$@"; }',
+            _bash_function_source("run_p0_group"),
+            'run_p0_group "$1"',
+            'exit "$test_exit_code"',
+        ]
+    )
+    for group, config in load_profile()["groups"].items():
+        result = subprocess.run(
+            ["bash", "-c", harness, "p0-group", group],
+            cwd=REPO_ROOT,
+            env={
+                **os.environ,
+                "NIGHTLY_HOME": "/tmp/p0-home",
+                "NIGHTLY_PYTEST_BASETEMP": "/tmp/p0-temp",
+                "SUPERSET_COMPOSE": "/tmp/superset.yml",
+                "UV_NO_SYNC": "1",
+            },
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        command = result.stdout.splitlines()
         assert "--fail-on-skip" in command
+        assert "DATUS_TEST_LAYER=nightly" in command
+        assert set(config["nodeids"]) <= set(command)
         assert "--reruns" not in command
-        assert "uv run python -m pytest" in command
 
-    assert '"P0 PostgreSQL Agent Storage Contracts"' in script.split("DOCKER_GROUPS=(", maxsplit=1)[1]
-    assert '"P0 Dashboard Bootstrap Skill E2E"' in script.split("COMPOSE_GROUPS=(", maxsplit=1)[1]
+
+def test_nightly_filter_requires_a_matching_group():
+    harness = "\n".join(
+        [
+            "set -uo pipefail",
+            f'REPO_ROOT="{REPO_ROOT}"',
+            "LOG_FILE=/dev/null",
+            'NIGHTLY_GROUP_FILTER="$1"',
+            _bash_function_source("validate_nightly_group_filter"),
+            "validate_nightly_group_filter",
+        ]
+    )
+    for pattern, expected in [("^P0 ", 0), ("^P0 DOES_NOT_EXIST$", 1), ("[", 1)]:
+        result = subprocess.run(
+            ["bash", "-c", harness, "filter", pattern],
+            cwd=REPO_ROOT,
+            env={**os.environ, "UV_NO_SYNC": "1"},
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode == expected, result.stderr
 
 
 def test_nightly_tracebacks_do_not_publish_local_credentials():
@@ -152,26 +375,69 @@ def test_release_candidate_reuses_p0_nightly_on_the_release_ref():
     assert "NIGHTLY_GROUP_FILTER: ${{ inputs.nightly_group_filter || '' }}" in nightly
     assert "uses: ./.github/workflows/run-nightly.yml" in release
     assert "if: ${{ github.event_name != 'pull_request' }}" in release
-    assert "datus_agent_ref: ${{ inputs.ref || github.ref }}" in release
-    assert "nightly_group_filter: '^P0 '" in release
+    assert "datus_agent_ref: ${{ needs.package-smoke.outputs.source_sha }}" in release
+    assert "test_profile: p0" in release
+    assert "candidate_artifact: ${{ needs.package-smoke.outputs.artifact_name }}" in release
     assert "secrets: inherit" not in release
     assert "RELEASE_BOT_TOKEN: ${{ secrets.RELEASE_BOT_TOKEN }}" in release
     assert "uses: ./.github/workflows/release-candidate.yml" in prepare
     assert "RELEASE_BOT_TOKEN: ${{ secrets.RELEASE_BOT_TOKEN }}" in prepare
 
 
-def test_every_adapter_suite_is_deselected_from_the_main_nightly_run():
+def test_every_adapter_suite_is_excluded_from_the_main_nightly_run():
     """An adapter suite with its own compose lifecycle must be excluded from the
     generic nightly command, or it runs a second time with no container up and
     fails on connection rather than skipping."""
     script = NIGHTLY_SCRIPT.read_text(encoding="utf-8")
-    deselect_block = script.split("NIGHTLY_DEDICATED_SUITE_DESELECTS=(", maxsplit=1)[1].split("\n)", maxsplit=1)[0]
+    exclude_blocks = [
+        script.split(f"{name}=(", maxsplit=1)[1].split(")", maxsplit=1)[0]
+        for name in ("NIGHTLY_DEDICATED_SUITE_DESELECTS", "NIGHTLY_OPTIONAL_CLOUD_IGNORES")
+    ]
 
     pattern = r"tests/integration/adapters/test_\w+\.py"
-    deselected = set(re.findall(pattern, deselect_block))
+    excluded = set(re.findall(pattern, "\n".join(exclude_blocks)))
     referenced = set(re.findall(pattern, script))
 
-    assert referenced <= deselected, f"adapter suites missing a --deselect: {sorted(referenced - deselected)}"
+    assert referenced <= excluded, f"adapter suites missing an exclusion: {sorted(referenced - excluded)}"
+
+
+@pytest.mark.parametrize("group", ["Main Nightly Tests", "Product E2E Nightly Tests", "Provider Health Tests"])
+def test_strict_broad_collection_excludes_unprovisioned_cloud_acceptance(tmp_path, group):
+    """Use the runner's actual exclusion arguments before pytest imports opt-in modules."""
+    script = NIGHTLY_SCRIPT.read_text(encoding="utf-8")
+    command = next(line for line in script.splitlines() if line.startswith("run_") and f'"{group}"' in line)
+    assert '"${NIGHTLY_OPTIONAL_CLOUD_IGNORES[@]}"' in command
+    declaration = next(line for line in script.splitlines() if line.startswith("NIGHTLY_OPTIONAL_CLOUD_IGNORES=("))
+    cloud_dir = tmp_path / "tests/integration/adapters"
+    cloud_dir.mkdir(parents=True)
+    (cloud_dir / "test_snowflake_secrets.py").write_text(
+        "from tests.nightly_requirements import require_opt_in_env\n"
+        "require_opt_in_env('ADAPTERS_SNOWFLAKE_SECRETS', 'README.md')\n"
+    )
+    (tmp_path / "tests/integration/test_ready.py").write_text("def test_ready():\n    assert True\n")
+    result = subprocess.run(
+        [
+            "bash",
+            "-c",
+            declaration + '\n"$1" -m pytest tests/integration "${NIGHTLY_OPTIONAL_CLOUD_IGNORES[@]}" '
+            "--noconftest -c /dev/null --collect-only -q",
+            "cloud-collection",
+            sys.executable,
+        ],
+        cwd=tmp_path,
+        env={
+            "PATH": os.defpath,
+            "PYTHONPATH": str(REPO_ROOT),
+            "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1",
+            "DATUS_STRICT_NIGHTLY_REQUIREMENTS": "1",
+        },
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "test_ready.py::test_ready" in result.stdout
+    assert "1 test collected" in result.stdout
 
 
 def test_nightly_runs_doris_agent_contract_from_checkout():
@@ -254,3 +520,102 @@ printf 'readiness_status=%s test_exit_code=%s\n' "$readiness_status" "$test_exit
     assert "readiness_status=23 test_exit_code=23" in result.stdout
     assert "--timeout 17" in result.stdout
     assert "simulated Doris readiness failure" in log_file.read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize("failure", [False, True])
+def test_trino_readiness_uses_adapter_and_propagates_failure(tmp_path, failure):
+    source = _bash_function_source("wait_for_trino_client_readiness")
+    uv = tmp_path / "uv"
+    uv.write_text(f"#!/bin/sh\nprintf 'uv_args=%s\\n' \"$*\"\nexit {23 if failure else 0}\n")
+    uv.chmod(0o755)
+    harness = f"""
+set -u
+set -o pipefail
+test_exit_code=0
+log() {{ :; }}
+sleep() {{ SECONDS=1000; }}
+{source}
+wait_for_trino_client_readiness 2
+status=$?
+printf 'status=%s test_exit_code=%s\n' "$status" "$test_exit_code"
+"""
+    log_file = tmp_path / "nightly.log"
+    result = subprocess.run(
+        ["bash", "-c", harness],
+        check=True,
+        capture_output=True,
+        text=True,
+        env={
+            "PATH": os.pathsep.join([str(tmp_path), str(Path(sys.executable).parent), os.defpath]),
+            "LOG_FILE": str(log_file),
+            "RUNNER_TEMP": str(tmp_path),
+        },
+    )
+    expected = 1 if failure else 0
+    assert f"status={expected} test_exit_code={expected}" in result.stdout
+    probe = next(tmp_path.glob("datus-trino-readiness-*.log")).read_text()
+    assert "uv_args=run --no-sync python -" in probe
+    assert "TrinoConnector(config_from_env())" in probe
+    source = _bash_function_source("wait_for_compose_client_readiness")
+    trino_case = source.split('"Trino Adapter Tests")', 1)[1].split(";;", 1)[0]
+    assert "wait_for_trino_client_readiness 300" in trino_case
+
+
+def test_trino_readiness_deadline_stops_stalled_probe_and_child(tmp_path):
+    """A stalled driver cannot outlive the deadline or leave its child running."""
+    uv = tmp_path / "uv"
+    pids = tmp_path / "probe-pids.json"
+    # Keep probe setup cheap so the one-second budget measures cancellation,
+    # rather than a second interpreter's cold startup under parallel coverage.
+    uv.write_text('#!/bin/sh\nset -eu\nsleep 30 &\nprintf "[%s,%s]" "$$" "$!" > "$TRINO_PROBE_PIDS"\nwait\n')
+    uv.chmod(0o755)
+    source = _bash_function_source("wait_for_trino_client_readiness")
+    harness = f"""
+set -u
+set -o pipefail
+test_exit_code=0
+log() {{ :; }}
+{source}
+wait_for_trino_client_readiness 1
+status=$?
+printf 'status=%s test_exit_code=%s\n' "$status" "$test_exit_code"
+"""
+    started = time.monotonic()
+    process = subprocess.Popen(
+        ["bash", "-c", harness],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        start_new_session=True,
+        env={
+            "PATH": os.pathsep.join([str(tmp_path), str(Path(sys.executable).parent), os.defpath]),
+            "LOG_FILE": str(tmp_path / "nightly.log"),
+            "RUNNER_TEMP": str(tmp_path),
+            "TRINO_PROBE_PIDS": str(pids),
+        },
+    )
+    owned_pids = []
+    try:
+        stdout, stderr = process.communicate(timeout=8)
+        assert process.returncode == 0, stderr
+        assert "status=1 test_exit_code=1" in stdout
+        assert "exceeded the remaining deadline" in stdout
+        assert time.monotonic() - started < 5
+        owned_pids = json.loads(pids.read_text())
+        assert len(owned_pids) == 2
+        for pid in owned_pids:
+            state = subprocess.run(["ps", "-o", "stat=", "-p", str(pid)], capture_output=True, text=True)
+            assert not state.stdout.strip() or state.stdout.strip().startswith("Z"), (
+                f"probe process still running: {pid}"
+            )
+    finally:
+        if process.poll() is None:
+            os.killpg(process.pid, signal.SIGKILL)
+            process.communicate()
+        # Also clean up when a regression leaves the separately grouped probe alive.
+        if pids.exists():
+            for pid in json.loads(pids.read_text()):
+                try:
+                    os.kill(pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass

@@ -32,8 +32,10 @@ SQLite and DuckDB are built into Datus. Every other datasource is provided by an
 | [DuckDB](datasources/duckdb.md) | `duckdb` | built in | database → schema → table |
 | [MySQL](datasources/mysql.md) | `mysql` | `datus-mysql` | database → table |
 | [PostgreSQL](datasources/postgresql.md) | `postgresql` | `datus-postgresql` | database → schema → table |
+| [Amazon Aurora](datasources/aurora.md) | `mysql` / `postgresql` | `datus-mysql` / `datus-postgresql` | same as the selected engine |
 | [Greenplum](datasources/greenplum.md) | `greenplum` | `datus-greenplum` | database → schema → table |
 | [Amazon Redshift](datasources/redshift.md) | `redshift` | `datus-redshift` | database → schema → table |
+| [Amazon Athena](datasources/athena.md) | `athena` | `datus-athena` | catalog → database → table |
 | [Snowflake](datasources/snowflake.md) | `snowflake` | `datus-snowflake` | database → schema → table |
 | [Google BigQuery](datasources/bigquery.md) | `bigquery` | `datus-bigquery` | project → dataset → table |
 | [StarRocks](datasources/starrocks.md) | `starrocks` | `datus-starrocks` | catalog → database → table |
@@ -41,14 +43,17 @@ SQLite and DuckDB are built into Datus. Every other datasource is provided by an
 | [TiDB](datasources/tidb.md) | `tidb` | `datus-tidb` | database → table |
 | [ClickHouse](datasources/clickhouse.md) | `clickhouse` | `datus-clickhouse` | database → table |
 | [Trino](datasources/trino.md) | `trino` | `datus-trino` | catalog → schema → table |
-| [Hive](datasources/hive.md) | `hive` | `datus-hive` | database → table |
+| [Hive / Inceptor](datasources/hive.md) | `hive` | `datus-hive` | database → table |
 | [Spark SQL](datasources/spark.md) | `spark` | `datus-spark` | database → table |
 | [ClickZetta](datasources/clickzetta.md) | `clickzetta` | `datus-clickzetta` | instance/workspace → schema → table |
 | [Hologres](datasources/hologres.md) | `hologres` | `datus-hologres` | database → schema → table |
 | [MaxCompute](datasources/maxcompute.md) | `maxcompute` | `datus-maxcompute` | project → optional schema → table |
 | [Oracle](datasources/oracle.md) | `oracle` | `datus-oracle` | schema → table |
+| [SAP HANA](datasources/hana.md) | `hana` | `datus-hana` | schema → table; tenant is the connection target |
 | [GaussDB / openGauss](datasources/gaussdb.md) | `gaussdb` | `datus-gaussdb` | database → schema → table |
 | [GaussDB(DWS)](datasources/dws.md) | `dws` | `datus-dws` | database → schema → table |
+
+Athena and HANA currently require the source-install commands on their pages. Install them before adding the datasource; automatic package installation cannot fetch an unpublished adapter. Aurora reuses the MySQL or PostgreSQL type and package.
 
 ## Common profile keys
 

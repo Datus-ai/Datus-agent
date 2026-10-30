@@ -59,6 +59,9 @@ def _make_model_config(
     cfg.retry_interval = 0.0
     cfg.strict_json_schema = True
     cfg.save_llm_trace = save_llm_trace
+    cfg.context_length = None
+    cfg.max_tokens = None
+    cfg.tokenizer_ref = None
     return cfg
 
 
@@ -473,9 +476,10 @@ class TestGenerate:
         assert call_kwargs["max_tokens"] == 4096
         assert "max_completion_tokens" not in call_kwargs
 
-    def test_max_tokens_omitted_when_specs_unknown(self):
-        """Omit the field when model_specs has no entry — let provider decide."""
+    def test_max_tokens_falls_back_to_registered_provider_limit(self):
+        """A provider fallback leaves half the post-margin window for input."""
         model = _make_model()
+        model.model_config.context_length = 8192
         mock_resp = self._mock_litellm_response("ok")
         with (
             patch.object(model, "max_tokens", return_value=None),
@@ -483,7 +487,7 @@ class TestGenerate:
         ):
             model.generate("prompt")
         call_kwargs = mock_lit.call_args[1]
-        assert "max_tokens" not in call_kwargs
+        assert call_kwargs["max_tokens"] == 3072  # (8192 context - 2048 margin) // 2
         assert "max_completion_tokens" not in call_kwargs
 
     def test_explicit_kwargs_override_fallback(self):
@@ -1303,6 +1307,26 @@ class TestModelSpecsAndTokenLimits:
         model = _make_model(cfg)
         assert model.max_tokens() == 16384
 
+    @pytest.mark.parametrize("name", ["o3", "o4-mini", "deepseek-reasoner", "deepseek-r1"])
+    def test_output_defaults_leave_room_for_requests(self, name):
+        from datus.models.request_capacity import ContextCapacityError
+
+        cfg = _make_model_config(model=name)
+        cfg.tokenizer_ref = "tiktoken:cl100k_base"
+        model = _make_model(cfg)
+        request = {"messages": [{"role": "user", "content": "hello"}]}
+        capacity = model.request_capacity()
+        assert capacity.input_limit() > 0
+        assert model.check_request(request)["max_tokens"] == model.max_tokens()
+        assert model.check_request({**request, "max_tokens": 4096})["max_tokens"] == 4096
+        with pytest.raises(ContextCapacityError, match="CONTEXT_LIMIT_EXCEEDED"):
+            model.check_request({**request, "max_tokens": model.context_length()})
+        cfg.max_tokens = 4096
+        assert model.max_tokens() == 4096 and model.request_capacity().default_output == 4096
+        cfg.max_tokens = model.context_length()
+        with pytest.raises(ContextCapacityError, match="CONTEXT_LIMIT_EXCEEDED"):
+            model.check_request(request)
+
     def test_exact_match_context_length(self):
         cfg = _make_model_config(model="gpt-4o")
         model = _make_model(cfg)
@@ -1320,15 +1344,15 @@ class TestModelSpecsAndTokenLimits:
         # Should match "kimi-k3" prefix
         assert model.context_length() == 1000000
 
-    def test_unknown_model_returns_none_for_max_tokens(self):
+    def test_unknown_model_has_default_max_tokens(self):
         cfg = _make_model_config(model="unknown-model-xyz")
         model = _make_model(cfg)
-        assert model.max_tokens() is None
+        assert model.max_tokens() == 8192
 
-    def test_unknown_model_returns_none_for_context_length(self):
+    def test_unknown_model_has_default_context_length(self):
         cfg = _make_model_config(model="unknown-model-xyz")
         model = _make_model(cfg)
-        assert model.context_length() is None
+        assert model.context_length() == 1048576
 
     def test_deepseek_chat_specs(self):
         cfg = _make_model_config(model="deepseek-chat")
@@ -1368,8 +1392,8 @@ class TestModelSpecsOpenRouterCacheMerge:
             cfg = _make_model_config(model="brand-new-model")
             model = _make_model(cfg)
             assert model.context_length() == 777000
-            # Cache entries have no max_tokens — must not crash, must return None.
-            assert model.max_tokens() is None
+            # Cache entries have no output limit, so use the default budget.
+            assert model.max_tokens() == 8192
         assert "brand-new-model" in oc._MODEL_SPECS_CACHE
         assert oc._MODEL_SPECS_CACHE["brand-new-model"]["context_length"] == 777000
 
@@ -1402,7 +1426,7 @@ class TestModelSpecsOpenRouterCacheMerge:
         ):
             cfg = _make_model_config(model="only-id-no-ctx")
             model = _make_model(cfg)
-            assert model.context_length() is None
+            assert model.context_length() == 1048576
 
     def test_lookup_uses_longest_prefix_match(self):
         """A short generic prefix must not preempt a more specific one on the same slug."""
@@ -1820,6 +1844,8 @@ class TestBuildAgent:
         self, model_name, provider, configured_base_url, expected_retention, expected_cache_key
     ):
         cfg = _make_model_config(model=model_name, model_type=provider, base_url=configured_base_url)
+        cfg.max_tokens = 8192
+        cfg.context_length = 262144
         model = _make_model(cfg)
         model.litellm_adapter.provider = provider
         _, call_args = self._call_build_agent(model)
@@ -1828,20 +1854,22 @@ class TestBuildAgent:
         assert bool((ms.extra_args or {}).get("prompt_cache_key")) == expected_cache_key
 
     def test_max_tokens_from_model_specs_applied_to_model_settings(self):
-        """Streaming/tool path: model_specs.max_tokens flows into ModelSettings."""
+        """Streaming/tool path: a model default is bounded by usable context."""
         model = _make_model()
+        model.model_config.context_length = 8192
         with patch.object(model, "max_tokens", return_value=4096):
             _, call_args = self._call_build_agent(model)
         ms = call_args[1]["model_settings"]
-        assert ms.max_tokens == 4096
+        assert ms.max_tokens == 3072  # (8192 context - 2048 margin) // 2
 
-    def test_max_tokens_omitted_in_model_settings_when_specs_unknown(self):
-        """When spec is unknown, leave ModelSettings.max_tokens at its default (None)."""
+    def test_model_settings_use_registered_provider_limit(self):
+        """The known provider output limit is explicitly sent and budgeted."""
         model = _make_model()
+        model.model_config.context_length = 8192
         with patch.object(model, "max_tokens", return_value=None):
             _, call_args = self._call_build_agent(model)
         ms = call_args[1]["model_settings"]
-        assert ms.max_tokens is None
+        assert ms.max_tokens == 3072  # (8192 context - 2048 margin) // 2
 
     def test_thinking_model_gets_reasoning(self):
         model = _make_model()
@@ -2217,8 +2245,8 @@ class TestBuildRunConfigInputFilter:
 
         model = _make_model()
         queue = PendingInputQueue()
-        queue.push("追加 1")
-        queue.push("追加 2")
+        queue.push("Follow-up 1")
+        queue.push("Follow-up 2")
         session = MagicMock()
         session.add_items = AsyncMock()
         broker = InteractionBroker()
@@ -2231,7 +2259,7 @@ class TestBuildRunConfigInputFilter:
 
         # Original message preserved; two structured user items appended.
         assert len(result.input) == 3
-        for injected, expected in zip(result.input[1:], ["追加 1", "追加 2"]):
+        for injected, expected in zip(result.input[1:], ["Follow-up 1", "Follow-up 2"]):
             assert injected["type"] == "message"
             assert injected["role"] == "user"
             assert injected["content"][0]["type"] == "input_text"
@@ -2247,7 +2275,7 @@ class TestBuildRunConfigInputFilter:
         # Broker emission: each drained item becomes a USER user_insert
         # ActionHistory in the broker's output queue, in original order.
         emitted = [broker._output_queue.get_nowait() for _ in range(2)]
-        assert [a.messages for a in emitted] == ["追加 1", "追加 2"]
+        assert [a.messages for a in emitted] == ["Follow-up 1", "Follow-up 2"]
         for action in emitted:
             assert action.role == ActionRole.USER
             assert action.action_type == "user_insert"
@@ -2463,3 +2491,63 @@ class TestAgentSamplingParamSuppression:
         settings = self._model_settings("openai", temperature=0.3, top_p=0.8)
         assert settings.temperature == 0.3
         assert settings.top_p == 0.8
+
+
+@pytest.mark.asyncio
+async def test_streamed_tool_error_is_yielded_while_sdk_batch_is_pending(monkeypatch):
+    """A completed tool must not wait for the SDK's batched tool-output event."""
+    import asyncio
+    from types import SimpleNamespace
+
+    from agents import Agent, RunItemStreamEvent, ToolCallItem
+    from openai.types.responses import ResponseFunctionToolCall
+
+    model = _make_model()
+    agent = Agent(name="test")
+    release = asyncio.Event()
+    result = SimpleNamespace(is_complete=False, cancel=MagicMock(), final_output="")
+    raw_call = ResponseFunctionToolCall(
+        type="function_call", name="execute_sql", call_id="sql-fast-error", arguments='{"sql":"SELECT missing"}'
+    )
+    error = "Unknown column 'missing' in 'on clause'"
+
+    async def sdk_events():
+        yield RunItemStreamEvent(name="tool_called", item=ToolCallItem(agent=agent, raw_item=raw_call))
+        await agent.hooks.on_tool_end(
+            SimpleNamespace(tool_call_id=raw_call.call_id),
+            agent,
+            SimpleNamespace(name="execute_sql"),
+            {"success": 0, "error": error, "result": None},
+        )
+        await release.wait()
+        result.is_complete = True
+
+    result.stream_events = sdk_events
+    monkeypatch.setattr(model, "_build_agent", lambda **kwargs: agent)
+    monkeypatch.setattr(model, "_build_run_config", lambda **kwargs: None)
+    monkeypatch.setattr("datus.models.openai_compatible.Runner.run_streamed", lambda *args, **kwargs: result)
+    actions = ActionHistoryManager()
+    stream = model._generate_with_tools_stream_internal(
+        prompt="test",
+        mcp_servers=None,
+        tools=None,
+        output_type=str,
+        strict_json_schema=True,
+        instruction="test",
+        max_turns=1,
+        action_history_manager=actions,
+        session=None,
+    )
+    try:
+        start = await asyncio.wait_for(anext(stream), timeout=1)
+        assert start.status == ActionStatus.PROCESSING
+        completed = await asyncio.wait_for(anext(stream), timeout=1)
+        assert completed.status == ActionStatus.FAILED
+        assert completed.output["raw_output"]["error"] == error
+        assert not release.is_set()
+    finally:
+        try:
+            await stream.aclose()
+            result.cancel.assert_called_once()
+        finally:
+            release.set()

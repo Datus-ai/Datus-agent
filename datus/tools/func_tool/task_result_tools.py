@@ -67,11 +67,8 @@ class TaskArtifact(BaseModel):
 def _as_dicts(value: Any, model: Type[BaseModel], field: str) -> Union[List[dict], str]:
     """Normalise a list-of-objects argument to plain dicts, or return an error string.
 
-    The invoker calls tool methods with the raw parsed JSON, so annotating a
-    parameter ``List[TaskArtifact]`` buys nothing at runtime — what arrives is a
-    list of dicts (and sometimes a JSON string, which some models emit for nested
-    arrays). Validating through the model here is what actually enforces the
-    schema, and keeps ``.model_dump()`` from blowing up on a dict.
+    The function-tool invoker validates structured inputs. Python callers and
+    legacy JSON strings still need normalization here, through the same models.
     """
     if value is None:
         return []
@@ -138,9 +135,9 @@ class TaskResultTool:
         self,
         outcome: TaskOutcome,
         summary: str,
-        artifacts: Optional[List[TaskArtifact]] = None,
-        gap_reasons: Optional[List[str]] = None,
-        plan_items: Optional[List[PlanItem]] = None,
+        artifacts: Optional[Union[List[TaskArtifact], str]] = None,
+        gap_reasons: Optional[Union[List[str], str]] = None,
+        plan_items: Optional[Union[List[PlanItem], str]] = None,
         estimate: Optional[str] = None,
     ) -> FuncToolResult:
         """Report how this task ended. Call this exactly once, as your final action.
@@ -161,10 +158,12 @@ class TaskResultTool:
                 who knows what you had to decide along the way.
             artifacts: Anything produced that the caller can link to. Identify each
                 one by its ``slug`` alone — the caller opens it by slug, and a path
-                around it only has to be stripped back off.
+                around it only has to be stripped back off. Prefer a structured array;
+                legacy JSON array strings are also accepted.
             gap_reasons: Concretely what is missing. Required for ``needs_development``
-                and ``blocked``.
-            plan_items: What to build, for ``needs_development``.
+                and ``blocked``. Prefer an array; legacy strings are also accepted.
+            plan_items: Structured array of what to build, for ``needs_development``.
+                Legacy JSON array strings are also accepted.
             estimate: Rough effort for the plan, e.g. "1.5 person-days".
         """
         if not summary or not summary.strip():

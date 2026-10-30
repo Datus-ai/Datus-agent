@@ -10,6 +10,7 @@ Env overrides (defaults match the adapter's docker-compose.yml):
   CLICKHOUSE_HOST=localhost  CLICKHOUSE_PORT=8123
   CLICKHOUSE_USER=default_user  CLICKHOUSE_PASSWORD=default_test
   CLICKHOUSE_DATABASE=default_test
+  CLICKHOUSE_PROTOCOL=http CLICKHOUSE_VERIFY=true CLICKHOUSE_CA_CERT=<optional PEM file>
 
 See `tests/integration/adapters/README.md`.
 """
@@ -18,6 +19,7 @@ import os
 from typing import Generator
 
 import pytest
+import yaml
 
 from tests.nightly_requirements import import_required, require_opt_in_env
 
@@ -31,6 +33,8 @@ datus_clickhouse = import_required(
 ClickHouseConfig = datus_clickhouse.ClickHouseConfig
 ClickHouseConnector = datus_clickhouse.ClickHouseConnector
 
+from datus.configuration.agent_config import DbConfig  # noqa: E402
+from datus.tools.db_tools.db_manager import DBManager  # noqa: E402
 from datus.tools.func_tool.database import DBFuncTool  # noqa: E402
 
 pytestmark = [pytest.mark.integration, pytest.mark.nightly]
@@ -77,25 +81,28 @@ def _escape(v: object) -> str:
 
 @pytest.fixture(scope="module")
 def ch_config() -> ClickHouseConfig:
+    tls = {}
+    for key, variable in (
+        ("protocol", "CLICKHOUSE_PROTOCOL"),
+        ("verify", "CLICKHOUSE_VERIFY"),
+        ("ca_cert", "CLICKHOUSE_CA_CERT"),
+    ):
+        if os.getenv(variable):
+            tls[key] = os.environ[variable]
     return ClickHouseConfig(
         host=os.getenv("CLICKHOUSE_HOST", "localhost"),
-        port=int(os.getenv("CLICKHOUSE_PORT", "8123")),
+        port=int(os.getenv("CLICKHOUSE_PORT", "8443" if tls.get("protocol") == "https" else "8123")),
         username=os.getenv("CLICKHOUSE_USER", "default_user"),
         password=os.getenv("CLICKHOUSE_PASSWORD", "default_test"),
         database=os.getenv("CLICKHOUSE_DATABASE", "default_test"),
+        **tls,
     )
 
 
 @pytest.fixture(scope="module")
 def ch_connector(ch_config: ClickHouseConfig) -> Generator[ClickHouseConnector, None, None]:
     # Ensure target database exists (connect without db first).
-    init_config = ClickHouseConfig(
-        host=ch_config.host,
-        port=ch_config.port,
-        username=ch_config.username,
-        password=ch_config.password,
-        database=None,
-    )
+    init_config = ch_config.model_copy(update={"database": None})
     init_conn = ClickHouseConnector(init_config)
     try:
         if not init_conn.test_connection():
@@ -180,3 +187,30 @@ def test_read_query_rejects_multi_statement(db_tool: DBFuncTool) -> None:
     result = db_tool.read_query(f"SELECT 1; DELETE FROM {REGION_TABLE}")
     assert result.success == 0, "multi-statement SQL should have been rejected"
     assert "multi-statement" in (result.error or "").lower(), f"unexpected error: {result.error}"
+
+
+def test_yaml_profile_queries_through_dbmanager(ch_config, seeded_connector, tmp_path):
+    """Use the real YAML -> DbConfig -> registry path, without a model or driver mock."""
+    profile = {
+        "agent": {"services": {"datasources": {"clickhouse_contract": ch_config.model_dump() | {"type": "clickhouse"}}}}
+    }
+    path = tmp_path / "agent.yml"
+    path.write_text(yaml.safe_dump(profile))
+    parsed = yaml.safe_load(path.read_text())["agent"]["services"]["datasources"]["clickhouse_contract"]
+    config = DbConfig.filter_kwargs(DbConfig, parsed)
+    manager = DBManager({"clickhouse_contract": config})
+    try:
+        connector = manager.get_conn("clickhouse_contract")
+        assert connector.config.protocol == ch_config.protocol
+        assert connector.config.verify == ch_config.verify
+        assert connector.config.ca_cert == ch_config.ca_cert
+        tool = DBFuncTool(connector)
+        result = tool.read_query(f"SELECT count(*) AS cnt FROM {REGION_TABLE}")
+        assert result.success == 1, result.error
+        assert result.result["original_rows"] == 1
+        assert "3" in result.result["compressed_data"]
+        metadata = tool.describe_table(REGION_TABLE)
+        assert metadata.success == 1, metadata.error
+        assert [column["name"] for column in metadata.result["columns"]] == ["r_regionkey", "r_name", "r_comment"]
+    finally:
+        manager.close()

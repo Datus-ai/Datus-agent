@@ -43,6 +43,8 @@ def test_tables_command(mock_args, capsys):
         cli.run()
         captured = capsys.readouterr()
         assert "Tables in Database" in captured.out
+        assert cli._bg_loop.is_closed()
+        assert not cli._bg_loop_thread.is_alive()
 
 
 @pytest.mark.acceptance
@@ -125,40 +127,24 @@ def test_chat_info(mock_args, capsys):
 
 
 @pytest.mark.acceptance
-def test_save_command(mock_args, capsys):
-    """
-    Tests the '/save' command with successful file save.
-    """
+def test_save_command(mock_args, capsys, tmp_path):
+    """Save a real query result through the REPL and production exporter."""
+    import json
+
     from datus.schemas.node_models import SQLContext
 
-    # Create mock SQL context
-    mock_sql_context = SQLContext(
-        sql_query="SELECT * FROM schools",
-        sql_return="[{'id': 1, 'name': 'School A'}]",
-        row_count=1,
-    )
-
-    with patch("datus.cli.repl.PromptSession.prompt") as mock_prompt:
-        mock_prompt.side_effect = ["/save", EOFError]
-
-        with (
-            patch("datus.cli.repl.DatusCLI.prompt_input") as mock_internal_prompt,
-            patch("datus.cli.cli_context.CliContext.get_last_sql_context") as mock_context,
-            patch("datus.cli.agent_commands.OutputTool.execute") as mock_output,
-        ):
-            mock_internal_prompt.side_effect = [
-                "json",  # file_type
-                "/tmp",  # target_dir
-                "test_output",  # file_name
-            ]
-            mock_context.return_value = mock_sql_context
-            mock_output.return_value = type("MockResult", (), {"output": "/tmp/test_output.json"})()
-
-            cli = DatusCLI(args=mock_args)
+    with patch("datus.cli.repl.PromptSession.prompt", side_effect=["/save", EOFError]):
+        cli = DatusCLI(args=mock_args)
+        query = "SELECT 42 AS answer"
+        result = cli.db_connector.execute_query(query, result_format="list")
+        assert result.success, result.error
+        cli.cli_context.add_sql_context(
+            SQLContext(sql_query=query, sql_return=json.dumps(result.sql_return), row_count=1)
+        )
+        with patch.object(cli, "prompt_input", side_effect=["json", str(tmp_path), "query_result"]):
             cli.run()
 
-    captured = capsys.readouterr()
-    stdout = captured.out
-
-    assert "Save Output" in stdout
-    assert "/tmp/test_output.json" in stdout
+    saved = json.loads((tmp_path / "query_result.json").read_text())
+    assert saved["gen_sql"] == query
+    assert json.loads(saved["sql_result"]) == [{"answer": 42}]
+    assert "query_result.json" in capsys.readouterr().out

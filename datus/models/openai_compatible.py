@@ -10,10 +10,10 @@ import json
 import os
 import threading
 import time
-from contextlib import nullcontext
+from contextlib import AsyncExitStack, aclosing, nullcontext
 from datetime import date, datetime
 from pathlib import Path
-from typing import Any, AsyncGenerator, Dict, List, Optional, Union
+from typing import Any, AsyncGenerator, Callable, Dict, List, Optional, Union
 
 import httpx
 import litellm
@@ -22,6 +22,7 @@ from agents import Agent, ModelSettings, Runner, Tool, WebSearchTool
 from agents.exceptions import MaxTurnsExceeded, ModelBehaviorError
 from agents.extensions.memory import AdvancedSQLiteSession
 from agents.mcp import MCPServerStdio
+from litellm.exceptions import MidStreamFallbackError
 from openai import APIConnectionError, APIError, APITimeoutError, RateLimitError
 from openai.types.shared.reasoning import Reasoning
 from pydantic import AnyUrl
@@ -35,6 +36,8 @@ from datus.models.litellm_adapter import (
 )
 from datus.models.mcp_result_extractors import extract_sql_contexts
 from datus.models.mcp_utils import multiple_mcp_servers
+from datus.models.request_capacity import DEFAULT_CONTEXT_LENGTH, DEFAULT_MAX_TOKENS
+from datus.models.tool_result_stream import ToolResultStream
 from datus.observability.manager import get_observability_manager
 from datus.observability.model_call import ModelCall
 from datus.observability.tool_calls import observe_tool_hooks
@@ -669,9 +672,15 @@ class OpenAICompatibleModel(LLMBaseModel):
                 ) as call,
             ):
                 call.bind_span(span)
-                call.request(params)
                 # Use LiteLLM for unified provider support
-                response = litellm.completion(messages=messages, **params)
+                uses_completion = "max_completion_tokens" in params or (
+                    hasattr(self, "_uses_completion_tokens_parameter") and self._uses_completion_tokens_parameter()
+                )
+                effective = self.check_request(
+                    {**params, "messages": messages}, "max_completion_tokens" if uses_completion else "max_tokens"
+                )
+                call.request(effective)
+                response = litellm.completion(**effective)
                 call.response(response)
                 message = response.choices[0].message
                 content = strip_litellm_placeholder(message.content)
@@ -839,6 +848,26 @@ class OpenAICompatibleModel(LLMBaseModel):
         done_action.end_time = datetime.now()
         return done_action
 
+    def summary_capacity_checker(
+        self, instruction: str, prompt: str, item_format: str, output_tokens: int
+    ) -> Callable[[List[Any]], int]:
+        """Include SDK conversion and system-message framing when sizing summaries."""
+        if item_format != "responses":
+            return super().summary_capacity_checker(instruction, prompt, item_format, output_tokens)
+        from datus.models.request_capacity import guard_request
+        from datus.models.summary_chunks import summary_input
+
+        agent = self._build_agent(instruction, str, True, {}, [], max_tokens=output_tokens)
+        capacity = self.request_capacity()
+
+        def check(items: List[Any]) -> int:
+            payload = agent.model.capacity_payload(
+                instruction, summary_input(items, prompt), agent.model_settings, [], None, []
+            )
+            return guard_request(capacity, payload)
+
+        return check
+
     async def generate_with_tools(
         self,
         prompt: Union[str, List[Dict[str, str]]],
@@ -967,6 +996,7 @@ class OpenAICompatibleModel(LLMBaseModel):
         tools: Optional[List[Tool]],
         hooks=None,
         agent_name: str = "default_agent",
+        max_tokens: Optional[int] = None,
     ) -> Agent:
         """Build Agent with consistent configuration for both streaming and non-streaming paths."""
         actual_output_type = output_type
@@ -981,6 +1011,7 @@ class OpenAICompatibleModel(LLMBaseModel):
             )
 
         litellm_model = self.litellm_adapter.get_agents_sdk_model()
+        litellm_model._datus_capacity = self.request_capacity()
 
         # DeepSeek requires "json" keyword in prompt for JSON mode
         final_instruction = instruction
@@ -1011,12 +1042,8 @@ class OpenAICompatibleModel(LLMBaseModel):
         if not suppress_sampling_params and self.model_config.top_p is not None:
             model_settings_kwargs["top_p"] = self.model_config.top_p
 
-        # Apply model_specs.max_tokens as a fallback so streaming/tool calls
-        # don't silently rely on each provider's server-side default. If the
-        # spec is unknown, omit the field and let the provider decide.
-        spec_max_tokens = self.max_tokens()
-        if isinstance(spec_max_tokens, int) and spec_max_tokens > 0:
-            model_settings_kwargs["max_tokens"] = spec_max_tokens
+        # Send the same resolved output cap that the capacity check reserves.
+        model_settings_kwargs["max_tokens"] = self.request_capacity().output_limit(max_tokens)
 
         if self.default_headers:
             model_settings_kwargs["extra_headers"] = self.default_headers
@@ -1104,6 +1131,7 @@ class OpenAICompatibleModel(LLMBaseModel):
                     tools=tools,
                     hooks=hooks,
                     agent_name=agent_name,
+                    max_tokens=kwargs.get("max_completion_tokens", kwargs.get("max_tokens")),
                 )
                 run_config = self._build_run_config(agent_name=agent_name)
 
@@ -1228,7 +1256,10 @@ class OpenAICompatibleModel(LLMBaseModel):
 
         async def _stream_operation():
             # Use multiple_mcp_servers context manager with empty dict if no MCP servers
-            async with multiple_mcp_servers(mcp_servers or {}) as connected_servers:
+            async with (
+                multiple_mcp_servers(mcp_servers or {}) as connected_servers,
+                AsyncExitStack() as tool_streams,
+            ):
                 agent_name = kwargs.get("agent_name", "Tools_Agent")
                 agent = self._build_agent(
                     instruction=instruction,
@@ -1238,7 +1269,11 @@ class OpenAICompatibleModel(LLMBaseModel):
                     tools=tools,
                     hooks=hooks,
                     agent_name=agent_name,
+                    max_tokens=kwargs.get("max_completion_tokens", kwargs.get("max_tokens")),
                 )
+
+                tool_stream = ToolResultStream(agent.hooks)
+                agent.hooks = tool_stream
 
                 run_config = self._build_run_config(
                     pending_input_queue=pending_input_queue,
@@ -1294,7 +1329,12 @@ class OpenAICompatibleModel(LLMBaseModel):
                         from datus.cli.execution_state import ExecutionInterrupted
 
                         raise ExecutionInterrupted("Interrupted by user")
-                    async for event in _stream_events_with_trace_baggage(result, agent_name):
+                    events = await tool_streams.enter_async_context(
+                        aclosing(
+                            tool_stream.stream_events(_stream_events_with_trace_baggage(result, agent_name), result)
+                        )
+                    )
+                    async for event in events:
                         if interrupt_controller and interrupt_controller.is_interrupted:
                             from datus.cli.execution_state import ExecutionInterrupted
 
@@ -1680,17 +1720,18 @@ class OpenAICompatibleModel(LLMBaseModel):
 
         for attempt in range(max_retries):
             try:
-                async for action in _stream_operation():
-                    # Skip actions that were already yielded in previous retry attempts
-                    # (thinking_delta actions share a stream ID and must not be deduped)
-                    if action.action_type != "thinking_delta" and action.action_id in processed_action_ids:
-                        logger.debug(f"Skipping duplicate action: {action.action_id}")
-                        continue
+                async with aclosing(_stream_operation()) as operation:
+                    async for action in operation:
+                        # Skip actions that were already yielded in previous retry attempts
+                        # (thinking_delta actions share a stream ID and must not be deduped)
+                        if action.action_type != "thinking_delta" and action.action_id in processed_action_ids:
+                            logger.debug(f"Skipping duplicate action: {action.action_id}")
+                            continue
 
-                    # Mark this action as processed (skip transient deltas)
-                    if action.action_type != "thinking_delta":
-                        processed_action_ids.add(action.action_id)
-                    yield action
+                        # Mark this action as processed (skip transient deltas)
+                        if action.action_type != "thinking_delta":
+                            processed_action_ids.add(action.action_id)
+                        yield action
                 # If we successfully complete, break out of retry loop
                 break
 
@@ -1726,7 +1767,7 @@ class OpenAICompatibleModel(LLMBaseModel):
                     logger.exception(f"Model behavior error after {max_retries} attempts: {type(e).__name__}: {e}")
                     raise
 
-            except (httpx.RemoteProtocolError, APIConnectionError, APITimeoutError) as e:
+            except (httpx.RemoteProtocolError, APIConnectionError, APITimeoutError, MidStreamFallbackError) as e:
                 if attempt < max_retries - 1:
                     logger.warning(
                         f"Stream connection error (attempt {attempt + 1}/{max_retries}): {type(e).__name__}: {e}. "
@@ -1867,14 +1908,14 @@ class OpenAICompatibleModel(LLMBaseModel):
         return _load_model_specs()
 
     def _lookup_spec(self, field: str) -> Optional[int]:
-        """Look up ``field`` in ``model_specs`` with exact-then-longest-prefix matching.
+        """Look up ``field`` in model specs, then the LiteLLM catalogue.
 
         Longest-prefix is important when specs declare both a generic family key
         (e.g. ``gpt-5``) and a more specific variant (e.g. ``gpt-5.3-codex``): the
         generic key would otherwise bleed into unrelated slugs that happen to
-        share a short prefix. Returns None when the field is missing —
-        OpenRouter-cache-only entries do not carry ``max_tokens``, so callers
-        must tolerate absence.
+        share a short prefix. The catalogue fills missing fields, including
+        output limits absent from OpenRouter-cache-only entries. Returns None
+        when neither source knows the field.
         """
         specs = self.model_specs
         exact = specs.get(self.model_name)
@@ -1886,17 +1927,23 @@ class OpenAICompatibleModel(LLMBaseModel):
                 continue
             if self.model_name.startswith(spec_model) and (best_key is None or len(spec_model) > len(best_key)):
                 best_key = spec_model
-        if best_key is None:
-            return None
-        return specs[best_key][field]
+        if best_key is not None:
+            return specs[best_key][field]
+        info = litellm.model_cost.get(
+            self.litellm_adapter.litellm_model_name, litellm.model_cost.get(self.model_name, {})
+        )
+        value = info.get({"context_length": "max_input_tokens", "max_tokens": "max_output_tokens"}.get(field))
+        return value if isinstance(value, int) and value > 0 else None
 
     def max_tokens(self) -> Optional[int]:
-        """Max tokens from model specs with prefix matching, or None if unavailable."""
-        return self._lookup_spec("max_tokens")
+        """Configured output limit or a model default that leaves input headroom."""
+        return self.model_config.max_tokens or self._default_output_limit(
+            self._lookup_spec("max_tokens") or DEFAULT_MAX_TOKENS
+        )
 
     def context_length(self) -> Optional[int]:
-        """Context length from model specs with prefix matching, or None if unavailable."""
-        return self._lookup_spec("context_length")
+        """Configured window, known model specification, or the default budget."""
+        return self.model_config.context_length or self._lookup_spec("context_length") or DEFAULT_CONTEXT_LENGTH
 
     def token_count(self, prompt: str) -> int:
         """

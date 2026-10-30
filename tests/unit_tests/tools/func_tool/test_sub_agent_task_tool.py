@@ -33,6 +33,9 @@ from datus.tools.func_tool.sub_agent_task_tool import (
 )
 from datus.utils.constants import HIDDEN_SYS_SUB_AGENTS, SYS_SUB_AGENTS
 
+# Built-ins offered only when their prerequisite exists (ontology_analyst needs an ontology).
+CONDITIONAL_SYS_SUB_AGENTS = {"ontology_analyst"}
+
 
 @pytest.fixture
 def mock_agent_config():
@@ -685,6 +688,7 @@ class TestResolveNodeType:
             "gen_sql": NodeType.TYPE_GEN_SQL,
             "chat": NodeType.TYPE_CHAT,
             "ask_metrics": NodeType.TYPE_ASK_METRICS,
+            "ontology_analyst": NodeType.TYPE_ONTOLOGY_ANALYST,
             "gen_report": NodeType.TYPE_GEN_REPORT,
             "gen_visual_report": NodeType.TYPE_GEN_VISUAL_REPORT,
             "gen_visual_dashboard": NodeType.TYPE_GEN_VISUAL_DASHBOARD,
@@ -1779,7 +1783,7 @@ class TestGetAvailableTypesBuiltIn:
         types = task_tool._get_available_types()
         assert HIDDEN_SYS_SUB_AGENTS.isdisjoint(types)
         for name in SYS_SUB_AGENTS:
-            if name in HIDDEN_SYS_SUB_AGENTS:
+            if name in HIDDEN_SYS_SUB_AGENTS or name in CONDITIONAL_SYS_SUB_AGENTS:
                 continue
             assert name in types, f"{name} not found in available types"
 
@@ -1804,8 +1808,73 @@ class TestGetAvailableTypesBuiltIn:
         which is not task()-delegatable)."""
         types = task_tool._get_available_types()
         builtin_in_list = [t for t in types if t in SYS_SUB_AGENTS]
-        expected = sorted(SYS_SUB_AGENTS - HIDDEN_SYS_SUB_AGENTS)
+        expected = sorted(SYS_SUB_AGENTS - HIDDEN_SYS_SUB_AGENTS - CONDITIONAL_SYS_SUB_AGENTS)
         assert builtin_in_list == expected
+
+
+@pytest.mark.ci
+class TestOntologyAnalystOffering:
+    """ontology_analyst refuses to run without an ontology, so it is offered only where one exists."""
+
+    @staticmethod
+    def _tool(tmp_path, datasource="flights_db"):
+        from datus.utils.path_manager import DatusPathManager
+
+        config = Mock(spec=AgentConfig)
+        config.current_datasource = datasource
+        config.agentic_nodes = {}
+        config.path_manager = DatusPathManager(datus_home=tmp_path / "home", project_root=tmp_path / "project")
+        models_dir = config.path_manager.semantic_models_dir / datasource
+        models_dir.mkdir(parents=True, exist_ok=True)
+        (models_dir / "aviation.yaml").write_text("version: 0.2.0.dev0\nname: aviation\ndatasets: []\n")
+        return SubAgentTaskTool(agent_config=config), config.path_manager.ontology_dir
+
+    @staticmethod
+    def _write_group(ontology_dir, datasource, mapping_name="aviation-aviation.mapping.yaml"):
+        """aviation.ontology.yaml plus a mapping onto ``semantic_models/<datasource>/aviation.yaml``."""
+        ontology_dir.mkdir(parents=True, exist_ok=True)
+        (ontology_dir / "aviation.ontology.yaml").write_text("version: 0.2.0.dev0\nname: Aviation\nontology: []\n")
+        (ontology_dir / mapping_name).write_text(
+            "version: 0.2.0.dev0\nname: m\n"
+            "ontology_ref: {name: Aviation, iri: ./aviation.ontology.yaml}\n"
+            f"semantic_model_ref: {{name: aviation, iri: ../semantic_models/{datasource}/aviation.yaml}}\n"
+            "concept_mappings: []\n"
+        )
+
+    def test_not_offered_without_ontology_dir(self, tmp_path):
+        tool, _ = self._tool(tmp_path)
+        types = tool._get_available_types()
+        assert "ontology_analyst" not in types
+        assert "- ontology_analyst:" not in tool._build_task_description()
+
+    def test_not_offered_without_a_mapping(self, tmp_path):
+        tool, ontology_dir = self._tool(tmp_path)
+        ontology_dir.mkdir(parents=True)
+        (ontology_dir / "README.txt").write_text("not an ontology")
+        # An ontology alone binds no model: a mapping does.
+        (ontology_dir / "aviation.yaml").write_text("version: 0.2.0.dev0\nname: Aviation\nontology: []\n")
+        assert "ontology_analyst" not in tool._get_available_types()
+
+    def test_offered_when_a_mapping_binds_a_model_of_the_datasource(self, tmp_path):
+        tool, ontology_dir = self._tool(tmp_path)
+        self._write_group(ontology_dir, "flights_db")
+        types = tool._get_available_types()
+        assert "ontology_analyst" in types
+        assert BUILTIN_SUBAGENT_DESCRIPTIONS["ontology_analyst"] in tool._build_task_description()
+
+    def test_a_mapping_onto_another_datasource_does_not_count(self, tmp_path):
+        tool, _ = self._tool(tmp_path, datasource="flights_db")
+        _, ontology_dir = self._tool(tmp_path, datasource="other_db")
+        self._write_group(ontology_dir, "other_db")
+        assert "ontology_analyst" not in tool._get_available_types()
+
+    def test_one_ontology_mapped_onto_two_datasources_is_offered_for_both(self, tmp_path):
+        flights, ontology_dir = self._tool(tmp_path, datasource="flights_db")
+        other, _ = self._tool(tmp_path, datasource="other_db")
+        self._write_group(ontology_dir, "flights_db", "aviation-flights.mapping.yaml")
+        self._write_group(ontology_dir, "other_db", "aviation-other.mapping.yaml")
+        assert "ontology_analyst" in flights._get_available_types()
+        assert "ontology_analyst" in other._get_available_types()
 
 
 # ── Built-in subagent: _resolve_node_type ──────────────────────────
@@ -2053,6 +2122,8 @@ class TestBuildTaskDescriptionBuiltIn:
     def test_contains_builtin_descriptions(self, task_tool):
         desc = task_tool._build_task_description()
         for name, builtin_desc in BUILTIN_SUBAGENT_DESCRIPTIONS.items():
+            if name in CONDITIONAL_SYS_SUB_AGENTS:
+                continue
             assert builtin_desc in desc, f"Description for {name} not found"
 
     def test_routes_plugin_backed_platforms_to_main_agent(self, task_tool):
@@ -2568,6 +2639,94 @@ class TestProxyToolPropagation:
     def test_default_parent_node_is_none(self, task_tool):
         """By default, _parent_node is None."""
         assert task_tool._parent_node is None
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "node_name", ["semantic_modeling", "gen_sql_summary", "gen_visual_report", "gen_visual_dashboard", "gen_sql"]
+    )
+    @pytest.mark.parametrize("tool_name", ["write_file", "edit_file", "delete_file"])
+    async def test_web_forwarded_file_call_uses_the_child_executor(self, task_tool, node_name, tool_name):
+        from agents import FunctionTool
+
+        from datus.api.services.action_sse_converter import action_to_sse_event
+        from datus.schemas.action_bus import ActionBus
+        from datus.tools.proxy.tool_result_channel import ToolResultChannel
+        from datus.tools.registry.tool_registry import ToolRegistry
+
+        parent = SimpleNamespace(proxy_tool_patterns=[tool_name], tool_channel=ToolResultChannel(), session_id=None)
+        task_tool.set_parent_node(parent)
+        bus = ActionBus()
+        task_tool.set_action_bus(bus)
+        original = FunctionTool(
+            name=tool_name,
+            description="File operation",
+            params_json_schema={"type": "object"},
+            on_invoke_tool=AsyncMock(return_value={"success": 1}),
+        )
+        node = MagicMock()
+        node.agent_config = SimpleNamespace(_client_source="web")
+        node.get_node_name.return_value = node_name
+        node.tools = [original]
+        node.tool_registry = ToolRegistry({tool_name: "filesystem_tools"})
+        node.proxied_tool_names = set()
+        action = ActionHistory(
+            action_id="child-file-call",
+            role=ActionRole.TOOL,
+            action_type=tool_name,
+            input={"function_name": tool_name, "arguments": {"path": "artifact.yml"}},
+            status=ActionStatus.PROCESSING,
+        )
+
+        async def stream(_history):
+            yield action
+
+        node.execute_stream_with_interactions = stream
+        with (
+            patch.object(task_tool, "_create_node", return_value=node),
+            patch.object(task_tool, "_build_node_input", return_value=Mock()),
+        ):
+            await task_tool.task(type=node_name, prompt="author a file")
+
+        forwarded = bus._queue.get_nowait()
+        event = action_to_sse_event(forwarded, 1, forwarded.action_id, proxied_tool_names={tool_name})
+        client_executes = node_name == "gen_sql"
+        assert event.data.payload.content[0].payload["proxied"] is client_executes
+        assert (node.tools[0] is original) is (not client_executes)
+        assert action.input == {"function_name": tool_name, "arguments": {"path": "artifact.yml"}}
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("owner", [False, True])
+    async def test_web_nested_forwarding_keeps_the_original_executor(self, task_tool, owner):
+        from datus.api.services.action_sse_converter import action_to_sse_event
+        from datus.schemas.action_bus import ActionBus
+
+        action = ActionHistory(
+            action_id="deep-file-call",
+            role=ActionRole.TOOL,
+            action_type="write_file",
+            input={"function_name": "write_file", "arguments": {"path": "artifact.yml"}, "_proxied": owner},
+            status=ActionStatus.PROCESSING,
+        )
+        for _ in range(3):
+            bus = ActionBus()
+            task_tool.set_action_bus(bus)
+            node = MagicMock()
+            node.agent_config = SimpleNamespace(_client_source="web")
+            node.proxied_tool_names = set() if owner else {"write_file"}
+
+            async def stream(_history, child_action=action):
+                yield child_action
+
+            node.execute_stream_with_interactions = stream
+            with (
+                patch.object(task_tool, "_create_node", return_value=node),
+                patch.object(task_tool, "_build_node_input", return_value=Mock()),
+            ):
+                await task_tool.task(type="gen_sql", prompt="forward nested activity")
+            action = bus._queue.get_nowait()
+
+        event = action_to_sse_event(action, 1, action.action_id, proxied_tool_names=set() if owner else {"write_file"})
+        assert event.data.payload.content[0].payload["proxied"] is owner
 
     @pytest.mark.asyncio
     async def test_apply_proxy_tools_called_when_parent_has_patterns(self, task_tool):
@@ -3129,3 +3288,71 @@ class TestSubagentInheritsParentDatabase:
         )
 
         node.setup_tools.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_task_delegation_reviews_plans_through_the_parent_session(task_tool, tmp_path):
+    from datus.tools.func_tool.semantic_plan_file_tools import SemanticPlanFileTools
+    from datus.tools.proxy.semantic_plan_review import apply_semantic_plan_review
+    from datus.tools.proxy.tool_result_channel import ToolResultChannel
+
+    class ReadyChannel(ToolResultChannel):
+        async def wait_for(self, call_id, timeout=None):
+            waiting.set()
+            return await super().wait_for(call_id, timeout)
+
+    waiting = asyncio.Event()
+    parent = SimpleNamespace(
+        tools=[],
+        semantic_plan_file_tool=None,
+        tool_channel=ReadyChannel(),
+        proxied_tool_names=set(),
+        proxy_tool_patterns=[],
+        session_id=None,
+        scope="owner",
+        pending_input_queue=None,
+    )
+    apply_semantic_plan_review(parent)
+    task_tool.set_parent_node(parent)
+    writer = SemanticPlanFileTools(tmp_path)
+    child = MagicMock()
+    child.semantic_plan_file_tool = writer
+    child.tools = writer.available_tools()
+    child.proxied_tool_names = set()
+    child.scope = "owner"
+    child.session_id = "semantic_modeling_session_test"
+    child.session_manager = None
+    observed = []
+
+    async def stream(*_args):
+        observed.append(
+            await child.tools[0].on_invoke_tool(
+                SimpleNamespace(tool_call_id="nested-call"), json.dumps({"model_name": "sales", "plan_json": {}})
+            )
+        )
+        return
+        yield  # pragma: no cover
+
+    child.execute_stream_with_interactions = stream
+    with (
+        patch.object(task_tool, "_create_node", return_value=child),
+        patch.object(task_tool, "_refresh_node_db_tools"),
+        patch.object(task_tool, "_build_node_input"),
+    ):
+        pending = asyncio.create_task(task_tool._execute_node("semantic_modeling", "plan sales"))
+        try:
+            await asyncio.wait_for(waiting.wait(), 2)
+            preview = parent.tool_review_previews["nested-call"]
+            child.action_bus.put.assert_called_once()
+            assert child.action_bus.put.call_args.args[0].output["preview"] == preview
+            assert not (tmp_path / preview["filePath"]).exists()
+            assert "write_semantic_model_plan_file" in parent.proxied_tool_names
+            assert "write_semantic_model_plan_file" in child.proxied_tool_names
+            await parent.tool_channel.publish("nested-call", {"success": 1})
+            await pending
+            assert observed[0]["result"]["review_status"] == "accepted"
+            assert (tmp_path / preview["filePath"]).read_text() == preview["newText"]
+            assert not parent.tool_review_previews
+        finally:
+            parent.tool_channel.cancel_all()
+            await pending

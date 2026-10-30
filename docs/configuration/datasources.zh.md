@@ -32,8 +32,10 @@ SQLite 和 DuckDB 内置在 Datus 中。其他 datasource 均由可独立安装�
 | [DuckDB](datasources/duckdb.md) | `duckdb` | 内置 | database → schema → table |
 | [MySQL](datasources/mysql.md) | `mysql` | `datus-mysql` | database → table |
 | [PostgreSQL](datasources/postgresql.md) | `postgresql` | `datus-postgresql` | database → schema → table |
+| [Amazon Aurora](datasources/aurora.md) | `mysql` / `postgresql` | `datus-mysql` / `datus-postgresql` | 与所选引擎相同 |
 | [Greenplum](datasources/greenplum.md) | `greenplum` | `datus-greenplum` | database → schema → table |
 | [Amazon Redshift](datasources/redshift.md) | `redshift` | `datus-redshift` | database → schema → table |
+| [Amazon Athena](datasources/athena.md) | `athena` | `datus-athena` | catalog → database → table |
 | [Snowflake](datasources/snowflake.md) | `snowflake` | `datus-snowflake` | database → schema → table |
 | [Google BigQuery](datasources/bigquery.md) | `bigquery` | `datus-bigquery` | project → dataset → table |
 | [StarRocks](datasources/starrocks.md) | `starrocks` | `datus-starrocks` | catalog → database → table |
@@ -41,14 +43,17 @@ SQLite 和 DuckDB 内置在 Datus 中。其他 datasource 均由可独立安装�
 | [TiDB](datasources/tidb.md) | `tidb` | `datus-tidb` | database → table |
 | [ClickHouse](datasources/clickhouse.md) | `clickhouse` | `datus-clickhouse` | database → table |
 | [Trino](datasources/trino.md) | `trino` | `datus-trino` | catalog → schema → table |
-| [Hive](datasources/hive.md) | `hive` | `datus-hive` | database → table |
+| [Hive / 星环 Inceptor](datasources/hive.md) | `hive` | `datus-hive` | database → table |
 | [Spark SQL](datasources/spark.md) | `spark` | `datus-spark` | database → table |
 | [ClickZetta](datasources/clickzetta.md) | `clickzetta` | `datus-clickzetta` | instance/workspace → schema → table |
 | [Hologres](datasources/hologres.md) | `hologres` | `datus-hologres` | database → schema → table |
 | [MaxCompute](datasources/maxcompute.md) | `maxcompute` | `datus-maxcompute` | project → 可选 schema → table |
 | [Oracle](datasources/oracle.md) | `oracle` | `datus-oracle` | schema → table |
+| [SAP HANA](datasources/hana.md) | `hana` | `datus-hana` | schema → table；tenant 是连接目标 |
 | [GaussDB / openGauss](datasources/gaussdb.md) | `gaussdb` | `datus-gaussdb` | database → schema → table |
 | [GaussDB(DWS)](datasources/dws.md) | `dws` | `datus-dws` | database → schema → table |
+
+Athena 和 HANA 当前需要使用各自页面的源码安装命令。请先安装再添加 datasource；自动安装无法获取尚未发布的 adapter。Aurora 复用 MySQL 或 PostgreSQL 的类型与安装包。
 
 ## 通用 profile 字段
 

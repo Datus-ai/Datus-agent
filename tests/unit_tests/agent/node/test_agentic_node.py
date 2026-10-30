@@ -200,6 +200,20 @@ class TestParseNodeConfig:
         assert any("always: be concise" in r for r in rules)
         assert "plain rule" in rules
 
+    def test_forwards_report_dist_to_node_config(self):
+        """``report_dist`` from agent.yml must survive the direct_attributes whitelist.
+
+        Regression: the whitelist in ``_parse_node_config`` used to omit
+        ``report_dist``, so a user-provided offline renderer bundle in
+        ``agentic_nodes.gen_visual_report.report_dist`` was silently dropped
+        and the report fell back to the unpkg CDN.
+        """
+        cfg = MagicMock(spec=AgentConfig)
+        cfg.agentic_nodes = {"gen_visual_report": {"report_dist": "/opt/web-artifact-render-dist"}}
+        node = _make_node()
+        result = node._parse_node_config(cfg, "gen_visual_report")
+        assert result.get("report_dist") == "/opt/web-artifact-render-dist"
+
     def test_returns_empty_when_no_agentic_nodes_attr(self):
         cfg = MagicMock()
         del cfg.agentic_nodes  # remove the attribute
@@ -803,6 +817,19 @@ class TestManualCompact:
     """
 
     @pytest.mark.asyncio
+    async def test_major_compact_preserves_session_when_archive_fails(self):
+        node = _make_node()
+        node.session_id = "archive_failure"
+        node._session = _make_async_session_mock()
+        node.model = MagicMock()
+        node.model.summarize_items = AsyncMock()
+        with patch.object(node, "_dump_session_history_jsonl", new=AsyncMock(return_value=None)):
+            result = await node._major_compact(reason="test")
+        assert result["success"] is False
+        node.model.summarize_items.assert_not_awaited()
+        node._session.replace_items.assert_not_awaited()
+
+    @pytest.mark.asyncio
     async def test_major_compact_no_model_returns_failure(self):
         node = _make_node()
         node.model = None
@@ -837,7 +864,9 @@ class TestManualCompact:
         node.model = mock_model
         # Bypass the disk dump so the test stays hermetic; we only care the
         # continuation message gets persisted with the summary embedded.
-        with patch.object(_ConcreteAgenticNode, "_dump_session_history_jsonl", new=AsyncMock(return_value=None)):
+        with patch.object(
+            _ConcreteAgenticNode, "_dump_session_history_jsonl", new=AsyncMock(return_value="history.jsonl")
+        ):
             with patch.object(_ConcreteAgenticNode, "_get_archive", return_value=None):
                 with patch.object(_ConcreteAgenticNode, "_get_system_prompt", return_value="sys"):
                     result = await node._major_compact(reason="cli_manual")
@@ -888,7 +917,9 @@ class TestManualCompact:
         mock_sm = MagicMock()
         mock_sm.create_session = MagicMock(return_value=_make_async_session_mock())
         node._session_manager = mock_sm
-        with patch.object(_ConcreteAgenticNode, "_dump_session_history_jsonl", new=AsyncMock(return_value=None)):
+        with patch.object(
+            _ConcreteAgenticNode, "_dump_session_history_jsonl", new=AsyncMock(return_value="history.jsonl")
+        ):
             with patch.object(_ConcreteAgenticNode, "_get_archive", return_value=None):
                 with patch.object(_ConcreteAgenticNode, "_get_system_prompt", return_value="sys"):
                     result = await node._major_compact(reason="resume_test")
@@ -908,7 +939,9 @@ class TestManualCompact:
         mock_model = MagicMock()
         mock_model.summarize_items = AsyncMock(return_value={"content": "summary", "usage": {"output_tokens": 10}})
         node.model = mock_model
-        with patch.object(_ConcreteAgenticNode, "_dump_session_history_jsonl", new=AsyncMock(return_value=None)):
+        with patch.object(
+            _ConcreteAgenticNode, "_dump_session_history_jsonl", new=AsyncMock(return_value="history.jsonl")
+        ):
             with patch.object(_ConcreteAgenticNode, "_get_archive", return_value=None):
                 with patch.object(_ConcreteAgenticNode, "_get_system_prompt", return_value="sys"):
                     result = await node._major_compact(reason="fail_test")
@@ -1510,7 +1543,9 @@ class TestManualCompactExtended:
             return_value={"content": "summary text", "usage": {"output_tokens": 100}}
         )
 
-        with patch.object(_SimpleAgenticNode, "_dump_session_history_jsonl", new=AsyncMock(return_value=None)):
+        with patch.object(
+            _SimpleAgenticNode, "_dump_session_history_jsonl", new=AsyncMock(return_value="history.jsonl")
+        ):
             with patch.object(_SimpleAgenticNode, "_get_archive", return_value=None):
                 with patch.object(_SimpleAgenticNode, "_get_system_prompt", return_value="sys"):
                     result = asyncio.run(node._major_compact(reason="t"))
@@ -1543,7 +1578,9 @@ class TestManualCompactExtended:
             return_value={"content": "native summary", "usage": {"output_tokens": 9}}
         )
 
-        with patch.object(_SimpleAgenticNode, "_dump_session_history_jsonl", new=AsyncMock(return_value=None)):
+        with patch.object(
+            _SimpleAgenticNode, "_dump_session_history_jsonl", new=AsyncMock(return_value="history.jsonl")
+        ):
             with patch.object(_SimpleAgenticNode, "_get_archive", return_value=None):
                 with patch.object(_SimpleAgenticNode, "_get_system_prompt", return_value="sys"):
                     result = asyncio.run(node._major_compact(reason="t"))
@@ -1622,7 +1659,9 @@ class TestAutoCompactExtended:
         )
         node.session_id = "sess_auto"
 
-        with patch.object(_SimpleAgenticNode, "_dump_session_history_jsonl", new=AsyncMock(return_value=None)):
+        with patch.object(
+            _SimpleAgenticNode, "_dump_session_history_jsonl", new=AsyncMock(return_value="history.jsonl")
+        ):
             with patch.object(_SimpleAgenticNode, "_get_archive", return_value=None):
                 with patch.object(_SimpleAgenticNode, "_get_system_prompt", return_value="sys"):
                     result = asyncio.run(node._auto_compact())

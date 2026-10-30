@@ -8,7 +8,7 @@ tags:
   - metrics
   - reference-sql
   - classify
-version: 1.1.1
+version: 1.1.2
 user_invocable: true
 ---
 
@@ -17,6 +17,8 @@ user_invocable: true
 You are building the project's **vector-indexed knowledge base** — `semantic_models`, `metrics`, and `reference_sql` (the LanceDB-backed stores) — from the project's files and database metadata. This is the heavy companion to the lightweight `/init`: `/init` already produces the `AGENTS.md` project map and the file-based `./knowledge/*.md`; **this skill owns the expensive generation** that writes the vector stores and then refreshes `AGENTS.md`'s KB index sections.
 
 This is an orchestration skill running in the main agent context, so you may call `task`, `todo_write`/`todo_list`/`todo_read`/`todo_update`, `ask_user`, `add_memory`/`edit_memory`, the filesystem tools (`glob`, `grep`, `read_file`, `write_file`, `edit_file`), and the database tools (`list_databases`, `list_tables`, `describe_table`, `search_table`, `execute_sql`).
+
+**Evidence status.** `knowledge/pending-questions.md`, when present, is an unresolved-question list, not a source of confirmed definitions. Exclude it from generation inputs. Its entries may guide verification against primary sources or explicit user confirmations, but must not be promoted to semantic models, metrics, reference SQL, skills, memory or established knowledge as facts. Carry this distinction into delegated exploration and generation prompts.
 
 **Routing authority is `storage-classify`.** This skill decides *what to scan and explore within scope*; the `storage-classify` skill owns *which content goes to which store, written with which mechanism*. Do NOT re-invent storage routing rules here — load `storage-classify` in Step 0 and follow it through Steps 2-4 (Step 2 inlines its rules into explore prompts; Step 3 routes every item by them).
 

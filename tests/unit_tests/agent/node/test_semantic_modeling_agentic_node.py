@@ -10,10 +10,11 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+import yaml
 
 from datus.agent.node import semantic_authoring
 from datus.schemas.action_history import ActionHistoryManager
-from datus.schemas.semantic_agentic_node_models import SemanticNodeInput, SourceQueryEvidence
+from datus.schemas.semantic_agentic_node_models import SemanticNodeInput
 from tests.unit_tests.mock_llm_model import build_simple_response
 
 
@@ -24,27 +25,93 @@ def _accept_any_authoring_document(monkeypatch):
     monkeypatch.setattr(
         semantic_authoring,
         "render_required_authoring_skill",
-        lambda _name, content, *, include_osi_core=False: (
+        lambda _name, content, *, include_osi_core=False, reference_dir=None: (
             content
-            + (
-                "\n## Active OSI Core authoring specification\n# Apache Ossie - Core Metadata Spec"
-                if include_osi_core
-                else ""
-            )
-            + "\n## Active DATUS extension authoring specification"
+            + ("\n## OSI Core reference shapes" if include_osi_core else "")
+            + "\n## Active DATUS capability directory"
         ),
     )
+    monkeypatch.setattr(semantic_authoring, "prepare_authoring_references", lambda cache_dir: cache_dir)
 
 
 def _stream_call_count(mock_llm_create) -> int:
     return sum(1 for call in mock_llm_create.call_history if call.get("method") == "generate_with_tools_stream")
 
 
+def _record_current_compiled_evidence(node, target):
+    names = node._semantic_validation_metric_names()
+    catalog = {name: {"name": name, "kind": "aggregate", "datasets": ["orders"], "measures": [name]} for name in names}
+    assert (
+        node.generation_evidence.record_compiled_validation(
+            {
+                "contract_digest": "sha256:" + hashlib.sha256(b"contract").hexdigest(),
+                "artifact_sha256": {str(target.resolve()): "sha256:" + hashlib.sha256(target.read_bytes()).hexdigest()},
+                "compiled_metrics": list(catalog.values()),
+                "compiled_metric_digests": {
+                    name: "sha256:" + hashlib.sha256(name.encode()).hexdigest() for name in names
+                },
+            },
+            metric_names=names,
+        )
+        is True
+    )
+    return catalog
+
+
+def test_loaded_database_references_are_readable_without_loading_them_into_the_prompt(
+    real_agent_config, mock_llm_create, tmp_path, tmp_path_factory, monkeypatch
+):
+    from datus.agent.node.semantic_modeling_agentic_node import SemanticModelingAgenticNode
+    from datus.tools.skill_tools.skill_config import SkillConfig
+    from datus.tools.skill_tools.skill_manager import SkillManager
+
+    node = SemanticModelingAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(exist_ok=True)
+    node.node_config["workspace_root"] = str(workspace)
+    filesystem = node._make_filesystem_tool(strict=True)
+    name = node._get_database_skill_candidates()[0]
+    resource_root = tmp_path_factory.mktemp("adapter_bundle")
+    bundle = resource_root / name
+    (bundle / "references").mkdir(parents=True)
+    (bundle / "SKILL.md").write_text(
+        f"---\nname: {name}\ndescription: Query rules\n---\n"
+        "# Query rules\nFor imports, read [Loading](references/data-loading.md).\n"
+    )
+    reference = bundle / "references/data-loading.md"
+    reference.write_text("# Loading details\nINSERT INTO target SELECT * FROM files;\n")
+    outside = resource_root / "outside.md"
+    outside.write_text("Outside the loaded bundle")
+    (bundle / "references/escape.md").symlink_to(outside)
+    node.skill_manager = SkillManager(config=SkillConfig(directories=[str(bundle.parent)]))
+    monkeypatch.setattr(node, "_get_required_skills", lambda: [])
+
+    assert not filesystem.read_file(str(reference)).success
+    prompt = node._inject_required_skills("Build metrics from supplied ETL")
+    assert f"<skill_location>{bundle}</skill_location>" in prompt
+    assert "Loading details" not in prompt
+    assert filesystem.read_file(str(reference)).result == reference.read_text()
+    assert filesystem._classify(str(reference)).read_only
+    assert not filesystem.write_file(str(reference), "Changed").success
+    assert not filesystem.read_file(str(bundle / "references/escape.md")).success
+    sql = bundle / "references/example.sql"
+    sql.write_text("SELECT 1 AS n")
+    assert filesystem.read_file(str(sql)).result == sql.read_text()
+    policy = node._make_filesystem_policy()
+    assert bundle in policy.allowlist_provider().read
+
+
 def test_unified_dosi_node_composes_existing_authoring_surfaces(real_agent_config, mock_llm_create):
     from datus.agent.node.semantic_modeling_agentic_node import SemanticModelingAgenticNode
 
     node = SemanticModelingAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
-    node.input = SemanticNodeInput(user_message="Create the order dataset and its revenue metric")
+    node.input = SemanticNodeInput(
+        user_message=(
+            "Create the order dataset and its revenue metric using `sql/order ETL.sql`.\n"
+            "SELECT region, SUM(amount) AS revenue FROM orders GROUP BY region;"
+        )
+    )
+    assert node.input.user_message in node._build_enhanced_message(node.input)
     tool_names = {tool.name for tool in node.tools}
 
     assert node.get_node_name() == "semantic_modeling"
@@ -55,7 +122,7 @@ def test_unified_dosi_node_composes_existing_authoring_surfaces(real_agent_confi
         "list_tables",
         "describe_table",
         "execute_sql",
-        "inspect_semantic_sources",
+        "verify_semantic_outputs",
         "read_file",
         "edit_file",
         "upsert_osi_datasets",
@@ -67,13 +134,16 @@ def test_unified_dosi_node_composes_existing_authoring_surfaces(real_agent_confi
         "validate_semantic",
         "write_semantic_model_plan_file",
     }.issubset(tool_names)
-    assert {"write_file", "delete_file", "load_file_as_table", "import_database_file", "bash", "task"}.isdisjoint(
-        tool_names
-    )
+    assert {
+        "write_file",
+        "delete_file",
+        "load_file_as_table",
+        "import_database_file",
+        "bash",
+        "task",
+    }.isdisjoint(tool_names)
     assert node.db_func_tool.read_only is True
     assert node._get_required_skills() == ["dosi-semantic-authoring"]
-    assert node.semantic_discovery_tools.compact_source_inspection is True
-    assert {tool.name for tool in node.semantic_discovery_tools.available_tools()} == {"inspect_semantic_sources"}
 
     with patch("datus.storage.metric.store.MetricStorage.get_subject_tree_flat") as subject_tree_lookup:
         prompt = node._get_system_prompt(template_context=node._prepare_template_context(node.input))
@@ -86,13 +156,28 @@ def test_unified_dosi_node_composes_existing_authoring_surfaces(real_agent_confi
     assert "extract reusable fields, relationships, and native business metrics" in prompt
     assert '<required_skill name="dosi-semantic-authoring">' in prompt
     node._populate_tool_registry()
+    assert node.tool_registry.get("verify_semantic_outputs") == "semantic_tools"
+    assert "## OSI Core reference shapes" in prompt
+    assert "## Active DATUS capability directory" in prompt
+    assert "ensure_metric_uids" not in tool_names
+
+
+@pytest.mark.parametrize(
+    "tools_config", [None, "semantic_tools.*", "*", "semantic_tools.write_semantic_model_plan_file"]
+)
+def test_plan_file_tool_available_with_default_and_wildcard_configs(real_agent_config, mock_llm_create, tools_config):
+    from datus.agent.node.semantic_modeling_agentic_node import SemanticModelingAgenticNode
+
+    config = real_agent_config.agentic_nodes.setdefault("semantic_modeling", {})
+    if tools_config is None:
+        config.pop("tools", None)
+    else:
+        config["tools"] = tools_config
+
+    node = SemanticModelingAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
+    assert sum(tool.name == "write_semantic_model_plan_file" for tool in node.tools) == 1
+    node._populate_tool_registry()
     assert node.tool_registry.get("write_semantic_model_plan_file") == "semantic_tools"
-    assert "## Active OSI Core authoring specification" in prompt
-    assert "# Apache Ossie - Core Metadata Spec" in prompt
-    assert "## Active DATUS extension authoring specification" in prompt
-    assert "Use a derived filter metric" in prompt
-    assert "Use a parameterized metric only" in prompt
-    assert "active contract explicitly permits" in prompt
 
 
 def test_plan_file_uses_project_root_for_vscode_source(real_agent_config, mock_llm_create, tmp_path, monkeypatch):
@@ -102,9 +187,15 @@ def test_plan_file_uses_project_root_for_vscode_source(real_agent_config, mock_l
     daemon_cwd.mkdir()
     monkeypatch.chdir(daemon_cwd)
     real_agent_config._client_source = "vscode"
+    real_agent_config.agentic_nodes.setdefault("semantic_modeling", {})["tools"] = (
+        "semantic_tools,semantic_tools.write_semantic_model_plan_file"
+    )
 
     node = SemanticModelingAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
     assert node._resolve_workspace_root() == "."
+    assert "write_semantic_model_plan_file" in {tool.name for tool in node.tools}
+    node._populate_tool_registry()
+    assert node.tool_registry.get("write_semantic_model_plan_file") == "semantic_tools"
 
     result = node.semantic_plan_file_tool.write_semantic_model_plan_file("sales_model", '{"summary":"plan"}')
 
@@ -154,8 +245,8 @@ def test_resumed_session_rebuilds_legacy_key_policy_and_caches_current_skill(
         prompt = node._get_session_system_prompt(template_context=context)
 
         assert '<required_skill name="dosi-semantic-authoring">' in prompt
-        assert "Use source DDL as the only evidence for new key declarations" in prompt
-        assert "Do not execute data queries to discover or verify keys" in prompt
+        assert "Declare keys only from source DDL" in prompt
+        assert "Never query data to discover or verify keys" in prompt
         assert node.session_manager.load_system_prompt_snapshot(node.session_id)["prompt"] == prompt
         assert node._get_session_system_prompt(template_context=context) == prompt
         build_prompt.assert_called_once()
@@ -268,30 +359,6 @@ def test_datasets_only_scope_rolls_back_metric_changes_made_through_edit_file(
         node._build_success_result(ctx)
 
     assert target.read_text(encoding="utf-8") == original
-
-
-def test_unified_node_exposes_structured_request_sql_as_discovery_evidence(real_agent_config, mock_llm_create):
-    from datus.agent.node.semantic_modeling_agentic_node import SemanticModelingAgenticNode
-
-    node = SemanticModelingAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
-    node.input = SemanticNodeInput(
-        user_message="Create reusable order metrics",
-        source_queries=[
-            SourceQueryEvidence(
-                source_sql_name="orders_revenue",
-                question="What is order revenue?",
-                sql="SELECT SUM(amount) AS revenue FROM orders",
-            )
-        ],
-    )
-
-    assert node._semantic_discovery_source_sql() == [
-        {
-            "name": "orders_revenue",
-            "question": "What is order revenue?",
-            "sql": "SELECT SUM(amount) AS revenue FROM orders",
-        }
-    ]
 
 
 def test_interactive_prompt_confirms_ambiguous_semantics_and_target(real_agent_config, mock_llm_create):
@@ -477,6 +544,7 @@ def test_generated_result_uses_selected_artifact_finalizer(real_agent_config, mo
     node._finalize_selected_osi_artifact.assert_called_once_with()
     assert result.status == "generated"
     assert result.semantic_models == ["subject/semantic_models/warehouse/orders.yml"]
+    assert result.business_validation == []
 
 
 @pytest.mark.asyncio
@@ -521,6 +589,15 @@ async def test_retries_unsupported_outcome_once_before_finalizing(real_agent_con
             "blocked",
             False,
         ),
+        (
+            {
+                "status": "blocked",
+                "blocker_code": "semantic_model_inline_in_mapping",
+                "output": "The model is inline in an Ossie mapping document; edit the mapping directly",
+            },
+            "blocked",
+            False,
+        ),
     ],
 )
 @pytest.mark.asyncio
@@ -543,6 +620,7 @@ async def test_supported_outcome_does_not_retry(
     assert _stream_call_count(mock_llm_create) == 1
     assert actions[-1].output["status"] == expected_status
     assert actions[-1].output["success"] is expected_success
+    assert actions[-1].output["blocker_code"] == payload.get("blocker_code")
     if expected_status == "generated":
         node._finalize_selected_osi_artifact.assert_called_once_with()
     else:
@@ -662,9 +740,12 @@ def test_host_finalizer_validates_and_reconciles_complete_selected_yaml(
             metric_names=touched_metrics,
         )
     assert compiled_validation_recorded is bool(touched_metrics)
-    node.semantic_tools.validate_semantic = MagicMock(
-        return_value=FuncToolResult(result={"valid": True, "scope": expected_scope})
-    )
+
+    def validate_final_content(**kwargs):
+        assert _record_current_compiled_evidence(node, target) == expected_compiled_catalog
+        return FuncToolResult(result={"valid": True, "scope": expected_scope})
+
+    node.semantic_tools.validate_semantic = MagicMock(side_effect=validate_final_content)
 
     with patch.object(
         node.generation_tools,
@@ -712,3 +793,162 @@ def test_host_finalizer_reports_unavailable_semantic_validation(real_agent_confi
 
     with pytest.raises(RuntimeError, match="validate_semantic is unavailable"):
         node._finalize_selected_osi_artifact()
+
+
+@pytest.mark.parametrize("authoring_scope", ["full", "datasets"])
+@pytest.mark.parametrize("legacy_has_uid", [False, True])
+def test_finalizer_fills_legacy_uids_and_reconciles_existing_kb_identities(
+    real_agent_config, mock_llm_create, authoring_scope, legacy_has_uid
+):
+    from datus.agent.node.semantic_modeling_agentic_node import SemanticModelingAgenticNode
+    from datus.agent.node.stream_run_context import StreamRunContext
+    from datus.tools.func_tool.base import FuncToolResult
+    from datus.tools.semantic_tools.metric_identity import metric_uid
+
+    node = SemanticModelingAgenticNode(
+        agent_config=real_agent_config, execution_mode="workflow", authoring_scope=authoring_scope
+    )
+    model_dir = real_agent_config.path_manager.semantic_model_path(real_agent_config.current_datasource)
+    model_dir.mkdir(parents=True, exist_ok=True)
+    target = model_dir / "uid_model.yml"
+    retained_uid = "tz4a98xxat96iws9zmbrgj3a"
+    metrics = [
+        {
+            "name": name,
+            "description": name,
+            "expression": {"dialects": [{"dialect": "ANSI_SQL", "expression": "COUNT(*)"}]},
+        }
+        for name in ("legacy", "retained")
+    ]
+    metrics[1]["custom_extensions"] = [{"vendor_name": "DATUS", "data": json.dumps({"uid": retained_uid})}]
+    if legacy_has_uid:
+        metrics[0]["custom_extensions"] = [{"vendor_name": "DATUS", "data": json.dumps({"uid": "a" * 24})}]
+    target.write_text(
+        yaml.safe_dump(
+            {
+                "version": "0.2.0.dev0",
+                "semantic_model": [
+                    {"name": "uid_model", "datasets": [{"name": "orders", "source": "orders"}], "metrics": metrics}
+                ],
+            },
+            sort_keys=False,
+        )
+    )
+    node.osi_target_state.select(
+        {
+            "semantic_model_name": "uid_model",
+            "semantic_model_file": str(target),
+            "absolute_path": str(target.resolve()),
+            "artifact_sha256": hashlib.sha256(target.read_bytes()).hexdigest(),
+        },
+        mode="bound",
+    )
+    # Seed an existing KB identity so the unchanged YAML metric also needs sync.
+    doc = node.generation_tools._load_osi_document(metric_file=str(target))
+    rows = node.generation_tools._build_osi_metric_objects(
+        doc=doc, metric_file=str(target), target_metric_names={"retained"}, compiled_metric_catalog=None
+    )
+    rows[0]["uid"] = "previous-kb-identity"
+    node.generation_tools.metric_rag.upsert_batch(rows)
+    node.generation_evidence.record_semantic_artifact_validation("uid_model", target, validation_scope="all")
+
+    def validate_current(**kwargs):
+        current = yaml.safe_load(target.read_bytes())["semantic_model"][0]["metrics"]
+        assert all(metric_uid(metric) for metric in current)
+        assert {metric["name"] for metric in current} == set(node._semantic_validation_metric_names())
+        _record_current_compiled_evidence(node, target)
+        return FuncToolResult(result={"valid": True, "scope": "all"})
+
+    node.semantic_tools.validate_semantic = MagicMock(side_effect=validate_current)
+    original_content = target.read_bytes()
+    ctx = StreamRunContext(
+        user_input=SemanticNodeInput(user_message="Update the model"), action_history_manager=ActionHistoryManager()
+    )
+    ctx.response_content = {"status": "generated", "output": "Ready"}
+    result = node._build_success_result(ctx)
+    assert result.success is True
+    assert result.status == "generated"
+    current = yaml.safe_load(target.read_bytes())["semantic_model"][0]["metrics"]
+    identities = {metric["name"]: metric_uid(metric) for metric in current}
+    assert identities["retained"] == retained_uid
+    assert len(identities["legacy"]) == 24
+    assert (target.read_bytes() == original_content) is legacy_has_uid
+    assert node.osi_target_state.touched_metric_names == ["legacy", "retained"]
+    kb_rows = node.generation_tools.metric_rag.list_artifact_rows(str(target))
+    assert {row["name"]: row["uid"] for row in kb_rows} == identities
+    node.semantic_tools.validate_semantic.assert_called_once()
+    assert node.generation_evidence.compiled_validation_passed(str(target), list(identities))
+    assert node.osi_target_state.artifact_snapshot_path == ""
+    content = target.read_bytes()
+    assert node._build_success_result(ctx).success is True
+    assert target.read_bytes() == content
+    node.semantic_tools.validate_semantic.assert_called_once()
+
+
+@pytest.mark.parametrize("second_name", ["order_count", "REVENUE"])
+def test_finalizer_enforces_kb_name_uniqueness_before_uid_or_kb_writes(real_agent_config, mock_llm_create, second_name):
+    from datus.agent.node.semantic_modeling_agentic_node import SemanticModelingAgenticNode
+    from datus.tools.semantic_tools.dosi.authoring import validate_dosi_document
+    from datus.tools.semantic_tools.metric_identity import metric_uid
+
+    node = SemanticModelingAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
+    model_dir = real_agent_config.path_manager.semantic_model_path(real_agent_config.current_datasource)
+    model_dir.mkdir(parents=True, exist_ok=True)
+    target = model_dir / "uid_name_validation.yml"
+    document = {
+        "version": "0.2.0.dev0",
+        "semantic_model": [
+            {
+                "name": "uid_name_validation",
+                "datasets": [
+                    {
+                        "name": "orders",
+                        "source": "orders",
+                        "fields": [
+                            {
+                                "name": "amount",
+                                "expression": {"dialects": [{"dialect": "ANSI_SQL", "expression": "amount"}]},
+                            }
+                        ],
+                    }
+                ],
+                "metrics": [
+                    {
+                        "name": name,
+                        "expression": {"dialects": [{"dialect": "ANSI_SQL", "expression": "SUM(orders.amount)"}]},
+                    }
+                    for name in ("revenue", second_name)
+                ],
+            }
+        ],
+    }
+    # Native Dosi accepts both names; the host also needs the KB's uniqueness rule.
+    validate_dosi_document(document)
+    target.write_text(yaml.safe_dump(document, sort_keys=False))
+    original = target.read_bytes()
+    node.osi_target_state.select(
+        {
+            "semantic_model_name": "uid_name_validation",
+            "semantic_model_file": str(target),
+            "absolute_path": str(target.resolve()),
+            "artifact_sha256": hashlib.sha256(original).hexdigest(),
+        },
+        mode="bound",
+    )
+    if second_name == "REVENUE":
+        with patch.object(node.generation_tools, "sync_osi_to_db") as sync:
+            with pytest.raises(ValueError, match="Metric name conflict"):
+                node._finalize_selected_osi_artifact()
+            sync.assert_not_called()
+        assert target.read_bytes() == original
+        assert not node.osi_target_state.touched_metric_names
+        assert not node.osi_target_state.artifact_snapshot_path
+        assert not node.generation_tools.metric_rag.list_artifact_rows(str(target))
+    else:
+        assert node._finalize_selected_osi_artifact() == str(target)
+        metrics = yaml.safe_load(target.read_bytes())["semantic_model"][0]["metrics"]
+        identities = {metric["name"]: metric_uid(metric) for metric in metrics}
+        assert len(set(identities.values())) == 2
+        assert all(identities.values())
+        kb_rows = node.generation_tools.metric_rag.list_artifact_rows(str(target))
+        assert {row["name"]: row["uid"] for row in kb_rows} == identities

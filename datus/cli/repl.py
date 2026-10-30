@@ -101,6 +101,7 @@ DATUS_BANNER_TEXT = (
     "╚═════╝  ╚═╝  ╚═╝    ╚═╝     ╚═════╝  ╚══════╝"
 )
 _BANNER_MIN_WIDTH = 60
+_CLI_SHUTDOWN_TIMEOUT = 5.0
 
 
 def _call_with_timeout(fn, timeout_seconds: float, description: str):
@@ -210,6 +211,7 @@ class DatusCLI:
         self.agent = None
         self.agent_initializing = False
         self.agent_ready = False
+        self._closed = False
         self._workflow_runner: WorkflowRunner | None = None
         self.startup_warnings: List[str] = []
 
@@ -1128,9 +1130,56 @@ class DatusCLI:
 
     def run(self):
         """Run the REPL loop."""
-        if self._use_tui and self.tui_app is not None:
-            return self._run_tui()
-        return self._run_prompt_session()
+        try:
+            if self._use_tui and self.tui_app is not None:
+                return self._run_tui()
+            return self._run_prompt_session()
+        finally:
+            self.close()
+
+    def close(self) -> None:
+        """Stop CLI-owned background work before releasing its DB connection."""
+        if getattr(self, "_closed", False):
+            return
+        self._closed = True
+        self.agent_ready = False
+        self.agent_initializing = False
+        bg_sync = getattr(self, "bg_sync", None)
+        if bg_sync is not None:
+            bg_sync.shutdown()
+
+        loop = getattr(self, "_bg_loop", None)
+        thread = getattr(self, "_bg_loop_thread", None)
+        if loop is not None and loop.is_running():
+
+            async def drain_background() -> None:
+                tasks = [task for task in asyncio.all_tasks(loop) if task is not asyncio.current_task()]
+                for task in tasks:
+                    task.cancel()
+                await asyncio.gather(*tasks, return_exceptions=True)
+                await loop.shutdown_asyncgens()
+                # Cancelling to_thread/run_in_executor does not stop its worker.
+                # Join those workers before closing connections they may use.
+                await asyncio.wait_for(loop.shutdown_default_executor(), timeout=_CLI_SHUTDOWN_TIMEOUT)
+
+            shutdown = asyncio.run_coroutine_threadsafe(drain_background(), loop)
+            try:
+                shutdown.result(timeout=_CLI_SHUTDOWN_TIMEOUT + 1)
+            except TimeoutError:
+                logger.warning("CLI background shutdown timed out; leaving the shared DB connection open")
+                return
+            finally:
+                loop.call_soon_threadsafe(loop.stop)
+                if thread is not None:
+                    thread.join(timeout=1)
+                if not loop.is_running():
+                    loop.close()
+
+        if self.db_connector:
+            try:
+                self.db_connector.close()
+            except Exception as exc:
+                logger.warning("Database connection close failed: %s", exc)
 
     def _run_prompt_session(self):
         """Classic ``PromptSession`` main loop (used for non-TTY fallback)."""
@@ -1221,7 +1270,7 @@ class DatusCLI:
         and carry the caller's ContextVar snapshot across execution units,
         which the previous naked-``threading.Thread`` approach did not do.
         """
-        if self.agent_initializing or self.agent_ready:
+        if self._closed or self.agent_initializing or self.agent_ready:
             return
 
         self.agent_initializing = True
@@ -1324,6 +1373,8 @@ class DatusCLI:
         """Background function that initializes the agent (runs inside the
         background loop's executor)."""
         try:
+            if self._closed:
+                return
             # Create a mock args object based on CLI args
             from argparse import Namespace
 
@@ -1342,11 +1393,16 @@ class DatusCLI:
 
             self.agent = Agent(agent_args, self.agent_config)
 
+            if self._closed:
+                return
+
             self.agent_ready = True
             self.agent_initializing = False
 
             self.agent_commands.update_agent_reference()
             self._pre_load_storage()
+            if self._closed:
+                return
             self._workflow_runner = self._create_workflow_runner()
             self._maybe_schedule_startup_sync()
             self._warm_bang_node()
@@ -1923,6 +1979,7 @@ class DatusCLI:
         import time
 
         from datus.cli.manual_exec import build_sql_error_payload, build_sql_message_payload, build_sql_payload
+        from datus.utils.sql_utils import validate_adapter_sql_analysis
 
         logger.debug(f"Executing SQL query: '{sql}'")
         sql_action = ActionHistory.create_action(
@@ -1946,6 +2003,7 @@ class DatusCLI:
                 )
                 return None
 
+            validate_adapter_sql_analysis(sql, getattr(self.db_connector, "dialect", "") or "")
             start_time = time.time()
             result = self.db_connector.execute(input_params={"sql_query": sql}, result_format="arrow")
             exec_time = time.time() - start_time
@@ -2244,15 +2302,7 @@ class DatusCLI:
         worker thread — ``sys.exit`` would only kill the worker while the main
         prompt_toolkit Application kept running.
         """
-        if self.db_connector:
-            try:
-                # Close the connection
-                self.db_connector.close()
-            except Exception as e:
-                logger.warning(f"Database connection closed failed, reason:{e}")
-        bg_sync = getattr(self, "bg_sync", None)
-        if bg_sync is not None:
-            bg_sync.shutdown()
+        self.close()
         return EXIT_SENTINEL
 
     def _cmd_profile(self, args: str) -> None:

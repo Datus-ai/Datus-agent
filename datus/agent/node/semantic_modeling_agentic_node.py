@@ -71,7 +71,6 @@ class SemanticModelingAgenticNode(SemanticAuthoringAgenticNode):
 
     NODE_NAME = "semantic_modeling"
     INCLUDE_OSI_CORE_SPEC = True
-    COMPACT_SOURCE_INSPECTION = True
     result_class = SemanticModelingNodeResult
 
     def __init__(
@@ -107,21 +106,32 @@ class SemanticModelingAgenticNode(SemanticAuthoringAgenticNode):
 
         self.tools = []
         self._setup_osi_target_tools()
-
         self._setup_db_tools(expose_tools=False)
         if self.db_func_tool is not None:
             self.tools.extend(
                 tool for tool in self.db_func_tool.available_tools() if tool.name in _SEMANTIC_READ_ONLY_DB_TOOLS
             )
-        self._setup_semantic_discovery_tools()
         self._setup_generation_tools()
         self._setup_filesystem_tools()
         self._setup_semantic_plan_file_tool()
         self._setup_semantic_tools()
+        if self.authoring_scope == "full":
+            self._setup_semantic_verification_tools()
         if self.execution_mode == "interactive":
             self._setup_ask_user_tool()
 
         logger.info("Setup %s tools for %s: %s", len(self.tools), self.NODE_NAME, [tool.name for tool in self.tools])
+
+    def _setup_semantic_verification_tools(self):
+        from datus.tools.func_tool.semantic_verification_tools import SemanticVerificationTools
+
+        self.semantic_verification_tools = SemanticVerificationTools(
+            self.db_func_tool,
+            self.semantic_tools,
+            self.generation_evidence,
+            lambda: self.osi_target_state.selected_path,
+        )
+        self.tools.extend(self.semantic_verification_tools.available_tools())
 
     async def _before_stream(self, ctx: StreamRunContext) -> None:
         await super()._before_stream(ctx)
@@ -184,7 +194,16 @@ class SemanticModelingAgenticNode(SemanticAuthoringAgenticNode):
         fact_tables: Optional[List[str]] = None,
         dimension_tables: Optional[List[str]] = None,
     ) -> FuncToolResult:
-        """Plan a reused or new target only after checking existing models."""
+        """Select a reused or new target after checking existing models.
+
+        Success selects the target for this run; continue authoring without calling bind.
+
+        Args:
+            semantic_model_name: Exact existing name to reuse/repair, or the new model name.
+            business_domain: Business domain used to find a suitable existing model.
+            fact_tables: Physical fact tables needed by the requested outputs.
+            dimension_tables: Physical dimension tables needed by the requested outputs.
+        """
         required = self._existing_models_check_required()
         if required is not None:
             return required
@@ -203,7 +222,12 @@ class SemanticModelingAgenticNode(SemanticAuthoringAgenticNode):
         semantic_model_file: str = "",
         semantic_model_name: str = "",
     ) -> FuncToolResult:
-        """Bind an existing target only after checking existing models."""
+        """Select an existing target after checking existing models; select only once.
+
+        Args:
+            semantic_model_file: Exact existing model path. Supply this or semantic_model_name.
+            semantic_model_name: Exact existing name; when both selectors are supplied they must agree.
+        """
         required = self._existing_models_check_required()
         if required is not None:
             return required
@@ -247,7 +271,7 @@ class SemanticModelingAgenticNode(SemanticAuthoringAgenticNode):
             logger.error("Failed to setup semantic-modeling filesystem tools: %s", exc)
 
     def _setup_semantic_plan_file_tool(self) -> None:
-        """Allow the optional planning skill to persist a plan outside the model file."""
+        """Expose plan persistence for optional planning workflows."""
         from datus.tools.func_tool.semantic_plan_file_tools import SemanticPlanFileTools
 
         # Semantic models are authored under project_root even when a VS Code
@@ -371,6 +395,7 @@ class SemanticModelingAgenticNode(SemanticAuthoringAgenticNode):
                 "semantic_model_required",
                 "semantic_model_selection_required",
                 "semantic_model_target_invalid",
+                "semantic_model_inline_in_mapping",
             }:
                 raise RuntimeError("status='blocked' requires a supported semantic-model blocker_code.")
             if self._target_was_mutated():
@@ -395,6 +420,9 @@ class SemanticModelingAgenticNode(SemanticAuthoringAgenticNode):
             status=status,
             blocker_code=blocker_code if status == "blocked" else None,
             skip_reason=skip_reason if status == "skipped" else None,
+            business_validation=self.generation_evidence.business_verification_summary(
+                self.osi_target_state.selected_path or ""
+            ),
         )
 
     def _target_was_mutated(self) -> bool:
@@ -468,6 +496,10 @@ class SemanticModelingAgenticNode(SemanticAuthoringAgenticNode):
     def _finalize_selected_osi_artifact(self) -> str:
         """Validate and fully reconcile one target YAML before returning success."""
         semantic_model_file, resolved, model_name = self._selected_osi_artifact()
+        metric_uids = self.filesystem_func_tool.ensure_metric_uids(resolved)
+        uid_sync_names = self.generation_tools.metric_names_needing_uid_sync(resolved, metric_uids)
+        if uid_sync_names:
+            self.osi_target_state.record_metric_touch(resolved, None, uid_sync_names)
         metric_names = self.generation_tools.extract_osi_metric_names(resolved)
         present_metrics, _ = self.osi_target_state.partition_touched_metrics(metric_names)
         validation_scope = "all" if metric_names else "semantic_model"
@@ -477,7 +509,8 @@ class SemanticModelingAgenticNode(SemanticAuthoringAgenticNode):
             resolved,
             required_scope=validation_scope,
         )
-        if not artifact_validated:
+        metrics_compiled = self.generation_evidence.compiled_validation_passed(resolved, present_metrics)
+        if not artifact_validated or (present_metrics and not metrics_compiled):
             if not getattr(self, "semantic_tools", None):
                 raise RuntimeError(
                     "The selected semantic model needs validation, but validate_semantic is unavailable."

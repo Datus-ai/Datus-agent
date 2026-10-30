@@ -41,6 +41,35 @@ from datus.utils.exceptions import DatusException, ErrorCode
 pytestmark = pytest.mark.ci
 
 
+class TestMCPExecutionConfig:
+    @pytest.mark.parametrize("raw", [True, 8, "invalid", [1], [("max_workers", 2)]])
+    def test_malformed_mcp_execution_shape_uses_defaults(self, tmp_path, raw):
+        config = AgentConfig(
+            nodes={},
+            home=str(tmp_path),
+            target="mock",
+            models={"mock": {"type": "openai", "api_key": "unused", "model": "unused"}},
+            skip_init_dirs=True,
+            mcp_tool_execution=raw,
+        )
+        assert config.mcp_tool_execution == {}
+
+    def test_valid_mcp_execution_mapping_is_copied(self, tmp_path):
+        from collections import UserDict
+
+        raw = UserDict({"max_workers": "2", "max_queue_size": 0})
+        config = AgentConfig(
+            nodes={},
+            home=str(tmp_path),
+            target="mock",
+            models={"mock": {"type": "openai", "api_key": "unused", "model": "unused"}},
+            skip_init_dirs=True,
+            mcp_tool_execution=raw,
+        )
+        raw["max_workers"] = 9
+        assert config.mcp_tool_execution == {"max_workers": "2", "max_queue_size": 0}
+
+
 # ---------------------------------------------------------------------------
 # resolve_env
 # ---------------------------------------------------------------------------
@@ -214,6 +243,45 @@ class TestDbConfigFilterKwargs:
 
 
 class TestDosiDbProfile:
+    @pytest.mark.parametrize("auth", [{"auth_mode": "iam"}, {"secret_ref": "test/database"}])
+    def test_aurora_settings_keep_types_and_are_independent(self, monkeypatch, auth):
+        monkeypatch.setenv("TEST_AWS_REGION", "us-east-1")
+        cfg = DbConfig.filter_kwargs(
+            DbConfig,
+            {
+                "type": "postgresql",
+                "host": "writer.example",
+                "database": "configured_db",
+                "aurora": True,
+                "aws": {"region": "${TEST_AWS_REGION}", "profile": "test"},
+                "ssl_verify_cert": False,
+                "secret_cache_ttl_seconds": 300,
+                **auth,
+            },
+        )
+
+        profile = _db_config_to_dosi_profile(cfg)
+        result = _apply_runtime_db_context_to_dosi_profile(profile, {"database": "runtime_db"})
+
+        assert result["aurora"] is True
+        assert result["ssl_verify_cert"] is False
+        assert result["secret_cache_ttl_seconds"] == 300
+        assert isinstance(result["secret_cache_ttl_seconds"], int)
+        assert result["aws"] == {"region": "us-east-1", "profile": "test"}
+        assert result["database"] == "runtime_db"
+        assert profile["database"] == "configured_db"
+        for key, value in auth.items():
+            assert result[key] == value
+        result["aws"]["region"] = "eu-west-1"
+        assert cfg.extra["aws"]["region"] == "us-east-1"
+
+    def test_explicit_fields_win_over_extra(self):
+        cfg = DbConfig(type="mysql", host="configured", extra={"host": "other", "port": 3306})
+        result = _db_config_to_dosi_profile(cfg)
+        assert result["host"] == "configured"
+        assert result["port"] == 3306
+        assert "extra" not in result
+
     def test_db_config_conversion_preserves_catalog(self):
         cfg = DbConfig(type="trino", host="trino-host", catalog="hive", database="college_exam")
 

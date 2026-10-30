@@ -9,13 +9,14 @@ This document covers the core subagents:
 1. **[gen_sql_summary](#gen_sql_summary)** — Summarizes and classifies SQL queries
 2. **[semantic_modeling](semantic_modeling.md)** — Authors Dosi semantic models and metrics
 3. **[ask_metrics](ask_metrics.md)** — Answers KPI, trend, grouped metric, and attribution questions from existing semantic metrics
-4. **[explore](#explore)** — Read-only data exploration and context gathering
-5. **[gen_sql](#gen_sql)** — Specialized SQL generation with deep expertise
-6. **[gen_report](#gen_report)** — Flexible report generation with configurable tools
-7. **[gen_table](gen_table.md)** — Database table creation via CTAS or natural language
-8. **[gen_job](gen_job.md)** — Data pipeline execution (single-database ETL AND cross-database migration with reconciliation)
-9. **[gen_skill](#gen_skill)** — Skill creation and optimization
-10. **[gen_visual_report](gen_visual_report.md)** — Self-contained visual report under `reports/<slug>/`
+4. **[ontology_analyst](ontology_analyst.md)** — Answers metric and record questions over a datasource's Apache Ossie ontology (concepts, roles, value domains)
+5. **[explore](#explore)** — Read-only data exploration and context gathering
+6. **[gen_sql](#gen_sql)** — Specialized SQL generation with deep expertise
+7. **[gen_report](#gen_report)** — Flexible report generation with configurable tools
+8. **[gen_table](gen_table.md)** — Database table creation via CTAS or natural language
+9. **[gen_job](gen_job.md)** — Data pipeline execution (single-database ETL AND cross-database migration with reconciliation)
+10. **[gen_skill](#gen_skill)** — Skill creation and optimization
+11. **[gen_visual_report](gen_visual_report.md)** — Self-contained visual report under `reports/<slug>/`
 
 Airflow scheduling and external BI authoring are handled directly by the main
 agent through installed plugins. They are not built-in or custom subagents.
@@ -39,6 +40,9 @@ agent:
     ask_metrics:
       model: claude     # Optional: defaults to configured model
       max_turns: 12     # Optional: defaults to 12
+
+    ontology_analyst:
+      model: claude
 
     gen_sql_summary:
       model: deepseek   # Optional: defaults to configured model
@@ -471,6 +475,7 @@ compatibility only. See [BI Dashboard Node (Legacy)](gen_dashboard.md) and
 | `gen_sql_summary` | Summarize and classify SQL queries | YAML (SQL summary) | `/data/reference_sql` | Subject tree categorization, auto context retrieval |
 | `semantic_modeling` | Author semantic models and metrics | Dosi YAML | `/data/semantic_models` | Unified validation and full Knowledge Base reconcile |
 | `ask_metrics` | Answer existing metric questions | Markdown report | N/A | KPI values, trends, grouped results, attribution, no raw SQL fallback |
+| `ontology_analyst` | Answer questions over an ontology | Markdown report | N/A | Concept catalog, role-aware paths, value-domain checks, record queries, no raw SQL fallback |
 | `explore` | Read-only data exploration | Structured context | N/A | Strictly read-only, fast turn budget, three exploration directions |
 | `gen_sql` | Generate optimized SQL | SQL query / SQL file | N/A | Deep SQL expertise, auto-validation, file-based output |
 | `gen_report` | Flexible report generation | Structured report | N/A | Configurable tools, extensible, custom report subagents |

@@ -8,12 +8,35 @@ from __future__ import annotations
 
 import json
 import re
+from contextlib import contextmanager
+from dataclasses import dataclass
 from pathlib import Path
-from threading import Lock
-from uuid import uuid4
+from threading import RLock
+from typing import Any
+from uuid import NAMESPACE_URL, uuid5
 
 from datus.storage.semantic_model.artifact_file import atomic_write_text, path_mutation_lock
-from datus.tools.func_tool.base import FuncToolResult
+from datus.tools.func_tool.base import FuncToolResult, tool_schema
+
+try:
+    import fcntl
+except ImportError:  # pragma: no cover - Windows keeps the in-process lock
+    fcntl = None
+
+
+@contextmanager
+def _plan_mutation_lock(target: Path):
+    """Keep baseline comparison and replacement together across API workers."""
+    with path_mutation_lock(target):
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with target.with_name(f".{target.name}.lock").open("a+", encoding="utf-8") as lock_file:
+            if fcntl is not None:
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                if fcntl is not None:
+                    fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
 
 
 def _reject_non_finite_number(value: str):
@@ -247,6 +270,19 @@ def _plan_graph(plan: dict, model_name: str, plan_id: str, revision: int) -> dic
     }
 
 
+@dataclass(frozen=True)
+class PreparedSemanticPlan:
+    model_name: str
+    path: str
+    old_text: str | None
+    new_text: str
+    revision: int
+    counts: dict[str, int]
+
+    def preview(self) -> dict[str, Any]:
+        return {"filePath": self.path, "oldText": self.old_text or "", "newText": self.new_text}
+
+
 class SemanticPlanFileTools:
     """Store a reviewable plan graph without approving its design."""
 
@@ -257,63 +293,161 @@ class SemanticPlanFileTools:
         self.project_root = Path(project_root).resolve()
         self._plan_ids: dict[str, str] = {}
         self._revisions: dict[str, int] = {}
-        self._write_lock = Lock()
+        self._write_lock = RLock()
 
     def available_tools(self):
         from datus.tools.func_tool import trans_to_function_tool
 
         return [trans_to_function_tool(self.write_semantic_model_plan_file)]
 
-    def write_semantic_model_plan_file(self, model_name: str, plan_json: str) -> FuncToolResult:
+    @tool_schema(strict_mode=False)
+    def write_semantic_model_plan_file(self, model_name: str, plan_json: dict[str, Any] | str) -> FuncToolResult:
         """Convert planning JSON to a graph and write it without changing the model.
 
-        Use with a planning workflow that prepares the JSON for human review.
+        Optional human-review artifact, not a prerequisite for authoring or target
+        selection. The plan uses the format below, not OSI dataset/metric objects.
+        Saving checks its structure and references; it does not validate the model,
+        approve a source choice or execute a query.
 
         Args:
             model_name: Selected semantic-model name; revisions reuse its plan directory.
-            plan_json: Flat JSON object following the loaded planning skill's framework.
+            plan_json: Structured object; legacy JSON-encoded objects also work.
+                Only these top-level keys are accepted (all optional):
+                summary (string), datasets, field_decisions, relationships, metrics
+                (arrays of objects, default empty). Each dataset, relationship and
+                metric requires a unique nonempty name within its array.
+                Dataset: name, optional action (create/update/reuse), source_kind
+                (physical/query). For physical use source as the table name; for
+                query use source_tables as an array of table names and omit source
+                entirely (no SELECT in a plan). Create/update with physical/query
+                source_kind requires sources.
+                Record query rowset_semantics and native_gap or user_requirement.
+                Field decision: dataset and field are required; dataset must name
+                a planned dataset. Optional role, group_by and reason are retained.
+                Relationship: name, from_dataset, to_dataset are required; both
+                datasets must be planned. Optional from_fields/to_fields are arrays
+                of field names in matching order; action and reason are retained.
+                Metric: name, optional dataset (a planned dataset), kind
+                (atomic/parameterized/filter/compose/window), depends_on (array of
+                planned metric names, no duplicates), action, role and reason.
+                Include reused datasets/metrics when other objects reference them.
+
+        Returns:
+            Workspace-relative JSON graph path, revision and object counts, or a
+            validation/write error. The semantic model file is never changed.
         """
+        # CLI and non-reviewed API calls still execute directly. The web review
+        # adapter calls prepare/commit separately and never writes before Accept.
+        with self._write_lock:
+            prepared = self.prepare(model_name, plan_json)
+            if isinstance(prepared, FuncToolResult):
+                return prepared
+            result = self.commit(prepared)
+            if result.success:
+                result.result["review_status"] = "applied"
+            return result
+
+    def _existing_plan_id(self, model_name: str) -> str | None:
+        parent = self.project_root / ".datus/semantic-model-plans"
+        if not parent.resolve().is_relative_to(self.project_root):
+            return None
+        candidates = []
+        for path in parent.glob("*/semantic-model-plan.json"):
+            if not path.resolve().is_relative_to(self.project_root):
+                continue
+            try:
+                graph = json.loads(path.read_text(encoding="utf-8"))
+                if graph.get("model") == model_name and graph.get("plan", {}).get("id") == path.parent.name:
+                    candidates.append((path.stat().st_mtime_ns, path.parent.name))
+            except (OSError, ValueError, AttributeError):
+                continue
+        return max(candidates)[1] if candidates else None
+
+    @staticmethod
+    def _model_plan_id(model_name: str) -> str:
+        # The containing project directory provides project isolation. Keeping
+        # the ID independent of absolute mount paths also coordinates workers
+        # that mount the same project at different locations.
+        return uuid5(NAMESPACE_URL, f"datus:semantic-model-plan:{model_name}").hex
+
+    def prepare(self, model_name: str, plan_json: dict[str, Any] | str) -> PreparedSemanticPlan | FuncToolResult:
+        """Validate and freeze a proposal without changing its on-disk baseline."""
         if not isinstance(model_name, str) or not self._MODEL_NAME.fullmatch(model_name):
             return FuncToolResult(success=0, error="model_name must be a simple semantic-model name")
         try:
-            plan = json.loads(plan_json, parse_constant=_reject_non_finite_number)
-        except (TypeError, ValueError) as exc:
-            return FuncToolResult(success=0, error=f"plan_json must be valid JSON: {exc}")
-        if not isinstance(plan, dict):
-            return FuncToolResult(success=0, error="plan_json must be a JSON object")
-        try:
+            plan = (
+                json.loads(plan_json, parse_constant=_reject_non_finite_number)
+                if isinstance(plan_json, str)
+                else plan_json
+            )
+            if not isinstance(plan, dict):
+                return FuncToolResult(success=0, error="plan_json must be a JSON object")
             json.dumps(plan, allow_nan=False)
         except (TypeError, ValueError) as exc:
             return FuncToolResult(success=0, error=f"plan_json must be valid JSON: {exc}")
+
         with self._write_lock:
-            plan_id = self._plan_ids.get(model_name)
-            if plan_id is None:
-                plan_id = uuid4().hex
-            revision = self._revisions.get(model_name, 0) + 1
-            try:
-                graph = _plan_graph(plan, model_name, plan_id, revision)
-                content = json.dumps(graph, ensure_ascii=False, indent=2, allow_nan=False) + "\n"
-            except (TypeError, ValueError) as exc:
-                return FuncToolResult(success=0, error=f"Invalid semantic plan: {exc}")
+            plan_id = (
+                self._existing_plan_id(model_name) or self._plan_ids.get(model_name) or self._model_plan_id(model_name)
+            )
             relative_path = Path(".datus/semantic-model-plans") / plan_id / "semantic-model-plan.json"
             target = self.project_root / relative_path
             if not target.resolve(strict=False).is_relative_to(self.project_root):
                 return FuncToolResult(success=0, error="Semantic plan path must stay inside the project workspace")
             try:
-                with path_mutation_lock(target):
-                    atomic_write_text(target, content)
-            except OSError as exc:
-                return FuncToolResult(success=0, error=f"Could not write semantic plan: {exc}")
+                old_text = target.read_text(encoding="utf-8") if target.exists() else None
+                previous = json.loads(old_text).get("plan", {}).get("revision", 0) if old_text else 0
+                revision = max(previous, self._revisions.get(model_name, 0)) + 1
+                graph = _plan_graph(plan, model_name, plan_id, revision)
+                content = json.dumps(graph, ensure_ascii=False, indent=2, allow_nan=False) + "\n"
+            except (OSError, TypeError, ValueError, AttributeError) as exc:
+                return FuncToolResult(success=0, error=f"Invalid semantic plan: {exc}")
+            # Reserve the identity even if this proposal is rejected, so feedback
+            # revises the same plan rather than minting another directory.
             self._plan_ids[model_name] = plan_id
             self._revisions[model_name] = revision
+            return PreparedSemanticPlan(
+                model_name,
+                relative_path.as_posix(),
+                old_text,
+                content,
+                revision,
+                {
+                    "datasets": len(plan.get("datasets", [])),
+                    "relationships": len(plan.get("relationships", [])),
+                    "metrics": len(plan.get("metrics", [])),
+                },
+            )
+
+    def commit(self, prepared: PreparedSemanticPlan) -> FuncToolResult:
+        """Commit exactly the reviewed content, rejecting a stale baseline."""
+        target = self.project_root / prepared.path
+        with self._write_lock:
+            if not target.resolve(strict=False).is_relative_to(self.project_root):
+                return FuncToolResult(success=0, error="Semantic plan path must stay inside the project workspace")
+            try:
+                model_lock = (
+                    self.project_root
+                    / ".datus/semantic-model-plans"
+                    / f"{self._model_plan_id(prepared.model_name)}.model"
+                )
+                if not model_lock.resolve(strict=False).is_relative_to(self.project_root):
+                    return FuncToolResult(success=0, error="Semantic plan path must stay inside the project workspace")
+                with _plan_mutation_lock(model_lock), _plan_mutation_lock(target):
+                    accepted_id = self._existing_plan_id(prepared.model_name)
+                    if accepted_id is not None and accepted_id != target.parent.name:
+                        return FuncToolResult(
+                            success=0, error="Plan changed during review. Submit a fresh proposal for review."
+                        )
+                    current = target.read_text(encoding="utf-8") if target.exists() else None
+                    if current != prepared.old_text:
+                        return FuncToolResult(
+                            success=0, error="Plan changed during review. Submit a fresh proposal for review."
+                        )
+                    atomic_write_text(target, prepared.new_text)
+            except OSError as exc:
+                return FuncToolResult(success=0, error=f"Could not write semantic plan: {exc}")
+            self._revisions[prepared.model_name] = max(self._revisions.get(prepared.model_name, 0), prepared.revision)
             return FuncToolResult(
-                result={
-                    "path": relative_path.as_posix(),
-                    "revision": revision,
-                    "counts": {
-                        "datasets": len(plan.get("datasets", [])),
-                        "relationships": len(plan.get("relationships", [])),
-                        "metrics": len(plan.get("metrics", [])),
-                    },
-                }
+                result={"path": prepared.path, "revision": prepared.revision, "counts": prepared.counts}
             )

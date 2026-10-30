@@ -88,6 +88,9 @@ class FakeAgenticNode(AgenticNode):
         self.execution_mode = execution_mode
         self.input: Optional[FakeInput] = None
         self.tools: List[Any] = []
+        from datus.tools.registry.tool_registry import ToolRegistry
+
+        self.tool_registry = ToolRegistry()
         self.mcp_servers: dict = {}
         self.actions: List[ActionHistory] = []
         self.result: Optional[FakeResult] = None
@@ -95,6 +98,7 @@ class FakeAgenticNode(AgenticNode):
         self.interrupt_controller = _NoopInterrupt()
         self.permission_hooks = None
         self.skill_manager = None
+        self.agent_config = None
         self.before_calls: List[str] = []
         self._pinned_model = model
 
@@ -225,7 +229,6 @@ class TestTemplateMethodHappyPath:
         ahm = ActionHistoryManager()
         actions = [a async for a in node.execute_stream(ahm)]
 
-        assert node.result is not None
         assert node.result.response == "hello world"
         assert actions[-1].output["response"] == "hello world"
 
@@ -244,7 +247,6 @@ class TestTemplateMethodHappyPath:
 
         # Fake's _build_success_result returns ctx.response_content directly;
         # thinking-filtered means it stays empty.
-        assert node.result is not None
         assert node.result.response == ""
 
 
@@ -342,7 +344,6 @@ class TestErrorPath:
 
         assert emitted[-1].action_type == "error"
         assert emitted[-1].status == ActionStatus.FAILED
-        assert node.result is not None
         assert node.result.success is False
         assert "model exploded" in (node.result.error or "")
         # Error response is the unified empty string, not a node-specific apology.

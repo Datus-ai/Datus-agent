@@ -3,6 +3,7 @@
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
 # -*- coding: utf-8 -*-
+import asyncio
 import csv
 import io
 import json
@@ -15,7 +16,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Set, Union
 
 from agents import Tool
-from datus_db_core import BaseSqlConnector
+from datus_db_core import BaseSqlConnector, connector_registry
 
 from datus.configuration.agent_config import AgentConfig
 from datus.schemas.agent_models import SubAgentConfig
@@ -58,6 +59,9 @@ from datus.utils.mcp_decorators import mcp_tool, mcp_tool_class
 from datus.utils.sql_utils import parse_dialect, parse_table_name_parts
 
 logger = get_logger(__name__)
+
+# Bounds SQL tool waits after approval, independently of driver/server deadlines.
+SQL_TOOL_TIMEOUT_SECONDS = 300.0
 
 
 def _parse_profile_text(text: str):
@@ -1114,8 +1118,26 @@ class DBFuncTool:
         if not table_names:
             return []  # can't parse → allow (SHOW/DESCRIBE/EXPLAIN have no tables)
         out_of_scope: List[str] = []
+        analyzer_getter = getattr(connector_registry, "get_sql_analyzer", None)
+        native_analysis = callable(analyzer_getter) and analyzer_getter(dialect) is not None
         for name in table_names:
             coordinate = self._build_table_coordinate(raw_name=name, connector=routed_connector)
+            if native_analysis:
+                candidates = [pattern for pattern in self._scoped_patterns if pattern.matches(coordinate)]
+                unresolved = [
+                    field for field in self._field_order if field != "table" and not getattr(coordinate, field)
+                ]
+                if candidates and not any(
+                    all(getattr(pattern, field) in ("", "*", "%") for field in unresolved) for pattern in candidates
+                ):
+                    field = next(
+                        field
+                        for field in unresolved
+                        if any(getattr(pattern, field) not in ("", "*", "%") for pattern in candidates)
+                    )
+                    raise ValueError(
+                        f"Unresolved {field} in SQL scope analysis; qualify the table or configure context"
+                    )
             if not self._table_matches_scope(coordinate):
                 out_of_scope.append(name)
         return out_of_scope
@@ -1206,7 +1228,46 @@ class DBFuncTool:
         return excluded
 
     def to_function_tool(self, bound_method: Callable) -> Tool:
-        return trans_to_function_tool(bound_method, excluded_params=self._excluded_tool_params())
+        excluded = self._excluded_tool_params()
+        read_query = bound_method.__name__ == "execute_sql" and self.read_only
+        if read_query:
+            excluded.update({"min_rows", "max_rows"})
+        tool = trans_to_function_tool(bound_method, excluded_params=excluded)
+        if bound_method.__name__ == "execute_sql":
+            timeout = SQL_TOOL_TIMEOUT_SECONDS
+            invoke = tool.on_invoke_tool
+
+            async def invoke_sql(context, arguments):
+                deadline = asyncio.timeout(timeout)
+                try:
+                    async with deadline:
+                        return await invoke(context, arguments)
+                except TimeoutError:
+                    if not deadline.expired():
+                        raise
+                    # Cancelling to_thread stops waiting, not the database
+                    # driver. A mutation may still finish; never imply it is
+                    # safe to repeat, or claim that the server killed it.
+                    if context is not None:
+                        context._datus_tool_status = "timeout"
+                    return FuncToolResult(
+                        success=0,
+                        error=(
+                            f"SQL tool timed out after {timeout:g} seconds. "
+                            "Database execution may still be running. "
+                            "Do not retry write statements without checking their outcome."
+                        ),
+                    ).model_dump(mode="json")
+
+            tool.on_invoke_tool = invoke_sql
+        if read_query:
+            tool.description = (
+                "Execute one read-only SQL statement (SELECT, SHOW, DESCRIBE or EXPLAIN). "
+                "Accepts SQL text or a readable .sql file containing one statement. "
+                "Returns compressed query rows; success=0 includes the query error. "
+                "Use datasource and database only to select the connection."
+            )
+        return tool
 
     def available_tools(self) -> List[Tool]:
         bound_tools = []
@@ -1430,6 +1491,7 @@ class DBFuncTool:
     ) -> FuncToolResult:
         """
         Return table-like objects (tables, views, materialized views) visible to the connector.
+
         Args:
             catalog: Optional catalog filter.
             database: Optional database filter.
@@ -2490,6 +2552,9 @@ class DBFuncTool:
                 return guard_error
 
             connector = self._get_connector(datasource, database)
+            analysis_error = self._validate_adapter_sql_analysis(sql, connector)
+            if analysis_error is not None:
+                return analysis_error
             sql_type = parse_sql_type(sql, connector.dialect)
 
             if sql_type in (SQLType.SELECT, SQLType.METADATA_SHOW, SQLType.EXPLAIN):
@@ -2552,7 +2617,9 @@ class DBFuncTool:
         except Exception as e:
             return FuncToolResult(success=0, error=str(e))
 
-    def read_query(self, sql: str, datasource: Optional[str] = "", database: Optional[str] = "") -> FuncToolResult:
+    def read_query(
+        self, sql: str, datasource: Optional[str] = "", database: Optional[str] = "", *, compress: bool = True
+    ) -> FuncToolResult:
         """
         Execute a read-only SQL query and return the result rows (optionally compressed).
 
@@ -2568,6 +2635,9 @@ class DBFuncTool:
             datasource: Optional datasource name for multi-datasource scenarios.
             database: Optional physical database to run against. Required to target a specific
                 database of a multi-database datasource (e.g. one file of a sqlite/duckdb glob).
+            compress: Compress rows for presentation. Internal result comparisons use False;
+                read policies still apply, but transformed results cannot serve as a
+                complete calculation reference and are refused.
 
         Returns:
             FuncToolResult with result=self.compressor.compress(rows) when successful. On failure success=0 with the
@@ -2601,9 +2671,12 @@ class DBFuncTool:
                 connector,
                 datasource=datasource,
                 result_format=result_format,
+                require_unmodified=not compress,
             )
             if result.success:
-                return FuncToolResult(result=self.compressor.compress(result.sql_return))
+                return FuncToolResult(
+                    result=self.compressor.compress(result.sql_return) if compress else result.sql_return
+                )
             return FuncToolResult(success=0, error=result.error)
         except Exception as e:
             return FuncToolResult(success=0, error=str(e))
@@ -2616,6 +2689,7 @@ class DBFuncTool:
         datasource: Optional[str] = "",
         result_format: str = "list",
         policy_context: Optional[Dict[str, Any]] = None,
+        require_unmodified: bool = False,
     ) -> ExecuteSQLResult:
         """Run a read-only query through the shared read guardrails.
 
@@ -2664,6 +2738,19 @@ class DBFuncTool:
                 sql_query=sql,
             )
         if enforced_sql != sql:
+            if require_unmodified:
+                return ExecuteSQLResult(
+                    success=False,
+                    error="Read policy rewrote the reference SQL; complete calculation verification is unavailable.",
+                    sql_query=enforced_sql,
+                )
+            analyzer_getter = getattr(connector_registry, "get_sql_analyzer", None)
+            if callable(analyzer_getter) and analyzer_getter(connector.dialect) is not None:
+                return ExecuteSQLResult(
+                    success=False,
+                    error="SQL policy rewriting is unsupported for this adapter's limited SQL analysis path.",
+                    sql_query=sql,
+                )
             # A policy rewrite (e.g. an injected LIMIT) must still be a single
             # read-only statement — re-validate so it can't smuggle in DML/DDL.
             validation_error, _ = self._validate_read_sql(enforced_sql, connector)
@@ -2684,6 +2771,14 @@ class DBFuncTool:
                 raise DatusException(
                     ErrorCode.POLICY_DENIED,
                     message=result_decision.reason or "Policy denied the query result",
+                )
+            if require_unmodified and (
+                result_decision.applied_policies or result_decision.result is not result.sql_return
+            ):
+                return ExecuteSQLResult(
+                    success=False,
+                    error="Read policy transformed the reference result; complete calculation verification is unavailable.",
+                    sql_query=enforced_sql,
                 )
             result.sql_return = result_decision.result
             if result_decision.applied_policies:
@@ -2766,6 +2861,17 @@ class DBFuncTool:
             effective_datasource = getattr(services, "default_datasource", "") or ""
         return effective_datasource or "default"
 
+    @staticmethod
+    def _validate_adapter_sql_analysis(sql: str, connector: BaseSqlConnector) -> Optional[FuncToolResult]:
+        """Reject unverified adapter SQL before any read/write/DDL dispatch."""
+        from datus.utils.sql_utils import validate_adapter_sql_analysis
+
+        try:
+            validate_adapter_sql_analysis(sql, connector.dialect)
+        except ValueError as error:
+            return FuncToolResult(success=0, error=str(error))
+        return None
+
     def _validate_read_sql(self, sql: str, connector: BaseSqlConnector) -> tuple[Optional[FuncToolResult], SQLType]:
         from datus.utils.sql_utils import (
             READ_ONLY_MULTI_STATEMENT,
@@ -2774,6 +2880,9 @@ class DBFuncTool:
             validate_read_only_sql,
         )
 
+        analysis_error = self._validate_adapter_sql_analysis(sql, connector)
+        if analysis_error is not None:
+            return analysis_error, SQLType.UNKNOWN
         violation, sql_type = validate_read_only_sql(sql, connector.dialect)
         if violation:
             error = {
@@ -2805,7 +2914,10 @@ class DBFuncTool:
             )
             return FuncToolResult(success=0, error=error), sql_type
 
-        out_of_scope = self._check_sql_table_scope(sql, connector)
+        try:
+            out_of_scope = self._check_sql_table_scope(sql, connector)
+        except ValueError as error:
+            return FuncToolResult(success=0, error=str(error)), sql_type
         if out_of_scope:
             return (
                 FuncToolResult(
@@ -2931,6 +3043,9 @@ class DBFuncTool:
         # (CREATE/ALTER/DROP, CREATE DATABASE, TRUNCATE, MERGE, GRANT, ...). The
         # only guard is defense-in-depth: read-only and DML statements have
         # dedicated paths (read_query / execute_write) and must not land here.
+        analysis_error = self._validate_adapter_sql_analysis(cleaned, connector)
+        if analysis_error is not None:
+            return analysis_error
         stmt_type = parse_sql_type(cleaned, connector.dialect)
         if stmt_type in (SQLType.SELECT, SQLType.METADATA_SHOW, SQLType.EXPLAIN):
             return FuncToolResult(
@@ -2943,7 +3058,10 @@ class DBFuncTool:
                 error="DML statements (INSERT/UPDATE/DELETE) must run through the write path.",
             )
 
-        out_of_scope = self._check_sql_table_scope(cleaned, connector)
+        try:
+            out_of_scope = self._check_sql_table_scope(cleaned, connector)
+        except ValueError as error:
+            return FuncToolResult(success=0, error=str(error))
         if out_of_scope:
             return FuncToolResult(
                 success=0,

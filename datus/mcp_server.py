@@ -76,10 +76,13 @@ import argparse
 import asyncio
 import logging
 from collections import OrderedDict
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
-from dataclasses import dataclass
-from typing import Any, Dict, List, Literal, Optional, Set, Union
+from dataclasses import dataclass, field
+from threading import RLock
+from typing import Any, Callable, Dict, List, Literal, Optional, Set, Union
+from weakref import WeakValueDictionary
 
 from mcp.server.fastmcp import FastMCP
 
@@ -96,6 +99,7 @@ from datus.tools.func_tool.reference_template_tools import ReferenceTemplateTool
 from datus.tools.func_tool.semantic_tools import SemanticTools
 from datus.utils.image_content import mcp_image_tool_content
 from datus.utils.loggings import configure_entrypoint_logging, get_logger
+from datus.utils.mcp_execution import MCPToolExecutor
 from datus.utils.multiprocessing_utils import configure_multiprocessing_start_method
 
 # Re-export for external use
@@ -149,6 +153,42 @@ class ToolContext:
     subagent: Optional[str]
     agent_config: AgentConfig
     tools: Dict[str, Any]  # Unified tool storage: {tool_name: tool_instance}
+    _lifetime_lock: Any = field(default_factory=RLock, init=False, repr=False, compare=False)
+    _users: int = field(default=0, init=False, repr=False, compare=False)
+    _retired: bool = field(default=False, init=False, repr=False, compare=False)
+    _closing: bool = field(default=False, init=False, repr=False, compare=False)
+    _cleanup: Optional[Callable] = field(default=None, init=False, repr=False, compare=False)
+    _deferred_close: Optional[Callable] = field(default=None, init=False, repr=False, compare=False)
+
+    def acquire(self) -> None:
+        """Pin this context before a request or submitted worker can use it."""
+        with self._lifetime_lock:
+            if self._closing:
+                raise RuntimeError("Tool context is closed")
+            self._users += 1
+
+    def release(self) -> None:
+        """Release a pin; retired contexts close only after their last user."""
+        with self._lifetime_lock:
+            self._users -= 1
+            cleanup = self._ready_for_cleanup()
+        if cleanup:
+            cleanup(self)
+
+    def retire(self, cleanup: Callable) -> None:
+        """Remove cache ownership while preserving requests and worker jobs."""
+        with self._lifetime_lock:
+            self._retired = True
+            self._cleanup = cleanup
+            ready = self._ready_for_cleanup()
+        if ready:
+            ready(self)
+
+    def _ready_for_cleanup(self) -> Optional[Callable]:
+        if self._retired and self._users == 0 and not self._closing:
+            self._closing = True
+            return self._cleanup
+        return None
 
     # Backward compatibility properties
     @property
@@ -212,6 +252,13 @@ class ToolContext:
 
     def close(self):
         """Release resources held by this context."""
+        if self._deferred_close is not None:
+            self.retire(self._deferred_close)
+            return
+        self._close_tools()
+
+    def _close_tools(self):
+        """Close connectors after the lifetime owner has released all users."""
         for tool_name, tool_instance in list(self.tools.items()):
             if tool_instance:
                 try:
@@ -222,6 +269,171 @@ class ToolContext:
                 except Exception as e:
                     logger.warning(f"Error closing {tool_name} connector: {e}")
         self.tools.clear()
+
+
+class _ContextLifetimes:
+    """Own deferred cleanup for static tools and legacy injected managers.
+
+    Pending asynchronous lookups keep cleanup alive through shutdown, just as
+    context pins keep it alive until submitted workers actually finish.
+    """
+
+    def __init__(self, finalizer: Optional[Callable] = None):
+        self._lock = RLock()
+        self._contexts: Dict[int, ToolContext] = {}
+        self._pending = 0
+        self._closed = False
+        self._finalizer = finalizer
+        self._finalizer_started = False
+        self._finalizer_done = finalizer is None
+        self._pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="datus-mcp-cleanup")
+
+    def begin_lookup(self) -> None:
+        with self._lock:
+            self.check_open()
+            self._pending += 1
+
+    def check_open(self) -> None:
+        with self._lock:
+            if self._closed:
+                raise RuntimeError("Tool context manager is closed")
+
+    def end_lookup(self) -> None:
+        with self._lock:
+            self._pending -= 1
+            self._finish_if_closed()
+
+    def track(self, context: ToolContext, *, pin: bool = False) -> None:
+        with self._lock:
+            self._contexts[id(context)] = context
+            # Legacy managers call close() on eviction; make that call retire
+            # the context without invalidating a request or detached worker.
+            context._deferred_close = self._schedule_close
+            if self._closed:
+                context.close()
+                raise RuntimeError("Tool context manager is closed")
+            if pin:
+                context.acquire()
+
+    def close(self) -> None:
+        with self._lock:
+            self._closed = True
+            self._finish_if_closed()
+
+    def _schedule_close(self, context: ToolContext) -> None:
+        self._pool.submit(self._close_context, context)
+
+    def _close_context(self, context: ToolContext) -> None:
+        try:
+            context._close_tools()
+        finally:
+            with self._lock:
+                self._contexts.pop(id(context), None)
+                self._finish_if_closed()
+
+    def _run_finalizer(self) -> None:
+        try:
+            self._finalizer()
+        except Exception as exc:
+            logger.warning(f"Error closing injected MCP context manager: {exc}")
+        finally:
+            with self._lock:
+                self._finalizer_done = True
+                self._finish_if_closed()
+
+    def _finish_if_closed(self) -> None:
+        if not self._closed or self._pending:
+            return
+        # A legacy lookup may be refreshing a cached context before returning
+        # it to us for pinning. Keep all known contexts alive until it exits.
+        for context in list(self._contexts.values()):
+            context.close()
+        if not self._finalizer_done and not self._finalizer_started:
+            self._finalizer_started = True
+            # No lookup can still mutate the legacy cache when this runs.
+            self._pool.submit(self._run_finalizer)
+        if not self._contexts and self._finalizer_done:
+            self._pool.shutdown(wait=False)
+
+
+@dataclass
+class _LegacyLookupLock:
+    lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    users: int = 0
+
+
+class _LegacyContextManagerAdapter:
+    """Support publication managers whose cache is owned by this server.
+
+    Managers start empty and publish new entries after asynchronous setup,
+    without yielding between cache insertion and return. Cache hits can await
+    policy refresh: their last returned context is pinned before that await.
+    """
+
+    def __init__(self, manager):
+        self._manager = manager
+        self.tool_executor = MCPToolExecutor()
+        self._lifetimes = _ContextLifetimes(manager.close_all)
+        # Keep a non-owning index of returned contexts so a cache hit can be
+        # pinned before the legacy manager awaits policy refresh. Different
+        # keys must not wait for each other's initialization or policy I/O.
+        self._contexts: WeakValueDictionary[tuple[str, Optional[str]], ToolContext] = WeakValueDictionary()
+        self._lookup_locks: Dict[tuple[str, Optional[str]], _LegacyLookupLock] = {}
+        self._lookups: Set[asyncio.Task] = set()
+
+    async def _acquire_context(self, datasource: str, subagent: Optional[str]) -> ToolContext:
+        key = (datasource, subagent or None)
+        lookup = self._lookup_locks.setdefault(key, _LegacyLookupLock())
+        lookup.users += 1
+        try:
+            async with lookup.lock:
+                self._lifetimes.check_open()
+                cached = self._contexts.get(key)
+                if cached is not None:
+                    try:
+                        cached.acquire()
+                    except RuntimeError:
+                        # A completed eviction may still have other references;
+                        # the owning manager will create its replacement.
+                        cached = None
+                try:
+                    context = await self._manager.get_or_create_context(datasource, subagent)
+                    self._lifetimes.track(context, pin=True)
+                    self._contexts[key] = context
+                    return context
+                finally:
+                    if cached is not None:
+                        cached.release()
+        finally:
+            lookup.users -= 1
+            if not lookup.users:
+                del self._lookup_locks[key]
+            self._lifetimes.end_lookup()
+
+    @asynccontextmanager
+    async def use_context(self, datasource: str, subagent: Optional[str] = None):
+        self._lifetimes.begin_lookup()
+        task = asyncio.create_task(self._acquire_context(datasource, subagent))
+        self._lookups.add(task)
+        task.add_done_callback(self._lookups.discard)
+        try:
+            context = await asyncio.shield(task)
+        except asyncio.CancelledError:
+            # Let an in-flight publication lookup complete, then release its
+            # abandoned pin (or retrieve its exception) even after shutdown.
+            def release_abandoned(done):
+                if not done.cancelled() and done.exception() is None:
+                    done.result().release()
+
+            task.add_done_callback(release_abandoned)
+            raise
+        try:
+            yield context
+        finally:
+            context.release()
+
+    def close_all(self) -> None:
+        self._lifetimes.close()
 
 
 class ToolContextManager:
@@ -251,10 +463,19 @@ class ToolContextManager:
         self.config_path = config_path
         self._max_size = max_size if max_size is not None else self.DEFAULT_MAX_SIZE
         self._contexts: OrderedDict[str, ToolContext] = OrderedDict()
-        self._lock = asyncio.Lock()
+        self._lock = RLock()
+        # Initialization stays serialized, but never owns the cache/state lock
+        # while connecting to a potentially stalled datasource.
+        self._initialization_lock = RLock()
+        self._closed = False
+        self._creating = 0
+        self._live_contexts: Dict[int, ToolContext] = {}
+        self._cleanup_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="datus-mcp-cleanup")
 
         # Load base configuration and read available datasources.
         self._config_manager = configuration_manager(config_path=config_path or "")
+        execution_config = self._config_manager.get("mcp_tool_execution", {})
+        self.tool_executor = MCPToolExecutor.from_config(execution_config)
         services = self._config_manager.get("services", {}) or {}
         datasources = services.get("datasources", {}) or {}
         self._available_datasources: Set[str] = set(datasources.keys())
@@ -304,28 +525,94 @@ class ToolContextManager:
         Returns:
             ToolContext with initialized tools
         """
-        cache_key = self._get_cache_key(datasource, subagent)
+        cached = self._lookup_cached_context(self._get_cache_key(datasource, subagent), blocking=False)
+        if cached is not None:
+            return cached
+        # Initialization loads configuration, opens connectors and initializes
+        # stores. Keep it (and LRU connector cleanup) off the request loop too.
+        # The worker owns the cache transaction even if the request is cancelled.
+        return await self.tool_executor.run(self._get_or_create_context, datasource, subagent)
 
-        async with self._lock:
-            if cache_key in self._contexts:
-                # Cache hit: move to end (most recently used)
+    @asynccontextmanager
+    async def use_context(self, datasource: str, subagent: Optional[str] = None):
+        """Atomically acquire a request pin, including cancellation during lookup."""
+        context = self._lookup_cached_context(self._get_cache_key(datasource, subagent), pin=True, blocking=False)
+        if context is None:
+            future = self.tool_executor.submit(self._get_or_create_context, datasource, subagent, pin=True)
+            try:
+                context = await self.tool_executor.wait(future)
+            except asyncio.CancelledError:
+                # The worker may finish after its caller has disappeared. Return
+                # the acquired pin then, rather than leaking an abandoned context.
+                def release_abandoned(done):
+                    if not done.cancelled() and done.exception() is None:
+                        done.result().release()
+
+                future.add_done_callback(release_abandoned)
+                raise
+        try:
+            yield context
+        finally:
+            context.release()
+
+    def _lookup_cached_context(
+        self, cache_key: str, pin: bool = False, *, blocking: bool = True
+    ) -> Optional[ToolContext]:
+        # Event-loop callers must not wait for a worker holding the state lock.
+        if not self._lock.acquire(blocking=blocking):
+            return None
+        try:
+            if self._closed:
+                raise RuntimeError("Tool context manager is closed")
+            context = self._contexts.get(cache_key)
+            if context is not None:
                 self._contexts.move_to_end(cache_key)
-                return self._contexts[cache_key]
+                if pin:
+                    context.acquire()
+            return context
+        finally:
+            self._lock.release()
 
-            # Cache miss: create new context
+    def _get_or_create_context(self, datasource: str, subagent: Optional[str], pin: bool = False) -> ToolContext:
+        cache_key = self._get_cache_key(datasource, subagent)
+        cached = self._lookup_cached_context(cache_key, pin)
+        if cached is not None:
+            return cached
+        with self._initialization_lock:
+            with self._lock:
+                cached = self._lookup_cached_context(cache_key, pin)
+                if cached is not None:
+                    return cached
+                self._creating += 1
+
             logger.info(f"Creating ToolContext for {cache_key}")
-            context = self._create_context(datasource, subagent)
+            try:
+                context = self._create_context(datasource, subagent)
+            except BaseException:
+                with self._lock:
+                    self._creating -= 1
+                    self._finish_cleanup_if_closed()
+                raise
 
-            # Evict oldest if cache is full
-            if self._max_size > 0 and len(self._contexts) >= self._max_size:
-                evicted_key, evicted_context = self._contexts.popitem(last=False)
-                logger.info(f"LRU evicting ToolContext: {evicted_key}")
-                try:
-                    evicted_context.close()
-                except Exception as e:
-                    logger.warning(f"Error closing evicted context {evicted_key}: {e}")
-
-            self._contexts[cache_key] = context
+            evicted_context = None
+            with self._lock:
+                self._creating -= 1
+                self._live_contexts[id(context)] = context
+                closed = self._closed
+                if not closed:
+                    if pin:
+                        context.acquire()
+                    if self._max_size > 0 and len(self._contexts) >= self._max_size:
+                        evicted_key, evicted_context = self._contexts.popitem(last=False)
+                        logger.info(f"LRU evicting ToolContext: {evicted_key}")
+                    self._contexts[cache_key] = context
+            if evicted_context is not None:
+                evicted_context.retire(self._schedule_close)
+            if closed:
+                # Shutdown does not wait for initialization. A late result is
+                # retired immediately and cannot repopulate the closed cache.
+                context.retire(self._schedule_close)
+                raise RuntimeError("Tool context manager is closed")
             return context
 
     def _create_context(
@@ -354,6 +641,13 @@ class ToolContextManager:
                 logger.warning(f"Failed to initialize {tool_config.name} for {datasource}: {e}")
                 tools[tool_config.name] = None
 
+        # Wire db_func_tool into reference_template_tool so execute_reference_template
+        # can run the rendered SQL directly, matching the behaviour of Chat API agents.
+        ref_tool = tools.get("reference_template_tool")
+        db_tool = tools.get("db_tool")
+        if ref_tool is not None and db_tool is not None:
+            ref_tool.db_func_tool = db_tool
+
         return ToolContext(
             datasource=datasource,
             subagent=subagent,
@@ -362,14 +656,35 @@ class ToolContextManager:
         )
 
     def close_all(self):
-        """Close all managed contexts."""
-        for cache_key, context in list(self._contexts.items()):
-            try:
-                context.close()
-                logger.info(f"Closed ToolContext for {cache_key}")
-            except Exception as e:
-                logger.warning(f"Error closing context {cache_key}: {e}")
-        self._contexts.clear()
+        """Retire contexts without waiting for initialization or driver cleanup."""
+        with self._lock:
+            self._closed = True
+            contexts = list(self._contexts.values())
+            for context in contexts:
+                self._live_contexts[id(context)] = context
+            self._contexts.clear()
+            self._finish_cleanup_if_closed()
+        for context in contexts:
+            context.retire(self._schedule_close)
+
+    def _schedule_close(self, context: ToolContext) -> None:
+        # A separate cleanup worker lets shutdown return even when a connector
+        # close blocks, and remains alive until all retired pins are released.
+        self._cleanup_pool.submit(self._close_context, context)
+
+    def _close_context(self, context: ToolContext) -> None:
+        try:
+            context.close()
+        except Exception as exc:
+            logger.warning(f"Error closing context {context.datasource}: {exc}")
+        finally:
+            with self._lock:
+                self._live_contexts.pop(id(context), None)
+                self._finish_cleanup_if_closed()
+
+    def _finish_cleanup_if_closed(self) -> None:
+        if self._closed and not self._creating and not self._live_contexts:
+            self._cleanup_pool.shutdown(wait=False)
 
 
 # Context variable for current request's tool context
@@ -406,6 +721,11 @@ class LightweightDynamicMCPServer:
         """
         self.config_path = config_path
         self._context_manager = ToolContextManager(config_path, max_size=max_cache_size)
+        # Preserve the injected manager's identity: publication backends check
+        # it after construction and own their in-memory configuration/cache.
+        self._request_context_manager = self._context_manager
+        if not callable(getattr(self._context_manager, "use_context", None)):
+            self._request_context_manager = _LegacyContextManagerAdapter(self._context_manager)
 
         # Single shared FastMCP instance
         self.mcp = FastMCP(
@@ -433,6 +753,10 @@ class LightweightDynamicMCPServer:
         # SSE session to context mapping (session_id -> ToolContext)
         # This is used to route /messages/ requests to the correct context
         self._sse_sessions: Dict[str, ToolContext] = {}
+
+    @property
+    def _execution_manager(self):
+        return getattr(self, "_request_context_manager", self._context_manager)
 
     @property
     def available_datasources(self) -> List[str]:
@@ -483,6 +807,7 @@ class LightweightDynamicMCPServer:
                 instance_attr=tool_config.name,
                 availability_attr=tool_config.availability_property,
                 format_result=self._format_result,
+                executor=self._execution_manager.tool_executor,
             )
 
     @asynccontextmanager
@@ -508,7 +833,8 @@ class LightweightDynamicMCPServer:
                 logger.info("LightweightDynamicMCPServer shutting down")
                 self._started = False
                 self._sse_app = None
-                self._context_manager.close_all()
+                self._execution_manager.close_all()
+                self._execution_manager.tool_executor.shutdown()
         else:
             # HTTP streamable transport: use session manager
             _ = self.mcp.streamable_http_app()
@@ -539,7 +865,8 @@ class LightweightDynamicMCPServer:
                     logger.info("LightweightDynamicMCPServer shutting down")
                     tg.cancel_scope.cancel()
                     self._started = False
-                    self._context_manager.close_all()
+                    self._execution_manager.close_all()
+                    self._execution_manager.tool_executor.shutdown()
 
     async def handle_request(
         self,
@@ -566,12 +893,12 @@ class LightweightDynamicMCPServer:
         if not self._started:
             raise RuntimeError("Server not started. Use lifespan_context first.")
 
-        # Get or create tool context
-        context = await self._context_manager.get_or_create_context(
-            datasource=datasource,
-            subagent=subagent,
-        )
+        async with self._execution_manager.use_context(datasource, subagent) as context:
+            await self._handle_context_request(context, scope, receive, send, transport, subpath)
 
+    async def _handle_context_request(self, context: ToolContext, scope, receive, send, transport, subpath):
+        datasource = context.datasource
+        session_ids: Set[str] = set()
         # Set context for this request
         token = _current_tool_context.set(context)
         try:
@@ -603,6 +930,7 @@ class LightweightDynamicMCPServer:
                                     if match:
                                         session_id = match.group(1)
                                         self._sse_sessions[session_id] = context
+                                        session_ids.add(session_id)
                                         logger.debug(f"Captured SSE session: {session_id} -> {datasource}")
                         await send(message)
 
@@ -618,6 +946,8 @@ class LightweightDynamicMCPServer:
                 await self._session_manager.handle_request(new_scope, receive, send)
         finally:
             _current_tool_context.reset(token)
+            for session_id in session_ids:
+                self._sse_sessions.pop(session_id, None)
 
     def create_asgi_app(self, transport: Literal["http", "sse"] = "http"):
         """
@@ -802,6 +1132,10 @@ class LightweightDynamicMCPServer:
                 return JSONResponse({"error": "Not Found: Unknown session_id"}, status_code=404)
 
             # Set context and delegate to SSE app
+            try:
+                context.acquire()
+            except RuntimeError:
+                return JSONResponse({"error": "Not Found: Expired session_id"}, status_code=404)
             token = _current_tool_context.set(context)
             try:
                 # Build scope for SSE app
@@ -844,6 +1178,7 @@ class LightweightDynamicMCPServer:
                 )
             finally:
                 _current_tool_context.reset(token)
+                context.release()
 
         # Define routes based on transport
         if current_transport == "sse":
@@ -937,10 +1272,15 @@ class DatusMCPServer:
             config_kwargs["database"] = database_name
 
         self.agent_config = load_agent_config(**config_kwargs)
+        execution_config = self.agent_config.mcp_tool_execution
+        self._tool_executor = MCPToolExecutor.from_config(execution_config)
 
         # Initialize all tools from global registry
         self.tools = {}
         self._init_tools()
+        self._tool_context = ToolContext(self.datasource, self.sub_agent, self.agent_config, self.tools)
+        self._context_lifetimes = _ContextLifetimes()
+        self._context_lifetimes.track(self._tool_context)
 
         # Register all MCP tools
         self._register_tools()
@@ -959,6 +1299,13 @@ class DatusMCPServer:
             except Exception as e:
                 logger.warning(f"Failed to initialize {tool_config.name}: {e}")
                 self.tools[tool_config.name] = None
+
+        # Wire db_func_tool into reference_template_tool so execute_reference_template
+        # can run the rendered SQL directly, matching the behaviour of Chat API agents.
+        ref_tool = self.tools.get("reference_template_tool")
+        db_tool = self.tools.get("db_tool")
+        if ref_tool is not None and db_tool is not None:
+            ref_tool.db_func_tool = db_tool
 
     # Backward compatibility properties
     @property
@@ -981,20 +1328,9 @@ class DatusMCPServer:
         especially for HTTP transport modes where the server lifecycle
         is managed manually.
         """
-        # Close all tool instances
-        for tool_name, tool_instance in list(self.tools.items()):
-            if tool_instance:
-                try:
-                    # Close database connectors if available
-                    if hasattr(tool_instance, "connector") and tool_instance.connector:
-                        tool_instance.connector.close()
-                        logger.info(f"{tool_name} connector closed")
-                except Exception as e:
-                    logger.warning(f"Error closing {tool_name} connector: {e}")
-
-        # Clear tool references
-        self.tools.clear()
-        logger.info("MCP server resources released")
+        self._context_lifetimes.close()
+        self._tool_executor.shutdown()
+        logger.info("MCP server retired; connector cleanup waits for active tool calls")
 
     def __enter__(self):
         """Context manager entry."""
@@ -1013,7 +1349,13 @@ class DatusMCPServer:
         for tool_config in get_tool_registry():
             tool_instance = self.tools.get(tool_config.name)
             if tool_instance:
-                register_static_tools(self.mcp, tool_instance, self._format_result)
+                register_static_tools(
+                    self.mcp,
+                    tool_instance,
+                    self._format_result,
+                    executor=self._tool_executor,
+                    resource=self._tool_context,
+                )
 
     @staticmethod
     def _format_result(result: Union[FuncToolResult, Any]) -> Union[Dict[str, Any], List[Any]]:

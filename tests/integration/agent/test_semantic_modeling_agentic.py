@@ -20,15 +20,21 @@ from lancedb.embeddings.base import TextEmbeddingFunction
 from datus.agent.node.semantic_modeling_agentic_node import SemanticModelingAgenticNode
 from datus.configuration.agent_config import AgentConfig, NodeConfig
 from datus.schemas.action_history import ActionHistoryManager, ActionRole, ActionStatus
-from datus.schemas.semantic_agentic_node_models import SemanticNodeInput, SourceQueryEvidence
+from datus.schemas.semantic_agentic_node_models import SemanticNodeInput
 from datus.storage import embedding_models
 from datus.storage.embedding_models import EmbeddingModel
 from datus.storage.metric.store import MetricRAG
 from datus.storage.registry import clear_storage_registry, configure_storage_defaults, get_storage_defaults
 from datus.storage.semantic_dataset.store import SemanticDatasetRAG
 from datus.utils.path_manager import DatusPathManager
+from datus.utils.query_result_text import parse_query_result_text
 
 pytestmark = [pytest.mark.nightly, pytest.mark.product_e2e]
+
+
+def _catalog_names(page: str) -> set[str]:
+    """Metric names on a ``list_metrics`` page: one ``- name -- description`` line each."""
+    return {line[2:].split(" -- ", 1)[0] for line in page.splitlines() if line.startswith("- ")}
 
 
 def _use_dosi(agent_config, project_root):
@@ -180,6 +186,7 @@ def _revenue_metric() -> dict:
     }
 
 
+@pytest.mark.acceptance
 def test_dosi_authoring_validates_reconciles_and_queries_without_llm(
     tmp_path,
     monkeypatch,
@@ -211,7 +218,7 @@ def test_dosi_authoring_validates_reconciles_and_queries_without_llm(
 
     catalog = node.semantic_tools.list_metrics(limit=20, offset=0)
     assert catalog.success == 1, catalog.error
-    assert {item["name"] for item in catalog.result["items"]} == {"revenue"}
+    assert _catalog_names(catalog.result) == {"revenue"}
 
     dry_run = node.semantic_tools.query_metrics(metrics=["revenue"], dry_run=True)
     assert dry_run.success == 1, dry_run.error
@@ -219,11 +226,15 @@ def test_dosi_authoring_validates_reconciles_and_queries_without_llm(
 
     live = node.semantic_tools.query_metrics(metrics=["revenue"])
     assert live.success == 1, live.error
-    cached = node.semantic_tools.get_cached_query_metrics_result(live.result["result_id"])
+    cached = node.semantic_tools.get_cached_query_metrics_result(parse_query_result_text(live.result).result_id)
     assert cached["columns"] == ["revenue"]
     rows = list(csv.DictReader(io.StringIO(cached["csv"])))
     assert len(rows) == 1
     assert float(rows[0]["revenue"]) == 450.0
+
+    from datus.cli.bootstrap_bi_streams import _validate_semantic_model_sync
+
+    assert _validate_semantic_model_sync(config) == (True, None)
 
     semantic_rag = SemanticDatasetRAG(config)
     metric_rag = MetricRAG(config)
@@ -297,19 +308,14 @@ async def test_semantic_modeling_authors_one_queryable_dosi_model_with_real_llm(
         user_message=(
             "Create one Dosi semantic model named nightly_school_counts for the main.schools table. "
             "Include the reusable dataset fields needed for a metric named school_count that counts schools. "
-            "Validate it, reconcile it to the Knowledge Base, and return status generated."
+            "Validate it, reconcile it to the Knowledge Base, and return status generated.\n"
+            "Reference calculation: How many schools are there?\n"
+            "```sql\nSELECT COUNT(*) AS school_count FROM schools\n```"
         ),
         semantic_model_name="nightly_school_counts",
         business_domain="schools",
         fact_tables=["main.schools"],
         max_turns=30,
-        source_queries=[
-            SourceQueryEvidence(
-                source_sql_name="school_count",
-                question="How many schools are there?",
-                sql="SELECT COUNT(*) AS school_count FROM schools",
-            )
-        ],
     )
 
     actions = [action async for action in node.execute_stream(ActionHistoryManager())]
@@ -328,4 +334,15 @@ async def test_semantic_modeling_authors_one_queryable_dosi_model_with_real_llm(
     assert model_path.is_file()
     metric_catalog = node.semantic_tools.list_metrics(limit=50, offset=0)
     assert metric_catalog.success == 1, metric_catalog.error
-    assert "school_count" in {item["name"] for item in metric_catalog.result["items"]}
+    assert "school_count" in _catalog_names(metric_catalog.result)
+
+    # Query the generated metric independently of the agent's final response.
+    result = node.semantic_tools.query_metrics(metrics=["school_count"])
+    assert result.success == 1, result.error
+    cached = node.semantic_tools.get_cached_query_metrics_result(parse_query_result_text(result.result).result_id)
+    rows = list(csv.DictReader(io.StringIO(cached["csv"])))
+    assert len(rows) == 1
+    connector = node.db_func_tool.connector
+    oracle = connector.execute_query("SELECT COUNT(*) AS school_count FROM schools", result_format="list")
+    assert oracle.success is True, oracle.error
+    assert float(rows[0]["school_count"]) == oracle.sql_return[0]["school_count"]

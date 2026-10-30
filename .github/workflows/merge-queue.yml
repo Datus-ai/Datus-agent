@@ -49,10 +49,23 @@ jobs:
             uv.lock
             pyproject.toml
 
+      - name: Select merge queue profile
+        id: profile
+        if: ${{ github.event_name != 'pull_request_target' }}
+        run: uv run --no-project --with pyyaml python ci/select_gate_profile.py --github-output "$GITHUB_OUTPUT"
+
       - name: Install dependencies
         if: ${{ github.event_name != 'pull_request_target' }}
         run: |
-          uv sync --locked --group ci
+          if [ "${{ steps.profile.outputs.profile }}" = "code" ] || [ "${{ steps.profile.outputs.ci_tests }}" = "true" ]; then
+            uv sync --locked --group ci
+          else
+            uv venv .venv
+            uv pip install pyyaml packaging
+          fi
+          if [ "${{ steps.profile.outputs.profile }}" = "docs" ]; then
+            uv pip install -r requirements-docs.txt
+          fi
           echo "${GITHUB_WORKSPACE}/.venv/bin" >> "$GITHUB_PATH"
 
       - name: Check release metadata
@@ -75,16 +88,16 @@ jobs:
           exit "$validation_exit"
 
       - name: Setup config file
-        if: ${{ github.event_name != 'pull_request_target' }}
+        if: ${{ github.event_name != 'pull_request_target' && steps.profile.outputs.profile == 'code' }}
         run: |
           cp conf/agent.yml.example conf/agent.yml
 
       - name: Restore tracked test config
-        if: ${{ github.event_name != 'pull_request_target' }}
+        if: ${{ github.event_name != 'pull_request_target' && steps.profile.outputs.profile == 'code' }}
         run: git restore --source=HEAD --worktree --staged tests/conf/agent.yml
 
       - name: Isolate test data directory
-        if: ${{ github.event_name != 'pull_request_target' }}
+        if: ${{ github.event_name != 'pull_request_target' && steps.profile.outputs.profile == 'code' }}
         run: |
           DATUS_TEST_HOME="${GITHUB_WORKSPACE}/.datus_test_data"
           echo "DATUS_TEST_HOME=$DATUS_TEST_HOME" >> "$GITHUB_ENV"
@@ -92,7 +105,7 @@ jobs:
           sed -i "s|project_root: .datus_test_data/workspace|project_root: $DATUS_TEST_HOME/workspace|g" tests/conf/agent.yml
 
       - name: Prepare small BIRD test fixtures
-        if: ${{ github.event_name != 'pull_request_target' }}
+        if: ${{ github.event_name != 'pull_request_target' && steps.profile.outputs.profile == 'code' }}
         run: |
           DATUS_TEST_BIRD_ROOT="$RUNNER_TEMP/datus-ci-bird/dev_databases"
           python3 ci/prepare_ci_bird.py "$DATUS_TEST_BIRD_ROOT"
@@ -134,4 +147,6 @@ jobs:
           name: merge-queue-results
           path: |
             ci/merge-queue-results.json
+            ci/gate-coverage.json
+            ci/test-results-*.execution.json
             ci/test-results-merge-*.xml

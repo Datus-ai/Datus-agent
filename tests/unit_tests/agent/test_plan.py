@@ -139,6 +139,24 @@ class TestCreateSingleNode:
         input_data = new_instance.call_args.kwargs["input_data"]
         assert input_data.reference_date == "2025-06-01"
 
+    def test_agentic_node_with_node_type_ontology_analyst(self):
+        cfg = _mock_config(agentic_nodes={"flight_ops": {"node_type": "ontology_analyst"}})
+        task = _sql_task(task="open P1 alerts into JFK")
+        task.current_date = "2026-08-20"
+        fake_node = MagicMock()
+        fake_node.type = NodeType.TYPE_ONTOLOGY_ANALYST
+        with patch("datus.agent.plan.Node.new_instance", return_value=fake_node) as new_instance:
+            _create_single_node("flight_ops", "node_oa", task, cfg)
+        call_kwargs = new_instance.call_args.kwargs
+        assert call_kwargs["node_type"] == NodeType.TYPE_ONTOLOGY_ANALYST
+        assert call_kwargs["node_name"] == "flight_ops"
+        from datus.schemas.ontology_analyst_agentic_node_models import OntologyAnalystNodeInput
+
+        input_data = call_kwargs["input_data"]
+        assert isinstance(input_data, OntologyAnalystNodeInput)
+        assert input_data.user_message == "open P1 alerts into JFK"
+        assert input_data.reference_date == "2026-08-20"
+
     def test_agentic_node_with_invalid_node_type_falls_back_to_gen_sql(self):
         """When agentic_nodes has an invalid node_type, it falls back to gen_sql."""
         cfg = _mock_config(agentic_nodes={"my_node": {"node_type": "nonexistent_type"}})

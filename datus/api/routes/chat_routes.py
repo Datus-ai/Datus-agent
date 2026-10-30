@@ -238,9 +238,12 @@ async def stream_chat_feedback(
 async def resume_chat(
     request: ResumeChatInput,
     svc: ServiceDep,
+    ctx: AppContextDep,
 ):
     task_manager = svc.task_manager
     task = task_manager.get_task(request.session_id)
+    if task is not None and task.user_id != ctx.user_id:
+        raise HTTPException(status_code=404, detail="Task not found")
     if task is None:
         return Result[dict](
             success=False,
@@ -522,6 +525,7 @@ async def insert_message(
 async def submit_tool_result(
     request: ToolResultInput,
     svc: ServiceDep,
+    ctx: AppContextDep,
 ) -> Result[ToolResultData]:
     """Receive tool execution result from frontend."""
     task_manager = svc.task_manager
@@ -537,8 +541,68 @@ async def submit_tool_result(
             errorMessage="No active task found for this session",
         )
 
+    if getattr(task.node, "scope", None) != ctx.user_id:
+        raise HTTPException(status_code=404, detail="No active task found for this session")
+
+    from datus.tools.proxy.semantic_plan_review import SemanticPlanReviewContext
+
+    review_context = getattr(task.node, "semantic_plan_review_context", None)
+    review = request.tool_result.result
+    if isinstance(review_context, SemanticPlanReviewContext):
+        previous = review_context.decisions.get(request.call_tool_id)
+        decision = request.tool_result.model_dump()
+        if previous is not None:
+            if previous != decision:
+                return Result(
+                    success=False,
+                    errorCode="REVIEW_ALREADY_RESOLVED",
+                    errorMessage="This proposal already has a review decision",
+                )
+            return Result(success=True, data=ToolResultData(call_tool_id=request.call_tool_id, status="received"))
+        if request.call_tool_id in review_context.previews and isinstance(review, dict):
+            status = review.get("review_status")
+            feedback = review.get("feedback")
+            valid = (status == "accepted" and request.tool_result.success == 1) or (
+                status in ("cancelled", "changes_requested") and request.tool_result.success == 0
+            )
+            if status == "changes_requested":
+                valid = valid and isinstance(feedback, str) and bool(feedback.strip()) and len(feedback) <= 4000
+            if not valid:
+                return Result(
+                    success=False, errorCode="INVALID_REVIEW", errorMessage="Invalid plan review decision or feedback"
+                )
+            if status == "cancelled":
+                # Emit a display result before interruption so cancellation and its
+                # frozen snapshot remain readable even when the SDK run is stopped.
+                from datus.api.services.action_sse_converter import action_to_sse_event
+                from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
+
+                review_context.decisions[request.call_tool_id] = decision
+                event = action_to_sse_event(
+                    ActionHistory(
+                        action_id=f"complete_{request.call_tool_id}",
+                        action_type="tool_result",
+                        role=ActionRole.TOOL,
+                        status=ActionStatus.SUCCESS,
+                        input={"function_name": "write_semantic_model_plan_file", "arguments": {}},
+                        output={"success": 1, "result": {"review_status": "cancelled"}},
+                    ),
+                    len(task.events),
+                    f"complete_{request.call_tool_id}",
+                )
+                if event:
+                    await task_manager._push_event(task, event)
+                await task_manager.stop_task(request.session_id)
+                return Result(success=True, data=ToolResultData(call_tool_id=request.call_tool_id, status="received"))
+
     logger.info(f"Received tool_result: session_id={request.session_id}, call_id={request.call_tool_id}")
     delivered = await task.node.tool_channel.publish(request.call_tool_id, request.tool_result.model_dump())
+    if (
+        delivered
+        and isinstance(review_context, SemanticPlanReviewContext)
+        and request.call_tool_id in review_context.previews
+    ):
+        review_context.decisions[request.call_tool_id] = request.tool_result.model_dump()
     if not delivered:
         # Task is alive but no waiter took the result — it arrived after the
         # proxy-tool wait already timed out, or it is a duplicate report.

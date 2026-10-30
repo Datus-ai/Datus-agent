@@ -58,6 +58,295 @@ def _planned_state(target, name="sales"):
 
 
 @pytest.fixture
+def identity_tool(tmp_path, osi_schema_validator):
+    def create(metrics):
+        target = tmp_path / "sales.yml"
+        target.write_text(
+            yaml.safe_dump(
+                {
+                    "version": "0.2.0.dev0",
+                    "semantic_model": [
+                        {"name": "sales", "datasets": [{"name": "orders", "source": "orders"}], "metrics": metrics}
+                    ],
+                },
+                sort_keys=False,
+            )
+        )
+        state = _bound_state(target)
+        evidence = GenerationEvidence()
+
+        def on_mutation(path):
+            evidence.record_artifact_mutation(path)
+            state.record_selected_write()
+
+        tool = SemanticModelingFilesystemFuncTool(
+            root_path=str(tmp_path),
+            current_node="semantic_modeling",
+            osi_target_state=state,
+            mutation_guard=state.require_selected_path,
+            mutation_callback=on_mutation,
+            generation_evidence=evidence,
+        )
+        return tool, target, state, evidence
+
+    return create
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "name,parameter,objects",
+    [
+        ("upsert_osi_metrics", "metrics_json", [_osi_metric("revenue", "SUM(orders.amount)")]),
+        ("upsert_osi_datasets", "datasets_json", [{"name": "orders", "source": "analytics.orders"}]),
+    ],
+)
+async def test_write_tool_schema_and_invocation_accept_structured_arrays(identity_tool, name, parameter, objects):
+    tool, target, _, _ = identity_tool([])
+    exposed = next(t for t in tool.available_tools() if t.name == name)
+    variants = exposed.params_json_schema["properties"][parameter]["anyOf"]
+    assert {v["type"] for v in variants} == {"array", "string"}
+    result = await exposed.on_invoke_tool(None, json.dumps({"path": str(target), parameter: objects}))
+    assert result["success"] == 1, result
+
+
+def test_metric_upsert_assigns_and_preserves_host_uid(identity_tool):
+    from datus.tools.semantic_tools.metric_identity import metric_uid
+
+    tool, target, state, _ = identity_tool([])
+    metric = _osi_metric("revenue", "SUM(orders.amount)")
+    assert tool.upsert_osi_metrics(str(target), json.dumps([metric])).success == 1
+    authored = yaml.safe_load(target.read_bytes())["semantic_model"][0]["metrics"][0]
+    uid = metric_uid(authored)
+    assert len(uid) == 24
+    first_content = target.read_bytes()
+    repeated = tool.upsert_osi_metrics(str(target), json.dumps([metric]))
+    assert repeated.result["unchanged"] == ["revenue"]
+    assert target.read_bytes() == first_content
+    metric["description"] = "Updated definition"
+    metric["custom_extensions"] = [{"vendor_name": "DATUS", "data": '{"uid":"model-mistake","unit":"USD"}'}]
+    assert tool.upsert_osi_metrics(str(target), json.dumps([metric])).success == 1
+    updated = yaml.safe_load(target.read_bytes())["semantic_model"][0]["metrics"][0]
+    assert metric_uid(updated) == uid
+    assert json.loads(updated["custom_extensions"][0]["data"])["unit"] == "USD"
+    assert updated["description"] == "Updated definition"
+    state.require_selected_revision(target)
+
+
+@pytest.mark.parametrize("replacement", [[], [{"vendor_name": "DATUS", "data": '{"uid":"model-mistake"}'}]])
+def test_edit_file_preserves_existing_uid(identity_tool, replacement):
+    from datus.tools.semantic_tools.metric_identity import ensure_metric_uid, metric_uid
+
+    metric = _osi_metric("revenue", "SUM(orders.amount)")
+    ensure_metric_uid(metric)
+    tool, target, state, _ = identity_tool([metric])
+    original = target.read_text()
+    document = yaml.safe_load(original)
+    candidate = document["semantic_model"][0]["metrics"][0]
+    candidate["custom_extensions"] = replacement
+    candidate["description"] = "Changed by edit_file"
+    result = tool.edit_file(str(target), original, yaml.safe_dump(document, sort_keys=False))
+    assert result.success == 1
+    edited = yaml.safe_load(target.read_bytes())["semantic_model"][0]["metrics"][0]
+    assert metric_uid(edited) == metric_uid(metric)
+    assert edited["description"] == "Changed by edit_file"
+    assert state.touched_metric_names == ["revenue"]
+
+
+def test_final_uid_preparation_tracks_legacy_metrics_and_rolls_back(identity_tool):
+    tool, target, state, evidence = identity_tool([_osi_metric("revenue", "SUM(orders.amount)")])
+    original = target.read_bytes()
+    evidence.record_semantic_artifact_validation("sales", target, validation_scope="all")
+    evidence.validation_passed = True
+    identities = tool.ensure_metric_uids(str(target))
+    assert len(identities["revenue"]) == 24
+    assert state.touched_metric_names == ["revenue"]
+    assert state.artifact_snapshot_content == original
+    state.require_selected_revision(target)
+    assert not evidence.validation_passed
+    assert not evidence.semantic_artifact_validation_passed("sales", target, required_scope="all")
+    prepared_content = target.read_bytes()
+    assert tool.ensure_metric_uids(str(target)) == identities
+    assert target.read_bytes() == prepared_content
+    assert "ensure_metric_uids" not in {item.name for item in tool.available_tools()}
+    assert tool.rollback_failed_authoring()
+    assert target.read_bytes() == original
+    state.require_selected_revision(target)
+
+
+def test_final_uid_preparation_covers_metrics_created_by_edit_file(identity_tool):
+    from datus.tools.semantic_tools.metric_identity import metric_uid
+
+    tool, target, state, evidence = identity_tool([])
+    original = target.read_text()
+    document = yaml.safe_load(original)
+    document["semantic_model"][0]["metrics"] = [_osi_metric("revenue", "SUM(orders.amount)")]
+    result = tool.edit_file(str(target), original, yaml.safe_dump(document, sort_keys=False))
+    assert result.success == 1
+    assert state.touched_metric_names == ["revenue"]
+    edited = yaml.safe_load(target.read_bytes())["semantic_model"][0]["metrics"][0]
+    assert metric_uid(edited) == ""
+    evidence.record_semantic_artifact_validation("sales", target, validation_scope="all")
+
+    identities = tool.ensure_metric_uids(str(target))
+    prepared = yaml.safe_load(target.read_bytes())["semantic_model"][0]["metrics"][0]
+    assert len(identities["revenue"]) == 24
+    assert metric_uid(prepared) == identities["revenue"]
+    assert state.touched_metric_names == ["revenue"]
+    assert state.artifact_snapshot_content == original.encode("utf-8")
+    assert not evidence.semantic_artifact_validation_passed("sales", target, required_scope="all")
+    state.require_selected_revision(target)
+
+
+def test_upsert_copied_metric_assigns_distinct_host_uid(identity_tool):
+    from datus.tools.semantic_tools.metric_identity import ensure_metric_uid, metric_uid
+
+    metric = _osi_metric("revenue", "SUM(orders.amount)")
+    ensure_metric_uid(metric)
+    tool, target, state, _ = identity_tool([metric])
+    copied = {**metric, "name": "other_revenue"}
+    result = tool.upsert_osi_metrics(str(target), json.dumps([copied]))
+    assert result.success == 1
+    assert result.result["created"] == ["other_revenue"]
+    authored = yaml.safe_load(target.read_bytes())["semantic_model"][0]["metrics"]
+    assert authored[0] == metric
+    assert metric_uid(authored[1]) != metric_uid(metric)
+    assert len(metric_uid(authored[1])) == 24
+    state.require_selected_revision(target)
+
+
+@pytest.mark.parametrize("scenario", ["external", "retained", "legacy"])
+def test_edit_file_copied_uid_is_replaced_before_final_validation(identity_tool, scenario):
+    from datus.tools.semantic_tools.metric_identity import ensure_metric_uid, metric_uid
+
+    source = _osi_metric("source_revenue", "SUM(orders.amount)")
+    ensure_metric_uid(source)
+    legacy = _osi_metric("revenue", "SUM(orders.amount)")
+    prior = {"external": [], "retained": [source], "legacy": [legacy]}[scenario]
+    tool, target, state, _ = identity_tool(prior)
+    original = target.read_text()
+    document = yaml.safe_load(original)
+    candidate = {**source, "name": "revenue"}
+    document["semantic_model"][0]["metrics"] = [metric for metric in prior if metric["name"] != "revenue"] + [candidate]
+
+    result = tool.edit_file(str(target), original, yaml.safe_dump(document, sort_keys=False))
+
+    assert result.success == 1
+    edited = {metric["name"]: metric for metric in yaml.safe_load(target.read_bytes())["semantic_model"][0]["metrics"]}
+    assert metric_uid(edited["revenue"]) == ""
+    assert {name: metric for name, metric in edited.items() if name != "revenue"} == {
+        metric["name"]: metric for metric in prior if metric["name"] != "revenue"
+    }
+    identities = tool.ensure_metric_uids(str(target))
+    assert len(identities["revenue"]) == 24
+    assert identities["revenue"] != metric_uid(source)
+    prepared = target.read_bytes()
+    assert tool.ensure_metric_uids(str(target)) == identities
+    assert target.read_bytes() == prepared
+    state.require_selected_revision(target)
+
+
+def test_edit_file_rename_preserves_authoritative_uid(identity_tool):
+    from datus.tools.semantic_tools.metric_identity import ensure_metric_uid, metric_uid
+
+    source = _osi_metric("revenue", "SUM(orders.amount)")
+    ensure_metric_uid(source)
+    tool, target, state, _ = identity_tool([source])
+    original = target.read_text()
+    document = yaml.safe_load(original)
+    document["semantic_model"][0]["metrics"][0]["name"] = "net_revenue"
+
+    result = tool.edit_file(str(target), original, yaml.safe_dump(document, sort_keys=False))
+
+    assert result.success == 1
+    renamed = yaml.safe_load(target.read_bytes())["semantic_model"][0]["metrics"][0]
+    assert renamed["name"] == "net_revenue"
+    assert metric_uid(renamed) == metric_uid(source)
+    assert state.touched_metric_names == ["net_revenue", "revenue"]
+    assert tool.ensure_metric_uids(str(target)) == {"net_revenue": metric_uid(source)}
+    state.require_selected_revision(target)
+
+
+def test_edit_file_can_remove_metric_with_invalid_uid(identity_tool):
+    source = _osi_metric("revenue", "SUM(orders.amount)")
+    source["custom_extensions"] = [{"vendor_name": "DATUS", "data": '{"uid":123}'}]
+    tool, target, state, _ = identity_tool([source])
+    original = target.read_text()
+    document = yaml.safe_load(original)
+    document["semantic_model"][0]["metrics"] = []
+
+    result = tool.edit_file(str(target), original, yaml.safe_dump(document, sort_keys=False))
+
+    assert result.success == 1
+    assert yaml.safe_load(target.read_bytes())["semantic_model"][0]["metrics"] == []
+    assert state.touched_metric_names == ["revenue"]
+    assert tool.ensure_metric_uids(str(target)) == {}
+
+
+@pytest.mark.parametrize("existing", [False, True])
+@pytest.mark.parametrize("incoming_uid", ["tz4a98xxat96iws9zmbrgj3a", 123])
+def test_upsert_without_prior_uid_uses_host_identity(identity_tool, existing, incoming_uid):
+    from datus.tools.semantic_tools.metric_identity import metric_uid
+
+    metric = _osi_metric("revenue", "SUM(orders.amount)")
+    tool, target, state, _ = identity_tool([metric] if existing else [])
+    metric["custom_extensions"] = [{"vendor_name": "DATUS", "data": json.dumps({"uid": incoming_uid, "unit": "USD"})}]
+
+    result = tool.upsert_osi_metrics(str(target), json.dumps([metric]))
+
+    assert result.success == 1
+    authored = yaml.safe_load(target.read_bytes())["semantic_model"][0]["metrics"][0]
+    assert metric_uid(authored) != incoming_uid
+    assert len(metric_uid(authored)) == 24
+    assert json.loads(authored["custom_extensions"][0]["data"])["unit"] == "USD"
+    assert tool.upsert_osi_metrics(str(target), json.dumps([metric])).result["unchanged"] == ["revenue"]
+    state.require_selected_revision(target)
+
+
+@pytest.mark.parametrize("operation", ["upsert", "upsert_batch", "edit_file"])
+def test_conflicting_metric_names_do_not_mutate_file(identity_tool, operation):
+    existing = _osi_metric("revenue", "SUM(orders.amount)")
+    tool, target, state, evidence = identity_tool([] if operation == "upsert_batch" else [existing])
+    original = target.read_bytes()
+    candidate = _osi_metric("REVENUE", "SUM(orders.amount)")
+    if operation == "edit_file":
+        document = yaml.safe_load(original)
+        document["semantic_model"][0]["metrics"].append(candidate)
+        result = tool.edit_file(str(target), original.decode("utf-8"), yaml.safe_dump(document, sort_keys=False))
+    else:
+        incoming = [existing, candidate] if operation == "upsert_batch" else [candidate]
+        result = tool.upsert_osi_metrics(str(target), json.dumps(incoming))
+    assert result.success == 0
+    assert "Metric name conflict" in result.error
+    assert "revenue" in result.error and "REVENUE" in result.error
+    assert target.read_bytes() == original
+    assert not state.touched_metric_names
+    assert not state.artifact_snapshot_path
+    assert not evidence.mutated_artifact_paths
+
+
+def test_edit_file_can_repair_existing_case_conflict_and_preserve_uids(identity_tool):
+    from datus.tools.semantic_tools.metric_identity import ensure_metric_uid, metric_uid
+
+    metrics = [_osi_metric(name, "SUM(orders.amount)") for name in ("revenue", "REVENUE")]
+    for metric in metrics:
+        ensure_metric_uid(metric)
+    tool, target, state, _ = identity_tool(metrics)
+    original = target.read_text()
+    document = yaml.safe_load(original)
+    document["semantic_model"][0]["metrics"][0].pop("custom_extensions")
+    document["semantic_model"][0]["metrics"][1]["name"] = "gross_revenue"
+    result = tool.edit_file(str(target), original, yaml.safe_dump(document, sort_keys=False))
+    assert result.success == 1
+    edited = yaml.safe_load(target.read_bytes())["semantic_model"][0]["metrics"]
+    assert [metric_uid(metric) for metric in edited] == [metric_uid(metric) for metric in metrics]
+    assert tool.ensure_metric_uids(str(target)) == {
+        "revenue": metric_uid(metrics[0]),
+        "gross_revenue": metric_uid(metrics[1]),
+    }
+    state.require_selected_revision(target)
+
+
+@pytest.fixture
 def osi_schema_validator(monkeypatch):
     validator = Mock(return_value=None)
     monkeypatch.setattr(MetricFilesystemFuncTool, "_validate_osi_document", staticmethod(validator))
@@ -65,6 +354,58 @@ def osi_schema_validator(monkeypatch):
 
 
 class TestMetricFilesystemFuncTool:
+    @pytest.mark.parametrize("rewrite_uid", [False, True])
+    def test_osi_edit_rejects_duplicate_yaml_keys_before_writing(self, tmp_path, rewrite_uid):
+        from datus.tools.semantic_tools.metric_identity import ensure_metric_uid, metric_uid
+
+        metric = _osi_metric("revenue", "SUM(orders.amount)")
+        ensure_metric_uid(metric)
+        document = {
+            "version": "0.2.0.dev0",
+            "semantic_model": [
+                {
+                    "name": "sales",
+                    "datasets": [
+                        {
+                            "name": "orders",
+                            "source": "orders",
+                            "fields": [
+                                {
+                                    "name": "amount",
+                                    "expression": {"dialects": [{"dialect": "ANSI_SQL", "expression": "amount"}]},
+                                }
+                            ],
+                        }
+                    ],
+                    "relationships": [],
+                    "metrics": [metric],
+                }
+            ],
+        }
+        target = tmp_path / "sales.yml"
+        original = yaml.safe_dump(document, sort_keys=False)
+        target.write_text(original)
+        candidate = original.replace("source: orders", "source: analytics.orders")
+        if rewrite_uid:
+            candidate = candidate.replace(metric_uid(metric), "model-mistake")
+        on_mutation = Mock()
+        tool = SemanticModelingFilesystemFuncTool(root_path=str(tmp_path), mutation_callback=on_mutation)
+
+        rejected = tool.edit_file(str(target), original, candidate + "  relationships: []\n")
+
+        assert rejected.success == 0
+        assert "duplicate field `relationships`" in rejected.error
+        assert rejected.result["written"] is False
+        assert target.read_bytes() == original.encode()
+        on_mutation.assert_not_called()
+
+        repaired = tool.edit_file(str(target), original, candidate)
+        assert repaired.success == 1, repaired.error
+        saved = yaml.safe_load(target.read_text())["semantic_model"][0]
+        assert saved["datasets"][0]["source"] == "analytics.orders"
+        assert metric_uid(saved["metrics"][0]) == metric_uid(metric)
+        on_mutation.assert_called_once_with(target)
+
     def test_osi_available_tools_include_narrow_dataset_mutations(self, tmp_path):
         tool = MetricFilesystemFuncTool(
             root_path=str(tmp_path),
@@ -156,10 +497,12 @@ class TestMetricFilesystemFuncTool:
         assert model["metrics"][0]["datatype"] == "Integer"
         assert osi_schema_validator.call_count == 3
 
+    @pytest.mark.parametrize("structured", [False, True])
     def test_osi_semantic_model_dataset_upsert_preserves_metrics_and_relationships(
         self,
         tmp_path,
         osi_schema_validator,
+        structured,
     ):
         target = tmp_path / "subject" / "semantic_models" / "warehouse" / "sales.yml"
         target.parent.mkdir(parents=True)
@@ -207,7 +550,7 @@ class TestMetricFilesystemFuncTool:
 
         result = tool.upsert_osi_datasets(
             str(target.relative_to(tmp_path)),
-            json.dumps([query_dataset]),
+            [query_dataset] if structured else json.dumps([query_dataset]),
         )
 
         assert result.success == 1
@@ -806,7 +1149,8 @@ class TestMetricFilesystemFuncTool:
         assert authored == {"name": "retained_users", "source": "analytics.retained_users"}
         osi_schema_validator.assert_called_once()
 
-    def test_upsert_osi_metrics_preserves_semantic_objects(self, tmp_path, osi_schema_validator):
+    @pytest.mark.parametrize("structured", [False, True])
+    def test_upsert_osi_metrics_preserves_semantic_objects(self, tmp_path, osi_schema_validator, structured):
         project = tmp_path / "project"
         target = project / "subject" / "semantic_models" / "warehouse" / "sales.yml"
         target.parent.mkdir(parents=True)
@@ -850,18 +1194,17 @@ semantic_model:
             osi_target_state=_bound_state(target),
         )
 
+        incoming = [
+            {
+                "name": "revenue",
+                "description": "Corrected definition",
+                "expression": {"dialects": [{"dialect": "ANSI_SQL", "expression": "SUM(net_amount)"}]},
+            },
+            _osi_metric("order_count", "COUNT(*)"),
+        ]
+        original_incoming = json.dumps(incoming)
         result = tool.upsert_osi_metrics(
-            "subject/semantic_models/warehouse/sales.yml",
-            json.dumps(
-                [
-                    {
-                        "name": "revenue",
-                        "description": "Corrected definition",
-                        "expression": {"dialects": [{"dialect": "ANSI_SQL", "expression": "SUM(net_amount)"}]},
-                    },
-                    _osi_metric("order_count", "COUNT(*)"),
-                ]
-            ),
+            "subject/semantic_models/warehouse/sales.yml", incoming if structured else json.dumps(incoming)
         )
 
         assert result.success == 1
@@ -875,6 +1218,7 @@ semantic_model:
         }
         assert [metric["name"] for metric in after_model["metrics"]] == ["revenue", "order_count"]
         assert after_model["metrics"][0]["description"] == "Corrected definition"
+        assert json.dumps(incoming) == original_incoming
         osi_schema_validator.assert_called_once()
 
     def test_delete_osi_metrics_is_scoped_and_tolerates_absent_names(self, tmp_path, osi_schema_validator):
@@ -1209,6 +1553,7 @@ semantic_model:
         target = tmp_path / "subject" / "semantic_models" / "warehouse" / "sales.yml"
         target.parent.mkdir(parents=True)
         metric = _osi_metric("revenue", "SUM(amount)")
+        metric["custom_extensions"] = [{"vendor_name": "DATUS", "data": '{"uid":"tz4a98xxat96iws9zmbrgj3a"}'}]
         target.write_text(
             yaml.safe_dump(
                 {

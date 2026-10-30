@@ -551,6 +551,52 @@ class TestDbConfigToConnectionConfigAdapterBranch:
         assert result["private_key_file"] == "/tmp/rsa_key.p8"
         assert result["private_key_file_pwd"] == "1234"
 
+    @pytest.mark.parametrize(
+        "auth_mode,mapping",
+        [
+            ("password", None),
+            ("password", {"username": "login", "password": "credential"}),
+            ("key_pair", {"private_key": "pem", "private_key_file_pwd": "passphrase"}),
+        ],
+    )
+    def test_snowflake_secret_profile_resolves_nested_environment_and_reaches_registry(
+        self, monkeypatch, auth_mode, mapping
+    ):
+        from datus.configuration.agent_config import DbConfig
+
+        monkeypatch.setenv("TEST_SF_SECRET", "arn:aws:secretsmanager:us-east-1:123456789012:secret:sf-test")
+        monkeypatch.setenv("TEST_AWS_PROFILE", "customer-role")
+        profile = {
+            "type": "snowflake",
+            "account": "test-account",
+            "warehouse": "COMPUTE_WH",
+            "database": "ANALYTICS",
+            "schema": "PUBLIC",
+            "role": "READER",
+            "auth_mode": auth_mode,
+            "secret_ref": "${TEST_SF_SECRET}",
+            "secret_cache_ttl_seconds": 120,
+            "aws": {"profile": "${TEST_AWS_PROFILE}", "region": "us-east-1"},
+        }
+        if mapping is not None:
+            profile["secret_key_mapping"] = mapping
+        if mapping is None or "username" not in mapping:
+            profile["username"] = "READER"
+        cfg = DbConfig.filter_kwargs(DbConfig, profile)
+        expected = {key: value for key, value in profile.items() if key != "type"} | {
+            "secret_ref": "arn:aws:secretsmanager:us-east-1:123456789012:secret:sf-test",
+            "aws": {"profile": "customer-role", "region": "us-east-1"},
+            "timeout_seconds": 30,
+        }
+        with (
+            patch("datus.tools.db_tools.db_manager.connector_registry.is_registered", return_value=True),
+            patch("datus.tools.db_tools.db_manager.connector_registry.create_connector") as create,
+        ):
+            result = self._make_manager()._build_conn(cfg)
+
+        create.assert_called_once_with("snowflake", expected)
+        assert result is create.return_value
+
     def test_adapter_preserves_gaussdb_driver_and_tls_fields(self):
         """GaussDB adapter options survive agent.yml parsing and manager conversion."""
         from datus.configuration.agent_config import DbConfig
@@ -576,6 +622,70 @@ class TestDbConfigToConnectionConfigAdapterBranch:
         assert result["driver"] == "pg8000"
         assert result["sslmode"] == "verify-ca"
         assert result["sslrootcert"] == "/etc/datus/certs/gaussdb-ca.pem"
+
+    @pytest.mark.parametrize("verify", [True, False])
+    def test_clickhouse_https_fields_survive_yaml_and_manager(self, verify, monkeypatch):
+        import yaml
+
+        from datus.configuration.agent_config import DbConfig
+
+        monkeypatch.setenv("CLICKHOUSE_TEST_CA", "/certs/private-ca.pem")
+        profile = yaml.safe_load("""
+        type: clickhouse
+        host: clickhouse.example.com
+        username: analytics
+        protocol: https
+        ca_cert: ${CLICKHOUSE_TEST_CA}
+        """)
+        profile["verify"] = verify
+        if not verify:
+            profile.pop("ca_cert")
+        cfg = DbConfig.filter_kwargs(DbConfig, profile)
+        result = self._make_manager()._db_config_to_connection_config(cfg)
+        expected = {
+            "host": "clickhouse.example.com",
+            "username": "analytics",
+            "timeout_seconds": 30,
+            "protocol": "https",
+            "verify": verify,
+        }
+        if verify:
+            expected["ca_cert"] = "/certs/private-ca.pem"
+        assert result == expected
+
+    @pytest.mark.parametrize("verify", [True, False])
+    def test_trino_tls_fields_survive_yaml_and_manager(self, verify, monkeypatch):
+        import yaml
+
+        from datus.configuration.agent_config import DbConfig
+
+        monkeypatch.setenv("TRINO_TEST_CA", "/certs/trino-ca.pem")
+        profile = yaml.safe_load("""
+        type: trino
+        host: trino.example.com
+        username: analytics
+        catalog: hive
+        schema_name: analytics
+        http_scheme: https
+        ca_cert: ${TRINO_TEST_CA}
+        """)
+        profile["verify"] = verify
+        if not verify:
+            profile.pop("ca_cert")
+        cfg = DbConfig.filter_kwargs(DbConfig, profile)
+        result = self._make_manager()._db_config_to_connection_config(cfg)
+        expected = {
+            "host": "trino.example.com",
+            "username": "analytics",
+            "catalog": "hive",
+            "schema_name": "analytics",
+            "http_scheme": "https",
+            "verify": verify,
+            "timeout_seconds": 30,
+        }
+        if verify:
+            expected["ca_cert"] = "/certs/trino-ca.pem"
+        assert result == expected
 
     def test_adapter_none_values_removed(self):
         """None-valued fields are excluded from the result dict."""

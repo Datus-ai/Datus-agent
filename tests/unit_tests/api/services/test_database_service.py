@@ -10,6 +10,7 @@ from typing import Iterator, NoReturn
 from unittest.mock import MagicMock, patch
 
 import pytest
+import yaml
 
 from datus.api.models.base_models import Result
 from datus.api.models.database_models import ListDatabasesInput
@@ -62,6 +63,162 @@ def _osi_yaml(*, metric_name: str = "") -> str:
         "        source: orders"
         f"{metrics}\n"
     )
+
+
+def _flat_osi_yaml(*, metric_name: str = "") -> str:
+    model = {
+        "version": "0.2.0.dev0",
+        "name": "orders",
+        "datasets": [
+            {
+                "name": "orders",
+                "source": "main.orders",
+                "fields": [
+                    {
+                        "name": "id",
+                        "expression": {"dialects": [{"dialect": "ANSI_SQL", "expression": "id"}]},
+                    }
+                ],
+            }
+        ],
+    }
+    if metric_name:
+        model["metrics"] = [
+            {
+                "name": metric_name,
+                "expression": {"dialects": [{"dialect": "ANSI_SQL", "expression": "COUNT(orders.id)"}]},
+            }
+        ]
+    return yaml.safe_dump(model, sort_keys=False)
+
+
+class TestFlatSemanticModelApi:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("metric_name", ["", "order_count"])
+    async def test_validate_flat_model_with_native_dosi(self, tmp_path, metric_name):
+        """A document accepted by Dosi must not be rejected for lacking a wrapper."""
+        svc = _service(models_root=tmp_path)
+        content = _flat_osi_yaml(metric_name=metric_name)
+        target, selector = _write_model(tmp_path, content)
+
+        result = await svc.validate_semantic_model(
+            ValidateSemanticModelInput(semantic_model_file=selector, semantic_model_name="orders", yaml=content)
+        )
+
+        assert result.success is True
+        assert result.data == ValidateSemanticModelData(valid=True, invalid_message=None)
+        assert target.read_text() == content
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("metric_name", ["", "order_count"])
+    async def test_save_flat_model_preserves_format_and_validation_scope(self, tmp_path, metric_name):
+        svc = _service(models_root=tmp_path)
+        original = _flat_osi_yaml()
+        target, selector = _write_model(tmp_path, original)
+        content = _flat_osi_yaml(metric_name=metric_name) + "description: Updated model\n"
+        svc._full_osi_validation = MagicMock(return_value=(True, {"valid": True, "issues": []}, ""))
+
+        with patch("datus.tools.func_tool.generation_tools.GenerationTools") as tools_cls:
+            tools_cls.return_value.sync_osi_to_db.return_value = {"success": True}
+            result = await svc.save_semantic_model(
+                SaveSemanticModelInput(
+                    semantic_model_file=selector,
+                    semantic_model_name="orders",
+                    yaml=content,
+                    expected_revision=artifact_revision(original.encode()),
+                )
+            )
+
+        assert result.success is True
+        assert result.data.status == "synced"
+        assert result.data.semantic_model_name == "orders"
+        assert result.data.revision == artifact_revision(content.encode())
+        assert target.read_text() == content
+        svc._full_osi_validation.assert_called_once_with(
+            svc.agent_config, semantic_model_name="orders", has_metrics=bool(metric_name)
+        )
+        tools_cls.return_value.sync_osi_to_db.assert_called_once_with(
+            str(target), include_semantic_objects=True, include_metrics=True
+        )
+
+    def test_get_flat_model_returns_declared_name_and_revision(self, tmp_path):
+        svc = _service(models_root=tmp_path)
+        content = _flat_osi_yaml()
+        _, selector = _write_model(tmp_path, content)
+
+        result = svc.get_semantic_model(selector)
+
+        assert result.success is True
+        assert result.data.semantic_model_name == "orders"
+        assert result.data.yaml == content
+        assert result.data.revision == artifact_revision(content.encode())
+
+    @pytest.mark.asyncio
+    async def test_save_flat_model_rejects_target_name_mismatch_without_writing(self, tmp_path):
+        svc = _service(models_root=tmp_path)
+        original = _flat_osi_yaml()
+        target, selector = _write_model(tmp_path, original)
+
+        result = await svc.save_semantic_model(
+            SaveSemanticModelInput(
+                semantic_model_file=selector,
+                semantic_model_name="another_model",
+                yaml=original + "description: Must not be written\n",
+            )
+        )
+
+        assert result.success is False
+        assert result.data.status == "validation_failed"
+        assert result.data.yaml_saved is False
+        assert "requested target is 'another_model'" in result.errorMessage
+        assert target.read_text() == original
+
+    @pytest.mark.asyncio
+    async def test_validate_flat_model_preserves_native_validation_errors(self, tmp_path):
+        svc = _service(models_root=tmp_path)
+        _, selector = _write_model(tmp_path, _flat_osi_yaml())
+        content = _flat_osi_yaml(metric_name="order_count").replace("COUNT(orders.id)", "COUNT(missing.id)")
+
+        result = await svc.validate_semantic_model(
+            ValidateSemanticModelInput(semantic_model_file=selector, yaml=content)
+        )
+
+        assert result.success is True
+        assert result.data.valid is False
+        assert "missing" in "; ".join(result.data.invalid_message)
+
+    @pytest.mark.asyncio
+    async def test_validate_flat_model_rejects_duplicate_keys_in_original_source(self, tmp_path):
+        svc = _service(models_root=tmp_path)
+        _, selector = _write_model(tmp_path, _flat_osi_yaml())
+        content = _flat_osi_yaml() + "name: overwritten_name\n"
+
+        result = await svc.validate_semantic_model(
+            ValidateSemanticModelInput(semantic_model_file=selector, yaml=content)
+        )
+
+        assert result.success is True
+        assert result.data.valid is False
+        assert "duplicate" in "; ".join(result.data.invalid_message).lower()
+
+    @pytest.mark.parametrize(
+        "content",
+        [
+            "[]",
+            "name: not_a_model",
+            "semantic_model: []",
+            "semantic_model: [{name: first}, {name: second}]",
+            "semantic_model: [{datasets: []}]",
+            "datasets: []",
+            "semantic_model: [",
+        ],
+    )
+    def test_candidate_identity_requires_one_named_model(self, content):
+        name, has_metrics, error = DatasourceService._osi_candidate_identity(content)
+
+        assert name is None
+        assert has_metrics is False
+        assert error
 
 
 class TestDatasourceServiceInit:

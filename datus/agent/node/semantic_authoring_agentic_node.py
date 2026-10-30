@@ -4,6 +4,7 @@
 
 """Shared runtime for semantic authoring agentic nodes."""
 
+from pathlib import Path
 from typing import Any, AsyncGenerator, Dict, List, Literal, Optional
 
 from datus.agent.node.agentic_node import AgenticNode
@@ -33,7 +34,6 @@ class SemanticAuthoringAgenticNode(AgenticNode):
 
     NODE_NAME = "semantic_authoring"
     INCLUDE_OSI_CORE_SPEC = False
-    COMPACT_SOURCE_INSPECTION = False
 
     def __init__(
         self,
@@ -82,7 +82,6 @@ class SemanticAuthoringAgenticNode(AgenticNode):
 
         # Setup tools
         self.db_func_tool = None
-        self.semantic_discovery_tools = None
         self.filesystem_func_tool: Optional[FilesystemFuncTool] = None
         self.generation_tools: Optional[GenerationTools] = None
         from datus.tools.func_tool.osi_target_tools import OsiSemanticModelTargetState
@@ -131,8 +130,6 @@ class SemanticAuthoringAgenticNode(AgenticNode):
         self.osi_target_state.reset()
         if self.osi_target_tools is not None:
             self.osi_target_tools.invalidate_inventory()
-        if self.semantic_discovery_tools is not None:
-            self.semantic_discovery_tools.reset_request_cache()
 
     def _ensure_bash_tool_in_tools(self) -> None:
         """Keep semantic authoring on its narrow filesystem surface."""
@@ -164,6 +161,7 @@ class SemanticAuthoringAgenticNode(AgenticNode):
             "mutation_callback",
             self.generation_evidence.record_artifact_mutation,
         )
+        path_allowlist = kwargs.pop("path_allowlist", None) or self._resolve_filesystem_allowlist()
         return filesystem_tool_cls(
             root_path=root_path,
             current_node=current_node,
@@ -174,6 +172,8 @@ class SemanticAuthoringAgenticNode(AgenticNode):
             mutation_callback=mutation_callback,
             osi_target_state=self.osi_target_state,
             generation_evidence=self.generation_evidence,
+            path_allowlist=path_allowlist,
+            path_allowlist_provider=lambda: self._with_loaded_skill_roots(path_allowlist),
             **kwargs,
         )
 
@@ -186,12 +186,18 @@ class SemanticAuthoringAgenticNode(AgenticNode):
 
     def _render_required_skill_content(self, skill_name: str, content: str) -> str:
         """Resolve runtime values in Dosi authoring specifications."""
-        from datus.agent.node.semantic_authoring import render_required_authoring_skill
+        from datus.agent.node.semantic_authoring import prepare_authoring_references, render_required_authoring_skill
+
+        reference_dir = None
+        if skill_name == "dosi-semantic-authoring":
+            cache_dir = Path(self.agent_config.path_manager.session_data_dir(self.session_id)) / "semantic_authoring"
+            reference_dir = prepare_authoring_references(cache_dir)
 
         return render_required_authoring_skill(
             skill_name,
             super()._render_required_skill_content(skill_name, content),
             include_osi_core=self.INCLUDE_OSI_CORE_SPEC,
+            reference_dir=reference_dir,
         )
 
     def _setup_semantic_tools(self):
@@ -276,39 +282,6 @@ class SemanticAuthoringAgenticNode(AgenticNode):
             "database": runtime_context.get("database", ""),
         }
 
-    def _setup_semantic_discovery_tools(self):
-        """Setup read-only semantic discovery tools."""
-        try:
-            from datus.tools.func_tool.semantic_discovery_tools import SemanticDiscoveryTools
-
-            self.semantic_discovery_tools = SemanticDiscoveryTools(
-                self.db_func_tool,
-                agent_config=self.agent_config,
-                sub_agent_name=self.NODE_NAME,
-                source_sql_provider=self._semantic_discovery_source_sql,
-                compact_source_inspection=self.COMPACT_SOURCE_INSPECTION,
-            )
-            discovery_tools = self.semantic_discovery_tools.available_tools()
-            self.tools.extend(discovery_tools)
-            logger.debug(
-                "Added semantic discovery tools: %s",
-                [tool.name for tool in discovery_tools],
-            )
-        except Exception as e:
-            logger.error(f"Failed to setup semantic discovery tools: {e}")
-
-    def _semantic_discovery_source_sql(self) -> List[Dict[str, Any]]:
-        """Expose structured SQL supplied directly by the current request."""
-        sources = list(getattr(getattr(self, "input", None), "source_queries", None) or [])
-        return [
-            {
-                "name": source.source_sql_name,
-                "question": source.question,
-                "sql": source.sql,
-            }
-            for source in sources
-        ]
-
     def _prepare_template_context(self, user_input: SemanticNodeInput) -> dict:
         """
         Prepare template context variables for semantic authoring.
@@ -366,6 +339,8 @@ class SemanticAuthoringAgenticNode(AgenticNode):
         meta = super()._system_prompt_snapshot_meta(prompt_version)
         # Earlier snapshots still instruct the model to validate keys against table data.
         meta["semantic_target_scope"] = "agent_bound_v4"
+        meta["semantic_evidence_policy"] = "direct_sql_and_business_checks_v2"
+        meta["metric_identity_policy"] = "cuid2_v1"
         meta.update(authoring_prompt_snapshot_meta(self.agent_config, self.NODE_NAME))
         return meta
 

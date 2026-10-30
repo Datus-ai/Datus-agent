@@ -5,8 +5,11 @@ PostgreSQL adapter 通过 PostgreSQL wire protocol 与 psycopg2 连接，保留�
 ## 安装
 
 ```bash
-pip install datus-postgresql
+pip install --upgrade 'datus-postgresql>=0.1.11' \
+  'datus-sqlalchemy>=0.1.12' 'datus-db-core>=0.1.10' 'SQLAlchemy==2.0.23'
 ```
+
+这些已发布版本包含下述证书和 AWS 认证字段。IAM 或 Secrets Manager 需要安装可选 `aws` extra，命令见 [Aurora 指南](aurora.zh.md#install)。较旧 adapter 可能只暴露 `sslmode`，证书仍需通过 libpq 标准文件或环境配置。请安装到 Agent 环境，升级共享包后重启；安装后从源码 checkout 通过 uv 启动时使用 `uv run --no-sync`。
 
 ## 连接配置
 
@@ -29,7 +32,7 @@ agent:
 ## 参数
 
 | 字段 | 类型 | 必填 | 默认值 | 说明 |
-|---|---|---:|---|---|
+| --- | --- | --: | --- | --- |
 | `host` | string | 否 | `127.0.0.1` | PostgreSQL 服务地址。 |
 | `port` | integer | 否 | `5432` | PostgreSQL wire-protocol 端口。 |
 | `username` | string | 是 | — | 登录 role。 |
@@ -37,11 +40,51 @@ agent:
 | `database` | string | 否 | 连接时使用 `postgres` | 初始 database。 |
 | `schema` | string | 否 | `public` | 初始 schema，是 adapter `schema_name` 的 alias。 |
 | `sslmode` | string | 否 | `prefer` | `disable`、`allow`、`prefer`、`require`、`verify-ca` 或 `verify-full`。 |
-| `timeout_seconds` | integer | 否 | `30` | 连接与连接池超时秒数。 |
+| `sslrootcert` | string | 否 | — | 传给 libpq 的 CA bundle 文件路径；Aurora/IAM 必填。 |
+| `sslcert` / `sslkey` | string | 否 | — | mTLS 客户端证书和私钥文件路径，必须成对提供。 |
+| `aurora` | boolean | 否 | `false` | 对 Aurora endpoint 强制 CA 和 `verify-full`。 |
+| `auth_mode` | string | 否 | `password` | `password` 或 AWS RDS `iam`。 |
+| `aws` | object | 否 | — | SDK 身份设置：`region`、`profile`、`ca_bundle`（仅 AWS API 信任）。 |
+| `secret_ref` | string | 否 | — | Secrets Manager 名称/ARN；不能与内联密码或 IAM 同用。 |
+| `secret_cache_ttl_seconds` | integer | 否 | `300` | Secret 刷新周期，1–86400 秒。 |
+| `connect_timeout_seconds` | integer | 否 | — | 可选正整数 DBAPI 建连超时。 |
+| `timeout_seconds` | integer | 否 | `30` | 连接池、socket 操作和默认查询截止时间。 |
+| `read_timeout_seconds` | integer | 否 | — | 正整数连接借出截止时间覆盖值。 |
+| `query_timeout_seconds` | integer | 否 | — | 正整数服务端 statement timeout 覆盖值。 |
 
 ## TLS 与命名空间
 
-`sslmode` 会传给 psycopg2/libpq。Adapter 默认值是 `prefer`；上面的含凭据基础示例使用 `verify-full`，会加密连接、校验 CA 证书链，并验证 `host` 与服务端证书匹配。当前 profile 没有 `sslrootcert` 字段，因此必须通过 libpq 标准证书目录或环境配置可信 CA，并使用与证书匹配的 hostname。不要在 datasource 中加入 adapter 不支持的证书字段。
+`sslmode` 会传给 psycopg2/libpq。已有 profile 的 adapter 默认值仍为 `prefer`，可能回退明文，且不提供服务端身份验证。新生产配置应显式选择 `verify-full`，使用与证书匹配的 hostname，并配置签发 CA。0.1.10 起可增加：
+
+```yaml
+sslrootcert: /absolute/path/postgresql-ca.pem
+# mTLS 必须同时提供以下两个客户端文件：
+# sslcert: /absolute/path/client.crt
+# sslkey: /absolute/path/client.key
+```
+
+这些字段接受文件路径，不接受内联 PEM。普通 PostgreSQL 省略 `sslrootcert` 时仍可使用 libpq 标准 CA 文件或环境。旧 `prefer` profile 迁移前应先准备可信 CA 和匹配 hostname；仅升级 adapter 不会改变它的连接策略。
+
+### AWS 认证
+
+请按 [Aurora 指南](aurora.zh.md#install)安装带 `aws` extra 的兼容已发布包。数据库 TLS 信任使用 `sslrootcert`；`aws.ca_bundle` 只影响 AWS HTTPS API。使用 SDK 凭据链或 AWS shared profile，包括由 SDK 自动刷新的 role；不要把临时 AWS 凭据粘贴到 datasource。完整 Aurora MySQL/PostgreSQL 配置、IAM 前提、Secret 轮换和故障切换行为见 [Amazon Aurora](aurora.zh.md)。
+
+RDS/Aurora IAM 配置应省略 `password` 与 `secret_ref`，并增加：
+
+```yaml
+aurora: true # 仅 Aurora endpoint 设置
+auth_mode: iam
+aws:
+  region: us-east-1
+  profile: analytics
+sslmode: verify-full
+sslrootcert: /absolute/path/rds-ca-bundle.pem
+connect_timeout_seconds: 10
+```
+
+`aurora: true` 和 `auth_mode: iam` 都要求显式 CA 路径；省略 `sslmode` 时自动使用 `verify-full`，显式选择其他模式会报错。IAM token 按新物理连接生成。密码认证也可用 `auth_mode: password` + `secret_ref`：Secret 必须包含 JSON 字符串 `password`，若含 `username` 必须与配置一致。Secret 按 TTL 刷新，版本变化会释放旧连接池后再建连。数据库 IAM 登录和 AWS 权限仍需单独启用。
+
+[GaussDB](gaussdb.zh.md)／[DWS](dws.zh.md) 有独立 adapter 和证书限制，应参照各自 datasource 页面；不能用 PostgreSQL 的 `verify-full` 模板代替这些产品的主机名验证。
 
 `database` 是初始 PostgreSQL database，`schema` 默认是 `public`。常规发现会过滤系统 database/schema；访问其他 database 仍取决于网络连通性和 role 权限。
 
@@ -56,10 +99,10 @@ datus --config conf/agent.yml --datasource warehouse_pg
 ## 故障排查
 
 | 现象 | 原因与处理 |
-|---|---|
+| --- | --- |
 | `password authentication failed` | 检查 role/password 与匹配的 `pg_hba.conf` 规则。 |
 | `no pg_hba.conf entry` | 放行 Datus 客户端地址，并选择正确的 TLS/认证规则。 |
-| 证书校验失败 | 使用合法 `sslmode`，并通过 libpq 标准环境/文件配置可信 CA；adapter profile 没有 `sslrootcert` 字段。 |
+| 证书校验失败 | 0.1.10 起可通过 `sslrootcert` 提供签发 CA 文件，并让 `host` 匹配证书；旧包使用 libpq 标准文件/环境。 |
 | 找不到 relation | 检查 `database`、`schema`、`search_path`、标识符大小写与权限。 |
 
 ## 参考

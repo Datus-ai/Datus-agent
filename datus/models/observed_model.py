@@ -121,8 +121,16 @@ class ObservedResponsesModel(_ObservedModel, OpenAIResponsesModel):
     _datus_protocol = "responses"
     _datus_impl = "openai_responses"
 
+    def capacity_payload(self, *args: Any, **kwargs: Any) -> dict:
+        """Build the SDK request locally without sending it or recording a call."""
+        return super()._build_response_create_kwargs(*args, **kwargs)
+
     def _build_response_create_kwargs(self, *args, **kwargs):
         params = super()._build_response_create_kwargs(*args, **kwargs)
+        if capacity := getattr(self, "_datus_capacity", None):
+            from datus.models.request_capacity import guard_request
+
+            guard_request(capacity, params)
         if call := current_model_call():
             # extra_body is merged by the OpenAI SDK after these keyword args.
             effective = dict(params)

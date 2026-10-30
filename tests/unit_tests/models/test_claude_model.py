@@ -85,6 +85,9 @@ def _make_model_config(
     cfg.retry_interval = 0.0
     cfg.strict_json_schema = True
     cfg.auth_type = auth_type
+    cfg.context_length = None
+    cfg.max_tokens = None
+    cfg.tokenizer_ref = None
     return cfg
 
 
@@ -3595,10 +3598,13 @@ class TestNativeMidTurnCompaction:
 
         async def _rewrite(messages):
             rewriter_calls.append(copy.deepcopy(messages))
+            if len(rewriter_calls) == 2:
+                rewriter.compactions += 1
             # A fresh list, like the real compactor: the loop appends to it.
             return list(view) if len(rewriter_calls) == 2 else None
 
         rewriter = MagicMock()
+        rewriter.compactions = 0
         rewriter.rewrite_native_messages = _rewrite
         session = MagicMock()
         session.get_items = AsyncMock(return_value=[])
@@ -3629,9 +3635,12 @@ class TestNativeMidTurnCompaction:
 
         async def _rewrite(messages):
             calls["n"] += 1
+            if calls["n"] == 2:
+                rewriter.compactions += 1
             return list(view) if calls["n"] == 2 else None
 
         rewriter = MagicMock()
+        rewriter.compactions = 0
         rewriter.rewrite_native_messages = _rewrite
         session = MagicMock()
         session.get_items = AsyncMock(return_value=[])
@@ -3648,6 +3657,60 @@ class TestNativeMidTurnCompaction:
         assert batches[-1][0]["role"] == "assistant"
         assert "done" in json.dumps(batches[-1][0], default=str)
         assert not any("SUMMARY" in json.dumps(b, default=str) for b in batches)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("block_content", [False, True])
+    async def test_projection_preserves_raw_history_and_each_user_turn(self, tmp_path, block_content):
+        from agents import SQLiteSession
+
+        from datus.agent.node.context_rewriter import MidTurnCompactor
+        from datus.cli.execution_state import PendingInputQueue
+        from datus.utils.tool_archive import ToolArchive
+        from datus.utils.tool_result_store import ACTIVE_RESULT_STORE, ToolResultStore
+        from tests.unit_tests.agent.node.test_context_rewriter import _FakeNode
+
+        raw = "large historical result " * 5000
+        history = [
+            {"role": "assistant", "content": [{"type": "tool_use", "id": "old", "name": "probe_tool", "input": {}}]},
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": "old",
+                        "content": [{"type": "text", "text": raw}] if block_content else raw,
+                    }
+                ],
+            },
+            {"role": "assistant", "content": [{"type": "text", "text": "Previous work saved"}]},
+        ]
+        session = SQLiteSession("native-projection", db_path=str(tmp_path / "session.db"))
+        await session.add_items(history)
+        node = _FakeNode(context_length=200000)
+        store = ToolResultStore(ToolArchive("project", "native-projection", base_dir=tmp_path))
+        node._get_tool_result_store = lambda: store
+        rewriter = MidTurnCompactor(node)
+        queue = PendingInputQueue()
+        token = ACTIVE_RESULT_STORE.set(None)
+        try:
+            seen = await self._run(_make_claude_model(), rewriter, session, queue, "CHECK_REFUNDS")
+            persisted = await session.get_items()
+        finally:
+            ACTIVE_RESULT_STORE.reset(token)
+            session.close()
+
+        assert rewriter.compactions == 0
+        assert all(raw not in json.dumps(view) and "result_id" in json.dumps(view) for view in seen)
+        assert persisted[: len(history)] == history
+        user_texts = [
+            part["text"]
+            for item in persisted
+            if item.get("role") == "user"
+            for part in item["content"]
+            if part.get("type") == "text"
+        ]
+        assert user_texts == ["start", "CHECK_REFUNDS"]
+        assert "tool finished" in json.dumps(persisted) and "done" in json.dumps(persisted)
 
     @pytest.mark.asyncio
     async def test_no_rewriter_leaves_the_loop_unchanged(self):
@@ -3765,6 +3828,73 @@ class TestClaudeSummarizeItems:
         assert result["content"] == "via litellm"
         assert base.await_args.args[0] == items
         assert base.await_args.kwargs["item_format"] == "responses"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("oauth", [False, True])
+    @pytest.mark.parametrize("transport", ["sync", "stream"])
+    async def test_chunked_native_summary_fits_the_actual_transport(self, oauth, transport):
+        from contextlib import asynccontextmanager
+
+        from datus.models.summary_chunks import bounded_summary
+
+        model = _make_claude_model()
+        model.model_config.context_length = 8192
+        model.model_config.max_tokens = 1024
+        model._is_oauth_token = oauth
+        model.use_native_api = True
+        response = _make_response([_make_text_block("short summary")], input_tokens=50, output_tokens=7)
+        sent = []
+
+        def create(**kwargs):
+            sent.append(kwargs)
+            return response
+
+        @asynccontextmanager
+        async def stream(**kwargs):
+            sent.append(kwargs)
+            yield SimpleNamespace(get_final_message=AsyncMock(return_value=response), current_message_snapshot=response)
+
+        if transport == "stream":
+            model.async_anthropic_client = MagicMock()
+        items = [{"role": "user", "content": [{"type": "text", "text": "project rule " * 600}]}]
+        original = copy.deepcopy(items)
+        # Replace only the external transports: real summary planning, chunking,
+        # request construction and the mandatory transport guard all execute.
+        with (
+            patch.object(model, "_raw_anthropic_messages_create", side_effect=create),
+            patch.object(model, "_raw_anthropic_messages_stream", side_effect=stream),
+        ):
+            text, used = await bounded_summary(
+                model,
+                items,
+                instruction="Keep current goals",
+                prompt="Summarize",
+                item_format="anthropic",
+                agent_name="test",
+            )
+        assert text == "short summary" and used == len(sent) * 7
+        assert 2 < len(sent) <= 8
+        assert all(request["max_tokens"] == 4000 for request in sent)
+        assert items == original
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("oauth", [False, True])
+    async def test_native_summary_preflight_counts_tool_stubs_and_system_framing(self, oauth):
+        from datus.models.request_capacity import guard_request
+
+        model = _make_claude_model()
+        model._is_oauth_token = oauth
+        items = self._transcript()
+        expected = model.summary_capacity_checker("sys", "SUMMARIZE", "anthropic", 4000)(items)
+        with patch.object(
+            model, "_raw_anthropic_messages_create", return_value=_make_response([_make_text_block("summary")])
+        ) as send:
+            result = await model.summarize_items(items, instruction="sys", prompt="SUMMARIZE", item_format="anthropic")
+        assert result["content"] == "summary"
+        request = send.call_args.kwargs
+        assert [tool["name"] for tool in request["tools"]] == ["execute_sql"]
+        assert request["tool_choice"] == {"type": "none"}
+        assert expected == guard_request(model.request_capacity(), request)
 
     @pytest.mark.asyncio
     async def test_oauth_only_model_cannot_summarize_responses_transcripts(self):

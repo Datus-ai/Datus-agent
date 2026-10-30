@@ -8,7 +8,7 @@ import os
 import threading
 from abc import ABC, abstractmethod
 from collections import OrderedDict
-from typing import Any, AsyncGenerator, ClassVar, Dict, List, Optional, Tuple, Union
+from typing import Any, AsyncGenerator, Callable, ClassVar, Dict, List, Optional, Tuple, Union
 
 from agents import SQLiteSession, Tool
 from agents.mcp import MCPServerStdio
@@ -103,6 +103,9 @@ class LLMBaseModel(ABC):  # Changed from BaseModel to LLMBaseModel
             # one bound to the previous effort level.
             bool(target_config.enable_thinking),
             target_config.reasoning_effort or "",
+            target_config.context_length,
+            target_config.max_tokens,
+            target_config.tokenizer_ref,
         )
 
         with cls._MODEL_CACHE_LOCK:
@@ -125,6 +128,66 @@ class LLMBaseModel(ABC):  # Changed from BaseModel to LLMBaseModel
             while len(cls._MODEL_CACHE) > cls._MODEL_CACHE_MAXSIZE:
                 cls._MODEL_CACHE.popitem(last=False)
         return instance
+
+    def request_capacity(self):
+        """Resolve immutable capacity metadata without changing a cached model."""
+        from datus.models.request_capacity import DEFAULT_CONTEXT_LENGTH, DEFAULT_MAX_TOKENS, RequestCapacity
+
+        config = self.model_config
+        adapter = getattr(self, "litellm_adapter", None)
+        name = getattr(adapter, "litellm_model_name", None) or config.model
+        import litellm
+
+        info = litellm.model_cost.get(name, litellm.model_cost.get(config.model, {}))
+        supports_limit = getattr(self, "supports_output_limit", True)
+        lookup_spec = getattr(self, "_lookup_spec", None)
+        spec_output = lookup_spec("max_tokens") if callable(lookup_spec) else None
+        output_ceiling = (
+            spec_output if isinstance(spec_output, int) and spec_output > 0 else info.get("max_output_tokens")
+        )
+        if not supports_limit:
+            output_ceiling = max(output_ceiling or 0, info.get("max_output_tokens") or 0) or None
+        context_length = (
+            config.context_length or self.context_length() or info.get("max_input_tokens") or DEFAULT_CONTEXT_LENGTH
+        )
+        return RequestCapacity(
+            model=name,
+            context_length=context_length,
+            default_output=config.max_tokens
+            or self._default_output_limit(
+                self.max_tokens() or info.get("max_output_tokens") or DEFAULT_MAX_TOKENS, context_length
+            ),
+            tokenizer_ref=config.tokenizer_ref,
+            supports_output_limit=supports_limit,
+            output_ceiling=output_ceiling,
+        )
+
+    def _default_output_limit(self, model_limit: Optional[int], context_length: Optional[int] = None) -> Optional[int]:
+        """Leave input headroom when a model's output ceiling fills its window.
+
+        Explicit configuration/request limits are validated unchanged. A model
+        ceiling is only a default, so reserve at most half the usable context
+        after the safety margin for output, leaving the other half for input.
+        Providers that cannot enforce an output cap must reserve their full limit.
+        """
+        context = context_length or self.model_config.context_length or self.context_length()
+        if model_limit and context and getattr(self, "supports_output_limit", True):
+            from datus.models.request_capacity import RequestCapacity
+
+            usable = context - RequestCapacity.margin_for(context)
+            return min(model_limit, max(1, usable // 2))
+        return model_limit
+
+    def check_request(self, payload: dict, output_parameter: str = "max_tokens") -> dict:
+        """Normalize output parameters and check the effective wire request."""
+        from datus.models.request_capacity import guard_request
+
+        request = dict(payload)
+        capacity = self.request_capacity()
+        if capacity.supports_output_limit:
+            request[output_parameter] = capacity.output_limit(request.get(output_parameter))
+        guard_request(capacity, request)
+        return request
 
     @abstractmethod
     def generate(self, prompt: Any, enable_thinking: bool = False, **kwargs) -> str:
@@ -300,9 +363,10 @@ class LLMBaseModel(ABC):  # Changed from BaseModel to LLMBaseModel
                 ErrorCode.COMMON_UNSUPPORTED,
                 message_args={"field_name": "item_format", "your_value": item_format},
             )
-        user_item = {"type": "message", "role": "user", "content": [{"type": "input_text", "text": prompt}]}
+        from datus.models.summary_chunks import summary_input
+
         return await self.generate_with_tools(
-            prompt=[*items, user_item],
+            prompt=summary_input(items, prompt),
             tools=None,
             mcp_servers=None,
             instruction=instruction,
@@ -313,6 +377,15 @@ class LLMBaseModel(ABC):  # Changed from BaseModel to LLMBaseModel
             agent_name=agent_name,
             **kwargs,
         )
+
+    def summary_capacity_checker(
+        self, instruction: str, prompt: str, item_format: str, output_tokens: int
+    ) -> Callable[[List[Any]], int]:
+        """Build a local capacity check for a single tool-less summary call."""
+        from datus.models.summary_chunks import summary_payload
+
+        capacity = self.request_capacity()
+        return lambda items: capacity.check(summary_payload(items, instruction, prompt), output_tokens)
 
     def _build_run_config(
         self,
@@ -418,7 +491,9 @@ class LLMBaseModel(ABC):  # Changed from BaseModel to LLMBaseModel
                         logger.warning(
                             "Cannot refresh compaction tool schemas; retaining previous schemas", exc_info=True
                         )
-                    context_rewriter.set_request_context(instructions, tool_schemas)
+                    context_rewriter.set_request_context(
+                        instructions, tool_schemas, data.agent.model_settings.max_tokens
+                    )
                     # Inserts are already pinned. Pass the original SDK list so
                     # the overlay remains aligned across subsequent calls.
                     from datus.agent.node.context_rewriter import extract_user_text
@@ -434,7 +509,11 @@ class LLMBaseModel(ABC):  # Changed from BaseModel to LLMBaseModel
                     pending_original_input = []
                     instructions = context_rewriter.system_instruction
                 return ModelInputData(input=view, instructions=instructions)
-            except Exception:  # noqa: BLE001 — filter exceptions abort the SDK run
+            except Exception as exc:  # noqa: BLE001 — optional queue handling remains best effort
+                from datus.models.request_capacity import ContextCapacityError
+
+                if isinstance(exc, ContextCapacityError):
+                    raise
                 logger.exception("call_model_input_filter raised; returning the current input view.")
                 return ModelInputData(input=view, instructions=data.model_data.instructions)
 
@@ -468,6 +547,10 @@ class LLMBaseModel(ABC):  # Changed from BaseModel to LLMBaseModel
     @abstractmethod
     def token_count(self, prompt: str) -> int:
         pass
+
+    def max_tokens(self) -> Optional[int]:
+        """Return the configured output limit when a model has no spec lookup."""
+        return self.model_config.max_tokens
 
     @abstractmethod
     def context_length(self) -> Optional[int]:
