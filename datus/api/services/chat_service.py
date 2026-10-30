@@ -9,6 +9,7 @@ read from disk each time (no in-memory state).
 import json
 import os
 import uuid
+from collections import Counter
 from typing import Any, AsyncGenerator, Callable, Dict, List, Optional
 
 from datus.agent.node.chat_agentic_node import ChatAgenticNode
@@ -91,13 +92,24 @@ def _is_safe_session_id(session_id: str) -> bool:
     return ".." not in session_id
 
 
-def _load_subagent_runs(session_dir: str, sub_session_id: str) -> List[List[ActionHistory]]:
+def _load_subagent_runs(
+    session_dir: str, sub_session_id: str, *, skip: int = 0, count: Optional[int] = None
+) -> List[List[ActionHistory]]:
     """A subagent session's stored actions, one list per prompt it received."""
     # SessionManager() creates its directory, so check for the file before building one.
     if not os.path.isfile(os.path.join(session_dir, f"{sub_session_id}.db")):
         return []
     try:
-        raw_messages = SessionManager(session_dir=session_dir).get_session_messages(sub_session_id)
+        manager = SessionManager(session_dir=session_dir)
+        bounds = {}
+        if count is not None:
+            from datus.api.services.history_pagination import subagent_run_window
+
+            window = subagent_run_window(manager, sub_session_id, skip, count)
+            if window is None:
+                return []
+            bounds = {"min_id": window[0], "max_id": window[1]}
+        raw_messages = manager.get_session_messages(sub_session_id, **bounds)
     except Exception as e:
         logger.warning(f"Failed to read subagent session {sub_session_id} for history: {e}")
         return []
@@ -465,15 +477,23 @@ class ChatService:
                 os.path.join(session_manager.session_dir, session_id) if _is_safe_session_id(session_id) else None
             )
             subagent_runs: Dict[str, List[List[ActionHistory]]] = {}
-            if (
-                window
-                and subagent_dir
-                and any(_is_task_result(action) for msg in raw_messages for action in msg.get("actions", []))
-            ):
+            if window and subagent_dir:
                 from datus.api.services.history_pagination import subagent_run_offsets
 
-                for child_id, skip in subagent_run_offsets(session_manager, session_id, window[0]).items():
-                    subagent_runs[child_id] = _load_subagent_runs(subagent_dir, child_id)[skip:]
+                run_counts = Counter(
+                    child_id
+                    for msg in raw_messages
+                    for action in msg.get("actions", [])
+                    if _is_task_result(action)
+                    and (child_id := _subagent_session_id(action))
+                    and _is_safe_session_id(child_id)
+                )
+                if run_counts:
+                    offsets = subagent_run_offsets(session_manager, session_id, window[0])
+                    for child_id, count in run_counts.items():
+                        subagent_runs[child_id] = _load_subagent_runs(
+                            subagent_dir, child_id, skip=offsets.get(child_id, 0), count=count
+                        )
             pending_review_messages: List[SSEMessagePayload] = []
 
             for idx, msg in enumerate(raw_messages):

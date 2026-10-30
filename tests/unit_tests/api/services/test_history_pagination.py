@@ -380,3 +380,159 @@ def test_client_requested_page_size_can_exceed_fifty_turns(history):
     page = get_history_page(service, "chat_custom_size", "alice", 60, None)
     assert questions(page) == [f"question {number}" for number in range(1, 61)]
     assert page.has_more
+
+
+@pytest.mark.parametrize("body_kind", ["text", "nested"])
+def test_failed_output_with_short_error_and_large_body_is_bounded_and_downloadable(history, body_kind):
+    service, write = history
+    text = "FAILED_BODY_" * 370000
+    body = text if body_kind == "text" else {"nested": {"rows": [{"output": text}]}}
+    path = write(
+        "chat_failed_body",
+        [
+            *turn(0),
+            {"type": "function_call", "call_id": "failed", "name": "execute_sql", "arguments": "{}"},
+            {
+                "type": "function_call_output",
+                "call_id": "failed",
+                "output": json.dumps({"success": 0, "error": "query failed", "result": body}),
+            },
+        ],
+    )
+    before = path.read_bytes()
+    page = get_history_page(service, "chat_failed_body", "alice", 10, None)
+    assert len(page.model_dump_json().encode()) < 40000
+    result = next(p.payload["result"] for m in page.messages for p in m.content if p.type == "call-tool-result")
+    assert result["error"] == "query failed"
+    assert json.loads(get_history_content(service, "chat_failed_body", "alice", result["historyContent"]["ref"])) == {
+        "error": "query failed",
+        "result": body,
+    }
+    assert path.read_bytes() == before
+
+
+def test_current_page_does_not_read_unrelated_older_subagents(history, monkeypatch):
+    service, write = history
+    parent, old_child, current_child = "chat_children", "gen_job_session_old", "gen_job_session_current"
+    write(old_child, [*turn(0), *tool("old_output", "execute_sql", "x" * 4000000)], parent=parent)
+    write(current_child, [*turn(1), *tool("current_output", "execute_sql", "current result")], parent=parent)
+    write(
+        parent,
+        [
+            *turn(0),
+            *tool("old_task", "task", {"session_id": old_child}),
+            *turn(1),
+            *tool("current_task", "task", {"session_id": current_child}),
+        ],
+    )
+    reads = []
+    original = SessionManager.get_session_messages
+
+    def track_reads(manager, session_id, **bounds):
+        reads.append(session_id)
+        return original(manager, session_id, **bounds)
+
+    monkeypatch.setattr(SessionManager, "get_session_messages", track_reads)
+    page = get_history_page(service, parent, "alice", 1, None)
+    assert old_child not in reads
+    assert reads.count(current_child) == 1
+    calls = [p.payload["callToolId"] for m in page.messages for p in m.content if p.type == "call-tool"]
+    assert "current_output" in calls
+
+
+@pytest.mark.parametrize("native", [False, True])
+@pytest.mark.parametrize("runs_on_page", [1, 2])
+def test_reused_subagent_reads_only_runs_referenced_by_the_selected_page(history, monkeypatch, native, runs_on_page):
+    import datus.models.session_manager as storage
+
+    service, write = history
+    parent, child = "chat_run_window", "gen_job_session_reused"
+
+    def child_tool(call_id, result):
+        if not native:
+            return tool(call_id, "execute_sql", result)
+        return [
+            {"role": "assistant", "content": [{"type": "tool_use", "id": call_id, "name": "execute_sql", "input": {}}]},
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": call_id,
+                        "content": json.dumps({"success": 1, "result": result}),
+                    }
+                ],
+            },
+        ]
+
+    write(
+        child,
+        [
+            *turn(0),
+            *child_tool("old_run", "OFF_PAGE_CHILD" * 310000),
+            {"role": "user", "content": "[DATUS_COMPACT_RESUME] Continue from the summary."},
+            *[
+                item
+                for number in range(1, runs_on_page + 1)
+                for item in [
+                    *turn(number),
+                    *child_tool(f"current_run_{number}", "current result"),
+                ]
+            ],
+            *turn(runs_on_page + 1),
+            *child_tool("later_run", "OFF_PAGE_CHILD" * 310000),
+        ],
+        parent=parent,
+    )
+    write(
+        parent,
+        [
+            *turn(0),
+            *tool("task_0", "task", {"session_id": child}),
+            *turn(1),
+            *[
+                item
+                for number in range(1, runs_on_page + 1)
+                for item in tool(f"task_{number}", "task", {"session_id": child})
+            ],
+            *turn(2),
+            *tool("task_later", "task", {"session_id": child}),
+        ],
+    )
+    real_loads = storage.json.loads
+
+    def guarded_loads(raw, *args, **kwargs):
+        if isinstance(raw, str) and "OFF_PAGE_CHILD" in raw:
+            pytest.fail("A tool body outside the selected Subagent run was deserialized")
+        return real_loads(raw, *args, **kwargs)
+
+    monkeypatch.setattr(storage.json, "loads", guarded_loads)
+    page = get_history_page(service, parent, "alice", 1, None, turn=2)
+    calls = [p.payload["callToolId"] for m in page.messages for p in m.content if p.type == "call-tool"]
+    assert {f"current_run_{number}" for number in range(1, runs_on_page + 1)} <= set(calls)
+    assert "old_run" not in calls and "later_run" not in calls
+    assert questions(page) == ["question 1"]
+
+
+@pytest.mark.parametrize("target", [1, 2])
+def test_bounded_subagent_runs_preserve_an_implicit_initial_assistant_run(history, target):
+    service, write = history
+    parent, child = "chat_implicit", "gen_job_session_implicit"
+    write(
+        child,
+        [*tool("implicit", "execute_sql", "first"), *turn(1), *tool("prompted", "execute_sql", "second")],
+        parent=parent,
+    )
+    write(
+        parent,
+        [
+            *turn(0),
+            *tool("task_0", "task", {"session_id": child}),
+            *turn(1),
+            *tool("task_1", "task", {"session_id": child}),
+        ],
+    )
+    page = get_history_page(service, parent, "alice", 1, None, turn=target)
+    calls = {p.payload["callToolId"] for m in page.messages for p in m.content if p.type == "call-tool"}
+    assert ("implicit" if target == 1 else "prompted") in calls
+    assert ("prompted" if target == 1 else "implicit") not in calls

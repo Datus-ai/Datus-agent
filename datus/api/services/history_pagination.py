@@ -11,8 +11,9 @@ import json
 import sqlite3
 import uuid
 from collections import Counter
+from itertools import chain, islice
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any, Iterator, Optional
 
 from datus.api.models.cli_models import ChatHistoryPageData
 from datus.models.session_manager import SessionManager, extract_user_input, is_compact_resume_text
@@ -107,6 +108,52 @@ def subagent_run_offsets(manager: SessionManager, session_id: str, start_id: int
         return dict(counts)
 
 
+def _user_turn_rows(
+    conn: sqlite3.Connection, session_id: str, snapshot: int, *, descending: bool = False
+) -> Iterator[tuple[int, str]]:
+    # Exclude native tool-result bodies in SQLite before returning user prompts.
+    rows = conn.execute(
+        "SELECT id,message_data FROM agent_messages WHERE session_id=? AND id<=? "
+        "AND json_extract(message_data,'$.role')='user' AND ("
+        "json_type(message_data,'$.content')!='array' OR "
+        "NOT EXISTS(SELECT 1 FROM json_each(message_data,'$.content') WHERE json_extract(value,'$.type')='tool_result') "
+        "OR EXISTS(SELECT 1 FROM json_each(message_data,'$.content') "
+        "WHERE json_extract(value,'$.type') IN ('text','input_text','output_text'))) ORDER BY id "
+        + ("DESC" if descending else "ASC"),
+        (session_id, snapshot),
+    )
+    for row_id, raw in rows:
+        content = extract_user_input(json.loads(raw).get("content", ""))
+        if not is_compact_resume_text(content):
+            yield row_id, raw
+
+
+def subagent_run_window(manager: SessionManager, session_id: str, skip: int, count: int) -> Optional[tuple[int, int]]:
+    """Resolve prompt boundaries without fetching off-page tool bodies."""
+    with _connect(_db_path(manager, session_id)) as conn:
+        snapshot = conn.execute(
+            "SELECT COALESCE(MAX(id),0) FROM agent_messages WHERE session_id=?", (session_id,)
+        ).fetchone()[0]
+        turns = _user_turn_rows(conn, session_id, snapshot)
+        first = next(turns, None)
+        # Legacy/compacted sessions can start with an implicit assistant run.
+        prefix = conn.execute(
+            "SELECT id FROM agent_messages WHERE session_id=? AND id<? AND ("
+            "json_extract(message_data,'$.type')='function_call' OR ("
+            "json_extract(message_data,'$.role')='assistant' AND EXISTS("
+            "SELECT 1 FROM json_each(message_data,'$.content') b WHERE b.type='object' AND ("
+            "json_extract(b.value,'$.type') IN ('tool_use','server_tool_use') OR ("
+            "json_extract(b.value,'$.type') IN ('text','output_text') "
+            "AND json_extract(b.value,'$.text')!=''))))) ORDER BY id LIMIT 1",
+            (session_id, first[0] if first else snapshot + 1),
+        ).fetchone()
+        starts = chain([(prefix[0], "")] if prefix else [], [first] if first else [], turns)
+        markers = [row_id for row_id, _ in islice(starts, skip, skip + count + 1)]
+        if not markers:
+            return None
+        return markers[0], markers[count] - 1 if len(markers) > count else snapshot
+
+
 def _window(manager: SessionManager, session_id: str, limit: int, cursor: Optional[str], turn: Optional[int]):
     path = _db_path(manager, session_id)
     with _connect(path) as conn:
@@ -128,23 +175,7 @@ def _window(manager: SessionManager, session_id: str, limit: int, cursor: Option
             ).fetchone()
             if not anchor or hashlib.sha256(anchor[0].encode()).hexdigest() != saved.get("anchor"):
                 raise HistoryChangedError("History changed; reload the latest messages")
-        # Anthropic tool_result-only user rows are not user turns. Filter in
-        # SQLite before returning content; a single tool result can be megabytes.
-        rows = conn.execute(
-            "SELECT id,message_data FROM agent_messages WHERE session_id=? AND id<=? "
-            "AND json_extract(message_data,'$.role')='user' AND ("
-            "json_type(message_data,'$.content')!='array' OR "
-            "NOT EXISTS(SELECT 1 FROM json_each(message_data,'$.content') WHERE json_extract(value,'$.type')='tool_result') "
-            "OR EXISTS(SELECT 1 FROM json_each(message_data,'$.content') "
-            "WHERE json_extract(value,'$.type') IN ('text','input_text','output_text'))) ORDER BY id DESC",
-            (session_id, snapshot),
-        )
-        turns = []
-        for row_id, raw in rows:
-            content = extract_user_input(json.loads(raw).get("content", ""))
-            if is_compact_resume_text(content):
-                continue
-            turns.append((row_id, raw))
+        turns = list(_user_turn_rows(conn, session_id, snapshot, descending=True))
         total = len(turns)
         if turn is not None:
             if not 1 <= turn <= total:
@@ -226,7 +257,15 @@ def _value(part, field: str) -> Any:
         return part.payload.get("toolParams")
     if field == "result" and part.type == "call-tool-result":
         result = part.payload.get("result") or {}
-        return result.get("error") if not result.get("success") else result.get("result")
+        body = result.get("result")
+        if result.get("success"):
+            return body
+        error = result.get("error")
+        if body is None or body == error or (isinstance(body, str) and body.strip() == error):
+            return error
+        # Failed tools can retain a separate, large body despite a short error.
+        # Keep both in the downloadable content so neither bypasses truncation.
+        return {"error": error, "result": body}
     raise ValueError("Invalid tool content field")
 
 
@@ -295,7 +334,8 @@ def get_history_page(
                 if envelope.get("success"):
                     envelope["result"] = _preview(original, inline_limit)
                 else:
-                    envelope["error"] = text[:inline_limit]
+                    if isinstance(envelope.get("error"), str):
+                        envelope["error"] = envelope["error"][:inline_limit]
                     # Failed envelopes sometimes also retain the same raw result.
                     envelope["result"] = None
     return ChatHistoryPageData(
