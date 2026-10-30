@@ -660,3 +660,10 @@ class ChatHistoryData(BaseModel):
     """Chat history data."""
 
     messages: List[SSEMessagePayload] = Field(default_factory=list, description="chat history messages")
+
+
+class ChatHistoryPageData(ChatHistoryData):
+    """A bounded window of complete user turns, oldest to newest."""
+
+    has_more: bool = False
+    next_cursor: Optional[str] = None

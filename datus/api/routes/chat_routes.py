@@ -37,6 +37,7 @@ from datus.api.models.chat_models import (
 )
 from datus.api.models.cli_models import (
     ChatHistoryData,
+    ChatHistoryPageData,
     ChatSessionData,
     CompactSessionData,
     CompactSessionInput,
@@ -390,6 +391,65 @@ async def get_chat_history(
         return Result[ChatHistoryData](
             success=False, errorCode="REQUEST_TIMEOUT", errorMessage="History fetch timed out"
         )
+
+
+@router.get("/history/page", response_model=Result[ChatHistoryPageData], summary="Get Recent Chat Turns")
+async def get_chat_history_page(
+    svc: ServiceDep,
+    ctx: AppContextDep,
+    session_id: str = Query(...),
+    limit: Optional[int] = Query(None, ge=1, le=100),
+    cursor: Optional[str] = Query(None, max_length=2048),
+) -> Result[ChatHistoryPageData]:
+    from datus.api.services.history_pagination import HistoryChangedError, get_history_page
+
+    try:
+        data = await asyncio.wait_for(
+            asyncio.to_thread(get_history_page, svc.chat, session_id, ctx.user_id, limit, cursor),
+            timeout=_FUSE_IO_TIMEOUT,
+        )
+        return Result(success=True, data=data)
+    except HistoryChangedError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except TimeoutError as exc:
+        raise HTTPException(status_code=504, detail="History fetch timed out") from exc
+
+
+@router.get("/history/content", summary="Download Full Historical Tool Content")
+async def get_chat_history_content(
+    svc: ServiceDep,
+    ctx: AppContextDep,
+    session_id: str = Query(...),
+    reference: str = Query(..., max_length=2048),
+):
+    from fastapi.responses import Response
+
+    from datus.api.services.history_pagination import HistoryChangedError, get_history_content
+
+    try:
+        text = await asyncio.wait_for(
+            asyncio.to_thread(get_history_content, svc.chat, session_id, ctx.user_id, reference),
+            timeout=_FUSE_IO_TIMEOUT,
+        )
+        return Response(
+            content=text,
+            media_type="text/plain",
+            headers={
+                "Content-Disposition": 'attachment; filename="tool-output.txt"',
+                "Cache-Control": "private, no-store",
+                "X-Content-Type-Options": "nosniff",
+            },
+        )
+    except HistoryChangedError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Tool output not found") from exc
+    except TimeoutError as exc:
+        raise HTTPException(status_code=504, detail="Tool output fetch timed out") from exc
 
 
 # ========== User Interaction ==========

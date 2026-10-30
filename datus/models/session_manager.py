@@ -1518,13 +1518,15 @@ class SessionManager:
                 ],
             )
 
-    def get_tool_result_contents(self, session_id: str) -> Dict[str, dict]:
-        return self._get_tool_display_contents(session_id, "call-tool-result")
+    def get_tool_result_contents(self, session_id: str, **window) -> Dict[str, dict]:
+        return self._get_tool_display_contents(session_id, "call-tool-result", **window)
 
-    def get_tool_call_contents(self, session_id: str) -> Dict[str, dict]:
-        return self._get_tool_display_contents(session_id, "call-tool")
+    def get_tool_call_contents(self, session_id: str, **window) -> Dict[str, dict]:
+        return self._get_tool_display_contents(session_id, "call-tool", **window)
 
-    def _get_tool_display_contents(self, session_id: str, content_type: str) -> Dict[str, dict]:
+    def _get_tool_display_contents(
+        self, session_id: str, content_type: str, *, min_id: Optional[int] = None, max_id: Optional[int] = None
+    ) -> Dict[str, dict]:
         """Only replay display content whose owning model message still exists."""
         self._validate_session_id(session_id)
         db_path = os.path.join(self.session_dir, f"{session_id}.db")
@@ -1535,8 +1537,9 @@ class SessionManager:
                 rows = conn.execute(
                     "SELECT c.contents_json FROM chat_message_contents c "
                     "JOIN agent_messages m ON m.id = c.message_id AND m.session_id = c.session_id "
-                    "WHERE c.session_id = ? ORDER BY c.message_id",
-                    (session_id,),
+                    "WHERE c.session_id = ? AND (? IS NULL OR c.message_id >= ?) "
+                    "AND (? IS NULL OR c.message_id <= ?) ORDER BY c.message_id",
+                    (session_id, min_id, min_id, max_id, max_id),
                 ).fetchall()
             except sqlite3.OperationalError:
                 return {}
@@ -1560,10 +1563,14 @@ class SessionManager:
         return results
 
     @staticmethod
-    def _read_message_contents(conn, session_id: str) -> Dict[int, list]:
+    def _read_message_contents(
+        conn, session_id: str, *, min_id: Optional[int] = None, max_id: Optional[int] = None
+    ) -> Dict[int, list]:
         try:
             rows = conn.execute(
-                "SELECT message_id, contents_json FROM chat_message_contents WHERE session_id = ?", (session_id,)
+                "SELECT message_id, contents_json FROM chat_message_contents WHERE session_id = ? "
+                "AND (? IS NULL OR message_id >= ?) AND (? IS NULL OR message_id <= ?)",
+                (session_id, min_id, min_id, max_id, max_id),
             ).fetchall()
         except sqlite3.OperationalError:
             return {}
@@ -1709,13 +1716,16 @@ class SessionManager:
                 output_data=output,
                 status=ActionStatus.SUCCESS,
             )
+            final_action.action_id = f"{last_assistant.action_id}_final"
             return final_action
 
         # Non-JSON output (e.g. chat agent markdown) — use raw text as content
         current_assistant_group["content"] = last_assistant.messages
         return None
 
-    def get_session_messages(self, session_id: str) -> List[Dict]:
+    def get_session_messages(
+        self, session_id: str, *, min_id: Optional[int] = None, max_id: Optional[int] = None
+    ) -> List[Dict]:
         """
         Get all messages from a session stored in SQLite, aggregating consecutive assistant messages.
 
@@ -1750,14 +1760,19 @@ class SessionManager:
         try:
             with sqlite3.connect(str(db_path)) as conn:
                 cursor = conn.cursor()
+                conditions = ["session_id = ?"]
+                params = [session_id]
+                if min_id is not None:
+                    conditions.append("id >= ?")
+                    params.append(min_id)
+                if max_id is not None:
+                    conditions.append("id <= ?")
+                    params.append(max_id)
                 cursor.execute(
-                    """
-                    SELECT id, message_data, created_at
-                    FROM agent_messages
-                    WHERE session_id = ?
-                    ORDER BY created_at, id
-                    """,
-                    (session_id,),
+                    "SELECT id, message_data, created_at FROM agent_messages WHERE "
+                    + " AND ".join(conditions)
+                    + " ORDER BY created_at, id",
+                    params,
                 )
                 rows = cursor.fetchall()
 
@@ -1767,7 +1782,7 @@ class SessionManager:
                 # feature or carried no references.
                 turn_map = self._read_message_turn_map(conn, session_id)
                 context_map = self._read_user_message_context(conn, session_id)
-                content_map = self._read_message_contents(conn, session_id)
+                content_map = self._read_message_contents(conn, session_id, min_id=min_id, max_id=max_id)
 
                 # Aggregate consecutive assistant messages
                 current_assistant_group = None
@@ -1835,6 +1850,7 @@ class SessionManager:
                                 continue
                             user_msg: Dict[str, Any] = {
                                 "role": "user",
+                                "source_id": row_id,
                                 "content": content,
                                 "timestamp": created_at_iso,
                                 "created_at": created_at_iso,
@@ -1858,6 +1874,7 @@ class SessionManager:
                             if not current_assistant_group:
                                 current_assistant_group = {
                                     "role": "assistant",
+                                    "source_id": row_id,
                                     "content": "",
                                     "timestamp": created_at_iso,
                                     "created_at": created_at_iso,
@@ -1874,7 +1891,7 @@ class SessionManager:
 
                             # Create ActionHistory for tool call (use original call_id from SDK)
                             action = ActionHistory(
-                                action_id=message_json.get("call_id", str(uuid.uuid4())),
+                                action_id=message_json.get("call_id", f"history_{row_id}"),
                                 role=ActionRole.TOOL,
                                 messages=f"Tool call: {tool_name}",
                                 action_type=tool_name,
@@ -1987,6 +2004,7 @@ class SessionManager:
                                     if not current_assistant_group:
                                         current_assistant_group = {
                                             "role": "assistant",
+                                            "source_id": row_id,
                                             "content": "",
                                             "timestamp": created_at_iso,
                                             "created_at": created_at_iso,
@@ -2006,7 +2024,7 @@ class SessionManager:
 
                                     # Create ActionHistory for thinking (use response_id from provider)
                                     response_id = message_json.get("provider_data", {}).get(
-                                        "response_id", message_json.get("id", str(uuid.uuid4()))
+                                        "response_id", message_json.get("id", f"history_{row_id}")
                                     )
                                     thinking_action = ActionHistory(
                                         action_id=response_id,
@@ -2029,6 +2047,7 @@ class SessionManager:
                                     if not current_assistant_group:
                                         current_assistant_group = {
                                             "role": "assistant",
+                                            "source_id": row_id,
                                             "content": "",
                                             "timestamp": created_at_iso,
                                             "created_at": created_at_iso,
