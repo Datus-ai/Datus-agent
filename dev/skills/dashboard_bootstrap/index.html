@@ -5130,7 +5130,7 @@
 <p>When Agent configuration is mutable, the final step creates or updates two nodes using the legacy naming and tool pattern:</p>
 <ul>
 <li><code>&lt;platform&gt;_&lt;dashboard&gt;</code> uses <code>gen_sql</code> with database and context-search tools.</li>
-<li><code>&lt;platform&gt;_&lt;dashboard&gt;_attribution</code> uses <code>gen_report</code> with semantic attribution tools.</li>
+<li><code>&lt;platform&gt;_&lt;dashboard&gt;_attribution</code> uses <code>gen_visual_report</code> with semantic attribution tools.</li>
 </ul>
 <p>Both nodes are scoped only to successful tables and exact metric/reference-SQL subject references for the active datasource. Metric scope uses <code>&lt;metric.subject_path&gt;.&lt;metric.name&gt;</code> from the synchronized Dosi model; reference-SQL scope uses <code>&lt;subject_tree&gt;.&lt;name&gt;</code> from the generated SQL summary. Bare subject paths select whole subtrees and are not used for an exact Dashboard selection. The generic <code>create-subagent</code> skill resolves these references against the post-sync subject trees, edits <code>agent.agentic_nodes</code> without replacing sibling entries, and verifies the YAML after writing. When the runtime marks configuration read-only, that skill is not discoverable and the workflow skips persistence without failing context construction.</p>
 <h2 id="auto-run">Auto-run<a class="headerlink" href="#auto-run" title="Permanent link">&para;</a></h2>

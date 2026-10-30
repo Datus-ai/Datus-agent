@@ -5223,13 +5223,13 @@
 <li><code>gen_sql</code>: specialized SQL generation</li>
 <li><code>ask_metrics</code>: answer questions using existing semantic metrics</li>
 <li><code>ontology_analyst</code>: answer metric and record questions over the datasource's ontology (offered only when one exists)</li>
-<li><code>gen_report</code>: structured report generation</li>
+<li><code>gen_visual_report</code>: self-contained visual report under <code>reports/&lt;slug&gt;/</code></li>
 <li><code>semantic_modeling</code>: unified Dosi semantic-model and metric authoring</li>
 <li><code>gen_sql_summary</code>: SQL summary generation</li>
 <li><code>gen_table</code>: interactive table creation</li>
 <li><code>gen_job</code>: data pipeline jobs (single-database ETL AND cross-database migration)</li>
 <li><code>gen_skill</code>: skill creation and optimization</li>
-<li><code>gen_visual_report</code>: self-contained visual report under <code>reports/&lt;slug&gt;/</code></li>
+<li><code>gen_visual_dashboard</code>: parameterized visual dashboard under <code>dashboards/&lt;slug&gt;/</code></li>
 </ol>
 <p>Airflow scheduling and external BI operations such as Superset authoring are
 not subagent types. The main agent performs them directly with installed
@@ -5239,12 +5239,12 @@ but they are not discoverable or executable as built-in or custom subagents.</p>
 <p>See <a href="../builtin_subagents/">Built-in subagents</a> for details.</p>
 <h2 id="custom-subagents">Custom Subagents<a class="headerlink" href="#custom-subagents" title="Permanent link">&para;</a></h2>
 <p>Custom subagents are configured under <code>agent.agentic_nodes</code>.</p>
-<p>The unified agent TUI (<code>/agent</code> or <code>/subagent</code>) Custom-tab wizard currently creates <code>gen_sql</code>-style or <code>gen_report</code>-style custom subagents. If you want to alias more specialized available node classes such as <code>explore</code>, <code>gen_table</code>, or <code>gen_skill</code>, edit <code>agent.yml</code> manually. Custom aliases of the legacy scheduling and external-BI node classes are ignored.</p>
+<p>The unified agent TUI (<code>/agent</code> or <code>/subagent</code>) Custom-tab wizard creates custom subagents using <code>gen_sql</code>, <code>gen_visual_report</code>, or <code>gen_visual_dashboard</code>. If you want to alias more specialized available node classes such as <code>explore</code>, <code>gen_table</code>, or <code>gen_skill</code>, edit <code>agent.yml</code> manually. Custom aliases of the legacy scheduling and external-BI node classes are ignored.</p>
 <p>Example:</p>
 <div class="language-yaml highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nt">agent</span><span class="p">:</span>
 </span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="w">  </span><span class="nt">agentic_nodes</span><span class="p">:</span>
 </span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="w">    </span><span class="nt">finance_report</span><span class="p">:</span>
-</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="w">      </span><span class="nt">node_class</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">gen_report</span>
+</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="w">      </span><span class="nt">node_class</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">gen_visual_report</span>
 </span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="w">      </span><span class="nt">model</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">claude</span>
 </span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="w">      </span><span class="nt">system_prompt</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">finance_report</span>
 </span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="w">      </span><span class="nt">prompt_version</span><span class="p">:</span><span class="w"> </span><span class="s">"1.0"</span>
@@ -5323,8 +5323,8 @@ but they are not discoverable or executable as built-in or custom subagents.</p>
 <td>Generate SQL with deeper multi-step reasoning</td>
 </tr>
 <tr>
-<td><code>gen_report</code></td>
-<td>Produce structured reports and analysis</td>
+<td><code>gen_visual_report</code></td>
+<td>Produce a self-contained visual report under <code>reports/&lt;slug&gt;/</code></td>
 </tr>
 <tr>
 <td><code>semantic_modeling</code></td>
@@ -5347,8 +5347,8 @@ but they are not discoverable or executable as built-in or custom subagents.</p>
 <td>Create or optimize skills</td>
 </tr>
 <tr>
-<td><code>gen_visual_report</code></td>
-<td>Produce a self-contained visual report under <code>reports/&lt;slug&gt;/</code></td>
+<td><code>gen_visual_dashboard</code></td>
+<td>Produce a parameterized visual dashboard under <code>dashboards/&lt;slug&gt;/</code></td>
 </tr>
 <tr>
 <td>Custom names</td>

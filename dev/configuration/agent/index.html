@@ -6009,7 +6009,7 @@ type to filter it.</p>
 <p><code>agent.agentic_nodes</code> is where Datus configures chat and subagent behavior.</p>
 <p>This section is used for:</p>
 <ul>
-<li>built-in agentic nodes such as <code>chat</code>, <code>explore</code>, <code>gen_sql</code>, <code>gen_report</code>, <code>gen_dashboard</code>, and <code>scheduler</code></li>
+<li>built-in agentic nodes such as <code>chat</code>, <code>explore</code>, <code>gen_sql</code>, <code>gen_visual_report</code>, <code>gen_dashboard</code>, and <code>scheduler</code></li>
 <li>custom subagents created with the unified agent TUI (<code>/agent</code> or <code>/subagent</code>)</li>
 <li>advanced manual aliases that point a custom name at a built-in node class</li>
 </ul>
@@ -6018,7 +6018,7 @@ type to filter it.</p>
 <ul>
 <li><code>model</code>: provider key from <code>agent.models</code> (custom entries only; omit to inherit the active provider/model)</li>
 <li><code>system_prompt</code>: subagent name / prompt template base name</li>
-<li><code>node_class</code>: node implementation to use, such as <code>gen_sql</code>, <code>gen_report</code>, <code>explore</code>, <code>gen_table</code>, <code>gen_skill</code>, <code>gen_dashboard</code>, or <code>scheduler</code></li>
+<li><code>node_class</code>: node implementation to use, such as <code>gen_sql</code>, <code>gen_visual_report</code>, <code>explore</code>, <code>gen_table</code>, <code>gen_skill</code>, <code>gen_dashboard</code>, or <code>scheduler</code></li>
 <li><code>prompt_version</code>, <code>prompt_language</code></li>
 <li><code>agent_description</code></li>
 <li><code>tools</code>, <code>mcp</code>, <code>skills</code></li>
@@ -6060,7 +6060,7 @@ type to filter it.</p>
 </span><span id="__span-19-6"><a id="__codelineno-19-6" name="__codelineno-19-6" href="#__codelineno-19-6"></a><span class="w">      </span><span class="nt">subagents</span><span class="p">:</span><span class="w"> </span><span class="s">"*"</span>
 </span><span id="__span-19-7"><a id="__codelineno-19-7" name="__codelineno-19-7" href="#__codelineno-19-7"></a>
 </span><span id="__span-19-8"><a id="__codelineno-19-8" name="__codelineno-19-8" href="#__codelineno-19-8"></a><span class="w">    </span><span class="nt">finance_report</span><span class="p">:</span>
-</span><span id="__span-19-9"><a id="__codelineno-19-9" name="__codelineno-19-9" href="#__codelineno-19-9"></a><span class="w">      </span><span class="nt">node_class</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">gen_report</span>
+</span><span id="__span-19-9"><a id="__codelineno-19-9" name="__codelineno-19-9" href="#__codelineno-19-9"></a><span class="w">      </span><span class="nt">node_class</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">gen_visual_report</span>
 </span><span id="__span-19-10"><a id="__codelineno-19-10" name="__codelineno-19-10" href="#__codelineno-19-10"></a><span class="w">      </span><span class="nt">model</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">claude</span>
 </span><span id="__span-19-11"><a id="__codelineno-19-11" name="__codelineno-19-11" href="#__codelineno-19-11"></a><span class="w">      </span><span class="nt">system_prompt</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">finance_report</span>
 </span><span id="__span-19-12"><a id="__codelineno-19-12" name="__codelineno-19-12" href="#__codelineno-19-12"></a><span class="w">      </span><span class="nt">prompt_version</span><span class="p">:</span><span class="w"> </span><span class="s">"1.0"</span>

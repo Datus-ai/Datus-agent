@@ -5258,17 +5258,19 @@
 <li>A new entry under <code>agent.agentic_nodes</code></li>
 <li>A prompt template file named like <code>{agent_name}_system_{prompt_version}.j2</code></li>
 </ol>
-<p>The wizard currently supports two custom node styles:</p>
+<p><code>gen_report</code> is no longer available. Configurations referencing it return a subagent-not-found error and recommend <code>gen_visual_report</code>.</p>
+<p>The wizard currently supports three custom node styles:</p>
 <ul>
 <li><code>gen_sql</code> (default)</li>
-<li><code>gen_report</code></li>
+<li><code>gen_visual_report</code></li>
+<li><code>gen_visual_dashboard</code></li>
 </ul>
 <p>If you want advanced aliases such as <code>explore</code>, <code>gen_table</code>, or <code>gen_skill</code>, edit <code>agent.yml</code> manually. Scheduling and external BI operations are handled directly by the main agent through installed plugins and cannot be exposed through a custom subagent alias.</p>
 <h2 id="wizard-fields">Wizard Fields<a class="headerlink" href="#wizard-fields" title="Permanent link">&para;</a></h2>
 <h3 id="step-1-basic-info">Step 1: Basic Info<a class="headerlink" href="#step-1-basic-info" title="Permanent link">&para;</a></h3>
 <ul>
 <li><code>system_prompt</code>: the subagent name and config key</li>
-<li><code>node_class</code>: <code>gen_sql</code> or <code>gen_report</code></li>
+<li><code>node_class</code>: <code>gen_sql</code>, <code>gen_visual_report</code>, or <code>gen_visual_dashboard</code></li>
 <li><code>agent_description</code>: short description shown in previews and task-tool descriptions</li>
 </ul>
 <h3 id="step-2-tools-and-mcp">Step 2: Tools and MCP<a class="headerlink" href="#step-2-tools-and-mcp" title="Permanent link">&para;</a></h3>
@@ -5358,7 +5360,7 @@
 </span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="w">  </span><span class="nt">agentic_nodes</span><span class="p">:</span>
 </span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="w">    </span><span class="nt">finance_report</span><span class="p">:</span>
 </span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="w">      </span><span class="nt">system_prompt</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">finance_report</span>
-</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="w">      </span><span class="nt">node_class</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">gen_report</span>
+</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="w">      </span><span class="nt">node_class</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">gen_visual_report</span>
 </span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="w">      </span><span class="nt">prompt_version</span><span class="p">:</span><span class="w"> </span><span class="s">"1.0"</span>
 </span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="w">      </span><span class="nt">prompt_language</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">en</span>
 </span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a><span class="w">      </span><span class="nt">agent_description</span><span class="p">:</span><span class="w"> </span><span class="s">"Finance</span><span class="nv"> </span><span class="s">reporting</span><span class="nv"> </span><span class="s">assistant"</span>
@@ -5387,7 +5389,7 @@
 <li>global knowledge still needs to be populated separately with <code>datus-agent bootstrap-kb</code></li>
 </ul>
 <h2 id="advanced-manual-configuration">Advanced Manual Configuration<a class="headerlink" href="#advanced-manual-configuration" title="Permanent link">&para;</a></h2>
-<p>The wizard covers the common <code>gen_sql</code> and <code>gen_report</code> cases. For more advanced setups, edit <code>agent.yml</code> directly.</p>
+<p>The wizard covers <code>gen_sql</code>, <code>gen_visual_report</code>, and <code>gen_visual_dashboard</code>. For more advanced setups, edit <code>agent.yml</code> directly.</p>
 <p>Example:</p>
 <div class="language-yaml highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="nt">agent</span><span class="p">:</span>
 </span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">  </span><span class="nt">agentic_nodes</span><span class="p">:</span>
