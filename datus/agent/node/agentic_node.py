@@ -813,25 +813,37 @@ class AgenticNode(Node):
         if catalog:
             details.append(f"catalog: {catalog}")
         connector = getattr(self.db_func_tool, "connector", None)
-        database = resolve_database_name_for_prompt(connector, getattr(user_input, "database", "") or "")
+        requested_database = getattr(user_input, "database", "") or ""
+        sql_context = {}
+        context_getter = getattr(self.db_func_tool, "get_sql_generation_context", None)
+        try:
+            if callable(context_getter):
+                sql_context = context_getter(datasource=datasource, database=requested_database) or {}
+            else:
+                # Compatibility for hosts providing a single connector directly.
+                context_getter = getattr(connector, "get_sql_generation_context", None)
+                if callable(context_getter):
+                    sql_context = (
+                        context_getter(database_name=resolve_database_name_for_prompt(connector, requested_database))
+                        or {}
+                    )
+        except Exception as e:
+            logger.debug("Unable to read connector SQL-generation context: %s", e)
+        if not isinstance(sql_context, dict):
+            sql_context = {}
+        database = requested_database or sql_context.get("database") or resolve_database_name_for_prompt(connector, "")
         if database:
             details.append(f"database: {database}")
-        sql_context_getter = getattr(connector, "get_sql_generation_context", None)
-        if callable(sql_context_getter):
-            try:
-                sql_context = sql_context_getter(database_name=database) or {}
-                compatibility_mode = sql_context.get("compatibility_mode") if isinstance(sql_context, dict) else None
-                if compatibility_mode:
-                    compatibility_mode = str(compatibility_mode).strip()
-                    if compatibility_mode:
-                        details.append(f"compatibility mode: {compatibility_mode}")
-                if isinstance(sql_context, dict) and isinstance(sql_context.get("namespace_hint"), str):
-                    namespace_hint = sql_context["namespace_hint"].strip()
-            except Exception as e:
-                # SQL-generation hints must never make an otherwise usable
-                # datasource fail. The adapter may be talking to an older or
-                # restricted server that cannot expose the requested trait.
-                logger.debug("Unable to read connector SQL-generation context: %s", e)
+        server_type = sql_context.get("server_type")
+        if isinstance(server_type, str) and server_type.strip():
+            details.append(f"server type: {server_type.strip()}")
+        compatibility_mode = sql_context.get("compatibility_mode")
+        if compatibility_mode:
+            compatibility_mode = str(compatibility_mode).strip()
+            if compatibility_mode:
+                details.append(f"compatibility mode: {compatibility_mode}")
+        if isinstance(sql_context.get("namespace_hint"), str):
+            namespace_hint = sql_context["namespace_hint"].strip()
         schema = getattr(user_input, "db_schema", "") or ""
         if schema:
             details.append(f"schema: {schema}")

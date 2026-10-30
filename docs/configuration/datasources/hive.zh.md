@@ -2,21 +2,18 @@
 
 Hive adapter 通过 PyHive/Thrift 连接 HiveServer2 的二进制端点，也可连接兼容此接口的星环 Inceptor。Hive database 是表的命名空间，可通过 `configuration` 传递会话属性。
 
-!!! note "Adapter 版本要求"
-    下文的 Kerberos 配置、Inceptor 元数据改进和结果协议需要包含对应改动的 `datus-hive` 构建。已发布的 `datus-hive` 0.1.3 不包含 `kerberos_service_name`、`kerberos` 可选依赖组、元数据修复和 `server_type`。使用这些功能前需安装包含对应改动的构建；仅安装 GSSAPI 依赖无法补上缺少的 Adapter 配置。
-
-下方命令固定到 [Adapter PR #163](https://github.com/Datus-ai/datus-db-adapters/pull/163) 已验证的源码提交，其中也包含 [Adapter PR #158](https://github.com/Datus-ai/datus-db-adapters/pull/158) 的 Kerberos 和元数据改动。在包含结果类型修复的安装包发布前，使用此源码构建。命令需要 Git 和 Python 3.12 或更高版本，两种安装方式使用同一提交。源码构建目前仍使用 0.1.3 版本号，因此使用 `--force-reinstall` 替换已经安装的 PyPI 0.1.3 包。
+已发布的 `datus-hive>=0.1.4` 包含 Kerberos 配置与 Inceptor 结果解码。下文的 SQL skill 和 reference 功能还需要包含 `db-hive-sql` 的 Adapter 构建，以及支持显示服务类型的 Agent 构建。
 
 ## 安装
 
 ```bash
-pip install --force-reinstall 'datus-hive @ git+https://github.com/Datus-ai/datus-db-adapters.git@84a407a6c5572947c01038d01e9f96580583be4a#subdirectory=datus-hive'
+pip install 'datus-hive>=0.1.4'
 ```
 
 将 Adapter 安装到运行 `datus` 的同一 Python 环境。使用 Kerberos 时，先选择支持 Kerberos 的 Adapter 构建，再安装可选的 GSSAPI 依赖：
 
 ```bash
-pip install --force-reinstall 'datus-hive[kerberos] @ git+https://github.com/Datus-ai/datus-db-adapters.git@84a407a6c5572947c01038d01e9f96580583be4a#subdirectory=datus-hive'
+pip install 'datus-hive[kerberos]>=0.1.4'
 ```
 
 Kerberos 扩展构建需要系统 Kerberos 库、开发头文件和 C 编译器。例如 Debian/Ubuntu 使用 `libkrb5-dev`；还需安装 `kinit`、`klist` 等 Kerberos 客户端工具。
@@ -205,3 +202,11 @@ datus --config conf/agent.yml --datasource hive_warehouse
 - [HiveServer2 clients](https://cwiki.apache.org/confluence/display/Hive/HiveServer2+Clients)
 - [HiveServer2 认证配置](https://hive.apache.org/docs/latest/admin/setting-up-hiveserver2/)
 - [星环 Inceptor 连接指南](https://www.transwarp.cn/doc/inceptor/9.5/quick-start--connect-database)
+
+## SQL 指导与 SaaS 配置
+
+`type: hive` 保持连接类型，`server_type: hive|inceptor` 选择实际产品。Agent 内部通过 `DbConfig.extra` 保存服务类型，创建 connector 时再展开。每轮数据源提醒显示当前目标的 `server type`，切换同为 Hive adapter 的数据源时也会更新。
+
+Adapter 通过 `datus.skills` 发布 `db-hive-sql`。主文件包含通用 HiveServer2 规则；目标为 Inceptor 时，模型在生成 SQL 前通过文件工具读取 `references/inceptor.md`。reference 说明版本相关的系统字典、VARCHAR2 和空字符串/NULL 语义。仅安装旧版 adapter 或仅升级 skill 不会让旧 Agent 自动显示服务类型。
+
+SaaS 的 Hive / Inceptor 表单保存 `type: hive`，扩展字段使用 `extra.serverType`、`extra.auth`、`extra.kerberosServiceName`、`extra.configuration`、`extra.timeoutSeconds` 和 `extra.queryTimeoutSeconds`。Backend 将这些字段转换为 adapter 配置。Kerberos 的票据获取、续期和身份隔离由运行环境负责，service name 不会创建票据；密码认证切换到 Kerberos 时不再传递旧密码。
