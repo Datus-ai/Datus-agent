@@ -17,6 +17,7 @@ from ci.harness.test_plan import (
     unit_test_plan,
     validate_unit_rules,
 )
+from ci.harness.unit_consumers import validate_unit_consumers
 
 pytestmark = pytest.mark.acceptance
 
@@ -97,26 +98,21 @@ def test_impact_targets_exist():
             assert (ROOT / target.split("::", 1)[0]).exists(), (rule["id"], target)
 
 
+def test_unit_owners_cover_all_visible_test_consumers():
+    errors = validate_unit_consumers(load_map())
+    assert not errors, "\n".join(errors)
+
+
 @pytest.mark.parametrize(
     "source,expected",
     [
-        (
-            "datus/agent/node/gen_table_agentic_node.py",
-            {
-                "tests/unit_tests/agent/node/test_gen_table_agentic_node.py",
-                "tests/unit_tests/agent/node/test_agentic_node.py",
-                "tests/unit_tests/agent/node/test_deliverable_node.py",
-                "tests/unit_tests/agent/node/test_node_base.py",
-                "tests/unit_tests/agent/node/test_node.py",
-                "tests/unit_tests/agent/node/test_schema_linking.py",
-            },
-        ),
         (
             "datus/mcp_server.py",
             {
                 "tests/unit_tests/test_mcp_server.py",
                 "tests/unit_tests/utils/test_mcp_decorators.py",
                 "tests/unit_tests/utils/test_mcp_execution.py",
+                "tests/unit_tests/utils/test_windows_compatibility.py",
                 "tests/unit_tests/tools/mcp_tools/",
                 "tests/unit_tests/api/services/test_mcp_service.py",
             },
@@ -127,6 +123,13 @@ def test_impact_targets_exist():
                 "tests/unit_tests/configuration/test_logging_config.py",
                 "tests/unit_tests/utils/test_loggings.py",
                 "tests/unit_tests/observability/test_privacy.py",
+                "tests/unit_tests/agent/node/test_node.py",
+                "tests/unit_tests/agent/node/test_schema_linking.py",
+                "tests/unit_tests/observability/test_capability_evidence.py",
+                "tests/unit_tests/schemas/test_input_result.py",
+                "tests/unit_tests/storage/test_storage.py",
+                "tests/unit_tests/test_saas_adaptation.py",
+                "tests/unit_tests/tools/func_tool/test_read_image.py",
             },
         ),
         (
@@ -194,7 +197,8 @@ def test_leaf_changes_select_their_owners_and_consumers(source, expected):
 )
 def test_specific_owners_retain_shared_contract_consumers(source, consumers):
     plan = unit_test_plan([source])
-    assert consumers <= set(plan["targets"])
+    for consumer in consumers:
+        assert any(consumer == t or (t.endswith("/") and consumer.startswith(t)) for t in plan["targets"])
     assert impact_plan([source])["unit_targets"] == plan["targets"]
 
 
@@ -220,13 +224,28 @@ def test_tool_category_owners_retain_permission_routing_contracts(source):
     assert impact_plan([source])["unit_targets"] == plan["targets"]
 
 
-def test_node_owners_retain_required_generic_node_contracts():
+def test_node_owners_retain_package_coverage_for_factories_and_shared_hooks():
     data = load_map()
-    required = ["tests/unit_tests/agent/node/test_node.py", "tests/unit_tests/agent/node/test_schema_linking.py"]
+    package = "tests/unit_tests/agent/node/"
     for source in (ROOT / "datus/agent/node").glob("*.py"):
         targets = unit_test_plan([source.relative_to(ROOT).as_posix()], data)["targets"]
-        for node_test in required:
-            assert any(node_test == t or (t.endswith("/") and node_test.startswith(t)) for t in targets), source
+        assert any(t.endswith("/") and package.startswith(t) for t in targets), source
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "datus/main.py",
+        "datus/entrypoints.py",
+        "datus/utils/multiprocessing_utils.py",
+        "datus/configuration/agent_config.py",
+        "datus/configuration/agent_config_loader.py",
+        "datus/configuration/node_type.py",
+        "datus/schemas/action_history.py",
+    ],
+)
+def test_shared_startup_and_configuration_keep_full_unit_fallback(source):
+    assert unit_test_plan([source])["targets"] == ["tests/unit_tests/"]
 
 
 @pytest.mark.parametrize("source", [".github/workflows/run-nightly.yml", ".github/workflows/prepare-release.yml"])
@@ -269,11 +288,12 @@ def test_specific_units_preserve_additive_live_and_service_requirements():
 
 def test_longest_package_owner_keeps_connector_consumers():
     plan = unit_test_plan(["./datus/tools/db_tools/sqlite_connector.py"])
-    assert plan["targets"] == [
+    for consumer in [
         "tests/unit_tests/agent/node/test_gen_sql_agentic_node.py",
         "tests/unit_tests/tools/db_tools/",
         "tests/unit_tests/tools/func_tool/test_database.py",
-    ]
+    ]:
+        assert any(consumer == t or (t.endswith("/") and consumer.startswith(t)) for t in plan["targets"])
     assert plan["selections"][0]["matched_path"] == "datus/tools/db_tools/"
 
 
@@ -303,7 +323,6 @@ def test_multiple_changes_preserve_each_owner_and_collapse_children():
     )
     assert "tests/unit_tests/gateway/" in plan["targets"]
     assert "tests/unit_tests/test_mcp_server.py" in plan["targets"]
-    assert len(plan["targets"]) == 6
 
 
 @pytest.mark.parametrize("support", ["conftest.py", "helpers.py", "fixtures/input.json"])

@@ -74,6 +74,14 @@ def test_coverage_map_gate_rejects_stale_unit_ownership():
     assert errors == ["unit_rules.stale: unit target does not exist: tests/unit_tests/no_such_test.py"]
 
 
+def test_coverage_map_gate_rejects_missing_runtime_consumers():
+    data = validate_coverage_map.load_map()
+    rule = next(r for r in data["execution"]["unit_rules"] if r["id"] == "entrypoints")
+    rule["targets"] = ["tests/unit_tests/test_main.py"]
+    errors, _ = validate(data)
+    assert any("unit_rules.entrypoints:" in e and "test_windows_compatibility.py" in e for e in errors)
+
+
 def test_validator_reader_rejects_duplicate_ownership_keys(tmp_path):
     path = tmp_path / "map.yml"
     path.write_text("execution:\n  unit_rules: []\n  unit_rules: []\n")

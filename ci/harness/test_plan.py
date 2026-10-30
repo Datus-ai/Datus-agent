@@ -116,6 +116,17 @@ def validate_unit_rules(data: dict, repo_root: Path = ROOT) -> list[str]:
     return errors
 
 
+def unit_owner(path: str, rules: list[dict]) -> tuple[str, dict] | None:
+    """Resolve the same exact-file / longest-directory owner for planning and audits."""
+    matches = [
+        (prefix, rule)
+        for rule in rules
+        for prefix in rule["paths"]
+        if path == prefix or (prefix.endswith("/") and path.startswith(prefix))
+    ]
+    return max(matches, key=lambda match: len(match[0])) if matches else None
+
+
 def unit_test_plan(changed: Iterable[str], data: dict | None = None) -> dict:
     """Choose the most specific owner plus its explicit consumer tests for each path.
 
@@ -146,14 +157,9 @@ def unit_test_plan(changed: Iterable[str], data: dict | None = None) -> dict:
                 targets, rule_id = [parent.as_posix() + "/"], "test-support"
             selections.append({"path": path, "rule": rule_id, "targets": targets, "fallback": False})
             continue
-        matches = [
-            (len(prefix), prefix, rule)
-            for rule in rules
-            for prefix in rule["paths"]
-            if path == prefix or (prefix.endswith("/") and path.startswith(prefix))
-        ]
-        if matches:
-            _, prefix, rule = max(matches, key=lambda match: match[0])
+        match = unit_owner(path, rules)
+        if match:
+            prefix, rule = match
             selections.append(
                 {
                     "path": path,

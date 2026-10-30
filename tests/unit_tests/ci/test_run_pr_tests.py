@@ -17,6 +17,11 @@ run_pr_tests = importlib.util.module_from_spec(MODULE_SPEC)
 MODULE_SPEC.loader.exec_module(run_pr_tests)
 
 
+def _assert_targets_cover(targets, *references):
+    for reference in references:
+        assert any(reference == t or (t.endswith("/") and reference.startswith(t)) for t in targets), reference
+
+
 def test_select_impacted_unit_tests_maps_source_prefixes():
     impacted = run_pr_tests.select_impacted_unit_tests(
         [
@@ -33,14 +38,13 @@ def test_select_impacted_unit_tests_includes_changed_unit_tests_and_dedupes():
     impacted = run_pr_tests.select_impacted_unit_tests(
         [
             "./tests/unit_tests/tools/test_registry.py",
-            "datus/tools/registry.py",
-            "datus/tools/search.py",
+            "tests/unit_tests/tools/test_registry.py",
+            "tests/unit_tests/tools/conftest.py",
             "ci/run-pr-tests.py",
         ]
     )
 
     assert set(impacted) == {
-        "tests/unit_tests/agent/node/test_tool_category_maps.py",
         "tests/unit_tests/tools/",
         "tests/unit_tests/ci/",
     }
@@ -49,8 +53,7 @@ def test_select_impacted_unit_tests_includes_changed_unit_tests_and_dedupes():
 def test_select_impacted_unit_tests_collapses_parent_directory_over_child_files():
     impacted = run_pr_tests.select_impacted_unit_tests(
         [
-            "datus/storage/knowledge_provenance.py",
-            "datus/storage/metric/store.py",
+            "tests/unit_tests/storage/conftest.py",
             "tests/unit_tests/storage/metric/test_metric_init.py",
             "tests/unit_tests/storage/metric/test_store.py",
             "tests/unit_tests/storage/test_knowledge_provenance.py",
@@ -60,7 +63,7 @@ def test_select_impacted_unit_tests_collapses_parent_directory_over_child_files(
     assert impacted == ["tests/unit_tests/storage/"]
 
 
-def test_select_impacted_unit_tests_maps_db_tools_to_db_tools_tests():
+def test_select_impacted_unit_tests_retains_connector_and_shared_consumers():
     impacted = run_pr_tests.select_impacted_unit_tests(
         [
             "datus/tools/db_tools/sqlite_connector.py",
@@ -68,14 +71,15 @@ def test_select_impacted_unit_tests_maps_db_tools_to_db_tools_tests():
         ]
     )
 
-    assert set(impacted) == {
+    _assert_targets_cover(
+        impacted,
         "tests/unit_tests/tools/db_tools/",
         "tests/unit_tests/tools/func_tool/test_database.py",
         "tests/unit_tests/agent/node/test_gen_sql_agentic_node.py",
-    }
+    )
 
 
-def test_select_impacted_unit_tests_maps_prompt_and_resource_paths_without_full_suite():
+def test_select_impacted_unit_tests_keeps_prompt_node_and_skill_consumers():
     impacted = run_pr_tests.select_impacted_unit_tests(
         [
             "datus/prompts/prompt_templates/semantic_modeling_system_1.0.j2",
@@ -83,14 +87,15 @@ def test_select_impacted_unit_tests_maps_prompt_and_resource_paths_without_full_
         ]
     )
 
-    assert set(impacted) == {
+    _assert_targets_cover(
+        impacted,
         "tests/unit_tests/agent/node/",
         "tests/unit_tests/prompts/",
         "tests/unit_tests/tools/skill_tools/",
-    }
+    )
 
 
-def test_select_impacted_unit_tests_includes_consumers_and_specific_subpackages():
+def test_select_impacted_unit_tests_retains_cross_package_consumers():
     impacted = run_pr_tests.select_impacted_unit_tests(
         [
             "datus/agent/node/gen_sql_agentic_node.py",
@@ -103,7 +108,8 @@ def test_select_impacted_unit_tests_includes_consumers_and_specific_subpackages(
         ]
     )
 
-    assert set(impacted) == {
+    _assert_targets_cover(
+        impacted,
         "tests/unit_tests/agent/node/",
         "tests/unit_tests/agent/test_workflow.py",
         "tests/unit_tests/api/",
@@ -114,7 +120,7 @@ def test_select_impacted_unit_tests_includes_consumers_and_specific_subpackages(
         "tests/unit_tests/storage/metric/",
         "tests/unit_tests/storage/semantic_model/",
         "tests/unit_tests/validation/",
-    }
+    )
 
 
 def test_select_impacted_unit_tests_maps_non_python_files_to_parent_directory():

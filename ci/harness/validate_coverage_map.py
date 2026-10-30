@@ -20,6 +20,7 @@ import yaml
 REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT))
 from ci.harness.test_plan import load_map, validate_unit_rules  # noqa: E402
+from ci.harness.unit_consumers import validate_unit_consumers  # noqa: E402
 
 DEFAULT_COVERAGE_MAP = Path("ci/harness/coverage-map.yml")
 DEFAULT_REPORT_MD = Path("ci/harness/coverage-map-report.md")
@@ -403,7 +404,10 @@ def validate_coverage_map(
 
     validate_docs_coverage(repo_root, coverage_map, flows, errors)
     if "execution" in coverage_map:
-        errors.extend(validate_unit_rules(coverage_map, repo_root))
+        ownership_errors = validate_unit_rules(coverage_map, repo_root)
+        errors.extend(ownership_errors)
+        if not ownership_errors:
+            errors.extend(validate_unit_consumers(coverage_map, repo_root))
 
     if check_github_issues:
         issue_refs = sorted(

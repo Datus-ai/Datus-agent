@@ -22,9 +22,23 @@ the real-model questions additionally assess tool selection and reasoning.
 rules and additive product impact rules. The fixed core runs for code changes.
 For each changed source file, `execution.unit_rules` selects the exact file or
 longest matching directory prefix, including the consumers listed by that owner.
-Shared model adapters still include observability and node consumers. Unknown
+Node factories, inherited hooks and shared session/result behavior retain the
+node package and its cross-package consumers. Shared startup, configuration and
+payload owners retain full unit coverage. Localized MCP, logging and SSL owners
+keep their explicit, audited consumers. Shared model adapters still include
+observability and node consumers. Unknown
 runtime modules retain the full unit fallback, and full-suite rules document why
 they are needed. Rule validation rejects stale targets and ambiguous source paths.
+
+Strict map validation and a fixed acceptance test audit every Python module under
+`datus/` against every `tests/unit_tests/**/test_*.py` consumer. The audit parses
+imports (including function-local imports), package re-exports and literal dynamic
+import or mock paths without importing application code. An omitted consumer or
+unowned module fails CI with its source path, owner and test file. Conditional
+re-exports retain every visible origin. This is a conservative reference check,
+not proof of runtime coverage: computed imports, dependency injection and factory
+dispatch still require the wider ownership boundaries above. Adding a narrow
+rule requires retaining both the visible consumers and those shared contracts.
 
 Changed unit tests select themselves; conftest, helper modules and fixture assets
 select their enclosing test package. Shared test configuration and datasets select
