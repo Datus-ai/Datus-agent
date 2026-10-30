@@ -149,12 +149,16 @@ def test_leaf_changes_select_their_owners_and_consumers(source, expected):
     ]
     + [
         (
+            "datus/agent/node/ask_metrics_agentic_node.py",
+            {"tests/unit_tests/agent/node/test_ontology_analyst_agentic_node.py"},
+        ),
+        (
             "datus/utils/sql_utils.py",
             {
                 "tests/unit_tests/utils/test_adapter_sql_analysis.py",
                 "tests/unit_tests/tools/func_tool/test_hana_adapter.py",
             },
-        )
+        ),
     ]
     + [
         (

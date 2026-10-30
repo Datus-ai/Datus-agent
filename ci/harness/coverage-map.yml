@@ -1741,6 +1741,7 @@ execution:
       paths: [datus/agent/node/ask_metrics_agentic_node.py]
       targets:
         - tests/unit_tests/agent/node/test_ask_metrics_agentic_node.py
+        - tests/unit_tests/agent/node/test_ontology_analyst_agentic_node.py
         - tests/unit_tests/agent/node/test_agentic_node.py
         - tests/unit_tests/agent/node/test_node.py
         - tests/unit_tests/agent/node/test_schema_linking.py
