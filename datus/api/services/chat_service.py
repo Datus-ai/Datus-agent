@@ -165,7 +165,7 @@ def _actions_to_payloads(
         if a.role == ActionRole.TOOL and a.status != ActionStatus.PROCESSING
     }
     replayed_ask_user_ids: set[str] = set()
-    for action in messages:
+    for action_index, action in enumerate(messages):
         if action.role == ActionRole.TOOL and action.status != ActionStatus.PROCESSING:
             if action.action_id.removeprefix("complete_") in replayed_ask_user_ids:
                 # Folded into the card, but it still counts as a tool result.
@@ -181,7 +181,11 @@ def _actions_to_payloads(
             sse_messages.extend(sub_payloads)
         sse_event = None
         message_id = (
-            str(uuid.uuid5(uuid.NAMESPACE_URL, f"{id_prefix}:{action.action_id}:{action.role}:{action.status}"))
+            str(
+                uuid.uuid5(
+                    uuid.NAMESPACE_URL, f"{id_prefix}:{action_index}:{action.action_id}:{action.role}:{action.status}"
+                )
+            )
             if id_prefix
             else str(uuid.uuid4())
         )
@@ -532,7 +536,7 @@ class ChatService:
                         payloads, event_id = _actions_to_payloads(
                             msg["actions"],
                             event_id,
-                            id_prefix=session_id if window else None,
+                            id_prefix=f"{session_id}:{msg.get('source_id', idx)}" if window else None,
                             expand_subagent=(
                                 (
                                     lambda call_id, result_action: _subagent_run_actions(

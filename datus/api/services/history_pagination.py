@@ -9,6 +9,7 @@ import base64
 import hashlib
 import json
 import sqlite3
+import uuid
 from collections import Counter
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional
@@ -106,13 +107,15 @@ def subagent_run_offsets(manager: SessionManager, session_id: str, start_id: int
         return dict(counts)
 
 
-def _window(manager: SessionManager, session_id: str, limit: int, cursor: Optional[str]):
+def _window(manager: SessionManager, session_id: str, limit: int, cursor: Optional[str], turn: Optional[int]):
     path = _db_path(manager, session_id)
     with _connect(path) as conn:
         snapshot = conn.execute(
             "SELECT COALESCE(MAX(id),0) FROM agent_messages WHERE session_id=?", (session_id,)
         ).fetchone()[0]
         before = snapshot + 1
+        if cursor and turn is not None:
+            raise ValueError("Use either a cursor or a target turn")
         if cursor:
             saved = _decode(cursor)
             if saved.get("s") != session_id:
@@ -128,13 +131,13 @@ def _window(manager: SessionManager, session_id: str, limit: int, cursor: Option
         # Anthropic tool_result-only user rows are not user turns. Filter in
         # SQLite before returning content; a single tool result can be megabytes.
         rows = conn.execute(
-            "SELECT id,message_data FROM agent_messages WHERE session_id=? AND id<? AND id<=? "
+            "SELECT id,message_data FROM agent_messages WHERE session_id=? AND id<=? "
             "AND json_extract(message_data,'$.role')='user' AND ("
             "json_type(message_data,'$.content')!='array' OR "
             "NOT EXISTS(SELECT 1 FROM json_each(message_data,'$.content') WHERE json_extract(value,'$.type')='tool_result') "
             "OR EXISTS(SELECT 1 FROM json_each(message_data,'$.content') "
             "WHERE json_extract(value,'$.type') IN ('text','input_text','output_text'))) ORDER BY id DESC",
-            (session_id, before, snapshot),
+            (session_id, snapshot),
         )
         turns = []
         for row_id, raw in rows:
@@ -142,13 +145,21 @@ def _window(manager: SessionManager, session_id: str, limit: int, cursor: Option
             if is_compact_resume_text(content):
                 continue
             turns.append((row_id, raw))
-            if len(turns) == limit + 1:
-                break
-        has_more = len(turns) > limit
-        selected = turns[:limit]
+        total = len(turns)
+        if turn is not None:
+            if not 1 <= turn <= total:
+                raise HistoryChangedError("The requested turn is no longer available")
+            first_turn = ((turn - 1) // limit) * limit + 1
+            last_turn = min(total, first_turn + limit - 1)
+            selected = turns[total - last_turn : total - first_turn + 1]
+            before = turns[total - last_turn - 1][0] if last_turn < total else snapshot + 1
+        else:
+            selected = [row for row in turns if row[0] < before][:limit]
         if not selected:
-            return (1, snapshot) if not cursor and snapshot else None, False, None
+            return ((1, snapshot) if not cursor and snapshot else None), False, None, total, []
         first_id, first_raw = selected[-1]
+        indices = {row_id: total - index for index, (row_id, _) in enumerate(turns)}
+        has_more = indices[first_id] > 1
         next_cursor = (
             _encode(
                 {
@@ -162,7 +173,15 @@ def _window(manager: SessionManager, session_id: str, limit: int, cursor: Option
             if has_more
             else None
         )
-        return (first_id, min(snapshot, before - 1)), has_more, next_cursor
+        anchors = [
+            {
+                "message_id": str(uuid.uuid5(uuid.NAMESPACE_URL, f"{session_id}:{row_id}")),
+                "index": indices[row_id],
+                "text": extract_user_input(json.loads(raw).get("content", ""))[:160],
+            }
+            for row_id, raw in reversed(selected)
+        ]
+        return (first_id, min(snapshot, before - 1)), has_more, next_cursor, total, anchors
 
 
 def _text(value: Any) -> str:
@@ -212,7 +231,12 @@ def _value(part, field: str) -> Any:
 
 
 def get_history_page(
-    service: "ChatService", session_id: str, user_id: Optional[str], limit: Optional[int], cursor: Optional[str]
+    service: "ChatService",
+    session_id: str,
+    user_id: Optional[str],
+    limit: Optional[int],
+    cursor: Optional[str],
+    turn: Optional[int] = None,
 ):
     config = getattr(service.agent_config, "api_config", {}) or {}
     max_turns = min(coerce_positive_int(config.get("max_history_turns"), 50), 100)
@@ -220,7 +244,7 @@ def get_history_page(
     inline_limit = min(coerce_positive_int(config.get("history_inline_chars"), 8000), 16000)
     manager = SessionManager(session_dir=service._session_dir, scope=user_id)
     try:
-        window, has_more, next_cursor = _window(manager, session_id, page_size, cursor)
+        window, has_more, next_cursor, total_turns, turns = _window(manager, session_id, page_size, cursor, turn)
     except FileNotFoundError:
         return ChatHistoryPageData()
     if not window:
@@ -275,7 +299,9 @@ def get_history_page(
                     envelope["error"] = text[:inline_limit]
                     # Failed envelopes sometimes also retain the same raw result.
                     envelope["result"] = None
-    return ChatHistoryPageData(messages=messages, has_more=has_more, next_cursor=next_cursor)
+    return ChatHistoryPageData(
+        messages=messages, has_more=has_more, next_cursor=next_cursor, total_turns=total_turns, turns=turns
+    )
 
 
 def get_history_content(service: "ChatService", session_id: str, user_id: Optional[str], reference: str) -> str:

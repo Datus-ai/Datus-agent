@@ -277,3 +277,43 @@ def test_off_page_tool_bodies_are_not_deserialized(history, monkeypatch):
     monkeypatch.setattr(storage.json, "loads", guarded_loads)
     page = get_history_page(service, "chat_bounded", "alice", 10, None)
     assert questions(page) == [f"question {n}" for n in range(11, 21)]
+
+
+def test_target_turn_loads_one_window_with_global_indices(history):
+    service, write = history
+    write("chat_jump", [message for n in range(35) for message in turn(n)])
+    latest = get_history_page(service, "chat_jump", "alice", 10, None)
+    assert latest.total_turns == 35
+    assert [anchor.index for anchor in latest.turns] == list(range(26, 36))
+    target = get_history_page(service, "chat_jump", "alice", 10, None, turn=7)
+    assert questions(target) == [f"question {n}" for n in range(10)]
+    assert [anchor.index for anchor in target.turns] == list(range(1, 11))
+    assert target.total_turns == 35
+    assert not target.has_more
+    middle = get_history_page(service, "chat_jump", "alice", 10, None, turn=12)
+    assert [anchor.index for anchor in middle.turns] == list(range(11, 21))
+    with pytest.raises(ValueError):
+        get_history_page(service, "chat_jump", "alice", 10, latest.next_cursor, turn=3)
+
+
+def test_shared_provider_response_ids_still_produce_distinct_stable_history_ids(history):
+    service, write = history
+    raw = [
+        {"role": "user", "content": "question"},
+        {
+            "role": "assistant",
+            "provider_data": {"response_id": "shared"},
+            "content": [{"type": "text", "text": "first"}],
+        },
+        {
+            "role": "assistant",
+            "provider_data": {"response_id": "shared"},
+            "content": [{"type": "text", "text": "second"}],
+        },
+    ]
+    write("chat_ids", raw)
+    first = get_history_page(service, "chat_ids", "alice", None, None)
+    second = get_history_page(service, "chat_ids", "alice", None, None)
+    ids = [message.message_id for message in first.messages]
+    assert len(ids) == len(set(ids))
+    assert ids == [message.message_id for message in second.messages]

@@ -152,6 +152,15 @@ pkill -f "datus/api/server.py"
 persisted user turns, ordered oldest to newest. Pass `next_cursor` back as
 `cursor` to read earlier turns; `has_more` indicates whether another page exists.
 `limit` may be supplied (1–100, clamped to the configured server maximum).
+`total_turns` reports the global count; `turns` contains this page's user-message
+IDs, one-based global indices, and short question previews. Tool-result-only
+user records and synthetic compact-resume instructions do not count as turns.
+
+Pass `turn=<one-based index>` instead of `cursor` to load the containing page
+directly. For 30 turns and a limit of 10, `turn=2` returns 1–10; `turn=11` returns
+11–20. Clients must keep historical windows separate from the live tail until
+the intervening pages are present, then join them using stable message IDs.
+This lets a global turn navigator jump without fetching every intervening page.
 Cursors are scoped to the session and retain a snapshot upper row id, so new
 turns do not shift older pages. A removed or rewritten cursor anchor returns 409;
 reload the latest history after compacting or rewinding a conversation.
