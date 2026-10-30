@@ -232,7 +232,7 @@ class EmbeddingModel:
             if self.send_dimensions is not None:
                 request_options["send_dimensions"] = self.send_dimensions
             if self.openai_config:
-                self._model = OpenAIEmbeddings.create(
+                model = OpenAIEmbeddings.create(
                     name=self.model_name,
                     dim=self._dim_size,
                     api_key=self.openai_config.api_key,
@@ -240,9 +240,23 @@ class EmbeddingModel:
                     **request_options,
                 )
             else:
-                self._model = OpenAIEmbeddings.create(name=self.model_name, dim=self._dim_size, **request_options)
+                model = OpenAIEmbeddings.create(name=self.model_name, dim=self._dim_size, **request_options)
             # check if the model is initialized
-            self._model.generate_embeddings(["foo"])
+            probe = model.generate_embeddings(["foo"])[0]
+            if (
+                self._dim_size is not None
+                and probe is not None
+                and self.model_name not in model.model_names()
+                and len(probe) != self._dim_size
+            ):
+                raise DatusException(
+                    ErrorCode.COMMON_CONFIG_ERROR,
+                    message=(
+                        f"Embedding model '{self.model_name}' returned width {len(probe)}, "
+                        f"but dim_size is {self._dim_size}."
+                    ),
+                )
+            self._model = model
             logger.debug(f"Model {self.registry_name}/{self.model_name} initialized successfully")
         else:
             raise DatusException(

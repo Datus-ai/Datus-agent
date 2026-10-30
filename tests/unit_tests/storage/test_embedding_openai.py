@@ -15,7 +15,7 @@ from datus.configuration.agent_config import ModelConfig
 from datus.storage import embedding_models
 from datus.storage.embedding_openai import OpenAIEmbeddings
 from datus.utils.constants import EmbeddingProvider
-from datus.utils.exceptions import DatusException
+from datus.utils.exceptions import DatusException, ErrorCode
 
 # ---------------------------------------------------------------------------
 # Initialization / defaults
@@ -236,6 +236,60 @@ def embedding_api(monkeypatch):
 
 
 class TestCustomEmbeddingCompatibility:
+    @pytest.mark.parametrize("model_name", ["vendor/custom-model", "deployment-name"])
+    @pytest.mark.parametrize("send_dimensions", [None, False])
+    def test_initialization_rejects_mismatched_native_width(
+        self, embedding_api, monkeypatch, model_name, send_dimensions
+    ):
+        monkeypatch.setenv("OPENAI_API_KEY", "local-test-only")
+        wrapper = embedding_models.EmbeddingModel(
+            model_name=model_name, dim_size=8, registry_name=EmbeddingProvider.OPENAI, send_dimensions=send_dimensions
+        )
+
+        with pytest.raises(DatusException, match="returned width 4, but dim_size is 8") as error:
+            _ = wrapper.model
+
+        assert error.value.code == ErrorCode.COMMON_CONFIG_ERROR
+        assert wrapper.is_model_available() is False
+        assert wrapper.try_init_model_silent() is False
+        with pytest.raises(DatusException, match="returned width 4, but dim_size is 8"):
+            _ = wrapper.model
+        assert len(embedding_api) == 1
+        assert "dimensions" not in embedding_api[0]
+
+    @pytest.mark.parametrize(
+        ("model_name", "dim_size", "send_dimensions", "expected_width"),
+        [
+            ("vendor/custom-model", 4, None, 4),
+            ("vendor/custom-model", 4, False, 4),
+            ("dimensions-capable-custom", 8, True, 8),
+            ("text-embedding-3-small", 4, False, 1536),
+            ("text-embedding-ada-002", 4, None, 1536),
+        ],
+    )
+    def test_initialization_preserves_matching_and_builtin_widths(
+        self, embedding_api, monkeypatch, model_name, dim_size, send_dimensions, expected_width
+    ):
+        monkeypatch.setenv("OPENAI_API_KEY", "local-test-only")
+        wrapper = embedding_models.EmbeddingModel(
+            model_name=model_name,
+            dim_size=dim_size,
+            registry_name=EmbeddingProvider.OPENAI,
+            send_dimensions=send_dimensions,
+        )
+
+        assert len(wrapper.model.generate_embeddings(["query"])[0]) == expected_width
+        assert wrapper.is_model_available() is True
+
+    def test_initialization_does_not_treat_null_probe_as_a_width(self, embedding_api, monkeypatch):
+        monkeypatch.setenv("OPENAI_API_KEY", "local-test-only")
+        wrapper = embedding_models.EmbeddingModel(
+            model_name="vendor/custom-model", dim_size=8, registry_name=EmbeddingProvider.OPENAI, send_dimensions=True
+        )
+
+        assert wrapper.model.generate_embeddings(["query"]) == [None]
+        assert len(embedding_api) == 2
+
     def test_stores_with_different_provider_routes_do_not_share_a_model(self, embedding_api, monkeypatch):
         monkeypatch.setattr(embedding_models, "EMBEDDING_MODELS", {})
         first = ModelConfig(
