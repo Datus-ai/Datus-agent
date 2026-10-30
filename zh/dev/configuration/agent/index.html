@@ -5871,7 +5871,7 @@ UTF-8 字节估算可能提前触发压缩，不等同于供应商返回的实�
 <p><code>agent.agentic_nodes</code> 用于配置 chat 和各类 subagent 的行为。</p>
 <p>这部分配置会被用于：</p>
 <ul>
-<li><code>chat</code>、<code>explore</code>、<code>gen_sql</code>、<code>gen_report</code>、<code>gen_dashboard</code>、<code>scheduler</code> 等内置 agentic 节点</li>
+<li><code>chat</code>、<code>explore</code>、<code>gen_sql</code>、<code>gen_visual_report</code>、<code>gen_dashboard</code>、<code>scheduler</code> 等内置 agentic 节点</li>
 <li>通过统一 agent TUI（<code>/agent</code> 或 <code>/subagent</code>）创建的自定义 subagent</li>
 <li>把自定义名称 alias 到某个内置节点类的高级手工配置</li>
 </ul>
@@ -5880,7 +5880,7 @@ UTF-8 字节估算可能提前触发压缩，不等同于供应商返回的实�
 <ul>
 <li><code>model</code>：引用 <code>agent.models</code> 中的 provider key</li>
 <li><code>system_prompt</code>：subagent 名称 / 提示词模板基名</li>
-<li><code>node_class</code>：要使用的节点实现，例如 <code>gen_sql</code>、<code>gen_report</code>、<code>explore</code>、<code>gen_table</code>、<code>gen_skill</code>、<code>gen_dashboard</code>、<code>scheduler</code></li>
+<li><code>node_class</code>：要使用的节点实现，例如 <code>gen_sql</code>、<code>gen_visual_report</code>、<code>explore</code>、<code>gen_table</code>、<code>gen_skill</code>、<code>gen_dashboard</code>、<code>scheduler</code></li>
 <li><code>prompt_version</code>、<code>prompt_language</code></li>
 <li><code>agent_description</code></li>
 <li><code>tools</code>、<code>mcp</code>、<code>skills</code></li>
@@ -5922,7 +5922,7 @@ UTF-8 字节估算可能提前触发压缩，不等同于供应商返回的实�
 </span><span id="__span-22-6"><a id="__codelineno-22-6" name="__codelineno-22-6" href="#__codelineno-22-6"></a><span class="w">      </span><span class="nt">subagents</span><span class="p">:</span><span class="w"> </span><span class="s">"*"</span>
 </span><span id="__span-22-7"><a id="__codelineno-22-7" name="__codelineno-22-7" href="#__codelineno-22-7"></a>
 </span><span id="__span-22-8"><a id="__codelineno-22-8" name="__codelineno-22-8" href="#__codelineno-22-8"></a><span class="w">    </span><span class="nt">finance_report</span><span class="p">:</span>
-</span><span id="__span-22-9"><a id="__codelineno-22-9" name="__codelineno-22-9" href="#__codelineno-22-9"></a><span class="w">      </span><span class="nt">node_class</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">gen_report</span>
+</span><span id="__span-22-9"><a id="__codelineno-22-9" name="__codelineno-22-9" href="#__codelineno-22-9"></a><span class="w">      </span><span class="nt">node_class</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">gen_visual_report</span>
 </span><span id="__span-22-10"><a id="__codelineno-22-10" name="__codelineno-22-10" href="#__codelineno-22-10"></a><span class="w">      </span><span class="nt">model</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">claude</span>
 </span><span id="__span-22-11"><a id="__codelineno-22-11" name="__codelineno-22-11" href="#__codelineno-22-11"></a><span class="w">      </span><span class="nt">system_prompt</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">finance_report</span>
 </span><span id="__span-22-12"><a id="__codelineno-22-12" name="__codelineno-22-12" href="#__codelineno-22-12"></a><span class="w">      </span><span class="nt">prompt_version</span><span class="p">:</span><span class="w"> </span><span class="s">"1.0"</span>

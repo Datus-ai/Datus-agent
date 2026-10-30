@@ -5258,17 +5258,19 @@
 <li><code>agent.agentic_nodes</code> 下的新配置项</li>
 <li>一个名为 <code>{agent_name}_system_{prompt_version}.j2</code> 的提示词模板文件</li>
 </ol>
-<p>当前向导支持两类自定义节点：</p>
+<p><code>gen_report</code> 已移除。旧配置引用它时会直接报 subagent 不存在，并提示使用 <code>gen_visual_report</code>。</p>
+<p>当前向导支持三类自定义节点：</p>
 <ul>
 <li><code>gen_sql</code>（默认）</li>
-<li><code>gen_report</code></li>
+<li><code>gen_visual_report</code></li>
+<li><code>gen_visual_dashboard</code></li>
 </ul>
 <p>如果你希望创建更高级的 alias，例如 <code>explore</code>、<code>gen_table</code>、<code>gen_skill</code>，需要手工编辑 <code>agent.yml</code>。调度和外部 BI 操作由主 agent 直接使用已安装 plugin 完成，不能通过自定义 subagent alias 暴露。</p>
 <h2 id="_3">向导字段<a class="headerlink" href="#_3" title="Permanent link">&para;</a></h2>
 <h3 id="1">第 1 步：基础信息<a class="headerlink" href="#1" title="Permanent link">&para;</a></h3>
 <ul>
 <li><code>system_prompt</code>：subagent 名称，也是配置键名</li>
-<li><code>node_class</code>：<code>gen_sql</code> 或 <code>gen_report</code></li>
+<li><code>node_class</code>：<code>gen_sql</code>、<code>gen_visual_report</code> 或 <code>gen_visual_dashboard</code></li>
 <li><code>agent_description</code>：简短描述，会出现在预览和 task-tool 描述里</li>
 </ul>
 <h3 id="2-tools-mcp">第 2 步：Tools 与 MCP<a class="headerlink" href="#2-tools-mcp" title="Permanent link">&para;</a></h3>
@@ -5358,7 +5360,7 @@
 </span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="w">  </span><span class="nt">agentic_nodes</span><span class="p">:</span>
 </span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="w">    </span><span class="nt">finance_report</span><span class="p">:</span>
 </span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="w">      </span><span class="nt">system_prompt</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">finance_report</span>
-</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="w">      </span><span class="nt">node_class</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">gen_report</span>
+</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="w">      </span><span class="nt">node_class</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">gen_visual_report</span>
 </span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="w">      </span><span class="nt">prompt_version</span><span class="p">:</span><span class="w"> </span><span class="s">"1.0"</span>
 </span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="w">      </span><span class="nt">prompt_language</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">en</span>
 </span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a><span class="w">      </span><span class="nt">agent_description</span><span class="p">:</span><span class="w"> </span><span class="s">"财务分析助手"</span>
@@ -5387,7 +5389,7 @@
 <li>全局知识仍然需要通过 <code>datus-agent bootstrap-kb</code> 单独构建</li>
 </ul>
 <h2 id="_5">高级手工配置<a class="headerlink" href="#_5" title="Permanent link">&para;</a></h2>
-<p>向导覆盖的是最常见的 <code>gen_sql</code> 和 <code>gen_report</code> 场景。更高级的配置请直接编辑 <code>agent.yml</code>。</p>
+<p>向导支持 <code>gen_sql</code>、<code>gen_visual_report</code> 和 <code>gen_visual_dashboard</code>。更高级的配置请直接编辑 <code>agent.yml</code>。</p>
 <p>例如：</p>
 <div class="language-yaml highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="nt">agent</span><span class="p">:</span>
 </span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">  </span><span class="nt">agentic_nodes</span><span class="p">:</span>
