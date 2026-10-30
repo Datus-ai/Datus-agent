@@ -1461,6 +1461,7 @@ execution:
       paths:
         - datus/api/models/
       targets:
+        - tests/unit_tests/agent/node/test_gen_visual_report_agentic_node.py
         - tests/unit_tests/api/
         - tests/unit_tests/gateway/
         - tests/unit_tests/tools/
