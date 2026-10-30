@@ -16,6 +16,7 @@ This document covers the core subagents:
 8. **[gen_job](gen_job.md)** — Data pipeline execution (single-database ETL AND cross-database migration with reconciliation)
 9. **[gen_skill](#gen_skill)** — Skill creation and optimization
 10. **[gen_visual_report](gen_visual_report.md)** — Self-contained visual report under `reports/<slug>/`
+11. **[gen_visual_dashboard](gen_visual_dashboard.md)** — Parameterized visual dashboard under `dashboards/<slug>/`
 
 Airflow scheduling and external BI authoring are handled directly by the main
 agent through installed plugins. They are not built-in or custom subagents.
@@ -393,6 +394,7 @@ compatibility only. See [BI Dashboard Node (Legacy)](gen_dashboard.md) and
 | `gen_job` | Data pipeline jobs (intra-DB ETL + cross-DB transfer) | Job / transfer result | Source + target databases | DDL/DML execution, cross-dialect type mapping via MigrationTargetMixin, `transfer_query_result`, lightweight reconciliation when source != target |
 | `gen_skill` | Create or optimize skills | Skill path | Skills directory | Interactive authoring, validation, skill loading |
 | `gen_visual_report` | Self-contained visual report (narrative, pre-baked queries) | `reports/<slug>/` (executable SQL + executed results + report components) | Project root | Modular section-by-section edits, generate from metrics or your own SQL, CLI auto-opens the report in your browser |
+| `gen_visual_dashboard` | Parameterized visual dashboard | `dashboards/<slug>/` (SQL templates + dashboard components) | Project root | Live filters re-query data through the local `datus --web` backend |
 
 **Built-in Features Across All Subagents:**
 - Minimal configuration required (only `model` and `max_turns` optional)

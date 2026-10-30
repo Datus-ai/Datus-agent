@@ -16,6 +16,7 @@
 8. **[gen_job](gen_job.zh.md)** — 数据管道执行（单库 ETL 和跨库迁移，含对数校验）
 9. **[gen_skill](#gen_skill)** — skill 创建与优化
 10. **[gen_visual_report](gen_visual_report.zh.md)** — 在 `reports/<slug>/` 下产出自包含的可视化报告
+11. **[gen_visual_dashboard](gen_visual_dashboard.zh.md)** — 在 `dashboards/<slug>/` 下产出参数化可视化看板
 
 Airflow 调度和外部 BI authoring 由主 agent 直接使用已安装 plugin 完成，
 不再属于内置或自定义 subagent。
@@ -391,6 +392,7 @@ Airflow 调度和 Superset 等外部 BI authoring 由主 agent 直接使用已�
 | `gen_job` | 数据管道作业（单库 ETL + 跨库传输） | 作业 / 传输结果 | 源库 + 目标库 | DDL/DML 执行、通过 MigrationTargetMixin 做跨方言类型映射、`transfer_query_result`、源目标不同库时做轻量对账校验 |
 | `gen_skill` | 创建或优化 skill | skill 路径 | skills 目录 | 交互式编写、校验、加载现有 skill |
 | `gen_visual_report` | 自包含的可视化报告（叙事文档，查询提前烘焙） | `reports/<slug>/`（可执行 SQL + 执行结果 + 报告组件） | 项目根目录 | 按模块独立修改、可基于 metric 或自定义 SQL 生成、CLI 模式直接在浏览器中打开 |
+| `gen_visual_dashboard` | 参数化可视化看板 | `dashboards/<slug>/`（SQL 模板 + 看板组件） | 项目根目录 | 筛选条件通过本地 `datus --web` 后端实时查询数据 |
 
 **所有 subagent 的内置特性：**
 - 最小化配置（仅 `model` 和 `max_turns` 可选）
