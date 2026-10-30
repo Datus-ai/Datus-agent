@@ -138,6 +138,8 @@ Omit `send_dimensions` (or use `null`) for automatic selection: `text-embedding-
 
 Without a positive configured `dim_size`, a custom model's width cannot be inferred. Changing a model's output width requires rebuilding any existing vector index with the new width.
 
+For all OpenAI-compatible models, initialization rejects a non-null probe vector whose width differs from the configured `dim_size`. This also applies to built-in model names: when `send_dimensions: false`, configure the provider's native width; `text-embedding-ada-002` requires 1536.
+
 ### Sentence Transformers (Local)
 
 For local embedding models:

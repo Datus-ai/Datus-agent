@@ -258,13 +258,48 @@ class TestCustomEmbeddingCompatibility:
         assert "dimensions" not in embedding_api[0]
 
     @pytest.mark.parametrize(
+        ("model_name", "send_dimensions", "native_width"),
+        [
+            ("text-embedding-3-small", False, 1536),
+            ("text-embedding-3-large", False, 3072),
+            ("text-embedding-ada-002", None, 1536),
+            ("text-embedding-ada-002", False, 1536),
+            ("text-embedding-ada-002", True, 1536),
+        ],
+    )
+    def test_initialization_rejects_builtin_width_mismatch(
+        self, embedding_api, monkeypatch, model_name, send_dimensions, native_width
+    ):
+        monkeypatch.setenv("OPENAI_API_KEY", "local-test-only")
+        wrapper = embedding_models.EmbeddingModel(
+            model_name=model_name, dim_size=8, registry_name=EmbeddingProvider.OPENAI, send_dimensions=send_dimensions
+        )
+
+        with pytest.raises(DatusException, match=f"returned width {native_width}, but dim_size is 8") as error:
+            _ = wrapper.model
+
+        assert error.value.code == ErrorCode.COMMON_CONFIG_ERROR
+        assert wrapper.is_model_available() is False
+        assert wrapper.try_init_model_silent() is False
+        assert len(embedding_api) == 1
+        assert "dimensions" not in embedding_api[0]
+
+    @pytest.mark.parametrize(
         ("model_name", "dim_size", "send_dimensions", "expected_width"),
         [
             ("vendor/custom-model", 4, None, 4),
             ("vendor/custom-model", 4, False, 4),
             ("dimensions-capable-custom", 8, True, 8),
-            ("text-embedding-3-small", 4, False, 1536),
-            ("text-embedding-ada-002", 4, None, 1536),
+            ("text-embedding-3-small", 1536, False, 1536),
+            ("text-embedding-3-large", 3072, False, 3072),
+            ("text-embedding-3-small", 8, None, 8),
+            ("text-embedding-3-large", 8, True, 8),
+            ("text-embedding-ada-002", 1536, None, 1536),
+            ("text-embedding-ada-002", 1536, True, 1536),
+            ("text-embedding-3-small", None, False, 1536),
+            ("text-embedding-3-large", None, False, 3072),
+            ("text-embedding-ada-002", None, None, 1536),
+            ("vendor/custom-model", None, False, 4),
         ],
     )
     def test_initialization_preserves_matching_and_builtin_widths(

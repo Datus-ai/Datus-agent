@@ -243,12 +243,7 @@ class EmbeddingModel:
                 model = OpenAIEmbeddings.create(name=self.model_name, dim=self._dim_size, **request_options)
             # check if the model is initialized
             probe = model.generate_embeddings(["foo"])[0]
-            if (
-                self._dim_size is not None
-                and probe is not None
-                and self.model_name not in model.model_names()
-                and len(probe) != self._dim_size
-            ):
+            if self._dim_size is not None and probe is not None and len(probe) != self._dim_size:
                 raise DatusException(
                     ErrorCode.COMMON_CONFIG_ERROR,
                     message=(

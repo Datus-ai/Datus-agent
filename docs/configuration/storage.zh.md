@@ -91,6 +91,8 @@ storage:
 
 自定义模型未配置正数 `dim_size` 时无法推断其宽度。改变模型的输出宽度后，需要按新宽度重建已有向量索引。
 
+所有 OpenAI 兼容模型在初始化时，都会检查非空探测向量的长度是否匹配配置的 `dim_size`，不匹配则报错。内置模型名同样适用：设置 `send_dimensions: false` 时应配置提供方的原生输出宽度；`text-embedding-ada-002` 应配置为 1536。
+
 ### Sentence-Transformers（本地）
 ```yaml
 database:
