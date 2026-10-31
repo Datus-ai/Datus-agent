@@ -238,9 +238,15 @@ class ChatCommands:
             node_id_suffix="_cli",
             scope=self.cli.scope,
             session_id=session_id,
+            on_warning=self._print_warning,
         )
         self._attach_status_dirty_callback(node)
         return node
+
+    def _print_warning(self, warning: str) -> None:
+        from rich.markup import escape
+
+        self.console.print(f"[yellow]{escape(warning)}[/]")
 
     def _attach_status_dirty_callback(self, node: "AgenticNode") -> None:
         """Wire ``TokenUsageHook`` mid-turn refreshes to ``DatusApp.invalidate``.
