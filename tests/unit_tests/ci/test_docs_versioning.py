@@ -5,6 +5,8 @@ import json
 from pathlib import Path
 from unittest.mock import Mock, call
 
+import pytest
+
 MODULE_PATH = Path(__file__).resolve().parents[3] / "ci" / "docs_versioning.py"
 MODULE_SPEC = importlib.util.spec_from_file_location("docs_versioning", MODULE_PATH)
 if MODULE_SPEC is None or MODULE_SPEC.loader is None:
@@ -155,7 +157,8 @@ def test_docs_version_visibility_hides_patch_and_old_minor_versions():
     assert docs_versioning.should_hide_docs_version("latest", min_visible_minor) is False
 
 
-def test_hide_legacy_docs_versions_scopes_mike_commands_to_deploy_prefix(monkeypatch):
+@pytest.mark.parametrize("push", [True, False])
+def test_hide_legacy_docs_versions_scopes_mike_commands_to_deploy_prefix(monkeypatch, push):
     check_output = Mock(
         return_value=json.dumps(
             [
@@ -169,14 +172,14 @@ def test_hide_legacy_docs_versions_scopes_mike_commands_to_deploy_prefix(monkeyp
     monkeypatch.setattr(docs_versioning.subprocess, "check_output", check_output)
     monkeypatch.setattr(docs_versioning.subprocess, "run", run)
 
-    changed = docs_versioning.hide_legacy_docs_versions((0, 2), "zh")
+    changed = docs_versioning.hide_legacy_docs_versions((0, 2), "zh", push=push)
 
     assert changed is True
     check_output.assert_called_once_with(
         ["mike", "list", "-j", "--deploy-prefix", "zh"],
         text=True,
     )
-    assert run.call_args_list == [
+    expected = [
         call(
             [
                 "mike",
@@ -190,8 +193,10 @@ def test_hide_legacy_docs_versions_scopes_mike_commands_to_deploy_prefix(monkeyp
             ],
             check=True,
         ),
-        call(["git", "push", "--", "origin", "gh-pages"], check=True),
     ]
+    if push:
+        expected.append(call(["git", "push", "--", "origin", "gh-pages"], check=True))
+    assert run.call_args_list == expected
 
 
 def test_hide_legacy_cli_forwards_deploy_prefix(monkeypatch):
@@ -201,7 +206,7 @@ def test_hide_legacy_cli_forwards_deploy_prefix(monkeypatch):
     result = docs_versioning.main(["hide-legacy", "--min-visible-minor", "0.2", "--deploy-prefix", "zh"])
 
     assert result == 0
-    hide_legacy.assert_called_once_with((0, 2), "zh")
+    hide_legacy.assert_called_once_with((0, 2), "zh", push=True)
 
 
 def test_hide_legacy_cli_reports_invalid_minor(capsys):
