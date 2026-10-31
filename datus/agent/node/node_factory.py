@@ -8,7 +8,7 @@ Shared factory functions for creating interactive agentic nodes and their inputs
 Used by CLI print mode and interactive REPL to avoid duplicating node creation logic.
 """
 
-from typing import TYPE_CHECKING, Literal, Optional
+from typing import TYPE_CHECKING, Callable, Literal, Optional
 
 from datus.schemas.at_context import apply_at_context
 from datus.utils.constants import HIDDEN_SYS_SUB_AGENTS, SYS_SUB_AGENTS
@@ -63,6 +63,7 @@ def create_interactive_node(
     execution_mode: Literal["interactive", "workflow"] = "interactive",
     node_id: Optional[str] = None,
     session_id: Optional[str] = None,
+    on_warning: Optional[Callable[[str], None]] = None,
 ):
     """Create an interactive agentic node based on subagent_name.
 
@@ -81,6 +82,9 @@ def create_interactive_node(
             before the first turn, rehydrating persisted plan-mode fields. When
             omitted, the node eagerly generates a fresh ``session_id`` in its
             ``__init__``.
+        on_warning: Optional callback for warnings the caller should show its
+            user. The CLI logs to file only, so a logged warning alone never
+            reaches the terminal or the print-mode JSON stream.
     """
     if subagent_name:
         node_class_type = _resolve_node_class_type(subagent_name, agent_config)
@@ -281,11 +285,13 @@ def create_interactive_node(
             visible_names = _visible_subagent_names(agent_config)
             if subagent_name not in SYS_SUB_AGENTS and subagent_name not in visible_names:
                 available_names = ", ".join(sorted(visible_names))
-                logger.warning(
-                    "Unknown subagent %r; falling back to gen_sql. Available subagents: %s",
-                    subagent_name,
-                    available_names,
+                warning = (
+                    f"Unknown subagent {subagent_name!r}; falling back to gen_sql. "
+                    f"Available subagents: {available_names}"
                 )
+                logger.warning(warning)
+                if on_warning is not None:
+                    on_warning(warning)
 
             from datus.agent.node.gen_sql_agentic_node import GenSQLAgenticNode
 

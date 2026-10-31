@@ -143,6 +143,33 @@ class TestWritePayload:
         assert data["role"] == "assistant"
         assert data["content"][0]["type"] == "markdown"
 
+    def test_factory_warning_is_a_json_line(self):
+        with (
+            patch("datus.cli.print_mode.load_agent_config") as mock_cfg,
+            patch("datus.cli.print_mode.AtReferenceCompleter") as mock_completer,
+            patch("datus.cli.print_mode.create_interactive_node") as mock_factory,
+            patch("datus.cli.print_mode.create_node_input"),
+            patch("datus.cli.print_mode.run_async"),
+        ):
+            mock_cfg.return_value = MagicMock(datasource_configs={})
+            mock_completer.return_value.parse_at_context.return_value = ([], [], [], None)
+
+            def fake_factory(*args, on_warning, **kwargs):
+                on_warning("Unknown subagent 'x'")
+                return MagicMock()
+
+            mock_factory.side_effect = fake_factory
+            from datus.cli.print_mode import PrintModeRunner
+
+            buf = io.StringIO()
+            with patch("sys.stdout", buf):
+                PrintModeRunner(_make_args()).run()
+
+        data = json.loads(buf.getvalue().strip())
+        assert data["role"] == "assistant"
+        assert data["message_id"]
+        assert data["content"] == [{"type": "markdown", "payload": {"content": "Unknown subagent 'x'"}}]
+
 
 # ---------------------------------------------------------------------------
 # Tests: PrintModeRunner._read_interaction_input
@@ -464,6 +491,7 @@ class TestResumeSessionId:
             scope=None,
             session_id="session_uuid123",
             execution_mode="workflow",
+            on_warning=runner._write_warning,
         )
 
 
@@ -513,6 +541,7 @@ class TestRunUsesFactory:
             scope=None,
             session_id=None,
             execution_mode="workflow",
+            on_warning=runner._write_warning,
         )
         mock_create_input.assert_called_once()
         assert mock_create_input.call_args.kwargs["catalog"] == "configured_catalog"

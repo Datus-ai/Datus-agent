@@ -405,6 +405,27 @@ class TestUnknownSubagentWarning:
         assert "Available subagents:" in warning_messages[0]
 
     @patch("datus.agent.node.gen_sql_agentic_node.GenSQLAgenticNode.__init__", return_value=None)
+    def test_unknown_subagent_warning_reaches_caller(self, mock_init, caplog):
+        config = _mock_agent_config()
+        warnings = []
+
+        with caplog.at_level(logging.WARNING, logger=self.LOGGER_NAME):
+            create_interactive_node("totally_bogus_name_xyz", config, on_warning=warnings.append)
+
+        assert len(self._unknown_subagent_warnings(caplog)) == 1
+        assert len(warnings) == 1
+        assert warnings[0].startswith("Unknown subagent 'totally_bogus_name_xyz'; falling back to gen_sql.")
+        assert "Available subagents:" in warnings[0]
+
+    @patch("datus.agent.node.gen_sql_agentic_node.GenSQLAgenticNode.__init__", return_value=None)
+    def test_known_subagent_does_not_call_on_warning(self, mock_init):
+        warnings = []
+
+        create_interactive_node("gen_sql", _mock_agent_config(), on_warning=warnings.append)
+
+        assert warnings == []
+
+    @patch("datus.agent.node.gen_sql_agentic_node.GenSQLAgenticNode.__init__", return_value=None)
     def test_stale_generate_sql_name_warns(self, mock_init, caplog):
         config = _mock_agent_config()
 
