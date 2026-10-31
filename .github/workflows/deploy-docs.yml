@@ -9,6 +9,17 @@ on:
       - 'requirements-docs.txt'
       - 'ci/prepare_docs_build.py'
       - 'ci/docs_versioning.py'
+      - 'ci/docs_site.py'
+      - 'ci/docs_redirects.yml'
+      - '.github/workflows/deploy-docs.yml'
+  pull_request:
+    paths:
+      - 'docs/**'
+      - 'mkdocs.yml'
+      - 'requirements-docs.txt'
+      - 'ci/*docs*.py'
+      - 'ci/docs_redirects.yml'
+      - 'tests/unit_tests/ci/test_*docs*.py'
       - '.github/workflows/deploy-docs.yml'
   workflow_dispatch:
     inputs:
@@ -16,12 +27,47 @@ on:
         description: 'Release tag to deploy into its minor docs line, e.g. v0.3.7 -> 0.3. Uses dev if empty.'
         required: false
         default: ''
+# mike commits both locale builds to one branch. Publish once after both trees
+# and their complete link graph pass validation; serialize release/main deploys.
+concurrency:
+  group: deploy-docs-${{ github.event_name == 'pull_request' && github.ref || 'publish' }}
+  cancel-in-progress: false
 permissions:
-  contents: write
+  contents: read
 env:
   DOCS_MIN_VISIBLE_MINOR: "0.2"
 jobs:
+  validate:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements-docs.txt pytest
+      - name: Test documentation publishing contracts
+        run: >-
+          pytest --noconftest -o addopts="" tests/unit_tests/ci/test_docs_site.py
+          tests/unit_tests/ci/test_docs_versioning.py tests/unit_tests/ci/test_prepare_docs_build.py
+      - name: Build both locales with the real mike version environment
+        run: |
+          for locale in en zh; do
+            site_root="https://docs.datus.ai/"
+            if [[ "${locale}" == "zh" ]]; then site_root="https://docs.datus.ai/zh/"; fi
+            build_root="${RUNNER_TEMP}/docs-${locale}"
+            DOCS_LOCALE="${locale}" DOCS_SITE_URL="${site_root}" python ci/prepare_docs_build.py \
+              --base-config mkdocs.yml --output-root "${build_root}" --source-ref HEAD
+            DOCS_LOCALE="${locale}" MIKE_DOCS_VERSION=dev mkdocs build --strict \
+              -f "${build_root}/mkdocs.yml" --site-dir "${build_root}/site"
+            python ci/docs_site.py --site-dir "${build_root}/site" --check-build-url "${site_root}dev/"
+          done
   deploy:
+    if: github.event_name != 'pull_request'
+    permissions:
+      contents: write
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -71,12 +117,13 @@ jobs:
             --event-name "${EVENT_NAME}" \
             --github-ref-type "${GITHUB_REF_TYPE_VALUE}" \
             --github-ref-name "${GITHUB_REF_NAME_VALUE}" >> "${GITHUB_ENV}"
+      # mike appends MIKE_DOCS_VERSION to site_url itself. Pass locale roots.
       - name: Configure language builds
         if: env.DOCS_SKIP_DEPLOY != 'true'
         run: |
           {
-            echo "DOCS_EN_SITE_URL=https://docs.datus.ai/${DOCS_VERSION}/"
-            echo "DOCS_ZH_SITE_URL=https://docs.datus.ai/zh/${DOCS_VERSION}/"
+            echo "DOCS_EN_SITE_URL=https://docs.datus.ai/"
+            echo "DOCS_ZH_SITE_URL=https://docs.datus.ai/zh/"
             echo "DOCS_EN_BASE=/${DOCS_VERSION}/"
             echo "DOCS_ZH_BASE=/zh/${DOCS_VERSION}/"
           } >> "${GITHUB_ENV}"
@@ -106,47 +153,62 @@ jobs:
         if: env.DOCS_SKIP_DEPLOY != 'true'
         run: |
           DOCS_LOCALE=en DOCS_SITE_URL="${DOCS_EN_SITE_URL}" \
-            mkdocs build --strict -f "${DOCS_EN_BUILD_CONFIG}" --site-dir "${RUNNER_TEMP}/site-en"
+            MIKE_DOCS_VERSION="${DOCS_VERSION}" mkdocs build --strict -f "${DOCS_EN_BUILD_CONFIG}" --site-dir "${RUNNER_TEMP}/site-en"
+          python ci/docs_site.py --site-dir "${RUNNER_TEMP}/site-en" \
+            --check-build-url "https://docs.datus.ai/${DOCS_VERSION}/"
       - name: Validate Chinese docs build
         if: env.DOCS_SKIP_DEPLOY != 'true'
         run: |
           DOCS_LOCALE=zh DOCS_SITE_URL="${DOCS_ZH_SITE_URL}" \
-            mkdocs build --strict -f "${DOCS_ZH_BUILD_CONFIG}" --site-dir "${RUNNER_TEMP}/site-zh"
-      - name: Deploy versioned docs
+            MIKE_DOCS_VERSION="${DOCS_VERSION}" mkdocs build --strict -f "${DOCS_ZH_BUILD_CONFIG}" --site-dir "${RUNNER_TEMP}/site-zh"
+          python ci/docs_site.py --site-dir "${RUNNER_TEMP}/site-zh" \
+            --check-build-url "https://docs.datus.ai/zh/${DOCS_VERSION}/"
+      - name: Stage versioned docs
         if: env.DOCS_SKIP_DEPLOY != 'true'
         run: |
           if [[ -n "${DOCS_ALIASES}" ]]; then
             DOCS_LOCALE=en DOCS_SITE_URL="${DOCS_EN_SITE_URL}" \
-              mike deploy -F "${DOCS_EN_BUILD_CONFIG}" --push --update-aliases "${DOCS_VERSION}" "${DOCS_ALIASES}"
+              mike deploy -F "${DOCS_EN_BUILD_CONFIG}" --update-aliases "${DOCS_VERSION}" "${DOCS_ALIASES}"
             DOCS_LOCALE=zh DOCS_SITE_URL="${DOCS_ZH_SITE_URL}" \
-              mike deploy -F "${DOCS_ZH_BUILD_CONFIG}" --deploy-prefix zh --push --update-aliases \
+              mike deploy -F "${DOCS_ZH_BUILD_CONFIG}" --deploy-prefix zh --update-aliases \
               "${DOCS_VERSION}" "${DOCS_ALIASES}"
           else
             DOCS_LOCALE=en DOCS_SITE_URL="${DOCS_EN_SITE_URL}" \
-              mike deploy -F "${DOCS_EN_BUILD_CONFIG}" --push "${DOCS_VERSION}"
+              mike deploy -F "${DOCS_EN_BUILD_CONFIG}" "${DOCS_VERSION}"
             DOCS_LOCALE=zh DOCS_SITE_URL="${DOCS_ZH_SITE_URL}" \
-              mike deploy -F "${DOCS_ZH_BUILD_CONFIG}" --deploy-prefix zh --push "${DOCS_VERSION}"
+              mike deploy -F "${DOCS_ZH_BUILD_CONFIG}" --deploy-prefix zh "${DOCS_VERSION}"
           fi
       - name: Set default docs version
         if: env.DOCS_SKIP_DEPLOY != 'true'
         run: |
           if [[ -n "${DOCS_SET_DEFAULT}" ]]; then
             DOCS_LOCALE=en DOCS_SITE_URL="${DOCS_EN_SITE_URL}" \
-              mike set-default -F "${DOCS_EN_BUILD_CONFIG}" --push "${DOCS_SET_DEFAULT}"
+              mike set-default -F "${DOCS_EN_BUILD_CONFIG}" "${DOCS_SET_DEFAULT}"
           elif [[ "${DOCS_HAS_PUBLISHED_VERSIONS}" == "false" ]]; then
             DOCS_LOCALE=en DOCS_SITE_URL="${DOCS_EN_SITE_URL}" \
-              mike set-default -F "${DOCS_EN_BUILD_CONFIG}" --push "${DOCS_VERSION}"
+              mike set-default -F "${DOCS_EN_BUILD_CONFIG}" "${DOCS_VERSION}"
           fi
           if [[ -n "${DOCS_SET_DEFAULT}" ]]; then
             DOCS_LOCALE=zh DOCS_SITE_URL="${DOCS_ZH_SITE_URL}" \
-              mike set-default -F "${DOCS_ZH_BUILD_CONFIG}" --deploy-prefix zh --push "${DOCS_SET_DEFAULT}"
+              mike set-default -F "${DOCS_ZH_BUILD_CONFIG}" --deploy-prefix zh "${DOCS_SET_DEFAULT}"
           elif [[ "${DOCS_ZH_HAS_PUBLISHED_VERSIONS}" == "false" ]]; then
             DOCS_LOCALE=zh DOCS_SITE_URL="${DOCS_ZH_SITE_URL}" \
-              mike set-default -F "${DOCS_ZH_BUILD_CONFIG}" --deploy-prefix zh --push "${DOCS_VERSION}"
+              mike set-default -F "${DOCS_ZH_BUILD_CONFIG}" --deploy-prefix zh "${DOCS_VERSION}"
           fi
       - name: Hide legacy docs versions
         if: env.DOCS_SKIP_DEPLOY != 'true'
         run: |
-          python ci/docs_versioning.py hide-legacy --min-visible-minor "${DOCS_MIN_VISIBLE_MINOR}"
-          python ci/docs_versioning.py hide-legacy --min-visible-minor "${DOCS_MIN_VISIBLE_MINOR}" \
+          python ci/docs_versioning.py hide-legacy --no-push --min-visible-minor "${DOCS_MIN_VISIBLE_MINOR}"
+          python ci/docs_versioning.py hide-legacy --no-push --min-visible-minor "${DOCS_MIN_VISIBLE_MINOR}" \
             --deploy-prefix zh
+      - name: Finalize and validate the complete published site
+        if: env.DOCS_SKIP_DEPLOY != 'true'
+        run: |
+          published_dir="${RUNNER_TEMP}/published-docs"
+          git worktree add --detach "${published_dir}" gh-pages
+          python ci/docs_site.py --site-dir "${published_dir}"
+          git -C "${published_dir}" add --all
+          if ! git -C "${published_dir}" diff --cached --quiet; then
+            git -C "${published_dir}" commit -m "Finalize documentation routes and SEO metadata"
+          fi
+          git -C "${published_dir}" push origin HEAD:gh-pages
