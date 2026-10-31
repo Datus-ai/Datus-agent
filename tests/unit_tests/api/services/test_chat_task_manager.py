@@ -3084,6 +3084,26 @@ class TestRunLoopSettlesTurn:
         assert (status, error) == ("error", "model blew up")
         assert usage["total_tokens"] == 120
 
+    @pytest.mark.asyncio
+    async def test_failed_turn_still_emits_end_event(self, real_agent_config):
+        """A node failure must still terminate the SSE stream (issue #1142)."""
+        task, _calls = await self._run(real_agent_config, self._node(raise_after=RuntimeError("model blew up")))
+
+        assert task.status == "error"
+        [end] = [event for event in task.events if event.event == "end"]
+        assert isinstance(end.data, SSEEndData)
+        assert task.events[-1] is end
+
+    @pytest.mark.asyncio
+    async def test_cancelled_turn_still_emits_end_event(self, real_agent_config):
+        """A /chat/stop cancellation must still terminate the SSE stream (issue #1142)."""
+        task, _calls = await self._run(real_agent_config, self._node(raise_after=asyncio.CancelledError()))
+
+        assert task.status == "cancelled"
+        [end] = [event for event in task.events if event.event == "end"]
+        assert isinstance(end.data, SSEEndData)
+        assert task.events[-1] is end
+
     @staticmethod
     def _error_action(depth=0, error="messages.1.content.0: Input tag 'output_text' found"):
         from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus

@@ -57,6 +57,10 @@ class AskUserTool:
 
     Args:
         broker: InteractionBroker instance (shared with permission hooks).
+        timeout: Maximum seconds to wait for the user's answer. ``None`` waits
+            forever, which is right for a directly-invoked node. Subagents set
+            a finite value so a question the user never answers cannot pin the
+            parent turn open (issue #1142).
     """
 
     permission_category: str = "tools"
@@ -65,8 +69,9 @@ class AskUserTool:
     MAX_OPTIONS_PER_QUESTION = 10
     MIN_OPTIONS_PER_QUESTION = 2
 
-    def __init__(self, broker: InteractionBroker):
+    def __init__(self, broker: InteractionBroker, timeout: Optional[float] = None):
         self._broker = broker
+        self._hitl_timeout = timeout
         self._tool_context: Any = None
 
     def set_tool_context(self, ctx: Any) -> None:
@@ -169,7 +174,7 @@ class AskUserTool:
         ]
 
         try:
-            raw_answers = await self._broker.request(events)
+            raw_answers = await self._broker.request(events, timeout=self._hitl_timeout)
 
             # raw_answers is List[List[str]] — one inner list per question
             if len(raw_answers) != len(validated):
@@ -194,13 +199,14 @@ class AskUserTool:
             logger.info(f"AskUserTool: completed batch clarification with {len(validated)} question(s)")
             return FuncToolResult(success=1, result=result_json)
 
-        except InteractionCancelled:
-            # Only the question was cancelled (ESC, or the broker closing). A
-            # cancelled *run* raises CancelledError, which is a BaseException and
-            # so passes through here untouched — deliberately, since turning it
-            # into a tool result would keep the run going after a /chat/stop.
-            logger.info("AskUserTool: interaction cancelled by user")
-            return FuncToolResult(success=0, error="User cancelled the question")
+        except InteractionCancelled as e:
+            # Only the question was cancelled (ESC, the broker closing, or a
+            # subagent's wait timing out). A cancelled *run* raises
+            # CancelledError, which is a BaseException and so passes through here
+            # untouched — deliberately, since turning it into a tool result
+            # would keep the run going after a /chat/stop.
+            logger.info("AskUserTool: interaction cancelled: %s", e)
+            return FuncToolResult(success=0, error=f"User cancelled the question: {e}")
         except Exception as e:
             logger.error(f"AskUserTool: unexpected error: {e}")
             return FuncToolResult(success=0, error=f"Failed to ask user: {e}")
