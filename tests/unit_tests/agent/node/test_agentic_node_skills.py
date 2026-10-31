@@ -1305,7 +1305,7 @@ Use FETCH FIRST instead of LIMIT.
 
         assert node._inject_required_skills("base prompt") == "base prompt"
 
-    @pytest.mark.parametrize("node_name", ["ask_metrics", "gen_report"])
+    @pytest.mark.parametrize("node_name", ["ask_metrics", "gen_visual_report"])
     @pytest.mark.parametrize("required", [None, "sql-analysis"])
     def test_nodes_without_db_tools_skip_dialect_skills(
         self, mock_agent_config, database_skill_manager, node_name, required, monkeypatch

@@ -149,7 +149,7 @@ existing configurations do not need new fields:
 
 | Setting | When omitted |
 | --- | --- |
-| `context_length` | Use existing model specifications or the provider catalogue; fall back to a `262144` (256K) token budget if unknown |
+| `context_length` | Use existing model specifications or the provider catalogue; fall back to a `1048576` (1M) token budget if unknown |
 | `max_tokens` | Use the model's output specification; fall back to `8192` if unknown. Transports with an output cap also leave room for input and the safety margin, so small windows may get a lower default |
 | `tokenizer_ref` | Use LiteLLM counting for known OpenAI models; otherwise reserve UTF-8 bytes, including for private aliases, without downloading a tokenizer |
 
@@ -389,7 +389,7 @@ With the new provider-level configuration, you only need to set credentials. All
 
 This section is used for:
 
-- built-in agentic nodes such as `chat`, `explore`, `gen_sql`, `gen_report`, `gen_dashboard`, and `scheduler`
+- built-in agentic nodes such as `chat`, `explore`, `gen_sql`, `gen_visual_report`, `gen_dashboard`, and `scheduler`
 - custom subagents created with the unified agent TUI (`/agent` or `/subagent`)
 - advanced manual aliases that point a custom name at a built-in node class
 
@@ -399,7 +399,7 @@ The runtime currently reads these commonly used fields from `agentic_nodes` entr
 
 - `model`: provider key from `agent.models` (custom entries only; omit to inherit the active provider/model)
 - `system_prompt`: subagent name / prompt template base name
-- `node_class`: node implementation to use, such as `gen_sql`, `gen_report`, `explore`, `gen_table`, `gen_skill`, `gen_dashboard`, or `scheduler`
+- `node_class`: node implementation to use, such as `gen_sql`, `gen_visual_report`, `explore`, `gen_table`, `gen_skill`, `gen_dashboard`, or `scheduler`
 - `prompt_version`, `prompt_language`
 - `agent_description`
 - `tools`, `mcp`, `skills`
@@ -451,7 +451,7 @@ agent:
       subagents: "*"
 
     finance_report:
-      node_class: gen_report
+      node_class: gen_visual_report
       model: claude
       system_prompt: finance_report
       prompt_version: "1.0"

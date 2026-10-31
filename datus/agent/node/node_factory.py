@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Literal, Optional
 from datus.schemas.at_context import apply_at_context
 from datus.utils.constants import HIDDEN_SYS_SUB_AGENTS, SYS_SUB_AGENTS
 from datus.utils.loggings import get_logger
+from datus.utils.node_utils import validate_node_class
 
 if TYPE_CHECKING:
     from datus.configuration.agent_config import AgentConfig
@@ -83,6 +84,7 @@ def create_interactive_node(
     """
     if subagent_name:
         node_class_type = _resolve_node_class_type(subagent_name, agent_config)
+        validate_node_class(node_class_type, subagent_name)
 
         if subagent_name == "semantic_modeling":
             from datus.agent.node.semantic_modeling_agentic_node import SemanticModelingAgenticNode
@@ -145,22 +147,6 @@ def create_interactive_node(
                 node_id=node_id if node_id is not None else f"{subagent_name}{node_id_suffix}",
                 description=f"Metric question-answering node for {subagent_name}",
                 node_type=NodeType.TYPE_ASK_METRICS,
-                input_data=None,
-                agent_config=agent_config,
-                tools=None,
-                node_name=subagent_name,
-                scope=scope,
-                execution_mode=execution_mode,
-                session_id=session_id,
-            )
-
-        elif subagent_name == "gen_report" or node_class_type == "gen_report":
-            from datus.agent.node.gen_report_agentic_node import GenReportAgenticNode
-
-            return GenReportAgenticNode(
-                node_id=node_id if node_id is not None else f"{subagent_name}{node_id_suffix}",
-                description=f"Report generation node for {subagent_name}",
-                node_type="gen_report",
                 input_data=None,
                 agent_config=agent_config,
                 tools=None,
@@ -406,7 +392,6 @@ def _build_typed_node_input(
     """Construct the node-type-specific input object (no @-context wiring)."""
     from datus.agent.node.ask_metrics_agentic_node import AskMetricsAgenticNode
     from datus.agent.node.gen_job_agentic_node import GenJobAgenticNode
-    from datus.agent.node.gen_report_agentic_node import GenReportAgenticNode
     from datus.agent.node.gen_sql_agentic_node import GenSQLAgenticNode
     from datus.agent.node.gen_table_agentic_node import GenTableAgenticNode
     from datus.agent.node.gen_visual_dashboard_agentic_node import GenVisualDashboardAgenticNode
@@ -442,16 +427,6 @@ def _build_typed_node_input(
             database=database,
             db_schema=db_schema,
             prompt_language=prompt_language,
-        )
-
-    elif isinstance(node, GenReportAgenticNode):
-        from datus.schemas.gen_report_agentic_node_models import GenReportNodeInput
-
-        return GenReportNodeInput(
-            user_message=user_message,
-            catalog=catalog,
-            database=database,
-            db_schema=db_schema,
         )
 
     elif isinstance(node, OntologyAnalystAgenticNode):

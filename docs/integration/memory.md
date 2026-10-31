@@ -36,7 +36,7 @@ Memory is stored under `.datus/memory/` in the workspace, with each agent having
 |-----------|---------------|
 | `chat` (built-in main agent) | Yes |
 | Custom subagents | Yes |
-| Built-in system subagents (`gen_sql`, `gen_report`, etc.) | No |
+| Built-in system subagents (`gen_sql`, `gen_visual_report`, etc.) | No |
 | `explore` | No |
 
 Only interactive, user-facing agents have memory. Built-in system subagents that perform specific pipeline tasks do not; when launched via `task`, they receive their parent agent's memory inlined as read-only background.

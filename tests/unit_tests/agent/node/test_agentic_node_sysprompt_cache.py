@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+from collections import OrderedDict
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Optional
@@ -51,12 +52,12 @@ ACTIVE_TEMPLATES = [
     "chat_system_1.2.j2",
     "gen_sql_system_1.2.j2",
     "explore_system_1.0.j2",
-    "gen_report_system_1.0.j2",
     "ask_metrics_system_1.0.j2",
 ]
 # Deliverable templates never inlined the datasource selection; they are held
 # to the same no-volatile-variables bar but don't point to <system_reminder>.
 DELIVERABLE_TEMPLATES = [
+    "gen_visual_report_system_1.0.j2",
     "gen_table_system_1.0.j2",
     "gen_dashboard_system_1.0.j2",
     "gen_job_system_1.0.j2",
@@ -509,6 +510,75 @@ class TestSnapshotMeta:
 
 
 class TestDatasourceReminder:
+    def test_same_adapter_products_follow_current_datasource(self, session_manager):
+        """The default connector must not supply a different target's SQL rules."""
+
+        class Connector:
+            def __init__(self, product, database):
+                self.product = product
+                self.database_name = database
+
+            def get_sql_generation_context(self, database_name=""):
+                return {"server_type": self.product}
+
+        connectors = {"warehouse": Connector("hive", "warehouse_db"), "bank": Connector("inceptor", "bidata")}
+        routed = []
+
+        def get_conn(datasource, database):
+            routed.append((datasource, database))
+            return connectors[datasource]
+
+        tool = DBFuncTool.__new__(DBFuncTool)
+        tool._db_manager = SimpleNamespace(get_conn=get_conn)
+        tool._default_datasource = "warehouse"
+        tool._default_database = ""
+        tool._primary_connector = connectors["warehouse"]
+        tool._connector_cache = OrderedDict()
+        tool._connector_cache_size = 4
+        services = SimpleNamespace(datasources={name: SimpleNamespace(type="hive") for name in connectors})
+        cfg = _agent_config(current_datasource="bank", services=services)
+        node = _SnapshotNode(session_manager, cfg, db_func_tool=tool)
+
+        bank = node._build_datasource_reminder()
+        assert "Current datasource: bank (dialect: hive, database: bidata, server type: inceptor)" in bank
+        cfg.current_datasource = "warehouse"
+        warehouse = node._build_datasource_reminder()
+        assert "Current datasource: warehouse (dialect: hive, database: warehouse_db, server type: hive)" in warehouse
+        assert routed == [("bank", ""), ("warehouse", "")]
+        explicit = tool.get_sql_generation_context(datasource="bank", database="other_db")
+        assert explicit == {"server_type": "inceptor", "database": "other_db"}
+        assert routed[-1] == ("bank", "other_db")
+
+    @pytest.mark.parametrize("hints", [None, "unsupported", {"server_type": ""}])
+    def test_optional_context_preserves_datasource_and_database(self, session_manager, hints):
+        services = SimpleNamespace(datasources={"main": SimpleNamespace(type="hive")})
+        connector = SimpleNamespace(database_name="default", get_sql_generation_context=lambda **_: hints)
+        node = _SnapshotNode(
+            session_manager,
+            _agent_config(current_datasource="main", services=services),
+            db_func_tool=SimpleNamespace(connector=connector),
+        )
+        line = node._build_datasource_reminder()
+        assert "Current datasource: main (dialect: hive, database: default)" in line
+
+    def test_context_retains_selected_database_for_bound_datasource(self):
+        requests = []
+
+        def get_conn(datasource, database):
+            requests.append((datasource, database))
+            return SimpleNamespace(
+                database_name=database, get_sql_generation_context=lambda **_: {"server_type": "inceptor"}
+            )
+
+        tool = DBFuncTool.__new__(DBFuncTool)
+        tool._db_manager = SimpleNamespace(get_conn=get_conn)
+        tool._default_datasource = "bank"
+        tool._default_database = "selected_db"
+        tool._connector_cache = OrderedDict()
+        tool._connector_cache_size = 4
+        assert tool.get_sql_generation_context("bank") == {"server_type": "inceptor", "database": "selected_db"}
+        assert requests == [("bank", "selected_db")]
+
     def test_adapter_namespace_hint_reaches_the_live_reminder(self, session_manager):
         services = SimpleNamespace(datasources={"main": SimpleNamespace(type="hana")})
         cfg = _agent_config(current_datasource="main", services=services)

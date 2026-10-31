@@ -55,6 +55,14 @@ def test_merge_group_expands_fixed_suites_with_shared_impact_selection(run_merge
     assert {"tests/unit_tests/models/", "tests/unit_tests/observability/", "tests/unit_tests/validation/"} <= targets
 
 
+def test_merge_group_uses_the_same_leaf_owners_as_prs(run_merge_queue_tests):
+    from ci.harness.test_plan import unit_test_plan
+
+    changed = ["datus/mcp_server.py", "datus/cli/language_commands.py"]
+    suite = run_merge_queue_tests.suite_definitions(changed)["impacted-unit"]
+    assert suite["targets"] == unit_test_plan(changed)["targets"]
+
+
 def test_build_pytest_command_includes_marker_junit_and_extra_args(tmp_path, run_merge_queue_tests):
     junit_xml = tmp_path / "results.xml"
 
@@ -87,6 +95,19 @@ def test_run_suite_fails_loudly_on_missing_target(tmp_path, monkeypatch, run_mer
     assert result["exit_code"] == 1
     assert result["missing"] == ["tests/unit_tests/gone.py"]
     assert result["targets"] == []
+
+
+def test_merge_queue_selects_local_storage_even_with_external_backends_configured(monkeypatch, run_merge_queue_tests):
+    calls = []
+
+    def run(command, **kwargs):
+        calls.append(kwargs["env"])
+        return run_merge_queue_tests.subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setenv("DATUS_TEST_STORAGE_BACKENDS", "postgresql+postgresql")
+    monkeypatch.setattr(run_merge_queue_tests.subprocess, "run", run)
+    assert run_merge_queue_tests.run_command(["pytest"], suite_name="acceptance-unit", timeout=10) == 0
+    assert calls[0]["DATUS_TEST_STORAGE_BACKENDS"] == "sqlite+lance"
 
 
 @pytest.mark.parametrize("name,expected", [("impacted-unit", 0), ("acceptance-unit", 5)])
@@ -180,3 +201,48 @@ def test_main_runs_selected_suite_and_writes_report(tmp_path, monkeypatch, run_m
         }
     ]
     assert '"status": "success"' in (out_dir / "merge-queue-results.json").read_text(encoding="utf-8")
+
+
+@pytest.mark.component
+@pytest.mark.parametrize("ci_tests,docs_exit", [(False, 0), (True, 0), (False, 1)])
+@pytest.mark.parametrize("trigger", ["explicit-base", "merge_group", "workflow_dispatch"])
+def test_documentation_gate_runs_and_records_its_required_checks(
+    ci_tests, docs_exit, trigger, tmp_path, monkeypatch, run_merge_queue_tests
+):
+    real_root = run_merge_queue_tests.REPO_ROOT
+    out = tmp_path / "ci"
+    out.mkdir()
+    (out / "check_docs.py").write_text(
+        f"from pathlib import Path\nPath('docs-built.txt').write_text('en,zh')\nraise SystemExit({docs_exit})\n"
+    )
+    tests = tmp_path / "tests/unit_tests/ci"
+    tests.mkdir(parents=True)
+    (tests / "test_docs_contract.py").write_text(
+        "from pathlib import Path\ndef test_ci_contract():\n"
+        "    Path('ci-executed.txt').write_text('passed')\n"
+        "    assert Path('docs-built.txt').read_text() == 'en,zh'\n"
+    )
+    (tmp_path / "pytest.ini").write_text("[pytest]\n")
+    monkeypatch.setattr(run_merge_queue_tests, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(run_merge_queue_tests, "OUT_DIR", out)
+    monkeypatch.setattr(run_merge_queue_tests, "DEFAULT_REPORT", out / "merge-queue-results.json")
+    monkeypatch.setattr(run_merge_queue_tests, "PYTEST_BASETEMP", tmp_path / "pytest-temp")
+    monkeypatch.setattr(run_merge_queue_tests, "changed_files", lambda *_: ["docs/index.md"])
+    monkeypatch.setattr(
+        run_merge_queue_tests,
+        "repository_profile",
+        lambda *_: {"profile": "docs", "ci_tests": ci_tests, "reason": "documentation registration"},
+    )
+    monkeypatch.setenv("PYTHONPATH", str(real_root))
+    monkeypatch.setenv("PYTEST_XDIST_AUTO_NUM_WORKERS", "2")
+    monkeypatch.setenv("GITHUB_EVENT_NAME", trigger)
+    monkeypatch.delenv("PYTEST_ADDOPTS", raising=False)
+    arguments = ["--base-ref", "HEAD"] if trigger == "explicit-base" else []
+    assert run_merge_queue_tests.main(arguments) == docs_exit
+    report = json.loads((out / "gate-coverage.json").read_text())
+    assert report["required_checks"] == ["docs-build", *(["docs-ci"] if ci_tests else [])]
+    assert report["status"] == ("success" if docs_exit == 0 else "failure")
+    assert (tmp_path / "docs-built.txt").read_text() == "en,zh"
+    assert {path.name: path.read_text() for path in tmp_path.glob("ci-executed.txt")} == (
+        {"ci-executed.txt": "passed"} if ci_tests else {}
+    )

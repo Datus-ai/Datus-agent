@@ -64,7 +64,7 @@ class SubAgentConfig(BaseModel):
     node_class: Optional[str] = Field(
         default=None,
         init=True,
-        description="Node class type for custom subagents: 'gen_sql' (default) or 'gen_report'",
+        description="Node class type for custom subagents: 'gen_sql' (default) or 'gen_visual_report'",
     )
     tools: str = Field(default="", init=True, description="Native tools to be used by sub-agents")
     mcp: str = Field(default="", init=True, description="MCP tools to be used by sub-agents")

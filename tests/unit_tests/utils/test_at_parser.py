@@ -52,7 +52,7 @@ def test_parse_agent_first_match_wins(parser: AtReferenceParser):
     """Subsequent ``@Agent`` mentions are dropped on purpose so the
     dispatch hint stays deterministic — we don't want one prompt to
     fan out to two subagents."""
-    result = parser.parse_input("@Agent gen_sql first @Agent gen_report second")
+    result = parser.parse_input("@Agent gen_sql first @Agent gen_visual_report second")
     assert result["agent"] == "gen_sql"
 
 

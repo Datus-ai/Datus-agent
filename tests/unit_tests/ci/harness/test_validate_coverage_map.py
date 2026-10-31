@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib.util
 from pathlib import Path
 
+import pytest
 import yaml
 
 MODULE_PATH = Path(__file__).resolve().parents[4] / "ci" / "harness" / "validate_coverage_map.py"
@@ -62,6 +63,30 @@ def test_minimal_map_with_gap_issue_is_valid():
 
     assert errors == []
     assert [flow.flow_id for flow in flows] == ["onboarding.quickstart"]
+
+
+def test_coverage_map_gate_rejects_stale_unit_ownership():
+    data = minimal_map()
+    data["execution"] = {
+        "unit_rules": [{"id": "stale", "paths": ["datus/example.py"], "targets": ["tests/unit_tests/no_such_test.py"]}]
+    }
+    errors, _ = validate(data)
+    assert errors == ["unit_rules.stale: unit target does not exist: tests/unit_tests/no_such_test.py"]
+
+
+def test_coverage_map_gate_rejects_missing_runtime_consumers():
+    data = validate_coverage_map.load_map()
+    rule = next(r for r in data["execution"]["unit_rules"] if r["id"] == "entrypoints")
+    rule["targets"] = ["tests/unit_tests/test_main.py"]
+    errors, _ = validate(data)
+    assert any("unit_rules.entrypoints:" in e and "test_windows_compatibility.py" in e for e in errors)
+
+
+def test_validator_reader_rejects_duplicate_ownership_keys(tmp_path):
+    path = tmp_path / "map.yml"
+    path.write_text("execution:\n  unit_rules: []\n  unit_rules: []\n")
+    with pytest.raises(yaml.constructor.ConstructorError, match="duplicate key"):
+        validate_coverage_map.read_yaml(path)
 
 
 def test_missing_docs_path_is_reported():

@@ -813,25 +813,37 @@ class AgenticNode(Node):
         if catalog:
             details.append(f"catalog: {catalog}")
         connector = getattr(self.db_func_tool, "connector", None)
-        database = resolve_database_name_for_prompt(connector, getattr(user_input, "database", "") or "")
+        requested_database = getattr(user_input, "database", "") or ""
+        sql_context = {}
+        context_getter = getattr(self.db_func_tool, "get_sql_generation_context", None)
+        try:
+            if callable(context_getter):
+                sql_context = context_getter(datasource=datasource, database=requested_database) or {}
+            else:
+                # Compatibility for hosts providing a single connector directly.
+                context_getter = getattr(connector, "get_sql_generation_context", None)
+                if callable(context_getter):
+                    sql_context = (
+                        context_getter(database_name=resolve_database_name_for_prompt(connector, requested_database))
+                        or {}
+                    )
+        except Exception as e:
+            logger.debug("Unable to read connector SQL-generation context: %s", e)
+        if not isinstance(sql_context, dict):
+            sql_context = {}
+        database = requested_database or sql_context.get("database") or resolve_database_name_for_prompt(connector, "")
         if database:
             details.append(f"database: {database}")
-        sql_context_getter = getattr(connector, "get_sql_generation_context", None)
-        if callable(sql_context_getter):
-            try:
-                sql_context = sql_context_getter(database_name=database) or {}
-                compatibility_mode = sql_context.get("compatibility_mode") if isinstance(sql_context, dict) else None
-                if compatibility_mode:
-                    compatibility_mode = str(compatibility_mode).strip()
-                    if compatibility_mode:
-                        details.append(f"compatibility mode: {compatibility_mode}")
-                if isinstance(sql_context, dict) and isinstance(sql_context.get("namespace_hint"), str):
-                    namespace_hint = sql_context["namespace_hint"].strip()
-            except Exception as e:
-                # SQL-generation hints must never make an otherwise usable
-                # datasource fail. The adapter may be talking to an older or
-                # restricted server that cannot expose the requested trait.
-                logger.debug("Unable to read connector SQL-generation context: %s", e)
+        server_type = sql_context.get("server_type")
+        if isinstance(server_type, str) and server_type.strip():
+            details.append(f"server type: {server_type.strip()}")
+        compatibility_mode = sql_context.get("compatibility_mode")
+        if compatibility_mode:
+            compatibility_mode = str(compatibility_mode).strip()
+            if compatibility_mode:
+                details.append(f"compatibility mode: {compatibility_mode}")
+        if isinstance(sql_context.get("namespace_hint"), str):
+            namespace_hint = sql_context["namespace_hint"].strip()
         schema = getattr(user_input, "db_schema", "") or ""
         if schema:
             details.append(f"schema: {schema}")
@@ -2671,6 +2683,9 @@ class AgenticNode(Node):
             # Read by ask_report / ask_dashboard nodes to resolve the
             # bound artifact directory at startup.
             "artifact_slug",
+            # Read by gen_visual_report to resolve the offline renderer
+            # bundle path (falls back to the unpkg CDN when unset).
+            "report_dist",
         ]
         for attr in direct_attributes:
             # Handle both dict and object access patterns
@@ -2860,7 +2875,7 @@ class AgenticNode(Node):
 
         Only activates if 'skills' is explicitly set in node_config.
         ChatAgenticNode overrides skill setup in its own setup_tools(), so this primarily
-        serves other AgenticNode subclasses (GenReport, GenMetrics, etc.).
+        serves other AgenticNode subclasses.
 
         If skill_manager was not created (e.g. no global 'skills:' section in agent.yml),
         creates one with default SkillConfig (same behavior as ChatAgenticNode).
@@ -3828,7 +3843,7 @@ class AgenticNode(Node):
         - Calls ``model.generate_with_tools_stream`` with the current
           ``ctx.user_prompt`` and per-node-configured tools / hooks.
         - Routes every emitted action through ``_maybe_rewrite_stream_action``
-          so subclasses can re-shape items mid-flight (used by GenReport).
+          so subclasses can re-shape items mid-flight.
         - Updates ``ctx.response_content`` / ``ctx.last_successful_output``
           from assistant chunks (skipping ``is_thinking`` items so the
           model's internal monologue never lands in the final response) and
@@ -3974,8 +3989,7 @@ class AgenticNode(Node):
     def _maybe_rewrite_stream_action(self, action: ActionHistory, ctx: "StreamRunContext") -> Optional[ActionHistory]:
         """Hook: optionally replace a streamed action before it is yielded.
 
-        Return a replacement :class:`ActionHistory` to substitute it (used by
-        GenReport to swap JSON payloads for rendered markdown in real time)
+        Return a replacement :class:`ActionHistory` to substitute it,
         or ``None`` (default) to keep the original action unchanged.
         """
         return None
