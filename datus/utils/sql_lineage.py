@@ -300,16 +300,13 @@ def _is_physical(table: exp.Table) -> bool:
 
 
 def _query_with_ctes(stmt: exp.Expression) -> Optional[exp.Expression]:
-    """Keep statement-level CTEs in the query's scope across SQLGlot versions."""
+    """Keep statement-level and query-local CTEs in their original nested scopes."""
     query = stmt.expression
-    if query is not None:
-        # SQLGlot renamed the WITH argument; keep the key the parser actually used.
-        for key in ("with_", "with"):
-            with_clause = stmt.args.get(key)
-            if with_clause is not None:
-                query = query.copy()
-                query.set(key, with_clause.copy())
-                break
+    with_clause = stmt.args.get("with_") or stmt.args.get("with")
+    if query is not None and with_clause is not None:
+        # Traverse the original tree: moving or merging WITH clauses changes shadowing
+        # and the scope in which recursive and outer CTE definitions resolve names.
+        return stmt
     return query
 
 
@@ -565,9 +562,10 @@ def _extract_fragment(
         writes = [table_full_name(target, default_database)] if target is not None else []
         if isinstance(stmt, exp.Drop):
             kind, query = "DROP", None
-            # Newer SQLGlot represents DROP targets as a list instead of ``this``.
-            tables = stmt.args.get("tables") or [stmt.this]
-            writes = [table_full_name(table, default_database) for table in tables if isinstance(table, exp.Table)]
+            # Other DROP kinds also use exp.Table targets, but do not end table lifetimes.
+            if str(stmt.args.get("kind") or "").upper() in {"TABLE", "VIEW"}:
+                tables = stmt.args.get("tables") or [stmt.this]
+                writes = [table_full_name(table, default_database) for table in tables if isinstance(table, exp.Table)]
         elif isinstance(stmt, exp.TruncateTable):
             kind, query = "TRUNCATE", None
             writes = [table_full_name(t, default_database) for t in stmt.expressions if isinstance(t, exp.Table)]

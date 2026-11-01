@@ -339,11 +339,71 @@ def test_cte_before_write_resolves_to_physical_table(write):
     assert edge_map(result)["dw.b"].sources == ["dw.a"]
 
 
+@pytest.mark.parametrize(
+    "sql, sources",
+    [
+        (
+            "WITH unused AS (SELECT 1) INSERT INTO dst WITH x AS (SELECT * FROM src) SELECT * FROM x",
+            {"dw.src"},
+        ),
+        (
+            "WITH a AS (SELECT * FROM raw_a) INSERT INTO dst "
+            "WITH b AS (SELECT * FROM raw_b) SELECT * FROM a JOIN b ON TRUE",
+            {"dw.raw_a", "dw.raw_b"},
+        ),
+        (
+            "WITH x AS (SELECT * FROM raw_outer), a AS (SELECT * FROM x) INSERT INTO dst "
+            "WITH x AS (SELECT * FROM raw_inner) SELECT * FROM x JOIN a ON TRUE",
+            {"dw.raw_outer", "dw.raw_inner"},
+        ),
+        (
+            "WITH x AS (SELECT * FROM raw_outer) INSERT INTO dst WITH x AS (SELECT * FROM x) SELECT * FROM x",
+            {"dw.raw_outer"},
+        ),
+        (
+            "WITH a AS (SELECT * FROM raw_a) INSERT INTO dst "
+            "WITH RECURSIVE b AS (SELECT id FROM a UNION ALL "
+            "SELECT b.id FROM b JOIN raw_b r ON b.id=r.id) SELECT * FROM b",
+            {"dw.raw_a", "dw.raw_b"},
+        ),
+    ],
+    ids=["query-local", "both-scopes", "shadowing", "inherited-shadowing", "recursive-query"],
+)
+def test_insert_preserves_both_cte_scopes(sql, sources):
+    """Each CTE resolves in its original scope, including shadowing and recursion."""
+    result = run(sql, dialect="postgres")
+    assert result.unresolved == []
+    assert set(result.statement_facts[0].read_tables) == sources
+    assert set(edge_map(result)["dw.dst"].sources) == sources
+
+
 @pytest.mark.parametrize("kind", ["TABLE", "VIEW"])
 def test_drop_records_the_qualified_target(kind):
     result = run(f"DROP {kind} other.scratch")
     [fact] = result.statement_facts
     assert (fact.operation, fact.read_tables, fact.write_tables) == ("DROP", [], ["other.scratch"])
+
+
+@pytest.mark.parametrize(
+    "dialect, drop",
+    [
+        ("mysql", "DROP INDEX scratch ON other"),
+        ("postgres", "DROP SEQUENCE scratch"),
+        ("postgres", "DROP SCHEMA scratch"),
+    ],
+)
+def test_non_table_drops_preserve_same_named_table_lineage(dialect, drop):
+    """Dropping another kind of object cannot end a table's lifetime."""
+    result = run(
+        "CREATE TABLE scratch AS SELECT * FROM src; INSERT INTO dst SELECT * FROM scratch; " + drop,
+        dialect=dialect,
+    )
+    assert result.unresolved == []
+    assert [(edge.target, edge.sources) for edge in result.lineage] == [
+        ("dw.scratch", ["dw.src"]),
+        ("dw.dst", ["dw.scratch"]),
+    ]
+    assert result.statement_facts[-1].write_tables == []
 
 
 def test_temp_folding_preserves_raw_statement_graph():
