@@ -31,7 +31,8 @@ dependencies = [
     "pandas==2.1.4; python_version < '3.13'",
     "pandas>=2.3.3,<3; python_version >= '3.13'",
     "sqlalchemy==2.0.23",
-    "sqlglot>=26.12.0,<31",
+    # Older releases can reject qualified identifiers such as dw.out during lineage parsing.
+    "sqlglot>=30.27.0,<31",
     "pyyaml==6.0.1",
     "packaging>=21.0",
     "structlog>=23.1.0",

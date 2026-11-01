@@ -90,6 +90,23 @@ def test_upsert_persists_one_project_graph_across_directories(tmp_path):
     ]
 
 
+def test_persisted_lineage_keeps_both_insert_cte_scopes(tmp_path):
+    """A complete persisted graph must include sources from both WITH clauses."""
+    write(
+        tmp_path,
+        "a.sql",
+        "WITH a AS (SELECT * FROM raw_a) INSERT INTO dst "
+        "WITH b AS (SELECT * FROM raw_b) SELECT * FROM a JOIN b ON TRUE",
+    )
+    tool = make_tool(tmp_path)
+    upsert(tool, paths=["a.sql"], dialect="postgres")
+
+    result = query(tool, tables=["dst"])
+    assert result["complete"] is True
+    assert records(result) == [("dst", ["raw_a", "raw_b"], "insert", [("a.sql", 1)])]
+    assert set(saved(tmp_path)["nodes"]) == {"dw.raw_a", "dw.raw_b", "dw.dst"}
+
+
 def test_unchanged_sources_are_skipped_without_rewriting_the_file(tmp_path):
     write(tmp_path, "a.sql", "INSERT INTO t SELECT * FROM s;")
     tool = make_tool(tmp_path)
@@ -623,7 +640,7 @@ def test_queries_are_counted_by_default_and_expanded_on_request(tmp_path):
     assert expanded["nodes"]["dws"]["role"] == "leaf"
 
 
-def test_stale_sources_make_the_result_incomplete_until_reanalyzed(tmp_path, monkeypatch):
+def test_stale_sources_make_the_result_incomplete_until_reanalyzed(tmp_path):
     edited = write(tmp_path, "a.sql", "INSERT INTO t SELECT * FROM s;")
     removed = write(tmp_path, "b.sql", "INSERT INTO u SELECT * FROM s;")
     tool = make_tool(tmp_path)
@@ -640,9 +657,16 @@ def test_stale_sources_make_the_result_incomplete_until_reanalyzed(tmp_path, mon
     upsert(tool, paths=["*.sql"], prune_missing=True)
     assert query(tool)["complete"] is True
 
-    monkeypatch.setattr(lineage_module, "ANALYZER_VERSION", lineage_module.ANALYZER_VERSION + 1)
+    with tool.store.edit() as document:
+        document.sources["a.sql"].analyzer_version = lineage_module.ANALYZER_VERSION - 1
     upgraded = query(tool)
     assert [s["reason"] for s in upgraded["stale"]] == ["analyzer_upgraded"]
+
+    refreshed = upsert(tool, paths=["*.sql"])
+    assert (refreshed["updated"], refreshed["unchanged"]) == (["a.sql"], 0)
+    assert saved(tmp_path)["sources"]["a.sql"]["analyzer_version"] == lineage_module.ANALYZER_VERSION
+    assert query(tool)["complete"] is True
+    assert records(query(tool)) == [("t", ["s2"], "insert", [("a.sql", 1)])]
 
 
 def test_scoped_completeness_covers_uncited_sources_that_may_hold_the_tables(tmp_path):

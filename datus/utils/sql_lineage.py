@@ -48,7 +48,7 @@ logger = get_logger(__name__)
 
 # Bump whenever extraction output changes, so persisted lineage analyzed by an older version is
 # reported stale and re-analyzed on the next upsert.
-ANALYZER_VERSION = 1
+ANALYZER_VERSION = 2
 
 # Dialect used to render statements back to SQL for their hash, so identical SQL
 # hashes identically within one dialect.
@@ -299,6 +299,17 @@ def _is_physical(table: exp.Table) -> bool:
 # ---------------------------------------------------------------------------
 
 
+def _query_with_ctes(stmt: exp.Expression) -> Optional[exp.Expression]:
+    """Keep statement-level and query-local CTEs in their original nested scopes."""
+    query = stmt.expression
+    with_clause = stmt.args.get("with_") or stmt.args.get("with")
+    if query is not None and with_clause is not None:
+        # Traverse the original tree: moving or merging WITH clauses changes shadowing
+        # and the scope in which recursive and outer CTE definitions resolve names.
+        return stmt
+    return query
+
+
 def _write_target(stmt: exp.Expression) -> Tuple[Optional[exp.Table], str, Optional[exp.Expression]]:
     """Return ``(target_table, statement_kind, query_part)`` for a write statement.
 
@@ -308,21 +319,13 @@ def _write_target(stmt: exp.Expression) -> Tuple[Optional[exp.Table], str, Optio
     if isinstance(stmt, exp.Insert):
         target = stmt.this.this if isinstance(stmt.this, exp.Schema) else stmt.this
         kind = "INSERT OVERWRITE" if stmt.args.get("overwrite") else "INSERT INTO"
-        query = stmt.expression
-        if query is not None and stmt.args.get("with") is not None:
-            query = query.copy()
-            query.set("with", stmt.args["with"].copy())
-        return (target if isinstance(target, exp.Table) else None), kind, query
+        return (target if isinstance(target, exp.Table) else None), kind, _query_with_ctes(stmt)
     if isinstance(stmt, exp.Create):
         target = stmt.this.this if isinstance(stmt.this, exp.Schema) else stmt.this
         kind = f"CREATE {(stmt.args.get('kind') or 'TABLE').upper()}"
         if stmt.expression is None:
             return None, kind, None  # plain DDL, no sources
-        query = stmt.expression
-        if query is not None and stmt.args.get("with") is not None:
-            query = query.copy()
-            query.set("with", stmt.args["with"].copy())
-        return (target if isinstance(target, exp.Table) else None), kind, query
+        return (target if isinstance(target, exp.Table) else None), kind, _query_with_ctes(stmt)
     if isinstance(stmt, exp.Merge):
         return (stmt.this if isinstance(stmt.this, exp.Table) else None), "MERGE", stmt
     if isinstance(stmt, exp.Update):
@@ -346,7 +349,7 @@ def _source_tables(query: exp.Expression, target: Optional[exp.Table], default_d
             if isinstance(source, exp.Table) and _is_physical(source):
                 seen.setdefault(table_full_name(source, default_database), None)
     # DML targets and FROM/USING tables can sit outside a SELECT scope.
-    with_clause = query.args.get("with")
+    with_clause = query.args.get("with_") or query.args.get("with")
     cte_names = {cte.alias_or_name for cte in with_clause.expressions} if with_clause else set()
     for table in query.find_all(exp.Table):
         if id(table) not in scoped_tables and table is not target and _is_physical(table):
@@ -559,7 +562,10 @@ def _extract_fragment(
         writes = [table_full_name(target, default_database)] if target is not None else []
         if isinstance(stmt, exp.Drop):
             kind, query = "DROP", None
-            writes = [table_full_name(stmt.this, default_database)] if isinstance(stmt.this, exp.Table) else []
+            # Other DROP kinds also use exp.Table targets, but do not end table lifetimes.
+            if str(stmt.args.get("kind") or "").upper() in {"TABLE", "VIEW"}:
+                tables = stmt.args.get("tables") or [stmt.this]
+                writes = [table_full_name(table, default_database) for table in tables if isinstance(table, exp.Table)]
         elif isinstance(stmt, exp.TruncateTable):
             kind, query = "TRUNCATE", None
             writes = [table_full_name(t, default_database) for t in stmt.expressions if isinstance(t, exp.Table)]
