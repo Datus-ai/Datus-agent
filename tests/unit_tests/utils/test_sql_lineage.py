@@ -332,10 +332,18 @@ def test_truncate_after_insert_does_not_relabel_previous_write():
     assert edge.load_mode == "insert"
 
 
-def test_cte_before_insert_resolves_to_physical_table():
-    """A WITH clause attached to INSERT remains available to source resolution."""
-    result = run("WITH x AS (SELECT * FROM a) INSERT INTO b SELECT * FROM x")
+@pytest.mark.parametrize("write", ["INSERT INTO b", "CREATE TABLE b AS", "CREATE VIEW b AS"])
+def test_cte_before_write_resolves_to_physical_table(write):
+    """A WITH clause attached to a write remains available to source resolution."""
+    result = run(f"WITH x AS (SELECT * FROM a) {write} SELECT * FROM x")
     assert edge_map(result)["dw.b"].sources == ["dw.a"]
+
+
+@pytest.mark.parametrize("kind", ["TABLE", "VIEW"])
+def test_drop_records_the_qualified_target(kind):
+    result = run(f"DROP {kind} other.scratch")
+    [fact] = result.statement_facts
+    assert (fact.operation, fact.read_tables, fact.write_tables) == ("DROP", [], ["other.scratch"])
 
 
 def test_temp_folding_preserves_raw_statement_graph():
