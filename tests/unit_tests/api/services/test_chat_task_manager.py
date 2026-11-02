@@ -3083,6 +3083,67 @@ class TestRunLoopSettlesTurn:
         assert isinstance(end.data, SSEEndData)
         assert task.events[-1] is end
 
+    @pytest.mark.asyncio
+    async def test_end_event_survives_usage_lookup_failure(self, real_agent_config):
+        """A get_last_turn_usage() failure must not stop the end event (#1142)."""
+        node = self._node()
+
+        async def _boom():
+            raise RuntimeError("usage lookup failed")
+
+        node.get_last_turn_usage = _boom
+        task, calls = await self._run(real_agent_config, node)
+
+        assert task.status == "completed"
+        [end] = [event for event in task.events if event.event == "end"]
+        assert isinstance(end.data, SSEEndData)
+        assert task.end_usage["session_id"] == "s-bill"
+        ((_usage, _error, status, _turn_id),) = calls
+        assert status == "completed"
+
+    @pytest.mark.asyncio
+    async def test_finally_swallows_end_event_failure(self, real_agent_config):
+        """A failing fallback end push must not stop turn settlement (#1142)."""
+        node = self._node(raise_after=RuntimeError("model blew up"))
+        task, calls = await self._run_with_end_push_failure(real_agent_config, node, RuntimeError("end push failed"))
+
+        assert task.status == "error"
+        assert not any(event.event == "end" for event in task.events)
+        assert calls and calls[0][2] == "error"
+
+    @pytest.mark.asyncio
+    async def test_finally_swallows_cancelled_end_event(self, real_agent_config):
+        """A cancelled fallback end push must not stop turn settlement (#1142)."""
+        node = self._node(raise_after=asyncio.CancelledError())
+        task, calls = await self._run_with_end_push_failure(
+            real_agent_config, node, asyncio.CancelledError("end push cancelled")
+        )
+
+        assert task.status == "cancelled"
+        assert not any(event.event == "end" for event in task.events)
+        assert calls and calls[0][2] == "cancelled"
+
+    async def _run_with_end_push_failure(self, real_agent_config, node, exc):
+        """Run ``_run_loop`` with ``end`` pushes raising ``exc``."""
+        from datus.api.models.cli_models import StreamChatInput
+
+        calls = []
+        manager = ChatTaskManager()
+        manager._create_node = lambda *args, **kwargs: node  # type: ignore[method-assign]
+        task = ChatTask(session_id="s-end-fail", asyncio_task=MagicMock())
+        task.on_turn_end = lambda usage, error, status, turn_id: calls.append((usage, error, status, turn_id))
+
+        real_push = manager._push_event
+
+        async def _push_event_or_raise(t, event):
+            if event.event == "end":
+                raise exc
+            await real_push(t, event)
+
+        manager._push_event = _push_event_or_raise  # type: ignore[method-assign]
+        await manager._run_loop(task, real_agent_config, StreamChatInput(message="go", session_id="s-end-fail"))
+        return task, calls
+
     @staticmethod
     def _error_action(depth=0, error="messages.1.content.0: Input tag 'output_text' found"):
         from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus

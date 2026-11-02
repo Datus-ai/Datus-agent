@@ -3380,3 +3380,33 @@ async def test_task_delegation_reviews_plans_through_the_parent_session(task_too
         finally:
             parent.tool_channel.cancel_all()
             await pending
+
+
+class TestSubagentAskUserTimeoutSeconds:
+    """Env parsing for the subagent HITL cap (issue #1142)."""
+
+    def test_unset_uses_default(self, monkeypatch):
+        import datus.tools.func_tool.sub_agent_task_tool as module
+
+        monkeypatch.delenv(module._SUBAGENT_ASK_USER_TIMEOUT_ENV, raising=False)
+        assert module._subagent_ask_user_timeout_seconds() == module.SUBAGENT_ASK_USER_TIMEOUT_SECONDS
+
+    def test_non_numeric_uses_default(self, monkeypatch):
+        import datus.tools.func_tool.sub_agent_task_tool as module
+
+        monkeypatch.setenv(module._SUBAGENT_ASK_USER_TIMEOUT_ENV, "not-a-number")
+        assert module._subagent_ask_user_timeout_seconds() == module.SUBAGENT_ASK_USER_TIMEOUT_SECONDS
+
+    @pytest.mark.parametrize("raw", ["inf", "-inf", "nan", "0", "-1"])
+    def test_non_finite_or_non_positive_uses_default(self, monkeypatch, raw):
+        import datus.tools.func_tool.sub_agent_task_tool as module
+
+        monkeypatch.setenv(module._SUBAGENT_ASK_USER_TIMEOUT_ENV, raw)
+        assert module._subagent_ask_user_timeout_seconds() == module.SUBAGENT_ASK_USER_TIMEOUT_SECONDS
+
+    @pytest.mark.parametrize("raw, expected", [("12.5", 12.5), ("60", 60.0)])
+    def test_positive_finite_value_is_used(self, monkeypatch, raw, expected):
+        import datus.tools.func_tool.sub_agent_task_tool as module
+
+        monkeypatch.setenv(module._SUBAGENT_ASK_USER_TIMEOUT_ENV, raw)
+        assert module._subagent_ask_user_timeout_seconds() == expected
