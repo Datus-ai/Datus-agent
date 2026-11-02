@@ -395,8 +395,8 @@ class LLMBaseModel(ABC):  # Changed from BaseModel to LLMBaseModel
         interaction_broker=None,
         agent_name: Optional[str] = None,
         context_rewriter=None,
-    ) -> Optional[RunConfig]:
-        """Build a :class:`RunConfig` carrying our per-model-call input filter.
+    ) -> RunConfig:
+        """Build a :class:`RunConfig` with tool feedback and an optional input filter.
 
         Lives on the base class because every agents-SDK-driven provider needs
         the same filter: ``OpenAICompatibleModel`` and ``CodexModel`` build
@@ -404,9 +404,10 @@ class LLMBaseModel(ABC):  # Changed from BaseModel to LLMBaseModel
         omits the filter silently loses mid-run insertion and mid-turn
         compaction.
 
-        Returns ``None`` when neither tracing context, ``pending_input_queue``
-        nor ``context_rewriter`` is wired in — the SDK then runs with its
-        default config and behavior is unchanged.
+        Unknown function tools produce a tool result for the model to correct
+        within the current run. Raising would restart the entire request with
+        the same stale history and persist the user's input again. Recovery
+        still counts toward the caller's ``max_turns`` limit.
 
         The filter is invoked by the SDK before every LLM turn within a
         ``Runner.run_streamed`` invocation (``agents/run.py`` ~1483). In order:
@@ -425,8 +426,8 @@ class LLMBaseModel(ABC):  # Changed from BaseModel to LLMBaseModel
         from datus.utils.trace_context import build_agents_run_config_kwargs
 
         trace_kwargs = build_agents_run_config_kwargs(agent_name=agent_name)
-        if pending_input_queue is None and context_rewriter is None and not trace_kwargs:
-            return None
+        if pending_input_queue is None and context_rewriter is None:
+            return RunConfig(tool_not_found_behavior="return_error_to_model", **trace_kwargs)
 
         pending_original_input: List[Any] = []
 
@@ -517,10 +518,8 @@ class LLMBaseModel(ABC):  # Changed from BaseModel to LLMBaseModel
                 logger.exception("call_model_input_filter raised; returning the current input view.")
                 return ModelInputData(input=view, instructions=data.model_data.instructions)
 
-        if pending_input_queue is None and context_rewriter is None:
-            return RunConfig(**trace_kwargs)
-
         return RunConfig(
+            tool_not_found_behavior="return_error_to_model",
             call_model_input_filter=_filter,
             session_input_callback=merge_session_input if context_rewriter is not None else None,
             **trace_kwargs,

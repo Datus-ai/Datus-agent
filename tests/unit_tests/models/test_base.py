@@ -272,6 +272,70 @@ class TestDrainPendingUserInserts:
         assert LLMBaseModel.drain_pending_user_inserts(broken) == []
 
 
+class TestMissingToolFeedback:
+    """Unknown tools must reach the model as results within the same run."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("with_queue", [False, True])
+    @pytest.mark.parametrize("tool_name", ["task", "removed_tool"])
+    async def test_missing_tool_can_be_corrected_without_replaying_user_input(
+        self, tmp_path, two_turn_agents_model, with_queue, tool_name
+    ):
+        from agents import Agent, Runner
+
+        from datus.cli.execution_state import PendingInputQueue
+        from datus.models.sqlite_session import DatusSQLiteSession
+
+        model = two_turn_agents_model(tool_name=tool_name, final_text="Recovered")
+        session = DatusSQLiteSession(
+            session_id="missing_tool", db_path=str(tmp_path / "session.db"), create_tables=True
+        )
+        config = LLMBaseModel._build_run_config(
+            MagicMock(),
+            pending_input_queue=PendingInputQueue() if with_queue else None,
+            session=session,
+        )
+        try:
+            result = Runner.run_streamed(
+                Agent(name="gen_visual_report", model=model),
+                input="Edit the existing chart",
+                session=session,
+                max_turns=3,
+                run_config=config,
+            )
+            async for _ in result.stream_events():
+                pass
+
+            assert result.final_output == "Recovered"
+            feedback = [item for item in model.inputs[1] if item.get("type") == "function_call_output"]
+            assert len(feedback) == 1
+            assert feedback[0]["call_id"] == "call_1"
+            assert tool_name in feedback[0]["output"]
+            assert "not found" in feedback[0]["output"].lower()
+            items = await session.get_items()
+            assert sum(item.get("role") == "user" for item in items) == 1
+            assert sum(item.get("type") == "function_call_output" for item in items) == 1
+        finally:
+            session.close()
+
+    @pytest.mark.asyncio
+    async def test_repeated_missing_tool_calls_still_obey_max_turns(self, scripted_agents_model):
+        from agents import Agent, Runner
+        from agents.exceptions import MaxTurnsExceeded
+
+        model = scripted_agents_model(script=("tool",) * 3, tool_name="task")
+        result = Runner.run_streamed(
+            Agent(name="gen_visual_report", model=model),
+            input="Edit the existing chart",
+            max_turns=2,
+            run_config=LLMBaseModel._build_run_config(MagicMock()),
+        )
+        with pytest.raises(MaxTurnsExceeded):
+            async for _ in result.stream_events():
+                pass
+        assert model.turn == 2
+
+
 class TestBuildRunConfigDeliversInsertAtTurnBoundary:
     """End-to-end through the real SDK turn loop.
 
