@@ -4,6 +4,7 @@
 
 import asyncio
 import hashlib
+import json
 import os
 import threading
 from abc import ABC, abstractmethod
@@ -13,6 +14,7 @@ from typing import Any, AsyncGenerator, Callable, ClassVar, Dict, List, Optional
 from agents import SQLiteSession, Tool
 from agents.mcp import MCPServerStdio
 from agents.run import CallModelData, ModelInputData, RunConfig
+from agents.run_config import ToolErrorFormatterArgs
 
 from datus.configuration.agent_config import AgentConfig, ModelConfig
 from datus.observability.model_call import observe_model_phase
@@ -23,6 +25,13 @@ from datus.utils.loggings import get_logger
 logger = get_logger(__name__)
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
+
+
+def _format_sdk_tool_error(args: ToolErrorFormatterArgs) -> Optional[str]:
+    """Use the shared FuncToolResult failure contract for unknown tools."""
+    if args.kind != "tool_not_found":
+        return None
+    return json.dumps({"success": 0, "error": args.default_message, "result": None})
 
 
 class LLMBaseModel(ABC):  # Changed from BaseModel to LLMBaseModel
@@ -427,7 +436,11 @@ class LLMBaseModel(ABC):  # Changed from BaseModel to LLMBaseModel
 
         trace_kwargs = build_agents_run_config_kwargs(agent_name=agent_name)
         if pending_input_queue is None and context_rewriter is None:
-            return RunConfig(tool_not_found_behavior="return_error_to_model", **trace_kwargs)
+            return RunConfig(
+                tool_not_found_behavior="return_error_to_model",
+                tool_error_formatter=_format_sdk_tool_error,
+                **trace_kwargs,
+            )
 
         pending_original_input: List[Any] = []
 
@@ -520,6 +533,7 @@ class LLMBaseModel(ABC):  # Changed from BaseModel to LLMBaseModel
 
         return RunConfig(
             tool_not_found_behavior="return_error_to_model",
+            tool_error_formatter=_format_sdk_tool_error,
             call_model_input_filter=_filter,
             session_input_callback=merge_session_input if context_rewriter is not None else None,
             **trace_kwargs,
