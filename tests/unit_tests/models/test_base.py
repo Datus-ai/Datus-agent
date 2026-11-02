@@ -272,6 +272,155 @@ class TestDrainPendingUserInserts:
         assert LLMBaseModel.drain_pending_user_inserts(broken) == []
 
 
+class TestMissingToolFeedback:
+    """Unknown tools must reach the model as results within the same run."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("with_queue", [False, True])
+    @pytest.mark.parametrize("tool_name", ["task", "removed_tool"])
+    async def test_missing_tool_can_be_corrected_without_replaying_user_input(
+        self, tmp_path, two_turn_agents_model, with_queue, tool_name
+    ):
+        from agents import Agent, Runner
+
+        from datus.cli.execution_state import PendingInputQueue
+        from datus.models.sqlite_session import DatusSQLiteSession
+
+        model = two_turn_agents_model(tool_name=tool_name, final_text="Recovered")
+        session = DatusSQLiteSession(
+            session_id="missing_tool", db_path=str(tmp_path / "session.db"), create_tables=True
+        )
+        config = LLMBaseModel._build_run_config(
+            MagicMock(),
+            pending_input_queue=PendingInputQueue() if with_queue else None,
+            session=session,
+        )
+        try:
+            result = Runner.run_streamed(
+                Agent(name="gen_visual_report", model=model),
+                input="Edit the existing chart",
+                session=session,
+                max_turns=3,
+                run_config=config,
+            )
+            async for _ in result.stream_events():
+                pass
+
+            assert result.final_output == "Recovered"
+            feedback = [item for item in model.inputs[1] if item.get("type") == "function_call_output"]
+            assert len(feedback) == 1
+            assert feedback[0]["call_id"] == "call_1"
+            assert tool_name in feedback[0]["output"]
+            assert "not found" in feedback[0]["output"].lower()
+            from datus.schemas.tool_summary import detect_tool_failure
+
+            assert detect_tool_failure(feedback[0]["output"]) is True
+            items = await session.get_items()
+            assert sum(item.get("role") == "user" for item in items) == 1
+            assert sum(item.get("type") == "function_call_output" for item in items) == 1
+        finally:
+            session.close()
+
+    @pytest.mark.asyncio
+    async def test_repeated_missing_tool_calls_still_obey_max_turns(self, scripted_agents_model):
+        from agents import Agent, Runner
+        from agents.exceptions import MaxTurnsExceeded
+
+        model = scripted_agents_model(script=("tool",) * 3, tool_name="task")
+        result = Runner.run_streamed(
+            Agent(name="gen_visual_report", model=model),
+            input="Edit the existing chart",
+            max_turns=2,
+            run_config=LLMBaseModel._build_run_config(MagicMock()),
+        )
+        with pytest.raises(MaxTurnsExceeded):
+            async for _ in result.stream_events():
+                pass
+        assert model.turn == 2
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("route", ["openai", "codex"])
+    @pytest.mark.parametrize(
+        "tool_name, tool_result, failed",
+        [
+            ("task", None, True),
+            ("probe_tool", "ok", False),
+            ("probe_tool", "Tool task not found in archived notes", False),
+            ("probe_tool", '{"success": 1, "result": "saved"}', False),
+            ("probe_tool", '{"success": 0, "error": "rejected"}', True),
+        ],
+    )
+    async def test_stream_consumers_preserve_tool_result_status(
+        self, tmp_path, two_turn_agents_model, route, monkeypatch, tool_name, tool_result, failed
+    ):
+        from agents import function_tool
+
+        from datus.models.sqlite_session import DatusSQLiteSession
+        from datus.schemas.action_history import ActionHistoryManager, ActionRole, ActionStatus
+
+        @function_tool
+        def probe_tool() -> str:
+            """Return an existing tool's unchanged payload."""
+            return tool_result
+
+        fake = two_turn_agents_model(tool_name=tool_name, final_text="Recovered")
+        if route == "codex":
+            from datus.models.codex_model import CodexModel
+
+            with patch("datus.models.codex_model.OAuthManager"):
+                model = CodexModel(ModelConfig(type="codex", model="gpt-test", api_key="", auth_type="oauth"))
+            monkeypatch.setattr(model, "_refresh_client_token", lambda: None)
+            monkeypatch.setattr(model, "_get_responses_model", lambda: fake)
+        else:
+            from datus.models.openai_model import OpenAIModel
+
+            model = OpenAIModel(ModelConfig(type="openai", model="gpt-test", api_key="test", retry_interval=0))
+            monkeypatch.setattr(model.litellm_adapter, "get_agents_sdk_model", lambda: fake)
+        session = DatusSQLiteSession(
+            session_id="tool_status", db_path=str(tmp_path / "tool_status.db"), create_tables=True
+        )
+        try:
+            actions = [
+                action
+                async for action in model.generate_with_tools_stream(
+                    "Edit the existing chart",
+                    tools=[probe_tool],
+                    session=session,
+                    max_turns=3,
+                    action_history_manager=ActionHistoryManager(),
+                    agent_name="gen_visual_report",
+                )
+            ]
+            completed = [action for action in actions if action.role == ActionRole.TOOL and action.output]
+            assert len(completed) == 1
+            assert completed[0].action_type == tool_name
+            assert completed[0].status == (ActionStatus.FAILED if failed else ActionStatus.SUCCESS)
+            assert completed[0].output["success"] is (not failed)
+            assert fake.turn == 2
+            assert sum(item.get("role") == "user" for item in await session.get_items()) == 1
+        finally:
+            session.close()
+
+    def test_other_sdk_tool_errors_keep_the_default_format(self):
+        from agents import RunContextWrapper
+        from agents.run_config import ToolErrorFormatterArgs
+
+        config = LLMBaseModel._build_run_config(MagicMock())
+        assert (
+            config.tool_error_formatter(
+                ToolErrorFormatterArgs(
+                    kind="approval_rejected",
+                    tool_type="function",
+                    tool_name="write_file",
+                    call_id="denied_write",
+                    default_message="User denied this call",
+                    run_context=RunContextWrapper(context=None),
+                )
+            )
+            is None
+        )
+
+
 class TestBuildRunConfigDeliversInsertAtTurnBoundary:
     """End-to-end through the real SDK turn loop.
 

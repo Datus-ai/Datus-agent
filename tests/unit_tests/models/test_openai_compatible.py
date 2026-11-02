@@ -2178,11 +2178,12 @@ class TestBuildRunConfigInputFilter:
         # read them, so MagicMocks are sufficient.
         return CallModelData(model_data=baseline, agent=MagicMock(), context=None)
 
-    def test_returns_none_when_no_queue(self):
-        """Without a queue wired in, no RunConfig is constructed — SDK
-        runs with default behavior and the run is unchanged."""
+    def test_no_queue_still_returns_tool_feedback_config(self):
+        """Tool feedback also applies to runs without insertion or compaction."""
         model = _make_model()
-        assert model._build_run_config(pending_input_queue=None) is None
+        config = model._build_run_config(pending_input_queue=None)
+        assert config.tool_not_found_behavior == "return_error_to_model"
+        assert config.call_model_input_filter is None
 
     def test_returns_trace_config_when_trace_context_is_active(self):
         """TraceContext should turn into Agents SDK workflow/group metadata."""
