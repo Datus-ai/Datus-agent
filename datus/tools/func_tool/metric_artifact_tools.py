@@ -229,13 +229,17 @@ def execute_metric_artifact_query(
     ]
     from datus.tools.func_tool._visual_artifact_helpers import utc_now_iso
 
+    # Metric policies inject private scope values before compilation. Keep that
+    # SQL inside the trusted execution path, never in shareable artifact files
+    # or query responses. The recipe remains sufficient for reader-side queries.
+    public_sql = None if policies.has_metric_policies else sql
     payload = QueryResultFile(
         executed_at=utc_now_iso(),
         datasource=datasource,
         row_count=len(rows),
         columns=columns,
         rows=rows,
-        sql=sql,
+        sql=public_sql,
         source={"kind": "metric", "metric": query.metric.model_dump()},
     )
     tables = query_lineage(sql, None, datasource).tables
@@ -247,7 +251,7 @@ def execute_metric_artifact_query(
         "metric_detail": detail,
         "metric_tables": tables,
         "captured_at": payload.executed_at,
-        "generated_sql": sql,
+        "generated_sql": public_sql,
     }
 
 

@@ -666,7 +666,7 @@ def test_model_files_are_tool_managed(environment, kind, operation):
     assert path.read_bytes() == original
 
 
-def _install_metric_policy(env, monkeypatch, allowed):
+def _install_metric_policy(env, monkeypatch, allowed, *, region="North"):
     original_binding = env.runtime.artifact_metric_binding
     env.runtime.artifact_metric_binding = lambda name: {**original_binding(name), "datasets": ["orders"]}
     env.db.agent_config = SimpleNamespace(active_plugin_names=lambda: {"scope"}, get_plugin_profile=lambda _: {})
@@ -678,8 +678,8 @@ def _install_metric_policy(env, monkeypatch, allowed):
             assert datasets == {"orders"}
             contexts.append(policy_context)
             return SimpleNamespace(
-                allowed=allowed and policy_context.get("region") == "North",
-                where="orders.region = 'North'",
+                allowed=allowed and policy_context.get("region") == region,
+                where=f"orders.region = '{region}'",
                 applied_policies=["region_scope"],
                 reason="denied",
             )
@@ -805,3 +805,54 @@ def test_metric_context_override_never_falls_back_to_tool(environment, monkeypat
             env.db.execute_read_enforced.assert_not_called()
             assert events == []
     assert contexts == [explicit_context]
+
+
+@pytest.mark.parametrize("kind", ["report", "dashboard"])
+def test_metric_artifact_keeps_policy_sql_out_of_public_content(environment, monkeypatch, kind):
+    env = environment
+    marker = "private_policy_region_7ad9f2"
+    with sqlite3.connect(env.root / "shop.sqlite") as connection:
+        connection.execute("UPDATE orders SET region = ? WHERE region = 'North'", (marker,))
+    _install_metric_policy(env, monkeypatch, True, region=marker)
+    env.db.agent_config.policy_context = {"region": marker}
+    options = {"params": [], "sample_params": {}} if kind == "dashboard" else {}
+
+    tools, saved = _save(env, kind, **options)
+
+    assert saved.success == 1, saved.error
+    executed_sql = env.db.execute_read_enforced.call_args.args[0]
+    assert marker in executed_sql
+    artifact_dir = tools.queries_dir.parent
+    files = {p.relative_to(artifact_dir).as_posix(): p.read_text() for p in artifact_dir.rglob("*") if p.is_file()}
+    assert marker not in json.dumps(files)
+    assert marker not in saved.model_dump_json()
+    recipe = MetricQueryFile.model_validate_json(files["queries/sales.metric.json"])
+    assert recipe.generated_sql is None
+    assert recipe.metric_tables == ["orders"]
+    assert tools._validate_metric_queries(kind) is None
+    insight = build_artifact_insight(json.loads(files["manifest.json"]), files)
+    assert insight.queries[0].source_kind == "metric"
+    assert insight.queries[0].lineage.tables == ["orders"]
+    assert marker not in insight.model_dump_json()
+    output_path, expected = {
+        "report": ("queries/sales.json", {"rows": [{"revenue": 17.0}], "sql": None}),
+        "dashboard": ("queries/sales.params.json", {"sample_row_count": 1}),
+    }[kind]
+    output = json.loads(files[output_path])
+    assert {key: output.get(key) for key in expected} == expected
+
+    # Re-reading the persisted recipe compiles against the reader's context;
+    # no author's SQL is needed, even after reloading the JSON from disk.
+    _install_metric_policy(env, monkeypatch, True, region="South")
+    result, public_binding = execute_metric_artifact_query(
+        recipe,
+        saved=recipe,
+        semantic_tools=env.semantic,
+        db_tool=env.db,
+        project_root=env.root,
+        policy_context={"region": "South"},
+    )
+    assert result.rows == [{"revenue": 8.0}]
+    assert result.sql is None
+    assert public_binding["generated_sql"] is None
+    assert marker not in env.db.execute_read_enforced.call_args.args[0]
