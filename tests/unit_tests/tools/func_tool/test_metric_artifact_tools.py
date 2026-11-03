@@ -664,3 +664,79 @@ def test_model_files_are_tool_managed(environment, kind, operation):
         result = fs.delete_file(relative)
     assert result.success == 0
     assert path.read_bytes() == original
+
+
+def _install_metric_policy(env, monkeypatch, allowed):
+    original_binding = env.runtime.artifact_metric_binding
+    env.runtime.artifact_metric_binding = lambda name: {**original_binding(name), "datasets": ["orders"]}
+    env.db.agent_config = SimpleNamespace(active_plugin_names=lambda: {"scope"}, get_plugin_profile=lambda _: {})
+
+    class MetricPolicy:
+        def before_metric_read(self, *, datasets, where, policy_context):
+            assert datasets == {"orders"}
+            assert policy_context == {"region": "North"}
+            return SimpleNamespace(
+                allowed=allowed, where="orders.region = 'North'", applied_policies=["region_scope"], reason="denied"
+            )
+
+    monkeypatch.setattr(
+        "datus.tools.policy_runtime.collect_plugin_policy_runtime_factories",
+        lambda _: {"scope": lambda _: MetricPolicy()},
+    )
+
+
+def test_metric_policy_is_applied_before_compilation(environment, monkeypatch):
+    from datus.tools.read_observer import observe_reads
+
+    env = environment
+    _install_metric_policy(env, monkeypatch, True)
+    events = []
+    with observe_reads(events.append):
+        result, _ = execute_metric_artifact_query(
+            MetricQueryRequest(metric=REF),
+            semantic_tools=env.semantic,
+            db_tool=env.db,
+            project_root=env.root,
+            policy_context={"region": "North"},
+        )
+    assert result.rows == [{"revenue": 17.0}]
+    assert env.runtime.calls[0]["where"] == "orders.region = 'North'"
+    assert events[0].phase == "metric_compile"
+    assert events[0].applied_policy_ids == ("region_scope",)
+
+
+def test_metric_policy_denial_does_not_compile_or_query(environment, monkeypatch):
+    from datus.utils.exceptions import DatusException
+
+    env = environment
+    _install_metric_policy(env, monkeypatch, False)
+    with pytest.raises(DatusException):
+        execute_metric_artifact_query(
+            MetricQueryRequest(metric=REF),
+            semantic_tools=env.semantic,
+            db_tool=env.db,
+            project_root=env.root,
+            policy_context={"region": "North"},
+        )
+    assert env.runtime.calls == []
+    env.db.execute_read_enforced.assert_not_called()
+
+
+def test_metric_policy_requires_resolved_model_datasets(environment, monkeypatch):
+    from datus.utils.exceptions import DatusException
+
+    env = environment
+    _install_metric_policy(env, monkeypatch, True)
+    binding = env.runtime.artifact_metric_binding("revenue")
+    binding.pop("datasets")
+    env.runtime.artifact_metric_binding = lambda _: binding
+    with pytest.raises(DatusException):
+        execute_metric_artifact_query(
+            MetricQueryRequest(metric=REF),
+            semantic_tools=env.semantic,
+            db_tool=env.db,
+            project_root=env.root,
+            policy_context={"region": "North"},
+        )
+    assert env.runtime.calls == []
+    env.db.execute_read_enforced.assert_not_called()

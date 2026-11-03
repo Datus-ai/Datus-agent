@@ -14,6 +14,8 @@ from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import Any, Literal
 
+READ_OBSERVER_VERSION = 1
+
 
 @dataclass(frozen=True)
 class ReadObservation:

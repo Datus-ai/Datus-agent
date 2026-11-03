@@ -61,6 +61,14 @@ class ReadResultDecision:
     applied_policies: list[str] = field(default_factory=list)
 
 
+@dataclass(frozen=True)
+class MetricReadDecision:
+    allowed: bool
+    where: Optional[str] = None
+    reason: Optional[str] = None
+    applied_policies: list[str] = field(default_factory=list)
+
+
 class PolicyRuntime:
     """Compose policy runtimes declared by active plugin manifests."""
 
@@ -101,6 +109,34 @@ class PolicyRuntime:
     def runtime_names(self) -> tuple[str, ...]:
         """Names of runtimes actually instantiated, including no-policy reads."""
         return tuple(name for name, _runtime in self._runtimes)
+
+    @property
+    def has_metric_policies(self) -> bool:
+        return any(callable(getattr(runtime, "before_metric_read", None)) for _, runtime in self._runtimes)
+
+    def before_metric_read(
+        self, *, datasets: set[str], where: Optional[str], policy_context: Optional[Dict[str, Any]]
+    ) -> MetricReadDecision:
+        """Apply the same plugin metric hooks as interactive semantic tools."""
+        context = self._normalize_context(policy_context)
+        applied: list[str] = []
+        current_where = where
+        for name, runtime in self._runtimes:
+            hook = getattr(runtime, "before_metric_read", None)
+            if not callable(hook):
+                continue
+            raw = self._invoke(
+                name, "before_metric_read", hook, datasets=datasets, where=current_where, policy_context=context
+            )
+            if not self._allowed(name, raw):
+                return MetricReadDecision(allowed=False, reason=_explain(context, getattr(raw, "reason", None)))
+            current_where = getattr(raw, "where", current_where)
+            if current_where is not None and not isinstance(current_where, str):
+                raise DatusException(
+                    ErrorCode.COMMON_CONFIG_ERROR, message="Metric policy returned a non-string filter"
+                )
+            applied.extend(self._policy_names(name, raw))
+        return MetricReadDecision(allowed=True, where=current_where, applied_policies=applied)
 
     def validate_context(self, policy_context: Optional[Dict[str, Any]]) -> PolicyValidationResult:
         context = self._normalize_context(policy_context)

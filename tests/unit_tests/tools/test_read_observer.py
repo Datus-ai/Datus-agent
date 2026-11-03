@@ -45,7 +45,7 @@ def execute(*, observer, denied=False, result_denied=False, database_failed=Fals
 def test_observations_describe_actual_rewrite_and_result_policy():
     events = []
     result, connector = execute(observer=events.append)
-    assert result.success
+    assert result.success is True
     assert [event.phase for event in events] == ["before_sql", "after_sql"]
     assert events[-1].sql == connector.execute_query.call_args.args[0] == "SELECT 1 AS n LIMIT 1"
     assert events[-1].applied_policy_ids == ("scope", "mask")
@@ -53,14 +53,13 @@ def test_observations_describe_actual_rewrite_and_result_policy():
     assert events[-1].policy_context == {"scope": ["sentinel"]}
 
 
-@pytest.mark.parametrize("failure", ["denied", "result_denied", "database_failed"])
-def test_no_completion_evidence_for_failed_read(failure):
+@pytest.mark.parametrize("failure,db_calls", [("denied", 0), ("result_denied", 1), ("database_failed", 1)])
+def test_no_completion_evidence_for_failed_read(failure, db_calls):
     events = []
     result, connector = execute(observer=events.append, **{failure: True})
-    assert not result.success
+    assert result.success is False
     assert [event.phase for event in events] == ["before_sql"]
-    if failure == "denied":
-        connector.execute_query.assert_not_called()
+    assert connector.execute_query.call_count == db_calls
 
 
 def test_observer_can_refuse_before_database_execution():
@@ -68,7 +67,7 @@ def test_observer_can_refuse_before_database_execution():
         raise DatusException(ErrorCode.POLICY_DENIED, message="Execution configuration changed")
 
     result, connector = execute(observer=refuse)
-    assert not result.success
+    assert result.success is False
     connector.execute_query.assert_not_called()
 
 

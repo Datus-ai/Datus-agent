@@ -153,17 +153,36 @@ def execute_metric_artifact_query(
             detail = {**detail, "definition": match[1].get("detail", {})}
     values = {name: None for name in query.parameter_names()}
     values.update(params or {})
+    from datus.tools.policy_runtime import PolicyRuntime
     from datus.tools.read_observer import ReadObservation, notify_read
 
+    config = getattr(db_tool, "agent_config", None)
+    policies = PolicyRuntime(config)
+    datasets = binding.get("datasets")
+    if policies.has_metric_policies and (
+        not isinstance(datasets, list) or not datasets or any(not isinstance(name, str) for name in datasets)
+    ):
+        raise DatusException(ErrorCode.POLICY_DENIED, message="Metric policy datasets could not be resolved")
+    arguments = metric_query_arguments(query, values)
+    decision = policies.before_metric_read(
+        datasets=set(datasets or []),
+        where=arguments.get("where"),
+        policy_context=policy_context,
+    )
+    if not decision.allowed:
+        raise DatusException(ErrorCode.POLICY_DENIED, message=decision.reason or "Metric policy denied the query")
+    arguments["where"] = decision.where
     notify_read(
         ReadObservation(
             phase="metric_compile",
-            agent_config=getattr(db_tool, "agent_config", None),
+            agent_config=config,
             policy_context=policy_context or {},
             datasource=binding["datasource"],
+            applied_policy_ids=tuple(decision.applied_policies),
+            runtime_names=policies.runtime_names,
         )
     )
-    compiled = run_async(runtime.query_metrics(**metric_query_arguments(query, values)))
+    compiled = run_async(runtime.query_metrics(**arguments))
     sql = (compiled.metadata or {}).get("sql")
     if not isinstance(sql, str) or not sql.strip():
         raise ValueError("metric engine returned no compiled SQL")
