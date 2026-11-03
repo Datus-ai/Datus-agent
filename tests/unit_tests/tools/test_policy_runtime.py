@@ -326,3 +326,51 @@ class TestDenialExplanation:
         rt = runtime_with(FakeRuntime(), monkeypatch)
 
         assert rt.validate_context(self.DENIED).allowed is True
+
+
+@pytest.mark.parametrize("initial_where", [None, "amount > 0"])
+@pytest.mark.parametrize("returned_fields", [{}, {"where": None}])
+def test_metric_hook_without_rewrite_preserves_input(monkeypatch, initial_where, returned_fields):
+    hook = Mock(return_value=SimpleNamespace(allowed=True, **returned_fields))
+    runtime = runtime_with(SimpleNamespace(before_metric_read=hook), monkeypatch)
+
+    result = runtime.before_metric_read(datasets={"orders"}, where=initial_where, policy_context={})
+
+    assert result.allowed
+    assert result.where == initial_where
+
+
+def test_metric_hook_none_preserves_earlier_policy_filters(monkeypatch):
+    original = "amount > 0"
+    scoped = "(amount > 0) AND store_id = 7"
+    first = Mock(return_value=SimpleNamespace(allowed=True, where=scoped, applied_policies=["store_scope"]))
+    second = Mock(return_value=SimpleNamespace(allowed=True, where=None))
+    third = Mock(return_value=SimpleNamespace(allowed=True))
+    monkeypatch.setattr(
+        "datus.tools.policy_runtime.collect_plugin_policy_runtime_factories",
+        lambda _: {
+            "scope": lambda _: SimpleNamespace(before_metric_read=first),
+            "check": lambda _: SimpleNamespace(before_metric_read=second),
+            "observe": lambda _: SimpleNamespace(before_metric_read=third),
+        },
+    )
+    runtime = PolicyRuntime(config())
+
+    result = runtime.before_metric_read(datasets={"orders"}, where=original, policy_context={})
+
+    assert first.call_args.kwargs["where"] == original
+    assert second.call_args.kwargs["where"] == scoped
+    assert third.call_args.kwargs["where"] == scoped
+    assert result.where == scoped
+    assert result.applied_policies == ["store_scope"]
+
+
+@pytest.mark.parametrize("invalid_where", [False, 0, [], {}])
+def test_metric_hook_rejects_non_string_filters(monkeypatch, invalid_where):
+    hook = Mock(return_value=SimpleNamespace(allowed=True, where=invalid_where))
+    runtime = runtime_with(SimpleNamespace(before_metric_read=hook), monkeypatch)
+
+    with pytest.raises(DatusException, match="non-string filter") as exc:
+        runtime.before_metric_read(datasets={"orders"}, where="amount > 0", policy_context={})
+
+    assert exc.value.code == ErrorCode.COMMON_CONFIG_ERROR

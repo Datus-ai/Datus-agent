@@ -130,11 +130,13 @@ class PolicyRuntime:
             )
             if not self._allowed(name, raw):
                 return MetricReadDecision(allowed=False, reason=_explain(context, getattr(raw, "reason", None)))
-            current_where = getattr(raw, "where", current_where)
-            if current_where is not None and not isinstance(current_where, str):
-                raise DatusException(
-                    ErrorCode.COMMON_CONFIG_ERROR, message="Metric policy returned a non-string filter"
-                )
+            rewritten_where = getattr(raw, "where", None)
+            if rewritten_where is not None:
+                if not isinstance(rewritten_where, str):
+                    raise DatusException(
+                        ErrorCode.COMMON_CONFIG_ERROR, message="Metric policy returned a non-string filter"
+                    )
+                current_where = rewritten_where
             applied.extend(self._policy_names(name, raw))
         return MetricReadDecision(allowed=True, where=current_where, applied_policies=applied)
 
