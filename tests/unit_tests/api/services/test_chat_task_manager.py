@@ -1211,6 +1211,27 @@ class TestChatTaskManagerBehavior:
 class TestStartChat:
     """Tests for start_chat — background task creation."""
 
+    @pytest.mark.parametrize("type_field", ["node_class", "type"])
+    async def test_old_custom_report_streams_migration_error(self, real_agent_config, type_field):
+        from datus.api.models.cli_models import StreamChatInput
+
+        real_agent_config.agentic_nodes["legacy_report"] = {
+            "id": "legacy-report-id",
+            type_field: "gen_report",
+        }
+        manager = ChatTaskManager()
+        request = StreamChatInput(message="Create a sales report", session_id="legacy-report-session")
+
+        task = await manager.start_chat(real_agent_config, request, sub_agent_id="legacy-report-id")
+        await task.asyncio_task
+        events = [event async for event in manager.consume_events(task)]
+
+        assert task.status == "error"
+        error = next(event.data for event in events if event.event == "error")
+        assert "legacy_report" in error.error
+        assert "Subagent 'gen_report' does not exist" in error.error
+        assert "Use 'gen_visual_report' instead" in error.error
+
     async def test_start_chat_creates_task(self, real_agent_config, mock_llm_create):
         """start_chat creates a ChatTask and returns it."""
         from datus.api.models.cli_models import StreamChatInput
@@ -1514,14 +1535,14 @@ class TestCreateNode:
         node = manager._create_node(real_agent_config, None, "test-session")
         assert isinstance(node, AgenticNode)
 
-    def test_create_gen_report_node(self, real_agent_config, mock_llm_create):
-        """gen_report must land on GenReportAgenticNode (regression: previously fell back to GenSQL)."""
-        from datus.agent.node.gen_report_agentic_node import GenReportAgenticNode
+    def test_create_gen_visual_report_node(self, real_agent_config, mock_llm_create):
+        """gen_visual_report must land on GenVisualReportAgenticNode (regression: previously fell back to GenSQL)."""
         from datus.agent.node.gen_sql_agentic_node import GenSQLAgenticNode
+        from datus.agent.node.gen_visual_report_agentic_node import GenVisualReportAgenticNode
 
         manager = ChatTaskManager()
-        node = manager._create_node(real_agent_config, "gen_report", "test-session")
-        assert isinstance(node, GenReportAgenticNode)
+        node = manager._create_node(real_agent_config, "gen_visual_report", "test-session")
+        assert isinstance(node, GenVisualReportAgenticNode)
         assert not isinstance(node, GenSQLAgenticNode)
 
     def test_create_gen_table_node(self, real_agent_config, mock_llm_create):
@@ -1552,21 +1573,21 @@ class TestCreateNode:
         node = manager._create_node(real_agent_config, "feedback", "test-session")
         assert isinstance(node, FeedbackAgenticNode)
 
-    def test_custom_agent_node_class_gen_report(self, real_agent_config, mock_llm_create):
-        """A custom sub_agent with node_class=gen_report must instantiate GenReportAgenticNode."""
-        from datus.agent.node.gen_report_agentic_node import GenReportAgenticNode
+    def test_custom_agent_node_class_gen_visual_report(self, real_agent_config, mock_llm_create):
+        """A custom sub_agent with node_class=gen_visual_report must instantiate GenVisualReportAgenticNode."""
         from datus.agent.node.gen_sql_agentic_node import GenSQLAgenticNode
+        from datus.agent.node.gen_visual_report_agentic_node import GenVisualReportAgenticNode
 
         real_agent_config.agentic_nodes["my_report_agent"] = {
             "system_prompt": "my_report_agent",
-            "node_class": "gen_report",
+            "node_class": "gen_visual_report",
             "tools": "db_tools.*",
             "max_turns": 5,
         }
 
         manager = ChatTaskManager()
         node = manager._create_node(real_agent_config, "my_report_agent", "test-session")
-        assert isinstance(node, GenReportAgenticNode)
+        assert isinstance(node, GenVisualReportAgenticNode)
         assert not isinstance(node, GenSQLAgenticNode)
 
     def test_custom_agent_type_ask_metrics(self, real_agent_config, mock_llm_create):
@@ -1602,12 +1623,12 @@ class TestCreateNode:
 
     def test_custom_agent_uuid_resolved_to_node_class(self, real_agent_config, mock_llm_create):
         """API passes the UUID under "id"; factory must look up the name and honour node_class."""
-        from datus.agent.node.gen_report_agentic_node import GenReportAgenticNode
+        from datus.agent.node.gen_visual_report_agentic_node import GenVisualReportAgenticNode
 
         real_agent_config.agentic_nodes["my_report_agent"] = {
             "id": "11111111-2222-3333-4444-555555555555",
             "system_prompt": "my_report_agent",
-            "node_class": "gen_report",
+            "node_class": "gen_visual_report",
             "tools": "db_tools.*",
             "max_turns": 5,
         }
@@ -1618,7 +1639,7 @@ class TestCreateNode:
             "11111111-2222-3333-4444-555555555555",
             "test-session",
         )
-        assert isinstance(node, GenReportAgenticNode)
+        assert isinstance(node, GenVisualReportAgenticNode)
 
 
 class TestCreateNodeInput:
@@ -2888,14 +2909,14 @@ class TestRunLoopTurnStats:
         start, done = self._tool_actions("c1", "query_metrics")
         node = self._fake_node([start, done])
 
-        _, events = await self._run(real_agent_config, node, sub_agent_id="gen_report")
+        _, events = await self._run(real_agent_config, node, sub_agent_id="gen_visual_report")
 
         (event,) = events
-        assert event.agent_name == "gen_report"
+        assert event.agent_name == "gen_visual_report"
         assert [(t.name, t.caller) for t in event.tools] == [("query_metrics", "subagent")]
         (sub,) = event.subagents
         assert (sub.name, sub.kind, sub.entry, sub.calls, sub.success, sub.tool_calls) == (
-            "gen_report",
+            "gen_visual_report",
             "builtin",
             "direct",
             1,

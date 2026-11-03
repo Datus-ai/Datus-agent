@@ -1452,7 +1452,7 @@ class ChatTaskManager:
         Delegates dispatch to :func:`datus.agent.node.node_factory.create_interactive_node`
         so the API path matches the CLI exactly: every built-in sub_agent is wired to
         its dedicated AgenticNode subclass, and custom sub_agents honour their
-        ``node_class`` field (``gen_report`` / ``gen_table`` / ``gen_dashboard`` /
+        ``node_class`` field (``gen_visual_report`` / ``gen_table`` / ``gen_dashboard`` /
         ``scheduler`` / ``gen_skill`` / ``explore``) instead of always falling back
         to ``GenSQLAgenticNode``.
 
@@ -1545,7 +1545,7 @@ class ChatTaskManager:
 
         Delegates to :func:`datus.agent.node.node_factory.create_node_input` so
         the API path covers every AgenticNode subclass the CLI knows about
-        (GenReport / Explore / SkillCreator / GenTable / GenJob in addition to
+        (visual artifact nodes / Explore / SkillCreator / GenTable / GenJob in addition to
         the GenSQL / Semantic / SqlSummary / Feedback / Chat branches).
         """
         from datus.agent.node.node_factory import create_node_input

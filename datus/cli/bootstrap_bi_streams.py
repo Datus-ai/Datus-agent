@@ -250,7 +250,7 @@ async def stream_bi_reference_sql(
 def _validate_semantic_model_sync(agent_config: AgentConfig, *, scope: str = "all") -> tuple[bool, Optional[str]]:
     """Run :class:`SemanticTools.validate_semantic` synchronously.
 
-    Returns ``(ok, error_message)``. Adapter-loading or runtime errors are
+    Returns ``(ok, error_message)``. Runtime initialization or validation errors are
     captured and surfaced as ``error_message`` rather than propagating, so
     the coordinator can yield a single failure message and gate metrics.
     Use ``scope="semantic_model"`` before metric generation so the expected
@@ -263,8 +263,6 @@ def _validate_semantic_model_sync(agent_config: AgentConfig, *, scope: str = "al
 
     try:
         tools = SemanticTools(agent_config=agent_config)
-        if not tools.adapter:
-            return False, "Dosi runtime unavailable; reinstall datus-agent from its lockfile"
         result = tools.validate_semantic(scope=scope)
         if not result.success:
             return False, result.error or "Semantic validation failed"

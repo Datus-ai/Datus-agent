@@ -126,16 +126,25 @@ def _discover_via_entry_points() -> list[BackendTestSpec]:
     return specs
 
 
-def discover_test_backends() -> list[BackendTestSpec]:
-    """Return backend specifications without starting external resources."""
+def discover_test_backends(selection: str = "all") -> list[BackendTestSpec]:
+    """Select backend specifications without starting external resources."""
+    selection = selection.strip()
     backends = [
         BackendTestSpec(
             rdb_factory=_SqliteTestEnv,
             vector_factory=_LanceTestEnv,
         )
     ]
+    if selection == backends[0].id:
+        return backends
     backends.extend(_discover_via_entry_points())
-    return backends
+    if selection == "all":
+        return backends
+    requested = {name.strip() for name in selection.split(",") if name.strip()}
+    unknown = requested - {backend.id for backend in backends}
+    if unknown or not requested:
+        raise ValueError(f"Unknown or empty storage backend selection: {selection!r}")
+    return [backend for backend in backends if backend.id in requested]
 
 
 def _teardown_environments(environments: list[RdbTestEnv | VectorTestEnv]) -> None:

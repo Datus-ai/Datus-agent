@@ -842,7 +842,7 @@ class TestAtReferenceCompleterParseAtContext:
     def test_parse_known_agent_returned(self, real_agent_config):
         completer = AtReferenceCompleter(
             real_agent_config,
-            visibility_provider=lambda: {"gen_sql", "gen_report"},
+            visibility_provider=lambda: {"gen_sql", "gen_visual_report"},
         )
         _t, _m, _s, agent = completer.parse_at_context("@Agent gen_sql write me a query")
         assert agent == "gen_sql"
@@ -931,10 +931,10 @@ class TestAtReferenceCompleterAgent:
     def test_fuzzy_match_returns_matching_agents(self, real_agent_config):
         completer = AtReferenceCompleter(
             real_agent_config,
-            visibility_provider=lambda: {"gen_sql", "gen_report", "scheduler"},
+            visibility_provider=lambda: {"gen_sql", "gen_visual_report", "scheduler"},
         )
         result = completer.agent_completer.fuzzy_match("gen")
-        assert set(result) == {"gen_sql", "gen_report"}
+        assert set(result) == {"gen_sql", "gen_visual_report"}
 
     def test_at_prefix_surfaces_agent_completion(self, real_agent_config):
         completer = AtReferenceCompleter(
@@ -953,12 +953,12 @@ class TestAtReferenceCompleterAgent:
         ``@Table ``."""
         completer = AtReferenceCompleter(
             real_agent_config,
-            visibility_provider=lambda: {"gen_sql", "gen_report"},
+            visibility_provider=lambda: {"gen_sql", "gen_visual_report"},
         )
         doc = Document("@Agent ", cursor_position=7)
         completions = list(completer.get_completions(doc, None))
         texts = {c.text for c in completions}
-        assert {"gen_sql", "gen_report"}.issubset(texts)
+        assert {"gen_sql", "gen_visual_report"}.issubset(texts)
 
 
 # ---------------------------------------------------------------------------

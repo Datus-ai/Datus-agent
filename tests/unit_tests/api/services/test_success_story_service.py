@@ -69,8 +69,10 @@ class TestSaveSuccessStory:
 
     def test_resolves_builtin_subagent(self, tmp_path):
         svc = SuccessStoryService(_make_config(tmp_path))
-        data = svc.save(SuccessStoryInput(session_id="s", sql="SELECT 1", user_message="q", subagent_id="gen_report"))
-        assert data.subagent_name == "gen_report"
+        data = svc.save(
+            SuccessStoryInput(session_id="s", sql="SELECT 1", user_message="q", subagent_id="gen_visual_report")
+        )
+        assert data.subagent_name == "gen_visual_report"
 
     def test_resolves_custom_node_by_key(self, tmp_path):
         nodes = {"my-agent": {"id": "uuid-xyz", "system_prompt": "x"}}

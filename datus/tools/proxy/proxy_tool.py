@@ -106,6 +106,9 @@ def apply_proxy_tools(
     """
     node.proxy_tool_patterns = proxy_patterns
     target_channel = channel or node.tool_channel
+    if getattr(getattr(node, "agent_config", None), "_client_source", None) == "web":
+        # Descendants inherit the root session's result channel, including through native authoring nodes.
+        node.tool_channel = target_channel
     # ``_FS_DEPENDENT_NODES`` exclusion below relies on ``tool_registry`` being
     # populated. In production that population is normally driven by
     # ``_ensure_permission_hooks``, which runs lazily on the first LLM turn —

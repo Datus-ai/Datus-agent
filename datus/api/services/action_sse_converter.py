@@ -78,7 +78,9 @@ def _build_tool_call_content(
         "toolName": function_name,
         "toolParams": arguments,
     }
-    if proxied_tool_names is not None:
+    if isinstance(action.input, dict) and isinstance(action.input.get("_proxied"), bool):
+        payload_data["proxied"] = action.input["_proxied"]
+    elif proxied_tool_names is not None:
         payload_data["proxied"] = function_name in proxied_tool_names
     preview = (tool_previews or {}).get(action.action_id)
     if action.action_type == TOOL_PREVIEW_ACTION_TYPE and isinstance(action.output, dict):

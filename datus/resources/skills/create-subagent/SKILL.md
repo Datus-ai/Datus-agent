@@ -26,7 +26,7 @@ scoped_context.sqls
 ```
 
 - Require a lowercase identifier that starts with a letter and contains only letters, digits, and underscores.
-- Allow `node_class` values supported by the runtime. Use `gen_sql` for a query agent and `gen_report` for an attribution/report agent.
+- Allow `node_class` values supported by the runtime. Use `gen_sql` for a query agent and `gen_visual_report` for an attribution/report agent.
 - Store `tools` and each populated Knowledge Base scope as comma-separated strings, matching the `SubAgentConfig` contract.
 - Require at least one of `tables`, `metrics`, or `sqls`. Keep `datasource` equal to the active datasource that owns those artifacts.
 - Put fully qualified physical table references in `tables`.
@@ -36,7 +36,7 @@ scoped_context.sqls
 
 ## Step 1 — Validate names and scope
 
-1. Reject names reserved for builtin system agents: `semantic_modeling`, `gen_sql_summary`, `gen_sql`, `ask_metrics`, `ontology_analyst`, `gen_report`, `gen_visual_report`, `gen_visual_dashboard`, `gen_table`, `gen_job`, `gen_skill`, `gen_dashboard`, `scheduler`, and `feedback`.
+1. Reject names reserved for builtin system agents: `semantic_modeling`, `gen_sql_summary`, `gen_sql`, `ask_metrics`, `ontology_analyst`, `gen_visual_report`, `gen_visual_dashboard`, `gen_table`, `gen_job`, `gen_skill`, `gen_dashboard`, `scheduler`, and `feedback`.
 2. Normalize metric and reference-SQL entries with Datus reference-path semantics: join subject-path segments with `.`, double-quote segments that require quoting, then append the item name for exact-item scope.
 3. Resolve every metric and reference-SQL entry against the corresponding post-sync shared Knowledge Base subject tree. Refuse unresolved or ambiguous entries; never silently omit an invalid scope token.
 4. Deduplicate every comma-separated scope while preserving its first-seen order.
@@ -72,9 +72,9 @@ agent:
         sqls: revenue_by_month
     superset_revenue_overview_attribution:
       system_prompt: superset_revenue_overview_attribution
-      node_class: gen_report
+      node_class: gen_visual_report
       agent_description: Attribution analysis for Revenue overview
-      tools: semantic_tools,context_search_tools.list_subject_tree
+      tools: semantic_tools.*,db_tools.*,context_search_tools.*
       scoped_context:
         datasource: warehouse
         tables: analytics.orders
@@ -82,7 +82,7 @@ agent:
         sqls: revenue_by_month
 ```
 
-Set `system_prompt` to the node name. When no custom prompt file exists, `gen_sql` and `gen_report` fall back to their builtin templates.
+Set `system_prompt` to the node name. When no custom prompt file exists, `gen_sql` and `gen_visual_report` fall back to their builtin templates.
 
 Before writing, classify every requested node as:
 

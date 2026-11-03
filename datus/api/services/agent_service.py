@@ -26,6 +26,7 @@ from datus.tools.func_tool.semantic_tools import SemanticTools
 from datus.tools.func_tool.sub_agent_task_tool import BUILTIN_SUBAGENT_DESCRIPTIONS
 from datus.utils.constants import HIDDEN_SYS_SUB_AGENTS, SYS_SUB_AGENTS
 from datus.utils.loggings import get_logger
+from datus.utils.node_utils import validate_node_class
 
 logger = get_logger(__name__)
 
@@ -72,14 +73,8 @@ _USER_FACING_TOOL_CATEGORIES: tuple[str, ...] = (
 # ``queries/`` to answer follow-ups but must never mutate the artifact.
 _ASK_AGENT_FILESYSTEM_READ_ONLY: tuple[str, ...] = ("glob", "grep", "read_file", "read_image")
 
-# Per-agent-type editor whitelist. Previously the saas frontend
-# (``tool-tree.ts`` ``enableToolGroup``) decided which categories the picker
-# would render — only ``gen_sql`` and the catch-all else branch (effectively
-# ``gen_report``) were handled explicitly, which hid filesystem_tools from
-# ask_* even though those agents preselect ``filesystem_tools.read_file`` /
-# ``glob`` / ``grep`` in their defaults. The API is now the single source of
-# truth: each agent type returns exactly the categories the editor should
-# surface, and the frontend can render whatever it receives.
+# Per-agent-type editor categories. The API supplies the tool picker catalog
+# alongside each type's defaults so it stays aligned with the runtime.
 _TOOL_CATEGORIES_BY_AGENT_TYPE: dict[str, tuple[str, ...]] = {
     "chat": _USER_FACING_TOOL_CATEGORIES + ("memory_tools",),
     "gen_sql": (
@@ -87,12 +82,11 @@ _TOOL_CATEGORIES_BY_AGENT_TYPE: dict[str, tuple[str, ...]] = {
         "semantic_tools",
         "context_search_tools",
     ),
-    "gen_report": (
+    "gen_visual_report": (
         "db_tools",
         "semantic_tools",
         "context_search_tools",
-        "date_parsing_tools",
-        "reference_template_tools",
+        "filesystem_tools",
     ),
     "ask_metrics": _USER_FACING_TOOL_CATEGORIES,
     "ontology_analyst": _USER_FACING_TOOL_CATEGORIES,
@@ -158,12 +152,13 @@ SUBAGENT_TOOL_REFERENCE: dict[str, dict[str, Any]] = {
         ],
         "tool_types": _build_tool_types("gen_sql"),
     },
-    "gen_report": {
+    "gen_visual_report": {
         "default_tools": [
             "semantic_tools.*",
-            "context_search_tools.list_subject_tree",
+            "db_tools.*",
+            "context_search_tools.*",
         ],
-        "tool_types": _build_tool_types("gen_report"),
+        "tool_types": _build_tool_types("gen_visual_report"),
     },
     "ask_metrics": {
         "default_tools": [
@@ -858,7 +853,7 @@ class AgentService:
         "gen_sql": "gen_sql_system",
         "ask_metrics": "ask_metrics_system",
         "ontology_analyst": "ontology_analyst_system",
-        "gen_report": "gen_report_system",
+        "gen_visual_report": "gen_visual_report_system",
         "ask_report": "ask_report_system",
         "ask_dashboard": "ask_dashboard_system",
         "chat": "chat_system",
@@ -872,6 +867,11 @@ class AgentService:
         agent_config: AgentConfig,
     ) -> Result[dict]:
         """Create a new custom sub-agent."""
+
+        try:
+            validate_node_class(request.type, request.name)
+        except ValueError as exc:
+            return Result(success=False, errorCode="INVALID_AGENT_TYPE", errorMessage=str(exc))
 
         # Validate tools
         if request.tools:

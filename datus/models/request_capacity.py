@@ -20,7 +20,7 @@ logger = get_logger(__name__)
 
 # Budget assumptions for models without published specifications, not detected
 # server limits. Explicit deployment settings and known model specs take priority.
-DEFAULT_CONTEXT_LENGTH = 262144
+DEFAULT_CONTEXT_LENGTH = 1048576
 DEFAULT_MAX_TOKENS = 8192
 
 

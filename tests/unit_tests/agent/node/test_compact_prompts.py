@@ -28,8 +28,8 @@ class TestRenderMajorCompactPrompt:
         assert "appended by the host" in prompt
 
     def test_substitutes_node_role(self):
-        prompt = render_major_compact_prompt(node_role="gen_report")
-        assert "`gen_report`" in prompt
+        prompt = render_major_compact_prompt(node_role="gen_visual_report")
+        assert "`gen_visual_report`" in prompt
 
     def test_no_tools_constraint_present(self):
         prompt = render_major_compact_prompt(node_role="chat")

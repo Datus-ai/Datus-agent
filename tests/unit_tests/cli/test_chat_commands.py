@@ -11,7 +11,6 @@ Tests cover:
 - _extract_node_type_from_session_id static method
 - _create_new_node for all node types
 - create_node_input for all node types
-- _extract_report_from_json
 - _extract_sql_and_output_from_content
 - Display methods: _display_sql_with_copy, _display_markdown_response,
   _display_semantic_model, _display_sql_summary_file,
@@ -250,7 +249,7 @@ class TestAgentDispatchHint:
     def test_hint_strips_only_trailing_whitespace(self):
         """Trailing whitespace from the user input shouldn't be propagated
         into the annotation block, but the message content stays intact."""
-        rendered = ChatCommands._render_agent_dispatch_hint("hello world   \n  ", "gen_report")
+        rendered = ChatCommands._render_agent_dispatch_hint("hello world   \n  ", "gen_visual_report")
         # The trailing whitespace block is removed, then the annotation is
         # appended after a single blank-line separator.
         assert rendered.startswith("hello world\n\n[Agent dispatch]")
@@ -451,18 +450,18 @@ class TestCreateNewNode:
         assert isinstance(node, SqlSummaryAgenticNode)
         assert node.agent_config is real_agent_config
 
-    def test_gen_report_node_creation(self, real_agent_config, mock_llm_create):
-        """subagent_name with node_class='gen_report' creates a GenReportAgenticNode."""
-        from datus.agent.node.gen_report_agentic_node import GenReportAgenticNode
+    def test_gen_visual_report_node_creation(self, real_agent_config, mock_llm_create):
+        """subagent_name with node_class='gen_visual_report' creates a GenVisualReportAgenticNode."""
+        from datus.agent.node.gen_visual_report_agentic_node import GenVisualReportAgenticNode
 
-        # The real_agent_config fixture has gen_report in agentic_nodes but without node_class.
-        # We need to set node_class='gen_report' for this config entry.
-        real_agent_config.agentic_nodes["gen_report"]["node_class"] = "gen_report"
+        # The real_agent_config fixture has gen_visual_report in agentic_nodes but without node_class.
+        # We need to set node_class='gen_visual_report' for this config entry.
+        real_agent_config.agentic_nodes["gen_visual_report"]["node_class"] = "gen_visual_report"
 
         cmds = _make_chat_commands(real_agent_config)
-        node = cmds._create_new_node(subagent_name="gen_report")
+        node = cmds._create_new_node(subagent_name="gen_visual_report")
 
-        assert isinstance(node, GenReportAgenticNode)
+        assert isinstance(node, GenVisualReportAgenticNode)
         assert node.agent_config is real_agent_config
 
     def test_create_node_no_console_output(self, real_agent_config, mock_llm_create):
@@ -533,20 +532,20 @@ class TestCreateNodeInput:
         assert node_type == "sql_summary"
         assert node_input.user_message == "Summarize SQL"
 
-    def test_gen_report_node_input(self, real_agent_config, mock_llm_create):
-        """GenReportAgenticNode gets GenReportNodeInput with 'gen_report' type."""
-        from datus.agent.node.gen_report_agentic_node import GenReportAgenticNode
-        from datus.schemas.gen_report_agentic_node_models import GenReportNodeInput
+    def test_gen_visual_report_node_input(self, real_agent_config, mock_llm_create):
+        """GenVisualReportAgenticNode gets GenVisualReportNodeInput with 'gen_visual_report' type."""
+        from datus.agent.node.gen_visual_report_agentic_node import GenVisualReportAgenticNode
+        from datus.schemas.gen_visual_report_models import GenVisualReportNodeInput
 
-        real_agent_config.agentic_nodes["gen_report"]["node_class"] = "gen_report"
+        real_agent_config.agentic_nodes["gen_visual_report"]["node_class"] = "gen_visual_report"
         cmds = _make_chat_commands(real_agent_config)
-        node = cmds._create_new_node(subagent_name="gen_report")
-        assert isinstance(node, GenReportAgenticNode)
+        node = cmds._create_new_node(subagent_name="gen_visual_report")
+        assert isinstance(node, GenVisualReportAgenticNode)
 
         node_input, node_type = cmds.create_node_input("Generate report", node, [], [], [])
 
-        assert isinstance(node_input, GenReportNodeInput)
-        assert node_type == "gen_report"
+        assert isinstance(node_input, GenVisualReportNodeInput)
+        assert node_type == "gen_visual_report"
         assert node_input.user_message == "Generate report"
 
     def test_chat_node_input_with_plan_mode(self, real_agent_config, mock_llm_create):
@@ -596,68 +595,6 @@ class TestCreateNodeInput:
 # ===========================================================================
 # TestExtractReportFromJson
 # ===========================================================================
-
-
-class TestExtractReportFromJson:
-    """Tests for _extract_report_from_json utility method."""
-
-    def test_none_input_returns_none(self, real_agent_config, mock_llm_create):
-        """None input returns None."""
-        cmds = _make_chat_commands(real_agent_config)
-        result = cmds._extract_report_from_json(None)
-        assert result is None
-
-    def test_empty_string_returns_none(self, real_agent_config, mock_llm_create):
-        """Empty string returns None."""
-        cmds = _make_chat_commands(real_agent_config)
-        result = cmds._extract_report_from_json("")
-        assert result is None
-
-    def test_dict_input_returns_none(self, real_agent_config, mock_llm_create):
-        """Intermediate tool output must never be parsed as final report text."""
-        cmds = _make_chat_commands(real_agent_config)
-        assert cmds._extract_report_from_json({"response": "partial"}) is None
-
-    def test_valid_json_with_report_field(self, real_agent_config, mock_llm_create):
-        """Valid JSON with 'report' field extracts the report content."""
-        cmds = _make_chat_commands(real_agent_config)
-        json_str = json.dumps({"report": "This is the report content", "other": "data"})
-
-        result = cmds._extract_report_from_json(json_str)
-        assert result == "This is the report content"
-        assert isinstance(result, str)
-
-    def test_json_without_report_field_returns_none(self, real_agent_config, mock_llm_create):
-        """JSON without 'report' field returns None."""
-        cmds = _make_chat_commands(real_agent_config)
-        json_str = json.dumps({"sql": "SELECT 1", "explanation": "test"})
-
-        result = cmds._extract_report_from_json(json_str)
-        assert result is None
-
-    def test_non_json_string_returns_none(self, real_agent_config, mock_llm_create):
-        """Plain non-JSON string returns None."""
-        cmds = _make_chat_commands(real_agent_config)
-        result = cmds._extract_report_from_json("This is just a plain text string.")
-        assert result is None
-
-    def test_json_wrapped_in_code_blocks(self, real_agent_config, mock_llm_create):
-        """JSON wrapped in ```json ... ``` code blocks extracts the report field."""
-        cmds = _make_chat_commands(real_agent_config)
-        json_content = json.dumps({"report": "Report from code block"})
-        wrapped = f"```json\n{json_content}\n```"
-
-        result = cmds._extract_report_from_json(wrapped)
-        assert result == "Report from code block"
-        assert isinstance(result, str)
-
-    def test_empty_report_field_returns_empty_string(self, real_agent_config, mock_llm_create):
-        """JSON with empty 'report' field returns empty string."""
-        cmds = _make_chat_commands(real_agent_config)
-        json_str = json.dumps({"report": ""})
-
-        result = cmds._extract_report_from_json(json_str)
-        assert result == ""
 
 
 # ===========================================================================
@@ -1376,12 +1313,6 @@ class TestEdgeCases:
         assert sql is None
         assert output is None
 
-    def test_extract_report_whitespace_only(self, real_agent_config, mock_llm_create):
-        """Whitespace-only string returns None."""
-        cmds = _make_chat_commands(real_agent_config)
-        result = cmds._extract_report_from_json("   ")
-        assert result is None
-
     def test_display_sql_with_copy_stores_last_sql(self, real_agent_config, mock_llm_create):
         """_display_sql_with_copy updates cli.last_sql."""
         console = Console(file=io.StringIO(), no_color=True)
@@ -1478,16 +1409,6 @@ class TestEdgeCases:
         # Should not add context since action is not done
         assert len(cmds.cli.cli_context.recent_sql_contexts) == 0
 
-    def test_extract_report_from_json_report_with_rich_content(self, real_agent_config, mock_llm_create):
-        """Report field with markdown content is extracted correctly."""
-        cmds = _make_chat_commands(real_agent_config)
-        report_content = "# Sales Report\n\n## Summary\n- Total: $100K\n- Growth: 15%"
-        json_str = json.dumps({"report": report_content, "metadata": {"version": 1}})
-
-        result = cmds._extract_report_from_json(json_str)
-        assert result == report_content
-        assert "Sales Report" in result
-
     def test_create_node_input_cli_context_none_values(self, real_agent_config, mock_llm_create):
         """create_node_input passes None when no database context source has values."""
         from datus.schemas.chat_agentic_node_models import ChatNodeInput
@@ -1558,11 +1479,13 @@ class TestEdgeCases:
     def test_prompt_builder_uses_connector_database_when_input_database_empty(self, real_agent_config, mock_llm_create):
         """AgenticNode prompt fallback works if the node has an initialized connector."""
         from datus.schemas.chat_agentic_node_models import ChatNodeInput
+        from datus.tools.func_tool.database import DBFuncTool
 
         cmds = _make_chat_commands(real_agent_config)
         node = cmds._create_new_node()
-        node.db_func_tool._primary_connector = MagicMock()
-        node.db_func_tool._primary_connector.database_name = "connector_db"
+        connector = MagicMock()
+        connector.database_name = "connector_db"
+        node.db_func_tool = DBFuncTool(connector)
 
         message = node._build_enhanced_message(ChatNodeInput(user_message="有哪些表"))
 
@@ -1846,35 +1769,6 @@ class TestExecuteChatCommandResponseProcessing:
 # ===========================================================================
 # TestExtractReportEdgeCases
 # ===========================================================================
-
-
-class TestExtractReportEdgeCases:
-    """Additional edge cases for _extract_report_from_json."""
-
-    def test_json_array_returns_none(self, real_agent_config, mock_llm_create):
-        """JSON array (not object) returns None."""
-        cmds = _make_chat_commands(real_agent_config)
-        result = cmds._extract_report_from_json("[1, 2, 3]")
-        assert result is None
-
-    def test_deeply_nested_report(self, real_agent_config, mock_llm_create):
-        """Report field is extracted even from larger JSON."""
-        cmds = _make_chat_commands(real_agent_config)
-        json_str = json.dumps(
-            {
-                "report": "Deep report content",
-                "metadata": {"nested": {"deep": True}},
-                "extra": [1, 2, 3],
-            }
-        )
-        result = cmds._extract_report_from_json(json_str)
-        assert result == "Deep report content"
-
-    def test_malformed_json_returns_none(self, real_agent_config, mock_llm_create):
-        """Malformed JSON that json_repair can't fix returns None."""
-        cmds = _make_chat_commands(real_agent_config)
-        result = cmds._extract_report_from_json("{{{broken")
-        assert result is None
 
 
 # ===========================================================================

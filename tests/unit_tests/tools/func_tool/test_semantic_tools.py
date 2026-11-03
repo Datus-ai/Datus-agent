@@ -126,7 +126,6 @@ class TestQueryMetricsCompression:
         "node_module, node_class",
         [
             ("gen_sql_agentic_node", "GenSQLAgenticNode"),
-            ("gen_report_agentic_node", "GenReportAgenticNode"),
             ("gen_visual_report_agentic_node", "GenVisualReportAgenticNode"),
             ("gen_visual_dashboard_agentic_node", "GenVisualDashboardAgenticNode"),
         ],

@@ -1610,7 +1610,7 @@ class TestBuildBannerPanel:
 class TestCmdAgent:
     def test_cmd_agent_set_valid(self, cli):
         """'.agent gen_sql' sets default_agent to gen_sql."""
-        cli.available_subagents = {"chat", "gen_sql", "gen_report"}
+        cli.available_subagents = {"chat", "gen_sql", "gen_visual_report"}
         cli._cmd_agent("gen_sql")
         assert cli.default_agent == "gen_sql"
         output = cli.console.file.getvalue()

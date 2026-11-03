@@ -274,8 +274,8 @@ def stream_bi_save_subagents(
     attribution_cfg = SubAgentConfig(
         system_prompt=f"{sub_agent_name}_attribution",
         agent_description=f"Attribution analysis for {description}",
-        node_class="gen_report",
-        tools="semantic_tools,context_search_tools.list_subject_tree",
+        node_class="gen_visual_report",
+        tools="semantic_tools.*,db_tools.*,context_search_tools.*",
         scoped_context=scoped_context,
     )
 

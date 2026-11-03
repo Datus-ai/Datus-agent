@@ -65,9 +65,9 @@ def test_create_subagent_skill_supports_dashboard_agent_contract():
     _, body = _parts()
 
     assert "node_class: gen_sql" in body
-    assert "node_class: gen_report" in body
+    assert "node_class: gen_visual_report" in body
     assert "context_search_tools,db_tools.search_table,db_tools.describe_table,db_tools.execute_sql" in body
-    assert "semantic_tools,context_search_tools.list_subject_tree" in body
+    assert "semantic_tools.*,db_tools.*,context_search_tools.*" in body
     assert "scoped_context.datasource" in body
     assert "scoped_context.tables" in body
     assert "scoped_context.metrics" in body

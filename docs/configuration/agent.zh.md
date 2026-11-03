@@ -82,7 +82,7 @@ agent:
 
 | 配置 | 未填写时的行为 |
 | --- | --- |
-| `context_length` | 优先读取已有模型规格或供应商目录；仍未知时按 `262144`（256K）做预算 |
+| `context_length` | 优先读取已有模型规格或供应商目录；仍未知时按 `1048576`（1M）做预算 |
 | `max_tokens` | 优先读取模型输出规格；仍未知时默认 `8192`。支持输出限额的模型还会为输入和安全余量留空间，小窗口的默认输出可能更低 |
 | `tokenizer_ref` | 已知 OpenAI 模型使用 LiteLLM 计数；其他模型（包括自部署别名）按 UTF-8 字节数保守估算，无需下载 tokenizer |
 
@@ -337,7 +337,7 @@ codex:
 
 这部分配置会被用于：
 
-- `chat`、`explore`、`gen_sql`、`gen_report`、`gen_dashboard`、`scheduler` 等内置 agentic 节点
+- `chat`、`explore`、`gen_sql`、`gen_visual_report`、`gen_dashboard`、`scheduler` 等内置 agentic 节点
 - 通过统一 agent TUI（`/agent` 或 `/subagent`）创建的自定义 subagent
 - 把自定义名称 alias 到某个内置节点类的高级手工配置
 
@@ -347,7 +347,7 @@ codex:
 
 - `model`：引用 `agent.models` 中的 provider key
 - `system_prompt`：subagent 名称 / 提示词模板基名
-- `node_class`：要使用的节点实现，例如 `gen_sql`、`gen_report`、`explore`、`gen_table`、`gen_skill`、`gen_dashboard`、`scheduler`
+- `node_class`：要使用的节点实现，例如 `gen_sql`、`gen_visual_report`、`explore`、`gen_table`、`gen_skill`、`gen_dashboard`、`scheduler`
 - `prompt_version`、`prompt_language`
 - `agent_description`
 - `tools`、`mcp`、`skills`
@@ -399,7 +399,7 @@ agent:
       subagents: "*"
 
     finance_report:
-      node_class: gen_report
+      node_class: gen_visual_report
       model: claude
       system_prompt: finance_report
       prompt_version: "1.0"

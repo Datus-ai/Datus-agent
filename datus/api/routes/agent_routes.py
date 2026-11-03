@@ -30,7 +30,7 @@ router = APIRouter(prefix="/api/v1", tags=["agent"])
     description="Get available tool types for a given sub-agent type",
 )
 async def get_agent_use_tools(
-    agent_type: str = Query(..., description="Agent type: 'gen_sql' or 'gen_report'"),
+    agent_type: str = Query(..., description="Agent type: 'gen_sql' or 'gen_visual_report'"),
 ) -> Result[dict]:
     """Return available tools for the specified agent type."""
     return AgentService.get_use_tools(agent_type)

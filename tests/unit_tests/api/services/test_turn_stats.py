@@ -120,12 +120,12 @@ class TestTurnStatsCollector:
 
     def test_failed_task_counts_as_failed_subagent(self):
         collector = TurnStatsCollector(_resolver)
-        collector.observe(_start("t1", "task", arguments={"type": "gen_report"}))
+        collector.observe(_start("t1", "task", arguments={"type": "gen_visual_report"}))
         collector.observe(_complete("t1", "task", ok=False))
 
         subagents, _ = collector.finalize("completed", 1000)
 
-        assert (subagents[0].name, subagents[0].kind) == ("gen_report", "builtin")
+        assert (subagents[0].name, subagents[0].kind) == ("gen_visual_report", "builtin")
         assert subagents[0].failed == 1
 
     def test_unfinished_calls_are_interrupted_not_dropped(self):

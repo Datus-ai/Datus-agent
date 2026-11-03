@@ -39,7 +39,7 @@ The two query selections are independent. A query may be used for reference SQL,
 When Agent configuration is mutable, the final step creates or updates two nodes using the legacy naming and tool pattern:
 
 - `<platform>_<dashboard>` uses `gen_sql` with database and context-search tools.
-- `<platform>_<dashboard>_attribution` uses `gen_report` with semantic attribution tools.
+- `<platform>_<dashboard>_attribution` uses `gen_visual_report` with semantic attribution tools.
 
 Both nodes are scoped only to successful tables and exact metric/reference-SQL subject references for the active datasource. Metric scope uses `<metric.subject_path>.<metric.name>` from the synchronized Dosi model; reference-SQL scope uses `<subject_tree>.<name>` from the generated SQL summary. Bare subject paths select whole subtrees and are not used for an exact Dashboard selection. The generic `create-subagent` skill resolves these references against the post-sync subject trees, edits `agent.agentic_nodes` without replacing sibling entries, and verifies the YAML after writing. When the runtime marks configuration read-only, that skill is not discoverable and the workflow skips persistence without failing context construction.
 

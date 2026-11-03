@@ -365,7 +365,7 @@ def test_validate_semantic_model_sync_passes_requested_scope(agent_config, monke
 
     class FakeSemanticTools:
         def __init__(self, *_a, **_k):
-            self.adapter = object()
+            pass
 
         def validate_semantic(self, scope: str = "all"):
             validation_scopes.append(scope)

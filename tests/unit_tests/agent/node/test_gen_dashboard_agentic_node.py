@@ -297,6 +297,7 @@ class TestGenDashboardAgenticNodeInit:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.component
 class TestGenDashboardToolSetup:
     """Tests for tool setup — BI tools only, no DB tools exposed."""
 

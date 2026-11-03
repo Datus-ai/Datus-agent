@@ -1077,7 +1077,7 @@ def _fmt_task(result: Any) -> str:
         return f"{n} semantic model" if n == 1 else f"{n} semantic models"
     if result.get("sql_summary_file"):
         return "SQL summary saved"
-    if result.get("report_result") is not None:
+    if result.get("report_slug"):
         return "report ready"
     skill_name = result.get("skill_name")
     if result.get("skill_path"):

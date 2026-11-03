@@ -196,7 +196,7 @@ To enable skills in a customized subagent, add the `skills` field under the suba
 agentic_nodes:
   # Mixing tools + mcp + skills in a single subagent
   school_report:
-    node_class: gen_report
+    node_class: gen_visual_report
     tools: db_tools.*, context_search_tools.*
     mcp: filesystem
     skills: "report-*, data-*"
@@ -215,7 +215,7 @@ agentic_nodes:
     model: deepseek
 ```
 
-The `skills` field accepts a comma-separated list of glob patterns. Only skills whose names match at least one pattern will be available to that subagent. The `node_class` field supports two values: `gen_sql` (default) and `gen_report`.
+The `skills` field accepts a comma-separated list of glob patterns. Only skills whose names match at least one pattern will be available to that subagent. The `node_class` field supports `gen_sql` (default), `gen_visual_report`, and `gen_visual_dashboard`.
 
 When a subagent has `skills` configured:
 
@@ -233,7 +233,7 @@ skills:
 
 agentic_nodes:
   attribution_report:
-    node_class: gen_report
+    node_class: gen_visual_report
     tools: db_tools.*
     skills: "report-generator"
     model: deepseek

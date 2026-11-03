@@ -6,8 +6,8 @@
 Integration tests for GenDashboardAgenticNode.
 
 Tests the BI dashboard subagent with real Superset (Docker).
-Initialization contracts use a fake model in nightly. Real-model execution is
-available for manual evaluation with ``-m product_e2e``.
+Initialization and tool wiring are covered by the deterministic component suite.
+Real Superset/model execution is available with ``-m product_e2e``.
 Requires:
 - Superset running on localhost:8088 (docker compose -f ../datus-bi-adapters/datus-bi-superset/tests/integration/docker-compose.yml up -d)
 - datus-bi-superset package installed
@@ -16,7 +16,6 @@ Requires:
 
 import copy
 import os
-from unittest.mock import patch
 
 import pytest
 import requests
@@ -73,66 +72,6 @@ def dashboard_agent_config():
     return config
 
 
-@pytest.fixture
-def mock_dashboard_model():
-    """Keep node/tool initialization independent of provider credentials and APIs."""
-    from tests.unit_tests.mock_llm_model import MockLLMModel
-
-    with patch("datus.models.base.LLMBaseModel.create_model", return_value=MockLLMModel()):
-        yield
-
-
-@pytest.mark.nightly
-@pytest.mark.usefixtures("mock_dashboard_model")
-class TestGenDashboardAgenticInit:
-    """Integration tests for GenDashboardAgenticNode initialization with real Superset."""
-
-    def test_node_initialization_with_bi_tools(self, dashboard_agent_config):
-        """Node initializes with BI tools connected to real Superset."""
-        from datus.agent.node.gen_dashboard_agentic_node import GenDashboardAgenticNode
-
-        node = GenDashboardAgenticNode(
-            agent_config=dashboard_agent_config,
-            execution_mode="workflow",
-        )
-
-        assert node.get_node_name() == "gen_dashboard"
-        assert node.execution_mode == "workflow"
-        assert node.bi_func_tool is not None, "BI func tool should be initialized with real Superset"
-
-        tool_names = [tool.name for tool in node.tools]
-        logger.info(f"GenDashboard node initialized with {len(node.tools)} tools: {tool_names}")
-
-        # Read tools should always be present
-        assert "list_dashboards" in tool_names, f"Missing list_dashboards, got: {tool_names}"
-        assert "get_dashboard" in tool_names, f"Missing get_dashboard, got: {tool_names}"
-        assert "list_charts" in tool_names, f"Missing list_charts, got: {tool_names}"
-        assert "get_chart" in tool_names, f"Missing get_chart, got: {tool_names}"
-        assert "get_chart_data" in tool_names, f"Missing get_chart_data, got: {tool_names}"
-        assert "list_datasets" in tool_names, f"Missing list_datasets, got: {tool_names}"
-
-        # Write tools should be present (Superset adapter supports all mixins)
-        assert "create_dashboard" in tool_names, f"Missing create_dashboard, got: {tool_names}"
-        assert "create_chart" in tool_names, f"Missing create_chart, got: {tool_names}"
-        assert "create_dataset" in tool_names, f"Missing create_dataset, got: {tool_names}"
-
-    def test_no_db_or_filesystem_tools(self, dashboard_agent_config):
-        """GenDashboard node should NOT expose DB or filesystem tools."""
-        from datus.agent.node.gen_dashboard_agentic_node import GenDashboardAgenticNode
-
-        node = GenDashboardAgenticNode(
-            agent_config=dashboard_agent_config,
-            execution_mode="workflow",
-        )
-
-        tool_names = [tool.name for tool in node.tools]
-        assert "list_tables" not in tool_names
-        assert "describe_table" not in tool_names
-        assert "read_query" not in tool_names
-        assert "read_file" not in tool_names
-        assert "write_file" not in tool_names
-
-
 @pytest.mark.nightly
 @pytest.mark.product_e2e
 class TestGenDashboardAgenticExecution:
@@ -167,3 +106,101 @@ class TestGenDashboardAgenticExecution:
             f"Last action should be SUCCESS, got {actions[-1].status}: {actions[-1].output}"
         )
         assert actions[-1].action_type == "gen_dashboard_response"
+
+    @pytest.mark.asyncio
+    @pytest.mark.timeout(300)
+    async def test_creates_a_persisted_queryable_dashboard(self, dashboard_agent_config):
+        """Create through the public node, then reload and independently verify BI data."""
+        import uuid
+
+        from rich.console import Console
+
+        from datus.agent.node.gen_dashboard_agentic_node import GenDashboardAgenticNode
+        from datus.cli.bootstrap_bi_picker import BootstrapBiPicker
+        from datus.schemas.action_history import ActionHistoryManager
+        from datus.schemas.gen_dashboard_agentic_node_models import GenDashboardNodeInput
+        from datus.tools.db_tools.db_manager import DBManager
+        from tests.integration.tools.test_bi_dashboard import (
+            _create_adapter,
+            _ensure_superset_test_database,
+            _get_or_create_sales_dataset,
+            _items_from_adapter_result,
+        )
+
+        assert os.environ.get("DEEPSEEK_API_KEY"), "P0 BI creation requires DEEPSEEK_API_KEY"
+        config = dashboard_agent_config
+        adapter = _create_adapter(
+            BootstrapBiPicker(config, Console(log_path=False, force_terminal=False)),
+            config,
+            {"platform": "superset", "dashboard_url": SUPERSET_URL, "api_base_url": SUPERSET_URL},
+        )
+        history = ActionHistoryManager()
+        node = GenDashboardAgenticNode(agent_config=config, execution_mode="workflow")
+        title = f"P0 Revenue {uuid.uuid4().hex[:8]}"
+        chart_title = f"{title} Chart"
+        database_manager = None
+
+        def saved_dashboards():
+            return [
+                item for item in _items_from_adapter_result(adapter.list_dashboards(search=title)) if item.name == title
+            ]
+
+        try:
+            dataset = _get_or_create_sales_dataset(adapter, _ensure_superset_test_database(adapter))
+            node.input = GenDashboardNodeInput(
+                user_message=(
+                    f"Create exactly one new Superset dashboard titled '{title}'. "
+                    f"Use existing dataset id {dataset.id}, datus_nightly_bi_sales. "
+                    f"Create one table chart titled '{chart_title}' showing SUM(revenue) grouped by region, "
+                    "attach it to the dashboard, "
+                    "and verify its data. Use the existing dataset; do not create a new dataset."
+                )
+            )
+            actions = [action async for action in node.execute_stream(history)]
+            assert node.result.success is True, node.result.error
+            assert actions[-1].status == "success"
+            successful = {action.action_type for action in actions if action.status == "success"}
+            assert {"create_dashboard", "create_chart"} <= successful, successful
+
+            # These fresh API reads prove persistence, separate from the model output.
+            dashboards = saved_dashboards()
+            assert len(dashboards) == 1
+            saved = adapter.get_dashboard_info(dashboards[0].id)
+            assert saved.name == title
+            assert len(saved.chart_ids) == 1
+            chart_id = str(saved.chart_ids[0])
+            assert adapter.get_chart(chart_id).name == chart_title
+            chart_data = adapter.get_chart_data(chart_id, limit=100)
+            assert "region" in chart_data.columns
+            values = [name for name in chart_data.columns if name != "region"]
+            assert len(values) == 1, chart_data.columns
+            actual = sorted((str(row["region"]), float(row[values[0]])) for row in chart_data.rows)
+
+            database = copy.deepcopy(config.services.datasources["superset"])
+            for name, value in {
+                "host": os.getenv("SUPERSET_POSTGRES_HOST", "127.0.0.1"),
+                "port": os.getenv("SUPERSET_POSTGRES_PORT", "5433"),
+                "username": "superset",
+                "password": "superset",
+                "database": "superset_examples",
+                "schema": "public",
+            }.items():
+                setattr(database, name, value)
+            database_manager = DBManager({"superset": database})
+            oracle = database_manager.get_conn("superset").execute_query(
+                "SELECT region, SUM(revenue) AS revenue FROM public.datus_nightly_bi_sales GROUP BY region",
+                result_format="list",
+            )
+            assert oracle.success is True, oracle.error
+            expected = sorted((str(row["region"]), float(row["revenue"])) for row in oracle.sql_return)
+            assert actual == expected
+        finally:
+            for dashboard in saved_dashboards():
+                saved = adapter.get_dashboard_info(dashboard.id)
+                for chart_id in saved.chart_ids:
+                    if adapter.get_chart(chart_id).name == chart_title:
+                        adapter.delete_chart(chart_id)
+                adapter.delete_dashboard(dashboard.id)
+            adapter.close()
+            if database_manager is not None:
+                database_manager.close()

@@ -42,9 +42,9 @@ class TestInheritedMemoryOverrides:
 
     def test_distinct_subagent_names_coexist(self):
         with inherited_memory("gen_sql", "chat"):
-            with inherited_memory("gen_report", "custom_agent"):
+            with inherited_memory("gen_visual_report", "custom_agent"):
                 assert get_inherited_memory("gen_sql") == "chat"
-                assert get_inherited_memory("gen_report") == "custom_agent"
+                assert get_inherited_memory("gen_visual_report") == "custom_agent"
                 assert get_inherited_memory("explore") is None
 
     @pytest.mark.asyncio

@@ -145,3 +145,38 @@ tail -f logs/datus-agent-api.log
 ```bash
 pkill -f "datus/api/server.py"
 ```
+
+### Bounded browser chat history
+
+`GET /api/v1/chat/history/page?session_id=...` returns the latest 10 complete
+persisted user turns, ordered oldest to newest. Pass `next_cursor` back as
+`cursor` to read earlier turns; `has_more` indicates whether another page exists.
+Clients supply `limit` (1–100, default 10) and `inline_chars` (1–16000, default
+8000) per request to control page size and tool-content preview length.
+`total_turns` reports the global count; `turns` contains this page's user-message
+IDs, one-based global indices, and short question previews. Tool-result-only
+user records and synthetic compact-resume instructions do not count as turns.
+
+Pass `turn=<one-based index>` instead of `cursor` to load the containing page
+directly. For 30 turns and a limit of 10, `turn=2` returns 1–10; `turn=11` returns
+11–20. Clients must keep historical windows separate from the live tail until
+the intervening pages are present, then join them using stable message IDs.
+This lets a global turn navigator jump without fetching every intervening page.
+Cursors are scoped to the session and retain a snapshot upper row id, so new
+turns do not shift older pages. A removed or rewritten cursor anchor returns 409;
+reload the latest history after compacting or rewinding a conversation.
+
+Large tool results/errors carry `result.historyContent`; large tool arguments
+carry `toolParamsHistoryContent`. Each reference contains `ref`, a bounded
+`preview`, and `size_bytes`. Download the complete text through authenticated
+`GET /api/v1/chat/history/content?session_id=...&reference=...`. The response is
+an attachment with `Cache-Control: private, no-store`. References are resolved
+from the same user's project/session storage on each request; no process-local
+cache or new database migration is required. Changed or removed content returns
+409/404. Historical tool calls are marked `historyOnly` for display rather than
+execution; live resumed calls still follow the existing tool review flow.
+
+The legacy `/api/v1/chat/history` endpoint retains its full-history contract.
+The browser sends page size and preview length; no Agent YAML configuration is
+needed. These request parameters affect browser transport, not the model's
+context or persisted session contents.

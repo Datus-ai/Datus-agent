@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import sqlite3
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -165,11 +166,13 @@ async def test_managed_sql_policy_enforces_sql_semantic_and_api_reads(
     assert "sql-policy" in installed.stdout
 
     database = tmp_path / "orders.sqlite"
+    with sqlite3.connect(database) as seed:
+        seed.executescript(
+            "CREATE TABLE orders (store_id TEXT NOT NULL, amount INTEGER NOT NULL);"
+            "INSERT INTO orders VALUES ('S001', 10), ('S002', 20);"
+        )
     connector = SQLiteConnector(SQLiteConfig(db_path=str(database)))
     try:
-        assert connector.execute_query("CREATE TABLE orders (store_id TEXT NOT NULL, amount INTEGER NOT NULL)").success
-        assert connector.execute_query("INSERT INTO orders VALUES ('S001', 10), ('S002', 20)").success
-
         datus_home = managed_plugin_runtime.home / ".datus"
         document = _agent_document(datus_home, tmp_path / "workspace", database)
         config_file = datus_home / "conf" / "agent.yml"
@@ -284,6 +287,44 @@ async def test_managed_sql_policy_enforces_sql_semantic_and_api_reads(
         )
         assert not denied_result.success
         assert "denies all data reads" in denied_result.error
+
+        # Exercise the real HTTP route, auth context, task manager and SQL tool.
+        from datus.api.services.datus_service import DatusService
+        from tests.helpers.product_acceptance import ModelServer, answer, isolated_connectors, tool_call
+        from tests.integration.api.test_api_chat import chat_http_client, find_event, parse_sse_body
+
+        with isolated_connectors(), ModelServer().running() as server:
+            document["agent"]["models"]["mock"].update(
+                model="core-test-model", base_url=server.url, context_length=262144, max_tokens=2048
+            )
+            config_file.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
+            http_config = _agent_config(document)
+            service = DatusService(agent_config=http_config, project_id="policy_http")
+            server.enqueue(
+                tool_call("execute_sql", {"sql": "SELECT store_id, amount FROM orders ORDER BY store_id"}),
+                answer("The scoped amount is 10."),
+            )
+            async with chat_http_client(http_config, service, config_path=str(config_file)) as client:
+                response = await client.post(
+                    "/api/v1/chat/stream",
+                    headers={"X-Datus-Policy-Context": json.dumps(scoped)},
+                    json={"message": "Read the order amounts using SQL.", "interactive": False},
+                )
+                assert response.status_code == 200, response.text
+                events = parse_sse_body(response.text)
+                assert find_event(events, "error") is None, response.text
+                assert find_event(events, "end") is not None, response.text
+                tool_results = [m for m in server.requests[-1]["messages"] if m.get("role") == "tool"]
+                assert "S001" in json.dumps(tool_results)
+                assert "S002" not in json.dumps(tool_results)
+                for context in (denied, unknown_policy):
+                    rejected = await client.post(
+                        "/api/v1/chat/stream",
+                        headers={"X-Datus-Policy-Context": json.dumps(context)},
+                        json={"message": "Read all order amounts.", "interactive": False},
+                    )
+                    assert "POLICY_CONTEXT_REJECTED" in rejected.text, rejected.text
+                assert len(server.requests) == 2
 
         plugin_decision = evaluate_bash_command(
             "datus sql-policy status",

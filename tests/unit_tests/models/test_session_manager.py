@@ -1561,7 +1561,7 @@ class TestGetSessionMessages:
         call_id_a = "toolu_call_a"
         call_id_b = "toolu_call_b"
         args_a = json.dumps({"type": "gen_sql_summary", "description": "archive sql"})
-        args_b = json.dumps({"type": "gen_report", "description": "archive report"})
+        args_b = json.dumps({"type": "gen_visual_report", "description": "archive report"})
 
         with sqlite3.connect(db_path) as conn:
             conn.execute("INSERT OR IGNORE INTO agent_sessions (session_id) VALUES (?)", (session_id,))
@@ -2328,7 +2328,7 @@ class TestCopySession:
             ],
         )
 
-        new_id = sm.copy_session(source_id, "gen_report")
+        new_id = sm.copy_session(source_id, "gen_visual_report")
 
         msgs = _read_messages(sm.session_dir, new_id)
         assert len(msgs) == 4

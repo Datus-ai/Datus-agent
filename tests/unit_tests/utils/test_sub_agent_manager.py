@@ -72,6 +72,23 @@ def test_save_agent_rename_preserves_config(tmp_path):
     assert "old_agent" not in manager.list_agents()
 
 
+@pytest.mark.parametrize("name,node_class", [("legacy_report", "gen_report"), ("gen_report", "gen_sql")])
+def test_save_rejects_removed_report_before_modifying_existing_agent(tmp_path, name, node_class):
+    manager, config_mgr, agent_config = _build_manager(tmp_path)
+    original = SubAgentConfig(system_prompt="kept_agent", node_class="gen_sql").as_payload("demo")
+    config_mgr.update_item("agentic_nodes", {"kept_agent": original})
+    agent_config.agentic_nodes = {"kept_agent": original}
+    prompt = tmp_path / "kept_agent_system_1.0.j2"
+    prompt.write_text("Project-specific SQL instructions", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="does not exist.*Use 'gen_visual_report' instead"):
+        manager.save_agent(SubAgentConfig(system_prompt=name, node_class=node_class), previous_name="kept_agent")
+
+    assert manager.list_agents() == {"kept_agent": original}
+    assert agent_config.agentic_nodes == {"kept_agent": original}
+    assert prompt.read_text(encoding="utf-8") == "Project-specific SQL instructions"
+
+
 def test_remove_agent_removes_config(tmp_path):
     """Removing an agent removes its config entry."""
     manager, config_mgr, agent_config = _build_manager(tmp_path)
@@ -192,7 +209,7 @@ class TestSaveAgentNew:
         result = manager.save_agent(config)
         assert Path(result["prompt_path"]).name == "agent_x_system_1.0.j2"
 
-    def test_gen_report_node_uses_gen_report_template(self, tmp_path):
+    def test_gen_visual_report_node_uses_gen_visual_report_template(self, tmp_path):
         manager, _, _ = _build_manager(tmp_path)
         # Track which source template was used
         calls = []
@@ -205,11 +222,11 @@ class TestSaveAgentNew:
         manager._prompt_manager.copy_to = tracking_copy_to
         config = SubAgentConfig(
             system_prompt="report_agent",
-            node_class="gen_report",
+            node_class="gen_visual_report",
             scoped_context=ScopedContext(tables="t"),
         )
         manager.save_agent(config)
-        assert "gen_report_system" in calls
+        assert "gen_visual_report_system" in calls
 
     def test_gen_sql_node_uses_gen_sql_system_template(self, tmp_path):
         manager, _, _ = _build_manager(tmp_path)

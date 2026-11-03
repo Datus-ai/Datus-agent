@@ -1,0 +1,13 @@
+# Only semantic renames need a declaration. New pages, version aliases and
+# historical version/language prefix repairs come from the built page inventory.
+# Destinations are resolved to an existing page in the requested locale/version,
+# then the latest stable documentation, an archive, or dev, in that order.
+cli-commands: cli/reference
+database-adapters: adapters/db_adapters
+models/providers: configuration/agent
+cli/model_command: cli/other_commands
+cli/language_command: cli/other_commands
+cli/effort_command: cli/other_commands
+cli/init_command: skills/init
+cli/build_kb_command: skills/build_kb
+adapters/dosi_semantic_adapter: semantic/dosi_engine

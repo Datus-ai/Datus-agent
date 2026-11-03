@@ -259,6 +259,33 @@ class TestApplyProxyToolsWithExplicitChannel:
         assert node.tools[0].on_invoke_tool is not original_invoke
 
     @pytest.mark.asyncio
+    async def test_nested_web_proxies_receive_results_from_the_root_channel(self):
+        root_channel = ToolResultChannel()
+        parent_channel = root_channel
+        for _ in range(3):
+            tool = FunctionTool(
+                name="write_file",
+                description="Write a file",
+                params_json_schema={"type": "object"},
+                on_invoke_tool=MagicMock(),
+            )
+            node = SimpleNamespace(
+                tools=[tool],
+                tool_channel=ToolResultChannel(),
+                tool_registry=ToolRegistry({"write_file": "filesystem_tools"}),
+                agent_config=SimpleNamespace(_client_source="web"),
+            )
+            apply_proxy_tools(node, ["write_file"], channel=parent_channel)
+            parent_channel = node.tool_channel
+
+        # tool_result reaches only the root session, even for a deep descendant.
+        await root_channel.publish("nested-file-call", {"success": 1, "result": "written"})
+        result = await asyncio.wait_for(
+            node.tools[0].on_invoke_tool(SimpleNamespace(tool_call_id="nested-file-call"), "{}"), timeout=0.1
+        )
+        assert result == {"success": 1, "result": "written"}
+
+    @pytest.mark.asyncio
     async def test_proxy_tool_receives_from_explicit_channel(self):
         """Proxy tool created with explicit channel can receive results from it."""
         original_invoke = MagicMock()

@@ -2,21 +2,18 @@
 
 The Hive adapter connects to the binary HiveServer2 endpoint through PyHive/Thrift, including compatible Transwarp Inceptor endpoints. Hive databases are the table namespace, and optional session properties are passed through `configuration`.
 
-!!! note "Adapter availability"
-    The Kerberos configuration, Inceptor metadata improvements, and Inceptor result protocol described below require a `datus-hive` build containing those changes. The published `datus-hive` 0.1.3 package does not include `kerberos_service_name`, the `kerberos` extra, the metadata fixes, or `server_type`. Install a build containing them before using these features; installing GSSAPI dependencies alone does not add the missing adapter configuration.
-
-The commands below pin the source revision validated for [adapter PR #163](https://github.com/Datus-ai/datus-db-adapters/pull/163), including the Kerberos and metadata changes from [adapter PR #158](https://github.com/Datus-ai/datus-db-adapters/pull/158). This is a source build; use it until a package release includes the result-type changes. The commands require Git and Python 3.12 or newer. Both installation variants use the same revision. `--force-reinstall` replaces an existing PyPI 0.1.3 installation even though the source build currently has the same package version.
+Published `datus-hive>=0.1.4` includes Kerberos configuration and Inceptor result decoding. The SQL skill/reference behavior below additionally requires an adapter build packaging `db-hive-sql` and an Agent build that renders server-type context.
 
 ## Install
 
 ```bash
-pip install --force-reinstall 'datus-hive @ git+https://github.com/Datus-ai/datus-db-adapters.git@84a407a6c5572947c01038d01e9f96580583be4a#subdirectory=datus-hive'
+pip install 'datus-hive>=0.1.4'
 ```
 
 Install the adapter into the same Python environment as `datus`. For Kerberos, install its optional GSSAPI dependencies after choosing an adapter build with Kerberos support:
 
 ```bash
-pip install --force-reinstall 'datus-hive[kerberos] @ git+https://github.com/Datus-ai/datus-db-adapters.git@84a407a6c5572947c01038d01e9f96580583be4a#subdirectory=datus-hive'
+pip install 'datus-hive[kerberos]>=0.1.4'
 ```
 
 The Kerberos extension needs system Kerberos libraries and development headers to build, plus a C compiler. For example, Debian/Ubuntu builds use `libkrb5-dev`; install the Kerberos client tools such as `kinit` and `klist` as well.
@@ -205,3 +202,11 @@ For a secured profile, replace `hive_warehouse` with its configured name. Check 
 - [HiveServer2 clients](https://cwiki.apache.org/confluence/display/Hive/HiveServer2+Clients)
 - [HiveServer2 authentication configuration](https://hive.apache.org/docs/latest/admin/setting-up-hiveserver2/)
 - [Transwarp Inceptor connection guide](https://www.transwarp.cn/doc/inceptor/9.5/quick-start--connect-database)
+
+## SQL guidance and SaaS configuration
+
+`type: hive` remains the connection type; `server_type: hive|inceptor` selects the product. Agent stores this adapter-specific field in `DbConfig.extra` and expands it when creating the connector. The per-turn datasource reminder identifies the current target's server type, including when switching between two Hive-family datasources.
+
+The adapter contributes `db-hive-sql` through `datus.skills`. Its entrypoint contains shared HiveServer2 guidance; for Inceptor, the model reads `references/inceptor.md` through the filesystem tool before generating SQL. The reference covers version-specific metadata dictionaries, VARCHAR2 and empty-string/NULL semantics. An older Agent needs the server-type reminder change as well as an adapter carrying the skill.
+
+The SaaS Hive / Inceptor form stores `type: hive` with `extra.serverType`, `extra.auth`, `extra.kerberosServiceName`, `extra.configuration`, `extra.timeoutSeconds` and `extra.queryTimeoutSeconds`. Backend maps these into adapter fields. The runtime owns Kerberos ticket acquisition, renewal and identity isolation; a service name does not acquire a ticket. Switching password authentication to Kerberos stops forwarding the old password.

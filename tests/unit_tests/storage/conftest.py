@@ -5,6 +5,7 @@ discovered backends so that store-level tests automatically repeat on every
 available rdb+vector combination.
 """
 
+import os
 from collections.abc import Iterator
 
 import pytest
@@ -20,7 +21,7 @@ from tests.unit_tests.storage._backend_discovery import (
     teardown_test_backend,
 )
 
-_BACKEND_SPECS = discover_test_backends()
+_BACKEND_SPECS = discover_test_backends(os.getenv("DATUS_TEST_STORAGE_BACKENDS", "all"))
 
 
 @pytest.fixture(scope="session", params=_BACKEND_SPECS, ids=lambda backend: backend.id)
@@ -29,6 +30,8 @@ def _storage_backend_environment(request) -> Iterator[BackendTestConfig]:
     try:
         backend = setup_test_backend(request.param)
     except Exception as exc:
+        if "DATUS_TEST_STORAGE_BACKENDS" in os.environ:
+            pytest.fail(f"Required storage backend {request.param.id} is unavailable: {exc}", pytrace=False)
         pytest.skip(  # audit-noqa: try_except_skip - external backend availability is optional
             f"Storage backend {request.param.id} is unavailable: {exc}"
         )

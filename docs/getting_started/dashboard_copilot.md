@@ -333,7 +333,7 @@ superset_world_bank_s
 superset_world_bank_s_attribution
 ```
 
-The main node uses the builtin `gen_sql` behavior. The attribution node uses the builtin `gen_report` behavior. Both receive the same successful `superset-pg` scoped context and use the corresponding builtin prompt templates.
+The main node uses the builtin `gen_sql` behavior. The attribution node uses the builtin `gen_visual_report` behavior. Both receive the same successful `superset-pg` scoped context and use the corresponding builtin prompt templates.
 
 A successful final report resembles:
 

@@ -200,6 +200,20 @@ class TestParseNodeConfig:
         assert any("always: be concise" in r for r in rules)
         assert "plain rule" in rules
 
+    def test_forwards_report_dist_to_node_config(self):
+        """``report_dist`` from agent.yml must survive the direct_attributes whitelist.
+
+        Regression: the whitelist in ``_parse_node_config`` used to omit
+        ``report_dist``, so a user-provided offline renderer bundle in
+        ``agentic_nodes.gen_visual_report.report_dist`` was silently dropped
+        and the report fell back to the unpkg CDN.
+        """
+        cfg = MagicMock(spec=AgentConfig)
+        cfg.agentic_nodes = {"gen_visual_report": {"report_dist": "/opt/web-artifact-render-dist"}}
+        node = _make_node()
+        result = node._parse_node_config(cfg, "gen_visual_report")
+        assert result.get("report_dist") == "/opt/web-artifact-render-dist"
+
     def test_returns_empty_when_no_agentic_nodes_attr(self):
         cfg = MagicMock()
         del cfg.agentic_nodes  # remove the attribute

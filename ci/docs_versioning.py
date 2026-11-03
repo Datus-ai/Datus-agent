@@ -175,6 +175,7 @@ def should_hide_docs_version(version: str, min_visible_minor: tuple[int, int]) -
 def hide_legacy_docs_versions(
     min_visible_minor: tuple[int, int],
     deploy_prefix: str = "",
+    push: bool = True,
 ) -> bool:
     prefix_args = ["--deploy-prefix", deploy_prefix] if deploy_prefix else []
     raw = subprocess.check_output(["mike", "list", "-j", *prefix_args], text=True)
@@ -205,7 +206,7 @@ def hide_legacy_docs_versions(
         )
         changed = True
 
-    if changed:
+    if changed and push:
         subprocess.run(["git", "push", "--", "origin", "gh-pages"], check=True)
     return changed
 
@@ -224,6 +225,7 @@ def build_parser() -> argparse.ArgumentParser:
     hide = subparsers.add_parser("hide-legacy", help="Hide patch/pre-release docs versions from mike version picker")
     hide.add_argument("--min-visible-minor", required=True)
     hide.add_argument("--deploy-prefix", default="")
+    hide.add_argument("--no-push", action="store_true", help="Stage changes locally for an atomic docs publish")
 
     return parser
 
@@ -253,7 +255,7 @@ def main(argv: list[str] | None = None) -> int:
         except ValueError as exc:
             print(f"::error::Invalid --min-visible-minor: {exc}", file=sys.stderr)
             return 1
-        changed = hide_legacy_docs_versions(min_visible_minor, args.deploy_prefix)
+        changed = hide_legacy_docs_versions(min_visible_minor, args.deploy_prefix, push=not args.no_push)
         if not changed:
             print("No docs version visibility changes needed.")
         return 0

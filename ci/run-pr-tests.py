@@ -36,6 +36,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 import xml.etree.ElementTree as XMLTree
 from pathlib import Path
 from typing import Any, TextIO
@@ -51,7 +52,18 @@ DEFAULT_COVERAGE_DB = os.path.join(OUT_DIR, ".coverage")
 DEFAULT_PYTEST_LOG = os.path.join(OUT_DIR, "pytest-coverage.txt")
 # Direct script execution starts with ci/ on sys.path.
 sys.path.insert(0, REPO_ROOT_DIR)
-from ci.harness.test_plan import core_targets, impact_plan, verify_gate  # noqa: E402
+from ci.harness.test_plan import (  # noqa: E402
+    changed_files as changed_paths,
+)
+from ci.harness.test_plan import (  # noqa: E402
+    collapse_targets as _collapse_contained_test_targets,
+)
+from ci.harness.test_plan import (  # noqa: E402
+    core_targets,
+    load_map,
+    unit_test_plan,
+    verify_gate,
+)
 
 PYTEST_BASETEMP_ENV = "DATUS_CI_PYTEST_BASETEMP"
 PR_HARNESS_MARK_EXPR = "(acceptance or component or llm_harness) and not quarantine"
@@ -66,7 +78,7 @@ PR_ACCEPTANCE_TARGETS = [
     "tests/unit_tests/agent/node/test_compare_agentic_node.py",
     "tests/unit_tests/agent/node/test_explore_agentic_node.py",
     "tests/unit_tests/agent/node/test_feedback_agentic_node.py",
-    "tests/unit_tests/agent/node/test_gen_report_agentic_node.py",
+    "tests/unit_tests/agent/node/test_gen_visual_report_agentic_node.py",
     "tests/unit_tests/agent/node/test_gen_table_agentic_node.py",
     "tests/unit_tests/agent/node/test_sql_summary_agentic_node.py",
     "tests/unit_tests/agent/node/test_skill_creator_agentic_node.py",
@@ -81,6 +93,8 @@ PR_ACCEPTANCE_TARGETS = [
     "tests/unit_tests/cli/web/test_chatbot.py",
     "tests/unit_tests/ci/test_harness_alignment.py",
     "tests/unit_tests/ci/test_run_merge_queue_tests.py",
+    "tests/unit_tests/ci/test_gate_profiles.py",
+    "tests/unit_tests/ci/test_p0_gate.py",
     "tests/unit_tests/ci/harness/test_test_plan.py",
     "tests/unit_tests/ci/test_prepare_ci_bird.py",
     "tests/integration/api/test_api.py",
@@ -115,64 +129,6 @@ PR_ACCEPTANCE_TARGETS = [
     "tests/unit_tests/utils/test_memory_loader.py",
 ]
 PR_ACCEPTANCE_TARGETS.extend(core_targets())
-
-IMPACTED_TEST_MAPPING = [
-    ("datus/agent/node/", "tests/unit_tests/agent/node/"),
-    ("datus/agent/", "tests/unit_tests/agent/"),
-    ("datus/api/auth/", "tests/unit_tests/api/auth/"),
-    ("datus/api/hooks/", "tests/unit_tests/api/hooks/"),
-    ("datus/api/models/", "tests/unit_tests/api/models/"),
-    ("datus/api/routes/", "tests/unit_tests/api/routes/"),
-    ("datus/api/services/", "tests/unit_tests/api/services/"),
-    ("datus/api/utils/", "tests/unit_tests/api/utils/"),
-    ("datus/api/", "tests/unit_tests/api/"),
-    ("datus/auth/", "tests/unit_tests/auth/"),
-    ("datus/cli/action_display/", "tests/unit_tests/cli/action_display/"),
-    ("datus/cli/screen/", "tests/unit_tests/cli/screen/"),
-    ("datus/cli/tui/", "tests/unit_tests/cli/tui/"),
-    ("datus/cli/web/", "tests/unit_tests/cli/web/"),
-    ("datus/cli/", "tests/unit_tests/cli/"),
-    ("datus/conf/", "tests/unit_tests/configuration/"),
-    ("datus/configuration/", "tests/unit_tests/configuration/"),
-    ("datus/gateway/", "tests/unit_tests/gateway/"),
-    ("datus/models/", "tests/unit_tests/models/"),
-    ("datus/observability/", "tests/unit_tests/observability/"),
-    ("datus/prompts/", "tests/unit_tests/prompts/"),
-    ("datus/resources/skills/", "tests/unit_tests/tools/skill_tools/"),
-    ("datus/schemas/", "tests/unit_tests/schemas/"),
-    ("datus/storage/document/", "tests/unit_tests/storage/document/"),
-    ("datus/storage/ext_knowledge/", "tests/unit_tests/storage/ext_knowledge/"),
-    ("datus/storage/feedback/", "tests/unit_tests/storage/feedback/"),
-    ("datus/storage/metric/", "tests/unit_tests/storage/metric/"),
-    ("datus/storage/rdb/", "tests/unit_tests/storage/rdb/"),
-    ("datus/storage/reference_sql/", "tests/unit_tests/storage/reference_sql/"),
-    ("datus/storage/reference_template/", "tests/unit_tests/storage/reference_template/"),
-    ("datus/storage/schema_metadata/", "tests/unit_tests/storage/schema_metadata/"),
-    ("datus/storage/semantic_model/", "tests/unit_tests/storage/semantic_model/"),
-    ("datus/storage/task/", "tests/unit_tests/storage/task/"),
-    ("datus/storage/vector/", "tests/unit_tests/storage/vector/"),
-    ("datus/storage/", "tests/unit_tests/storage/"),
-    ("datus/tools/bi_tools/", "tests/unit_tests/tools/bi_tools/"),
-    ("datus/tools/date_tools/", "tests/unit_tests/tools/date_tools/"),
-    ("datus/tools/db_tools/", "tests/unit_tests/tools/db_tools/"),
-    ("datus/tools/func_tool/", "tests/unit_tests/tools/func_tool/"),
-    ("datus/tools/llms_tools/", "tests/unit_tests/tools/llms_tools/"),
-    ("datus/tools/mcp_tools/", "tests/unit_tests/tools/mcp_tools/"),
-    ("datus/tools/output_tools/", "tests/unit_tests/tools/output_tools/"),
-    ("datus/tools/permission/", "tests/unit_tests/tools/permission/"),
-    ("datus/tools/proxy/", "tests/unit_tests/tools/proxy/"),
-    ("datus/tools/registry/", "tests/unit_tests/tools/registry/"),
-    ("datus/tools/search_tools/", "tests/unit_tests/tools/search_tools/"),
-    ("datus/tools/semantic_tools/", "tests/unit_tests/tools/semantic_tools/"),
-    ("datus/tools/skill_tools/", "tests/unit_tests/tools/skill_tools/"),
-    ("datus/tools/", "tests/unit_tests/tools/"),
-    ("datus/utils/", "tests/unit_tests/utils/"),
-    ("datus/validation/", "tests/unit_tests/validation/"),
-    ("ci/", "tests/unit_tests/ci/"),
-    # Catch top-level datus/ changes (for example __init__.py or future shared modules)
-    # with the full unit suite as a safety net when no narrower prefix applies.
-    ("datus/", "tests/unit_tests/"),
-]
 
 
 def log(msg: str) -> None:
@@ -240,49 +196,6 @@ def _stream_process_output(proc: subprocess.Popen[str], log_file: TextIO) -> Non
     for line in proc.stdout:
         sys.stdout.write(line)
         log_file.write(line)
-
-
-def _normalize_path(path: str) -> str:
-    normalized = path.replace("\\", "/")
-    if normalized.startswith("./"):
-        normalized = normalized[2:]
-    return normalized
-
-
-def _dedupe_preserve(items: list[str]) -> list[str]:
-    seen = set()
-    ordered: list[str] = []
-    for item in items:
-        if item not in seen:
-            seen.add(item)
-            ordered.append(item)
-    return ordered
-
-
-def _is_target_under_dir(target: str, parent_dir: str) -> bool:
-    child = _normalize_path(target).rstrip("/")
-    parent = _normalize_path(parent_dir).rstrip("/")
-    return bool(parent and child != parent and child.startswith(f"{parent}/"))
-
-
-def _collapse_contained_test_targets(targets: list[str]) -> list[str]:
-    """Drop explicit child targets when a parent directory target already covers them.
-
-    Passing both a test directory and files under that directory to pytest can
-    unexpectedly narrow collection to the explicit children. Keep the broadest
-    target so impacted-suite coverage matches the source-to-test mapping.
-    """
-    deduped = _dedupe_preserve(targets)
-    parent_dirs = [target for target in deduped if target.endswith("/")]
-    if not parent_dirs:
-        return deduped
-
-    collapsed: list[str] = []
-    for target in deduped:
-        if any(_is_target_under_dir(target, parent_dir) for parent_dir in parent_dirs):
-            continue
-        collapsed.append(target)
-    return collapsed
 
 
 def _remove_output_path(path: str) -> None:
@@ -360,6 +273,7 @@ def _reset_report_outputs() -> None:
         os.path.join(OUT_DIR, "diff-cover.json"),
         os.path.join(OUT_DIR, "diff-cover-report.md"),
         os.path.join(OUT_DIR, "test-report.md"),
+        os.path.join(OUT_DIR, "unit-test-plan.json"),
         DEFAULT_PYTEST_LOG,
     ]:
         _remove_output_path(path)
@@ -412,7 +326,15 @@ def _build_pytest_command(
     cmd.extend(
         [
             f"--junitxml={junit_xml}",
+            "-o",
+            "addopts=",
+            "-o",
+            "log_cli=false",
+            "-o",
+            "verbosity_test_cases=0",
             "-q",
+            "--tb=short",
+            "--durations=30",
             "--disable-warnings",
             "--log-level=CRITICAL",
             "--log-cli-level=CRITICAL",
@@ -452,6 +374,7 @@ def _run_pytest_suite(
     log(f"{suite_name} pytest basetemp: {basetemp}")
 
     env = os.environ.copy()
+    env["DATUS_TEST_STORAGE_BACKENDS"] = "sqlite+lance"
     # Nested runner regressions may execute from a temporary project. Keep our
     # reporting plugin importable there as well as in xdist workers.
     repo_root = str(Path(__file__).resolve().parents[1])
@@ -473,6 +396,7 @@ def _run_pytest_suite(
     if os.name != "nt":
         popen_kwargs["start_new_session"] = True
 
+    started = time.monotonic()
     proc = subprocess.Popen(cmd, **popen_kwargs)
     reader = threading.Thread(target=_stream_process_output, args=(proc, log_file), daemon=True)
     reader.start()
@@ -498,7 +422,13 @@ def _run_pytest_suite(
         if reader.is_alive():
             log(f"{suite_name} output reader did not exit within {READER_JOIN_TIMEOUT_SECONDS}s")
 
-    log(f"{suite_name} exited with code {exit_code}")
+    elapsed = round(time.monotonic() - started, 3)
+    execution_path = Path(junit_xml + ".execution.json")
+    if execution_path.exists():
+        report = json.loads(execution_path.read_text())
+        report["duration_seconds"] = elapsed
+        execution_path.write_text(json.dumps(report, indent=2) + "\n")
+    log(f"{suite_name} exited with code {exit_code} in {elapsed:.3f}s")
     return exit_code
 
 
@@ -515,27 +445,8 @@ def _normalize_suite_exit_code(
 
 
 def select_impacted_unit_tests(changed_files: list[str]) -> list[str]:
-    """Map changed source files to the unit-test paths that should run."""
-    impacted: list[str] = impact_plan(changed_files)["unit_targets"]
-    for path in changed_files:
-        normalized = _normalize_path(path)
-        if not normalized:
-            continue
-
-        if normalized.startswith("tests/unit_tests/"):
-            if normalized.endswith(".py"):
-                impacted.append(normalized)
-            else:
-                parent = normalized.rstrip("/").rsplit("/", 1)[0]
-                impacted.append(f"{parent}/" if parent else "tests/unit_tests/")
-            continue
-
-        for prefix, test_target in IMPACTED_TEST_MAPPING:
-            if normalized.startswith(prefix):
-                impacted.append(test_target)
-                break
-
-    return _collapse_contained_test_targets(impacted)
+    """Use the shared unit ownership rules for PR and merge-queue changes."""
+    return unit_test_plan(changed_files)["targets"]
 
 
 def _filter_existing_paths(paths: list[str]) -> list[str]:
@@ -547,10 +458,11 @@ def _filter_existing_paths(paths: list[str]) -> list[str]:
     """
     existing: list[str] = []
     for path in paths:
+        absolute = Path(path) if Path(path).is_absolute() else Path(REPO_ROOT_DIR, path)
         if path.endswith("/"):
-            if os.path.isdir(path):
+            if absolute.is_dir():
                 existing.append(path)
-        elif os.path.exists(path):
+        elif absolute.exists():
             existing.append(path)
     return _collapse_contained_test_targets(existing)
 
@@ -704,25 +616,23 @@ def list_changed_files(base_ref: str) -> list[str]:
     if not compare_ref:
         raise RuntimeError("Cannot select tests without a valid compare branch")
 
-    proc = _run_cmd(
-        ["git", "diff", "--name-only", f"{compare_ref}...HEAD"],
-        GIT_CMD_TIMEOUT,
-        capture_output=True,
-        text=True,
-    )
-    if not proc or proc.returncode != 0:
-        err = proc.stderr.strip() if proc else "timed out"
-        raise RuntimeError(f"Cannot enumerate changed files against {compare_ref}: {err}")
-
-    changed = [_normalize_path(line.strip()) for line in proc.stdout.splitlines() if line.strip()]
+    changed = changed_paths(compare_ref)
     log(f"Detected {len(changed)} changed files against {compare_ref}")
     return changed
 
 
 def resolve_impacted_unit_tests(base_ref: str) -> list[str]:
     changed_files = list_changed_files(base_ref)
-    impacted = select_impacted_unit_tests(changed_files)
-    impacted = _filter_existing_paths(impacted)
+    data = load_map()
+    plan = unit_test_plan(changed_files, data)
+    impacted = _filter_existing_paths(plan["targets"])
+    plan["targets"] = impacted
+    Path(OUT_DIR, "unit-test-plan.json").write_text(json.dumps(plan, indent=2) + "\n")
+    for selection in plan["selections"]:
+        rule = selection["rule"] or "no unit impact"
+        if selection["fallback"]:
+            rule += " (full-suite fallback)"
+        log(f"{selection['path']}: {rule} -> {', '.join(selection['targets']) or 'fixed acceptance only'}")
     if impacted:
         log(f"Impacted unit-test targets: {', '.join(impacted)}")
     else:

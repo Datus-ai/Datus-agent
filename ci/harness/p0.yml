@@ -1,0 +1,31 @@
+schema_version: 1
+# Release validation installs published adapters; these checkouts supply plugin
+# payloads and service fixtures only. Full Nightly still follows repository main.
+release_sources:
+  bi_adapters: efb72734df1e8a3f43a8b89454f9004a849d8f0b
+  storage_adapters: 47f4056d15d472c46d2ed9bea9687d3b665e0190
+  plugins: b2b39d2d7024461bd03f71137365beba828ea066
+  sql_policies: a5455bf34a03d3fb895847bff4b3b3b19a9418a7
+groups:
+  P0 Core Product Contracts:
+    include_core_nodeids: true
+  P0 Core Real Model:
+    nodeids:
+      - tests/integration/agent/test_core_live.py::test_question_is_answered_with_real_sql
+      - tests/integration/agent/test_core_live.py::test_followup_keeps_the_original_question
+      - tests/integration/agent/test_core_live.py::test_sql_node_returns_an_executable_query
+  P0 PostgreSQL Agent Storage Contracts:
+    nodeids:
+      - tests/integration/storage/test_postgresql_semantic_kb.py::test_postgresql_semantic_kb_reconcile_is_idempotent
+      - tests/integration/storage/test_postgresql_feedback_store.py::test_postgresql_feedback_storage_write_read_update_and_delete
+  P0 SQL Policy Plugin Contracts:
+    nodeids:
+      - tests/integration/plugins/test_sql_policy_plugin.py::test_managed_sql_policy_enforces_sql_semantic_and_api_reads
+  P0 Dosi Semantic Modeling E2E:
+    nodeids:
+      - tests/integration/agent/test_semantic_modeling_agentic.py::test_semantic_modeling_authors_one_queryable_dosi_model_with_real_llm
+  P0 BI Product E2E:
+    service: superset
+    nodeids:
+      - tests/integration/plugins/test_dashboard_bootstrap_plugin.py::test_dashboard_bootstrap_installs_plugin_and_exports_verified_superset_queries
+      - tests/integration/agent/test_gen_dashboard_agentic.py::TestGenDashboardAgenticExecution::test_creates_a_persisted_queryable_dashboard

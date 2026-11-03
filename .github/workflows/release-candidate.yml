@@ -3,6 +3,14 @@ name: "Release Candidate Validation"
 on:
   workflow_dispatch:
     inputs:
+      check_adapter_latest:
+        required: false
+        default: true
+        type: boolean
+      check_tag_available:
+        required: false
+        default: true
+        type: boolean
       expected_version:
         description: "Expected datus-agent version on this branch, for example 0.3.1 or 0.3.1rc1"
         required: false
@@ -15,6 +23,14 @@ on:
         type: string
   workflow_call:
     inputs:
+      check_adapter_latest:
+        required: false
+        default: true
+        type: boolean
+      check_tag_available:
+        required: false
+        default: true
+        type: boolean
       expected_version:
         required: false
         default: ""
@@ -23,6 +39,11 @@ on:
         required: false
         default: ""
         type: string
+    outputs:
+      source_sha:
+        value: ${{ jobs.package-smoke.outputs.source_sha }}
+      artifact_name:
+        value: ${{ jobs.package-smoke.outputs.artifact_name }}
     secrets:
       RELEASE_BOT_TOKEN:
         description: "Read token for private repositories required by P0 Nightly."
@@ -46,6 +67,7 @@ env:
 
 jobs:
   p0-nightly-contracts:
+    needs: package-smoke
     name: P0 nightly contracts on release commit
     # Never execute pull-request code on the long-lived Nightly runner. PRs
     # still receive the GitHub-hosted package/docs smoke below; the protected
@@ -53,13 +75,17 @@ jobs:
     if: ${{ github.event_name != 'pull_request' }}
     uses: ./.github/workflows/run-nightly.yml
     with:
-      datus_agent_ref: ${{ inputs.ref || github.ref }}
-      nightly_group_filter: '^P0 '
+      datus_agent_ref: ${{ needs.package-smoke.outputs.source_sha }}
+      test_profile: p0
+      candidate_artifact: ${{ needs.package-smoke.outputs.artifact_name }}
     secrets:
       RELEASE_BOT_TOKEN: ${{ secrets.RELEASE_BOT_TOKEN }}
 
   package-smoke:
     name: Package and docs smoke
+    outputs:
+      source_sha: ${{ steps.identity.outputs.source_sha }}
+      artifact_name: ${{ env.RELEASE_CANDIDATE_DIST_ARTIFACT }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -102,17 +128,26 @@ jobs:
       - name: Check release version and dependency metadata
         env:
           EXPECTED_VERSION: ${{ steps.release.outputs.version }}
+          CHECK_ADAPTER_LATEST: ${{ github.event_name == 'push' || github.event_name == 'pull_request' || inputs.check_adapter_latest }}
+          CHECK_TAG_AVAILABLE: ${{ github.event_name == 'push' || github.event_name == 'pull_request' || inputs.check_tag_available }}
         run: |
-          python ci/check_release_readiness.py \
-            --expected-version "$EXPECTED_VERSION" \
-            --check-tag-available \
-            --check-adapter-latest
+          args=(--expected-version "$EXPECTED_VERSION")
+          if [ "$CHECK_TAG_AVAILABLE" = "true" ]; then args+=(--check-tag-available); fi
+          if [ "$CHECK_ADAPTER_LATEST" = "true" ]; then args+=(--check-adapter-latest); fi
+          python ci/check_release_readiness.py "${args[@]}"
 
       - name: Build release candidate distributions
         run: python -m build --outdir dist-release-candidate
 
       - name: Validate release candidate distributions
         run: python -m twine check dist-release-candidate/*
+
+      - name: Record candidate artifact identity
+        id: identity
+        run: |
+          source_sha="$(git rev-parse HEAD)"
+          python ci/release_artifact.py create --dist dist-release-candidate --source-sha "$source_sha"
+          echo "source_sha=$source_sha" >> "$GITHUB_OUTPUT"
 
       - name: Install wheel in a clean environment
         shell: bash

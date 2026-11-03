@@ -22,6 +22,7 @@ from agents import Agent, ModelSettings, Runner, Tool, WebSearchTool
 from agents.exceptions import MaxTurnsExceeded, ModelBehaviorError
 from agents.extensions.memory import AdvancedSQLiteSession
 from agents.mcp import MCPServerStdio
+from litellm.exceptions import MidStreamFallbackError
 from openai import APIConnectionError, APIError, APITimeoutError, RateLimitError
 from openai.types.shared.reasoning import Reasoning
 from pydantic import AnyUrl
@@ -1766,7 +1767,7 @@ class OpenAICompatibleModel(LLMBaseModel):
                     logger.exception(f"Model behavior error after {max_retries} attempts: {type(e).__name__}: {e}")
                     raise
 
-            except (httpx.RemoteProtocolError, APIConnectionError, APITimeoutError) as e:
+            except (httpx.RemoteProtocolError, APIConnectionError, APITimeoutError, MidStreamFallbackError) as e:
                 if attempt < max_retries - 1:
                     logger.warning(
                         f"Stream connection error (attempt {attempt + 1}/{max_retries}): {type(e).__name__}: {e}. "

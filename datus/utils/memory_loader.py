@@ -44,7 +44,7 @@ def has_memory(node_name: str) -> bool:
     """Determine if a node should have persistent memory.
 
     Enabled for 'chat' and custom subagents only.
-    Built-in system subagents (gen_sql, gen_report, feedback, etc.), explore, and
+    Built-in system subagents (gen_sql, gen_visual_report, feedback, etc.), explore, and
     compare do not get their own memory file. The feedback node updates the caller
     node's memory instead of maintaining its own.
     """
@@ -56,7 +56,7 @@ def has_memory(node_name: str) -> bool:
 def resolve_memory_node(node_name: str) -> str:
     """Map a node to the memory file it owns when it runs as a *main* agent.
 
-    Built-in system nodes (gen_sql, gen_report, explore, …) do not keep their own
+    Built-in system nodes (gen_sql, gen_visual_report, explore, …) do not keep their own
     memory — when one runs as the top-level interactive agent it reads/writes the
     shared ``chat`` memory. Custom agents own a memory file under their own name.
     Subagents never write memory, so this is only consulted on the main-agent path.

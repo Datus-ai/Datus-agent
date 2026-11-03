@@ -998,7 +998,7 @@ def test_failure_path_uniform(tool: str):
         ("task", {"sql_file_path": "/tmp/q.sql"}, "SQL file generated"),
         ("task", {"semantic_models": ["a.yml", "b.yml"]}, "2 semantic models"),
         ("task", {"sql_summary_file": "x"}, "SQL summary saved"),
-        ("task", {"report_result": {}}, "report ready"),
+        ("task", {"report_slug": "sales"}, "report ready"),
         ("task", {"skill_path": "/tmp", "skill_name": "x"}, 'skill "x" generated'),
         ("task", {"scheduler_result": {}}, "scheduler updated"),
         ("task", {"items_saved": 3}, "feedback saved"),

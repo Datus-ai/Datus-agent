@@ -197,7 +197,7 @@ Run this optional step only after all reference-SQL and semantic-modeling tasks 
    - keep at most the first three dashboard-title tokens;
    - join them as `<platform>_<dashboard>`;
    - if the result does not start with a letter, prefix it with `dashboard_`.
-8. Ask `create-subagent` to create or update both legacy-shaped nodes:
+8. Ask `create-subagent` to create or update both scoped nodes:
 
 ```text
 name: <base-name>
@@ -207,9 +207,9 @@ tools: context_search_tools,db_tools.search_table,db_tools.describe_table,db_too
 scoped_context: <successful active-datasource artifacts>
 
 name: <base-name>_attribution
-node_class: gen_report
+node_class: gen_visual_report
 agent_description: Attribution analysis for <dashboard description, falling back to its title>
-tools: semantic_tools,context_search_tools.list_subject_tree
+tools: semantic_tools.*,db_tools.*,context_search_tools.*
 scoped_context: <the same successful active-datasource artifacts>
 ```
 

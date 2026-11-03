@@ -36,7 +36,7 @@ Auto Memory 是 Datus-agent 的持久化记忆系统，使 Agent 能够跨对话
 |-----------|-------------|
 | `chat`（内置主 Agent） | Yes |
 | 自定义 subagent | Yes |
-| 内置系统 subagent（`gen_sql`、`gen_report` 等） | No |
+| 内置系统 subagent（`gen_sql`、`gen_visual_report` 等） | No |
 | `explore` | No |
 
 只有面向用户的交互式 Agent 拥有记忆，执行特定流水线任务的内置系统 subagent 不启用；当它们通过 `task` 启动时，会以只读形式 inline 继承父 Agent 的记忆作为背景。
