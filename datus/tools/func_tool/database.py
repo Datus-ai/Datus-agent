@@ -237,8 +237,7 @@ class DBFuncTool:
         else:
             self._init_single_db_connector(connector_or_manager)
 
-        model_name = agent_config.active_model().model if agent_config else "gpt-3.5-turbo"
-        self.compressor = DataCompressor(model_name=model_name)
+        self._compressor: Optional[DataCompressor] = None
         self.agent_config = agent_config
         self.sub_agent_name = sub_agent_name
         # Backing field for the ``read_only`` property: this instance's own
@@ -267,6 +266,17 @@ class DBFuncTool:
             self.has_semantic_datasets = False
         if not self.has_semantic_datasets and agent_config is not None:
             _warn_once_if_projection_is_stale(agent_config)
+
+    # Capability consumed by trusted hosts before enabling model-free exports.
+    MODEL_FREE_READS_VERSION = 1
+
+    @property
+    def compressor(self) -> DataCompressor:
+        """Resolve a model only when an agent asks for a token-budgeted preview."""
+        if self._compressor is None:
+            model_name = self.agent_config.active_model().model if self.agent_config else "gpt-3.5-turbo"
+            self._compressor = DataCompressor(model_name=model_name)
+        return self._compressor
 
     @property
     def policy_context(self) -> Dict[str, Any]:

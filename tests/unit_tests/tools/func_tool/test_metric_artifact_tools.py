@@ -856,3 +856,16 @@ def test_metric_artifact_keeps_policy_sql_out_of_public_content(environment, mon
     assert result.sql is None
     assert public_binding["generated_sql"] is None
     assert marker not in env.db.execute_read_enforced.call_args.args[0]
+
+
+def test_metric_tool_initializes_without_model_selection(monkeypatch):
+    from datus.tools.func_tool.semantic_tools import SemanticTools
+    from datus.utils.exceptions import DatusException
+
+    config = SimpleNamespace(active_model=MagicMock(side_effect=DatusException(ErrorCode.MODEL_NOT_SELECTED)))
+    monkeypatch.setattr("datus.tools.func_tool.semantic_tools.MetricRAG", lambda *args: None)
+    tool = SemanticTools(config)
+    config.active_model.assert_not_called()
+    with pytest.raises(DatusException) as error:
+        _ = tool.compressor
+    assert error.value.code == ErrorCode.MODEL_NOT_SELECTED
