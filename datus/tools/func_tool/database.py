@@ -2725,8 +2725,20 @@ class DBFuncTool:
         effective_policy_context = self.policy_context if policy_context is None else policy_context
         try:
             from datus.tools.policy_runtime import PolicyRuntime
+            from datus.tools.read_observer import ReadObservation, notify_read
 
             runtime = PolicyRuntime(self.agent_config)
+            notify_read(
+                ReadObservation(
+                    phase="before_sql",
+                    agent_config=self.agent_config,
+                    policy_context=effective_policy_context,
+                    datasource=effective_datasource,
+                    sql=sql,
+                    runtime_names=runtime.runtime_names,
+                    datasource_configs=getattr(self._db_manager, "_db_configs", None),
+                )
+            )
             decision = runtime.before_sql_read(
                 sql,
                 datasource=effective_datasource,
@@ -2802,6 +2814,18 @@ class DBFuncTool:
                     policies=result_decision.applied_policies,
                     datasource=effective_datasource,
                 )
+            notify_read(
+                ReadObservation(
+                    phase="after_sql",
+                    agent_config=self.agent_config,
+                    policy_context=effective_policy_context,
+                    datasource=effective_datasource,
+                    sql=enforced_sql,
+                    applied_policy_ids=tuple(decision.applied_policies + result_decision.applied_policies),
+                    runtime_names=runtime.runtime_names,
+                    datasource_configs=getattr(self._db_manager, "_db_configs", None),
+                )
+            )
             return result
         except DatusException as exc:
             return ExecuteSQLResult(

@@ -97,6 +97,11 @@ class PolicyRuntime:
                 message=f"Failed to initialize policy runtime: {exc}",
             ) from exc
 
+    @property
+    def runtime_names(self) -> tuple[str, ...]:
+        """Names of runtimes actually instantiated, including no-policy reads."""
+        return tuple(name for name, _runtime in self._runtimes)
+
     def validate_context(self, policy_context: Optional[Dict[str, Any]]) -> PolicyValidationResult:
         context = self._normalize_context(policy_context)
         for plugin_name, runtime in self._runtimes:

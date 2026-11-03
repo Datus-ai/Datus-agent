@@ -153,6 +153,16 @@ def execute_metric_artifact_query(
             detail = {**detail, "definition": match[1].get("detail", {})}
     values = {name: None for name in query.parameter_names()}
     values.update(params or {})
+    from datus.tools.read_observer import ReadObservation, notify_read
+
+    notify_read(
+        ReadObservation(
+            phase="metric_compile",
+            agent_config=getattr(db_tool, "agent_config", None),
+            policy_context=policy_context or {},
+            datasource=binding["datasource"],
+        )
+    )
     compiled = run_async(runtime.query_metrics(**metric_query_arguments(query, values)))
     sql = (compiled.metadata or {}).get("sql")
     if not isinstance(sql, str) or not sql.strip():
