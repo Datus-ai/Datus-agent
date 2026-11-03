@@ -664,3 +664,208 @@ def test_model_files_are_tool_managed(environment, kind, operation):
         result = fs.delete_file(relative)
     assert result.success == 0
     assert path.read_bytes() == original
+
+
+def _install_metric_policy(env, monkeypatch, allowed, *, region="North"):
+    original_binding = env.runtime.artifact_metric_binding
+    env.runtime.artifact_metric_binding = lambda name: {**original_binding(name), "datasets": ["orders"]}
+    env.db.agent_config = SimpleNamespace(active_plugin_names=lambda: {"scope"}, get_plugin_profile=lambda _: {})
+
+    contexts = []
+
+    class MetricPolicy:
+        def before_metric_read(self, *, datasets, where, policy_context):
+            assert datasets == {"orders"}
+            contexts.append(policy_context)
+            return SimpleNamespace(
+                allowed=allowed and policy_context.get("region") == region,
+                where=f"orders.region = '{region}'",
+                applied_policies=["region_scope"],
+                reason="denied",
+            )
+
+    monkeypatch.setattr(
+        "datus.tools.policy_runtime.collect_plugin_policy_runtime_factories",
+        lambda _: {"scope": lambda _: MetricPolicy()},
+    )
+
+    return contexts
+
+
+def test_metric_policy_is_applied_before_compilation(environment, monkeypatch):
+    from datus.tools.read_observer import observe_reads
+
+    env = environment
+    _install_metric_policy(env, monkeypatch, True)
+    events = []
+    with observe_reads(events.append):
+        result, _ = execute_metric_artifact_query(
+            MetricQueryRequest(metric=REF),
+            semantic_tools=env.semantic,
+            db_tool=env.db,
+            project_root=env.root,
+            policy_context={"region": "North"},
+        )
+    assert result.rows == [{"revenue": 17.0}]
+    assert env.runtime.calls[0]["where"] == "orders.region = 'North'"
+    assert events[0].phase == "metric_compile"
+    assert events[0].applied_policy_ids == ("region_scope",)
+
+
+def test_metric_policy_denial_does_not_compile_or_query(environment, monkeypatch):
+    from datus.utils.exceptions import DatusException
+
+    env = environment
+    _install_metric_policy(env, monkeypatch, False)
+    with pytest.raises(DatusException):
+        execute_metric_artifact_query(
+            MetricQueryRequest(metric=REF),
+            semantic_tools=env.semantic,
+            db_tool=env.db,
+            project_root=env.root,
+            policy_context={"region": "North"},
+        )
+    assert env.runtime.calls == []
+    env.db.execute_read_enforced.assert_not_called()
+
+
+def test_metric_policy_requires_resolved_model_datasets(environment, monkeypatch):
+    from datus.utils.exceptions import DatusException
+
+    env = environment
+    _install_metric_policy(env, monkeypatch, True)
+    binding = env.runtime.artifact_metric_binding("revenue")
+    binding.pop("datasets")
+    env.runtime.artifact_metric_binding = lambda _: binding
+    with pytest.raises(DatusException):
+        execute_metric_artifact_query(
+            MetricQueryRequest(metric=REF),
+            semantic_tools=env.semantic,
+            db_tool=env.db,
+            project_root=env.root,
+            policy_context={"region": "North"},
+        )
+    assert env.runtime.calls == []
+    env.db.execute_read_enforced.assert_not_called()
+
+
+@pytest.mark.parametrize("kind", ["report", "dashboard"])
+def test_metric_save_inherits_tool_policy_context(environment, monkeypatch, kind):
+    from datus.tools.read_observer import observe_reads
+
+    env = environment
+    contexts = _install_metric_policy(env, monkeypatch, True)
+    env.db.agent_config.policy_context = {"region": "North"}
+    events = []
+    options = {"params": [], "sample_params": {}} if kind == "dashboard" else {}
+    with observe_reads(events.append):
+        tools, saved = _save(env, kind, **options)
+
+    assert saved.success == 1, saved.error
+    assert contexts == [env.db.policy_context]
+    assert env.runtime.calls[0]["where"] == "orders.region = 'North'"
+    effective_context = env.db.execute_read_enforced.call_args.kwargs["policy_context"]
+    assert effective_context == env.db.policy_context
+    assert [event.phase for event in events] == ["metric_compile", "before_sql", "after_sql"]
+    assert all(event.policy_context is effective_context for event in events)
+    if kind == "report":
+        payload = json.loads((tools.queries_dir / "sales.json").read_text())
+        assert payload["rows"] == [{"revenue": 17.0}]
+    else:
+        payload = json.loads((tools.queries_dir / "sales.params.json").read_text())
+        assert payload["sample_row_count"] == 1
+
+
+@pytest.mark.parametrize("explicit_context", [{"region": "North"}, {}])
+def test_metric_context_override_never_falls_back_to_tool(environment, monkeypatch, explicit_context):
+    from datus.tools.read_observer import observe_reads
+    from datus.utils.exceptions import DatusException
+
+    env = environment
+    contexts = _install_metric_policy(env, monkeypatch, True)
+    env.db.agent_config.policy_context = {"region": "North", "tool_only": True}
+    events = []
+    kwargs = dict(
+        semantic_tools=env.semantic,
+        db_tool=env.db,
+        project_root=env.root,
+        policy_context=explicit_context,
+    )
+    with observe_reads(events.append):
+        if explicit_context:
+            result, _ = execute_metric_artifact_query(MetricQueryRequest(metric=REF), **kwargs)
+            assert result.rows == [{"revenue": 17.0}]
+            assert env.db.execute_read_enforced.call_args.kwargs["policy_context"] is explicit_context
+            assert all(event.policy_context is explicit_context for event in events)
+        else:
+            with pytest.raises(DatusException) as exc:
+                execute_metric_artifact_query(MetricQueryRequest(metric=REF), **kwargs)
+            assert exc.value.code == ErrorCode.POLICY_DENIED
+            assert env.runtime.calls == []
+            env.db.execute_read_enforced.assert_not_called()
+            assert events == []
+    assert contexts == [explicit_context]
+
+
+@pytest.mark.parametrize("kind", ["report", "dashboard"])
+def test_metric_artifact_keeps_policy_sql_out_of_public_content(environment, monkeypatch, kind):
+    env = environment
+    marker = "private_policy_region_7ad9f2"
+    with sqlite3.connect(env.root / "shop.sqlite") as connection:
+        connection.execute("UPDATE orders SET region = ? WHERE region = 'North'", (marker,))
+    _install_metric_policy(env, monkeypatch, True, region=marker)
+    env.db.agent_config.policy_context = {"region": marker}
+    options = {"params": [], "sample_params": {}} if kind == "dashboard" else {}
+
+    tools, saved = _save(env, kind, **options)
+
+    assert saved.success == 1, saved.error
+    executed_sql = env.db.execute_read_enforced.call_args.args[0]
+    assert marker in executed_sql
+    artifact_dir = tools.queries_dir.parent
+    files = {p.relative_to(artifact_dir).as_posix(): p.read_text() for p in artifact_dir.rglob("*") if p.is_file()}
+    assert marker not in json.dumps(files)
+    assert marker not in saved.model_dump_json()
+    recipe = MetricQueryFile.model_validate_json(files["queries/sales.metric.json"])
+    assert recipe.generated_sql is None
+    assert recipe.metric_tables == ["orders"]
+    assert tools._validate_metric_queries(kind) is None
+    insight = build_artifact_insight(json.loads(files["manifest.json"]), files)
+    assert insight.queries[0].source_kind == "metric"
+    assert insight.queries[0].lineage.tables == ["orders"]
+    assert marker not in insight.model_dump_json()
+    output_path, expected = {
+        "report": ("queries/sales.json", {"rows": [{"revenue": 17.0}], "sql": None}),
+        "dashboard": ("queries/sales.params.json", {"sample_row_count": 1}),
+    }[kind]
+    output = json.loads(files[output_path])
+    assert {key: output.get(key) for key in expected} == expected
+
+    # Re-reading the persisted recipe compiles against the reader's context;
+    # no author's SQL is needed, even after reloading the JSON from disk.
+    _install_metric_policy(env, monkeypatch, True, region="South")
+    result, public_binding = execute_metric_artifact_query(
+        recipe,
+        saved=recipe,
+        semantic_tools=env.semantic,
+        db_tool=env.db,
+        project_root=env.root,
+        policy_context={"region": "South"},
+    )
+    assert result.rows == [{"revenue": 8.0}]
+    assert result.sql is None
+    assert public_binding["generated_sql"] is None
+    assert marker not in env.db.execute_read_enforced.call_args.args[0]
+
+
+def test_metric_tool_initializes_without_model_selection(monkeypatch):
+    from datus.tools.func_tool.semantic_tools import SemanticTools
+    from datus.utils.exceptions import DatusException
+
+    config = SimpleNamespace(active_model=MagicMock(side_effect=DatusException(ErrorCode.MODEL_NOT_SELECTED)))
+    monkeypatch.setattr("datus.tools.func_tool.semantic_tools.MetricRAG", lambda *args: None)
+    tool = SemanticTools(config)
+    config.active_model.assert_not_called()
+    with pytest.raises(DatusException) as error:
+        _ = tool.compressor
+    assert error.value.code == ErrorCode.MODEL_NOT_SELECTED

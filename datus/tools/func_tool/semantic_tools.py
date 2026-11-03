@@ -659,16 +659,25 @@ class SemanticTools:
         # ContextSearchTools.list_subject_tree; ContextSearchTools owns RAG discovery.
         self.metric_rag = MetricRAG(agent_config, sub_agent_name)
         # The token budget of an executed result's preview, and of a dry run's data.
-        self.compressor = DataCompressor(
-            model_name=agent_config.active_model().model,
-            token_threshold=METRIC_RESULT_TOKEN_BUDGET,
-        )
+        self._compressor: Optional[DataCompressor] = None
         self._query_metrics_result_cache: OrderedDict[str, dict] = OrderedDict()
 
         # Lazy load runtime and attribution tool
         self._runtime: Optional[DosiRuntime] = None
         self._runtime_load_error: Optional[str] = None
         self._runtime_context_key: Optional[Tuple[str, ...]] = None
+
+    MODEL_FREE_READS_VERSION = 1
+
+    @property
+    def compressor(self) -> DataCompressor:
+        """Artifact compilation does not need an LLM-sized result preview."""
+        if self._compressor is None:
+            self._compressor = DataCompressor(
+                model_name=self.agent_config.active_model().model,
+                token_threshold=METRIC_RESULT_TOKEN_BUDGET,
+            )
+        return self._compressor
 
     @staticmethod
     def _query_data_row_count(data: Any) -> int:

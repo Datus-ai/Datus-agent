@@ -237,8 +237,8 @@ class DBFuncTool:
         else:
             self._init_single_db_connector(connector_or_manager)
 
-        model_name = agent_config.active_model().model if agent_config else "gpt-3.5-turbo"
-        self.compressor = DataCompressor(model_name=model_name)
+        self._compressor: Optional[DataCompressor] = None
+        self._compressor_config = agent_config
         self.agent_config = agent_config
         self.sub_agent_name = sub_agent_name
         # Backing field for the ``read_only`` property: this instance's own
@@ -267,6 +267,17 @@ class DBFuncTool:
             self.has_semantic_datasets = False
         if not self.has_semantic_datasets and agent_config is not None:
             _warn_once_if_projection_is_stale(agent_config)
+
+    # Capability consumed by trusted hosts before enabling model-free exports.
+    MODEL_FREE_READS_VERSION = 1
+
+    @property
+    def compressor(self) -> DataCompressor:
+        """Resolve a model only when an agent asks for a token-budgeted preview."""
+        if self._compressor is None:
+            model_name = self._compressor_config.active_model().model if self._compressor_config else "gpt-3.5-turbo"
+            self._compressor = DataCompressor(model_name=model_name)
+        return self._compressor
 
     @property
     def policy_context(self) -> Dict[str, Any]:
@@ -2725,8 +2736,20 @@ class DBFuncTool:
         effective_policy_context = self.policy_context if policy_context is None else policy_context
         try:
             from datus.tools.policy_runtime import PolicyRuntime
+            from datus.tools.read_observer import ReadObservation, notify_read
 
             runtime = PolicyRuntime(self.agent_config)
+            notify_read(
+                ReadObservation(
+                    phase="before_sql",
+                    agent_config=self.agent_config,
+                    policy_context=effective_policy_context,
+                    datasource=effective_datasource,
+                    sql=sql,
+                    runtime_names=runtime.runtime_names,
+                    datasource_configs=getattr(self._db_manager, "_db_configs", None),
+                )
+            )
             decision = runtime.before_sql_read(
                 sql,
                 datasource=effective_datasource,
@@ -2802,6 +2825,18 @@ class DBFuncTool:
                     policies=result_decision.applied_policies,
                     datasource=effective_datasource,
                 )
+            notify_read(
+                ReadObservation(
+                    phase="after_sql",
+                    agent_config=self.agent_config,
+                    policy_context=effective_policy_context,
+                    datasource=effective_datasource,
+                    sql=enforced_sql,
+                    applied_policy_ids=tuple(decision.applied_policies + result_decision.applied_policies),
+                    runtime_names=runtime.runtime_names,
+                    datasource_configs=getattr(self._db_manager, "_db_configs", None),
+                )
+            )
             return result
         except DatusException as exc:
             return ExecuteSQLResult(

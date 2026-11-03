@@ -244,6 +244,9 @@ def build_artifact_insight(manifest: dict, files: dict[str, str]) -> ArtifactIns
             is_template=parsed_manifest.kind == "dashboard" and metric is None,
         )
         if metric:
+            if generated_sql is None and metric.metric_tables:
+                lineage.tables = list(metric.metric_tables)
+                lineage.status = "partial"
             lineage.origin = "metric_sample" if template else "metric_query"
             if template and lineage.status == "parsed":
                 lineage.status = "partial"

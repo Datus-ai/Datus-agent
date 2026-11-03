@@ -55,7 +55,8 @@ class MetricQueryFile(MetricQueryRequest):
     metric_detail: dict[str, Any]
     metric_tables: list[str] = Field(default_factory=list)
     captured_at: str
-    generated_sql: str = Field(min_length=1)
+    # Optional diagnostics only; metric-policy-expanded SQL is never published.
+    generated_sql: str | None = Field(default=None, min_length=1)
 
     @model_validator(mode="after")
     def identity_matches(self) -> MetricQueryFile:
