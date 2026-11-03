@@ -238,6 +238,7 @@ class DBFuncTool:
             self._init_single_db_connector(connector_or_manager)
 
         self._compressor: Optional[DataCompressor] = None
+        self._compressor_config = agent_config
         self.agent_config = agent_config
         self.sub_agent_name = sub_agent_name
         # Backing field for the ``read_only`` property: this instance's own
@@ -274,7 +275,7 @@ class DBFuncTool:
     def compressor(self) -> DataCompressor:
         """Resolve a model only when an agent asks for a token-budgeted preview."""
         if self._compressor is None:
-            model_name = self.agent_config.active_model().model if self.agent_config else "gpt-3.5-turbo"
+            model_name = self._compressor_config.active_model().model if self._compressor_config else "gpt-3.5-turbo"
             self._compressor = DataCompressor(model_name=model_name)
         return self._compressor
 
