@@ -671,18 +671,25 @@ def _install_metric_policy(env, monkeypatch, allowed):
     env.runtime.artifact_metric_binding = lambda name: {**original_binding(name), "datasets": ["orders"]}
     env.db.agent_config = SimpleNamespace(active_plugin_names=lambda: {"scope"}, get_plugin_profile=lambda _: {})
 
+    contexts = []
+
     class MetricPolicy:
         def before_metric_read(self, *, datasets, where, policy_context):
             assert datasets == {"orders"}
-            assert policy_context == {"region": "North"}
+            contexts.append(policy_context)
             return SimpleNamespace(
-                allowed=allowed, where="orders.region = 'North'", applied_policies=["region_scope"], reason="denied"
+                allowed=allowed and policy_context.get("region") == "North",
+                where="orders.region = 'North'",
+                applied_policies=["region_scope"],
+                reason="denied",
             )
 
     monkeypatch.setattr(
         "datus.tools.policy_runtime.collect_plugin_policy_runtime_factories",
         lambda _: {"scope": lambda _: MetricPolicy()},
     )
+
+    return contexts
 
 
 def test_metric_policy_is_applied_before_compilation(environment, monkeypatch):
@@ -740,3 +747,61 @@ def test_metric_policy_requires_resolved_model_datasets(environment, monkeypatch
         )
     assert env.runtime.calls == []
     env.db.execute_read_enforced.assert_not_called()
+
+
+@pytest.mark.parametrize("kind", ["report", "dashboard"])
+def test_metric_save_inherits_tool_policy_context(environment, monkeypatch, kind):
+    from datus.tools.read_observer import observe_reads
+
+    env = environment
+    contexts = _install_metric_policy(env, monkeypatch, True)
+    env.db.agent_config.policy_context = {"region": "North"}
+    events = []
+    options = {"params": [], "sample_params": {}} if kind == "dashboard" else {}
+    with observe_reads(events.append):
+        tools, saved = _save(env, kind, **options)
+
+    assert saved.success == 1, saved.error
+    assert contexts == [env.db.policy_context]
+    assert env.runtime.calls[0]["where"] == "orders.region = 'North'"
+    effective_context = env.db.execute_read_enforced.call_args.kwargs["policy_context"]
+    assert effective_context == env.db.policy_context
+    assert [event.phase for event in events] == ["metric_compile", "before_sql", "after_sql"]
+    assert all(event.policy_context is effective_context for event in events)
+    if kind == "report":
+        payload = json.loads((tools.queries_dir / "sales.json").read_text())
+        assert payload["rows"] == [{"revenue": 17.0}]
+    else:
+        payload = json.loads((tools.queries_dir / "sales.params.json").read_text())
+        assert payload["sample_row_count"] == 1
+
+
+@pytest.mark.parametrize("explicit_context", [{"region": "North"}, {}])
+def test_metric_context_override_never_falls_back_to_tool(environment, monkeypatch, explicit_context):
+    from datus.tools.read_observer import observe_reads
+    from datus.utils.exceptions import DatusException
+
+    env = environment
+    contexts = _install_metric_policy(env, monkeypatch, True)
+    env.db.agent_config.policy_context = {"region": "North", "tool_only": True}
+    events = []
+    kwargs = dict(
+        semantic_tools=env.semantic,
+        db_tool=env.db,
+        project_root=env.root,
+        policy_context=explicit_context,
+    )
+    with observe_reads(events.append):
+        if explicit_context:
+            result, _ = execute_metric_artifact_query(MetricQueryRequest(metric=REF), **kwargs)
+            assert result.rows == [{"revenue": 17.0}]
+            assert env.db.execute_read_enforced.call_args.kwargs["policy_context"] is explicit_context
+            assert all(event.policy_context is explicit_context for event in events)
+        else:
+            with pytest.raises(DatusException) as exc:
+                execute_metric_artifact_query(MetricQueryRequest(metric=REF), **kwargs)
+            assert exc.value.code == ErrorCode.POLICY_DENIED
+            assert env.runtime.calls == []
+            env.db.execute_read_enforced.assert_not_called()
+            assert events == []
+    assert contexts == [explicit_context]

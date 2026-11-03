@@ -156,6 +156,8 @@ def execute_metric_artifact_query(
     from datus.tools.policy_runtime import PolicyRuntime
     from datus.tools.read_observer import ReadObservation, notify_read
 
+    # Match the SQL read path: an explicit empty context must not inherit tool privileges.
+    effective_policy_context = db_tool.policy_context if policy_context is None else policy_context
     config = getattr(db_tool, "agent_config", None)
     policies = PolicyRuntime(config)
     datasets = binding.get("datasets")
@@ -167,7 +169,7 @@ def execute_metric_artifact_query(
     decision = policies.before_metric_read(
         datasets=set(datasets or []),
         where=arguments.get("where"),
-        policy_context=policy_context,
+        policy_context=effective_policy_context,
     )
     if not decision.allowed:
         raise DatusException(ErrorCode.POLICY_DENIED, message=decision.reason or "Metric policy denied the query")
@@ -176,7 +178,7 @@ def execute_metric_artifact_query(
         ReadObservation(
             phase="metric_compile",
             agent_config=config,
-            policy_context=policy_context or {},
+            policy_context=effective_policy_context,
             datasource=binding["datasource"],
             applied_policy_ids=tuple(decision.applied_policies),
             runtime_names=policies.runtime_names,
@@ -194,7 +196,7 @@ def execute_metric_artifact_query(
     if oversize is not None:
         raise ValueError(oversize.error)
     result = db_tool.execute_read_enforced(
-        sql, connector, datasource=datasource, result_format="arrow", policy_context=policy_context
+        sql, connector, datasource=datasource, result_format="arrow", policy_context=effective_policy_context
     )
     if not result.success:
         if getattr(result, "error_code", None) == ErrorCode.POLICY_DENIED.code:
