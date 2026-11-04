@@ -514,7 +514,13 @@ class TestChatTaskManagerBehavior:
         assert captured["queue_during_run"] is task.pending_input_queue
 
     @pytest.mark.asyncio
-    async def test_run_loop_auto_continues_residual_mid_run_message(self, real_agent_config):
+    @pytest.mark.parametrize(
+        ("request_limits", "expected_limit"),
+        [({}, 200), ({"max_turns": 2}, 2), ({"max_turns": 100}, 100)],
+    )
+    async def test_run_loop_auto_continues_residual_mid_run_message(
+        self, real_agent_config, request_limits, expected_limit
+    ):
         """A message queued after the final turn (never seen by the SDK filter)
         is drained after the run, echoed as a user_insert frame, and run in a
         fresh pass — instead of being silently dropped."""
@@ -523,17 +529,20 @@ class TestChatTaskManagerBehavior:
 
         class FakeNode:
             session_id = "s-cont"
+            max_turns = 200
 
             def __init__(self):
                 self.pending_input_queue = None
                 self.input = None
                 self.run_count = 0
+                self.run_limits = []
 
             def get_node_name(self):
                 return "chat"
 
             async def execute_stream_with_interactions(self, action_history_manager):
                 self.run_count += 1
+                self.run_limits.append(self.max_turns)
                 if self.run_count == 1:
                     # Simulate a mid-run insert that landed after the final
                     # turn — the SDK's call_model_input_filter never sees it.
@@ -557,10 +566,15 @@ class TestChatTaskManagerBehavior:
         manager._create_node_input = lambda **kwargs: SimpleNamespace(**kwargs)  # type: ignore[method-assign]
         task = ChatTask(session_id="s-cont", asyncio_task=MagicMock())
 
-        await manager._run_loop(task, real_agent_config, StreamChatInput(message="explore", session_id="s-cont"))
+        await manager._run_loop(
+            task,
+            real_agent_config,
+            StreamChatInput(message="explore", session_id="s-cont", **request_limits),
+        )
 
         # Two passes: the original run + one auto-continuation for the residual.
         assert task.node.run_count == 2
+        assert task.node.run_limits == [expected_limit, expected_limit]
         # The residual was echoed to the client as a user bubble.
         user_events = [
             e for e in task.events if e.event == "message" and getattr(e.data.payload, "role", None) == "user"

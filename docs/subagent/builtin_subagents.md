@@ -205,7 +205,7 @@ The explore subagent is a lightweight, read-only assistant designed for fast con
 ### Key Features
 
 - **Strictly read-only**: Never modifies data, files, or database records. Only SELECT queries are allowed, always with LIMIT.
-- **Fast exploration**: Limited to 15 conversation turns for quick context gathering.
+- **Fast exploration**: Defaults to 100 conversation turns; configure `max_turns` for a smaller exploration budget.
 - **Three exploration directions**:
   - **Schema+Sample**: Discover tables, columns, types, constraints, and sample data
   - **Knowledge**: Search metrics, reference SQL, business rules, and domain knowledge

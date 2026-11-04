@@ -801,6 +801,10 @@ class ChatTaskManager:
                 )
 
             node = await asyncio.to_thread(_init_node)
+            # Each request owns its node, including any continuation passes.
+            # An omitted request limit must preserve the configured node limit.
+            if "max_turns" in request.model_fields_set:
+                node.max_turns = request.max_turns
             task.node = node
             task.previous_message_id = await asyncio.to_thread(
                 self._max_message_id, agent_config, node.session_id, user_id

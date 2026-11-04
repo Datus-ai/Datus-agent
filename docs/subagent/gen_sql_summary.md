@@ -79,7 +79,7 @@ agentic_nodes:
 | Parameter | Required | Description | Default |
 |-----------|----------|-------------|---------|
 | `model` | No | LLM model to use | Uses default configured model |
-| `max_turns` | No | Maximum conversation turns | 30 |
+| `max_turns` | No | Maximum conversation turns | 100 |
 
 ### Subject Tree Categorization
 
