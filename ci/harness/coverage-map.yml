@@ -2046,6 +2046,8 @@ execution:
         - datus/tools/func_tool/database.py
       targets:
         - tests/unit_tests/agent/node/
+        - tests/unit_tests/api/services/test_chat_task_manager.py
+        - tests/unit_tests/api/services/test_dashboard_service.py
         - tests/unit_tests/api/services/test_database_service.py
         - tests/unit_tests/cli/test_chat_commands.py
         - tests/unit_tests/test_mcp_server.py

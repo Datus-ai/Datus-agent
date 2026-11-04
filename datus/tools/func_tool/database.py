@@ -227,12 +227,19 @@ class DBFuncTool:
                 raise ValueError("agent_config is required when using DBManager mode")
             self._db_manager = connector_or_manager
             self._default_datasource = default_datasource or (agent_config.current_datasource if agent_config else "")
-            self._default_database = default_database or ""
+            runtime_getter = getattr(agent_config, "runtime_db_context", None)
+            runtime = runtime_getter() if callable(runtime_getter) else {}
+            self._execution_context = runtime if isinstance(runtime, dict) else {}
+            self._default_database = default_database or (
+                self._execution_context.get("database", "")
+                if self._execution_context.get("datasource") == self._default_datasource
+                else ""
+            )
             self._datasources = list(agent_config.current_db_configs().keys()) if agent_config else []
             self._connector_cache: OrderedDict[tuple, BaseSqlConnector] = OrderedDict()
             self._connector_cache_size = connector_cache_size
             # Bind the primary connector to (default datasource, default database).
-            self._primary_connector = self._db_manager.get_conn(self._default_datasource, self._default_database)
+            self._primary_connector = self._resolve_connector(self._default_datasource, self._default_database)
             self._is_multi_connector = True
         else:
             self._init_single_db_connector(connector_or_manager)
@@ -545,6 +552,44 @@ class DBFuncTool:
         connector = self._get_connector(datasource, database)
         return connector.quote_identifier(name)
 
+    def connector_for_execution_context(self, context):
+        """Restore a persisted artifact query's binding independently of this turn."""
+        from datus.schemas.database_context import DatabaseExecutionContext
+
+        coordinates = DatabaseExecutionContext.from_mapping(context)
+        if self._db_manager is None:
+            return self.connector
+        return self._db_manager.get_conn(coordinates.datasource, coordinates.database, context=coordinates)
+
+    def connector_for_datasource_default(self, datasource: Optional[str] = None):
+        """Replay legacy queries using configured defaults, independent of the turn."""
+        if self._db_manager is None:
+            return self.connector
+        return self._db_manager.get_conn(datasource or self._default_datasource)
+
+    def execution_context(self, connector, datasource: Optional[str] = "") -> Dict[str, str]:
+        from datus.schemas.database_context import DatabaseExecutionContext
+
+        return DatabaseExecutionContext.from_mapping(
+            {
+                "datasource": datasource or getattr(self, "_default_datasource", ""),
+                "catalog": getattr(connector, "catalog_name", ""),
+                "database": self._active_database_of(connector),
+                "schema": getattr(connector, "schema_name", ""),
+            }
+        ).to_dict(include_empty=True)
+
+    def _resolve_connector(self, datasource: str, database: str):
+        """Bind native and pooled connections without mutating a shared connection."""
+        context = getattr(self, "_execution_context", {})
+        if context.get("datasource") == datasource and context.get("database", "") == database:
+            from datus.schemas.database_context import DatabaseExecutionContext
+
+            return self._db_manager.get_conn(
+                datasource, database, context=DatabaseExecutionContext.from_mapping(context)
+            )
+        return self._db_manager.get_conn(datasource, database)
+
     def _get_connector(self, datasource: Optional[str] = None, database: str = "") -> BaseSqlConnector:
         """
         Get connector for the specified (datasource, database).
@@ -568,7 +613,7 @@ class DBFuncTool:
         # Multi-connector mode: route by (datasource, database). DBManager.get_conn binds
         # the connector to the database (selects the file for a glob datasource).
         ds = datasource or self._default_datasource
-        db = database or ("" if datasource else self._default_database)
+        db = database or (self._default_database if ds == self._default_datasource else "")
         key = (ds, db)
 
         # Check cache
@@ -578,7 +623,7 @@ class DBFuncTool:
             return self._connector_cache[key]
 
         try:
-            connector = self._db_manager.get_conn(ds, db)
+            connector = self._resolve_connector(ds, db)
         except DatusException:
             # Preserve database-level routing errors (e.g. invalid database name with the
             # list of available databases) so ``/database`` failures stay diagnosable.
@@ -1191,6 +1236,9 @@ class DBFuncTool:
             "execute_ddl",
             "get_table_ddl",
             "quote_sql_identifier",
+            "connector_for_execution_context",
+            "connector_for_datasource_default",
+            "execution_context",
         }
     )
 
@@ -2701,7 +2749,8 @@ class DBFuncTool:
             )
             if result.success:
                 return FuncToolResult(
-                    result=self.compressor.compress(result.sql_return) if compress else result.sql_return
+                    result=self.compressor.compress(result.sql_return) if compress else result.sql_return,
+                    execution_context=self.execution_context(connector, datasource),
                 )
             return FuncToolResult(success=0, error=result.error)
         except Exception as e:
@@ -3142,7 +3191,9 @@ class DBFuncTool:
                 }
                 if target is not None:
                     result_payload["deliverable_target"] = target.model_dump(by_alias=True, exclude_none=True)
-                return FuncToolResult(result=result_payload)
+                return FuncToolResult(
+                    result=result_payload, execution_context=self.execution_context(connector, datasource)
+                )
             else:
                 return FuncToolResult(success=0, error=result.error)
         except Exception as e:
@@ -3298,7 +3349,9 @@ class DBFuncTool:
                 if row_count is not None:
                     target = target.model_copy(update={"rows_affected": row_count})
                 result_payload["deliverable_target"] = target.model_dump(by_alias=True, exclude_none=True)
-            return FuncToolResult(result=result_payload)
+            return FuncToolResult(
+                result=result_payload, execution_context=self.execution_context(connector, datasource)
+            )
         except Exception as e:
             return FuncToolResult(success=0, error=f"Write execution failed: {str(e)}")
 

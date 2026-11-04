@@ -110,6 +110,7 @@ class QueryTemplateMetaFile(BaseModel):
 
     slug: str = Field(..., min_length=1, max_length=64, pattern=r"^[a-z0-9_]+$")
     description: str = Field(default="")
+    execution_context: Optional[Dict[str, str]] = None
     datasource: str
     params: List[TemplateParamDecl] = Field(..., description="Parameters declared by the SQL template")
     columns: List[QueryColumnMeta] = Field(..., min_length=1, description="Inferred from the sample render")
@@ -119,6 +120,8 @@ class QueryTemplateMetaFile(BaseModel):
 
     @model_validator(mode="after")
     def _params_unique(self) -> "QueryTemplateMetaFile":
+        if self.execution_context and self.execution_context.get("datasource") != self.datasource:
+            raise ValueError("query execution context must match its datasource")
         seen: set[str] = set()
         for p in self.params:
             if p.name in seen:

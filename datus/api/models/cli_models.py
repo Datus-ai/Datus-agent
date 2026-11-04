@@ -184,9 +184,13 @@ class ChatInput(BaseModel):
         None,
         description="Datasource (connection profile) override; selects which configured datasource to use",
     )
-    catalog: Optional[str] = Field(None, description="Database catalog for context")
-    database: Optional[str] = Field(None, description="Database name for context")
-    db_schema: Optional[str] = Field(None, description="Database schema for context")
+    catalog: Optional[str] = Field(
+        None, description="Catalog; omit/null to inherit, empty to clear; changes reset database/schema"
+    )
+    database: Optional[str] = Field(
+        None, description="Database; omit/null to inherit, empty to clear; changes reset schema"
+    )
+    db_schema: Optional[str] = Field(None, description="Schema; omit/null to inherit, empty to use the engine default")
 
     # Chat configuration
     max_turns: int = Field(default=100, description="Maximum conversation turns per interaction")
@@ -566,6 +570,8 @@ class SSESessionData(BaseModel):
     session_id: str = Field(..., description="Service session ID")
     llm_session_id: Optional[str] = Field(None, description="LLM session ID")
 
+    execution_context: Optional[Dict[str, str]] = Field(None, description="Resolved non-secret execution coordinates")
+
 
 class SSEEndData(BaseModel):
     """Data structure for SSE end events."""
@@ -660,6 +666,8 @@ class ChatHistoryData(BaseModel):
     """Chat history data."""
 
     messages: List[SSEMessagePayload] = Field(default_factory=list, description="chat history messages")
+
+    execution_context: Optional[Dict[str, str]] = Field(None, description="Last effective database context")
 
 
 class ChatHistoryTurn(BaseModel):

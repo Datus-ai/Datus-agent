@@ -8,9 +8,8 @@ Covers:
 - ``_get_session_system_prompt``: build-once / replay-verbatim across turns and
   node instances, rebuild on a meta change (model switch), no caching without a
   session id.
-- ``_system_prompt_snapshot_meta``: identity keys exclude per-turn live values
-  (datasource, profile, date) but DO include the response language and bound
-  database skill, which can change between Chat API requests.
+- ``_system_prompt_snapshot_meta``: identity keys include the resolved datasource/database/schema, prompt template,
+  response language and bound database skill, while excluding the date/profile.
 - ``_build_datasource_reminder``: live per-turn datasource + dialect line for
   the user-message ``<system_reminder>`` envelope; never mentions the
   permission profile.
@@ -183,13 +182,13 @@ class TestGetSessionSystemPrompt:
         assert node.build_count == 2
         assert list(tmp_path.glob("*.sysprompt.json")) == []
 
-    def test_datasource_switch_does_not_rebuild(self, session_manager):
-        """Without DB tools, datasource changes do not affect the system prompt."""
+    def test_datasource_switch_rebuilds(self, session_manager):
+        """Target-specific prompts must not survive a datasource change."""
         node = _SnapshotNode(session_manager, _agent_config(current_datasource="main"))
         node._get_session_system_prompt(prompt_version="1.2")
         node.agent_config = _agent_config(current_datasource="dev")
         node._get_session_system_prompt(prompt_version="1.2")
-        assert node.build_count == 1
+        assert node.build_count == 2
 
     def test_cache_hit_mounts_lazy_tools(self, session_manager):
         """A replayed prompt advertises skill/bash/memory tools — the hit path
@@ -325,7 +324,9 @@ class TestBoundDatabaseSkillSnapshot:
         assert next_node._get_session_system_prompt("1.2") == second
         assert next_node.build_count == 1
 
-    def test_same_dialect_across_datasources_reuses_snapshot(self, session_manager, snapshot_skills, snapshot_db_tools):
+    def test_same_dialect_across_datasources_rebuilds_snapshot(
+        self, session_manager, snapshot_skills, snapshot_db_tools
+    ):
         first_node = _DialectSnapshotNode(
             session_manager,
             _agent_config(current_datasource="sqlite_a"),
@@ -341,13 +342,11 @@ class TestBoundDatabaseSkillSnapshot:
         )
 
         assert next_node._get_session_system_prompt("1.2") == first
-        assert next_node.build_count == 0
+        assert next_node.build_count == 1
         assert '<required_skill name="db-sqlite-sql">' in first
         assert '<required_skill name="db-duckdb-sql">' not in first
 
-    def test_without_db_tools_datasource_changes_reuse_prompt_without_dialect_skills(
-        self, session_manager, snapshot_skills
-    ):
+    def test_without_db_tools_datasource_changes_rebuild_without_dialect_skills(self, session_manager, snapshot_skills):
         services = SimpleNamespace(
             datasources={"sqlite_a": SimpleNamespace(type=DBType.SQLITE), "duckdb": SimpleNamespace(type=DBType.DUCKDB)}
         )
@@ -360,7 +359,7 @@ class TestBoundDatabaseSkillSnapshot:
         )
 
         assert next_node._get_session_system_prompt("1.2") == first
-        assert next_node.build_count == 0
+        assert next_node.build_count == 1
         assert '<required_skill name="db-' not in first
         assert '<required_skill name="snapshot-guide">' in first
 
@@ -399,15 +398,10 @@ class TestSnapshotMeta:
     def test_meta_is_exactly_the_identity_keys(self, session_manager):
         node = _SnapshotNode(session_manager, _agent_config(current_datasource="main"))
         meta = node._system_prompt_snapshot_meta("1.2")
-        assert meta == {
-            "node_name": "chat",
-            "system_prompt_template": "chat_system",
-            "prompt_version": "1.2",
-            "model_name": "openai:gpt-4.1",
-            "language": "",
-            "database_skill": "",
-            "injected_skills_sha256": hashlib.sha256(b"").hexdigest(),
-        }
+        assert meta["node_name"] == "chat"
+        assert meta["model_name"] == "openai:gpt-4.1"
+        assert meta["execution_context"] == '{"datasource":"main"}'
+        assert meta["injected_skills_sha256"] == hashlib.sha256(b"").hexdigest()
 
     def test_the_template_is_part_of_the_identity(self, session_manager):
         """``node_name`` does not imply it any more.
@@ -956,3 +950,75 @@ class TestTemplateHygiene:
         assert "available_datasources" in source
         assert "workspace_root" in source
         assert "Current datasource: {{ datasource }}" not in source
+
+
+def test_mysql_source_switch_replaces_target_specific_prompt(session_manager):
+    class TargetNode(_SnapshotNode):
+        def _get_database_skill_candidates(self):
+            return ["db-mysql-sql"]
+
+        def _required_skill_context(self):
+            return "unchanged modeling rules"
+
+        def _get_system_prompt(self, prompt_version=None, template_context=None):
+            return f"Active datasource: {self.agent_config.current_datasource}"
+
+    a = TargetNode(session_manager, _agent_config(current_datasource="reca"))
+    assert a._get_session_system_prompt() == "Active datasource: reca"
+    b = TargetNode(session_manager, _agent_config(current_datasource="ik"))
+    assert b._get_session_system_prompt() == "Active datasource: ik"
+
+
+def test_resolved_api_context_is_authoritative_for_metric_tools(session_manager):
+    config = _agent_config(current_datasource="warehouse")
+    config.runtime_db_context = lambda: {
+        "datasource": "warehouse",
+        "catalog": "selected_catalog",
+        "database": "selected_db",
+        "schema": "selected_schema",
+    }
+    node = _SnapshotNode(session_manager, config)
+    node.input = SimpleNamespace(database="stale_db", catalog="stale_catalog", db_schema="stale_schema")
+    assert node._semantic_runtime_db_context() == {
+        "datasource": "warehouse",
+        "catalog": "selected_catalog",
+        "database": "selected_db",
+        "schema": "selected_schema",
+        "db_schema": "selected_schema",
+    }
+
+
+@pytest.mark.parametrize("override", [None, "1.0"])
+def test_digest_and_render_use_the_same_resolved_template_version(session_manager, monkeypatch, override):
+    from unittest.mock import Mock
+
+    from datus.prompts import prompt_manager
+
+    manager = Mock()
+    manager.template_fingerprint.return_value = "selected-template-digest"
+    monkeypatch.setattr(prompt_manager, "get_prompt_manager", lambda **kwargs: manager)
+    node = _SnapshotNode(session_manager, _agent_config(), node_config={"prompt_version": "9.9"})
+    meta = node._system_prompt_snapshot_meta(override)
+    selected = override if override is not None else node.agent_config.prompt_version
+    manager.template_fingerprint.assert_called_once_with(node._system_prompt_template_name(), version=selected)
+    assert meta["prompt_version"] == selected
+    assert meta["prompt_template_sha256"] == "selected-template-digest"
+
+
+@pytest.mark.parametrize("operation", ["load_session_meta", "save_session_meta", "get_max_user_turn_number"])
+def test_execution_context_metadata_database_failure_does_not_abort_the_turn(session_manager, monkeypatch, operation):
+    import sqlite3
+    from unittest.mock import Mock
+
+    from datus.agent.node import agentic_node
+
+    node = _SnapshotNode(session_manager, _agent_config(current_datasource="warehouse"))
+    node.input = SimpleNamespace(database="analytics", catalog="", db_schema="")
+    monkeypatch.setattr(session_manager, operation, Mock(side_effect=sqlite3.DatabaseError("metadata unavailable")))
+    logger = Mock()
+    monkeypatch.setattr(agentic_node, "logger", logger)
+    node._record_execution_context()
+    assert node._get_session_system_prompt() == "SYS#1"
+    logger.debug.assert_called_once_with(
+        "Failed to record execution context for session %s", node.session_id, exc_info=True
+    )

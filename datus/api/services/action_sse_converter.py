@@ -177,6 +177,12 @@ def _normalize_tool_result_payload(
     }
     if error:
         payload["error"] = error
+    if isinstance(raw_result, dict) and isinstance(raw_result.get("execution_context"), dict):
+        from datus.schemas.database_context import DatabaseExecutionContext
+
+        coordinates = DatabaseExecutionContext.from_mapping(raw_result["execution_context"]).to_dict()
+        if coordinates:
+            payload["execution_context"] = coordinates
     return payload
 
 

@@ -693,7 +693,18 @@ class ChatService:
                 stored_messages=len(raw_messages),
                 returned_messages=len(sse_messages),
             )
-            return Result[ChatHistoryData](success=True, data=ChatHistoryData(messages=sse_messages))
+            from datus.schemas.database_context import EXECUTION_CONTEXT_META_KEY, DatabaseExecutionContext
+
+            raw_context = session_manager.load_session_meta(session_id, EXECUTION_CONTEXT_META_KEY)
+            context = None
+            if raw_context:
+                try:
+                    context = DatabaseExecutionContext.from_mapping(json.loads(raw_context)).to_dict()
+                except (ValueError, TypeError, AttributeError):
+                    logger.warning("Ignoring malformed execution context for session %s", session_id)
+            return Result[ChatHistoryData](
+                success=True, data=ChatHistoryData(messages=sse_messages, execution_context=context)
+            )
 
         except Exception as e:
             logger.error(f"Failed to get history for session {session_id}: {e}")
