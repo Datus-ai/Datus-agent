@@ -296,7 +296,10 @@ class DBManager:
     ) -> BaseSqlConnector:
         """Connector for ``(datasource, database)``.
 
-        ``database`` empty → the datasource's default database. For a glob (``path_pattern``)
+        Without ``context``, ``database`` empty selects the datasource default.
+        A resolved ``context`` is authoritative and requires a concrete database;
+        an empty one is rejected before opening or reusing a connection.
+        For a glob (``path_pattern``)
         datasource each matched file is a database; for server DBs ``database`` overrides the
         configured one (cloned into the connection URI).
         """
@@ -396,18 +399,16 @@ class DBManager:
     def _init_connection(
         self, datasource: str, database: str, *, context: Optional[DatabaseExecutionContext] = None
     ) -> BaseSqlConnector:
-        configured = self._db_configs.get(datasource)
-        if (
-            context is not None
-            and configured is not None
-            and not database
-            and not context.database
-            and context.catalog != (configured.catalog or "")
-            and configured.database
-        ):
-            raise ValueError(
-                "Select a database explicitly after changing catalog; the previous catalog's default is invalid"
-            )
+        if context is not None:
+            if context.datasource != datasource or (database and database != context.database):
+                raise ValueError("Connection context does not match its datasource/database")
+            if not context.database:
+                raise ValueError(
+                    "Select a database explicitly; a resolved empty database cannot use a connection default"
+                )
+            # Only the context-free legacy path interprets an empty argument
+            # as a request for the configured default.
+            database = context.database
         db_name, db_config = self._resolve_db_config(datasource, database)
         cache_key = db_name
         if context is not None:

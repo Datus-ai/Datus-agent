@@ -356,6 +356,40 @@ class TestDosiDbProfile:
         assert cleared == {"type": "postgresql", "database": "analytics"}
         assert profile["schema"] == "tenant_a"
 
+    @pytest.mark.parametrize(
+        "overrides,expected_schema",
+        [
+            ({"database_name": "analytics"}, "tenant_a"),
+            ({"catalog_name": "cat_a"}, "tenant_a"),
+            ({"database_name": "analytics", "schema_name": "", "catalog_name": None}, "tenant_a"),
+            ({"schema_name": "tenant_b"}, "tenant_b"),
+        ],
+    )
+    def test_cli_partial_overrides_preserve_unspecified_configured_coordinates(
+        self, tmp_path, overrides, expected_schema
+    ):
+        configured = DbConfig(type="postgresql", database="analytics", catalog="cat_a", schema="tenant_a", default=True)
+        cfg = AgentConfig(
+            nodes={},
+            home=str(tmp_path),
+            target="mock",
+            models={"mock": {"type": "openai", "api_key": "unused", "model": "unused"}},
+            services={"datasources": {"warehouse": configured.to_dict()}},
+            skip_init_dirs=True,
+        )
+        cfg.override_by_args(**overrides)
+        context = cfg.runtime_db_context()
+        assert context["database"] == "analytics"
+        assert context["catalog"] == "cat_a"
+        assert context["schema"] == expected_schema
+        compiler = _apply_runtime_db_context_to_dosi_profile(
+            _db_config_to_dosi_profile(cfg.current_db_config()), context
+        )
+        assert compiler["database"] == "analytics"
+        assert compiler["catalog"] == "cat_a"
+        assert compiler["schema"] == expected_schema
+        assert cfg.current_db_config().schema == "tenant_a"
+
 
 # ---------------------------------------------------------------------------
 # DatasetDbConfig — BI serving-layer config aligned with DbConfig

@@ -2206,6 +2206,13 @@ class AgentConfig:
             "schema": kwargs.get("schema") or kwargs.get("db_schema") or kwargs.get("schema_name"),
         }
         if any(value for key, value in runtime_db_context.items() if key != "datasource"):
+            # CLI args are a partial override (argparse uses empty values for
+            # absent flags), whereas set_runtime_db_context pins a complete
+            # resolved snapshot. Fill omitted levels before pinning so they
+            # cannot be mistaken for explicit API clears downstream.
+            configured = self.current_db_config() if self.current_datasource else None
+            for coordinate in ("catalog", "database", "schema"):
+                runtime_db_context[coordinate] = runtime_db_context[coordinate] or getattr(configured, coordinate, "")
             self.set_runtime_db_context(runtime_db_context)
         if kwargs.get("benchmark", ""):
             benchmark_platform = kwargs["benchmark"]

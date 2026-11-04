@@ -52,6 +52,36 @@ def test_changed_catalog_does_not_reintroduce_the_old_catalog_database_default()
         manager.get_conn("warehouse", context=context)
 
 
+@pytest.mark.parametrize("engine", ["postgresql", "mysql", "starrocks", "sqlite", "duckdb"])
+def test_resolved_empty_database_cannot_reuse_a_configured_or_cached_database(engine):
+    configured = DbConfig(type=engine, catalog="cat_a", database="analytics", schema="tenant_a")
+    manager = DBManager({"warehouse": configured})
+    manager._build_conn = Mock(return_value=SimpleNamespace(database="analytics", connect=lambda: None))
+    assert manager.get_conn("warehouse").database == "analytics"
+    context = DatabaseExecutionContext(datasource="warehouse", catalog="cat_a")
+    with pytest.raises(ValueError, match="Select a database explicitly"):
+        manager.get_conn("warehouse", context=context)
+    manager._build_conn.assert_called_once()
+    assert configured.database == "analytics"
+
+
+def test_resolved_database_is_authoritative_even_when_the_positional_argument_is_omitted():
+    manager = DBManager({"warehouse": DbConfig(type="mysql", database="configured")})
+    manager._build_conn = lambda cfg: SimpleNamespace(database=cfg.database)
+    context = DatabaseExecutionContext(datasource="warehouse", database="selected")
+    assert manager.get_conn("warehouse", context=context).database == "selected"
+
+
+def test_resolved_empty_database_cannot_select_the_first_file_of_a_glob(tmp_path):
+    import sqlite3
+
+    with sqlite3.connect(tmp_path / "analytics.sqlite"):
+        pass
+    manager = DBManager({"warehouse": DbConfig(type="sqlite", path_pattern=str(tmp_path / "*.sqlite"))})
+    with pytest.raises(ValueError, match="Select a database explicitly"):
+        manager.get_conn("warehouse", context=DatabaseExecutionContext(datasource="warehouse"))
+
+
 def test_persisted_artifact_binding_keeps_original_database_after_the_turn_switches(tmp_path):
     import sqlite3
 

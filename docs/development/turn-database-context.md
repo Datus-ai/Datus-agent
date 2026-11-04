@@ -15,6 +15,18 @@ defaults only apply under their configured parent coordinates. A catalog-only
 switch must select a database before opening a connector if its old configured
 database belongs to another catalog; it must not silently reuse that database.
 
+Resolved execution contexts require a nonempty database when creating a SQL
+connector. Clearing the database invalidates the old selection; execution is
+refused until a database is explicitly selected again. This avoids restoring a
+configured database, choosing the first file in a glob, or relying on a driver's
+implicit database default. Context-free discovery/legacy calls may still use
+their configured defaults.
+
+CLI argument overrides are partial: absent flags (including argparse's empty
+defaults) keep the selected datasource's configured catalog/database/schema.
+The CLI merges those effective defaults before pinning a complete runtime
+snapshot. API resolved empty fields continue to mean explicit clears.
+
 The resolved snapshot preserves empty coordinates through node input and semantic
 runtime configuration. Empty schema removes the configured schema override, so
 the engine selects its default schema. Native DuckDB connections initialize the
