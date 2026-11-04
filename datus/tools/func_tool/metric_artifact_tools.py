@@ -191,7 +191,16 @@ def execute_metric_artifact_query(
     if hashlib.sha256(model_path.read_bytes()).hexdigest() != binding["model_revision"]:
         raise ValueError("semantic model changed while compiling; retry the metric query")
     datasource = binding["datasource"]
-    connector = db_tool._get_connector(datasource)
+    config = getattr(runtime, "config", None)
+    db_config = getattr(config, "db_config", None)
+    coordinates = saved.execution_context if saved else None
+    if not coordinates and isinstance(db_config, dict):
+        from datus.schemas.database_context import DatabaseExecutionContext
+
+        coordinates = DatabaseExecutionContext.from_mapping({**db_config, "datasource": datasource}).to_dict()
+    connector = (
+        db_tool.connector_for_execution_context(coordinates) if coordinates else db_tool._get_connector(datasource)
+    )
     oversize = db_tool.guard_estimated_rows(sql, connector)
     if oversize is not None:
         raise ValueError(oversize.error)
@@ -236,6 +245,7 @@ def execute_metric_artifact_query(
     payload = QueryResultFile(
         executed_at=utc_now_iso(),
         datasource=datasource,
+        execution_context=db_tool.execution_context(connector, datasource),
         row_count=len(rows),
         columns=columns,
         rows=rows,
@@ -245,6 +255,7 @@ def execute_metric_artifact_query(
     tables = query_lineage(sql, None, datasource).tables
     return payload, {
         "datasource": datasource,
+        "execution_context": payload.execution_context,
         "model_path": relative_path,
         "model_revision": binding["model_revision"],
         "model_snapshot": model_path.read_bytes().decode("utf-8"),
@@ -437,6 +448,7 @@ class MetricArtifactToolsMixin:
                     slug=name,
                     description=goal.strip(),
                     datasource=payload.datasource,
+                    execution_context=payload.execution_context,
                     params=declarations,
                     columns=payload.columns,
                     sample_params=values,

@@ -9,11 +9,12 @@ the client can reconnect and resume from where it left off.
 
 import asyncio
 import copy
+import json
 import os
 import uuid
 from contextlib import ExitStack
 from datetime import datetime
-from typing import Any, AsyncGenerator, Callable, Dict, List, Literal, Optional, Set, Tuple
+from typing import Any, AsyncGenerator, Callable, Dict, List, Literal, Optional
 
 from datus.agent.node.agentic_node import AgenticNode
 from datus.api.hooks.turn_stats_hooks import TurnStatsEvent, get_turn_stats_hook
@@ -75,10 +76,6 @@ HEARTBEAT_INTERVAL = 10  # seconds
 # Max run-boundary auto-continuations per task, bounding a client that keeps
 # POSTing /chat/insert from running one task indefinitely.
 _MAX_INSERT_CONTINUATIONS = 20
-
-# How many (session, datasource) pairs the unbound-datasource warning remembers
-# before it forgets them all and starts again.
-_MAX_WARNED_DATASOURCES = 512
 
 
 def is_thinking_only_content(content_items) -> bool:
@@ -446,37 +443,6 @@ class ChatTaskManager:
         self._default_source = default_source
         self._default_interactive = default_interactive
         self._stream_thinking = stream_thinking
-        # (session_id, datasource) pairs already reported as unbound. A channel
-        # pinned to a datasource that was unbound sends the same name every
-        # turn, and only the first one is news.
-        self._warned_datasources: Set[Tuple[str, str]] = set()
-
-    def _warn_unbound_datasource(self, request: StreamChatInput, agent_config: AgentConfig) -> None:
-        """Report a dropped ``datasource`` once per session, not once per turn.
-
-        Names the available datasources, which is what tells a reader whether
-        the request is stale or the binding is missing — so it is worth building
-        the list, and worth building it only once.
-        """
-        key = (request.session_id or "", request.datasource or "")
-        if key in self._warned_datasources:
-            return
-        # Bounded rather than pruned: this only exists to keep a repeat out of
-        # the log, so forgetting everything occasionally costs one extra line.
-        if len(self._warned_datasources) >= _MAX_WARNED_DATASOURCES:
-            self._warned_datasources.clear()
-        self._warned_datasources.add(key)
-        # %r on both request-supplied values: ``session_id`` is free-form client
-        # input, and repr escapes the CR/LF that would otherwise let it forge a
-        # second log line.
-        logger.warning(
-            "Ignoring datasource %r for session %r: not bound to this project (available: %s); "
-            "falling back to %r and dropping the catalog/database/schema that came with it",
-            request.datasource,
-            request.session_id,
-            sorted(agent_config.services.datasources),
-            agent_config.current_datasource,
-        )
 
     # ------------------------------------------------------------------
     # Public API
@@ -560,34 +526,38 @@ class ChatTaskManager:
                 agent_config.set_active_custom(model_id, persist=False)
             else:
                 agent_config.set_active_provider_model(provider, model_id, persist=False)
-        # Per-request datasource override (e.g. an IM channel pinned to a datasource).
-        # Switches the connection profile; the setter validates it exists in config.
-        #
-        # A name that is not bound falls back to the project's default instead of
-        # raising: the caller is a UI hint (the web composer's picker keeps its own
-        # selection, and one resolved against another project's roster — or unbound
-        # since — arrives here stale), and the setter's DatusException reached the
-        # client as an ``error`` SSE event that killed the whole turn.
-        if request.datasource:
-            if request.datasource in agent_config.services.datasources:
-                agent_config.current_datasource = request.datasource
-            else:
-                self._warn_unbound_datasource(request, agent_config)
-                request.datasource = agent_config.current_datasource or None
-                # The whole selection goes, not just its datasource: these three
-                # name objects INSIDE the warehouse that was just dropped, and
-                # ``_fill_database_context`` below prefers the request's value
-                # over the config's — so keeping them would point the turn at
-                # another warehouse's same-named database, which is the silent
-                # half of the bug the fallback exists to avoid.
-                request.catalog = None
-                request.database = None
-                request.db_schema = None
+        from datus.schemas.database_context import EXECUTION_CONTEXT_META_KEY, DatabaseExecutionContext
+
+        previous = {}
+        if request.session_id:
+            raw_context = await asyncio.to_thread(
+                lambda: self._session_manager(agent_config, user_id).load_session_meta(
+                    request.session_id, EXECUTION_CONTEXT_META_KEY
+                )
+            )
+            if raw_context:
+                try:
+                    previous = DatabaseExecutionContext.from_mapping(json.loads(raw_context)).to_dict()
+                except (ValueError, TypeError, AttributeError):
+                    logger.warning("Ignoring malformed execution context for session %s", request.session_id)
+        datasource = request.datasource or previous.get("datasource") or agent_config.current_datasource
+        if datasource:
+            if datasource not in agent_config.services.datasources:
+                raise ValueError(f"Datasource {datasource!r} is not bound to this project; select a valid datasource")
+            agent_config.current_datasource = datasource
+        # A different source or physical database starts from its own defaults,
+        # never the previous target's schema/catalog.
+        inherit = previous if previous.get("datasource") == datasource else {}
+        if request.database and request.database != inherit.get("database"):
+            inherit = {}
         request.catalog, request.database, request.db_schema = _fill_database_context(
             agent_config,
-            catalog=request.catalog,
-            database=request.database,
-            schema=request.db_schema,
+            catalog=request.catalog or inherit.get("catalog"),
+            database=request.database or inherit.get("database"),
+            schema=request.db_schema or inherit.get("schema"),
+        )
+        agent_config.set_runtime_db_context(
+            datasource=datasource, catalog=request.catalog, database=request.database, schema=request.db_schema
         )
         agent_name = sub_agent_id or "chat"
         safe_name = agent_name.replace(" ", "_")
@@ -852,6 +822,7 @@ class ChatTaskManager:
                     data=SSESessionData(
                         session_id=session_id,
                         llm_session_id=node.session_id,
+                        execution_context=agent_config.runtime_db_context(),
                     ),
                     timestamp=now_utc_iso(),
                 ),

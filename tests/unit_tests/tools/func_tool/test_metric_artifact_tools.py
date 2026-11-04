@@ -869,3 +869,42 @@ def test_metric_tool_initializes_without_model_selection(monkeypatch):
     with pytest.raises(DatusException) as error:
         _ = tool.compressor
     assert error.value.code == ErrorCode.MODEL_NOT_SELECTED
+
+
+@pytest.mark.parametrize("kind", ["report", "dashboard"])
+def test_metric_artifact_replays_its_original_database_after_a_turn_switch(environment, kind):
+    from collections import OrderedDict
+
+    from datus.configuration.agent_config import DbConfig
+    from datus.tools.db_tools.db_manager import DBManager
+
+    env = environment
+    with sqlite3.connect(env.root / "other.sqlite") as connection:
+        connection.execute("CREATE TABLE orders(region TEXT, amount REAL)")
+        connection.execute("INSERT INTO orders VALUES ('Other', 999)")
+    manager = DBManager({"warehouse": DbConfig(type="sqlite", path_pattern=str(env.root / "*.sqlite"))})
+    env.db._db_manager = manager
+    env.db._is_multi_connector = True
+    env.db._default_datasource = "warehouse"
+    env.db._default_database = "shop"
+    env.db._execution_context = {"datasource": "warehouse", "database": "shop"}
+    env.db._connector_cache = OrderedDict()
+    env.db._connector_cache_size = 8
+    env.runtime.config = SimpleNamespace(db_config={"database": "shop"})
+    options = {"params": [], "sample_params": {}} if kind == "dashboard" else {}
+    tools, result = _save(env, kind, **options)
+    assert result.success == 1, result.error
+    saved = MetricQueryFile.model_validate_json((tools.queries_dir / "sales.metric.json").read_text())
+    assert saved.execution_context == {"datasource": "warehouse", "database": "shop"}
+    env.db._default_database = "other"
+    env.db._execution_context = {"datasource": "warehouse", "database": "other"}
+    env.runtime.config = SimpleNamespace(db_config={"database": "other"})
+    payload, _ = execute_metric_artifact_query(
+        saved, saved=saved, semantic_tools=env.semantic, db_tool=env.db, project_root=env.root
+    )
+    assert payload.rows == [{"revenue": 25.0}]
+    current = env.db._get_connector("warehouse")
+    assert current.execute_query("SELECT SUM(amount) AS total FROM orders", result_format="list").sql_return == [
+        {"total": 999.0}
+    ]
+    manager.close()

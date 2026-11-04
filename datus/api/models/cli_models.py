@@ -566,6 +566,8 @@ class SSESessionData(BaseModel):
     session_id: str = Field(..., description="Service session ID")
     llm_session_id: Optional[str] = Field(None, description="LLM session ID")
 
+    execution_context: Optional[Dict[str, str]] = Field(None, description="Resolved non-secret execution coordinates")
+
 
 class SSEEndData(BaseModel):
     """Data structure for SSE end events."""
@@ -660,6 +662,8 @@ class ChatHistoryData(BaseModel):
     """Chat history data."""
 
     messages: List[SSEMessagePayload] = Field(default_factory=list, description="chat history messages")
+
+    execution_context: Optional[Dict[str, str]] = Field(None, description="Last effective database context")
 
 
 class ChatHistoryTurn(BaseModel):

@@ -1890,6 +1890,7 @@ class SemanticTools:
             if not dry_run:
                 metadata = result.metadata or {}
                 return FuncToolResult(
+                    execution_context=self._runtime_db_context(),
                     result=self._render_query_result(
                         self._cache_query_metrics_result(result.columns, result.data, metadata),
                         list(result.columns),
@@ -1898,7 +1899,7 @@ class SemanticTools:
                         notes=self._query_hints(runtime, runtime_query_kwargs, result),
                         outputs=metadata.get("outputs"),
                         execution_info=metadata.get("execution_info"),
-                    )
+                    ),
                 )
 
             # A dry run keeps its structure: the compiled SQL and the warehouse
@@ -1940,6 +1941,7 @@ class SemanticTools:
                 result_dict["metadata"] = safe_metadata
 
             tool_result = FuncToolResult(
+                execution_context=self._runtime_db_context(),
                 success=0 if warehouse_error else 1,
                 error=f"Warehouse dry-run failed: {warehouse_error}" if warehouse_error else None,
                 result=result_dict,

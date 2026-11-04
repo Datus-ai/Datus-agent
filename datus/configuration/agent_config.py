@@ -890,7 +890,7 @@ class AgentConfig:
         _active_plugins_raw = kwargs.get("active_plugins")
         self._plugins_section_present: bool = isinstance(_active_plugins_raw, dict)
         self._active_plugins: Dict[str, PluginActivation] = _normalize_plugin_activations(_active_plugins_raw)
-        self._runtime_db_context: Dict[str, str] = {}
+        self._runtime_db_context = None
         # Shared lazily-loaded ``conf/providers.yml`` catalog (metadata only:
         # default_model, base_url, api_key_env, type, model_overrides). Kept
         # as ``None`` until first access so tests that stub load paths can
@@ -1380,6 +1380,7 @@ class AgentConfig:
         """Set the current datasource name (must exist in services.datasources, or empty to clear)."""
         if not value:
             self._current_datasource = ""
+            self._runtime_db_context = None
             self.db_type = ""
             return
         if value not in self.services.datasources:
@@ -1389,6 +1390,9 @@ class AgentConfig:
             )
         if value == self._current_datasource:
             return
+        context = getattr(self, "_runtime_db_context", None)
+        if context is not None and context.datasource != value:
+            self._runtime_db_context = None
         self._current_datasource = value
         self.db_type = self.services.datasources[value].type
 
@@ -1611,47 +1615,15 @@ class AgentConfig:
             values.update(runtime_db_context)
         values.update({key: value for key, value in kwargs.items() if value is not None})
 
-        normalized: Dict[str, str] = {}
-        for key in (
-            "datasource",
-            "catalog",
-            "catalog_name",
-            "database",
-            "database_name",
-            "schema",
-            "db_schema",
-            "schema_name",
-        ):
-            value = values.get(key)
-            if value is None:
-                continue
-            text = value.strip() if isinstance(value, str) else str(value).strip()
-            if text:
-                normalized[key] = text
+        from datus.schemas.database_context import DatabaseExecutionContext
 
-        if "catalog" not in normalized and "catalog_name" in normalized:
-            normalized["catalog"] = normalized["catalog_name"]
-        if "catalog_name" not in normalized and "catalog" in normalized:
-            normalized["catalog_name"] = normalized["catalog"]
-        if "database" not in normalized and "database_name" in normalized:
-            normalized["database"] = normalized["database_name"]
-        if "database_name" not in normalized and "database" in normalized:
-            normalized["database_name"] = normalized["database"]
-        if "schema" not in normalized:
-            if "db_schema" in normalized:
-                normalized["schema"] = normalized["db_schema"]
-            elif "schema_name" in normalized:
-                normalized["schema"] = normalized["schema_name"]
-        if "db_schema" not in normalized and "schema" in normalized:
-            normalized["db_schema"] = normalized["schema"]
-        if "schema_name" not in normalized and "schema" in normalized:
-            normalized["schema_name"] = normalized["schema"]
-
-        self._runtime_db_context = normalized
+        self._runtime_db_context = DatabaseExecutionContext.from_mapping(values)
 
     def runtime_db_context(self) -> Dict[str, str]:
-        """Return the request/CLI scoped datasource context, if one is pinned."""
-        return dict(self._runtime_db_context)
+        """Return a copy of this execution's immutable database coordinates."""
+        if self._runtime_db_context is None:
+            return {}
+        return self._runtime_db_context.to_dict(aliases=True)
 
     def list_databases(self, datasource: str = "") -> List[str]:
         """Config-known physical databases of a datasource.

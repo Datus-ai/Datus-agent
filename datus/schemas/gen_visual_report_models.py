@@ -58,6 +58,7 @@ class QueryResultFile(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     executed_at: str = Field(..., description="ISO 8601 UTC")
+    execution_context: Optional[Dict[str, str]] = None
     datasource: str
     row_count: int = Field(..., ge=0)
     columns: List[QueryColumnMeta] = Field(..., min_length=1)

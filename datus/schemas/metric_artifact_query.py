@@ -48,6 +48,7 @@ class MetricQueryFile(MetricQueryRequest):
     name: str = Field(pattern=r"^[a-z0-9_]{1,64}$")
     goal: str = Field(min_length=1)
     datasource: str = Field(min_length=1)
+    execution_context: dict[str, str] | None = None
     model_path: str = Field(min_length=1)
     model_revision: str = Field(pattern=r"^[a-f0-9]{64}$")
     model_snapshot: str | None = None

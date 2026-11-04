@@ -466,6 +466,13 @@ class AskMetricsAgenticNode(AgenticNode):
         input_ref_date = getattr(self.input, "reference_date", None) if self.input else None
         return get_default_current_date(input_ref_date)
 
+    def _system_prompt_snapshot_meta(self, prompt_version: Optional[str]) -> Dict[str, str]:
+        import hashlib
+
+        meta = super()._system_prompt_snapshot_meta(prompt_version)
+        meta["metric_catalog_sha256"] = hashlib.sha256(self.subject_tree_prompt.encode()).hexdigest()
+        return meta
+
     def _get_system_prompt(self, prompt_version: Optional[str] = None) -> str:
         context: Dict[str, Any] = {
             "agent_config": self.agent_config,

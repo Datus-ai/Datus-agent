@@ -11,6 +11,7 @@ from datus_db_core import BaseSqlConnector, ConnectionConfig, DatusDbException, 
 from sqlalchemy.engine.url import URL, make_url
 
 from datus.configuration.agent_config import DbConfig
+from datus.schemas.database_context import DatabaseExecutionContext
 from datus.tools.db_tools.config import DuckDBConfig, SQLiteConfig
 from datus.utils.constants import DBType
 from datus.utils.exceptions import DatusException, ErrorCode
@@ -287,17 +288,19 @@ def get_connection(
 class DBManager:
     def __init__(self, db_configs: Dict[str, DbConfig]):
         # {datasource: {database: connector}} — a datasource may serve multiple databases.
-        self._conn_dict: Dict[str, Dict[str, BaseSqlConnector]] = {}
+        self._conn_dict: Dict[str, Dict[Union[str, Tuple[str, str, str]], BaseSqlConnector]] = {}
         self._db_configs: Dict[str, DbConfig] = db_configs
 
-    def get_conn(self, datasource: str, database: str = "") -> BaseSqlConnector:
+    def get_conn(
+        self, datasource: str, database: str = "", *, context: Optional[DatabaseExecutionContext] = None
+    ) -> BaseSqlConnector:
         """Connector for ``(datasource, database)``.
 
         ``database`` empty → the datasource's default database. For a glob (``path_pattern``)
         datasource each matched file is a database; for server DBs ``database`` overrides the
         configured one (cloned into the connection URI).
         """
-        return self._init_connection(datasource, database)
+        return self._init_connection(datasource, database, context=context)
 
     def get_connections(self, datasource: str = "") -> Dict[str, BaseSqlConnector]:
         """Connectors for every database served by ``datasource``, keyed by database name.
@@ -390,8 +393,16 @@ class DBManager:
             return database, dataclasses.replace(cfg, database=database)
         return cfg.database or "", cfg
 
-    def _init_connection(self, datasource: str, database: str) -> BaseSqlConnector:
+    def _init_connection(
+        self, datasource: str, database: str, *, context: Optional[DatabaseExecutionContext] = None
+    ) -> BaseSqlConnector:
         db_name, db_config = self._resolve_db_config(datasource, database)
+        cache_key = db_name
+        if context is not None:
+            if context.datasource != datasource or (context.database and context.database != db_name):
+                raise ValueError("Connection context does not match its datasource/database")
+            db_config = dataclasses.replace(db_config, catalog=context.catalog, schema=context.schema)
+            cache_key = (db_name, context.catalog, context.schema)
         # Self-heal: a caller may have nulled this datasource's entry to mark its
         # connectors closed (e.g. an external pool on eviction). setdefault keeps
         # an existing None, so rebuild a fresh group rather than calling .get on it.
@@ -399,11 +410,11 @@ class DBManager:
         if not isinstance(group, dict):
             group = {}
             self._conn_dict[datasource] = group
-        cached = group.get(db_name)
+        cached = group.get(cache_key)
         if cached is not None:
             return cached
         conn = self._build_conn(db_config)
-        group[db_name] = conn
+        group[cache_key] = conn
         return conn
 
     def _build_conn(self, db_config: DbConfig) -> BaseSqlConnector:

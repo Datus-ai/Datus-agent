@@ -340,7 +340,12 @@ def get_history_page(
                     # Failed envelopes sometimes also retain the same raw result.
                     envelope["result"] = None
     return ChatHistoryPageData(
-        messages=messages, has_more=has_more, next_cursor=next_cursor, total_turns=total_turns, turns=turns
+        messages=messages,
+        execution_context=result.data.execution_context,
+        has_more=has_more,
+        next_cursor=next_cursor,
+        total_turns=total_turns,
+        turns=turns,
     )
 
 
