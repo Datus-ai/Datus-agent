@@ -11,7 +11,7 @@ from typing import Any, Callable, Dict, Iterable, List, Optional, TypeVar
 import json_repair
 from agents import FunctionTool, function_tool
 from agents.function_schema import function_schema
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, Field, ValidationError, model_serializer
 
 from datus.utils.loggings import get_logger
 
@@ -163,6 +163,16 @@ class FuncToolResult(BaseModel):
         default=None, description="Error message: field is not empty when success=0", init=True
     )
     result: Optional[Any] = Field(default=None, description="Result of the execution", init=True)
+    execution_context: Optional[Dict[str, str]] = Field(
+        default=None, description="Effective non-secret database coordinates"
+    )
+
+    @model_serializer(mode="wrap")
+    def _serialize_context(self, handler):
+        result = handler(self)
+        if self.execution_context is None:
+            result.pop("execution_context", None)
+        return result
 
 
 class FuncToolListResult(BaseModel):

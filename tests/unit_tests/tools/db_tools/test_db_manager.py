@@ -1,12 +1,15 @@
 """Unit tests for db_manager.py — gen_uri, _resolve_connection_context, helpers, and DBManager."""
 
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, Mock, patch
 
+import duckdb
 import pytest
 from datus_db_core import BaseSqlConnector, DatusDbException
 from datus_db_core import ErrorCode as DbErrorCode
 
+from datus.configuration.agent_config import DbConfig
+from datus.schemas.database_context import DatabaseExecutionContext
 from datus.tools.db_tools.config import DuckDBConfig, SQLiteConfig
 from datus.tools.db_tools.db_manager import (
     DBManager,
@@ -310,13 +313,13 @@ class TestDBManager:
             mgr.get_conn("nonexistent")
 
     def test_get_db_uris(self):
-        configs = {"ns": _cfg(type="sqlite", uri="sqlite:///test.db")}
+        configs = {"ns": DbConfig(type="sqlite", uri="sqlite:///test.db")}
         mgr = DBManager(configs)
         uris = mgr.get_db_uris("ns")
         assert uris["ns"] == "sqlite:///test.db"
 
     def test_get_conn_rebuilds_after_close(self):
-        configs = {"ns": _cfg(type="sqlite", uri="sqlite:///test.db")}
+        configs = {"ns": DbConfig(type="sqlite", uri="sqlite:///test.db")}
         mgr = DBManager(configs)
         with patch.object(mgr, "_build_conn", side_effect=lambda cfg: MagicMock()) as build:
             first = mgr.get_conn("ns")
@@ -443,7 +446,7 @@ class TestDBManager:
         # An external pool may null a datasource entry to mark its connectors
         # closed on eviction. setdefault keeps the None, so the manager must
         # rebuild rather than raise 'NoneType' object has no attribute 'get'.
-        configs = {"ns": _cfg(type="sqlite", uri="sqlite:///test.db")}
+        configs = {"ns": DbConfig(type="sqlite", uri="sqlite:///test.db")}
         mgr = DBManager(configs)
         with patch.object(mgr, "_build_conn", side_effect=lambda cfg: MagicMock()):
             first = mgr.get_conn("ns")
@@ -1002,3 +1005,144 @@ class TestMissingConnectorType:
         with patch("datus.tools.db_tools.db_manager._auto_install_adapter") as mock_install:
             mgr.missing_connector_type("ds")
         mock_install.assert_not_called()
+
+
+def test_two_namespace_bindings_do_not_mutate_the_shared_config_or_connection():
+    configured = DbConfig(type="postgresql", database="configured", schema="public")
+    manager = DBManager({"warehouse": configured})
+    manager._build_conn = lambda cfg: SimpleNamespace(database=cfg.database, schema=cfg.schema, catalog=cfg.catalog)
+    a = DatabaseExecutionContext(datasource="warehouse", database="analytics", schema="a")
+    b = DatabaseExecutionContext(datasource="warehouse", database="analytics", schema="b")
+    first = manager.get_conn("warehouse", "analytics", context=a)
+    second = manager.get_conn("warehouse", "analytics", context=b)
+    assert (first.database, first.schema) == ("analytics", "a")
+    assert (second.database, second.schema) == ("analytics", "b")
+    assert first is manager.get_conn("warehouse", "analytics", context=a)
+    assert first is not second
+    assert (configured.database, configured.schema) == ("configured", "public")
+
+
+def test_changed_catalog_does_not_reintroduce_the_old_catalog_database_default():
+    manager = DBManager({"warehouse": DbConfig(type="starrocks", catalog="cat_a", database="analytics")})
+    context = DatabaseExecutionContext(datasource="warehouse", catalog="cat_b")
+    with pytest.raises(ValueError, match="Select a database explicitly"):
+        manager.get_conn("warehouse", context=context)
+
+
+@pytest.mark.parametrize("engine", ["postgresql", "mysql", "starrocks", "sqlite", "duckdb"])
+def test_resolved_empty_database_cannot_reuse_a_configured_or_cached_database(engine):
+    configured = DbConfig(type=engine, catalog="cat_a", database="analytics", schema="tenant_a")
+    manager = DBManager({"warehouse": configured})
+    manager._build_conn = Mock(return_value=SimpleNamespace(database="analytics", connect=lambda: None))
+    assert manager.get_conn("warehouse").database == "analytics"
+    context = DatabaseExecutionContext(datasource="warehouse", catalog="cat_a")
+    with pytest.raises(ValueError, match="Select a database explicitly"):
+        manager.get_conn("warehouse", context=context)
+    manager._build_conn.assert_called_once()
+    assert configured.database == "analytics"
+
+
+def test_resolved_database_is_authoritative_even_when_the_positional_argument_is_omitted():
+    manager = DBManager({"warehouse": DbConfig(type="mysql", database="configured")})
+    manager._build_conn = lambda cfg: SimpleNamespace(database=cfg.database)
+    context = DatabaseExecutionContext(datasource="warehouse", database="selected")
+    assert manager.get_conn("warehouse", context=context).database == "selected"
+
+
+def test_resolved_empty_database_cannot_select_the_first_file_of_a_glob(tmp_path):
+    import sqlite3
+
+    with sqlite3.connect(tmp_path / "analytics.sqlite"):
+        pass
+    manager = DBManager({"warehouse": DbConfig(type="sqlite", path_pattern=str(tmp_path / "*.sqlite"))})
+    with pytest.raises(ValueError, match="Select a database explicitly"):
+        manager.get_conn("warehouse", context=DatabaseExecutionContext(datasource="warehouse"))
+
+
+def test_duckdb_schema_is_bound_before_caching_and_replayed_in_another_thread(tmp_path):
+    from concurrent.futures import ThreadPoolExecutor
+
+    path = tmp_path / "warehouse.duckdb"
+    with duckdb.connect(str(path)) as conn:
+        for schema in ["main", "tenant_a", 'tenant_"b']:
+            quoted = '"' + schema.replace('"', '""') + '"'
+            conn.execute(f"CREATE SCHEMA IF NOT EXISTS {quoted}")
+            conn.execute(f"CREATE TABLE {quoted}.marker AS SELECT ? AS value", [schema])
+    manager = DBManager({"warehouse": DbConfig(type="duckdb", uri=str(path))})
+    try:
+        a = DatabaseExecutionContext(datasource="warehouse", database="warehouse", schema="tenant_a")
+        b = DatabaseExecutionContext(datasource="warehouse", database="warehouse", schema='tenant_"b')
+        first = manager.get_conn("warehouse", "warehouse", context=a)
+        second = manager.get_conn("warehouse", "warehouse", context=b)
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            for connector, expected in [(first, a.schema), (second, b.schema), (first, a.schema)]:
+                result = pool.submit(connector.execute_query, "SELECT value FROM marker", "list").result()
+                assert result.sql_return == [{"value": expected}]
+                assert connector.schema_name == expected
+        invalid = DatabaseExecutionContext(datasource="warehouse", database="warehouse", schema="missing")
+        with pytest.raises(Exception, match="missing"):
+            manager.get_conn("warehouse", "warehouse", context=invalid)
+        assert ("warehouse", "", "missing") not in manager._conn_dict["warehouse"]
+    finally:
+        manager.close()
+
+
+@pytest.mark.parametrize("engine", ["sqlite", "duckdb"])
+def test_fixed_uri_validates_real_database_names_and_keeps_coordinates_consistent(tmp_path, engine):
+    import sqlite3
+
+    suffix = "sqlite" if engine == "sqlite" else "duckdb"
+    path = tmp_path / f"actual.{suffix}"
+    connect = sqlite3.connect if engine == "sqlite" else duckdb.connect
+    with connect(str(path)) as conn:
+        conn.execute("CREATE TABLE marker(value INTEGER)")
+        conn.execute("INSERT INTO marker VALUES (25)")
+    cfg = DbConfig(type=engine, uri=str(path), database="configured_alias")
+    manager = DBManager({"warehouse": cfg})
+    try:
+        context = DatabaseExecutionContext(datasource="warehouse", database="actual")
+        conn = manager.get_conn("warehouse", "actual", context=context)
+        result = conn.execute_query("SELECT value FROM marker", result_format="list")
+        assert result.success is True, result.error
+        assert result.sql_return == [{"value": 25}]
+        assert conn.database_name == "actual"
+        assert ("actual", "", "") in manager._conn_dict["warehouse"]
+        with pytest.raises(DatusException, match="unrelated"):
+            manager.get_conn(
+                "warehouse", "unrelated", context=DatabaseExecutionContext(datasource="warehouse", database="unrelated")
+            )
+        assert ("unrelated", "", "") not in manager._conn_dict["warehouse"]
+        assert cfg.database == "configured_alias"
+    finally:
+        manager.close()
+
+
+def test_duckdb_fixed_uri_can_bind_a_database_actually_attached_to_the_file(tmp_path, monkeypatch):
+    from datus.tools.db_tools.duckdb_connector import DuckdbConnector
+
+    for name, value in [("primary", 25), ("attached", 999)]:
+        with duckdb.connect(str(tmp_path / f"{name}.duckdb")) as conn:
+            conn.execute(f"CREATE TABLE marker AS SELECT {value} AS value")
+
+    def attach(connector):
+        path = str(tmp_path / "attached.duckdb").replace("'", "''")
+        connector.connection.execute(f"ATTACH '{path}' AS attached")
+
+    monkeypatch.setattr(DuckdbConnector, "_setup_iceberg", attach)
+    manager = DBManager(
+        {
+            "warehouse": DbConfig(
+                type="duckdb", uri=str(tmp_path / "primary.duckdb"), extra={"iceberg": {"catalog_alias": "attached"}}
+            )
+        }
+    )
+    try:
+        conn = manager.get_conn(
+            "warehouse", "attached", context=DatabaseExecutionContext(datasource="warehouse", database="attached")
+        )
+        result = conn.execute_query("SELECT current_database() AS db, value FROM marker", result_format="list")
+        assert result.success is True, result.error
+        assert result.sql_return == [{"db": "attached", "value": 999}]
+        assert conn.database_name == "attached"
+    finally:
+        manager.close()

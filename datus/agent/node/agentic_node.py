@@ -868,6 +868,13 @@ class AgenticNode(Node):
                 f"datasource '{LOCAL_FILES_DATASOURCE}' (dialect: duckdb) after "
                 f"load_file_as_table registers them."
             )
+        previous = getattr(self, "_previous_execution_context", None)
+        if previous:
+            line += (
+                f" Execution target changed from {previous}. Historical tool results, metric catalogs and "
+                "semantic-model paths describe their original targets. Re-discover and bind targets for this turn. "
+                "Preserve existing report/dashboard queries and their datasource bindings when adding new sections."
+            )
         return line
 
     def _semantic_runtime_db_context(self) -> Dict[str, str]:
@@ -887,6 +894,13 @@ class AgenticNode(Node):
             except Exception as e:
                 logger.debug("Unable to read runtime DB context for Dosi: %s", e)
                 runtime_context = {}
+        if isinstance(runtime_context, dict) and runtime_context.get("datasource"):
+            from datus.schemas.database_context import DatabaseExecutionContext
+
+            context = DatabaseExecutionContext.from_mapping(runtime_context).to_dict(include_empty=True)
+            if "schema" in context:
+                context["db_schema"] = context["schema"]
+            return context
         datasource = runtime_context.get("datasource") or datasource
         context: Dict[str, str] = {}
         if datasource:
@@ -1209,9 +1223,10 @@ class AgenticNode(Node):
         the inputs that change the prompt's identity within a session: the
         node template, its version, and the active model (a model switch also
         resets the provider-side prefix cache, so rebuilding is free). The
-        live per-turn datasource is injected in the user message instead. The
-        bound database skill is part of the system prompt, so its identity
-        appears here and a dialect switch rebuilds the snapshot. ``language`` DOES
+        live per-turn target is also injected in the user message, but some
+        node templates embed an active datasource or semantic-model directory.
+        The complete database coordinates therefore invalidate the snapshot,
+        even for two sources with the same dialect and database skill. ``language`` DOES
         appear: it is a per-request field on the Chat API, so a user switching
         the UI language mid-session must not keep replaying a snapshot that
         pins the old one. Date and memory stay frozen until the snapshot is rebuilt. Injected
@@ -1237,7 +1252,21 @@ class AgenticNode(Node):
             except Exception:
                 model_id = ""
         language = getattr(agent_config, "language", None) if agent_config is not None else None
+        from datus.schemas.database_context import execution_context_for_node
+
+        try:
+            from datus.prompts.prompt_manager import get_prompt_manager
+
+            template_digest = get_prompt_manager(agent_config=agent_config).template_fingerprint(
+                self._system_prompt_template_name(),
+                version=version,
+            )
+        except (AttributeError, FileNotFoundError, ValueError, TypeError):
+            template_digest = ""
+
         return {
+            "prompt_template_sha256": template_digest,
+            "execution_context": execution_context_for_node(agent_config, getattr(self, "input", None)).identity,
             "node_name": self.get_node_name(),
             # NOT implied by ``node_name``. The node name used to decide the
             # template outright, so listing it here covered both; now
@@ -3617,6 +3646,24 @@ class AgenticNode(Node):
     # ``_build_error_result``.
     result_class: Any = None
 
+    def _record_execution_context(self) -> None:
+        """Persist effective coordinates and mark a target boundary in this turn."""
+        from datus.schemas.database_context import EXECUTION_CONTEXT_META_KEY, execution_context_for_node
+
+        context = execution_context_for_node(getattr(self, "agent_config", None), self.input)
+        self._previous_execution_context = None
+        if not context.datasource:
+            return
+        try:
+            previous = self.session_manager.load_session_meta(self.session_id, EXECUTION_CONTEXT_META_KEY)
+            if previous and previous != context.identity:
+                self._previous_execution_context = previous
+            self.session_manager.save_session_meta(self.session_id, EXECUTION_CONTEXT_META_KEY, context.identity)
+            turn = self.session_manager.get_max_user_turn_number(self.session_id) + 1
+            self.session_manager.save_session_meta(self.session_id, f"execution_context.turn.{turn}", context.identity)
+        except Exception:  # noqa: BLE001 — metadata bookkeeping must not abort a turn
+            logger.debug("Failed to record execution context for session %s", self.session_id, exc_info=True)
+
     def _apply_turn_db_context(self) -> None:
         """Point the connector at this turn's catalog and schema.
 
@@ -3715,6 +3762,7 @@ class AgenticNode(Node):
             # sub-agents continuing a parent session) all want SDK to see prior
             # items. ``execution_mode`` controls human-in-the-loop, not history.
             ctx.session = self._get_or_create_session()
+            self._record_execution_context()
 
             template_context = self._build_template_context(ctx)
             prompt_version = getattr(self.input, "prompt_version", None)

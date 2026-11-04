@@ -20,13 +20,13 @@ from datus.tools.semantic_tools.models import (
     AttributionWindow,
     QueryResult,
 )
-from datus.utils.query_result_text import parse_query_result_text
+from datus.utils.query_result_text import QueryResultText, parse_query_result_text
 
 
 def _text(result):
     """An executed query's result text, read back."""
     parsed = parse_query_result_text(result.result)
-    assert parsed is not None, result.result
+    assert isinstance(parsed, QueryResultText), result.result
     return parsed
 
 
@@ -1319,6 +1319,15 @@ class TestAvailableTools:
 
 
 class TestRuntimeDbContext:
+    def test_empty_schema_reaches_the_compiler_without_reusing_configured_defaults(self, semantic_tools):
+        semantic_tools.agent_config.current_db_config.return_value = DbConfig(
+            type="postgresql", database="analytics", schema="tenant_a"
+        )
+        semantic_tools.set_runtime_db_context({"database": "analytics", "schema": ""})
+        with patch("datus.tools.func_tool.semantic_tools.DosiRuntime") as runtime:
+            assert semantic_tools.runtime is runtime.return_value
+        assert "schema" not in runtime.call_args.args[0].db_config
+
     @pytest.mark.parametrize("db_type", ["mysql", "postgresql"])
     @pytest.mark.parametrize("auth", [{"auth_mode": "iam"}, {"secret_ref": "test/database"}])
     def test_runtime_preserves_aurora_profile(self, semantic_tools, db_type, auth):
@@ -3078,3 +3087,29 @@ class TestSelectRecords:
         assert result.success == 0
         assert result.result["code"] == "value_not_in_domain"
         assert result.result["detail"]["violations"] == violations
+
+
+@pytest.mark.parametrize("dry_run", [False, True])
+@pytest.mark.parametrize("context", [{}, {"datasource": "stale", "database": "stale_db"}])
+def test_query_metrics_reports_the_captured_resolved_runtime_context(
+    semantic_tools, mock_runtime, monkeypatch, dry_run, context
+):
+    semantic_tools.agent_config.runtime_db_context.return_value = context
+    mock_runtime.config = SimpleNamespace(
+        datasource="warehouse", db_config={"catalog": "cat", "database": "analytics", "schema": "tenant_a"}
+    )
+    result = QueryResult(columns=["revenue"], data=[{"revenue": 25}], metadata={"sql": "SELECT 25"})
+
+    def run_query(awaitable):
+        semantic_tools.agent_config.runtime_db_context.return_value = {"datasource": "next", "database": "next_db"}
+        return result
+
+    monkeypatch.setattr("datus.tools.func_tool.semantic_tools._run_async", run_query)
+    response = semantic_tools.query_metrics(metrics=["revenue"], dry_run=dry_run)
+    assert response.success == 1, response.error
+    assert response.execution_context == {
+        "datasource": "warehouse",
+        "catalog": "cat",
+        "database": "analytics",
+        "schema": "tenant_a",
+    }

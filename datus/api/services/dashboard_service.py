@@ -396,7 +396,7 @@ class DashboardService:
                 semantic_tools = SemanticTools(
                     agent_config=self.agent_config,
                     sub_agent_name="gen_visual_dashboard",
-                    runtime_db_context_provider=lambda: {"datasource": query.datasource},
+                    runtime_db_context_provider=lambda: query.execution_context or {"datasource": query.datasource},
                     policy_context_provider=lambda: (
                         policy_context
                         if policy_context is not None
@@ -549,7 +549,11 @@ class DashboardService:
 
         try:
             db_tool = func_tool_mod.DBFuncTool(agent_config=self.agent_config, sub_agent_name="gen_visual_dashboard")
-            connector = db_tool._get_connector(meta.datasource or None)
+            connector = (
+                db_tool.connector_for_execution_context(meta.execution_context)
+                if meta.execution_context
+                else db_tool.connector_for_datasource_default(meta.datasource or None)
+            )
         except Exception as exc:
             logger.exception("Failed to resolve datasource for %s/%s: %s", dashboard_slug, query_slug, exc)
             return Result(
@@ -636,6 +640,7 @@ class DashboardService:
                 executed_at=_dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
                 datasource=meta.datasource,
                 row_count=len(rows),
+                execution_context=db_tool.execution_context(connector, meta.datasource),
                 columns=columns_meta,
                 rows=rows,
                 sql=rendered_sql,
