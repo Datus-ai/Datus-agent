@@ -20,13 +20,13 @@ from datus.tools.semantic_tools.models import (
     AttributionWindow,
     QueryResult,
 )
-from datus.utils.query_result_text import parse_query_result_text
+from datus.utils.query_result_text import QueryResultText, parse_query_result_text
 
 
 def _text(result):
     """An executed query's result text, read back."""
     parsed = parse_query_result_text(result.result)
-    assert parsed is not None, result.result
+    assert isinstance(parsed, QueryResultText), result.result
     return parsed
 
 
