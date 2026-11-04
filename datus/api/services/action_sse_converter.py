@@ -8,6 +8,8 @@ chat-history retrieval can share the same conversion logic.
 import json
 from typing import Any, Dict, List, Optional, Set
 
+import json_repair
+
 from datus.agent.node.compact_archive import parse_archived_marker
 from datus.api.models.cli_models import (
     IMessageContent,
@@ -214,16 +216,133 @@ def _build_user_content(action: ActionHistory) -> List[IMessageContent]:
     return [IMessageContent(type="markdown", payload=payload_data)]
 
 
+_STRUCTURED_RESPONSE_NODES = frozenset({"semantic_modeling", "gen_sql", "gen_sql_summary", "gen_table", "gen_job"})
+
+
+def _response_node_class(action: ActionHistory) -> Optional[str]:
+    """Read host-owned provenance, never infer a node from model JSON fields."""
+    data = action.input if isinstance(getattr(action, "input", None), dict) else {}
+    node_class = data.get("_node_class")
+    if not isinstance(node_class, str) and action.action_type.endswith("_response"):
+        node_class = action.action_type.removesuffix("_response")
+    elif not isinstance(node_class, str) and action.action_type in _STRUCTURED_RESPONSE_NODES:
+        node_class = action.action_type
+    return (
+        {"gensql": "gen_sql", "sqlsummary": "gen_sql_summary"}.get(node_class, node_class)
+        if isinstance(node_class, str)
+        else None
+    )
+
+
+def _sql_response_content(sql: str) -> IMessageContent:
+    if sql.strip().endswith(".sql"):
+        # A path is not executable SQL. The host completion may replace this
+        # hint with the statement read through the node's filesystem tools.
+        return IMessageContent(type="markdown", payload={"content": f"SQL file: `{sql}`"})
+    return IMessageContent(type="code", payload={"codeType": "sql", "content": sql})
+
+
+def _build_structured_response_content(
+    content: Any, node_class: Optional[str] = None, *, include_sql: bool = True
+) -> Optional[List[IMessageContent]]:
+    """Render known node result envelopes without changing the internal result.
+
+    Only unwrap complete, standalone objects matching a built-in protocol.
+    A prose answer containing a JSON example, or arbitrary user JSON with an
+    ``output`` property, must remain readable in its original form.
+    """
+    if node_class not in _STRUCTURED_RESPONSE_NODES:
+        return None
+    payload = content
+    if isinstance(content, str):
+        text = content.strip()
+        if text.startswith("```"):
+            fence, _, body = text.partition("\n")
+            if fence not in ("```json", "```") or not body.endswith("```"):
+                return None
+            text = body[:-3].strip()
+        if not (text.startswith("{") and text.endswith("}")):
+            return None
+        try:
+            payload = json_repair.loads(text)
+        except (ValueError, TypeError):
+            return None
+    if not isinstance(payload, dict):
+        return None
+
+    keys = payload.keys()
+    markdown = payload.get("output")
+    if isinstance(markdown, str):
+        recognized = (
+            (node_class == "gen_sql" and keys <= {"sql", "output"} and isinstance(payload.get("sql"), str))
+            or (
+                node_class == "gen_sql_summary"
+                and keys <= {"sql_summary_file", "output"}
+                and isinstance(payload.get("sql_summary_file"), str)
+            )
+            or (
+                node_class == "gen_table"
+                and keys <= {"table_name", "output"}
+                and isinstance(payload.get("table_name"), str)
+            )
+            or (
+                node_class == "semantic_modeling"
+                and keys <= {"status", "blocker_code", "skip_reason", "output"}
+                and payload.get("status") in ("generated", "skipped", "blocked")
+            )
+        )
+    else:
+        # Cross-database jobs legitimately have no SQL and use ``explanation``
+        # rather than ``output``. llm_result2json's SQL/output gate excludes them.
+        markdown = payload.get("explanation")
+        job_keys = {
+            "mode",
+            "source_database",
+            "target_database",
+            "tables",
+            "sql",
+            "rows_transferred",
+            "validation",
+            "explanation",
+        }
+        recognized = (
+            node_class == "gen_job"
+            and isinstance(markdown, str)
+            and keys <= job_keys
+            and job_keys - {"sql"} <= keys
+            and payload.get("mode") in ("intra-db", "cross-db")
+            and isinstance(payload.get("tables"), list)
+            and isinstance(payload.get("validation"), dict)
+        )
+    if not recognized:
+        return None
+
+    contents = []
+    sql = payload.get("sql")
+    if include_sql and isinstance(sql, str) and sql:
+        contents.append(_sql_response_content(sql))
+    if markdown:
+        contents.append(IMessageContent(type="markdown", payload={"content": markdown}))
+    return contents
+
+
 def _build_response_content(action: ActionHistory) -> List[IMessageContent]:
     """Build content for final response event."""
     contents = []
     action_output = action.output if isinstance(action.output, dict) else {}
+    data = action.input if isinstance(action.input, dict) else {}
+    if isinstance(data.get("_response_content"), list):
+        return [IMessageContent(**part) for part in data["_response_content"]]
     if "sql" in action_output and action_output["sql"]:
         sql = action_output.get("sql")
-        sql_payload = {"codeType": "sql", "content": sql}
-        contents.append(IMessageContent(type="code", payload=sql_payload))
+        contents.append(_sql_response_content(sql))
 
     response = action_output.get("response") or action_output.get("content") or action_output.get("raw_output") or ""
+    structured = _build_structured_response_content(response, _response_node_class(action), include_sql=not contents)
+    if structured is not None:
+        # Prefer the host's resolved SQL (which may have been loaded from a
+        # .sql file), and avoid displaying it twice when the envelope has it too.
+        return contents + structured
     if response:
         resp_payload = {"content": str(response)}
         contents.append(IMessageContent(type="markdown", payload=resp_payload))
@@ -251,6 +370,9 @@ def _build_thinking_content(action: ActionHistory) -> Optional[List[IMessageCont
         return [IMessageContent(type="thinking", payload={"content": messages})] if messages else None
 
     output = action.output
+    data = action.input if isinstance(action.input, dict) else {}
+    if isinstance(data.get("_response_content"), list):
+        return [IMessageContent(**part) for part in data["_response_content"]]
     content = None
     if output and isinstance(output, dict):
         for key in ["response", "raw_output", "output", "thinking", "content"]:
@@ -264,14 +386,18 @@ def _build_thinking_content(action: ActionHistory) -> Optional[List[IMessageCont
         messages = strip_litellm_placeholder(action.messages)
         return [IMessageContent(type="thinking", payload={"content": messages})] if messages else None
 
-    result_json = llm_result2json(content)
+    node_class = _response_node_class(action)
+    structured = _build_structured_response_content(content, node_class)
+    if structured is not None:
+        return structured
+
+    result_json = llm_result2json(content) if node_class in _STRUCTURED_RESPONSE_NODES else None
 
     if result_json:
         contents = []
         if "sql" in result_json and result_json["sql"]:
             sql = result_json.get("sql")
-            sql_payload = {"codeType": "sql", "content": sql}
-            contents.append(IMessageContent(type="code", payload=sql_payload))
+            contents.append(_sql_response_content(sql))
         if "output" in result_json and result_json["output"]:
             resp_payload = {"content": result_json.get("output", "")}
             contents.append(IMessageContent(type="markdown", payload=resp_payload))
@@ -629,7 +755,7 @@ def action_to_sse_event(
         sse_role = "assistant"
         sse_type = SSEDataType.CREATE_MESSAGE
 
-        if stream_thinking and is_update:
+        if is_update:
             sse_type = SSEDataType.UPDATE_MESSAGE
 
         if action.action_type == "token_usage":

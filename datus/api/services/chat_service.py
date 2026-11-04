@@ -27,7 +27,11 @@ from datus.api.models.cli_models import (
     SSEMessagePayload,
     StreamChatInput,
 )
-from datus.api.services.action_sse_converter import action_to_sse_event, answered_ask_user_to_sse_event
+from datus.api.services.action_sse_converter import (
+    _STRUCTURED_RESPONSE_NODES,
+    action_to_sse_event,
+    answered_ask_user_to_sse_event,
+)
 from datus.api.services.chat_task_manager import (
     TurnEndCallback,
     _is_visible_assistant_response,
@@ -35,8 +39,9 @@ from datus.api.services.chat_task_manager import (
     _should_include_final_response,
     _should_skip_duplicate_assistant_message,
 )
+from datus.api.services.turn_stats import resolve_subagent
 from datus.configuration.agent_config import AgentConfig
-from datus.models.session_manager import SessionManager, session_matches_agent
+from datus.models.session_manager import SessionManager, extract_agent_from_session_id, session_matches_agent
 from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
 from datus.utils.config_utils import coerce_positive_int
 from datus.utils.exceptions import DatusException, ErrorCode
@@ -131,6 +136,8 @@ def _subagent_run_actions(
     call_id: str,
     result_action: ActionHistory,
     runs_cache: Dict[str, List[List[ActionHistory]]],
+    agent_config: Any = None,
+    node_responses: Optional[Dict[str, dict]] = None,
 ) -> List[ActionHistory]:
     """The steps one ``task`` call's subagent ran, stamped as depth-1 children of the call.
 
@@ -148,10 +155,32 @@ def _subagent_run_actions(
         return []
 
     actions = runs.pop(0)
+    node_class = _history_node_class(agent_config, sub_session_id, SessionManager(session_dir=session_dir))
     for action in actions:
         action.depth = max(action.depth, 1)
         action.parent_action_id = action.parent_action_id or call_id
+        if action.role == ActionRole.ASSISTANT and node_class:
+            action.input = {**(action.input if isinstance(action.input, dict) else {}), "_node_class": node_class}
+    saved = (node_responses or {}).get(call_id)
+    saved_text = saved.get("raw_output") if saved else None
+    if saved and isinstance(saved_text, str):
+        saved_text = saved_text.strip()
+        for action in reversed(actions):
+            output = action.output if isinstance(action.output, dict) else {}
+            raw_output = output.get("raw_output")
+            if isinstance(raw_output, str) and raw_output.strip() == saved_text:
+                action.input = {"_node_class": saved["node_class"], "_response_content": saved["content"]}
+                break
     return actions
+
+
+def _history_node_class(agent_config: Any, session_id: str, manager: SessionManager) -> Optional[str]:
+    snapshot = manager.load_system_prompt_snapshot(session_id) or {}
+    name = snapshot.get("node_name") or extract_agent_from_session_id(session_id)
+    if name == "chat" or name in _STRUCTURED_RESPONSE_NODES:
+        return name
+    nodes = getattr(agent_config, "agentic_nodes", None) or {}
+    return resolve_subagent(agent_config, name)[0] if name in nodes else None
 
 
 def _actions_to_payloads(
@@ -159,6 +188,7 @@ def _actions_to_payloads(
     event_id: int,
     expand_subagent: Optional[Callable[[str, ActionHistory], List[ActionHistory]]] = None,
     id_prefix: Optional[str] = None,
+    node_class: Optional[str] = None,
 ) -> tuple[List[SSEMessagePayload], int]:
     """Convert one stored assistant group into history payloads.
 
@@ -178,6 +208,9 @@ def _actions_to_payloads(
     }
     replayed_ask_user_ids: set[str] = set()
     for action_index, action in enumerate(messages):
+        if action.role == ActionRole.ASSISTANT and node_class:
+            data = action.input if isinstance(action.input, dict) else {}
+            action = action.model_copy(update={"input": {"_node_class": node_class, **data}})
         if action.role == ActionRole.TOOL and action.status != ActionStatus.PROCESSING:
             if action.action_id.removeprefix("complete_") in replayed_ask_user_ids:
                 # Folded into the card, but it still counts as a tool result.
@@ -465,6 +498,8 @@ class ChatService:
             raw_messages = session_manager.get_session_messages(session_id, **bounds)
             tool_results = session_manager.get_tool_result_contents(session_id, **bounds)
             tool_calls = session_manager.get_tool_call_contents(session_id, **bounds)
+            node_responses = session_manager.get_node_response_contents(session_id, **bounds)
+            node_class = _history_node_class(self.agent_config, session_id, session_manager)
 
             if not raw_messages:
                 return Result[ChatHistoryData](success=True, data=ChatHistoryData())
@@ -560,12 +595,18 @@ class ChatService:
                             expand_subagent=(
                                 (
                                     lambda call_id, result_action: _subagent_run_actions(
-                                        subagent_dir, call_id, result_action, subagent_runs
+                                        subagent_dir,
+                                        call_id,
+                                        result_action,
+                                        subagent_runs,
+                                        self.agent_config,
+                                        node_responses,
                                     )
                                 )
                                 if subagent_dir
                                 else None
                             ),
+                            node_class=node_class,
                         )
                         sse_messages.extend(payloads)
                     elif msg.get("content"):

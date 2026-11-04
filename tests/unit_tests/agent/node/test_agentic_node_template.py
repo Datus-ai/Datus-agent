@@ -204,6 +204,20 @@ def _tool_action(summary: str) -> ActionHistory:
 
 class TestTemplateMethodHappyPath:
     @pytest.mark.asyncio
+    async def test_response_provenance_uses_class_and_preserves_forwarded_children(self):
+        own = _ok_action("done")
+        child = _ok_action("child")
+        child.action_id = "child-action"
+        child.depth = 1
+        child.input = {"_node_class": "gen_job"}
+        node = FakeAgenticNode(_StreamModel([[child, own]]))
+        node.input = FakeInput(user_message="hello")
+        emitted = [action async for action in node.execute_stream(ActionHistoryManager())]
+        assert own.input["_node_class"] == node.get_node_class_name()
+        assert child.input["_node_class"] == "gen_job"
+        assert emitted[-1].input["_node_class"] == node.get_node_class_name()
+
+    @pytest.mark.asyncio
     async def test_initial_and_final_actions_have_canonical_types(self):
         model = _StreamModel([[_ok_action("done")]])
         node = FakeAgenticNode(model)

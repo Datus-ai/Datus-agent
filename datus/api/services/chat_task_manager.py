@@ -31,7 +31,13 @@ from datus.api.models.cli_models import (
     StreamChatInput,
 )
 from datus.api.models.message_contents import PreparedChatMessage
-from datus.api.services.action_sse_converter import action_to_sse_event
+from datus.api.services.action_sse_converter import (
+    _STRUCTURED_RESPONSE_NODES,
+    _build_response_content,
+    _build_structured_response_content,
+    _response_node_class,
+    action_to_sse_event,
+)
 from datus.api.services.background_drain import track_background_task
 from datus.api.services.turn_stats import TurnStatsCollector, resolve_subagent
 from datus.cli.autocomplete import AtReferenceCompleter
@@ -132,7 +138,13 @@ def _assistant_content_fingerprint(event: SSEEvent) -> str:
         content = payload.get("content")
         if content:
             parts.append(str(content).strip())
-    return "\n".join(part for part in parts if part)
+    if not parts:
+        return ""
+    # Equal text in two delegated tasks (or in a child and its parent) is
+    # independent content. Only suppress repeats inside the producing scope.
+    payload = event.data.payload
+    scope = (payload.depth, payload.parent_action_id)
+    return f"{scope!r}:" + "\n".join(parts)
 
 
 def _should_skip_duplicate_assistant_message(
@@ -150,6 +162,8 @@ def _should_skip_duplicate_assistant_message(
       An UPDATE on the id that already owns the text is the legitimate
       overwrite path (streamed thinking deltas replaced by the finished
       response, ``finalize_progress`` stepping one bubble through its stages).
+      Structured result updates also have to replace their JSON stream, even
+      when an earlier attempt already displayed the same readable summary.
 
     Judging UPDATE at all is the point: one assistant turn carrying text plus N
     parallel tool calls opens N ``thinking_stream_*`` messages that each stream
@@ -174,7 +188,14 @@ def _should_skip_duplicate_assistant_message(
     if owner is None:
         return False
     if event.data.type == SSEDataType.UPDATE_MESSAGE:
-        return owner != event.data.payload.message_id
+        if owner == event.data.payload.message_id:
+            return False
+        output = action.output if isinstance(getattr(action, "output", None), dict) else {}
+        raw = output.get("response") or output.get("content") or output.get("raw_output")
+        return (
+            not _is_resolved_sql_file_response(action)
+            and _build_structured_response_content(raw, _response_node_class(action)) is None
+        )
     return True
 
 
@@ -218,6 +239,19 @@ def _should_include_final_response(action, assistant_response_sent: bool) -> boo
     )
 
 
+def _is_resolved_sql_file_response(action: ActionHistory) -> bool:
+    output = action.output if isinstance(getattr(action, "output", None), dict) else {}
+    sql = output.get("sql")
+    return (
+        action.action_type.endswith("_response")
+        and _response_node_class(action) == "gen_sql"
+        and bool(output.get("sql_file_path"))
+        and isinstance(sql, str)
+        and bool(sql.strip())
+        and not sql.strip().endswith(".sql")
+    )
+
+
 def _is_visible_assistant_response(action, event: SSEEvent, *, tool_result_seen: bool) -> bool:
     """Return True when an action already emitted user-visible assistant text.
 
@@ -227,6 +261,8 @@ def _is_visible_assistant_response(action, event: SSEEvent, *, tool_result_seen:
     means the wrapper ``chat_response`` would duplicate it.
     """
     if action.role != ActionRole.ASSISTANT or action.status != ActionStatus.SUCCESS:
+        return False
+    if getattr(action, "depth", 0) > 0:
         return False
     if not action.action_type or action.action_type == "thinking_delta" or action.action_type.endswith("_response"):
         return False
@@ -953,6 +989,8 @@ class ChatTaskManager:
                 assistant_response_sent = False
                 tool_result_seen = False
                 seen_assistant_message_fingerprints: dict[str, str] = {}
+                pending_delta_ids: dict[tuple[int, Optional[str]], str] = {}
+                response_sources: dict[tuple[int, Optional[str]], tuple[str, str]] = {}
                 async for action in node.execute_stream_with_interactions(action_history):
                     action_count += 1
                     if _is_turn_error_action(action):
@@ -978,9 +1016,39 @@ class ChatTaskManager:
                     )
 
                     is_first_delta = True
+                    message_id = action.action_id
+                    scope = (action.depth, action.parent_action_id)
                     if action.action_type == "thinking_delta":
                         is_first_delta = action.action_id not in seen_delta_action_ids
                         seen_delta_action_ids.add(action.action_id)
+                        if effective_stream:
+                            pending_delta_ids[scope] = action.action_id
+                    elif action.action_type == "response":
+                        pending_id = pending_delta_ids.pop(scope, None)
+                        if pending_id and action.action_id not in seen_delta_action_ids:
+                            output = action.output if isinstance(action.output, dict) else {}
+                            raw = output.get("response") or output.get("content") or output.get("raw_output")
+                            if _build_structured_response_content(raw, _response_node_class(action)) is not None:
+                                # Some provider fallback completions mint a fresh
+                                # action id. Replace this producer's JSON stream
+                                # instead of leaving it above a new summary bubble.
+                                message_id = pending_id
+
+                    source = response_sources.get(scope)
+                    is_resolved_sql_update = bool(source and _is_resolved_sql_file_response(action))
+                    if is_resolved_sql_update:
+                        message_id = source[0]
+                    if (
+                        source
+                        and action.role == ActionRole.ASSISTANT
+                        and action.status == ActionStatus.SUCCESS
+                        and action.action_type.endswith("_response")
+                        and _response_node_class(action) in _STRUCTURED_RESPONSE_NODES
+                    ):
+                        # Persist the host's canonical view outside model input.
+                        # Bind it to the SDK assistant row (or enclosing task), so
+                        # copy/rewind retains the same SQL even if the file changes.
+                        self._record_node_response(task, action, source, _build_response_content(action))
 
                     # finalize_progress actions reuse the same id across stages
                     # so the SSE wire emits CREATE then UPDATE_MESSAGE; we mark
@@ -990,21 +1058,26 @@ class ChatTaskManager:
                         is_finalize_progress_update = action.action_id in seen_delta_action_ids
                         seen_delta_action_ids.add(action.action_id)
 
-                    is_update = is_finalize_progress_update or (
-                        effective_stream
-                        and action.action_type == "response"
-                        and isinstance(action.output, dict)
-                        and action.action_id in seen_delta_action_ids
+                    is_update = (
+                        is_resolved_sql_update
+                        or is_finalize_progress_update
+                        or (
+                            effective_stream
+                            and action.action_type == "response"
+                            and isinstance(action.output, dict)
+                            and message_id in seen_delta_action_ids
+                        )
                     )
 
                     sse = action_to_sse_event(
                         action,
                         event_id,
-                        action.action_id,
+                        message_id,
                         stream_thinking=effective_stream,
                         is_first_delta=is_first_delta,
                         is_update=bool(is_update),
-                        include_final_response=_should_include_final_response(action, assistant_response_sent),
+                        include_final_response=is_resolved_sql_update
+                        or _should_include_final_response(action, assistant_response_sent),
                         proxied_tool_names=getattr(node, "proxied_tool_names", None),
                         # A fast prepare can beat the original tool-start frame.
                         # Include its snapshot there too so UPDATE-before-CREATE
@@ -1046,6 +1119,17 @@ class ChatTaskManager:
                         await self._push_event(task, sse)
                         event_id += 1
                         _remember_assistant_message(sse, seen_assistant_message_fingerprints)
+                        if (
+                            action.role == ActionRole.ASSISTANT
+                            and action.status == ActionStatus.SUCCESS
+                            and action.action_type == "response"
+                            and _response_node_class(action) in _STRUCTURED_RESPONSE_NODES
+                        ):
+                            output = action.output if isinstance(action.output, dict) else {}
+                            raw = output.get("response") or output.get("content") or output.get("raw_output")
+                            if isinstance(raw, str):
+                                response_sources[scope] = (message_id, raw)
+                                self._record_node_response(task, action, (message_id, raw), sse.data.payload.content)
                         if _is_visible_assistant_response(action, sse, tool_result_seen=tool_result_seen):
                             assistant_response_sent = True
                         if action.role == ActionRole.TOOL and action.status != ActionStatus.PROCESSING:
@@ -1227,6 +1311,26 @@ class ChatTaskManager:
             callback(dict(usage), task.error if status == "error" else None, status, task.turn_id or "")
         except Exception:
             logger.warning("Turn settlement hook failed for session %s", task.session_id, exc_info=True)
+
+    @staticmethod
+    def _record_node_response(task, action, source: tuple[str, str], contents: List[IMessageContent]) -> None:
+        part = {
+            "type": "node-response",
+            "payload": {
+                "parent_action_id": action.parent_action_id,
+                "raw_output": source[1],
+                "node_class": _response_node_class(action),
+                "content": [item.model_dump() for item in contents],
+            },
+        }
+        if action.depth > 0 and action.parent_action_id:
+            record = task.tool_result_contents.setdefault(
+                f"tool-result:{action.parent_action_id}",
+                {"tool_call_id": action.parent_action_id, "parts": []},
+            )
+            record["parts"] = [item for item in record["parts"] if item["type"] != "node-response"] + [part]
+        else:
+            task.message_contents[f"node-response:{source[0]}"] = {"assistant_text": source[1], "parts": [part]}
 
     async def _persist_message_contents(self, task, agent_config, session_id, user_id) -> None:
         contents = {**task.message_contents, **task.tool_result_contents}

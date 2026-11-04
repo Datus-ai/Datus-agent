@@ -3776,6 +3776,7 @@ class AgenticNode(Node):
                 output_data=result.model_dump(),
                 status=ActionStatus.SUCCESS if getattr(result, "success", True) else ActionStatus.FAILED,
             )
+            final_action.input["_node_class"] = self.get_node_class_name()
             ahm.add_action(final_action)
             yield final_action
 
@@ -3906,6 +3907,11 @@ class AgenticNode(Node):
             ):
                 rewritten = self._maybe_rewrite_stream_action(stream_action, ctx)
                 action_to_yield = rewritten or stream_action
+                if action_to_yield.role == ActionRole.ASSISTANT and action_to_yield.depth == 0:
+                    action_to_yield.input = {
+                        **(action_to_yield.input if isinstance(action_to_yield.input, dict) else {}),
+                        "_node_class": self.get_node_class_name(),
+                    }
 
                 if (
                     action_to_yield.role == ActionRole.ASSISTANT
