@@ -39,6 +39,7 @@ StarRocks、Doris 用 `catalog.database.table`；Trino 用 `catalog.schema.table
 MySQL、TiDB、ClickHouse、Hive、Spark 用 `database.table`。Oracle 服务名和 HANA 租户属于连接身份，
 不作为 SQL 对象名前缀；datasource 路由名单独指定。名称含点时需要 SQL 引号。
 策略默认值只指向当前命名空间，查询短名仍按 SQL 的 search path 解析。
+MySQL/TiDB 会读取实际连接的 `lower_case_table_names`，物理目标和 CTE 按该设置匹配大小写。
 
 行过滤支持 `eq`、`in`。四种固定 masking 为 `nullify`、`redact`、`last4`、`email`，只配置目标列和方式。
 文本方式需要兼容的文本类型和已支持的方言。目前已完成 DuckDB，以及 13 个 Docker adapter 的真实执行验收：PostgreSQL、MySQL、TiDB、StarRocks、
@@ -81,7 +82,11 @@ SQLite 文本列的行规则要求字符串值，避免两种执行器的隐式�
 `datus sql-policy status` 查看配置。离线 `check` 可以校验 context，但缺少实际连接时拒绝策略改写；查看改写后的 SQL 应使用 Agent / Dosi dry-run。
 本实现需要配套原生 wheel，SaaS/Backend 的接入和发布另行处理。
 
+报表/看板指标先编译，在最终 SQL 读取入口统一应用一次策略；直接 Dosi 执行仍使用原生 provider。
+配置了策略时，包含读取的写语句会被拒绝；仅配置 masking、请求上下文为空时也会生效。
+
 ## 只读硬开关（`agent.sql_read_only`）
+
 
 `agent.sql_read_only` 是另一套更简单的机制，不要与上面的 policy plugin 混淆。
 

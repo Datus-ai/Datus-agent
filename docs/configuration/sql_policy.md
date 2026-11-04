@@ -38,6 +38,8 @@ initial defaults; explicit coordinates stay fixed. For example, `orders` and
 `orders.phone` use the current namespace. Rebind after a namespace switch: short
 targets follow the new current namespace, while full targets remain explicit.
 Missing required current coordinates are refused.
+MySQL/TiDB binding reads the live `lower_case_table_names` setting; physical
+targets and CTE names use that server's case rules.
 
 Full names follow the adapter: DuckDB/PostgreSQL/Greenplum/GaussDB use
 `database.schema.table`, StarRocks/Doris use `catalog.database.table`, Trino uses
@@ -107,7 +109,13 @@ validates context but refuses configured rewrites without a live connector; use
 Agent/Dosi dry-run to inspect protected SQL. Coordinated native wheels are needed
 for this implementation; SaaS/Backend rollout is separate.
 
+Report/dashboard metric recipes compile first and apply protection once at the
+final SQL read boundary. Standalone Dosi execution keeps its native provider.
+Read-carrying writes are refused whenever protection is configured, including
+profile-only masking with an empty request context.
+
 ## Hard Read-Only Switch (`agent.sql_read_only`)
+
 
 `agent.sql_read_only` is a separate, simpler mechanism. Do not confuse it with the policy plugins above.
 

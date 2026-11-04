@@ -99,6 +99,31 @@ async def test_native_read_paths_receive_one_request_local_policy(make_runtime, 
     assert calls and all(policy is bound and required for _, policy, required in calls)
 
 
+@pytest.mark.asyncio
+async def test_external_sql_compilation_does_not_bind_or_mutate_native_policy(make_runtime, monkeypatch):
+    runtime = make_runtime()
+    bound = SimpleNamespace(snapshot_json="{}", context_json="{}")
+    provider = MagicMock(return_value=bound)
+    runtime._read_policy_provider = provider
+    calls = []
+    original = FakeEngine.compile
+
+    def compile(self, *args, policy=None, policy_required=False, **kwargs):
+        calls.append((policy, policy_required))
+        return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(FakeEngine, "compile", compile)
+    await runtime.compile_for_sql_execution(metrics=["revenue"], dry_run=True)
+    provider.assert_not_called()
+    assert runtime._read_policy_provider is provider
+    assert calls == [(None, False)]
+    await runtime.query_metrics(["revenue"], dry_run=True)
+    provider.assert_called_once()
+    assert calls[-1] == (bound, True)
+    with pytest.raises(ValueError, match="compile-only"):
+        await runtime.compile_for_sql_execution(metrics=["revenue"], dry_run=False)
+
+
 def _install_file_catalog(monkeypatch, metrics_by_stem: dict[str, list[str]]) -> None:
     def metrics(engine):
         stem = Path(engine.model_path).stem

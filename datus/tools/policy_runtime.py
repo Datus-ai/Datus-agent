@@ -152,6 +152,10 @@ class PolicyRuntime:
     def has_metric_policies(self) -> bool:
         return any(callable(getattr(runtime, "before_metric_read", None)) for _, runtime in self._runtimes)
 
+    @property
+    def has_bound_read_provider(self) -> bool:
+        return any(callable(getattr(runtime, "bind_read", None)) for _, runtime in self._runtimes)
+
     def before_metric_read(
         self, *, datasets: set[str], where: Optional[str], policy_context: Optional[Dict[str, Any]]
     ) -> MetricReadDecision:

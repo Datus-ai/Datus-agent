@@ -2605,7 +2605,7 @@ class DBFuncTool:
             # lands every row the policy just withheld in a table no policy
             # covers — the person who may only SELECT two stores now owns all
             # four. The plugin cannot see it: it hooks reads, and this is a
-            # write. So on a project that has a policy context at all, a write
+            # write. With request or configured read protection, a write
             # that embeds a query is refused before it is dispatched.
             #
             # The permission prompt is not this check. It asks whether the
@@ -2615,11 +2615,15 @@ class DBFuncTool:
             # Ordered after the read-only gate above: a hardened deployment
             # refuses every write outright, so it never needs to reason about
             # what the write reads.
-            if self.policy_context and write_statement_reads_data(sql, connector.dialect):
+            from datus.tools.policy_runtime import PolicyRuntime
+
+            if write_statement_reads_data(sql, connector.dialect) and (
+                self.policy_context or PolicyRuntime(self.agent_config).requires_bound_read(self.policy_context)
+            ):
                 return FuncToolResult(
                     success=0,
                     error=(
-                        "This project has row-level policies, so a write statement that "
+                        "This project has row-level policies or column masking, so a write statement that "
                         "reads from a query is not allowed — it would copy filtered rows "
                         "into a table no policy covers. Create views and derived tables "
                         "on the database side instead."

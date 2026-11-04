@@ -2760,6 +2760,29 @@ class TestExecuteSqlWriteLaundering:
         assert result.success == 1
         connector.execute_ddl.assert_called_once()
 
+    @pytest.mark.parametrize(
+        "sql", ["CREATE TABLE mine AS SELECT * FROM orders", "INSERT INTO mine SELECT * FROM orders"]
+    )
+    def test_profile_only_masking_refuses_read_carrying_writes(self, monkeypatch, sql):
+        connector = self._connector()
+        tool = self._tool(connector, {})
+        tool.agent_config.active_plugin_names = lambda: {"sql-policy"}
+        tool.agent_config.get_plugin_profile = lambda _: {
+            "column_masking": [{"column": "orders.phone", "mask": "last4"}]
+        }
+        runtime = SimpleNamespace(
+            validate_context=lambda _: SimpleNamespace(allowed=True), requires_bound_read=lambda _: True
+        )
+        monkeypatch.setattr(
+            "datus.tools.policy_runtime.collect_plugin_policy_runtime_factories",
+            lambda _: {"sql-policy": lambda _: runtime},
+        )
+        result = tool.execute_sql(sql)
+        assert result.success == 0
+        assert "column masking" in result.error
+        connector.execute_ddl.assert_not_called()
+        connector.execute_insert.assert_not_called()
+
 
 class TestMcpFactoriesHonorDeploymentReadOnly:
     """``create_dynamic`` / ``create_static`` are the MCP server's construction

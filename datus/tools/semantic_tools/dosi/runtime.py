@@ -440,6 +440,17 @@ class DosiRuntime:
             "datasource": self.datasource or handle.profile_name or "default",
         }
 
+    async def compile_for_sql_execution(self, **arguments: Any) -> QueryResult:
+        """Compile for a host that applies policies at its final SQL boundary.
+
+        Artifact execution uses DBFuncTool to protect the complete SQL once.
+        This request-local compiler cannot execute rows or change the provider
+        on this runtime or its shared engine handles.
+        """
+        if arguments.get("dry_run") is not True:
+            raise ValueError("external SQL execution requires compile-only dry_run")
+        return await DosiRuntime(self.config).query_metrics(**arguments)
+
     async def query_metrics(
         self,
         metrics: List[str],
