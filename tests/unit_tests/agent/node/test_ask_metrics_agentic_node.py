@@ -940,6 +940,17 @@ class TestUpdateContext:
         # The text leaves the SQL out; the cached metadata keeps it for the workflow context.
         assert ctx.sql_query.startswith("SELECT DATE_TRUNC")
 
+    def test_rejected_scope_does_not_fall_back_to_the_action_preview(self):
+        actions = [_query_action("result_id: query_metrics:1\nrows: 1\n\nrevenue\n100")]
+        node = self._make_node_with_result(actions)
+        node.semantic_tools = MagicMock()
+        node.semantic_tools.get_cached_query_metrics_result.return_value = None
+        node.semantic_tools.can_use_query_metrics_preview.return_value = False
+        workflow = MagicMock()
+        workflow.context.sql_contexts = []
+        assert node.update_context(workflow)["success"] is False
+        assert workflow.context.sql_contexts == []
+
     def test_captures_zero_row_result(self):
         actions = [_query_action("result_id: query_metrics:1\nrows: 0\n\nmetric_time__month,order_count")]
         node = self._make_node_with_result(actions)

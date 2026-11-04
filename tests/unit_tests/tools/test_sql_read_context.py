@@ -123,6 +123,41 @@ def test_policy_defaults_require_an_available_current_namespace():
     assert context.fixed_object(parts("public.orders"))["schema"] == "public"
 
 
+def test_postgres_unquoted_identifiers_fold_only_ascii_letters():
+    connector = SimpleNamespace(
+        dialect="postgres",
+        execute_query=lambda *args, **kwargs: SimpleNamespace(
+            success=True,
+            sql_return=[{"database_name": "analytics", "schema_name": "public", "search_path": ["public"]}],
+        ),
+    )
+    context = SqlReadContext(connector, "warehouse")
+    assert context.fixed_object(parts("Keys"))["table"] == "Keys"
+    assert context.fixed_object(parts("KEYS"))["table"] == "keys"
+    assert context.column_name({"name": "KEY"}) == "Key"
+    assert context.column_name({"name": "KEY", "quoted": True}) == "KEY"
+
+
+@pytest.mark.parametrize("dialect", ["postgres", "oracle", "hana", "snowflake"])
+@pytest.mark.parametrize("stored", ["Orders", "Orders.X"])
+def test_metadata_listings_preserve_stored_identifier_case(monkeypatch, dialect, stored):
+    monkeypatch.setattr("datus.tools.sql_read_context.table_name_field_order", lambda _: ["schema_name", "table_name"])
+    connector = SimpleNamespace(
+        dialect=dialect,
+        get_current_context=lambda: {"schema_name": "sales"},
+        execute_query=lambda *_, **__: SimpleNamespace(
+            success=True,
+            sql_return=[{"database_name": "analytics", "schema_name": "sales", "search_path": ["sales"]}],
+        ),
+        get_tables=lambda **_: [stored],
+        get_views=lambda **_: [],
+        get_schema=lambda **_: [{"name": "Id", "type": "INTEGER"}],
+    )
+    table = resolve(SqlReadContext(connector, "warehouse"), '"sales"."' + stored + '"')
+    assert table["object"]["table"] == stored
+    assert table["columns"][0]["name"] == "Id"
+
+
 @pytest.mark.parametrize("dialect", ["starrocks", "doris"])
 def test_policy_defaults_include_current_catalog(monkeypatch, dialect):
     monkeypatch.setattr(

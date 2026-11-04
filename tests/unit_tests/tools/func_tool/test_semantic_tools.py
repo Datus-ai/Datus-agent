@@ -2718,11 +2718,20 @@ def test_cached_results_expire_when_policy_binding_cannot_be_verified(semantic_t
 
 @pytest.mark.parametrize("actual_database", ["selected", "configured_default"])
 def test_dosi_policy_metadata_uses_selected_database_and_rejects_mismatch(semantic_tools, monkeypatch, actual_database):
+    from datus.configuration.agent_config import DbConfig
+
     bound = SimpleNamespace(context_json=json.dumps({"database": actual_database, "schema": "sales"}))
     runtime = SimpleNamespace(requires_bound_read=lambda _: True, bind_read=lambda **_: bound)
     monkeypatch.setattr("datus.tools.policy_runtime.PolicyRuntime", lambda _: runtime)
     manager = Mock()
+    manager.get_conn.return_value.dialect = "postgres"
+    semantic_tools.agent_config.datasource_configs = {"warehouse": DbConfig(type="postgres", schema="public")}
     monkeypatch.setattr("datus.tools.db_tools.db_manager.db_manager_instance", lambda _: manager)
+    scoped_configs = []
+    scoped_manager = Mock()
+    monkeypatch.setattr(
+        "datus.tools.db_tools.db_manager.DBManager", lambda configs: scoped_configs.append(configs) or scoped_manager
+    )
     monkeypatch.setattr(
         semantic_tools,
         "_runtime_db_context",
@@ -2736,6 +2745,32 @@ def test_dosi_policy_metadata_uses_selected_database_and_rejects_mismatch(semant
         with pytest.raises(DatusException, match="does not match the policy metadata connection"):
             semantic_tools._bind_dosi_read()
     manager.get_conn.assert_called_once_with("warehouse", "selected")
+    scoped_manager.get_conn.assert_called_once_with("warehouse", "selected")
+    assert scoped_configs[0]["warehouse"].schema == "sales"
+    assert semantic_tools.agent_config.datasource_configs["warehouse"].schema == "public"
+
+
+def test_dosi_policy_uses_trusted_request_context(semantic_tools, monkeypatch):
+    contexts = []
+    runtime = SimpleNamespace(requires_bound_read=lambda value: contexts.append(value) or False)
+    monkeypatch.setattr("datus.tools.policy_runtime.PolicyRuntime", lambda _: runtime)
+    semantic_tools.agent_config.policy_context = {"tenant_id": "configured"}
+    semantic_tools._policy_context_provider = lambda: {"tenant_id": "request", "sql_policy": {"version": "v2"}}
+    assert semantic_tools._bind_dosi_read() is None
+    assert contexts == [{"tenant_id": "request", "sql_policy": {"version": "v2"}}]
+
+
+def test_evicted_preview_requires_its_original_policy_scope(semantic_tools, monkeypatch):
+    scope = ["first"]
+    monkeypatch.setattr(semantic_tools, "_policy_cache_scope", lambda: scope[0])
+    monkeypatch.setattr(semantic_tools, "MAX_QUERY_METRICS_RESULT_CACHE_SIZE", 1)
+    first = semantic_tools._cache_query_metrics_result(["revenue"], [{"revenue": 1}])
+    semantic_tools._cache_query_metrics_result(["revenue"], [{"revenue": 2}])
+    assert semantic_tools.get_cached_query_metrics_result(first) is None
+    assert semantic_tools.can_use_query_metrics_preview(first)
+    scope[0] = "second"
+    assert not semantic_tools.can_use_query_metrics_preview(first)
+    assert not semantic_tools.can_use_query_metrics_preview("unknown")
 
 
 def test_dosi_sqlite_policy_uses_main_namespace_instead_of_file_stem(semantic_tools, monkeypatch):

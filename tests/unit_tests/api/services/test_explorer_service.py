@@ -834,6 +834,25 @@ class TestExplorerServicePreviewMetric:
         assert query_metrics.call_args.kwargs["metrics"] == ["revenue"]
         assert query_metrics.call_args.kwargs["dimensions"] == ["region"]
 
+    async def test_native_policy_receives_request_context_without_mutating_shared_config(
+        self, real_agent_config, monkeypatch
+    ):
+        from datus.api.models.explorer_models import MetricPreviewInput
+
+        tools = self._patch_tools(
+            monkeypatch,
+            runtime=MagicMock(),
+            query_metrics=MagicMock(return_value=self._func_result(result={"metadata": {"sql": "SELECT 1"}})),
+        )
+        config_context = real_agent_config.policy_context
+        request_context = {"tenant_id": "request", "sql_policy": {"version": "request-only"}}
+        service = ExplorerService(agent_config=real_agent_config)
+        monkeypatch.setattr(service, "_metric_is_in_scope", lambda _: True)
+        result = await service.preview_metric(MetricPreviewInput(subject_path=["revenue"]), request_context)
+        assert result.success
+        assert tools.kwargs["policy_context_provider"]() == request_context
+        assert real_agent_config.policy_context is config_context
+
     async def test_falls_back_to_data_row_sql(self, real_agent_config, monkeypatch):
         """SQL is recovered from the single data row when metadata omits it."""
         from datus.api.models.explorer_models import MetricPreviewInput

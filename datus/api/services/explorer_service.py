@@ -879,6 +879,9 @@ class ExplorerService:
                 self.sub_agent_name,
                 runtime_db_context_provider=lambda: runtime_db_context,
                 semantic_model_path_provider=self._semantic_model_path_provider,
+                policy_context_provider=lambda: (
+                    policy_context or getattr(self.agent_config, "policy_context", None) or {}
+                ),
             )
             if tools.runtime is None:
                 return Result[MetricPreviewData](

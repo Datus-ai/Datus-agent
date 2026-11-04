@@ -16,7 +16,9 @@ import itertools
 import json
 import re
 import secrets
+import weakref
 from collections import OrderedDict
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Literal, Mapping, Optional, Tuple
 
@@ -620,6 +622,7 @@ class SemanticTools:
         semantic_model_path_provider: Optional[Callable[[], Optional[str]]] = None,
         semantic_metric_names_provider: Optional[Callable[[], Optional[List[str]]]] = None,
         ontology_enabled: bool = False,
+        policy_context_provider: Optional[Callable[[], Mapping[str, Any]]] = None,
     ):
         """
         Initialize semantic function tool.
@@ -637,6 +640,8 @@ class SemanticTools:
                 request-local semantic model selected for authoring or validation.
             semantic_metric_names_provider: Optional callback returning the
                 present touched metrics that require compiled publish evidence.
+            policy_context_provider: Trusted request-local policy context for
+                native compilation; defaults to the context on agent_config.
             ontology_enabled: Load the project's Apache Ossie ontologies
                 (``subject/ontology/``) through the mapping documents that
                 bind them to this datasource's models and expose the ontology tools. Off for every agent that
@@ -650,6 +655,8 @@ class SemanticTools:
         self._warehouse_dry_run_provider = warehouse_dry_run_provider
         self._semantic_model_path_provider = semantic_model_path_provider
         self._semantic_metric_names_provider = semantic_metric_names_provider
+        self._policy_context_provider = policy_context_provider
+        self._policy_metadata_managers = {}
         self.ontology_enabled = bool(ontology_enabled)
         self._runtime_db_context_static: Dict[str, str] = {}
         self._runtime_db_context_static_set = False
@@ -661,6 +668,7 @@ class SemanticTools:
         # The token budget of an executed result's preview, and of a dry run's data.
         self._compressor: Optional[DataCompressor] = None
         self._query_metrics_result_cache: OrderedDict[str, dict] = OrderedDict()
+        self._evicted_query_metrics_scopes: OrderedDict[str, str] = OrderedDict()
 
         # Lazy load runtime and attribution tool
         self._runtime: Optional[DosiRuntime] = None
@@ -759,8 +767,21 @@ class SemanticTools:
             "metadata": dict(metadata or {}),
         }
         while len(self._query_metrics_result_cache) > self.MAX_QUERY_METRICS_RESULT_CACHE_SIZE:
-            self._query_metrics_result_cache.popitem(last=False)
+            evicted_id, evicted = self._query_metrics_result_cache.popitem(last=False)
+            self._evicted_query_metrics_scopes[evicted_id] = evicted["policy_scope"]
+        while len(self._evicted_query_metrics_scopes) > self.MAX_QUERY_METRICS_RESULT_CACHE_SIZE:
+            self._evicted_query_metrics_scopes.popitem(last=False)
         return cache_key
+
+    def can_use_query_metrics_preview(self, cache_key: str) -> bool:
+        """Permit an evicted preview only while its original scope is verified."""
+        scope = self._evicted_query_metrics_scopes.get(cache_key)
+        if scope is None:
+            return False
+        try:
+            return scope == self._policy_cache_scope()
+        except (DatusException, ValueError):
+            return False
 
     def get_cached_query_metrics_result(self, cache_key: str) -> Optional[dict]:
         cached = self._query_metrics_result_cache.get(cache_key)
@@ -1169,11 +1190,15 @@ class SemanticTools:
         return self._runtime
 
     def _bind_dosi_read(self):
-        from datus.tools.db_tools.db_manager import db_manager_instance
+        from datus.tools.db_tools.db_manager import DBManager, db_manager_instance
         from datus.tools.policy_runtime import PolicyRuntime
 
         runtime = PolicyRuntime(self.agent_config)
-        context = getattr(self.agent_config, "policy_context", None)
+        context = (
+            self._policy_context_provider()
+            if self._policy_context_provider is not None
+            else getattr(self.agent_config, "policy_context", None)
+        )
         context = dict(context) if isinstance(context, dict) else {}
         if not runtime.requires_bound_read(context):
             return None
@@ -1181,6 +1206,24 @@ class SemanticTools:
         datasource = current.get("datasource") or self.agent_config.current_datasource
         manager = db_manager_instance(self.agent_config.datasource_configs)
         connector = manager.get_conn(datasource, current.get("database", ""))
+        # File-backed connections must retain the live session's attachments
+        # and temporary objects. Server metadata uses an isolated connector
+        # when the request selects a catalog/schema, including ask_metrics
+        # turns which do not mount a database tool to switch the shared one.
+        if connector.dialect not in {"sqlite", "duckdb"} and any(current.get(k) for k in ("catalog", "schema")):
+            key = tuple(current.get(k, "") for k in ("datasource", "catalog", "database", "schema"))
+            if key not in self._policy_metadata_managers:
+                config = self.agent_config.datasource_configs[datasource]
+                overrides = {k: current[k] for k in ("catalog", "schema") if current.get(k)}
+                extra = dict(config.extra or {})
+                for name in overrides:
+                    extra.pop(name, None)
+                    extra.pop(name + "_name", None)
+                scoped_manager = DBManager({datasource: replace(config, **overrides, extra=extra)})
+                scoped = scoped_manager.get_conn(datasource, current.get("database", ""))
+                self._policy_metadata_managers[key] = (scoped_manager, scoped)
+                weakref.finalize(self, scoped_manager.close)
+            connector = self._policy_metadata_managers[key][1]
         bound = runtime.bind_read(connector=connector, datasource=datasource, policy_context=context)
         if bound is not None:
             actual = json.loads(bound.context_json)

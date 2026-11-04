@@ -11,6 +11,8 @@ from typing import Any, Callable
 
 from datus.utils.sql_utils import table_name_field_order
 
+_ASCII_LOWER = str.maketrans("ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz")
+
 
 def _literal(value: str) -> str:
     return "'" + value.replace("'", "''") + "'"
@@ -40,7 +42,7 @@ def _paths(value: str) -> list[str]:
 class SqlReadContext:
     def canonical_name(self, name: str) -> str:
         if self.dialect in {"duckdb", "sqlite"}:
-            return name.translate(str.maketrans("ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz"))
+            return name.translate(_ASCII_LOWER)
         return name
 
     def fixed_object(self, parts: list[dict]) -> dict:
@@ -67,7 +69,7 @@ class SqlReadContext:
         name = identifier["name"]
         if not identifier.get("quoted"):
             if self.dialect in {"postgres", "postgresql", "hologres", "gaussdb", "dws"}:
-                name = name.lower()
+                name = name.translate(_ASCII_LOWER)
             elif self.dialect in {"snowflake", "oracle", "hana"}:
                 name = name.upper()
         return self.canonical_name(name)
@@ -181,7 +183,7 @@ class SqlReadContext:
             name = item["name"]
             if not item.get("quoted"):
                 if self.dialect in {"postgres", "postgresql", "hologres", "gaussdb", "dws"}:
-                    name = name.lower()
+                    name = name.translate(_ASCII_LOWER)
                 elif self.dialect in {"snowflake", "oracle", "hana"}:
                     name = name.upper()
             values.append(name)
@@ -305,7 +307,11 @@ class SqlReadContext:
             # Getters are scoped to this exact namespace; their short display
             # names are used only to confirm kind, never to construct policy IDs.
             def matches_name(reference):
-                parts = self._parts(parser(str(reference)))
+                if self.canonical_name(str(reference)) == self.canonical_name(name):
+                    return True
+                # Listings contain stored identifiers, not unquoted SQL input.
+                stored = [{**part, "quoted": True} for part in parser(str(reference))]
+                parts = self._parts(stored)
                 return all(
                     self.canonical_name(parts.get(key, namespace.get(key, ""))) == self.canonical_name(value)
                     for key, value in {**namespace, "table": name}.items()
