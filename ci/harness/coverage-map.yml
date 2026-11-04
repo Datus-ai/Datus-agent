@@ -1574,6 +1574,7 @@ execution:
         - datus/prompts/
       targets:
         - tests/unit_tests/agent/node/
+        - tests/unit_tests/api/services/test_structured_response_rendering.py
         - tests/unit_tests/configuration/
         - tests/unit_tests/prompts/
     - id: datus-schemas
