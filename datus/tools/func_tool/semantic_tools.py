@@ -1199,7 +1199,11 @@ class SemanticTools:
             if self._policy_context_provider is not None
             else getattr(self.agent_config, "policy_context", None)
         )
-        context = dict(context) if isinstance(context, dict) else {}
+        if context is None:
+            context = {}
+        elif not isinstance(context, Mapping):
+            raise DatusException(ErrorCode.POLICY_DENIED, message="Policy context must be a mapping")
+        context = dict(context)
         if not runtime.requires_bound_read(context):
             return None
         current = self._runtime_db_context()
@@ -1234,8 +1238,6 @@ class SemanticTools:
                     continue
                 expected = current.get(namespace)
                 if expected and actual.get(namespace) != expected:
-                    from datus.utils.exceptions import DatusException, ErrorCode
-
                     raise DatusException(
                         ErrorCode.POLICY_DENIED,
                         message=f"Dosi {namespace} does not match the policy metadata connection; switch the live connection and rebind",

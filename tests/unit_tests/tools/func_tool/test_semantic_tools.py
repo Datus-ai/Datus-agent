@@ -2751,13 +2751,26 @@ def test_dosi_policy_metadata_uses_selected_database_and_rejects_mismatch(semant
 
 
 def test_dosi_policy_uses_trusted_request_context(semantic_tools, monkeypatch):
+    from types import MappingProxyType
+
     contexts = []
     runtime = SimpleNamespace(requires_bound_read=lambda value: contexts.append(value) or False)
     monkeypatch.setattr("datus.tools.policy_runtime.PolicyRuntime", lambda _: runtime)
     semantic_tools.agent_config.policy_context = {"tenant_id": "configured"}
-    semantic_tools._policy_context_provider = lambda: {"tenant_id": "request", "sql_policy": {"version": "v2"}}
+    semantic_tools._policy_context_provider = lambda: MappingProxyType(
+        {"tenant_id": "request", "sql_policy": {"version": "v2"}}
+    )
     assert semantic_tools._bind_dosi_read() is None
     assert contexts == [{"tenant_id": "request", "sql_policy": {"version": "v2"}}]
+
+
+@pytest.mark.parametrize("context", ["invalid", ["tenant_id", 42]])
+def test_dosi_policy_rejects_invalid_request_context(semantic_tools, context):
+    from datus.utils.exceptions import DatusException
+
+    semantic_tools._policy_context_provider = lambda: context
+    with pytest.raises(DatusException, match="Policy context must be a mapping"):
+        semantic_tools._bind_dosi_read()
 
 
 def test_evicted_preview_requires_its_original_policy_scope(semantic_tools, monkeypatch):
