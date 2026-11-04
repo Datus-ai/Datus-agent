@@ -290,9 +290,17 @@ def _build_structured_response_content(
 
     keys = payload.keys()
     markdown = payload.get("output", "" if node_class == "gen_sql" else None)
+    explanation = payload.get("explanation", "")
+    tables = payload.get("tables", [])
     if isinstance(markdown, str):
         recognized = (
-            (node_class == "gen_sql" and keys <= {"sql", "output"} and isinstance(payload.get("sql"), str))
+            (
+                node_class == "gen_sql"
+                and keys <= {"sql", "output", "tables", "explanation"}
+                and isinstance(payload.get("sql"), str)
+                and isinstance(explanation, str)
+                and (isinstance(tables, str) or (isinstance(tables, list) and all(isinstance(t, str) for t in tables)))
+            )
             or (
                 node_class == _LEGACY_CHAT_RESPONSE_PROTOCOL
                 and keys <= {"sql", "output"}
@@ -339,6 +347,15 @@ def _build_structured_response_content(
         )
     if not recognized:
         return None
+
+    if node_class == "gen_sql" and not markdown:
+        # Match the node's supported older explanation/tables result schema.
+        parts = []
+        if explanation:
+            parts.append(f"Explanation: {explanation}")
+        if tables:
+            parts.append(f"Tables used: {', '.join(tables) if isinstance(tables, list) else tables}")
+        markdown = "\n".join(parts).replace("\\n", "\n").replace('\\"', '"').replace("\\'", "'")
 
     contents = []
     sql = payload.get("sql")
@@ -414,6 +431,21 @@ def _build_thinking_content(action: ActionHistory) -> Optional[List[IMessageCont
         return [IMessageContent(type="thinking", payload={"content": messages})] if messages else None
 
     protocol = _response_protocol(action)
+    blocks = data.get("_response_text_blocks")
+    if protocol and isinstance(blocks, list) and len(blocks) > 1 and all(isinstance(block, str) for block in blocks):
+        # Old sessions have provider text boundaries but no saved display view.
+        # Parse each complete block so sibling prose cannot hide an envelope.
+        contents = []
+        recognized = False
+        for block in blocks:
+            structured = _build_structured_response_content(block, protocol)
+            if structured is not None:
+                contents.extend(structured)
+                recognized = True
+            else:
+                contents.append(IMessageContent(type="thinking", payload={"content": block}))
+        if recognized:
+            return contents
     structured = _build_structured_response_content(content, protocol)
     if structured is not None:
         return structured

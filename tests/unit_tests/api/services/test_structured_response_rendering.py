@@ -115,6 +115,86 @@ def test_legacy_chat_completion_uses_host_prompt_identity(version, is_thinking):
     assert action.input["_node_class"] == "chat"
 
 
+@pytest.mark.parametrize("is_thinking", [False, True])
+@pytest.mark.parametrize(
+    "fields,expected",
+    [
+        ({"explanation": SUMMARY, "tables": ["orders"]}, f"Explanation: {SUMMARY}\nTables used: orders"),
+        ({"explanation": "line1\\nline2", "tables": []}, "Explanation: line1\nline2"),
+        ({"tables": "orders"}, "Tables used: orders"),
+        ({"output": SUMMARY, "explanation": "Legacy explanation", "tables": ["orders"]}, SUMMARY),
+    ],
+)
+def test_legacy_gen_sql_completion_matches_supported_node_schema(fields, expected, is_thinking):
+    raw = json.dumps({"sql": r"SELECT COUNT\(*) FROM orders", **fields})
+    action = _action(output={"raw_output": raw, "is_thinking": is_thinking}, node_class="gen_sql")
+    event = action_to_sse_event(action, 1, action.action_id)
+    assert [(part.type, part.payload["content"]) for part in event.data.payload.content] == [
+        ("code", "SELECT COUNT(*) FROM orders"),
+        ("markdown", expected),
+    ]
+    assert action.output["raw_output"] == raw
+
+
+@pytest.mark.parametrize("is_thinking", [False, True])
+@pytest.mark.parametrize(
+    "fields",
+    [{"custom": True}, {"explanation": {}}, {"tables": {}}, {"tables": [1]}],
+)
+def test_legacy_gen_sql_rejects_extra_or_invalid_fields(fields, is_thinking):
+    raw = json.dumps({"sql": "SELECT 1", "explanation": SUMMARY, "tables": ["orders"], **fields})
+    action = _action(output={"raw_output": raw, "is_thinking": is_thinking}, node_class="gen_sql")
+    event = action_to_sse_event(action, 1, action.action_id)
+    assert [part.payload["content"] for part in event.data.payload.content] == [raw]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("legacy", [False, True])
+@pytest.mark.parametrize("provider", ["openai", "claude"])
+@pytest.mark.parametrize("envelope_first", [False, True])
+@pytest.mark.parametrize("delegated", [False, True])
+async def test_multipart_gen_sql_history_without_saved_display(
+    real_agent_config, legacy, provider, envelope_first, delegated
+):
+    parent_id = "gen_sql_session_old_multipart"
+    child_id = "gen_sql_session_old_child"
+    call_id = "old-sql-task"
+    storage = SessionManager(session_dir=real_agent_config.session_dir)
+    parent = storage.get_session(parent_id)
+    owner = SessionManager(session_dir=f"{real_agent_config.session_dir}/{parent_id}") if delegated else storage
+    session = owner.get_session(child_id if delegated else parent_id)
+    payload = {"explanation": SUMMARY, "tables": ["orders"]} if legacy else {"output": SUMMARY}
+    raw = json.dumps({"sql": r"SELECT COUNT\(*) FROM orders", **payload})
+    prose = "  The requested query is ready.\n"
+    texts = [raw, prose] if envelope_first else [prose, raw]
+    blocks = [{"type": "text" if provider == "claude" else "output_text", "text": text} for text in texts]
+    await session.add_items([{"role": "user", "content": "Count orders"}, {"role": "assistant", "content": blocks}])
+    if delegated:
+        await parent.add_items(
+            [
+                {"role": "user", "content": "Delegate SQL"},
+                {"type": "function_call", "call_id": call_id, "name": "task", "arguments": '{"type":"gen_sql"}'},
+                {
+                    "type": "function_call_output",
+                    "call_id": call_id,
+                    "output": json.dumps({"success": True, "result": {"session_id": child_id}}),
+                },
+            ]
+        )
+    history = ChatService(real_agent_config).get_history(parent_id)
+    assert history.success is True
+    answers = [
+        message for message in history.data.messages if message.role == "assistant" and message.depth == int(delegated)
+    ]
+    assert len(answers) == 1
+    rendered = ["SELECT COUNT(*) FROM orders", f"Explanation: {SUMMARY}\nTables used: orders" if legacy else SUMMARY]
+    assert [part.payload["content"] for part in answers[0].content] == (
+        [*rendered, prose] if envelope_first else [prose, *rendered]
+    )
+    assert answers[0].parent_action_id == (call_id if delegated else None)
+    assert (await session.get_items())[-1]["content"] == blocks
+
+
 @pytest.mark.asyncio
 async def test_gen_sql_history_normalizes_sql_without_saved_display(real_agent_config):
     session_id = "gen_sql_session_escape_history"
@@ -198,15 +278,19 @@ async def test_legacy_chat_history_uses_prompt_provenance(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("template,version", [("chat_system", "1.2"), ("chat_system", ""), ("custom_system", "0.9")])
-async def test_chat_history_keeps_json_without_legacy_prompt_provenance(real_agent_config, template, version):
+@pytest.mark.parametrize("multipart", [False, True])
+async def test_chat_history_keeps_json_without_legacy_prompt_provenance(
+    real_agent_config, template, version, multipart
+):
     session_id = "chat_session_freeform_json"
     storage = SessionManager(session_dir=real_agent_config.session_dir)
     session = storage.get_session(session_id)
     raw = json.dumps({"sql": "SELECT 1", "output": "User data"})
+    texts = ["Here is the JSON.", raw] if multipart else [raw]
     await session.add_items(
         [
             {"role": "user", "content": "Show JSON"},
-            {"role": "assistant", "content": [{"type": "output_text", "text": raw}]},
+            {"role": "assistant", "content": [{"type": "output_text", "text": text} for text in texts]},
         ]
     )
     storage.save_system_prompt_snapshot(
@@ -216,7 +300,7 @@ async def test_chat_history_keeps_json_without_legacy_prompt_provenance(real_age
     assert history.success is True
     answers = [message for message in history.data.messages if message.role == "assistant"]
     assert len(answers) == 1
-    assert [part.payload["content"] for part in answers[0].content] == [raw]
+    assert [part.payload["content"] for part in answers[0].content] == ["\n".join(texts)]
 
 
 @pytest.mark.asyncio
