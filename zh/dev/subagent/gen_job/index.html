@@ -8,7 +8,7 @@
       
       
       
-        
+        <link rel="canonical" href="https://docs.datus.ai/zh/dev/subagent/gen_job/">
       
       
         <link rel="prev" href="../gen_table/">
@@ -18,9 +18,9 @@
       
       
         
-          
+          <link rel="alternate" href="/dev/" hreflang="en">
         
-          
+          <link rel="alternate" href="/zh/dev/" hreflang="zh">
         
       
       
@@ -57,13 +57,7 @@
 
     
     
-  <!-- datus-docs-seo -->
-<link rel="canonical" href="https://docs.datus.ai/zh/dev/subagent/gen_job/">
-<link rel="alternate" hreflang="en" href="https://docs.datus.ai/dev/subagent/gen_job/">
-<link rel="alternate" hreflang="zh-Hans" href="https://docs.datus.ai/zh/dev/subagent/gen_job/">
-<link rel="alternate" hreflang="x-default" href="https://docs.datus.ai/dev/subagent/gen_job/">
-<!-- /datus-docs-seo -->
-</head>
+  </head>
   
   
     
@@ -5650,7 +5644,7 @@
 <div class="language-yaml highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="nt">agent</span><span class="p">:</span>
 </span><span id="__span-6-2"><a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="w">  </span><span class="nt">agentic_nodes</span><span class="p">:</span>
 </span><span id="__span-6-3"><a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="w">    </span><span class="nt">gen_job</span><span class="p">:</span>
-</span><span id="__span-6-4"><a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="w">      </span><span class="nt">max_turns</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">40</span><span class="w">       </span><span class="c1"># 默认：40（跨库场景需要更多 turn）</span>
+</span><span id="__span-6-4"><a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="w">      </span><span class="nt">max_turns</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">100</span><span class="w">       </span><span class="c1"># 默认：100</span>
 </span></code></pre></div>
 <h2 id="skill">使用的 Skill<a class="headerlink" href="#skill" title="Permanent link">&para;</a></h2>
 <ul>
@@ -5738,8 +5732,8 @@
 </tr>
 <tr>
 <td>默认 max_turns</td>
-<td>20</td>
-<td>40</td>
+<td>100</td>
+<td>100</td>
 </tr>
 </tbody>
 </table>
