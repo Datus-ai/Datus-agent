@@ -64,7 +64,7 @@ Most configurations are built-in. In `agent.yml`, minimal setup is needed:
 agentic_nodes:
   gen_sql_summary:
     model: deepseek      # Optional: defaults to configured model
-    max_turns: 30        # Optional: defaults to 30
+    max_turns: 100        # Optional: defaults to 100
 ```
 
 **Built-in configurations** (automatically enabled):
@@ -79,7 +79,7 @@ agentic_nodes:
 | Parameter | Required | Description | Default |
 |-----------|----------|-------------|---------|
 | `model` | No | LLM model to use | Uses default configured model |
-| `max_turns` | No | Maximum conversation turns | 30 |
+| `max_turns` | No | Maximum conversation turns | 100 |
 
 ### Subject Tree Categorization
 

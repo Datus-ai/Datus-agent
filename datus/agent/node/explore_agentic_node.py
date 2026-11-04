@@ -7,7 +7,7 @@ ExploreAgenticNode implementation for read-only data exploration.
 
 This module provides a lightweight AgenticNode focused on gathering context
 (schema structure, data samples, metrics, reference SQL, knowledge) before
-SQL generation. It exposes only read-only tools and runs with a low max_turns
+SQL generation. It exposes only read-only tools and runs with a configurable max_turns
 budget for fast, focused exploration.
 """
 
@@ -40,7 +40,7 @@ class ExploreAgenticNode(AgenticNode):
 
     Gathers context information (schema, data samples, metrics, knowledge)
     to support downstream SQL generation. Exposes only read-only tools
-    and uses a low max_turns budget for fast exploration.
+    and uses a configurable max_turns budget for exploration.
     """
 
     # Canonical class identifier. ``get_node_class_name()`` returns this even
@@ -68,13 +68,13 @@ class ExploreAgenticNode(AgenticNode):
         # otherwise block on a missing broker listener.
         self.execution_mode = execution_mode
 
-        # Default max_turns = 50, can be overridden by agent.yml
-        self.max_turns = 50
+        # Default max_turns = 100, can be overridden by agent.yml
+        self.max_turns = 100
         config_key = node_name or self.NODE_NAME
         if agent_config and hasattr(agent_config, "agentic_nodes") and config_key in agent_config.agentic_nodes:
             agentic_node_config = agent_config.agentic_nodes[config_key]
             if isinstance(agentic_node_config, dict):
-                self.max_turns = agentic_node_config.get("max_turns", 50)
+                self.max_turns = agentic_node_config.get("max_turns", 100)
 
         # Initialize tool attributes before parent constructor
         self.db_func_tool: Optional[DBFuncTool] = None

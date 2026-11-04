@@ -124,7 +124,7 @@ agent:
   agentic_nodes:
     ask_metrics:
       model: claude
-      max_turns: 12
+      max_turns: 100
       subject_tree_prompt_limit: 100
 ```
 
@@ -138,7 +138,7 @@ agent:
     sales_metric_qa:
       type: ask_metrics
       model: claude
-      max_turns: 12
+      max_turns: 100
       prompt_version: "1.0"
       tools: "context_search_tools.search_metrics,semantic_tools.get_metric,semantic_tools.query_metrics"
       subject_tree_prompt_limit: 50

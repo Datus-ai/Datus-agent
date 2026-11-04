@@ -169,7 +169,7 @@ gen_job works out of the box. You can optionally customize it in `agent.yml`:
 agent:
   agentic_nodes:
     gen_job:
-      max_turns: 40       # Default: 40 (cross-DB flows need more turns)
+      max_turns: 100       # Default: 100
 ```
 
 ## Skills Used

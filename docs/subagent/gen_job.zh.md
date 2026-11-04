@@ -167,7 +167,7 @@ gen_job 开箱即用。可在 `agent.yml` 中自定义：
 agent:
   agentic_nodes:
     gen_job:
-      max_turns: 40       # 默认：40（跨库场景需要更多 turn）
+      max_turns: 100       # 默认：100
 ```
 
 ## 使用的 Skill
@@ -238,6 +238,6 @@ gen_job：
 | 数据写入 (INSERT/UPDATE/DELETE) | 不支持 | 支持 |
 | 跨库迁移 | 不支持 | 支持 |
 | 用户确认 (ask_user) | 必须 | 可选 |
-| 默认 max_turns | 20 | 40 |
+| 默认 max_turns | 100 | 100 |
 
 需要交互式建表时用 **gen_table**，需要 ETL 流水线或跨库迁移时用 **gen_job**。
