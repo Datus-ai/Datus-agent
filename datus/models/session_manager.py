@@ -32,7 +32,12 @@ from datus.utils.async_utils import run_async
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.json_utils import llm_result2json
 from datus.utils.loggings import get_logger
-from datus.utils.message_utils import extract_user_input, is_compact_resume_text
+from datus.utils.message_utils import (
+    assistant_text_blocks,
+    extract_user_input,
+    is_compact_resume_text,
+    merge_assistant_response,
+)
 from datus.utils.time_utils import to_utc_iso
 
 logger = get_logger(__name__)
@@ -1466,7 +1471,10 @@ class SessionManager:
                 (session_id, previous_message_id),
             ).fetchall()
             records = [record for record in contents.values() if record.get("persist", True)]
-            pending = [record for record in records if not record.get("tool_call_id")]
+            pending = [
+                record for record in records if not record.get("tool_call_id") and "assistant_text" not in record
+            ]
+            assistant_records = [record for record in records if "assistant_text" in record]
             tools = {record["tool_call_id"]: record for record in records if record.get("tool_call_id")}
             result_rows: Dict[str, int] = {}
             persisted: Dict[int, list] = {}
@@ -1493,6 +1501,28 @@ class SessionManager:
                     if record["text"].strip() == text:
                         persisted[message_id] = list(record["parts"])
                         pending.pop(index)
+                        break
+            claimed_assistant_ids = set()
+            for record in reversed(assistant_records):
+                # Model completions trim text; SDK history retains surrounding whitespace.
+                assistant_text = record["assistant_text"].strip()
+                for message_id, raw in reversed(rows):
+                    message = json.loads(raw)
+                    blocks = assistant_text_blocks(message.get("content", ""))
+                    if (
+                        message_id not in claimed_assistant_ids
+                        and message.get("role") == "assistant"
+                        and assistant_text in {"\n".join(blocks).strip(), *(text.strip() for text in blocks)}
+                    ):
+                        parts = []
+                        for part in record["parts"]:
+                            payload = part.get("payload", {})
+                            if part.get("type") == "node-response" and isinstance(payload.get("content"), list):
+                                content = merge_assistant_response(blocks, assistant_text, payload["content"])
+                                part = {**part, "payload": {**payload, "content": content}}
+                            parts.append(part)
+                        persisted.setdefault(message_id, []).extend(parts)
+                        claimed_assistant_ids.add(message_id)
                         break
             for call_id, record in tools.items():
                 owner = call_id
@@ -1524,8 +1554,17 @@ class SessionManager:
     def get_tool_call_contents(self, session_id: str, **window) -> Dict[str, dict]:
         return self._get_tool_display_contents(session_id, "call-tool", **window)
 
+    def get_node_response_contents(self, session_id: str, **window) -> Dict[str, dict]:
+        return self._get_tool_display_contents(session_id, "node-response", key_field="parent_action_id", **window)
+
     def _get_tool_display_contents(
-        self, session_id: str, content_type: str, *, min_id: Optional[int] = None, max_id: Optional[int] = None
+        self,
+        session_id: str,
+        content_type: str,
+        *,
+        min_id: Optional[int] = None,
+        max_id: Optional[int] = None,
+        key_field: str = "callToolId",
     ) -> Dict[str, dict]:
         """Only replay display content whose owning model message still exists."""
         self._validate_session_id(session_id)
@@ -1557,7 +1596,7 @@ class SessionManager:
                 payload = part.get("payload")
                 if not isinstance(payload, dict):
                     continue
-                call_id = payload.get("callToolId")
+                call_id = payload.get(key_field)
                 if isinstance(call_id, str) and call_id:
                     results[call_id] = payload
         return results
@@ -2031,7 +2070,7 @@ class SessionManager:
                                         role=ActionRole.ASSISTANT,
                                         messages=assistant_message_text,
                                         action_type="thinking",
-                                        input=None,
+                                        input={"_response_text_blocks": assistant_text_blocks(content_array)},
                                         output={"raw_output": assistant_message_text},
                                         status=ActionStatus.SUCCESS,
                                         start_time=(
@@ -2039,6 +2078,14 @@ class SessionManager:
                                         ),
                                         end_time=(datetime.fromisoformat(created_at) if created_at else datetime.now()),
                                     )
+                                    for part in content_map.get(row_id, []):
+                                        if part.get("type") == "node-response":
+                                            saved = part.get("payload", {})
+                                            thinking_action.input = {
+                                                **thinking_action.input,
+                                                "_node_class": saved.get("node_class"),
+                                                "_response_content": saved.get("content"),
+                                            }
                                     current_actions.append(thinking_action)
 
                                 # Native tool calls live inside the assistant

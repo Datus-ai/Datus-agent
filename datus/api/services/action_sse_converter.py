@@ -8,6 +8,8 @@ chat-history retrieval can share the same conversion logic.
 import json
 from typing import Any, Dict, List, Optional, Set
 
+import json_repair
+
 from datus.agent.node.compact_archive import parse_archived_marker
 from datus.api.models.cli_models import (
     IMessageContent,
@@ -25,8 +27,9 @@ from datus.schemas.action_history import (
     ActionRole,
     ActionStatus,
 )
-from datus.utils.json_utils import llm_result2json
+from datus.utils.json_utils import normalize_sql_escapes
 from datus.utils.loggings import get_logger
+from datus.utils.sql_utils import looks_like_sql_file_ref
 from datus.utils.time_utils import now_utc_iso, to_utc_iso
 
 logger = get_logger(__name__)
@@ -214,16 +217,176 @@ def _build_user_content(action: ActionHistory) -> List[IMessageContent]:
     return [IMessageContent(type="markdown", payload=payload_data)]
 
 
+_STRUCTURED_RESPONSE_NODES = frozenset({"semantic_modeling", "gen_sql", "gen_sql_summary", "gen_table", "gen_job"})
+_LEGACY_CHAT_RESPONSE_PROTOCOL = "chat_sql_output"
+
+
+def _response_node_class(action: ActionHistory) -> Optional[str]:
+    """Read host-owned provenance, never infer a node from model JSON fields."""
+    data = action.input if isinstance(getattr(action, "input", None), dict) else {}
+    node_class = data.get("_node_class")
+    if not isinstance(node_class, str) and action.action_type.endswith("_response"):
+        node_class = action.action_type.removesuffix("_response")
+    elif not isinstance(node_class, str) and action.action_type in _STRUCTURED_RESPONSE_NODES:
+        node_class = action.action_type
+    return (
+        {"gensql": "gen_sql", "sqlsummary": "gen_sql_summary"}.get(node_class, node_class)
+        if isinstance(node_class, str)
+        else None
+    )
+
+
+def _sql_response_content(sql: str, *, resolved: bool = False) -> IMessageContent:
+    """Keep confirmed SQL verbatim and show unresolved file references as hints."""
+    if not resolved and looks_like_sql_file_ref(sql):
+        # A path is not executable SQL. The host completion may replace this
+        # hint with the statement read through the node's filesystem tools.
+        return IMessageContent(type="markdown", payload={"content": f"SQL file: `{sql}`"})
+    return IMessageContent(type="code", payload={"codeType": "sql", "content": sql})
+
+
+def _response_protocol(action: ActionHistory) -> Optional[str]:
+    """Select a result protocol from trusted node and prompt identity."""
+    node_class = _response_node_class(action)
+    if node_class in _STRUCTURED_RESPONSE_NODES:
+        return node_class
+    data = action.input if isinstance(getattr(action, "input", None), dict) else {}
+    if (
+        node_class == "chat"
+        and data.get("_system_prompt_template") == "chat_system"
+        and data.get("_prompt_version") in ("0.9", "1.1")
+    ):
+        return _LEGACY_CHAT_RESPONSE_PROTOCOL
+    return None
+
+
+def _build_structured_response_content(
+    content: Any, node_class: Optional[str] = None, *, include_sql: bool = True
+) -> Optional[List[IMessageContent]]:
+    """Render known node result envelopes without changing the internal result.
+
+    Only unwrap complete, standalone objects matching a built-in protocol.
+    A prose answer containing a JSON example, or arbitrary user JSON with an
+    ``output`` property, must remain readable in its original form.
+    """
+    if node_class not in _STRUCTURED_RESPONSE_NODES and node_class != _LEGACY_CHAT_RESPONSE_PROTOCOL:
+        return None
+    payload = content
+    if isinstance(content, str):
+        text = content.strip()
+        if text.startswith("```"):
+            fence, _, body = text.partition("\n")
+            if fence not in ("```json", "```") or not body.endswith("```"):
+                return None
+            text = body[:-3].strip()
+        if not (text.startswith("{") and text.endswith("}")):
+            return None
+        try:
+            payload = json_repair.loads(text)
+        except (ValueError, TypeError):
+            return None
+    if not isinstance(payload, dict):
+        return None
+
+    keys = payload.keys()
+    markdown = payload.get("output", "" if node_class == "gen_sql" else None)
+    explanation = payload.get("explanation", "")
+    tables = payload.get("tables", [])
+    if isinstance(markdown, str):
+        recognized = (
+            (
+                node_class == "gen_sql"
+                and keys <= {"sql", "output", "tables", "explanation"}
+                and isinstance(payload.get("sql"), str)
+                and isinstance(explanation, str)
+                and (isinstance(tables, str) or (isinstance(tables, list) and all(isinstance(t, str) for t in tables)))
+            )
+            or (
+                node_class == _LEGACY_CHAT_RESPONSE_PROTOCOL
+                and keys <= {"sql", "output"}
+                and ("sql" not in payload or isinstance(payload["sql"], str))
+            )
+            or (
+                node_class == "gen_sql_summary"
+                and keys <= {"sql_summary_file", "output"}
+                and isinstance(payload.get("sql_summary_file"), str)
+            )
+            or (
+                node_class == "gen_table"
+                and keys <= {"table_name", "output"}
+                and isinstance(payload.get("table_name"), str)
+            )
+            or (
+                node_class == "semantic_modeling"
+                and keys <= {"status", "blocker_code", "skip_reason", "output"}
+                and payload.get("status") in ("generated", "skipped", "blocked")
+            )
+        )
+    else:
+        # Cross-database jobs legitimately have no SQL and use ``explanation``
+        # rather than ``output``. llm_result2json's SQL/output gate excludes them.
+        markdown = payload.get("explanation")
+        job_keys = {
+            "mode",
+            "source_database",
+            "target_database",
+            "tables",
+            "sql",
+            "rows_transferred",
+            "validation",
+            "explanation",
+        }
+        recognized = (
+            node_class == "gen_job"
+            and isinstance(markdown, str)
+            and keys <= job_keys
+            and job_keys - {"sql"} <= keys
+            and payload.get("mode") in ("intra-db", "cross-db")
+            and isinstance(payload.get("tables"), list)
+            and isinstance(payload.get("validation"), dict)
+        )
+    if not recognized:
+        return None
+
+    if node_class == "gen_sql" and not markdown:
+        # Match the node's supported older explanation/tables result schema.
+        parts = []
+        if explanation:
+            parts.append(f"Explanation: {explanation}")
+        if tables:
+            parts.append(f"Tables used: {', '.join(tables) if isinstance(tables, list) else tables}")
+        markdown = "\n".join(parts).replace("\\n", "\n").replace('\\"', '"').replace("\\'", "'")
+
+    contents = []
+    sql = payload.get("sql")
+    if include_sql and isinstance(sql, str) and sql:
+        # Match the SQL node's parser. Deliverable protocols retain SQL verbatim,
+        # including dialect-specific literals that the SQL parser would sanitize.
+        if node_class in ("gen_sql", _LEGACY_CHAT_RESPONSE_PROTOCOL) and not looks_like_sql_file_ref(sql):
+            sql = normalize_sql_escapes(sql)
+        contents.append(_sql_response_content(sql))
+    if markdown:
+        contents.append(IMessageContent(type="markdown", payload={"content": markdown}))
+    return contents
+
+
 def _build_response_content(action: ActionHistory) -> List[IMessageContent]:
     """Build content for final response event."""
     contents = []
     action_output = action.output if isinstance(action.output, dict) else {}
+    data = action.input if isinstance(action.input, dict) else {}
+    if isinstance(data.get("_response_content"), list):
+        return [IMessageContent(**part) for part in data["_response_content"]]
     if "sql" in action_output and action_output["sql"]:
         sql = action_output.get("sql")
-        sql_payload = {"codeType": "sql", "content": sql}
-        contents.append(IMessageContent(type="code", payload=sql_payload))
+        contents.append(_sql_response_content(sql, resolved=bool(action_output.get("sql_file_path"))))
 
     response = action_output.get("response") or action_output.get("content") or action_output.get("raw_output") or ""
+    structured = _build_structured_response_content(response, _response_protocol(action), include_sql=not contents)
+    if structured is not None:
+        # Prefer the host's resolved SQL (which may have been loaded from a
+        # .sql file), and avoid displaying it twice when the envelope has it too.
+        return contents + structured
     if response:
         resp_payload = {"content": str(response)}
         contents.append(IMessageContent(type="markdown", payload=resp_payload))
@@ -251,6 +414,9 @@ def _build_thinking_content(action: ActionHistory) -> Optional[List[IMessageCont
         return [IMessageContent(type="thinking", payload={"content": messages})] if messages else None
 
     output = action.output
+    data = action.input if isinstance(action.input, dict) else {}
+    if isinstance(data.get("_response_content"), list):
+        return [IMessageContent(**part) for part in data["_response_content"]]
     content = None
     if output and isinstance(output, dict):
         for key in ["response", "raw_output", "output", "thinking", "content"]:
@@ -264,23 +430,25 @@ def _build_thinking_content(action: ActionHistory) -> Optional[List[IMessageCont
         messages = strip_litellm_placeholder(action.messages)
         return [IMessageContent(type="thinking", payload={"content": messages})] if messages else None
 
-    result_json = llm_result2json(content)
-
-    if result_json:
+    protocol = _response_protocol(action)
+    blocks = data.get("_response_text_blocks")
+    if protocol and isinstance(blocks, list) and len(blocks) > 1 and all(isinstance(block, str) for block in blocks):
+        # Old sessions have provider text boundaries but no saved display view.
+        # Parse each complete block so sibling prose cannot hide an envelope.
         contents = []
-        if "sql" in result_json and result_json["sql"]:
-            sql = result_json.get("sql")
-            sql_payload = {"codeType": "sql", "content": sql}
-            contents.append(IMessageContent(type="code", payload=sql_payload))
-        if "output" in result_json and result_json["output"]:
-            resp_payload = {"content": result_json.get("output", "")}
-            contents.append(IMessageContent(type="markdown", payload=resp_payload))
-        if "explanation" in result_json and result_json["explanation"]:
-            resp_payload = {"content": result_json.get("explanation", "")}
-            contents.append(IMessageContent(type="markdown", payload=resp_payload))
-
-        if contents:
+        recognized = False
+        for block in blocks:
+            structured = _build_structured_response_content(block, protocol)
+            if structured is not None:
+                contents.extend(structured)
+                recognized = True
+            else:
+                contents.append(IMessageContent(type="thinking", payload={"content": block}))
+        if recognized:
             return contents
+    structured = _build_structured_response_content(content, protocol)
+    if structured is not None:
+        return structured
 
     return [IMessageContent(type="thinking", payload={"content": content})]
 
@@ -629,7 +797,7 @@ def action_to_sse_event(
         sse_role = "assistant"
         sse_type = SSEDataType.CREATE_MESSAGE
 
-        if stream_thinking and is_update:
+        if is_update:
             sse_type = SSEDataType.UPDATE_MESSAGE
 
         if action.action_type == "token_usage":
