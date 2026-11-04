@@ -2739,6 +2739,9 @@ class DBFuncTool:
             from datus.tools.read_observer import ReadObservation, notify_read
 
             runtime = PolicyRuntime(self.agent_config)
+            from datus.tools.db_tools.policy_sql import resolve_policy_sql
+
+            policy_sql = resolve_policy_sql(sql, connector) if runtime.runtime_names else sql
             notify_read(
                 ReadObservation(
                     phase="before_sql",
@@ -2751,7 +2754,7 @@ class DBFuncTool:
                 )
             )
             decision = runtime.before_sql_read(
-                sql,
+                policy_sql,
                 datasource=effective_datasource,
                 dialect=connector.dialect,
                 policy_context=effective_policy_context,
@@ -2761,7 +2764,9 @@ class DBFuncTool:
                     ErrorCode.POLICY_DENIED,
                     message=decision.reason or "Policy denied the query",
                 )
-            enforced_sql = decision.sql if decision.sql is not None else sql
+            # Name resolution is only the policy matching input. If no policy
+            # changes it, preserve the original SQL and reference-read contract.
+            enforced_sql = decision.sql if decision.sql not in (None, policy_sql) else sql
             if decision.applied_policies:
                 logger.info(
                     "Applied pre-read policies",
