@@ -48,3 +48,26 @@ CLI 提供了对上下文（不仅是代码）更细粒度的控制，使你在�
 datus-cli --datasource duckdb-demo
 ```
 
+## 无人值守的 Print 模式
+
+`datus --print` 向 stdout 输出 JSON 行，默认使用无法向用户请求批准的
+`workflow` 执行模式。运行无人值守任务时，可明确指定权限档位：
+
+```bash
+datus --datasource duckdb-demo --print "汇总 tree 表的数据" --permission-mode auto
+```
+
+| 档位 | 非交互 Print 模式下的行为 |
+| --- | --- |
+| `normal`（未配置时的默认值） | 允许规则命中的调用直接运行；未获自动批准的 ASK 调用以 `PERMISSION_DENIED` 失败。默认关闭 AI 复核。 |
+| `auto` | 对符合条件的 Bash/SQL ASK 调用启用 AI 复核。复核可允许或拒绝调用；复核不可用、超时或无法确定时仍拒绝执行。 |
+| `dangerous` | 默认允许操作，不经过 AI 复核。这会授予较广权限；显式拒绝规则及非交互模式的文件系统保护仍然生效。 |
+
+权限档位读取自 `agent.yml` 的 `permissions.profile`，也可通过
+`--permission-mode` 覆盖。用户及节点配置可覆盖复核设置。当节点实际生效的
+`normal` 档位同时关闭通用 AI 复核和旧版 Bash 分类器时，Print 模式会在执行前
+向 stderr 输出提示。该提示不影响 stdout 的 JSON 输出，也不改变权限设置。
+
+若驱动程序能够响应批准请求，可使用 `--execution-mode interactive`，并实现
+stdin/stdout 交互协议。`auto` 不会自动批准所有工具，也不会绕过显式拒绝规则。
+

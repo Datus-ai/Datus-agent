@@ -23,6 +23,17 @@ from datus.cli.main import Application, ArgumentParser
 
 
 class TestArgumentParser:
+    def test_help_explains_headless_permission_modes(self, capsys):
+        ap = ArgumentParser()
+        with pytest.raises(SystemExit) as exc:
+            ap.parser.parse_args(["--help"])
+        assert exc.value.code == 0
+        help_text = " ".join(capsys.readouterr().out.split())
+        assert "'normal': ASK calls without automatic approval fail" in help_text
+        assert "'auto': AI review for eligible Bash/SQL ASK calls" in help_text
+        assert "'dangerous': allow actions by default" in help_text
+        assert "Explicit deny rules and filesystem protections still apply" in help_text
+
     def test_init_creates_parser(self):
         ap = ArgumentParser()
         assert isinstance(ap.parser, argparse.ArgumentParser)
