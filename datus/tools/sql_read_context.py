@@ -310,8 +310,12 @@ class SqlReadContext:
                 if self.canonical_name(str(reference)) == self.canonical_name(name):
                     return True
                 # Listings contain stored identifiers, not unquoted SQL input.
-                stored = [{**part, "quoted": True} for part in parser(str(reference))]
-                parts = self._parts(stored)
+                # A different raw stored name need not be valid qualified SQL.
+                try:
+                    stored = [{**part, "quoted": True} for part in parser(str(reference))]
+                    parts = self._parts(stored)
+                except Exception:
+                    return False
                 return all(
                     self.canonical_name(parts.get(key, namespace.get(key, ""))) == self.canonical_name(value)
                     for key, value in {**namespace, "table": name}.items()

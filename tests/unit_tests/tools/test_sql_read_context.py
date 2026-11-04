@@ -138,6 +138,22 @@ def test_postgres_unquoted_identifiers_fold_only_ascii_letters():
     assert context.column_name({"name": "KEY", "quoted": True}) == "KEY"
 
 
+@pytest.mark.parametrize("listing", ["tables", "views"])
+@pytest.mark.parametrize("unrelated", ["archive.sales.orders.history", "unclosed( identifier"])
+def test_unrelated_raw_metadata_names_do_not_abort_resolution(listing, unrelated):
+    connector = SimpleNamespace(
+        dialect="postgres",
+        execute_query=lambda *_, **__: SimpleNamespace(
+            success=True,
+            sql_return=[{"database_name": "analytics", "schema_name": "public", "search_path": ["public"]}],
+        ),
+        get_tables=lambda **_: [unrelated, "orders"] if listing == "tables" else ["orders"],
+        get_views=lambda **_: [unrelated] if listing == "views" else [],
+        get_schema=lambda **_: [{"name": "id", "type": "INTEGER"}],
+    )
+    assert resolve(SqlReadContext(connector, "warehouse"), "orders")["object"]["table"] == "orders"
+
+
 @pytest.mark.parametrize("dialect", ["postgres", "oracle", "hana", "snowflake"])
 @pytest.mark.parametrize("stored", ["Orders", "Orders.X"])
 def test_metadata_listings_preserve_stored_identifier_case(monkeypatch, dialect, stored):
