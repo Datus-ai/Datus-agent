@@ -994,6 +994,7 @@ class ChatTaskManager:
                 seen_assistant_message_fingerprints: dict[str, str] = {}
                 pending_delta_ids: dict[tuple[int, Optional[str]], str] = {}
                 response_sources: dict[tuple[int, Optional[str]], tuple[str, str]] = {}
+                response_contents: dict[tuple[int, Optional[str]], List[IMessageContent]] = {}
                 async for action in node.execute_stream_with_interactions(action_history):
                     action_count += 1
                     if _is_turn_error_action(action):
@@ -1052,20 +1053,14 @@ class ChatTaskManager:
                             # but save the aggregate in one SDK assistant row.
                             source = (source[0], raw)
                             response_sources[scope] = source
+                            self._record_node_response(task, action, source, response_contents[scope])
                     is_resolved_sql_update = bool(source and _is_resolved_sql_file_response(action))
                     if is_resolved_sql_update:
                         message_id = source[0]
-                    if (
-                        source
-                        and action.role == ActionRole.ASSISTANT
-                        and action.status == ActionStatus.SUCCESS
-                        and action.action_type.endswith("_response")
-                        and _response_protocol(action) is not None
-                    ):
-                        # Persist the host's canonical view outside model input.
-                        # Bind it to the SDK assistant row (or enclosing task), so
-                        # copy/rewind retains the same SQL even if the file changes.
-                        self._record_node_response(task, action, source, _build_response_content(action))
+                        # Only a confirmed file resolution replaces the rendered
+                        # result. Deliverable wrappers can retain a raw aggregate.
+                        response_contents[scope] = _build_response_content(action)
+                        self._record_node_response(task, action, source, response_contents[scope])
 
                     # finalize_progress actions reuse the same id across stages
                     # so the SSE wire emits CREATE then UPDATE_MESSAGE; we mark
@@ -1144,9 +1139,16 @@ class ChatTaskManager:
                         ):
                             output = action.output if isinstance(action.output, dict) else {}
                             raw = output.get("response") or output.get("content") or output.get("raw_output")
-                            if isinstance(raw, str):
+                            if (
+                                isinstance(raw, str)
+                                and _build_structured_response_content(raw, _response_protocol(action)) is not None
+                            ):
                                 response_sources[scope] = (message_id, raw)
+                                response_contents[scope] = sse.data.payload.content
                                 self._record_node_response(task, action, (message_id, raw), sse.data.payload.content)
+                            else:
+                                response_sources.pop(scope, None)
+                                response_contents.pop(scope, None)
                         if _is_visible_assistant_response(action, sse, tool_result_seen=tool_result_seen):
                             assistant_response_sent = True
                         if action.role == ActionRole.TOOL and action.status != ActionStatus.PROCESSING:

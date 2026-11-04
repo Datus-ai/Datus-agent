@@ -383,6 +383,19 @@ class TestBoundDatabaseSkillSnapshot:
 
 
 class TestSnapshotMeta:
+    @pytest.mark.parametrize("explicit,node_version,expected", [(None, "0.9", "0.9"), ("1.1", "0.9", "1.1")])
+    def test_meta_uses_node_version_before_agent_version(self, session_manager, explicit, node_version, expected):
+        node = _SnapshotNode(session_manager, _agent_config(), node_config={"prompt_version": node_version})
+        meta = node._system_prompt_snapshot_meta(explicit)
+        assert meta["prompt_version"] == expected
+
+    def test_node_version_change_invalidates_snapshot(self, session_manager):
+        node = _SnapshotNode(session_manager, _agent_config(), node_config={"prompt_version": "0.9"})
+        assert node._get_session_system_prompt() == "SYS#1"
+        node.node_config["prompt_version"] = "1.1"
+        assert node._get_session_system_prompt() == "SYS#2"
+        assert session_manager.load_system_prompt_snapshot(node.session_id)["prompt_version"] == "1.1"
+
     def test_meta_is_exactly_the_identity_keys(self, session_manager):
         node = _SnapshotNode(session_manager, _agent_config(current_datasource="main"))
         meta = node._system_prompt_snapshot_meta("1.2")

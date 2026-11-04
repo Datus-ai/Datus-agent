@@ -10,6 +10,7 @@ from datus.api.services.action_sse_converter import action_to_sse_event
 from datus.api.services.chat_service import ChatService, _actions_to_payloads
 from datus.api.services.chat_task_manager import ChatTask, ChatTaskManager
 from datus.models.session_manager import SessionManager
+from datus.prompts.prompt_manager import PromptManager
 from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
 
 SUMMARY = "## Result\n\n- Completed and verified."
@@ -41,6 +42,12 @@ PROTOCOLS = [
         {**JOB_RESULT, "mode": "intra-db", "sql": "INSERT INTO orders SELECT 1"},
         "INSERT INTO orders SELECT 1",
         id="gen-job-intra-db",
+    ),
+    pytest.param(
+        "gen_job",
+        {**JOB_RESULT, "mode": "intra-db", "sql": r"INSERT INTO target SELECT $$\($$"},
+        r"INSERT INTO target SELECT $$\($$",
+        id="gen-job-dollar-literal",
     ),
 ]
 
@@ -132,7 +139,10 @@ async def test_gen_sql_history_normalizes_sql_without_saved_display(real_agent_c
 @pytest.mark.parametrize("version", ["0.9", "1.1"])
 @pytest.mark.parametrize("include_sql", [False, True])
 @pytest.mark.parametrize("delegated", [False, True])
-async def test_legacy_chat_history_uses_prompt_provenance(real_agent_config, version, include_sql, delegated):
+@pytest.mark.parametrize("metadata_kind", ["correct", "wrong_version", "missing_template"])
+async def test_legacy_chat_history_uses_prompt_provenance(
+    real_agent_config, version, include_sql, delegated, metadata_kind
+):
     parent_id = "chat_session_legacy_parent"
     child_id = "chat_session_legacy_child"
     call_id = "legacy-chat-task"
@@ -151,11 +161,17 @@ async def test_legacy_chat_history_uses_prompt_provenance(real_agent_config, ver
             {"role": "assistant", "content": [{"type": "output_text", "text": raw}]},
         ]
     )
+    meta = {"node_name": "chat", "system_prompt_template": "chat_system", "prompt_version": version}
+    if metadata_kind != "correct":
+        meta["prompt_version"] = "1.2"
+    if metadata_kind == "missing_template":
+        meta.pop("system_prompt_template")
     owner.save_system_prompt_snapshot(
         session_id,
-        "Legacy chat prompt",
-        {"node_name": "chat", "system_prompt_template": "chat_system", "prompt_version": version},
+        PromptManager(agent_config=real_agent_config).render_template("chat_system", version=version),
+        meta,
     )
+    original_snapshot = owner.load_system_prompt_snapshot(session_id)
     if delegated:
         await parent.add_items(
             [
@@ -177,6 +193,7 @@ async def test_legacy_chat_history_uses_prompt_provenance(real_agent_config, ver
     _assert_summary(answers[0].content, sql)
     assert answers[0].parent_action_id == (call_id if delegated else None)
     assert (await session.get_items())[-1]["content"][0]["text"] == raw
+    assert owner.load_system_prompt_snapshot(session_id) == original_snapshot
 
 
 @pytest.mark.asyncio
@@ -200,6 +217,127 @@ async def test_chat_history_keeps_json_without_legacy_prompt_provenance(real_age
     answers = [message for message in history.data.messages if message.role == "assistant"]
     assert len(answers) == 1
     assert [part.payload["content"] for part in answers[0].content] == [raw]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("appended_version", ["0.9", "1.1"])
+async def test_modern_chat_prompt_ignores_legacy_examples_appended_to_snapshot(real_agent_config, appended_version):
+    session_id = "chat_session_modern_prompt"
+    storage = SessionManager(session_dir=real_agent_config.session_dir)
+    session = storage.get_session(session_id)
+    raw = json.dumps({"sql": "SELECT 1", "output": "User data"})
+    await session.add_items(
+        [
+            {"role": "user", "content": "Show JSON"},
+            {"role": "assistant", "content": [{"type": "output_text", "text": raw}]},
+        ]
+    )
+    prompts = PromptManager(agent_config=real_agent_config)
+    prompt = prompts.render_template("chat_system", version="1.2")
+    prompt += "\n\n" + prompts.render_template("chat_system", version=appended_version)
+    storage.save_system_prompt_snapshot(
+        session_id, prompt, {"node_name": "chat", "system_prompt_template": "chat_system", "prompt_version": "0.9"}
+    )
+    history = ChatService(real_agent_config).get_history(session_id)
+    assert history.success is True
+    answers = [message for message in history.data.messages if message.role == "assistant"]
+    assert len(answers) == 1
+    assert [part.payload["content"] for part in answers[0].content] == [raw]
+
+
+@pytest.mark.parametrize("node,payload,sql", PROTOCOLS)
+@pytest.mark.parametrize("is_thinking", [False, True])
+def test_rejected_known_protocol_retains_all_fields(node, payload, sql, is_thinking):
+    raw = json.dumps({**payload, "custom": True})
+    action = _action(output={"raw_output": raw, "is_thinking": is_thinking}, node_class=node)
+    event = action_to_sse_event(action, 1, action.action_id)
+    assert [(part.type, part.payload["content"]) for part in event.data.payload.content] == [
+        ("thinking" if is_thinking else "markdown", raw)
+    ]
+    assert action.output["raw_output"] == raw
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("prior_valid", [False, True])
+async def test_rejected_protocol_is_not_replaced_by_lossy_wrapper_on_reload(real_agent_config, prior_valid):
+    session_id = "gen_sql_session_rejected_protocol"
+    storage = SessionManager(session_dir=real_agent_config.session_dir)
+    session = storage.get_session(session_id)
+    raw = json.dumps({"sql": "SELECT 1", "output": SUMMARY, "custom": True})
+    await session.add_items([{"role": "user", "content": "Generate SQL"}])
+
+    class FakeNode:
+        session_id = "gen_sql_session_rejected_protocol"
+
+        async def execute_stream_with_interactions(self, action_history_manager):
+            if prior_valid:
+                earlier = json.dumps({"sql": "SELECT 0", "output": "Earlier result"})
+                await session.add_items([{"role": "assistant", "content": [{"type": "output_text", "text": earlier}]}])
+                yield _action("earlier", output={"raw_output": earlier, "is_thinking": False}, node_class="gen_sql")
+            await session.add_items([{"role": "assistant", "content": [{"type": "output_text", "text": raw}]}])
+            yield _action("raw", output={"raw_output": raw, "is_thinking": False}, node_class="gen_sql")
+            yield _action("model-final", action_type="final_response", output={"raw_output": raw}, node_class="gen_sql")
+            yield _action("parsed", action_type="gen_sql_response", output={"sql": "SELECT 1", "response": SUMMARY})
+
+        async def get_last_turn_usage(self):
+            return None
+
+    manager = ChatTaskManager()
+    manager._create_node = lambda *args, **kwargs: FakeNode()
+    task = ChatTask(session_id=session_id, asyncio_task=MagicMock())
+    await manager._run_loop(task, real_agent_config, StreamChatInput(message="Generate SQL", session_id=session_id))
+    assert task.status == "completed"
+    live = [event.data.payload for event in task.events if event.event == "message"]
+    expected = (["SELECT 0", "Earlier result"] if prior_valid else []) + [raw]
+    assert [part.payload["content"] for message in live for part in message.content] == expected
+    history = ChatService(real_agent_config).get_history(session_id)
+    assert history.success is True
+    answers = [message for message in history.data.messages if message.role == "assistant"]
+    assert len(answers) == (2 if prior_valid else 1)
+    assert [part.payload["content"] for message in answers for part in message.content] == expected
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("node,payload,sql", PROTOCOLS)
+async def test_multipart_node_wrapper_preserves_rendered_result_on_reload(real_agent_config, node, payload, sql):
+    session_id = "api-multipart-result"
+    storage = SessionManager(session_dir=real_agent_config.session_dir)
+    session = storage.get_session(session_id)
+    preface = "The requested work is complete."
+    raw = json.dumps(payload)
+    aggregate = f"{preface}\n{raw}"
+    blocks = [{"type": "text", "text": preface}, {"type": "text", "text": raw}]
+    await session.add_items([{"role": "user", "content": "Run the task"}])
+
+    class FakeNode:
+        session_id = "api-multipart-result"
+
+        async def execute_stream_with_interactions(self, action_history_manager):
+            await session.add_items([{"role": "assistant", "content": blocks}])
+            yield _action("preface", output={"raw_output": preface, "is_thinking": False}, node_class=node)
+            yield _action("result", output={"raw_output": raw, "is_thinking": False}, node_class=node)
+            yield _action(
+                "model-final", action_type="final_response", output={"raw_output": aggregate}, node_class=node
+            )
+            yield _action("node-final", action_type=f"{node}_response", output={"response": aggregate})
+
+        async def get_last_turn_usage(self):
+            return None
+
+    manager = ChatTaskManager()
+    manager._create_node = lambda *args, **kwargs: FakeNode()
+    task = ChatTask(session_id=session_id, asyncio_task=MagicMock())
+    await manager._run_loop(task, real_agent_config, StreamChatInput(message="Run the task", session_id=session_id))
+    assert task.status == "completed"
+    live = [event.data.payload for event in task.events if event.event == "message"]
+    assert len(live) == 2
+    _assert_summary(live[-1].content, sql)
+    history = ChatService(real_agent_config).get_history(session_id)
+    assert history.success is True
+    answers = [message for message in history.data.messages if message.role == "assistant"]
+    assert len(answers) == 1
+    _assert_summary(answers[0].content, sql)
+    assert (await session.get_items())[-1]["content"] == blocks
 
 
 @pytest.mark.parametrize("node,payload,sql", PROTOCOLS)

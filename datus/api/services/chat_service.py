@@ -10,6 +10,8 @@ import json
 import os
 import uuid
 from collections import Counter
+from functools import lru_cache
+from importlib.resources import files
 from typing import Any, AsyncGenerator, Callable, Dict, List, Optional
 
 from datus.agent.node.chat_agentic_node import ChatAgenticNode
@@ -174,6 +176,29 @@ def _subagent_run_actions(
     return actions
 
 
+@lru_cache(maxsize=1)
+def _builtin_chat_prompt_signatures() -> tuple[tuple[str, str, str], ...]:
+    """Static prefixes and output contracts of shipped historical chat templates."""
+    signatures = []
+    for version, marker in (
+        ("0.9", "## Output Format\n"),
+        ("1.1", "Output format: Return a JSON object"),
+        ("1.2", "Output format: Respond directly in markdown"),
+    ):
+        try:
+            template = (
+                files("datus.prompts")
+                .joinpath("prompt_templates", f"chat_system_{version}.j2")
+                .read_text(encoding="utf-8")
+            )
+            prefix = template.split("{", 1)[0].rstrip()
+            contract = template[template.index(marker) :].strip()
+        except (OSError, ValueError):
+            continue
+        signatures.append((prefix, contract, version))
+    return tuple(sorted(signatures, key=lambda item: len(item[0]), reverse=True))
+
+
 def _history_response_context(agent_config: Any, session_id: str, manager: SessionManager) -> Dict[str, Any]:
     """Recover host-owned node and prompt identity for SDK history rows."""
     snapshot = manager.load_system_prompt_snapshot(session_id) or {}
@@ -186,9 +211,21 @@ def _history_response_context(agent_config: Any, session_id: str, manager: Sessi
         return {}
     context = {"_node_class": node_class}
     if node_class == "chat":
+        template_name = snapshot.get("system_prompt_template")
+        version = snapshot.get("prompt_version")
+        prompt = snapshot.get("prompt")
+        if template_name in (None, "chat_system") and isinstance(prompt, str):
+            # Older snapshots recorded the agent version even when the node
+            # rendered another version. Recover from immutable saved bytes,
+            # never from current configuration or the model's JSON fields.
+            for prefix, contract, historical_version in _builtin_chat_prompt_signatures():
+                if prompt.startswith(prefix):
+                    if contract in prompt:
+                        template_name, version = "chat_system", historical_version
+                    break
         context.update(
-            _system_prompt_template=snapshot.get("system_prompt_template"),
-            _prompt_version=snapshot.get("prompt_version"),
+            _system_prompt_template=template_name,
+            _prompt_version=version,
         )
     return context
 

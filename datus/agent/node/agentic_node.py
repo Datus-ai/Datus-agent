@@ -1218,7 +1218,7 @@ class AgenticNode(Node):
         skill contents are fingerprinted so same-named updates rebuild it.
         """
         agent_config = getattr(self, "agent_config", None)
-        version = prompt_version
+        version = prompt_version or (getattr(self, "node_config", None) or {}).get("prompt_version")
         if version is None and agent_config is not None and hasattr(agent_config, "prompt_version"):
             version = agent_config.prompt_version
         # A node-level model override (``node_config.model``) pins the

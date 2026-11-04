@@ -27,7 +27,7 @@ from datus.schemas.action_history import (
     ActionRole,
     ActionStatus,
 )
-from datus.utils.json_utils import llm_result2json, normalize_sql_escapes
+from datus.utils.json_utils import normalize_sql_escapes
 from datus.utils.loggings import get_logger
 from datus.utils.sql_utils import looks_like_sql_file_ref
 from datus.utils.time_utils import now_utc_iso, to_utc_iso
@@ -289,7 +289,7 @@ def _build_structured_response_content(
         return None
 
     keys = payload.keys()
-    markdown = payload.get("output")
+    markdown = payload.get("output", "" if node_class == "gen_sql" else None)
     if isinstance(markdown, str):
         recognized = (
             (node_class == "gen_sql" and keys <= {"sql", "output"} and isinstance(payload.get("sql"), str))
@@ -343,9 +343,9 @@ def _build_structured_response_content(
     contents = []
     sql = payload.get("sql")
     if include_sql and isinstance(sql, str) and sql:
-        # Only model envelopes need the node parser's escape cleanup. Resolved
-        # SQL from the host may use dialect-specific literals and is already final.
-        if not looks_like_sql_file_ref(sql):
+        # Match the SQL node's parser. Deliverable protocols retain SQL verbatim,
+        # including dialect-specific literals that the SQL parser would sanitize.
+        if node_class in ("gen_sql", _LEGACY_CHAT_RESPONSE_PROTOCOL) and not looks_like_sql_file_ref(sql):
             sql = normalize_sql_escapes(sql)
         contents.append(_sql_response_content(sql))
     if markdown:
@@ -417,23 +417,6 @@ def _build_thinking_content(action: ActionHistory) -> Optional[List[IMessageCont
     structured = _build_structured_response_content(content, protocol)
     if structured is not None:
         return structured
-
-    result_json = llm_result2json(content) if protocol is not None else None
-
-    if result_json:
-        contents = []
-        if "sql" in result_json and result_json["sql"]:
-            sql = result_json.get("sql")
-            contents.append(_sql_response_content(sql))
-        if "output" in result_json and result_json["output"]:
-            resp_payload = {"content": result_json.get("output", "")}
-            contents.append(IMessageContent(type="markdown", payload=resp_payload))
-        if "explanation" in result_json and result_json["explanation"]:
-            resp_payload = {"content": result_json.get("explanation", "")}
-            contents.append(IMessageContent(type="markdown", payload=resp_payload))
-
-        if contents:
-            return contents
 
     return [IMessageContent(type="thinking", payload={"content": content})]
 
