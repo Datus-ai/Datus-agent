@@ -897,7 +897,10 @@ class AgenticNode(Node):
         if isinstance(runtime_context, dict) and runtime_context.get("datasource"):
             from datus.schemas.database_context import DatabaseExecutionContext
 
-            return DatabaseExecutionContext.from_mapping(runtime_context).to_dict()
+            context = DatabaseExecutionContext.from_mapping(runtime_context).to_dict()
+            if "schema" in context:
+                context["db_schema"] = context["schema"]
+            return context
         datasource = runtime_context.get("datasource") or datasource
         context: Dict[str, str] = {}
         if datasource:

@@ -971,4 +971,5 @@ def test_resolved_api_context_is_authoritative_for_metric_tools(session_manager)
         "catalog": "selected_catalog",
         "database": "selected_db",
         "schema": "selected_schema",
+        "db_schema": "selected_schema",
     }

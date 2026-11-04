@@ -448,7 +448,9 @@ class TestSemanticRuntimeDbContext:
             "schema": "runtime_schema",
             "db_schema": "runtime_schema",
         }
-        cfg.current_db_config.assert_called_once_with("runtime_ds")
+        # The resolved API snapshot is authoritative; stale project defaults
+        # must not be consulted to reconstruct this turn's coordinates.
+        cfg.current_db_config.assert_not_called()
 
     def test_uses_input_context_when_config_context_fails(self):
         cfg = MagicMock()
