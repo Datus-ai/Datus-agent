@@ -894,6 +894,10 @@ class AgenticNode(Node):
             except Exception as e:
                 logger.debug("Unable to read runtime DB context for Dosi: %s", e)
                 runtime_context = {}
+        if isinstance(runtime_context, dict) and runtime_context.get("datasource"):
+            from datus.schemas.database_context import DatabaseExecutionContext
+
+            return DatabaseExecutionContext.from_mapping(runtime_context).to_dict()
         datasource = runtime_context.get("datasource") or datasource
         context: Dict[str, str] = {}
         if datasource:

@@ -954,3 +954,21 @@ def test_mysql_source_switch_replaces_target_specific_prompt(session_manager):
     assert a._get_session_system_prompt() == "Active datasource: reca"
     b = TargetNode(session_manager, _agent_config(current_datasource="ik"))
     assert b._get_session_system_prompt() == "Active datasource: ik"
+
+
+def test_resolved_api_context_is_authoritative_for_metric_tools(session_manager):
+    config = _agent_config(current_datasource="warehouse")
+    config.runtime_db_context = lambda: {
+        "datasource": "warehouse",
+        "catalog": "selected_catalog",
+        "database": "selected_db",
+        "schema": "selected_schema",
+    }
+    node = _SnapshotNode(session_manager, config)
+    node.input = SimpleNamespace(database="stale_db", catalog="stale_catalog", db_schema="stale_schema")
+    assert node._semantic_runtime_db_context() == {
+        "datasource": "warehouse",
+        "catalog": "selected_catalog",
+        "database": "selected_db",
+        "schema": "selected_schema",
+    }
