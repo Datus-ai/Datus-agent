@@ -64,6 +64,41 @@ def _write_model(path: Path, model_name: str, metric_names: list[str]) -> None:
     )
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ["metrics", "dry_run", "attribute"])
+async def test_native_read_paths_receive_one_request_local_policy(make_runtime, monkeypatch, operation):
+    runtime = make_runtime()
+    bound = SimpleNamespace(snapshot_json='{"version":"v1"}', context_json='{"datasource":"warehouse"}')
+    bindings, calls = [], []
+
+    def provider():
+        bindings.append(bound)
+        return bound
+
+    runtime._read_policy_provider = provider
+    for name in ("compile", "execute", "attribute"):
+        original = getattr(FakeEngine, name)
+
+        def protected(self, *args, _name=name, _original=original, policy=None, policy_required=False, **kwargs):
+            calls.append((_name, policy, policy_required))
+            return _original(self, *args, **kwargs)
+
+        monkeypatch.setattr(FakeEngine, name, protected)
+    if operation == "attribute":
+        await runtime.attribute(
+            AttributionRequest(
+                metric="revenue",
+                dimensions=["orders.status"],
+                baseline=AttributionWindow(start="2026-01-01", end="2026-01-08"),
+                current=AttributionWindow(start="2026-01-08", end="2026-01-15"),
+            )
+        )
+    else:
+        await runtime.query_metrics(["revenue"], dry_run=operation == "dry_run")
+    assert bindings == [bound]
+    assert calls and all(policy is bound and required for _, policy, required in calls)
+
+
 def _install_file_catalog(monkeypatch, metrics_by_stem: dict[str, list[str]]) -> None:
     def metrics(engine):
         stem = Path(engine.model_path).stem

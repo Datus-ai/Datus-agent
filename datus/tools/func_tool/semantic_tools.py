@@ -721,6 +721,14 @@ class SemanticTools:
                 writer.writerow([row])
         return buf.getvalue()
 
+    def _policy_cache_scope(self) -> str:
+        if getattr(self, "agent_config", None) is None:
+            return "unprotected"
+        bound = self._bind_dosi_read()
+        if bound is None:
+            return "unprotected"
+        return hashlib.sha256((bound.snapshot_json + bound.context_json).encode()).hexdigest()
+
     def _cache_query_metrics_result(
         self, columns: List[str], data: Any, metadata: Optional[Mapping[str, Any]] = None
     ) -> Optional[str]:
@@ -735,6 +743,9 @@ class SemanticTools:
         # instance serves every client of a datasource.
         cache_key = f"query_metrics:{secrets.token_urlsafe(12)}"
         self._query_metrics_result_cache[cache_key] = {
+            "policy_scope": metadata["_policy_scope"]
+            if metadata and "_policy_scope" in metadata
+            else self._policy_cache_scope(),
             "columns": list(columns),
             "csv": full_csv,
             "row_count": self._query_data_row_count(data),
@@ -752,7 +763,10 @@ class SemanticTools:
         return cache_key
 
     def get_cached_query_metrics_result(self, cache_key: str) -> Optional[dict]:
-        return self._query_metrics_result_cache.get(cache_key)
+        cached = self._query_metrics_result_cache.get(cache_key)
+        if cached is not None and cached.get("policy_scope", "unprotected") != self._policy_cache_scope():
+            return None
+        return cached
 
     # One page has to fit an MCP response; the cached result is bounded only by the query.
     MAX_QUERY_METRICS_RESULT_PAGE = 1000
@@ -1137,7 +1151,7 @@ class SemanticTools:
                 runtime_config = runtime_config.model_copy(
                     update={"ontology_dir": str(self.agent_config.path_manager.ontology_dir)}
                 )
-            self._runtime = DosiRuntime(runtime_config)
+            self._runtime = DosiRuntime(runtime_config, read_policy_provider=self._bind_dosi_read)
             self._runtime_context_key = context_key
             self._runtime_load_error = None
             logger.info("Loaded Dosi runtime for datasource %s", datasource)
@@ -1147,6 +1161,37 @@ class SemanticTools:
             self._runtime = None
             self._runtime_context_key = None
         return self._runtime
+
+    def _bind_dosi_read(self):
+        from datus.tools.db_tools.db_manager import db_manager_instance
+        from datus.tools.policy_runtime import PolicyRuntime
+
+        runtime = PolicyRuntime(self.agent_config)
+        context = getattr(self.agent_config, "policy_context", None)
+        context = dict(context) if isinstance(context, dict) else {}
+        if not runtime.requires_bound_read(context):
+            return None
+        current = self._runtime_db_context()
+        datasource = current.get("datasource") or self.agent_config.current_datasource
+        manager = db_manager_instance(self.agent_config.datasource_configs)
+        connector = manager.get_conn(datasource, current.get("database", ""))
+        bound = runtime.bind_read(connector=connector, datasource=datasource, policy_context=context)
+        if bound is not None:
+            actual = json.loads(bound.context_json)
+            for namespace in ("catalog", "database", "schema"):
+                # SQLite's Agent database label is the file stem; its SQL
+                # namespace is always main (or an explicit ATTACH alias).
+                if connector.dialect == "sqlite" and namespace == "database":
+                    continue
+                expected = current.get(namespace)
+                if expected and actual.get(namespace) != expected:
+                    from datus.utils.exceptions import DatusException, ErrorCode
+
+                    raise DatusException(
+                        ErrorCode.POLICY_DENIED,
+                        message=f"Dosi {namespace} does not match the policy metadata connection; switch the live connection and rebind",
+                    )
+        return bound
 
     async def _attribute(self, runtime: DosiRuntime, request: AttributionRequest) -> AttributionResult:
         return await runtime.attribute(request)

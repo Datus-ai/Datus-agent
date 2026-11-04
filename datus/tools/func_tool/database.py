@@ -2754,6 +2754,7 @@ class DBFuncTool:
                 sql,
                 datasource=effective_datasource,
                 dialect=connector.dialect,
+                connector=connector,
                 policy_context=effective_policy_context,
             )
             if not decision.allowed:
@@ -2782,18 +2783,19 @@ class DBFuncTool:
                     error="Read policy rewrote the reference SQL; complete calculation verification is unavailable.",
                     sql_query=enforced_sql,
                 )
-            analyzer_getter = getattr(connector_registry, "get_sql_analyzer", None)
-            if callable(analyzer_getter) and analyzer_getter(connector.dialect) is not None:
-                return ExecuteSQLResult(
-                    success=False,
-                    error="SQL policy rewriting is unsupported for this adapter's limited SQL analysis path.",
-                    sql_query=sql,
-                )
             # A policy rewrite (e.g. an injected LIMIT) must still be a single
             # read-only statement — re-validate so it can't smuggle in DML/DDL.
             validation_error, _ = self._validate_read_sql(enforced_sql, connector)
             if validation_error:
                 return ExecuteSQLResult(success=False, error=validation_error.error, sql_query=enforced_sql)
+        verifier = getattr(decision, "verify_context", None)
+        if verifier is not None:
+            try:
+                verifier()
+            except Exception as exc:
+                return ExecuteSQLResult(
+                    success=False, error=f"SQL policy context changed: {exc}", sql_query=enforced_sql
+                )
         result = connector.execute_query(enforced_sql, result_format=result_format)
         if not result.success:
             return result

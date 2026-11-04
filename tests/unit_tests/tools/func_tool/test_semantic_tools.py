@@ -102,6 +102,8 @@ def semantic_tools():
         mock_config = Mock()
         mock_config.active_model.return_value.model = "gpt-4o"
         mock_config.current_datasource = "ns1"
+        mock_config.active_plugin_names.return_value = set()
+        mock_config.policy_context = {}
         mock_config.runtime_db_context.return_value = {}
         mock_config.current_db_config.return_value = None
         mock_config.path_manager.semantic_model_path.return_value = "/tmp/models"
@@ -2662,6 +2664,8 @@ def test_query_metrics_exposes_warehouse_cancellation_diagnostics(semantic_tools
 
 def _ontology_config(tmp_path=None):
     config = Mock()
+    config.active_plugin_names.return_value = set()
+    config.policy_context = {}
     config.active_model.return_value.model = "gpt-4o"
     config.current_datasource = "flights_db"
     config.current_db_config.return_value = None
@@ -2669,6 +2673,64 @@ def _ontology_config(tmp_path=None):
     config.path_manager.semantic_model_path.return_value = "/tmp/models/flights_db"
     config.path_manager.ontology_dir = "/tmp/subject/ontology"
     return config
+
+
+def test_cached_results_are_scoped_to_effective_policy_and_namespace(semantic_tools, monkeypatch):
+    bound = SimpleNamespace(snapshot_json='{"version":"tenant-1"}', context_json='{"database":"sales"}')
+    monkeypatch.setattr(semantic_tools, "_bind_dosi_read", lambda: bound)
+    key = semantic_tools._cache_query_metrics_result(["revenue"], [{"revenue": 100}])
+    assert semantic_tools.get_cached_query_metrics_result(key) is not None
+    bound.snapshot_json = '{"version":"tenant-2"}'
+    assert semantic_tools.get_cached_query_metrics_result(key) is None
+    bound.snapshot_json = '{"version":"tenant-1"}'
+    bound.context_json = '{"database":"other"}'
+    assert semantic_tools.get_cached_query_metrics_result(key) is None
+
+
+def test_cache_uses_execution_scope_without_rebinding(semantic_tools, monkeypatch):
+    def unexpected_rebind():
+        raise AssertionError("execution already supplied the policy scope")
+
+    monkeypatch.setattr(semantic_tools, "_bind_dosi_read", unexpected_rebind)
+    key = semantic_tools._cache_query_metrics_result(
+        ["revenue"], [{"revenue": 100}], {"_policy_scope": "execution-scope"}
+    )
+    assert semantic_tools._query_metrics_result_cache[key]["policy_scope"] == "execution-scope"
+
+
+@pytest.mark.parametrize("actual_database", ["selected", "configured_default"])
+def test_dosi_policy_metadata_uses_selected_database_and_rejects_mismatch(semantic_tools, monkeypatch, actual_database):
+    bound = SimpleNamespace(context_json=json.dumps({"database": actual_database, "schema": "sales"}))
+    runtime = SimpleNamespace(requires_bound_read=lambda _: True, bind_read=lambda **_: bound)
+    monkeypatch.setattr("datus.tools.policy_runtime.PolicyRuntime", lambda _: runtime)
+    manager = Mock()
+    monkeypatch.setattr("datus.tools.db_tools.db_manager.db_manager_instance", lambda _: manager)
+    monkeypatch.setattr(
+        semantic_tools,
+        "_runtime_db_context",
+        lambda: {"datasource": "warehouse", "database": "selected", "schema": "sales"},
+    )
+    if actual_database == "selected":
+        assert semantic_tools._bind_dosi_read() is bound
+    else:
+        from datus.utils.exceptions import DatusException
+
+        with pytest.raises(DatusException, match="does not match the policy metadata connection"):
+            semantic_tools._bind_dosi_read()
+    manager.get_conn.assert_called_once_with("warehouse", "selected")
+
+
+def test_dosi_sqlite_policy_uses_main_namespace_instead_of_file_stem(semantic_tools, monkeypatch):
+    bound = SimpleNamespace(context_json=json.dumps({"database": "main", "catalog": None, "schema": None}))
+    runtime = SimpleNamespace(requires_bound_read=lambda _: True, bind_read=lambda **_: bound)
+    monkeypatch.setattr("datus.tools.policy_runtime.PolicyRuntime", lambda _: runtime)
+    connector = SimpleNamespace(dialect="sqlite")
+    manager = SimpleNamespace(get_conn=lambda *_: connector)
+    monkeypatch.setattr("datus.tools.db_tools.db_manager.db_manager_instance", lambda _: manager)
+    monkeypatch.setattr(
+        semantic_tools, "_runtime_db_context", lambda: {"datasource": "warehouse", "database": "file_stem"}
+    )
+    assert semantic_tools._bind_dosi_read() is bound
 
 
 def _validation_exception(**fields):

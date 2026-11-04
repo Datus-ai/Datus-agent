@@ -91,6 +91,57 @@ def test_no_policy_runtime_is_pass_through(monkeypatch):
     )
 
 
+def test_effective_snapshot_without_provider_fails_closed(monkeypatch):
+    monkeypatch.setattr("datus.tools.policy_runtime.collect_plugin_policy_runtime_factories", lambda active: {})
+    runtime = PolicyRuntime(config())
+    with pytest.raises(DatusException, match="no implementation is loaded"):
+        runtime.before_sql_read(
+            "SELECT 1",
+            datasource="warehouse",
+            dialect="duckdb",
+            policy_context={"sql_policy": {"version": "v1", "policies": {}}},
+        )
+
+
+@pytest.mark.parametrize("active_names", [None, {"sql-policy"}])
+def test_configured_but_missing_plugin_fails_closed(monkeypatch, active_names):
+    monkeypatch.setattr("datus.tools.policy_runtime.collect_plugin_policy_runtime_factories", lambda active: {})
+    cfg = config()
+    cfg.active_plugin_names = lambda: active_names
+    cfg.get_plugin_profile = lambda _: {"column_masking": [{"column": "db.main.orders.phone", "mask": "last4"}]}
+    with pytest.raises(DatusException, match="Required SQL policy plugin"):
+        PolicyRuntime(cfg)
+
+
+def test_empty_legacy_metric_provider_needs_no_connection(monkeypatch):
+    legacy = SimpleNamespace(policies=[], before_metric_read=lambda **kwargs: None)
+    runtime = runtime_with(legacy, monkeypatch)
+    assert not runtime.requires_bound_read({})
+    assert runtime.bind_read(connector=None, datasource="warehouse", policy_context={}) is None
+
+
+@pytest.mark.parametrize("sql", ["SHOW TABLES", "DESCRIBE main.orders"])
+def test_only_plain_metadata_inspection_can_bypass_source_rewrite(sql):
+    from datus.tools.policy_runtime import _plain_metadata_read
+
+    assert _plain_metadata_read(sql, "duckdb")
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "DESCRIBE SELECT * FROM orders",
+        "PRAGMA storage_info('orders')",
+        "SHOW TABLES; SELECT * FROM orders",
+        "EXPLAIN ANALYZE SELECT * FROM orders",
+    ],
+)
+def test_query_bodies_cannot_bypass_rewrite_as_metadata(sql):
+    from datus.tools.policy_runtime import _plain_metadata_read
+
+    assert not _plain_metadata_read(sql, "duckdb")
+
+
 def test_runtime_chains_sql_and_result_hooks(monkeypatch):
     first = FakeRuntime(sql="SELECT 1 WHERE tenant_id = 1")
     second = FakeRuntime(result=[{"email": "***"}])

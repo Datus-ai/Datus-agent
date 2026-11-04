@@ -20,7 +20,7 @@ import asyncio
 import hashlib
 import threading
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Callable, Dict, Iterable, List, Optional
 
 import yaml
 
@@ -80,7 +80,8 @@ def _lod_definition(row: Dict[str, Any]) -> Optional[str]:
 class DosiRuntime:
     """Agent's model catalog, query, validation, and editor boundary for Dosi."""
 
-    def __init__(self, config: DosiConfig):
+    def __init__(self, config: DosiConfig, *, read_policy_provider: Optional[Callable[[], Any]] = None):
+        self._read_policy_provider = read_policy_provider
         self.service_type = "dosi"
         self.datasource = config.datasource
         self.config: DosiConfig = config
@@ -90,6 +91,18 @@ class DosiRuntime:
         self._catalog_handles: tuple[tuple[str, EngineHandle], ...] = ()
         self._metric_to_path: Dict[str, str] = {}
         self._model_to_path: Dict[str, str] = {}
+
+    def _policy_kwargs(self) -> dict:
+        provider = getattr(self, "_read_policy_provider", None)
+        policy = provider() if provider is not None else None
+        return {"policy": policy, "policy_required": True} if policy is not None else {}
+
+    @staticmethod
+    def _policy_scope(kwargs: dict) -> str:
+        policy = kwargs.get("policy")
+        if policy is None:
+            return "unprotected"
+        return hashlib.sha256((policy.snapshot_json + policy.context_json).encode()).hexdigest()
 
     # ==================== Semantic Model Interface ====================
 
@@ -442,6 +455,7 @@ class DosiRuntime:
         params: Optional[Dict[str, Any]] = None,
         context_filter: Optional[str] = None,
     ) -> QueryResult:
+        policy_kwargs = await asyncio.to_thread(self._policy_kwargs)
         binding = await asyncio.to_thread(load_binding)
         handle = await asyncio.to_thread(self._handle_for_metrics, metrics)
         engine = await asyncio.to_thread(handle.get)
@@ -484,6 +498,7 @@ class DosiRuntime:
                 engine.compile,
                 self._dry_run_dialect(binding, connection),
                 connection,
+                policy_kwargs,
             )
         try:
             if dry_run:
@@ -495,6 +510,7 @@ class DosiRuntime:
                     # Dry-run SQL is read by humans and LLM callers, never fed
                     # to a driver, so hand back the formatted form.
                     pretty=True,
+                    **policy_kwargs,
                 )
                 return QueryResult(
                     columns=["sql"],
@@ -509,7 +525,7 @@ class DosiRuntime:
                         **_echo(compiled),
                     },
                 )
-            result = await self._execute_query(binding, engine, query, connection)
+            result = await self._execute_query(binding, engine, query, connection, policy_kwargs)
             columns, rows = list(result["columns"]), list(result["rows"])
             if handle.has_ontology:
                 columns, rows = self._label_requested_columns(result, dataset_names)
@@ -517,6 +533,7 @@ class DosiRuntime:
                 columns=columns,
                 data=rows,
                 metadata={
+                    "_policy_scope": self._policy_scope(policy_kwargs),
                     "sql": result["sql"],
                     "dialect": result["dialect"],
                     "row_count": result["row_count"],
@@ -637,6 +654,7 @@ class DosiRuntime:
         compile_fn: Any,
         dialect: Optional[str],
         connection: Optional[str],
+        policy_kwargs: Optional[dict] = None,
     ) -> Dict[str, Any]:
         """Rewrite ``order_by`` keys that name a requested concept path to its output column.
 
@@ -653,7 +671,7 @@ class DosiRuntime:
             return query
         probe = {key: value for key, value in query.items() if key not in ("order_by", "limit")}
         try:
-            compiled = compile_fn(probe, dialect=dialect, connection=connection)
+            compiled = compile_fn(probe, dialect=dialect, connection=connection, **(policy_kwargs or {}))
         except Exception:  # noqa: BLE001 - the real call reports it
             return query
         columns = {
@@ -728,6 +746,7 @@ class DosiRuntime:
         limit: Optional[int] = None,
     ) -> QueryResult:
         """Record-level (detail) query rooted on one concept; fields may be concept paths."""
+        policy_kwargs = await asyncio.to_thread(self._policy_kwargs)
         binding = await asyncio.to_thread(load_binding)
         _, handle = await asyncio.to_thread(self._first_answer, lambda engine: engine.describe(from_concept))
         engine = await asyncio.to_thread(handle.get)
@@ -749,6 +768,7 @@ class DosiRuntime:
             engine.compile_select,
             self._dry_run_dialect(binding, connection),
             connection,
+            policy_kwargs,
         )
         try:
             result = await asyncio.to_thread(
@@ -756,11 +776,13 @@ class DosiRuntime:
                 query,
                 connection=connection,
                 timeout_secs=float(self.config.timeout_seconds),
+                **policy_kwargs,
             )
         except Exception as exc:  # noqa: BLE001 - mapped to typed errors below
             raise_mapped(exc, binding, requested_dimensions=list(fields))
             raise  # unreachable; raise_mapped always raises
         metadata: Dict[str, Any] = {
+            "_policy_scope": self._policy_scope(policy_kwargs),
             "sql": result["sql"],
             "dialect": result["dialect"],
             "row_count": result["row_count"],
@@ -787,6 +809,7 @@ class DosiRuntime:
                     ),
                 )
             )
+        policy_kwargs = await asyncio.to_thread(self._policy_kwargs)
         binding = await asyncio.to_thread(load_binding)
         handle = await asyncio.to_thread(self._handle_for_metric, request.metric)
         engine = await asyncio.to_thread(handle.get)
@@ -798,6 +821,7 @@ class DosiRuntime:
                 native_request,
                 connection=handle.profile_name,
                 timeout_secs=float(self.config.timeout_seconds),
+                **policy_kwargs,
             )
             return AttributionResult.model_validate({**result, "implementation": "dosi"})
         except Exception as exc:  # noqa: BLE001 - mapped to typed errors below
@@ -1406,11 +1430,12 @@ class DosiRuntime:
         except ValueError as exc:
             raise SemanticCoreException(str(exc)) from exc
 
-    async def _execute_query(self, binding, engine, query, connection):
+    async def _execute_query(self, binding, engine, query, connection, policy_kwargs=None):
         """Propagate asyncio cancellation into request-local native execution."""
         token_type = getattr(binding, "CancellationToken", None)
         token = token_type() if token_type is not None else None
         kwargs = {"connection": connection, "timeout_secs": float(self.config.timeout_seconds)}
+        kwargs.update(policy_kwargs if policy_kwargs is not None else await asyncio.to_thread(self._policy_kwargs))
         if token is not None:
             kwargs["cancellation"] = token
         try:
