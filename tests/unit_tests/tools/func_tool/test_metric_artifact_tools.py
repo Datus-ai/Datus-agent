@@ -908,3 +908,24 @@ def test_metric_artifact_replays_its_original_database_after_a_turn_switch(envir
         {"total": 999.0}
     ]
     manager.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("suffix", [".metric.json", ".params.json"])
+async def test_dashboard_rejects_a_saved_context_pointing_at_another_datasource(environment, suffix):
+    env = environment
+    tools, saved = _save(env, "dashboard", params=[], sample_params={})
+    assert saved.success == 1, saved.error
+    path = tools.queries_dir / f"sales{suffix}"
+    content = json.loads(path.read_text())
+    content["execution_context"]["datasource"] = "other"
+    path.write_text(json.dumps(content))
+    env.db.execute_read_enforced.reset_mock()
+    service = DashboardService(agent_config=env.config)
+    response = await service.run_query(
+        project_files_root=env.root, dashboard_slug="demo", query_slug="sales", params={}
+    )
+    assert response.success is False
+    assert response.errorCode == "TEMPLATE_CORRUPT"
+    assert "execution context must match" in response.errorMessage
+    env.db.execute_read_enforced.assert_not_called()

@@ -68,6 +68,8 @@ class QueryResultFile(BaseModel):
 
     @model_validator(mode="after")
     def _row_count_matches(self) -> "QueryResultFile":
+        if self.execution_context and self.execution_context.get("datasource") != self.datasource:
+            raise ValueError("query execution context must match its datasource")
         if len(self.rows) != self.row_count:
             raise ValueError(f"row_count={self.row_count} does not match len(rows)={len(self.rows)}")
         column_names = {c.name for c in self.columns}

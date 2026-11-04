@@ -61,6 +61,8 @@ class MetricQueryFile(MetricQueryRequest):
 
     @model_validator(mode="after")
     def identity_matches(self) -> MetricQueryFile:
+        if self.execution_context and self.execution_context.get("datasource") != self.datasource:
+            raise ValueError("query execution context must match its datasource")
         path = PurePosixPath(self.model_path)
         if path.is_absolute() or ".." in path.parts or "\\" in self.model_path:
             raise ValueError("model_path must be a relative project path without traversal")

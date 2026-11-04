@@ -120,6 +120,8 @@ class QueryTemplateMetaFile(BaseModel):
 
     @model_validator(mode="after")
     def _params_unique(self) -> "QueryTemplateMetaFile":
+        if self.execution_context and self.execution_context.get("datasource") != self.datasource:
+            raise ValueError("query execution context must match its datasource")
         seen: set[str] = set()
         for p in self.params:
             if p.name in seen:
