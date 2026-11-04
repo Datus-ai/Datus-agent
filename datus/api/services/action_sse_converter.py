@@ -27,7 +27,7 @@ from datus.schemas.action_history import (
     ActionRole,
     ActionStatus,
 )
-from datus.utils.json_utils import llm_result2json
+from datus.utils.json_utils import llm_result2json, normalize_sql_escapes
 from datus.utils.loggings import get_logger
 from datus.utils.time_utils import now_utc_iso, to_utc_iso
 
@@ -217,6 +217,7 @@ def _build_user_content(action: ActionHistory) -> List[IMessageContent]:
 
 
 _STRUCTURED_RESPONSE_NODES = frozenset({"semantic_modeling", "gen_sql", "gen_sql_summary", "gen_table", "gen_job"})
+_LEGACY_CHAT_RESPONSE_PROTOCOL = "chat_sql_output"
 
 
 def _response_node_class(action: ActionHistory) -> Optional[str]:
@@ -239,7 +240,22 @@ def _sql_response_content(sql: str) -> IMessageContent:
         # A path is not executable SQL. The host completion may replace this
         # hint with the statement read through the node's filesystem tools.
         return IMessageContent(type="markdown", payload={"content": f"SQL file: `{sql}`"})
-    return IMessageContent(type="code", payload={"codeType": "sql", "content": sql})
+    return IMessageContent(type="code", payload={"codeType": "sql", "content": normalize_sql_escapes(sql)})
+
+
+def _response_protocol(action: ActionHistory) -> Optional[str]:
+    """Select a result protocol from trusted node and prompt identity."""
+    node_class = _response_node_class(action)
+    if node_class in _STRUCTURED_RESPONSE_NODES:
+        return node_class
+    data = action.input if isinstance(getattr(action, "input", None), dict) else {}
+    if (
+        node_class == "chat"
+        and data.get("_system_prompt_template") == "chat_system"
+        and data.get("_prompt_version") in ("0.9", "1.1")
+    ):
+        return _LEGACY_CHAT_RESPONSE_PROTOCOL
+    return None
 
 
 def _build_structured_response_content(
@@ -251,7 +267,7 @@ def _build_structured_response_content(
     A prose answer containing a JSON example, or arbitrary user JSON with an
     ``output`` property, must remain readable in its original form.
     """
-    if node_class not in _STRUCTURED_RESPONSE_NODES:
+    if node_class not in _STRUCTURED_RESPONSE_NODES and node_class != _LEGACY_CHAT_RESPONSE_PROTOCOL:
         return None
     payload = content
     if isinstance(content, str):
@@ -275,6 +291,11 @@ def _build_structured_response_content(
     if isinstance(markdown, str):
         recognized = (
             (node_class == "gen_sql" and keys <= {"sql", "output"} and isinstance(payload.get("sql"), str))
+            or (
+                node_class == _LEGACY_CHAT_RESPONSE_PROTOCOL
+                and keys <= {"sql", "output"}
+                and ("sql" not in payload or isinstance(payload["sql"], str))
+            )
             or (
                 node_class == "gen_sql_summary"
                 and keys <= {"sql_summary_file", "output"}
@@ -338,7 +359,7 @@ def _build_response_content(action: ActionHistory) -> List[IMessageContent]:
         contents.append(_sql_response_content(sql))
 
     response = action_output.get("response") or action_output.get("content") or action_output.get("raw_output") or ""
-    structured = _build_structured_response_content(response, _response_node_class(action), include_sql=not contents)
+    structured = _build_structured_response_content(response, _response_protocol(action), include_sql=not contents)
     if structured is not None:
         # Prefer the host's resolved SQL (which may have been loaded from a
         # .sql file), and avoid displaying it twice when the envelope has it too.
@@ -386,12 +407,12 @@ def _build_thinking_content(action: ActionHistory) -> Optional[List[IMessageCont
         messages = strip_litellm_placeholder(action.messages)
         return [IMessageContent(type="thinking", payload={"content": messages})] if messages else None
 
-    node_class = _response_node_class(action)
-    structured = _build_structured_response_content(content, node_class)
+    protocol = _response_protocol(action)
+    structured = _build_structured_response_content(content, protocol)
     if structured is not None:
         return structured
 
-    result_json = llm_result2json(content) if node_class in _STRUCTURED_RESPONSE_NODES else None
+    result_json = llm_result2json(content) if protocol is not None else None
 
     if result_json:
         contents = []

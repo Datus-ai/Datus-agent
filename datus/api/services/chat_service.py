@@ -155,12 +155,12 @@ def _subagent_run_actions(
         return []
 
     actions = runs.pop(0)
-    node_class = _history_node_class(agent_config, sub_session_id, SessionManager(session_dir=session_dir))
+    response_context = _history_response_context(agent_config, sub_session_id, SessionManager(session_dir=session_dir))
     for action in actions:
         action.depth = max(action.depth, 1)
         action.parent_action_id = action.parent_action_id or call_id
-        if action.role == ActionRole.ASSISTANT and node_class:
-            action.input = {**(action.input if isinstance(action.input, dict) else {}), "_node_class": node_class}
+        if action.role == ActionRole.ASSISTANT and response_context:
+            action.input = {**response_context, **(action.input if isinstance(action.input, dict) else {})}
     saved = (node_responses or {}).get(call_id)
     saved_text = saved.get("raw_output") if saved else None
     if saved and isinstance(saved_text, str):
@@ -174,13 +174,23 @@ def _subagent_run_actions(
     return actions
 
 
-def _history_node_class(agent_config: Any, session_id: str, manager: SessionManager) -> Optional[str]:
+def _history_response_context(agent_config: Any, session_id: str, manager: SessionManager) -> Dict[str, Any]:
+    """Recover host-owned node and prompt identity for SDK history rows."""
     snapshot = manager.load_system_prompt_snapshot(session_id) or {}
     name = snapshot.get("node_name") or extract_agent_from_session_id(session_id)
-    if name == "chat" or name in _STRUCTURED_RESPONSE_NODES:
-        return name
-    nodes = getattr(agent_config, "agentic_nodes", None) or {}
-    return resolve_subagent(agent_config, name)[0] if name in nodes else None
+    node_class = name
+    if name != "chat" and name not in _STRUCTURED_RESPONSE_NODES:
+        nodes = getattr(agent_config, "agentic_nodes", None) or {}
+        node_class = resolve_subagent(agent_config, name)[0] if name in nodes else None
+    if not node_class:
+        return {}
+    context = {"_node_class": node_class}
+    if node_class == "chat":
+        context.update(
+            _system_prompt_template=snapshot.get("system_prompt_template"),
+            _prompt_version=snapshot.get("prompt_version"),
+        )
+    return context
 
 
 def _actions_to_payloads(
@@ -188,7 +198,7 @@ def _actions_to_payloads(
     event_id: int,
     expand_subagent: Optional[Callable[[str, ActionHistory], List[ActionHistory]]] = None,
     id_prefix: Optional[str] = None,
-    node_class: Optional[str] = None,
+    response_context: Optional[dict] = None,
 ) -> tuple[List[SSEMessagePayload], int]:
     """Convert one stored assistant group into history payloads.
 
@@ -208,9 +218,9 @@ def _actions_to_payloads(
     }
     replayed_ask_user_ids: set[str] = set()
     for action_index, action in enumerate(messages):
-        if action.role == ActionRole.ASSISTANT and node_class:
+        if action.role == ActionRole.ASSISTANT and response_context:
             data = action.input if isinstance(action.input, dict) else {}
-            action = action.model_copy(update={"input": {"_node_class": node_class, **data}})
+            action = action.model_copy(update={"input": {**response_context, **data}})
         if action.role == ActionRole.TOOL and action.status != ActionStatus.PROCESSING:
             if action.action_id.removeprefix("complete_") in replayed_ask_user_ids:
                 # Folded into the card, but it still counts as a tool result.
@@ -499,7 +509,7 @@ class ChatService:
             tool_results = session_manager.get_tool_result_contents(session_id, **bounds)
             tool_calls = session_manager.get_tool_call_contents(session_id, **bounds)
             node_responses = session_manager.get_node_response_contents(session_id, **bounds)
-            node_class = _history_node_class(self.agent_config, session_id, session_manager)
+            response_context = _history_response_context(self.agent_config, session_id, session_manager)
 
             if not raw_messages:
                 return Result[ChatHistoryData](success=True, data=ChatHistoryData())
@@ -606,7 +616,7 @@ class ChatService:
                                 if subagent_dir
                                 else None
                             ),
-                            node_class=node_class,
+                            response_context=response_context,
                         )
                         sse_messages.extend(payloads)
                     elif msg.get("content"):

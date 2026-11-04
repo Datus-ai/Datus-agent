@@ -1186,6 +1186,22 @@ class AgenticNode(Node):
             return node_class
         return AgenticNode.get_node_name(self)
 
+    def _response_provenance(self, user_input: Any) -> Dict[str, str]:
+        """Identify this producer and any versioned chat result protocol."""
+        source = {"_node_class": self.get_node_class_name()}
+        if source["_node_class"] == "chat":
+            config = getattr(self, "node_config", None) or {}
+            version = (
+                getattr(user_input, "prompt_version", None)
+                or config.get("prompt_version")
+                or getattr(getattr(self, "agent_config", None), "prompt_version", None)
+            )
+            source.update(
+                _system_prompt_template=self._system_prompt_template_name(),
+                _prompt_version=str(version or ""),
+            )
+        return source
+
     def _system_prompt_snapshot_meta(self, prompt_version: Optional[str]) -> Dict[str, str]:
         """Identity keys that invalidate the cached system-prompt snapshot.
 
@@ -3776,7 +3792,7 @@ class AgenticNode(Node):
                 output_data=result.model_dump(),
                 status=ActionStatus.SUCCESS if getattr(result, "success", True) else ActionStatus.FAILED,
             )
-            final_action.input["_node_class"] = self.get_node_class_name()
+            final_action.input.update(self._response_provenance(ctx.user_input))
             ahm.add_action(final_action)
             yield final_action
 
@@ -3885,6 +3901,7 @@ class AgenticNode(Node):
         self._active_context_rewriter = ctx.context_rewriter
         from datus.utils.tool_result_store import ACTIVE_RESULT_STORE
 
+        response_provenance = self._response_provenance(ctx.user_input)
         result_store_token = ACTIVE_RESULT_STORE.set(None)
         try:
             async for stream_action in self.model.generate_with_tools_stream(
@@ -3910,7 +3927,7 @@ class AgenticNode(Node):
                 if action_to_yield.role == ActionRole.ASSISTANT and action_to_yield.depth == 0:
                     action_to_yield.input = {
                         **(action_to_yield.input if isinstance(action_to_yield.input, dict) else {}),
-                        "_node_class": self.get_node_class_name(),
+                        **response_provenance,
                     }
 
                 if (

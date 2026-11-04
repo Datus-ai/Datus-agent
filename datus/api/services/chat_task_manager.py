@@ -32,10 +32,10 @@ from datus.api.models.cli_models import (
 )
 from datus.api.models.message_contents import PreparedChatMessage
 from datus.api.services.action_sse_converter import (
-    _STRUCTURED_RESPONSE_NODES,
     _build_response_content,
     _build_structured_response_content,
     _response_node_class,
+    _response_protocol,
     action_to_sse_event,
 )
 from datus.api.services.background_drain import track_background_task
@@ -194,7 +194,7 @@ def _should_skip_duplicate_assistant_message(
         raw = output.get("response") or output.get("content") or output.get("raw_output")
         return (
             not _is_resolved_sql_file_response(action)
-            and _build_structured_response_content(raw, _response_node_class(action)) is None
+            and _build_structured_response_content(raw, _response_protocol(action)) is None
         )
     return True
 
@@ -423,7 +423,11 @@ class ChatTask:
         if content_id is None:
             claimed = set(self.content_events.values())
             content_id = next(
-                (key for key, record in self.message_contents.items() if key not in claimed and record["text"] == text),
+                (
+                    key
+                    for key, record in self.message_contents.items()
+                    if key not in claimed and record.get("text") == text
+                ),
                 None,
             )
         if content_id in self.message_contents:
@@ -1028,7 +1032,7 @@ class ChatTaskManager:
                         if pending_id and action.action_id not in seen_delta_action_ids:
                             output = action.output if isinstance(action.output, dict) else {}
                             raw = output.get("response") or output.get("content") or output.get("raw_output")
-                            if _build_structured_response_content(raw, _response_node_class(action)) is not None:
+                            if _build_structured_response_content(raw, _response_protocol(action)) is not None:
                                 # Some provider fallback completions mint a fresh
                                 # action id. Replace this producer's JSON stream
                                 # instead of leaving it above a new summary bubble.
@@ -1043,7 +1047,7 @@ class ChatTaskManager:
                         and action.role == ActionRole.ASSISTANT
                         and action.status == ActionStatus.SUCCESS
                         and action.action_type.endswith("_response")
-                        and _response_node_class(action) in _STRUCTURED_RESPONSE_NODES
+                        and _response_protocol(action) is not None
                     ):
                         # Persist the host's canonical view outside model input.
                         # Bind it to the SDK assistant row (or enclosing task), so
@@ -1123,7 +1127,7 @@ class ChatTaskManager:
                             action.role == ActionRole.ASSISTANT
                             and action.status == ActionStatus.SUCCESS
                             and action.action_type == "response"
-                            and _response_node_class(action) in _STRUCTURED_RESPONSE_NODES
+                            and _response_protocol(action) is not None
                         ):
                             output = action.output if isinstance(action.output, dict) else {}
                             raw = output.get("response") or output.get("content") or output.get("raw_output")

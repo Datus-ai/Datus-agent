@@ -65,6 +65,143 @@ def _assert_summary(contents, sql=None):
     )
 
 
+def test_user_content_restore_skips_node_response_records():
+    task = ChatTask(session_id="mixed-contents", asyncio_task=MagicMock())
+    first = [{"type": "markdown", "payload": {"content": "first"}}]
+    second = [{"type": "markdown", "payload": {"content": "second"}}]
+    task.register_message_contents("same user text", first)
+    ChatTaskManager._record_node_response(task, _action(node_class="gen_sql"), ("sql", "raw SQL result"), [])
+    task.register_message_contents("same user text", second)
+
+    assert task.restore_message_contents("same user text", "user-1") == first
+    assert task.restore_message_contents("same user text", "user-2") == second
+    assert task.restore_message_contents("unregistered user text", "user-3") is None
+    assert len(set(task.content_events.values())) == 2
+
+
+@pytest.mark.parametrize("is_thinking", [False, True])
+@pytest.mark.parametrize("depth", [0, 1])
+def test_envelope_sql_normalization_preserves_quoted_literals(is_thinking, depth):
+    sql = "SELECT COUNT\\(*)\nFROM orders WHERE path = 'C:\\(data\\)' AND note = 'a''\\(b\\)'"
+    expected = "SELECT COUNT(*)\nFROM orders WHERE path = 'C:\\(data\\)' AND note = 'a''\\(b\\)'"
+    raw = json.dumps({"sql": sql, "output": SUMMARY})
+    action = _action(
+        depth=depth,
+        parent="sql-task" if depth else None,
+        output={"raw_output": raw, "is_thinking": is_thinking},
+        node_class="gen_sql",
+    )
+    event = action_to_sse_event(action, 1, action.action_id)
+    _assert_summary(event.data.payload.content, expected)
+    assert action.output["raw_output"] == raw
+
+
+@pytest.mark.parametrize("version", ["0.9", "1.1"])
+@pytest.mark.parametrize("is_thinking", [False, True])
+def test_legacy_chat_completion_uses_host_prompt_identity(version, is_thinking):
+    raw = json.dumps({"sql": "SELECT 1", "output": SUMMARY})
+    action = _action(output={"raw_output": raw, "is_thinking": is_thinking}, node_class="chat")
+    action.input.update(_system_prompt_template="chat_system", _prompt_version=version)
+    event = action_to_sse_event(action, 1, action.action_id, stream_thinking=True, is_update=True)
+    assert event.data.type == SSEDataType.UPDATE_MESSAGE
+    _assert_summary(event.data.payload.content, "SELECT 1")
+    assert action.input["_node_class"] == "chat"
+
+
+@pytest.mark.asyncio
+async def test_gen_sql_history_normalizes_sql_without_saved_display(real_agent_config):
+    session_id = "gen_sql_session_escape_history"
+    storage = SessionManager(session_dir=real_agent_config.session_dir)
+    session = storage.get_session(session_id)
+    raw = json.dumps({"sql": r"SELECT COUNT\(*) FROM orders", "output": SUMMARY})
+    await session.add_items(
+        [
+            {"role": "user", "content": "Count orders"},
+            {"role": "assistant", "content": [{"type": "output_text", "text": raw}]},
+        ]
+    )
+    history = ChatService(real_agent_config).get_history(session_id)
+    assert history.success is True
+    answers = [message for message in history.data.messages if message.role == "assistant"]
+    assert len(answers) == 1
+    _assert_summary(answers[0].content, "SELECT COUNT(*) FROM orders")
+    assert (await session.get_items())[-1]["content"][0]["text"] == raw
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("version", ["0.9", "1.1"])
+@pytest.mark.parametrize("include_sql", [False, True])
+@pytest.mark.parametrize("delegated", [False, True])
+async def test_legacy_chat_history_uses_prompt_provenance(real_agent_config, version, include_sql, delegated):
+    parent_id = "chat_session_legacy_parent"
+    child_id = "chat_session_legacy_child"
+    call_id = "legacy-chat-task"
+    storage = SessionManager(session_dir=real_agent_config.session_dir)
+    parent = storage.get_session(parent_id)
+    child_storage = SessionManager(session_dir=f"{real_agent_config.session_dir}/{parent_id}")
+    owner = child_storage if delegated else storage
+    session_id = child_id if delegated else parent_id
+    session = owner.get_session(session_id)
+    sql = "SELECT COUNT(*) FROM orders" if include_sql else None
+    payload = {"output": SUMMARY, **({"sql": sql} if include_sql else {})}
+    raw = json.dumps(payload)
+    await session.add_items(
+        [
+            {"role": "user", "content": "Analyze orders"},
+            {"role": "assistant", "content": [{"type": "output_text", "text": raw}]},
+        ]
+    )
+    owner.save_system_prompt_snapshot(
+        session_id,
+        "Legacy chat prompt",
+        {"node_name": "chat", "system_prompt_template": "chat_system", "prompt_version": version},
+    )
+    if delegated:
+        await parent.add_items(
+            [
+                {"role": "user", "content": "Delegate analysis"},
+                {"type": "function_call", "call_id": call_id, "name": "task", "arguments": '{"type":"chat"}'},
+                {
+                    "type": "function_call_output",
+                    "call_id": call_id,
+                    "output": json.dumps({"success": True, "result": {"session_id": child_id}}),
+                },
+            ]
+        )
+    history = ChatService(real_agent_config).get_history(parent_id)
+    assert history.success is True
+    answers = [
+        message for message in history.data.messages if message.role == "assistant" and message.depth == int(delegated)
+    ]
+    assert len(answers) == 1
+    _assert_summary(answers[0].content, sql)
+    assert answers[0].parent_action_id == (call_id if delegated else None)
+    assert (await session.get_items())[-1]["content"][0]["text"] == raw
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("template,version", [("chat_system", "1.2"), ("chat_system", ""), ("custom_system", "0.9")])
+async def test_chat_history_keeps_json_without_legacy_prompt_provenance(real_agent_config, template, version):
+    session_id = "chat_session_freeform_json"
+    storage = SessionManager(session_dir=real_agent_config.session_dir)
+    session = storage.get_session(session_id)
+    raw = json.dumps({"sql": "SELECT 1", "output": "User data"})
+    await session.add_items(
+        [
+            {"role": "user", "content": "Show JSON"},
+            {"role": "assistant", "content": [{"type": "output_text", "text": raw}]},
+        ]
+    )
+    storage.save_system_prompt_snapshot(
+        session_id, "Chat prompt", {"node_name": "chat", "system_prompt_template": template, "prompt_version": version}
+    )
+    history = ChatService(real_agent_config).get_history(session_id)
+    assert history.success is True
+    answers = [message for message in history.data.messages if message.role == "assistant"]
+    assert len(answers) == 1
+    assert [part.payload["content"] for part in answers[0].content] == [raw]
+
+
 @pytest.mark.parametrize("node,payload,sql", PROTOCOLS)
 @pytest.mark.parametrize("depth", [0, 1])
 @pytest.mark.parametrize("fenced", [False, True])

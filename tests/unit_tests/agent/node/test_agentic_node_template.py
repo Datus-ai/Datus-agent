@@ -204,6 +204,22 @@ def _tool_action(summary: str) -> ActionHistory:
 
 class TestTemplateMethodHappyPath:
     @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "input_version,node_version,expected",
+        [(None, "0.9", "0.9"), (None, "1.1", "1.1"), ("1.1", "1.2", "1.1"), (None, "1.2", "1.2")],
+    )
+    async def test_chat_response_provenance_records_prompt_identity(self, input_version, node_version, expected):
+        own = _ok_action("done")
+        node = FakeAgenticNode(_StreamModel([[own]]))
+        node.get_node_class_name = lambda: "chat"
+        node.node_config = {"system_prompt": "chat", "prompt_version": node_version}
+        node.input = FakeInput(user_message="hello", prompt_version=input_version)
+        emitted = [action async for action in node.execute_stream(ActionHistoryManager())]
+        expected_source = {"_node_class": "chat", "_system_prompt_template": "chat_system", "_prompt_version": expected}
+        assert own.input == expected_source
+        assert {key: emitted[-1].input[key] for key in expected_source} == expected_source
+
+    @pytest.mark.asyncio
     async def test_response_provenance_uses_class_and_preserves_forwarded_children(self):
         own = _ok_action("done")
         child = _ok_action("child")
