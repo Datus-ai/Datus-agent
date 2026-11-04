@@ -98,8 +98,8 @@ class DuckdbConnector(BaseSqlConnector, SchemaNamespaceMixin, MigrationTargetMix
         # ``database_name`` setter would only populate that context's ContextVar
         # and later cross-context reads would fall back to an empty default. See
         # ``SQLiteConnector.__init__`` for the full rationale.
-        if config.database_name:
-            self._default_database = config.database_name
+        if config.initial_database or config.database_name:
+            self._default_database = config.initial_database or config.database_name
         elif self.db_path == ":memory:":
             # In-memory DuckDB has no file stem, and DuckDB names the database
             # ``memory`` (not ``:memory:``). Leave the default empty so metadata
@@ -159,6 +159,10 @@ class DuckdbConnector(BaseSqlConnector, SchemaNamespaceMixin, MigrationTargetMix
 
             if self.iceberg_config:
                 self._setup_iceberg()
+
+            if self.config.initial_database:
+                database_identifier = '"' + self.config.initial_database.replace('"', '""') + '"'
+                self.connection.execute(f"USE {database_identifier}")
 
             # Bind the native session before the registry publishes this
             # connector. ContextVars alone cannot change unqualified SQL reads.

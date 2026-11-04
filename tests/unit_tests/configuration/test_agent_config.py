@@ -3136,3 +3136,72 @@ class TestCompactConfigMidTurnKeys:
         cfg = CompactConfig.from_dict({"major": {"bogus": 1}, "minor": {"keep_recent_user_turns": 2}})
         assert cfg.minor.keep_recent_user_turns == 2
         assert cfg.minor.keep_recent_tool_results == 5
+
+
+@pytest.mark.parametrize(
+    "overrides,expected",
+    [
+        ({"catalog_name": "cat_b"}, ("cat_b", "", "")),
+        ({"database_name": "next_db"}, ("cat_a", "next_db", "")),
+    ],
+)
+def test_cli_parent_changes_do_not_splice_configured_children(tmp_path, overrides, expected):
+    cfg = AgentConfig(
+        nodes={},
+        home=str(tmp_path),
+        skip_init_dirs=True,
+        services={
+            "datasources": {
+                "warehouse": {
+                    "type": "postgresql",
+                    "catalog": "cat_a",
+                    "database": "analytics",
+                    "schema": "tenant_a",
+                    "default": True,
+                },
+            }
+        },
+    )
+    cfg.override_by_args(**overrides)
+    actual = cfg.runtime_db_context()
+    assert tuple(actual[k] for k in ("catalog", "database", "schema")) == expected
+
+
+@pytest.mark.parametrize("engine", ["sqlite", "duckdb"])
+def test_cli_schema_override_resolves_the_glob_database_first(tmp_path, engine):
+    import sqlite3
+
+    import duckdb
+
+    path = tmp_path / ("analytics.sqlite" if engine == "sqlite" else "analytics.duckdb")
+    with sqlite3.connect(str(path)) if engine == "sqlite" else duckdb.connect(str(path)):
+        pass
+    cfg = AgentConfig(
+        nodes={},
+        home=str(tmp_path / "home"),
+        skip_init_dirs=True,
+        services={
+            "datasources": {
+                "warehouse": {
+                    "type": engine,
+                    "path_pattern": str(tmp_path / ("*.sqlite" if engine == "sqlite" else "*.duckdb")),
+                    "default": True,
+                },
+            }
+        },
+    )
+    cfg.override_by_args(schema_name="tenant_a")
+    assert cfg.runtime_db_context()["database"] == "analytics"
+    assert cfg.runtime_db_context()["schema"] == "tenant_a"
+
+
+@pytest.mark.parametrize("engine", ["sqlite", "duckdb"])
+@pytest.mark.parametrize("database", ["", "analytics"])
+def test_file_database_default_uses_the_real_file_name_without_a_connector(tmp_path, engine, database):
+    from datus.configuration.agent_config import AgentConfig, DbConfig
+
+    config = object.__new__(AgentConfig)
+    profile = DbConfig(type=engine, uri=str(tmp_path / "analytics.db"), database=database)
+    config.current_db_config = lambda datasource="": profile
+    assert config.default_database_name("warehouse") == "analytics"
+    assert profile.database == database

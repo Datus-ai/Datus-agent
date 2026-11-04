@@ -547,7 +547,7 @@ class DashboardService:
             connector = (
                 db_tool.connector_for_execution_context(meta.execution_context)
                 if meta.execution_context
-                else db_tool._get_connector(meta.datasource or None)
+                else db_tool.connector_for_datasource_default(meta.datasource or None)
             )
         except Exception as exc:
             logger.exception("Failed to resolve datasource for %s/%s: %s", dashboard_slug, query_slug, exc)

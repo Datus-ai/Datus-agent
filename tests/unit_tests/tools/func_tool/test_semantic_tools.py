@@ -2959,3 +2959,29 @@ class TestSelectRecords:
         assert result.success == 0
         assert result.result["code"] == "value_not_in_domain"
         assert result.result["detail"]["violations"] == violations
+
+
+@pytest.mark.parametrize("dry_run", [False, True])
+@pytest.mark.parametrize("context", [{}, {"datasource": "stale", "database": "stale_db"}])
+def test_query_metrics_reports_the_captured_resolved_runtime_context(
+    semantic_tools, mock_runtime, monkeypatch, dry_run, context
+):
+    semantic_tools.agent_config.runtime_db_context.return_value = context
+    mock_runtime.config = SimpleNamespace(
+        datasource="warehouse", db_config={"catalog": "cat", "database": "analytics", "schema": "tenant_a"}
+    )
+    result = QueryResult(columns=["revenue"], data=[{"revenue": 25}], metadata={"sql": "SELECT 25"})
+
+    def run_query(awaitable):
+        semantic_tools.agent_config.runtime_db_context.return_value = {"datasource": "next", "database": "next_db"}
+        return result
+
+    monkeypatch.setattr("datus.tools.func_tool.semantic_tools._run_async", run_query)
+    response = semantic_tools.query_metrics(metrics=["revenue"], dry_run=dry_run)
+    assert response.success == 1, response.error
+    assert response.execution_context == {
+        "datasource": "warehouse",
+        "catalog": "cat",
+        "database": "analytics",
+        "schema": "tenant_a",
+    }

@@ -32,4 +32,7 @@ class DuckDBConfig(FileConnectionConfig):
     memory_limit: Optional[str] = Field(default=None, description="Memory limit (e.g., '2GB')")
     database_name: Optional[str] = Field(default=None, description="Optional database name override")
     schema_name: str = Field(default="", description="Initial native connection schema; empty selects main")
+    initial_database: Optional[str] = Field(
+        default=None, description="Validated native database target, not a display alias"
+    )
     iceberg: Optional[Dict[str, Any]] = Field(default=None, description="DuckDB Iceberg REST catalog configuration")

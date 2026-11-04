@@ -973,3 +973,39 @@ def test_resolved_api_context_is_authoritative_for_metric_tools(session_manager)
         "schema": "selected_schema",
         "db_schema": "selected_schema",
     }
+
+
+@pytest.mark.parametrize("override", [None, "1.0"])
+def test_digest_and_render_use_the_same_resolved_template_version(session_manager, monkeypatch, override):
+    from unittest.mock import Mock
+
+    from datus.prompts import prompt_manager
+
+    manager = Mock()
+    manager.template_fingerprint.return_value = "selected-template-digest"
+    monkeypatch.setattr(prompt_manager, "get_prompt_manager", lambda **kwargs: manager)
+    node = _SnapshotNode(session_manager, _agent_config(), node_config={"prompt_version": "9.9"})
+    meta = node._system_prompt_snapshot_meta(override)
+    selected = override if override is not None else node.agent_config.prompt_version
+    manager.template_fingerprint.assert_called_once_with(node._system_prompt_template_name(), version=selected)
+    assert meta["prompt_version"] == selected
+    assert meta["prompt_template_sha256"] == "selected-template-digest"
+
+
+@pytest.mark.parametrize("operation", ["load_session_meta", "save_session_meta", "get_max_user_turn_number"])
+def test_execution_context_metadata_database_failure_does_not_abort_the_turn(session_manager, monkeypatch, operation):
+    import sqlite3
+    from unittest.mock import Mock
+
+    from datus.agent.node import agentic_node
+
+    node = _SnapshotNode(session_manager, _agent_config(current_datasource="warehouse"))
+    node.input = SimpleNamespace(database="analytics", catalog="", db_schema="")
+    monkeypatch.setattr(session_manager, operation, Mock(side_effect=sqlite3.DatabaseError("metadata unavailable")))
+    logger = Mock()
+    monkeypatch.setattr(agentic_node, "logger", logger)
+    node._record_execution_context()
+    assert node._get_session_system_prompt() == "SYS#1"
+    logger.debug.assert_called_once_with(
+        "Failed to record execution context for session %s", node.session_id, exc_info=True
+    )

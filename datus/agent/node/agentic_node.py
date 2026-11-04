@@ -1243,7 +1243,7 @@ class AgenticNode(Node):
 
             template_digest = get_prompt_manager(agent_config=agent_config).template_fingerprint(
                 self._system_prompt_template_name(),
-                version=prompt_version or (getattr(self, "node_config", None) or {}).get("prompt_version"),
+                version=version,
             )
         except (AttributeError, FileNotFoundError, ValueError, TypeError):
             template_digest = ""
@@ -3638,12 +3638,15 @@ class AgenticNode(Node):
         self._previous_execution_context = None
         if not context.datasource:
             return
-        previous = self.session_manager.load_session_meta(self.session_id, EXECUTION_CONTEXT_META_KEY)
-        if previous and previous != context.identity:
-            self._previous_execution_context = previous
-        self.session_manager.save_session_meta(self.session_id, EXECUTION_CONTEXT_META_KEY, context.identity)
-        turn = self.session_manager.get_max_user_turn_number(self.session_id) + 1
-        self.session_manager.save_session_meta(self.session_id, f"execution_context.turn.{turn}", context.identity)
+        try:
+            previous = self.session_manager.load_session_meta(self.session_id, EXECUTION_CONTEXT_META_KEY)
+            if previous and previous != context.identity:
+                self._previous_execution_context = previous
+            self.session_manager.save_session_meta(self.session_id, EXECUTION_CONTEXT_META_KEY, context.identity)
+            turn = self.session_manager.get_max_user_turn_number(self.session_id) + 1
+            self.session_manager.save_session_meta(self.session_id, f"execution_context.turn.{turn}", context.identity)
+        except Exception:  # noqa: BLE001 — metadata bookkeeping must not abort a turn
+            logger.debug("Failed to record execution context for session %s", self.session_id, exc_info=True)
 
     def _apply_turn_db_context(self) -> None:
         """Point the connector at this turn's catalog and schema.

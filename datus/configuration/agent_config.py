@@ -1640,6 +1640,23 @@ class AgentConfig:
             return [p["name"] for p in get_files_from_glob_pattern(cfg.path_pattern, cfg.type)]
         return [cfg.database] if cfg.database else []
 
+    def default_database_name(self, datasource: str = "") -> str:
+        """Resolve configured/file-derived defaults without opening a connector."""
+        cfg = self.current_db_config(datasource)
+        if cfg.uri and cfg.type == DBType.SQLITE:
+            return file_stem_from_uri(cfg.uri)
+        if cfg.uri and cfg.type == DBType.DUCKDB:
+            physical = file_stem_from_uri(cfg.uri)
+            if physical == ":memory:" and cfg.database in ("", ":memory:"):
+                return "memory"
+            return cfg.database or physical
+        if cfg.database:
+            return cfg.database
+        if cfg.path_pattern:
+            files = get_files_from_glob_pattern(cfg.path_pattern, cfg.type)
+            return files[0]["name"] if files else ""
+        return ""
+
     def default_scheduler_service(self) -> Optional[str]:
         defaults = [name for name, cfg in self.scheduler_services.items() if cfg.get("default")]
         if len(defaults) > 1:
@@ -2211,8 +2228,15 @@ class AgentConfig:
             # resolved snapshot. Fill omitted levels before pinning so they
             # cannot be mistaken for explicit API clears downstream.
             configured = self.current_db_config() if self.current_datasource else None
+            inherit_defaults = True
             for coordinate in ("catalog", "database", "schema"):
-                runtime_db_context[coordinate] = runtime_db_context[coordinate] or getattr(configured, coordinate, "")
+                default = (
+                    self.default_database_name()
+                    if coordinate == "database" and configured is not None
+                    else getattr(configured, coordinate, "") or ""
+                )
+                runtime_db_context[coordinate] = runtime_db_context[coordinate] or (default if inherit_defaults else "")
+                inherit_defaults = inherit_defaults and runtime_db_context[coordinate] == default
             self.set_runtime_db_context(runtime_db_context)
         if kwargs.get("benchmark", ""):
             benchmark_platform = kwargs["benchmark"]

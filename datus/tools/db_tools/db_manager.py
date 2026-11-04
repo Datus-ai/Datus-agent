@@ -10,7 +10,7 @@ from typing import Callable, Dict, Optional, Set, Tuple, Union
 from datus_db_core import BaseSqlConnector, ConnectionConfig, DatusDbException, connector_registry
 from sqlalchemy.engine.url import URL, make_url
 
-from datus.configuration.agent_config import DbConfig
+from datus.configuration.agent_config import DbConfig, file_stem_from_uri
 from datus.schemas.database_context import DatabaseExecutionContext
 from datus.tools.db_tools.config import DuckDBConfig, SQLiteConfig
 from datus.utils.constants import DBType
@@ -392,6 +392,22 @@ class DBManager:
                     f"Available: {', '.join(f['name'] for f in files)}.",
                 )
             return match["name"], dataclasses.replace(cfg, uri=match["uri"], database=match["name"], path_pattern="")
+        db_type = _normalize_dialect_name(cfg.type)
+        if cfg.uri and db_type in (DBType.SQLITE, DBType.DUCKDB):
+            physical = file_stem_from_uri(cfg.uri)
+            if db_type == DBType.SQLITE:
+                if database and database != physical:
+                    raise DatusException(
+                        ErrorCode.COMMON_VALIDATION_FAILED,
+                        message=f"Database {database!r} is not provided by this SQLite file; available: {physical!r}",
+                    )
+                return physical, dataclasses.replace(cfg, database=physical)
+            # DuckDB may attach additional databases during connection setup.
+            # Native USE validates this target before the connector is cached.
+            target = database or cfg.database or physical
+            if physical == ":memory:" and target == ":memory:":
+                target = "memory"
+            return target, dataclasses.replace(cfg, database=target)
         if database and database != cfg.database:
             return database, dataclasses.replace(cfg, database=database)
         return cfg.database or "", cfg
@@ -466,6 +482,11 @@ class DBManager:
             db_path = db_config.uri or db_config.database
             if db_path.startswith("sqlite:///"):
                 db_path = db_path.replace("sqlite:///", "")
+            if db_config.uri and db_config.database and db_config.database != file_stem_from_uri(db_path):
+                raise DatusException(
+                    ErrorCode.COMMON_VALIDATION_FAILED,
+                    message=f"Database {db_config.database!r} is not provided by this SQLite file",
+                )
             extra = db_config.extra or {}
             return SQLiteConfig(
                 db_path=db_path,
@@ -484,6 +505,7 @@ class DBManager:
                 db_path=db_path,
                 timeout_seconds=timeout_seconds,
                 database_name=None,  # Let connector extract from file path
+                initial_database=(db_config.database or None) if db_config.uri else None,
                 schema_name=db_config.schema or "",
                 read_only=_bool_extra(extra.get("read_only"), False),
                 enable_external_access=_bool_extra(extra.get("enable_external_access"), True),

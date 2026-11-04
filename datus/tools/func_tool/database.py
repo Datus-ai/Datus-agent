@@ -561,6 +561,12 @@ class DBFuncTool:
             return self.connector
         return self._db_manager.get_conn(coordinates.datasource, coordinates.database, context=coordinates)
 
+    def connector_for_datasource_default(self, datasource: Optional[str] = None):
+        """Replay legacy queries using configured defaults, independent of the turn."""
+        if self._db_manager is None:
+            return self.connector
+        return self._db_manager.get_conn(datasource or self._default_datasource)
+
     def execution_context(self, connector, datasource: Optional[str] = "") -> Dict[str, str]:
         from datus.schemas.database_context import DatabaseExecutionContext
 
@@ -1231,6 +1237,7 @@ class DBFuncTool:
             "get_table_ddl",
             "quote_sql_identifier",
             "connector_for_execution_context",
+            "connector_for_datasource_default",
             "execution_context",
         }
     )

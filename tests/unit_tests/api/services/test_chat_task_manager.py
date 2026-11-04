@@ -59,6 +59,8 @@ class TestFillDatabaseContext:
         assert schema is None
 
     def test_context_falls_back_to_config_fields(self, real_agent_config):
+        real_agent_config.current_db_config().type = "postgresql"
+        real_agent_config.current_db_config().uri = ""
         real_agent_config.current_db_config().catalog = "configured_catalog"
         real_agent_config.current_db_config().database = "configured_database"
         real_agent_config.current_db_config().schema = "configured_schema"
@@ -1248,6 +1250,8 @@ class TestStartChat:
         """start_chat fills omitted request database context before the run loop."""
         from datus.api.models.cli_models import StreamChatInput
 
+        real_agent_config.current_db_config().type = "postgresql"
+        real_agent_config.current_db_config().uri = ""
         real_agent_config.current_db_config().catalog = "configured_catalog"
         real_agent_config.current_db_config().database = "configured_database"
         real_agent_config.current_db_config().schema = "configured_schema"
@@ -1721,6 +1725,8 @@ class TestCreateNodeInput:
 
     def test_node_input_falls_back_to_config_db_context(self, real_agent_config, mock_llm_create):
         """_create_node_input fills missing database context from current config."""
+        real_agent_config.current_db_config().type = "postgresql"
+        real_agent_config.current_db_config().uri = ""
         real_agent_config.current_db_config().catalog = "configured_catalog"
         real_agent_config.current_db_config().database = "configured_database"
         real_agent_config.current_db_config().schema = "configured_schema"
@@ -2437,6 +2443,69 @@ class TestStartChatRemoteSourceHardening:
 class TestStartChatDatasourceOverride:
     """A per-request ``datasource`` (e.g. an IM channel override) switches the
     connection profile without leaking into the physical ``database`` slot."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("engine", ["sqlite", "duckdb"])
+    @pytest.mark.parametrize("explicit_empty", [False, True])
+    async def test_glob_database_omission_uses_effective_default_but_explicit_empty_rejects(
+        self, tmp_path, monkeypatch, engine, explicit_empty
+    ):
+        import sqlite3
+
+        import duckdb
+
+        from datus.api.models.cli_models import StreamChatInput
+        from datus.configuration.agent_config import AgentConfig
+        from datus.tools.func_tool.database import DBFuncTool
+
+        suffix = "sqlite" if engine == "sqlite" else "duckdb"
+        path = tmp_path / f"analytics.{suffix}"
+        connect = sqlite3.connect if engine == "sqlite" else duckdb.connect
+        with connect(str(path)) as conn:
+            conn.execute("CREATE TABLE marker(value INTEGER)")
+            conn.execute("INSERT INTO marker VALUES (25)")
+        cfg = AgentConfig(
+            nodes={},
+            home=str(tmp_path / "home"),
+            target="mock",
+            skip_init_dirs=True,
+            models={"mock": {"type": "openai", "api_key": "unused", "model": "unused"}},
+            services={
+                "datasources": {
+                    "warehouse": {
+                        "type": engine,
+                        "path_pattern": str(tmp_path / f"*.{suffix}"),
+                        "default": True,
+                    }
+                }
+            },
+        )
+        cfg.override_by_args()
+        assert cfg.current_db_config().database == ""
+        observed = {}
+
+        async def run(task, config, request, **kwargs):
+            observed.update(config.runtime_db_context())
+            if explicit_empty:
+                with pytest.raises(ValueError, match="Select a database explicitly"):
+                    DBFuncTool(agent_config=config)
+            else:
+                tool = DBFuncTool(agent_config=config)
+                try:
+                    result = tool.connector.execute_query("SELECT value FROM marker", result_format="list")
+                    assert result.success is True, result.error
+                    assert result.sql_return == [{"value": 25}]
+                finally:
+                    tool._db_manager.close()
+
+        manager = ChatTaskManager()
+        monkeypatch.setattr(manager, "_run_loop", run)
+        request = StreamChatInput(message="query", **({"database": ""} if explicit_empty else {}))
+        task = await manager.start_chat(cfg, request)
+        await task.asyncio_task
+        assert observed["database"] == ("" if explicit_empty else "analytics")
+        assert cfg.current_db_config().database == ""
+        assert cfg.runtime_db_context() == {}
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(

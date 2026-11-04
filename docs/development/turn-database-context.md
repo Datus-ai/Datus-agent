@@ -22,16 +22,25 @@ configured database, choosing the first file in a glob, or relying on a driver's
 implicit database default. Context-free discovery/legacy calls may still use
 their configured defaults.
 
+For a first turn, omitted coordinates resolve configured defaults before the
+snapshot is frozen. File datasources without a configured database resolve the
+file-derived default, including the first matched file of a glob. This is
+separate from explicitly clearing a database, which never selects a default.
+
 CLI argument overrides are partial: absent flags (including argparse's empty
-defaults) keep the selected datasource's configured catalog/database/schema.
-The CLI merges those effective defaults before pinning a complete runtime
+defaults) inherit configured coordinates only while their parents still match.
+Changing catalog clears inherited database/schema; changing database clears
+inherited schema. The CLI resolves file defaults before pinning the complete
 snapshot. API resolved empty fields continue to mean explicit clears.
 
 The resolved snapshot preserves empty coordinates through node input and semantic
 runtime configuration. Empty schema removes the configured schema override, so
 the engine selects its default schema. Native DuckDB connections initialize the
-selected schema before entering the cache. Query cursors inherit the native
-connection's effective search path, because DuckDB cursors are separate sessions.
+selected database and schema before entering the cache. Fixed-URI SQLite and
+DuckDB targets must name a database actually provided by the file/session; an
+arbitrary requested name cannot silently keep the original file. Query cursors
+inherit the native connection's effective search path, because DuckDB cursors are
+separate sessions.
 
 Metric identity within an artifact includes datasource, subject path and name.
 Different sources may define metrics with the same path/name and different model

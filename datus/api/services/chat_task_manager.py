@@ -549,6 +549,13 @@ class ChatTaskManager:
         # A changed parent invalidates inherited children and defaults belonging
         # to another parent. Never splice a new catalog onto an old db/schema.
         defaults = agent_config.current_db_config() if datasource else None
+        default_database = ""
+        if defaults is not None:
+            default_database = (
+                await asyncio.to_thread(agent_config.default_database_name, datasource)
+                if defaults.path_pattern
+                else agent_config.default_database_name(datasource)
+            )
         inherit = previous.get("datasource") == datasource
         use_defaults = True
         resolved = []
@@ -557,7 +564,7 @@ class ChatTaskManager:
             ("database", request.database),
             ("schema", request.db_schema),
         ):
-            default = getattr(defaults, field, None) or ""
+            default = default_database if field == "database" else getattr(defaults, field, None) or ""
             value = supplied
             if value is None:
                 value = previous.get(field, "") if inherit else default if use_defaults else ""
