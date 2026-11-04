@@ -48,6 +48,7 @@ from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
 from datus.utils.config_utils import coerce_positive_int
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
+from datus.utils.message_utils import merge_assistant_response
 from datus.utils.time_utils import now_utc_iso
 
 logger = get_logger(__name__)
@@ -170,8 +171,13 @@ def _subagent_run_actions(
         for action in reversed(actions):
             output = action.output if isinstance(action.output, dict) else {}
             raw_output = output.get("raw_output")
-            if isinstance(raw_output, str) and raw_output.strip() == saved_text:
-                action.input = {"_node_class": saved["node_class"], "_response_content": saved["content"]}
+            data = action.input if isinstance(action.input, dict) else {}
+            blocks = data.get("_response_text_blocks")
+            if not isinstance(blocks, list):
+                blocks = [raw_output] if isinstance(raw_output, str) else []
+            content = merge_assistant_response(blocks, saved_text, saved["content"])
+            if content is not None:
+                action.input = {**data, "_node_class": saved["node_class"], "_response_content": content}
                 break
     return actions
 

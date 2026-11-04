@@ -299,14 +299,19 @@ async def test_rejected_protocol_is_not_replaced_by_lossy_wrapper_on_reload(real
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("node,payload,sql", PROTOCOLS)
-async def test_multipart_node_wrapper_preserves_rendered_result_on_reload(real_agent_config, node, payload, sql):
+@pytest.mark.parametrize("provider", ["openai", "claude"])
+@pytest.mark.parametrize("envelope_first", [False, True])
+async def test_multipart_node_wrapper_preserves_rendered_result_on_reload(
+    real_agent_config, node, payload, sql, provider, envelope_first
+):
     session_id = "api-multipart-result"
     storage = SessionManager(session_dir=real_agent_config.session_dir)
     session = storage.get_session(session_id)
     preface = "The requested work is complete."
     raw = json.dumps(payload)
-    aggregate = f"{preface}\n{raw}"
-    blocks = [{"type": "text", "text": preface}, {"type": "text", "text": raw}]
+    texts = [raw, preface] if envelope_first else [preface, raw]
+    aggregate = "\n".join(texts)
+    blocks = [{"type": "text" if provider == "claude" else "output_text", "text": text} for text in texts]
     await session.add_items([{"role": "user", "content": "Run the task"}])
 
     class FakeNode:
@@ -314,11 +319,16 @@ async def test_multipart_node_wrapper_preserves_rendered_result_on_reload(real_a
 
         async def execute_stream_with_interactions(self, action_history_manager):
             await session.add_items([{"role": "assistant", "content": blocks}])
-            yield _action("preface", output={"raw_output": preface, "is_thinking": False}, node_class=node)
-            yield _action("result", output={"raw_output": raw, "is_thinking": False}, node_class=node)
-            yield _action(
-                "model-final", action_type="final_response", output={"raw_output": aggregate}, node_class=node
-            )
+            for text in texts:
+                yield _action(
+                    "result" if text == raw else "preface",
+                    output={"raw_output": text, "is_thinking": False},
+                    node_class=node,
+                )
+            if provider == "claude":
+                yield _action(
+                    "model-final", action_type="final_response", output={"raw_output": aggregate}, node_class=node
+                )
             yield _action("node-final", action_type=f"{node}_response", output={"response": aggregate})
 
         async def get_last_turn_usage(self):
@@ -331,12 +341,15 @@ async def test_multipart_node_wrapper_preserves_rendered_result_on_reload(real_a
     assert task.status == "completed"
     live = [event.data.payload for event in task.events if event.event == "message"]
     assert len(live) == 2
-    _assert_summary(live[-1].content, sql)
+    result = next(message for message in live if message.message_id == "result")
+    _assert_summary(result.content, sql)
     history = ChatService(real_agent_config).get_history(session_id)
     assert history.success is True
     answers = [message for message in history.data.messages if message.role == "assistant"]
     assert len(answers) == 1
-    _assert_summary(answers[0].content, sql)
+    assert [(part.type, part.payload) for part in answers[0].content] == [
+        (part.type, part.payload) for message in live for part in message.content
+    ]
     assert (await session.get_items())[-1]["content"] == blocks
 
 
@@ -551,156 +564,91 @@ def test_repeated_structured_summary_still_replaces_its_json_stream():
 @pytest.mark.asyncio
 @pytest.mark.parametrize("stream", [False, True])
 @pytest.mark.parametrize("padding", [("", ""), ("", "\n"), ("\n \t", "\r\n \t")])
-@pytest.mark.parametrize("multipart", [False, True])
-async def test_sql_file_is_updated_with_resolved_sql_and_persisted(real_agent_config, stream, padding, multipart):
-    """Use the actual live loop and SQLite replay, including a nonstandard session id."""
-    session_id = "api-generated-session-id"
-    raw = json.dumps({"sql": "queries/report.sql", "output": SUMMARY})
-    sdk_text = f"{padding[0]}{raw}{padding[1]}"
-    preface = "I verified the result."
-    sdk_blocks = ([{"type": "text", "text": preface}] if multipart else []) + [
-        {"type": "text" if multipart else "output_text", "text": sdk_text}
-    ]
-    sql = r"SELECT $$\($$ AS value FROM test.sql"
-    storage = SessionManager(session_dir=real_agent_config.session_dir)
-    session = storage.get_session(session_id)
-    await session.add_items([{"role": "user", "content": "Generate SQL"}])
-
-    class FakeNode:
-        session_id = "api-generated-session-id"
-
-        async def execute_stream_with_interactions(self, action_history_manager):
-            if multipart:
-                yield _action("preface", output={"raw_output": preface, "is_thinking": False}, node_class="gen_sql")
-            delta = _action("stream", action_type="thinking_delta", output={"delta": sdk_text})
-            delta.status = ActionStatus.PROCESSING
-            yield delta
-            await session.add_items([{"role": "assistant", "content": sdk_blocks}])
-            yield _action("stream", output={"raw_output": raw, "is_thinking": False}, node_class="gen_sql")
-            if multipart:
-                yield _action(
-                    "model-final",
-                    action_type="final_response",
-                    output={"raw_output": "\n".join(block["text"] for block in sdk_blocks)},
-                    node_class="gen_sql",
-                )
-            yield _action(
-                "final",
-                action_type="custom_sql_agent_response",
-                node_class="gen_sql",
-                output={"response": SUMMARY, "sql": sql, "sql_file_path": "queries/report.sql"},
-            )
-
-        async def get_last_turn_usage(self):
-            return None
-
-    manager = ChatTaskManager()
-    manager._create_node = lambda *args, **kwargs: FakeNode()
-    task = ChatTask(session_id=session_id, asyncio_task=MagicMock())
-    await manager._run_loop(
-        task, real_agent_config, StreamChatInput(message="Generate SQL", session_id=session_id, stream_response=stream)
-    )
-    assert task.status == "completed"
-    assert (await session.get_items())[-1]["content"] == sdk_blocks
-    messages = [event for event in task.events if event.event == "message"]
-    for event in messages:
-        assert not any(
-            item.type == "code" and item.payload["content"] == "queries/report.sql"
-            for item in event.data.payload.content
-        )
-    assert messages[-1].data.type == SSEDataType.UPDATE_MESSAGE
-    assert messages[-1].data.payload.message_id == "stream"
-    _assert_summary(messages[-1].data.payload.content, sql)
-    history = ChatService(real_agent_config).get_history(session_id)
-    assert history.success is True
-    answers = [message for message in history.data.messages if message.role == "assistant"]
-    assert len(answers) == 1
-    _assert_summary(answers[0].content, sql)
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("stream", [False, True])
-@pytest.mark.parametrize("padding", [("", ""), ("", "\n"), ("\n \t", "\r\n \t")])
-@pytest.mark.parametrize("multipart", [False, True])
-async def test_delegated_sql_file_view_survives_real_history_expansion(real_agent_config, stream, padding, multipart):
-    parent_id = "chat_session_file_parent"
+@pytest.mark.parametrize("provider", ["openai", "claude"])
+@pytest.mark.parametrize("prose_position", ["none", "before", "after"])
+@pytest.mark.parametrize("delegated", [False, True])
+async def test_sql_file_is_updated_with_resolved_sql_and_persisted(
+    real_agent_config, stream, padding, provider, prose_position, delegated
+):
+    """Exercise block matching through the live loop and real SDK/SQLite replay."""
+    parent_id = "chat_session_file_parent" if delegated else "api-generated-session-id"
     child_id = "custom_sql_session_file_child"
     call_id = "sql-task"
     raw = json.dumps({"sql": "queries/report.sql", "output": SUMMARY})
     sdk_text = f"{padding[0]}{raw}{padding[1]}"
-    preface = "I verified the delegated result."
-    sdk_blocks = ([{"type": "text", "text": preface}] if multipart else []) + [
-        {"type": "text" if multipart else "output_text", "text": sdk_text}
-    ]
-    sql = r"SELECT $pattern$\($pattern$ AS value FROM test.sql"
+    prose = "I verified the result."
+    text_type = "text" if provider == "claude" else "output_text"
+    sdk_blocks = [{"type": text_type, "text": sdk_text}]
+    if prose_position == "before":
+        sdk_blocks.insert(0, {"type": text_type, "text": prose})
+    elif prose_position == "after":
+        sdk_blocks.extend([{"type": text_type, "text": ""}, {"type": text_type, "text": prose}])
+    sql = r"SELECT $$\($$ AS value FROM test.sql"
     storage = SessionManager(session_dir=real_agent_config.session_dir)
     parent = storage.get_session(parent_id)
-    child_storage = SessionManager(session_dir=f"{real_agent_config.session_dir}/{parent_id}")
-    child = child_storage.get_session(child_id)
+    owner = SessionManager(session_dir=f"{real_agent_config.session_dir}/{parent_id}") if delegated else storage
+    session = owner.get_session(child_id if delegated else parent_id)
     await parent.add_items([{"role": "user", "content": "Generate SQL"}])
-    await child.add_items([{"role": "user", "content": "Generate SQL"}])
+    if delegated:
+        await session.add_items([{"role": "user", "content": "Generate SQL"}])
     result = {"success": True, "result": {"session_id": child_id, "response": SUMMARY}}
+
+    def response(action_id, *, action_type="response", output):
+        return _action(
+            action_id,
+            depth=int(delegated),
+            parent=call_id if delegated else None,
+            node_class="gen_sql",
+            action_type=action_type,
+            output=output,
+        )
 
     class FakeNode:
         session_id = parent_id
 
         async def execute_stream_with_interactions(self, action_history_manager):
-            await parent.add_items(
-                [
-                    {
-                        "type": "function_call",
-                        "call_id": call_id,
-                        "name": "task",
-                        "arguments": json.dumps({"type": "custom_sql", "prompt": "Generate SQL"}),
-                    }
-                ]
-            )
-            start = _action(call_id, action_type="task")
-            start.role, start.status = ActionRole.TOOL, ActionStatus.PROCESSING
-            start.input = {"function_name": "task", "arguments": {"type": "custom_sql"}}
-            yield start
-            if multipart:
-                yield _action(
-                    "child-preface",
-                    depth=1,
-                    parent=call_id,
-                    node_class="gen_sql",
-                    output={"raw_output": preface, "is_thinking": False},
+            if delegated:
+                await parent.add_items(
+                    [
+                        {
+                            "type": "function_call",
+                            "call_id": call_id,
+                            "name": "task",
+                            "arguments": '{"type":"custom_sql"}',
+                        }
+                    ]
                 )
-            delta = _action(
-                "child-stream", depth=1, parent=call_id, action_type="thinking_delta", output={"delta": sdk_text}
-            )
+                start = _action(call_id, action_type="task")
+                start.role, start.status = ActionRole.TOOL, ActionStatus.PROCESSING
+                start.input = {"function_name": "task", "arguments": {"type": "custom_sql"}}
+                yield start
+            if prose_position == "before":
+                yield response("prose", output={"raw_output": prose, "is_thinking": False})
+            delta = response("sql-stream", action_type="thinking_delta", output={"delta": sdk_text})
             delta.status = ActionStatus.PROCESSING
             yield delta
-            await child.add_items([{"role": "assistant", "content": sdk_blocks}])
-            yield _action(
-                "child-stream",
-                depth=1,
-                parent=call_id,
-                node_class="gen_sql",
-                output={"raw_output": raw, "is_thinking": False},
-            )
-            if multipart:
-                yield _action(
-                    "child-model-final",
-                    depth=1,
-                    parent=call_id,
-                    node_class="gen_sql",
+            await session.add_items([{"role": "assistant", "content": sdk_blocks}])
+            yield response("sql-stream", output={"raw_output": raw, "is_thinking": False})
+            if prose_position == "after":
+                yield response("prose", output={"raw_output": prose, "is_thinking": False})
+            if provider == "claude":
+                yield response(
+                    "model-final",
                     action_type="final_response",
-                    output={"raw_output": "\n".join(block["text"] for block in sdk_blocks)},
+                    output={"raw_output": "\n".join(block["text"] for block in sdk_blocks if block["text"])},
                 )
-            yield _action(
-                "child-final",
-                depth=1,
-                parent=call_id,
-                node_class="gen_sql",
+            yield response(
+                "node-final",
                 action_type="custom_sql_response",
                 output={"response": SUMMARY, "sql": sql, "sql_file_path": "queries/report.sql"},
             )
-            await parent.add_items([{"type": "function_call_output", "call_id": call_id, "output": json.dumps(result)}])
-            done = _action(f"complete_{call_id}", action_type="task", output=result)
-            done.role, done.input = ActionRole.TOOL, start.input
-            yield done
+            if delegated:
+                await parent.add_items(
+                    [{"type": "function_call_output", "call_id": call_id, "output": json.dumps(result)}]
+                )
+                done = _action(f"complete_{call_id}", action_type="task", output=result)
+                done.role, done.input = ActionRole.TOOL, start.input
+                yield done
 
         async def get_last_turn_usage(self):
             return None
@@ -712,15 +660,27 @@ async def test_delegated_sql_file_view_survives_real_history_expansion(real_agen
         task, real_agent_config, StreamChatInput(message="Generate SQL", session_id=parent_id, stream_response=stream)
     )
     assert task.status == "completed"
-    assert (await child.get_items())[-1]["content"] == sdk_blocks
-    updates = [
-        event for event in task.events if event.event == "message" and event.data.type == SSEDataType.UPDATE_MESSAGE
-    ]
-    _assert_summary(updates[-1].data.payload.content, sql)
+    assert (await session.get_items())[-1]["content"] == sdk_blocks
+    messages = [event for event in task.events if event.event == "message"]
+    sql_messages = [event for event in messages if event.data.payload.message_id == "sql-stream"]
+    assert len(sql_messages) == (3 if stream else 2)
+    assert sql_messages[-1].data.type == SSEDataType.UPDATE_MESSAGE
+    _assert_summary(sql_messages[-1].data.payload.content, sql)
+    assert [
+        part.payload["content"]
+        for event in messages
+        for part in event.data.payload.content
+        if part.type == "code" and part.payload["content"] == "queries/report.sql"
+    ] == []
     history = ChatService(real_agent_config).get_history(parent_id)
     assert history.success is True
-    sql_answers = [message for message in history.data.messages if any(part.type == "code" for part in message.content)]
-    assert len(sql_answers) == 1
-    assert sql_answers[0].depth == 1
-    assert sql_answers[0].parent_action_id == call_id
-    _assert_summary(sql_answers[0].content, sql)
+    answers = [message for message in history.data.messages if any(part.type == "code" for part in message.content)]
+    assert len(answers) == 1
+    assert answers[0].depth == int(delegated)
+    assert answers[0].parent_action_id == (call_id if delegated else None)
+    expected = [("code", {"codeType": "sql", "content": sql}), ("markdown", {"content": SUMMARY})]
+    if prose_position == "before":
+        expected.insert(0, ("markdown", {"content": prose}))
+    elif prose_position == "after":
+        expected.append(("markdown", {"content": prose}))
+    assert [(part.type, part.payload) for part in answers[0].content] == expected

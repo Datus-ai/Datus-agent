@@ -32,7 +32,12 @@ from datus.utils.async_utils import run_async
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.json_utils import llm_result2json
 from datus.utils.loggings import get_logger
-from datus.utils.message_utils import extract_user_input, is_compact_resume_text
+from datus.utils.message_utils import (
+    assistant_text_blocks,
+    extract_user_input,
+    is_compact_resume_text,
+    merge_assistant_response,
+)
 from datus.utils.time_utils import to_utc_iso
 
 logger = get_logger(__name__)
@@ -1503,12 +1508,20 @@ class SessionManager:
                 assistant_text = record["assistant_text"].strip()
                 for message_id, raw in reversed(rows):
                     message = json.loads(raw)
+                    blocks = assistant_text_blocks(message.get("content", ""))
                     if (
                         message_id not in claimed_assistant_ids
                         and message.get("role") == "assistant"
-                        and extract_user_input(message.get("content", "")).strip() == assistant_text
+                        and assistant_text in {"\n".join(blocks).strip(), *(text.strip() for text in blocks)}
                     ):
-                        persisted.setdefault(message_id, []).extend(record["parts"])
+                        parts = []
+                        for part in record["parts"]:
+                            payload = part.get("payload", {})
+                            if part.get("type") == "node-response" and isinstance(payload.get("content"), list):
+                                content = merge_assistant_response(blocks, assistant_text, payload["content"])
+                                part = {**part, "payload": {**payload, "content": content}}
+                            parts.append(part)
+                        persisted.setdefault(message_id, []).extend(parts)
                         claimed_assistant_ids.add(message_id)
                         break
             for call_id, record in tools.items():
@@ -2057,7 +2070,7 @@ class SessionManager:
                                         role=ActionRole.ASSISTANT,
                                         messages=assistant_message_text,
                                         action_type="thinking",
-                                        input=None,
+                                        input={"_response_text_blocks": assistant_text_blocks(content_array)},
                                         output={"raw_output": assistant_message_text},
                                         status=ActionStatus.SUCCESS,
                                         start_time=(
@@ -2069,6 +2082,7 @@ class SessionManager:
                                         if part.get("type") == "node-response":
                                             saved = part.get("payload", {})
                                             thinking_action.input = {
+                                                **thinking_action.input,
                                                 "_node_class": saved.get("node_class"),
                                                 "_response_content": saved.get("content"),
                                             }
