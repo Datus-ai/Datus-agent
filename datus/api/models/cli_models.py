@@ -184,9 +184,13 @@ class ChatInput(BaseModel):
         None,
         description="Datasource (connection profile) override; selects which configured datasource to use",
     )
-    catalog: Optional[str] = Field(None, description="Database catalog for context")
-    database: Optional[str] = Field(None, description="Database name for context")
-    db_schema: Optional[str] = Field(None, description="Database schema for context")
+    catalog: Optional[str] = Field(
+        None, description="Catalog; omit/null to inherit, empty to clear; changes reset database/schema"
+    )
+    database: Optional[str] = Field(
+        None, description="Database; omit/null to inherit, empty to clear; changes reset schema"
+    )
+    db_schema: Optional[str] = Field(None, description="Schema; omit/null to inherit, empty to use the engine default")
 
     # Chat configuration
     max_turns: int = Field(default=30, description="Maximum conversation turns per interaction")

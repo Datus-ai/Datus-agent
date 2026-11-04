@@ -1039,8 +1039,7 @@ class SemanticTools:
             if value is None:
                 continue
             text = value.strip() if isinstance(value, str) else str(value).strip()
-            if text:
-                normalized[key] = text
+            normalized[key] = text
 
         if "catalog" not in normalized and "catalog_name" in normalized:
             normalized["catalog"] = normalized["catalog_name"]

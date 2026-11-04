@@ -305,13 +305,13 @@ class MetricArtifactToolsMixin:
     def _validate_metric_queries(self, kind: str) -> str | None:
         """Check complete tool-produced bundles before declaring render success."""
         try:
-            metric_revisions: dict[tuple[tuple[str, ...], str], str] = {}
+            metric_revisions: dict[tuple[str, tuple[str, ...], str], str] = {}
             model_revisions: dict[tuple[str, str], str] = {}
             for path in self.queries_dir.glob("*.metric.json"):
                 saved = MetricQueryFile.model_validate_json(path.read_text(encoding="utf-8"))
                 if saved.model_snapshot_path is not None:
                     resolve_metric_query_snapshot(saved, artifact_dir=self.queries_dir.parent)
-                identity = (tuple(saved.metric.path), saved.metric.name)
+                identity = (saved.datasource, tuple(saved.metric.path), saved.metric.name)
                 previous_revision = metric_revisions.setdefault(identity, saved.model_revision)
                 if previous_revision != saved.model_revision:
                     raise ValueError(

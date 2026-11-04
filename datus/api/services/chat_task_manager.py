@@ -545,17 +545,26 @@ class ChatTaskManager:
             if datasource not in agent_config.services.datasources:
                 raise ValueError(f"Datasource {datasource!r} is not bound to this project; select a valid datasource")
             agent_config.current_datasource = datasource
-        # A different source or physical database starts from its own defaults,
-        # never the previous target's schema/catalog.
-        inherit = previous if previous.get("datasource") == datasource else {}
-        if request.database and request.database != inherit.get("database"):
-            inherit = {}
-        request.catalog, request.database, request.db_schema = _fill_database_context(
-            agent_config,
-            catalog=request.catalog or inherit.get("catalog"),
-            database=request.database or inherit.get("database"),
-            schema=request.db_schema or inherit.get("schema"),
-        )
+        # None means omitted; an empty string explicitly clears that level.
+        # A changed parent invalidates inherited children and defaults belonging
+        # to another parent. Never splice a new catalog onto an old db/schema.
+        defaults = agent_config.current_db_config() if datasource else None
+        inherit = previous.get("datasource") == datasource
+        use_defaults = True
+        resolved = []
+        for field, supplied in (
+            ("catalog", request.catalog),
+            ("database", request.database),
+            ("schema", request.db_schema),
+        ):
+            default = getattr(defaults, field, None) or ""
+            value = supplied
+            if value is None:
+                value = previous.get(field, "") if inherit else default if use_defaults else ""
+            resolved.append(value)
+            inherit = inherit and value == previous.get(field, "")
+            use_defaults = use_defaults and value == default
+        request.catalog, request.database, request.db_schema = resolved
         agent_config.set_runtime_db_context(
             datasource=datasource, catalog=request.catalog, database=request.database, schema=request.db_schema
         )
@@ -1524,12 +1533,10 @@ class ChatTaskManager:
         node_agent_config = getattr(current_node, "agent_config", None)
         if not isinstance(node_agent_config, AgentConfig):
             node_agent_config = None
-        catalog, database, db_schema = _fill_database_context(
-            node_agent_config,
-            catalog=catalog,
-            database=database,
-            schema=db_schema,
-        )
+        if node_agent_config is None or not node_agent_config.runtime_db_context():
+            catalog, database, db_schema = _fill_database_context(
+                node_agent_config, catalog=catalog, database=database, schema=db_schema
+            )
 
         return create_node_input(
             user_message=user_message,

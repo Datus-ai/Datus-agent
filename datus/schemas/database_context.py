@@ -38,8 +38,8 @@ class DatabaseExecutionContext:
             schema=value("schema", "db_schema", "schema_name"),
         )
 
-    def to_dict(self, *, aliases: bool = False) -> dict[str, str]:
-        result = {key: value for key, value in asdict(self).items() if value}
+    def to_dict(self, *, aliases: bool = False, include_empty: bool = False) -> dict[str, str]:
+        result = {key: value for key, value in asdict(self).items() if value or include_empty}
         if aliases:
             for key, names in {
                 "catalog": ("catalog_name",),

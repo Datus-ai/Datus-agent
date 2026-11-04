@@ -396,6 +396,18 @@ class DBManager:
     def _init_connection(
         self, datasource: str, database: str, *, context: Optional[DatabaseExecutionContext] = None
     ) -> BaseSqlConnector:
+        configured = self._db_configs.get(datasource)
+        if (
+            context is not None
+            and configured is not None
+            and not database
+            and not context.database
+            and context.catalog != (configured.catalog or "")
+            and configured.database
+        ):
+            raise ValueError(
+                "Select a database explicitly after changing catalog; the previous catalog's default is invalid"
+            )
         db_name, db_config = self._resolve_db_config(datasource, database)
         cache_key = db_name
         if context is not None:
@@ -414,6 +426,10 @@ class DBManager:
         if cached is not None:
             return cached
         conn = self._build_conn(db_config)
+        if _normalize_dialect_name(db_config.type) == DBType.DUCKDB:
+            # Native schema selection must succeed before this binding is
+            # visible to other threads or saved as an artifact query target.
+            conn.connect()
         group[cache_key] = conn
         return conn
 
@@ -467,6 +483,7 @@ class DBManager:
                 db_path=db_path,
                 timeout_seconds=timeout_seconds,
                 database_name=None,  # Let connector extract from file path
+                schema_name=db_config.schema or "",
                 read_only=_bool_extra(extra.get("read_only"), False),
                 enable_external_access=_bool_extra(extra.get("enable_external_access"), True),
                 memory_limit=extra.get("memory_limit"),

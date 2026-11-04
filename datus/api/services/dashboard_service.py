@@ -635,6 +635,7 @@ class DashboardService:
                 executed_at=_dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
                 datasource=meta.datasource,
                 row_count=len(rows),
+                execution_context=db_tool.execution_context(connector, meta.datasource),
                 columns=columns_meta,
                 rows=rows,
                 sql=rendered_sql,

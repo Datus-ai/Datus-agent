@@ -571,7 +571,7 @@ class DBFuncTool:
                 "database": self._active_database_of(connector),
                 "schema": getattr(connector, "schema_name", ""),
             }
-        ).to_dict()
+        ).to_dict(include_empty=True)
 
     def _resolve_connector(self, datasource: str, database: str):
         """Bind native and pooled connections without mutating a shared connection."""

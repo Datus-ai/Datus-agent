@@ -1317,6 +1317,15 @@ class TestAvailableTools:
 
 
 class TestRuntimeDbContext:
+    def test_empty_schema_reaches_the_compiler_without_reusing_configured_defaults(self, semantic_tools):
+        semantic_tools.agent_config.current_db_config.return_value = DbConfig(
+            type="postgresql", database="analytics", schema="tenant_a"
+        )
+        semantic_tools.set_runtime_db_context({"database": "analytics", "schema": ""})
+        with patch("datus.tools.func_tool.semantic_tools.DosiRuntime") as runtime:
+            assert semantic_tools.runtime is runtime.return_value
+        assert "schema" not in runtime.call_args.args[0].db_config
+
     @pytest.mark.parametrize("db_type", ["mysql", "postgresql"])
     @pytest.mark.parametrize("auth", [{"auth_mode": "iam"}, {"secret_ref": "test/database"}])
     def test_runtime_preserves_aurora_profile(self, semantic_tools, db_type, auth):

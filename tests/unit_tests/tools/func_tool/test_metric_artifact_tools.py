@@ -434,6 +434,30 @@ def test_same_metric_queries_can_be_resaved_sequentially_but_mixed_revisions_fai
     assert len({recipe.model_revision for recipe in recipes}) == 1
 
 
+@pytest.mark.parametrize("kind", ["report", "dashboard"])
+def test_same_named_metrics_on_different_datasources_keep_independent_revisions(environment, kind, monkeypatch):
+    env = environment
+    options = {"params": [], "sample_params": {}} if kind == "dashboard" else {}
+    tools, saved = _save(env, kind, **options)
+    assert saved.success == 1, saved.error
+    other = env.root / "subject" / "semantic_models" / "other" / "shop.yml"
+    other.parent.mkdir(parents=True)
+    other.write_text("version: '0.2.0.dev0'\nsemantic_model: []\n# different datasource and revision\n")
+    monkeypatch.setattr(
+        env.runtime,
+        "artifact_metric_binding",
+        lambda name: {
+            "model_path": str(other),
+            "model_revision": hashlib.sha256(other.read_bytes()).hexdigest(),
+            "datasource": "other",
+        },
+    )
+    save = tools.save_metric_query_template if kind == "dashboard" else tools.save_metric_query
+    second = save(name="other_sales", query={"metric": REF}, goal="Other sales", hypothesis="Compare", **options)
+    assert second.success == 1, second.error
+    assert tools._validate_metric_queries(kind) is None
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("kind", ["report", "dashboard"])
 @pytest.mark.parametrize("model_name", [None, "flights.yml", "jeff_shop.yml"])
@@ -872,32 +896,55 @@ def test_metric_tool_initializes_without_model_selection(monkeypatch):
 
 
 @pytest.mark.parametrize("kind", ["report", "dashboard"])
-def test_metric_artifact_replays_its_original_database_after_a_turn_switch(environment, kind):
+@pytest.mark.parametrize("engine", ["sqlite", "duckdb"])
+def test_metric_artifact_replays_its_original_database_after_a_turn_switch(environment, kind, engine):
     from collections import OrderedDict
 
     from datus.configuration.agent_config import DbConfig
     from datus.tools.db_tools.db_manager import DBManager
 
     env = environment
-    with sqlite3.connect(env.root / "other.sqlite") as connection:
-        connection.execute("CREATE TABLE orders(region TEXT, amount REAL)")
-        connection.execute("INSERT INTO orders VALUES ('Other', 999)")
-    manager = DBManager({"warehouse": DbConfig(type="sqlite", path_pattern=str(env.root / "*.sqlite"))})
+    if engine == "duckdb":
+        import duckdb
+
+        with duckdb.connect(str(env.root / "shop.duckdb")) as connection:
+            connection.execute("CREATE TABLE orders AS SELECT 'Main' AS region, 888.0 AS amount")
+            for schema, amount in [("tenant_a", 25.0), ("tenant_b", 999.0)]:
+                connection.execute(f"CREATE SCHEMA {schema}")
+                connection.execute(f"CREATE TABLE {schema}.orders AS SELECT 'Tenant' AS region, ? AS amount", [amount])
+        config = DbConfig(type="duckdb", uri=str(env.root / "shop.duckdb"))
+    else:
+        with sqlite3.connect(env.root / "other.sqlite") as connection:
+            connection.execute("CREATE TABLE orders(region TEXT, amount REAL)")
+            connection.execute("INSERT INTO orders VALUES ('Other', 999)")
+        config = DbConfig(type="sqlite", path_pattern=str(env.root / "*.sqlite"))
+    manager = DBManager({"warehouse": config})
     env.db._db_manager = manager
     env.db._is_multi_connector = True
     env.db._default_datasource = "warehouse"
     env.db._default_database = "shop"
     env.db._execution_context = {"datasource": "warehouse", "database": "shop"}
+    if engine == "duckdb":
+        env.db._execution_context["schema"] = "tenant_a"
     env.db._connector_cache = OrderedDict()
     env.db._connector_cache_size = 8
-    env.runtime.config = SimpleNamespace(db_config={"database": "shop"})
+    env.runtime.config = SimpleNamespace(
+        db_config={"database": "shop", **({"schema": "tenant_a"} if engine == "duckdb" else {})}
+    )
     options = {"params": [], "sample_params": {}} if kind == "dashboard" else {}
     tools, result = _save(env, kind, **options)
     assert result.success == 1, result.error
     saved = MetricQueryFile.model_validate_json((tools.queries_dir / "sales.metric.json").read_text())
-    assert saved.execution_context == {"datasource": "warehouse", "database": "shop"}
-    env.db._default_database = "other"
-    env.db._execution_context = {"datasource": "warehouse", "database": "other"}
+    assert saved.execution_context == {
+        "datasource": "warehouse",
+        "database": "shop",
+        "catalog": "",
+        "schema": "tenant_a" if engine == "duckdb" else "",
+    }
+    env.db._default_database = "shop" if engine == "duckdb" else "other"
+    env.db._execution_context = {"datasource": "warehouse", "database": env.db._default_database}
+    if engine == "duckdb":
+        env.db._execution_context["schema"] = "tenant_b"
     env.runtime.config = SimpleNamespace(db_config={"database": "other"})
     payload, _ = execute_metric_artifact_query(
         saved, saved=saved, semantic_tools=env.semantic, db_tool=env.db, project_root=env.root

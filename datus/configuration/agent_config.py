@@ -1623,7 +1623,7 @@ class AgentConfig:
         """Return a copy of this execution's immutable database coordinates."""
         if self._runtime_db_context is None:
             return {}
-        return self._runtime_db_context.to_dict(aliases=True)
+        return self._runtime_db_context.to_dict(aliases=True, include_empty=True)
 
     def list_databases(self, datasource: str = "") -> List[str]:
         """Config-known physical databases of a datasource.
@@ -2931,6 +2931,8 @@ def _apply_runtime_db_context_to_dosi_profile(
         value = _runtime_context_value(runtime_db_context, *aliases)
         if value:
             result[canonical_key] = value
+        elif runtime_db_context and any(runtime_db_context.get(key) is not None for key in aliases):
+            result.pop(canonical_key, None)
 
     return result or db_config
 

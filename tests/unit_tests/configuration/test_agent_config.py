@@ -328,6 +328,7 @@ class TestDosiDbProfile:
         )
 
         assert cfg.runtime_db_context() == {
+            "datasource": "",
             "catalog_name": "runtime_catalog",
             "catalog": "runtime_catalog",
             "database_name": "runtime_db",
@@ -339,10 +340,21 @@ class TestDosiDbProfile:
 
         cfg.set_runtime_db_context({"schema_name": "runtime_schema_name"})
         assert cfg.runtime_db_context() == {
+            "datasource": "",
+            "catalog": "",
+            "catalog_name": "",
+            "database": "",
+            "database_name": "",
             "schema_name": "runtime_schema_name",
             "schema": "runtime_schema_name",
             "db_schema": "runtime_schema_name",
         }
+
+    def test_explicitly_cleared_runtime_fields_remove_profile_defaults(self):
+        profile = {"type": "postgresql", "database": "analytics", "schema": "tenant_a"}
+        cleared = _apply_runtime_db_context_to_dosi_profile(profile, {"database": "analytics", "schema": ""})
+        assert cleared == {"type": "postgresql", "database": "analytics"}
+        assert profile["schema"] == "tenant_a"
 
 
 # ---------------------------------------------------------------------------

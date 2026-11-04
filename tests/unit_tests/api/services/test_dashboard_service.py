@@ -135,6 +135,9 @@ def _patch_executor(monkeypatch, *, captured: dict) -> None:
         def __init__(self, *, agent_config, sub_agent_name):
             captured["sub_agent_name"] = sub_agent_name
 
+        def execution_context(self, connector, datasource):
+            return {"datasource": datasource, "database": "live_database", "schema": "live_schema"}
+
         def _get_connector(self, datasource):
             captured["datasource"] = datasource
             return _FakeConnector()
@@ -307,6 +310,11 @@ async def test_run_query_without_published_version_uses_local_template(monkeypat
     assert result.success is True
     assert result.data.row_count == 1
     assert result.data.datasource == "warehouse"
+    assert result.data.execution_context == {
+        "datasource": "warehouse",
+        "database": "live_database",
+        "schema": "live_schema",
+    }
     # The rendered SQL substitutes the param — confirms we read the
     # on-disk ``.sql.j2`` and ran it through ``render_dashboard_template``.
     assert "APAC" in captured["sql"]
@@ -574,6 +582,9 @@ def _patch_failing_executor(monkeypatch, *, exc: Exception | None = None, exec_r
         def __init__(self, *, agent_config, sub_agent_name):
             self.agent_config = agent_config
 
+        def execution_context(self, connector, datasource):
+            return {"datasource": datasource, "database": "live_database", "schema": "live_schema"}
+
         def _get_connector(self, datasource):
             return _Connector()
 
@@ -658,6 +669,9 @@ async def test_run_query_datasource_resolution_failure_returns_datasource_unavai
     class _Broken:
         def __init__(self, *, agent_config, sub_agent_name):
             pass
+
+        def execution_context(self, connector, datasource):
+            return {"datasource": datasource, "database": "live_database", "schema": "live_schema"}
 
         def _get_connector(self, datasource):
             raise RuntimeError(f"no datasource named {datasource!r}")

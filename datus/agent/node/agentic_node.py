@@ -897,7 +897,7 @@ class AgenticNode(Node):
         if isinstance(runtime_context, dict) and runtime_context.get("datasource"):
             from datus.schemas.database_context import DatabaseExecutionContext
 
-            context = DatabaseExecutionContext.from_mapping(runtime_context).to_dict()
+            context = DatabaseExecutionContext.from_mapping(runtime_context).to_dict(include_empty=True)
             if "schema" in context:
                 context["db_schema"] = context["schema"]
             return context
@@ -1241,11 +1241,10 @@ class AgenticNode(Node):
         try:
             from datus.prompts.prompt_manager import get_prompt_manager
 
-            template = get_prompt_manager(agent_config=agent_config).get_raw_template(
+            template_digest = get_prompt_manager(agent_config=agent_config).template_fingerprint(
                 self._system_prompt_template_name(),
                 version=prompt_version or (getattr(self, "node_config", None) or {}).get("prompt_version"),
             )
-            template_digest = hashlib.sha256(template.encode()).hexdigest()
         except (AttributeError, FileNotFoundError, ValueError, TypeError):
             template_digest = ""
 

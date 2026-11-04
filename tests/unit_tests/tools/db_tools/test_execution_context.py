@@ -8,6 +8,9 @@ from collections import OrderedDict
 from types import SimpleNamespace
 from unittest.mock import Mock
 
+import duckdb
+import pytest
+
 from datus.configuration.agent_config import DbConfig
 from datus.schemas.database_context import DatabaseExecutionContext
 from datus.tools.db_tools.db_manager import DBManager
@@ -42,6 +45,13 @@ def test_two_namespace_bindings_do_not_mutate_the_shared_config_or_connection():
     assert (configured.database, configured.schema) == ("configured", "public")
 
 
+def test_changed_catalog_does_not_reintroduce_the_old_catalog_database_default():
+    manager = DBManager({"warehouse": DbConfig(type="starrocks", catalog="cat_a", database="analytics")})
+    context = DatabaseExecutionContext(datasource="warehouse", catalog="cat_b")
+    with pytest.raises(ValueError, match="Select a database explicitly"):
+        manager.get_conn("warehouse", context=context)
+
+
 def test_persisted_artifact_binding_keeps_original_database_after_the_turn_switches(tmp_path):
     import sqlite3
 
@@ -66,3 +76,31 @@ def test_persisted_artifact_binding_keeps_original_database_after_the_turn_switc
     )
     assert tool._get_connector("warehouse") is current
     manager.close()
+
+
+def test_duckdb_schema_is_bound_before_caching_and_replayed_in_another_thread(tmp_path):
+    from concurrent.futures import ThreadPoolExecutor
+
+    path = tmp_path / "warehouse.duckdb"
+    with duckdb.connect(str(path)) as conn:
+        for schema in ["main", "tenant_a", 'tenant_"b']:
+            quoted = '"' + schema.replace('"', '""') + '"'
+            conn.execute(f"CREATE SCHEMA IF NOT EXISTS {quoted}")
+            conn.execute(f"CREATE TABLE {quoted}.marker AS SELECT ? AS value", [schema])
+    manager = DBManager({"warehouse": DbConfig(type="duckdb", uri=str(path))})
+    try:
+        a = DatabaseExecutionContext(datasource="warehouse", database="warehouse", schema="tenant_a")
+        b = DatabaseExecutionContext(datasource="warehouse", database="warehouse", schema='tenant_"b')
+        first = manager.get_conn("warehouse", "warehouse", context=a)
+        second = manager.get_conn("warehouse", "warehouse", context=b)
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            for connector, expected in [(first, a.schema), (second, b.schema), (first, a.schema)]:
+                result = pool.submit(connector.execute_query, "SELECT value FROM marker", "list").result()
+                assert result.sql_return == [{"value": expected}]
+                assert connector.schema_name == expected
+        invalid = DatabaseExecutionContext(datasource="warehouse", database="warehouse", schema="missing")
+        with pytest.raises(Exception, match="missing"):
+            manager.get_conn("warehouse", "warehouse", context=invalid)
+        assert ("warehouse", "", "missing") not in manager._conn_dict["warehouse"]
+    finally:
+        manager.close()

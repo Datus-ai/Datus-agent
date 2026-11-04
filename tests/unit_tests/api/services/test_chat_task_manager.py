@@ -1296,7 +1296,7 @@ class TestStartChat:
         await task.asyncio_task
         assert captured["datasource"] == source
         assert captured["database"] == (override or "selected")
-        assert captured.get("schema") == (None if override else "last_schema")
+        assert captured.get("schema") == ("" if override else "last_schema")
         assert real_agent_config.current_db_config().database == "california_schools"
         sessions.load_session_meta.assert_called_once_with("resumed", EXECUTION_CONTEXT_META_KEY)
 
@@ -1732,6 +1732,19 @@ class TestCreateNodeInput:
         assert result.catalog == "configured_catalog"
         assert result.database == "configured_database"
         assert result.db_schema == "configured_schema"
+
+    def test_resolved_empty_schema_survives_node_input_and_semantic_context(self, real_agent_config, mock_llm_create):
+        cfg = real_agent_config.current_db_config()
+        cfg.schema = "configured_schema"
+        real_agent_config.set_runtime_db_context(
+            datasource=real_agent_config.current_datasource, database=cfg.database, schema="", catalog=""
+        )
+        manager = ChatTaskManager()
+        node = manager._create_node(real_agent_config, "gen_sql", "cleared-schema")
+        result = manager._create_node_input("query", node, [], [], [], catalog="", database=cfg.database, db_schema="")
+        assert result.db_schema == ""
+        node.input = result
+        assert node._semantic_runtime_db_context()["schema"] == ""
 
     def test_feedback_node_input_with_source_session(self, real_agent_config, mock_llm_create):
         """_create_node_input for FeedbackAgenticNode carries source_session_id through."""
@@ -2424,6 +2437,45 @@ class TestStartChatRemoteSourceHardening:
 class TestStartChatDatasourceOverride:
     """A per-request ``datasource`` (e.g. an IM channel override) switches the
     connection profile without leaking into the physical ``database`` slot."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "selection,expected",
+        [
+            ({"catalog": "cat_b"}, {"catalog": "cat_b"}),
+            ({"db_schema": ""}, {"catalog": "cat_a", "database": "analytics"}),
+            ({"database": "other"}, {"catalog": "cat_a", "database": "other"}),
+            ({}, {"catalog": "cat_a", "database": "analytics", "schema": "tenant_a"}),
+        ],
+    )
+    async def test_parent_changes_invalidate_children_and_empty_schema_is_explicit(
+        self, real_agent_config, monkeypatch, selection, expected
+    ):
+        import json
+
+        from datus.api.models.cli_models import StreamChatInput
+
+        source = real_agent_config.current_datasource
+        cfg = real_agent_config.current_db_config()
+        cfg.catalog, cfg.database, cfg.schema = "cat_a", "analytics", "tenant_a"
+        previous = {"datasource": source, "catalog": "cat_a", "database": "analytics", "schema": "tenant_a"}
+        manager = ChatTaskManager()
+        sessions = MagicMock()
+        sessions.load_session_meta.return_value = json.dumps(previous)
+        monkeypatch.setattr(manager, "_session_manager", lambda *args: sessions)
+        captured = {}
+
+        async def run(task, config, request, **kwargs):
+            captured.update(config.runtime_db_context())
+
+        monkeypatch.setattr(manager, "_run_loop", run)
+        task = await manager.start_chat(
+            real_agent_config, StreamChatInput(message="query", session_id="hierarchy", **selection)
+        )
+        await task.asyncio_task
+        from datus.schemas.database_context import DatabaseExecutionContext
+
+        assert DatabaseExecutionContext.from_mapping(captured).to_dict() == {"datasource": source, **expected}
 
     @pytest.mark.asyncio
     async def test_request_datasource_switches_current_datasource(self, real_agent_config, monkeypatch):
