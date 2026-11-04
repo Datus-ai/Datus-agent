@@ -260,11 +260,58 @@ def test_view_classification_wins_when_adapter_also_lists_it_as_a_table(monkeypa
     connector = SimpleNamespace(
         dialect="mysql",
         get_current_context=lambda: {"database_name": "analytics"},
+        execute_query=lambda *_, **__: SimpleNamespace(success=True, sql_return=[{"lower_case_table_names": 0}]),
         get_tables=lambda **_: ["orders_view"],
         get_views=lambda **_: ["orders_view"],
     )
     with pytest.raises(ValueError, match="opaque database views"):
         resolve(SqlReadContext(connector, "warehouse"), "orders_view")
+
+
+@pytest.mark.parametrize("dialect", ["mysql", "tidb"])
+@pytest.mark.parametrize("mode", [0, 1, 2])
+def test_mysql_table_case_matching_uses_the_live_server_setting(monkeypatch, dialect, mode):
+    monkeypatch.setattr(
+        "datus.tools.sql_read_context.table_name_field_order", lambda _: ["database_name", "table_name"]
+    )
+    connector = SimpleNamespace(
+        dialect=dialect,
+        get_current_context=lambda: {"database_name": "analytics"},
+        execute_query=lambda *_, **__: SimpleNamespace(success=True, sql_return=[{"lower_case_table_names": mode}]),
+        get_tables=lambda **_: ["analytics.orders"],
+        get_views=lambda **_: [],
+        get_schema=lambda **_: [{"name": "Phone", "type": "VARCHAR(30)"}],
+    )
+    context = SqlReadContext(connector, "warehouse")
+    assert context.execution_context["case_sensitive_table_names"] is (mode == 0)
+    assert resolve(context, "orders")["object"]["table"] == "orders"
+    if mode:
+        assert resolve(context, "ORDERS")["object"]["table"] == "orders"
+        assert context.fixed_object(parts("ORDERS"))["table"] == "orders"
+    else:
+        with pytest.raises(ValueError, match="could not be resolved"):
+            resolve(context, "ORDERS")
+    assert context.column_name({"name": "Phone", "quoted": True}) == "Phone"
+
+
+def test_mysql_non_ascii_object_case_is_normalized_by_the_server(monkeypatch):
+    monkeypatch.setattr(
+        "datus.tools.sql_read_context.table_name_field_order", lambda _: ["database_name", "table_name"]
+    )
+    queries = []
+
+    def query(sql, **_):
+        queries.append(sql)
+        row = {"folded_name": "ä"} if "folded_name" in sql else {"lower_case_table_names": 1}
+        return SimpleNamespace(success=True, sql_return=[row])
+
+    connector = SimpleNamespace(
+        dialect="mysql", get_current_context=lambda: {"database_name": "analytics"}, execute_query=query
+    )
+    context = SqlReadContext(connector, "warehouse")
+    assert context.canonical_name("Ä") == "ä"
+    assert context.canonical_name("Ä") == "ä"
+    assert sum("CONVERT(0xc384 USING utf8mb4)" in sql for sql in queries) == 1
 
 
 def test_unicode_identifiers_do_not_use_unicode_case_folding(db):

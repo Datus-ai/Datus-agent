@@ -43,6 +43,18 @@ class SqlReadContext:
     def canonical_name(self, name: str) -> str:
         if self.dialect in {"duckdb", "sqlite"}:
             return name.translate(_ASCII_LOWER)
+        if self.dialect in {"mysql", "tidb"} and self._state["lower_case_table_names"]:
+            if name.isascii():
+                return name.translate(_ASCII_LOWER)
+            if name not in self._folded_names:
+                # Hex avoids dialect-dependent literal/backslash escaping.
+                folded = self._query(
+                    f"SELECT LOWER(CONVERT(0x{name.encode('utf-8').hex()} USING utf8mb4)) AS folded_name"
+                )[0]["folded_name"]
+                if not isinstance(folded, str):
+                    raise ValueError("server identifier case normalization is unavailable")
+                self._folded_names[name] = folded
+            return self._folded_names[name]
         return name
 
     def fixed_object(self, parts: list[dict]) -> dict:
@@ -67,6 +79,10 @@ class SqlReadContext:
 
     def column_name(self, identifier: dict) -> str:
         name = identifier["name"]
+        if self.dialect in {"mysql", "tidb"}:
+            # Column names are insensitive independently of the table setting;
+            # the shared core matches them while retaining stored output names.
+            return name
         if not identifier.get("quoted"):
             if self.dialect in {"postgres", "postgresql", "hologres", "gaussdb", "dws"}:
                 name = name.translate(_ASCII_LOWER)
@@ -79,6 +95,7 @@ class SqlReadContext:
         self.datasource = datasource
         self.dialect = str(connector.dialect)
         self.namespace_order = [name.removesuffix("_name") for name in table_name_field_order(self.dialect)]
+        self._folded_names: dict[str, str] = {}
         self._state = self._capture()
         # Keep the original object alive so a replacement connection cannot
         # reuse its Python id and appear to be the same SQLite session.
@@ -89,6 +106,8 @@ class SqlReadContext:
             "search_path": self._state["search_path"],
             "revision": json.dumps(self._state, sort_keys=True),
         }
+        if self.dialect in {"mysql", "tidb"}:
+            self.execution_context["case_sensitive_table_names"] = self._state["lower_case_table_names"] == 0
         self._metadata: dict[tuple, dict] = {}
 
     def _query(self, sql: str) -> list[dict]:
@@ -154,6 +173,15 @@ class SqlReadContext:
             )
         else:
             state["search_path"] = [state["schema"]] if state["schema"] else []
+            if self.dialect in {"mysql", "tidb"}:
+                mode = int(
+                    self._query("SELECT @@lower_case_table_names AS lower_case_table_names")[0][
+                        "lower_case_table_names"
+                    ]
+                )
+                if mode not in {0, 1, 2}:
+                    raise ValueError("unsupported server table-name case mode")
+                state["lower_case_table_names"] = mode
             for field in self.namespace_order[:-1]:
                 if not state.get(field):
                     raise ValueError(f"actual execution {field} is unavailable for {self.dialect}")
