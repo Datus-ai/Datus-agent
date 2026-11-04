@@ -1721,13 +1721,26 @@ def test_artifact_metric_binding_uses_one_catalog_snapshot(make_runtime, model_f
     updated = tmp_path / "updated.yaml"
     updated.write_text("# A later registry snapshot\n", encoding="utf-8")
     snapshots = [
-        (((str(model_file), SimpleNamespace(profile_name="original")),), {"revenue": str(model_file)}, {}),
+        (
+            (
+                (
+                    str(model_file),
+                    SimpleNamespace(
+                        profile_name="original",
+                        get=lambda: SimpleNamespace(metrics=lambda: [{"name": "revenue", "datasets": ["orders"]}]),
+                    ),
+                ),
+            ),
+            {"revenue": str(model_file)},
+            {},
+        ),
         (((str(updated), SimpleNamespace(profile_name="updated")),), {"revenue": str(updated)}, {}),
     ]
     runtime = make_runtime()
     catalog = MagicMock(side_effect=snapshots)
     monkeypatch.setattr(runtime, "_catalog", catalog)
     assert runtime.artifact_metric_binding("revenue") == {
+        "datasets": ["orders"],
         "model_path": str(model_file),
         "model_revision": hashlib.sha256(model_file.read_bytes()).hexdigest(),
         "datasource": "original",

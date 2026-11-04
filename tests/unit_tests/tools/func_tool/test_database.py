@@ -3391,3 +3391,30 @@ async def test_registered_sql_preserves_real_failure_and_parent_cancellation():
     pending.cancel()
     with pytest.raises(asyncio.CancelledError):
         await pending
+
+
+def test_uncompressed_policy_read_never_resolves_model(tmp_path):
+    from datus.tools.db_tools.config import SQLiteConfig
+    from datus.tools.db_tools.sqlite_connector import SQLiteConnector
+    from datus.tools.read_observer import observe_reads
+    from datus.utils.exceptions import ErrorCode
+
+    config = _mock_agent_config()
+    config.active_model.side_effect = DatusException(ErrorCode.MODEL_NOT_SELECTED)
+    connector = SQLiteConnector(SQLiteConfig(db_path=str(tmp_path / "read.sqlite")))
+    with (
+        patch("datus.tools.func_tool.database.SchemaWithValueRAG"),
+        patch("datus.tools.func_tool.database.SemanticDatasetRAG"),
+    ):
+        tool = DBFuncTool(connector, agent_config=config)
+    observed = []
+    with observe_reads(observed.append):
+        result = tool.execute_read_enforced("SELECT 1 AS n", connector)
+    assert result.success is True
+    assert result.sql_return == [{"n": 1}]
+    assert [event.phase for event in observed] == ["before_sql", "after_sql"]
+    config.active_model.assert_not_called()
+    # Operations that actually need a model still surface the existing error.
+    with pytest.raises(DatusException) as error:
+        _ = tool.compressor
+    assert error.value.code == ErrorCode.MODEL_NOT_SELECTED

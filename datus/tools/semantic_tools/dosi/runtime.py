@@ -399,7 +399,7 @@ class DosiRuntime:
             graphs.append(await asyncio.to_thread(lineage, redact_sql=redact_sql))
         return graphs
 
-    def artifact_metric_binding(self, metric_name: str) -> dict[str, str]:
+    def artifact_metric_binding(self, metric_name: str) -> dict[str, Any]:
         """Resolve an artifact's metric to its complete model and connection.
 
         Model names remain unique within a datasource. The full document hash
@@ -417,7 +417,11 @@ class DosiRuntime:
                 )
             )
         handle = dict(handles)[path]
+        metric = next((row for row in handle.get().metrics() if row.get("name") == metric_name), None)
+        if metric is None:
+            raise SemanticCoreException("Metric is absent from the compiled model")
         return {
+            "datasets": list(metric.get("datasets") or []),
             "model_path": path,
             "model_revision": hashlib.sha256(Path(path).read_bytes()).hexdigest(),
             "datasource": self.datasource or handle.profile_name or "default",
