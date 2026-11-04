@@ -988,18 +988,27 @@ def test_resolved_api_context_is_authoritative_for_metric_tools(session_manager)
     }
 
 
-@pytest.mark.parametrize("override", [None, "1.0"])
-def test_digest_and_render_use_the_same_resolved_template_version(session_manager, monkeypatch, override):
+@pytest.mark.parametrize(
+    "override,node_version,selected", [(None, "9.9", "9.9"), ("1.0", "9.9", "1.0"), (None, None, "1.2")]
+)
+def test_digest_and_render_use_the_same_resolved_template_version(
+    session_manager, monkeypatch, override, node_version, selected
+):
     from unittest.mock import Mock
 
+    from datus.agent.node import agentic_node
     from datus.prompts import prompt_manager
 
     manager = Mock()
     manager.template_fingerprint.return_value = "selected-template-digest"
+    manager.render_template.return_value = "rendered prompt"
     monkeypatch.setattr(prompt_manager, "get_prompt_manager", lambda **kwargs: manager)
-    node = _SnapshotNode(session_manager, _agent_config(), node_config={"prompt_version": "9.9"})
+    monkeypatch.setattr(agentic_node, "get_prompt_manager", lambda **kwargs: manager)
+    node = _SnapshotNode(session_manager, _agent_config(), node_config={"prompt_version": node_version})
+    node._finalize_system_prompt = lambda prompt: prompt
     meta = node._system_prompt_snapshot_meta(override)
-    selected = override if override is not None else node.agent_config.prompt_version
+    assert agentic_node.AgenticNode._get_system_prompt(node, override) == "rendered prompt"
+    assert manager.render_template.call_args.kwargs["version"] == selected
     manager.template_fingerprint.assert_called_once_with(node._system_prompt_template_name(), version=selected)
     assert meta["prompt_version"] == selected
     assert meta["prompt_template_sha256"] == "selected-template-digest"
