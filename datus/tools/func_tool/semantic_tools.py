@@ -764,7 +764,13 @@ class SemanticTools:
 
     def get_cached_query_metrics_result(self, cache_key: str) -> Optional[dict]:
         cached = self._query_metrics_result_cache.get(cache_key)
-        if cached is not None and cached.get("policy_scope", "unprotected") != self._policy_cache_scope():
+        if cached is None:
+            return None
+        try:
+            scope = self._policy_cache_scope()
+        except (DatusException, ValueError):
+            return None
+        if cached.get("policy_scope", "unprotected") != scope:
             return None
         return cached
 

@@ -2698,6 +2698,24 @@ def test_cache_uses_execution_scope_without_rebinding(semantic_tools, monkeypatc
     assert semantic_tools._query_metrics_result_cache[key]["policy_scope"] == "execution-scope"
 
 
+@pytest.mark.parametrize("failure", ["denied", "namespace"])
+def test_cached_results_expire_when_policy_binding_cannot_be_verified(semantic_tools, monkeypatch, failure):
+    from datus.utils.exceptions import DatusException, ErrorCode
+
+    key = semantic_tools._cache_query_metrics_result(["revenue"], [{"revenue": 100}], {"_policy_scope": "old"})
+
+    def fail_binding():
+        if failure == "denied":
+            raise DatusException(ErrorCode.POLICY_DENIED, message="required connector unavailable")
+        raise ValueError("execution namespace changed")
+
+    monkeypatch.setattr(semantic_tools, "_bind_dosi_read", fail_binding)
+    assert semantic_tools.get_cached_query_metrics_result(key) is None
+    result = semantic_tools.get_query_metrics_result(key)
+    assert not result.success
+    assert "Unknown or expired" in result.error
+
+
 @pytest.mark.parametrize("actual_database", ["selected", "configured_default"])
 def test_dosi_policy_metadata_uses_selected_database_and_rejects_mismatch(semantic_tools, monkeypatch, actual_database):
     bound = SimpleNamespace(context_json=json.dumps({"database": actual_database, "schema": "sales"}))
