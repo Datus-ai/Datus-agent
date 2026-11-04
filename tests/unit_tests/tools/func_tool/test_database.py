@@ -2639,7 +2639,7 @@ class TestDBFuncToolExecuteReadEnforced:
         with patch("datus.tools.policy_runtime.PolicyRuntime", return_value=runtime):
             result = tool.execute_read_enforced(sql, connector, require_unmodified=True)
 
-        assert result.success
+        assert result.success is True
         policy_sql = runtime.before_sql_read.call_args.args[0]
         tree = sqlglot.parse_one(policy_sql, dialect="starrocks")
         tables = [
@@ -2699,7 +2699,7 @@ class TestDBFuncToolExecuteReadEnforced:
         with patch("datus.tools.policy_runtime.PolicyRuntime", return_value=runtime):
             result = tool.execute_read_enforced("SELECT * FROM orders", routed, policy_context=context)
 
-        assert result.success
+        assert result.success is True
         executed = routed.execute_query.call_args.args[0]
         assert "scope-marker" in executed
         assert runtime.after_read_result.call_args.kwargs["sql"] == executed
