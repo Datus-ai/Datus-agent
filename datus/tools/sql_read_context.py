@@ -233,17 +233,17 @@ class SqlReadContext:
         candidates = [base]
         if self.dialect == "sqlite" and "database" not in specified:
             candidates = [{**base, "database": name} for name in self._state["search_path"]]
-        if "schema" in self.namespace_order and "schema" not in specified:
-            candidates = []
-            if self.dialect == "duckdb":
-                candidates.append({**base, "database": "temp", "schema": "main"})
+        if self.dialect == "duckdb" and "database" not in specified:
+            # Schema qualification alone does not bypass DuckDB's temporary
+            # catalog. Only an explicit database fixes the physical catalog.
+            candidates = [{**base, "database": "temp", "schema": specified.get("schema", "main")}]
+            if "schema" not in specified:
                 for path in self._state["search_path"]:
                     namespace = self._parts(parser(path + ".__datus_probe"))
                     candidates.append({**base, **{k: v for k, v in namespace.items() if k != "table"}})
-            else:
-                candidates.extend({**base, "schema": name} for name in self._state["search_path"])
-            if not candidates or self.dialect == "duckdb":
-                candidates.append(base)
+            candidates.append(base)
+        elif "schema" in self.namespace_order and "schema" not in specified:
+            candidates = [{**base, "schema": name} for name in self._state["search_path"]] or [base]
         for namespace in candidates:
             table = self._lookup(namespace, specified["table"], parser)
             if table is not None:

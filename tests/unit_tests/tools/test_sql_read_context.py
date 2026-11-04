@@ -229,11 +229,23 @@ def test_search_path_and_quoted_dots(db):
     assert db.execute(f"SELECT * FROM {table['sql_reference']}").fetchall() == []
 
 
-def test_temporary_table_shadows_persistent_table(db):
+@pytest.mark.parametrize("reference", ["orders", "main.orders", "MAIN.ORDERS"])
+def test_temporary_table_shadows_persistent_table(db, reference):
+    db.execute("INSERT INTO orders(id) VALUES (1)")
     db.execute("CREATE TEMP TABLE orders(secret VARCHAR)")
+    db.execute("INSERT INTO temp.main.orders VALUES ('temporary value')")
     context = SqlReadContext(Connector(db), "warehouse")
-    assert resolve(context, "orders")["object"]["database"] == "temp"
-    assert resolve(context, "memory.main.orders")["object"]["database"] == "memory"
+    table = resolve(context, reference)
+    assert table["object"]["database"] == "temp"
+    assert [column["name"] for column in table["columns"]] == ["secret"]
+    assert (
+        db.execute(f"SELECT * FROM {table['sql_reference']}").fetchall()
+        == db.execute(f"SELECT * FROM {reference}").fetchall()
+        == [("temporary value",)]
+    )
+    persistent = resolve(context, "memory.main.orders")
+    assert persistent["object"]["database"] == "memory"
+    assert db.execute(f"SELECT id FROM {persistent['sql_reference']}").fetchall() == [(1,)]
 
 
 def test_attached_database_switch_requires_fresh_binding(db):
