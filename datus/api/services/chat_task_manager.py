@@ -248,7 +248,6 @@ def _is_resolved_sql_file_response(action: ActionHistory) -> bool:
         and bool(output.get("sql_file_path"))
         and isinstance(sql, str)
         and bool(sql.strip())
-        and not sql.strip().endswith(".sql")
     )
 
 
@@ -1039,6 +1038,20 @@ class ChatTaskManager:
                                 message_id = pending_id
 
                     source = response_sources.get(scope)
+                    if (
+                        source
+                        and action.role == ActionRole.ASSISTANT
+                        and action.status == ActionStatus.SUCCESS
+                        and action.action_type == "final_response"
+                        and _response_protocol(action) is not None
+                    ):
+                        output = action.output if isinstance(action.output, dict) else {}
+                        raw = output.get("raw_output")
+                        if isinstance(raw, str) and raw.strip():
+                            # Native providers emit one completion per text block,
+                            # but save the aggregate in one SDK assistant row.
+                            source = (source[0], raw)
+                            response_sources[scope] = source
                     is_resolved_sql_update = bool(source and _is_resolved_sql_file_response(action))
                     if is_resolved_sql_update:
                         message_id = source[0]

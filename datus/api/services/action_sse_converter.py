@@ -29,6 +29,7 @@ from datus.schemas.action_history import (
 )
 from datus.utils.json_utils import llm_result2json, normalize_sql_escapes
 from datus.utils.loggings import get_logger
+from datus.utils.sql_utils import looks_like_sql_file_ref
 from datus.utils.time_utils import now_utc_iso, to_utc_iso
 
 logger = get_logger(__name__)
@@ -235,12 +236,13 @@ def _response_node_class(action: ActionHistory) -> Optional[str]:
     )
 
 
-def _sql_response_content(sql: str) -> IMessageContent:
-    if sql.strip().endswith(".sql"):
+def _sql_response_content(sql: str, *, resolved: bool = False) -> IMessageContent:
+    """Keep confirmed SQL verbatim and show unresolved file references as hints."""
+    if not resolved and looks_like_sql_file_ref(sql):
         # A path is not executable SQL. The host completion may replace this
         # hint with the statement read through the node's filesystem tools.
         return IMessageContent(type="markdown", payload={"content": f"SQL file: `{sql}`"})
-    return IMessageContent(type="code", payload={"codeType": "sql", "content": normalize_sql_escapes(sql)})
+    return IMessageContent(type="code", payload={"codeType": "sql", "content": sql})
 
 
 def _response_protocol(action: ActionHistory) -> Optional[str]:
@@ -341,6 +343,10 @@ def _build_structured_response_content(
     contents = []
     sql = payload.get("sql")
     if include_sql and isinstance(sql, str) and sql:
+        # Only model envelopes need the node parser's escape cleanup. Resolved
+        # SQL from the host may use dialect-specific literals and is already final.
+        if not looks_like_sql_file_ref(sql):
+            sql = normalize_sql_escapes(sql)
         contents.append(_sql_response_content(sql))
     if markdown:
         contents.append(IMessageContent(type="markdown", payload={"content": markdown}))
@@ -356,7 +362,7 @@ def _build_response_content(action: ActionHistory) -> List[IMessageContent]:
         return [IMessageContent(**part) for part in data["_response_content"]]
     if "sql" in action_output and action_output["sql"]:
         sql = action_output.get("sql")
-        contents.append(_sql_response_content(sql))
+        contents.append(_sql_response_content(sql, resolved=bool(action_output.get("sql_file_path"))))
 
     response = action_output.get("response") or action_output.get("content") or action_output.get("raw_output") or ""
     structured = _build_structured_response_content(response, _response_protocol(action), include_sql=not contents)

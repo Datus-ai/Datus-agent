@@ -250,6 +250,37 @@ def test_wrapper_prefers_resolved_sql_over_enclosed_file_path():
     ]
 
 
+@pytest.mark.parametrize(
+    "sql", [r"SELECT $$\($$", r"SELECT $pattern$\($pattern$", 'SELECT "column\\(name" FROM orders']
+)
+def test_resolved_sql_file_content_is_verbatim(sql):
+    action = _action(
+        action_type="gen_sql_response",
+        output={"sql": sql, "sql_file_path": "queries/report.sql", "response": SUMMARY},
+    )
+    event = action_to_sse_event(action, 1, action.action_id, include_final_response=True)
+    assert [(part.type, part.payload) for part in event.data.payload.content] == [
+        ("code", {"codeType": "sql", "content": sql}),
+        ("markdown", {"content": SUMMARY}),
+    ]
+    assert action.output["sql"] == sql
+
+
+@pytest.mark.parametrize("sql", ["SELECT * FROM test.sql", "SELECT\t*\tFROM\ttest.sql", "SELECT *\nFROM test.sql"])
+@pytest.mark.parametrize("action_type", ["response", "thinking", "gen_sql_response"])
+def test_inline_sql_ending_in_qualified_sql_table_is_executable(sql, action_type):
+    action = _action(
+        action_type=action_type,
+        output={"raw_output": json.dumps({"sql": sql, "output": SUMMARY}), "is_thinking": False},
+        node_class="gen_sql",
+    )
+    event = action_to_sse_event(action, 1, action.action_id, include_final_response=True)
+    assert [(part.type, part.payload) for part in event.data.payload.content] == [
+        ("code", {"codeType": "sql", "content": sql}),
+        ("markdown", {"content": SUMMARY}),
+    ]
+
+
 @pytest.mark.parametrize("status", ["skipped", "blocked"])
 def test_semantic_outcomes_display_guidance_without_protocol_metadata(status):
     action = _action(
@@ -382,12 +413,17 @@ def test_repeated_structured_summary_still_replaces_its_json_stream():
 @pytest.mark.asyncio
 @pytest.mark.parametrize("stream", [False, True])
 @pytest.mark.parametrize("padding", [("", ""), ("", "\n"), ("\n \t", "\r\n \t")])
-async def test_sql_file_is_updated_with_resolved_sql_and_persisted(real_agent_config, stream, padding):
+@pytest.mark.parametrize("multipart", [False, True])
+async def test_sql_file_is_updated_with_resolved_sql_and_persisted(real_agent_config, stream, padding, multipart):
     """Use the actual live loop and SQLite replay, including a nonstandard session id."""
     session_id = "api-generated-session-id"
     raw = json.dumps({"sql": "queries/report.sql", "output": SUMMARY})
     sdk_text = f"{padding[0]}{raw}{padding[1]}"
-    sql = "SELECT 1 AS value"
+    preface = "I verified the result."
+    sdk_blocks = ([{"type": "text", "text": preface}] if multipart else []) + [
+        {"type": "text" if multipart else "output_text", "text": sdk_text}
+    ]
+    sql = r"SELECT $$\($$ AS value FROM test.sql"
     storage = SessionManager(session_dir=real_agent_config.session_dir)
     session = storage.get_session(session_id)
     await session.add_items([{"role": "user", "content": "Generate SQL"}])
@@ -396,11 +432,20 @@ async def test_sql_file_is_updated_with_resolved_sql_and_persisted(real_agent_co
         session_id = "api-generated-session-id"
 
         async def execute_stream_with_interactions(self, action_history_manager):
+            if multipart:
+                yield _action("preface", output={"raw_output": preface, "is_thinking": False}, node_class="gen_sql")
             delta = _action("stream", action_type="thinking_delta", output={"delta": sdk_text})
             delta.status = ActionStatus.PROCESSING
             yield delta
-            await session.add_items([{"role": "assistant", "content": [{"type": "output_text", "text": sdk_text}]}])
+            await session.add_items([{"role": "assistant", "content": sdk_blocks}])
             yield _action("stream", output={"raw_output": raw, "is_thinking": False}, node_class="gen_sql")
+            if multipart:
+                yield _action(
+                    "model-final",
+                    action_type="final_response",
+                    output={"raw_output": "\n".join(block["text"] for block in sdk_blocks)},
+                    node_class="gen_sql",
+                )
             yield _action(
                 "final",
                 action_type="custom_sql_agent_response",
@@ -418,11 +463,12 @@ async def test_sql_file_is_updated_with_resolved_sql_and_persisted(real_agent_co
         task, real_agent_config, StreamChatInput(message="Generate SQL", session_id=session_id, stream_response=stream)
     )
     assert task.status == "completed"
-    assert (await session.get_items())[-1]["content"][0]["text"] == sdk_text
+    assert (await session.get_items())[-1]["content"] == sdk_blocks
     messages = [event for event in task.events if event.event == "message"]
     for event in messages:
         assert not any(
-            item.type == "code" and item.payload["content"].endswith(".sql") for item in event.data.payload.content
+            item.type == "code" and item.payload["content"] == "queries/report.sql"
+            for item in event.data.payload.content
         )
     assert messages[-1].data.type == SSEDataType.UPDATE_MESSAGE
     assert messages[-1].data.payload.message_id == "stream"
@@ -437,13 +483,18 @@ async def test_sql_file_is_updated_with_resolved_sql_and_persisted(real_agent_co
 @pytest.mark.asyncio
 @pytest.mark.parametrize("stream", [False, True])
 @pytest.mark.parametrize("padding", [("", ""), ("", "\n"), ("\n \t", "\r\n \t")])
-async def test_delegated_sql_file_view_survives_real_history_expansion(real_agent_config, stream, padding):
+@pytest.mark.parametrize("multipart", [False, True])
+async def test_delegated_sql_file_view_survives_real_history_expansion(real_agent_config, stream, padding, multipart):
     parent_id = "chat_session_file_parent"
     child_id = "custom_sql_session_file_child"
     call_id = "sql-task"
     raw = json.dumps({"sql": "queries/report.sql", "output": SUMMARY})
     sdk_text = f"{padding[0]}{raw}{padding[1]}"
-    sql = "SELECT 42 AS value"
+    preface = "I verified the delegated result."
+    sdk_blocks = ([{"type": "text", "text": preface}] if multipart else []) + [
+        {"type": "text" if multipart else "output_text", "text": sdk_text}
+    ]
+    sql = r"SELECT $pattern$\($pattern$ AS value FROM test.sql"
     storage = SessionManager(session_dir=real_agent_config.session_dir)
     parent = storage.get_session(parent_id)
     child_storage = SessionManager(session_dir=f"{real_agent_config.session_dir}/{parent_id}")
@@ -470,12 +521,20 @@ async def test_delegated_sql_file_view_survives_real_history_expansion(real_agen
             start.role, start.status = ActionRole.TOOL, ActionStatus.PROCESSING
             start.input = {"function_name": "task", "arguments": {"type": "custom_sql"}}
             yield start
+            if multipart:
+                yield _action(
+                    "child-preface",
+                    depth=1,
+                    parent=call_id,
+                    node_class="gen_sql",
+                    output={"raw_output": preface, "is_thinking": False},
+                )
             delta = _action(
                 "child-stream", depth=1, parent=call_id, action_type="thinking_delta", output={"delta": sdk_text}
             )
             delta.status = ActionStatus.PROCESSING
             yield delta
-            await child.add_items([{"role": "assistant", "content": [{"type": "output_text", "text": sdk_text}]}])
+            await child.add_items([{"role": "assistant", "content": sdk_blocks}])
             yield _action(
                 "child-stream",
                 depth=1,
@@ -483,6 +542,15 @@ async def test_delegated_sql_file_view_survives_real_history_expansion(real_agen
                 node_class="gen_sql",
                 output={"raw_output": raw, "is_thinking": False},
             )
+            if multipart:
+                yield _action(
+                    "child-model-final",
+                    depth=1,
+                    parent=call_id,
+                    node_class="gen_sql",
+                    action_type="final_response",
+                    output={"raw_output": "\n".join(block["text"] for block in sdk_blocks)},
+                )
             yield _action(
                 "child-final",
                 depth=1,
@@ -506,7 +574,7 @@ async def test_delegated_sql_file_view_survives_real_history_expansion(real_agen
         task, real_agent_config, StreamChatInput(message="Generate SQL", session_id=parent_id, stream_response=stream)
     )
     assert task.status == "completed"
-    assert (await child.get_items())[-1]["content"][0]["text"] == sdk_text
+    assert (await child.get_items())[-1]["content"] == sdk_blocks
     updates = [
         event for event in task.events if event.event == "message" and event.data.type == SSEDataType.UPDATE_MESSAGE
     ]

@@ -693,7 +693,7 @@ def looks_like_sql_file_ref(text: str) -> bool:
     reference identically.
     """
     s = text.strip()
-    return bool(s) and s.endswith(".sql") and "\n" not in s and " " not in s
+    return bool(s) and s.endswith(".sql") and not any(char.isspace() for char in s)
 
 
 def read_workspace_sql_file(file_path: str, workspace_root: str) -> str:
