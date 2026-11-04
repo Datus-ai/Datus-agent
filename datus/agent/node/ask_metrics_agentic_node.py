@@ -73,7 +73,7 @@ class AskMetricsAgenticNode(AgenticNode):
     ):
         self.execution_mode = execution_mode
         self.configured_node_name = node_name
-        self.max_turns = 50
+        self.max_turns = 100
         if agent_config and hasattr(agent_config, "agentic_nodes") and node_name in agent_config.agentic_nodes:
             agentic_node_config = agent_config.agentic_nodes[node_name]
             if isinstance(agentic_node_config, dict):

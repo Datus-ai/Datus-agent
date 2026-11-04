@@ -81,11 +81,11 @@ class SqlSummaryAgenticNode(AgenticNode):
         self._mutation_snapshots: dict = {}
 
         # Get max_turns from agentic_nodes configuration
-        self.max_turns = 50
+        self.max_turns = 100
         if agent_config and hasattr(agent_config, "agentic_nodes") and node_name in agent_config.agentic_nodes:
             agentic_node_config = agent_config.agentic_nodes[node_name]
             if isinstance(agentic_node_config, dict):
-                self.max_turns = agentic_node_config.get("max_turns", 50)
+                self.max_turns = agentic_node_config.get("max_turns", 100)
 
         self.sql_summary_dir = str(agent_config.path_manager.sql_summary_path())
         self.knowledge_base_dir = str(agent_config.path_manager.subject_dir)

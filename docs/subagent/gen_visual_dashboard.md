@@ -114,7 +114,7 @@ agent:
   agentic_nodes:
     gen_visual_dashboard:
       model: claude              # Optional: defaults to the configured model
-      max_turns: 30              # Optional: defaults to 30
+      max_turns: 100              # Optional: defaults to 100
       web_host: localhost        # Optional: host baked into the HTML's query endpoint
       web_port: 8501             # Optional: port baked into the HTML's query endpoint
 ```
@@ -122,7 +122,7 @@ agent:
 | Parameter | Required | Description | Default |
 |-----------|----------|-------------|---------|
 | `model` | No | LLM model to use | Configured default |
-| `max_turns` | No | Maximum agent iterations before the run stops | 30 |
+| `max_turns` | No | Maximum agent iterations before the run stops | 100 |
 | `web_host` | No | Host baked into the HTML's filter-query endpoint | `localhost` |
 | `web_port` | No | Port baked into the HTML's filter-query endpoint | `8501` |
 | `query_endpoint` | No | Full URL override; takes precedence over `web_host` + `web_port` composition | Composed from `web_host` + `web_port` |

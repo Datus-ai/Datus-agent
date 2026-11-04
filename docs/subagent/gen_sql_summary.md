@@ -64,7 +64,7 @@ Most configurations are built-in. In `agent.yml`, minimal setup is needed:
 agentic_nodes:
   gen_sql_summary:
     model: deepseek      # Optional: defaults to configured model
-    max_turns: 30        # Optional: defaults to 30
+    max_turns: 100        # Optional: defaults to 100
 ```
 
 **Built-in configurations** (automatically enabled):

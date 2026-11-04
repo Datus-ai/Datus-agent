@@ -34,46 +34,46 @@ agent:
   agentic_nodes:
     semantic_modeling:
       model: claude     # 可选：默认使用已配置的模型
-      max_turns: 30     # 可选：默认为 30
+      max_turns: 100     # 可选：默认为 100
 
     ask_metrics:
       model: claude     # 可选：默认使用已配置的模型
-      max_turns: 12     # 可选：默认为 12
+      max_turns: 100     # 可选：默认为 100
 
     ontology_analyst:
       model: claude
 
     gen_sql_summary:
       model: deepseek   # 可选：默认使用已配置的模型
-      max_turns: 30     # 可选：默认为 30
+      max_turns: 100     # 可选：默认为 100
 
     explore:
       model: haiku      # 推荐：较小模型适合工具调用任务
-      max_turns: 15     # 可选：默认为 15
+      max_turns: 100     # 可选：默认为 100
 
     gen_sql:
       model: claude     # 可选：默认使用已配置的模型
-      max_turns: 30     # 可选：默认为 30
+      max_turns: 100     # 可选：默认为 100
 
     gen_table:
-      max_turns: 20     # 可选：默认为 20
+      max_turns: 100     # 可选：默认为 100
 
     gen_job:
-      max_turns: 30     # 可选：默认为 30
+      max_turns: 100     # 可选：默认为 100
 
     gen_skill:
-      max_turns: 30     # 可选：默认为 30
+      max_turns: 100     # 可选：默认为 100
 
     gen_visual_report:
       model: claude            # 可选：默认使用已配置的模型
-      max_turns: 30            # 可选：默认为 30
+      max_turns: 100            # 可选：默认为 100
       report_dist: ~/report_dist  # 可选：HTML 离线编译时使用的本地 dist 目录
 ```
 
 **可选配置参数**：
 
 - `model`：使用的 AI 模型（如 `claude`、`deepseek`）。默认使用已配置的模型。
-- `max_turns`：最大对话轮数（默认：30）
+- `max_turns`：最大对话轮数（默认：100）
 
 **内置配置**（无需设置）：
 - **工具**：根据 subagent 类型自动配置
@@ -217,7 +217,7 @@ agent:
   agentic_nodes:
     explore:
       model: haiku           # 推荐：使用较小模型（haiku、gpt-4o-mini）
-      max_turns: 15           # 可选：默认为 15
+      max_turns: 100           # 可选：默认为 100
 ```
 
 > **提示**：explore subagent 以工具调用为主，而非复杂推理。推荐使用较小、更快的模型（如 `haiku`、`gpt-4o-mini`），可降低成本并提升速度，同时不影响质量。
@@ -271,7 +271,7 @@ agent:
   agentic_nodes:
     gen_sql:
       model: claude           # 可选：默认使用已配置的模型
-      max_turns: 30           # 可选：默认为 30
+      max_turns: 100           # 可选：默认为 100
 ```
 
 ### 工作原理

@@ -83,7 +83,7 @@ gen_table works out of the box. You can optionally customize it in `agent.yml`:
 agent:
   agentic_nodes:
     gen_table:
-      max_turns: 20       # Default: 20
+      max_turns: 100       # Default: 100
 ```
 
 ## Skills Used
@@ -151,6 +151,6 @@ gen_table:
 | Data writes (INSERT/UPDATE/DELETE) | No | Yes |
 | Cross-database migration | No | Yes |
 | User confirmation (ask_user) | Always required | Available |
-| Default max_turns | 20 | 40 |
+| Default max_turns | 100 | 100 |
 
 Use **gen_table** when you need interactive table creation with user confirmation. Use **gen_job** for single-database ETL pipelines or cross-database migration (gen_job now covers both).

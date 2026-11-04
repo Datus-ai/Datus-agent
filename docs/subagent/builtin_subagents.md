@@ -35,46 +35,46 @@ agent:
   agentic_nodes:
     semantic_modeling:
       model: claude     # Optional: defaults to configured model
-      max_turns: 30     # Optional: defaults to 30
+      max_turns: 100     # Optional: defaults to 100
 
     ask_metrics:
       model: claude     # Optional: defaults to configured model
-      max_turns: 12     # Optional: defaults to 12
+      max_turns: 100     # Optional: defaults to 100
 
     ontology_analyst:
       model: claude
 
     gen_sql_summary:
       model: deepseek   # Optional: defaults to configured model
-      max_turns: 30     # Optional: defaults to 30
+      max_turns: 100     # Optional: defaults to 100
 
     explore:
       model: haiku      # Recommended: smaller model for tool-calling tasks
-      max_turns: 15     # Optional: defaults to 15
+      max_turns: 100     # Optional: defaults to 100
 
     gen_sql:
       model: claude     # Optional: defaults to configured model
-      max_turns: 30     # Optional: defaults to 30
+      max_turns: 100     # Optional: defaults to 100
 
     gen_table:
-      max_turns: 20     # Optional: defaults to 20
+      max_turns: 100     # Optional: defaults to 100
 
     gen_job:
-      max_turns: 30     # Optional: defaults to 30
+      max_turns: 100     # Optional: defaults to 100
 
     gen_skill:
-      max_turns: 30     # Optional: defaults to 30
+      max_turns: 100     # Optional: defaults to 100
 
     gen_visual_report:
       model: claude            # Optional: defaults to configured model
-      max_turns: 30            # Optional: defaults to 30
+      max_turns: 100            # Optional: defaults to 100
       report_dist: ~/report_dist  # Optional: local dist path for offline HTML compilation
 ```
 
 **Optional configuration parameters:**
 
 - `model`: The AI model to use (e.g., `claude`, `deepseek`). Defaults to your configured model.
-- `max_turns`: Maximum conversation turns (default: 30)
+- `max_turns`: Maximum conversation turns (default: 100)
 
 **Built-in configurations** (no setup needed):
 - **Tools**: Automatically configured based on subagent type
@@ -218,7 +218,7 @@ agent:
   agentic_nodes:
     explore:
       model: haiku           # Recommended: use a smaller model (haiku, gpt-4o-mini)
-      max_turns: 15           # Optional: defaults to 15
+      max_turns: 100           # Optional: defaults to 100
 ```
 
 > **Tip**: The explore subagent is optimized for tool-calling rather than reasoning. Using a smaller, faster model (e.g., `haiku`, `gpt-4o-mini`) is recommended to reduce cost and improve speed without sacrificing quality.
@@ -272,7 +272,7 @@ agent:
   agentic_nodes:
     gen_sql:
       model: claude           # Optional: defaults to configured model
-      max_turns: 30           # Optional: defaults to 30
+      max_turns: 100           # Optional: defaults to 100
 ```
 
 ### How It Works
