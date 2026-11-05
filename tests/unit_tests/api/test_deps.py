@@ -287,7 +287,10 @@ class TestProjectConfigRefresh:
             # Only the LLM loop is replaced. start_chat still takes the real
             # per-turn config snapshot and registers a real background task.
             snapshots[task.session_id] = config
-            task.node = SimpleNamespace(interaction_broker=SimpleNamespace(submit=AsyncMock(return_value=True)))
+            task.node = SimpleNamespace(
+                interaction_broker=SimpleNamespace(submit=AsyncMock(return_value=True)),
+                interrupt_controller=SimpleNamespace(interrupt=MagicMock()),
+            )
             started.put_nowait(task.session_id)
             try:
                 await release.wait()
@@ -344,6 +347,7 @@ class TestProjectConfigRefresh:
 
             stopped = await stop_chat(StopChatInput(session_id=old_task.session_id), refreshed)
             assert stopped.success is True
+            old_task.node.interrupt_controller.interrupt.assert_called_once_with()
             await asyncio.gather(old_task.asyncio_task, return_exceptions=True)
             assert not new_task.asyncio_task.done()
 
@@ -356,7 +360,10 @@ class TestProjectConfigRefresh:
             assert refreshed.task_manager._stream_thinking is True
 
             final_task = await refreshed.task_manager.start_chat(
-                refreshed.chat.agent_config, StreamChatInput(message="turn after the old task ended")
+                refreshed.chat.agent_config,
+                StreamChatInput(
+                    message="next turn in the original session", session_id=old_task.session_id, datasource=selected
+                ),
             )
             assert await asyncio.wait_for(started.get(), timeout=2) == final_task.session_id
             assert set(snapshots[final_task.session_id].datasource_configs) == set(after.datasource_configs)
