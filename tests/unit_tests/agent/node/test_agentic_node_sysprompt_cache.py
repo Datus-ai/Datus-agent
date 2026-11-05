@@ -989,11 +989,13 @@ def test_resolved_api_context_is_authoritative_for_metric_tools(session_manager)
 
 
 @pytest.mark.parametrize(
-    "override,node_version,selected", [(None, "9.9", "9.9"), ("1.0", "9.9", "1.0"), (None, None, "1.2")]
+    "override,node_version,selected",
+    [(None, "9.9", "9.9"), ("1.0", "9.9", "1.0"), (None, None, "1.2"), ("1.0", None, "1.0")],
 )
 def test_digest_and_render_use_the_same_resolved_template_version(
     session_manager, monkeypatch, override, node_version, selected
 ):
+    """Rendering, fingerprint and snapshot honor request > node > agent precedence."""
     from unittest.mock import Mock
 
     from datus.agent.node import agentic_node
