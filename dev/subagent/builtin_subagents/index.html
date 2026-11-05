@@ -8,7 +8,7 @@
       
       
       
-        
+        <link rel="canonical" href="https://docs.datus.ai/dev/subagent/builtin_subagents/">
       
       
         <link rel="prev" href="../introduction/">
@@ -18,9 +18,9 @@
       
       
         
-          
+          <link rel="alternate" href="/dev/" hreflang="en">
         
-          
+          <link rel="alternate" href="/zh/dev/" hreflang="zh">
         
       
       
@@ -57,13 +57,7 @@
 
     
     
-  <!-- datus-docs-seo -->
-<link rel="canonical" href="https://docs.datus.ai/dev/subagent/builtin_subagents/">
-<link rel="alternate" hreflang="en" href="https://docs.datus.ai/dev/subagent/builtin_subagents/">
-<link rel="alternate" hreflang="zh-Hans" href="https://docs.datus.ai/zh/dev/subagent/builtin_subagents/">
-<link rel="alternate" hreflang="x-default" href="https://docs.datus.ai/dev/subagent/builtin_subagents/">
-<!-- /datus-docs-seo -->
-</head>
+  </head>
   
   
     
@@ -5816,7 +5810,7 @@
 <li><strong><a href="#gen_sql">gen_sql</a></strong> — Specialized SQL generation with deep expertise</li>
 <li><strong><a href="../gen_table/">gen_table</a></strong> — Database table creation via CTAS or natural language</li>
 <li><strong><a href="../gen_job/">gen_job</a></strong> — Data pipeline execution (single-database ETL AND cross-database migration with reconciliation)</li>
-<li><strong><a href="#gen_skill">gen_skill</a></strong> — Skill creation and optimization</li>
+<li><strong><a href="#gen_skill">gen_skill</a></strong> — Skill creation, editing, and review</li>
 <li><strong><a href="../gen_visual_report/">gen_visual_report</a></strong> — Self-contained visual report under <code>reports/&lt;slug&gt;/</code></li>
 <li><strong><a href="../gen_visual_dashboard/">gen_visual_dashboard</a></strong> — Parameterized visual dashboard under <code>dashboards/&lt;slug&gt;/</code></li>
 </ol>
@@ -6137,13 +6131,14 @@ subsequent messages. The legacy <code>/&lt;subagent&gt; &lt;message&gt;</code> f
 <hr />
 <h2 id="gen_skill">gen_skill<a class="headerlink" href="#gen_skill" title="Permanent link">&para;</a></h2>
 <h3 id="overview_4">Overview<a class="headerlink" href="#overview_4" title="Permanent link">&para;</a></h3>
-<p>The <code>gen_skill</code> subagent guides users through creating or optimizing Datus skills. It can inspect existing skills, scaffold new skill directories, edit <code>SKILL.md</code>, validate the result, and search prior sessions for usage patterns.</p>
+<p>The <code>gen_skill</code> subagent creates, edits, and reviews Datus skills using its built-in workflow. It can inspect existing skills, organize supporting resources, verify instructions and examples, validate the result, and search prior sessions for usage patterns. Review-only requests produce findings without modifying files; loading an authoring guide is not required.</p>
 <h3 id="key-features_2">Key Features<a class="headerlink" href="#key-features_2" title="Permanent link">&para;</a></h3>
 <ul>
 <li><strong>Interactive skill authoring</strong>: interview-style workflow with <code>ask_user</code></li>
 <li><strong>Scoped filesystem access</strong>: read-only workspace tools plus write access to the configured skills directory</li>
 <li><strong>Skill-aware editing</strong>: load existing skills before revising them</li>
-<li><strong>Validation support</strong>: built-in <code>validate_skill</code> checks before finishing</li>
+<li><strong>Content review and verification</strong>: check complete examples with available parsers or focused tests, investigate semantic claims with small synthetic or read-only checks, and distinguish confirmed issues from unverified risks</li>
+<li><strong>Format validation</strong>: built-in <code>validate_skill</code> checks after authoring; a PASS does not establish content correctness</li>
 </ul>
 <h3 id="configuration_3">Configuration<a class="headerlink" href="#configuration_3" title="Permanent link">&para;</a></h3>
 <div class="language-yaml highlight"><pre><span></span><code><span id="__span-11-1"><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="nt">agent</span><span class="p">:</span>
@@ -6152,6 +6147,7 @@ subsequent messages. The legacy <code>/&lt;subagent&gt; &lt;message&gt;</code> f
 </span><span id="__span-11-4"><a id="__codelineno-11-4" name="__codelineno-11-4" href="#__codelineno-11-4"></a><span class="w">      </span><span class="nt">model</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">claude</span>
 </span><span id="__span-11-5"><a id="__codelineno-11-5" name="__codelineno-11-5" href="#__codelineno-11-5"></a><span class="w">      </span><span class="nt">max_turns</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">30</span>
 </span></code></pre></div>
+<p>The default available skill is <code>create-skill</code>, an optional Datus format and packaging reference. Its body is not automatically injected; the main prompt provides the core workflow and review requirements. Additional format and configuration details are loaded on demand from its supporting files. An explicitly configured <code>optimize-skill</code> entry is ignored with a warning; existing configuration files do not need to change. Other skill patterns are preserved, and the default applies if no patterns remain.</p>
 <h3 id="output-format_2">Output Format<a class="headerlink" href="#output-format_2" title="Permanent link">&para;</a></h3>
 <div class="language-json highlight"><pre><span></span><code><span id="__span-12-1"><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="p">{</span>
 </span><span id="__span-12-2"><a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a><span class="w">  </span><span class="nt">"response"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Created a new validation skill for finance dashboards."</span><span class="p">,</span>
@@ -6245,10 +6241,10 @@ compatibility only. See <a href="../gen_dashboard/">BI Dashboard Node (Legacy)</
 </tr>
 <tr>
 <td><code>gen_skill</code></td>
-<td>Create or optimize skills</td>
-<td>Skill path</td>
+<td>Create, edit, or review skills</td>
+<td>Skill path or review findings</td>
 <td>Skills directory</td>
-<td>Interactive authoring, validation, skill loading</td>
+<td>Authoring, content review, verification, skill loading</td>
 </tr>
 <tr>
 <td><code>gen_visual_report</code></td>
