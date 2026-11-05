@@ -521,7 +521,7 @@ agent:
 
     gen_skill:
       model: anthropic
-      # Default: "create-skill, optimize-skill"
+      # Default: "create-skill" (optional format and packaging reference)
   # Platform documentation (datasource-independent, stored at {home}/data/document/{platform}/)
   # Each key under 'document' is either a reserved global setting (e.g. tavily_api_key)
   #

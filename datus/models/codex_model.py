@@ -1058,6 +1058,7 @@ class CodexModel(LLMBaseModel):
            from the OpenRouter cache that carry a provider prefix
         3. Longest prefix match from providers.yml
         """
+        from datus.cli.provider_model_catalog import model_spec_prefix_matches
         from datus.models.openai_compatible import _load_model_specs
 
         specs = _load_model_specs()
@@ -1077,7 +1078,9 @@ class CodexModel(LLMBaseModel):
         for spec_model, spec in specs.items():
             if not isinstance(spec, dict) or not isinstance(spec.get(field), int):
                 continue
-            if self.model_name.startswith(spec_model) and (best_key is None or len(spec_model) > len(best_key)):
+            if model_spec_prefix_matches(self.model_name, spec_model) and (
+                best_key is None or len(spec_model) > len(best_key)
+            ):
                 best_key = spec_model
         if best_key is None:
             return None

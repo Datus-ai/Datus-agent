@@ -51,9 +51,11 @@ async def test_same_sdk_run_compacts_repeatedly_and_preserves_task(
         else ModelConfig(type="openai", model="gpt-4o", api_key="test", context_length=16384, max_tokens=1024)
     )
     node.model = OpenAIModel(config)
-    # Trigger multiple rewrites with bounded fixtures even when the model uses
-    # the larger fallback window. Capacity defaults themselves stay unchanged.
-    node._compact_cfg.major.token_threshold = 15360 / node.model.context_length() if custom_model else 0.65
+    # Keep the same input headroom while reserving the model's actual output
+    # budget, so bounded fixtures trigger multiple rewrites for custom models.
+    node._compact_cfg.major.token_threshold = (
+        (node.model.max_tokens() + 7168) / node.model.context_length() if custom_model else 0.65
+    )
     node._compact_cfg.minor.enabled = False
     # Only the summary model is stubbed; splitting, archival, session rewrite
     # and all SDK model-input filters execute their production implementations.

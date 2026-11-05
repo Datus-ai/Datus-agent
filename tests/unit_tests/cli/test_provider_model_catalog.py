@@ -8,6 +8,9 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, Callable, Dict, List
 from unittest.mock import MagicMock, patch
@@ -204,6 +207,18 @@ def _ids_only(buckets: Dict[str, List[Dict[str, Any]]]) -> Dict[str, List[str]]:
 
 
 class TestBucketByVendor:
+    @pytest.mark.parametrize("limit", [131072, None, 0, -1, True, "131072"])
+    def test_output_limit_is_preserved_for_native_and_gateway_buckets(self, limit):
+        buckets = pmc._bucket_by_vendor(
+            [{"id": "z-ai/glm-5.3", "top_provider": {"max_completion_tokens": limit}}],
+            allowed_providers={"glm", "openrouter"},
+        )
+        for provider in ("glm", "openrouter"):
+            if limit == 131072:
+                assert buckets[provider][0]["max_tokens"] == 131072
+            else:
+                assert "max_tokens" not in buckets[provider][0]
+
     @pytest.mark.parametrize(
         "model_id,expected_provider,expected_slug",
         [
@@ -959,6 +974,111 @@ class TestResolveProviderModels:
 # ─────────────────────────────────────────────────────────────────────────────
 # Silence contract: never WARN/ERROR/console on any failure path
 # ─────────────────────────────────────────────────────────────────────────────
+
+
+class TestResolveModelDetails:
+    def test_provider_subsets_do_not_poison_shared_metadata(self, fake_datus_home):
+        buckets = {
+            "openai": [{"id": "gpt-new"}],
+            "glm": [{"id": "glm-5.3", "context_length": 1048576}],
+            "openrouter": [{"id": "z-ai/glm-5.3", "context_length": 1048576}],
+        }
+        with patch.object(pmc, "fetch_openrouter_models", return_value=buckets) as fetch:
+            first = pmc.resolve_provider_models({"providers": {"openai": {"models": []}}})
+            second = pmc.resolve_provider_models({"providers": {"glm": {"models": []}}})
+        assert first["providers"]["openai"]["models"] == ["gpt-new"]
+        assert second["providers"]["glm"]["models"] == ["glm-5.3"]
+        assert pmc.resolve_model_details()["openrouter"][0]["id"] == "z-ai/glm-5.3"
+        fetch.assert_called_once()
+
+    def test_empty_home_fetches_once_for_runtime_and_directory(self, fake_datus_home):
+        buckets = {"openai": [{"id": "gpt-new", "context_length": 1048576, "max_tokens": 131072}]}
+        with patch.object(pmc, "fetch_openrouter_models", return_value=buckets) as fetch:
+            assert pmc.resolve_model_details() == buckets
+            assert pmc.resolve_provider_models(_local_catalog())["providers"]["openai"]["models"] == ["gpt-new"]
+            assert pmc.resolve_model_details() == buckets
+        fetch.assert_called_once()
+        assert pmc.load_cached_model_details() == buckets
+
+    def test_fresh_disk_cache_does_not_fetch(self, fake_datus_home):
+        buckets = {"glm": [{"id": "glm-5.3", "context_length": 1048576, "max_tokens": 131072}]}
+        pmc.save_cached_models(buckets)
+        with patch.object(pmc, "fetch_openrouter_models") as fetch:
+            assert pmc.resolve_model_details() == buckets
+        fetch.assert_not_called()
+
+    @pytest.mark.parametrize("broken", [False, True])
+    def test_expired_or_corrupt_cache_is_refreshed(self, fake_datus_home, broken):
+        pmc.save_cached_models({"glm": [{"id": "old"}]})
+        path = pmc._cache_file_path()
+        if broken:
+            path.write_text("invalid json")
+        else:
+            old = time.time() - pmc.FRESH_CACHE_TTL_SEC - 1
+            os.utime(path, (old, old))
+        buckets = {"glm": [{"id": "glm-5.3", "context_length": 1048576, "max_tokens": 131072}]}
+        with patch.object(pmc, "fetch_openrouter_models", return_value=buckets) as fetch:
+            assert pmc.resolve_model_details() == buckets
+        fetch.assert_called_once()
+        assert pmc.load_cached_model_details() == buckets
+
+    def test_failed_fetch_uses_stale_cache_and_retries_after_backoff(self, fake_datus_home, monkeypatch):
+        buckets = {"glm": [{"id": "glm-5.3", "context_length": 1048576}]}
+        pmc.save_cached_models(buckets)
+        old = time.time() - pmc.FRESH_CACHE_TTL_SEC - 1
+        os.utime(pmc._cache_file_path(), (old, old))
+        tick = [100.0]
+        monkeypatch.setattr(pmc.time, "monotonic", lambda: tick[0])
+        with patch.object(pmc, "fetch_openrouter_models", return_value=None) as fetch:
+            assert pmc.resolve_model_details() == buckets
+            assert pmc.resolve_model_details() == buckets
+            assert fetch.call_count == 1
+            tick[0] += pmc.FAILED_FETCH_RETRY_SEC + 1
+            assert pmc.resolve_model_details() == buckets
+            assert fetch.call_count == 2
+
+    def test_fresh_cache_ttl_is_not_extended_in_memory(self, fake_datus_home, monkeypatch):
+        buckets = {"glm": [{"id": "glm-5.3", "context_length": 1048576}]}
+        pmc.save_cached_models(buckets)
+        tick = [100.0]
+        wall = [time.time()]
+        monkeypatch.setattr(pmc.time, "monotonic", lambda: tick[0])
+        monkeypatch.setattr(pmc.time, "time", lambda: wall[0])
+        age = pmc.FRESH_CACHE_TTL_SEC - 5
+        os.utime(pmc._cache_file_path(), (wall[0] - age, wall[0] - age))
+        with patch.object(pmc, "fetch_openrouter_models", return_value=buckets) as fetch:
+            assert pmc.resolve_model_details() == buckets
+            fetch.assert_not_called()
+            tick[0] += 6
+            wall[0] += 6
+            assert pmc.resolve_model_details() == buckets
+            fetch.assert_called_once()
+
+    def test_disk_refresh_invalidates_memory_immediately(self, fake_datus_home):
+        pmc.save_cached_models({"glm": [{"id": "glm-5.3", "context_length": 200000}]})
+        assert pmc.resolve_model_details()["glm"][0]["context_length"] == 200000
+        updated = {"glm": [{"id": "glm-5.3", "context_length": 1048576, "max_tokens": 131072}]}
+        pmc.save_cached_models(updated)
+        assert pmc.resolve_model_details() == updated
+
+    def test_unwritable_disk_still_reuses_fetched_metadata(self, fake_datus_home):
+        buckets = {"glm": [{"id": "glm-5.3", "context_length": 1048576}]}
+        with (
+            patch.object(pmc, "fetch_openrouter_models", return_value=buckets) as fetch,
+            patch.object(pmc, "save_cached_models"),
+        ):
+            assert pmc.resolve_model_details() == buckets
+            assert pmc.resolve_model_details() == buckets
+        fetch.assert_called_once()
+        assert not pmc._cache_file_path().exists()
+
+    def test_concurrent_callers_share_one_fetch(self, fake_datus_home):
+        buckets = {"glm": [{"id": "glm-5.3", "context_length": 1048576}]}
+        with patch.object(pmc, "fetch_openrouter_models", return_value=buckets) as fetch:
+            with ThreadPoolExecutor(max_workers=8) as pool:
+                results = list(pool.map(lambda _: pmc.resolve_model_details(), range(16)))
+        assert all(result == buckets for result in results)
+        fetch.assert_called_once()
 
 
 class TestSilenceContract:

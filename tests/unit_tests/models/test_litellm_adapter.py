@@ -367,6 +367,19 @@ class TestAutoDetectWithBaseUrl:
         assert adapter.provider == "openai"
         assert adapter.litellm_model_name == "openai/Qwen3.5-397B"
 
+    @pytest.mark.parametrize(
+        ("model", "expected"),
+        [
+            ("z-ai/yumcode-pro", "openai/z-ai/yumcode-pro"),
+            ("my-org/private-model", "openai/my-org/private-model"),
+            ("openai/z-ai/yumcode-pro", "openai/z-ai/yumcode-pro"),
+            ("anthropic/claude-sonnet-4", "anthropic/claude-sonnet-4"),
+        ],
+    )
+    def test_custom_endpoint_distinguishes_deployment_aliases_from_provider_prefixes(self, model, expected):
+        adapter = LiteLLMAdapter(provider="openai", model=model, api_key="key", base_url="https://models.example/v1")
+        assert adapter.litellm_model_name == expected
+
     def test_native_openai_no_extra_prefix(self):
         """type: openai + api.openai.com → no openai/ prefix for native models."""
         adapter = LiteLLMAdapter(

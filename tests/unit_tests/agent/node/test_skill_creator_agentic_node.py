@@ -25,6 +25,26 @@ from datus.tools.skill_tools.skill_func_tool import SkillFuncTool
 from tests.unit_tests.mock_llm_model import MockLLMModel, MockToolCall, build_simple_response, build_tool_then_response
 
 
+@pytest.fixture
+def external_skill_bundle(real_agent_config, tmp_path):
+    """A registered plugin bundle outside the project and global skill roots."""
+    from datus.tools.skill_tools.skill_config import SkillConfig
+
+    directory = tmp_path / "plugin" / "skills" / "external-review-skill"
+    reference = directory / "references" / "query-rules.md"
+    reference.parent.mkdir(parents=True)
+    reference.write_text("# Query rules\nAggregate before joining.\n", encoding="utf-8")
+    (directory / "SKILL.md").write_text(
+        "---\nname: external-review-skill\ndescription: Review query rules.\n"
+        "allowed_agents: [chat]\n---\n# Review\nRead references/query-rules.md.\n",
+        encoding="utf-8",
+    )
+    real_agent_config.skills_config = SkillConfig.from_dict(
+        {"directories": [str(directory.parent)]}, agent_config=real_agent_config
+    )
+    return reference
+
+
 class TestSkillCreatorAgenticNodeInit:
     """Tests for SkillCreatorAgenticNode initialization."""
 
@@ -119,10 +139,44 @@ class TestSkillCreatorAgenticNodeInit:
         assert node.skill_func_tool_instance.node_name == "my_skill_editor"
         assert node.skill_func_tool_instance.node_class == "gen_skill"
         assert node.skill_func_tool_instance.authoring_mode is True
+        assert node.skill_func_tool_instance is node.skill_func_tool
+        assert node.skill_func_tool_instance.manager is node.skill_manager
 
 
 class TestSkillCreatorAgenticNodeTools:
     """Tests for SkillCreatorAgenticNode tool setup."""
+
+    @pytest.mark.parametrize("skills", [None, ""])
+    def test_loaded_external_bundle_is_readable_and_read_only(
+        self, real_agent_config, mock_llm_create, external_skill_bundle, skills
+    ):
+        """Authoring loads update the live filesystem policy, including with no default guides."""
+        from datus.agent.node.gen_skill_agentic_node import SkillCreatorAgenticNode
+        from datus.tools.func_tool.fs_path_policy import PathZone
+
+        if skills is not None:
+            real_agent_config.agentic_nodes["gen_skill"] = {"skills": skills}
+        real_agent_config.filesystem_strict = True
+        node = SkillCreatorAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
+        filesystem = node.filesystem_func_tool
+        reference = external_skill_bundle
+        assert filesystem.read_file(str(reference)).success == 0
+
+        loaded = node.skill_func_tool_instance.load_skill("external-review-skill")
+
+        assert loaded.success == 1
+        assert node.skill_func_tool_instance is node.skill_func_tool
+        assert node.skill_func_tool_instance.manager is node.skill_manager
+        assert node.skill_manager.config is real_agent_config.skills_config
+        assert filesystem.read_file(str(reference)).result == reference.read_text()
+        assert filesystem._classify(str(reference)).read_only is True
+        assert filesystem._classify(str(reference.parents[2])).zone == PathZone.EXTERNAL
+        denied = filesystem.write_file(str(reference), "Changed")
+        assert denied.success == 0
+        assert "Read-only" in denied.error
+        assert reference.read_text() == "# Query rules\nAggregate before joining.\n"
+        tool_names = [tool.name for tool in node.tools]
+        assert tool_names.count("load_skill") == 1
 
     def test_has_unified_filesystem_tools(self, real_agent_config, mock_llm_create):
         """Node exposes a single unified filesystem tool — write scope is
@@ -254,6 +308,80 @@ class TestSkillCreatorAgenticNodeTools:
 class TestSkillCreatorSystemPrompt:
     """Tests for SkillCreatorAgenticNode system prompt."""
 
+    @pytest.mark.parametrize("database_available", [False, True])
+    def test_task_guidance_uses_mounted_tools(self, real_agent_config, mock_llm_create, database_available):
+        """Retain task constraints without maintaining a second tool inventory."""
+        from datus.agent.node.gen_skill_agentic_node import SkillCreatorAgenticNode
+
+        node = SkillCreatorAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
+        assert node.db_func_tool is not None
+        node._populate_tool_registry()
+        if not database_available:
+            node.tools = [tool for tool in node.tools if node.tool_registry.get(tool.name) != "db_tools"]
+
+        prompt = node._get_system_prompt()
+
+        assert ("Use the available database tools" in prompt) is database_available
+        assert "## Available Tools" not in prompt
+        assert "`.datus/skills/<skill-name>/`" in prompt
+        assert "## Review and Verify" in prompt
+        assert str(Path(real_agent_config.project_root).resolve()) in prompt
+        assert "web_fetch" in {tool.name for tool in node.tools}
+
+    @pytest.mark.parametrize("skill_patterns", [None, "sql-*"])
+    def test_system_prompt_is_independent_of_format_reference(self, real_agent_config, mock_llm_create, skill_patterns):
+        """Core guidance is available even when the optional reference is not advertised."""
+        from datus.agent.node.gen_skill_agentic_node import SkillCreatorAgenticNode
+        from datus.utils.resource_utils import package_data_path
+
+        if skill_patterns is not None:
+            real_agent_config.agentic_nodes["gen_skill"] = {"skills": skill_patterns}
+        node = SkillCreatorAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
+        source = (Path(package_data_path("resources/skills")) / "create-skill" / "SKILL.md").read_text()
+        body = source.split("---", 2)[2].strip()
+        location = node.skill_manager.registry.get_skill("create-skill").location.resolve()
+
+        prompt = node._get_system_prompt()
+
+        assert body not in prompt
+        assert location not in node.skill_manager.loaded_skill_roots
+        assert "## Review and Verify" in prompt
+        assert "## Skill Format" in prompt
+        assert "name: lowercase-with-hyphens" in prompt
+        assert ('<skill name="create-skill">' in prompt) is (skill_patterns is None)
+
+    def test_format_reference_supporting_files_are_readable_after_load(self, real_agent_config, mock_llm_create):
+        """On-demand format details resolve through the existing shared manager and filesystem."""
+        from datus.agent.node.gen_skill_agentic_node import SkillCreatorAgenticNode
+
+        real_agent_config.filesystem_strict = True
+        node = SkillCreatorAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
+        location = node.skill_manager.registry.get_skill("create-skill").location.resolve()
+
+        loaded = node.skill_func_tool_instance.load_skill("create-skill")
+
+        assert loaded.success == 1
+        assert f"<skill_location>{location}</skill_location>" in loaded.result
+        for filename in ("format.md", "integration.md"):
+            reference = location / "references" / filename
+            assert f"references/{filename}" in loaded.result
+            result = node.filesystem_func_tool.read_file(str(reference))
+            assert result.success == 1
+            assert result.result == reference.read_text()
+
+    @pytest.mark.parametrize("validation_available", [False, True])
+    def test_validation_guidance_uses_mounted_tool(self, real_agent_config, mock_llm_create, validation_available):
+        """A missing validator is not advertised as an executable check."""
+        from datus.agent.node.gen_skill_agentic_node import SkillCreatorAgenticNode
+
+        node = SkillCreatorAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
+        if not validation_available:
+            node.tools = [tool for tool in node.tools if tool.name != "validate_skill"]
+
+        prompt = node._get_system_prompt()
+
+        assert ("Use `validate_skill`" in prompt) is validation_available
+
     def test_system_prompt_renders(self, real_agent_config, mock_llm_create):
         """System prompt template should render without error."""
         from datus.agent.node.gen_skill_agentic_node import SkillCreatorAgenticNode
@@ -270,7 +398,7 @@ class TestSkillCreatorSystemPrompt:
         assert len(prompt) > 100
 
     def test_system_prompt_contains_routing(self, real_agent_config, mock_llm_create):
-        """System prompt should contain routing logic for create vs optimize."""
+        """The main prompt supports creation, editing, and review."""
         from datus.agent.node.gen_skill_agentic_node import SkillCreatorAgenticNode
 
         node = SkillCreatorAgenticNode(
@@ -282,8 +410,9 @@ class TestSkillCreatorSystemPrompt:
         )
         prompt = node._get_system_prompt()
         assert "create-skill" in prompt
-        assert "optimize-skill" in prompt
-        assert "Routing" in prompt
+        assert "**Create or revise**" in prompt
+        assert "**Review**" in prompt
+        assert "Task and Scope" in prompt
 
     def test_system_prompt_contains_critical_rules(self, real_agent_config, mock_llm_create):
         """System prompt should contain critical rules."""
@@ -297,9 +426,9 @@ class TestSkillCreatorSystemPrompt:
             node_name="gen_skill",
         )
         prompt = node._get_system_prompt()
-        assert "Critical Rules" in prompt
+        assert "Task and Scope" in prompt
         assert "validate_skill" in prompt
-        assert "ask_user" in prompt
+        assert "Ask only when missing information blocks" in prompt
 
 
 @pytest.mark.component
@@ -485,6 +614,36 @@ class TestSkillCreatorLifecycleAcceptance:
     """Deterministic create/optimize skill lifecycle coverage with real tools."""
 
     @pytest.mark.asyncio
+    async def test_review_loads_external_skill_references_in_noninteractive_workflow(
+        self, real_agent_config, mock_llm_create, external_skill_bundle
+    ):
+        """The tool and permission hook must see the same roots after load_skill."""
+        from datus.agent.node.gen_skill_agentic_node import SkillCreatorAgenticNode
+
+        mock_llm_create.reset(
+            responses=[
+                build_tool_then_response(
+                    tool_calls=[
+                        MockToolCall("load_skill", {"skill_name": "external-review-skill"}),
+                        MockToolCall("read_file", {"path": str(external_skill_bundle)}),
+                    ],
+                    content="Review complete: aggregate before joining.",
+                )
+            ]
+        )
+        node = SkillCreatorAgenticNode(agent_config=real_agent_config, execution_mode="workflow", is_subagent=True)
+        node.input = SkillCreatorNodeInput(user_message="Review external-review-skill and its query rules.")
+
+        async for _ in node.execute_stream(ActionHistoryManager()):
+            pass
+
+        assert node.result.success is True
+        results = {item["tool"]: item for item in mock_llm_create.tool_results}
+        assert results["load_skill"]["executed"] is True
+        assert results["read_file"]["executed"] is True
+        assert "Aggregate before joining." in str(results["read_file"]["output"])
+
+    @pytest.mark.asyncio
     async def test_create_skill_writes_validates_and_discovers_skill(self, real_agent_config, mock_llm_create):
         from datus.agent.node.gen_skill_agentic_node import SkillCreatorAgenticNode
         from datus.tools.skill_tools import SkillConfig, SkillManager
@@ -589,7 +748,7 @@ Summarize district-level facts and verify enrollment and performance metrics.
             responses=[
                 build_tool_then_response(
                     tool_calls=[
-                        MockToolCall("load_skill", {"skill_name": "optimize-skill"}),
+                        MockToolCall("load_skill", {"skill_name": skill_name}),
                         MockToolCall("read_file", {"path": f".datus/skills/{skill_name}/SKILL.md"}),
                         MockToolCall(
                             "write_file",
@@ -639,6 +798,40 @@ Summarize district-level facts and verify enrollment and performance metrics.
 
 class TestSkillCreatorConfigOverrides:
     """Tests for config-driven behavior overrides."""
+
+    @pytest.mark.parametrize(
+        "node_name,configured_skills,effective_skills",
+        [
+            ("gen_skill", "optimize-skill", "create-skill"),
+            ("gen_skill", "create-skill, optimize-skill", "create-skill"),
+            ("gen_skill", "create-skill, optimize-skill, custom-*", "create-skill, custom-*"),
+            ("my_skill_editor", "optimize-skill", "create-skill"),
+        ],
+    )
+    def test_obsolete_skill_is_ignored_with_warning(
+        self, real_agent_config, mock_llm_create, caplog, node_name, configured_skills, effective_skills
+    ):
+        """Old configuration keeps working without rewriting it or dropping other skill patterns."""
+        import logging
+
+        from datus.agent.node.gen_skill_agentic_node import SkillCreatorAgenticNode
+
+        real_agent_config.agentic_nodes[node_name] = {"node_class": "gen_skill", "skills": configured_skills}
+        with caplog.at_level(logging.WARNING):
+            node = SkillCreatorAgenticNode(
+                agent_config=real_agent_config, node_name=node_name, execution_mode="workflow"
+            )
+            prompt = node._get_system_prompt()
+            node._get_system_prompt()
+
+        assert node.node_config["skills"] == effective_skills
+        assert real_agent_config.agentic_nodes[node_name]["skills"] == configured_skills
+        assert "## Review and Verify" in prompt
+        assert '<skill name="create-skill">' in node._get_available_skills_context()
+        assert node.skill_func_tool_instance.manager is node.skill_manager
+        warnings = [record for record in caplog.records if "Ignoring obsolete skill 'optimize-skill'" in record.message]
+        assert len(warnings) == 1
+        assert node_name in warnings[0].message
 
     def test_max_turns_override_from_config(self, real_agent_config, mock_llm_create):
         """max_turns should be overridden from agentic_nodes config."""
