@@ -988,8 +988,12 @@ def test_resolved_api_context_is_authoritative_for_metric_tools(session_manager)
     }
 
 
-@pytest.mark.parametrize("override", [None, "1.0"])
-def test_digest_and_render_use_the_same_resolved_template_version(session_manager, monkeypatch, override):
+@pytest.mark.parametrize(
+    "override,node_version,expected",
+    [(None, "9.9", "9.9"), ("1.0", "9.9", "1.0"), (None, None, "1.2"), ("1.0", None, "1.0")],
+)
+def test_digest_uses_effective_template_version(session_manager, monkeypatch, override, node_version, expected):
+    """Fingerprint and snapshot metadata honor request > node > agent precedence."""
     from unittest.mock import Mock
 
     from datus.prompts import prompt_manager
@@ -997,11 +1001,10 @@ def test_digest_and_render_use_the_same_resolved_template_version(session_manage
     manager = Mock()
     manager.template_fingerprint.return_value = "selected-template-digest"
     monkeypatch.setattr(prompt_manager, "get_prompt_manager", lambda **kwargs: manager)
-    node = _SnapshotNode(session_manager, _agent_config(), node_config={"prompt_version": "9.9"})
+    node = _SnapshotNode(session_manager, _agent_config(), node_config={"prompt_version": node_version})
     meta = node._system_prompt_snapshot_meta(override)
-    selected = override if override is not None else node.agent_config.prompt_version
-    manager.template_fingerprint.assert_called_once_with(node._system_prompt_template_name(), version=selected)
-    assert meta["prompt_version"] == selected
+    manager.template_fingerprint.assert_called_once_with(node._system_prompt_template_name(), version=expected)
+    assert meta["prompt_version"] == expected
     assert meta["prompt_template_sha256"] == "selected-template-digest"
 
 
