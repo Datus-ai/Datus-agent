@@ -455,16 +455,16 @@ class EngineHandle:
                 stat = os.stat(path)
             except OSError as exc:
                 raise SemanticCoreException(f"cannot read ontology {path!r}: {exc}") from exc
-            signature += [stat.st_mtime_ns, stat.st_size]
+            signature += [stat.st_mtime_ns, stat.st_size, stat.st_dev, stat.st_ino, stat.st_ctime_ns]
         for path in self._config.mapping_references:
             # A referenced file may be missing (deleted, or not written yet);
             # the engine then fails to load, and its appearing rebuilds it.
             try:
                 stat = os.stat(path)
             except OSError:
-                signature += [-1, -1]
+                signature += [-1, -1, -1, -1, -1]
             else:
-                signature += [stat.st_mtime_ns, stat.st_size]
+                signature += [stat.st_mtime_ns, stat.st_size, stat.st_dev, stat.st_ino, stat.st_ctime_ns]
         return tuple(signature) or None
 
     @property
@@ -529,7 +529,15 @@ class EngineHandle:
                 stat = os.stat(model_file)
             except OSError as exc:
                 raise SemanticCoreException(f"cannot read semantic model {model_file!r}: {exc}") from exc
-            return (stat.st_mtime_ns, stat.st_size, stat.st_ino, self._sqlite_signature(), self._ontology_signature())
+            return (
+                stat.st_mtime_ns,
+                stat.st_size,
+                stat.st_dev,
+                stat.st_ino,
+                stat.st_ctime_ns,
+                self._sqlite_signature(),
+                self._ontology_signature(),
+            )
 
         with self._lock:
             for _ in range(3):
@@ -649,24 +657,24 @@ class EngineRegistry:
     def __init__(self, config: DosiConfig):
         self._config = config
         self._lock = threading.Lock()
-        self._signature: tuple[tuple[str, int, int], ...] = ()
+        self._signature: tuple[tuple[str, int, int, int, int, int], ...] = ()
         self._handles: dict[str, EngineHandle] = {}
         self._keys: list[str] = []
         self._unpaired_ontologies: list[str] = []
 
     @staticmethod
-    def _file_signature(path: str) -> Optional[tuple[str, int, int]]:
+    def _file_signature(path: str) -> Optional[tuple[str, int, int, int, int, int]]:
         try:
             stat = Path(path).stat()
         except FileNotFoundError:
             return None
         except OSError as exc:
             raise SemanticCoreException(f"cannot read semantic model {path!r}: {exc}") from exc
-        return path, stat.st_mtime_ns, stat.st_size
+        return path, stat.st_mtime_ns, stat.st_size, stat.st_dev, stat.st_ino, stat.st_ctime_ns
 
     def snapshot(
         self,
-    ) -> tuple[tuple[tuple[str, int, int], ...], tuple[tuple[str, EngineHandle], ...]]:
+    ) -> tuple[tuple[tuple[str, int, int, int, int, int], ...], tuple[tuple[str, EngineHandle], ...]]:
         """Return a stable file signature and matching engine handles."""
         with self._lock:
             ontology_files = resolve_ontology_files(self._config)

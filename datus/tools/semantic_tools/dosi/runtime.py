@@ -90,7 +90,7 @@ class DosiRuntime:
         self.config: DosiConfig = config
         self._registry = EngineRegistry(config)
         self._catalog_lock = threading.Lock()
-        self._catalog_signature: tuple[tuple[str, int, int], ...] = ()
+        self._catalog_signature: tuple[tuple[str, int, int, int, int, int], ...] = ()
         self._catalog_handles: tuple[tuple[str, EngineHandle], ...] = ()
         self._metric_to_path: Dict[str, str] = {}
         self._model_to_path: Dict[str, str] = {}

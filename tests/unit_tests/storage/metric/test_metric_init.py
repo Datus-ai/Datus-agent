@@ -3,6 +3,7 @@
 
 """Tests for metric bootstrap compatibility routing and YAML import."""
 
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -55,7 +56,7 @@ def test_semantic_yaml_metrics_reports_missing_file(tmp_path):
 def test_dosi_yaml_import_reconciles_metric_projection(tmp_path):
     yaml_path = tmp_path / "orders.yml"
     yaml_path.write_text("name: model\ndatasets: []\n", encoding="utf-8")
-    config = MagicMock()
+    config = SimpleNamespace(current_datasource="warehouse")
     tools = MagicMock()
     tools.sync_osi_to_db.return_value = {"success": True, "message": "imported"}
 
@@ -74,7 +75,7 @@ def test_legacy_yaml_import_is_rejected(tmp_path):
     """Legacy metric YAML is rejected before it can be synced."""
     yaml_path = tmp_path / "metrics.yml"
     yaml_path.write_text("metric: []\n", encoding="utf-8")
-    config = MagicMock()
+    config = SimpleNamespace(current_datasource="warehouse")
 
     with patch("datus.tools.func_tool.generation_tools.GenerationTools") as tools_cls:
         success, error = init_semantic_yaml_metrics(str(yaml_path), config)

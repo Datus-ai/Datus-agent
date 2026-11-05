@@ -1,5 +1,6 @@
 """Independent file consumers must load historical models before reading fields."""
 
+import os
 from types import SimpleNamespace
 
 import pytest
@@ -66,13 +67,13 @@ def test_first_entry_loads_and_exposes_the_current_file(project, entry):
         service = DatasourceService.__new__(DatasourceService)
         service.agent_config = config
         result = service.get_semantic_model(relative)
-        assert result.success, result.errorMessage
+        assert result.success is True, result.errorMessage
         assert result.data.yaml == path.read_text()
         assert result.data.revision == artifact_revision(path.read_bytes())
     elif entry in {"read", "grep"}:
         tool = FilesystemFuncTool(root_path=str(root), current_node="semantic_modeling")
         result = tool.read_file(relative) if entry == "read" else tool.grep("^name: shop", "subject")
-        assert result.success, result.error
+        assert result.success == 1, result.error
         assert "name: shop" in str(result.result)
     elif entry == "package":
         from datus.cli.package_builder import StagedEntry
@@ -158,3 +159,17 @@ def test_file_context_uses_target_datasource_without_mutating_request(project):
     assert seen == ["other"]
     assert config.current_datasource == "warehouse"
     assert config.runtime_db_context()["database"] == "active_db"
+
+
+@pytest.mark.asyncio
+async def test_catalog_reloads_atomic_replacement_with_preserved_size_and_mtime(project):
+    _, path, _ = project
+    runtime = DosiRuntime(DosiConfig(semantic_models_path=str(path.parent)))
+    assert [metric.name for metric in await runtime.list_metrics()] == ["revenue"]
+    snapshot = path.stat()
+    replacement = path.with_suffix(".tmp")
+    replacement.write_text(path.read_text().replace("name: revenue", "name: income_"))
+    os.utime(replacement, ns=(snapshot.st_atime_ns, snapshot.st_mtime_ns))
+    replacement.replace(path)
+    assert (path.stat().st_size, path.stat().st_mtime_ns) == (snapshot.st_size, snapshot.st_mtime_ns)
+    assert [metric.name for metric in await runtime.list_metrics()] == ["income_"]
