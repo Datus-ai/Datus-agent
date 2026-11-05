@@ -314,8 +314,8 @@ class TestSkillCreatorSystemPrompt:
         from datus.agent.node.gen_skill_agentic_node import SkillCreatorAgenticNode
 
         node = SkillCreatorAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
-        assert node.db_func_tool is not None
         node._populate_tool_registry()
+        assert node.tool_registry.get("execute_sql") == "db_tools"
         if not database_available:
             node.tools = [tool for tool in node.tools if node.tool_registry.get(tool.name) != "db_tools"]
 

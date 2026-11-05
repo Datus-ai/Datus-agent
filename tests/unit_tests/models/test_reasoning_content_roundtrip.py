@@ -136,8 +136,7 @@ async def test_reasoning_survives_tools_and_session_restore(tmp_path, monkeypatc
                 item["provider_data"][REASONING_ENDPOINT_KEY] == reasoning_endpoint_identity(ENDPOINT)
                 for item in reasoning_items
             )
-            if model_name == "z-ai/yumcode-pro":
-                assert requests[0]["max_tokens"] == 128000
+            assert requests[0]["max_tokens"] == 128000
         finally:
             session.close()
 

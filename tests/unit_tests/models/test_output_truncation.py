@@ -374,7 +374,7 @@ async def test_native_responses_status_through_sdk(streaming, truncated, tmp_pat
 
 
 def test_responses_other_incomplete_reasons_are_not_output_exhaustion():
-    check_responses_output({"status": "incomplete", "incomplete_details": {"reason": "content_filter"}})
+    assert check_responses_output({"status": "incomplete", "incomplete_details": {"reason": "content_filter"}}) is None
 
 
 @pytest.mark.asyncio
