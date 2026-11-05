@@ -14,6 +14,7 @@ from unittest.mock import MagicMock, patch
 
 import httpx
 import pytest
+import yaml
 
 from datus.cli import provider_model_catalog as pmc
 
@@ -97,6 +98,28 @@ def _local_catalog() -> dict:
         },
         "model_overrides": {"kimi-k2.5": {"temperature": 1.0}},
         "model_specs": {"gpt-4.1": {"context_length": 400000, "max_tokens": 128000}},
+    }
+
+
+def test_atlas_provider_catalog_is_packaged() -> None:
+    repo_root = Path(__file__).resolve().parents[3]
+    source_catalog = yaml.safe_load((repo_root / "conf/providers.yml").read_text(encoding="utf-8"))
+    packaged_catalog = yaml.safe_load((repo_root / "datus/conf/providers.yml").read_text(encoding="utf-8"))
+
+    assert source_catalog == packaged_catalog
+    assert source_catalog["providers"]["atlas"] == {
+        "type": "openai",
+        "base_url": "https://api.atlascloud.ai/v1",
+        "api_key_env": "ATLASCLOUD_API_KEY",
+        "default_model": "deepseek-ai/deepseek-v4-flash",
+        "models": [
+            "deepseek-ai/deepseek-v4-flash",
+            "deepseek-ai/deepseek-v4-pro",
+        ],
+    }
+    assert source_catalog["model_specs"]["deepseek-ai/deepseek-v4-flash"] == {
+        "context_length": 1_000_000,
+        "max_tokens": 384_000,
     }
 
 
