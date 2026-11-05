@@ -139,7 +139,9 @@ def test_postgres_unquoted_identifiers_fold_only_ascii_letters():
 
 
 @pytest.mark.parametrize("listing", ["tables", "views"])
-@pytest.mark.parametrize("unrelated", ["archive.sales.orders.history", "unclosed( identifier"])
+@pytest.mark.parametrize(
+    "unrelated", ["public.orders", "analytics.public.orders", "archive.sales.orders.history", "unclosed( identifier"]
+)
 def test_unrelated_raw_metadata_names_do_not_abort_resolution(listing, unrelated):
     connector = SimpleNamespace(
         dialect="postgres",
@@ -154,6 +156,47 @@ def test_unrelated_raw_metadata_names_do_not_abort_resolution(listing, unrelated
     assert resolve(SqlReadContext(connector, "warehouse"), "orders")["object"]["table"] == "orders"
 
 
+@pytest.mark.parametrize("kind", ["table", "view"])
+def test_scoped_metadata_preserves_dots_in_the_stored_object_name(kind):
+    connector = SimpleNamespace(
+        dialect="postgres",
+        execute_query=lambda *_, **__: SimpleNamespace(
+            success=True,
+            sql_return=[{"database_name": "analytics", "schema_name": "public", "search_path": ["public"]}],
+        ),
+        get_tables=lambda **_: ["public.orders"],
+        get_views=lambda **_: ["public.orders"] if kind == "view" else [],
+        get_schema=lambda **_: [{"name": "id", "type": "INTEGER"}],
+    )
+    context = SqlReadContext(connector, "warehouse")
+    with pytest.raises(ValueError, match="could not be resolved"):
+        resolve(context, "orders")
+    if kind == "view":
+        with pytest.raises(ValueError, match="opaque database views"):
+            resolve(context, '"public.orders"')
+    else:
+        assert resolve(context, '"public.orders"')["object"]["table"] == "public.orders"
+
+
+@pytest.mark.parametrize("kind", ["table", "view"])
+def test_hana_qualified_metadata_preserves_quoted_dots_and_quotes(monkeypatch, kind):
+    monkeypatch.setattr("datus.tools.sql_read_context.table_name_field_order", lambda _: ["schema_name", "table_name"])
+    connector = SimpleNamespace(
+        dialect="hana",
+        get_current_context=lambda: {"schema_name": "Sales.X"},
+        get_tables=lambda **_: ['"Sales.X"."Orders.Y""Z"'],
+        get_views=lambda **_: ['"Sales.X"."Orders.Y""Z"'] if kind == "view" else [],
+        get_schema=lambda **_: [{"name": "Id", "type": "INTEGER"}],
+    )
+    context = SqlReadContext(connector, "warehouse")
+    reference = '"Orders.Y""Z"'
+    if kind == "view":
+        with pytest.raises(ValueError, match="opaque database views"):
+            resolve(context, reference)
+    else:
+        assert resolve(context, reference)["object"]["table"] == 'Orders.Y"Z'
+
+
 @pytest.mark.parametrize("dialect", ["postgres", "oracle", "hana", "snowflake"])
 @pytest.mark.parametrize("stored", ["Orders", "Orders.X"])
 def test_metadata_listings_preserve_stored_identifier_case(monkeypatch, dialect, stored):
@@ -165,7 +208,7 @@ def test_metadata_listings_preserve_stored_identifier_case(monkeypatch, dialect,
             success=True,
             sql_return=[{"database_name": "analytics", "schema_name": "sales", "search_path": ["sales"]}],
         ),
-        get_tables=lambda **_: [stored],
+        get_tables=lambda **_: [f'"sales"."{stored}"' if dialect == "hana" else stored],
         get_views=lambda **_: [],
         get_schema=lambda **_: [{"name": "Id", "type": "INTEGER"}],
     )
@@ -203,7 +246,7 @@ def test_schema_only_objects_ignore_connection_database_and_fold_unquoted_names(
         dialect=dialect,
         config=SimpleNamespace(service_name="FREEPDB1", database="HXE"),
         get_current_context=lambda: {"database_name": "connection_target", "schema_name": "SALES"},
-        get_tables=lambda **_: ["ORDERS"],
+        get_tables=lambda **_: ['"SALES"."ORDERS"' if dialect == "hana" else "ORDERS"],
         get_views=lambda **_: [],
         get_schema=lambda **_: [{"name": "PHONE", "type": "NVARCHAR(255)"}],
     )
@@ -349,6 +392,25 @@ def test_views_fail_closed(db):
         resolve(SqlReadContext(Connector(db), "warehouse"), "hidden")
 
 
+@pytest.mark.parametrize("identifier", ["orders_table_name", "table_name", "o'table_name"])
+def test_duckdb_view_name_literals_cannot_fall_through_to_a_different_table(db, identifier):
+    quoted = '"' + identifier.replace('"', '""') + '"'
+    db.execute(f"CREATE TABLE main.{quoted}(id INTEGER)")
+    db.execute(f"INSERT INTO main.{quoted} VALUES (99)")
+    db.execute("CREATE SCHEMA sales; SET search_path='sales,main'")
+    db.execute(f"CREATE VIEW sales.{quoted} AS SELECT 42 AS id")
+    assert db.execute(f"SELECT * FROM {quoted}").fetchall() == [(42,)]
+    with pytest.raises(ValueError, match="opaque database views"):
+        resolve(SqlReadContext(Connector(db), "warehouse"), quoted)
+
+
+def test_duckdb_view_namespace_literals_are_preserved(db):
+    db.execute("ATTACH ':memory:' AS catalog_table_name; CREATE SCHEMA catalog_table_name.schema_table_name")
+    db.execute("CREATE VIEW catalog_table_name.schema_table_name.hidden AS SELECT 42 AS id")
+    with pytest.raises(ValueError, match="opaque database views"):
+        resolve(SqlReadContext(Connector(db), "warehouse"), "catalog_table_name.schema_table_name.hidden")
+
+
 def test_view_classification_wins_when_adapter_also_lists_it_as_a_table(monkeypatch):
     monkeypatch.setattr(
         "datus.tools.sql_read_context.table_name_field_order", lambda _: ["database_name", "table_name"]
@@ -374,7 +436,7 @@ def test_mysql_table_case_matching_uses_the_live_server_setting(monkeypatch, dia
         dialect=dialect,
         get_current_context=lambda: {"database_name": "analytics"},
         execute_query=lambda *_, **__: SimpleNamespace(success=True, sql_return=[{"lower_case_table_names": mode}]),
-        get_tables=lambda **_: ["analytics.orders"],
+        get_tables=lambda **_: ["orders"],
         get_views=lambda **_: [],
         get_schema=lambda **_: [{"name": "Phone", "type": "VARCHAR(30)"}],
     )
@@ -440,7 +502,7 @@ def test_clickhouse_text_metadata_unwraps_nullable_and_dictionary_types(monkeypa
     connector = SimpleNamespace(
         dialect="clickhouse",
         get_current_context=lambda: {"database_name": "sales"},
-        get_tables=lambda **_: ["sales.orders"],
+        get_tables=lambda **_: ["orders"],
         get_views=lambda **_: [],
         get_schema=lambda **_: [{"name": "phone", "type": native_type}],
     )

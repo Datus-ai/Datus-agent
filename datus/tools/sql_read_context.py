@@ -319,17 +319,22 @@ class SqlReadContext:
             columns = [column for column in columns if column.get("hidden", 0) != 1]
             physical = True
         elif self.dialect == "duckdb":
-            conditions = " AND ".join(
-                f"lower({field}_name)=lower({_literal(value)})"
-                for field, value in {
-                    "database": namespace["database"],
-                    "schema": namespace["schema"],
-                    "table": name,
-                }.items()
-            )
+
+            def conditions(object_field: str) -> str:
+                return " AND ".join(
+                    f"lower({field}_name)=lower({_literal(value)})"
+                    for field, value in {
+                        "database": namespace["database"],
+                        "schema": namespace["schema"],
+                        object_field: name,
+                    }.items()
+                )
+
             tables = self._query(
-                f"SELECT database_name,schema_name,table_name,true AS physical FROM duckdb_tables() WHERE {conditions} UNION ALL SELECT database_name,schema_name,view_name AS table_name,false AS physical FROM duckdb_views() WHERE "
-                + conditions.replace("table_name", "view_name")
+                "SELECT database_name,schema_name,table_name,true AS physical FROM duckdb_tables() WHERE "
+                + conditions("table")
+                + " UNION ALL SELECT database_name,schema_name,view_name AS table_name,false AS physical "
+                "FROM duckdb_views() WHERE " + conditions("view")
             )
             tables = [
                 row
@@ -373,15 +378,16 @@ class SqlReadContext:
             tables = self.connector.get_tables(**kwargs)
             views = self.connector.get_views(**kwargs)
 
-            # Getters are scoped to this exact namespace; their short display
-            # names are used only to confirm kind, never to construct policy IDs.
+            # Fully scoped getters return raw stored names, including literal
+            # dots. HANA explicitly returns quoted schema.table identifiers.
+            # Do not infer qualification from punctuation in other listings.
             def matches_name(reference):
-                if self.canonical_name(str(reference)) == self.canonical_name(name):
-                    return True
-                # Listings contain stored identifiers, not unquoted SQL input.
-                # A different raw stored name need not be valid qualified SQL.
+                if self.dialect != "hana":
+                    return self.canonical_name(str(reference)) == self.canonical_name(name)
                 try:
-                    stored = [{**part, "quoted": True} for part in parser(str(reference))]
+                    stored = parser(str(reference))
+                    if len(stored) != 2 or not all(part.get("quoted") for part in stored):
+                        raise ValueError("HANA metadata must contain quoted schema.table identifiers")
                     parts = self._parts(stored)
                 except Exception:
                     return False
