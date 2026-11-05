@@ -15,9 +15,10 @@ agent:
 Node skill patterns control which discovered skills appear in that node's available-skills list:
 
 ```yaml
-agentic_nodes:
-  my_agent:
-    skills: "sql-*"
+agent:
+  agentic_nodes:
+    my_agent:
+      skills: "sql-*"
 ```
 
 Load a discovered skill with `load_skill("<skill-name>")` or inspect the list with `.skill list`. Resolve its supporting files relative to the location returned by the load operation.
