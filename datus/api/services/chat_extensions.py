@@ -14,6 +14,8 @@ if TYPE_CHECKING:
 
 
 class ChatNodeFactory(Protocol):
+    """Construct a host node for an already resolved session identity."""
+
     def __call__(
         self,
         *,
@@ -22,10 +24,11 @@ class ChatNodeFactory(Protocol):
         node_id: str,
         user_id: str | None,
         interactive: bool,
-        session_id: str | None,
+        session_id: str,
     ) -> AgenticNode | None:
         """Return a host node, or None to use the standard Agent factory.
 
+        Missing session IDs are resolved to node_id before this call.
         Called on a worker thread with a per-turn configuration clone. Raising
         fails this turn; failures must never fall back to a less restricted node.
         """
@@ -33,6 +36,8 @@ class ChatNodeFactory(Protocol):
 
 
 class ChatTaskManagerFactory(Protocol):
+    """Construct a project manager from trusted startup defaults."""
+
     def __call__(
         self,
         *,

@@ -9,6 +9,8 @@ These are trusted Python extension points, not fields accepted from chat clients
 `DatusService(..., task_manager_factory=...)` calls a `ChatTaskManagerFactory`
 with `default_source`, `default_interactive` and `stream_thinking`. It must return
 a fresh manager for that project. The lazy ChatService receives that same manager.
+Config refreshes reuse the existing manager, including its host extensions. An
+explicit `task_manager` takes precedence over the factory.
 Never assign a manager to a service after publication or copy a running manager.
 
 For API hosts, pass the factory to `init_deps`. Background jobs should use
@@ -18,6 +20,8 @@ Calling `init_deps` without a factory restores ordinary Agent construction.
 
 A manager can accept `node_factory: ChatNodeFactory`. It runs on a worker thread
 with a per-turn configuration clone, user scope, session ID and execution mode.
+An omitted session ID resolves to the node ID before host or built-in dispatch;
+explicit session IDs remain unchanged.
 Return a node for the host's sessions, or `None` for standard node dispatch.
 An exception fails the turn; it never falls back to an unrestricted node.
 Override the public `start_chat` only when the host must constrain continuation
@@ -52,11 +56,10 @@ dispatched after a restart, but an interrupted model run must not be silently
 replayed. This interface does not promise exactly-once external model side effects.
 The host is responsible for retaining the session directory for the receipt's life.
 
-For the opening execution, install `AcceptedOpeningSession` on the host node and
-pass `accepted_opening=True` to `start_chat`. The session avoids feeding/storing
-the already accepted input twice, including SDK history rewrites. The manager
-suppresses the duplicate opening SSE event only; normal history already contains
-it. Use ordinary sessions and the default flag on subsequent turns.
+For the opening execution, install `AcceptedOpeningSession` on the host node.
+The session avoids feeding/storing the already accepted input twice, including
+SDK history rewrites. SSE delivery stays unchanged: user messages and residual
+mid-run inserts reach the client. Use ordinary sessions on subsequent turns.
 
 ## Execute metrics under policy
 

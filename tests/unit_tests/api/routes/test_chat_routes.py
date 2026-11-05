@@ -962,7 +962,6 @@ class TestSemanticPlanReviewDecisions:
             events=[],
             condition=asyncio.Condition(),
             tool_result_contents={},
-            accepted_opening_event=False,
         )
         svc = _mock_svc(task)
         svc.task_manager.stop_task = AsyncMock(return_value=True)

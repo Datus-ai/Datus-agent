@@ -20,6 +20,7 @@ MODEL = 'version: 0.2.0.dev0\nsemantic_model:\n  - name: sales\n    datasets:\n 
 
 @pytest.fixture
 def execution(tmp_path, monkeypatch):
+    """Create a real local Dosi model and DuckDB containing two independent regions."""
     database = tmp_path / "local.duckdb"
     with duckdb.connect(str(database)) as conn:
         conn.execute("CREATE TABLE orders(day DATE, region VARCHAR, amount DOUBLE)")
@@ -46,6 +47,7 @@ def execution(tmp_path, monkeypatch):
 
 
 def attribution():
+    """Build an attribution request comparing adjacent daily periods."""
     return AttributionRequest(
         metric="revenue",
         dimensions=["orders.region"],
@@ -56,24 +58,29 @@ def attribution():
 
 
 def install_policy(monkeypatch, *, kind="metric", deny=None):
+    """Install observable policy hooks for scoped execution and independent denial tests."""
     calls = []
 
     class Policy:
         runtime_names = ()
 
         def __init__(self, config):
+            """Accept the production policy constructor contract without external plugins."""
             pass
 
         def validate_context(self, context):
+            """Record validation and optionally reject the supplied execution context."""
             calls.append(("validate", context))
             return SimpleNamespace(allowed=deny != "context")
 
         def before_metric_read(self, **kwargs):
+            """Apply a region metric filter or reject the metric read."""
             calls.append(("metric", kwargs))
             where = f"orders.region = '{kwargs['policy_context']['region']}'" if kind == "metric" else kwargs["where"]
             return SimpleNamespace(allowed=deny != "metric", where=where)
 
         def before_sql_read(self, sql, **kwargs):
+            """Rewrite each orders source with the SQL row policy or reject it."""
             from sqlglot import exp, parse_one
 
             calls.append(("sql", kwargs))
@@ -90,6 +97,7 @@ def install_policy(monkeypatch, *, kind="metric", deny=None):
             return SimpleNamespace(allowed=deny != "sql", sql=sql, applied_policies=[], reason="denied")
 
         def after_read_result(self, result, **kwargs):
+            """Record the result-policy boundary and optionally reject its rows."""
             calls.append(("result", kwargs))
             return SimpleNamespace(allowed=deny != "result", result=result, applied_policies=[], reason="denied")
 
@@ -101,6 +109,7 @@ def install_policy(monkeypatch, *, kind="metric", deny=None):
 @pytest.mark.asyncio
 @pytest.mark.parametrize("kind", ["metric", "sql"])
 async def test_query_and_attribution_share_scope_and_do_not_mutate_shared_model(execution, monkeypatch, kind):
+    """Real query and attribution results obey each region scope without model mutation."""
     _, executor, model = execution
     calls = install_policy(monkeypatch, kind=kind)
     original = model.read_bytes()
@@ -125,6 +134,7 @@ async def test_query_and_attribution_share_scope_and_do_not_mutate_shared_model(
 @pytest.mark.asyncio
 @pytest.mark.parametrize("denied", ["context", "metric", "sql", "result"])
 async def test_query_denial_never_returns_rows(execution, monkeypatch, denied):
+    """Every query policy stage can independently prevent result disclosure."""
     _, executor, _ = execution
     install_policy(monkeypatch, deny=denied)
     with pytest.raises(DatusException):
@@ -134,6 +144,7 @@ async def test_query_denial_never_returns_rows(execution, monkeypatch, denied):
 @pytest.mark.asyncio
 @pytest.mark.parametrize("denied", ["context", "metric", "sql"])
 async def test_attribution_denial_never_returns_evidence(execution, monkeypatch, denied):
+    """Each supported attribution policy stage fails closed when denied."""
     _, executor, _ = execution
     install_policy(monkeypatch, deny=denied)
     with pytest.raises(DatusException):
@@ -145,12 +156,14 @@ async def test_attribution_denial_never_returns_evidence(execution, monkeypatch,
     [(("unknown",), []), (("sql-policy",), [{"type": "column_mask"}]), (("sql-policy",), [{"type": "result_filter"}])],
 )
 def test_attribution_rejects_unrepresentable_policy(names, policies):
+    """Unknown plugins and non-row policies disable native attribution."""
     config = SimpleNamespace(get_plugin_profile=lambda _: {"policies": policies})
     with pytest.raises(DatusException, match="analysis_runtime_unavailable"):
         PolicyMetricExecutor.validate_attribution_support(config, SimpleNamespace(runtime_names=names))
 
 
 def test_attribution_accepts_only_known_row_policy_forms():
+    """Known SQL and metric row policies remain eligible for native attribution."""
     config = SimpleNamespace(
         get_plugin_profile=lambda _: {"policies": [{"type": "row_filter"}, {"type": "metric_row_filter"}]}
     )
@@ -163,6 +176,7 @@ def test_attribution_accepts_only_known_row_policy_forms():
 
 @pytest.mark.asyncio
 async def test_dry_run_and_missing_dataset_are_denied_before_execution(execution, monkeypatch):
+    """Dry-run SQL exposure and unresolved metric scope fail before query execution."""
     _, executor, _ = execution
     install_policy(monkeypatch)
     query = AsyncMock()

@@ -23,11 +23,15 @@ from datus.utils.exceptions import DatusException, ErrorCode
 
 
 def _invalid(message: str) -> DatusException:
+    """Build the storage error used for invalid or conflicting host requests."""
     return DatusException(ErrorCode.STORAGE_INVALID_ARGUMENT, message=message)
 
 
 class AcceptedTurnStore:
+    """Persist host acceptance metadata alongside ordinary chat history."""
+
     def __init__(self, directory: str, session_id: str, *, namespace: str):
+        """Validate the session identity and namespace without creating history."""
         if not re.fullmatch(r"[A-Za-z0-9_-]+", session_id) or not namespace or namespace == SESSION_TITLE_KEY:
             raise _invalid("Invalid accepted turn identity")
         self.session_id = session_id
@@ -37,6 +41,7 @@ class AcceptedTurnStore:
             raise _invalid("Invalid session path")
 
     def read(self) -> dict[str, Any] | None:
+        """Return the persisted receipt, or None when acceptance has not occurred."""
         if not self.path.is_file():
             return None
         with sqlite3.connect(f"file:{self.path}?mode=ro", uri=True, timeout=10) as conn:
@@ -128,6 +133,7 @@ class AcceptedTurnStore:
                 session.close()
 
     def update(self, status: str, safe_error: str | None = None) -> dict[str, Any]:
+        """Atomically update an existing receipt status and safe error code."""
         with sqlite3.connect(self.path, timeout=10) as conn:
             conn.execute("BEGIN IMMEDIATE")
             row = conn.execute(
@@ -147,6 +153,7 @@ class AcceptedTurnStore:
     def execution_lock(self) -> Iterator[bool]:
         # POSIX hosts use flock on a separate inode: locking the database itself
         # would conflict with SQLite locks on macOS. Unsupported hosts fail closed.
+        """Yield whether a nonblocking POSIX execution fence was acquired; always release it."""
         import fcntl
 
         # SQLite uses OS locks on the database inode (including flock on macOS).
@@ -173,22 +180,26 @@ class AcceptedOpeningSession(DatusSQLiteSession):
     """
 
     def __init__(self, *args: Any, opening: str, **kwargs: Any):
+        """Open SDK history with a separate guard for the already persisted input."""
         super().__init__(*args, **kwargs)
         self.opening = opening
         self.opening_pending = True
 
     def is_opening(self, item: dict[str, Any]) -> bool:
+        """Match the accepted user input across string and SDK content representations."""
         from datus.utils.message_utils import extract_user_input
 
         return item.get("role") == "user" and extract_user_input(item.get("content")) == self.opening
 
     async def get_items(self, limit: int | None = None) -> list[dict[str, Any]]:
+        """Hide the accepted opening from first-turn model history to avoid duplicate input."""
         items = await super().get_items(limit)
         if self.opening_pending:
             return [item for item in items if not self.is_opening(item)]
         return items
 
     async def add_items(self, items: list[dict[str, Any]]) -> None:
+        """Skip the accepted input when the SDK persists the opening execution."""
         if self.opening_pending:
             for index, item in enumerate(items):
                 if self.is_opening(item):
@@ -197,5 +208,6 @@ class AcceptedOpeningSession(DatusSQLiteSession):
         await super().add_items(items)
 
     async def replace_items(self, items: list[dict[str, Any]], **kwargs: Any) -> None:
+        """Preserve exactly one accepted opening when the SDK rewrites history."""
         opening = {"role": "user", "content": self.opening}
         await super().replace_items([opening, *[item for item in items if not self.is_opening(item)]], **kwargs)

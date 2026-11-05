@@ -27,6 +27,7 @@ real :class:`SessionManager` over ``tmp_path`` — no LLM, no network.
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import re
 from collections import OrderedDict
@@ -123,6 +124,11 @@ def session_manager(tmp_path):
     manager.close_all_sessions()
 
 
+class _CatalogSnapshotNode(_SnapshotNode):
+    def _get_system_prompt(self, prompt_version=None, template_context=None):
+        return self._inject_datasource_runtime_context(super()._get_system_prompt(prompt_version, template_context))
+
+
 class TestGetSessionSystemPrompt:
     def test_first_turn_builds_and_persists(self, session_manager):
         node = _SnapshotNode(session_manager, _agent_config())
@@ -189,6 +195,55 @@ class TestGetSessionSystemPrompt:
         node.agent_config = _agent_config(current_datasource="dev")
         node._get_session_system_prompt(prompt_version="1.2")
         assert node.build_count == 2
+
+    @pytest.mark.parametrize("change", ["add", "remove", "rename", "dialect"])
+    def test_catalog_change_rebuilds_prompt_in_the_existing_session(self, session_manager, change):
+        before = SimpleNamespace(
+            datasources={"main": SimpleNamespace(type="mysql"), "secondary": SimpleNamespace(type="duckdb")}
+        )
+        first = _CatalogSnapshotNode(
+            session_manager, _agent_config(current_datasource="main", services=before), db_func_tool=object()
+        )
+        original_prompt = first._get_session_system_prompt(prompt_version="1.2")
+        assert "secondary (duckdb)" in original_prompt
+
+        after = copy.deepcopy(before)
+        if change == "add":
+            after.datasources["warehouse"] = SimpleNamespace(type="starrocks")
+        elif change == "remove":
+            after.datasources.pop("secondary")
+        elif change == "rename":
+            after.datasources["renamed"] = after.datasources.pop("secondary")
+        else:
+            after.datasources["secondary"].type = "starrocks"
+        next_turn = _CatalogSnapshotNode(
+            session_manager, _agent_config(current_datasource="main", services=after), db_func_tool=object()
+        )
+        updated_prompt = next_turn._get_session_system_prompt(prompt_version="1.2")
+
+        assert next_turn.build_count == 1
+        assert updated_prompt != original_prompt
+        for name, config in after.datasources.items():
+            assert f"{name} ({config.type})" in updated_prompt
+        assert next_turn._get_session_system_prompt(prompt_version="1.2") == updated_prompt
+        assert next_turn.build_count == 1
+        assert first.agent_config.services.datasources["secondary"].type == "duckdb"
+
+    def test_catalog_reordering_preserves_the_prompt_snapshot(self, session_manager):
+        services = SimpleNamespace(
+            datasources={"main": SimpleNamespace(type="mysql"), "secondary": SimpleNamespace(type="duckdb")}
+        )
+        first = _CatalogSnapshotNode(
+            session_manager, _agent_config(current_datasource="main", services=services), db_func_tool=object()
+        )
+        original_prompt = first._get_session_system_prompt(prompt_version="1.2")
+        reordered = SimpleNamespace(datasources=dict(reversed(list(services.datasources.items()))))
+        next_turn = _CatalogSnapshotNode(
+            session_manager, _agent_config(current_datasource="main", services=reordered), db_func_tool=object()
+        )
+
+        assert next_turn._get_session_system_prompt(prompt_version="1.2") == original_prompt
+        assert next_turn.build_count == 0
 
     def test_cache_hit_mounts_lazy_tools(self, session_manager):
         """A replayed prompt advertises skill/bash/memory tools — the hit path

@@ -28,6 +28,7 @@ from datus.utils.exceptions import DatusException, ErrorCode
 
 
 def _denied(reason: str) -> DatusException:
+    """Build a policy-denial error without returning query results."""
     return DatusException(ErrorCode.POLICY_DENIED, message=reason)
 
 
@@ -39,6 +40,7 @@ class PolicyMetricExecutor:
     """
 
     def __init__(self, config: AgentConfig, runtime: DosiRuntime):
+        """Bind the trusted planning config and runtime; supply policy context per call."""
         self.config = config
         self.runtime = runtime
 
@@ -54,6 +56,7 @@ class PolicyMetricExecutor:
                 raise _denied("analysis_runtime_unavailable")
 
     async def _scope(self, metric: str, where: str | None, context: dict[str, Any]) -> tuple[str | None, PolicyRuntime]:
+        """Validate current context and resolve the policy-constrained metric filter."""
         policy = PolicyRuntime(self.config)
         if not policy.validate_context(context).allowed:
             raise _denied("Current context does not allow metric reads")
@@ -78,6 +81,7 @@ class PolicyMetricExecutor:
         return QueryResult(columns=list(rows[0]) if rows else [], data=rows, metadata={"row_count": len(rows)})
 
     def _query_read(self, sql: str, context: dict[str, Any]) -> list[dict[str, Any]]:
+        """Read compiled SQL through the standard SQL and result-policy pipeline."""
         tool = DBFuncTool(agent_config=self.config, read_only=True)
         datasource = self.config.current_datasource
         connector = tool._get_connector(datasource, database=self.config.default_database_name(datasource) or "")
@@ -102,6 +106,7 @@ class PolicyMetricExecutor:
         # SQL callback. Apply row policies to every dataset source in a private,
         # in-memory model before native compilation. Never alter the shared model.
         # Result/column policies and unknown plugins cannot be represented this way.
+        """Apply row policies to a private model before every native attribution query."""
         if handle.has_ontology:
             raise _denied("MAPPING_UNSUPPORTED")
         document = yaml.safe_load(Path(handle._config.semantic_model_path).read_text())

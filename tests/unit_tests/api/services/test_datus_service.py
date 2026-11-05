@@ -371,6 +371,7 @@ class TestSubAgentScopedServices:
 
 
 def test_host_manager_factory_owns_chat_from_construction(real_agent_config):
+    """Lazy chat and config refreshes retain the manager created by the host."""
     from unittest.mock import Mock
 
     manager = ChatTaskManager()

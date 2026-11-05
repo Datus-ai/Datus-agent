@@ -95,6 +95,7 @@ async def get_datus_service(request: Request) -> DatusService:
 
     async def _factory() -> DatusService:
         # Load config on-demand if not provided by auth provider
+        """Load request configuration and construct the service with host extensions."""
         agent_config = ctx.config
         if agent_config is None:
             try:
@@ -105,7 +106,9 @@ async def get_datus_service(request: Request) -> DatusService:
 
         return create_datus_service(agent_config, cache_key)
 
-    return await _service_cache.get_or_create(cache_key, _factory, expected_fingerprint=expected_fp)
+    return await _service_cache.get_or_create(
+        cache_key, _factory, expected_fingerprint=expected_fp, agent_config=ctx.config
+    )
 
 
 def get_app_context(request: Request) -> AppContext:

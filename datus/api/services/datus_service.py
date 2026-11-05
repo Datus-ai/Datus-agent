@@ -18,6 +18,7 @@ if TYPE_CHECKING:
     # the accessors below import them lazily inside the function body to keep
     # that cycle from forming at runtime.
     from datus.api.services.chat_extensions import ChatTaskManagerFactory
+    from datus.api.services.chat_task_manager import ChatTaskManager
     from datus.api.services.explorer_service import ExplorerService
     from datus.api.services.tool_service import ToolService
 
@@ -62,20 +63,27 @@ class DatusService:
         default_source: "str | None" = None,
         default_interactive: bool = True,
         stream_thinking: bool = False,
+        task_manager: Optional["ChatTaskManager"] = None,
         *,
         task_manager_factory: Optional["ChatTaskManagerFactory"] = None,
     ):
+        """Reuse an explicit manager, or construct one with the host factory and defaults."""
         self._agent_config = agent_config
         self._project_id = project_id
         self._config_fingerprint = self.compute_fingerprint(agent_config)
 
-        # ChatTaskManager — project-scoped (not process-level singleton)
+        # Config generations of the same project share their task registry so
+        # resume/stop/interaction requests can still reach earlier turns.
         from datus.api.services.chat_task_manager import ChatTaskManager
 
-        self._task_manager = (task_manager_factory or ChatTaskManager)(
-            default_source=default_source,
-            default_interactive=default_interactive,
-            stream_thinking=stream_thinking,
+        self._task_manager = (
+            task_manager
+            if task_manager is not None
+            else (task_manager_factory or ChatTaskManager)(
+                default_source=default_source,
+                default_interactive=default_interactive,
+                stream_thinking=stream_thinking,
+            )
         )
 
         # Lazy service slots
@@ -141,6 +149,20 @@ class DatusService:
     def has_active_tasks(self) -> bool:
         """Return True if any chat task is still running."""
         return self._task_manager.has_active_tasks()
+
+    def with_config(self, agent_config: AgentConfig) -> "DatusService":
+        """Build a fresh config facade without replacing the project's tasks.
+
+        Existing requests keep this facade, and running turns keep the config
+        snapshot taken by ChatTaskManager.start_chat. New requests get fresh
+        lazy sub-services, while every generation uses the same task registry.
+        Only the cached generation owns shutdown of that shared manager.
+        """
+        return DatusService(
+            agent_config=agent_config,
+            project_id=self._project_id,
+            task_manager=self._task_manager,
+        )
 
     # ------------------------------------------------------------------
     # Lazy service properties

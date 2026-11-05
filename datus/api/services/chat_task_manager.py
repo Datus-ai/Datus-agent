@@ -407,7 +407,6 @@ class ChatTask:
         self.turn_id: Optional[str] = None
         # Guards on_turn_end to exactly once per turn (see _settle_turn).
         self.settled: bool = False
-        self.accepted_opening_event: bool = False
         # ``SSEEndData`` of a completed turn; the usage the host is billed for.
         self.end_usage: Optional[Dict[str, Any]] = None
 
@@ -481,6 +480,7 @@ class ChatTaskManager:
         *,
         node_factory: Optional[ChatNodeFactory] = None,
     ) -> None:
+        """Create a project task registry with optional trusted node dispatch."""
         self._node_factory = node_factory
         self._tasks: Dict[str, ChatTask] = {}
         self._completed_tasks: Dict[str, ChatTask] = {}
@@ -501,13 +501,8 @@ class ChatTaskManager:
         policy_context: Optional[Dict[str, Any]] = None,
         stats_context: Optional[Dict[str, Any]] = None,
         on_turn_end: Optional["TurnEndCallback"] = None,
-        *,
-        accepted_opening: bool = False,
     ) -> ChatTask:
         """Create a background task for the agentic loop.
-            :param accepted_opening: host already committed the opening in history;
-                suppress its duplicate SSE event. The host node must also use an
-                AcceptedOpeningSession for this first turn only.
             :param sub_agent_id: builtin name or custom sub-agent DB ID
             :param stats_context: host data returned with the turn's call statistics
             :param on_turn_end: called once the turn is over, however it ended,
@@ -640,7 +635,6 @@ class ChatTaskManager:
             if request.messages is not None
             else [{"type": "markdown", "payload": {"content": request.message}}],
         )
-        task.accepted_opening_event = accepted_opening
         task.stats_context = dict(stats_context or {})
         task.on_turn_end = on_turn_end
         task.turn_id = uuid.uuid4().hex
@@ -1516,9 +1510,6 @@ class ChatTaskManager:
 
     async def _push_event(self, task: ChatTask, event: SSEEvent) -> None:
         """Append an event to the task buffer and notify consumers."""
-        if task.accepted_opening_event and isinstance(event.data, SSEMessageData) and event.data.payload.role == "user":
-            task.accepted_opening_event = False
-            return
         if isinstance(event.data, SSEMessageData):
             for part in event.data.payload.content:
                 call_id = part.payload.get("callToolId")
@@ -1578,6 +1569,7 @@ class ChatTaskManager:
         feedback flow passes a pre-copied id so the new node opens the cloned
         session file directly instead of mutating ``node.session_id`` later.
         """
+        session_id = session_id if session_id is not None else node_id
         if self._node_factory is not None:
             node = self._node_factory(
                 agent_config=agent_config,
@@ -1612,7 +1604,7 @@ class ChatTaskManager:
             scope=user_id,
             execution_mode=execution_mode,
             node_id=node_id,
-            session_id=session_id if session_id is not None else node_id,
+            session_id=session_id,
         )
 
     # ------------------------------------------------------------------
