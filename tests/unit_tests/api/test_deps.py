@@ -328,7 +328,7 @@ class TestProjectConfigRefresh:
                 UserInteractionInput(session_id=old_task.session_id, interaction_key="question", input=[["yes"]]),
                 refreshed,
             )
-            assert interaction.success
+            assert interaction.success is True
             old_task.node.interaction_broker.submit.assert_awaited_once_with("question", [["yes"]])
 
             selected = "warehouse" if change == "add" else "renamed_warehouse" if change == "rename" else original_name
@@ -343,7 +343,7 @@ class TestProjectConfigRefresh:
             assert snapshots[new_task.session_id] is not after
 
             stopped = await stop_chat(StopChatInput(session_id=old_task.session_id), refreshed)
-            assert stopped.success
+            assert stopped.success is True
             await asyncio.gather(old_task.asyncio_task, return_exceptions=True)
             assert not new_task.asyncio_task.done()
 
