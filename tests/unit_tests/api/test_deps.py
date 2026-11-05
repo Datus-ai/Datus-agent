@@ -1,5 +1,8 @@
 """Tests for datus.api.deps — dependency injection module."""
 
+import asyncio
+import copy
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -20,12 +23,14 @@ def _reset_deps():
     deps._datasource = "default"
     deps._default_source = None
     deps._default_interactive = True
+    deps._stream_thinking = False
     yield
     deps._auth_provider = None
     deps._service_cache = None
     deps._datasource = "default"
     deps._default_source = None
     deps._default_interactive = True
+    deps._stream_thinking = False
 
 
 class TestInitDeps:
@@ -191,7 +196,7 @@ class TestGetDatusService:
         mock_cache = MagicMock(spec=DatusServiceCache)
         captured = {}
 
-        async def fake_get_or_create(key, factory, expected_fingerprint=None):
+        async def fake_get_or_create(key, factory, expected_fingerprint=None, *, agent_config=None):
             captured["svc"] = await factory()
             return captured["svc"]
 
@@ -244,6 +249,126 @@ class TestGetDatusService:
             # Expected: config not found
             assert "Failed to load agent config" in str(e)
         finally:
+            await cache.shutdown()
+
+
+@pytest.mark.asyncio
+class TestProjectConfigRefresh:
+    """Exercise auth -> cache -> catalog/chat with a live background turn."""
+
+    @pytest.mark.parametrize("change", ["add", "remove", "rename"])
+    async def test_busy_project_uses_new_bindings_without_losing_running_turn(
+        self, real_agent_config, monkeypatch, change
+    ):
+        from datus.api.models.chat_models import StopChatInput
+        from datus.api.models.cli_models import StreamChatInput, UserInteractionInput
+        from datus.api.routes.chat_routes import stop_chat, submit_user_interaction
+        from datus.api.routes.config_routes import list_datasources_endpoint
+        from datus.api.services.chat_task_manager import ChatTaskManager
+
+        before = real_agent_config
+        original_name = before.current_datasource
+        if change != "add":
+            before.services.datasources["warehouse"] = copy.deepcopy(before.services.datasources[original_name])
+        after = copy.deepcopy(before)
+        if change == "add":
+            after.services.datasources["warehouse"] = copy.deepcopy(after.services.datasources[original_name])
+        elif change == "remove":
+            after.services.datasources.pop("warehouse")
+        else:
+            after.services.datasources["renamed_warehouse"] = after.services.datasources.pop("warehouse")
+
+        live_config = before
+        started = asyncio.Queue()
+        release = asyncio.Event()
+        snapshots = {}
+
+        async def run_turn(manager, task, config, request, **kwargs):
+            # Only the LLM loop is replaced. start_chat still takes the real
+            # per-turn config snapshot and registers a real background task.
+            snapshots[task.session_id] = config
+            task.node = SimpleNamespace(
+                interaction_broker=SimpleNamespace(submit=AsyncMock(return_value=True)),
+                interrupt_controller=SimpleNamespace(interrupt=MagicMock()),
+            )
+            started.put_nowait(task.session_id)
+            try:
+                await release.wait()
+            finally:
+                task.status = "completed"
+
+        monkeypatch.setattr(ChatTaskManager, "_run_loop", run_turn)
+
+        async def authenticate(request):
+            return AppContext(project_id="project", config=live_config)
+
+        auth = SimpleNamespace(authenticate=authenticate, on_evict=lambda callback: None)
+        cache = DatusServiceCache()
+        init_deps(auth, cache, default_source="web", default_interactive=False, stream_thinking=True)
+        request = MagicMock()
+        try:
+            old = await get_datus_service(request)
+            old_chat = old.chat
+            old_task = await old.task_manager.start_chat(
+                old_chat.agent_config,
+                StreamChatInput(message="old turn", datasource="warehouse" if change != "add" else original_name),
+            )
+            assert await asyncio.wait_for(started.get(), timeout=2) == old_task.session_id
+
+            live_config = after
+            refreshed = await get_datus_service(request)
+            roster = await list_datasources_endpoint(refreshed)
+            assert {entry.name for entry in roster.data.datasources} == set(after.datasource_configs)
+            assert refreshed.agent_config is after
+            assert old.agent_config is before
+            assert refreshed.chat.agent_config is after
+            assert old_chat.agent_config is before
+            assert refreshed.task_manager is old.task_manager
+            assert refreshed.task_manager.get_task(old_task.session_id) is old_task
+            assert not old_task.asyncio_task.done()
+
+            interaction = await submit_user_interaction(
+                UserInteractionInput(session_id=old_task.session_id, interaction_key="question", input=[["yes"]]),
+                refreshed,
+            )
+            assert interaction.success is True
+            old_task.node.interaction_broker.submit.assert_awaited_once_with("question", [["yes"]])
+
+            selected = "warehouse" if change == "add" else "renamed_warehouse" if change == "rename" else original_name
+            new_task = await refreshed.task_manager.start_chat(
+                refreshed.chat.agent_config, StreamChatInput(message="new turn", datasource=selected)
+            )
+            assert await asyncio.wait_for(started.get(), timeout=2) == new_task.session_id
+            assert set(snapshots[old_task.session_id].datasource_configs) == set(before.datasource_configs)
+            assert set(snapshots[new_task.session_id].datasource_configs) == set(after.datasource_configs)
+            assert snapshots[new_task.session_id].current_datasource == selected
+            assert snapshots[old_task.session_id] is not before
+            assert snapshots[new_task.session_id] is not after
+
+            stopped = await stop_chat(StopChatInput(session_id=old_task.session_id), refreshed)
+            assert stopped.success is True
+            old_task.node.interrupt_controller.interrupt.assert_called_once_with()
+            await asyncio.gather(old_task.asyncio_task, return_exceptions=True)
+            assert not new_task.asyncio_task.done()
+
+            release.set()
+            await refreshed.task_manager.wait_all_tasks()
+            assert not refreshed.has_active_tasks()
+            assert await get_datus_service(request) is refreshed
+            assert refreshed.task_manager._default_source == "web"
+            assert refreshed.task_manager._default_interactive is False
+            assert refreshed.task_manager._stream_thinking is True
+
+            final_task = await refreshed.task_manager.start_chat(
+                refreshed.chat.agent_config,
+                StreamChatInput(
+                    message="next turn in the original session", session_id=old_task.session_id, datasource=selected
+                ),
+            )
+            assert await asyncio.wait_for(started.get(), timeout=2) == final_task.session_id
+            assert set(snapshots[final_task.session_id].datasource_configs) == set(after.datasource_configs)
+        finally:
+            release.set()
             await cache.shutdown()
 
 

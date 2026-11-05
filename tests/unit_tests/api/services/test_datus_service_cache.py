@@ -1,6 +1,7 @@
 """Tests for datus.api.services.datus_service_cache — async LRU cache."""
 
 import asyncio
+import copy
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -392,6 +393,53 @@ class TestShutdown:
         await cache.shutdown()  # should not raise
         assert len(cache._cache) == 0
         svc_ok.shutdown.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+class TestConfigRefreshDuringCreation:
+    async def test_waiter_uses_its_config_when_initial_factory_has_an_older_snapshot(self, real_agent_config):
+        """An edit during first initialization must reach the waiting request."""
+        from datus.api.services.datus_service import DatusService
+
+        cache = DatusServiceCache()
+        before = real_agent_config
+        after = copy.deepcopy(before)
+        after.services.datasources["warehouse"] = copy.deepcopy(before.current_db_config())
+        factory_started = asyncio.Event()
+        waiter_started = asyncio.Event()
+        finish_factory = asyncio.Event()
+        calls = 0
+
+        async def factory():
+            nonlocal calls
+            calls += 1
+            factory_started.set()
+            await finish_factory.wait()
+            return DatusService(before, "project")
+
+        async def request_new_config():
+            waiter_started.set()
+            return await cache.get_or_create("project", factory, agent_config=after)
+
+        creator = asyncio.create_task(cache.get_or_create("project", factory, agent_config=before))
+        waiter = None
+        try:
+            await asyncio.wait_for(factory_started.wait(), timeout=2)
+            waiter = asyncio.create_task(request_new_config())
+            await asyncio.wait_for(waiter_started.wait(), timeout=2)
+            finish_factory.set()
+            first, refreshed = await asyncio.wait_for(asyncio.gather(creator, waiter), timeout=2)
+
+            assert first.agent_config is before
+            assert refreshed.agent_config is after
+            assert "warehouse" in refreshed.agent_config.datasource_configs
+            assert refreshed.task_manager is first.task_manager
+            assert calls == 1
+            assert await cache.get_or_create("project", factory, agent_config=after) is refreshed
+        finally:
+            finish_factory.set()
+            await asyncio.gather(creator, *([waiter] if waiter is not None else []), return_exceptions=True)
+            await cache.shutdown()
 
 
 @pytest.mark.asyncio
