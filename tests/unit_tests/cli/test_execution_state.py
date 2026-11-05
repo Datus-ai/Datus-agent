@@ -337,6 +337,78 @@ class TestInteractionBrokerRequest:
             await task
 
 
+class TestInteractionBrokerRequestTimeout:
+    """A bounded wait releases the caller when the user never answers (#1142)."""
+
+    @pytest.mark.asyncio
+    async def test_request_times_out_and_clears_pending(self):
+        """A timed-out request raises InteractionCancelled and leaves no pending entry."""
+        broker = InteractionBroker()
+
+        with pytest.raises(InteractionCancelled, match="Timed out"):
+            await asyncio.wait_for(
+                broker.request(
+                    [InteractionEvent(content="Never answered?", choices={"a": "A"}, default_choice="a")],
+                    timeout=0.05,
+                ),
+                timeout=1.0,
+            )
+
+        assert broker.has_pending is False
+
+    @pytest.mark.asyncio
+    async def test_late_submit_after_timeout_returns_false(self):
+        """A response arriving after the timeout cannot resolve a question nobody waits on."""
+        broker = InteractionBroker()
+
+        request_task = asyncio.create_task(
+            broker.request(
+                [InteractionEvent(content="Never answered?", choices={"a": "A"}, default_choice="a")],
+                timeout=0.05,
+            )
+        )
+        action = await asyncio.wait_for(broker._output_queue.get(), timeout=1.0)
+
+        with pytest.raises(InteractionCancelled):
+            await request_task
+
+        assert await broker.submit(action.action_id, [["a"]]) is False
+        assert broker.has_pending is False
+
+    @pytest.mark.asyncio
+    async def test_concurrent_requests_one_answered_one_timed_out(self):
+        """Regression for #1142: two concurrent subagents share the parent broker.
+
+        The answered question must still resolve while the unanswered one times
+        out, so both tool calls return and the parent turn can drain.
+        """
+        broker = InteractionBroker()
+
+        # The answered leg has no timeout: it is resolved below.
+        answered_task = asyncio.create_task(
+            broker.request([InteractionEvent(content="answered?", choices={"a": "A"}, default_choice="a")])
+        )
+        unanswered_task = asyncio.create_task(
+            broker.request(
+                [InteractionEvent(content="unanswered?", choices={"b": "B"}, default_choice="b")],
+                timeout=0.5,
+            )
+        )
+
+        actions = []
+        while len(actions) < 2:
+            actions.append(await asyncio.wait_for(broker._output_queue.get(), timeout=1.0))
+        by_question = {a.input["events"][0]["content"]: a.action_id for a in actions}
+
+        assert await broker.submit(by_question["answered?"], [["a"]]) is True
+        assert await asyncio.wait_for(answered_task, timeout=1.0) == [["a"]]
+
+        with pytest.raises(InteractionCancelled, match="Timed out"):
+            await asyncio.wait_for(unanswered_task, timeout=1.0)
+
+        assert broker.has_pending is False
+
+
 class TestInteractionBrokerSubmit:
     """Tests for InteractionBroker.submit() method."""
 

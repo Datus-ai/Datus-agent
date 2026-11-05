@@ -1515,6 +1515,30 @@ class TestInteractionBrokerPassthrough:
         task_tool._inject_broker(node, parent_broker)
         assert node.interaction_broker is parent_broker
 
+    def test_inject_broker_caps_subagent_ask_user_wait(self, task_tool, monkeypatch):
+        """A subagent's ask_user gets a finite HITL timeout (issue #1142).
+
+        An unanswered question is forwarded to the parent broker and would
+        otherwise block the subagent — and therefore the parent turn — forever.
+        """
+        import datus.tools.func_tool.sub_agent_task_tool as sub_agent_module
+        from datus.cli.execution_state import InteractionBroker
+        from datus.tools.func_tool.ask_user_tools import AskUserTool
+
+        monkeypatch.setattr(sub_agent_module, "_subagent_ask_user_timeout_seconds", lambda: 7.5)
+        parent_broker = InteractionBroker()
+        node = MagicMock()
+        node.interaction_broker = InteractionBroker()
+        node.ask_user_tool = AskUserTool(broker=InteractionBroker())
+        node.hooks = None
+        node.permission_hooks = None
+        node.plan_hooks = None
+
+        task_tool._inject_broker(node, parent_broker)
+
+        assert node.ask_user_tool._broker is parent_broker
+        assert node.ask_user_tool._hitl_timeout == 7.5
+
     def test_inject_broker_updates_hooks(self, task_tool):
         """_inject_broker updates broker on hooks (e.g. PermissionHooks)."""
         from datus.cli.execution_state import InteractionBroker
@@ -3384,3 +3408,33 @@ async def test_task_delegation_reviews_plans_through_the_parent_session(task_too
         finally:
             parent.tool_channel.cancel_all()
             await pending
+
+
+class TestSubagentAskUserTimeoutSeconds:
+    """Env parsing for the subagent HITL cap (issue #1142)."""
+
+    def test_unset_uses_default(self, monkeypatch):
+        import datus.tools.func_tool.sub_agent_task_tool as module
+
+        monkeypatch.delenv(module._SUBAGENT_ASK_USER_TIMEOUT_ENV, raising=False)
+        assert module._subagent_ask_user_timeout_seconds() == module.SUBAGENT_ASK_USER_TIMEOUT_SECONDS
+
+    def test_non_numeric_uses_default(self, monkeypatch):
+        import datus.tools.func_tool.sub_agent_task_tool as module
+
+        monkeypatch.setenv(module._SUBAGENT_ASK_USER_TIMEOUT_ENV, "not-a-number")
+        assert module._subagent_ask_user_timeout_seconds() == module.SUBAGENT_ASK_USER_TIMEOUT_SECONDS
+
+    @pytest.mark.parametrize("raw", ["inf", "-inf", "nan", "0", "-1"])
+    def test_non_finite_or_non_positive_uses_default(self, monkeypatch, raw):
+        import datus.tools.func_tool.sub_agent_task_tool as module
+
+        monkeypatch.setenv(module._SUBAGENT_ASK_USER_TIMEOUT_ENV, raw)
+        assert module._subagent_ask_user_timeout_seconds() == module.SUBAGENT_ASK_USER_TIMEOUT_SECONDS
+
+    @pytest.mark.parametrize("raw, expected", [("12.5", 12.5), ("60", 60.0)])
+    def test_positive_finite_value_is_used(self, monkeypatch, raw, expected):
+        import datus.tools.func_tool.sub_agent_task_tool as module
+
+        monkeypatch.setenv(module._SUBAGENT_ASK_USER_TIMEOUT_ENV, raw)
+        assert module._subagent_ask_user_timeout_seconds() == expected

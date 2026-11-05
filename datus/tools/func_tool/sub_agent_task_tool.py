@@ -13,6 +13,8 @@ tools, template rendering, and action history.
 
 from __future__ import annotations
 
+import math
+import os
 import uuid
 from contextlib import nullcontext
 from datetime import datetime
@@ -46,6 +48,41 @@ if TYPE_CHECKING:
     from datus.schemas.base import BaseInput
 
 logger = get_logger(__name__)
+
+# A subagent's ``ask_user`` is forwarded to the parent's InteractionBroker.
+# The user may never see or answer it — for example when it is buried under a
+# sibling subagent's streaming event flood — and the parent turn cannot finish
+# until every concurrent tool call returns. Bound that wait so the parent turn
+# drains and ``chat/stream`` can emit its ``end`` event (issue #1142).
+SUBAGENT_ASK_USER_TIMEOUT_SECONDS = 300.0
+_SUBAGENT_ASK_USER_TIMEOUT_ENV = "DATUS_SUBAGENT_ASK_USER_TIMEOUT"
+
+
+def _subagent_ask_user_timeout_seconds() -> float:
+    """Read the subagent HITL wait cap from the environment, with a safe default."""
+    raw = os.environ.get(_SUBAGENT_ASK_USER_TIMEOUT_ENV)
+    if not raw:
+        return SUBAGENT_ASK_USER_TIMEOUT_SECONDS
+    try:
+        value = float(raw)
+    except ValueError:
+        logger.warning(
+            "Ignoring non-numeric %s=%r, falling back to %ss",
+            _SUBAGENT_ASK_USER_TIMEOUT_ENV,
+            raw,
+            SUBAGENT_ASK_USER_TIMEOUT_SECONDS,
+        )
+        return SUBAGENT_ASK_USER_TIMEOUT_SECONDS
+    if not math.isfinite(value) or value <= 0:
+        logger.warning(
+            "Ignoring non-positive %s=%r, falling back to %ss",
+            _SUBAGENT_ASK_USER_TIMEOUT_ENV,
+            raw,
+            SUBAGENT_ASK_USER_TIMEOUT_SECONDS,
+        )
+        return SUBAGENT_ASK_USER_TIMEOUT_SECONDS
+    return value
+
 
 # Mapping from subagent type string to NodeType constants
 NODE_CLASS_MAP = {
@@ -660,6 +697,10 @@ class SubAgentTaskTool:
         ask_user_tool = getattr(node, "ask_user_tool", None)
         if ask_user_tool is not None and hasattr(ask_user_tool, "_broker"):
             ask_user_tool._broker = broker
+            # A concurrent subagent's question can be missed by the user; cap the
+            # wait so it cannot pin the parent turn open forever (issue #1142).
+            if hasattr(ask_user_tool, "_hitl_timeout"):
+                ask_user_tool._hitl_timeout = _subagent_ask_user_timeout_seconds()
 
         # Update broker references on hooks that were already initialised
         # with the node's original (now stale) broker.
