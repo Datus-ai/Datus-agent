@@ -43,8 +43,11 @@ class SqlReadContext:
     def canonical_name(self, name: str) -> str:
         if self.dialect in {"duckdb", "sqlite"}:
             return name.translate(_ASCII_LOWER)
-        if self.dialect == "spark" and self._state["case_sensitive_names"]:
-            return name
+        if self.dialect == "spark":
+            if self._state["case_sensitive_names"]:
+                return name
+            if not name.isascii():
+                raise ValueError("case-insensitive Spark Unicode identifiers require server-owned identifier binding")
         if self.dialect in {"hive", "spark", "trino"}:
             # These engines fold quoted identifiers too. Apply the same key
             # to query sources, profile targets and metadata listings.

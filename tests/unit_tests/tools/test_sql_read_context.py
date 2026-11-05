@@ -441,6 +441,9 @@ def test_spark_live_case_mode_is_bound_and_rechecked(monkeypatch):
     with pytest.raises(ValueError, match="namespace changed"):
         context.verify_context()
     assert SqlReadContext(connector, "warehouse").canonical_name("Orders") == "orders"
+    for name in ["İ", "i\u0307", "Keys"]:
+        with pytest.raises(ValueError, match="server-owned identifier binding"):
+            SqlReadContext(connector, "warehouse").canonical_name(name)
     state["value"] = "unknown"
     with pytest.raises(ValueError, match="case mode is unavailable"):
         SqlReadContext(connector, "warehouse")
