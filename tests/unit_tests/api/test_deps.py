@@ -23,6 +23,7 @@ def _reset_deps():
     deps._datasource = "default"
     deps._default_source = None
     deps._default_interactive = True
+    deps._task_manager_factory = None
     deps._stream_thinking = False
     yield
     deps._auth_provider = None
@@ -30,6 +31,7 @@ def _reset_deps():
     deps._datasource = "default"
     deps._default_source = None
     deps._default_interactive = True
+    deps._task_manager_factory = None
     deps._stream_thinking = False
 
 
@@ -426,3 +428,40 @@ class TestGetScopedSubAgent:
         detail = str(excinfo.value.detail)
         assert "analyst" not in detail
         assert "auditor" not in detail
+
+
+@pytest.mark.asyncio
+async def test_http_and_background_share_host_factory_and_reinitialization_resets_it(real_agent_config):
+    """Startup factories apply to both entry points and survive config refresh."""
+    from datus.api.services.chat_task_manager import ChatTaskManager
+
+    factory = MagicMock(side_effect=lambda **kwargs: ChatTaskManager(**kwargs))
+    auth = MagicMock()
+    auth.authenticate = AsyncMock(return_value=AppContext(project_id="host", config=real_agent_config))
+    cache = DatusServiceCache()
+    init_deps(auth, cache, default_source="web", stream_thinking=True, task_manager_factory=factory)
+    try:
+        background = deps.create_datus_service(real_agent_config, "background")
+        request = MagicMock()
+        first = await get_datus_service(request)
+        second = await get_datus_service(request)
+        assert first is second
+        assert first.task_manager is not background.task_manager
+        assert factory.call_count == 2
+        factory.assert_called_with(default_source="web", default_interactive=True, stream_thinking=True)
+        changed = copy.deepcopy(real_agent_config)
+        changed.services.datasources["host_refreshed"] = copy.deepcopy(
+            changed.services.datasources[changed.current_datasource]
+        )
+        auth.authenticate.return_value = AppContext(project_id="host", config=changed)
+        refreshed = await get_datus_service(request)
+        assert refreshed is not first
+        assert refreshed.agent_config is changed
+        assert refreshed.task_manager is first.task_manager
+        assert refreshed.chat._task_manager is first.task_manager
+        assert factory.call_count == 2
+        init_deps(auth, cache)
+        deps.create_datus_service(real_agent_config, "plain")
+        assert factory.call_count == 2
+    finally:
+        await cache.shutdown()

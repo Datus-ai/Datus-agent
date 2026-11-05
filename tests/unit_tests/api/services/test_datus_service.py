@@ -368,3 +368,22 @@ class TestSubAgentScopedServices:
 
         assert svc.has_sub_agent("analyst") is True
         assert svc.has_sub_agent("no_such_sub_agent") is False
+
+
+def test_host_manager_factory_owns_chat_from_construction(real_agent_config):
+    """Lazy chat and config refreshes retain the manager created by the host."""
+    from unittest.mock import Mock
+
+    manager = ChatTaskManager()
+    factory = Mock(return_value=manager)
+    service = DatusService(
+        real_agent_config,
+        "host",
+        default_source="web",
+        default_interactive=False,
+        stream_thinking=True,
+        task_manager_factory=factory,
+    )
+    factory.assert_called_once_with(default_source="web", default_interactive=False, stream_thinking=True)
+    assert service.task_manager is manager
+    assert service.chat._task_manager is manager

@@ -17,6 +17,7 @@ if TYPE_CHECKING:
     # Import-time only: these modules import back into the service layer, and
     # the accessors below import them lazily inside the function body to keep
     # that cycle from forming at runtime.
+    from datus.api.services.chat_extensions import ChatTaskManagerFactory
     from datus.api.services.chat_task_manager import ChatTaskManager
     from datus.api.services.explorer_service import ExplorerService
     from datus.api.services.tool_service import ToolService
@@ -63,7 +64,10 @@ class DatusService:
         default_interactive: bool = True,
         stream_thinking: bool = False,
         task_manager: Optional["ChatTaskManager"] = None,
+        *,
+        task_manager_factory: Optional["ChatTaskManagerFactory"] = None,
     ):
+        """Reuse an explicit manager, or construct one with the host factory and defaults."""
         self._agent_config = agent_config
         self._project_id = project_id
         self._config_fingerprint = self.compute_fingerprint(agent_config)
@@ -75,7 +79,7 @@ class DatusService:
         self._task_manager = (
             task_manager
             if task_manager is not None
-            else ChatTaskManager(
+            else (task_manager_factory or ChatTaskManager)(
                 default_source=default_source,
                 default_interactive=default_interactive,
                 stream_thinking=stream_thinking,
