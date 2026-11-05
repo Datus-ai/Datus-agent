@@ -8,7 +8,7 @@
       
       
       
-        
+        <link rel="canonical" href="https://docs.datus.ai/zh/dev/subagent/builtin_subagents/">
       
       
         <link rel="prev" href="../introduction/">
@@ -18,9 +18,9 @@
       
       
         
-          
+          <link rel="alternate" href="/dev/" hreflang="en">
         
-          
+          <link rel="alternate" href="/zh/dev/" hreflang="zh">
         
       
       
@@ -57,13 +57,7 @@
 
     
     
-  <!-- datus-docs-seo -->
-<link rel="canonical" href="https://docs.datus.ai/zh/dev/subagent/builtin_subagents/">
-<link rel="alternate" hreflang="en" href="https://docs.datus.ai/dev/subagent/builtin_subagents/">
-<link rel="alternate" hreflang="zh-Hans" href="https://docs.datus.ai/zh/dev/subagent/builtin_subagents/">
-<link rel="alternate" hreflang="x-default" href="https://docs.datus.ai/dev/subagent/builtin_subagents/">
-<!-- /datus-docs-seo -->
-</head>
+  </head>
   
   
     
@@ -5816,7 +5810,7 @@
 <li><strong><a href="#gen_sql">gen_sql</a></strong> — 具备深度专业知识的专用 SQL 生成</li>
 <li><strong><a href="../gen_table/">gen_table</a></strong> — 数据库建表（CTAS 或自然语言描述）</li>
 <li><strong><a href="../gen_job/">gen_job</a></strong> — 数据管道执行（单库 ETL 和跨库迁移，含对数校验）</li>
-<li><strong><a href="#gen_skill">gen_skill</a></strong> — skill 创建与优化</li>
+<li><strong><a href="#gen_skill">gen_skill</a></strong> — skill 创建、修改与审查</li>
 <li><strong><a href="../gen_visual_report/">gen_visual_report</a></strong> — 在 <code>reports/&lt;slug&gt;/</code> 下产出自包含的可视化报告</li>
 <li><strong><a href="../gen_visual_dashboard/">gen_visual_dashboard</a></strong> — 在 <code>dashboards/&lt;slug&gt;/</code> 下产出参数化可视化看板</li>
 </ol>
@@ -6136,13 +6130,14 @@
 <hr />
 <h2 id="gen_skill">gen_skill<a class="headerlink" href="#gen_skill" title="Permanent link">&para;</a></h2>
 <h3 id="_22">概览<a class="headerlink" href="#_22" title="Permanent link">&para;</a></h3>
-<p><code>gen_skill</code> subagent 用于引导用户创建或优化 Datus skill。它可以检查现有 skill、脚手架新的 skill 目录、编辑 <code>SKILL.md</code>、执行校验，并检索历史会话中的使用模式。</p>
+<p><code>gen_skill</code> subagent 使用内置工作流创建、修改和审查 Datus skill。它可以检查已有 skill、组织配套资源、核验指令与示例、执行格式校验，并检索历史会话中的使用模式。仅要求审查时会返回问题清单，不修改文件，也不要求先加载编写指南。</p>
 <h3 id="_23">关键特性<a class="headerlink" href="#_23" title="Permanent link">&para;</a></h3>
 <ul>
 <li><strong>交互式 skill 编写</strong>：通过 <code>ask_user</code> 进行访谈式创建</li>
 <li><strong>受控文件系统权限</strong>：对工作区只读，对配置的 skills 目录可写</li>
 <li><strong>skill 感知编辑</strong>：修改前先加载已有 skill</li>
-<li><strong>内置校验</strong>：结束前可调用 <code>validate_skill</code> 检查结果</li>
+<li><strong>内容审查与核验</strong>：使用可用的解析器或专项测试检查完整示例，通过小规模合成数据或只读检查核验语义判断，区分已确认问题和待核实风险</li>
+<li><strong>格式校验</strong>：编写后调用 <code>validate_skill</code>；PASS 不代表内容正确性已经得到验证</li>
 </ul>
 <h3 id="_24">配置<a class="headerlink" href="#_24" title="Permanent link">&para;</a></h3>
 <div class="language-yaml highlight"><pre><span></span><code><span id="__span-11-1"><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="nt">agent</span><span class="p">:</span>
@@ -6151,6 +6146,7 @@
 </span><span id="__span-11-4"><a id="__codelineno-11-4" name="__codelineno-11-4" href="#__codelineno-11-4"></a><span class="w">      </span><span class="nt">model</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">claude</span>
 </span><span id="__span-11-5"><a id="__codelineno-11-5" name="__codelineno-11-5" href="#__codelineno-11-5"></a><span class="w">      </span><span class="nt">max_turns</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">30</span>
 </span></code></pre></div>
+<p>默认可用 skill 为 <code>create-skill</code>，作为按需使用的 Datus 格式和打包参考，不再自动注入其正文。核心工作流和审查要求由主提示提供，详细格式与配置说明从参考文件按需读取。配置中显式列出的 <code>optimize-skill</code> 会被忽略并记录 warning 日志，无需修改已有配置文件。其他技能配置保持不变；忽略后若无剩余项，则使用默认技能配置。</p>
 <h3 id="_25">输出格式<a class="headerlink" href="#_25" title="Permanent link">&para;</a></h3>
 <div class="language-json highlight"><pre><span></span><code><span id="__span-12-1"><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="p">{</span>
 </span><span id="__span-12-2"><a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a><span class="w">  </span><span class="nt">"response"</span><span class="p">:</span><span class="w"> </span><span class="s2">"已创建一个用于财务仪表盘校验的新 skill。"</span><span class="p">,</span>
@@ -6243,10 +6239,10 @@
 </tr>
 <tr>
 <td><code>gen_skill</code></td>
-<td>创建或优化 skill</td>
-<td>skill 路径</td>
+<td>创建、修改或审查 skill</td>
+<td>skill 路径或审查结果</td>
 <td>skills 目录</td>
-<td>交互式编写、校验、加载现有 skill</td>
+<td>编写、内容审查、核验、加载现有 skill</td>
 </tr>
 <tr>
 <td><code>gen_visual_report</code></td>
