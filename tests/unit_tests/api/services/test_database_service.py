@@ -32,6 +32,7 @@ def _service(*, models_root: Path | None = None) -> DatasourceService:
     svc.agent_config = SimpleNamespace(
         home="/datus-home",
         current_datasource="warehouse",
+        datasource_configs={"warehouse": SimpleNamespace()},
         path_manager=SimpleNamespace(semantic_models_dir=models_root),
     )
     return svc
@@ -542,13 +543,8 @@ class TestGetSemanticModel:
         assert result.data.semantic_model_file == "subject/semantic_models/lakehouse/orders.yml"
 
     @pytest.mark.asyncio
-    async def test_save_semantic_model_rejects_a_non_active_datasource(self, tmp_path):
-        """Reads span every datasource; writes must stay on the active one.
-
-        The validators and the knowledge-base sync are all scoped to
-        ``current_datasource``, so saving another datasource's artifact would
-        file its rows under the wrong datasource.
-        """
+    async def test_save_semantic_model_rejects_an_unbound_datasource(self, tmp_path):
+        """An on-disk directory does not grant access to an unbound datasource."""
         svc = _service(models_root=tmp_path)
         _yaml_file, selector = _write_model(tmp_path, _osi_yaml(), datasource="lakehouse")
 
@@ -557,10 +553,10 @@ class TestGetSemanticModel:
         assert result.success is False
         assert result.errorCode == "INVALID_PARAMETERS"
         assert "lakehouse" in result.errorMessage
-        assert "warehouse" in result.errorMessage
+        assert "not configured" in result.errorMessage
 
     @pytest.mark.asyncio
-    async def test_validate_semantic_model_rejects_a_non_active_datasource(self, tmp_path):
+    async def test_validate_semantic_model_rejects_an_unbound_datasource(self, tmp_path):
         svc = _service(models_root=tmp_path)
         _yaml_file, selector = _write_model(tmp_path, _osi_yaml(), datasource="lakehouse")
 
@@ -1509,7 +1505,7 @@ class TestSchemaOnlyDialectCatalog:
 
 
 @pytest.mark.asyncio
-async def test_prepare_rejects_other_datasource_without_mutating_file(tmp_path):
+async def test_prepare_rejects_unbound_datasource_without_mutating_file(tmp_path):
     from datus.api.models.table_models import PrepareMetricDefinitionsInput
 
     target, selector = _write_model(tmp_path, _osi_yaml(), datasource="other")
@@ -1518,7 +1514,7 @@ async def test_prepare_rejects_other_datasource_without_mutating_file(tmp_path):
         PrepareMetricDefinitionsInput(semantic_model_file=selector, yaml=_osi_yaml(), changed_metrics=[])
     )
     assert result.success is False
-    assert "switch the active datasource" in result.errorMessage
+    assert "not configured" in result.errorMessage
     assert target.read_bytes() == before
 
 
@@ -1538,3 +1534,154 @@ async def test_prepare_returns_native_diagnostics_without_writing(tmp_path):
     assert result.data.patches == []
     assert result.data.validation["issues"]
     assert target.read_bytes() == before
+
+
+class TestSemanticModelDatasourceContext:
+    @pytest.fixture
+    def service(self, tmp_path):
+        from datus.configuration.agent_config import AgentConfig
+
+        config = AgentConfig(
+            nodes={},
+            home=str(tmp_path / "home"),
+            project_root=str(tmp_path),
+            services={
+                "datasources": {
+                    "warehouse": {"type": "sqlite", "uri": str(tmp_path / "warehouse.db")},
+                    "lakehouse": {"type": "duckdb", "uri": str(tmp_path / "lakehouse.duckdb")},
+                }
+            },
+            skip_init_dirs=True,
+        )
+        config.current_datasource = "warehouse"
+        config.set_runtime_db_context(datasource="warehouse", database="chat_database", schema="chat_schema")
+        svc = DatasourceService.__new__(DatasourceService)
+        svc.agent_config = config
+        return svc
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("prefix", ["subject/semantic_models/", ""])
+    async def test_prepare_and_validate_bound_non_current_model(self, service, prefix):
+        from datus.api.models.table_models import PrepareMetricDefinitionsInput
+
+        model = yaml.safe_load(_flat_osi_yaml(metric_name="order_count"))
+        content = yaml.safe_dump({"version": model.pop("version"), "semantic_model": [model]}, sort_keys=False)
+        target, _ = _write_model(service.agent_config.path_manager.semantic_models_dir, content, datasource="lakehouse")
+        selector = prefix + "lakehouse/orders.yml"
+        prepared = await service.prepare_metric_definitions(
+            PrepareMetricDefinitionsInput(semantic_model_file=selector, yaml=content, changed_metrics=["order_count"])
+        )
+        validated = await service.validate_semantic_model(
+            ValidateSemanticModelInput(semantic_model_file=selector, yaml=content)
+        )
+
+        assert prepared.success is True
+        assert prepared.data.valid is True
+        assert validated.success is True
+        assert validated.data.valid is True
+        assert target.read_text() == content
+        assert service.agent_config.current_datasource == "warehouse"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("datasource", ["warehouse", "lakehouse"])
+    async def test_save_uses_file_datasource_for_validation_and_sync(self, service, datasource):
+        config = service.agent_config
+        before_context = config.runtime_db_context()
+        original = _flat_osi_yaml()
+        content = _flat_osi_yaml(metric_name="order_count")
+        target, selector = _write_model(config.path_manager.semantic_models_dir, original, datasource=datasource)
+        seen = []
+
+        def validate(scoped, **kwargs):
+            seen.append(scoped)
+            assert scoped.current_datasource == datasource
+            assert scoped.db_type == config.datasource_configs[datasource].type
+            assert config.current_datasource == "warehouse"
+            assert config.runtime_db_context() == before_context
+            assert target.read_text() == content
+            return True, {"valid": True}, ""
+
+        service._full_osi_validation = MagicMock(side_effect=validate)
+        with patch("datus.tools.func_tool.generation_tools.GenerationTools") as tools_cls:
+            tools_cls.return_value.sync_osi_to_db.return_value = {"success": True}
+            result = await service.save_semantic_model(
+                SaveSemanticModelInput(
+                    semantic_model_file=selector, yaml=content, expected_revision=artifact_revision(original.encode())
+                )
+            )
+
+        assert result.success is True
+        assert result.data.status == "synced"
+        assert target.read_text() == content
+        tools_cls.assert_called_once_with(agent_config=seen[0])
+        tools_cls.return_value.sync_osi_to_db.assert_called_once_with(
+            str(target), include_semantic_objects=True, include_metrics=True
+        )
+        assert seen[0].current_datasource == datasource
+        assert config.current_datasource == "warehouse"
+        assert config.runtime_db_context() == before_context
+
+    @pytest.mark.asyncio
+    async def test_failed_non_current_save_restores_file_and_keeps_shared_context(self, service):
+        config = service.agent_config
+        before_context = config.runtime_db_context()
+        original = _flat_osi_yaml()
+        target, selector = _write_model(config.path_manager.semantic_models_dir, original, datasource="lakehouse")
+        service._full_osi_validation = MagicMock(return_value=(False, {"valid": False}, "invalid target"))
+        with patch("datus.tools.func_tool.generation_tools.GenerationTools") as tools_cls:
+            result = await service.save_semantic_model(
+                SaveSemanticModelInput(semantic_model_file=selector, yaml=original + "description: Edited\n")
+            )
+
+        assert result.success is False
+        assert result.data.status == "validation_failed"
+        assert target.read_text() == original
+        tools_cls.assert_not_called()
+        scoped = service._full_osi_validation.call_args.args[0]
+        assert scoped.current_datasource == "lakehouse"
+        assert scoped.runtime_db_context() == {}
+        assert config.current_datasource == "warehouse"
+        assert config.runtime_db_context() == before_context
+
+    def test_concurrent_saves_keep_each_artifacts_datasource(self, service):
+        config = service.agent_config
+        original = _flat_osi_yaml()
+        content = _flat_osi_yaml(metric_name="order_count")
+        targets = [
+            _write_model(config.path_manager.semantic_models_dir, original, datasource=datasource)
+            for datasource in ("warehouse", "lakehouse")
+        ]
+        barrier = threading.Barrier(2)
+
+        def validate(scoped, **kwargs):
+            datasource = scoped.current_datasource
+            barrier.wait(timeout=5)
+            assert scoped.current_datasource == datasource
+            assert config.current_datasource == "warehouse"
+            return True, {"valid": True}, ""
+
+        service._full_osi_validation = MagicMock(side_effect=validate)
+        synced = []
+
+        def tools_for_config(*, agent_config):
+            def sync(path, **kwargs):
+                synced.append((Path(path).parent.name, agent_config.current_datasource))
+                return {"success": True}
+
+            return SimpleNamespace(sync_osi_to_db=sync)
+
+        with patch("datus.tools.func_tool.generation_tools.GenerationTools", side_effect=tools_for_config):
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                futures = [
+                    executor.submit(
+                        service._save_semantic_model_sync,
+                        SaveSemanticModelInput(semantic_model_file=selector, yaml=content),
+                    )
+                    for _, selector in targets
+                ]
+                results = [future.result(timeout=10) for future in futures]
+
+        assert [result.success for result in results] == [True, True]
+        assert sorted(synced) == [("lakehouse", "lakehouse"), ("warehouse", "warehouse")]
+        assert [target.read_text() for target, _ in targets] == [content, content]
+        assert config.current_datasource == "warehouse"
