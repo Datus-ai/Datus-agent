@@ -12,7 +12,7 @@ import yaml
 
 from datus.storage.metric.store import normalize_metric_name
 from datus.storage.semantic_model.artifact_file import atomic_write_text, semantic_artifact_lock
-from datus.tools.func_tool.base import FuncToolResult, tool_schema
+from datus.tools.func_tool.base import FuncToolResult, load_tool_json, tool_schema
 from datus.tools.func_tool.filesystem_tools import FilesystemFuncTool
 from datus.tools.func_tool.fs_path_policy import PathZone, ResolvedPath
 from datus.tools.semantic_tools.metric_identity import (
@@ -108,9 +108,9 @@ class MetricFilesystemFuncTool(FilesystemFuncTool):
 
         try:
             incoming_datasets = (
-                json.loads(datasets_json) if isinstance(datasets_json, str) else copy.deepcopy(datasets_json)
+                load_tool_json(datasets_json) if isinstance(datasets_json, str) else copy.deepcopy(datasets_json)
             )
-        except (TypeError, json.JSONDecodeError) as exc:
+        except (TypeError, ValueError) as exc:
             return FuncToolResult(success=0, error=f"datasets_json is not a valid JSON-encoded array string: {exc}")
         if not isinstance(incoming_datasets, list) or not incoming_datasets:
             return FuncToolResult(success=0, error="datasets_json must be a non-empty JSON array")
@@ -417,9 +417,9 @@ class MetricFilesystemFuncTool(FilesystemFuncTool):
 
         try:
             incoming_metrics = (
-                json.loads(metrics_json) if isinstance(metrics_json, str) else copy.deepcopy(metrics_json)
+                load_tool_json(metrics_json) if isinstance(metrics_json, str) else copy.deepcopy(metrics_json)
             )
-        except (TypeError, json.JSONDecodeError) as exc:
+        except (TypeError, ValueError) as exc:
             return FuncToolResult(success=0, error=f"metrics_json is not a valid JSON-encoded array string: {exc}")
         if not isinstance(incoming_metrics, list) or not incoming_metrics:
             return FuncToolResult(success=0, error="metrics_json must be a non-empty JSON array")

@@ -10,6 +10,11 @@ from unittest.mock import Mock, patch
 
 import pytest
 import yaml
+from agents import Agent, RunConfig, Runner, SQLiteSession
+from agents.items import ModelResponse, ToolCallOutputItem
+from agents.models.interface import Model
+from agents.usage import Usage
+from openai.types.responses import ResponseFunctionToolCall, ResponseOutputMessage, ResponseOutputText
 
 from datus.storage.semantic_model.artifact_file import semantic_artifact_lock
 from datus.tools.func_tool.generation_evidence import GenerationEvidence
@@ -93,6 +98,7 @@ def identity_tool(tmp_path, osi_schema_validator):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("encoded", [False, True])
 @pytest.mark.parametrize(
     "name,parameter,objects",
     [
@@ -100,13 +106,131 @@ def identity_tool(tmp_path, osi_schema_validator):
         ("upsert_osi_datasets", "datasets_json", [{"name": "orders", "source": "analytics.orders"}]),
     ],
 )
-async def test_write_tool_schema_and_invocation_accept_structured_arrays(identity_tool, name, parameter, objects):
+async def test_write_tool_schema_and_invocation_accept_structured_arrays(
+    identity_tool, name, parameter, objects, encoded
+):
     tool, target, _, _ = identity_tool([])
     exposed = next(t for t in tool.available_tools() if t.name == name)
     variants = exposed.params_json_schema["properties"][parameter]["anyOf"]
     assert {v["type"] for v in variants} == {"array", "string"}
-    result = await exposed.on_invoke_tool(None, json.dumps({"path": str(target), parameter: objects}))
+    payload = json.dumps(objects) if encoded else objects
+    result = await exposed.on_invoke_tool(None, json.dumps({"path": str(target), parameter: payload}))
     assert result["success"] == 1, result
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("wrapped", [False, True])
+@pytest.mark.parametrize(
+    "name,parameter,payload,duplicate_key",
+    [
+        (
+            "upsert_osi_datasets",
+            "datasets_json",
+            '[{"name":"orders","source":"orders","source":"analytics.orders"}]',
+            "source",
+        ),
+        (
+            "upsert_osi_metrics",
+            "metrics_json",
+            '[{"name":"revenue","description":"Revenue","expression":{"dialects":'
+            '[{"dialect":"ANSI_SQL","expression":"SUM(orders.amount)","expression":"COUNT(*)"}]}}]',
+            "expression",
+        ),
+    ],
+)
+async def test_encoded_upserts_reject_duplicate_keys_without_mutating(
+    identity_tool, wrapped, name, parameter, payload, duplicate_key
+):
+    tool, target, state, _ = identity_tool([])
+    before = target.read_bytes()
+    arguments = {"path": str(target), parameter: payload}
+
+    if wrapped:
+        exposed = next(t for t in tool.available_tools() if t.name == name)
+        result = await exposed.on_invoke_tool(None, json.dumps(arguments))
+    else:
+        result = getattr(tool, name)(**arguments).model_dump()
+
+    assert result["success"] == 0
+    assert f"Duplicate JSON key {duplicate_key!r}" in result["error"]
+    assert target.read_bytes() == before
+    state.require_selected_revision(target)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "name,parameter,objects",
+    [
+        ("upsert_osi_metrics", "metrics_json", [_osi_metric("revenue", "SUM(orders.amount)")]),
+        ("upsert_osi_datasets", "datasets_json", [{"name": "orders", "source": "analytics.orders"}]),
+    ],
+)
+async def test_runner_replays_rejected_encoded_content_and_executes_corrected_retry(
+    identity_tool, name, parameter, objects
+):
+    """Invalid JSON inside a string is a tool error, not malformed SDK replay JSON."""
+    tool, target, _, _ = identity_tool([])
+    before = target.read_bytes()
+    rejected = '[{"name":"discarded",' + json.dumps(objects[0])[1:] + "]"
+    raw_args = json.dumps({"path": str(target), parameter: rejected})
+
+    class SequenceModel(Model):
+        turn = 0
+
+        async def get_response(self, system_instructions, input, *_args, **_kwargs):
+            self.turn += 1
+            if self.turn == 1:
+                output = [ResponseFunctionToolCall(arguments=raw_args, call_id="bad", name=name, type="function_call")]
+            elif self.turn == 2:
+                call = next(item for item in input if item.get("type") == "function_call")
+                assert json.loads(call["arguments"])[parameter] == rejected
+                feedback = next(item for item in input if item.get("type") == "function_call_output")
+                assert "Duplicate JSON key 'name'" in feedback["output"]
+                assert target.read_bytes() == before
+                output = [
+                    ResponseFunctionToolCall(
+                        arguments=json.dumps({"path": str(target), parameter: json.dumps(objects)}),
+                        call_id="retry",
+                        name=name,
+                        type="function_call",
+                    )
+                ]
+            else:
+                output = [
+                    ResponseOutputMessage(
+                        id="done",
+                        content=[ResponseOutputText(annotations=[], text="done", type="output_text")],
+                        role="assistant",
+                        status="completed",
+                        type="message",
+                    )
+                ]
+            return ModelResponse(output=output, usage=Usage(), response_id=None)
+
+        async def stream_response(self, *_args, **_kwargs):
+            if False:
+                yield None
+
+    session = SQLiteSession("encoded-upsert-retry", ":memory:")
+    try:
+        exposed = next(t for t in tool.available_tools() if t.name == name)
+        result = await Runner.run(
+            Agent(name="test", model=SequenceModel(), tools=[exposed]),
+            input="update the model",
+            session=session,
+            max_turns=3,
+            run_config=RunConfig(tracing_disabled=True),
+        )
+        assert result.final_output == "done"
+        outputs = [item.output for item in result.new_items if isinstance(item, ToolCallOutputItem)]
+        assert [item["success"] for item in outputs] == [0, 1]
+        assert target.read_bytes() != before
+        calls = [item for item in await session.get_items() if item.get("type") == "function_call"]
+        assert len(calls) == 2
+        assert json.loads(calls[0]["arguments"])[parameter] == rejected
+        assert json.loads(calls[1]["arguments"])[parameter] == json.dumps(objects)
+    finally:
+        session.close()
 
 
 def test_metric_upsert_assigns_and_preserves_host_uid(identity_tool):
