@@ -378,6 +378,8 @@ def test_case_insensitive_sources_and_policy_targets_share_canonical_identifiers
         get_views=lambda **_: [],
         get_schema=get_schema,
         get_identifier_case_sensitive=lambda: False,
+        get_default_identifier_case_sensitive=lambda: False,
+        get_relation_info=lambda **_: {"name": "orders", "type": "MANAGED"},
     )
     context = SqlReadContext(connector, "warehouse")
     assert context.execution_context["source_dialect"] == dialect
@@ -431,6 +433,7 @@ def test_spark_live_case_mode_is_bound_and_rechecked(monkeypatch):
         dialect="spark",
         get_current_context=lambda: {"database_name": "default"},
         get_identifier_case_sensitive=lambda: state["value"],
+        get_default_identifier_case_sensitive=lambda: False,
     )
     context = SqlReadContext(connector, "warehouse")
     assert context.execution_context["case_sensitive_table_names"] is True
@@ -447,6 +450,50 @@ def test_spark_live_case_mode_is_bound_and_rechecked(monkeypatch):
     state["value"] = "unknown"
     with pytest.raises(ValueError, match="case mode is unavailable"):
         SqlReadContext(connector, "warehouse")
+
+
+def test_spark_resolves_the_requested_relation_without_scanning_unrelated_names(monkeypatch):
+    from unittest.mock import Mock
+
+    monkeypatch.setattr(
+        "datus.tools.sql_read_context.table_name_field_order", lambda _: ["database_name", "table_name"]
+    )
+    info = Mock(return_value={"name": "orders", "type": "MANAGED"})
+    connector = SimpleNamespace(
+        dialect="spark",
+        get_current_context=lambda: {"database_name": "default"},
+        get_identifier_case_sensitive=lambda: False,
+        get_default_identifier_case_sensitive=lambda: False,
+        get_relation_info=info,
+        get_tables=Mock(side_effect=AssertionError("must not enumerate unrelated 库存 metadata")),
+        get_views=Mock(side_effect=AssertionError("must not enumerate unrelated 库存 metadata")),
+        get_schema=lambda **_: [{"name": "id", "type": "INT"}],
+    )
+    context = SqlReadContext(connector, "warehouse")
+    assert resolve(context, "ORDERS")["object"]["table"] == "orders"
+    info.assert_called_once_with(table_name="orders", database_name="default", unqualified=True)
+    assert resolve(context, "default.orders")["object"]["table"] == "orders"
+    assert info.call_args.kwargs["unqualified"] is False
+    info.return_value = {"name": "orders", "type": "UNKNOWN"}
+    with pytest.raises(ValueError, match="opaque database views"):
+        resolve(SqlReadContext(connector, "warehouse"), "orders")
+    info.return_value = {"name": "Keys", "type": "MANAGED"}
+    with pytest.raises(ValueError, match="server-owned identifier binding"):
+        resolve(SqlReadContext(connector, "warehouse"), "keys")
+
+
+def test_dosi_refuses_a_spark_server_default_it_cannot_reproduce(monkeypatch):
+    monkeypatch.setattr(
+        "datus.tools.sql_read_context.table_name_field_order", lambda _: ["database_name", "table_name"]
+    )
+    connector = SimpleNamespace(
+        dialect="spark",
+        get_current_context=lambda: {"database_name": "default"},
+        get_identifier_case_sensitive=lambda: False,
+        get_default_identifier_case_sensitive=lambda: True,
+    )
+    with pytest.raises(ValueError, match="cannot reproduce Spark"):
+        SqlReadContext(connector, "warehouse").verify_execution_target("hive")
 
 
 @pytest.mark.parametrize("identifier", ["orders_table_name", "table_name", "o'table_name"])

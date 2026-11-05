@@ -197,6 +197,11 @@ class SqlReadContext:
                 if not isinstance(mode, bool):
                     raise ValueError("actual Spark identifier case mode is unavailable")
                 state["case_sensitive_names"] = mode
+                default_getter = getattr(self.connector, "get_default_identifier_case_sensitive", None)
+                default_mode = default_getter() if callable(default_getter) else None
+                if not isinstance(default_mode, bool):
+                    raise ValueError("actual Spark default identifier case mode is unavailable")
+                state["default_case_sensitive_names"] = default_mode
             if self.dialect in {"mysql", "tidb"}:
                 mode = int(
                     self._query("SELECT @@lower_case_table_names AS lower_case_table_names")[0][
@@ -219,7 +224,9 @@ class SqlReadContext:
 
     def verify_execution_target(self, target: str) -> None:
         self.verify_context()
-        if self.dialect == "spark" and self._state["case_sensitive_names"]:
+        if self.dialect == "spark" and (
+            self._state["case_sensitive_names"] or self._state["default_case_sensitive_names"]
+        ):
             raise ValueError("Dosi cannot reproduce Spark case-sensitive session settings")
         if self.dialect == "sqlite" and target == "duckdb":
             if any(name not in {"main", "temp"} for name, _ in self._state["attachments"]):
@@ -301,7 +308,7 @@ class SqlReadContext:
         elif not duckdb_catalog_prefix and "schema" in self.namespace_order and "schema" not in specified:
             candidates = [{**base, "schema": name} for name in self._state["search_path"]] or [base]
         for namespace in candidates:
-            table = self._lookup(namespace, specified["table"], parser)
+            table = self._lookup(namespace, specified["table"], parser, unqualified=len(parts) == 1)
             if table is not None:
                 if not table["physical"]:
                     raise ValueError("opaque database views require an explicitly supported policy path")
@@ -309,7 +316,9 @@ class SqlReadContext:
                 return table
         raise ValueError("physical table could not be resolved in the execution namespace")
 
-    def _lookup(self, namespace: dict, name: str, parser: Callable[[str], list[dict]]) -> dict | None:
+    def _lookup(
+        self, namespace: dict, name: str, parser: Callable[[str], list[dict]], *, unqualified: bool = False
+    ) -> dict | None:
         # Search-path candidates can come from session state rather than _parts.
         # Metadata APIs often use case-sensitive string predicates internally.
         namespace = {field: self.canonical_name(value) for field, value in namespace.items()}
@@ -388,6 +397,15 @@ class SqlReadContext:
                 + " ORDER BY column_index"
             )
             physical = row["physical"]
+        elif self.dialect == "spark":
+            info = self.connector.get_relation_info(
+                table_name=name, database_name=namespace["database"], unqualified=unqualified
+            )
+            if info["type"] not in {"MANAGED", "EXTERNAL"}:
+                return {"physical": False}
+            name = self.canonical_name(info["name"])
+            columns = self.connector.get_schema(database_name=namespace["database"], table_name=name)
+            physical = True
         else:
             if (
                 self.dialect in {"postgres", "postgresql", "hologres", "gaussdb", "dws"}
