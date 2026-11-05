@@ -8,6 +8,7 @@ dry-run shape, engine lifecycle, and connections wiring."""
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import sys
 import threading
@@ -62,6 +63,26 @@ def _write_model(path: Path, model_name: str, metric_names: list[str]) -> None:
     path.write_text(
         f"version: '0.2.0.dev0'\nsemantic_model:\n  - name: {model_name}\n    datasets: []\n    metrics:\n{metrics}\n"
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("level", [logging.DEBUG, logging.INFO])
+@pytest.mark.parametrize("dry_run", [False, True])
+async def test_sql_debug_logging_uses_native_result_without_an_extra_compile(make_runtime, caplog, level, dry_run):
+    runtime = make_runtime(datasource="warehouse")
+    with caplog.at_level(level):
+        result = await runtime.query_metrics(["revenue"], dry_run=dry_run)
+    engine = FakeEngine.instances[-1]
+    assert len(engine.compile_calls) == (1 if dry_run else 0)
+    assert len(engine.execute_calls) == (0 if dry_run else 1)
+    event = "sql.dosi.compile" if dry_run else "sql.dosi.execute"
+    messages = [record.getMessage() for record in caplog.records if event in record.getMessage()]
+    if level == logging.INFO:
+        assert messages == []
+    else:
+        assert len(messages) == 1
+        assert result.metadata["sql"] in messages[0]
+        assert "warehouse" in messages[0]
 
 
 @pytest.mark.asyncio

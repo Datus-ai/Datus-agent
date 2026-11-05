@@ -5,6 +5,24 @@
 
 ## 配置
 
+### 用 DEBUG 日志查看 SQL
+
+以 `datus --debug` 启动，或配置 `agent.logging.level: DEBUG`。
+Agent 常规日志中会出现以下结构化事件：
+
+| 事件 | SQL 字段 | 记录时机 |
+|---|---|---|
+| `sql.policy.rewrite` | `original_sql`、`rewritten_sql`、`rewritten` | 策略处理完成、执行之前；覆盖 SQL 工具、API 读取和 CLI 手工 SQL。 |
+| `sql.execute` | `sql` | SQL 工具或 CLI 向 connector 提交最终 SQL 之前。 |
+| `sql.dosi.execute` | `sql` | 原生指标/明细执行成功后，记录该次引擎调用实际返回的 SQL。 |
+| `sql.dosi.compile` | `sql` | 指标 dry-run 编译完成；该 SQL 尚未执行。 |
+
+事件包含 datasource、dialect；Dosi 另包含 connection 和 operation。
+打印日志不会额外编译查询，也不会序列化 policy_context；SQL 字段沿用现有日志脱敏配置。
+INFO 及以上级别不输出这些事件。
+
+### 策略规则
+
 原生 `datus-sql-policies` 使用同一份物理表 `row_filter` 保护 SQL 和指标读取。
 旧 `metric_row_filter` 配置需要迁移，不再往指标的业务 `where` 中拼接条件。
 

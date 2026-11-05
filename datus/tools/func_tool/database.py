@@ -2849,6 +2849,12 @@ class DBFuncTool:
                 return ExecuteSQLResult(
                     success=False, error=f"SQL policy context changed: {exc}", sql_query=enforced_sql
                 )
+        logger.debug(
+            "sql.execute",
+            datasource=effective_datasource,
+            dialect=connector.dialect,
+            sql=enforced_sql,
+        )
         result = connector.execute_query(enforced_sql, result_format=result_format)
         if not result.success:
             return result

@@ -7,6 +7,25 @@ continue to work without the private package.
 
 ## Configuration
 
+### Inspect SQL in DEBUG logs
+
+Start Agent with `datus --debug` or set `agent.logging.level: DEBUG`.
+The normal Agent log contains these structured events:
+
+| Event | SQL fields | When recorded |
+|---|---|---|
+| `sql.policy.rewrite` | `original_sql`, `rewritten_sql`, `rewritten` | After policy processing, before execution; includes SQL tools, API reads and CLI SQL mode. |
+| `sql.execute` | `sql` | Immediately before the SQL tool or CLI submits the final statement to its connector. |
+| `sql.dosi.execute` | `sql` | After successful native metric/detail execution, using the SQL returned by that actual engine call. |
+| `sql.dosi.compile` | `sql` | Metric dry-run compilation; the statement has not been executed. |
+
+Events include the datasource and dialect. Dosi events also identify the
+connection and operation. Logging never recompiles a query or serializes the
+policy context; SQL fields pass through the existing log-redaction configuration.
+These events are suppressed at INFO and higher levels.
+
+### Rules
+
 The native `datus-sql-policies` provider uses one physical-table row rule for
 both SQL and Dosi reads. `metric_row_filter` profiles must be migrated.
 

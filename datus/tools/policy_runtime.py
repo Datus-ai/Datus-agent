@@ -15,6 +15,9 @@ from typing import Any, Callable, Dict, Optional
 
 from datus.plugins.registry import collect_plugin_policy_runtime_factories
 from datus.utils.exceptions import DatusException, ErrorCode
+from datus.utils.loggings import get_logger
+
+logger = get_logger(__name__)
 
 
 def _plain_metadata_read(sql: str, dialect: str) -> bool:
@@ -304,6 +307,15 @@ class PolicyRuntime:
                 return replace(decision, reason=_explain(context, decision.reason))
             current_sql = decision.sql if decision.sql is not None else current_sql
             applied.extend(decision.applied_policies)
+        logger.debug(
+            "sql.policy.rewrite",
+            datasource=datasource,
+            dialect=dialect,
+            original_sql=sql,
+            rewritten_sql=current_sql,
+            rewritten=current_sql != sql,
+            policy_runtimes=self.runtime_names,
+        )
         return SqlReadDecision(allowed=True, sql=current_sql, applied_policies=applied, verify_context=verifier)
 
     def after_read_result(

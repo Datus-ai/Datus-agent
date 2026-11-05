@@ -58,6 +58,9 @@ from datus.tools.semantic_tools.models import (
     ValidationIssue,
     ValidationResult,
 )
+from datus.utils.loggings import get_logger
+
+logger = get_logger(__name__)
 
 
 def _echo(compiled: Dict[str, Any]) -> Dict[str, Any]:
@@ -523,6 +526,7 @@ class DosiRuntime:
                     pretty=True,
                     **policy_kwargs,
                 )
+                self._log_query_sql(compiled, event="sql.dosi.compile", operation="metrics", connection=connection)
                 return QueryResult(
                     columns=["sql"],
                     data=[{"sql": compiled["sql"]}],
@@ -789,6 +793,7 @@ class DosiRuntime:
                 timeout_secs=float(self.config.timeout_seconds),
                 **policy_kwargs,
             )
+            self._log_query_sql(result, event="sql.dosi.execute", operation="select", connection=connection)
         except Exception as exc:  # noqa: BLE001 - mapped to typed errors below
             raise_mapped(exc, binding, requested_dimensions=list(fields))
             raise  # unreachable; raise_mapped always raises
@@ -1441,6 +1446,17 @@ class DosiRuntime:
         except ValueError as exc:
             raise SemanticCoreException(str(exc)) from exc
 
+    def _log_query_sql(self, result: Dict[str, Any], *, event: str, operation: str, connection: Optional[str]) -> None:
+        """Log the SQL returned by the actual native call without recompiling."""
+        logger.debug(
+            event,
+            datasource=self.config.datasource,
+            connection=connection,
+            operation=operation,
+            dialect=result.get("dialect"),
+            sql=result.get("sql"),
+        )
+
     async def _execute_query(self, binding, engine, query, connection, policy_kwargs=None):
         """Propagate asyncio cancellation into request-local native execution."""
         token_type = getattr(binding, "CancellationToken", None)
@@ -1450,7 +1466,9 @@ class DosiRuntime:
         if token is not None:
             kwargs["cancellation"] = token
         try:
-            return await asyncio.to_thread(engine.execute, query, **kwargs)
+            result = await asyncio.to_thread(engine.execute, query, **kwargs)
+            self._log_query_sql(result, event="sql.dosi.execute", operation="metrics", connection=connection)
+            return result
         except asyncio.CancelledError:
             if token is not None:
                 token.cancel()

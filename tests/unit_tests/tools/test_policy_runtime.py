@@ -1,3 +1,4 @@
+import logging
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import Mock, patch
@@ -220,6 +221,32 @@ def test_db_read_applies_before_and_after_hooks(monkeypatch):
     assert db.execute_query.call_args.args[0] == "SELECT * FROM orders WHERE store_id = 1"
     assert result.sql_return == [{"email": "***"}]
     assert fake.contexts[-1] == cfg.policy_context
+
+
+@pytest.mark.parametrize("level", [logging.DEBUG, logging.INFO])
+def test_sql_debug_logs_match_the_statement_sent_to_the_connector(monkeypatch, caplog, level):
+    original = "SELECT * FROM orders"
+    rewritten = "SELECT * FROM orders WHERE store_id = 1"
+    fake = FakeRuntime(sql=rewritten)
+    monkeypatch.setattr(
+        "datus.tools.policy_runtime.collect_plugin_policy_runtime_factories",
+        lambda active: {"sql-policy": lambda profile: fake},
+    )
+    cfg = config({"row_filter": {"access_mode": "scoped", "store_ids": [1]}, "private_marker": "not-for-logs"})
+    db = connector()
+    with caplog.at_level(level):
+        result = make_db_tool(db, cfg).execute_read_enforced(original, db, datasource="warehouse")
+    assert result.success
+    db.execute_query.assert_called_once_with(rewritten, result_format="list")
+    messages = [record.getMessage() for record in caplog.records]
+    sql_logs = [message for message in messages if "sql.policy.rewrite" in message or "sql.execute" in message]
+    if level == logging.INFO:
+        assert sql_logs == []
+    else:
+        assert len(sql_logs) == 2
+        assert original in sql_logs[0] and rewritten in sql_logs[0]
+        assert rewritten in sql_logs[1]
+        assert "not-for-logs" not in "\n".join(sql_logs)
 
 
 def test_db_policy_denial_does_not_execute(monkeypatch):
