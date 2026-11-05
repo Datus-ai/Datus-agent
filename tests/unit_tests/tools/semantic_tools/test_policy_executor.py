@@ -129,9 +129,15 @@ async def test_query_denial_never_returns_rows(execution, monkeypatch, denied):
     install_policy(monkeypatch, deny=denied)
     with pytest.raises(DatusException):
         await executor.query_metrics("revenue", policy_context={"region": "west"})
-    if denied != "result":
-        with pytest.raises(DatusException):
-            await executor.attribute(attribution(), policy_context={"region": "west"})
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("denied", ["context", "metric", "sql"])
+async def test_attribution_denial_never_returns_evidence(execution, monkeypatch, denied):
+    _, executor, _ = execution
+    install_policy(monkeypatch, deny=denied)
+    with pytest.raises(DatusException):
+        await executor.attribute(attribution(), policy_context={"region": "west"})
 
 
 @pytest.mark.parametrize(
@@ -148,8 +154,11 @@ def test_attribution_accepts_only_known_row_policy_forms():
     config = SimpleNamespace(
         get_plugin_profile=lambda _: {"policies": [{"type": "row_filter"}, {"type": "metric_row_filter"}]}
     )
-    PolicyMetricExecutor.validate_attribution_support(config, SimpleNamespace(runtime_names=("sql-policy",)))
-    PolicyMetricExecutor.validate_attribution_support(config, SimpleNamespace(runtime_names=()))
+    assert (
+        PolicyMetricExecutor.validate_attribution_support(config, SimpleNamespace(runtime_names=("sql-policy",)))
+        is None
+    )
+    assert PolicyMetricExecutor.validate_attribution_support(config, SimpleNamespace(runtime_names=())) is None
 
 
 @pytest.mark.asyncio
