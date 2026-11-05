@@ -563,8 +563,9 @@ class TestCacheIO:
         assert pmc.load_cached_models() == {"openai": ["gpt-4o", "gpt-4.1"]}
         assert pmc.load_cached_model_details() == {"openai": [{"id": "gpt-4o"}, {"id": "gpt-4.1"}]}
 
-    def test_load_rejects_wrong_version(self, fake_datus_home: Path) -> None:
-        _write_cache(fake_datus_home, {"openai": [{"id": "gpt-4o"}]}, version=99)
+    @pytest.mark.parametrize("version", [99, [], {}, None, True, "2", 2.0])
+    def test_load_rejects_wrong_version(self, fake_datus_home: Path, version) -> None:
+        _write_cache(fake_datus_home, {"openai": [{"id": "gpt-4o"}]}, version=version)
         assert pmc.load_cached_models() is None
         assert pmc.load_cached_model_details() is None
 
@@ -1043,12 +1044,14 @@ class TestResolveModelDetails:
             assert pmc.resolve_model_details() == buckets
         fetch.assert_not_called()
 
-    @pytest.mark.parametrize("broken", [False, True])
-    def test_expired_or_corrupt_cache_is_refreshed(self, fake_datus_home, broken):
+    @pytest.mark.parametrize("cache_state", ["expired", "invalid_json", "invalid_schema"])
+    def test_expired_or_corrupt_cache_is_refreshed(self, fake_datus_home, cache_state):
         pmc.save_cached_models({"glm": [{"id": "old"}]})
         path = pmc._cache_file_path()
-        if broken:
+        if cache_state == "invalid_json":
             path.write_text("invalid json")
+        elif cache_state == "invalid_schema":
+            path.write_text(json.dumps({"version": [], "models": {"glm": [{"id": "old"}]}}))
         else:
             old = time.time() - pmc.FRESH_CACHE_TTL_SEC - 1
             os.utime(path, (old, old))

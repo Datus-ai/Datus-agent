@@ -333,7 +333,7 @@ def _read_cache_file() -> Optional[Dict[str, Any]]:
         logger.debug("openrouter cache schema mismatch")
         return None
     version = raw.get("version", 1)
-    if version not in _SUPPORTED_CACHE_VERSIONS:
+    if type(version) is not int or version not in _SUPPORTED_CACHE_VERSIONS:
         logger.debug("openrouter cache schema mismatch")
         return None
     models = raw.get("models")

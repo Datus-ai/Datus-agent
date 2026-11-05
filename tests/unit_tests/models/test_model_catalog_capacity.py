@@ -156,3 +156,17 @@ def test_known_output_default_is_preserved_when_gateway_advertises_more(monkeypa
     )
     model = OpenAIModel(ModelConfig(type="deepseek", model="deepseek-v4-flash", api_key="test"))
     assert model.max_tokens() == 384000
+
+
+@pytest.mark.parametrize("model_name,expected", [("glm-5.3", 128000), ("gpt-4o", 16384)])
+@pytest.mark.parametrize("reverse", [False, True])
+def test_duplicate_catalog_slugs_do_not_raise_output_defaults(monkeypatch, model_name, expected, reverse):
+    monkeypatch.setattr(litellm, "model_cost", {})
+    buckets = [
+        ("openai", [{"id": model_name, "context_length": 1048576, "max_tokens": 256000}]),
+        ("glm", [{"id": model_name, "context_length": 1048576, "max_tokens": 512000}]),
+    ]
+    details = dict(reversed(buckets) if reverse else buckets)
+    monkeypatch.setattr(catalog, "fetch_openrouter_models", Mock(return_value=details))
+    model = OpenAIModel(ModelConfig(type="openai", model=model_name, api_key="test"))
+    assert model.max_tokens() == expected

@@ -146,6 +146,7 @@ def _load_model_specs() -> Dict[str, Dict[str, int]]:
                 logger.warning(f"Failed to load model_specs from providers.yml, using empty specs: {e}")
 
             # Exact catalog metadata supersedes offline defaults, field by field.
+            offline_output_defaults = {name: spec.get("max_tokens") for name, spec in specs.items()}
             if details:
                 for entries in details.values():
                     for entry in entries:
@@ -159,7 +160,7 @@ def _load_model_specs() -> Dict[str, Dict[str, int]]:
                                     # Catalog ceilings describe a serving provider;
                                     # a larger ceiling must not inflate the existing
                                     # default budget used for ordinary requests.
-                                    known = specs.get(slug, {}).get(field)
+                                    known = offline_output_defaults.get(slug)
                                     lite = litellm.model_cost.get(
                                         slug, litellm.model_cost.get(f"openrouter/{slug}", {})
                                     ).get("max_output_tokens")
