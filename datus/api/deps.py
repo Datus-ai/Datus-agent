@@ -88,7 +88,9 @@ async def get_datus_service(request: Request) -> DatusService:
             stream_thinking=_stream_thinking,
         )
 
-    return await _service_cache.get_or_create(cache_key, _factory, expected_fingerprint=expected_fp)
+    return await _service_cache.get_or_create(
+        cache_key, _factory, expected_fingerprint=expected_fp, agent_config=ctx.config
+    )
 
 
 def get_app_context(request: Request) -> AppContext:
