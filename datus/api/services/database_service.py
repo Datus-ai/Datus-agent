@@ -3,6 +3,7 @@ Service for handling Database Management operations.
 """
 
 import asyncio
+import copy
 import stat
 import threading
 import time
@@ -831,27 +832,29 @@ class DatasourceService:
         return relative.parts[0] if len(relative.parts) > 1 else ""
 
     def _resolve_writable_semantic_model_file(self, semantic_model_file: str) -> Path:
-        """Resolve a save/validate target, refusing another datasource's model.
-
-        Reads span the whole tree, but every write-side stage is built around
-        ``current_datasource``: Dosi resolves the target inside the active
-        datasource's inventory, and knowledge-base sync stamps its rows with
-        that datasource. Writing
-        another datasource's artifact would therefore file its rows under the
-        wrong datasource, so reject it with a message that says what to do.
-        Threading a per-request datasource through those stages is the real
-        fix and needs its own change.
-        """
+        """Resolve a write-side target belonging to a configured datasource."""
 
         path = self._resolve_semantic_model_file(semantic_model_file)
         datasource = self._semantic_model_datasource(path)
-        active = str(getattr(self.agent_config, "current_datasource", "") or "").strip()
-        if datasource and active and datasource != active:
-            raise ValueError(
-                f"semantic_model_file belongs to datasource {datasource!r}, but {active!r} is active; "
-                "switch the active datasource before saving this model"
-            )
+        if datasource and datasource not in self.agent_config.datasource_configs:
+            raise ValueError(f"semantic_model_file belongs to datasource {datasource!r}, which is not configured")
         return path
+
+    def _semantic_model_config(self, path: Path) -> AgentConfig:
+        """Scope Dosi validation and KB sync to the artifact's datasource.
+
+        The service config is cached per project and used concurrently. Switching
+        a copy keeps another model save or chat request on its own datasource.
+        The setter also updates the dialect and clears incompatible runtime DB
+        coordinates. Files directly under the model root retain the default.
+        """
+        datasource = self._semantic_model_datasource(path)
+        if not datasource or datasource == self.agent_config.current_datasource:
+            return self.agent_config
+
+        config = copy.copy(self.agent_config)
+        config.current_datasource = datasource
+        return config
 
     @staticmethod
     def _osi_candidate_identity(yaml_content: str) -> tuple[Optional[str], bool, Optional[str]]:
@@ -987,6 +990,7 @@ class DatasourceService:
     def _save_semantic_model_sync(self, request: SaveSemanticModelInput) -> Result[SaveSemanticModelData]:
         try:
             semantic_model_path = self._resolve_writable_semantic_model_file(request.semantic_model_file)
+            agent_config = self._semantic_model_config(semantic_model_path)
         except ValueError as exc:
             return Result[SaveSemanticModelData](
                 success=False,
@@ -1087,7 +1091,7 @@ class DatasourceService:
             assert model_name is not None
             try:
                 valid, validation_payload, validation_error = self._full_osi_validation(
-                    self.agent_config,
+                    agent_config,
                     semantic_model_name=model_name,
                     has_metrics=has_metrics,
                 )
@@ -1144,7 +1148,7 @@ class DatasourceService:
             try:
                 from datus.tools.func_tool.generation_tools import GenerationTools
 
-                sync_result = GenerationTools(agent_config=self.agent_config).sync_osi_to_db(
+                sync_result = GenerationTools(agent_config=agent_config).sync_osi_to_db(
                     str(semantic_model_path),
                     include_semantic_objects=True,
                     include_metrics=True,
@@ -1223,8 +1227,7 @@ class DatasourceService:
         """Validate submitted SemanticModel YAML without changing the live artifact."""
         logger.info("Validating semantic model YAML")
         try:
-            # Same addressing rule as save: validating a file you would not be
-            # allowed to save is a confusing asymmetry.
+            # Apply the same path and datasource-binding checks as save.
             semantic_model_path = self._resolve_writable_semantic_model_file(request.semantic_model_file)
             is_valid, error_messages, _model_name, _has_metrics = self._validate_semantic_content(
                 request,
