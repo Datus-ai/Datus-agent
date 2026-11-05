@@ -259,6 +259,71 @@ def test_attached_database_switch_requires_fresh_binding(db):
     assert resolve(rebound, "memory.main.orders")["object"]["database"] == "memory"
 
 
+@pytest.mark.parametrize("reference", ["other.orders", '"OTHER"."ORDERS"'])
+def test_duckdb_two_part_catalog_source_resolves_the_attached_physical_table(db, reference):
+    db.execute("ATTACH ':memory:' AS other; CREATE TABLE other.main.orders AS SELECT 42 AS tenant_id")
+    context = SqlReadContext(Connector(db), "warehouse")
+    table = resolve(context, reference)
+    assert table["object"]["database"] == "other"
+    assert table["object"]["schema"] == "main"
+    assert (
+        db.execute(f"SELECT * FROM {table['sql_reference']}").fetchall()
+        == db.execute("SELECT * FROM " + reference).fetchall()
+        == [(42,)]
+    )
+    # A short profile target still follows documented right alignment.
+    assert context.fixed_object(parts(reference))["schema"] == "other"
+    assert context.fixed_object(parts(reference))["database"] == "memory"
+
+
+def test_duckdb_two_part_catalog_schema_ambiguity_is_refused(db):
+    db.execute("ATTACH ':memory:' AS other; CREATE SCHEMA other.sales; USE other.sales")
+    db.execute("CREATE TABLE other.main.orders AS SELECT 42 AS id")
+    db.execute("CREATE SCHEMA other.other")
+    with pytest.raises(duckdb.BinderException, match="Ambiguous reference to catalog or schema"):
+        db.execute("SELECT * FROM other.orders")
+    context = SqlReadContext(Connector(db), "warehouse")
+    with pytest.raises(ValueError, match="ambiguous DuckDB catalog or schema"):
+        resolve(context, "other.orders")
+    assert resolve(context, "other.main.orders")["object"]["schema"] == "main"
+
+
+@pytest.mark.parametrize("path", ["other.sales,memory.main", "memory.main,other.sales"])
+def test_duckdb_two_part_catalog_source_follows_that_catalog_search_path(db, path):
+    db.execute("ATTACH ':memory:' AS other; CREATE SCHEMA other.sales")
+    db.execute("CREATE TABLE other.main.orders AS SELECT 1 AS id")
+    db.execute("CREATE TABLE other.sales.orders AS SELECT 2 AS id")
+    db.execute("SET search_path='" + path + "'")
+    context = SqlReadContext(Connector(db), "warehouse")
+    table = resolve(context, "other.orders")
+    assert table["object"]["schema"] == "sales"
+    assert (
+        db.execute(f"SELECT * FROM {table['sql_reference']}").fetchall()
+        == db.execute("SELECT * FROM other.orders").fetchall()
+        == [(2,)]
+    )
+
+
+@pytest.mark.parametrize("dialect", ["hive", "spark", "trino"])
+@pytest.mark.parametrize("reference", ["ORDERS", '"ORDERS"'])
+def test_case_insensitive_sources_and_policy_targets_share_canonical_identifiers(monkeypatch, dialect, reference):
+    order = ["catalog_name", "schema_name", "table_name"] if dialect == "trino" else ["database_name", "table_name"]
+    monkeypatch.setattr("datus.tools.sql_read_context.table_name_field_order", lambda _: order)
+    connector = SimpleNamespace(
+        dialect=dialect,
+        get_current_context=lambda: {"catalog_name": "Memory", "database_name": "Sales", "schema_name": "Sales"},
+        get_tables=lambda **_: ["orders"],
+        get_views=lambda **_: [],
+        get_schema=lambda **_: [{"name": "phone", "type": "VARCHAR(30)"}],
+    )
+    context = SqlReadContext(connector, "warehouse")
+    assert context.execution_context["source_dialect"] == dialect
+    table = resolve(context, reference)
+    assert table["object"] == context.fixed_object(parts(reference))
+    assert table["object"]["table"] == "orders"
+    assert context.column_name({"name": "PHONE", "quoted": True}) == "phone"
+
+
 def test_views_fail_closed(db):
     db.execute("CREATE VIEW hidden AS SELECT * FROM orders")
     with pytest.raises(ValueError, match="opaque database views"):

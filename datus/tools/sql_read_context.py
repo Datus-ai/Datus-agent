@@ -43,6 +43,10 @@ class SqlReadContext:
     def canonical_name(self, name: str) -> str:
         if self.dialect in {"duckdb", "sqlite"}:
             return name.translate(_ASCII_LOWER)
+        if self.dialect in {"hive", "spark", "trino"}:
+            # These engines fold quoted identifiers too. Apply the same key
+            # to query sources, profile targets and metadata listings.
+            return name.lower()
         if self.dialect in {"mysql", "tidb"} and self._state["lower_case_table_names"]:
             if name.isascii():
                 return name.translate(_ASCII_LOWER)
@@ -102,6 +106,7 @@ class SqlReadContext:
         self._sqlite_connection = getattr(connector, "connection", None) if self.dialect == "sqlite" else None
         self.execution_context = {
             "datasource": datasource,
+            "source_dialect": self.dialect,
             **{key: self._state.get(key) or None for key in ("catalog", "database", "schema")},
             "search_path": self._state["search_path"],
             "revision": json.dumps(self._state, sort_keys=True),
@@ -229,8 +234,31 @@ class SqlReadContext:
         key = (tuple((p["name"], p.get("quoted", False)) for p in parts), fixed)
         if key in self._metadata:
             return self._metadata[key]
+        duckdb_catalog_prefix = False
+        if self.dialect == "duckdb" and len(parts) == 2 and not fixed:
+            prefix = self.canonical_name(specified["schema"])
+            catalogs = self._query("SELECT database_name FROM duckdb_databases()")
+            if any(self.canonical_name(row["database_name"]) == prefix for row in catalogs):
+                schemas = self._query(
+                    f"SELECT schema_name FROM duckdb_schemas() WHERE database_name={_literal(self._state['database'])}"
+                )
+                if any(self.canonical_name(row["schema_name"]) == prefix for row in schemas):
+                    raise ValueError("ambiguous DuckDB catalog or schema; qualify database.schema.table explicitly")
+                # Resolve this catalog through its search-path schemas, then
+                # main. Profile-target defaulting retains right alignment.
+                specified = {"database": specified["schema"], "table": specified["table"]}
+                duckdb_catalog_prefix = True
         base = {key: specified.get(key) or self._state[key] for key in ("catalog", "database", "schema")}
         candidates = [base]
+        if duckdb_catalog_prefix:
+            candidates = []
+            for path in self._state["search_path"]:
+                namespace = self._parts(parser(path + ".__datus_probe"))
+                if self.canonical_name(namespace.get("database", self._state["database"])) == self.canonical_name(
+                    specified["database"]
+                ):
+                    candidates.append({**base, "schema": namespace["schema"]})
+            candidates.append({**base, "schema": "main"})
         if self.dialect == "sqlite" and "database" not in specified:
             candidates = [{**base, "database": name} for name in self._state["search_path"]]
         if self.dialect == "duckdb" and "database" not in specified:
@@ -242,7 +270,7 @@ class SqlReadContext:
                     namespace = self._parts(parser(path + ".__datus_probe"))
                     candidates.append({**base, **{k: v for k, v in namespace.items() if k != "table"}})
             candidates.append(base)
-        elif "schema" in self.namespace_order and "schema" not in specified:
+        elif not duckdb_catalog_prefix and "schema" in self.namespace_order and "schema" not in specified:
             candidates = [{**base, "schema": name} for name in self._state["search_path"]] or [base]
         for namespace in candidates:
             table = self._lookup(namespace, specified["table"], parser)
