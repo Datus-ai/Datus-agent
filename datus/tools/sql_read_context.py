@@ -219,7 +219,7 @@ class SqlReadContext:
                     name = name.translate(_ASCII_LOWER)
                 elif self.dialect in {"snowflake", "oracle", "hana"}:
                     name = name.upper()
-            values.append(name)
+            values.append(self.canonical_name(name))
         return dict(zip(self.namespace_order[-len(values) :], values))
 
     def resolve_source_parts(
@@ -248,7 +248,10 @@ class SqlReadContext:
                 # main. Profile-target defaulting retains right alignment.
                 specified = {"database": specified["schema"], "table": specified["table"]}
                 duckdb_catalog_prefix = True
-        base = {key: specified.get(key) or self._state[key] for key in ("catalog", "database", "schema")}
+        base = {
+            key: self.canonical_name(specified.get(key) or self._state[key])
+            for key in ("catalog", "database", "schema")
+        }
         candidates = [base]
         if duckdb_catalog_prefix:
             candidates = []

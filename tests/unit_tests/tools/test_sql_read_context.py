@@ -309,12 +309,20 @@ def test_duckdb_two_part_catalog_source_follows_that_catalog_search_path(db, pat
 def test_case_insensitive_sources_and_policy_targets_share_canonical_identifiers(monkeypatch, dialect, reference):
     order = ["catalog_name", "schema_name", "table_name"] if dialect == "trino" else ["database_name", "table_name"]
     monkeypatch.setattr("datus.tools.sql_read_context.table_name_field_order", lambda _: order)
+
+    def get_schema(*, table_name, **namespace):
+        # Trino's information_schema predicate is case-sensitive even though
+        # identifiers in business SQL are not. Normalize before metadata IO.
+        assert table_name == "orders"
+        assert all(value == value.lower() for value in namespace.values() if isinstance(value, str))
+        return [{"name": "phone", "type": "VARCHAR(30)"}]
+
     connector = SimpleNamespace(
         dialect=dialect,
         get_current_context=lambda: {"catalog_name": "Memory", "database_name": "Sales", "schema_name": "Sales"},
         get_tables=lambda **_: ["orders"],
         get_views=lambda **_: [],
-        get_schema=lambda **_: [{"name": "phone", "type": "VARCHAR(30)"}],
+        get_schema=get_schema,
     )
     context = SqlReadContext(connector, "warehouse")
     assert context.execution_context["source_dialect"] == dialect
