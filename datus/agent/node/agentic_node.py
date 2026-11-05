@@ -1216,6 +1216,13 @@ class AgenticNode(Node):
             )
         return source
 
+    def _resolve_system_prompt_version(self, prompt_version: Optional[str]) -> Optional[str]:
+        """Use the same explicit, node, then agent version for rendering and its cache identity."""
+        version = prompt_version or (getattr(self, "node_config", None) or {}).get("prompt_version")
+        if version is None:
+            version = getattr(getattr(self, "agent_config", None), "prompt_version", None)
+        return version
+
     def _system_prompt_snapshot_meta(self, prompt_version: Optional[str]) -> Dict[str, str]:
         """Identity keys that invalidate the cached system-prompt snapshot.
 
@@ -1233,9 +1240,7 @@ class AgenticNode(Node):
         skill contents are fingerprinted so same-named updates rebuild it.
         """
         agent_config = getattr(self, "agent_config", None)
-        version = prompt_version or (getattr(self, "node_config", None) or {}).get("prompt_version")
-        if version is None and agent_config is not None and hasattr(agent_config, "prompt_version"):
-            version = agent_config.prompt_version
+        version = self._resolve_system_prompt_version(prompt_version)
         # A node-level model override (``node_config.model``) pins the
         # effective model regardless of the agent-level target, so it must be
         # the identity when set — otherwise a /model switch that doesn't
@@ -1381,10 +1386,7 @@ class AgenticNode(Node):
         Returns:
             System prompt string loaded from the template
         """
-        # Get prompt version from parameter, fallback to agent config, then use default
-        version = prompt_version
-        if version is None and self.agent_config and hasattr(self.agent_config, "prompt_version"):
-            version = self.agent_config.prompt_version
+        version = self._resolve_system_prompt_version(prompt_version)
 
         root_path = self._resolve_workspace_root()
 
