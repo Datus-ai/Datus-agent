@@ -3292,3 +3292,62 @@ class TestStartChatSettlesExactlyOnce:
 
         assert [c[2] for c in calls] == ["completed"]
         assert calls[0][3] == task.turn_id
+
+
+def test_host_node_factory_delegates_or_fails_closed(real_agent_config, monkeypatch):
+    from unittest.mock import Mock
+
+    from datus.agent.node import node_factory
+
+    builtin, hosted = object(), object()
+    fallback = Mock(return_value=builtin)
+    extension = Mock(return_value=hosted)
+    monkeypatch.setattr(node_factory, "create_interactive_node", fallback)
+    manager = ChatTaskManager(node_factory=extension)
+    assert manager._create_node(real_agent_config, "ask_metrics", "session", "owner", False) is hosted
+    extension.assert_called_once_with(
+        agent_config=real_agent_config,
+        subagent_id="ask_metrics",
+        node_id="session",
+        user_id="owner",
+        interactive=False,
+        session_id=None,
+    )
+    fallback.assert_not_called()
+    extension.return_value = None
+    assert manager._create_node(real_agent_config, "chat", "normal", "owner") is builtin
+    fallback.assert_called_once()
+    extension.side_effect = ValueError("Host authorization denied")
+    with pytest.raises(ValueError, match="authorization"):
+        manager._create_node(real_agent_config, "chat", "denied", "owner")
+    assert fallback.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_preaccepted_opening_skips_only_first_user_event():
+    from datus.api.models.cli_models import IMessageContent, SSEMessageData, SSEMessagePayload
+    from datus.api.services.chat_task_manager import ChatTask
+
+    manager = ChatTaskManager()
+    task = ChatTask("accepted", None)
+    task.accepted_opening_event = True
+
+    def event(role):
+        return SSEEvent(
+            id=1,
+            event="message",
+            timestamp="2026-11-05T00:00:00Z",
+            data=SSEMessageData(
+                type="createMessage",
+                payload=SSEMessagePayload(
+                    message_id="1", role=role, content=[IMessageContent(type="markdown", payload={"content": "hello"})]
+                ),
+            ),
+        )
+
+    opening, reply = event("user"), event("assistant")
+    await manager._push_event(task, opening)
+    assert task.events == []
+    await manager._push_event(task, reply)
+    await manager._push_event(task, opening)
+    assert task.events == [reply, opening]

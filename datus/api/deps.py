@@ -6,8 +6,10 @@ from fastapi import Depends, HTTPException, Request
 
 from datus.api.auth.context import AppContext
 from datus.api.auth.provider import AuthProvider
+from datus.api.services.chat_extensions import ChatTaskManagerFactory
 from datus.api.services.datus_service import DatusService
 from datus.api.services.datus_service_cache import DatusServiceCache
+from datus.configuration.agent_config import AgentConfig
 from datus.configuration.agent_config_loader import load_agent_config
 from datus.utils.exceptions import DatusException
 from datus.utils.loggings import get_logger
@@ -21,6 +23,7 @@ _datasource: str = "default"
 _default_source: Optional[str] = None
 _default_interactive: bool = True
 _stream_thinking: bool = False
+_task_manager_factory: Optional[ChatTaskManagerFactory] = None
 
 _DEFAULT_PROJECT_KEY = "default"
 
@@ -32,12 +35,16 @@ def init_deps(
     default_source: Optional[str] = None,
     default_interactive: bool = True,
     stream_thinking: bool = False,
+    *,
+    task_manager_factory: Optional[ChatTaskManagerFactory] = None,
 ) -> None:
     """Initialize global auth provider and service cache.
 
     Called from main.py lifespan to inject dependencies.
     """
     global _auth_provider, _service_cache, _datasource, _default_source, _default_interactive, _stream_thinking
+    global _task_manager_factory
+    _task_manager_factory = task_manager_factory
     _auth_provider = auth_provider
     _service_cache = cache
     _datasource = datasource
@@ -46,6 +53,22 @@ def init_deps(
     _stream_thinking = stream_thinking
     # Wire eviction callback: auth config changes trigger cache eviction
     auth_provider.on_evict(cache.evict)
+
+
+def create_datus_service(agent_config: AgentConfig, project_id: str) -> DatusService:
+    """Construct an uncached service with the host's startup extensions.
+
+    Background jobs use this same constructor inside their cache factory.
+    Callers own cache lookup and shutdown; this function never replaces a live manager.
+    """
+    return DatusService(
+        agent_config=agent_config,
+        project_id=project_id,
+        default_source=_default_source,
+        default_interactive=_default_interactive,
+        stream_thinking=_stream_thinking,
+        task_manager_factory=_task_manager_factory,
+    )
 
 
 async def get_datus_service(request: Request) -> DatusService:
@@ -80,13 +103,7 @@ async def get_datus_service(request: Request) -> DatusService:
                 logger.error(f"Failed to load agent config for datasource '{_datasource}': {e}")
                 raise RuntimeError(f"Failed to load agent config: {e}") from e
 
-        return DatusService(
-            agent_config=agent_config,
-            project_id=cache_key,
-            default_source=_default_source,
-            default_interactive=_default_interactive,
-            stream_thinking=_stream_thinking,
-        )
+        return create_datus_service(agent_config, cache_key)
 
     return await _service_cache.get_or_create(cache_key, _factory, expected_fingerprint=expected_fp)
 

@@ -40,6 +40,7 @@ from datus.api.services.action_sse_converter import (
     action_to_sse_event,
 )
 from datus.api.services.background_drain import track_background_task
+from datus.api.services.chat_extensions import ChatNodeFactory
 from datus.api.services.turn_stats import TurnStatsCollector, resolve_subagent
 from datus.cli.autocomplete import AtReferenceCompleter
 from datus.cli.execution_state import PendingInputQueue
@@ -406,6 +407,7 @@ class ChatTask:
         self.turn_id: Optional[str] = None
         # Guards on_turn_end to exactly once per turn (see _settle_turn).
         self.settled: bool = False
+        self.accepted_opening_event: bool = False
         # ``SSEEndData`` of a completed turn; the usage the host is billed for.
         self.end_usage: Optional[Dict[str, Any]] = None
 
@@ -476,7 +478,10 @@ class ChatTaskManager:
         default_source: Optional[str] = None,
         default_interactive: bool = True,
         stream_thinking: bool = False,
+        *,
+        node_factory: Optional[ChatNodeFactory] = None,
     ) -> None:
+        self._node_factory = node_factory
         self._tasks: Dict[str, ChatTask] = {}
         self._completed_tasks: Dict[str, ChatTask] = {}
         self._default_source = default_source
@@ -496,8 +501,13 @@ class ChatTaskManager:
         policy_context: Optional[Dict[str, Any]] = None,
         stats_context: Optional[Dict[str, Any]] = None,
         on_turn_end: Optional["TurnEndCallback"] = None,
+        *,
+        accepted_opening: bool = False,
     ) -> ChatTask:
         """Create a background task for the agentic loop.
+            :param accepted_opening: host already committed the opening in history;
+                suppress its duplicate SSE event. The host node must also use an
+                AcceptedOpeningSession for this first turn only.
             :param sub_agent_id: builtin name or custom sub-agent DB ID
             :param stats_context: host data returned with the turn's call statistics
             :param on_turn_end: called once the turn is over, however it ended,
@@ -630,6 +640,7 @@ class ChatTaskManager:
             if request.messages is not None
             else [{"type": "markdown", "payload": {"content": request.message}}],
         )
+        task.accepted_opening_event = accepted_opening
         task.stats_context = dict(stats_context or {})
         task.on_turn_end = on_turn_end
         task.turn_id = uuid.uuid4().hex
@@ -1442,7 +1453,7 @@ class ChatTaskManager:
         return event_id
 
     @staticmethod
-    def _session_manager(agent_config: AgentConfig, user_id: Optional[str]):
+    def session_manager(agent_config: AgentConfig, user_id: Optional[str]):
         """Build a SessionManager pointed at this run's session dir + scope."""
         from datus.models.session_manager import SessionManager
         from datus.utils.path_manager import get_path_manager
@@ -1451,6 +1462,9 @@ class ChatTaskManager:
             get_path_manager(agent_config=agent_config).sessions_dir
         )
         return SessionManager(session_dir=base_dir, scope=user_id)
+
+    # Preserve the internal name for existing subclasses; hosts use session_manager.
+    _session_manager = session_manager
 
     def _max_user_turn_number(self, agent_config: AgentConfig, session_id: str, user_id: Optional[str]) -> int:
         """Best-effort snapshot of the session's turn counter (0 on any error)."""
@@ -1502,6 +1516,9 @@ class ChatTaskManager:
 
     async def _push_event(self, task: ChatTask, event: SSEEvent) -> None:
         """Append an event to the task buffer and notify consumers."""
+        if task.accepted_opening_event and isinstance(event.data, SSEMessageData) and event.data.payload.role == "user":
+            task.accepted_opening_event = False
+            return
         if isinstance(event.data, SSEMessageData):
             for part in event.data.payload.content:
                 call_id = part.payload.get("callToolId")
@@ -1561,6 +1578,18 @@ class ChatTaskManager:
         feedback flow passes a pre-copied id so the new node opens the cloned
         session file directly instead of mutating ``node.session_id`` later.
         """
+        if self._node_factory is not None:
+            node = self._node_factory(
+                agent_config=agent_config,
+                subagent_id=subagent_id,
+                node_id=node_id,
+                user_id=user_id,
+                interactive=interactive,
+                session_id=session_id,
+            )
+            if node is not None:
+                return node
+
         from datus.agent.node.node_factory import create_interactive_node
 
         execution_mode: Literal["interactive", "workflow"] = "interactive" if interactive else "workflow"
