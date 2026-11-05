@@ -185,9 +185,6 @@ def test_receipt_connections_close_on_success_and_failure(tmp_path, monkeypatch,
         """Retain connections so garbage collection cannot hide missing closes."""
         conn = connect(*args, **kwargs)
         connections.append(conn)
-        if operation.startswith("read"):
-            with pytest.raises(sqlite3.OperationalError, match="readonly"):
-                conn.execute("CREATE TABLE forbidden_write(value)")
         return conn
 
     monkeypatch.setattr(sqlite3, "connect", capture)
@@ -247,3 +244,24 @@ def test_begin_failure_releases_session_connection_and_lock_reference(tmp_path, 
             blocker.rollback()
             for session in sessions:
                 session.close()
+
+
+def test_receipt_read_keeps_connection_read_only(tmp_path, monkeypatch):
+    """Read-only lookup refuses writes even when the underlying file is writable."""
+    store = AcceptedTurnStore(str(tmp_path), "stable", namespace="host")
+    receipt = accept(store)
+    connect = sqlite3.connect
+
+    def attempt_write(*args, **kwargs):
+        """Probe the actual connection before the store reads and closes it."""
+        conn = connect(*args, **kwargs)
+        try:
+            with pytest.raises(sqlite3.OperationalError, match="readonly"):
+                conn.execute("CREATE TABLE forbidden_write(value)")
+        except BaseException:
+            conn.close()
+            raise
+        return conn
+
+    monkeypatch.setattr(sqlite3, "connect", attempt_write)
+    assert store.read() == receipt
