@@ -29,7 +29,7 @@ def environment(tmp_path):
 
     model = tmp_path / "subject" / "semantic_models" / "warehouse" / "shop.yml"
     model.parent.mkdir(parents=True)
-    model.write_text("version: '0.2.0.dev0'\nsemantic_model: []\n", encoding="utf-8")
+    model.write_text("version: 0.2.0.dev0\nname: model\ndatasets: []\n", encoding="utf-8")
     database = tmp_path / "shop.sqlite"
     with sqlite3.connect(database) as connection:
         connection.execute("CREATE TABLE orders(region TEXT, amount REAL)")
@@ -420,7 +420,9 @@ def test_same_metric_queries_can_be_resaved_sequentially_but_mixed_revisions_fai
     second = save(name="next_sales", **args)
     assert second.success == 1, second.error
     assert tools._validate_metric_queries(kind) is None
-    env.model.write_text("version: '0.2.0.dev0'\nsemantic_model: []\n# changed\n", encoding="utf-8")
+    env.model.write_text(
+        "version: 0.2.0.dev0\nname: model\ndatasets: []\ndescription: Revised model\n", encoding="utf-8"
+    )
     first_update = save(name="sales", **args)
     assert first_update.success == 1, first_update.error
     assert "cannot mix model revisions" in tools._validate_metric_queries(kind)
@@ -442,7 +444,7 @@ def test_same_named_metrics_on_different_datasources_keep_independent_revisions(
     assert saved.success == 1, saved.error
     other = env.root / "subject" / "semantic_models" / "other" / "shop.yml"
     other.parent.mkdir(parents=True)
-    other.write_text("version: '0.2.0.dev0'\nsemantic_model: []\n# different datasource and revision\n")
+    other.write_text("version: 0.2.0.dev0\nname: model\ndatasets: []\n")
     monkeypatch.setattr(
         env.runtime,
         "artifact_metric_binding",
@@ -466,7 +468,7 @@ async def test_queries_share_model_files_and_bundle_preserves_exact_bytes(enviro
     from datus.utils.metric_artifact_models import resolve_metric_query_snapshot
 
     env = environment
-    content = b"version: '0.2.0.dev0'\r\nsemantic_model: []\r\n"
+    content = b"version: '0.2.0.dev0'\r\nname: model\r\ndatasets: []\r\n"
     env.model.write_bytes(content)
     options = {"params": [], "sample_params": {}} if kind == "dashboard" else {}
     tools, first = _save(env, kind, **options)
@@ -521,7 +523,7 @@ def test_multiple_models_with_same_basename_remain_distinct(environment, kind, m
     assert saved.success == 1, saved.error
     second_model = env.root / "subject" / "semantic_models" / "other" / "shop.yml"
     second_model.parent.mkdir(parents=True)
-    second_model.write_text("version: '0.2.0.dev0'\nsemantic_model: []\n# Cost model\n")
+    second_model.write_text("version: 0.2.0.dev0\nname: second_model\ndatasets: []\n")
     second_ref = {"path": ["Commerce", "Costs"], "name": "cost"}
     monkeypatch.setattr(
         env.runtime,
@@ -649,7 +651,7 @@ def test_different_metrics_cannot_mix_revisions_of_one_model(environment, kind, 
     options = {"params": [], "sample_params": {}} if kind == "dashboard" else {}
     tools, saved = _save(env, kind, **options)
     assert saved.success == 1
-    env.model.write_text("version: '0.2.0.dev0'\nsemantic_model: []\n# Updated model\n")
+    env.model.write_text("version: 0.2.0.dev0\nname: model\ndatasets: []\ndescription: Revised model\n")
     other_ref = {"path": ["Commerce"], "name": "cost"}
     binding = env.runtime.artifact_metric_binding("revenue")
     monkeypatch.setattr(env.runtime, "artifact_metric_binding", lambda name: binding)
@@ -683,7 +685,7 @@ def test_model_files_are_tool_managed(environment, kind, operation):
     if operation == "write":
         result = fs.write_file(relative, "changed")
     elif operation == "edit":
-        result = fs.edit_file(relative, "semantic_model", "changed")
+        result = fs.edit_file(relative, "datasets", "changed")
     else:
         result = fs.delete_file(relative)
     assert result.success == 0

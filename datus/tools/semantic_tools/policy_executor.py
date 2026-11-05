@@ -112,6 +112,7 @@ class PolicyMetricExecutor:
         """Apply row policies to a private model before every native attribution query."""
         if handle.has_ontology:
             raise _denied("MAPPING_UNSUPPORTED")
+        handle.get()
         document = yaml.safe_load(Path(handle._config.semantic_model_path).read_text())
         tool = DBFuncTool(agent_config=self.config, read_only=True)
         datasource = self.runtime.datasource or self.config.current_datasource
@@ -119,7 +120,7 @@ class PolicyMetricExecutor:
             datasource
         )
         connector = tool._get_connector(datasource, database=database or "")
-        for model in document["semantic_model"]:
+        for model in [document]:
             for dataset in model["datasets"]:
                 source = dataset["source"]
                 parsed = parse_one(source, read=connector.dialect)

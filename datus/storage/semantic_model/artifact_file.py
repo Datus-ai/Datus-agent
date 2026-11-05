@@ -32,7 +32,7 @@ def artifact_revision(content: bytes) -> str:
 
 
 @contextmanager
-def path_mutation_lock(target_path: Path) -> Iterator[None]:
+def _thread_mutation_lock(target_path: Path) -> Iterator[None]:
     """Serialize mutations of one file across threads in this process.
 
     One registry for every writer, deliberately. The agent framework dispatches tool calls with
@@ -53,8 +53,65 @@ def path_mutation_lock(target_path: Path) -> Iterator[None]:
         yield
 
 
-#: The original name, kept so semantic-model callers read naturally. Same registry, same lock.
-semantic_artifact_lock = path_mutation_lock
+@contextmanager
+def path_mutation_lock(target_path: Path) -> Iterator[None]:
+    """Serialize managed model edits with native loading and other file writers."""
+    path = Path(target_path)
+    if "semantic_models" in path.parts and path.suffix.lower() in {".yaml", ".yml", ".json"}:
+        with semantic_artifact_lock(path):
+            yield
+    else:
+        with _thread_mutation_lock(path):
+            yield
+
+
+_MODEL_LOCK_DEPTH = threading.local()
+
+
+def model_lock_held(path: str | Path) -> bool:
+    return str(Path(path).resolve()) in getattr(_MODEL_LOCK_DEPTH, "paths", set())
+
+
+@contextmanager
+def semantic_artifact_lock(target_path: Path) -> Iterator[None]:
+    """Load before editing, then coordinate with Dosi's atomic file replacement."""
+    target_path = Path(target_path).resolve(strict=False)
+    if model_lock_held(target_path):
+        with _thread_mutation_lock(target_path):
+            yield
+        return
+    if target_path.is_file():
+        from datus.tools.semantic_tools.dosi.files import file_engine
+
+        file_engine(target_path, allow_invalid=True)
+    with _thread_mutation_lock(target_path):
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        with (target_path.parent / f".{target_path.name}.dosi.lock").open("a+b") as lock:
+            if os.name == "posix":
+                import fcntl
+
+                fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+            else:
+                import msvcrt
+
+                lock.seek(0)
+                if not lock.read(1):
+                    lock.write(b"\0")
+                    lock.flush()
+                lock.seek(0)
+                msvcrt.locking(lock.fileno(), msvcrt.LK_LOCK, 1)
+            paths = getattr(_MODEL_LOCK_DEPTH, "paths", set())
+            _MODEL_LOCK_DEPTH.paths = paths
+            paths.add(str(target_path))
+            try:
+                yield
+            finally:
+                paths.remove(str(target_path))
+                if os.name == "posix":
+                    fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
+                else:
+                    lock.seek(0)
+                    msvcrt.locking(lock.fileno(), msvcrt.LK_UNLCK, 1)
 
 
 def atomic_write_bytes(target_path: Path, content: bytes, *, mode: Optional[int] = None) -> None:

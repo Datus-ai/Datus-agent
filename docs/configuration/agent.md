@@ -173,7 +173,6 @@ The fallback window is a local budget assumption, not automatic detection of
 server capacity. Private deployments can override any of these settings. Set
 the actual limit for a smaller window; a larger configured window or a matching
 tokenizer can improve capacity utilization:
-
 ```yaml
 agent:
   models:
@@ -451,7 +450,6 @@ Dosi is the built-in semantic engine and needs no engine selection. An old `agen
 ### `scoped_context`
 
 `scoped_context` limits what the subagent should see from shared metadata and knowledge:
-
 ```yaml
 scoped_context:
   datasource: finance

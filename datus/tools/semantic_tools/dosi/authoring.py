@@ -115,11 +115,12 @@ def validate_dosi_document(document: dict[str, Any] | str) -> None:
 class DosiMetricAuthor(MetricAuthor):
     """Shared file mutations guarded by the native engine's model contract."""
 
-    def __init__(self, semantic_models_path: str):
+    def __init__(self, semantic_models_path: str, *, load_model=None):
         binding = load_binding()
         super().__init__(
             semantic_models_path,
             validate_document=validate_dosi_document,
             schema_version=str(binding.SPEC_VERSION),
             error_cls=DosiAuthoringError,
+            load_model=load_model,
         )

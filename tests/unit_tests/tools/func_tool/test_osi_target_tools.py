@@ -44,13 +44,12 @@ def _write_model(
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
         "version: 0.2.0.dev0\n"
-        "semantic_model:\n"
-        f"  - name: {name}\n"
-        f"    description: {description}\n"
-        "    datasets:\n"
-        f"      - name: {dataset}\n"
-        f"        source: {source}\n"
-        f"        description: {description} dataset\n",
+        f"name: {name}\n"
+        f"description: {description}\n"
+        "datasets:\n"
+        f"  - name: {dataset}\n"
+        f"    source: {source}\n"
+        f"    description: {description} dataset\n",
         encoding="utf-8",
     )
 
@@ -100,7 +99,7 @@ def test_list_scans_live_yaml_inventory_without_mutating_binding(tmp_path):
         source="games.players",
         description="Player behavior",
     )
-    (model_dir / "broken.yml").write_text("semantic_model: [\n", encoding="utf-8")
+    (model_dir / "broken.yml").write_text("datasets: [\n", encoding="utf-8")
     (model_dir / "metrics").mkdir(parents=True)
     (model_dir / "metrics" / "legacy.yml").write_text("metric:\n  name: legacy\n", encoding="utf-8")
     other_dir = tmp_path / "subject" / "semantic_models" / "other"
@@ -134,30 +133,30 @@ def test_list_and_bind_reuse_inventory_and_return_compact_authoring_outline(tmp_
     target = model_dir / "orders.yml"
     target.parent.mkdir(parents=True)
     target.write_text(
-        "version: 0.2.0.dev0\n"
-        "semantic_model:\n"
-        "  - name: orders_model\n"
-        "    datasets:\n"
-        "      - name: orders\n"
-        "        source: analytics.orders\n"
-        "        primary_key: [order_id]\n"
-        "        fields:\n"
-        "          - name: order_id\n"
-        "          - name: ordered_at\n"
-        "            dimension: {is_time: true}\n"
-        "      - name: customers\n"
-        "        source: analytics.customers\n"
-        "        unique_keys: [[customer_id]]\n"
-        "        fields:\n"
-        "          - name: customer_id\n"
-        "    relationships:\n"
-        "      - name: orders_customer\n"
-        "        from: orders\n"
-        "        to: customers\n"
-        "        from_columns: [customer_id]\n"
-        "        to_columns: [customer_id]\n"
-        "    metrics:\n"
-        "      - name: order_count\n",
+        """version: 0.2.0.dev0
+name: orders_model
+datasets:
+  - name: orders
+    source: analytics.orders
+    primary_key: [order_id]
+    fields:
+      - name: order_id
+      - name: ordered_at
+        dimension: {is_time: true}
+  - name: customers
+    source: analytics.customers
+    unique_keys: [[customer_id]]
+    fields:
+      - name: customer_id
+relationships:
+  - name: orders_customer
+    from: orders
+    to: customers
+    from_columns: [customer_id]
+    to_columns: [customer_id]
+metrics:
+  - name: order_count
+""",
         encoding="utf-8",
     )
     inspect_inventory = semantic_authoring.inspect_osi_semantic_model_inventory
@@ -284,9 +283,9 @@ def test_bind_rejects_invalid_selector(tmp_path, selector):
 def test_bind_rejects_malformed_and_multi_model_yaml(tmp_path):
     config, model_dir = _config(tmp_path)
     model_dir.mkdir(parents=True)
-    (model_dir / "broken.yml").write_text("semantic_model: [\n", encoding="utf-8")
+    (model_dir / "broken.yml").write_text("datasets: [\n", encoding="utf-8")
     (model_dir / "multi.yml").write_text(
-        "semantic_model:\n  - name: first\n    datasets: []\n  - name: second\n    datasets: []\n",
+        "- name: first\n  datasets: []\n- name: second\n  datasets: []\n",
         encoding="utf-8",
     )
     tools = OsiSemanticModelTargetTools(config)
@@ -536,7 +535,7 @@ def test_duplicate_names_span_valid_and_recoverable_models(tmp_path, monkeypatch
     _write_model(model_dir / "two.yml", name="shared", source="analytics.two")
 
     def validate(document, **kwargs):
-        source = document["semantic_model"][0]["datasets"][0]["source"]
+        source = document["datasets"][0]["source"]
         return "invalid core schema" if source in invalid_sources else None
 
     monkeypatch.setattr(semantic_authoring, "validate_osi_authoring_document", validate)
@@ -560,15 +559,15 @@ def test_query_backed_parse_warning_does_not_make_exact_target_unbindable(tmp_pa
     target = model_dir / "query.yml"
     target.parent.mkdir(parents=True)
     target.write_text(
-        "version: 0.2.0.dev0\n"
-        "semantic_model:\n"
-        "  - name: query_model\n"
-        "    datasets:\n"
-        "      - name: query_dataset\n"
-        "        source: SELECT * FROM\n"
-        "        custom_extensions:\n"
-        "          - vendor_name: DATUS\n"
-        '            data: \'{"source_type":"query"}\'\n',
+        """version: 0.2.0.dev0
+name: query_model
+datasets:
+  - name: query_dataset
+    source: SELECT * FROM
+    custom_extensions:
+      - vendor_name: DATUS
+        data: '{\"source_type\":\"query\"}'
+""",
         encoding="utf-8",
     )
     tools = OsiSemanticModelTargetTools(config)

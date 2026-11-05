@@ -15,7 +15,40 @@ from datus.tools.semantic_tools.models import AttributionRequest, AttributionWin
 from datus.tools.semantic_tools.policy_executor import PolicyMetricExecutor
 from datus.utils.exceptions import DatusException
 
-MODEL = 'version: 0.2.0.dev0\nsemantic_model:\n  - name: sales\n    datasets:\n      - name: orders\n        source: orders\n        fields:\n          - name: day\n            datatype: Date\n            dimension:\n              is_time: true\n            expression:\n              dialects:\n                - dialect: DUCKDB\n                  expression: day\n          - name: region\n            expression:\n              dialects:\n                - dialect: DUCKDB\n                  expression: region\n          - name: amount\n            expression:\n              dialects:\n                - dialect: DUCKDB\n                  expression: amount\n    metrics:\n      - name: revenue\n        expression:\n          dialects:\n            - dialect: DUCKDB\n              expression: SUM(amount)\n        custom_extensions:\n          - vendor_name: DATUS\n            data: \'{"uid":"metric","dataset":"orders","time_dimension":"day"}\'\n'
+MODEL = """version: 0.2.0.dev0
+name: sales
+datasets:
+  - name: orders
+    source: orders
+    fields:
+      - name: day
+        datatype: Date
+        dimension:
+          is_time: true
+        expression:
+          dialects:
+            - dialect: DUCKDB
+              expression: day
+      - name: region
+        expression:
+          dialects:
+            - dialect: DUCKDB
+              expression: region
+      - name: amount
+        expression:
+          dialects:
+            - dialect: DUCKDB
+              expression: amount
+metrics:
+  - name: revenue
+    expression:
+      dialects:
+        - dialect: DUCKDB
+          expression: SUM(amount)
+    custom_extensions:
+      - vendor_name: DATUS
+        data: '{\"uid\":\"metric\",\"dataset\":\"orders\",\"time_dimension\":\"day\"}'
+"""
 
 
 @pytest.fixture

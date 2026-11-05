@@ -43,7 +43,7 @@ def fake_binding(monkeypatch):
 @pytest.fixture
 def model_file(tmp_path):
     path = tmp_path / "model.yaml"
-    path.write_text("version: '0.2.0.dev0'\nsemantic_model: []\n")
+    path.write_text("version: 0.2.0.dev0\nname: model\ndatasets: []\n")
     return path
 
 
@@ -59,10 +59,8 @@ def make_runtime(model_file):
 
 
 def _write_model(path: Path, model_name: str, metric_names: list[str]) -> None:
-    metrics = "\n".join(f"      - name: {name}" for name in metric_names)
-    path.write_text(
-        f"version: '0.2.0.dev0'\nsemantic_model:\n  - name: {model_name}\n    datasets: []\n    metrics:\n{metrics}\n"
-    )
+    metrics = "\n".join(f"  - name: {name}" for name in metric_names)
+    path.write_text(f"version: '0.2.0.dev0'\nname: {model_name}\ndatasets: []\nmetrics:\n{metrics}\n")
 
 
 @pytest.mark.asyncio
@@ -295,19 +293,18 @@ async def test_list_metrics_exposes_native_window_metadata(make_runtime, model_f
     model_file.write_text(
         """
 version: 0.2.0.dev0
-semantic_model:
-  - name: orders_model
-    datasets: []
-    metrics:
-      - name: running_revenue
-        expression:
-          dialects: [{dialect: ANSI_SQL, expression: 'SUM(orders.amount)'}]
-        custom_extensions:
-          - vendor_name: DATUS
-            data: >-
-              {"v":"1.2",
-              "window":{"type":"cumulative","function":"sum"},
-              "subject_path":["sales","revenue"],"unit":"USD"}
+name: orders_model
+datasets: []
+metrics:
+  - name: running_revenue
+    expression:
+      dialects: [{dialect: ANSI_SQL, expression: 'SUM(orders.amount)'}]
+    custom_extensions:
+      - vendor_name: DATUS
+        data: >-
+          {\"v\":\"1.2\",
+          \"window\":{\"type\":\"cumulative\",\"function\":\"sum\"},
+          \"subject_path\":[\"sales\",\"revenue\"],\"unit\":\"USD\"}
 """.lstrip()
     )
     metrics = {metric.name: metric for metric in await make_runtime().list_metrics()}
@@ -341,25 +338,24 @@ async def test_list_metrics_exposes_native_window_family_and_axis(make_runtime, 
     model_file.write_text(
         """
 version: 0.2.0.dev0
-semantic_model:
-  - name: orders_model
-    datasets: []
-    metrics:
-      - name: order_rank
-        custom_extensions:
-          - vendor_name: DATUS
-            data: '{"v":"1.3","window":{"rank":{"function":"rank"}}}'
-      - name: first_revenue
-        custom_extensions:
-          - vendor_name: DATUS
-            data: '{"v":"1.3","window":{"value":{"function":"first_value"}}}'
-      - name: revenue_range
-        custom_extensions:
-          - vendor_name: DATUS
-            data: >-
-              {"v":"1.3","window":{"frame":{"function":"count",
-              "preceding":"unbounded","units":"range",
-              "order":{"by":"value","direction":"asc"}}}}
+name: orders_model
+datasets: []
+metrics:
+  - name: order_rank
+    custom_extensions:
+      - vendor_name: DATUS
+        data: '{\"v\":\"1.3\",\"window\":{\"rank\":{\"function\":\"rank\"}}}'
+  - name: first_revenue
+    custom_extensions:
+      - vendor_name: DATUS
+        data: '{\"v\":\"1.3\",\"window\":{\"value\":{\"function\":\"first_value\"}}}'
+  - name: revenue_range
+    custom_extensions:
+      - vendor_name: DATUS
+        data: >-
+          {\"v\":\"1.3\",\"window\":{\"frame\":{\"function\":\"count\",
+          \"preceding\":\"unbounded\",\"units\":\"range\",
+          \"order\":{\"by\":\"value\",\"direction\":\"asc\"}}}}
 """.lstrip()
     )
     rows = [
@@ -1177,7 +1173,7 @@ async def test_engine_rebuilds_on_model_mtime_change(make_runtime, model_file):
     await runtime.list_metrics()
     assert len(FakeEngine.instances) == 1
 
-    model_file.write_text("version: '0.2.0.dev0'\nsemantic_model: []\n# touched\n")
+    model_file.write_text("version: 0.2.0.dev0\nname: model\ndatasets: []\n")
     os.utime(model_file, (0, 0))  # force a different mtime regardless of clock
     await runtime.list_metrics()
     assert len(FakeEngine.instances) == 2
@@ -1269,7 +1265,7 @@ async def test_validate_semantic_maps_issues(make_runtime, fake_binding):
                 {
                     "severity": "warning",
                     "code": "missing_sql_dialect",
-                    "location": "semantic_model[0]",
+                    "location": "<document>",
                     "message": "field has no SQL dialect",
                 }
             ],
@@ -1289,7 +1285,7 @@ async def test_validate_semantic_maps_issues(make_runtime, fake_binding):
     assert result.valid is False
     assert len(result.issues) == 2
     assert result.issues[0].severity == "warning"
-    assert result.issues[0].location == "semantic_model[0]"
+    assert result.issues[0].location == "<document>"
     assert "unknown_column" in result.issues[1].message
     assert "did you mean amount?" in result.issues[1].message
 
@@ -1327,7 +1323,7 @@ async def test_validate_semantic_rejects_missing_requested_metric(make_runtime):
 
 @pytest.mark.asyncio
 async def test_validate_semantic_returns_structured_invalid_yaml_issue(make_runtime, model_file):
-    model_file.write_text("semantic_model: [\n")
+    model_file.write_text("datasets: [\n")
 
     result = await make_runtime().validate_semantic()
 
@@ -1341,16 +1337,15 @@ async def test_validate_semantic_rejects_legacy_window_hints(make_runtime, model
     model_file.write_text(
         """
 version: 0.2.0.dev0
-semantic_model:
-  - name: orders_model
-    datasets: []
-    metrics:
-      - name: legacy_revenue
-        expression:
-          dialects: [{dialect: ANSI_SQL, expression: 'SUM(orders.amount)'}]
-        custom_extensions:
-          - vendor_name: DATUS
-            data: '{"grain_to_date":"year","window_aggregation":"sum"}'
+name: orders_model
+datasets: []
+metrics:
+  - name: legacy_revenue
+    expression:
+      dialects: [{dialect: ANSI_SQL, expression: 'SUM(orders.amount)'}]
+    custom_extensions:
+      - vendor_name: DATUS
+        data: '{\"grain_to_date\":\"year\",\"window_aggregation\":\"sum\"}'
 """.lstrip()
     )
 
@@ -1363,7 +1358,7 @@ semantic_model:
 
 @pytest.mark.asyncio
 async def test_validate_semantic_supports_targeted_single_model(make_runtime, model_file):
-    model_file.write_text("version: '0.2.0.dev0'\nsemantic_model:\n  - name: activity_management\n")
+    model_file.write_text("version: '0.2.0.dev0'\nname: activity_management\n")
     runtime = make_runtime()
 
     matched = await runtime.validate_semantic(
@@ -1384,7 +1379,7 @@ async def test_validate_semantic_supports_targeted_single_model(make_runtime, mo
 
 @pytest.mark.asyncio
 async def test_validate_semantic_preserves_positional_model_name(make_runtime, model_file):
-    model_file.write_text("version: '0.2.0.dev0'\nsemantic_model:\n  - name: activity_management\n")
+    model_file.write_text("version: '0.2.0.dev0'\nname: activity_management\n")
 
     result = await make_runtime().validate_semantic(
         "semantic_model",
@@ -1400,7 +1395,7 @@ async def test_semantic_models_path_directory_single_file(tmp_path):
     from datus.tools.semantic_tools.dosi.config import DosiConfig
     from datus.tools.semantic_tools.dosi.runtime import DosiRuntime
 
-    (tmp_path / "model.yaml").write_text("version: '0.2.0.dev0'\nsemantic_model: []\n")
+    (tmp_path / "model.yaml").write_text("version: 0.2.0.dev0\nname: model\ndatasets: []\n")
     runtime = DosiRuntime(DosiConfig(semantic_models_path=str(tmp_path)))
     await runtime.list_metrics()  # builds the engine
     assert FakeEngine.instances[-1].model_path == str(tmp_path / "model.yaml")
@@ -1534,16 +1529,15 @@ async def test_catalog_wraps_malformed_sibling_document(tmp_path, monkeypatch):
     from datus.tools.semantic_tools.dosi.config import DosiConfig
     from datus.tools.semantic_tools.dosi.runtime import DosiRuntime
 
-    (tmp_path / "broken.yaml").write_text("semantic_model: [\n")
+    (tmp_path / "broken.yaml").write_text("datasets: [\n")
     _write_model(tmp_path / "orders.yaml", "orders_model", ["order_count"])
     _install_file_catalog(monkeypatch, {"orders": ["order_count"]})
     runtime = DosiRuntime(DosiConfig(semantic_models_path=str(tmp_path)))
 
-    with pytest.raises(
-        SemanticCoreException,
-        match=r"cannot read semantic model .*broken\.yaml",
-    ):
-        await runtime.list_metrics()
+    issues = runtime.initialize()
+    assert str(tmp_path / "broken.yaml") in issues
+    metrics = await runtime.list_metrics()
+    assert [metric.name for metric in metrics] == ["order_count"]
 
 
 @pytest.mark.asyncio
@@ -1609,7 +1603,7 @@ async def test_validate_semantic_validates_all_files_and_supports_targeting(tmp_
                     {
                         "severity": "error",
                         "code": "invalid_users_model",
-                        "location": "semantic_model[0]",
+                        "location": "<document>",
                         "message": "users model is invalid",
                     }
                 ],

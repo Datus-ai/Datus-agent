@@ -298,7 +298,6 @@ database:
 ### Metrics Configuration
 
 The storage configuration works with the metrics section to embed business metrics:
-
 ```yaml
 metrics:
   duckdb:                              # Datasource reference

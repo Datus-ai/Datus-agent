@@ -57,7 +57,7 @@ def test_native_authoring_errors_explain_complete_object_repairs():
     from datus.tools.semantic_tools.dosi.authoring import dosi_validation_text_payload
 
     document = yaml.safe_load(_advanced_model("STARROCKS"))
-    metrics = document["semantic_model"][0]["metrics"]
+    metrics = document["metrics"]
     metrics[2]["expression"]["dialects"][0]["expression"] = "SUM(orders.amount)"
     result = dosi_validation_text_payload(yaml.safe_dump(document))
     mismatch = next(e for e in result["compile_errors"] if e["code"] == "derive_expression_mismatch")
@@ -67,7 +67,7 @@ def test_native_authoring_errors_explain_complete_object_repairs():
 
     assert "metric 'average_order_value'" in "; ".join(validation_messages(result))
 
-    metrics[2] = yaml.safe_load(_advanced_model("STARROCKS"))["semantic_model"][0]["metrics"][2]
+    metrics[2] = yaml.safe_load(_advanced_model("STARROCKS"))["metrics"][2]
     metrics[3]["expression"]["dialects"][0]["expression"] = "RANK() OVER (ORDER BY SUM(orders.amount))"
     result = dosi_validation_text_payload(yaml.safe_dump(document))
     window = next(e for e in result["compile_errors"] if e["code"] == "window_in_metric")
@@ -151,7 +151,7 @@ def test_native_validation_retains_non_object_compile_diagnostics(monkeypatch):
     monkeypatch.setattr(
         authoring, "load_binding", lambda: SimpleNamespace(validate=lambda _: {"compile_errors": errors})
     )
-    result = authoring.dosi_validation_text_payload("semantic_model: []")
+    result = authoring.dosi_validation_text_payload("name: model\ndatasets: []\n")
     assert result["compile_errors"][0] == "Native diagnostic"
     assert "aggregate SQL" in result["compile_errors"][1]["hint"]
 

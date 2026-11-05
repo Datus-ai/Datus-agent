@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import copy
 import glob
+import json
 import os
 import re
 import threading
@@ -157,7 +158,7 @@ def document_kind(document: Optional[dict[str, Any]]) -> str:
     The same rule the engine applies (apache/ossie#458): a mapping has all of
     ``concept_mappings``, ``ontology_ref`` and ``semantic_model_ref``; an
     ontology has an ``ontology:`` list; a model is flat (``name`` +
-    ``datasets``) or the ``semantic_model:`` wrapper. Never the file name.
+    ``datasets`` at the root). Never the file name.
     """
     if not isinstance(document, dict):
         return "other"
@@ -165,7 +166,7 @@ def document_kind(document: Optional[dict[str, Any]]) -> str:
         return "mapping"
     if isinstance(document.get("ontology"), list):
         return "ontology"
-    if "semantic_model" in document or ("name" in document and "datasets" in document):
+    if "name" in document and "datasets" in document:
         return "model"
     return "other"
 
@@ -432,6 +433,7 @@ class EngineHandle:
         self._lock = threading.Lock()
         self._engine: Optional[Any] = None
         self._model_signature: Optional[tuple] = None
+        self._load_error: Optional[SemanticCoreException] = None
 
     def _sqlite_source(self) -> Optional[str]:
         """The SQLite file backing this handle's db_config, if any."""
@@ -521,29 +523,39 @@ class EngineHandle:
     def get(self) -> Any:
         config = self._config
         model_file = resolve_model_file(config)
-        try:
-            stat = os.stat(model_file)
-        except OSError as exc:
-            raise SemanticCoreException(f"cannot read semantic model {model_file!r}: {exc}") from exc
+
+        def signature():
+            try:
+                stat = os.stat(model_file)
+            except OSError as exc:
+                raise SemanticCoreException(f"cannot read semantic model {model_file!r}: {exc}") from exc
+            return (stat.st_mtime_ns, stat.st_size, stat.st_ino, self._sqlite_signature(), self._ontology_signature())
+
         with self._lock:
-            signature = (stat.st_mtime_ns, stat.st_size, self._sqlite_signature(), self._ontology_signature())
-            if self._engine is None or signature != self._model_signature:
-                # A changed SQLite source must reopen the engine connection.
-                self._engine = self._build(config, model_file)
-                self._model_signature = signature
-            return self._engine
+            for _ in range(3):
+                before = signature()
+                if before == self._model_signature:
+                    if self._load_error is not None:
+                        raise self._load_error
+                    if self._engine is not None:
+                        return self._engine
+                engine, error = None, None
+                try:
+                    engine = self._build(config, model_file)
+                except SemanticCoreException as exc:
+                    error = exc
+                if before != signature():
+                    continue
+                self._engine, self._load_error, self._model_signature = engine, error, before
+                if error is not None:
+                    raise error
+                return engine
+            self._engine = None
+            self._model_signature = None
+            raise SemanticCoreException(f"model inputs changed repeatedly while loading {model_file!r}; retry")
 
     def _build(self, config: DosiConfig, model_file: str) -> Any:
         binding = load_binding()
-        try:
-            findings = legacy_window_findings(load_document(model_file))
-        except (OSError, TypeError, ValueError, yaml.YAMLError):
-            # The native loader owns syntax/schema diagnostics. This preflight
-            # exists only to catch syntactically valid legacy hints that Dosi
-            # would otherwise treat as inert metadata.
-            findings = []
-        if findings:
-            raise SemanticCoreException(legacy_window_error(findings))
         try:
             ontology_kwargs: dict[str, Any] = {}
             if config.ontology_path:
@@ -553,12 +565,6 @@ class EngineHandle:
             # A mapping that carries its model inline is the engine's only
             # input; naming it as the model too would give the model twice.
             model_kwargs = {} if model_file == config.mapping_path else {"model_path": model_file}
-            if not ontology_kwargs:
-                return binding.Engine(
-                    model_path=model_file,
-                    connections=self._runtime_connections(config),
-                    pool_size=config.pool_size,
-                )
             # Ontology lowering reports constructs it keeps as text (``note:``)
             # as RuntimeWarnings, which reach a CLI user's terminal on every
             # load. The same notes are on ``Engine.warnings``; log them instead.
@@ -572,6 +578,12 @@ class EngineHandle:
                 )
             for note in lowering_notes:
                 logger.debug("Ontology %s: %s", self.ontology_source, note.message)
+            try:
+                findings = legacy_window_findings(load_document(model_file))
+            except (OSError, TypeError, ValueError, yaml.YAMLError) as exc:
+                raise SemanticCoreException(f"cannot read semantic model {model_file!r}: {exc}") from exc
+            if findings:
+                raise SemanticCoreException(legacy_window_error(findings))
             return engine
         except TypeError as exc:
             if config.mapping_path and "mapping_path" in str(exc):
@@ -678,6 +690,21 @@ class EngineRegistry:
                 entry for entry in (self._file_signature(path) for path in ontology_files) if entry is not None
             )
             if signature != self._signature:
+                for path in files:
+                    handle = shared_engine_handle(
+                        self._config.model_copy(
+                            update={
+                                "semantic_model_path": path,
+                                "ontology_path": None,
+                                "mapping_path": None,
+                                "mapping_references": [],
+                            }
+                        )
+                    )
+                    try:
+                        handle.get()
+                    except SemanticCoreException as exc:
+                        logger.warning("Model %s requires repair: %s", path, exc)
                 bindings, unpaired = plan_ontologies(files, ontology_files, self._config.semantic_models_path)
                 self._unpaired_ontologies = unpaired
                 # Model files first, in catalog order; then the engines whose
@@ -701,7 +728,7 @@ class EngineRegistry:
                     ):
                         handles[key] = kept
                     else:
-                        handles[key] = EngineHandle(self._config.model_copy(update=update))
+                        handles[key] = shared_engine_handle(self._config.model_copy(update=update))
                 self._handles = handles
                 self._keys = keys
                 self._signature = signature
@@ -715,3 +742,24 @@ class EngineRegistry:
         """Ontology-directory files the last snapshot could not bind (see plan_ontologies)."""
         with self._lock:
             return list(self._unpaired_ontologies)
+
+
+_SHARED_HANDLES: dict[str, EngineHandle] = {}
+_SHARED_HANDLES_LOCK = threading.Lock()
+
+
+def shared_engine_handle(config: DosiConfig) -> EngineHandle:
+    """Reuse native engines across tools, discovery and standalone API requests."""
+    values = config.model_dump(mode="json")
+    if values.get("semantic_model_path"):
+        values["semantic_model_path"] = str(Path(values["semantic_model_path"]).resolve())
+        values["semantic_models_path"] = None
+    key = json.dumps(values, sort_keys=True, default=str)
+    with _SHARED_HANDLES_LOCK:
+        handle = _SHARED_HANDLES.get(key)
+        if handle is None:
+            handle = EngineHandle(config)
+            if len(_SHARED_HANDLES) >= 128:
+                _SHARED_HANDLES.pop(next(iter(_SHARED_HANDLES)))
+            _SHARED_HANDLES[key] = handle
+        return handle

@@ -116,7 +116,7 @@ def test_non_object_model_root_is_mapped_by_native_loader(tmp_path, fake_binding
 def test_registry_skips_model_removed_between_listing_and_stat(tmp_path, monkeypatch):
     stable = tmp_path / "stable.yaml"
     vanished = tmp_path / "vanished.yaml"
-    stable.write_text("version: '0.2.0.dev0'\nsemantic_model: []\n")
+    stable.write_text("version: 0.2.0.dev0\nname: model\ndatasets: []\n")
     registry = EngineRegistry(DosiConfig(semantic_models_path=str(tmp_path)))
     monkeypatch.setattr(
         "datus.tools.semantic_tools.dosi.engine.resolve_model_files",
@@ -156,7 +156,7 @@ def test_has_model_files_is_true_only_when_a_plain_model_resolves(tmp_path, layo
     from datus.tools.semantic_tools.dosi.engine import has_model_files
 
     models_dir = tmp_path / "models"
-    document = "version: '0.2.0.dev0'\nsemantic_model: []\n"
+    document = "version: 0.2.0.dev0\nname: model\ndatasets: []\n"
     if layout != "missing_directory":
         models_dir.mkdir()
     if layout == "model_at_top":
@@ -185,7 +185,7 @@ def test_resolve_model_files_finds_models_in_subdirectories(tmp_path):
     authoring and for the knowledge base while being absent from queries."""
     from datus.tools.semantic_tools.dosi.engine import resolve_model_files
 
-    document = "version: '0.2.0.dev0'\nsemantic_model: []\n"
+    document = "version: 0.2.0.dev0\nname: model\ndatasets: []\n"
     (tmp_path / "flat.yaml").write_text(document)
     nested = tmp_path / "orders"
     nested.mkdir()
@@ -205,7 +205,7 @@ def test_resolve_model_files_skips_the_metric_fragment_directory(tmp_path):
     fails."""
     from datus.tools.semantic_tools.dosi.engine import resolve_model_files
 
-    (tmp_path / "flat.yaml").write_text("version: '0.2.0.dev0'\nsemantic_model: []\n")
+    (tmp_path / "flat.yaml").write_text("version: 0.2.0.dev0\nname: model\ndatasets: []\n")
     fragments = tmp_path / "metrics"
     fragments.mkdir()
     (fragments / "revenue.yml").write_text("name: revenue\n")
@@ -242,7 +242,7 @@ def test_sqlite_wal_changes_engine_file_signature(tmp_path):
 
 def test_sqlite_connection_preserves_native_uri(tmp_path):
     model = tmp_path / "model.yaml"
-    model.write_text("version: '0.2.0.dev0'\nsemantic_model: []\n")
+    model.write_text("version: 0.2.0.dev0\nname: model\ndatasets: []\n")
     source = tmp_path / "orders.sqlite"
     config = DosiConfig(
         semantic_model_path=str(model),
@@ -255,7 +255,7 @@ def test_sqlite_connection_preserves_native_uri(tmp_path):
 
 def test_athena_connection_preserves_typed_identity_and_result_budgets(tmp_path):
     model = tmp_path / "model.yaml"
-    model.write_text("version: '0.2.0.dev0'\nsemantic_model: []\n")
+    model.write_text("version: 0.2.0.dev0\nname: model\ndatasets: []\n")
     profile = {
         "type": "athena",
         "aws": {"region": "us-east-1", "profile": "test"},

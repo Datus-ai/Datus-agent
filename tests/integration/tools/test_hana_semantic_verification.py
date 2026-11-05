@@ -17,26 +17,25 @@ pytestmark = [pytest.mark.integration, pytest.mark.nightly]
 
 MODEL = """
 version: '0.2.0.dev0'
-semantic_model:
-- name: hana_native_regression
-  datasets:
-  - name: sales
-    source: DUMMY
-    primary_key: [id]
-    fields:
-    - {name: id, expression: {dialects: [{dialect: HANA, expression: '1'}]}}
-    - {name: region, expression: {dialects: [{dialect: HANA, expression: "TO_VARCHAR(DATE '2026-10-01', 'YYYY-MM')"}]}}
-    - {name: amount, expression: {dialects: [{dialect: HANA, expression: '100'}]}}
-  metrics:
-  - name: revenue
-    expression: {dialects: [{dialect: HANA, expression: 'SUM(sales.amount)'}]}
-  - name: orders
-    expression: {dialects: [{dialect: HANA, expression: 'COUNT(sales.id)'}]}
-  - name: average_order
-    expression: {dialects: [{dialect: HANA, expression: 'SUM(sales.amount) / NULLIF(COUNT(sales.id), 0)'}]}
-    custom_extensions:
-    - vendor_name: DATUS
-      data: '{"v":"1.11","derive":{"type":"compose","expr":"revenue / NULLIF(orders, 0)"}}'
+name: hana_native_regression
+datasets:
+- name: sales
+  source: DUMMY
+  primary_key: [id]
+  fields:
+  - {name: id, expression: {dialects: [{dialect: HANA, expression: '1'}]}}
+  - {name: region, expression: {dialects: [{dialect: HANA, expression: \"TO_VARCHAR(DATE '2026-10-01', 'YYYY-MM')\"}]}}
+  - {name: amount, expression: {dialects: [{dialect: HANA, expression: '100'}]}}
+metrics:
+- name: revenue
+  expression: {dialects: [{dialect: HANA, expression: 'SUM(sales.amount)'}]}
+- name: orders
+  expression: {dialects: [{dialect: HANA, expression: 'COUNT(sales.id)'}]}
+- name: average_order
+  expression: {dialects: [{dialect: HANA, expression: 'SUM(sales.amount) / NULLIF(COUNT(sales.id), 0)'}]}
+  custom_extensions:
+  - vendor_name: DATUS
+    data: '{\"v\":\"1.11\",\"derive\":{\"type\":\"compose\",\"expr\":\"revenue / NULLIF(orders, 0)\"}}'
 """
 
 

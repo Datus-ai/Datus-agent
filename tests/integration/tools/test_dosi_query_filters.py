@@ -193,7 +193,7 @@ def test_business_verification_binds_the_queried_model_and_invalidates_changes(q
 
     selected = Path(query_tool.runtime.artifact_metric_binding("score_total")["model_path"])
     other = yaml.safe_load(selected.read_text())
-    model = other["semantic_model"][0]
+    model = other
     model["name"] = "other_model"
     model["metrics"] = [{**model["metrics"][0], "name": "other_total"}]
     other_path = selected.with_name("other.yaml")
@@ -504,7 +504,7 @@ def test_published_dashboard_keeps_distinct_native_models(query_tool, monkeypatc
 
     model_path = Path(query_tool.runtime.artifact_metric_binding("score_total")["model_path"])
     second = yaml.safe_load(model_path.read_text())
-    model = second["semantic_model"][0]
+    model = second
     model["name"] = "double_scores"
     model["metrics"] = [model["metrics"][0]]
     model["metrics"][0]["name"] = "score_double"

@@ -33,7 +33,7 @@ from tests.unit_tests.tools.semantic_tools.dosi_fakes import (
     build_fake_module,
 )
 
-MODEL_YAML = "version: '0.2.0.dev0'\nsemantic_model: []\n"
+MODEL_YAML = "version: 0.2.0.dev0\nname: model\ndatasets: []\n"
 ONTOLOGY_YAML = "version: 0.2.0.dev0\nname: Aviation\nontology: []\n"
 
 
@@ -76,13 +76,15 @@ def _layout(tmp_path, models=("aviation",), ontologies=("aviation",), datasource
     ontology_dir = tmp_path / "subject" / "ontology"
     models_dir.mkdir(parents=True, exist_ok=True)
     for stem in models:
-        (models_dir / f"{stem}.yaml").write_text(MODEL_YAML)
+        (models_dir / f"{stem}.yaml").write_text(MODEL_YAML.replace("name: model", f"name: {stem}"))
     if ontologies:
         ontology_dir.mkdir(parents=True, exist_ok=True)
         for stem in ontologies:
             (ontology_dir / f"{stem}.ontology.yaml").write_text(ONTOLOGY_YAML)
             (ontology_dir / f"{stem}-{stem}.mapping.yaml").write_text(
-                _mapping_yaml(f"{stem}.ontology.yaml", f"{datasource}/{stem}.yaml")
+                _mapping_yaml(f"{stem}.ontology.yaml", f"{datasource}/{stem}.yaml").replace(
+                    "name: model", f"name: {stem}"
+                )
             )
     return models_dir, ontology_dir
 
@@ -267,7 +269,7 @@ class TestEngineLoading:
 
 
 MAPPING_YAML = _mapping_yaml("ontology.yaml", "flights_db/flights.yaml")
-NAMED_MODEL_YAML = "version: '0.2.0.dev0'\nsemantic_model:\n  - name: aviation\n    datasets: []\n"
+NAMED_MODEL_YAML = "version: '0.2.0.dev0'\nname: aviation\ndatasets: []\n"
 FLAT_MODEL_YAML = "version: 0.2.0.dev0\nname: aviation\ndatasets: []\n"
 INLINE_MAPPING_YAML = """version: 0.2.0.dev0
 name: mini_mapping

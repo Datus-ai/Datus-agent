@@ -674,6 +674,8 @@ class SemanticTools:
         self._runtime: Optional[DosiRuntime] = None
         self._runtime_load_error: Optional[str] = None
         self._runtime_context_key: Optional[Tuple[str, ...]] = None
+        # The runtime initializes native engines before any model file tools run.
+        _ = self.runtime
 
     MODEL_FREE_READS_VERSION = 1
 
@@ -1193,6 +1195,7 @@ class SemanticTools:
                     update={"ontology_dir": str(self.agent_config.path_manager.ontology_dir)}
                 )
             self._runtime = DosiRuntime(runtime_config, read_policy_provider=self._bind_dosi_read)
+            self._runtime.initialize()
             self._runtime_context_key = context_key
             self._runtime_load_error = None
             logger.info("Loaded Dosi runtime for datasource %s", datasource)

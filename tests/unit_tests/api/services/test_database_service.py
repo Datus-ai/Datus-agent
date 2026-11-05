@@ -54,16 +54,8 @@ def _write_model(
 
 
 def _osi_yaml(*, metric_name: str = "") -> str:
-    metrics = f"\n    metrics:\n      - name: {metric_name}" if metric_name else "\n    metrics: []"
-    return (
-        "version: 1.0.0\n"
-        "semantic_model:\n"
-        "  - name: orders\n"
-        "    datasets:\n"
-        "      - name: orders\n"
-        "        source: orders"
-        f"{metrics}\n"
-    )
+    metrics = f"\nmetrics:\n  - name: {metric_name}" if metric_name else "\nmetrics: []"
+    return f"version: 1.0.0\nname: orders\ndatasets:\n  - name: orders\n    source: orders{metrics}\n"
 
 
 def _flat_osi_yaml(*, metric_name: str = "") -> str:
@@ -207,11 +199,11 @@ class TestFlatSemanticModelApi:
         [
             "[]",
             "name: not_a_model",
-            "semantic_model: []",
-            "semantic_model: [{name: first}, {name: second}]",
-            "semantic_model: [{datasets: []}]",
+            "name: \ndatasets: []\n",
+            "- {name: first, datasets: []}\n- {name: second, datasets: []}",
+            "datasets: []\n",
             "datasets: []",
-            "semantic_model: [",
+            "datasets: [",
         ],
     )
     def test_candidate_identity_requires_one_named_model(self, content):
@@ -312,16 +304,13 @@ class TestSemanticLayerServiceBranches:
         svc = _service(models_root=tmp_path)
         yaml_file, selector = _write_model(
             tmp_path,
-            "version: 1.0.0\nsemantic_model:\n  - name: orders\n    datasets: []\n",
+            "version: 1.0.0\nname: orders\ndatasets: []\n",
         )
         svc._validate_dosi_semantic_yaml = MagicMock(return_value=(True, []))
         svc._full_osi_validation = MagicMock(return_value=(True, {"valid": True, "issues": []}, ""))
         request = SaveSemanticModelInput(
             semantic_model_file=selector,
-            yaml=(
-                "version: 1.0.0\nsemantic_model:\n  - name: orders\n    datasets:\n"
-                "      - name: orders\n        source: orders\n    metrics: []\n"
-            ),
+            yaml=("version: 1.0.0\nname: orders\ndatasets:\n  - name: orders\n    source: orders\nmetrics: []\n"),
         )
 
         with patch("datus.tools.func_tool.generation_tools.GenerationTools") as tools_cls:
@@ -1565,7 +1554,7 @@ class TestSemanticModelDatasourceContext:
         from datus.api.models.table_models import PrepareMetricDefinitionsInput
 
         model = yaml.safe_load(_flat_osi_yaml(metric_name="order_count"))
-        content = yaml.safe_dump({"version": model.pop("version"), "semantic_model": [model]}, sort_keys=False)
+        content = yaml.safe_dump({"version": model.pop("version"), **model}, sort_keys=False)
         target, _ = _write_model(service.agent_config.path_manager.semantic_models_dir, content, datasource="lakehouse")
         selector = prefix + "lakehouse/orders.yml"
         prepared = await service.prepare_metric_definitions(

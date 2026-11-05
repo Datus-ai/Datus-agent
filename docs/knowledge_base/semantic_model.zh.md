@@ -61,54 +61,53 @@ subject/semantic_models/duckdb_demo/bank_failures.yml
 
 ```yaml
 version: 0.2.0.dev0
-semantic_model:
+name: bank_failures
+datasets:
   - name: bank_failures
-    datasets:
-      - name: bank_failures
-        source: main.bank_failures
-        description: 银行倒闭事件事实表，每一行记录一家倒闭银行。
-        ai_context: 用于按日期和州分析银行倒闭事件。
-        fields:
-          - name: bank
-            expression:
-              dialects:
-                - dialect: DUCKDB
-                  expression: Bank
-            description: 倒闭银行名称
-          - name: state
-            expression:
-              dialects:
-                - dialect: DUCKDB
-                  expression: State
-            description: 银行所在州（美国州代码）
-          - name: date
-            expression:
-              dialects:
-                - dialect: DUCKDB
-                  expression: Date
-            dimension:
-              is_time: true
-            description: 银行倒闭日期
-            custom_extensions:
-              - vendor_name: DATUS
-                data: '{"v":"1.4","time_granularity":"day"}'
-          - name: assets_million
-            expression:
-              dialects:
-                - dialect: DUCKDB
-                  expression: '"Assets ($mil.)"'
-            label: Assets ($mil.)
-            description: 倒闭时资产总额（百万美元）
+    source: main.bank_failures
+    description: 银行倒闭事件事实表，每一行记录一家倒闭银行。
+    ai_context: 用于按日期和州分析银行倒闭事件。
+    fields:
+      - name: bank
+        expression:
+          dialects:
+            - dialect: DUCKDB
+              expression: Bank
+        description: 倒闭银行名称
+      - name: state
+        expression:
+          dialects:
+            - dialect: DUCKDB
+              expression: State
+        description: 银行所在州（美国州代码）
+      - name: date
+        expression:
+          dialects:
+            - dialect: DUCKDB
+              expression: Date
+        dimension:
+          is_time: true
+        description: 银行倒闭日期
         custom_extensions:
           - vendor_name: DATUS
-            data: '{"v":"1.4","time_dimension":"date"}'
-    relationships: []
-    metrics: []
+            data: '{"v":"1.4","time_granularity":"day"}'
+      - name: assets_million
+        expression:
+          dialects:
+            - dialect: DUCKDB
+              expression: '"Assets ($mil.)"'
+        label: Assets ($mil.)
+        description: 倒闭时资产总额（百万美元）
+    custom_extensions:
+      - vendor_name: DATUS
+        data: '{"v":"1.4","time_dimension":"date"}'
+relationships: []
+metrics: []
 ```
 
 需要遵守以下规则：
 
-- 根节点只有 `version` 和 `semantic_model`；`semantic_model` 是列表。
+- 模型直接定义在根节点，包含 `version`、`name` 和 `datasets`。
 - 物理 dataset 的 `source` 使用带限定的表名。只有查询结果本身是稳定业务 dataset 时，才使用可复用查询作为 source。
 - 表达式使用 `expression.dialects[]`，dialect 应与当前 datasource 匹配，例如 `DUCKDB`、`POSTGRESQL`、`SNOWFLAKE` 或 `STARROCKS`。
 - `primary_key` 和 `unique_keys` 只记录经过确认的键；Datus 不会根据列名或单条查询臆测主键。

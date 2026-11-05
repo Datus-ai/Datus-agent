@@ -27,21 +27,15 @@ def _model(name: str, metrics: dict[str, list[str]]) -> str:
     return yaml.safe_dump(
         {
             "version": "0.2.0.dev0",
-            "semantic_model": [
+            "name": name,
+            "datasets": [{"name": name, "source": f"public.{name}"}],
+            "metrics": [
                 {
-                    "name": name,
-                    "datasets": [{"name": name, "source": f"public.{name}"}],
-                    "metrics": [
-                        {
-                            "name": metric,
-                            "expression": {"dialects": [{"dialect": "ANSI_SQL", "expression": "COUNT(*)"}]},
-                            "custom_extensions": [
-                                {"vendor_name": "DATUS", "data": json.dumps({"subject_path": subject_path})}
-                            ],
-                        }
-                        for metric, subject_path in metrics.items()
-                    ],
+                    "name": metric,
+                    "expression": {"dialects": [{"dialect": "ANSI_SQL", "expression": "COUNT(*)"}]},
+                    "custom_extensions": [{"vendor_name": "DATUS", "data": json.dumps({"subject_path": subject_path})}],
                 }
+                for metric, subject_path in metrics.items()
             ],
         }
     )
@@ -54,14 +48,14 @@ def _fake_sync(agent_config):
         rag = MetricRAG(agent_config)
         doc = yaml.safe_load(Path(yaml_path).read_text())
         rows = []
-        for metric in doc["semantic_model"][0].get("metrics") or []:
+        for metric in doc.get("metrics") or []:
             hints = json.loads(metric["custom_extensions"][0]["data"])
             rows.append(
                 {
                     "subject_path": hints["subject_path"],
                     "id": f"metric:{metric['name']}",
                     "name": metric["name"],
-                    "semantic_model_name": doc["semantic_model"][0]["name"],
+                    "semantic_model_name": doc["name"],
                     "description": metric["name"],
                     "metric_type": "simple",
                     "measure_expr": "COUNT(*)",
@@ -78,7 +72,7 @@ def _fake_sync(agent_config):
         if rows:
             rag.upsert_batch(rows)
         rag.delete_artifact_rows_except(yaml_path, [row["id"] for row in rows])
-        model = doc["semantic_model"][0]["name"]
+        model = doc["name"]
         datasets = SemanticDatasetRAG(agent_config)
         datasets.upsert_batch(
             [

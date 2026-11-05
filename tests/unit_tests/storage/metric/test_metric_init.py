@@ -54,7 +54,7 @@ def test_semantic_yaml_metrics_reports_missing_file(tmp_path):
 
 def test_dosi_yaml_import_reconciles_metric_projection(tmp_path):
     yaml_path = tmp_path / "orders.yml"
-    yaml_path.write_text("semantic_model: []\n", encoding="utf-8")
+    yaml_path.write_text("name: model\ndatasets: []\n", encoding="utf-8")
     config = MagicMock()
     tools = MagicMock()
     tools.sync_osi_to_db.return_value = {"success": True, "message": "imported"}
