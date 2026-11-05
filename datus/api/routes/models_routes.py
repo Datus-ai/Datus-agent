@@ -8,6 +8,7 @@ context-budget decisions without re-hitting OpenRouter.
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter
@@ -132,13 +133,13 @@ async def list_models(svc: ServiceDep) -> Result[ModelsData]:
       1. OpenRouter cache (``~/.datus/cache/openrouter_models.json``) — richest.
       2. ``providers.yml`` model list with ``model_specs`` for context_length.
     """
+    cached_details = await asyncio.to_thread(resolve_model_details) or {}
     agent_config = svc.agent_config
     catalog = agent_config.provider_catalog if isinstance(agent_config.provider_catalog, dict) else {}
     providers_meta = catalog.get("providers", {}) if isinstance(catalog, dict) else {}
     if not isinstance(providers_meta, dict):
         providers_meta = {}
 
-    cached_details = resolve_model_details() or {}
     used_cache = False
 
     models: List[ModelInfo] = []

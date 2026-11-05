@@ -158,7 +158,9 @@ OpenRouter catalog. On first use, Datus reads the cache under the current Agent
 home (`cache/openrouter_models.json`) or fetches the public catalog with an
 8-second timeout. Metadata stays fresh for 10 minutes; failed refreshes retain
 stale data and wait 60 seconds before retrying. Both context and output limits
-are retained. Explicit settings take priority over catalog metadata, with
+are retained. Async generation and model listing refresh metadata in a worker
+thread; capacity lookups on the event loop only read the current cache snapshot.
+Explicit settings take priority over catalog metadata, with
 `providers.yml` and LiteLLM specifications as offline fallbacks. Numeric model
 versions do not inherit an older version's limits through prefix matching.
 An advertised output ceiling does not automatically increase the default output

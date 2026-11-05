@@ -3,6 +3,7 @@
 
 """Exercise automatic metadata resolution through the real model budget path."""
 
+import asyncio
 from unittest.mock import Mock
 
 import litellm
@@ -19,6 +20,23 @@ def _model(**overrides):
 
 def _glm_details(context=1048576, output=131072):
     return {"glm": [{"id": "glm-5.3", "context_length": context, "max_tokens": output}]}
+
+
+@pytest.mark.asyncio
+async def test_event_loop_capacity_uses_cache_after_threaded_refresh(monkeypatch):
+    monkeypatch.setattr(litellm, "model_cost", {})
+    fetch = Mock(return_value=_glm_details(context=524288, output=8192))
+    monkeypatch.setattr(catalog, "fetch_openrouter_models", fetch)
+    model = _model()
+    assert model.context_length() == 1048576
+    assert model.max_tokens() == 128000
+    fetch.assert_not_called()
+
+    await asyncio.to_thread(catalog.resolve_model_details)
+
+    assert model.context_length() == 524288
+    assert model.max_tokens() == 8192
+    fetch.assert_called_once()
 
 
 def test_empty_home_fetches_both_limits_without_opening_model_picker(monkeypatch):

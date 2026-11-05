@@ -6,12 +6,14 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from threading import Event
 from typing import Any, Callable, Dict, List
 from unittest.mock import MagicMock, patch
 
@@ -977,6 +979,40 @@ class TestResolveProviderModels:
 
 
 class TestResolveModelDetails:
+    @pytest.mark.asyncio
+    async def test_event_loop_lookup_uses_snapshot_during_refresh(self, fake_datus_home):
+        stale = {"glm": [{"id": "glm-5.3", "context_length": 200000}]}
+        updated = {"glm": [{"id": "glm-5.3", "context_length": 1048576, "max_tokens": 131072}]}
+        pmc.save_cached_models(stale)
+        old = time.time() - pmc.FRESH_CACHE_TTL_SEC - 1
+        os.utime(pmc._cache_file_path(), (old, old))
+        started, release = Event(), Event()
+
+        def fetch(**kwargs):
+            started.set()
+            assert release.wait(3), "Event-loop lookup waited for the refresh lock"
+            return updated
+
+        with patch.object(pmc, "fetch_openrouter_models", side_effect=fetch) as remote:
+            refresh = asyncio.create_task(asyncio.to_thread(pmc.resolve_model_details))
+            try:
+                assert await asyncio.to_thread(started.wait, 3)
+                # The refresh worker holds the lock and is waiting for this
+                # task. Reading capacity must neither fetch nor wait for it.
+                assert pmc.resolve_model_details(refresh=False) == stale
+                assert remote.call_count == 1
+            finally:
+                release.set()
+                result = await refresh
+        assert result == updated
+        assert pmc.resolve_model_details(refresh=False) == updated
+
+    @pytest.mark.asyncio
+    async def test_cold_event_loop_lookup_does_not_fetch(self, fake_datus_home):
+        with patch.object(pmc, "fetch_openrouter_models") as remote:
+            assert pmc.resolve_model_details(refresh=False) == {}
+        remote.assert_not_called()
+
     def test_provider_subsets_do_not_poison_shared_metadata(self, fake_datus_home):
         buckets = {
             "openai": [{"id": "gpt-new"}],

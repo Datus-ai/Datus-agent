@@ -4,6 +4,7 @@
 
 """Codex model implementation using OAuth authentication and Responses API."""
 
+import asyncio
 import base64
 import json
 import os
@@ -540,6 +541,9 @@ class CodexModel(LLMBaseModel):
         **kwargs,
     ) -> Dict:
         """Generate response with tool support via the Codex Responses API."""
+        from datus.cli.provider_model_catalog import resolve_model_details
+
+        await asyncio.to_thread(resolve_model_details)
         self._refresh_client_token()
         responses_model = self._get_responses_model()
 
@@ -638,6 +642,9 @@ class CodexModel(LLMBaseModel):
         message insertion without any error — the queue then only drains at the
         run boundary via the chat layer's auto-continuation.
         """
+        from datus.cli.provider_model_catalog import resolve_model_details
+
+        await asyncio.to_thread(resolve_model_details)
         if action_history_manager is None:
             action_history_manager = ActionHistoryManager()
 

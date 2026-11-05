@@ -122,7 +122,12 @@ def _load_model_specs() -> Dict[str, Dict[str, int]]:
     try:
         from datus.cli.provider_model_catalog import resolve_model_details
 
-        details = resolve_model_details()
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            details = resolve_model_details()
+        else:
+            details = resolve_model_details(refresh=False)
     except Exception as e:
         logger.debug(f"Failed to resolve model catalog, using local specs: {e}")
         details = None
@@ -912,6 +917,10 @@ class OpenAICompatibleModel(LLMBaseModel):
         Returns:
             Dict with content and sql_contexts
         """
+        # Resolve remote metadata off the event loop before building the agent.
+        from datus.cli.provider_model_catalog import resolve_model_details
+
+        await asyncio.to_thread(resolve_model_details)
         tools = self._maybe_add_builtin_web_search(tools, kwargs)
         # Use the internal method that returns a Dict
         result = await self._generate_with_tools_internal(
@@ -976,6 +985,9 @@ class OpenAICompatibleModel(LLMBaseModel):
         Yields:
             ActionHistory objects for streaming updates
         """
+        from datus.cli.provider_model_catalog import resolve_model_details
+
+        await asyncio.to_thread(resolve_model_details)
         if action_history_manager is None:
             action_history_manager = ActionHistoryManager()
 

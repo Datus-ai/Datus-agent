@@ -20,9 +20,17 @@ pytestmark = pytest.mark.component
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("configured_limit", [None, 1024], ids=["automatic", "configured"])
 @pytest.mark.parametrize("output_limit", [None, 512, 4000], ids=["default", "override", "summary"])
 @pytest.mark.parametrize("streaming", [False, True])
-async def test_real_sdk_wire_request_sends_output_limit(monkeypatch, output_limit, streaming):
+async def test_real_sdk_wire_request_sends_output_limit(monkeypatch, configured_limit, output_limit, streaming):
+    from datus.cli import provider_model_catalog as catalog
+
+    monkeypatch.setattr(
+        catalog,
+        "fetch_openrouter_models",
+        lambda **kwargs: {"glm": [{"id": "glm-5.3-flashx", "context_length": 1048576, "max_tokens": 8192}]},
+    )
     requests = []
 
     def respond(request):
@@ -60,7 +68,7 @@ async def test_real_sdk_wire_request_sends_output_limit(monkeypatch, output_limi
             model="glm-5.3-flashx",
             api_key="test",
             base_url="https://models.example.test/v1",
-            max_tokens=1024,
+            max_tokens=configured_limit,
         )
     )
     monkeypatch.setattr(model, "_build_run_config", lambda **kwargs: RunConfig(tracing_disabled=True))
@@ -89,8 +97,9 @@ async def test_real_sdk_wire_request_sends_output_limit(monkeypatch, output_limi
         finally:
             await GLOBAL_LOGGING_WORKER.stop()
     assert len(requests) == 1
-    assert requests[0]["max_tokens"] == (1024 if output_limit is None else output_limit)
-    assert model.request_capacity().default_output == 1024
+    default_limit = configured_limit or 8192
+    assert requests[0]["max_tokens"] == (default_limit if output_limit is None else output_limit)
+    assert model.request_capacity().default_output == default_limit
 
 
 def test_direct_generation_sends_explicit_output_limit():

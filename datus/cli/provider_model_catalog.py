@@ -439,16 +439,25 @@ def _cache_signature(path: Path) -> Optional[tuple[int, int]]:
         return None
 
 
-def resolve_model_details() -> Dict[str, List[Dict[str, Any]]]:
+def resolve_model_details(*, refresh: bool = True) -> Dict[str, List[Dict[str, Any]]]:
     """Get metadata for both model selection and runtime capacity resolution.
 
     Reuse a fresh disk cache, otherwise fetch once and fall back to stale data.
     Memory entries follow the current Agent home and disk file changes. Failed
     fetches are retried after a short backoff rather than on every token check.
+    With ``refresh=False``, only read the current snapshot without waiting for
+    the refresh lock. Async generation prepares metadata in a worker thread;
+    mid-run capacity lookups can then use this nonblocking snapshot view.
     Returned entries are shared read-only; consumers must not mutate them.
     """
     global _MODEL_DETAILS_CACHE
     path = _cache_file_path()
+    if not refresh:
+        memo = _MODEL_DETAILS_CACHE
+        if memo is not None and memo.path == path and memo.signature == _cache_signature(path):
+            return memo.details
+        return load_cached_model_details() or {}
+
     with _MODEL_DETAILS_LOCK:
         signature = _cache_signature(path)
         now = time.monotonic()

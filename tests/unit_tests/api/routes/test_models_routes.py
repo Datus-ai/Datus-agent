@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any, Dict, Iterable, Optional
 from unittest.mock import MagicMock
 
@@ -127,6 +128,18 @@ class TestProviderScoping:
 
 
 class TestCacheMetadata:
+    @pytest.mark.asyncio
+    async def test_catalog_refresh_runs_off_event_loop(self, monkeypatch):
+        def resolve():
+            with pytest.raises(RuntimeError):
+                asyncio.get_running_loop()
+            return {"openai": [{"id": "gpt-4o", "context_length": 256000, "max_tokens": 32768}]}
+
+        monkeypatch.setattr(models_routes, "resolve_model_details", resolve)
+        monkeypatch.setattr(models_routes, "load_cache_fetched_at", lambda: None)
+        result = await list_models(_make_svc(catalog=_basic_catalog(), available={"openai"}))
+        assert result.data.models[0].context_length == 256000
+
     @pytest.mark.asyncio
     async def test_resolved_output_limit_supersedes_local_default(self, monkeypatch):
         monkeypatch.setattr(
