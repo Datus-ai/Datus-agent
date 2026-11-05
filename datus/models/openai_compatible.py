@@ -19,7 +19,7 @@ import httpx
 import litellm
 import yaml
 from agents import Agent, ModelSettings, Runner, Tool, WebSearchTool
-from agents.exceptions import MaxTurnsExceeded, ModelBehaviorError
+from agents.exceptions import MaxTurnsExceeded, ModelBehaviorError, RunErrorDetails
 from agents.extensions.memory import AdvancedSQLiteSession
 from agents.mcp import MCPServerStdio
 from agents.result import RunResultStreaming
@@ -1145,7 +1145,10 @@ class OpenAICompatibleModel(LLMBaseModel):
 
         async def _tools_operation():
             # Use multiple_mcp_servers context manager with empty dict if no MCP servers
-            async with multiple_mcp_servers(mcp_servers or {}) as connected_servers:
+            async with (
+                multiple_mcp_servers(mcp_servers or {}) as connected_servers,
+                self._preserve_truncated_run_result(None, session),
+            ):
                 agent_name = kwargs.get("agent_name", "default_agent")
                 agent = self._build_agent(
                     instruction=instruction,
@@ -1323,7 +1326,7 @@ class OpenAICompatibleModel(LLMBaseModel):
                     ) from e
 
                 await tool_streams.enter_async_context(
-                    self._preserve_truncated_stream_result(result, session, action_history_manager)
+                    self._preserve_truncated_run_result(result, session, action_history_manager)
                 )
 
                 # Streaming phase: yield progress actions in real-time
@@ -1824,32 +1827,45 @@ class OpenAICompatibleModel(LLMBaseModel):
                     raise
 
     @asynccontextmanager
-    async def _preserve_truncated_stream_result(
+    async def _preserve_truncated_run_result(
         self,
-        result: RunResultStreaming,
+        result: Optional[RunResultStreaming],
         session: Optional[AdvancedSQLiteSession],
-        action_history_manager: ActionHistoryManager,
+        action_history_manager: Optional[ActionHistoryManager] = None,
     ) -> AsyncGenerator[None, None]:
         """Retain received text and run usage on output exhaustion, without retrying."""
         try:
             yield
         except ModelOutputTruncatedError as exc:
-            exc.partial_response = strip_litellm_placeholder(exc.partial_response)
-            usage = result.context_wrapper.usage
-            usage.add(exc.usage)
-            exc.usage = usage
-            if session:
-                try:
-                    if exc.partial_response:
-                        # The SDK persists the input and completed tool rounds;
-                        # the rejected response has no executable tool items.
-                        await session.add_items([{"role": "assistant", "content": exc.partial_response}])
-                    if hasattr(session, "store_run_usage"):
-                        await session.store_run_usage(result)
-                except Exception:
-                    logger.warning("Failed to persist truncated model result", exc_info=True)
-            await self._extract_and_distribute_token_usage(result, action_history_manager)
+            completed = result if result is not None else exc.run_data
+            if completed is not None:
+                await self._preserve_truncated_result(exc, completed, session, action_history_manager)
             raise
+
+    async def _preserve_truncated_result(
+        self,
+        exc: ModelOutputTruncatedError,
+        result: Union[RunResultStreaming, RunErrorDetails],
+        session: Optional[AdvancedSQLiteSession],
+        action_history_manager: Optional[ActionHistoryManager] = None,
+    ) -> None:
+        """Combine completed rounds and the rejected response for either SDK path."""
+        exc.partial_response = strip_litellm_placeholder(exc.partial_response)
+        usage = result.context_wrapper.usage
+        usage.add(exc.usage)
+        exc.usage = usage
+        if session:
+            try:
+                if exc.partial_response:
+                    # The SDK persists the input and completed tool rounds;
+                    # the rejected response has no executable tool items.
+                    await session.add_items([{"role": "assistant", "content": exc.partial_response}])
+                if hasattr(session, "store_run_usage"):
+                    await session.store_run_usage(result)
+            except Exception:
+                logger.warning("Failed to persist truncated model result", exc_info=True)
+        if action_history_manager is not None:
+            await self._extract_and_distribute_token_usage(result, action_history_manager)
 
     def _extract_usage_info(self, usage) -> dict:
         """Extract standardized usage info from SDK usage object.

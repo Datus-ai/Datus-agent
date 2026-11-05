@@ -8,10 +8,11 @@ from contextlib import aclosing
 from inspect import isawaitable
 from typing import Any
 
+from agents.exceptions import AgentsException
 from agents.usage import Usage
 
 
-class ModelOutputTruncatedError(Exception):
+class ModelOutputTruncatedError(AgentsException):
     """A model exhausted its output budget; partial text is not a completed answer."""
 
     def __init__(self, partial_response: str = "", usage: Usage | None = None, reason: str = "length"):

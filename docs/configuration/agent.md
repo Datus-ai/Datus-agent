@@ -202,7 +202,7 @@ Remote image URLs and opaque file inputs require extracted content or a provider
 token count; counting only their URL or file ID cannot establish request capacity.
 
 In the OpenAI-compatible and native OpenAI Responses paths, an explicit output-limit
-termination is reported as a failure. Streaming runs retain received assistant text
+termination is reported as a failure. Tool runs retain received assistant text
 and usage in the failed result and session; reasoning is not returned as the answer,
 and incomplete tool calls are not executed. Datus does not automatically retry these
 runs. Continue with the existing session when more output is needed.

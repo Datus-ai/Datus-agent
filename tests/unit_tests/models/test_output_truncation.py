@@ -137,7 +137,8 @@ async def test_sdk_rejects_length_before_tool_execution(service, streaming, kind
 
 
 @pytest.mark.asyncio
-async def test_stream_retains_completed_tools_partial_answer_usage_and_resume(service, tmp_path):
+@pytest.mark.parametrize("streaming", [False, True])
+async def test_retains_completed_tools_partial_answer_usage_and_resume(service, tmp_path, streaming):
     model, requests, responses = service
     invoked = []
 
@@ -158,12 +159,16 @@ async def test_stream_retains_completed_tools_partial_answer_usage_and_resume(se
     manager = ActionHistoryManager()
     try:
         with pytest.raises(ModelOutputTruncatedError) as caught:
-            async for _ in model.generate_with_tools_stream(
-                "Review.", tools=[write_probe], session=session, action_history_manager=manager
-            ):
-                pass
+            if streaming:
+                async for _ in model.generate_with_tools_stream(
+                    "Review.", tools=[write_probe], session=session, action_history_manager=manager
+                ):
+                    pass
+            else:
+                await model.generate_with_tools("Review.", tools=[write_probe], session=session)
         assert caught.value.partial_response == PARTIAL
         assert caught.value.usage.total_tokens == 240
+        assert caught.value.usage.requests == 2
         assert invoked == ["complete"]
         assert len(requests) == 2  # max_retry must not restart an output-limited run.
         assert not any(action.action_type == "retry_notification" for action in manager.get_actions())
