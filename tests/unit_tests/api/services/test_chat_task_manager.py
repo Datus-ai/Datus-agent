@@ -3294,6 +3294,78 @@ class TestStartChatSettlesExactlyOnce:
         assert calls[0][3] == task.turn_id
 
 
+class TestDirectSubagentDatasource:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("address", ["reca_agent", "custom-agent-id"])
+    @pytest.mark.parametrize("stale_target", ["request", "history", "default", "matching"])
+    async def test_saved_binding_controls_the_full_execution_target(
+        self, real_agent_config, monkeypatch, address, stale_target
+    ):
+        import copy
+        import json
+
+        from datus.api.models.cli_models import StreamChatInput
+
+        original = real_agent_config.current_datasource
+        bound = copy.deepcopy(real_agent_config.current_db_config())
+        bound.type, bound.uri = "postgresql", ""
+        bound.database, bound.schema, bound.catalog = "bound_db", "bound_schema", ""
+        real_agent_config.services.datasources["reca"] = bound
+        real_agent_config.agentic_nodes["reca_agent"] = {
+            "id": "custom-agent-id",
+            "node_class": "gen_sql",
+            "scoped_context": {"datasource": "reca"},
+        }
+        sessions = MagicMock()
+        sessions.load_session_meta.return_value = (
+            json.dumps(
+                {
+                    "datasource": "reca" if stale_target == "matching" else original,
+                    "database": "selected_db" if stale_target == "matching" else "ik_db",
+                    "schema": "selected_schema" if stale_target == "matching" else "ik_schema",
+                }
+            )
+            if stale_target in {"history", "matching"}
+            else None
+        )
+        manager = ChatTaskManager()
+        monkeypatch.setattr(manager, "_session_manager", lambda *args: sessions)
+        observed = {}
+
+        async def run(task, config, request, **kwargs):
+            observed.update(config.runtime_db_context())
+            observed["request_datasource"] = request.datasource
+
+        monkeypatch.setattr(manager, "_run_loop", run)
+        selection = {"datasource": original, "catalog": "ik_cat", "database": "ik_db", "db_schema": "ik_schema"}
+        request = StreamChatInput(
+            message="query", session_id="direct", **(selection if stale_target == "request" else {})
+        )
+        task = await manager.start_chat(real_agent_config, request, sub_agent_id=address)
+        await task.asyncio_task
+
+        assert observed["datasource"] == "reca"
+        assert observed["request_datasource"] == "reca"
+        assert observed["database"] == ("selected_db" if stale_target == "matching" else "bound_db")
+        assert observed["schema"] == ("selected_schema" if stale_target == "matching" else "bound_schema")
+        assert observed["catalog"] == ""
+        assert real_agent_config.current_datasource == original
+
+    @pytest.mark.asyncio
+    async def test_missing_bound_datasource_does_not_fall_back(self, real_agent_config, monkeypatch):
+        from unittest.mock import AsyncMock
+
+        from datus.api.models.cli_models import StreamChatInput
+
+        real_agent_config.agentic_nodes["custom"] = {"scoped_context": {"datasource": "removed"}}
+        manager = ChatTaskManager()
+        run = AsyncMock()
+        monkeypatch.setattr(manager, "_run_loop", run)
+        with pytest.raises(ValueError, match="not bound"):
+            await manager.start_chat(real_agent_config, StreamChatInput(message="query"), sub_agent_id="custom")
+        run.assert_not_awaited()
+
+
 @pytest.mark.parametrize("session_id", [None, "explicit-session", ""])
 def test_host_node_factory_delegates_or_fails_closed(real_agent_config, monkeypatch, session_id):
     """Host dispatch and fallback share the effective session and fail closed."""

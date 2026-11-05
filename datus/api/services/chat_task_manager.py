@@ -78,6 +78,22 @@ def _release_stamp() -> Optional[str]:
 
 logger = get_logger(__name__)
 
+
+def _subagent_datasource(agent_config: AgentConfig, name_or_id: Optional[str]) -> Optional[str]:
+    """Resolve a direct subagent's saved datasource by configuration name or API id."""
+    if not name_or_id:
+        return None
+    for name, entry in (agent_config.agentic_nodes or {}).items():
+        entry_id = entry.get("id") if isinstance(entry, dict) else getattr(entry, "id", None)
+        if name != name_or_id and entry_id != name_or_id:
+            continue
+        config = agent_config.sub_agent_config(name)
+        scope = config.get("scoped_context") if isinstance(config, dict) else getattr(config, "scoped_context", None)
+        datasource = scope.get("datasource") if isinstance(scope, dict) else getattr(scope, "datasource", None)
+        return datasource if isinstance(datasource, str) and datasource else None
+    return None
+
+
 HEARTBEAT_INTERVAL = 10  # seconds
 
 # Max run-boundary auto-continuations per task, bounding a client that keeps
@@ -585,6 +601,16 @@ class ChatTaskManager:
                 except (ValueError, TypeError, AttributeError):
                     logger.warning("Ignoring malformed execution context for session %s", request.session_id)
         datasource = request.datasource or previous.get("datasource") or agent_config.current_datasource
+        # A directly addressed subagent owns its execution target. UI selections
+        # and sessions created before a rebind can still name another datasource.
+        # Drop that target's children together rather than applying them to the
+        # bound warehouse. Unscoped agents keep normal per-turn selection.
+        bound_datasource = _subagent_datasource(agent_config, sub_agent_id)
+        if bound_datasource:
+            if datasource != bound_datasource:
+                request.catalog = request.database = request.db_schema = None
+            datasource = bound_datasource
+            request.datasource = bound_datasource
         if datasource:
             if datasource not in agent_config.services.datasources:
                 raise ValueError(f"Datasource {datasource!r} is not bound to this project; select a valid datasource")
