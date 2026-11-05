@@ -71,6 +71,9 @@ IMPACTED_UNIT_MARK_EXPR = "not acceptance and not component and not llm_harness 
 PR_ACCEPTANCE_TARGETS = [
     "tests/unit_tests/models/test_request_capacity.py",
     "tests/unit_tests/models/test_image_model_roundtrip.py",
+    "tests/unit_tests/models/test_output_limit_requests.py",
+    "tests/unit_tests/models/test_output_truncation.py",
+    "tests/unit_tests/models/test_reasoning_content_roundtrip.py",
     "tests/unit_tests/observability/test_native_model_calls.py",
     "tests/unit_tests/observability/test_model_call.py",
     "tests/unit_tests/agent/node/test_chat_agentic_node.py",

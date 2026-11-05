@@ -3,15 +3,14 @@
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
 """
-SkillCreatorAgenticNode implementation for interactive skill creation and editing.
+SkillCreatorAgenticNode implementation for skill creation, editing, and review.
 
 This module provides an AgenticNode that guides users through creating,
-editing, and scaffolding Datus skills. It exposes filesystem (read+write),
+editing, reviewing, and scaffolding Datus skills. It exposes filesystem (read+write),
 database (optional), ask_user, and skill loading tools, running with a
 configurable max_turns budget for extended multi-step interactions.
 """
 
-import re
 from typing import Dict, List, Literal, Optional
 
 from datus.agent.node.agentic_node import AgenticNode
@@ -28,9 +27,9 @@ logger = get_logger(__name__)
 
 class SkillCreatorAgenticNode(AgenticNode):
     """
-    Interactive skill creation and editing agentic node.
+    Skill creation, editing, and review agentic node.
 
-    Guides users through creating new skills, editing existing skills,
+    Guides users through creating new skills, editing and reviewing existing skills,
     and scaffolding skill directory structures. Exposes full filesystem
     tools (read+write), optional database tools, ask_user for interactive
     interview, and skill loading tools for edit mode.
@@ -46,9 +45,8 @@ class SkillCreatorAgenticNode(AgenticNode):
     # optimize/edit workflow can read any skill by name.
     SKILL_AUTHORING_MODE = True
 
-    # Skill-authoring workflow (create new skills, optimize existing ones). Both
-    # skills list ``gen_skill`` in their SKILL.md ``allowed_agents``.
-    DEFAULT_SKILLS = "create-skill, optimize-skill"
+    # Optional Datus format reference; the system prompt owns the workflow.
+    DEFAULT_SKILLS = "create-skill"
 
     def __init__(
         self,
@@ -103,6 +101,26 @@ class SkillCreatorAgenticNode(AgenticNode):
 
     def get_node_name(self) -> str:
         return self._configured_node_name
+
+    def _setup_skill_func_tools(self) -> None:
+        """Ignore the retired guide in old configuration before resolving skills."""
+        configured_skills = self.node_config.get("skills")
+        if isinstance(configured_skills, str):
+            patterns = [pattern.strip() for pattern in configured_skills.split(",") if pattern.strip()]
+            if "optimize-skill" in patterns:
+                logger.warning(
+                    "Ignoring obsolete skill 'optimize-skill' in node '%s' skills configuration.",
+                    self.get_node_name(),
+                )
+                # Normalize only this node's runtime view, leaving agent.yml
+                # and the shared request configuration unchanged.
+                self.node_config = dict(self.node_config)
+                remaining = [pattern for pattern in patterns if pattern != "optimize-skill"]
+                if remaining:
+                    self.node_config["skills"] = ", ".join(remaining)
+                else:
+                    self.node_config.pop("skills", None)
+        super()._setup_skill_func_tools()
 
     def setup_tools(self):
         """Setup tools for skill creation: filesystem, db, ask_user, skill loading."""
@@ -167,19 +185,25 @@ class SkillCreatorAgenticNode(AgenticNode):
             from datus.tools.skill_tools.skill_func_tool import SkillFuncTool
             from datus.tools.skill_tools.skill_manager import SkillManager
 
-            skill_manager = SkillManager(
-                permission_manager=self.permission_manager,
-                config_mutable=self._resolve_config_mutable(),
-                agent_config=self.agent_config,
-            )
-            self.skill_func_tool_instance = SkillFuncTool(
-                manager=skill_manager,
-                node_name=self.get_node_name(),
-                node_class=self.get_node_class_name(),
-                authoring_mode=self.SKILL_AUTHORING_MODE,
-            )
-            self.tools.extend(self.skill_func_tool_instance.available_tools())
-            logger.debug(f"Setup skill loading tools with {skill_manager.get_skill_count()} skills")
+            # Share the base node's registry and loaded roots with filesystem
+            # tools/hooks so loaded plugin bundles become readable immediately.
+            if self.skill_manager is None:
+                self.skill_manager = SkillManager(
+                    config=getattr(self.agent_config, "skills_config", None),
+                    permission_manager=self.permission_manager,
+                    config_mutable=self._resolve_config_mutable(),
+                    agent_config=self.agent_config,
+                )
+            if self.skill_func_tool is None:
+                self.skill_func_tool = SkillFuncTool(
+                    manager=self.skill_manager,
+                    node_name=self.get_node_name(),
+                    node_class=self.get_node_class_name(),
+                    authoring_mode=self.SKILL_AUTHORING_MODE,
+                )
+            self.skill_func_tool_instance = self.skill_func_tool
+            self._ensure_skill_tools_in_tools()
+            logger.debug(f"Setup skill loading tools with {self.skill_manager.get_skill_count()} skills")
         except Exception as e:
             logger.warning(f"Failed to setup skill loading tools, continuing without: {e}")
 
@@ -214,59 +238,15 @@ class SkillCreatorAgenticNode(AgenticNode):
         except Exception as e:
             logger.warning(f"Failed to setup session search tool, continuing without: {e}")
 
-    # Companion skills loaded into system prompt
-    COMPANION_SKILLS = ("create-skill", "optimize-skill")
-
-    def _load_companion_skill_content(self) -> str:
-        """Load companion skill SKILL.md content for injection into system prompt.
-
-        Loads both create-skill and optimize-skill, returning their markdown
-        bodies (without frontmatter) under labeled sections.
-        """
-        parts = []
-        for skill_name in self.COMPANION_SKILLS:
-            content = self._load_single_skill_body(skill_name)
-            if content:
-                parts.append(f"## {skill_name} Workflow\n\n{content}")
-        return "\n\n".join(parts)
-
-    def _load_single_skill_body(self, skill_name: str) -> str:
-        """Load a single skill's SKILL.md body (without frontmatter)."""
-        if not self.skill_func_tool_instance or not self.skill_func_tool_instance.manager:
-            return ""
-        try:
-            registry = self.skill_func_tool_instance.manager.registry
-            skills = registry.list_skills()
-            if skill_name not in skills:
-                return ""
-            content = registry.load_skill_content(skill_name)
-            if not content:
-                return ""
-            # Strip YAML frontmatter
-            match = re.match(r"^---\s*\n.*?\n---\s*\n", content, re.DOTALL)
-            if match:
-                return content[match.end() :].strip()
-            return content.strip()
-        except Exception as e:
-            logger.debug(f"Could not load companion skill '{skill_name}': {e}")
-            return ""
-
     def _get_system_prompt(self, prompt_version: Optional[str] = None) -> str:
         """Get the system prompt for the skill creator node."""
         from datus.prompts.prompt_manager import get_prompt_manager
 
         version = prompt_version or self.node_config.get("prompt_version")
         template_name = "skill_creator_system"
-
-        # Gather existing skill names for context
-        existing_skills = ""
-        if self.skill_func_tool_instance and self.skill_func_tool_instance.manager:
-            try:
-                skill_names = list(self.skill_func_tool_instance.manager.registry.list_skills().keys())
-                if skill_names:
-                    existing_skills = ", ".join(sorted(skill_names))
-            except Exception:
-                pass
+        self._ensure_lazy_tools_mounted()
+        self._populate_tool_registry()
+        tool_names = {tool.name for tool in self.tools}
 
         # Gather configured skill directories
         skill_directories: List[str] = []
@@ -280,12 +260,9 @@ class SkillCreatorAgenticNode(AgenticNode):
         from datus.utils.node_utils import build_datasource_prompt_context
 
         context = {
-            "has_db_tools": bool(self.db_func_tool),
-            "has_filesystem_tools": bool(self.filesystem_func_tool),
-            "has_ask_user_tool": bool(self.ask_user_tool),
-            "has_skill_tools": bool(self.skill_func_tool_instance),
+            "has_db_tools": any(self.tool_registry.get(name) == "db_tools" for name in tool_names),
+            "has_validate_skill": "validate_skill" in tool_names,
             "skill_directories": skill_directories,
-            "existing_skills": existing_skills,
             "workspace_root": self._resolve_workspace_root(),
             **build_datasource_prompt_context(self.agent_config),
         }
@@ -294,11 +271,6 @@ class SkillCreatorAgenticNode(AgenticNode):
             base_prompt = get_prompt_manager(agent_config=self.agent_config).render_template(
                 template_name=template_name, version=version, **context
             )
-
-            # Auto-load the companion skill-creator SKILL.md for deep knowledge
-            companion_content = self._load_companion_skill_content()
-            if companion_content:
-                base_prompt += "\n\n## Skill Creator Reference Guide\n\n" + companion_content
 
             return self._finalize_system_prompt(base_prompt)
         except Exception as e:

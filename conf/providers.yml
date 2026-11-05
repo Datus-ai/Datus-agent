@@ -193,7 +193,8 @@ model_overrides:
     top_p: 0.95
 
 # Model specifications: context_length and max_tokens for each model.
-# Used for token budget management. Prefix matching is applied at runtime
+# Offline defaults for token budgets; automatically resolved metadata takes priority.
+# Hyphen-delimited prefix matching is applied at runtime
 # (e.g. "gpt-4o-mini" matches "gpt-4o", "kimi-k2-0711-preview" matches "kimi-k2").
 model_specs:
   # OpenAI Models

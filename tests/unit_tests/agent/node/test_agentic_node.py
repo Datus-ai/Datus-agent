@@ -110,6 +110,30 @@ def _make_node(agent_config=None, context_length=_UNSET, **overrides):
 
 
 class TestExecuteAgenticNode:
+    @pytest.mark.parametrize("partial", ["Partial answer", ""])
+    def test_truncation_error_preserves_only_received_answer_and_usage(self, partial):
+        from agents.usage import Usage
+
+        from datus.agent.node.stream_run_context import StreamRunContext
+        from datus.models.output_truncation import ModelOutputTruncatedError
+        from datus.schemas.chat_agentic_node_models import ChatNodeResult
+
+        node = _make_node()
+        node.result_class = ChatNodeResult
+        ctx = StreamRunContext(BaseInput(), ActionHistoryManager(), response_content="Earlier assistant commentary")
+
+        result = node._build_error_result(
+            ModelOutputTruncatedError(partial, Usage(input_tokens=100, output_tokens=20, total_tokens=120)), ctx
+        )
+
+        assert result.success is False
+        assert result.response == partial
+        assert result.tokens_used == 120
+        assert "truncated" in result.error
+        ordinary_failure = node._build_error_result(ValueError("unrelated failure"), ctx)
+        assert ordinary_failure.response == ""
+        assert ordinary_failure.tokens_used == 0
+
     def test_failed_terminal_action_overrides_prior_success(self):
         node = _make_node()
         node.result_class = BaseResult

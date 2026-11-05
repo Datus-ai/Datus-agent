@@ -15,7 +15,7 @@ an ever-expanding local list. Resolution order:
 The helper never raises and never writes to the console; only `logger.debug`
 lines are emitted on failure paths.
 
-Cache schema v2 stores the full metadata (name, context_length, pricing) so
+Cache schema v2 stores model metadata (name, context_length, max_tokens, pricing) so
 downstream billing/statistics tools can read it without re-hitting OpenRouter.
 v1 caches (flat slug lists) are still accepted via a one-way upgrade path.
 """
@@ -25,7 +25,9 @@ from __future__ import annotations
 import copy
 import json
 import os
+import threading
 import time
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Set
@@ -45,6 +47,7 @@ CACHE_SCHEMA_VERSION = 2
 # Avoids two openrouter calls during a single CLI startup (Application credential
 # probe + AgentConfig.provider_catalog lazy load).
 FRESH_CACHE_TTL_SEC = 600.0
+FAILED_FETCH_RETRY_SEC = 60.0
 # Cache versions that load_cached_models / load_cached_model_details accept.
 _SUPPORTED_CACHE_VERSIONS = frozenset({1, 2})
 
@@ -100,6 +103,18 @@ _NON_CHAT_SLUG_FRAGMENTS = frozenset(
 _MIN_CONTEXT_LENGTH = 4096
 
 
+@dataclass
+class _ModelDetailsCache:
+    path: Path
+    signature: Optional[tuple[int, int]]
+    expires_at: float
+    details: Dict[str, List[Dict[str, Any]]]
+
+
+_MODEL_DETAILS_CACHE: Optional[_ModelDetailsCache] = None
+_MODEL_DETAILS_LOCK = threading.Lock()
+
+
 def _cache_file_path() -> Path:
     return get_path_manager().datus_home / "cache" / CACHE_FILE_NAME
 
@@ -128,14 +143,26 @@ def _extract_pricing(raw_pricing: Any) -> Optional[Dict[str, str]]:
 def _extract_context_length(item: Dict[str, Any]) -> Optional[int]:
     """OpenRouter exposes context_length at the top level and under top_provider."""
     raw = item.get("context_length")
-    if isinstance(raw, int):
+    if type(raw) is int and raw > 0:
         return raw
     top = item.get("top_provider")
     if isinstance(top, dict):
         top_ctx = top.get("context_length")
-        if isinstance(top_ctx, int):
+        if type(top_ctx) is int and top_ctx > 0:
             return top_ctx
     return None
+
+
+def _extract_max_tokens(item: Dict[str, Any]) -> Optional[int]:
+    """Normalize OpenRouter's output limit to the runtime's ``max_tokens`` field."""
+    top = item.get("top_provider")
+    value = top.get("max_completion_tokens") if isinstance(top, dict) else None
+    return value if type(value) is int and value > 0 else None
+
+
+def model_spec_prefix_matches(model_id: str, spec_id: str) -> bool:
+    """Allow suffixed variants, but never inherit another numeric version's limits."""
+    return model_id.startswith(spec_id + "-")
 
 
 def _is_model_unfit(slug: str, context_length: Optional[int]) -> bool:
@@ -193,6 +220,9 @@ def _bucket_by_vendor(
             entry["name"] = name
         if ctx_len is not None:
             entry["context_length"] = ctx_len
+        max_tokens = _extract_max_tokens(item)
+        if max_tokens is not None:
+            entry["max_tokens"] = max_tokens
         pricing = _extract_pricing(item.get("pricing"))
         if pricing:
             entry["pricing"] = pricing
@@ -240,6 +270,9 @@ def _aggregate_openrouter(raw_models: List[Dict[str, Any]]) -> List[Dict[str, An
             entry["name"] = name
         if ctx_len is not None:
             entry["context_length"] = ctx_len
+        max_tokens = _extract_max_tokens(item)
+        if max_tokens is not None:
+            entry["max_tokens"] = max_tokens
         pricing = _extract_pricing(item.get("pricing"))
         if pricing:
             entry["pricing"] = pricing
@@ -300,7 +333,7 @@ def _read_cache_file() -> Optional[Dict[str, Any]]:
         logger.debug("openrouter cache schema mismatch")
         return None
     version = raw.get("version", 1)
-    if version not in _SUPPORTED_CACHE_VERSIONS:
+    if type(version) is not int or version not in _SUPPORTED_CACHE_VERSIONS:
         logger.debug("openrouter cache schema mismatch")
         return None
     models = raw.get("models")
@@ -398,6 +431,70 @@ def save_cached_models(buckets: Dict[str, List[Dict[str, Any]]]) -> None:
             pass
 
 
+def _cache_signature(path: Path) -> Optional[tuple[int, int]]:
+    try:
+        stat = path.stat()
+        return stat.st_mtime_ns, stat.st_size
+    except OSError:
+        return None
+
+
+def resolve_model_details(*, refresh: bool = True) -> Dict[str, List[Dict[str, Any]]]:
+    """Get metadata for both model selection and runtime capacity resolution.
+
+    Reuse a fresh disk cache, otherwise fetch once and fall back to stale data.
+    Memory entries follow the current Agent home and disk file changes. Failed
+    fetches are retried after a short backoff rather than on every token check.
+    With ``refresh=False``, only read the current snapshot without waiting for
+    the refresh lock. Async generation prepares metadata in a worker thread;
+    mid-run capacity lookups can then use this nonblocking snapshot view.
+    Returned entries are shared read-only; consumers must not mutate them.
+    """
+    global _MODEL_DETAILS_CACHE
+    path = _cache_file_path()
+    if not refresh:
+        memo = _MODEL_DETAILS_CACHE
+        if memo is not None and memo.path == path and memo.signature == _cache_signature(path):
+            return memo.details
+        return load_cached_model_details() or {}
+
+    with _MODEL_DETAILS_LOCK:
+        signature = _cache_signature(path)
+        now = time.monotonic()
+        memo = _MODEL_DETAILS_CACHE
+        if memo is not None and memo.path == path and memo.signature == signature and now < memo.expires_at:
+            return memo.details
+
+        cached = load_cached_model_details() or {}
+        if cached and _cache_is_fresh(FRESH_CACHE_TTL_SEC):
+            details = cached
+            # Do not extend the disk cache's TTL when first loading it into memory.
+            age = time.time() - signature[0] / 1e9 if signature is not None else FRESH_CACHE_TTL_SEC
+            ttl = max(0.0, FRESH_CACHE_TTL_SEC - age)
+        else:
+            # Fetch all supported buckets once. Callers apply their provider
+            # whitelist after resolution so a partial catalog cannot poison
+            # another caller's cache, including the OpenRouter aggregate.
+            remote = fetch_openrouter_models(
+                allowed_providers=set(OPENROUTER_VENDOR_MAP.values()) | {OPENROUTER_PROVIDER_KEY}
+            )
+            if remote:
+                save_cached_models(remote)
+                details = remote
+                ttl = FRESH_CACHE_TTL_SEC
+            else:
+                details = cached
+                ttl = FAILED_FETCH_RETRY_SEC
+
+        _MODEL_DETAILS_CACHE = _ModelDetailsCache(
+            path=path,
+            signature=_cache_signature(path),
+            expires_at=time.monotonic() + ttl,
+            details=details,
+        )
+        return details
+
+
 def _overlay(local_catalog: dict, buckets: Dict[str, List[Dict[str, Any]]]) -> dict:
     """Return a new catalog with each non-protected provider's `models` replaced.
 
@@ -452,36 +549,13 @@ def resolve_provider_models(local_catalog: dict) -> dict:
     `default_model`, `base_url`, `api_key_env`, `type`, `auth_type` are preserved.
     PROTECTED_PROVIDERS keep their local `models` regardless of remote content.
 
-    Providers not declared in ``providers.yml`` are dropped at fetch time — the
-    YAML is the single source of truth for which vendors are considered verified.
+    Only providers declared in ``providers.yml`` are overlaid; the shared
+    metadata cache can also serve callers using a different provider subset.
     """
     providers_block = local_catalog.get("providers") if isinstance(local_catalog, dict) else None
     allowed_providers = set(providers_block.keys()) if isinstance(providers_block, dict) else None
 
-    if _cache_is_fresh(FRESH_CACHE_TTL_SEC):
-        cached_overlay = _overlay_from_cache(local_catalog, allowed_providers)
-        if cached_overlay is not None:
-            return cached_overlay
-
-    remote_buckets = fetch_openrouter_models(allowed_providers=allowed_providers)
-    if remote_buckets is not None:
-        save_cached_models(remote_buckets)
-        return _resolve_models_from(_overlay(local_catalog, remote_buckets))
-
-    cached_overlay = _overlay_from_cache(local_catalog, allowed_providers)
-    if cached_overlay is not None:
-        return cached_overlay
-
-    return _resolve_models_from(copy.deepcopy(local_catalog))
-
-
-def _overlay_from_cache(local_catalog: dict, allowed_providers: Optional[Set[str]]) -> Optional[dict]:
-    """Apply the on-disk cache as an overlay, filtered by ``allowed_providers``."""
-    cached_details = load_cached_model_details()
-    if cached_details is None:
-        return None
+    details = resolve_model_details()
     if allowed_providers is not None:
-        cached_details = {k: v for k, v in cached_details.items() if k in allowed_providers}
-    if not cached_details:
-        return None
-    return _resolve_models_from(_overlay(local_catalog, cached_details))
+        details = {k: v for k, v in details.items() if k in allowed_providers}
+    return _resolve_models_from(_overlay(local_catalog, details))

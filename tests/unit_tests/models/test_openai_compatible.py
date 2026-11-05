@@ -1319,12 +1319,17 @@ class TestModelSpecsAndTokenLimits:
         assert capacity.input_limit() > 0
         assert model.check_request(request)["max_tokens"] == model.max_tokens()
         assert model.check_request({**request, "max_tokens": 4096})["max_tokens"] == 4096
-        with pytest.raises(ContextCapacityError, match="CONTEXT_LIMIT_EXCEEDED"):
+        expected_error = (
+            "OUTPUT_LIMIT_EXCEEDED"
+            if capacity.output_ceiling and model.context_length() > capacity.output_ceiling
+            else "CONTEXT_LIMIT_EXCEEDED"
+        )
+        with pytest.raises(ContextCapacityError, match=expected_error):
             model.check_request({**request, "max_tokens": model.context_length()})
         cfg.max_tokens = 4096
         assert model.max_tokens() == 4096 and model.request_capacity().default_output == 4096
         cfg.max_tokens = model.context_length()
-        with pytest.raises(ContextCapacityError, match="CONTEXT_LIMIT_EXCEEDED"):
+        with pytest.raises(ContextCapacityError, match=expected_error):
             model.check_request(request)
 
     def test_exact_match_context_length(self):
@@ -1347,7 +1352,7 @@ class TestModelSpecsAndTokenLimits:
     def test_unknown_model_has_default_max_tokens(self):
         cfg = _make_model_config(model="unknown-model-xyz")
         model = _make_model(cfg)
-        assert model.max_tokens() == 8192
+        assert model.max_tokens() == 128000
 
     def test_unknown_model_has_default_context_length(self):
         cfg = _make_model_config(model="unknown-model-xyz")
@@ -1367,7 +1372,7 @@ class TestModelSpecsAndTokenLimits:
 
 
 class TestModelSpecsOpenRouterCacheMerge:
-    """Verify _load_model_specs merges context_length from the OpenRouter cache."""
+    """Verify resolved metadata supplies both capacity limits."""
 
     @pytest.fixture(autouse=True)
     def _clear_specs_cache(self):
@@ -1393,21 +1398,20 @@ class TestModelSpecsOpenRouterCacheMerge:
             model = _make_model(cfg)
             assert model.context_length() == 777000
             # Cache entries have no output limit, so use the default budget.
-            assert model.max_tokens() == 8192
+            assert model.max_tokens() == 128000
         assert "brand-new-model" in oc._MODEL_SPECS_CACHE
         assert oc._MODEL_SPECS_CACHE["brand-new-model"]["context_length"] == 777000
 
-    def test_yaml_wins_over_cache_on_shared_slug(self):
-        """YAML value is authoritative when the slug is defined in both."""
+    def test_catalog_metadata_supersedes_yaml_on_shared_slug(self):
+        """Automatically fetched exact metadata supersedes offline defaults."""
         with patch(
             "datus.cli.provider_model_catalog.load_cached_model_details",
-            return_value={"openai": [{"id": "gpt-4o", "context_length": 9999}]},
+            return_value={"openai": [{"id": "gpt-4o", "context_length": 256000, "max_tokens": 8192}]},
         ):
             cfg = _make_model_config(model="gpt-4o")
             model = _make_model(cfg)
-            # conf/providers.yml ships gpt-4o at 128000; cache's 9999 is ignored.
-            assert model.context_length() == 128000
-            assert model.max_tokens() == 16384
+            assert model.context_length() == 256000
+            assert model.max_tokens() == 8192
 
     def test_cache_read_error_does_not_break_loader(self):
         """A broken cache layer must not prevent YAML specs from loading."""
