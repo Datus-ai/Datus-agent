@@ -93,6 +93,7 @@ def identity_tool(tmp_path, osi_schema_validator):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("encoded", [False, True])
 @pytest.mark.parametrize(
     "name,parameter,objects",
     [
@@ -100,13 +101,55 @@ def identity_tool(tmp_path, osi_schema_validator):
         ("upsert_osi_datasets", "datasets_json", [{"name": "orders", "source": "analytics.orders"}]),
     ],
 )
-async def test_write_tool_schema_and_invocation_accept_structured_arrays(identity_tool, name, parameter, objects):
+async def test_write_tool_schema_and_invocation_accept_structured_arrays(
+    identity_tool, name, parameter, objects, encoded
+):
     tool, target, _, _ = identity_tool([])
     exposed = next(t for t in tool.available_tools() if t.name == name)
     variants = exposed.params_json_schema["properties"][parameter]["anyOf"]
     assert {v["type"] for v in variants} == {"array", "string"}
-    result = await exposed.on_invoke_tool(None, json.dumps({"path": str(target), parameter: objects}))
+    payload = json.dumps(objects) if encoded else objects
+    result = await exposed.on_invoke_tool(None, json.dumps({"path": str(target), parameter: payload}))
     assert result["success"] == 1, result
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("wrapped", [False, True])
+@pytest.mark.parametrize(
+    "name,parameter,payload,duplicate_key",
+    [
+        (
+            "upsert_osi_datasets",
+            "datasets_json",
+            '[{"name":"orders","source":"orders","source":"analytics.orders"}]',
+            "source",
+        ),
+        (
+            "upsert_osi_metrics",
+            "metrics_json",
+            '[{"name":"revenue","description":"Revenue","expression":{"dialects":'
+            '[{"dialect":"ANSI_SQL","expression":"SUM(orders.amount)","expression":"COUNT(*)"}]}}]',
+            "expression",
+        ),
+    ],
+)
+async def test_encoded_upserts_reject_duplicate_keys_without_mutating(
+    identity_tool, wrapped, name, parameter, payload, duplicate_key
+):
+    tool, target, state, _ = identity_tool([])
+    before = target.read_bytes()
+    arguments = {"path": str(target), parameter: payload}
+
+    if wrapped:
+        exposed = next(t for t in tool.available_tools() if t.name == name)
+        result = await exposed.on_invoke_tool(None, json.dumps(arguments))
+    else:
+        result = getattr(tool, name)(**arguments).model_dump()
+
+    assert result["success"] == 0
+    assert f"Duplicate JSON key {duplicate_key!r}" in result["error"]
+    assert target.read_bytes() == before
+    state.require_selected_revision(target)
 
 
 def test_metric_upsert_assigns_and_preserves_host_uid(identity_tool):

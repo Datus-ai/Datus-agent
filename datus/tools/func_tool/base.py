@@ -31,6 +31,11 @@ def _unique_json_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
     return result
 
 
+def load_tool_json(value: str) -> Any:
+    """Decode JSON tool input without silently replacing duplicate object keys."""
+    return json.loads(value, object_pairs_hook=_unique_json_object)
+
+
 def normalize_null(value):
     """Convert string 'null', 'None', empty, or whitespace-only values to None for LLM compatibility.
 
@@ -64,7 +69,7 @@ def normalize_tool_args(arguments: dict, params_schema: dict) -> dict:
             normalized[name] = value.casefold() == "true"
         elif kinds == {"array"}:
             try:
-                decoded = json.loads(value, object_pairs_hook=_unique_json_object)
+                decoded = load_tool_json(value)
             except _DuplicateJSONKeyError:
                 raise
             except (ValueError, RecursionError):
@@ -99,7 +104,7 @@ def parse_tool_args(
         if not stripped:
             return {}, "{}", None
         try:
-            parsed = json.loads(stripped, object_pairs_hook=_unique_json_object)
+            parsed = load_tool_json(stripped)
         except _DuplicateJSONKeyError as exc:
             return (
                 {},

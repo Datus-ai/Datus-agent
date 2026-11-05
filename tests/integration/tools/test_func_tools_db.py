@@ -1,7 +1,11 @@
+import json
+import sqlite3
+
 import pytest
 
 from datus.configuration.agent_config import AgentConfig
 from datus.tools.db_tools.db_manager import db_manager_instance
+from datus.tools.func_tool.base import trans_to_function_tool
 from datus.tools.func_tool.database import DBFuncTool
 from datus.utils.constants import DBType
 
@@ -12,6 +16,32 @@ class TestDBFuncToolIntegrationReal:
 
     These tests use real database files from tests/data directory.
     """
+
+    @pytest.mark.asyncio
+    async def test_duplicate_sql_arguments_do_not_modify_database(self, tmp_path):
+        from datus.tools.db_tools.config import SQLiteConfig
+        from datus.tools.db_tools.sqlite_connector import SQLiteConnector
+
+        db_path = tmp_path / "duplicate-args.db"
+        with sqlite3.connect(db_path) as db:
+            db.execute("CREATE TABLE events (id INTEGER)")
+        connector = SQLiteConnector(SQLiteConfig(db_path=str(db_path)))
+        try:
+            tool = trans_to_function_tool(DBFuncTool(connector).execute_sql)
+            result = await tool.on_invoke_tool(
+                None, '{"sql":"INSERT INTO events VALUES (1)","sql":"INSERT INTO events VALUES (2)"}'
+            )
+            assert result["success"] == 0
+            assert "Duplicate JSON key 'sql'" in result["error"]
+            with sqlite3.connect(db_path) as db:
+                assert db.execute("SELECT id FROM events").fetchall() == []
+
+            retry = await tool.on_invoke_tool(None, json.dumps({"sql": "INSERT INTO events VALUES (3)"}))
+            assert retry["success"] == 1, retry
+            with sqlite3.connect(db_path) as db:
+                assert db.execute("SELECT id FROM events").fetchall() == [(3,)]
+        finally:
+            connector.close()
 
     @pytest.fixture
     def ssb_sqlite_config(self):
