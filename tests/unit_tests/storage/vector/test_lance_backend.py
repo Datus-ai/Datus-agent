@@ -54,11 +54,11 @@ class TestLanceVectorTableWriteOps:
         raw_table.delete.assert_not_called()
 
     def test_delete_with_in_node(self):
-        """delete() with in_() Node compiles to OR chain."""
+        """delete() keeps membership native instead of expanding an OR chain."""
         raw_table = MagicMock()
         table = LanceVectorTable(raw_table)
         table.delete(in_("chunk_id", ["a", "b", "c"]))
-        raw_table.delete.assert_called_once_with("(chunk_id = 'a' OR chunk_id = 'b' OR chunk_id = 'c')")
+        raw_table.delete.assert_called_once_with("(chunk_id IN ('a', 'b', 'c'))")
 
     def test_update_with_node_eq(self):
         """update() compiles eq() Node where and delegates."""

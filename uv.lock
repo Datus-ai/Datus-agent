@@ -677,7 +677,7 @@ requires-dist = [
     { name = "datus-bi-core", specifier = ">=0.1.2" },
     { name = "datus-db-core", specifier = ">=0.1.7" },
     { name = "datus-scheduler-core", specifier = ">=0.1.1" },
-    { name = "datus-storage-base", specifier = ">=0.1.5,<0.2.0" },
+    { name = "datus-storage-base", specifier = ">=0.1.8,<0.2.0" },
     { name = "defusedxml", specifier = ">=0.7.1" },
     { name = "dosi-engine", specifier = "==0.2.0" },
     { name = "duckdb", specifier = "==1.5.2" },
@@ -795,7 +795,7 @@ wheels = [
 
 [[package]]
 name = "datus-storage-base"
-version = "0.1.5"
+version = "0.1.8"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "numpy", version = "1.26.4", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.13'" },
@@ -804,9 +804,9 @@ dependencies = [
     { name = "pandas", version = "2.3.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.13'" },
     { name = "pyarrow" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/e1/2f/832f2b68c44d77b757a33e422554f04f6ad7db6983c538f210a560d062e1/datus_storage_base-0.1.5.tar.gz", hash = "sha256:ab70b8db8823590b2272b5c86178b833532e0b915014a9645ae8bc8aac7814a3", size = 12057, upload-time = "2026-06-11T10:38:24.428Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/35/68/24625c2fb019991affe37ca20f426bda12a76cec75f8eb8ae9f79fef23c5/datus_storage_base-0.1.8.tar.gz", hash = "sha256:7782fe37a7cb596503ab1d4fe6c9a1bea75faf0bc3b926fc042386983e566818", size = 14887, upload-time = "2026-11-05T19:00:03.75Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/61/bd/20561a1a302cc3e1aa96e4d1eee9313873676e1a59272a889bc8b7ffa4d1/datus_storage_base-0.1.5-py3-none-any.whl", hash = "sha256:3865635243dde9b46761bce8ecca21ed25efe4cf7bdd9ab64f52eb4576984a3c", size = 15648, upload-time = "2026-06-11T10:38:22.071Z" },
+    { url = "https://files.pythonhosted.org/packages/ab/43/7c2f19a8b6fa83f85fc215b64a7397fbe41bf324315d94deff583a474d05/datus_storage_base-0.1.8-py3-none-any.whl", hash = "sha256:9c4bf484a60d6726e4f70e02fb06f6728bc2ba94deb9d48ebbca26c716460508", size = 18678, upload-time = "2026-11-05T19:00:02.695Z" },
 ]
 
 [[package]]
