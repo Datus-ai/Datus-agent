@@ -43,6 +43,8 @@ class SqlReadContext:
     def canonical_name(self, name: str) -> str:
         if self.dialect in {"duckdb", "sqlite"}:
             return name.translate(_ASCII_LOWER)
+        if self.dialect == "spark" and self._state["case_sensitive_names"]:
+            return name
         if self.dialect in {"hive", "spark", "trino"}:
             # These engines fold quoted identifiers too. Apply the same key
             # to query sources, profile targets and metadata listings.
@@ -113,6 +115,8 @@ class SqlReadContext:
         }
         if self.dialect in {"mysql", "tidb"}:
             self.execution_context["case_sensitive_table_names"] = self._state["lower_case_table_names"] == 0
+        elif self.dialect == "spark":
+            self.execution_context["case_sensitive_table_names"] = self._state["case_sensitive_names"]
         self._metadata: dict[tuple, dict] = {}
 
     def _query(self, sql: str) -> list[dict]:
@@ -184,6 +188,12 @@ class SqlReadContext:
             )
         else:
             state["search_path"] = [state["schema"]] if state["schema"] else []
+            if self.dialect == "spark":
+                getter = getattr(self.connector, "get_identifier_case_sensitive", None)
+                mode = getter() if callable(getter) else None
+                if not isinstance(mode, bool):
+                    raise ValueError("actual Spark identifier case mode is unavailable")
+                state["case_sensitive_names"] = mode
             if self.dialect in {"mysql", "tidb"}:
                 mode = int(
                     self._query("SELECT @@lower_case_table_names AS lower_case_table_names")[0][
@@ -206,6 +216,8 @@ class SqlReadContext:
 
     def verify_execution_target(self, target: str) -> None:
         self.verify_context()
+        if self.dialect == "spark" and self._state["case_sensitive_names"]:
+            raise ValueError("Dosi cannot reproduce Spark case-sensitive session settings")
         if self.dialect == "sqlite" and target == "duckdb":
             if any(name not in {"main", "temp"} for name, _ in self._state["attachments"]):
                 raise ValueError("Dosi SQLite execution cannot reproduce attached databases from the sqlite3 session")
@@ -279,6 +291,10 @@ class SqlReadContext:
                     namespace = self._parts(parser(path + ".__datus_probe"))
                     candidates.append({**base, **{k: v for k, v in namespace.items() if k != "table"}})
             candidates.append(base)
+            if "schema" not in specified:
+                # DuckDB implicitly searches the persistent main schema after
+                # the configured path, even when main is absent from that path.
+                candidates.append({**base, "schema": "main"})
         elif not duckdb_catalog_prefix and "schema" in self.namespace_order and "schema" not in specified:
             candidates = [{**base, "schema": name} for name in self._state["search_path"]] or [base]
         for namespace in candidates:
@@ -301,7 +317,8 @@ class SqlReadContext:
                 raise ValueError("SQLite database is not attached to the execution connection")
             namespace = {**namespace, "database": database}
             tables = self._query(
-                f"SELECT name,type,sql FROM {_quote(database)}.sqlite_schema WHERE name={_literal(name)} COLLATE NOCASE"
+                f"SELECT name,type,sql FROM {_quote(database)}.sqlite_schema "
+                f"WHERE name={_literal(name)} COLLATE NOCASE AND type IN ('table','view')"
             )
             if not tables:
                 return None

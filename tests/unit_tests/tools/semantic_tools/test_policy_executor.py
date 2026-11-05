@@ -84,6 +84,7 @@ def install_policy(monkeypatch, *, kind="metric", deny=None):
             from sqlglot import exp, parse_one
 
             calls.append(("sql", kwargs))
+            assert kwargs["connector"].dialect == "duckdb"
             if kind == "sql":
                 tree = parse_one(sql)
                 for table in list(tree.find_all(exp.Table)):

@@ -377,6 +377,7 @@ def test_case_insensitive_sources_and_policy_targets_share_canonical_identifiers
         get_tables=lambda **_: ["orders"],
         get_views=lambda **_: [],
         get_schema=get_schema,
+        get_identifier_case_sensitive=lambda: False,
     )
     context = SqlReadContext(connector, "warehouse")
     assert context.execution_context["source_dialect"] == dialect
@@ -390,6 +391,59 @@ def test_views_fail_closed(db):
     db.execute("CREATE VIEW hidden AS SELECT * FROM orders")
     with pytest.raises(ValueError, match="opaque database views"):
         resolve(SqlReadContext(Connector(db), "warehouse"), "hidden")
+
+
+def test_duckdb_unqualified_source_uses_implicit_main_fallback(db):
+    db.execute("CREATE SCHEMA sales; SET search_path='sales'")
+    context = SqlReadContext(Connector(db), "warehouse")
+    assert db.execute("SELECT * FROM orders").fetchall() == []
+    assert resolve(context, "orders")["object"]["schema"] == "main"
+    with pytest.raises(ValueError, match="could not be resolved"):
+        resolve(context, "sales.orders")
+    db.execute("CREATE VIEW sales.orders AS SELECT * FROM main.orders")
+    with pytest.raises(ValueError, match="opaque database views"):
+        resolve(SqlReadContext(Connector(db), "warehouse"), "orders")
+
+
+def test_sqlite_table_can_share_its_name_with_a_trigger(tmp_path):
+    from datus.tools.db_tools.config import SQLiteConfig
+    from datus.tools.db_tools.sqlite_connector import SQLiteConnector
+
+    connector = SQLiteConnector(SQLiteConfig(db_path=str(tmp_path / "triggers.sqlite")))
+    try:
+        connector.connect()
+        connector.connection.executescript(
+            "CREATE TABLE orders(id INTEGER); CREATE TRIGGER orders AFTER INSERT ON orders BEGIN SELECT 1; END;"
+        )
+        table = resolve(SqlReadContext(connector, "warehouse"), "orders")
+        assert table["object"]["table"] == "orders"
+        assert table["columns"][0]["name"] == "id"
+    finally:
+        connector.close()
+
+
+def test_spark_live_case_mode_is_bound_and_rechecked(monkeypatch):
+    monkeypatch.setattr(
+        "datus.tools.sql_read_context.table_name_field_order", lambda _: ["database_name", "table_name"]
+    )
+    state = {"value": True}
+    connector = SimpleNamespace(
+        dialect="spark",
+        get_current_context=lambda: {"database_name": "default"},
+        get_identifier_case_sensitive=lambda: state["value"],
+    )
+    context = SqlReadContext(connector, "warehouse")
+    assert context.execution_context["case_sensitive_table_names"] is True
+    assert context.canonical_name("Orders") == "Orders"
+    with pytest.raises(ValueError, match="cannot reproduce Spark"):
+        context.verify_execution_target("hive")
+    state["value"] = False
+    with pytest.raises(ValueError, match="namespace changed"):
+        context.verify_context()
+    assert SqlReadContext(connector, "warehouse").canonical_name("Orders") == "orders"
+    state["value"] = "unknown"
+    with pytest.raises(ValueError, match="case mode is unavailable"):
+        SqlReadContext(connector, "warehouse")
 
 
 @pytest.mark.parametrize("identifier", ["orders_table_name", "table_name", "o'table_name"])
