@@ -288,6 +288,17 @@ def test_duckdb_two_part_catalog_schema_ambiguity_is_refused(db):
     assert resolve(context, "other.main.orders")["object"]["schema"] == "main"
 
 
+@pytest.mark.parametrize("change", ["attach", "detach"])
+def test_duckdb_catalog_topology_changes_require_fresh_binding(db, change):
+    db.execute("ATTACH ':memory:' AS other")
+    context = SqlReadContext(Connector(db), "warehouse")
+    db.execute("ATTACH ':memory:' AS extra" if change == "attach" else "DETACH other")
+    with pytest.raises(ValueError, match="namespace changed"):
+        context.verify_context()
+    # A fresh context can observe the new topology normally.
+    SqlReadContext(Connector(db), "warehouse").verify_context()
+
+
 @pytest.mark.parametrize("path", ["other.sales,memory.main", "memory.main,other.sales"])
 def test_duckdb_two_part_catalog_source_follows_that_catalog_search_path(db, path):
     db.execute("ATTACH ':memory:' AS other; CREATE SCHEMA other.sales")

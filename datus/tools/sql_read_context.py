@@ -169,6 +169,12 @@ class SqlReadContext:
             state.update(
                 database=row["database_name"], schema=row["schema_name"], search_path=_paths(row["search_path"] or "")
             )
+            # ATTACH/DETACH changes two-part source resolution without changing
+            # current_database or search_path. Bind that topology as well.
+            state["attachments"] = [
+                (row["database_name"], row["path"])
+                for row in self._query("SELECT database_name,path FROM duckdb_databases() ORDER BY database_name")
+            ]
         elif self.dialect in {"postgres", "postgresql", "hologres", "gaussdb", "dws"}:
             row = self._query(
                 "SELECT current_database() AS database_name, current_schema() AS schema_name, current_schemas(true) AS search_path"
