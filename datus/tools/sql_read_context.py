@@ -285,6 +285,10 @@ class SqlReadContext:
         raise ValueError("physical table could not be resolved in the execution namespace")
 
     def _lookup(self, namespace: dict, name: str, parser: Callable[[str], list[dict]]) -> dict | None:
+        # Search-path candidates can come from session state rather than _parts.
+        # Metadata APIs often use case-sensitive string predicates internally.
+        namespace = {field: self.canonical_name(value) for field, value in namespace.items()}
+        name = self.canonical_name(name)
         if self.dialect == "sqlite":
             database = self.canonical_name(namespace["database"])
             if database not in {self.canonical_name(name) for name in self._state["search_path"]}:
