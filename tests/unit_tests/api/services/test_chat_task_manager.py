@@ -3292,3 +3292,145 @@ class TestStartChatSettlesExactlyOnce:
 
         assert [c[2] for c in calls] == ["completed"]
         assert calls[0][3] == task.turn_id
+
+
+class TestDirectSubagentDatasource:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("address", ["reca_agent", "custom-agent-id"])
+    @pytest.mark.parametrize("stale_target", ["request", "history", "default", "matching"])
+    async def test_saved_binding_controls_the_full_execution_target(
+        self, real_agent_config, monkeypatch, address, stale_target
+    ):
+        import copy
+        import json
+
+        from datus.api.models.cli_models import StreamChatInput
+
+        original = real_agent_config.current_datasource
+        bound = copy.deepcopy(real_agent_config.current_db_config())
+        bound.type, bound.uri = "postgresql", ""
+        bound.database, bound.schema, bound.catalog = "bound_db", "bound_schema", ""
+        real_agent_config.services.datasources["reca"] = bound
+        real_agent_config.agentic_nodes["reca_agent"] = {
+            "id": "custom-agent-id",
+            "node_class": "gen_sql",
+            "scoped_context": {"datasource": "reca"},
+        }
+        sessions = MagicMock()
+        sessions.load_session_meta.return_value = (
+            json.dumps(
+                {
+                    "datasource": "reca" if stale_target == "matching" else original,
+                    "database": "selected_db" if stale_target == "matching" else "ik_db",
+                    "schema": "selected_schema" if stale_target == "matching" else "ik_schema",
+                }
+            )
+            if stale_target in {"history", "matching"}
+            else None
+        )
+        manager = ChatTaskManager()
+        monkeypatch.setattr(manager, "_session_manager", lambda *args: sessions)
+        observed = {}
+
+        async def run(task, config, request, **kwargs):
+            observed.update(config.runtime_db_context())
+            observed["request_datasource"] = request.datasource
+
+        monkeypatch.setattr(manager, "_run_loop", run)
+        selection = {"datasource": original, "catalog": "ik_cat", "database": "ik_db", "db_schema": "ik_schema"}
+        request = StreamChatInput(
+            message="query", session_id="direct", **(selection if stale_target == "request" else {})
+        )
+        task = await manager.start_chat(real_agent_config, request, sub_agent_id=address)
+        await task.asyncio_task
+
+        assert observed["datasource"] == "reca"
+        assert observed["request_datasource"] == "reca"
+        assert observed["database"] == ("selected_db" if stale_target == "matching" else "bound_db")
+        assert observed["schema"] == ("selected_schema" if stale_target == "matching" else "bound_schema")
+        assert observed["catalog"] == ""
+        assert real_agent_config.current_datasource == original
+
+    @pytest.mark.asyncio
+    async def test_missing_bound_datasource_does_not_fall_back(self, real_agent_config, monkeypatch):
+        from unittest.mock import AsyncMock
+
+        from datus.api.models.cli_models import StreamChatInput
+
+        real_agent_config.agentic_nodes["custom"] = {"scoped_context": {"datasource": "removed"}}
+        manager = ChatTaskManager()
+        run = AsyncMock()
+        monkeypatch.setattr(manager, "_run_loop", run)
+        with pytest.raises(ValueError, match="not bound"):
+            await manager.start_chat(real_agent_config, StreamChatInput(message="query"), sub_agent_id="custom")
+        run.assert_not_awaited()
+
+
+@pytest.mark.parametrize("session_id", [None, "explicit-session", ""])
+def test_host_node_factory_delegates_or_fails_closed(real_agent_config, monkeypatch, session_id):
+    """Host dispatch and fallback share the effective session and fail closed."""
+    from unittest.mock import Mock
+
+    from datus.agent.node import node_factory
+
+    builtin, hosted = object(), object()
+    fallback = Mock(return_value=builtin)
+    extension = Mock(return_value=hosted)
+    monkeypatch.setattr(node_factory, "create_interactive_node", fallback)
+    manager = ChatTaskManager(node_factory=extension)
+    assert manager._create_node(real_agent_config, "ask_metrics", "session", "owner", False, session_id) is hosted
+    extension.assert_called_once_with(
+        agent_config=real_agent_config,
+        subagent_id="ask_metrics",
+        node_id="session",
+        user_id="owner",
+        interactive=False,
+        session_id="session" if session_id is None else session_id,
+    )
+    fallback.assert_not_called()
+    extension.return_value = None
+    assert manager._create_node(real_agent_config, "chat", "normal", "owner", session_id=session_id) is builtin
+    fallback.assert_called_once()
+    assert fallback.call_args.kwargs["session_id"] == ("normal" if session_id is None else session_id)
+    extension.side_effect = ValueError("Host authorization denied")
+    with pytest.raises(ValueError, match="authorization"):
+        manager._create_node(real_agent_config, "chat", "denied", "owner")
+    assert fallback.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_user_events_and_residual_inserts_reach_client():
+    """Accepted history must not hide streamed user messages or queued inserts."""
+    from datus.api.models.cli_models import IMessageContent, SSEMessageData, SSEMessagePayload
+    from datus.api.services.chat_task_manager import ChatTask
+
+    manager = ChatTaskManager()
+    task = ChatTask("accepted", None)
+
+    def event(role):
+        """Build a rendered message for either conversation role."""
+        return SSEEvent(
+            id=1,
+            event="message",
+            timestamp="2026-11-05T00:00:00Z",
+            data=SSEMessageData(
+                type="createMessage",
+                payload=SSEMessagePayload(
+                    message_id="1", role=role, content=[IMessageContent(type="markdown", payload={"content": "hello"})]
+                ),
+            ),
+        )
+
+    opening, reply = event("user"), event("assistant")
+    await manager._push_event(task, opening)
+    assert task.events == [opening]
+    await manager._push_event(task, reply)
+    await manager._push_event(task, opening)
+    assert task.events == [opening, reply, opening]
+
+    residual = ChatTask("accepted-residual", None)
+    next_id = await manager._emit_user_insert_sse(residual, "follow up", 2)
+    assert next_id == 3
+    assert len(residual.events) == 1
+    assert residual.events[0].data.payload.role == "user"
+    assert residual.events[0].data.payload.content[0].payload["content"] == "follow up"

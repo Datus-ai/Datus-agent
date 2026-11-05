@@ -9,6 +9,7 @@ import collections
 from typing import Awaitable, Callable, Optional
 
 from datus.api.services.datus_service import DatusService
+from datus.configuration.agent_config import AgentConfig
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
@@ -35,13 +36,20 @@ class DatusServiceCache:
         project_id: str,
         factory: Callable[[], Awaitable[DatusService]],
         expected_fingerprint: Optional[str] = None,
+        *,
+        agent_config: Optional[AgentConfig] = None,
     ) -> DatusService:
         """Return cached DatusService or create via factory (thundering-herd safe).
 
         If ``expected_fingerprint`` is provided and does not match the cached
-        instance's ``config_fingerprint``, the stale entry is evicted before
-        creating a new one.
+        instance's ``config_fingerprint``, a supplied ``agent_config`` creates
+        a new facade sharing the project's task manager. Old turns stay
+        reachable and keep their snapshots; new requests use the new config.
+        Fingerprint-only callers retain the deferred-rebuild behavior.
         """
+        if agent_config is not None and expected_fingerprint is None:
+            expected_fingerprint = DatusService.compute_fingerprint(agent_config)
+
         is_creator = False
         stale_svc: Optional[DatusService] = None
 
@@ -52,6 +60,14 @@ class DatusServiceCache:
                 if expected_fingerprint is None or cached.config_fingerprint == expected_fingerprint:
                     self._cache.move_to_end(project_id)
                     return cached
+                if agent_config is not None:
+                    refreshed = cached.with_config(agent_config)
+                    self._cache[project_id] = refreshed
+                    self._cache.move_to_end(project_id)
+                    # Do not dispose the old facade: its task manager is now
+                    # owned by the replacement and still runs the old turns.
+                    logger.info(f"Refreshed DatusService config for project {project_id} while preserving chat tasks")
+                    return refreshed
                 # Fingerprint mismatch. Rebuilding now would orphan any in-flight
                 # chat task: its interaction broker lives in this instance's
                 # task_manager, so a later /chat/user_interaction answer would
@@ -84,7 +100,12 @@ class DatusServiceCache:
 
         if not is_creator:
             # Wait for the creator coroutine to finish
-            return await fut
+            svc = await fut
+            if agent_config is not None:
+                # The creator may have started before this request's config
+                # change. Recheck against our snapshot after it finishes.
+                return await self.get_or_create(project_id, factory, expected_fingerprint, agent_config=agent_config)
+            return svc
 
         # We are the creator — run the factory outside the lock
         try:

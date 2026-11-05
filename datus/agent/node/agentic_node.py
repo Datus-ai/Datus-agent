@@ -1216,12 +1216,12 @@ class AgenticNode(Node):
             )
         return source
 
-    def _system_prompt_version(self, prompt_version: Optional[str]) -> Optional[str]:
-        return (
-            prompt_version
-            or (getattr(self, "node_config", None) or {}).get("prompt_version")
-            or getattr(getattr(self, "agent_config", None), "prompt_version", None)
-        )
+    def _resolve_system_prompt_version(self, prompt_version: Optional[str]) -> Optional[str]:
+        """Use the same explicit, node, then agent version for rendering and its cache identity."""
+        version = prompt_version or (getattr(self, "node_config", None) or {}).get("prompt_version")
+        if version is None:
+            version = getattr(getattr(self, "agent_config", None), "prompt_version", None)
+        return version
 
     def _system_prompt_snapshot_meta(self, prompt_version: Optional[str]) -> Dict[str, str]:
         """Identity keys that invalidate the cached system-prompt snapshot.
@@ -1238,9 +1238,11 @@ class AgenticNode(Node):
         the UI language mid-session must not keep replaying a snapshot that
         pins the old one. Date and memory stay frozen until the snapshot is rebuilt. Injected
         skill contents are fingerprinted so same-named updates rebuild it.
+        The advertised datasource catalog also changes when a project binds,
+        unbinds or renames a source, even if the current target stays the same.
         """
         agent_config = getattr(self, "agent_config", None)
-        version = self._system_prompt_version(prompt_version)
+        version = self._resolve_system_prompt_version(prompt_version)
         # A node-level model override (``node_config.model``) pins the
         # effective model regardless of the agent-level target, so it must be
         # the identity when set — otherwise a /model switch that doesn't
@@ -1258,6 +1260,9 @@ class AgenticNode(Node):
                 model_id = ""
         language = getattr(agent_config, "language", None) if agent_config is not None else None
         from datus.schemas.database_context import execution_context_for_node
+        from datus.utils.node_utils import build_datasource_prompt_context
+
+        datasource_catalog = build_datasource_prompt_context(agent_config).get("available_datasources", {})
 
         try:
             from datus.prompts.prompt_manager import get_prompt_manager
@@ -1270,6 +1275,9 @@ class AgenticNode(Node):
             template_digest = ""
 
         return {
+            "datasource_catalog_sha256": hashlib.sha256(
+                json.dumps(datasource_catalog, sort_keys=True, default=str).encode()
+            ).hexdigest(),
             "prompt_template_sha256": template_digest,
             "execution_context": execution_context_for_node(agent_config, getattr(self, "input", None)).identity,
             "node_name": self.get_node_name(),
@@ -1386,8 +1394,7 @@ class AgenticNode(Node):
         Returns:
             System prompt string loaded from the template
         """
-        # Match the version used to fingerprint and invalidate the snapshot.
-        version = self._system_prompt_version(prompt_version)
+        version = self._resolve_system_prompt_version(prompt_version)
 
         root_path = self._resolve_workspace_root()
 

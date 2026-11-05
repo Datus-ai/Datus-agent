@@ -24,6 +24,7 @@ from openai.types.responses import (
 )
 
 from datus.tools.func_tool.base import FuncToolListResult, FuncToolResult, tool_schema, trans_to_function_tool
+from datus.tools.func_tool.filesystem_tools import FilesystemFuncTool
 from datus.tools.permission.permission_hooks import PermissionHooks
 from datus.tools.permission.permission_manager import PermissionManager
 from datus.tools.permission.profiles import get_profile
@@ -223,6 +224,93 @@ class TestTransToFunctionTool:
         assert "Invalid JSON" in result["error"]
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("second_path", ["SKILL.md", "unexpected.md"])
+    async def test_duplicate_paths_do_not_write_either_file(self, tmp_path, second_path):
+        original = tmp_path / "SKILL.md"
+        original.write_text("original", encoding="utf-8")
+        filesystem = FilesystemFuncTool(root_path=str(tmp_path))
+        tool = self._make_tool_from_method(filesystem.write_file)
+        raw_args = f'{{"path":"SKILL.md","content":"replacement","path":"{second_path}"}}'
+        context = SimpleNamespace(tool_arguments=raw_args, tool_call={"arguments": raw_args})
+
+        result = await tool.on_invoke_tool(context, raw_args)
+
+        assert result["success"] == 0
+        assert "Duplicate JSON key 'path'" in result["error"]
+        assert "not executed" in result["error"]
+        assert "Retry" in result["error"]
+        assert original.read_text(encoding="utf-8") == "original"
+        assert not (tmp_path / "unexpected.md").exists()
+        assert context.tool_arguments == "{}"
+        assert context.tool_call["arguments"] == "{}"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("raw_args", "duplicate_key"),
+        [
+            ('{"payload":{"path":"first","path":"second"}}', "path"),
+            ('{"payload":{"items":[{"id":1,"id":2}]}}', "id"),
+            (r'{"payload":{"path":"first","p\u0061th":"second"}}', "path"),
+        ],
+    )
+    async def test_duplicate_nested_keys_do_not_execute(self, raw_args, duplicate_key):
+        class PayloadTool:
+            called = False
+
+            @tool_schema(strict_mode=False)
+            def inspect(self, payload: dict[str, Any]) -> FuncToolResult:
+                self.called = True
+                return FuncToolResult(result=payload)
+
+        instance = PayloadTool()
+        result = await self._make_tool_from_method(instance.inspect).on_invoke_tool(None, raw_args)
+
+        assert result["success"] == 0
+        assert f"Duplicate JSON key {duplicate_key!r}" in result["error"]
+        assert not instance.called
+
+    @pytest.mark.asyncio
+    async def test_duplicate_keys_in_encoded_array_do_not_execute(self):
+        class RecordsTool:
+            called = False
+
+            @tool_schema(strict_mode=False)
+            def inspect(self, records: list[dict[str, str]]) -> FuncToolResult:
+                self.called = True
+                return FuncToolResult(result=records)
+
+        instance = RecordsTool()
+        raw_args = json.dumps({"records": '[{"path":"first","path":"second"}]'})
+        context = SimpleNamespace(tool_arguments=raw_args, tool_call={"arguments": raw_args})
+
+        result = await self._make_tool_from_method(instance.inspect).on_invoke_tool(context, raw_args)
+
+        assert result["success"] == 0
+        assert "Duplicate JSON key 'path'" in result["error"]
+        assert not instance.called
+        assert context.tool_arguments == "{}"
+        assert context.tool_call["arguments"] == "{}"
+
+    @pytest.mark.asyncio
+    async def test_repeated_keys_in_separate_objects_and_json_text_are_preserved(self):
+        class PayloadTool:
+            @tool_schema(strict_mode=False)
+            def inspect(self, payload: dict[str, Any], content: str) -> FuncToolResult:
+                return FuncToolResult(result={"payload": payload, "content": content})
+
+        arguments = {
+            "payload": {"items": [{"path": "first"}, {"path": "second"}]},
+            "content": '{"path":"first","path":"second"}',
+        }
+        raw_args = json.dumps(arguments)
+        context = SimpleNamespace(tool_arguments=raw_args, tool_call={"arguments": raw_args})
+
+        result = await self._make_tool_from_method(PayloadTool().inspect).on_invoke_tool(context, raw_args)
+
+        assert result == {"success": 1, "error": None, "result": arguments}
+        assert context.tool_arguments == raw_args
+
+    @pytest.mark.asyncio
     async def test_repairs_arguments_for_replay_without_executing(self):
         """Repair malformed arguments for replay, then execute only a valid retry."""
 
@@ -325,7 +413,14 @@ class TestTransToFunctionTool:
         assert raw_tool_call.arguments == raw_args
 
     @pytest.mark.asyncio
-    async def test_runner_replays_repaired_args_and_executes_only_valid_retry(self):
+    @pytest.mark.parametrize(
+        ("raw_args", "replayed_sql"),
+        [
+            ('{"sql":"SELECT 1","min_rows":,"max_rows":}', "SELECT 1"),
+            ('{"sql":"SELECT 1","sql":"SELECT 2","min_rows":null,"max_rows":null}', None),
+        ],
+    )
+    async def test_runner_replays_rejected_args_and_executes_only_valid_retry(self, raw_args, replayed_sql):
         """Exercise the real Runner turn and session persistence path."""
 
         class FakeTool:
@@ -353,7 +448,7 @@ class TestTransToFunctionTool:
                 if len(self.inputs) == 1:
                     output = [
                         ResponseFunctionToolCall(
-                            arguments='{"sql":"SELECT 1","min_rows":,"max_rows":}',
+                            arguments=raw_args,
                             call_id="call_malformed",
                             name="execute_sql",
                             type="function_call",
@@ -363,7 +458,16 @@ class TestTransToFunctionTool:
                     replayed_call = next(
                         item for item in input if isinstance(item, dict) and item.get("call_id") == "call_malformed"
                     )
-                    assert json.loads(replayed_call["arguments"])["sql"] == "SELECT 1"
+                    assert json.loads(replayed_call["arguments"]).get("sql") == replayed_sql
+                    rejection = next(
+                        item
+                        for item in input
+                        if isinstance(item, dict)
+                        and item.get("type") == "function_call_output"
+                        and item.get("call_id") == "call_malformed"
+                    )
+                    assert "The tool was not executed." in rejection["output"]
+                    assert "Retry" in rejection["output"]
                     output = [
                         ResponseFunctionToolCall(
                             arguments='{"sql":"SELECT 1","min_rows":null,"max_rows":null}',

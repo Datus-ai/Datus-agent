@@ -40,6 +40,7 @@ from datus.api.services.action_sse_converter import (
     action_to_sse_event,
 )
 from datus.api.services.background_drain import track_background_task
+from datus.api.services.chat_extensions import ChatNodeFactory
 from datus.api.services.turn_stats import TurnStatsCollector, resolve_subagent
 from datus.cli.autocomplete import AtReferenceCompleter
 from datus.cli.execution_state import PendingInputQueue
@@ -76,6 +77,22 @@ def _release_stamp() -> Optional[str]:
 
 
 logger = get_logger(__name__)
+
+
+def _subagent_datasource(agent_config: AgentConfig, name_or_id: Optional[str]) -> Optional[str]:
+    """Resolve a direct subagent's saved datasource by configuration name or API id."""
+    if not name_or_id:
+        return None
+    for name, entry in (agent_config.agentic_nodes or {}).items():
+        entry_id = entry.get("id") if isinstance(entry, dict) else getattr(entry, "id", None)
+        if name != name_or_id and entry_id != name_or_id:
+            continue
+        config = agent_config.sub_agent_config(name)
+        scope = config.get("scoped_context") if isinstance(config, dict) else getattr(config, "scoped_context", None)
+        datasource = scope.get("datasource") if isinstance(scope, dict) else getattr(scope, "datasource", None)
+        return datasource if isinstance(datasource, str) and datasource else None
+    return None
+
 
 HEARTBEAT_INTERVAL = 10  # seconds
 
@@ -476,7 +493,11 @@ class ChatTaskManager:
         default_source: Optional[str] = None,
         default_interactive: bool = True,
         stream_thinking: bool = False,
+        *,
+        node_factory: Optional[ChatNodeFactory] = None,
     ) -> None:
+        """Create a project task registry with optional trusted node dispatch."""
+        self._node_factory = node_factory
         self._tasks: Dict[str, ChatTask] = {}
         self._completed_tasks: Dict[str, ChatTask] = {}
         self._default_source = default_source
@@ -580,6 +601,16 @@ class ChatTaskManager:
                 except (ValueError, TypeError, AttributeError):
                     logger.warning("Ignoring malformed execution context for session %s", request.session_id)
         datasource = request.datasource or previous.get("datasource") or agent_config.current_datasource
+        # A directly addressed subagent owns its execution target. UI selections
+        # and sessions created before a rebind can still name another datasource.
+        # Drop that target's children together rather than applying them to the
+        # bound warehouse. Unscoped agents keep normal per-turn selection.
+        bound_datasource = _subagent_datasource(agent_config, sub_agent_id)
+        if bound_datasource:
+            if datasource != bound_datasource:
+                request.catalog = request.database = request.db_schema = None
+            datasource = bound_datasource
+            request.datasource = bound_datasource
         if datasource:
             if datasource not in agent_config.services.datasources:
                 raise ValueError(f"Datasource {datasource!r} is not bound to this project; select a valid datasource")
@@ -1442,7 +1473,7 @@ class ChatTaskManager:
         return event_id
 
     @staticmethod
-    def _session_manager(agent_config: AgentConfig, user_id: Optional[str]):
+    def session_manager(agent_config: AgentConfig, user_id: Optional[str]):
         """Build a SessionManager pointed at this run's session dir + scope."""
         from datus.models.session_manager import SessionManager
         from datus.utils.path_manager import get_path_manager
@@ -1451,6 +1482,9 @@ class ChatTaskManager:
             get_path_manager(agent_config=agent_config).sessions_dir
         )
         return SessionManager(session_dir=base_dir, scope=user_id)
+
+    # Preserve the internal name for existing subclasses; hosts use session_manager.
+    _session_manager = session_manager
 
     def _max_user_turn_number(self, agent_config: AgentConfig, session_id: str, user_id: Optional[str]) -> int:
         """Best-effort snapshot of the session's turn counter (0 on any error)."""
@@ -1561,6 +1595,19 @@ class ChatTaskManager:
         feedback flow passes a pre-copied id so the new node opens the cloned
         session file directly instead of mutating ``node.session_id`` later.
         """
+        session_id = session_id if session_id is not None else node_id
+        if self._node_factory is not None:
+            node = self._node_factory(
+                agent_config=agent_config,
+                subagent_id=subagent_id,
+                node_id=node_id,
+                user_id=user_id,
+                interactive=interactive,
+                session_id=session_id,
+            )
+            if node is not None:
+                return node
+
         from datus.agent.node.node_factory import create_interactive_node
 
         execution_mode: Literal["interactive", "workflow"] = "interactive" if interactive else "workflow"
@@ -1583,7 +1630,7 @@ class ChatTaskManager:
             scope=user_id,
             execution_mode=execution_mode,
             node_id=node_id,
-            session_id=session_id if session_id is not None else node_id,
+            session_id=session_id,
         )
 
     # ------------------------------------------------------------------

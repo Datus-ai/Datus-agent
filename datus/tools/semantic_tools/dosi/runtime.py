@@ -109,6 +109,33 @@ class DosiRuntime:
 
     # ==================== Semantic Model Interface ====================
 
+    @classmethod
+    def from_agent_config(
+        cls, agent_config: Any, *, semantic_model_path: Optional[str] = None, ontology_enabled: bool = False
+    ) -> "DosiRuntime":
+        """Build the semantic runtime without constructing navigation or RAG tools."""
+        from datus.configuration.agent_config import (
+            _apply_runtime_db_context_to_dosi_profile,
+            _db_config_to_dosi_profile,
+        )
+        from datus.tools.semantic_tools.dosi.engine import has_model_files
+
+        context = agent_config.runtime_db_context()
+        datasource = context.get("datasource") or agent_config.current_datasource
+        profile = _apply_runtime_db_context_to_dosi_profile(
+            _db_config_to_dosi_profile(agent_config.current_db_config(datasource)), context
+        )
+        config = DosiConfig(
+            datasource=datasource,
+            db_config=profile,
+            timeout_seconds=float((profile or {}).get("timeout_seconds", 30)),
+            semantic_models_path=str(agent_config.path_manager.semantic_model_path(datasource)),
+            semantic_model_path=semantic_model_path or None,
+        )
+        if ontology_enabled or not has_model_files(config):
+            config = config.model_copy(update={"ontology_dir": str(agent_config.path_manager.ontology_dir)})
+        return cls(config)
+
     def list_semantic_models(
         self,
         catalog_name: str = "",
