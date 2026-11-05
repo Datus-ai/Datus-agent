@@ -155,3 +155,95 @@ async def test_preaccepted_opening_enters_model_and_history_once_after_sdk_reset
     ]
     session.close()
     history.close()
+
+
+@pytest.mark.parametrize("directory", ["question?mark", "hash#mark", "percent%20mark", "relative ?#%目录"])
+def test_read_receipt_from_uri_sensitive_directory(tmp_path, monkeypatch, directory):
+    """Read-only receipt lookup treats URI delimiters as literal path characters."""
+    monkeypatch.chdir(tmp_path)
+    store = AcceptedTurnStore(directory, "stable", namespace="host")
+    receipt = accept(store)
+    assert store.read() == receipt
+    assert store.update("completed")["status"] == "completed"
+    assert store.read()["status"] == "completed"
+
+
+@pytest.mark.parametrize("operation", ["read", "update", "read_error", "update_error"])
+def test_receipt_connections_close_on_success_and_failure(tmp_path, monkeypatch, operation):
+    """Receipt access closes real connections on returns and invalid stored JSON."""
+    from contextlib import closing
+
+    store = AcceptedTurnStore(str(tmp_path), "stable", namespace="host")
+    accept(store)
+    if operation.endswith("_error"):
+        with closing(sqlite3.connect(store.path)) as conn, conn:
+            conn.execute("UPDATE session_meta SET value='invalid' WHERE key='host'")
+    connections = []
+    connect = sqlite3.connect
+
+    def capture(*args, **kwargs):
+        """Retain connections so garbage collection cannot hide missing closes."""
+        conn = connect(*args, **kwargs)
+        connections.append(conn)
+        if operation.startswith("read"):
+            with pytest.raises(sqlite3.OperationalError, match="readonly"):
+                conn.execute("CREATE TABLE forbidden_write(value)")
+        return conn
+
+    monkeypatch.setattr(sqlite3, "connect", capture)
+    try:
+        if operation.endswith("_error"):
+            import json
+
+            with pytest.raises(json.JSONDecodeError):
+                store.read() if operation.startswith("read") else store.update("completed")
+        else:
+            result = store.read() if operation == "read" else store.update("completed")
+            assert result["status"] == ("pending" if operation == "read" else "completed")
+        assert len(connections) == 1
+        with pytest.raises(sqlite3.ProgrammingError, match="closed"):
+            connections[0].execute("SELECT 1")
+    finally:
+        for conn in connections:
+            conn.close()
+
+
+def test_update_missing_receipt_does_not_create_database(tmp_path):
+    """Updating an expired or absent session reports unavailability without recreating it."""
+    store = AcceptedTurnStore(str(tmp_path), "missing", namespace="host")
+    with pytest.raises(DatusException, match="Accepted turn is unavailable"):
+        store.update("running")
+    assert not store.path.exists()
+
+
+def test_begin_failure_releases_session_connection_and_lock_reference(tmp_path, monkeypatch):
+    """A competing SQLite writer cannot leak the SDK session when acceptance fails."""
+    from contextlib import closing
+
+    store = AcceptedTurnStore(str(tmp_path), "stable", namespace="host")
+    seed = DatusSQLiteSession(session_id="stable", db_path=str(store.path), create_tables=True)
+    seed.close()
+    sessions = []
+    lock_path = store.path.resolve()
+    initial_count = DatusSQLiteSession._file_lock_counts.get(lock_path, 0)
+    with closing(sqlite3.connect(store.path)) as blocker:
+
+        def session_factory(**kwargs):
+            """Create a real session, then hold a competing write transaction."""
+            session = DatusSQLiteSession(**kwargs)
+            session._get_connection().execute("PRAGMA busy_timeout=0")
+            sessions.append(session)
+            blocker.execute("BEGIN IMMEDIATE")
+            return session
+
+        monkeypatch.setattr("datus.models.accepted_turn.DatusSQLiteSession", session_factory)
+        try:
+            with pytest.raises(sqlite3.OperationalError, match="locked"):
+                accept(store)
+            assert DatusSQLiteSession._file_lock_counts.get(lock_path, 0) == initial_count
+            with pytest.raises(RuntimeError, match="closed"):
+                sessions[0]._get_connection()
+        finally:
+            blocker.rollback()
+            for session in sessions:
+                session.close()

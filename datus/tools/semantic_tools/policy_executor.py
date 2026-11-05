@@ -83,8 +83,11 @@ class PolicyMetricExecutor:
     def _query_read(self, sql: str, context: dict[str, Any]) -> list[dict[str, Any]]:
         """Read compiled SQL through the standard SQL and result-policy pipeline."""
         tool = DBFuncTool(agent_config=self.config, read_only=True)
-        datasource = self.config.current_datasource
-        connector = tool._get_connector(datasource, database=self.config.default_database_name(datasource) or "")
+        datasource = self.runtime.datasource or self.config.current_datasource
+        database = (self.runtime.config.db_config or {}).get("database") or self.config.default_database_name(
+            datasource
+        )
+        connector = tool._get_connector(datasource, database=database or "")
         result = tool.execute_read_enforced(sql, connector, datasource=datasource, policy_context=context)
         if not result.success or not isinstance(result.sql_return, list):
             raise _denied("Query unavailable")
@@ -111,8 +114,11 @@ class PolicyMetricExecutor:
             raise _denied("MAPPING_UNSUPPORTED")
         document = yaml.safe_load(Path(handle._config.semantic_model_path).read_text())
         tool = DBFuncTool(agent_config=self.config, read_only=True)
-        datasource = self.config.current_datasource
-        connector = tool._get_connector(datasource, database=self.config.default_database_name(datasource) or "")
+        datasource = self.runtime.datasource or self.config.current_datasource
+        database = (self.runtime.config.db_config or {}).get("database") or self.config.default_database_name(
+            datasource
+        )
+        connector = tool._get_connector(datasource, database=database or "")
         for model in document["semantic_model"]:
             for dataset in model["datasets"]:
                 source = dataset["source"]

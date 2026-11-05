@@ -187,3 +187,50 @@ async def test_dry_run_and_missing_dataset_are_denied_before_execution(execution
     with pytest.raises(DatusException, match="datasets"):
         await executor.query_metrics("revenue", policy_context={})
     query.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ["query", "attribute"])
+@pytest.mark.parametrize("selection", ["datasource", "database", "default_database"])
+async def test_policy_reads_use_runtime_connection_scope(execution, tmp_path, monkeypatch, operation, selection):
+    """Native execution, SQL-policy evaluation and connectors use the same selected scope."""
+    from datus.configuration.agent_config import DbConfig
+    from datus.tools.func_tool.database import DBFuncTool
+
+    config, executor, _ = execution
+    decoy = tmp_path / "decoy.duckdb"
+    with duckdb.connect(str(decoy)) as conn:
+        conn.execute("CREATE TABLE orders(day DATE, region VARCHAR, amount DOUBLE)")
+        conn.execute("INSERT INTO orders VALUES ('2026-11-03','west',999)")
+    if selection == "datasource":
+        config.services.datasources["other"] = DbConfig(type="duckdb", uri=str(decoy))
+        config.current_datasource = "other"
+    elif selection == "database":
+        config.services.datasources["warehouse"] = DbConfig(
+            type="duckdb", path_pattern=str(tmp_path / "*.duckdb"), database="decoy"
+        )
+        executor.runtime.config.db_config["database"] = "local"
+    else:
+        executor.runtime.config.db_config.pop("database", None)
+    calls = install_policy(monkeypatch, kind="sql")
+    connectors = []
+    get_connector = DBFuncTool._get_connector
+
+    def capture_connector(tool, datasource=None, database=""):
+        """Observe routing while retaining the real local database connector."""
+        connectors.append((datasource, database))
+        return get_connector(tool, datasource, database)
+
+    monkeypatch.setattr(DBFuncTool, "_get_connector", capture_connector)
+    if operation == "query":
+        result = await executor.query_metrics(
+            "revenue", policy_context={"region": "west"}, time_start="2026-11-03", time_end="2026-11-04"
+        )
+        assert result.data[0]["revenue"] == 8
+    else:
+        result = await executor.attribute(attribution(), policy_context={"region": "west"})
+        assert result.total_change.current_value == 8
+        assert result.total_change.baseline_value == 10
+    assert connectors and set(connectors) == {("warehouse", "local")}
+    sql_calls = [kwargs for stage, kwargs in calls if stage == "sql"]
+    assert sql_calls and all(kwargs["datasource"] == "warehouse" for kwargs in sql_calls)

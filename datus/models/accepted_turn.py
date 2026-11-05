@@ -14,7 +14,7 @@ import json
 import re
 import sqlite3
 from collections.abc import Callable, Iterator
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -44,7 +44,7 @@ class AcceptedTurnStore:
         """Return the persisted receipt, or None when acceptance has not occurred."""
         if not self.path.is_file():
             return None
-        with sqlite3.connect(f"file:{self.path}?mode=ro", uri=True, timeout=10) as conn:
+        with closing(sqlite3.connect(f"{self.path.resolve().as_uri()}?mode=ro", uri=True, timeout=10)) as conn:
             if not conn.execute("SELECT 1 FROM sqlite_master WHERE name='session_meta'").fetchone():
                 return None
             row = conn.execute(
@@ -78,8 +78,8 @@ class AcceptedTurnStore:
         session = DatusSQLiteSession(session_id=self.session_id, db_path=str(self.path), create_tables=True)
         conn = session._get_connection()
         with session._lock:
-            conn.execute("BEGIN IMMEDIATE")
             try:
+                conn.execute("BEGIN IMMEDIATE")
                 conn.execute(SESSION_META_TABLE)
                 row = conn.execute(
                     "SELECT value FROM session_meta WHERE session_id=? AND key=?", (self.session_id, self.namespace)
@@ -134,7 +134,9 @@ class AcceptedTurnStore:
 
     def update(self, status: str, safe_error: str | None = None) -> dict[str, Any]:
         """Atomically update an existing receipt status and safe error code."""
-        with sqlite3.connect(self.path, timeout=10) as conn:
+        if not self.path.is_file():
+            raise _invalid("Accepted turn is unavailable")
+        with closing(sqlite3.connect(f"{self.path.resolve().as_uri()}?mode=rw", uri=True, timeout=10)) as conn, conn:
             conn.execute("BEGIN IMMEDIATE")
             row = conn.execute(
                 "SELECT value FROM session_meta WHERE session_id=? AND key=?", (self.session_id, self.namespace)
