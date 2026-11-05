@@ -3292,3 +3292,73 @@ class TestStartChatSettlesExactlyOnce:
 
         assert [c[2] for c in calls] == ["completed"]
         assert calls[0][3] == task.turn_id
+
+
+@pytest.mark.parametrize("session_id", [None, "explicit-session", ""])
+def test_host_node_factory_delegates_or_fails_closed(real_agent_config, monkeypatch, session_id):
+    """Host dispatch and fallback share the effective session and fail closed."""
+    from unittest.mock import Mock
+
+    from datus.agent.node import node_factory
+
+    builtin, hosted = object(), object()
+    fallback = Mock(return_value=builtin)
+    extension = Mock(return_value=hosted)
+    monkeypatch.setattr(node_factory, "create_interactive_node", fallback)
+    manager = ChatTaskManager(node_factory=extension)
+    assert manager._create_node(real_agent_config, "ask_metrics", "session", "owner", False, session_id) is hosted
+    extension.assert_called_once_with(
+        agent_config=real_agent_config,
+        subagent_id="ask_metrics",
+        node_id="session",
+        user_id="owner",
+        interactive=False,
+        session_id="session" if session_id is None else session_id,
+    )
+    fallback.assert_not_called()
+    extension.return_value = None
+    assert manager._create_node(real_agent_config, "chat", "normal", "owner", session_id=session_id) is builtin
+    fallback.assert_called_once()
+    assert fallback.call_args.kwargs["session_id"] == ("normal" if session_id is None else session_id)
+    extension.side_effect = ValueError("Host authorization denied")
+    with pytest.raises(ValueError, match="authorization"):
+        manager._create_node(real_agent_config, "chat", "denied", "owner")
+    assert fallback.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_user_events_and_residual_inserts_reach_client():
+    """Accepted history must not hide streamed user messages or queued inserts."""
+    from datus.api.models.cli_models import IMessageContent, SSEMessageData, SSEMessagePayload
+    from datus.api.services.chat_task_manager import ChatTask
+
+    manager = ChatTaskManager()
+    task = ChatTask("accepted", None)
+
+    def event(role):
+        """Build a rendered message for either conversation role."""
+        return SSEEvent(
+            id=1,
+            event="message",
+            timestamp="2026-11-05T00:00:00Z",
+            data=SSEMessageData(
+                type="createMessage",
+                payload=SSEMessagePayload(
+                    message_id="1", role=role, content=[IMessageContent(type="markdown", payload={"content": "hello"})]
+                ),
+            ),
+        )
+
+    opening, reply = event("user"), event("assistant")
+    await manager._push_event(task, opening)
+    assert task.events == [opening]
+    await manager._push_event(task, reply)
+    await manager._push_event(task, opening)
+    assert task.events == [opening, reply, opening]
+
+    residual = ChatTask("accepted-residual", None)
+    next_id = await manager._emit_user_insert_sse(residual, "follow up", 2)
+    assert next_id == 3
+    assert len(residual.events) == 1
+    assert residual.events[0].data.payload.role == "user"
+    assert residual.events[0].data.payload.content[0].payload["content"] == "follow up"
