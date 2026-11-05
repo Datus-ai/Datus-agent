@@ -8,6 +8,7 @@ from enum import Enum
 from typing import Any, Dict, List, Optional
 
 from datus.storage.embedding_models import DEFAULT_MODEL_CONFIG, EmbeddingModel
+from datus.utils.config_utils import coerce_bool
 from datus.utils.constants import EmbeddingProvider
 from datus.utils.exceptions import DatusException, ErrorCode
 
@@ -58,16 +59,29 @@ def _find_config_differences(
 ) -> List[str]:
     """Find differences between existing and new configurations."""
     differences = []
-    if not existing_config:
-        existing_config = DEFAULT_MODEL_CONFIG
-    if not new_config:
-        new_config = DEFAULT_MODEL_CONFIG
+    existing_config = dict(existing_config or DEFAULT_MODEL_CONFIG)
+    new_config = dict(new_config or DEFAULT_MODEL_CONFIG)
 
     if "registry_name" not in existing_config:
         existing_config["registry_name"] = EmbeddingProvider.SENTENCE_TRANSFORMERS
 
     if "registry_name" not in new_config:
         new_config["registry_name"] = EmbeddingProvider.SENTENCE_TRANSFORMERS
+
+    for config in (existing_config, new_config):
+        if config["registry_name"] == EmbeddingProvider.OPENAI:
+            from datus.storage.embedding_openai import OpenAIEmbeddings
+
+            policy = config.get("send_dimensions")
+            if policy is not None:
+                policy = coerce_bool(policy, default=False)
+            dim = config.get("dim_size")
+            # ConfigParser stores None as a string; it still means no explicit width.
+            if dim == "None":
+                dim = None
+            config["send_dimensions"] = OpenAIEmbeddings.should_send_dimensions(
+                config.get("model_name", ""), dim, policy
+            )
 
     for key, value in existing_config.items():
         if key not in new_config:
