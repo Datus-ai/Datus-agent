@@ -69,6 +69,35 @@ def test_sqlite_uses_live_attachments_and_native_column_metadata(tmp_path):
         connector.close()
 
 
+@pytest.mark.parametrize("shadow_schema", ["main", "temp", "other"])
+@pytest.mark.parametrize("shadow_kind", ["TABLE", "VIEW"])
+def test_sqlite_metadata_pragmas_cannot_be_shadowed_by_user_objects(tmp_path, shadow_schema, shadow_kind):
+    from datus.tools.db_tools.config import SQLiteConfig
+    from datus.tools.db_tools.sqlite_connector import SQLiteConnector
+
+    connector = SQLiteConnector(SQLiteConfig(db_path=str(tmp_path / "warehouse.sqlite")))
+    try:
+        connector.connect()
+        connection = connector.connection
+        connection.execute("ATTACH DATABASE ':memory:' AS other")
+        for schema in ("main", "temp", "other"):
+            connection.execute(f'CREATE TABLE "{schema}".orders (id INTEGER, phone TEXT)')
+        for name in ("pragma_table_list", "pragma_table_xinfo", "pragma_database_list"):
+            definition = "(id INTEGER)" if shadow_kind == "TABLE" else "AS SELECT 999 AS id"
+            connection.execute(f'CREATE {shadow_kind} "{shadow_schema}"."{name}" {definition}')
+        context = SqlReadContext(connector, "warehouse")
+        for schema in ("main", "temp", "other"):
+            table = resolve(context, f"{schema}.orders")
+            assert table["physical"] is True
+            assert table["object"]["database"] == schema
+            assert table["columns"] == [
+                {"name": "id", "sql_type": "INTEGER", "is_text": False},
+                {"name": "phone", "sql_type": "TEXT", "is_text": True},
+            ]
+    finally:
+        connector.close()
+
+
 def test_reads_actual_namespace_and_returns_canonical_metadata(db):
     context = SqlReadContext(Connector(db), "warehouse")
     table = resolve(context, "ORDERS")

@@ -348,10 +348,12 @@ class SqlReadContext:
             if len(tables) != 1:
                 raise ValueError("ambiguous physical metadata")
             table = tables[0]
-            kinds = self._query(
-                "SELECT type FROM pragma_table_list WHERE "
-                f"schema={_literal(database)} COLLATE NOCASE AND name={_literal(table['name'])} COLLATE NOCASE"
-            )
+            kinds = [
+                row
+                for row in self._query(f"PRAGMA {_quote(database)}.table_list({_literal(table['name'])})")
+                if self.canonical_name(str(row.get("schema", ""))) == database
+                and self.canonical_name(str(row.get("name", ""))) == self.canonical_name(table["name"])
+            ]
             if table["type"] != "table" or len(kinds) != 1 or kinds[0]["type"] != "table":
                 return {"physical": False}
             name = table["name"]
