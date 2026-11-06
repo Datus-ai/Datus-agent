@@ -198,6 +198,17 @@ class ObservabilityManager:
             _LAST_TRACE_REFERENCE.set(ref)
             return ref
 
+        try:
+            from opentelemetry import trace
+
+            # A valid active span is authoritative even when it is unsampled.
+            # Cached references belong to an earlier span and are only useful
+            # after the active scope has ended, never for a disabled run.
+            if trace.get_current_span().get_span_context().is_valid:
+                return None
+        except Exception:
+            pass
+
         ref = _CURRENT_TRACE_REFERENCE.get()
         if ref is not None:
             return ref
