@@ -1,7 +1,7 @@
 # Host chat execution extensions
 
 Hosts can keep their own authorization and evidence rules while sharing Agent
-chat history, SSE, cancellation, usage accounting and policy execution.
+chat history, SSE, cancellation and usage accounting.
 These are trusted Python extension points, not fields accepted from chat clients.
 
 ## Construct the service once
@@ -60,26 +60,3 @@ For the opening execution, install `AcceptedOpeningSession` on the host node.
 The session avoids feeding/storing the already accepted input twice, including
 SDK history rewrites. SSE delivery stays unchanged: user messages and residual
 mid-run inserts reach the client. Use ordinary sessions on subsequent turns.
-
-## Execute metrics under policy
-
-`DosiRuntime.from_agent_config(config)` constructs the same datasource/profile
-mapping without opening RAG/navigation tools. `PolicyMetricExecutor(config,
-runtime)` provides `query_metrics` and `attribute`, each taking fresh trusted
-`policy_context`. Hosts supply business filters and authorized windows/dimensions;
-metric policy precedes compilation, and SQL policy precedes reads. Query results
-pass through the result policy and omit internal SQL metadata.
-
-Native attribution currently has no per-query Python callback. The executor's
-compatibility adapter applies row policies to every dataset in an in-memory
-model, then lets Dosi perform the full analysis. Shared model files are unchanged.
-Only the known SQL-policy row-filter and metric-row-filter forms are supported;
-unknown plugins, column/result policies and ontology attribution fail closed.
-`validate_attribution_support` provides this check before offering analysis.
-This is not a generic callback for arbitrary native queries. Future native engine
-hooks can replace the adapter behind this public interface.
-
-Attribution results retain engine metadata for trusted callers. A host exposing
-them to a model or user must project allowed business evidence and redact SQL,
-policy details and exceptions. The host must reauthorize every tool call and
-refresh its policy context; the executor does not own user identity or token refresh.

@@ -71,4 +71,4 @@ Adapter 包负责数据库专用配置；Datus 负责外围 profile 名、`type`
 
 - [配置 datasources](../configuration/datasources.md)
 - [在 CLI 中使用 `/datasource`](../cli/other_commands.md#datasource)
-- [配置 SQL policy 与只读模式](../configuration/sql_policy.md)
+- [配置 SQL 只读模式](../configuration/agent.zh.md#sql-read-only)

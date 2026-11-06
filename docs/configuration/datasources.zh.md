@@ -124,6 +124,6 @@ default_datasource: analytics
 ## 相关文档
 
 - [数据库 adapter 架构](../adapters/db_adapters.md)
-- [SQL policy 与部署级只读模式](sql_policy.md)
+- [部署级 SQL 只读模式](agent.zh.md#sql-read-only)
 - [Plugin 系统](../plugin/introduction.md)
 - [CLI 参考](../cli/reference.md)
