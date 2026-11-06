@@ -286,7 +286,7 @@ def test_sql_debug_logs_match_the_statement_sent_to_the_connector(monkeypatch, c
     db = connector()
     with caplog.at_level(level):
         result = make_db_tool(db, cfg).execute_read_enforced(original, db, datasource="warehouse")
-    assert result.success
+    assert result.success is True
     db.execute_query.assert_called_once_with(rewritten, result_format="list")
     messages = [record.getMessage() for record in caplog.records]
     sql_logs = [message for message in messages if "sql.policy.rewrite" in message or "sql.execute" in message]
