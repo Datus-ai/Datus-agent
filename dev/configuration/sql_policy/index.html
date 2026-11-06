@@ -8,7 +8,7 @@
       
       
       
-        
+        <link rel="canonical" href="https://docs.datus.ai/dev/configuration/sql_policy/">
       
       
         <link rel="prev" href="../benchmark/">
@@ -18,9 +18,9 @@
       
       
         
-          
+          <link rel="alternate" href="/dev/" hreflang="en">
         
-          
+          <link rel="alternate" href="/zh/dev/" hreflang="zh">
         
       
       
@@ -57,13 +57,7 @@
 
     
     
-  <!-- datus-docs-seo -->
-<link rel="canonical" href="https://docs.datus.ai/dev/configuration/sql_policy/">
-<link rel="alternate" hreflang="en" href="https://docs.datus.ai/dev/configuration/sql_policy/">
-<link rel="alternate" hreflang="zh-Hans" href="https://docs.datus.ai/zh/dev/configuration/sql_policy/">
-<link rel="alternate" hreflang="x-default" href="https://docs.datus.ai/dev/configuration/sql_policy/">
-<!-- /datus-docs-seo -->
-</head>
+  </head>
   
   
     
@@ -3341,13 +3335,41 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Configuration">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#inspect-sql-in-debug-logs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Inspect SQL in DEBUG logs
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rules" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Rules
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
-  <a href="#request-context" class="md-nav__link">
+  <a href="#trusted-request-context" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Request Context
+        Trusted request context
       
     </span>
   </a>
@@ -3355,10 +3377,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#runtime-flow" class="md-nav__link">
+  <a href="#execution" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Runtime Flow
+        Execution
       
     </span>
   </a>
@@ -5040,13 +5062,41 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Configuration">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#inspect-sql-in-debug-logs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Inspect SQL in DEBUG logs
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rules" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Rules
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
-  <a href="#request-context" class="md-nav__link">
+  <a href="#trusted-request-context" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Request Context
+        Trusted request context
       
     </span>
   </a>
@@ -5054,10 +5104,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#runtime-flow" class="md-nav__link">
+  <a href="#execution" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Runtime Flow
+        Execution
       
     </span>
   </a>
@@ -5118,103 +5168,146 @@
 
 
 <h1 id="sql-policy">SQL Policy<a class="headerlink" href="#sql-policy" title="Permanent link">&para;</a></h1>
-<p>Datus Agent does not authenticate users or decide their permissions. A trusted upstream service authenticates and authorizes the request, then sends execution-only inputs as <code>policy_context</code>. Active policy plugins interpret that context and protect reads.</p>
+<p>A trusted upstream service authenticates users and supplies effective policies.
+Agent executes them; it does not resolve roles. Policy support is optional and
+loaded through the <code>sql-policy</code> plugin. Ordinary standalone Agent/Dosi calls
+continue to work without the private package.</p>
 <h2 id="configuration">Configuration<a class="headerlink" href="#configuration" title="Permanent link">&para;</a></h2>
-<p>SQL policy is configured only as a plugin profile; the former <code>agent.sql_policy</code> provider configuration is not supported.</p>
+<h3 id="inspect-sql-in-debug-logs">Inspect SQL in DEBUG logs<a class="headerlink" href="#inspect-sql-in-debug-logs" title="Permanent link">&para;</a></h3>
+<p>Start Agent with <code>datus --debug</code> or set <code>agent.logging.level: DEBUG</code>.
+The normal Agent log contains these structured events:</p>
+<table>
+<thead>
+<tr>
+<th>Event</th>
+<th>SQL fields</th>
+<th>When recorded</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>sql.policy.rewrite</code></td>
+<td><code>original_sql</code>, <code>rewritten_sql</code>, <code>rewritten</code></td>
+<td>After policy processing, before execution; includes SQL tools, API reads and CLI SQL mode.</td>
+</tr>
+<tr>
+<td><code>sql.execute</code></td>
+<td><code>sql</code></td>
+<td>Immediately before the SQL tool or CLI submits the final statement to its connector.</td>
+</tr>
+<tr>
+<td><code>sql.dosi.execute</code></td>
+<td><code>sql</code></td>
+<td>After successful native metric/detail execution, using the SQL returned by that actual engine call.</td>
+</tr>
+<tr>
+<td><code>sql.dosi.compile</code></td>
+<td><code>sql</code></td>
+<td>Metric dry-run compilation; the statement has not been executed.</td>
+</tr>
+</tbody>
+</table>
+<p>Events include the datasource and dialect. Dosi events also identify the
+connection and operation. Logging never recompiles a query or serializes the
+policy context; SQL fields pass through the existing log-redaction configuration.
+These events are suppressed at INFO and higher levels.</p>
+<h3 id="rules">Rules<a class="headerlink" href="#rules" title="Permanent link">&para;</a></h3>
+<p>The native <code>datus-sql-policies</code> provider uses one physical-table row rule for
+both SQL and Dosi reads. <code>metric_row_filter</code> profiles must be migrated.</p>
 <div class="language-yaml highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nt">agent</span><span class="p">:</span>
 </span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="w">  </span><span class="nt">plugins</span><span class="p">:</span>
 </span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="w">    </span><span class="nt">sql-policy</span><span class="p">:</span>
 </span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="w">      </span><span class="nt">default</span><span class="p">:</span>
 </span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="w">        </span><span class="nt">default</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
 </span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="w">        </span><span class="nt">policies</span><span class="p">:</span>
-</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="w">          </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">id</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">sp_store_scope_sql</span>
-</span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a><span class="w">            </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">store_scope_sql</span>
+</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="w">          </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">id</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">tenant_scope</span>
+</span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a><span class="w">            </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">tenant_scope</span>
 </span><span id="__span-0-9"><a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a><span class="w">            </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">row_filter</span>
 </span><span id="__span-0-10"><a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a><span class="w">            </span><span class="nt">applies_to</span><span class="p">:</span>
-</span><span id="__span-0-11"><a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a><span class="w">              </span><span class="nt">datasources</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">"warehouse"</span><span class="p p-Indicator">]</span>
-</span><span id="__span-0-12"><a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a><span class="w">              </span><span class="nt">tables</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">"orders"</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">"store_sales"</span><span class="p p-Indicator">]</span>
+</span><span id="__span-0-11"><a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a><span class="w">              </span><span class="nt">datasources</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">warehouse</span><span class="p p-Indicator">]</span>
+</span><span id="__span-0-12"><a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a><span class="w">              </span><span class="nt">tables</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">analytics.main.orders</span><span class="p p-Indicator">]</span>
 </span><span id="__span-0-13"><a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a><span class="w">            </span><span class="nt">condition</span><span class="p">:</span>
-</span><span id="__span-0-14"><a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a><span class="w">              </span><span class="nt">column</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">store_id</span>
+</span><span id="__span-0-14"><a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a><span class="w">              </span><span class="nt">column</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">tenant_id</span>
 </span><span id="__span-0-15"><a id="__codelineno-0-15" name="__codelineno-0-15" href="#__codelineno-0-15"></a><span class="w">              </span><span class="nt">operator</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">in</span>
-</span><span id="__span-0-16"><a id="__codelineno-0-16" name="__codelineno-0-16" href="#__codelineno-0-16"></a><span class="w">              </span><span class="nt">value_from</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">policy_context.row_filter.store_ids</span>
+</span><span id="__span-0-16"><a id="__codelineno-0-16" name="__codelineno-0-16" href="#__codelineno-0-16"></a><span class="w">              </span><span class="nt">value_from</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">policy_context.row_filter.tenant_ids</span>
+</span><span id="__span-0-17"><a id="__codelineno-0-17" name="__codelineno-0-17" href="#__codelineno-0-17"></a><span class="w">        </span><span class="nt">column_masking</span><span class="p">:</span>
+</span><span id="__span-0-18"><a id="__codelineno-0-18" name="__codelineno-0-18" href="#__codelineno-0-18"></a><span class="w">          </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">column</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">analytics.main.orders.phone</span>
+</span><span id="__span-0-19"><a id="__codelineno-0-19" name="__codelineno-0-19" href="#__codelineno-0-19"></a><span class="w">            </span><span class="nt">mask</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">last4</span>
 </span></code></pre></div>
-<p>Policy types and their fields belong to the policy plugin. Every <code>row_filter</code> and <code>metric_row_filter</code> policy requires a stable, unique <code>id</code>. Agent only loads the plugin runtime declared by its <code>datus-plugin.yml</code> manifest.</p>
-<h2 id="request-context">Request Context<a class="headerlink" href="#request-context" title="Permanent link">&para;</a></h2>
-<p>The default API provider reads a JSON object from <code>X-Datus-Policy-Context</code>:</p>
-<div class="language-http highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="err">X-Datus-Policy-Context: {"row_filter":{"access_mode":"scoped","store_ids":[1,2]}}</span>
+<p>Profile targets accept short, partially qualified and full names. Missing
+prefixes bind to the live session's current coordinates, not the datasource's
+initial defaults; explicit coordinates stay fixed. For example, <code>orders</code> and
+<code>orders.phone</code> use the current namespace. Rebind after a namespace switch: short
+targets follow the new current namespace, while full targets remain explicit.
+Missing required current coordinates are refused.
+MySQL/TiDB binding reads the live <code>lower_case_table_names</code> setting; physical
+targets and CTE names use that server's case rules.</p>
+<p>Full names follow the adapter: DuckDB/PostgreSQL/Greenplum/GaussDB use
+<code>database.schema.table</code>, StarRocks/Doris use <code>catalog.database.table</code>, Trino uses
+<code>catalog.schema.table</code>, Oracle/HANA use <code>schema.table</code>, and MySQL/TiDB/ClickHouse/
+Hive/Spark use <code>database.table</code>. Oracle service names and HANA tenants identify
+the connection rather than an SQL object prefix. The datasource key is separate. Quote names containing dots. Policy defaults select the current
+namespace; short SQL query names still use the connection's search path.</p>
+<p>Row operators are <code>eq</code> and <code>in</code>. The fixed masks are <code>nullify</code>, <code>redact</code>, <code>last4</code>
+and <code>email</code>; text masks require compatible text columns and an admitted dialect.
+Live acceptance covers DuckDB and 13 Docker-backed adapters: PostgreSQL, MySQL,
+TiDB, StarRocks, Doris, ClickHouse, Greenplum, GaussDB/openGauss, Trino, Oracle,
+Hive, Spark (HiveServer2), and HANA, for the tested native types and query shapes.
+Oracle metrics require OCI; HANA metrics require SAP HANA ODBC. HANA local
+acceptance uses a direct plaintext listener; tenant routing and TLS are separate.
+SQLite is also verified: raw SQL uses native SQLite syntax; Dosi uses DuckDB
+with its SQLite extension. Targets use <code>main.table</code> or <code>attach_alias.table</code>,
+not the file stem. Dosi requires a file-backed database and refuses temporary
+objects/additional attachments it cannot reproduce. SQLite metadata requires
+3.37+; <code>last4</code> returns NULL on embedded NUL. Text row-filter columns require
+string values to avoid different implicit numeric coercion in sqlite3 and DuckDB. Other text dialects (including
+Inceptor) remain unavailable.</p>
+<h2 id="trusted-request-context">Trusted request context<a class="headerlink" href="#trusted-request-context" title="Permanent link">&para;</a></h2>
+<p>Profile-based rows retain the existing execution inputs:</p>
+<div class="language-json highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="p">{</span><span class="nt">"row_filter"</span><span class="p">:{</span><span class="nt">"access_mode"</span><span class="p">:</span><span class="s2">"scoped"</span><span class="p">,</span><span class="nt">"tenant_ids"</span><span class="p">:[</span><span class="mi">42</span><span class="p">]}}</span>
 </span></code></pre></div>
-<p>The agreed shape has one section per policy family, without an identity or groups layer:</p>
-<div class="language-json highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="p">{</span>
-</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="w">  </span><span class="nt">"row_filter"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
-</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="w">    </span><span class="nt">"access_mode"</span><span class="p">:</span><span class="w"> </span><span class="s2">"scoped"</span><span class="p">,</span>
-</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="w">    </span><span class="nt">"policy_modes"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
-</span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="w">      </span><span class="nt">"sp_store_scope_sql"</span><span class="p">:</span><span class="w"> </span><span class="s2">"scoped"</span>
-</span><span id="__span-2-6"><a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="w">    </span><span class="p">},</span>
-</span><span id="__span-2-7"><a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a><span class="w">    </span><span class="nt">"store_ids"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="mi">2</span><span class="p">]</span>
-</span><span id="__span-2-8"><a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a><span class="w">  </span><span class="p">},</span>
-</span><span id="__span-2-9"><a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a><span class="w">  </span><span class="nt">"column_mask"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
-</span><span id="__span-2-10"><a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a><span class="w">    </span><span class="nt">"customers.email"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"strategy"</span><span class="p">:</span><span class="w"> </span><span class="s2">"email_partial"</span><span class="p">}</span>
-</span><span id="__span-2-11"><a id="__codelineno-2-11" name="__codelineno-2-11" href="#__codelineno-2-11"></a><span class="w">  </span><span class="p">}</span>
-</span><span id="__span-2-12"><a id="__codelineno-2-12" name="__codelineno-2-12" href="#__codelineno-2-12"></a><span class="p">}</span>
-</span></code></pre></div>
-<p>The current sql-policy plugin first applies the request-wide row-filter mode:</p>
-<table>
-<thead>
-<tr>
-<th><code>access_mode</code></th>
-<th>Behavior</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>denied</code></td>
-<td>Reject every data read.</td>
-</tr>
-<tr>
-<td><code>scoped</code></td>
-<td>Evaluate each configured row filter. Missing required inputs fail closed.</td>
-</tr>
-</tbody>
-</table>
-<p>For a scoped request, the optional <code>policy_modes</code> object can override individual policies by ID:</p>
-<table>
-<thead>
-<tr>
-<th>Per-policy mode</th>
-<th>Behavior</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>scoped</code></td>
-<td>Apply that policy and resolve its <code>policy_context.*</code> inputs.</td>
-</tr>
-<tr>
-<td><code>unrestricted</code></td>
-<td>Skip only that policy. Other row and result policies still run.</td>
-</tr>
-</tbody>
-</table>
-<p>Omitted policies default to <code>scoped</code>. Unknown policy IDs, malformed modes, and a missing or unknown request-wide <code>access_mode</code> are rejected. When no row policy is configured, an empty context is allowed.</p>
-<p><code>X-Datus-User-Id</code> remains session identity only. Agent does not merge it into <code>policy_context</code>, and it does not treat any context field as authenticated identity.</p>
-<h2 id="runtime-flow">Runtime Flow<a class="headerlink" href="#runtime-flow" title="Permanent link">&para;</a></h2>
+<p><code>denied</code> rejects every read. Optional <code>policy_modes</code> may skip one row rule by
+setting its configured ID to <code>unrestricted</code>; other rules and masks still run.
+Missing inputs, unknown IDs and invalid modes are denied.</p>
+<p>Alternatively, trusted hosts may supply <code>policy_context.sql_policy</code> containing
+<code>version</code> and effective <code>policies: {row_filters: [...], column_masks: [...]}</code>.
+Targets are canonical structured objects with <code>datasource</code>, optional <code>catalog</code>,
+<code>database</code>, <code>schema</code> and <code>table</code>; row entries add <code>column</code>, <code>operator</code>, <code>values</code>,
+and mask entries add <code>column</code>, <code>mask</code>. This snapshot replaces profile rules for
+the request. It is authorization input, never a model-generated tool argument.
+The default API provider can parse this JSON from <code>X-Datus-Policy-Context</code>; a
+trusted authenticated deployment must control that header. <code>X-Datus-User-Id</code>
+continues to serve only as session identity.</p>
+<h2 id="execution">Execution<a class="headerlink" href="#execution" title="Permanent link">&para;</a></h2>
 <ol>
-<li>The upstream service authenticates and authorizes the caller and builds <code>policy_context</code>.</li>
-<li>The API parses the header into <code>AppContext.policy_context</code> and validates it through active policy runtimes before starting any built-in or user-defined subagent.</li>
-<li>The request-specific <code>AgentConfig</code> clone carries the same context to every subagent and tool transformer.</li>
-<li><code>DBFuncTool.execute_read_enforced</code> validates the original SQL, calls <code>before_sql_read</code>, revalidates rewritten SQL, then executes it.</li>
-<li>A successful raw result passes through <code>after_read_result</code> before compression, artifact storage, rendering, or return to the caller. This is the extension point for column masking.</li>
-<li>Semantic metric tools call the same plugin runtime before aggregation to add their <code>where</code> predicates.</li>
+<li>Agent validates trusted context and binds one snapshot to live metadata.</li>
+<li>Direct SQL enters <code>DBFuncTool.execute_read_enforced</code>; Dosi receives the same
+   provider through optional Python <code>policy</code> / <code>policy_required</code> arguments.</li>
+<li>After complete SQL lowering, the shared native core replaces every physical
+   read: raw row filters first, masked projection second, business calculations
+   outside. Subqueries, repeated sources, query-backed datasets, derived metrics,
+   FIXED/context-filter branches and attribution queries use this boundary.</li>
+<li>Context verification runs again before execution. Metric/detail cache keys
+   include the policy snapshot and execution context. Masking is not reapplied
+   to returned rows.</li>
 </ol>
-<p>Invalid runtime declarations, malformed decisions, policy exceptions, denials, and unsafe SQL rewrites all fail closed. Proxied tools execute outside the Agent process and therefore must be protected by the external executor.</p>
-<p>For manual checks, pass the same object explicitly:</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>datus<span class="w"> </span>sql-policy<span class="w"> </span>check<span class="w"> </span>--sql<span class="w"> </span><span class="s2">"SELECT * FROM orders"</span><span class="w"> </span><span class="se">\</span>
-</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="w">  </span>--policy-context<span class="w"> </span><span class="s1">'{"row_filter":{"access_mode":"scoped","store_ids":[1,2]}}'</span>
-</span></code></pre></div>
+<p>If required policies or native bindings are unavailable, reads are refused.
+Opaque views/functions and unsupported source syntax are refused. No policy
+falls back to metric WHERE injection. External proxied executors must enforce
+their own boundary. Native integration does not turn every existing workflow or
+external execution surface into a protected host automatically.</p>
+<p><code>datus sql-policy status</code> lists configured policies. The offline plugin <code>check</code>
+validates context but refuses configured rewrites without a live connector; use
+Agent/Dosi dry-run to inspect protected SQL. Coordinated native wheels are needed
+for this implementation; SaaS/Backend rollout is separate.</p>
+<p>Report/dashboard metric recipes compile first and apply protection once at the
+final SQL read boundary. Standalone Dosi execution keeps its native provider.
+Read-carrying writes are refused whenever protection is configured, including
+profile-only masking with an empty request context.</p>
 <h2 id="hard-read-only-switch-agentsql_read_only">Hard Read-Only Switch (<code>agent.sql_read_only</code>)<a class="headerlink" href="#hard-read-only-switch-agentsql_read_only" title="Permanent link">&para;</a></h2>
 <p><code>agent.sql_read_only</code> is a separate, simpler mechanism. Do not confuse it with the policy plugins above.</p>
-<div class="language-yaml highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="nt">agent</span><span class="p">:</span>
-</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="w">  </span><span class="nt">sql_read_only</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span><span class="w">   </span><span class="c1"># default: false</span>
+<div class="language-yaml highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="nt">agent</span><span class="p">:</span>
+</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="w">  </span><span class="nt">sql_read_only</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span><span class="w">   </span><span class="c1"># default: false</span>
 </span></code></pre></div>
 <p>When <code>true</code>, no SQL entry point served by this configuration may run a non-read statement:</p>
 <ul>
