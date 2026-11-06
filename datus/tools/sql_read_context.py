@@ -40,6 +40,17 @@ def _paths(value: str) -> list[str]:
 
 
 class SqlReadContext:
+    def canonical_object_name(self, name: str) -> str:
+        """Canonical permanent-object coordinates, separate from CTE/columns."""
+        if self.dialect == "spark":
+            # Spark's permanent metastore ignores ASCII case even when its
+            # CTE/column resolver is case sensitive. Unicode needs an explicit
+            # server-owned canonical binding before it can be admitted here.
+            if not name.isascii():
+                raise ValueError("Spark Unicode physical object identifiers require server-owned identifier binding")
+            return name.translate(_ASCII_LOWER)
+        return self.canonical_name(name)
+
     def canonical_name(self, name: str) -> str:
         if self.dialect in {"duckdb", "sqlite"}:
             return name.translate(_ASCII_LOWER)
@@ -79,11 +90,11 @@ class SqlReadContext:
             value = specified[field] if field in specified else self._state.get(field)
             if not value:
                 raise ValueError(f"current execution {field} is unavailable; qualify the policy target explicitly")
-            namespace[field] = self.canonical_name(value)
+            namespace[field] = self.canonical_object_name(value)
         return {
             "datasource": self.datasource,
             **{key: namespace.get(key) for key in ("catalog", "database", "schema")},
-            "table": self.canonical_name(specified["table"]),
+            "table": self.canonical_object_name(specified["table"]),
         }
 
     def column_name(self, identifier: dict) -> str:
@@ -446,10 +457,12 @@ class SqlReadContext:
         object_id = {
             "datasource": self.datasource,
             **{
-                key: self.canonical_name(namespace[key]) if key in self.namespace_order and namespace.get(key) else None
+                key: self.canonical_object_name(namespace[key])
+                if key in self.namespace_order and namespace.get(key)
+                else None
                 for key in ("catalog", "database", "schema")
             },
-            "table": self.canonical_name(name),
+            "table": self.canonical_object_name(name),
         }
         quote_identifier = getattr(self.connector, "quote_identifier", _quote)
         reference = ".".join(quote_identifier(object_id[field]) for field in self.namespace_order)

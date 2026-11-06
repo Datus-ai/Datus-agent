@@ -438,6 +438,11 @@ def test_spark_live_case_mode_is_bound_and_rechecked(monkeypatch):
     context = SqlReadContext(connector, "warehouse")
     assert context.execution_context["case_sensitive_table_names"] is True
     assert context.canonical_name("Orders") == "Orders"
+    assert context.canonical_object_name("Orders") == "orders"
+    assert context.fixed_object(parts("DEFAULT.ORDERS"))["database"] == "default"
+    assert context.fixed_object(parts("DEFAULT.ORDERS"))["table"] == "orders"
+    with pytest.raises(ValueError, match="server-owned identifier binding"):
+        context.canonical_object_name("库存")
     with pytest.raises(ValueError, match="cannot reproduce Spark"):
         context.verify_execution_target("hive")
     state["value"] = False

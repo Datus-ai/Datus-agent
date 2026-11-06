@@ -1245,6 +1245,7 @@ class SemanticTools:
         bound = runtime.bind_read(connector=connector, datasource=datasource, policy_context=context)
         if bound is not None:
             actual = json.loads(bound.context_json)
+            names = None
             for namespace in ("catalog", "database", "schema"):
                 # SQLite's Agent database label is the file stem; its SQL
                 # namespace is always main (or an explicit ATTACH alias).
@@ -1252,6 +1253,12 @@ class SemanticTools:
                     continue
                 expected = current.get(namespace)
                 if expected and actual.get(namespace) != expected:
+                    from datus.tools.sql_read_context import SqlReadContext
+
+                    if names is None:
+                        names = SqlReadContext(connector, datasource)
+                    if names.canonical_name(str(actual.get(namespace) or "")) == names.canonical_name(expected):
+                        continue
                     raise DatusException(
                         ErrorCode.POLICY_DENIED,
                         message=f"Dosi {namespace} does not match the policy metadata connection; switch the live connection and rebind",
@@ -1942,6 +1949,42 @@ class SemanticTools:
         Returns:
             FuncToolResult with the result text, or the compiled SQL of a dry run
         """
+        return self._query_metrics(
+            metrics=metrics,
+            dimensions=dimensions,
+            time_start=time_start,
+            time_end=time_end,
+            time_granularity=time_granularity,
+            where=where,
+            limit=limit,
+            order_by=order_by,
+            params=params,
+            dry_run=dry_run,
+            context_filter=context_filter,
+        )
+
+    def compile_metric_for_sql_execution(self, **arguments: Any) -> FuncToolResult:
+        """Host-only handoff: compile business SQL for the enforced SQL boundary."""
+        if arguments.get("dry_run") is not True:
+            raise ValueError("external SQL execution requires compile-only dry_run")
+        return self._query_metrics(**arguments, external_sql_execution=True)
+
+    def _query_metrics(
+        self,
+        metrics: List[str],
+        dimensions: Optional[List[str]] = None,
+        time_start: Optional[str] = None,
+        time_end: Optional[str] = None,
+        time_granularity: Optional[str] = None,
+        where: Optional[str] = None,
+        limit: Optional[int] = None,
+        order_by: Optional[List[str]] = None,
+        params: Optional[Dict[str, Any]] = None,
+        dry_run: bool = False,
+        context_filter: Optional[str] = None,
+        *,
+        external_sql_execution: bool = False,
+    ) -> FuncToolResult:
         metrics = _normalize_name_list(metrics)
         dimensions = _normalize_name_list(dimensions)
         order_by = _normalize_name_list(order_by)
@@ -1997,7 +2040,8 @@ class SemanticTools:
             if context_filter:
                 runtime_query_kwargs["context_filter"] = context_filter
             execution_context = self._query_execution_context(runtime)
-            result = _run_async(runtime.query_metrics(**runtime_query_kwargs))
+            compile_or_query = runtime.compile_for_sql_execution if external_sql_execution else runtime.query_metrics
+            result = _run_async(compile_or_query(**runtime_query_kwargs))
             if not dry_run:
                 metadata = result.metadata or {}
                 return FuncToolResult(

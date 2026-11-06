@@ -635,6 +635,7 @@ class TestExplorerServicePreviewMetric:
         tools_stub = SimpleNamespace(
             runtime=runtime,
             query_metrics=query_metrics,
+            compile_metric_for_sql_execution=query_metrics,
             metric_datasets=lambda: {},
         )
 
@@ -852,6 +853,23 @@ class TestExplorerServicePreviewMetric:
         assert result.success
         assert tools.kwargs["policy_context_provider"]() == request_context
         assert real_agent_config.policy_context is config_context
+
+    async def test_preview_uses_external_sql_compile_instead_of_protected_display_dry_run(
+        self, real_agent_config, monkeypatch
+    ):
+        from datus.api.models.explorer_models import MetricPreviewInput
+
+        tools = self._patch_tools(monkeypatch, runtime=MagicMock(), query_metrics=MagicMock())
+        tools.query_metrics.side_effect = AssertionError("display dry-run would protect the handoff twice")
+        tools.compile_metric_for_sql_execution = MagicMock(
+            return_value=self._func_result(result={"metadata": {"sql": "SELECT SUM(amount) FROM orders"}})
+        )
+        service = ExplorerService(agent_config=real_agent_config)
+        result = await service.preview_metric(MetricPreviewInput(subject_path=["revenue"]))
+        assert result.success
+        assert result.data.sql == "SELECT SUM(amount) FROM orders"
+        tools.compile_metric_for_sql_execution.assert_called_once()
+        tools.query_metrics.assert_not_called()
 
     async def test_falls_back_to_data_row_sql(self, real_agent_config, monkeypatch):
         """SQL is recovered from the single data row when metadata omits it."""

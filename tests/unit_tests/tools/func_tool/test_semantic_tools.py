@@ -2808,6 +2808,60 @@ def test_dosi_sqlite_policy_uses_main_namespace_instead_of_file_stem(semantic_to
     assert semantic_tools._bind_dosi_read() is bound
 
 
+@pytest.mark.parametrize("schema,allowed", [("MAIN", True), ("main", True), ("sales", False)])
+def test_dosi_duckdb_namespace_comparison_uses_live_identifier_rules(semantic_tools, monkeypatch, schema, allowed):
+    import duckdb
+
+    from datus.utils.exceptions import DatusException
+
+    bound = SimpleNamespace(context_json=json.dumps({"database": "memory", "schema": "main"}))
+    runtime = SimpleNamespace(requires_bound_read=lambda _: True, bind_read=lambda **_: bound)
+    monkeypatch.setattr("datus.tools.policy_runtime.PolicyRuntime", lambda _: runtime)
+    with duckdb.connect() as db:
+        connector = SimpleNamespace(
+            dialect="duckdb",
+            execute_query=lambda sql, **_: SimpleNamespace(
+                success=True, sql_return=db.execute(sql).fetch_arrow_table()
+            ),
+        )
+        manager = SimpleNamespace(get_conn=lambda *_: connector)
+        monkeypatch.setattr("datus.tools.db_tools.db_manager.db_manager_instance", lambda _: manager)
+        monkeypatch.setattr(
+            semantic_tools,
+            "_runtime_db_context",
+            lambda: {"datasource": "warehouse", "database": "memory", "schema": schema},
+        )
+        if allowed:
+            assert semantic_tools._bind_dosi_read() is bound
+        else:
+            with pytest.raises(DatusException, match="does not match the policy metadata connection"):
+                semantic_tools._bind_dosi_read()
+
+
+def test_external_metric_compile_uses_the_single_enforcement_handoff(semantic_tools, monkeypatch):
+    runtime = SimpleNamespace(
+        compile_for_sql_execution=AsyncMock(
+            return_value=QueryResult(
+                columns=[],
+                data=[],
+                metadata={"sql": "SELECT SUM(amount) FROM orders"},
+            )
+        ),
+        query_metrics=AsyncMock(return_value=QueryResult(columns=[], data=[], metadata={"sql": "SELECT protected"})),
+    )
+    monkeypatch.setattr(semantic_tools, "_require_runtime", lambda _: (runtime, None))
+    monkeypatch.setattr(semantic_tools, "_query_execution_context", lambda _: {})
+    semantic_tools._warehouse_dry_run_provider = None
+    result = semantic_tools.compile_metric_for_sql_execution(metrics=["revenue"], dry_run=True)
+    assert result.result["metadata"]["sql"] == "SELECT SUM(amount) FROM orders"
+    runtime.compile_for_sql_execution.assert_awaited_once()
+    runtime.query_metrics.assert_not_awaited()
+    displayed = semantic_tools.query_metrics(metrics=["revenue"], dry_run=True)
+    assert displayed.result["metadata"]["sql"] == "SELECT protected"
+    with pytest.raises(ValueError, match="compile-only"):
+        semantic_tools.compile_metric_for_sql_execution(metrics=["revenue"], dry_run=False)
+
+
 def _validation_exception(**fields):
     from datus.tools.semantic_tools.dosi.errors import SemanticValidationException
     from datus.tools.semantic_tools.models import SemanticValidationError
