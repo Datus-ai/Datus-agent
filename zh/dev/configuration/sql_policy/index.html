@@ -8,7 +8,7 @@
       
       
       
-        
+        <link rel="canonical" href="https://docs.datus.ai/zh/dev/configuration/sql_policy/">
       
       
         <link rel="prev" href="../benchmark/">
@@ -18,9 +18,9 @@
       
       
         
-          
+          <link rel="alternate" href="/dev/" hreflang="en">
         
-          
+          <link rel="alternate" href="/zh/dev/" hreflang="zh">
         
       
       
@@ -57,13 +57,7 @@
 
     
     
-  <!-- datus-docs-seo -->
-<link rel="canonical" href="https://docs.datus.ai/zh/dev/configuration/sql_policy/">
-<link rel="alternate" hreflang="en" href="https://docs.datus.ai/dev/configuration/sql_policy/">
-<link rel="alternate" hreflang="zh-Hans" href="https://docs.datus.ai/zh/dev/configuration/sql_policy/">
-<link rel="alternate" hreflang="x-default" href="https://docs.datus.ai/dev/configuration/sql_policy/">
-<!-- /datus-docs-seo -->
-</head>
+  </head>
   
   
     
@@ -5257,8 +5251,30 @@ SQLite 也已验证：原生 SQL 使用 SQLite 方言，Dosi 通过 DuckDB SQLit
 SQLite 文本列的行规则要求字符串值，避免两种执行器的隐式类型转换差异。
 其他文本方言（包括 Inceptor）尚未开放。</p>
 <h2 id="_3">可信请求上下文<a class="headerlink" href="#_3" title="Permanent link">&para;</a></h2>
+<p>项目可以使用命名脱敏方案替代静态 <code>column_masking</code> 列表。以下片段放在现有
+<code>agent.plugins.sql-policy.&lt;profile&gt;</code> 内：</p>
+<div class="language-yaml highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="nt">policy_revision</span><span class="p">:</span><span class="w"> </span><span class="s">"r17"</span>
+</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="nt">masking_profiles</span><span class="p">:</span>
+</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="w">  </span><span class="nt">finance_team</span><span class="p">:</span>
+</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">column</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">analytics.main.orders.phone</span>
+</span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="w">      </span><span class="nt">mask</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">last4</span>
+</span><span id="__span-1-6"><a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="w">  </span><span class="nt">external_partner</span><span class="p">:</span>
+</span><span id="__span-1-7"><a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a><span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">column</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">analytics.main.orders.phone</span>
+</span><span id="__span-1-8"><a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a><span class="w">      </span><span class="nt">mask</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">redact</span>
+</span><span id="__span-1-9"><a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a><span class="w">  </span><span class="nt">approved_raw</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[]</span>
+</span></code></pre></div>
+<p>ID 是自定义且区分大小写的配置 key；可信宿主每请求选择一个方案：</p>
+<div class="language-json highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="p">{</span><span class="nt">"policy_revision"</span><span class="p">:</span><span class="s2">"r17"</span><span class="p">,</span><span class="nt">"masking_profile"</span><span class="p">:</span><span class="s2">"finance_team"</span><span class="p">,</span><span class="nt">"row_filter"</span><span class="p">:{</span><span class="nt">"access_mode"</span><span class="p">:</span><span class="s2">"scoped"</span><span class="p">,</span><span class="nt">"tenant_ids"</span><span class="p">:[</span><span class="mi">42</span><span class="p">]}}</span>
+</span></code></pre></div>
+<p>请求只传 ID 和版本，列规则保存在项目共享配置中。明确选中空列表方案时不执行列脱敏，
+行过滤仍然执行，方案名称没有特殊授权含义。ID 缺失、未知或版本不匹配时拒绝读取。
+命名方案与静态 masking 规则互斥；请求中的方案选择与完整 <code>sql_policy</code> 快照也互斥。
+只有 masking 的项目同样需要方案 ID 和版本。选择过程不修改共享配置，
+方案及版本会进入执行和缓存指纹，并显示在 <code>sql.policy.rewrite</code> DEBUG 事件中。</p>
+<p>可信宿主可以通过 <code>PolicyRuntime(config).requires_request_context()</code> 判断是否需要用户上下文，
+包括只有命名脱敏方案的项目。SaaS/Backend 的用户选择和配置刷新尚未接入，当前需由可信宿主明确传入。</p>
 <p>配置中的行规则继续使用现有执行输入：</p>
-<div class="language-json highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="p">{</span><span class="nt">"row_filter"</span><span class="p">:{</span><span class="nt">"access_mode"</span><span class="p">:</span><span class="s2">"scoped"</span><span class="p">,</span><span class="nt">"tenant_ids"</span><span class="p">:[</span><span class="mi">42</span><span class="p">]}}</span>
+<div class="language-json highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="p">{</span><span class="nt">"row_filter"</span><span class="p">:{</span><span class="nt">"access_mode"</span><span class="p">:</span><span class="s2">"scoped"</span><span class="p">,</span><span class="nt">"tenant_ids"</span><span class="p">:[</span><span class="mi">42</span><span class="p">]}}</span>
 </span></code></pre></div>
 <p><code>denied</code> 拒绝所有读取。可选 <code>policy_modes</code> 可将某个已配置规则 ID 标为 <code>unrestricted</code>，只跳过该行规则；其他规则及 masking 仍然生效。缺少输入、未知 ID、非法模式都会拒绝。</p>
 <p>可信宿主也可直接提供 <code>policy_context.sql_policy</code>，包含 <code>version</code> 和
@@ -5279,11 +5295,12 @@ SQLite 文本列的行规则要求字符串值，避免两种执行器的隐式�
 <p><code>datus sql-policy status</code> 查看配置。离线 <code>check</code> 可以校验 context，但缺少实际连接时拒绝策略改写；查看改写后的 SQL 应使用 Agent / Dosi dry-run。
 本实现需要配套原生 wheel，SaaS/Backend 的接入和发布另行处理。</p>
 <p>报表/看板指标先编译，在最终 SQL 读取入口统一应用一次策略；直接 Dosi 执行仍使用原生 provider。
-配置了策略时，包含读取的写语句会被拒绝；仅配置 masking、请求上下文为空时也会生效。</p>
+配置了策略时，包含读取的写语句会被拒绝；仅配置静态 <code>column_masking</code>、请求上下文为空时也会生效。
+命名脱敏方案需要请求明确提供方案 ID 和版本。</p>
 <h2 id="agentsql_read_only">只读硬开关（<code>agent.sql_read_only</code>）<a class="headerlink" href="#agentsql_read_only" title="Permanent link">&para;</a></h2>
 <p><code>agent.sql_read_only</code> 是另一套更简单的机制，不要与上面的 policy plugin 混淆。</p>
-<div class="language-yaml highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="nt">agent</span><span class="p">:</span>
-</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="w">  </span><span class="nt">sql_read_only</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span><span class="w">   </span><span class="c1"># 默认 false</span>
+<div class="language-yaml highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="nt">agent</span><span class="p">:</span>
+</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="w">  </span><span class="nt">sql_read_only</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span><span class="w">   </span><span class="c1"># 默认 false</span>
 </span></code></pre></div>
 <p>置为 <code>true</code> 后，该配置服务的所有 SQL 入口都不允许执行非只读语句：</p>
 <ul>
