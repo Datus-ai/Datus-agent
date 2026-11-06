@@ -8,7 +8,7 @@
       
       
       
-        
+        <link rel="canonical" href="https://docs.datus.ai/dev/configuration/sql_policy/">
       
       
         <link rel="prev" href="../benchmark/">
@@ -18,9 +18,9 @@
       
       
         
-          
+          <link rel="alternate" href="/dev/" hreflang="en">
         
-          
+          <link rel="alternate" href="/zh/dev/" hreflang="zh">
         
       
       
@@ -57,13 +57,7 @@
 
     
     
-  <!-- datus-docs-seo -->
-<link rel="canonical" href="https://docs.datus.ai/dev/configuration/sql_policy/">
-<link rel="alternate" hreflang="en" href="https://docs.datus.ai/dev/configuration/sql_policy/">
-<link rel="alternate" hreflang="zh-Hans" href="https://docs.datus.ai/zh/dev/configuration/sql_policy/">
-<link rel="alternate" hreflang="x-default" href="https://docs.datus.ai/dev/configuration/sql_policy/">
-<!-- /datus-docs-seo -->
-</head>
+  </head>
   
   
     
@@ -5269,8 +5263,35 @@ objects/additional attachments it cannot reproduce. SQLite metadata requires
 string values to avoid different implicit numeric coercion in sqlite3 and DuckDB. Other text dialects (including
 Inceptor) remain unavailable.</p>
 <h2 id="trusted-request-context">Trusted request context<a class="headerlink" href="#trusted-request-context" title="Permanent link">&para;</a></h2>
+<p>Projects can define named masking rule sets instead of a fixed <code>column_masking</code>
+list. Place this fragment inside the selected <code>agent.plugins.sql-policy</code> profile:</p>
+<div class="language-yaml highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="nt">policy_revision</span><span class="p">:</span><span class="w"> </span><span class="s">"r17"</span>
+</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="nt">masking_profiles</span><span class="p">:</span>
+</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="w">  </span><span class="nt">finance_team</span><span class="p">:</span>
+</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">column</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">analytics.main.orders.phone</span>
+</span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="w">      </span><span class="nt">mask</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">last4</span>
+</span><span id="__span-1-6"><a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="w">  </span><span class="nt">external_partner</span><span class="p">:</span>
+</span><span id="__span-1-7"><a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a><span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">column</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">analytics.main.orders.phone</span>
+</span><span id="__span-1-8"><a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a><span class="w">      </span><span class="nt">mask</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">redact</span>
+</span><span id="__span-1-9"><a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a><span class="w">  </span><span class="nt">approved_raw</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[]</span>
+</span></code></pre></div>
+<p>IDs are custom, case-sensitive keys. The trusted host selects one set per request:</p>
+<div class="language-json highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="p">{</span><span class="nt">"policy_revision"</span><span class="p">:</span><span class="s2">"r17"</span><span class="p">,</span><span class="nt">"masking_profile"</span><span class="p">:</span><span class="s2">"finance_team"</span><span class="p">,</span><span class="nt">"row_filter"</span><span class="p">:{</span><span class="nt">"access_mode"</span><span class="p">:</span><span class="s2">"scoped"</span><span class="p">,</span><span class="nt">"tenant_ids"</span><span class="p">:[</span><span class="mi">42</span><span class="p">]}}</span>
+</span></code></pre></div>
+<p>Only the ID and revision travel per request. Column definitions remain in shared
+configuration. An explicitly selected empty list disables masking while retaining
+row filtering; names have no special authorization meaning. Missing/unknown IDs,
+mismatched revisions and combining a selection with <code>sql_policy</code> snapshots are
+denied. Named sets and static masking rules are mutually exclusive.
+Mask-only projects still require the ID and revision. Shared configuration is
+never changed by a request selection, and execution/cache scopes include the
+selected profile and revision. <code>sql.policy.rewrite</code> DEBUG events include both.</p>
+<p>Trusted hosts can call <code>PolicyRuntime(config).requires_request_context()</code> to
+determine whether user inputs are required, including mask-only projects.
+SaaS/Backend profile selection and automatic configuration refresh are separate
+integration work; currently the trusted host supplies these fields explicitly.</p>
 <p>Profile-based rows retain the existing execution inputs:</p>
-<div class="language-json highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="p">{</span><span class="nt">"row_filter"</span><span class="p">:{</span><span class="nt">"access_mode"</span><span class="p">:</span><span class="s2">"scoped"</span><span class="p">,</span><span class="nt">"tenant_ids"</span><span class="p">:[</span><span class="mi">42</span><span class="p">]}}</span>
+<div class="language-json highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="p">{</span><span class="nt">"row_filter"</span><span class="p">:{</span><span class="nt">"access_mode"</span><span class="p">:</span><span class="s2">"scoped"</span><span class="p">,</span><span class="nt">"tenant_ids"</span><span class="p">:[</span><span class="mi">42</span><span class="p">]}}</span>
 </span></code></pre></div>
 <p><code>denied</code> rejects every read. Optional <code>policy_modes</code> may skip one row rule by
 setting its configured ID to <code>unrestricted</code>; other rules and masks still run.
@@ -5309,11 +5330,12 @@ for this implementation; SaaS/Backend rollout is separate.</p>
 <p>Report/dashboard metric recipes compile first and apply protection once at the
 final SQL read boundary. Standalone Dosi execution keeps its native provider.
 Read-carrying writes are refused whenever protection is configured, including
-profile-only masking with an empty request context.</p>
+fixed <code>column_masking</code> with an empty request context. Named masking profiles
+require the request's explicit profile ID and revision.</p>
 <h2 id="hard-read-only-switch-agentsql_read_only">Hard Read-Only Switch (<code>agent.sql_read_only</code>)<a class="headerlink" href="#hard-read-only-switch-agentsql_read_only" title="Permanent link">&para;</a></h2>
 <p><code>agent.sql_read_only</code> is a separate, simpler mechanism. Do not confuse it with the policy plugins above.</p>
-<div class="language-yaml highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="nt">agent</span><span class="p">:</span>
-</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="w">  </span><span class="nt">sql_read_only</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span><span class="w">   </span><span class="c1"># default: false</span>
+<div class="language-yaml highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="nt">agent</span><span class="p">:</span>
+</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="w">  </span><span class="nt">sql_read_only</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span><span class="w">   </span><span class="c1"># default: false</span>
 </span></code></pre></div>
 <p>When <code>true</code>, no SQL entry point served by this configuration may run a non-read statement:</p>
 <ul>
