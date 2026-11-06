@@ -114,6 +114,56 @@ def test_configured_but_missing_plugin_fails_closed(monkeypatch, active_names):
         PolicyRuntime(cfg)
 
 
+@pytest.mark.parametrize("profiles", [{"custom/a": []}, {"财务组": [{"column": "orders.phone", "mask": "last4"}]}])
+def test_named_profiles_require_the_policy_plugin_even_for_an_empty_ruleset(monkeypatch, profiles):
+    monkeypatch.setattr("datus.tools.policy_runtime.collect_plugin_policy_runtime_factories", lambda _: {})
+    cfg = config()
+    cfg.get_plugin_profile = lambda _: {"policy_revision": "v1", "masking_profiles": profiles}
+    with pytest.raises(DatusException, match="Required SQL policy plugin"):
+        PolicyRuntime(cfg)
+
+
+def test_request_selection_without_a_plugin_is_denied(monkeypatch):
+    monkeypatch.setattr("datus.tools.policy_runtime.collect_plugin_policy_runtime_factories", lambda _: {})
+    runtime = PolicyRuntime(config())
+    with pytest.raises(DatusException, match="no implementation is loaded"):
+        runtime.validate_context({"masking_profile": "custom/a", "policy_revision": "v1"})
+
+
+def test_request_selection_requires_a_native_provider(monkeypatch):
+    runtime = runtime_with(FakeRuntime(), monkeypatch)
+    with pytest.raises(DatusException, match="native source-policy provider"):
+        runtime.validate_context({"masking_profile": "custom/a", "policy_revision": "v1"})
+
+
+@pytest.mark.parametrize("required", [True, False])
+def test_request_context_requirement_is_owned_by_the_plugin(monkeypatch, required):
+    fake = FakeRuntime()
+    fake.requires_request_context = lambda: required
+    runtime = runtime_with(fake, monkeypatch)
+    assert runtime.requires_request_context() is required
+    assert fake.contexts == []
+
+
+def test_request_context_requirement_falls_back_to_existing_validation(monkeypatch):
+    assert runtime_with(FakeRuntime(allowed=False), monkeypatch).requires_request_context()
+    assert not runtime_with(FakeRuntime(allowed=True), monkeypatch).requires_request_context()
+
+
+def test_no_plugin_needs_no_request_context(monkeypatch):
+    monkeypatch.setattr("datus.tools.policy_runtime.collect_plugin_policy_runtime_factories", lambda _: {})
+    assert not PolicyRuntime(config()).requires_request_context()
+
+
+@pytest.mark.parametrize("answer", [None, "yes", 1, {}])
+def test_invalid_plugin_context_requirements_fail_closed(monkeypatch, answer):
+    fake = FakeRuntime()
+    fake.requires_request_context = lambda: answer
+    runtime = runtime_with(fake, monkeypatch)
+    with pytest.raises(DatusException, match="Invalid policy context requirement"):
+        runtime.requires_request_context()
+
+
 def test_empty_legacy_metric_provider_needs_no_connection(monkeypatch):
     legacy = SimpleNamespace(policies=[], before_metric_read=lambda **kwargs: None)
     runtime = runtime_with(legacy, monkeypatch)

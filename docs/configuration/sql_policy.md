@@ -84,6 +84,41 @@ Inceptor) remain unavailable.
 
 ## Trusted request context
 
+Projects can define named masking rule sets instead of a fixed `column_masking`
+list. Place this fragment inside the selected `agent.plugins.sql-policy` profile:
+
+```yaml
+policy_revision: "r17"
+masking_profiles:
+  finance_team:
+    - column: analytics.main.orders.phone
+      mask: last4
+  external_partner:
+    - column: analytics.main.orders.phone
+      mask: redact
+  approved_raw: []
+```
+
+IDs are custom, case-sensitive keys. The trusted host selects one set per request:
+
+```json
+{"policy_revision":"r17","masking_profile":"finance_team","row_filter":{"access_mode":"scoped","tenant_ids":[42]}}
+```
+
+Only the ID and revision travel per request. Column definitions remain in shared
+configuration. An explicitly selected empty list disables masking while retaining
+row filtering; names have no special authorization meaning. Missing/unknown IDs,
+mismatched revisions and combining a selection with `sql_policy` snapshots are
+denied. Named sets and static masking rules are mutually exclusive.
+Mask-only projects still require the ID and revision. Shared configuration is
+never changed by a request selection, and execution/cache scopes include the
+selected profile and revision. `sql.policy.rewrite` DEBUG events include both.
+
+Trusted hosts can call `PolicyRuntime(config).requires_request_context()` to
+determine whether user inputs are required, including mask-only projects.
+SaaS/Backend profile selection and automatic configuration refresh are separate
+integration work; currently the trusted host supplies these fields explicitly.
+
 Profile-based rows retain the existing execution inputs:
 
 ```json
@@ -131,7 +166,8 @@ for this implementation; SaaS/Backend rollout is separate.
 Report/dashboard metric recipes compile first and apply protection once at the
 final SQL read boundary. Standalone Dosi execution keeps its native provider.
 Read-carrying writes are refused whenever protection is configured, including
-profile-only masking with an empty request context.
+fixed `column_masking` with an empty request context. Named masking profiles
+require the request's explicit profile ID and revision.
 
 ## Hard Read-Only Switch (`agent.sql_read_only`)
 
