@@ -875,3 +875,50 @@ class TestValidateInlineMappingRequestedMetrics:
             "compiled_metric_not_found" in issue.message and "no_such_metric" in issue.message
             for issue in result.issues
         )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("initial_state", ["missing", "invalid"])
+async def test_catalog_recovers_referenced_file_outside_tracked_directories(tmp_path, initial_state):
+    models_dir = tmp_path / "models"
+    ontology_dir = tmp_path / "mappings"
+    external_dir = tmp_path / "shared"
+    for directory in (models_dir, ontology_dir, external_dir):
+        directory.mkdir()
+    model_template = """version: 0.2.0.dev0
+name: {name}
+datasets:
+  - name: orders
+    source: orders
+    fields:
+      - name: id
+        expression: {{dialects: [{{dialect: ANSI_SQL, expression: id}}]}}
+metrics:
+  - name: {name}_count
+    expression: {{dialects: [{{dialect: ANSI_SQL, expression: 'COUNT(orders.id)'}}]}}
+"""
+    for name in ("healthy", "recovering"):
+        (models_dir / f"{name}.yaml").write_text(model_template.format(name=name))
+    (ontology_dir / "mapping.yaml").write_text(
+        "version: 0.2.0.dev0\n"
+        "name: recovering_mapping\n"
+        "ontology_ref: {name: Shop, iri: ../shared/ontology.yaml}\n"
+        "semantic_model_ref: {name: recovering, iri: ../models/recovering.yaml}\n"
+        "concept_mappings: []\n"
+    )
+    external = external_dir / "ontology.yaml"
+    if initial_state == "invalid":
+        external.write_text("name: [\n")
+    tracked_files = sorted(models_dir.iterdir()) + sorted(ontology_dir.iterdir())
+    original = [(path.read_bytes(), path.stat().st_mtime_ns) for path in tracked_files]
+    runtime = DosiRuntime(DosiConfig(semantic_models_path=str(models_dir), ontology_dir=str(ontology_dir)))
+
+    assert list(runtime.initialize()) == [str(models_dir / "recovering.yaml")]
+    assert [metric.name for metric in await runtime.list_metrics()] == ["healthy_count"]
+    assert [metric.name for metric in await runtime.list_metrics()] == ["healthy_count"]
+
+    external.write_text("version: 0.2.0.dev0\nname: Shop\nontology: []\n")
+    assert [(path.read_bytes(), path.stat().st_mtime_ns) for path in tracked_files] == original
+    assert [metric.name for metric in await runtime.list_metrics()] == ["healthy_count", "recovering_count"]
+    result = await runtime.query_metrics(["recovering_count"], dry_run=True)
+    assert "COUNT" in result.metadata["sql"].upper()

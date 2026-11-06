@@ -1274,11 +1274,22 @@ class DosiRuntime:
         with self._catalog_lock:
             signature, handles = self._registry.snapshot()
             if signature == self._catalog_signature:
-                return (
-                    self._catalog_handles,
-                    dict(self._metric_to_path),
-                    dict(self._model_to_path),
-                )
+                # External dependencies can recover without changing the registry signature.
+                available_paths = {path for path, _ in self._catalog_handles}
+                for model_path, handle in handles:
+                    if model_path in available_paths:
+                        continue
+                    try:
+                        handle.get()
+                    except SemanticCoreException:
+                        continue
+                    break
+                else:
+                    return (
+                        self._catalog_handles,
+                        dict(self._metric_to_path),
+                        dict(self._model_to_path),
+                    )
 
             metric_to_path: Dict[str, str] = {}
             model_to_path: Dict[str, str] = {}
