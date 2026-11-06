@@ -8,15 +8,15 @@
       
       
       
-        
+        <link rel="canonical" href="https://docs.datus.ai/dev/development/host-chat-extensions/">
       
       
       
       
         
-          
+          <link rel="alternate" href="/dev/" hreflang="en">
         
-          
+          <link rel="alternate" href="/zh/dev/" hreflang="zh">
         
       
       
@@ -53,12 +53,7 @@
 
     
     
-  <!-- datus-docs-seo -->
-<link rel="canonical" href="https://docs.datus.ai/dev/development/host-chat-extensions/">
-<link rel="alternate" hreflang="en" href="https://docs.datus.ai/dev/development/host-chat-extensions/">
-<link rel="alternate" hreflang="x-default" href="https://docs.datus.ai/dev/development/host-chat-extensions/">
-<!-- /datus-docs-seo -->
-</head>
+  </head>
   
   
     
@@ -3067,8 +3062,6 @@
       
         
       
-        
-      
     
     
     
@@ -3259,34 +3252,6 @@
   
   
     <li class="md-nav__item">
-      <a href="../../configuration/sql_policy/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    SQL Policy
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
       <a href="../../configuration/web_tool/" class="md-nav__link">
         
   
@@ -3406,10 +3371,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_1_12_9" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_1_12_8" >
         
           
-          <label class="md-nav__link" for="__nav_1_12_9" id="__nav_1_12_9_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_1_12_8" id="__nav_1_12_8_label" tabindex="0">
             
   
   
@@ -3427,8 +3392,8 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_1_12_9_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_1_12_9">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_1_12_8_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_1_12_8">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -4931,17 +4896,6 @@
   
 </li>
       
-        <li class="md-nav__item">
-  <a href="#execute-metrics-under-policy" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Execute metrics under policy
-      
-    </span>
-  </a>
-  
-</li>
-      
     </ul>
   
 </nav>
@@ -4969,7 +4923,7 @@
 
 <h1 id="host-chat-execution-extensions">Host chat execution extensions<a class="headerlink" href="#host-chat-execution-extensions" title="Permanent link">&para;</a></h1>
 <p>Hosts can keep their own authorization and evidence rules while sharing Agent
-chat history, SSE, cancellation, usage accounting and policy execution.
+chat history, SSE, cancellation and usage accounting.
 These are trusted Python extension points, not fields accepted from chat clients.</p>
 <h2 id="construct-the-service-once">Construct the service once<a class="headerlink" href="#construct-the-service-once" title="Permanent link">&para;</a></h2>
 <p><code>DatusService(..., task_manager_factory=...)</code> calls a <code>ChatTaskManagerFactory</code>
@@ -5017,25 +4971,6 @@ The host is responsible for retaining the session directory for the receipt's li
 The session avoids feeding/storing the already accepted input twice, including
 SDK history rewrites. SSE delivery stays unchanged: user messages and residual
 mid-run inserts reach the client. Use ordinary sessions on subsequent turns.</p>
-<h2 id="execute-metrics-under-policy">Execute metrics under policy<a class="headerlink" href="#execute-metrics-under-policy" title="Permanent link">&para;</a></h2>
-<p><code>DosiRuntime.from_agent_config(config)</code> constructs the same datasource/profile
-mapping without opening RAG/navigation tools. <code>PolicyMetricExecutor(config,
-runtime)</code> provides <code>query_metrics</code> and <code>attribute</code>, each taking fresh trusted
-<code>policy_context</code>. Hosts supply business filters and authorized windows/dimensions;
-metric policy precedes compilation, and SQL policy precedes reads. Query results
-pass through the result policy and omit internal SQL metadata.</p>
-<p>Native attribution currently has no per-query Python callback. The executor's
-compatibility adapter applies row policies to every dataset in an in-memory
-model, then lets Dosi perform the full analysis. Shared model files are unchanged.
-Only the known SQL-policy row-filter and metric-row-filter forms are supported;
-unknown plugins, column/result policies and ontology attribution fail closed.
-<code>validate_attribution_support</code> provides this check before offering analysis.
-This is not a generic callback for arbitrary native queries. Future native engine
-hooks can replace the adapter behind this public interface.</p>
-<p>Attribution results retain engine metadata for trusted callers. A host exposing
-them to a model or user must project allowed business evidence and redact SQL,
-policy details and exceptions. The host must reauthorize every tool call and
-refresh its policy context; the executor does not own user identity or token refresh.</p>
 
 
 

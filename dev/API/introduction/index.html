@@ -8,7 +8,7 @@
       
       
       
-        
+        <link rel="canonical" href="https://docs.datus.ai/dev/API/introduction/">
       
       
         <link rel="prev" href="../../workflow/api/">
@@ -18,9 +18,9 @@
       
       
         
-          
+          <link rel="alternate" href="/dev/" hreflang="en">
         
-          
+          <link rel="alternate" href="/zh/dev/" hreflang="zh">
         
       
       
@@ -57,13 +57,7 @@
 
     
     
-  <!-- datus-docs-seo -->
-<link rel="canonical" href="https://docs.datus.ai/dev/API/introduction/">
-<link rel="alternate" hreflang="en" href="https://docs.datus.ai/dev/API/introduction/">
-<link rel="alternate" hreflang="zh-Hans" href="https://docs.datus.ai/zh/dev/API/introduction/">
-<link rel="alternate" hreflang="x-default" href="https://docs.datus.ai/dev/API/introduction/">
-<!-- /datus-docs-seo -->
-</head>
+  </head>
   
   
     
@@ -3183,8 +3177,6 @@
       
         
       
-        
-      
     
     
     
@@ -3375,34 +3367,6 @@
   
   
     <li class="md-nav__item">
-      <a href="../../configuration/sql_policy/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    SQL Policy
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
       <a href="../../configuration/web_tool/" class="md-nav__link">
         
   
@@ -3522,10 +3486,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_1_12_9" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_1_12_8" >
         
           
-          <label class="md-nav__link" for="__nav_1_12_9" id="__nav_1_12_9_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_1_12_8" id="__nav_1_12_8_label" tabindex="0">
             
   
   
@@ -3543,8 +3507,8 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_1_12_9_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_1_12_9">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_1_12_8_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_1_12_8">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -5138,10 +5102,6 @@ by sending a <code>X-Datus-User-Id</code> header whose value matches <code>^[A-Z
 default unscoped session; when present, the user id is used to isolate chat sessions and tool state per user.</p>
 <div class="language-text highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>X-Datus-User-Id: alice
 </span></code></pre></div>
-<p>Active policy plugins use a separate execution context. Send it in <code>X-Datus-Policy-Context</code> as a JSON object,
-for example <code>{"row_filter":{"access_mode":"scoped","market_codes":["MKT300"]}}</code>. Authentication and
-authorization happen upstream; Agent forwards this object without treating it as identity. <code>X-Datus-User-Id</code>
-remains session identity and is not merged into policy context. See <a href="../../configuration/sql_policy/">SQL Policy</a>.</p>
 <p>Datasource isolation is controlled separately by the <code>--datasource</code> CLI flag (or <code>DATUS_DATASOURCE</code> env var) and selects
 which datasource from <code>agent.yml</code> is used to load databases and knowledge.</p>
 <h2 id="response-envelope">Response envelope<a class="headerlink" href="#response-envelope" title="Permanent link">&para;</a></h2>
