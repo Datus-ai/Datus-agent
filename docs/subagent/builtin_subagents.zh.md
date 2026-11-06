@@ -14,7 +14,7 @@
 6. **[gen_sql](#gen_sql)** — 具备深度专业知识的专用 SQL 生成
 7. **[gen_table](gen_table.zh.md)** — 数据库建表（CTAS 或自然语言描述）
 8. **[gen_job](gen_job.zh.md)** — 数据管道执行（单库 ETL 和跨库迁移，含对数校验）
-9. **[gen_skill](#gen_skill)** — skill 创建与优化
+9. **[gen_skill](#gen_skill)** — skill 创建、修改与审查
 10. **[gen_visual_report](gen_visual_report.zh.md)** — 在 `reports/<slug>/` 下产出自包含的可视化报告
 11. **[gen_visual_dashboard](gen_visual_dashboard.zh.md)** — 在 `dashboards/<slug>/` 下产出参数化可视化看板
 
@@ -324,14 +324,15 @@ gen_sql subagent 通常由聊天助手通过 `task(type="gen_sql")` 自动调用
 
 ### 概览
 
-`gen_skill` subagent 用于引导用户创建或优化 Datus skill。它可以检查现有 skill、脚手架新的 skill 目录、编辑 `SKILL.md`、执行校验，并检索历史会话中的使用模式。
+`gen_skill` subagent 使用内置工作流创建、修改和审查 Datus skill。它可以检查已有 skill、组织配套资源、核验指令与示例、执行格式校验，并检索历史会话中的使用模式。仅要求审查时会返回问题清单，不修改文件，也不要求先加载编写指南。
 
 ### 关键特性
 
 - **交互式 skill 编写**：通过 `ask_user` 进行访谈式创建
 - **受控文件系统权限**：对工作区只读，对配置的 skills 目录可写
 - **skill 感知编辑**：修改前先加载已有 skill
-- **内置校验**：结束前可调用 `validate_skill` 检查结果
+- **内容审查与核验**：使用可用的解析器或专项测试检查完整示例，通过小规模合成数据或只读检查核验语义判断，区分已确认问题和待核实风险
+- **格式校验**：编写后调用 `validate_skill`；PASS 不代表内容正确性已经得到验证
 
 ### 配置
 
@@ -342,6 +343,8 @@ agent:
       model: claude
       max_turns: 30
 ```
+
+默认可用 skill 为 `create-skill`，作为按需使用的 Datus 格式和打包参考，不再自动注入其正文。核心工作流和审查要求由主提示提供，详细格式与配置说明从参考文件按需读取。配置中显式列出的 `optimize-skill` 会被忽略并记录 warning 日志，无需修改已有配置文件。其他技能配置保持不变；忽略后若无剩余项，则使用默认技能配置。
 
 ### 输出格式
 
@@ -390,7 +393,7 @@ Airflow 调度和 Superset 等外部 BI authoring 由主 agent 直接使用已�
 | `gen_sql` | 生成优化 SQL | SQL 查询 / SQL 文件 | N/A | 深度 SQL 专长、自动验证、支持文件输出 |
 | `gen_table` | 交互式建表 | DDL + 执行结果 | 数据库 | DDL 确认、CTAS 或自然语言建表 |
 | `gen_job` | 数据管道作业（单库 ETL + 跨库传输） | 作业 / 传输结果 | 源库 + 目标库 | DDL/DML 执行、通过 MigrationTargetMixin 做跨方言类型映射、`transfer_query_result`、源目标不同库时做轻量对账校验 |
-| `gen_skill` | 创建或优化 skill | skill 路径 | skills 目录 | 交互式编写、校验、加载现有 skill |
+| `gen_skill` | 创建、修改或审查 skill | skill 路径或审查结果 | skills 目录 | 编写、内容审查、核验、加载现有 skill |
 | `gen_visual_report` | 自包含的可视化报告（叙事文档，查询提前烘焙） | `reports/<slug>/`（可执行 SQL + 执行结果 + 报告组件） | 项目根目录 | 按模块独立修改、可基于 metric 或自定义 SQL 生成、CLI 模式直接在浏览器中打开 |
 | `gen_visual_dashboard` | 参数化可视化看板 | `dashboards/<slug>/`（SQL 模板 + 看板组件） | 项目根目录 | 筛选条件通过本地 `datus --web` 后端实时查询数据 |
 

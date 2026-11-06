@@ -65,9 +65,9 @@ def test_model_without_spec_lookup_or_capacity_settings_uses_default_budget():
     model = _StubModel(lambda *_args, **_kwargs: "ok")
     capacity = model.request_capacity()
     assert capacity.context_length == 1048576
-    assert capacity.default_output == 8192
+    assert capacity.default_output == 128000
     assert capacity.counter_source == "utf8_byte_upper_bound"
-    assert model.check_request({"messages": [{"role": "user", "content": "hello"}]})["max_tokens"] == 8192
+    assert model.check_request({"messages": [{"role": "user", "content": "hello"}]})["max_tokens"] == 128000
 
 
 class TestTestConnection:

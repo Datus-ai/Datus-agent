@@ -169,10 +169,10 @@ BUILTIN_SUBAGENT_DESCRIPTIONS = {
         "Returns JSON with {response, sql_summary_file, tokens_used}."
     ),
     "gen_skill": (
-        "Create new skills or optimize existing skills. "
-        "For new skills: capture intent, interview user, write SKILL.md, scaffold directory. "
-        "For optimization: load existing skill, analyze usage sessions and tool call patterns, rewrite. "
-        "Prompt: describe what skill to create, or 'optimize <skill-name>' to improve an existing skill. "
+        "Create, edit, optimize, or review Datus skills using shared authoring standards. "
+        "Inspect relevant context, organize SKILL.md and supporting resources, review content, "
+        "and verify findings with available tools. Review-only requests return findings without changing files. "
+        "Prompt: describe the requested skill or changes, or provide a skill to review. "
         "Returns JSON with {response, skill_name, skill_path, tokens_used}."
     ),
     "gen_table": (

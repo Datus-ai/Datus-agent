@@ -132,14 +132,15 @@ def test_explicit_broken_tokenizer_does_not_silently_fall_back():
 
 
 @pytest.mark.asyncio
-async def test_custom_model_without_new_settings_reaches_transport_and_retains_capacity_guard():
+@pytest.mark.parametrize("model_name", ["private-deployment", "z-ai/yumcode-pro"])
+async def test_custom_model_without_new_settings_reaches_transport_and_retains_capacity_guard(model_name):
     import litellm
 
     model = OpenAIModel(
-        ModelConfig(type="openai", model="private-deployment", api_key="test", base_url="https://proxy.example/v1")
+        ModelConfig(type="openai", model=model_name, api_key="test", base_url="https://proxy.example/v1")
     )
     response = litellm.ModelResponse(
-        model="private-deployment",
+        model=model_name,
         choices=[{"index": 0, "finish_reason": "stop", "message": {"role": "assistant", "content": "done"}}],
         usage={"prompt_tokens": 10, "completion_tokens": 2, "total_tokens": 12},
     )
@@ -148,7 +149,7 @@ async def test_custom_model_without_new_settings_reaches_transport_and_retains_c
         prompt = "Inspect the schema.\n" + "column_name " * 25000
         result = await model.generate_with_tools(prompt, max_turns=1)
         assert result["content"] == "done"
-        assert send.await_args.kwargs["max_tokens"] == DEFAULT_MAX_TOKENS
+        assert send.await_args.kwargs["max_tokens"] == 128000
         send.reset_mock()
         with pytest.raises(ContextCapacityError, match="CONTEXT_LIMIT_EXCEEDED"):
             await model.generate_with_tools("\N{EURO SIGN}" * DEFAULT_CONTEXT_LENGTH, max_turns=1)

@@ -4122,7 +4122,8 @@ class AgenticNode(Node):
 
         Builds an instance of ``self.result_class`` populated with
         ``success=False``, ``error=<formatted>``, ``response=""``,
-        ``tokens_used=0``. Automatically fills ``action_history`` for
+        ``tokens_used=0``. Explicit output truncation preserves partial text
+        and received usage instead. Automatically fills ``action_history`` for
         NodeResult subtypes that declare that field.
 
         Subclasses MUST declare ``result_class`` for this to work; the
@@ -4140,6 +4141,13 @@ class AgenticNode(Node):
             "response": "",
             "tokens_used": 0,
         }
+        from datus.models.output_truncation import ModelOutputTruncatedError
+
+        if isinstance(exc, ModelOutputTruncatedError):
+            from datus.utils.text_utils import strip_litellm_placeholder
+
+            kwargs["response"] = strip_litellm_placeholder(exc.partial_response)
+            kwargs["tokens_used"] = exc.usage.total_tokens
         if "action_history" in getattr(self.result_class, "model_fields", {}):
             kwargs["action_history"] = [a.model_dump() for a in ctx.action_history_manager.get_actions()]
         return self.result_class(**kwargs)

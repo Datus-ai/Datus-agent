@@ -186,6 +186,10 @@ class BashTool:
         stdin (it is closed), so interactive prompts / ``read`` return EOF
         immediately rather than hanging.
 
+        Use ``python`` for Python checks: it uses the same interpreter as Datus,
+        including its installed packages. ``python3`` resolves through PATH and
+        may use a different environment.
+
         Prefer the dedicated tools when they fit — they are safer (scoped to
         the project via the filesystem policy) and produce cleaner, reviewable
         results:
