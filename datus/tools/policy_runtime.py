@@ -135,7 +135,7 @@ class PolicyRuntime:
             if (
                 getattr(agent_config, "sql_policy_required", False) is True
                 or isinstance(expected, dict)
-                and (expected.get("policies") or expected.get("column_masking"))
+                and (expected.get("policies") or expected.get("column_masking") or expected.get("masking_profiles"))
             ) and "sql-policy" not in {name for name, _ in self._runtimes}:
                 raise DatusException(ErrorCode.COMMON_CONFIG_ERROR, message="Required SQL policy plugin is unavailable")
         except DatusException:
@@ -158,6 +158,26 @@ class PolicyRuntime:
     @property
     def has_bound_read_provider(self) -> bool:
         return any(callable(getattr(runtime, "bind_read", None)) for _, runtime in self._runtimes)
+
+    def requires_request_context(self) -> bool:
+        """Ask plugins whether reads need trusted request-local authorization."""
+        for plugin_name, runtime in self._runtimes:
+            requirement = getattr(runtime, "requires_request_context", None)
+            if callable(requirement):
+                required = self._invoke(plugin_name, "requires_request_context", requirement)
+                if not isinstance(required, bool):
+                    raise DatusException(ErrorCode.COMMON_CONFIG_ERROR, message="Invalid policy context requirement")
+                if required:
+                    return True
+            else:
+                # Preserve existing providers which express required inputs
+                # through their context validation hook.
+                hook = getattr(runtime, "validate_context", None)
+                if callable(hook):
+                    result = self._invoke(plugin_name, "validate_context", hook, {})
+                    if not self._validation_decision(plugin_name, result).allowed:
+                        return True
+        return False
 
     def before_metric_read(
         self, *, datasets: set[str], where: Optional[str], policy_context: Optional[Dict[str, Any]]
@@ -188,17 +208,17 @@ class PolicyRuntime:
     def validate_context(self, policy_context: Optional[Dict[str, Any]]) -> PolicyValidationResult:
         context = self._normalize_context(policy_context)
         if not self._runtimes and any(
-            key in context for key in ("row_filter", "column_masking", "column_mask", "sql_policy")
+            key in context for key in ("row_filter", "column_masking", "column_mask", "sql_policy", "masking_profile")
         ):
             raise DatusException(
                 ErrorCode.POLICY_DENIED, message="Request requires SQL policies but no implementation is loaded"
             )
-        if "sql_policy" in context and not any(
+        if any(key in context for key in ("sql_policy", "masking_profile")) and not any(
             callable(getattr(runtime, "bind_read", None)) for _, runtime in self._runtimes
         ):
             raise DatusException(
                 ErrorCode.POLICY_DENIED,
-                message="Effective SQL policy snapshot requires a native source-policy provider",
+                message="Effective SQL policies require a native source-policy provider",
             )
         for plugin_name, runtime in self._runtimes:
             hook = getattr(runtime, "validate_context", None)
@@ -315,6 +335,8 @@ class PolicyRuntime:
             rewritten_sql=current_sql,
             rewritten=current_sql != sql,
             policy_runtimes=self.runtime_names,
+            masking_profile=context.get("masking_profile"),
+            policy_revision=context.get("policy_revision"),
         )
         return SqlReadDecision(allowed=True, sql=current_sql, applied_policies=applied, verify_context=verifier)
 

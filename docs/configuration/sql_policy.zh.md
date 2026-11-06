@@ -72,6 +72,36 @@ SQLite 文本列的行规则要求字符串值，避免两种执行器的隐式�
 
 ## 可信请求上下文
 
+项目可以使用命名脱敏方案替代静态 `column_masking` 列表。以下片段放在现有
+`agent.plugins.sql-policy.<profile>` 内：
+
+```yaml
+policy_revision: "r17"
+masking_profiles:
+  finance_team:
+    - column: analytics.main.orders.phone
+      mask: last4
+  external_partner:
+    - column: analytics.main.orders.phone
+      mask: redact
+  approved_raw: []
+```
+
+ID 是自定义且区分大小写的配置 key；可信宿主每请求选择一个方案：
+
+```json
+{"policy_revision":"r17","masking_profile":"finance_team","row_filter":{"access_mode":"scoped","tenant_ids":[42]}}
+```
+
+请求只传 ID 和版本，列规则保存在项目共享配置中。明确选中空列表方案时不执行列脱敏，
+行过滤仍然执行，方案名称没有特殊授权含义。ID 缺失、未知或版本不匹配时拒绝读取。
+命名方案与静态 masking 规则互斥；请求中的方案选择与完整 `sql_policy` 快照也互斥。
+只有 masking 的项目同样需要方案 ID 和版本。选择过程不修改共享配置，
+方案及版本会进入执行和缓存指纹，并显示在 `sql.policy.rewrite` DEBUG 事件中。
+
+可信宿主可以通过 `PolicyRuntime(config).requires_request_context()` 判断是否需要用户上下文，
+包括只有命名脱敏方案的项目。SaaS/Backend 的用户选择和配置刷新尚未接入，当前需由可信宿主明确传入。
+
 配置中的行规则继续使用现有执行输入：
 
 ```json
@@ -101,7 +131,8 @@ SQLite 文本列的行规则要求字符串值，避免两种执行器的隐式�
 本实现需要配套原生 wheel，SaaS/Backend 的接入和发布另行处理。
 
 报表/看板指标先编译，在最终 SQL 读取入口统一应用一次策略；直接 Dosi 执行仍使用原生 provider。
-配置了策略时，包含读取的写语句会被拒绝；仅配置 masking、请求上下文为空时也会生效。
+配置了策略时，包含读取的写语句会被拒绝；仅配置静态 `column_masking`、请求上下文为空时也会生效。
+命名脱敏方案需要请求明确提供方案 ID 和版本。
 
 ## 只读硬开关（`agent.sql_read_only`）
 
