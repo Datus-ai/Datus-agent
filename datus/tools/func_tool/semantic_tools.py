@@ -1252,6 +1252,12 @@ class SemanticTools:
                 if connector.dialect == "sqlite" and namespace == "database":
                     continue
                 expected = current.get(namespace)
+                if connector.dialect == "oracle" and namespace == "database":
+                    # Match both the adapter and Dosi: service_name wins over
+                    # the legacy database alias, including a chat selection
+                    # which still carries that alias in its runtime context.
+                    profile = self._extract_db_config(datasource) or {}
+                    expected = profile.get("service_name") or expected
                 if expected and actual.get(namespace) != expected:
                     from datus.tools.sql_read_context import SqlReadContext
 

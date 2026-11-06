@@ -2838,6 +2838,41 @@ def test_dosi_duckdb_namespace_comparison_uses_live_identifier_rules(semantic_to
                 semantic_tools._bind_dosi_read()
 
 
+@pytest.mark.parametrize("service_name", ["FREEPDB1", None])
+@pytest.mark.parametrize("actual_database,allowed", [("FREEPDB1", True), ("OTHERPDB", False)])
+def test_dosi_oracle_namespace_uses_the_configured_service_target(
+    semantic_tools, monkeypatch, service_name, actual_database, allowed
+):
+    from datus.configuration.agent_config import DbConfig
+    from datus.utils.exceptions import DatusException
+
+    database = "legacy_alias" if service_name else "FREEPDB1"
+    config = DbConfig(type="oracle", database=database, extra={"service_name": service_name})
+    semantic_tools.agent_config.current_db_config.return_value = config
+    monkeypatch.setattr(
+        "datus.tools.sql_read_context.SqlReadContext",
+        lambda *_: SimpleNamespace(canonical_name=lambda name: name),
+    )
+    bound = SimpleNamespace(context_json=json.dumps({"database": actual_database}))
+    runtime = SimpleNamespace(requires_bound_read=lambda _: True, bind_read=lambda **_: bound)
+    monkeypatch.setattr("datus.tools.policy_runtime.PolicyRuntime", lambda _: runtime)
+    connector = SimpleNamespace(dialect="oracle")
+    manager = SimpleNamespace(get_conn=lambda *_: connector)
+    monkeypatch.setattr("datus.tools.db_tools.db_manager.db_manager_instance", lambda _: manager)
+    monkeypatch.setattr(
+        semantic_tools,
+        "_runtime_db_context",
+        lambda: {"datasource": "warehouse", "database": database},
+    )
+    if allowed:
+        assert semantic_tools._bind_dosi_read() is bound
+    else:
+        # A genuinely different service is still rejected, without relying
+        # on identifier metadata to equate two different connection targets.
+        with pytest.raises(DatusException, match="Dosi database does not match"):
+            semantic_tools._bind_dosi_read()
+
+
 def test_external_metric_compile_uses_the_single_enforcement_handoff(semantic_tools, monkeypatch):
     runtime = SimpleNamespace(
         compile_for_sql_execution=AsyncMock(
