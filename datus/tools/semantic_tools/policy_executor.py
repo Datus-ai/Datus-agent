@@ -129,7 +129,7 @@ class PolicyMetricExecutor:
                     else exp.select("*").from_(exp.to_table(source)).sql(dialect=connector.dialect)
                 )
                 decision = policy.before_sql_read(
-                    sql, datasource=datasource, dialect=connector.dialect, policy_context=context
+                    sql, datasource=datasource, dialect=connector.dialect, policy_context=context, connector=connector
                 )
                 if not decision.allowed:
                     raise _denied("ACCESS_DENIED")

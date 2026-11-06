@@ -89,6 +89,33 @@ async def test_metric_failure_logs_traceback_only_for_unexpected_errors(
         logger.exception.assert_not_called()
 
 
+@pytest.mark.asyncio
+async def test_dashboard_metric_tools_keep_explicit_request_policy_context(monkeypatch, tmp_path):
+    from datus.tools import func_tool
+    from datus.tools.func_tool import metric_artifact_tools, semantic_tools
+    from datus.utils.exceptions import DatusException
+
+    request_context = {"sql_policy": {"version": "request"}}
+    config_context = {"sql_policy": {"version": "config"}}
+    config = SimpleNamespace(project_root=str(tmp_path), policy_context=config_context)
+    captured = []
+    monkeypatch.setattr(func_tool, "DBFuncTool", lambda **_: object())
+    monkeypatch.setattr(semantic_tools, "SemanticTools", lambda **kwargs: SimpleNamespace(**kwargs))
+
+    def execute(query, *, semantic_tools, policy_context, **_):
+        captured.append(semantic_tools.policy_context_provider())
+        assert policy_context is request_context
+        raise DatusException(ErrorCode.POLICY_DENIED, message="stop after checking the request boundary")
+
+    monkeypatch.setattr(metric_artifact_tools, "execute_metric_artifact_query", execute)
+    query = SimpleNamespace(name="sales", datasource="warehouse", parameter_names=lambda: set())
+    meta = SimpleNamespace(slug="sales", datasource="warehouse", params=[])
+    result = await DashboardService(agent_config=config)._run_metric_query(query, meta, {}, None, request_context)
+    assert result.errorCode == "POLICY_DENIED"
+    assert captured == [request_context]
+    assert config.policy_context is config_context
+
+
 def _write_dashboard(
     project_files_root: Path,
     *,

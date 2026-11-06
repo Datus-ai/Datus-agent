@@ -153,23 +153,30 @@ def execute_metric_artifact_query(
             detail = {**detail, "definition": match[1].get("detail", {})}
     values = {name: None for name in query.parameter_names()}
     values.update(params or {})
-    from datus.tools.policy_runtime import PolicyRuntime
+    from datus.tools.policy_runtime import MetricReadDecision, PolicyRuntime
     from datus.tools.read_observer import ReadObservation, notify_read
 
     # Match the SQL read path: an explicit empty context must not inherit tool privileges.
     effective_policy_context = db_tool.policy_context if policy_context is None else policy_context
     config = getattr(db_tool, "agent_config", None)
     policies = PolicyRuntime(config)
+    native_required = policies.has_bound_read_provider and policies.requires_bound_read(effective_policy_context)
     datasets = binding.get("datasets")
-    if policies.has_metric_policies and (
-        not isinstance(datasets, list) or not datasets or any(not isinstance(name, str) for name in datasets)
+    if (
+        not native_required
+        and policies.has_metric_policies
+        and (not isinstance(datasets, list) or not datasets or any(not isinstance(name, str) for name in datasets))
     ):
         raise DatusException(ErrorCode.POLICY_DENIED, message="Metric policy datasets could not be resolved")
     arguments = metric_query_arguments(query, values)
-    decision = policies.before_metric_read(
-        datasets=set(datasets or []),
-        where=arguments.get("where"),
-        policy_context=effective_policy_context,
+    decision = (
+        MetricReadDecision(allowed=True, where=arguments.get("where"))
+        if native_required
+        else policies.before_metric_read(
+            datasets=set(datasets or []),
+            where=arguments.get("where"),
+            policy_context=effective_policy_context,
+        )
     )
     if not decision.allowed:
         raise DatusException(ErrorCode.POLICY_DENIED, message=decision.reason or "Metric policy denied the query")
@@ -184,7 +191,8 @@ def execute_metric_artifact_query(
             runtime_names=policies.runtime_names,
         )
     )
-    compiled = run_async(runtime.query_metrics(**arguments))
+    compile_query = runtime.compile_for_sql_execution if native_required else runtime.query_metrics
+    compiled = run_async(compile_query(**arguments))
     sql = (compiled.metadata or {}).get("sql")
     if not isinstance(sql, str) or not sql.strip():
         raise ValueError("metric engine returned no compiled SQL")

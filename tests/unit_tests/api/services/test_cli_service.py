@@ -750,6 +750,31 @@ class TestCLIServiceReadOnlyDeployment:
     """
 
     @pytest.mark.asyncio
+    async def test_profile_only_masking_rejects_copying_raw_rows(self, writable_cli_svc, monkeypatch):
+        from types import SimpleNamespace
+
+        config = writable_cli_svc.agent_config
+        monkeypatch.setattr(config, "active_plugin_names", lambda: {"sql-policy"})
+        monkeypatch.setattr(
+            config, "get_plugin_profile", lambda _: {"column_masking": [{"column": "schools.School", "mask": "redact"}]}
+        )
+        runtime = SimpleNamespace(
+            validate_context=lambda _: SimpleNamespace(allowed=True), requires_bound_read=lambda _: True
+        )
+        monkeypatch.setattr(
+            "datus.tools.policy_runtime.collect_plugin_policy_runtime_factories",
+            lambda _: {"sql-policy": lambda _: runtime},
+        )
+        _, connector = writable_cli_svc._execution_target(None)
+        with patch.object(connector, "execute", wraps=connector.execute) as execute:
+            result = await writable_cli_svc.execute_sql(
+                ExecuteSQLInput(sql_query="CREATE TABLE mask_copy AS SELECT School FROM schools"), policy_context={}
+            )
+        assert not result.success
+        assert "column masking" in result.errorMessage
+        execute.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_select_is_allowed(self, writable_cli_svc, mutable_real_agent_config):
         mutable_real_agent_config.harden_sql_read_only()
 

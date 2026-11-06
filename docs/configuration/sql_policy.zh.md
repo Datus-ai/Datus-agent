@@ -1,10 +1,30 @@
 # SQL Policy
 
-Datus Agent 不负责用户认证，也不判断用户具有什么权限。可信上游服务完成认证和鉴权后，只把策略执行所需的输入作为 `policy_context` 传给 Agent；启用的 policy plugin 负责解释这些输入并保护数据读取。
+可信上游完成用户认证和权限计算，Agent 只执行生效策略，不管理 role。
+策略通过可选的 `sql-policy` plugin 加载；没有配置策略时，Agent / Dosi 保持原有独立运行方式，不依赖私有包。
 
 ## 配置
 
-SQL policy 只通过 plugin profile 配置；原来的 `agent.sql_policy` provider 配置不再支持。
+### 用 DEBUG 日志查看 SQL
+
+以 `datus --debug` 启动，或配置 `agent.logging.level: DEBUG`。
+Agent 常规日志中会出现以下结构化事件：
+
+| 事件 | SQL 字段 | 记录时机 |
+|---|---|---|
+| `sql.policy.rewrite` | `original_sql`、`rewritten_sql`、`rewritten` | 策略处理完成、执行之前；覆盖 SQL 工具、API 读取和 CLI 手工 SQL。 |
+| `sql.execute` | `sql` | SQL 工具或 CLI 向 connector 提交最终 SQL 之前。 |
+| `sql.dosi.execute` | `sql` | 原生指标/明细执行成功后，记录该次引擎调用实际返回的 SQL。 |
+| `sql.dosi.compile` | `sql` | 指标 dry-run 编译完成；该 SQL 尚未执行。 |
+
+事件包含 datasource、dialect；Dosi 另包含 connection 和 operation。
+打印日志不会额外编译查询，也不会序列化 policy_context；SQL 字段沿用现有日志脱敏配置。
+INFO 及以上级别不输出这些事件。
+
+### 策略规则
+
+原生 `datus-sql-policies` 使用同一份物理表 `row_filter` 保护 SQL 和指标读取。
+旧 `metric_row_filter` 配置需要迁移，不再往指标的业务 `where` 中拼接条件。
 
 ```yaml
 agent:
@@ -13,82 +33,78 @@ agent:
       default:
         default: true
         policies:
-          - id: sp_store_scope_sql
-            name: store_scope_sql
+          - id: tenant_scope
+            name: tenant_scope
             type: row_filter
             applies_to:
-              datasources: ["warehouse"]
-              tables: ["orders", "store_sales"]
+              datasources: [warehouse]
+              tables: [analytics.main.orders]
             condition:
-              column: store_id
+              column: tenant_id
               operator: in
-              value_from: policy_context.row_filter.store_ids
+              value_from: policy_context.row_filter.tenant_ids
+        column_masking:
+          - column: analytics.main.orders.phone
+            mask: last4
 ```
 
-policy type 及其字段由 policy plugin 定义。每个 `row_filter` 和 `metric_row_filter` policy 都必须有稳定且唯一的 `id`。Agent 只加载 plugin 在 `datus-plugin.yml` 中声明的运行时。
+Profile 目标支持短名、部分限定名和完整名称：`orders`、`orders.phone` 等省略的前缀，在绑定时按实际连接
+的当前坐标补齐，不使用 datasource 初始默认值；显式坐标保持不变。切换命名空间后，旧绑定失效，
+重新绑定的短目标跟随新命名空间，完整目标仍指向原来指定的表。必要的当前坐标不可用时拒绝绑定。
 
-## 请求上下文
+完整目标按 adapter 层级书写：DuckDB、PostgreSQL、Greenplum、GaussDB 用 `database.schema.table`；
+StarRocks、Doris 用 `catalog.database.table`；Trino 用 `catalog.schema.table`；Oracle、HANA 用 `schema.table`；
+MySQL、TiDB、ClickHouse、Hive、Spark 用 `database.table`。Oracle 服务名和 HANA 租户属于连接身份，
+不作为 SQL 对象名前缀；datasource 路由名单独指定。名称含点时需要 SQL 引号。
+策略默认值只指向当前命名空间，查询短名仍按 SQL 的 search path 解析。
+MySQL/TiDB 会读取实际连接的 `lower_case_table_names`，物理目标和 CTE 按该设置匹配大小写。
 
-默认 API provider 从 `X-Datus-Policy-Context` 读取 JSON object：
+行过滤支持 `eq`、`in`。四种固定 masking 为 `nullify`、`redact`、`last4`、`email`，只配置目标列和方式。
+文本方式需要兼容的文本类型和已支持的方言。目前已完成 DuckDB，以及 13 个 Docker adapter 的真实执行验收：PostgreSQL、MySQL、TiDB、StarRocks、
+Doris、ClickHouse、Greenplum、GaussDB/openGauss、Trino、Oracle、Hive、Spark（HiveServer2）、HANA，
+覆盖已测试的原生类型和查询形态。Oracle 指标路径需要 OCI，HANA 指标路径需要 SAP HANA ODBC；
+本地 HANA 验收使用直接明文 SQL 端口，租户路由及 TLS 另行验收。
+SQLite 也已验证：原生 SQL 使用 SQLite 方言，Dosi 通过 DuckDB SQLite 扩展执行。
+目标使用 `main.table` 或 `attach_alias.table`，不使用文件名。Dosi 仅支持文件库，
+存在临时对象或额外附加库时拒绝执行；元数据要求 SQLite 3.37+，`last4` 遇到内嵌 NUL 返回 NULL。
+SQLite 文本列的行规则要求字符串值，避免两种执行器的隐式类型转换差异。
+其他文本方言（包括 Inceptor）尚未开放。
 
-```http
-X-Datus-Policy-Context: {"row_filter":{"access_mode":"scoped","store_ids":[1,2]}}
-```
+## 可信请求上下文
 
-约定结构按 policy family 分两层，不包含用户身份或 groups：
+配置中的行规则继续使用现有执行输入：
 
 ```json
-{
-  "row_filter": {
-    "access_mode": "scoped",
-    "policy_modes": {
-      "sp_store_scope_sql": "scoped"
-    },
-    "store_ids": [1, 2]
-  },
-  "column_mask": {
-    "customers.email": {"strategy": "email_partial"}
-  }
-}
+{"row_filter":{"access_mode":"scoped","tenant_ids":[42]}}
 ```
 
-当前 sql-policy plugin 首先应用请求级 row-filter 模式：
+`denied` 拒绝所有读取。可选 `policy_modes` 可将某个已配置规则 ID 标为 `unrestricted`，只跳过该行规则；其他规则及 masking 仍然生效。缺少输入、未知 ID、非法模式都会拒绝。
 
-| `access_mode` | 行为 |
-|---|---|
-| `denied` | 拒绝所有数据读取。 |
-| `scoped` | 逐个评估已配置的行过滤；缺少必需输入时 fail closed。 |
+可信宿主也可直接提供 `policy_context.sql_policy`，包含 `version` 和
+`policies: {row_filters: [...], column_masks: [...]}`。目标为规范化的结构化对象：
+`datasource`、可选 `catalog`、`database`、`schema`、`table`。
+行规则增加 `column`、`operator`、`values`，masking 增加 `column`、`mask`。
+该快照替代本次请求的 profile 规则，属于可信授权输入，不能由模型的工具参数提供。
+默认 API provider 可从 `X-Datus-Policy-Context` 解析 JSON，部署方必须保证 header 来源可信。
+`X-Datus-User-Id` 仍只用于会话隔离。
 
-对于 scoped 请求，可选的 `policy_modes` object 可以按 policy ID 单独覆盖模式：
+## 生效流程
 
-| 单 policy 模式 | 行为 |
-|---|---|
-| `scoped` | 执行该 policy，并解析其 `policy_context.*` 输入。 |
-| `unrestricted` | 仅跳过该 policy；其他 row policy 和 result policy 仍会执行。 |
+1. Agent 校验 context，将本次策略快照绑定到实际连接和元数据。
+2. 普通 SQL 经 `DBFuncTool.execute_read_enforced`；Dosi 经可选 Python `policy` / `policy_required` 参数注入同一 provider。
+3. 完整 SQL lowering 后，共享原生核心逐个替换物理表读取：先按原值过滤行，再投影脱敏值，外层业务计算使用这些值。子查询、重复引用、query-backed dataset、衍生指标、FIXED/context_filter 和归因查询都经过这个边界。
+4. 执行前再次校验连接上下文；指标/明细结果缓存绑定策略快照和执行上下文。返回结果后不再做二次 masking。
 
-未在 `policy_modes` 中声明的 policy 默认为 `scoped`。未知 policy ID、格式错误的模式，以及缺少或未知的请求级 `access_mode` 都会被拒绝；没有配置 row policy 时，空 context 可以通过。
+要求策略但缺失实现、绑定失败或语法不支持时拒绝执行。暂不支持的视图、表函数等不透明来源会被拒绝；不会退回旧的指标 WHERE 注入。进程外 proxied executor 需自行保护；新增原生接口不会自动保护所有已有 workflow 或外部执行入口。
 
-`X-Datus-User-Id` 只用于会话隔离。Agent 不会把它合并进 `policy_context`，也不会把 context 中的任何字段当作已认证身份。
+`datus sql-policy status` 查看配置。离线 `check` 可以校验 context，但缺少实际连接时拒绝策略改写；查看改写后的 SQL 应使用 Agent / Dosi dry-run。
+本实现需要配套原生 wheel，SaaS/Backend 的接入和发布另行处理。
 
-## 运行流程
-
-1. 上游服务完成认证、鉴权并生成 `policy_context`。
-2. API 将 header 解析为 `AppContext.policy_context`，并在启动任何内置或用户自定义 subagent 前调用启用的 policy runtime 校验。
-3. 请求级 `AgentConfig` 副本把同一 context 传给所有 subagent 和 tool transformer。
-4. `DBFuncTool.execute_read_enforced` 先校验原始 SQL，再调用 `before_sql_read`，然后重新校验改写后的 SQL 并执行。
-5. 查询成功后，原始结果会先经过 `after_read_result`，之后才允许压缩、保存 artifact、渲染或返回；column masking 将在这个扩展点实现。
-6. 语义指标工具也调用同一个 plugin runtime，在聚合前写入 `where` 条件。
-
-无效 runtime 声明、格式错误的 decision、策略异常、策略拒绝和不安全 SQL 改写都会 fail closed。proxied tool 在 Agent 进程外执行，需要由外部 executor 自行保护。
-
-手工检查时显式传入同一个对象：
-
-```bash
-datus sql-policy check --sql "SELECT * FROM orders" \
-  --policy-context '{"row_filter":{"access_mode":"scoped","store_ids":[1,2]}}'
-```
+报表/看板指标先编译，在最终 SQL 读取入口统一应用一次策略；直接 Dosi 执行仍使用原生 provider。
+配置了策略时，包含读取的写语句会被拒绝；仅配置 masking、请求上下文为空时也会生效。
 
 ## 只读硬开关（`agent.sql_read_only`）
+
 
 `agent.sql_read_only` 是另一套更简单的机制，不要与上面的 policy plugin 混淆。
 

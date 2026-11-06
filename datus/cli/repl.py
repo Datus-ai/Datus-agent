@@ -1981,7 +1981,6 @@ class DatusCLI:
         from datus.cli.manual_exec import build_sql_error_payload, build_sql_message_payload, build_sql_payload
         from datus.utils.sql_utils import validate_adapter_sql_analysis
 
-        logger.debug(f"Executing SQL query: '{sql}'")
         sql_action = ActionHistory.create_action(
             role=ActionRole.USER,
             action_type="sql_execution",
@@ -2005,6 +2004,12 @@ class DatusCLI:
 
             validate_adapter_sql_analysis(sql, getattr(self.db_connector, "dialect", "") or "")
             start_time = time.time()
+            logger.debug(
+                "sql.execute",
+                datasource=getattr(self.agent_config, "current_datasource", "") or "",
+                dialect=getattr(self.db_connector, "dialect", "") or "",
+                sql=sql,
+            )
             result = self.db_connector.execute(input_params={"sql_query": sql}, result_format="arrow")
             exec_time = time.time() - start_time
 

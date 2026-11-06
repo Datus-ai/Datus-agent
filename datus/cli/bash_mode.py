@@ -430,6 +430,7 @@ def _enforce_policy_if_read(cli: "DatusCLI", sql: str) -> str:
         sql,
         datasource=datasource,
         dialect=dialect,
+        connector=connector,
         policy_context=policy_context,
     )
     if not enforced.allowed:
@@ -437,16 +438,12 @@ def _enforce_policy_if_read(cli: "DatusCLI", sql: str) -> str:
             ErrorCode.TOOL_INVALID_INPUT,
             message=enforced.reason or "Policy denied the query",
         )
+    verifier = getattr(enforced, "verify_context", None)
+    if verifier is not None:
+        verifier()
     rewritten_sql = sql if enforced.sql is None else enforced.sql
     if rewritten_sql != sql:
-        from datus.tools.db_tools import connector_registry
-
-        analyzer_getter = getattr(connector_registry, "get_sql_analyzer", None)
-        if callable(analyzer_getter) and analyzer_getter(dialect) is not None:
-            raise DatusException(
-                ErrorCode.TOOL_INVALID_INPUT,
-                message="SQL policy rewriting is unsupported for this adapter's limited SQL analysis path.",
-            )
+        validate_adapter_sql_analysis(rewritten_sql, dialect)
         from datus.utils.sql_utils import (
             READ_ONLY_MULTI_STATEMENT,
             READ_ONLY_NON_READ,

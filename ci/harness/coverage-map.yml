@@ -1723,6 +1723,7 @@ execution:
         - tests/unit_tests/agent/
         - tests/unit_tests/api/
         - tests/unit_tests/ci/
+        - tests/unit_tests/configuration/test_agent_config.py
         - tests/unit_tests/tools/
     - id: datus-tools-skill_tools
       paths:

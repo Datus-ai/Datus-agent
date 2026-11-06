@@ -736,6 +736,51 @@ def test_metric_policy_is_applied_before_compilation(environment, monkeypatch):
     assert events[0].applied_policy_ids == ("region_scope",)
 
 
+def test_native_artifact_policies_apply_once_at_the_final_sql_boundary(environment, monkeypatch):
+    from unittest.mock import AsyncMock
+
+    env = environment
+    context = {"sql_policy": {"version": "request", "policies": {}}}
+    env.db.agent_config = SimpleNamespace(active_plugin_names=lambda: {"sql-policy"}, get_plugin_profile=lambda _: {})
+
+    class NativePolicy:
+        def validate_context(self, value):
+            assert value == context
+            return SimpleNamespace(allowed=True)
+
+        def requires_bound_read(self, value):
+            return True
+
+        def before_metric_read(self, **kwargs):
+            raise AssertionError("physical policies must not use the former metric-WHERE hook")
+
+        def bind_read(self, **kwargs):
+            raise AssertionError("the enforced DB tool owns the execution binding")
+
+    monkeypatch.setattr(
+        "datus.tools.policy_runtime.collect_plugin_policy_runtime_factories",
+        lambda _: {"sql-policy": lambda _: NativePolicy()},
+    )
+    compiler = AsyncMock(wraps=env.runtime.query_metrics)
+    env.runtime.compile_for_sql_execution = compiler
+    env.runtime.query_metrics = AsyncMock(side_effect=AssertionError("do not apply policies during artifact compile"))
+    env.db.execute_read_enforced.return_value = SimpleNamespace(
+        success=True, sql_return=pa.table({"region": ["masked"], "revenue": [17.0]})
+    )
+    result, _ = execute_metric_artifact_query(
+        MetricQueryRequest.model_validate({"metric": REF, "dimensions": ["orders.region"]}),
+        semantic_tools=env.semantic,
+        db_tool=env.db,
+        project_root=env.root,
+        policy_context=context,
+    )
+    assert result.rows == [{"region": "masked", "revenue": 17.0}]
+    compiler.assert_awaited_once()
+    env.runtime.query_metrics.assert_not_called()
+    env.db.execute_read_enforced.assert_called_once()
+    assert env.db.execute_read_enforced.call_args.kwargs["policy_context"] is context
+
+
 def test_metric_policy_denial_does_not_compile_or_query(environment, monkeypatch):
     from datus.utils.exceptions import DatusException
 

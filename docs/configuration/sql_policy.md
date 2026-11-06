@@ -1,10 +1,33 @@
 # SQL Policy
 
-Datus Agent does not authenticate users or decide their permissions. A trusted upstream service authenticates and authorizes the request, then sends execution-only inputs as `policy_context`. Active policy plugins interpret that context and protect reads.
+A trusted upstream service authenticates users and supplies effective policies.
+Agent executes them; it does not resolve roles. Policy support is optional and
+loaded through the `sql-policy` plugin. Ordinary standalone Agent/Dosi calls
+continue to work without the private package.
 
 ## Configuration
 
-SQL policy is configured only as a plugin profile; the former `agent.sql_policy` provider configuration is not supported.
+### Inspect SQL in DEBUG logs
+
+Start Agent with `datus --debug` or set `agent.logging.level: DEBUG`.
+The normal Agent log contains these structured events:
+
+| Event | SQL fields | When recorded |
+|---|---|---|
+| `sql.policy.rewrite` | `original_sql`, `rewritten_sql`, `rewritten` | After policy processing, before execution; includes SQL tools, API reads and CLI SQL mode. |
+| `sql.execute` | `sql` | Immediately before the SQL tool or CLI submits the final statement to its connector. |
+| `sql.dosi.execute` | `sql` | After successful native metric/detail execution, using the SQL returned by that actual engine call. |
+| `sql.dosi.compile` | `sql` | Metric dry-run compilation; the statement has not been executed. |
+
+Events include the datasource and dialect. Dosi events also identify the
+connection and operation. Logging never recompiles a query or serializes the
+policy context; SQL fields pass through the existing log-redaction configuration.
+These events are suppressed at INFO and higher levels.
+
+### Rules
+
+The native `datus-sql-policies` provider uses one physical-table row rule for
+both SQL and Dosi reads. `metric_row_filter` profiles must be migrated.
 
 ```yaml
 agent:
@@ -13,82 +36,105 @@ agent:
       default:
         default: true
         policies:
-          - id: sp_store_scope_sql
-            name: store_scope_sql
+          - id: tenant_scope
+            name: tenant_scope
             type: row_filter
             applies_to:
-              datasources: ["warehouse"]
-              tables: ["orders", "store_sales"]
+              datasources: [warehouse]
+              tables: [analytics.main.orders]
             condition:
-              column: store_id
+              column: tenant_id
               operator: in
-              value_from: policy_context.row_filter.store_ids
+              value_from: policy_context.row_filter.tenant_ids
+        column_masking:
+          - column: analytics.main.orders.phone
+            mask: last4
 ```
 
-Policy types and their fields belong to the policy plugin. Every `row_filter` and `metric_row_filter` policy requires a stable, unique `id`. Agent only loads the plugin runtime declared by its `datus-plugin.yml` manifest.
+Profile targets accept short, partially qualified and full names. Missing
+prefixes bind to the live session's current coordinates, not the datasource's
+initial defaults; explicit coordinates stay fixed. For example, `orders` and
+`orders.phone` use the current namespace. Rebind after a namespace switch: short
+targets follow the new current namespace, while full targets remain explicit.
+Missing required current coordinates are refused.
+MySQL/TiDB binding reads the live `lower_case_table_names` setting; physical
+targets and CTE names use that server's case rules.
 
-## Request Context
+Full names follow the adapter: DuckDB/PostgreSQL/Greenplum/GaussDB use
+`database.schema.table`, StarRocks/Doris use `catalog.database.table`, Trino uses
+`catalog.schema.table`, Oracle/HANA use `schema.table`, and MySQL/TiDB/ClickHouse/
+Hive/Spark use `database.table`. Oracle service names and HANA tenants identify
+the connection rather than an SQL object prefix. The datasource key is separate. Quote names containing dots. Policy defaults select the current
+namespace; short SQL query names still use the connection's search path.
 
-The default API provider reads a JSON object from `X-Datus-Policy-Context`:
+Row operators are `eq` and `in`. The fixed masks are `nullify`, `redact`, `last4`
+and `email`; text masks require compatible text columns and an admitted dialect.
+Live acceptance covers DuckDB and 13 Docker-backed adapters: PostgreSQL, MySQL,
+TiDB, StarRocks, Doris, ClickHouse, Greenplum, GaussDB/openGauss, Trino, Oracle,
+Hive, Spark (HiveServer2), and HANA, for the tested native types and query shapes.
+Oracle metrics require OCI; HANA metrics require SAP HANA ODBC. HANA local
+acceptance uses a direct plaintext listener; tenant routing and TLS are separate.
+SQLite is also verified: raw SQL uses native SQLite syntax; Dosi uses DuckDB
+with its SQLite extension. Targets use `main.table` or `attach_alias.table`,
+not the file stem. Dosi requires a file-backed database and refuses temporary
+objects/additional attachments it cannot reproduce. SQLite metadata requires
+3.37+; `last4` returns NULL on embedded NUL. Text row-filter columns require
+string values to avoid different implicit numeric coercion in sqlite3 and DuckDB. Other text dialects (including
+Inceptor) remain unavailable.
 
-```http
-X-Datus-Policy-Context: {"row_filter":{"access_mode":"scoped","store_ids":[1,2]}}
-```
+## Trusted request context
 
-The agreed shape has one section per policy family, without an identity or groups layer:
+Profile-based rows retain the existing execution inputs:
 
 ```json
-{
-  "row_filter": {
-    "access_mode": "scoped",
-    "policy_modes": {
-      "sp_store_scope_sql": "scoped"
-    },
-    "store_ids": [1, 2]
-  },
-  "column_mask": {
-    "customers.email": {"strategy": "email_partial"}
-  }
-}
+{"row_filter":{"access_mode":"scoped","tenant_ids":[42]}}
 ```
 
-The current sql-policy plugin first applies the request-wide row-filter mode:
+`denied` rejects every read. Optional `policy_modes` may skip one row rule by
+setting its configured ID to `unrestricted`; other rules and masks still run.
+Missing inputs, unknown IDs and invalid modes are denied.
 
-| `access_mode` | Behavior |
-|---|---|
-| `denied` | Reject every data read. |
-| `scoped` | Evaluate each configured row filter. Missing required inputs fail closed. |
+Alternatively, trusted hosts may supply `policy_context.sql_policy` containing
+`version` and effective `policies: {row_filters: [...], column_masks: [...]}`.
+Targets are canonical structured objects with `datasource`, optional `catalog`,
+`database`, `schema` and `table`; row entries add `column`, `operator`, `values`,
+and mask entries add `column`, `mask`. This snapshot replaces profile rules for
+the request. It is authorization input, never a model-generated tool argument.
+The default API provider can parse this JSON from `X-Datus-Policy-Context`; a
+trusted authenticated deployment must control that header. `X-Datus-User-Id`
+continues to serve only as session identity.
 
-For a scoped request, the optional `policy_modes` object can override individual policies by ID:
+## Execution
 
-| Per-policy mode | Behavior |
-|---|---|
-| `scoped` | Apply that policy and resolve its `policy_context.*` inputs. |
-| `unrestricted` | Skip only that policy. Other row and result policies still run. |
+1. Agent validates trusted context and binds one snapshot to live metadata.
+2. Direct SQL enters `DBFuncTool.execute_read_enforced`; Dosi receives the same
+   provider through optional Python `policy` / `policy_required` arguments.
+3. After complete SQL lowering, the shared native core replaces every physical
+   read: raw row filters first, masked projection second, business calculations
+   outside. Subqueries, repeated sources, query-backed datasets, derived metrics,
+   FIXED/context-filter branches and attribution queries use this boundary.
+4. Context verification runs again before execution. Metric/detail cache keys
+   include the policy snapshot and execution context. Masking is not reapplied
+   to returned rows.
 
-Omitted policies default to `scoped`. Unknown policy IDs, malformed modes, and a missing or unknown request-wide `access_mode` are rejected. When no row policy is configured, an empty context is allowed.
+If required policies or native bindings are unavailable, reads are refused.
+Opaque views/functions and unsupported source syntax are refused. No policy
+falls back to metric WHERE injection. External proxied executors must enforce
+their own boundary. Native integration does not turn every existing workflow or
+external execution surface into a protected host automatically.
 
-`X-Datus-User-Id` remains session identity only. Agent does not merge it into `policy_context`, and it does not treat any context field as authenticated identity.
+`datus sql-policy status` lists configured policies. The offline plugin `check`
+validates context but refuses configured rewrites without a live connector; use
+Agent/Dosi dry-run to inspect protected SQL. Coordinated native wheels are needed
+for this implementation; SaaS/Backend rollout is separate.
 
-## Runtime Flow
-
-1. The upstream service authenticates and authorizes the caller and builds `policy_context`.
-2. The API parses the header into `AppContext.policy_context` and validates it through active policy runtimes before starting any built-in or user-defined subagent.
-3. The request-specific `AgentConfig` clone carries the same context to every subagent and tool transformer.
-4. `DBFuncTool.execute_read_enforced` validates the original SQL, calls `before_sql_read`, revalidates rewritten SQL, then executes it.
-5. A successful raw result passes through `after_read_result` before compression, artifact storage, rendering, or return to the caller. This is the extension point for column masking.
-6. Semantic metric tools call the same plugin runtime before aggregation to add their `where` predicates.
-
-Invalid runtime declarations, malformed decisions, policy exceptions, denials, and unsafe SQL rewrites all fail closed. Proxied tools execute outside the Agent process and therefore must be protected by the external executor.
-
-For manual checks, pass the same object explicitly:
-
-```bash
-datus sql-policy check --sql "SELECT * FROM orders" \
-  --policy-context '{"row_filter":{"access_mode":"scoped","store_ids":[1,2]}}'
-```
+Report/dashboard metric recipes compile first and apply protection once at the
+final SQL read boundary. Standalone Dosi execution keeps its native provider.
+Read-carrying writes are refused whenever protection is configured, including
+profile-only masking with an empty request context.
 
 ## Hard Read-Only Switch (`agent.sql_read_only`)
+
 
 `agent.sql_read_only` is a separate, simpler mechanism. Do not confuse it with the policy plugins above.
 

@@ -17,6 +17,8 @@ from typing import Any, Mapping, Optional
 _ALIASES = {
     "postgresql": "postgres",
     "greenplum": "postgres",
+    # Spark Thrift uses the verified HiveServer2 SQL/execution subset.
+    "spark": "hive",
 }
 
 
