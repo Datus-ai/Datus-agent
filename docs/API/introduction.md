@@ -22,11 +22,6 @@ default unscoped session; when present, the user id is used to isolate chat sess
 X-Datus-User-Id: alice
 ```
 
-Active policy plugins use a separate execution context. Send it in `X-Datus-Policy-Context` as a JSON object,
-for example `{"row_filter":{"access_mode":"scoped","market_codes":["MKT300"]}}`. Authentication and
-authorization happen upstream; Agent forwards this object without treating it as identity. `X-Datus-User-Id`
-remains session identity and is not merged into policy context. See [SQL Policy](../configuration/sql_policy.md).
-
 Datasource isolation is controlled separately by the `--datasource` CLI flag (or `DATUS_DATASOURCE` env var) and selects
 which datasource from `agent.yml` is used to load databases and knowledge.
 

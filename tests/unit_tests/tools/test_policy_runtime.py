@@ -109,12 +109,16 @@ def test_configured_but_missing_plugin_fails_closed(monkeypatch, active_names):
     monkeypatch.setattr("datus.tools.policy_runtime.collect_plugin_policy_runtime_factories", lambda active: {})
     cfg = config()
     cfg.active_plugin_names = lambda: active_names
-    cfg.get_plugin_profile = lambda _: {"column_masking": [{"column": "db.main.orders.phone", "mask": "last4"}]}
+    cfg.get_plugin_profile = lambda _: {
+        "column_masking": [{"column": "db.main.orders.phone", "mask": "redact", "n": 4}]
+    }
     with pytest.raises(DatusException, match="Required SQL policy plugin"):
         PolicyRuntime(cfg)
 
 
-@pytest.mark.parametrize("profiles", [{"custom/a": []}, {"财务组": [{"column": "orders.phone", "mask": "last4"}]}])
+@pytest.mark.parametrize(
+    "profiles", [{"custom/a": []}, {"财务组": [{"column": "orders.phone", "mask": "redact", "n": 4}]}]
+)
 def test_named_profiles_require_the_policy_plugin_even_for_an_empty_ruleset(monkeypatch, profiles):
     monkeypatch.setattr("datus.tools.policy_runtime.collect_plugin_policy_runtime_factories", lambda _: {})
     cfg = config()

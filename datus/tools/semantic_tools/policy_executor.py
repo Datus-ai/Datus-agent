@@ -119,7 +119,9 @@ class PolicyMetricExecutor:
             datasource
         )
         connector = tool._get_connector(datasource, database=database or "")
-        for model in document["semantic_model"]:
+        # Current Dosi serializes one model at the document root. Retain the
+        # older wrapper for existing authored files and bindings.
+        for model in document.get("semantic_model", [document]):
             for dataset in model["datasets"]:
                 source = dataset["source"]
                 parsed = parse_one(source, read=connector.dialect)

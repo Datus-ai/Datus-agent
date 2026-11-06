@@ -124,6 +124,6 @@ default_datasource: analytics
 ## Related documentation
 
 - [Database adapter architecture](../adapters/db_adapters.md)
-- [SQL policy and deployment-wide read-only mode](sql_policy.md)
+- [Deployment-wide SQL read-only mode](agent.md#sql-read-only)
 - [Plugin system](../plugin/introduction.md)
 - [CLI reference](../cli/reference.md)

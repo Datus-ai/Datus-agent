@@ -78,7 +78,6 @@
 **升级说明**
 
 - **Dosi 0.1.12 下 `where` 的语义变化** - 含窗口指标的查询里，`where` 对分组字段的条件现在过滤的是结果行而不是参与排名的行，保留的行仍带着全体人群算出的名次和分区计数。要得到之前的数字，把条件改传 `context_filter`。用来限定租户人群的行级指标策略同样必须写进 `context_filter`。[指标与维度](https://docs.datus.ai/0.4/knowledge_base/metrics/)
-- **迁移 SQL Policy 配置** - 每条 `row_filter` 和 `metric_row_filter` 都需要稳定且唯一的 `id`。全局 `access_mode: unrestricted` 已移除；如需绕过某条策略，应将请求级 `access_mode` 设为 `scoped`，再设置 `policy_modes.<policy_id>: unrestricted`。[#1416](https://github.com/Datus-ai/Datus-agent/pull/1416) [datus-sql-policies#9](https://github.com/Datus-ai/datus-sql-policies/pull/9) [SQL Policy 文档](https://docs.datus.ai/zh/0.4/configuration/sql_policy/)
 - **升级 Dosi 语义依赖** - 使用原生归因与维度推荐需安装 `datus-semantic-core>=0.2.6` 和 `datus-semantic-dosi>=0.1.14`；`datus-semantic-dosi 0.1.14` 固定依赖 `dosi-engine 0.1.11`。[#1421](https://github.com/Datus-ai/Datus-agent/pull/1421) [#1443](https://github.com/Datus-ai/Datus-agent/pull/1443) [datus-semantic-adapter#101](https://github.com/Datus-ai/datus-semantic-adapter/pull/101) [#107](https://github.com/Datus-ai/datus-semantic-adapter/pull/107) [Dosi 语义适配器文档](https://docs.datus.ai/zh/0.4/adapters/dosi_semantic_adapter/)
 - **同步模型 SDK 依赖** - 自行维护依赖锁文件或模型兼容性补丁的部署应更新为 `openai>=2.45,<3`、`openai-agents[litellm]==0.18.1`、`litellm==1.100.1` 和 `httpx==0.28.1`；图片读取还需要 `Pillow>=10.4`。[#1412](https://github.com/Datus-ai/Datus-agent/pull/1412) [#1418](https://github.com/Datus-ai/Datus-agent/pull/1418) [图片读取文档](https://docs.datus.ai/zh/0.4/configuration/image_tool/)
 
@@ -117,10 +116,6 @@
 - **GaussDB/openGauss 端到端支持** - 支持官方驱动和纯 Python pg8000、SHA-256 认证、PG/A/B 兼容模式、完整 TLS `sslmode` 和 CA 校验，以及 Dosi 原生执行。[#1279](https://github.com/Datus-ai/Datus-agent/pull/1279) [#1295](https://github.com/Datus-ai/Datus-agent/pull/1295) [datus-db-adapters#96](https://github.com/Datus-ai/datus-db-adapters/pull/96) [#100](https://github.com/Datus-ai/datus-db-adapters/pull/100) [#102](https://github.com/Datus-ai/datus-db-adapters/pull/102) [osi-engine#50](https://github.com/Datus-ai/osi-engine/pull/50) [#57](https://github.com/Datus-ai/osi-engine/pull/57) [#58](https://github.com/Datus-ai/osi-engine/pull/58) [数据源文档](https://docs.datus.ai/zh/0.4/configuration/datasources/) [Dosi connector 文档](https://dosi.datus.ai/zh/connectors/)
 - **项目打包交付** - 新增 `datus package`，可将项目配置、语义模型、skills、模板和报告导出为不含凭据的自包含 ZIP；文件工具同时取消扩展名白名单，可操作 Dockerfile、Terraform、notebook 等项目文件。[#1262](https://github.com/Datus-ai/Datus-agent/pull/1262) [#1260](https://github.com/Datus-ai/Datus-agent/pull/1260) [文档](https://docs.datus.ai/zh/0.4/cli/package_command/)
 
-**增强**
-
-- **数据权限扩展到语义指标查询** - 新增 `metric_row_filter`，根据指标涉及的数据集在聚合前注入过滤条件；同时支持 ASK 状态下的受限 AI 权限审查，并修复 principal 传递。[#1261](https://github.com/Datus-ai/Datus-agent/pull/1261) [#1265](https://github.com/Datus-ai/Datus-agent/pull/1265) [#1277](https://github.com/Datus-ai/Datus-agent/pull/1277) [datus-sql-policies#5](https://github.com/Datus-ai/datus-sql-policies/pull/5)
-
 **Bug 修复**
 
 - **语义建模和查询正确性** - 统一半开时间区间，并修复 SQL preflight、多维 attribution 部分失败处理、预览校验错误透传、SQLite bridge、Dosi dry-run SQL 格式及 Oracle service name 映射。[#1238](https://github.com/Datus-ai/Datus-agent/pull/1238) [#1242](https://github.com/Datus-ai/Datus-agent/pull/1242) [#1253](https://github.com/Datus-ai/Datus-agent/pull/1253) [#1292](https://github.com/Datus-ai/Datus-agent/pull/1292) [datus-semantic-adapter#74](https://github.com/Datus-ai/datus-semantic-adapter/pull/74) [#79](https://github.com/Datus-ai/datus-semantic-adapter/pull/79) [#80](https://github.com/Datus-ai/datus-semantic-adapter/pull/80) [#83](https://github.com/Datus-ai/datus-semantic-adapter/pull/83)
@@ -139,7 +134,7 @@
 **新功能**
 
 - **Datus Plugin 体系** - 第三方能力现可通过 Plugin 扩展 Datus，无需修改 Datus Agent 本身。Plugin 可提供 `datus <plugin>` CLI 命令、内置 Skill 和额外的提示词上下文；支持安装、升级、启停、离线打包与导出，并可按项目激活和选择 profile。0.3.9 进一步完善了声明式 `datus-plugin.yml` 契约、外部目录挂载与托管式多租户部署支持。[#1125](https://github.com/Datus-ai/Datus-agent/pull/1125) [#1151](https://github.com/Datus-ai/Datus-agent/pull/1151) [#1153](https://github.com/Datus-ai/Datus-agent/pull/1153) [#1155](https://github.com/Datus-ai/Datus-agent/pull/1155) [#1159](https://github.com/Datus-ai/Datus-agent/pull/1159) [#1192](https://github.com/Datus-ai/Datus-agent/pull/1192) [Plugin 文档](https://docs.datus.ai/zh/0.3/plugin/introduction/) [Plugin 开发文档](https://docs.datus.ai/zh/0.3/plugin/development/)
-- **三种输入模式与工具快捷执行** - 在 CLI 中按 `Tab` 可在对话、SQL 和 Bash 模式之间循环切换。对话模式下，使用 `!<tool>` 可直接运行 Agent 工具，使用 `!<plugin>` 可运行已安装 Plugin 的 CLI，并支持命令与参数自动补全。所有操作均遵循现有权限和 SQL 策略，执行结果会自动加入对话上下文，便于 Agent 继续分析。[#1157](https://github.com/Datus-ai/Datus-agent/pull/1157) [#1186](https://github.com/Datus-ai/Datus-agent/pull/1186) [文档](https://docs.datus.ai/zh/0.3/cli/execution_command/)
+- **三种输入模式与工具快捷执行** - 在 CLI 中按 `Tab` 可在对话、SQL 和 Bash 模式之间循环切换。对话模式下，使用 `!<tool>` 可直接运行 Agent 工具，使用 `!<plugin>` 可运行已安装 Plugin 的 CLI，并支持命令与参数自动补全。所有操作均遵循现有权限检查，执行结果会自动加入对话上下文，便于 Agent 继续分析。[#1157](https://github.com/Datus-ai/Datus-agent/pull/1157) [#1186](https://github.com/Datus-ai/Datus-agent/pull/1186) [文档](https://docs.datus.ai/zh/0.3/cli/execution_command/)
 - **操作系统级 Bash 沙箱** - Bash 命令可在 macOS `sandbox-exec` 或 Linux `bubblewrap` 提供的操作系统级沙箱中运行，并将写入范围限制在工作区、会话数据目录和临时目录。可通过 `/sandbox` 或 `agent.bash.sandbox` 开启；严格模式可进一步限制可访问目录并收紧子进程环境变量，设置 `deny_network: true` 后还可禁止网络访问。沙箱默认关闭；启用后如当前平台缺少可用机制，Bash 命令将被拒绝。[#1181](https://github.com/Datus-ai/Datus-agent/pull/1181) [文档](https://docs.datus.ai/zh/0.3/cli/reference/)
 
 **增强**
@@ -241,7 +236,6 @@
 
 **新功能**
 
-- **SQL Policy Framework** - 新增请求级 SQL 读查询策略框架，支持从 API 请求的 `X-Datus-Principal` 读取结构化调用方身份，并在数据库读查询执行前调用自定义 provider 改写或拒绝 SQL；改写后的 SQL 会再次经过只读校验，生产部署可接入自有鉴权或策略服务。[#1020](https://github.com/Datus-ai/Datus-agent/pull/1020) [#1028](https://github.com/Datus-ai/Datus-agent/pull/1028) [文档](https://docs.datus.ai/zh/0.3/configuration/sql_policy/)
 - **Strict OSI 语义创作路径** - `gen_semantic_model` / `gen_metrics` 现可按 OSI adapter 自动进入严格 OSI authoring 模式，生成 OSI core YAML，通过 adapter 校验、dry-run 后发布，并把可查询指标同步回 Knowledge Base，避免 MetricFlow-only 字段泄漏到源语义模型中。[#1007](https://github.com/Datus-ai/Datus-agent/pull/1007) [文档](https://docs.datus.ai/zh/0.3/adapters/osi_semantic_adapter/)
 - **Metric Preview API** - 新增已保存指标的维度发现与 SQL 预览接口，SaaS metric editor 可在 UI 中列出可查询维度、dry-run 编译指标 SQL，并用结构化 preflight 错误提示不兼容维度组合。[#992](https://github.com/Datus-ai/Datus-agent/pull/992)
 - **轻量化 `/init` + 全新 `/build-kb`** - `/init` 现在只做快速项目扫描、`AGENTS.md` 清单和文件类 knowledge/memory 写入；重型向量知识库构建迁移到新的 `/build-kb` 命令，支持按文件、表、datasource 或业务域限定范围，并通过内置 `storage-classify` skill 路由 semantic models、metrics、reference SQL、knowledge、memory、skills 和 `AGENTS.md`。[#997](https://github.com/Datus-ai/Datus-agent/pull/997) [#1022](https://github.com/Datus-ai/Datus-agent/pull/1022) [文档](https://docs.datus.ai/zh/0.3/cli/build_kb_command/)

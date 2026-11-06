@@ -276,7 +276,7 @@ class PolicyRuntime:
             return None
         if connector is None:
             raise DatusException(ErrorCode.POLICY_DENIED, message="A live connector is required to bind SQL policies")
-        read_context = SqlReadContext(connector, datasource)
+        read_context = SqlReadContext(connector, datasource, capture_metadata=False)
         bound = self._invoke(name, "bind_read", runtime.bind_read, read_context=read_context, policy_context=context)
         if bound is None:
             raise DatusException(

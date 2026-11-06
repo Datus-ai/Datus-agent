@@ -412,7 +412,6 @@ flow_groups:
         priority: p0
         quality_sensitive: true
         docs:
-          - docs/configuration/sql_policy.md
           - docs/API/introduction.md
         entrypoints:
           - "REST API: /api/v1/chat/stream"
