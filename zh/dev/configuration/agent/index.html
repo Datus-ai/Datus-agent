@@ -8,7 +8,7 @@
       
       
       
-        
+        <link rel="canonical" href="https://docs.datus.ai/zh/dev/configuration/agent/">
       
       
         <link rel="prev" href="../introduction/">
@@ -18,9 +18,9 @@
       
       
         
-          
+          <link rel="alternate" href="/dev/" hreflang="en">
         
-          
+          <link rel="alternate" href="/zh/dev/" hreflang="zh">
         
       
       
@@ -57,13 +57,7 @@
 
     
     
-  <!-- datus-docs-seo -->
-<link rel="canonical" href="https://docs.datus.ai/zh/dev/configuration/agent/">
-<link rel="alternate" hreflang="en" href="https://docs.datus.ai/dev/configuration/agent/">
-<link rel="alternate" hreflang="zh-Hans" href="https://docs.datus.ai/zh/dev/configuration/agent/">
-<link rel="alternate" hreflang="x-default" href="https://docs.datus.ai/dev/configuration/agent/">
-<!-- /datus-docs-seo -->
-</head>
+  </head>
   
   
     
@@ -3081,8 +3075,6 @@
       
         
       
-        
-      
     
     
     
@@ -3437,6 +3429,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#sql-read-only" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        SQL 只读模式
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#_9" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3527,34 +3530,6 @@
     
   
     基准测试
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../sql_policy/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    SQL Policy
   
 
     
@@ -3694,10 +3669,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_1_12_9" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_1_12_8" >
         
           
-          <label class="md-nav__link" for="__nav_1_12_9" id="__nav_1_12_9_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_1_12_8" id="__nav_1_12_8_label" tabindex="0">
             
   
   
@@ -3715,8 +3690,8 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_1_12_9_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_1_12_9">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_1_12_8_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_1_12_8">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -5414,6 +5389,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#sql-read-only" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        SQL 只读模式
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#_9" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -5974,41 +5960,50 @@ UTF-8 字节估算可能提前触发压缩，不等同于供应商返回的实�
 <blockquote>
 <p>上下文压缩（在长会话中自动运行的 minor/major 压缩，使会话保持在模型上下文窗口内）通过 <code>agent.compact</code> 配置。其工作方式与可调参数见<a href="../compact/">上下文压缩</a>。</p>
 </blockquote>
+<h2 id="sql-read-only">SQL 只读模式<a class="headerlink" href="#sql-read-only" title="Permanent link">&para;</a></h2>
+<p>设置 <code>agent.sql_read_only</code>，可对 CLI、API、MCP 和工作流执行统一启用 SQL 只读限制：</p>
+<div class="language-yaml highlight"><span class="filename">agent.yml</span><pre><span></span><code><span id="__span-23-1"><a id="__codelineno-23-1" name="__codelineno-23-1" href="#__codelineno-23-1"></a><span class="nt">agent</span><span class="p">:</span>
+</span><span id="__span-23-2"><a id="__codelineno-23-2" name="__codelineno-23-2" href="#__codelineno-23-2"></a><span class="w">  </span><span class="nt">sql_read_only</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span><span class="w">  </span><span class="c1"># 默认：false</span>
+</span></code></pre></div>
+<p>启用后会拒绝 SQL 写入、DDL 和跨数据源结果传输，不受交互式权限档位影响。
+CTE 或 <code>EXPLAIN</code> 中包含的写操作也会被拒绝。此配置无需插件，部署启用后，
+单次请求不能将其关闭。</p>
+<p>工具调用的交互式确认方式见<a href="../../cli/execution_command/">工具快捷执行</a>。</p>
 <h2 id="_9">完整示例<a class="headerlink" href="#_9" title="Permanent link">&para;</a></h2>
-<div class="language-yaml highlight"><span class="filename">datus-config.yaml</span><pre><span></span><code><span id="__span-23-1"><a id="__codelineno-23-1" name="__codelineno-23-1" href="#__codelineno-23-1"></a><span class="nt">agent</span><span class="p">:</span>
-</span><span id="__span-23-2"><a id="__codelineno-23-2" name="__codelineno-23-2" href="#__codelineno-23-2"></a><span class="w">  </span><span class="nt">target</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">alibaba_coding</span>
-</span><span id="__span-23-3"><a id="__codelineno-23-3" name="__codelineno-23-3" href="#__codelineno-23-3"></a><span class="w">  </span><span class="nt">models</span><span class="p">:</span>
-</span><span id="__span-23-4"><a id="__codelineno-23-4" name="__codelineno-23-4" href="#__codelineno-23-4"></a><span class="w">    </span><span class="nt">openai</span><span class="p">:</span>
-</span><span id="__span-23-5"><a id="__codelineno-23-5" name="__codelineno-23-5" href="#__codelineno-23-5"></a><span class="w">      </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">openai</span>
-</span><span id="__span-23-6"><a id="__codelineno-23-6" name="__codelineno-23-6" href="#__codelineno-23-6"></a><span class="w">      </span><span class="nt">base_url</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">https://api.openai.com/v1</span>
-</span><span id="__span-23-7"><a id="__codelineno-23-7" name="__codelineno-23-7" href="#__codelineno-23-7"></a><span class="w">      </span><span class="nt">api_key</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${OPENAI_API_KEY}</span>
-</span><span id="__span-23-8"><a id="__codelineno-23-8" name="__codelineno-23-8" href="#__codelineno-23-8"></a><span class="w">      </span><span class="nt">model</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">gpt-5.2</span>
-</span><span id="__span-23-9"><a id="__codelineno-23-9" name="__codelineno-23-9" href="#__codelineno-23-9"></a>
-</span><span id="__span-23-10"><a id="__codelineno-23-10" name="__codelineno-23-10" href="#__codelineno-23-10"></a><span class="w">    </span><span class="nt">gemini</span><span class="p">:</span>
-</span><span id="__span-23-11"><a id="__codelineno-23-11" name="__codelineno-23-11" href="#__codelineno-23-11"></a><span class="w">      </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">gemini</span>
-</span><span id="__span-23-12"><a id="__codelineno-23-12" name="__codelineno-23-12" href="#__codelineno-23-12"></a><span class="w">      </span><span class="nt">base_url</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">https://generativelanguage.googleapis.com/v1beta</span>
-</span><span id="__span-23-13"><a id="__codelineno-23-13" name="__codelineno-23-13" href="#__codelineno-23-13"></a><span class="w">      </span><span class="nt">api_key</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${GEMINI_API_KEY}</span>
-</span><span id="__span-23-14"><a id="__codelineno-23-14" name="__codelineno-23-14" href="#__codelineno-23-14"></a><span class="w">      </span><span class="nt">model</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">gemini-2.5-flash</span>
-</span><span id="__span-23-15"><a id="__codelineno-23-15" name="__codelineno-23-15" href="#__codelineno-23-15"></a>
-</span><span id="__span-23-16"><a id="__codelineno-23-16" name="__codelineno-23-16" href="#__codelineno-23-16"></a><span class="w">    </span><span class="nt">claude</span><span class="p">:</span>
-</span><span id="__span-23-17"><a id="__codelineno-23-17" name="__codelineno-23-17" href="#__codelineno-23-17"></a><span class="w">      </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">claude</span>
-</span><span id="__span-23-18"><a id="__codelineno-23-18" name="__codelineno-23-18" href="#__codelineno-23-18"></a><span class="w">      </span><span class="nt">base_url</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">https://api.anthropic.com</span>
-</span><span id="__span-23-19"><a id="__codelineno-23-19" name="__codelineno-23-19" href="#__codelineno-23-19"></a><span class="w">      </span><span class="nt">api_key</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${ANTHROPIC_API_KEY}</span>
-</span><span id="__span-23-20"><a id="__codelineno-23-20" name="__codelineno-23-20" href="#__codelineno-23-20"></a><span class="w">      </span><span class="nt">model</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">claude-sonnet-4-5</span>
-</span><span id="__span-23-21"><a id="__codelineno-23-21" name="__codelineno-23-21" href="#__codelineno-23-21"></a>
-</span><span id="__span-23-22"><a id="__codelineno-23-22" name="__codelineno-23-22" href="#__codelineno-23-22"></a><span class="w">    </span><span class="nt">deepseek</span><span class="p">:</span>
-</span><span id="__span-23-23"><a id="__codelineno-23-23" name="__codelineno-23-23" href="#__codelineno-23-23"></a><span class="w">      </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">deepseek</span>
-</span><span id="__span-23-24"><a id="__codelineno-23-24" name="__codelineno-23-24" href="#__codelineno-23-24"></a><span class="w">      </span><span class="nt">base_url</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">https://api.deepseek.com</span>
-</span><span id="__span-23-25"><a id="__codelineno-23-25" name="__codelineno-23-25" href="#__codelineno-23-25"></a><span class="w">      </span><span class="nt">api_key</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${DEEPSEEK_API_KEY}</span>
-</span><span id="__span-23-26"><a id="__codelineno-23-26" name="__codelineno-23-26" href="#__codelineno-23-26"></a><span class="w">      </span><span class="nt">model</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">deepseek-v4-flash</span>
-</span><span id="__span-23-27"><a id="__codelineno-23-27" name="__codelineno-23-27" href="#__codelineno-23-27"></a>
-</span><span id="__span-23-28"><a id="__codelineno-23-28" name="__codelineno-23-28" href="#__codelineno-23-28"></a><span class="w">    </span><span class="nt">alibaba_coding</span><span class="p">:</span>
-</span><span id="__span-23-29"><a id="__codelineno-23-29" name="__codelineno-23-29" href="#__codelineno-23-29"></a><span class="w">      </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">claude</span>
-</span><span id="__span-23-30"><a id="__codelineno-23-30" name="__codelineno-23-30" href="#__codelineno-23-30"></a><span class="w">      </span><span class="nt">base_url</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">https://coding-intl.dashscope.aliyuncs.com/apps/anthropic</span>
-</span><span id="__span-23-31"><a id="__codelineno-23-31" name="__codelineno-23-31" href="#__codelineno-23-31"></a><span class="w">      </span><span class="nt">api_key</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${DASHSCOPE_API_KEY}</span>
-</span><span id="__span-23-32"><a id="__codelineno-23-32" name="__codelineno-23-32" href="#__codelineno-23-32"></a><span class="w">      </span><span class="nt">model</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">qwen3-coder-plus</span>
-</span><span id="__span-23-33"><a id="__codelineno-23-33" name="__codelineno-23-33" href="#__codelineno-23-33"></a><span class="w">      </span><span class="nt">temperature</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">1.0</span>
-</span><span id="__span-23-34"><a id="__codelineno-23-34" name="__codelineno-23-34" href="#__codelineno-23-34"></a><span class="w">      </span><span class="nt">top_p</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0.95</span>
+<div class="language-yaml highlight"><span class="filename">datus-config.yaml</span><pre><span></span><code><span id="__span-24-1"><a id="__codelineno-24-1" name="__codelineno-24-1" href="#__codelineno-24-1"></a><span class="nt">agent</span><span class="p">:</span>
+</span><span id="__span-24-2"><a id="__codelineno-24-2" name="__codelineno-24-2" href="#__codelineno-24-2"></a><span class="w">  </span><span class="nt">target</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">alibaba_coding</span>
+</span><span id="__span-24-3"><a id="__codelineno-24-3" name="__codelineno-24-3" href="#__codelineno-24-3"></a><span class="w">  </span><span class="nt">models</span><span class="p">:</span>
+</span><span id="__span-24-4"><a id="__codelineno-24-4" name="__codelineno-24-4" href="#__codelineno-24-4"></a><span class="w">    </span><span class="nt">openai</span><span class="p">:</span>
+</span><span id="__span-24-5"><a id="__codelineno-24-5" name="__codelineno-24-5" href="#__codelineno-24-5"></a><span class="w">      </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">openai</span>
+</span><span id="__span-24-6"><a id="__codelineno-24-6" name="__codelineno-24-6" href="#__codelineno-24-6"></a><span class="w">      </span><span class="nt">base_url</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">https://api.openai.com/v1</span>
+</span><span id="__span-24-7"><a id="__codelineno-24-7" name="__codelineno-24-7" href="#__codelineno-24-7"></a><span class="w">      </span><span class="nt">api_key</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${OPENAI_API_KEY}</span>
+</span><span id="__span-24-8"><a id="__codelineno-24-8" name="__codelineno-24-8" href="#__codelineno-24-8"></a><span class="w">      </span><span class="nt">model</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">gpt-5.2</span>
+</span><span id="__span-24-9"><a id="__codelineno-24-9" name="__codelineno-24-9" href="#__codelineno-24-9"></a>
+</span><span id="__span-24-10"><a id="__codelineno-24-10" name="__codelineno-24-10" href="#__codelineno-24-10"></a><span class="w">    </span><span class="nt">gemini</span><span class="p">:</span>
+</span><span id="__span-24-11"><a id="__codelineno-24-11" name="__codelineno-24-11" href="#__codelineno-24-11"></a><span class="w">      </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">gemini</span>
+</span><span id="__span-24-12"><a id="__codelineno-24-12" name="__codelineno-24-12" href="#__codelineno-24-12"></a><span class="w">      </span><span class="nt">base_url</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">https://generativelanguage.googleapis.com/v1beta</span>
+</span><span id="__span-24-13"><a id="__codelineno-24-13" name="__codelineno-24-13" href="#__codelineno-24-13"></a><span class="w">      </span><span class="nt">api_key</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${GEMINI_API_KEY}</span>
+</span><span id="__span-24-14"><a id="__codelineno-24-14" name="__codelineno-24-14" href="#__codelineno-24-14"></a><span class="w">      </span><span class="nt">model</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">gemini-2.5-flash</span>
+</span><span id="__span-24-15"><a id="__codelineno-24-15" name="__codelineno-24-15" href="#__codelineno-24-15"></a>
+</span><span id="__span-24-16"><a id="__codelineno-24-16" name="__codelineno-24-16" href="#__codelineno-24-16"></a><span class="w">    </span><span class="nt">claude</span><span class="p">:</span>
+</span><span id="__span-24-17"><a id="__codelineno-24-17" name="__codelineno-24-17" href="#__codelineno-24-17"></a><span class="w">      </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">claude</span>
+</span><span id="__span-24-18"><a id="__codelineno-24-18" name="__codelineno-24-18" href="#__codelineno-24-18"></a><span class="w">      </span><span class="nt">base_url</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">https://api.anthropic.com</span>
+</span><span id="__span-24-19"><a id="__codelineno-24-19" name="__codelineno-24-19" href="#__codelineno-24-19"></a><span class="w">      </span><span class="nt">api_key</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${ANTHROPIC_API_KEY}</span>
+</span><span id="__span-24-20"><a id="__codelineno-24-20" name="__codelineno-24-20" href="#__codelineno-24-20"></a><span class="w">      </span><span class="nt">model</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">claude-sonnet-4-5</span>
+</span><span id="__span-24-21"><a id="__codelineno-24-21" name="__codelineno-24-21" href="#__codelineno-24-21"></a>
+</span><span id="__span-24-22"><a id="__codelineno-24-22" name="__codelineno-24-22" href="#__codelineno-24-22"></a><span class="w">    </span><span class="nt">deepseek</span><span class="p">:</span>
+</span><span id="__span-24-23"><a id="__codelineno-24-23" name="__codelineno-24-23" href="#__codelineno-24-23"></a><span class="w">      </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">deepseek</span>
+</span><span id="__span-24-24"><a id="__codelineno-24-24" name="__codelineno-24-24" href="#__codelineno-24-24"></a><span class="w">      </span><span class="nt">base_url</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">https://api.deepseek.com</span>
+</span><span id="__span-24-25"><a id="__codelineno-24-25" name="__codelineno-24-25" href="#__codelineno-24-25"></a><span class="w">      </span><span class="nt">api_key</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${DEEPSEEK_API_KEY}</span>
+</span><span id="__span-24-26"><a id="__codelineno-24-26" name="__codelineno-24-26" href="#__codelineno-24-26"></a><span class="w">      </span><span class="nt">model</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">deepseek-v4-flash</span>
+</span><span id="__span-24-27"><a id="__codelineno-24-27" name="__codelineno-24-27" href="#__codelineno-24-27"></a>
+</span><span id="__span-24-28"><a id="__codelineno-24-28" name="__codelineno-24-28" href="#__codelineno-24-28"></a><span class="w">    </span><span class="nt">alibaba_coding</span><span class="p">:</span>
+</span><span id="__span-24-29"><a id="__codelineno-24-29" name="__codelineno-24-29" href="#__codelineno-24-29"></a><span class="w">      </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">claude</span>
+</span><span id="__span-24-30"><a id="__codelineno-24-30" name="__codelineno-24-30" href="#__codelineno-24-30"></a><span class="w">      </span><span class="nt">base_url</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">https://coding-intl.dashscope.aliyuncs.com/apps/anthropic</span>
+</span><span id="__span-24-31"><a id="__codelineno-24-31" name="__codelineno-24-31" href="#__codelineno-24-31"></a><span class="w">      </span><span class="nt">api_key</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${DASHSCOPE_API_KEY}</span>
+</span><span id="__span-24-32"><a id="__codelineno-24-32" name="__codelineno-24-32" href="#__codelineno-24-32"></a><span class="w">      </span><span class="nt">model</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">qwen3-coder-plus</span>
+</span><span id="__span-24-33"><a id="__codelineno-24-33" name="__codelineno-24-33" href="#__codelineno-24-33"></a><span class="w">      </span><span class="nt">temperature</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">1.0</span>
+</span><span id="__span-24-34"><a id="__codelineno-24-34" name="__codelineno-24-34" href="#__codelineno-24-34"></a><span class="w">      </span><span class="nt">top_p</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0.95</span>
 </span></code></pre></div>
 
 
