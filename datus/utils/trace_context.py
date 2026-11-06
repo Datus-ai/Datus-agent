@@ -54,6 +54,11 @@ def set_trace_run_scope_provider(provider: Optional[TraceRunScopeProvider]) -> N
 
 @contextlib.contextmanager
 def _host_trace_run_scope() -> Iterator[None]:
+    """Keep host policy entered for the run without changing business failures.
+
+    Host setup and cleanup errors are isolated. Closing without the body's
+    exception prevents a host context manager from suppressing that exception.
+    """
     stack = contextlib.ExitStack()
     try:
         if _TRACE_RUN_SCOPE_PROVIDER is not None:
@@ -219,6 +224,12 @@ def reset_trace_context(token: contextvars.Token[Optional[TraceContext]]) -> Non
 
 @contextlib.contextmanager
 def trace_context(ctx: Optional[TraceContext], *, replace: bool = False) -> Iterator[None]:
+    """Bind identity, model-call attribution, and host policy for a logical run.
+
+    Nested contexts reuse the current run unless ``replace=True``. An entered
+    scope spans the body's entire lifetime, including generator yields, and
+    restores the previous identity and logging context on exit or failure.
+    """
     if ctx is None or (get_trace_context() is not None and not replace):
         yield
         return
