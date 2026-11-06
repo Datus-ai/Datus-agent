@@ -67,6 +67,7 @@ async def test_host_run_scope_pins_snapshot_across_async_tasks_threads_and_neste
 def test_broken_host_run_scope_does_not_fail_run_or_replace_business_exception(monkeypatch, failure):
     @contextmanager
     def scope():
+        """Inject the selected host failure at context entry or cleanup."""
         if failure == "enter":
             raise RuntimeError("private host failure")
         try:
@@ -76,6 +77,7 @@ def test_broken_host_run_scope_does_not_fail_run_or_replace_business_exception(m
                 raise RuntimeError("private host failure")
 
     def factory():
+        """Fail before context creation or supply the boundary-failing scope."""
         if failure == "factory":
             raise RuntimeError("private host failure")
         return scope()
