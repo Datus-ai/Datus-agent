@@ -6,6 +6,7 @@
 
 import os
 import sys
+from types import SimpleNamespace
 
 import pytest
 
@@ -84,6 +85,33 @@ def _layout(tmp_path, models=("aviation",), ontologies=("aviation",), datasource
                 _mapping_yaml(f"{stem}.ontology.yaml", f"{datasource}/{stem}.yaml")
             )
     return models_dir, ontology_dir
+
+
+@pytest.mark.asyncio
+async def test_select_passes_same_bound_policy_to_probe_and_execution(tmp_path, ontology_binding, monkeypatch):
+    models, ontologies = _layout(tmp_path)
+    bound = SimpleNamespace(snapshot_json='{"version":"v1"}', context_json='{"datasource":"flights_db"}')
+    bindings, calls = [], []
+
+    def provider():
+        bindings.append(bound)
+        return bound
+
+    for name in ("compile_select", "select"):
+        original = getattr(FakeOntologyEngine, name)
+
+        def protected(self, *args, _name=name, _original=original, policy=None, policy_required=False, **kwargs):
+            calls.append((_name, policy, policy_required))
+            return _original(self, *args, **kwargs)
+
+        monkeypatch.setattr(FakeOntologyEngine, name, protected)
+    runtime = DosiRuntime(
+        DosiConfig(semantic_models_path=str(models), ontology_dir=str(ontologies)), read_policy_provider=provider
+    )
+    await runtime.select(from_concept="FlightAlert", fields=["FlightAlert.id"], order_by=["FlightAlert.id"])
+    assert bindings == [bound]
+    assert {name for name, _, _ in calls} == {"compile_select", "select"}
+    assert all(policy is bound and required for _, policy, required in calls)
 
 
 def _distinct_metrics_per_model(monkeypatch):

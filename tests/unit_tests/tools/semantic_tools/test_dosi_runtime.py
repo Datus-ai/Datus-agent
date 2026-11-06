@@ -8,6 +8,7 @@ dry-run shape, engine lifecycle, and connections wiring."""
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import sys
 import threading
@@ -62,6 +63,86 @@ def _write_model(path: Path, model_name: str, metric_names: list[str]) -> None:
     path.write_text(
         f"version: '0.2.0.dev0'\nsemantic_model:\n  - name: {model_name}\n    datasets: []\n    metrics:\n{metrics}\n"
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("level", [logging.DEBUG, logging.INFO])
+@pytest.mark.parametrize("dry_run", [False, True])
+async def test_sql_debug_logging_uses_native_result_without_an_extra_compile(make_runtime, caplog, level, dry_run):
+    runtime = make_runtime(datasource="warehouse")
+    with caplog.at_level(level):
+        result = await runtime.query_metrics(["revenue"], dry_run=dry_run)
+    engine = FakeEngine.instances[-1]
+    assert len(engine.compile_calls) == (1 if dry_run else 0)
+    assert len(engine.execute_calls) == (0 if dry_run else 1)
+    event = "sql.dosi.compile" if dry_run else "sql.dosi.execute"
+    messages = [record.getMessage() for record in caplog.records if event in record.getMessage()]
+    if level == logging.INFO:
+        assert messages == []
+    else:
+        assert len(messages) == 1
+        assert result.metadata["sql"] in messages[0]
+        assert "warehouse" in messages[0]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ["metrics", "dry_run", "attribute"])
+async def test_native_read_paths_receive_one_request_local_policy(make_runtime, monkeypatch, operation):
+    runtime = make_runtime()
+    bound = SimpleNamespace(snapshot_json='{"version":"v1"}', context_json='{"datasource":"warehouse"}')
+    bindings, calls = [], []
+
+    def provider():
+        bindings.append(bound)
+        return bound
+
+    runtime._read_policy_provider = provider
+    for name in ("compile", "execute", "attribute"):
+        original = getattr(FakeEngine, name)
+
+        def protected(self, *args, _name=name, _original=original, policy=None, policy_required=False, **kwargs):
+            calls.append((_name, policy, policy_required))
+            return _original(self, *args, **kwargs)
+
+        monkeypatch.setattr(FakeEngine, name, protected)
+    if operation == "attribute":
+        await runtime.attribute(
+            AttributionRequest(
+                metric="revenue",
+                dimensions=["orders.status"],
+                baseline=AttributionWindow(start="2026-01-01", end="2026-01-08"),
+                current=AttributionWindow(start="2026-01-08", end="2026-01-15"),
+            )
+        )
+    else:
+        await runtime.query_metrics(["revenue"], dry_run=operation == "dry_run")
+    assert bindings == [bound]
+    assert calls and all(policy is bound and required for _, policy, required in calls)
+
+
+@pytest.mark.asyncio
+async def test_external_sql_compilation_does_not_bind_or_mutate_native_policy(make_runtime, monkeypatch):
+    runtime = make_runtime()
+    bound = SimpleNamespace(snapshot_json="{}", context_json="{}")
+    provider = MagicMock(return_value=bound)
+    runtime._read_policy_provider = provider
+    calls = []
+    original = FakeEngine.compile
+
+    def compile(self, *args, policy=None, policy_required=False, **kwargs):
+        calls.append((policy, policy_required))
+        return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(FakeEngine, "compile", compile)
+    await runtime.compile_for_sql_execution(metrics=["revenue"], dry_run=True)
+    provider.assert_not_called()
+    assert runtime._read_policy_provider is provider
+    assert calls == [(None, False)]
+    await runtime.query_metrics(["revenue"], dry_run=True)
+    provider.assert_called_once()
+    assert calls[-1] == (bound, True)
+    with pytest.raises(ValueError, match="compile-only"):
+        await runtime.compile_for_sql_execution(metrics=["revenue"], dry_run=False)
 
 
 def _install_file_catalog(monkeypatch, metrics_by_stem: dict[str, list[str]]) -> None:

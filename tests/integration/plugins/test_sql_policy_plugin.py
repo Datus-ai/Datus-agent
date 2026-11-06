@@ -7,10 +7,10 @@ from __future__ import annotations
 
 import importlib.util
 import json
-import sqlite3
 from pathlib import Path
 from types import SimpleNamespace
 
+import duckdb
 import pytest
 import yaml
 from starlette.requests import Request
@@ -19,15 +19,13 @@ from datus.api.auth.header_context_provider import HeaderContextProvider
 from datus.api.routes.chat_routes import _policy_context_pre_check
 from datus.configuration.agent_config import AgentConfig, NodeConfig
 from datus.plugins.registry import invalidate_plugin_cache
-from datus.tools.db_tools.config import SQLiteConfig
-from datus.tools.db_tools.sqlite_connector import SQLiteConnector
+from datus.tools.db_tools.config import DuckDBConfig
+from datus.tools.db_tools.duckdb_connector import DuckdbConnector
 from datus.tools.func_tool.database import DBFuncTool
-from datus.tools.middleware.tool_middleware import transform_tool_args
 from datus.tools.permission.bash_rules import evaluate_bash_command
 from datus.tools.permission.permission_config import PermissionLevel
 
 SQL_POLICY_ID = "sp_store_scope_sql"
-METRIC_POLICY_ID = "sp_store_scope_metrics"
 
 
 def _policies() -> list[dict]:
@@ -36,20 +34,9 @@ def _policies() -> list[dict]:
             "id": SQL_POLICY_ID,
             "name": "store_scope_sql",
             "type": "row_filter",
-            "applies_to": {"datasources": ["warehouse"], "tables": ["orders"]},
+            "applies_to": {"datasources": ["warehouse"], "tables": ["orders.main.orders"]},
             "condition": {
                 "column": "store_id",
-                "operator": "in",
-                "value_from": "policy_context.row_filter.store_ids",
-            },
-        },
-        {
-            "id": METRIC_POLICY_ID,
-            "name": "store_scope_metrics",
-            "type": "metric_row_filter",
-            "applies_to": {"datasets": ["orders"]},
-            "condition": {
-                "column": "orders.store_id",
                 "operator": "in",
                 "value_from": "policy_context.row_filter.store_ids",
             },
@@ -57,32 +44,15 @@ def _policies() -> list[dict]:
     ]
 
 
-def _scoped_context(*, sql_mode: str | None = None, metric_mode: str | None = None) -> dict:
+def _scoped_context(*, sql_mode: str | None = None) -> dict:
     """Build scoped policy context, optionally overriding either policy mode."""
     row_filter = {"access_mode": "scoped", "store_ids": ["S001"]}
     policy_modes = {}
     if sql_mode is not None:
         policy_modes[SQL_POLICY_ID] = sql_mode
-    if metric_mode is not None:
-        policy_modes[METRIC_POLICY_ID] = metric_mode
     if policy_modes:
         row_filter["policy_modes"] = policy_modes
     return {"row_filter": row_filter}
-
-
-def _transform_metric(config: AgentConfig, policy_context: dict) -> dict:
-    """Apply the managed metric policy to the shared nightly query."""
-    return transform_tool_args(
-        "query_metrics",
-        {"metrics": ["order_revenue"], "where": "orders.amount > 0"},
-        category="semantic_tools",
-        active_plugin_names=config.active_plugin_names(),
-        context={
-            "agent_config": config,
-            "policy_context": policy_context,
-            "metric_datasets": {"order_revenue": ["orders"]},
-        },
-    )
 
 
 def _agent_document(home, workspace, database) -> dict:
@@ -104,8 +74,9 @@ def _agent_document(home, workspace, database) -> dict:
             "services": {
                 "datasources": {
                     "warehouse": {
-                        "type": "sqlite",
+                        "type": "duckdb",
                         "uri": str(database),
+                        "read_only": True,
                         "default": True,
                     }
                 }
@@ -165,13 +136,13 @@ async def test_managed_sql_policy_enforces_sql_semantic_and_api_reads(
     installed = managed_plugin_runtime.install(p0_external_sources.sql_policies)
     assert "sql-policy" in installed.stdout
 
-    database = tmp_path / "orders.sqlite"
-    with sqlite3.connect(database) as seed:
-        seed.executescript(
+    database = tmp_path / "orders.duckdb"
+    with duckdb.connect(str(database)) as seed:
+        seed.execute(
             "CREATE TABLE orders (store_id TEXT NOT NULL, amount INTEGER NOT NULL);"
             "INSERT INTO orders VALUES ('S001', 10), ('S002', 20);"
         )
-    connector = SQLiteConnector(SQLiteConfig(db_path=str(database)))
+    connector = DuckdbConnector(DuckDBConfig(db_path=str(database), read_only=True))
     try:
         datus_home = managed_plugin_runtime.home / ".datus"
         document = _agent_document(datus_home, tmp_path / "workspace", database)
@@ -184,10 +155,9 @@ async def test_managed_sql_policy_enforces_sql_semantic_and_api_reads(
         info = managed_plugin_runtime.run("plugin", "info", "sql-policy")
         assert "entry:   datus_sql_policies" in info.stdout
         status = managed_plugin_runtime.run("sql-policy", "status")
-        assert "2 policies configured" in status.stdout
+        assert "1 policy configured" in status.stdout
         assert "store_scope_sql" in status.stdout
         assert SQL_POLICY_ID in status.stdout
-        assert METRIC_POLICY_ID in status.stdout
         checked = managed_plugin_runtime.run(
             "sql-policy",
             "check",
@@ -196,12 +166,13 @@ async def test_managed_sql_policy_enforces_sql_semantic_and_api_reads(
             "--datasource",
             "warehouse",
             "--dialect",
-            "sqlite",
+            "duckdb",
             "--policy-context",
             json.dumps(_scoped_context()),
+            check=False,
         )
-        assert "store_scope_sql" in checked.stdout
-        assert "S001" in checked.stdout
+        assert checked.returncode == 1
+        assert "connection-bound native" in checked.stdout
 
         config = _agent_config(document)
         invalidate_plugin_cache()
@@ -222,12 +193,53 @@ async def test_managed_sql_policy_enforces_sql_semantic_and_api_reads(
         assert sql_result.success, sql_result.error
         assert sql_result.sql_return == [{"store_id": "S001", "amount": 10}]
 
-        transformed = _transform_metric(config, scoped)
-        assert "orders.amount > 0" in transformed["where"]
-        assert "orders.store_id" in transformed["where"]
-        assert "S001" in transformed["where"]
+        # One physical row rule protects actual Dosi execution too; no tool
+        # argument transformer adds a business WHERE predicate.
+        from datus.tools.policy_runtime import PolicyRuntime
+        from datus.tools.semantic_tools.dosi.config import DosiConfig
+        from datus.tools.semantic_tools.dosi.runtime import DosiRuntime
 
-        sql_unrestricted = _scoped_context(sql_mode="unrestricted", metric_mode="scoped")
+        model_file = tmp_path / "model.json"
+        model_file.write_text(
+            json.dumps(
+                {
+                    "version": "0.2.0.dev0",
+                    "name": "orders_model",
+                    "datasets": [
+                        {
+                            "name": "orders",
+                            "source": "orders",
+                            "fields": [
+                                {
+                                    "name": "amount",
+                                    "expression": {"dialects": [{"dialect": "ANSI_SQL", "expression": "amount"}]},
+                                }
+                            ],
+                        }
+                    ],
+                    "metrics": [
+                        {
+                            "name": "order_revenue",
+                            "expression": {"dialects": [{"dialect": "ANSI_SQL", "expression": "SUM(orders.amount)"}]},
+                        }
+                    ],
+                }
+            )
+        )
+        runtime = DosiRuntime(
+            DosiConfig(
+                semantic_model_path=str(model_file),
+                datasource="warehouse",
+                db_config={"type": "duckdb", "uri": str(database)},
+            ),
+            read_policy_provider=lambda: PolicyRuntime(config).bind_read(
+                connector=connector, datasource="warehouse", policy_context=config.policy_context
+            ),
+        )
+        metric = await runtime.query_metrics(["order_revenue"])
+        assert metric.data == [{"order_revenue": 10}]
+
+        sql_unrestricted = _scoped_context(sql_mode="unrestricted")
         config.policy_context = sql_unrestricted
         unrestricted_sql_result = tool.execute_read_enforced(
             "SELECT store_id, amount FROM orders ORDER BY store_id",
@@ -239,20 +251,8 @@ async def test_managed_sql_policy_enforces_sql_semantic_and_api_reads(
             {"store_id": "S001", "amount": 10},
             {"store_id": "S002", "amount": 20},
         ]
-        metric_still_scoped = _transform_metric(config, sql_unrestricted)
-        assert "orders.store_id" in metric_still_scoped["where"]
-
-        metric_unrestricted = _scoped_context(sql_mode="scoped", metric_mode="unrestricted")
-        config.policy_context = metric_unrestricted
-        sql_still_scoped = tool.execute_read_enforced(
-            "SELECT store_id, amount FROM orders ORDER BY store_id",
-            connector,
-            datasource="warehouse",
-        )
-        assert sql_still_scoped.success is True, sql_still_scoped.error
-        assert sql_still_scoped.sql_return == [{"store_id": "S001", "amount": 10}]
-        unrestricted_metric_args = _transform_metric(config, metric_unrestricted)
-        assert unrestricted_metric_args["where"] == "orders.amount > 0"
+        metric = await runtime.query_metrics(["order_revenue"])
+        assert metric.data == [{"order_revenue": 30}]
 
         provider = HeaderContextProvider()
         config.policy_context = scoped

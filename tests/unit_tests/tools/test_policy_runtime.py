@@ -1,3 +1,4 @@
+import logging
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import Mock, patch
@@ -91,6 +92,57 @@ def test_no_policy_runtime_is_pass_through(monkeypatch):
     )
 
 
+def test_effective_snapshot_without_provider_fails_closed(monkeypatch):
+    monkeypatch.setattr("datus.tools.policy_runtime.collect_plugin_policy_runtime_factories", lambda active: {})
+    runtime = PolicyRuntime(config())
+    with pytest.raises(DatusException, match="no implementation is loaded"):
+        runtime.before_sql_read(
+            "SELECT 1",
+            datasource="warehouse",
+            dialect="duckdb",
+            policy_context={"sql_policy": {"version": "v1", "policies": {}}},
+        )
+
+
+@pytest.mark.parametrize("active_names", [None, {"sql-policy"}])
+def test_configured_but_missing_plugin_fails_closed(monkeypatch, active_names):
+    monkeypatch.setattr("datus.tools.policy_runtime.collect_plugin_policy_runtime_factories", lambda active: {})
+    cfg = config()
+    cfg.active_plugin_names = lambda: active_names
+    cfg.get_plugin_profile = lambda _: {"column_masking": [{"column": "db.main.orders.phone", "mask": "last4"}]}
+    with pytest.raises(DatusException, match="Required SQL policy plugin"):
+        PolicyRuntime(cfg)
+
+
+def test_empty_legacy_metric_provider_needs_no_connection(monkeypatch):
+    legacy = SimpleNamespace(policies=[], before_metric_read=lambda **kwargs: None)
+    runtime = runtime_with(legacy, monkeypatch)
+    assert not runtime.requires_bound_read({})
+    assert runtime.bind_read(connector=None, datasource="warehouse", policy_context={}) is None
+
+
+@pytest.mark.parametrize("sql", ["SHOW TABLES", "DESCRIBE main.orders"])
+def test_only_plain_metadata_inspection_can_bypass_source_rewrite(sql):
+    from datus.tools.policy_runtime import _plain_metadata_read
+
+    assert _plain_metadata_read(sql, "duckdb")
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "DESCRIBE SELECT * FROM orders",
+        "PRAGMA storage_info('orders')",
+        "SHOW TABLES; SELECT * FROM orders",
+        "EXPLAIN ANALYZE SELECT * FROM orders",
+    ],
+)
+def test_query_bodies_cannot_bypass_rewrite_as_metadata(sql):
+    from datus.tools.policy_runtime import _plain_metadata_read
+
+    assert not _plain_metadata_read(sql, "duckdb")
+
+
 def test_runtime_chains_sql_and_result_hooks(monkeypatch):
     first = FakeRuntime(sql="SELECT 1 WHERE tenant_id = 1")
     second = FakeRuntime(result=[{"email": "***"}])
@@ -169,6 +221,32 @@ def test_db_read_applies_before_and_after_hooks(monkeypatch):
     assert db.execute_query.call_args.args[0] == "SELECT * FROM orders WHERE store_id = 1"
     assert result.sql_return == [{"email": "***"}]
     assert fake.contexts[-1] == cfg.policy_context
+
+
+@pytest.mark.parametrize("level", [logging.DEBUG, logging.INFO])
+def test_sql_debug_logs_match_the_statement_sent_to_the_connector(monkeypatch, caplog, level):
+    original = "SELECT * FROM orders"
+    rewritten = "SELECT * FROM orders WHERE store_id = 1"
+    fake = FakeRuntime(sql=rewritten)
+    monkeypatch.setattr(
+        "datus.tools.policy_runtime.collect_plugin_policy_runtime_factories",
+        lambda active: {"sql-policy": lambda profile: fake},
+    )
+    cfg = config({"row_filter": {"access_mode": "scoped", "store_ids": [1]}, "private_marker": "not-for-logs"})
+    db = connector()
+    with caplog.at_level(level):
+        result = make_db_tool(db, cfg).execute_read_enforced(original, db, datasource="warehouse")
+    assert result.success
+    db.execute_query.assert_called_once_with(rewritten, result_format="list")
+    messages = [record.getMessage() for record in caplog.records]
+    sql_logs = [message for message in messages if "sql.policy.rewrite" in message or "sql.execute" in message]
+    if level == logging.INFO:
+        assert sql_logs == []
+    else:
+        assert len(sql_logs) == 2
+        assert original in sql_logs[0] and rewritten in sql_logs[0]
+        assert rewritten in sql_logs[1]
+        assert "not-for-logs" not in "\n".join(sql_logs)
 
 
 def test_db_policy_denial_does_not_execute(monkeypatch):

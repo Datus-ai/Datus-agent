@@ -16,7 +16,9 @@ import itertools
 import json
 import re
 import secrets
+import weakref
 from collections import OrderedDict
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Literal, Mapping, Optional, Tuple
 
@@ -620,6 +622,7 @@ class SemanticTools:
         semantic_model_path_provider: Optional[Callable[[], Optional[str]]] = None,
         semantic_metric_names_provider: Optional[Callable[[], Optional[List[str]]]] = None,
         ontology_enabled: bool = False,
+        policy_context_provider: Optional[Callable[[], Mapping[str, Any]]] = None,
     ):
         """
         Initialize semantic function tool.
@@ -637,6 +640,8 @@ class SemanticTools:
                 request-local semantic model selected for authoring or validation.
             semantic_metric_names_provider: Optional callback returning the
                 present touched metrics that require compiled publish evidence.
+            policy_context_provider: Trusted request-local policy context for
+                native compilation; defaults to the context on agent_config.
             ontology_enabled: Load the project's Apache Ossie ontologies
                 (``subject/ontology/``) through the mapping documents that
                 bind them to this datasource's models and expose the ontology tools. Off for every agent that
@@ -650,6 +655,8 @@ class SemanticTools:
         self._warehouse_dry_run_provider = warehouse_dry_run_provider
         self._semantic_model_path_provider = semantic_model_path_provider
         self._semantic_metric_names_provider = semantic_metric_names_provider
+        self._policy_context_provider = policy_context_provider
+        self._policy_metadata_managers = {}
         self.ontology_enabled = bool(ontology_enabled)
         self._runtime_db_context_static: Dict[str, str] = {}
         self._runtime_db_context_static_set = False
@@ -661,6 +668,7 @@ class SemanticTools:
         # The token budget of an executed result's preview, and of a dry run's data.
         self._compressor: Optional[DataCompressor] = None
         self._query_metrics_result_cache: OrderedDict[str, dict] = OrderedDict()
+        self._evicted_query_metrics_scopes: OrderedDict[str, str] = OrderedDict()
 
         # Lazy load runtime and attribution tool
         self._runtime: Optional[DosiRuntime] = None
@@ -721,6 +729,14 @@ class SemanticTools:
                 writer.writerow([row])
         return buf.getvalue()
 
+    def _policy_cache_scope(self) -> str:
+        if getattr(self, "agent_config", None) is None:
+            return "unprotected"
+        bound = self._bind_dosi_read()
+        if bound is None:
+            return "unprotected"
+        return hashlib.sha256((bound.snapshot_json + bound.context_json).encode()).hexdigest()
+
     def _cache_query_metrics_result(
         self, columns: List[str], data: Any, metadata: Optional[Mapping[str, Any]] = None
     ) -> Optional[str]:
@@ -735,6 +751,9 @@ class SemanticTools:
         # instance serves every client of a datasource.
         cache_key = f"query_metrics:{secrets.token_urlsafe(12)}"
         self._query_metrics_result_cache[cache_key] = {
+            "policy_scope": metadata["_policy_scope"]
+            if metadata and "_policy_scope" in metadata
+            else self._policy_cache_scope(),
             "columns": list(columns),
             "csv": full_csv,
             "row_count": self._query_data_row_count(data),
@@ -748,11 +767,33 @@ class SemanticTools:
             "metadata": dict(metadata or {}),
         }
         while len(self._query_metrics_result_cache) > self.MAX_QUERY_METRICS_RESULT_CACHE_SIZE:
-            self._query_metrics_result_cache.popitem(last=False)
+            evicted_id, evicted = self._query_metrics_result_cache.popitem(last=False)
+            self._evicted_query_metrics_scopes[evicted_id] = evicted["policy_scope"]
+        while len(self._evicted_query_metrics_scopes) > self.MAX_QUERY_METRICS_RESULT_CACHE_SIZE:
+            self._evicted_query_metrics_scopes.popitem(last=False)
         return cache_key
 
+    def can_use_query_metrics_preview(self, cache_key: str) -> bool:
+        """Permit an evicted preview only while its original scope is verified."""
+        scope = self._evicted_query_metrics_scopes.get(cache_key)
+        if scope is None:
+            return False
+        try:
+            return scope == self._policy_cache_scope()
+        except (DatusException, ValueError):
+            return False
+
     def get_cached_query_metrics_result(self, cache_key: str) -> Optional[dict]:
-        return self._query_metrics_result_cache.get(cache_key)
+        cached = self._query_metrics_result_cache.get(cache_key)
+        if cached is None:
+            return None
+        try:
+            scope = self._policy_cache_scope()
+        except (DatusException, ValueError):
+            return None
+        if cached.get("policy_scope", "unprotected") != scope:
+            return None
+        return cached
 
     # One page has to fit an MCP response; the cached result is bounded only by the query.
     MAX_QUERY_METRICS_RESULT_PAGE = 1000
@@ -1151,7 +1192,7 @@ class SemanticTools:
                 runtime_config = runtime_config.model_copy(
                     update={"ontology_dir": str(self.agent_config.path_manager.ontology_dir)}
                 )
-            self._runtime = DosiRuntime(runtime_config)
+            self._runtime = DosiRuntime(runtime_config, read_policy_provider=self._bind_dosi_read)
             self._runtime_context_key = context_key
             self._runtime_load_error = None
             logger.info("Loaded Dosi runtime for datasource %s", datasource)
@@ -1161,6 +1202,74 @@ class SemanticTools:
             self._runtime = None
             self._runtime_context_key = None
         return self._runtime
+
+    def _bind_dosi_read(self):
+        from datus.tools.db_tools.db_manager import DBManager, db_manager_instance
+        from datus.tools.policy_runtime import PolicyRuntime
+
+        runtime = PolicyRuntime(self.agent_config)
+        context = (
+            self._policy_context_provider()
+            if self._policy_context_provider is not None
+            else getattr(self.agent_config, "policy_context", None)
+        )
+        if context is None:
+            context = {}
+        elif not isinstance(context, Mapping):
+            raise DatusException(ErrorCode.POLICY_DENIED, message="Policy context must be a mapping")
+        context = dict(context)
+        if not runtime.requires_bound_read(context):
+            return None
+        current = self._runtime_db_context()
+        datasource = current.get("datasource") or self.agent_config.current_datasource
+        manager = db_manager_instance(self.agent_config.datasource_configs)
+        connector = manager.get_conn(datasource, current.get("database", ""))
+        # File-backed connections must retain the live session's attachments
+        # and temporary objects. Server metadata uses an isolated connector
+        # when the request selects a catalog/schema, including ask_metrics
+        # turns which do not mount a database tool to switch the shared one.
+        if connector.dialect not in {"sqlite", "duckdb"} and any(current.get(k) for k in ("catalog", "schema")):
+            key = tuple(current.get(k, "") for k in ("datasource", "catalog", "database", "schema"))
+            if key not in self._policy_metadata_managers:
+                config = self.agent_config.datasource_configs[datasource]
+                overrides = {k: current[k] for k in ("catalog", "schema") if current.get(k)}
+                extra = dict(config.extra or {})
+                for name in overrides:
+                    extra.pop(name, None)
+                    extra.pop(name + "_name", None)
+                scoped_manager = DBManager({datasource: replace(config, **overrides, extra=extra)})
+                scoped = scoped_manager.get_conn(datasource, current.get("database", ""))
+                self._policy_metadata_managers[key] = (scoped_manager, scoped)
+                weakref.finalize(self, scoped_manager.close)
+            connector = self._policy_metadata_managers[key][1]
+        bound = runtime.bind_read(connector=connector, datasource=datasource, policy_context=context)
+        if bound is not None:
+            actual = json.loads(bound.context_json)
+            names = None
+            for namespace in ("catalog", "database", "schema"):
+                # SQLite's Agent database label is the file stem; its SQL
+                # namespace is always main (or an explicit ATTACH alias).
+                if connector.dialect == "sqlite" and namespace == "database":
+                    continue
+                expected = current.get(namespace)
+                if connector.dialect == "oracle" and namespace == "database":
+                    # Match both the adapter and Dosi: service_name wins over
+                    # the legacy database alias, including a chat selection
+                    # which still carries that alias in its runtime context.
+                    profile = self._extract_db_config(datasource) or {}
+                    expected = profile.get("service_name") or expected
+                if expected and actual.get(namespace) != expected:
+                    from datus.tools.sql_read_context import SqlReadContext
+
+                    if names is None:
+                        names = SqlReadContext(connector, datasource)
+                    if names.canonical_name(str(actual.get(namespace) or "")) == names.canonical_name(expected):
+                        continue
+                    raise DatusException(
+                        ErrorCode.POLICY_DENIED,
+                        message=f"Dosi {namespace} does not match the policy metadata connection; switch the live connection and rebind",
+                    )
+        return bound
 
     async def _attribute(self, runtime: DosiRuntime, request: AttributionRequest) -> AttributionResult:
         return await runtime.attribute(request)
@@ -1846,6 +1955,42 @@ class SemanticTools:
         Returns:
             FuncToolResult with the result text, or the compiled SQL of a dry run
         """
+        return self._query_metrics(
+            metrics=metrics,
+            dimensions=dimensions,
+            time_start=time_start,
+            time_end=time_end,
+            time_granularity=time_granularity,
+            where=where,
+            limit=limit,
+            order_by=order_by,
+            params=params,
+            dry_run=dry_run,
+            context_filter=context_filter,
+        )
+
+    def compile_metric_for_sql_execution(self, **arguments: Any) -> FuncToolResult:
+        """Host-only handoff: compile business SQL for the enforced SQL boundary."""
+        if arguments.get("dry_run") is not True:
+            raise ValueError("external SQL execution requires compile-only dry_run")
+        return self._query_metrics(**arguments, external_sql_execution=True)
+
+    def _query_metrics(
+        self,
+        metrics: List[str],
+        dimensions: Optional[List[str]] = None,
+        time_start: Optional[str] = None,
+        time_end: Optional[str] = None,
+        time_granularity: Optional[str] = None,
+        where: Optional[str] = None,
+        limit: Optional[int] = None,
+        order_by: Optional[List[str]] = None,
+        params: Optional[Dict[str, Any]] = None,
+        dry_run: bool = False,
+        context_filter: Optional[str] = None,
+        *,
+        external_sql_execution: bool = False,
+    ) -> FuncToolResult:
         metrics = _normalize_name_list(metrics)
         dimensions = _normalize_name_list(dimensions)
         order_by = _normalize_name_list(order_by)
@@ -1901,7 +2046,8 @@ class SemanticTools:
             if context_filter:
                 runtime_query_kwargs["context_filter"] = context_filter
             execution_context = self._query_execution_context(runtime)
-            result = _run_async(runtime.query_metrics(**runtime_query_kwargs))
+            compile_or_query = runtime.compile_for_sql_execution if external_sql_execution else runtime.query_metrics
+            result = _run_async(compile_or_query(**runtime_query_kwargs))
             if not dry_run:
                 metadata = result.metadata or {}
                 return FuncToolResult(

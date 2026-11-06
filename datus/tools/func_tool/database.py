@@ -2653,7 +2653,7 @@ class DBFuncTool:
             # lands every row the policy just withheld in a table no policy
             # covers — the person who may only SELECT two stores now owns all
             # four. The plugin cannot see it: it hooks reads, and this is a
-            # write. So on a project that has a policy context at all, a write
+            # write. With request or configured read protection, a write
             # that embeds a query is refused before it is dispatched.
             #
             # The permission prompt is not this check. It asks whether the
@@ -2663,11 +2663,15 @@ class DBFuncTool:
             # Ordered after the read-only gate above: a hardened deployment
             # refuses every write outright, so it never needs to reason about
             # what the write reads.
-            if self.policy_context and write_statement_reads_data(sql, connector.dialect):
+            from datus.tools.policy_runtime import PolicyRuntime
+
+            if write_statement_reads_data(sql, connector.dialect) and (
+                self.policy_context or PolicyRuntime(self.agent_config).requires_bound_read(self.policy_context)
+            ):
                 return FuncToolResult(
                     success=0,
                     error=(
-                        "This project has row-level policies, so a write statement that "
+                        "This project has row-level policies or column masking, so a write statement that "
                         "reads from a query is not allowed — it would copy filtered rows "
                         "into a table no policy covers. Create views and derived tables "
                         "on the database side instead."
@@ -2803,6 +2807,7 @@ class DBFuncTool:
                 sql,
                 datasource=effective_datasource,
                 dialect=connector.dialect,
+                connector=connector,
                 policy_context=effective_policy_context,
             )
             if not decision.allowed:
@@ -2831,18 +2836,25 @@ class DBFuncTool:
                     error="Read policy rewrote the reference SQL; complete calculation verification is unavailable.",
                     sql_query=enforced_sql,
                 )
-            analyzer_getter = getattr(connector_registry, "get_sql_analyzer", None)
-            if callable(analyzer_getter) and analyzer_getter(connector.dialect) is not None:
-                return ExecuteSQLResult(
-                    success=False,
-                    error="SQL policy rewriting is unsupported for this adapter's limited SQL analysis path.",
-                    sql_query=sql,
-                )
             # A policy rewrite (e.g. an injected LIMIT) must still be a single
             # read-only statement — re-validate so it can't smuggle in DML/DDL.
             validation_error, _ = self._validate_read_sql(enforced_sql, connector)
             if validation_error:
                 return ExecuteSQLResult(success=False, error=validation_error.error, sql_query=enforced_sql)
+        verifier = getattr(decision, "verify_context", None)
+        if verifier is not None:
+            try:
+                verifier()
+            except Exception as exc:
+                return ExecuteSQLResult(
+                    success=False, error=f"SQL policy context changed: {exc}", sql_query=enforced_sql
+                )
+        logger.debug(
+            "sql.execute",
+            datasource=effective_datasource,
+            dialect=connector.dialect,
+            sql=enforced_sql,
+        )
         result = connector.execute_query(enforced_sql, result_format=result_format)
         if not result.success:
             return result

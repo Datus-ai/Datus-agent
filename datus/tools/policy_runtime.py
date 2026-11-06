@@ -15,6 +15,34 @@ from typing import Any, Callable, Dict, Optional
 
 from datus.plugins.registry import collect_plugin_policy_runtime_factories
 from datus.utils.exceptions import DatusException, ErrorCode
+from datus.utils.loggings import get_logger
+
+logger = get_logger(__name__)
+
+
+def _plain_metadata_read(sql: str, dialect: str) -> bool:
+    """Only schema inspection may bypass the source rewrite, never query bodies."""
+    if sql.strip().rstrip(";").strip().upper() in {"SHOW TABLES", "SHOW DATABASES", "SHOW SCHEMAS", "SHOW CATALOGS"}:
+        return True
+    import sqlglot
+    from sqlglot import expressions as exp
+
+    from datus.utils.sql_utils import parse_dialect
+
+    try:
+        statements = sqlglot.parse(sql, read=parse_dialect(dialect))
+        if len(statements) != 1 or not isinstance(statements[0], exp.Describe):
+            return False
+        statement = statements[0]
+        table = statement.this
+        return (
+            isinstance(table, exp.Table)
+            and not any(statement.find_all(exp.Query, exp.Func))
+            and all(isinstance(part, exp.Identifier) for part in table.parts)
+        )
+    except Exception:
+        return False
+
 
 #: Sibling key on ``policy_context`` carrying *why* SaaS denied this caller.
 #:
@@ -51,6 +79,7 @@ class SqlReadDecision:
     sql: Optional[str] = None
     reason: Optional[str] = None
     applied_policies: list[str] = field(default_factory=list)
+    verify_context: Optional[Callable[[], None]] = field(default=None, repr=False, compare=False)
 
 
 @dataclass(frozen=True)
@@ -97,6 +126,18 @@ class PolicyRuntime:
                 ):
                     raise TypeError("factory returned an object without policy lifecycle hooks")
                 self._runtimes.append((plugin_name, runtime))
+            configured = getattr(agent_config, "get_plugin_profile", None)
+            expected = (
+                configured("sql-policy")
+                if callable(configured) and (active_names is None or "sql-policy" in active_names)
+                else {}
+            )
+            if (
+                getattr(agent_config, "sql_policy_required", False) is True
+                or isinstance(expected, dict)
+                and (expected.get("policies") or expected.get("column_masking"))
+            ) and "sql-policy" not in {name for name, _ in self._runtimes}:
+                raise DatusException(ErrorCode.COMMON_CONFIG_ERROR, message="Required SQL policy plugin is unavailable")
         except DatusException:
             raise
         except Exception as exc:
@@ -113,6 +154,10 @@ class PolicyRuntime:
     @property
     def has_metric_policies(self) -> bool:
         return any(callable(getattr(runtime, "before_metric_read", None)) for _, runtime in self._runtimes)
+
+    @property
+    def has_bound_read_provider(self) -> bool:
+        return any(callable(getattr(runtime, "bind_read", None)) for _, runtime in self._runtimes)
 
     def before_metric_read(
         self, *, datasets: set[str], where: Optional[str], policy_context: Optional[Dict[str, Any]]
@@ -142,6 +187,19 @@ class PolicyRuntime:
 
     def validate_context(self, policy_context: Optional[Dict[str, Any]]) -> PolicyValidationResult:
         context = self._normalize_context(policy_context)
+        if not self._runtimes and any(
+            key in context for key in ("row_filter", "column_masking", "column_mask", "sql_policy")
+        ):
+            raise DatusException(
+                ErrorCode.POLICY_DENIED, message="Request requires SQL policies but no implementation is loaded"
+            )
+        if "sql_policy" in context and not any(
+            callable(getattr(runtime, "bind_read", None)) for _, runtime in self._runtimes
+        ):
+            raise DatusException(
+                ErrorCode.POLICY_DENIED,
+                message="Effective SQL policy snapshot requires a native source-policy provider",
+            )
         for plugin_name, runtime in self._runtimes:
             hook = getattr(runtime, "validate_context", None)
             if not callable(hook):
@@ -152,6 +210,60 @@ class PolicyRuntime:
                 return replace(decision, reason=_explain(context, decision.reason))
         return PolicyValidationResult(allowed=True)
 
+    def requires_bound_read(self, policy_context: Optional[Dict[str, Any]]) -> bool:
+        context = self._normalize_context(policy_context)
+        validation = self.validate_context(context)
+        if not validation.allowed:
+            raise DatusException(ErrorCode.POLICY_DENIED, message=validation.reason or "Policy denied")
+        for _, runtime in self._runtimes:
+            requirement = getattr(runtime, "requires_bound_read", None)
+            if callable(requirement):
+                if requirement(context):
+                    return True
+            elif hasattr(runtime, "policies"):
+                if runtime.policies:
+                    return True
+            elif callable(getattr(runtime, "before_metric_read", None)):
+                return True
+        return False
+
+    def bind_read(self, *, connector: Any, datasource: str, policy_context: Optional[Dict[str, Any]]):
+        context = self._normalize_context(policy_context)
+        validation = self.validate_context(context)
+        if not validation.allowed:
+            raise DatusException(ErrorCode.POLICY_DENIED, message=validation.reason or "Policy denied")
+        providers = [
+            (name, runtime) for name, runtime in self._runtimes if callable(getattr(runtime, "bind_read", None))
+        ]
+        if len(providers) > 1:
+            raise DatusException(
+                ErrorCode.COMMON_CONFIG_ERROR, message="Only one source-level SQL policy provider can be bound"
+            )
+        if not providers:
+            if self.requires_bound_read(context):
+                raise DatusException(
+                    ErrorCode.POLICY_DENIED,
+                    message="Installed metric policy provider does not support native Dosi protection",
+                )
+            return None
+        from datus.tools.sql_read_context import SqlReadContext
+
+        name, runtime = providers[0]
+        # Empty policies need no connection or metadata. The provider owns this
+        # decision, including a trusted effective snapshot supplied per request.
+        required = getattr(runtime, "requires_bound_read", lambda context: True)(context)
+        if not required:
+            return None
+        if connector is None:
+            raise DatusException(ErrorCode.POLICY_DENIED, message="A live connector is required to bind SQL policies")
+        read_context = SqlReadContext(connector, datasource)
+        bound = self._invoke(name, "bind_read", runtime.bind_read, read_context=read_context, policy_context=context)
+        if bound is None:
+            raise DatusException(
+                ErrorCode.POLICY_DENIED, message="Required SQL policy provider returned no bound policy"
+            )
+        return bound
+
     def before_sql_read(
         self,
         sql: str,
@@ -159,11 +271,25 @@ class PolicyRuntime:
         datasource: str,
         dialect: str,
         policy_context: Optional[Dict[str, Any]],
+        connector: Any = None,
     ) -> SqlReadDecision:
         context = self._normalize_context(policy_context)
+        validation = self.validate_context(context)
+        if not validation.allowed:
+            return SqlReadDecision(allowed=False, reason=validation.reason)
         current_sql = sql
+        verifier = None
         applied: list[str] = []
         for plugin_name, runtime in self._runtimes:
+            if callable(getattr(runtime, "bind_read", None)):
+                bound = self.bind_read(connector=connector, datasource=datasource, policy_context=context)
+                if bound is not None:
+                    if not _plain_metadata_read(current_sql, dialect):
+                        current_sql = self._invoke(
+                            plugin_name, "rewrite_sql", bound.rewrite_sql, current_sql, bound.target
+                        )
+                    verifier = bound.verify_context
+                continue
             hook = getattr(runtime, "before_sql_read", None)
             if not callable(hook):
                 continue
@@ -181,7 +307,16 @@ class PolicyRuntime:
                 return replace(decision, reason=_explain(context, decision.reason))
             current_sql = decision.sql if decision.sql is not None else current_sql
             applied.extend(decision.applied_policies)
-        return SqlReadDecision(allowed=True, sql=current_sql, applied_policies=applied)
+        logger.debug(
+            "sql.policy.rewrite",
+            datasource=datasource,
+            dialect=dialect,
+            original_sql=sql,
+            rewritten_sql=current_sql,
+            rewritten=current_sql != sql,
+            policy_runtimes=self.runtime_names,
+        )
+        return SqlReadDecision(allowed=True, sql=current_sql, applied_policies=applied, verify_context=verifier)
 
     def after_read_result(
         self,

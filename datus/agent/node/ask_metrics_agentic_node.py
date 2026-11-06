@@ -664,6 +664,9 @@ class AskMetricsAgenticNode(AgenticNode):
                 and hasattr(self.semantic_tools, "get_cached_query_metrics_result")
             ):
                 cached_result = self.semantic_tools.get_cached_query_metrics_result(parsed.result_id)
+                if cached_result is None and hasattr(self.semantic_tools, "can_use_query_metrics_preview"):
+                    if not self.semantic_tools.can_use_query_metrics_preview(parsed.result_id):
+                        return {"success": False, "message": "query_metrics result policy scope cannot be verified"}
             sql_query = ""
             if isinstance(cached_result, dict) and cached_result.get("csv"):
                 sql_return = cached_result["csv"]

@@ -243,6 +243,33 @@ class TestDbConfigFilterKwargs:
 
 
 class TestDosiDbProfile:
+    @pytest.mark.parametrize("adapter,dialect", [("greenplum", "postgres"), ("spark", "hive")])
+    def test_compatible_wire_profiles_use_the_engine_dialect(self, adapter, dialect):
+        from datus.tools.semantic_tools.dosi.dialects import resolve_profile_dialect
+
+        cfg = DbConfig(type=adapter, host="localhost", database="analytics", extra={"schema_name": "sales"})
+        result = _db_config_to_dosi_profile(cfg)
+        assert result["type"] == dialect
+        assert result["database"] == "analytics"
+        assert result["schema"] == "sales"
+        assert resolve_profile_dialect({"type": adapter}, ["postgres", "hive"]) == dialect
+
+    def test_explicit_schema_wins_over_schema_name_alias(self):
+        cfg = DbConfig(type="trino", host="localhost", extra={"schema": "sales", "schema_name": "other"})
+        assert _db_config_to_dosi_profile(cfg)["schema"] == "sales"
+
+    @pytest.mark.parametrize("database", [None, "legacy_alias"])
+    def test_oracle_service_name_maps_to_the_engine_connection_database(self, database):
+        cfg = DbConfig(
+            type="oracle",
+            host="localhost",
+            database=database,
+            extra={"service_name": "FREEPDB1", "schema_name": "SALES"},
+        )
+        profile = _db_config_to_dosi_profile(cfg)
+        assert profile["database"] == "FREEPDB1"
+        assert profile["schema"] == "SALES"
+
     @pytest.mark.parametrize("auth", [{"auth_mode": "iam"}, {"secret_ref": "test/database"}])
     def test_aurora_settings_keep_types_and_are_independent(self, monkeypatch, auth):
         monkeypatch.setenv("TEST_AWS_REGION", "us-east-1")

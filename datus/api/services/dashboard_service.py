@@ -397,6 +397,11 @@ class DashboardService:
                     agent_config=self.agent_config,
                     sub_agent_name="gen_visual_dashboard",
                     runtime_db_context_provider=lambda: query.execution_context or {"datasource": query.datasource},
+                    policy_context_provider=lambda: (
+                        policy_context
+                        if policy_context is not None
+                        else getattr(self.agent_config, "policy_context", None) or {}
+                    ),
                 )
                 if published:
                     return execute_published_metric_query(

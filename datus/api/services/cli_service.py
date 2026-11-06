@@ -421,35 +421,38 @@ class CLIService:
             sql_type = parse_sql_type(request.sql_query, connector.dialect)
             is_write = sql_type in _WRITE_SQL_TYPES and is_single_statement(request.sql_query)
 
-            if is_write and policy_context:
+            from datus.tools.policy_runtime import PolicyRuntime
+
+            if (
+                is_write
+                and write_statement_reads_data(request.sql_query, connector.dialect)
+                and (policy_context or PolicyRuntime(self.agent_config).requires_bound_read(policy_context))
+            ):
                 # A write can carry a read: `CREATE TABLE mine AS SELECT * FROM
                 # orders` copies the rows a policy just filtered into a table no
                 # policy covers. The plugin cannot help — it hooks reads only —
                 # so on a project that has policies at all, a write that embeds
                 # a query is refused here.
-                reads = write_statement_reads_data(request.sql_query, connector.dialect)
-                if reads:
-                    message = (
-                        "This project has row-level policies, so a write statement that "
-                        "reads from a query is not allowed here — it would copy filtered "
-                        "rows into a table no policy covers. Create views and derived "
-                        "tables on the database side instead."
-                    )
-                    # Every other exit from here closes the action it opened;
-                    # returning without doing so leaves it PROCESSING forever
-                    # and the refusal never reaches the history.
-                    actions.update_action_by_id(
-                        sql_action.action_id,
-                        status=ActionStatus.FAILED,
-                        output={"error": message},
-                        messages=f"SQL execution refused: {message}",
-                    )
-                    return Result(
-                        success=False,
-                        errorCode=ErrorCode.SQL_EXECUTION_ERROR,
-                        errorMessage=message,
-                    )
-
+                message = (
+                    "This project has row-level policies or column masking, so a write statement that "
+                    "reads from a query is not allowed here — it would copy filtered "
+                    "rows into a table no policy covers. Create views and derived "
+                    "tables on the database side instead."
+                )
+                # Every other exit from here closes the action it opened;
+                # returning without doing so leaves it PROCESSING forever
+                # and the refusal never reaches the history.
+                actions.update_action_by_id(
+                    sql_action.action_id,
+                    status=ActionStatus.FAILED,
+                    output={"error": message},
+                    messages=f"SQL execution refused: {message}",
+                )
+                return Result(
+                    success=False,
+                    errorCode=ErrorCode.SQL_EXECUTION_ERROR,
+                    errorMessage=message,
+                )
             if is_write:
                 result = connector.execute(
                     input_params={"sql_query": request.sql_query},
