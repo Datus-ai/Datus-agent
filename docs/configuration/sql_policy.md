@@ -41,14 +41,18 @@ agent:
             type: row_filter
             applies_to:
               datasources: [warehouse]
-              tables: [analytics.main.orders]
+              tables: [analytics.main.orders*]
+            on_missing_column: skip
             condition:
               column: tenant_id
               operator: in
               value_from: policy_context.row_filter.tenant_ids
-        column_masking:
-          - column: analytics.main.orders.phone
-            mask: last4
+        masking_profiles:
+          employee:
+            - column: analytics.main.orders*.phone
+              mask: redact
+              n: 4
+          approved_raw: []
 ```
 
 Profile targets accept short, partially qualified and full names. Missing
@@ -67,8 +71,7 @@ Hive/Spark use `database.table`. Oracle service names and HANA tenants identify
 the connection rather than an SQL object prefix. The datasource key is separate. Quote names containing dots. Policy defaults select the current
 namespace; short SQL query names still use the connection's search path.
 
-Row operators are `eq` and `in`. The fixed masks are `nullify`, `redact`, `last4`
-and `email`; text masks require compatible text columns and an admitted dialect.
+Row operators are `eq` and `in`. The fixed masks are `nullify`, `redact` and `email`; text masks require compatible text columns and an admitted dialect.
 Live acceptance covers DuckDB and 13 Docker-backed adapters: PostgreSQL, MySQL,
 TiDB, StarRocks, Doris, ClickHouse, Greenplum, GaussDB/openGauss, Trino, Oracle,
 Hive, Spark (HiveServer2), and HANA, for the tested native types and query shapes.
@@ -78,9 +81,38 @@ SQLite is also verified: raw SQL uses native SQLite syntax; Dosi uses DuckDB
 with its SQLite extension. Targets use `main.table` or `attach_alias.table`,
 not the file stem. Dosi requires a file-backed database and refuses temporary
 objects/additional attachments it cannot reproduce. SQLite metadata requires
-3.37+; `last4` returns NULL on embedded NUL. Text row-filter columns require
+3.37+; `redact.n` returns NULL on embedded NUL. Text row-filter columns require
 string values to avoid different implicit numeric coercion in sqlite3 and DuckDB. Other text dialects (including
 Inceptor) remain unavailable.
+
+### Shared metadata and wildcard rules
+
+The private Rust core captures the current namespace and native column types.
+Agent supplies a generic query callback; embedded Dosi rebinds the provider to
+its actual native executor. Both paths share metadata SQL and policy templates.
+
+Unquoted `*` and `?` match within a name component (`?` = one Unicode character).
+Row table targets may use patterns, e.g. `tables: [analytics.main.orders_*]`;
+the row column remains exact. `on_missing_column: skip` is the default and skips
+only a confirmed missing column on that table; `error` refuses it. Metadata
+query failures always refuse execution.
+
+Masking accepts patterns and lists, for example:
+
+```yaml
+masking_profiles:
+  employee:
+    - column: [analytics.main.orders_*.phone, analytics.main.customers.id_card]
+      mask: redact
+      n: 4
+  approved_raw: []
+```
+
+`redact.n` defaults to 0 (whole-value `***`); positive n retains the suffix in
+Unicode characters. Length <= n yields NULL. Use `redact, n: 4` to retain four trailing characters.
+Exact targets override patterns; identical masks merge; conflicting patterns
+refuse execution. An exact missing column is an error; zero pattern matches
+are skipped. These fields apply to both SQL and metric execution.
 
 ## Trusted request context
 
@@ -88,11 +120,11 @@ Projects can define named masking rule sets instead of a fixed `column_masking`
 list. Place this fragment inside the selected `agent.plugins.sql-policy` profile:
 
 ```yaml
-policy_revision: "r17"
 masking_profiles:
-  finance_team:
+  employee:
     - column: analytics.main.orders.phone
-      mask: last4
+      mask: redact
+      n: 4
   external_partner:
     - column: analytics.main.orders.phone
       mask: redact
@@ -102,17 +134,21 @@ masking_profiles:
 IDs are custom, case-sensitive keys. The trusted host selects one set per request:
 
 ```json
-{"policy_revision":"r17","masking_profile":"finance_team","row_filter":{"access_mode":"scoped","tenant_ids":[42]}}
+{"masking_profile":"employee","row_filter":{"access_mode":"scoped","tenant_ids":[42]}}
 ```
 
-Only the ID and revision travel per request. Column definitions remain in shared
+The request carries the ID and an optional expected revision. Column definitions remain in shared
 configuration. An explicitly selected empty list disables masking while retaining
 row filtering; names have no special authorization meaning. Missing/unknown IDs,
 mismatched revisions and combining a selection with `sql_policy` snapshots are
 denied. Named sets and static masking rules are mutually exclusive.
-Mask-only projects still require the ID and revision. Shared configuration is
-never changed by a request selection, and execution/cache scopes include the
-selected profile and revision. `sql.policy.rewrite` DEBUG events include both.
+Mask-only projects still require the ID. `policy_revision` is optional in both
+configuration and requests: omit it to use the current loaded rules; when
+supplied, it must be a nonempty string matching a configured revision. NULL
+and empty values are invalid. Shared configuration is never changed by a request
+selection. Execution/cache scopes always include actual rule content and profile
+identity, plus the configured revision when present. DEBUG events include the
+request profile and any supplied revision.
 
 Trusted hosts can call `PolicyRuntime(config).requires_request_context()` to
 determine whether user inputs are required, including mask-only projects.
@@ -167,7 +203,7 @@ Report/dashboard metric recipes compile first and apply protection once at the
 final SQL read boundary. Standalone Dosi execution keeps its native provider.
 Read-carrying writes are refused whenever protection is configured, including
 fixed `column_masking` with an empty request context. Named masking profiles
-require the request's explicit profile ID and revision.
+require the request's explicit profile ID; revision checking is optional.
 
 ## Hard Read-Only Switch (`agent.sql_read_only`)
 

@@ -119,6 +119,35 @@ def test_reads_actual_namespace_and_returns_canonical_metadata(db):
     assert table["columns"][1] == {"name": "phone", "sql_type": "VARCHAR", "is_text": True}
 
 
+def test_provider_owned_metadata_avoids_eager_database_probes(db):
+    connector = Connector(db)
+    calls = []
+    execute = connector.execute_query
+
+    def record(sql, **kwargs):
+        calls.append(sql)
+        return execute(sql, **kwargs)
+
+    connector.execute_query = record
+    context = SqlReadContext(connector, "warehouse", capture_metadata=False)
+    assert calls == []
+    assert context.execution_context["source_dialect"] == "duckdb"
+    import json
+
+    assert json.loads(context.metadata_query("SELECT current_database() AS db")) == [{"db": "memory"}]
+    assert calls == ["SELECT current_database() AS db"]
+
+
+def test_provider_owned_metadata_query_errors_are_not_treated_as_missing_columns():
+    connector = SimpleNamespace(
+        dialect="duckdb",
+        execute_query=lambda *args, **kwargs: SimpleNamespace(success=False, error="permission denied"),
+    )
+    context = SqlReadContext(connector, "warehouse", capture_metadata=False)
+    with pytest.raises(ValueError, match="permission denied"):
+        context.metadata_query("SELECT * FROM system_catalog")
+
+
 def test_policy_targets_fill_omitted_prefixes_from_live_namespace(db):
     context = SqlReadContext(Connector(db), "warehouse")
     expected = {

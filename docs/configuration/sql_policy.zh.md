@@ -38,14 +38,18 @@ agent:
             type: row_filter
             applies_to:
               datasources: [warehouse]
-              tables: [analytics.main.orders]
+              tables: [analytics.main.orders*]
+            on_missing_column: skip
             condition:
               column: tenant_id
               operator: in
               value_from: policy_context.row_filter.tenant_ids
-        column_masking:
-          - column: analytics.main.orders.phone
-            mask: last4
+        masking_profiles:
+          employee:
+            - column: analytics.main.orders*.phone
+              mask: redact
+              n: 4
+          approved_raw: []
 ```
 
 Profile 目标支持短名、部分限定名和完整名称：`orders`、`orders.phone` 等省略的前缀，在绑定时按实际连接
@@ -59,16 +63,41 @@ MySQL、TiDB、ClickHouse、Hive、Spark 用 `database.table`。Oracle 服务名
 策略默认值只指向当前命名空间，查询短名仍按 SQL 的 search path 解析。
 MySQL/TiDB 会读取实际连接的 `lower_case_table_names`，物理目标和 CTE 按该设置匹配大小写。
 
-行过滤支持 `eq`、`in`。四种固定 masking 为 `nullify`、`redact`、`last4`、`email`，只配置目标列和方式。
+行过滤支持 `eq`、`in`。三种固定 masking 为 `nullify`、`redact`、`email`；`redact` 可通过 `n` 配置保留尾长。
 文本方式需要兼容的文本类型和已支持的方言。目前已完成 DuckDB，以及 13 个 Docker adapter 的真实执行验收：PostgreSQL、MySQL、TiDB、StarRocks、
 Doris、ClickHouse、Greenplum、GaussDB/openGauss、Trino、Oracle、Hive、Spark（HiveServer2）、HANA，
 覆盖已测试的原生类型和查询形态。Oracle 指标路径需要 OCI，HANA 指标路径需要 SAP HANA ODBC；
 本地 HANA 验收使用直接明文 SQL 端口，租户路由及 TLS 另行验收。
 SQLite 也已验证：原生 SQL 使用 SQLite 方言，Dosi 通过 DuckDB SQLite 扩展执行。
 目标使用 `main.table` 或 `attach_alias.table`，不使用文件名。Dosi 仅支持文件库，
-存在临时对象或额外附加库时拒绝执行；元数据要求 SQLite 3.37+，`last4` 遇到内嵌 NUL 返回 NULL。
+存在临时对象或额外附加库时拒绝执行；元数据要求 SQLite 3.37+，`redact.n` 遇到内嵌 NUL 返回 NULL。
 SQLite 文本列的行规则要求字符串值，避免两种执行器的隐式类型转换差异。
 其他文本方言（包括 Inceptor）尚未开放。
+
+### 共享元数据与通配符
+
+私有 Rust 核心统一获取当前命名空间、全部列名及原生类型。Agent 提供执行元数据 SQL
+的通用回调；嵌入式 Dosi 则绑定到自己的实际执行连接。两条路径共用元数据查询和策略模板。
+
+未加引号的 `*`、`?` 在单个名称层级内匹配，`?` 表示一个 Unicode 字符。Row filter
+的表名支持通配符，例如 `tables: [analytics.main.orders_*]`，过滤列仍为精确列名。
+`on_missing_column` 默认 `skip`，只跳过已确认缺列的当前表规则；设为 `error` 则拒绝。
+元数据查询失败仍拒绝执行。
+
+Masking 支持名称通配符和列列表，例如：
+
+```yaml
+masking_profiles:
+  employee:
+    - column: [analytics.main.orders_*.phone, analytics.main.customers.id_card]
+      mask: redact
+      n: 4
+  approved_raw: []
+```
+
+`redact.n` 默认 0（整体变为 `***`）；大于 0 时保留末尾 n 个 Unicode 字符，长度不超过 n
+则返回 NULL。保留末尾四个字符使用 `redact, n: 4`。精确目标覆盖通配规则，相同转换合并，冲突的
+通配规则拒绝执行；精确列缺失报错，通配规则匹配不到列则跳过。这些配置同时作用于 SQL 和指标执行。
 
 ## 可信请求上下文
 
@@ -76,11 +105,11 @@ SQLite 文本列的行规则要求字符串值，避免两种执行器的隐式�
 `agent.plugins.sql-policy.<profile>` 内：
 
 ```yaml
-policy_revision: "r17"
 masking_profiles:
-  finance_team:
+  employee:
     - column: analytics.main.orders.phone
-      mask: last4
+      mask: redact
+      n: 4
   external_partner:
     - column: analytics.main.orders.phone
       mask: redact
@@ -90,14 +119,16 @@ masking_profiles:
 ID 是自定义且区分大小写的配置 key；可信宿主每请求选择一个方案：
 
 ```json
-{"policy_revision":"r17","masking_profile":"finance_team","row_filter":{"access_mode":"scoped","tenant_ids":[42]}}
+{"masking_profile":"employee","row_filter":{"access_mode":"scoped","tenant_ids":[42]}}
 ```
 
-请求只传 ID 和版本，列规则保存在项目共享配置中。明确选中空列表方案时不执行列脱敏，
+请求只传 ID、行过滤参数和可选的预期版本，列规则保存在项目共享配置中。明确选中空列表方案时不执行列脱敏，
 行过滤仍然执行，方案名称没有特殊授权含义。ID 缺失、未知或版本不匹配时拒绝读取。
 命名方案与静态 masking 规则互斥；请求中的方案选择与完整 `sql_policy` 快照也互斥。
-只有 masking 的项目同样需要方案 ID 和版本。选择过程不修改共享配置，
-方案及版本会进入执行和缓存指纹，并显示在 `sql.policy.rewrite` DEBUG 事件中。
+只有 masking 的项目同样需要方案 ID。配置和请求中的 `policy_revision` 都可省略：
+请求不传时使用当前加载的规则；显式传入时必须为非空字符串，且配置中有完全相同的版本。
+NULL 或空值不视为省略。选择过程不修改共享配置；实际规则内容和方案 ID 始终进入执行
+和缓存指纹，配置了版本时也计入。DEBUG 日志记录请求中的方案 ID 和可选版本。
 
 可信宿主可以通过 `PolicyRuntime(config).requires_request_context()` 判断是否需要用户上下文，
 包括只有命名脱敏方案的项目。SaaS/Backend 的用户选择和配置刷新尚未接入，当前需由可信宿主明确传入。
@@ -132,7 +163,7 @@ ID 是自定义且区分大小写的配置 key；可信宿主每请求选择一�
 
 报表/看板指标先编译，在最终 SQL 读取入口统一应用一次策略；直接 Dosi 执行仍使用原生 provider。
 配置了策略时，包含读取的写语句会被拒绝；仅配置静态 `column_masking`、请求上下文为空时也会生效。
-命名脱敏方案需要请求明确提供方案 ID 和版本。
+命名脱敏方案需要请求明确提供方案 ID；版本校验为可选。
 
 ## 只读硬开关（`agent.sql_read_only`）
 

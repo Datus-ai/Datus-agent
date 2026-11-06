@@ -624,6 +624,8 @@ class EngineHandle:
             # engine owns the file-path contract.
             entry["uri"] = source
             entry.pop("path", None)
+        if db_type == "spark" and getattr(load_binding(), "POLICY_EXECUTION_HOST_VERSION", 0) >= 1:
+            entry["server_type"] = "spark"
         dialect = normalize_dialect(entry.get("type"))
         if dialect:
             entry["type"] = dialect
