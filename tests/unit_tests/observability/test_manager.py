@@ -7,6 +7,7 @@ from contextlib import contextmanager
 
 import pytest
 from opentelemetry import baggage
+from opentelemetry.trace import NonRecordingSpan, SpanContext, TraceFlags
 
 from datus.observability.config import ObservabilityConfig
 from datus.observability.manager import (
@@ -228,6 +229,7 @@ def test_span_records_context_local_trace_reference(monkeypatch):
 
     class FakeSpanContext:
         is_valid = True
+        trace_flags = TraceFlags(TraceFlags.SAMPLED)
         trace_id = 0x123
         span_id = 0x456
 
@@ -376,6 +378,7 @@ def test_trace_reference_helpers_handle_invalid_spans_and_context():
 
     assert manager._trace_reference_from_span(InvalidSpan()) is None
     assert manager._trace_reference_from_span(BrokenSpan()) is None
+
     assert _format_trace_id(0xA) == "0000000000000000000000000000000a"
     assert _format_span_id(0xB) == "000000000000000b"
 
@@ -388,6 +391,20 @@ def test_trace_reference_helpers_handle_invalid_spans_and_context():
         assert _current_trace_run_id() == "bench-1"
     with trace_context(TraceContext(name="chat", session_id="session-1"), replace=True):
         assert _current_trace_run_id() == "session-1"
+
+
+def test_unsampled_spans_do_not_advertise_an_external_trace_reference():
+    span = NonRecordingSpan(SpanContext(trace_id=1234, span_id=5678, is_remote=False, trace_flags=TraceFlags(0)))
+    assert ObservabilityManager()._trace_reference_from_span(span) is None
+
+
+def test_sampled_spans_preserve_the_external_trace_reference():
+    span = NonRecordingSpan(
+        SpanContext(trace_id=1234, span_id=5678, is_remote=False, trace_flags=TraceFlags(TraceFlags.SAMPLED))
+    )
+    reference = ObservabilityManager()._trace_reference_from_span(span)
+    assert reference is not None
+    assert reference.trace_id == f"{1234:032x}"
 
 
 def test_set_span_attributes_stringifies_and_ignores_failures():

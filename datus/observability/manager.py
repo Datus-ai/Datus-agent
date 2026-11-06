@@ -219,6 +219,10 @@ class ObservabilityManager:
             return None
         if not getattr(context, "is_valid", False):
             return None
+        # A host may retain local RECORD_ONLY spans while collection is off.
+        # Their IDs correlate local work but have no exported trace to link to.
+        if not getattr(getattr(context, "trace_flags", None), "sampled", False):
+            return None
 
         trace_id = _format_trace_id(getattr(context, "trace_id", 0))
         span_id = _format_span_id(getattr(context, "span_id", 0))
