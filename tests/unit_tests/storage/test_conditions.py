@@ -6,7 +6,7 @@ def test_conditions_basic():
         [
             eq("status", "active"),
             ge("score", 80),
-            in_("type", ["A", "B", "C"]),  # expanded into OR chain
+            in_("type", ["A", "B", "C"]),  # native membership
             ne("deleted_at", None),  # -> IS NOT NULL
         ]
     )
@@ -14,8 +14,7 @@ def test_conditions_basic():
     where_clause = build_where(node)
 
     assert (
-        where_clause
-        == "(status = 'active' AND score >= 80 AND (type = 'A' OR type = 'B' OR type = 'C') AND deleted_at IS NOT NULL)"
+        where_clause == "(status = 'active' AND score >= 80 AND (type IN ('A', 'B', 'C')) AND deleted_at IS NOT NULL)"
     )
 
 
@@ -36,7 +35,7 @@ def test_conditions_gte_and_digit_column():
 
 def test_in_handles_null_values():
     clause = build_where(in_("status", ["open", None, "closed"]))
-    assert clause == "(status = 'open' OR status = 'closed' OR status IS NULL)"
+    assert clause == "(status IN ('open', 'closed') OR status IS NULL)"
 
     null_only_clause = build_where(in_("status", [None]))
     assert null_only_clause == "(status IS NULL)"
