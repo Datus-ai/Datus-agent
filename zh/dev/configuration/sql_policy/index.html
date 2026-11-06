@@ -8,7 +8,7 @@
       
       
       
-        
+        <link rel="canonical" href="https://docs.datus.ai/zh/dev/configuration/sql_policy/">
       
       
         <link rel="prev" href="../benchmark/">
@@ -18,9 +18,9 @@
       
       
         
-          
+          <link rel="alternate" href="/dev/" hreflang="en">
         
-          
+          <link rel="alternate" href="/zh/dev/" hreflang="zh">
         
       
       
@@ -57,13 +57,7 @@
 
     
     
-  <!-- datus-docs-seo -->
-<link rel="canonical" href="https://docs.datus.ai/zh/dev/configuration/sql_policy/">
-<link rel="alternate" hreflang="en" href="https://docs.datus.ai/dev/configuration/sql_policy/">
-<link rel="alternate" hreflang="zh-Hans" href="https://docs.datus.ai/zh/dev/configuration/sql_policy/">
-<link rel="alternate" hreflang="x-default" href="https://docs.datus.ai/dev/configuration/sql_policy/">
-<!-- /datus-docs-seo -->
-</head>
+  </head>
   
   
     
@@ -3341,16 +3335,33 @@
     </span>
   </a>
   
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#_2" class="md-nav__link">
+    <nav class="md-nav" aria-label="配置">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#debug-sql" class="md-nav__link">
     <span class="md-ellipsis">
       
-        请求上下文
+        用 DEBUG 日志查看 SQL
       
     </span>
   </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        策略规则
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
   
 </li>
       
@@ -3358,7 +3369,18 @@
   <a href="#_3" class="md-nav__link">
     <span class="md-ellipsis">
       
-        运行流程
+        可信请求上下文
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_4" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        生效流程
       
     </span>
   </a>
@@ -3378,7 +3400,7 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#_4" class="md-nav__link">
+  <a href="#_5" class="md-nav__link">
     <span class="md-ellipsis">
       
         如何验证一个部署
@@ -5040,16 +5062,33 @@
     </span>
   </a>
   
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#_2" class="md-nav__link">
+    <nav class="md-nav" aria-label="配置">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#debug-sql" class="md-nav__link">
     <span class="md-ellipsis">
       
-        请求上下文
+        用 DEBUG 日志查看 SQL
       
     </span>
   </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        策略规则
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
   
 </li>
       
@@ -5057,7 +5096,18 @@
   <a href="#_3" class="md-nav__link">
     <span class="md-ellipsis">
       
-        运行流程
+        可信请求上下文
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_4" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        生效流程
       
     </span>
   </a>
@@ -5077,7 +5127,7 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#_4" class="md-nav__link">
+  <a href="#_5" class="md-nav__link">
     <span class="md-ellipsis">
       
         如何验证一个部署
@@ -5118,103 +5168,116 @@
 
 
 <h1 id="sql-policy">SQL Policy<a class="headerlink" href="#sql-policy" title="Permanent link">&para;</a></h1>
-<p>Datus Agent 不负责用户认证，也不判断用户具有什么权限。可信上游服务完成认证和鉴权后，只把策略执行所需的输入作为 <code>policy_context</code> 传给 Agent；启用的 policy plugin 负责解释这些输入并保护数据读取。</p>
+<p>可信上游完成用户认证和权限计算，Agent 只执行生效策略，不管理 role。
+策略通过可选的 <code>sql-policy</code> plugin 加载；没有配置策略时，Agent / Dosi 保持原有独立运行方式，不依赖私有包。</p>
 <h2 id="_1">配置<a class="headerlink" href="#_1" title="Permanent link">&para;</a></h2>
-<p>SQL policy 只通过 plugin profile 配置；原来的 <code>agent.sql_policy</code> provider 配置不再支持。</p>
+<h3 id="debug-sql">用 DEBUG 日志查看 SQL<a class="headerlink" href="#debug-sql" title="Permanent link">&para;</a></h3>
+<p>以 <code>datus --debug</code> 启动，或配置 <code>agent.logging.level: DEBUG</code>。
+Agent 常规日志中会出现以下结构化事件：</p>
+<table>
+<thead>
+<tr>
+<th>事件</th>
+<th>SQL 字段</th>
+<th>记录时机</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>sql.policy.rewrite</code></td>
+<td><code>original_sql</code>、<code>rewritten_sql</code>、<code>rewritten</code></td>
+<td>策略处理完成、执行之前；覆盖 SQL 工具、API 读取和 CLI 手工 SQL。</td>
+</tr>
+<tr>
+<td><code>sql.execute</code></td>
+<td><code>sql</code></td>
+<td>SQL 工具或 CLI 向 connector 提交最终 SQL 之前。</td>
+</tr>
+<tr>
+<td><code>sql.dosi.execute</code></td>
+<td><code>sql</code></td>
+<td>原生指标/明细执行成功后，记录该次引擎调用实际返回的 SQL。</td>
+</tr>
+<tr>
+<td><code>sql.dosi.compile</code></td>
+<td><code>sql</code></td>
+<td>指标 dry-run 编译完成；该 SQL 尚未执行。</td>
+</tr>
+</tbody>
+</table>
+<p>事件包含 datasource、dialect；Dosi 另包含 connection 和 operation。
+打印日志不会额外编译查询，也不会序列化 policy_context；SQL 字段沿用现有日志脱敏配置。
+INFO 及以上级别不输出这些事件。</p>
+<h3 id="_2">策略规则<a class="headerlink" href="#_2" title="Permanent link">&para;</a></h3>
+<p>原生 <code>datus-sql-policies</code> 使用同一份物理表 <code>row_filter</code> 保护 SQL 和指标读取。
+旧 <code>metric_row_filter</code> 配置需要迁移，不再往指标的业务 <code>where</code> 中拼接条件。</p>
 <div class="language-yaml highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nt">agent</span><span class="p">:</span>
 </span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="w">  </span><span class="nt">plugins</span><span class="p">:</span>
 </span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="w">    </span><span class="nt">sql-policy</span><span class="p">:</span>
 </span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="w">      </span><span class="nt">default</span><span class="p">:</span>
 </span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="w">        </span><span class="nt">default</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
 </span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="w">        </span><span class="nt">policies</span><span class="p">:</span>
-</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="w">          </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">id</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">sp_store_scope_sql</span>
-</span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a><span class="w">            </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">store_scope_sql</span>
+</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="w">          </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">id</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">tenant_scope</span>
+</span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a><span class="w">            </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">tenant_scope</span>
 </span><span id="__span-0-9"><a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a><span class="w">            </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">row_filter</span>
 </span><span id="__span-0-10"><a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a><span class="w">            </span><span class="nt">applies_to</span><span class="p">:</span>
-</span><span id="__span-0-11"><a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a><span class="w">              </span><span class="nt">datasources</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">"warehouse"</span><span class="p p-Indicator">]</span>
-</span><span id="__span-0-12"><a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a><span class="w">              </span><span class="nt">tables</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">"orders"</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">"store_sales"</span><span class="p p-Indicator">]</span>
+</span><span id="__span-0-11"><a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a><span class="w">              </span><span class="nt">datasources</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">warehouse</span><span class="p p-Indicator">]</span>
+</span><span id="__span-0-12"><a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a><span class="w">              </span><span class="nt">tables</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">analytics.main.orders</span><span class="p p-Indicator">]</span>
 </span><span id="__span-0-13"><a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a><span class="w">            </span><span class="nt">condition</span><span class="p">:</span>
-</span><span id="__span-0-14"><a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a><span class="w">              </span><span class="nt">column</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">store_id</span>
+</span><span id="__span-0-14"><a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a><span class="w">              </span><span class="nt">column</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">tenant_id</span>
 </span><span id="__span-0-15"><a id="__codelineno-0-15" name="__codelineno-0-15" href="#__codelineno-0-15"></a><span class="w">              </span><span class="nt">operator</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">in</span>
-</span><span id="__span-0-16"><a id="__codelineno-0-16" name="__codelineno-0-16" href="#__codelineno-0-16"></a><span class="w">              </span><span class="nt">value_from</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">policy_context.row_filter.store_ids</span>
+</span><span id="__span-0-16"><a id="__codelineno-0-16" name="__codelineno-0-16" href="#__codelineno-0-16"></a><span class="w">              </span><span class="nt">value_from</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">policy_context.row_filter.tenant_ids</span>
+</span><span id="__span-0-17"><a id="__codelineno-0-17" name="__codelineno-0-17" href="#__codelineno-0-17"></a><span class="w">        </span><span class="nt">column_masking</span><span class="p">:</span>
+</span><span id="__span-0-18"><a id="__codelineno-0-18" name="__codelineno-0-18" href="#__codelineno-0-18"></a><span class="w">          </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">column</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">analytics.main.orders.phone</span>
+</span><span id="__span-0-19"><a id="__codelineno-0-19" name="__codelineno-0-19" href="#__codelineno-0-19"></a><span class="w">            </span><span class="nt">mask</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">last4</span>
 </span></code></pre></div>
-<p>policy type 及其字段由 policy plugin 定义。每个 <code>row_filter</code> 和 <code>metric_row_filter</code> policy 都必须有稳定且唯一的 <code>id</code>。Agent 只加载 plugin 在 <code>datus-plugin.yml</code> 中声明的运行时。</p>
-<h2 id="_2">请求上下文<a class="headerlink" href="#_2" title="Permanent link">&para;</a></h2>
-<p>默认 API provider 从 <code>X-Datus-Policy-Context</code> 读取 JSON object：</p>
-<div class="language-http highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="err">X-Datus-Policy-Context: {"row_filter":{"access_mode":"scoped","store_ids":[1,2]}}</span>
+<p>Profile 目标支持短名、部分限定名和完整名称：<code>orders</code>、<code>orders.phone</code> 等省略的前缀，在绑定时按实际连接
+的当前坐标补齐，不使用 datasource 初始默认值；显式坐标保持不变。切换命名空间后，旧绑定失效，
+重新绑定的短目标跟随新命名空间，完整目标仍指向原来指定的表。必要的当前坐标不可用时拒绝绑定。</p>
+<p>完整目标按 adapter 层级书写：DuckDB、PostgreSQL、Greenplum、GaussDB 用 <code>database.schema.table</code>；
+StarRocks、Doris 用 <code>catalog.database.table</code>；Trino 用 <code>catalog.schema.table</code>；Oracle、HANA 用 <code>schema.table</code>；
+MySQL、TiDB、ClickHouse、Hive、Spark 用 <code>database.table</code>。Oracle 服务名和 HANA 租户属于连接身份，
+不作为 SQL 对象名前缀；datasource 路由名单独指定。名称含点时需要 SQL 引号。
+策略默认值只指向当前命名空间，查询短名仍按 SQL 的 search path 解析。
+MySQL/TiDB 会读取实际连接的 <code>lower_case_table_names</code>，物理目标和 CTE 按该设置匹配大小写。</p>
+<p>行过滤支持 <code>eq</code>、<code>in</code>。四种固定 masking 为 <code>nullify</code>、<code>redact</code>、<code>last4</code>、<code>email</code>，只配置目标列和方式。
+文本方式需要兼容的文本类型和已支持的方言。目前已完成 DuckDB，以及 13 个 Docker adapter 的真实执行验收：PostgreSQL、MySQL、TiDB、StarRocks、
+Doris、ClickHouse、Greenplum、GaussDB/openGauss、Trino、Oracle、Hive、Spark（HiveServer2）、HANA，
+覆盖已测试的原生类型和查询形态。Oracle 指标路径需要 OCI，HANA 指标路径需要 SAP HANA ODBC；
+本地 HANA 验收使用直接明文 SQL 端口，租户路由及 TLS 另行验收。
+SQLite 也已验证：原生 SQL 使用 SQLite 方言，Dosi 通过 DuckDB SQLite 扩展执行。
+目标使用 <code>main.table</code> 或 <code>attach_alias.table</code>，不使用文件名。Dosi 仅支持文件库，
+存在临时对象或额外附加库时拒绝执行；元数据要求 SQLite 3.37+，<code>last4</code> 遇到内嵌 NUL 返回 NULL。
+SQLite 文本列的行规则要求字符串值，避免两种执行器的隐式类型转换差异。
+其他文本方言（包括 Inceptor）尚未开放。</p>
+<h2 id="_3">可信请求上下文<a class="headerlink" href="#_3" title="Permanent link">&para;</a></h2>
+<p>配置中的行规则继续使用现有执行输入：</p>
+<div class="language-json highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="p">{</span><span class="nt">"row_filter"</span><span class="p">:{</span><span class="nt">"access_mode"</span><span class="p">:</span><span class="s2">"scoped"</span><span class="p">,</span><span class="nt">"tenant_ids"</span><span class="p">:[</span><span class="mi">42</span><span class="p">]}}</span>
 </span></code></pre></div>
-<p>约定结构按 policy family 分两层，不包含用户身份或 groups：</p>
-<div class="language-json highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="p">{</span>
-</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="w">  </span><span class="nt">"row_filter"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
-</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="w">    </span><span class="nt">"access_mode"</span><span class="p">:</span><span class="w"> </span><span class="s2">"scoped"</span><span class="p">,</span>
-</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="w">    </span><span class="nt">"policy_modes"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
-</span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="w">      </span><span class="nt">"sp_store_scope_sql"</span><span class="p">:</span><span class="w"> </span><span class="s2">"scoped"</span>
-</span><span id="__span-2-6"><a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="w">    </span><span class="p">},</span>
-</span><span id="__span-2-7"><a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a><span class="w">    </span><span class="nt">"store_ids"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="mi">2</span><span class="p">]</span>
-</span><span id="__span-2-8"><a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a><span class="w">  </span><span class="p">},</span>
-</span><span id="__span-2-9"><a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a><span class="w">  </span><span class="nt">"column_mask"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
-</span><span id="__span-2-10"><a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a><span class="w">    </span><span class="nt">"customers.email"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"strategy"</span><span class="p">:</span><span class="w"> </span><span class="s2">"email_partial"</span><span class="p">}</span>
-</span><span id="__span-2-11"><a id="__codelineno-2-11" name="__codelineno-2-11" href="#__codelineno-2-11"></a><span class="w">  </span><span class="p">}</span>
-</span><span id="__span-2-12"><a id="__codelineno-2-12" name="__codelineno-2-12" href="#__codelineno-2-12"></a><span class="p">}</span>
-</span></code></pre></div>
-<p>当前 sql-policy plugin 首先应用请求级 row-filter 模式：</p>
-<table>
-<thead>
-<tr>
-<th><code>access_mode</code></th>
-<th>行为</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>denied</code></td>
-<td>拒绝所有数据读取。</td>
-</tr>
-<tr>
-<td><code>scoped</code></td>
-<td>逐个评估已配置的行过滤；缺少必需输入时 fail closed。</td>
-</tr>
-</tbody>
-</table>
-<p>对于 scoped 请求，可选的 <code>policy_modes</code> object 可以按 policy ID 单独覆盖模式：</p>
-<table>
-<thead>
-<tr>
-<th>单 policy 模式</th>
-<th>行为</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>scoped</code></td>
-<td>执行该 policy，并解析其 <code>policy_context.*</code> 输入。</td>
-</tr>
-<tr>
-<td><code>unrestricted</code></td>
-<td>仅跳过该 policy；其他 row policy 和 result policy 仍会执行。</td>
-</tr>
-</tbody>
-</table>
-<p>未在 <code>policy_modes</code> 中声明的 policy 默认为 <code>scoped</code>。未知 policy ID、格式错误的模式，以及缺少或未知的请求级 <code>access_mode</code> 都会被拒绝；没有配置 row policy 时，空 context 可以通过。</p>
-<p><code>X-Datus-User-Id</code> 只用于会话隔离。Agent 不会把它合并进 <code>policy_context</code>，也不会把 context 中的任何字段当作已认证身份。</p>
-<h2 id="_3">运行流程<a class="headerlink" href="#_3" title="Permanent link">&para;</a></h2>
+<p><code>denied</code> 拒绝所有读取。可选 <code>policy_modes</code> 可将某个已配置规则 ID 标为 <code>unrestricted</code>，只跳过该行规则；其他规则及 masking 仍然生效。缺少输入、未知 ID、非法模式都会拒绝。</p>
+<p>可信宿主也可直接提供 <code>policy_context.sql_policy</code>，包含 <code>version</code> 和
+<code>policies: {row_filters: [...], column_masks: [...]}</code>。目标为规范化的结构化对象：
+<code>datasource</code>、可选 <code>catalog</code>、<code>database</code>、<code>schema</code>、<code>table</code>。
+行规则增加 <code>column</code>、<code>operator</code>、<code>values</code>，masking 增加 <code>column</code>、<code>mask</code>。
+该快照替代本次请求的 profile 规则，属于可信授权输入，不能由模型的工具参数提供。
+默认 API provider 可从 <code>X-Datus-Policy-Context</code> 解析 JSON，部署方必须保证 header 来源可信。
+<code>X-Datus-User-Id</code> 仍只用于会话隔离。</p>
+<h2 id="_4">生效流程<a class="headerlink" href="#_4" title="Permanent link">&para;</a></h2>
 <ol>
-<li>上游服务完成认证、鉴权并生成 <code>policy_context</code>。</li>
-<li>API 将 header 解析为 <code>AppContext.policy_context</code>，并在启动任何内置或用户自定义 subagent 前调用启用的 policy runtime 校验。</li>
-<li>请求级 <code>AgentConfig</code> 副本把同一 context 传给所有 subagent 和 tool transformer。</li>
-<li><code>DBFuncTool.execute_read_enforced</code> 先校验原始 SQL，再调用 <code>before_sql_read</code>，然后重新校验改写后的 SQL 并执行。</li>
-<li>查询成功后，原始结果会先经过 <code>after_read_result</code>，之后才允许压缩、保存 artifact、渲染或返回；column masking 将在这个扩展点实现。</li>
-<li>语义指标工具也调用同一个 plugin runtime，在聚合前写入 <code>where</code> 条件。</li>
+<li>Agent 校验 context，将本次策略快照绑定到实际连接和元数据。</li>
+<li>普通 SQL 经 <code>DBFuncTool.execute_read_enforced</code>；Dosi 经可选 Python <code>policy</code> / <code>policy_required</code> 参数注入同一 provider。</li>
+<li>完整 SQL lowering 后，共享原生核心逐个替换物理表读取：先按原值过滤行，再投影脱敏值，外层业务计算使用这些值。子查询、重复引用、query-backed dataset、衍生指标、FIXED/context_filter 和归因查询都经过这个边界。</li>
+<li>执行前再次校验连接上下文；指标/明细结果缓存绑定策略快照和执行上下文。返回结果后不再做二次 masking。</li>
 </ol>
-<p>无效 runtime 声明、格式错误的 decision、策略异常、策略拒绝和不安全 SQL 改写都会 fail closed。proxied tool 在 Agent 进程外执行，需要由外部 executor 自行保护。</p>
-<p>手工检查时显式传入同一个对象：</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>datus<span class="w"> </span>sql-policy<span class="w"> </span>check<span class="w"> </span>--sql<span class="w"> </span><span class="s2">"SELECT * FROM orders"</span><span class="w"> </span><span class="se">\</span>
-</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="w">  </span>--policy-context<span class="w"> </span><span class="s1">'{"row_filter":{"access_mode":"scoped","store_ids":[1,2]}}'</span>
-</span></code></pre></div>
+<p>要求策略但缺失实现、绑定失败或语法不支持时拒绝执行。暂不支持的视图、表函数等不透明来源会被拒绝；不会退回旧的指标 WHERE 注入。进程外 proxied executor 需自行保护；新增原生接口不会自动保护所有已有 workflow 或外部执行入口。</p>
+<p><code>datus sql-policy status</code> 查看配置。离线 <code>check</code> 可以校验 context，但缺少实际连接时拒绝策略改写；查看改写后的 SQL 应使用 Agent / Dosi dry-run。
+本实现需要配套原生 wheel，SaaS/Backend 的接入和发布另行处理。</p>
+<p>报表/看板指标先编译，在最终 SQL 读取入口统一应用一次策略；直接 Dosi 执行仍使用原生 provider。
+配置了策略时，包含读取的写语句会被拒绝；仅配置 masking、请求上下文为空时也会生效。</p>
 <h2 id="agentsql_read_only">只读硬开关（<code>agent.sql_read_only</code>）<a class="headerlink" href="#agentsql_read_only" title="Permanent link">&para;</a></h2>
 <p><code>agent.sql_read_only</code> 是另一套更简单的机制，不要与上面的 policy plugin 混淆。</p>
-<div class="language-yaml highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="nt">agent</span><span class="p">:</span>
-</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="w">  </span><span class="nt">sql_read_only</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span><span class="w">   </span><span class="c1"># 默认 false</span>
+<div class="language-yaml highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="nt">agent</span><span class="p">:</span>
+</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="w">  </span><span class="nt">sql_read_only</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span><span class="w">   </span><span class="c1"># 默认 false</span>
 </span></code></pre></div>
 <p>置为 <code>true</code> 后，该配置服务的所有 SQL 入口都不允许执行非只读语句：</p>
 <ul>
@@ -5265,7 +5328,7 @@
 </table>
 <p>该开关只能收紧：它以只读属性加一个单向的 <code>AgentConfig.harden_sql_read_only()</code> 暴露——每请求的配置副本可以自行加固，但下游任何代码都无法把 <code>true</code> 改回去；同时它也绝不会放松本就以只读运行的组件（Explore、<code>ask_report</code>、LLM validator）。</p>
 <p>适用场景：进程需要针对自有数据源运行第三方作者的 agent 内容（skill、subagent、reference template）。两套机制可以叠加使用——<code>sql_read_only</code> 限定「允许执行哪一类语句」，policy plugin 限定「某个调用方能读到什么」。</p>
-<h3 id="_4">如何验证一个部署<a class="headerlink" href="#_4" title="Permanent link">&para;</a></h3>
+<h3 id="_5">如何验证一个部署<a class="headerlink" href="#_5" title="Permanent link">&para;</a></h3>
 <p>自动化覆盖位于 <code>tests/unit_tests/tools/func_tool/test_database.py</code>、<code>tests/integration/tools/test_func_tools_db.py</code> 与 <code>tests/integration/tools/test_mcp_server.py</code>。</p>
 <p>另有两个手工脚本，通过 MCP 端到端探测真实服务。两者都不在 CI 中运行，都会打印判定表格并在失败时以非零码退出：</p>
 <table>
