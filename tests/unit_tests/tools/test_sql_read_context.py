@@ -6,7 +6,14 @@ import duckdb
 import pytest
 import sqlglot
 
+from datus.tools.db_tools import connector_registry
 from datus.tools.sql_read_context import SqlReadContext
+
+
+@pytest.fixture(autouse=True)
+def postgres_capabilities(monkeypatch):
+    """Declare the fake PostgreSQL connector's shape without an optional adapter."""
+    monkeypatch.setitem(connector_registry._capabilities, "postgresql", {"database", "schema"})
 
 
 class Connector:
