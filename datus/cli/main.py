@@ -233,9 +233,10 @@ class ArgumentParser:
             default=None,
             help=(
                 "Override permissions.profile from agent.yml for this run (REPL and --print). "
-                "In --print mode the run uses the configured profile by default (bash and other "
-                "tools only auto-run when an allow rule matches); pass 'dangerous' to restore "
-                "the legacy allow-everything print-mode behavior."
+                "In headless --print mode, 'normal': ASK calls without automatic approval fail "
+                "with PERMISSION_DENIED; 'auto': AI review for eligible Bash/SQL ASK calls "
+                "(review may still deny); 'dangerous': allow actions by default without AI review. "
+                "Explicit deny rules and filesystem protections still apply."
             ),
         )
 
@@ -246,8 +247,9 @@ class ArgumentParser:
             choices=["interactive", "workflow"],
             default=None,
             help=(
-                "--print only. 'workflow' (default): headless — ASK permissions fail fast with "
-                "PERMISSION_DENIED. 'interactive': permission/interaction prompts are streamed "
+                "--print only. 'workflow' (default): headless — ASK calls without automatic approval "
+                "fail with PERMISSION_DENIED. Use --permission-mode auto for AI review of eligible "
+                "Bash/SQL calls. 'interactive': permission/interaction prompts are streamed "
                 "as MessagePayload JSON on stdout and answers are read from stdin, so a driving "
                 "program can approve or deny each request."
             ),
