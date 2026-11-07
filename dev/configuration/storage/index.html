@@ -8,7 +8,7 @@
       
       
       
-        
+        <link rel="canonical" href="https://docs.datus.ai/dev/configuration/storage/">
       
       
         <link rel="prev" href="../datasources/dws/">
@@ -18,9 +18,9 @@
       
       
         
-          
+          <link rel="alternate" href="/dev/" hreflang="en">
         
-          
+          <link rel="alternate" href="/zh/dev/" hreflang="zh">
         
       
       
@@ -57,13 +57,7 @@
 
     
     
-  <!-- datus-docs-seo -->
-<link rel="canonical" href="https://docs.datus.ai/dev/configuration/storage/">
-<link rel="alternate" hreflang="en" href="https://docs.datus.ai/dev/configuration/storage/">
-<link rel="alternate" hreflang="zh-Hans" href="https://docs.datus.ai/zh/dev/configuration/storage/">
-<link rel="alternate" hreflang="x-default" href="https://docs.datus.ai/dev/configuration/storage/">
-<!-- /datus-docs-seo -->
-</head>
+  </head>
   
   
     
@@ -5760,7 +5754,7 @@ OpenAI-compatible embedding provider.</p>
 </div>
 <h2 id="integration-with-other-components">Integration with Other Components<a class="headerlink" href="#integration-with-other-components" title="Permanent link">&para;</a></h2>
 <h3 id="metrics-configuration">Metrics Configuration<a class="headerlink" href="#metrics-configuration" title="Permanent link">&para;</a></h3>
-<p>The storage configuration works with the metrics section to embed business metrics:</p>
+<p>The storage configuration works with the metrics section to embed business metrics:
 <div class="language-yaml highlight"><pre><span></span><code><span id="__span-15-1"><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a><span class="nt">metrics</span><span class="p">:</span>
 </span><span id="__span-15-2"><a id="__codelineno-15-2" name="__codelineno-15-2" href="#__codelineno-15-2"></a><span class="w">  </span><span class="nt">duckdb</span><span class="p">:</span><span class="w">                              </span><span class="c1"># Datasource reference</span>
 </span><span id="__span-15-3"><a id="__codelineno-15-3" name="__codelineno-15-3" href="#__codelineno-15-3"></a><span class="w">    </span><span class="nt">domain</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">sale</span><span class="w">                       </span><span class="c1"># Business domain</span>
@@ -5771,7 +5765,7 @@ OpenAI-compatible embedding provider.</p>
 </span><span id="__span-15-8"><a id="__codelineno-15-8" name="__codelineno-15-8" href="#__codelineno-15-8"></a><span class="w">  </span><span class="nt">metric</span><span class="p">:</span>
 </span><span id="__span-15-9"><a id="__codelineno-15-9" name="__codelineno-15-9" href="#__codelineno-15-9"></a><span class="w">    </span><span class="nt">model_name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">all-MiniLM-L6-v2</span><span class="w">       </span><span class="c1"># Model for embedding metrics</span>
 </span><span id="__span-15-10"><a id="__codelineno-15-10" name="__codelineno-15-10" href="#__codelineno-15-10"></a><span class="w">    </span><span class="nt">dim_size</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">384</span>
-</span></code></pre></div>
+</span></code></pre></div></p>
 <h2 id="storage-backends">Storage Backends<a class="headerlink" href="#storage-backends" title="Permanent link">&para;</a></h2>
 <p>Datus Agent uses a dual-track storage architecture — <strong>Vector DB</strong> for embeddings and <strong>RDB</strong> for structured metadata. Both support pluggable backends via a registry + entry-point mechanism.</p>
 <blockquote>

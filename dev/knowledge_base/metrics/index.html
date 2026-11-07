@@ -8,7 +8,7 @@
       
       
       
-        
+        <link rel="canonical" href="https://docs.datus.ai/dev/knowledge_base/metrics/">
       
       
         <link rel="prev" href="../semantic_model/">
@@ -18,9 +18,9 @@
       
       
         
-          
+          <link rel="alternate" href="/dev/" hreflang="en">
         
-          
+          <link rel="alternate" href="/zh/dev/" hreflang="zh">
         
       
       
@@ -57,13 +57,7 @@
 
     
     
-  <!-- datus-docs-seo -->
-<link rel="canonical" href="https://docs.datus.ai/dev/knowledge_base/metrics/">
-<link rel="alternate" hreflang="en" href="https://docs.datus.ai/dev/knowledge_base/metrics/">
-<link rel="alternate" hreflang="zh-Hans" href="https://docs.datus.ai/zh/dev/knowledge_base/metrics/">
-<link rel="alternate" hreflang="x-default" href="https://docs.datus.ai/dev/knowledge_base/metrics/">
-<!-- /datus-docs-seo -->
-</head>
+  </head>
   
   
     
@@ -5251,7 +5245,7 @@
 <p>The user does not need to know the metric names. AskMetrics uses the subject tree and metric descriptions to infer that this question needs <code>bank_failure_count</code> and <code>failed_assets_million</code>, discovers the available time dimension, and queries them by year.</p>
 <p>This flow assumes the metrics already exist on the active datasource. If no existing metric can answer the question, AskMetrics reports that limitation instead of switching to an unrelated raw-SQL answer. See <a href="../../subagent/ask_metrics/">AskMetrics</a> for routing, configuration, and output behavior.</p>
 <h2 id="current-metric-yaml">Current metric YAML<a class="headerlink" href="#current-metric-yaml" title="Permanent link">&para;</a></h2>
-<p>The following excerpt is the <code>semantic_model[0].metrics</code> section from the <code>bank_failures.yml</code> file generated against Datus's sample DuckDB database. It uses the dataset and fields shown in <a href="../semantic_model/">Semantic Models</a>. The leading indentation is intentional: this block belongs inside a semantic model and is not a standalone YAML document.</p>
+<p>The following excerpt is the <code>metrics</code> section from the <code>bank_failures.yml</code> file generated against Datus's sample DuckDB database. It uses the dataset and fields shown in <a href="../semantic_model/">Semantic Models</a>. The leading indentation is intentional: this block belongs inside a semantic model and is not a standalone YAML document.</p>
 <div class="language-yaml highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="w">    </span><span class="nt">metrics</span><span class="p">:</span>
 </span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">bank_failure_count</span>
 </span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="w">        </span><span class="nt">expression</span><span class="p">:</span>
