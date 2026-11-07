@@ -879,7 +879,7 @@ class TestValidateInlineMappingRequestedMetrics:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("initial_state", ["missing", "invalid"])
-async def test_catalog_recovers_referenced_file_outside_tracked_directories(tmp_path, initial_state):
+async def test_catalog_refreshes_when_external_dependency_availability_changes(tmp_path, initial_state):
     models_dir = tmp_path / "models"
     ontology_dir = tmp_path / "mappings"
     external_dir = tmp_path / "shared"
@@ -922,3 +922,15 @@ metrics:
     assert [metric.name for metric in await runtime.list_metrics()] == ["healthy_count", "recovering_count"]
     result = await runtime.query_metrics(["recovering_count"], dry_run=True)
     assert "COUNT" in result.metadata["sql"].upper()
+
+    if initial_state == "missing":
+        external.unlink()
+    else:
+        external.write_text("name: [\n")
+    assert [metric.name for metric in await runtime.list_metrics()] == ["healthy_count"]
+    result = await runtime.query_metrics(["healthy_count"], dry_run=True)
+    assert "COUNT" in result.metadata["sql"].upper()
+
+    external.write_text("version: 0.2.0.dev0\nname: Shop\nontology: []\n")
+    assert [metric.name for metric in await runtime.list_metrics()] == ["healthy_count", "recovering_count"]
+    assert [(path.read_bytes(), path.stat().st_mtime_ns) for path in tracked_files] == original

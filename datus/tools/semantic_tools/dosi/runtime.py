@@ -1274,16 +1274,17 @@ class DosiRuntime:
         with self._catalog_lock:
             signature, handles = self._registry.snapshot()
             if signature == self._catalog_signature:
-                # External dependencies can recover without changing the registry signature.
+                # External dependencies can change availability without changing the registry signature.
                 available_paths = {path for path, _ in self._catalog_handles}
                 for model_path, handle in handles:
-                    if model_path in available_paths:
-                        continue
                     try:
                         handle.get()
                     except SemanticCoreException:
+                        if model_path in available_paths:
+                            break
                         continue
-                    break
+                    if model_path not in available_paths:
+                        break
                 else:
                     return (
                         self._catalog_handles,
