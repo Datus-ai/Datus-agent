@@ -81,44 +81,31 @@ def _model():
         )
     return {
         "version": "0.2.0.dev0",
-        "semantic_model": [
+        "name": "hive_acceptance",
+        "datasets": [
+            {"name": "orders", "source": source, "primary_key": ["order_id"], "fields": fields},
             {
-                "name": "hive_acceptance",
-                "datasets": [
-                    {"name": "orders", "source": source, "primary_key": ["order_id"], "fields": fields},
-                    {
-                        "name": "customers",
-                        "source": "SELECT 10 AS customer_id, '北区' AS region UNION ALL SELECT 20, '南区'",
-                        "primary_key": ["customer_id"],
-                        "fields": [
-                            {"name": name, "expression": _expression(name)} for name in ("customer_id", "region")
-                        ],
-                    },
-                    {
-                        "name": "clock",
-                        "source": (
-                            "SELECT CAST('2024-01-01 00:20:00' AS TIMESTAMP) AS started_at, "
-                            "CAST('2024-01-01 00:40:00' AS TIMESTAMP) AS ended_at "
-                            "UNION ALL SELECT CAST('2023-12-31 23:59:59.9' AS TIMESTAMP), "
-                            "CAST('2024-01-01 00:00:00.1' AS TIMESTAMP)"
-                        ),
-                        "fields": [
-                            {"name": name, "expression": _expression(name)} for name in ("started_at", "ended_at")
-                        ],
-                    },
-                ],
-                "relationships": [
-                    {
-                        "name": "orders_to_customers",
-                        "from": "orders",
-                        "to": "customers",
-                        "from_columns": ["customer_id"],
-                        "to_columns": ["customer_id"],
-                    }
-                ],
-                "metrics": metrics,
+                "name": "customers",
+                "source": "SELECT 10 AS customer_id, '北区' AS region UNION ALL SELECT 20, '南区'",
+                "primary_key": ["customer_id"],
+                "fields": [{"name": name, "expression": _expression(name)} for name in ("customer_id", "region")],
+            },
+            {
+                "name": "clock",
+                "source": "SELECT CAST('2024-01-01 00:20:00' AS TIMESTAMP) AS started_at, CAST('2024-01-01 00:40:00' AS TIMESTAMP) AS ended_at UNION ALL SELECT CAST('2023-12-31 23:59:59.9' AS TIMESTAMP), CAST('2024-01-01 00:00:00.1' AS TIMESTAMP)",
+                "fields": [{"name": name, "expression": _expression(name)} for name in ("started_at", "ended_at")],
+            },
+        ],
+        "relationships": [
+            {
+                "name": "orders_to_customers",
+                "from": "orders",
+                "to": "customers",
+                "from_columns": ["customer_id"],
+                "to_columns": ["customer_id"],
             }
         ],
+        "metrics": metrics,
     }
 
 
@@ -299,25 +286,21 @@ def test_native_inceptor_system_varchar2_metrics(hive_tool):
         pytest.skip("Inceptor-specific system view and VARCHAR2 metadata")
     model = {
         "version": "0.2.0.dev0",
-        "semantic_model": [
+        "name": "catalog_acceptance",
+        "datasets": [
             {
-                "name": "catalog_acceptance",
-                "datasets": [
-                    {
-                        "name": "catalog_columns",
-                        "source": "system.columns_v",
-                        "fields": [{"name": "column_name", "expression": _expression("column_name")}],
-                    }
-                ],
-                "metrics": [
-                    {"name": name, "expression": _expression(sql)}
-                    for name, sql in (
-                        ("catalog_count", "COUNT(catalog_columns.column_name)"),
-                        ("catalog_min", "MIN(catalog_columns.column_name)"),
-                        ("catalog_max", "MAX(catalog_columns.column_name)"),
-                    )
-                ],
+                "name": "catalog_columns",
+                "source": "system.columns_v",
+                "fields": [{"name": "column_name", "expression": _expression("column_name")}],
             }
+        ],
+        "metrics": [
+            {"name": name, "expression": _expression(sql)}
+            for name, sql in (
+                ("catalog_count", "COUNT(catalog_columns.column_name)"),
+                ("catalog_min", "MIN(catalog_columns.column_name)"),
+                ("catalog_max", "MAX(catalog_columns.column_name)"),
+            )
         ],
     }
     (model_dir / "catalog.yaml").write_text(yaml.safe_dump(model))

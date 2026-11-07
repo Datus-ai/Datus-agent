@@ -26,7 +26,7 @@ _NATIVE_NOTES = """\
 
 ---
 # Dosi native authoring notes
-# - Keep exactly one semantic_model object per file; Dosi does not merge model
+# - Keep one model per file, with version, name and datasets at the root; Dosi does not merge model
 #   fragments before validation or execution.
 # - Every expression dialect must be `{dialect}` for this datasource.
 # - Dosi execution metadata belongs in vendor_name: DATUS custom_extensions.

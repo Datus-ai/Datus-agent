@@ -171,7 +171,7 @@ datus --datasource duckdb_demo
 subject/semantic_models/<datasource>/<semantic_model>.yml
 ```
 
-每个创作文件的根 `semantic_model` 列表只放一个模型对象。建议按业务域组织相关的事实表和维表，例如 `sales.yml` 或 `marketing.yml`。物理来源和 query-backed 来源的选择遵循上面的规则。
+每个创作文件在文档根部定义一个模型。建议按业务域组织相关的事实表和维表，例如 `sales.yml` 或 `marketing.yml`。物理来源和 query-backed 来源的选择遵循上面的规则。
 
 ## YAML 规范
 
@@ -187,7 +187,7 @@ Authoring skill 默认注入紧凑的 OSI 结构与完整的 DATUS 能力目录�
 
 | 对象 | 必需或重要字段 | 含义 |
 | --- | --- | --- |
-| 根对象 | `version`、`semantic_model` | OSI 版本和模型列表 |
+| 根对象 | `version`、`name`、`datasets` | Ossie 版本和模型定义 |
 | Semantic model | `name`、`datasets`；可选 `description`、`ai_context`、`relationships`、`metrics`、`custom_extensions` | 一个业务域 |
 | Dataset | `name`、`source`；可选 `primary_key`、`unique_keys`、`fields`、说明和 extension | 物理表或可复用查询 |
 | Field | `name`、`expression`；可选 `dimension`、`label`、说明和 extension | 来源列或表达式，维度策略决定能否参与分组 |
@@ -203,73 +203,72 @@ Authoring skill 默认注入紧凑的 OSI 结构与完整的 DATUS 能力目录�
 
 ```yaml
 version: 0.2.0.dev0
-semantic_model:
+name: bank_failures
+datasets:
   - name: bank_failures
-    datasets:
-      - name: bank_failures
-        source: main.bank_failures
-        description: 银行倒闭事件事实表，每一行记录一家倒闭银行及其倒闭日期与倒闭时资产。
-        ai_context: 每一行代表一家银行的倒闭事件；用于按时间（date）、州（state）等维度分析银行倒闭数量与倒闭资产规模。
-        fields:
-          - name: bank
-            expression:
-              dialects:
-                - dialect: DUCKDB
-                  expression: Bank
-            description: 倒闭银行名称
-          - name: state
-            expression:
-              dialects:
-                - dialect: DUCKDB
-                  expression: State
-            description: 银行所在州（美国州代码）
-          - name: date
-            expression:
-              dialects:
-                - dialect: DUCKDB
-                  expression: Date
-            dimension:
-              is_time: true
-            description: 银行倒闭日期
-            custom_extensions:
-              - vendor_name: DATUS
-                data: '{"v":"1.4","time_granularity":"day"}'
-          - name: assets_million
-            expression:
-              dialects:
-                - dialect: DUCKDB
-                  expression: '"Assets ($mil.)"'
-            label: Assets ($mil.)
-            description: 倒闭时资产总额（百万美元）
-        custom_extensions:
-          - vendor_name: DATUS
-            data: '{"v":"1.4","time_dimension":"date"}'
-
-    relationships: []
-    metrics:
-      - name: bank_failure_count
+    source: main.bank_failures
+    description: 银行倒闭事件事实表，每一行记录一家倒闭银行及其倒闭日期与倒闭时资产。
+    ai_context: 每一行代表一家银行的倒闭事件；用于按时间（date）、州（state）等维度分析银行倒闭数量与倒闭资产规模。
+    fields:
+      - name: bank
         expression:
           dialects:
             - dialect: DUCKDB
-              expression: COUNT(*)
-        description: 倒闭银行数量，即银行倒闭事件的记录数。
-        ai_context:
-          instructions: 按 date 作为业务时间，统计倒闭事件条数；可按 state 或时间粒度分组。
-        custom_extensions:
-          - vendor_name: DATUS
-            data: '{"v":"1.4","dataset":"bank_failures","time_dimension":"bank_failures.date","subject_path":["banking","bank_failures","count"],"unit":"banks"}'
-
-      - name: failed_assets_million
+              expression: Bank
+        description: 倒闭银行名称
+      - name: state
         expression:
           dialects:
             - dialect: DUCKDB
-              expression: SUM(bank_failures.assets_million)
-        description: 倒闭银行资产总额（单位：百万美元）。
-        ai_context:
-          instructions: 按 date 作为业务时间，对倒闭时资产求和；单位是百万美元。
+              expression: State
+        description: 银行所在州（美国州代码）
+      - name: date
+        expression:
+          dialects:
+            - dialect: DUCKDB
+              expression: Date
+        dimension:
+          is_time: true
+        description: 银行倒闭日期
         custom_extensions:
           - vendor_name: DATUS
-            data: '{"v":"1.4","time_dimension":"bank_failures.date","subject_path":["banking","bank_failures","assets"],"unit":"USD million"}'
+            data: '{"v":"1.4","time_granularity":"day"}'
+      - name: assets_million
+        expression:
+          dialects:
+            - dialect: DUCKDB
+              expression: '"Assets ($mil.)"'
+        label: Assets ($mil.)
+        description: 倒闭时资产总额（百万美元）
+    custom_extensions:
+      - vendor_name: DATUS
+        data: '{"v":"1.4","time_dimension":"date"}'
+
+relationships: []
+metrics:
+  - name: bank_failure_count
+    expression:
+      dialects:
+        - dialect: DUCKDB
+          expression: COUNT(*)
+    description: 倒闭银行数量，即银行倒闭事件的记录数。
+    ai_context:
+      instructions: 按 date 作为业务时间，统计倒闭事件条数；可按 state 或时间粒度分组。
+    custom_extensions:
+      - vendor_name: DATUS
+        data: '{"v":"1.4","dataset":"bank_failures","time_dimension":"bank_failures.date","subject_path":["banking","bank_failures","count"],"unit":"banks"}'
+
+  - name: failed_assets_million
+    expression:
+      dialects:
+        - dialect: DUCKDB
+          expression: SUM(bank_failures.assets_million)
+    description: 倒闭银行资产总额（单位：百万美元）。
+    ai_context:
+      instructions: 按 date 作为业务时间，对倒闭时资产求和；单位是百万美元。
+    custom_extensions:
+      - vendor_name: DATUS
+        data: '{"v":"1.4","time_dimension":"bank_failures.date","subject_path":["banking","bank_failures","assets"],"unit":"USD million"}'
 ```
 
 这个结果来自真实 schema 和数据检查，而不是预先编写的模板。它只为提示词要求的 4 个字段建模，也没有声明 key。DuckDB 可以不加引号解析 `Bank`、`State` 和 `Date` 这些简单标识符；`Assets ($mil.)` 含空格和符号，因此使用双引号表达式。

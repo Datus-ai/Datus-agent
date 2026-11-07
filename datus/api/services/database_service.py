@@ -945,6 +945,9 @@ class DatasourceService:
             )
 
         try:
+            from datus.tools.semantic_tools.dosi.files import file_engine
+
+            file_engine(semantic_model_path, self._semantic_model_config(semantic_model_path), allow_invalid=True)
             content = semantic_model_path.read_bytes()
             yaml_content = content.decode("utf-8")
             declared_name = None
@@ -1000,6 +1003,10 @@ class DatasourceService:
 
         display_path = self._semantic_model_display_path(semantic_model_path)
         candidate_content = request.yaml.encode("utf-8")
+        if semantic_model_path.is_file():
+            from datus.tools.semantic_tools.dosi.files import file_engine
+
+            file_engine(semantic_model_path, agent_config, allow_invalid=True)
         with semantic_artifact_lock(semantic_model_path):
             try:
                 original_exists = semantic_model_path.exists()

@@ -147,14 +147,10 @@ class MetricFilesystemFuncTool(FilesystemFuncTool):
                     )
                 document = {
                     "version": "0.2.0.dev0",
-                    "semantic_model": [
-                        {
-                            "name": planned_name,
-                            "datasets": [],
-                            "relationships": [],
-                            "metrics": [],
-                        }
-                    ],
+                    "name": planned_name,
+                    "datasets": [],
+                    "relationships": [],
+                    "metrics": [],
                 }
             else:
                 if not target_path.is_file():
@@ -170,16 +166,16 @@ class MetricFilesystemFuncTool(FilesystemFuncTool):
 
             if not isinstance(document, dict):
                 return FuncToolResult(success=0, error="OSI semantic model root must be a YAML object")
-            models = document.get("semantic_model")
+            models = [document] if "datasets" in document else None
             if not isinstance(models, list) or len(models) != 1 or not isinstance(models[0], dict):
-                return FuncToolResult(success=0, error="OSI document must contain exactly one semantic_model object")
+                return FuncToolResult(success=0, error="OSI document must contain one root model with datasets")
 
             model = models[0]
             existing_datasets = model["datasets"] if "datasets" in model else []
             if not isinstance(existing_datasets, list) or any(
                 not isinstance(dataset, dict) for dataset in existing_datasets
             ):
-                return FuncToolResult(success=0, error="semantic_model[0].datasets must be a list of dataset objects")
+                return FuncToolResult(success=0, error="datasets must be a list of dataset objects")
 
             dataset_indexes = {
                 str(dataset.get("name") or "").strip(): index
@@ -248,7 +244,7 @@ class MetricFilesystemFuncTool(FilesystemFuncTool):
     def delete_osi_datasets(self, path: str, dataset_names: List[str]) -> FuncToolResult:
         """Delete explicitly named datasets from a planned OSI semantic model.
 
-        Only ``semantic_model[0].datasets`` is changed. Relationships, metrics,
+        Only ``datasets`` is changed. Relationships, metrics,
         and model metadata are preserved. Resolve live references first: the
         complete candidate must validate before deletion is written. Missing
         names are successful no-ops, allowing retries to republish the final
@@ -295,16 +291,16 @@ class MetricFilesystemFuncTool(FilesystemFuncTool):
 
             if not isinstance(document, dict):
                 return FuncToolResult(success=0, error="OSI semantic model root must be a YAML object")
-            models = document.get("semantic_model")
+            models = [document] if "datasets" in document else None
             if not isinstance(models, list) or len(models) != 1 or not isinstance(models[0], dict):
-                return FuncToolResult(success=0, error="OSI document must contain exactly one semantic_model object")
+                return FuncToolResult(success=0, error="OSI document must contain one root model with datasets")
 
             model = models[0]
             existing_datasets = model["datasets"] if "datasets" in model else []
             if not isinstance(existing_datasets, list) or any(
                 not isinstance(dataset, dict) for dataset in existing_datasets
             ):
-                return FuncToolResult(success=0, error="semantic_model[0].datasets must be a list of dataset objects")
+                return FuncToolResult(success=0, error="datasets must be a list of dataset objects")
 
             deleted = [
                 str(dataset.get("name") or "").strip()
@@ -470,16 +466,16 @@ class MetricFilesystemFuncTool(FilesystemFuncTool):
 
             if not isinstance(document, dict):
                 return FuncToolResult(success=0, error="OSI semantic model root must be a YAML object")
-            models = document.get("semantic_model")
+            models = [document] if "datasets" in document else None
             if not isinstance(models, list) or len(models) != 1 or not isinstance(models[0], dict):
-                return FuncToolResult(success=0, error="OSI document must contain exactly one semantic_model object")
+                return FuncToolResult(success=0, error="OSI document must contain one root model with datasets")
 
             model = models[0]
             existing_metrics = model["metrics"] if "metrics" in model else []
             if not isinstance(existing_metrics, list) or any(
                 not isinstance(metric, dict) for metric in existing_metrics
             ):
-                return FuncToolResult(success=0, error="semantic_model[0].metrics must be a list of metric objects")
+                return FuncToolResult(success=0, error="metrics must be a list of metric objects")
 
             metric_indexes: Dict[str, int] = {}
             for index, metric in enumerate(existing_metrics):
@@ -621,16 +617,16 @@ class MetricFilesystemFuncTool(FilesystemFuncTool):
 
             if not isinstance(document, dict):
                 return FuncToolResult(success=0, error="OSI semantic model root must be a YAML object")
-            models = document.get("semantic_model")
+            models = [document] if "datasets" in document else None
             if not isinstance(models, list) or len(models) != 1 or not isinstance(models[0], dict):
-                return FuncToolResult(success=0, error="OSI document must contain exactly one semantic_model object")
+                return FuncToolResult(success=0, error="OSI document must contain one root model with datasets")
 
             model = models[0]
             existing_metrics = model["metrics"] if "metrics" in model else []
             if not isinstance(existing_metrics, list) or any(
                 not isinstance(metric, dict) for metric in existing_metrics
             ):
-                return FuncToolResult(success=0, error="semantic_model[0].metrics must be a list of metric objects")
+                return FuncToolResult(success=0, error="metrics must be a list of metric objects")
 
             requested_set = {normalize_metric_name(name) for name in requested}
             deleted = [
@@ -825,7 +821,7 @@ class OsiSemanticModelFilesystemFuncTool(MetricFilesystemFuncTool):
     @staticmethod
     def _dataset_definitions(document: Any) -> Dict[str, tuple[str, Dict[str, Any]]]:
         """Index dataset definitions for planned edit change tracking."""
-        models = document.get("semantic_model") if isinstance(document, dict) else None
+        models = [document] if isinstance(document, dict) and "datasets" in document else None
         if not isinstance(models, list) or len(models) != 1 or not isinstance(models[0], dict):
             return {}
         return {

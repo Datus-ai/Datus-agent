@@ -90,7 +90,7 @@ class DosiRuntime:
         self.config: DosiConfig = config
         self._registry = EngineRegistry(config)
         self._catalog_lock = threading.Lock()
-        self._catalog_signature: tuple[tuple[str, int, int], ...] = ()
+        self._catalog_signature: tuple[tuple[str, int, int, int, int, int], ...] = ()
         self._catalog_handles: tuple[tuple[str, EngineHandle], ...] = ()
         self._metric_to_path: Dict[str, str] = {}
         self._model_to_path: Dict[str, str] = {}
@@ -106,6 +106,26 @@ class DosiRuntime:
         if policy is None:
             return "unprotected"
         return hashlib.sha256((policy.snapshot_json + policy.context_json).encode()).hexdigest()
+
+    def initialize(self) -> dict[str, str]:
+        """Load existing files independently; absent/broken models keep authoring usable."""
+        self.model_errors: dict[str, str] = {}
+        try:
+            _, handles = self._registry.snapshot()
+        except SemanticCoreException as exc:
+            self.model_errors["<catalog>"] = str(exc)
+            return self.model_errors
+        for path, handle in handles:
+            try:
+                handle.get()
+            except SemanticCoreException as exc:
+                self.model_errors[path] = str(exc)
+        return dict(self.model_errors)
+
+    def load_model(self, path: str, *, allow_invalid: bool = False):
+        from datus.tools.semantic_tools.dosi.files import file_engine
+
+        return file_engine(path, config=self.config, allow_invalid=allow_invalid)
 
     # ==================== Semantic Model Interface ====================
 
@@ -1123,7 +1143,10 @@ class DosiRuntime:
     def _author(self) -> Any:
         from datus.tools.semantic_tools.dosi.authoring import DosiMetricAuthor
 
-        return DosiMetricAuthor(self._authoring_root())
+        self.initialize()
+        return DosiMetricAuthor(
+            self._authoring_root(), load_model=lambda path: self.load_model(path, allow_invalid=True)
+        )
 
     def read_metric_source(
         self,
@@ -1155,7 +1178,10 @@ class DosiRuntime:
         """Restore a deleted metric to its original model file."""
         from datus.tools.semantic_tools.dosi.authoring import DosiMetricAuthor
 
-        return DosiMetricAuthor(source.file_path).write(source.name, source.text, create=True)
+        self.load_model(source.file_path, allow_invalid=True)
+        return DosiMetricAuthor(
+            source.file_path, load_model=lambda path: self.load_model(path, allow_invalid=True)
+        ).write(source.name, source.text, create=True)
 
     # ==================== Internals ====================
 
@@ -1248,15 +1274,33 @@ class DosiRuntime:
         with self._catalog_lock:
             signature, handles = self._registry.snapshot()
             if signature == self._catalog_signature:
-                return (
-                    self._catalog_handles,
-                    dict(self._metric_to_path),
-                    dict(self._model_to_path),
-                )
+                # External dependencies can change availability without changing the registry signature.
+                available_paths = {path for path, _ in self._catalog_handles}
+                for model_path, handle in handles:
+                    try:
+                        handle.get()
+                    except SemanticCoreException:
+                        if model_path in available_paths:
+                            break
+                        continue
+                    if model_path not in available_paths:
+                        break
+                else:
+                    return (
+                        self._catalog_handles,
+                        dict(self._metric_to_path),
+                        dict(self._model_to_path),
+                    )
 
             metric_to_path: Dict[str, str] = {}
             model_to_path: Dict[str, str] = {}
+            available_handles = []
             for model_path, handle in handles:
+                try:
+                    engine = handle.get()
+                except SemanticCoreException as exc:
+                    logger.warning("Model %s is unavailable: %s", model_path, exc)
+                    continue
                 try:
                     model_names = self._document_model_names(model_path)
                 except (OSError, TypeError, ValueError, yaml.YAMLError) as exc:
@@ -1268,7 +1312,8 @@ class DosiRuntime:
                             f"semantic model {model_name!r} is declared in {owner!r} and {model_path!r}"
                         )
                     model_to_path[model_name] = model_path
-                for row in handle.get().metrics():
+                available_handles.append((model_path, handle))
+                for row in engine.metrics():
                     metric_name = str(row.get("name") or "").strip()
                     if not metric_name:
                         continue
@@ -1281,6 +1326,7 @@ class DosiRuntime:
                         )
                     metric_to_path[metric_name] = model_path
 
+            handles = tuple(available_handles)
             self._catalog_signature = signature
             self._catalog_handles = handles
             self._metric_to_path = metric_to_path

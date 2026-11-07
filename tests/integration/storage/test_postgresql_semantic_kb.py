@@ -49,10 +49,9 @@ def _embedding_model() -> EmbeddingModel:
 
 def _osi_document(description: str, metric_description: str) -> str:
     return textwrap.dedent(
-        f"""\
-        version: "0.2.0.dev0"
-        semantic_model:
-          - name: nightly_orders
+        f"""
+            version: 0.2.0.dev0
+            name: nightly_orders
             description: PostgreSQL reconcile regression model
             datasets:
               - name: orders

@@ -8,7 +8,7 @@ from datus.schemas.metric_artifact_query import MetricQueryFile
 from datus.utils.metric_artifact_models import resolve_metric_query_snapshot
 
 
-def recipe(content="semantic_model: []\r\n", **changes):
+def recipe(content="name: model\ndatasets: []\n", **changes):
     revision = hashlib.sha256(content.encode()).hexdigest()
     return MetricQueryFile.model_validate(
         {
@@ -32,7 +32,7 @@ def recipe(content="semantic_model: []\r\n", **changes):
 @pytest.mark.parametrize("length", [16, 64])
 @pytest.mark.parametrize("suffix", [".yml", ".yaml", ".json"])
 def test_resolves_exact_bytes_without_studio_model(tmp_path, source, length, suffix):
-    content = "semantic_model: []\r\n"
+    content = "name: model\ndatasets: []\n"
     revision = hashlib.sha256(content.encode()).hexdigest()
     query = recipe(content, model_snapshot_path=f"models/{revision[:length]}{suffix}")
     options = {}
@@ -55,7 +55,7 @@ def test_resolves_exact_bytes_without_studio_model(tmp_path, source, length, suf
 @pytest.mark.parametrize("problem", ["missing", "tampered"])
 @pytest.mark.parametrize("length", [16, 64])
 def test_reference_never_falls_back_to_inline_model(tmp_path, source, problem, length):
-    content = "semantic_model: []\r\n"
+    content = "name: model\ndatasets: []\n"
     revision = hashlib.sha256(content.encode()).hexdigest()
     query = recipe(content, model_snapshot=content, model_snapshot_path=f"models/{revision[:length]}.yml")
     files = {} if problem == "missing" else {query.model_snapshot_path: "changed model"}
@@ -114,7 +114,7 @@ def test_model_symlink_cannot_escape_artifact(tmp_path):
 @pytest.mark.parametrize("name", ["flights.yml", "jeff_shop.yml", "model.yaml", "model.json", "0" * 64 + ".yml"])
 @pytest.mark.parametrize("source", ["disk", "bundle"])
 def test_model_filename_is_independent_of_content_revision(tmp_path, name, source):
-    content = "semantic_model: []\r\n"
+    content = "name: model\ndatasets: []\n"
     query = recipe(content, model_snapshot_path=f"models/{name}")
     files = {query.model_snapshot_path: content}
     if source == "disk":

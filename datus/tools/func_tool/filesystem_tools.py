@@ -266,7 +266,7 @@ class FilesystemFuncTool(BaseTool):
     # ------------------------------------------------------------------ zones
 
     def _classify(self, path: str) -> ResolvedPath:
-        return classify_path(
+        resolved = classify_path(
             path,
             root_path=self._root_resolved,
             current_node=self._current_node,
@@ -274,6 +274,16 @@ class FilesystemFuncTool(BaseTool):
             session_data_dir=self._session_data_dir,
             allowlist=self.path_allowlist,
         )
+        if (
+            resolved.zone == PathZone.INTERNAL
+            and "semantic_models" in resolved.resolved.parts
+            and resolved.resolved.suffix.lower() in {".yaml", ".yml", ".json"}
+            and resolved.resolved.is_file()
+        ):
+            from datus.tools.semantic_tools.dosi.files import file_engine
+
+            file_engine(resolved.resolved, getattr(self, "agent_config", None), allow_invalid=True)
+        return resolved
 
     def _read_only_reject(self, resolved: ResolvedPath) -> FuncToolResult:
         """Reject writes to a read-only whitelist (e.g. the session compact archive)."""
@@ -973,6 +983,7 @@ class FilesystemFuncTool(BaseTool):
                 report_relative_to = self._root_resolved
 
             def _search_file(file_path: Path, reported_file: str) -> List[dict]:
+                self._classify(str(file_path))
                 try:
                     if file_path.stat().st_size > self.config.max_file_size:
                         return []

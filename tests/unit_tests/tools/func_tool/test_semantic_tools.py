@@ -116,6 +116,7 @@ def mock_runtime(semantic_tools):
     """Set up a mock Dosi runtime on the SemanticTools instance."""
     runtime = Mock()
     semantic_tools._runtime = runtime
+    semantic_tools._runtime_context_key = None
     return runtime
 
 
@@ -2043,7 +2044,7 @@ class TestValidateSemantic:
     def test_records_compiled_evidence_without_exposing_descriptions(self, semantic_tools_with_runtime, tmp_path):
         tool, _ = semantic_tools_with_runtime
         artifact = tmp_path / "commerce.yml"
-        artifact.write_text("semantic_model: commerce\n", encoding="utf-8")
+        artifact.write_text("name: commerce\n", encoding="utf-8")
         calls = {}
         evidence = GenerationEvidence()
         tool.generation_evidence = evidence
@@ -2248,7 +2249,7 @@ class TestValidateSemantic:
     def test_records_target_artifact_validation_evidence(self, semantic_tools_with_runtime, tmp_path):
         tool, _ = semantic_tools_with_runtime
         artifact = tmp_path / "commerce.yml"
-        artifact.write_text("semantic_model: commerce\n", encoding="utf-8")
+        artifact.write_text("name: commerce\n", encoding="utf-8")
         evidence = GenerationEvidence()
         tool.generation_evidence = evidence
 
@@ -2282,7 +2283,7 @@ class TestValidateSemantic:
     def test_resolves_target_artifact_validation_evidence(self, semantic_tools_with_runtime, tmp_path):
         tool, _ = semantic_tools_with_runtime
         artifact = tmp_path / "commerce.yml"
-        artifact.write_text("semantic_model: commerce\n", encoding="utf-8")
+        artifact.write_text("name: commerce\n", encoding="utf-8")
 
         with patch(
             "datus.agent.node.semantic_authoring.discover_osi_semantic_models",
@@ -2302,7 +2303,7 @@ class TestValidateSemantic:
     def test_dosi_resolves_osi_target_artifact_evidence(self, semantic_tools_with_runtime, tmp_path):
         tool, _ = semantic_tools_with_runtime
         artifact = tmp_path / "commerce.yml"
-        artifact.write_text("semantic_model: commerce\n", encoding="utf-8")
+        artifact.write_text("name: commerce\n", encoding="utf-8")
 
         with patch(
             "datus.agent.node.semantic_authoring.discover_osi_semantic_models",
@@ -2932,7 +2933,7 @@ class TestOntologyToolRegistration:
         models_dir.mkdir(parents=True)
         ontology_dir.mkdir(parents=True)
         if plain_model:
-            (models_dir / "flights.yaml").write_text("version: '0.2.0.dev0'\nsemantic_model:\n  - name: flights\n")
+            (models_dir / "flights.yaml").write_text("version: '0.2.0.dev0'\nname: flights\n")
         (ontology_dir / "flights.mapping.yaml").write_text(
             "version: 0.2.0.dev0\nname: flights_mapping\n"
             "ontology_ref: {name: Flights, document: {version: 0.2.0.dev0, name: Flights, ontology: []}}\n"

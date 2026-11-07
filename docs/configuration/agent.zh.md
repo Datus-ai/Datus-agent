@@ -98,7 +98,6 @@ Agent home 下的 `cache/openrouter_models.json`，没有有效缓存则获取�
 
 默认窗口是本地预算假设，不代表自动探测到了服务端容量。私有部署可以只覆盖需要调整的项；
 已知实际窗口较小时应配置实际值，窗口较大或提供准确 tokenizer 时可更充分地利用容量：
-
 ```yaml
 agent:
   models:

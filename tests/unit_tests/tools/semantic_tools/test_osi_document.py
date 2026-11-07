@@ -4,50 +4,43 @@
 import json
 
 import pytest
-import yaml
 
 from datus.tools.semantic_tools.osi_document import load_osi_document
 from datus.utils.exceptions import DatusException
 
 
-@pytest.mark.parametrize("flat", [False, True])
-def test_load_osi_document_reads_core_fields_and_datus_hints(tmp_path, flat):
+def test_load_osi_document_reads_core_fields_and_datus_hints(tmp_path):
     model = tmp_path / "orders.yml"
     model.write_text(
         """
 version: 0.2.0.dev0
-semantic_model:
-  - name: orders_model
-    datasets:
-      - name: orders
-        source: analytics.orders
-        primary_key: [order_id]
-        fields:
-          - name: order_id
-            expression: {dialects: [{dialect: ANSI_SQL, expression: order_id}]}
-          - name: order_date
-            expression: {dialects: [{dialect: ANSI_SQL, expression: order_date}]}
-            dimension: {is_time: true}
-            custom_extensions:
-              - vendor_name: DATUS
-                data: '{"v":"1.2","time_granularity":"day"}'
-          - name: status
-            expression: {dialects: [{dialect: ANSI_SQL, expression: status}]}
-            dimension: {}
-    metrics:
-      - name: running_revenue
-        expression:
-          dialects: [{dialect: ANSI_SQL, expression: 'SUM(orders.amount)'}]
+name: orders_model
+datasets:
+  - name: orders
+    source: analytics.orders
+    primary_key: [order_id]
+    fields:
+      - name: order_id
+        expression: {dialects: [{dialect: ANSI_SQL, expression: order_id}]}
+      - name: order_date
+        expression: {dialects: [{dialect: ANSI_SQL, expression: order_date}]}
+        dimension: {is_time: true}
         custom_extensions:
           - vendor_name: DATUS
-            data: '{"v":"1.2","uid":"tz4a98xxat96iws9zmbrgj3a","window":{"type":"cumulative","function":"sum"},"subject_path":["sales","revenue"]}'
+            data: '{\"v\":\"1.2\",\"time_granularity\":\"day\"}'
+      - name: status
+        expression: {dialects: [{dialect: ANSI_SQL, expression: status}]}
+        dimension: {}
+metrics:
+  - name: running_revenue
+    expression:
+      dialects: [{dialect: ANSI_SQL, expression: 'SUM(orders.amount)'}]
+    custom_extensions:
+      - vendor_name: DATUS
+        data: '{\"v\":\"1.2\",\"uid\":\"tz4a98xxat96iws9zmbrgj3a\",\"window\":{\"type\":\"cumulative\",\"function\":\"sum\"},\"subject_path\":[\"sales\",\"revenue\"]}'
 """.lstrip(),
         encoding="utf-8",
     )
-
-    if flat:
-        source = yaml.safe_load(model.read_text())
-        model.write_text(yaml.safe_dump({"version": source["version"], **source["semantic_model"][0]}))
 
     document = load_osi_document(str(model), "orders_model")
 
@@ -69,17 +62,10 @@ semantic_model:
 def test_load_osi_document_does_not_scan_sibling_artifacts(tmp_path):
     model = tmp_path / "model.yml"
     model.write_text(
-        """
-version: 0.2.0.dev0
-semantic_model:
-  - name: finance
-    datasets:
-      - name: budgets
-        source: budgets
-""".lstrip(),
+        "\nversion: 0.2.0.dev0\nname: finance\ndatasets:\n  - name: budgets\n    source: budgets\n".lstrip(),
         encoding="utf-8",
     )
-    (tmp_path / "invalid-sibling.yml").write_text("semantic_model: [", encoding="utf-8")
+    (tmp_path / "invalid-sibling.yml").write_text("datasets: [", encoding="utf-8")
 
     document = load_osi_document(str(model), "finance")
 
@@ -93,17 +79,15 @@ def test_load_osi_document_rejects_invalid_metric_uid(tmp_path, uid):
     model.write_text(
         json.dumps(
             {
-                "semantic_model": [
+                "version": "0.2.0.dev0",
+                "name": "sales",
+                "datasets": [],
+                "metrics": [
                     {
-                        "name": "sales",
-                        "metrics": [
-                            {
-                                "name": "revenue",
-                                "custom_extensions": [{"vendor_name": "DATUS", "data": json.dumps({"uid": uid})}],
-                            }
-                        ],
+                        "name": "revenue",
+                        "custom_extensions": [{"vendor_name": "DATUS", "data": json.dumps({"uid": uid})}],
                     }
-                ]
+                ],
             }
         )
     )
@@ -118,18 +102,13 @@ def test_load_osi_document_preserves_missing_legacy_identity(tmp_path, payload):
     model.write_text(
         json.dumps(
             {
-                "semantic_model": [
-                    {
-                        "name": "sales",
-                        "metrics": [
-                            {
-                                "name": name,
-                                "custom_extensions": [{"vendor_name": "DATUS", "data": json.dumps(payload)}],
-                            }
-                            for name in ("revenue", "order_count")
-                        ],
-                    }
-                ]
+                "version": "0.2.0.dev0",
+                "name": "sales",
+                "datasets": [],
+                "metrics": [
+                    {"name": name, "custom_extensions": [{"vendor_name": "DATUS", "data": json.dumps(payload)}]}
+                    for name in ("revenue", "order_count")
+                ],
             }
         )
     )
@@ -145,18 +124,13 @@ def test_load_osi_document_rejects_duplicate_metric_uids(tmp_path):
     model.write_text(
         json.dumps(
             {
-                "semantic_model": [
-                    {
-                        "name": "sales",
-                        "metrics": [
-                            {
-                                "name": name,
-                                "custom_extensions": [{"vendor_name": "DATUS", "data": json.dumps({"uid": uid})}],
-                            }
-                            for name, uid in zip(("revenue", "order_count"), uids)
-                        ],
-                    }
-                ]
+                "version": "0.2.0.dev0",
+                "name": "sales",
+                "datasets": [],
+                "metrics": [
+                    {"name": name, "custom_extensions": [{"vendor_name": "DATUS", "data": json.dumps({"uid": uid})}]}
+                    for name, uid in zip(("revenue", "order_count"), uids)
+                ],
             }
         )
     )
@@ -171,23 +145,22 @@ def test_load_osi_document_preserves_authored_source_types(tmp_path):
     model.write_text(
         """
 version: 0.2.0.dev0
-semantic_model:
-  - name: source_model
-    datasets:
-      - name: mapped_table
-        source: {table: analytics.orders}
-      - name: whitespace_query
-        source: "SELECT\\tCOUNT(*) FROM analytics.orders"
-      - name: extension_query
-        source: "VALUES (1)"
-        custom_extensions:
-          - vendor_name: DATUS
-            data: '{"source_type":"query"}'
-      - name: extension_table
-        source: "SELECT_table"
-        custom_extensions:
-          - vendor_name: DATUS
-            data: '{"source_type":"table"}'
+name: source_model
+datasets:
+  - name: mapped_table
+    source: {table: analytics.orders}
+  - name: whitespace_query
+    source: \"SELECT\\tCOUNT(*) FROM analytics.orders\"
+  - name: extension_query
+    source: \"VALUES (1)\"
+    custom_extensions:
+      - vendor_name: DATUS
+        data: '{\"source_type\":\"query\"}'
+  - name: extension_table
+    source: \"SELECT_table\"
+    custom_extensions:
+      - vendor_name: DATUS
+        data: '{\"source_type\":\"table\"}'
 """.lstrip(),
         encoding="utf-8",
     )
@@ -205,18 +178,17 @@ def test_load_osi_document_leaves_multiple_time_fields_unresolved(tmp_path):
     model.write_text(
         """
 version: 0.2.0.dev0
-semantic_model:
-  - name: events_model
-    datasets:
-      - name: events
-        source: events
-        fields:
-          - name: created_at
-            dimension: {is_time: true}
-          - name: completed_at
-            datatype: DateTime
-          - name: invalid_dimension_marker
-            dimension: true
+name: events_model
+datasets:
+  - name: events
+    source: events
+    fields:
+      - name: created_at
+        dimension: {is_time: true}
+      - name: completed_at
+        datatype: DateTime
+      - name: invalid_dimension_marker
+        dimension: true
 """.lstrip(),
         encoding="utf-8",
     )
@@ -236,17 +208,16 @@ def test_load_osi_document_infers_single_time_field_from_datatype(tmp_path):
     model.write_text(
         """
 version: 0.2.0.dev0
-semantic_model:
-  - name: events_model
-    datasets:
-      - name: events
-        source: events
-        fields:
-          - name: occurred_at
-            datatype: DateTimeTz
-          - name: event_name
-            datatype: String
-            dimension: {}
+name: events_model
+datasets:
+  - name: events
+    source: events
+    fields:
+      - name: occurred_at
+        datatype: DateTimeTz
+      - name: event_name
+        datatype: String
+        dimension: {}
 """.lstrip(),
         encoding="utf-8",
     )
@@ -264,18 +235,17 @@ def test_load_osi_document_explicit_time_role_overrides_datatype(tmp_path):
     model.write_text(
         """
 version: 0.2.0.dev0
-semantic_model:
-  - name: periods_model
-    datasets:
-      - name: periods
-        source: periods
-        fields:
-          - name: date_label
-            datatype: Date
-            dimension: {is_time: false}
-          - name: fiscal_year
-            datatype: Integer
-            dimension: {is_time: true}
+name: periods_model
+datasets:
+  - name: periods
+    source: periods
+    fields:
+      - name: date_label
+        datatype: Date
+        dimension: {is_time: false}
+      - name: fiscal_year
+        datatype: Integer
+        dimension: {is_time: true}
 """.lstrip(),
         encoding="utf-8",
     )
@@ -295,14 +265,13 @@ def test_load_osi_document_rejects_duplicate_model_declarations(tmp_path):
     model.write_text(
         """
 version: 0.2.0.dev0
-semantic_model:
-  - name: finance
-    datasets: []
+name: finance
+datasets: []
 ---
 version: 0.2.0.dev0
-semantic_model:
-  - name: finance
-    metrics: []
+name: finance
+datasets: []
+metrics: []
 """.lstrip(),
         encoding="utf-8",
     )
@@ -318,17 +287,16 @@ def test_load_osi_document_reads_composite_unique_keys(tmp_path):
     model.write_text(
         """
 version: 0.2.0.dev0
-semantic_model:
-  - name: ops
-    datasets:
-      - name: activity
-        source: mart.activity
-        unique_keys:
-          - [ac_code, subject_seq, product_code]
-          - [surrogate_id]
-        fields:
-          - name: ac_code
-            expression: {dialects: [{dialect: ANSI_SQL, expression: ac_code}]}
+name: ops
+datasets:
+  - name: activity
+    source: mart.activity
+    unique_keys:
+      - [ac_code, subject_seq, product_code]
+      - [surrogate_id]
+    fields:
+      - name: ac_code
+        expression: {dialects: [{dialect: ANSI_SQL, expression: ac_code}]}
 """
     )
 
@@ -343,14 +311,13 @@ def test_load_osi_document_defaults_unique_keys_to_empty(tmp_path):
     model.write_text(
         """
 version: 0.2.0.dev0
-semantic_model:
-  - name: ops
-    datasets:
-      - name: activity
-        source: mart.activity
-        fields:
-          - name: ac_code
-            expression: {dialects: [{dialect: ANSI_SQL, expression: ac_code}]}
+name: ops
+datasets:
+  - name: activity
+    source: mart.activity
+    fields:
+      - name: ac_code
+        expression: {dialects: [{dialect: ANSI_SQL, expression: ac_code}]}
 """
     )
 
@@ -364,19 +331,18 @@ def test_load_osi_document_ignores_non_string_unique_key_entries(tmp_path):
     model.write_text(
         """
 version: 0.2.0.dev0
-semantic_model:
-  - name: ops
-    datasets:
-      - name: activity
-        source: mart.activity
-        unique_keys:
-          - [ac_code, null, subject_seq]
-          - [123]
-          - []
-          - [surrogate_id]
-        fields:
-          - name: ac_code
-            expression: {dialects: [{dialect: ANSI_SQL, expression: ac_code}]}
+name: ops
+datasets:
+  - name: activity
+    source: mart.activity
+    unique_keys:
+      - [ac_code, null, subject_seq]
+      - [123]
+      - []
+      - [surrogate_id]
+    fields:
+      - name: ac_code
+        expression: {dialects: [{dialect: ANSI_SQL, expression: ac_code}]}
 """
     )
 

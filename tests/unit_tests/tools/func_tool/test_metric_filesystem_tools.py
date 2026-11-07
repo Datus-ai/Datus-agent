@@ -70,9 +70,9 @@ def identity_tool(tmp_path, osi_schema_validator):
             yaml.safe_dump(
                 {
                     "version": "0.2.0.dev0",
-                    "semantic_model": [
-                        {"name": "sales", "datasets": [{"name": "orders", "source": "orders"}], "metrics": metrics}
-                    ],
+                    "name": "sales",
+                    "datasets": [{"name": "orders", "source": "orders"}],
+                    "metrics": metrics,
                 },
                 sort_keys=False,
             )
@@ -239,7 +239,7 @@ def test_metric_upsert_assigns_and_preserves_host_uid(identity_tool):
     tool, target, state, _ = identity_tool([])
     metric = _osi_metric("revenue", "SUM(orders.amount)")
     assert tool.upsert_osi_metrics(str(target), json.dumps([metric])).success == 1
-    authored = yaml.safe_load(target.read_bytes())["semantic_model"][0]["metrics"][0]
+    authored = yaml.safe_load(target.read_bytes())["metrics"][0]
     uid = metric_uid(authored)
     assert len(uid) == 24
     first_content = target.read_bytes()
@@ -249,7 +249,7 @@ def test_metric_upsert_assigns_and_preserves_host_uid(identity_tool):
     metric["description"] = "Updated definition"
     metric["custom_extensions"] = [{"vendor_name": "DATUS", "data": '{"uid":"model-mistake","unit":"USD"}'}]
     assert tool.upsert_osi_metrics(str(target), json.dumps([metric])).success == 1
-    updated = yaml.safe_load(target.read_bytes())["semantic_model"][0]["metrics"][0]
+    updated = yaml.safe_load(target.read_bytes())["metrics"][0]
     assert metric_uid(updated) == uid
     assert json.loads(updated["custom_extensions"][0]["data"])["unit"] == "USD"
     assert updated["description"] == "Updated definition"
@@ -265,12 +265,12 @@ def test_edit_file_preserves_existing_uid(identity_tool, replacement):
     tool, target, state, _ = identity_tool([metric])
     original = target.read_text()
     document = yaml.safe_load(original)
-    candidate = document["semantic_model"][0]["metrics"][0]
+    candidate = document["metrics"][0]
     candidate["custom_extensions"] = replacement
     candidate["description"] = "Changed by edit_file"
     result = tool.edit_file(str(target), original, yaml.safe_dump(document, sort_keys=False))
     assert result.success == 1
-    edited = yaml.safe_load(target.read_bytes())["semantic_model"][0]["metrics"][0]
+    edited = yaml.safe_load(target.read_bytes())["metrics"][0]
     assert metric_uid(edited) == metric_uid(metric)
     assert edited["description"] == "Changed by edit_file"
     assert state.touched_metric_names == ["revenue"]
@@ -303,16 +303,16 @@ def test_final_uid_preparation_covers_metrics_created_by_edit_file(identity_tool
     tool, target, state, evidence = identity_tool([])
     original = target.read_text()
     document = yaml.safe_load(original)
-    document["semantic_model"][0]["metrics"] = [_osi_metric("revenue", "SUM(orders.amount)")]
+    document["metrics"] = [_osi_metric("revenue", "SUM(orders.amount)")]
     result = tool.edit_file(str(target), original, yaml.safe_dump(document, sort_keys=False))
     assert result.success == 1
     assert state.touched_metric_names == ["revenue"]
-    edited = yaml.safe_load(target.read_bytes())["semantic_model"][0]["metrics"][0]
+    edited = yaml.safe_load(target.read_bytes())["metrics"][0]
     assert metric_uid(edited) == ""
     evidence.record_semantic_artifact_validation("sales", target, validation_scope="all")
 
     identities = tool.ensure_metric_uids(str(target))
-    prepared = yaml.safe_load(target.read_bytes())["semantic_model"][0]["metrics"][0]
+    prepared = yaml.safe_load(target.read_bytes())["metrics"][0]
     assert len(identities["revenue"]) == 24
     assert metric_uid(prepared) == identities["revenue"]
     assert state.touched_metric_names == ["revenue"]
@@ -331,7 +331,7 @@ def test_upsert_copied_metric_assigns_distinct_host_uid(identity_tool):
     result = tool.upsert_osi_metrics(str(target), json.dumps([copied]))
     assert result.success == 1
     assert result.result["created"] == ["other_revenue"]
-    authored = yaml.safe_load(target.read_bytes())["semantic_model"][0]["metrics"]
+    authored = yaml.safe_load(target.read_bytes())["metrics"]
     assert authored[0] == metric
     assert metric_uid(authored[1]) != metric_uid(metric)
     assert len(metric_uid(authored[1])) == 24
@@ -350,12 +350,12 @@ def test_edit_file_copied_uid_is_replaced_before_final_validation(identity_tool,
     original = target.read_text()
     document = yaml.safe_load(original)
     candidate = {**source, "name": "revenue"}
-    document["semantic_model"][0]["metrics"] = [metric for metric in prior if metric["name"] != "revenue"] + [candidate]
+    document["metrics"] = [metric for metric in prior if metric["name"] != "revenue"] + [candidate]
 
     result = tool.edit_file(str(target), original, yaml.safe_dump(document, sort_keys=False))
 
     assert result.success == 1
-    edited = {metric["name"]: metric for metric in yaml.safe_load(target.read_bytes())["semantic_model"][0]["metrics"]}
+    edited = {metric["name"]: metric for metric in yaml.safe_load(target.read_bytes())["metrics"]}
     assert metric_uid(edited["revenue"]) == ""
     assert {name: metric for name, metric in edited.items() if name != "revenue"} == {
         metric["name"]: metric for metric in prior if metric["name"] != "revenue"
@@ -377,12 +377,12 @@ def test_edit_file_rename_preserves_authoritative_uid(identity_tool):
     tool, target, state, _ = identity_tool([source])
     original = target.read_text()
     document = yaml.safe_load(original)
-    document["semantic_model"][0]["metrics"][0]["name"] = "net_revenue"
+    document["metrics"][0]["name"] = "net_revenue"
 
     result = tool.edit_file(str(target), original, yaml.safe_dump(document, sort_keys=False))
 
     assert result.success == 1
-    renamed = yaml.safe_load(target.read_bytes())["semantic_model"][0]["metrics"][0]
+    renamed = yaml.safe_load(target.read_bytes())["metrics"][0]
     assert renamed["name"] == "net_revenue"
     assert metric_uid(renamed) == metric_uid(source)
     assert state.touched_metric_names == ["net_revenue", "revenue"]
@@ -396,12 +396,12 @@ def test_edit_file_can_remove_metric_with_invalid_uid(identity_tool):
     tool, target, state, _ = identity_tool([source])
     original = target.read_text()
     document = yaml.safe_load(original)
-    document["semantic_model"][0]["metrics"] = []
+    document["metrics"] = []
 
     result = tool.edit_file(str(target), original, yaml.safe_dump(document, sort_keys=False))
 
     assert result.success == 1
-    assert yaml.safe_load(target.read_bytes())["semantic_model"][0]["metrics"] == []
+    assert yaml.safe_load(target.read_bytes())["metrics"] == []
     assert state.touched_metric_names == ["revenue"]
     assert tool.ensure_metric_uids(str(target)) == {}
 
@@ -418,7 +418,7 @@ def test_upsert_without_prior_uid_uses_host_identity(identity_tool, existing, in
     result = tool.upsert_osi_metrics(str(target), json.dumps([metric]))
 
     assert result.success == 1
-    authored = yaml.safe_load(target.read_bytes())["semantic_model"][0]["metrics"][0]
+    authored = yaml.safe_load(target.read_bytes())["metrics"][0]
     assert metric_uid(authored) != incoming_uid
     assert len(metric_uid(authored)) == 24
     assert json.loads(authored["custom_extensions"][0]["data"])["unit"] == "USD"
@@ -434,7 +434,7 @@ def test_conflicting_metric_names_do_not_mutate_file(identity_tool, operation):
     candidate = _osi_metric("REVENUE", "SUM(orders.amount)")
     if operation == "edit_file":
         document = yaml.safe_load(original)
-        document["semantic_model"][0]["metrics"].append(candidate)
+        document["metrics"].append(candidate)
         result = tool.edit_file(str(target), original.decode("utf-8"), yaml.safe_dump(document, sort_keys=False))
     else:
         incoming = [existing, candidate] if operation == "upsert_batch" else [candidate]
@@ -457,11 +457,11 @@ def test_edit_file_can_repair_existing_case_conflict_and_preserve_uids(identity_
     tool, target, state, _ = identity_tool(metrics)
     original = target.read_text()
     document = yaml.safe_load(original)
-    document["semantic_model"][0]["metrics"][0].pop("custom_extensions")
-    document["semantic_model"][0]["metrics"][1]["name"] = "gross_revenue"
+    document["metrics"][0].pop("custom_extensions")
+    document["metrics"][1]["name"] = "gross_revenue"
     result = tool.edit_file(str(target), original, yaml.safe_dump(document, sort_keys=False))
     assert result.success == 1
-    edited = yaml.safe_load(target.read_bytes())["semantic_model"][0]["metrics"]
+    edited = yaml.safe_load(target.read_bytes())["metrics"]
     assert [metric_uid(metric) for metric in edited] == [metric_uid(metric) for metric in metrics]
     assert tool.ensure_metric_uids(str(target)) == {
         "revenue": metric_uid(metrics[0]),
@@ -486,25 +486,21 @@ class TestMetricFilesystemFuncTool:
         ensure_metric_uid(metric)
         document = {
             "version": "0.2.0.dev0",
-            "semantic_model": [
+            "name": "sales",
+            "datasets": [
                 {
-                    "name": "sales",
-                    "datasets": [
+                    "name": "orders",
+                    "source": "orders",
+                    "fields": [
                         {
-                            "name": "orders",
-                            "source": "orders",
-                            "fields": [
-                                {
-                                    "name": "amount",
-                                    "expression": {"dialects": [{"dialect": "ANSI_SQL", "expression": "amount"}]},
-                                }
-                            ],
+                            "name": "amount",
+                            "expression": {"dialects": [{"dialect": "ANSI_SQL", "expression": "amount"}]},
                         }
                     ],
-                    "relationships": [],
-                    "metrics": [metric],
                 }
             ],
+            "relationships": [],
+            "metrics": [metric],
         }
         target = tmp_path / "sales.yml"
         original = yaml.safe_dump(document, sort_keys=False)
@@ -515,7 +511,7 @@ class TestMetricFilesystemFuncTool:
         on_mutation = Mock()
         tool = SemanticModelingFilesystemFuncTool(root_path=str(tmp_path), mutation_callback=on_mutation)
 
-        rejected = tool.edit_file(str(target), original, candidate + "  relationships: []\n")
+        rejected = tool.edit_file(str(target), original, candidate + "relationships: []\n")
 
         assert rejected.success == 0
         assert "duplicate field `relationships`" in rejected.error
@@ -525,7 +521,7 @@ class TestMetricFilesystemFuncTool:
 
         repaired = tool.edit_file(str(target), original, candidate)
         assert repaired.success == 1, repaired.error
-        saved = yaml.safe_load(target.read_text())["semantic_model"][0]
+        saved = yaml.safe_load(target.read_text())
         assert saved["datasets"][0]["source"] == "analytics.orders"
         assert metric_uid(saved["metrics"][0]) == metric_uid(metric)
         on_mutation.assert_called_once_with(target)
@@ -554,27 +550,23 @@ class TestMetricFilesystemFuncTool:
         target.parent.mkdir(parents=True)
         original_document = {
             "version": "0.2.0.dev0",
-            "semantic_model": [
+            "name": "sales",
+            "datasets": [
                 {
-                    "name": "sales",
-                    "datasets": [
+                    "name": "orders",
+                    "source": "analytics.orders",
+                    "fields": [
                         {
-                            "name": "orders",
-                            "source": "analytics.orders",
-                            "fields": [
-                                {
-                                    "name": "ordered_at",
-                                    "expression": {"dialects": [{"dialect": "ANSI_SQL", "expression": "ordered_at"}]},
-                                    "dimension": {"is_time": True},
-                                }
-                            ],
-                        },
-                        {"name": "obsolete_orders_query", "source": "SELECT 1 AS unused"},
+                            "name": "ordered_at",
+                            "expression": {"dialects": [{"dialect": "ANSI_SQL", "expression": "ordered_at"}]},
+                            "dimension": {"is_time": True},
+                        }
                     ],
-                    "relationships": [],
-                    "metrics": [],
-                }
+                },
+                {"name": "obsolete_orders_query", "source": "SELECT 1 AS unused"},
             ],
+            "relationships": [],
+            "metrics": [],
         }
         target.write_text(yaml.safe_dump(original_document, sort_keys=False), encoding="utf-8")
         original_content = target.read_bytes()
@@ -585,7 +577,7 @@ class TestMetricFilesystemFuncTool:
             mutation_guard=state.require_bound_path,
             osi_target_state=state,
         )
-        repaired_dataset = dict(original_document["semantic_model"][0]["datasets"][0])
+        repaired_dataset = dict(original_document["datasets"][0])
         repaired_dataset["fields"] = [
             *repaired_dataset["fields"],
             {
@@ -613,7 +605,7 @@ class TestMetricFilesystemFuncTool:
         assert state.touched_dataset_names == ["orders", "obsolete_orders_query"]
         assert state.touched_metric_names == ["order_count"]
         assert state.artifact_snapshot_content == original_content
-        model = yaml.safe_load(target.read_text(encoding="utf-8"))["semantic_model"][0]
+        model = yaml.safe_load(target.read_text(encoding="utf-8"))
         assert [dataset["name"] for dataset in model["datasets"]] == ["orders"]
         assert [field["name"] for field in model["datasets"][0]["fields"]] == ["ordered_at", "order_id"]
         assert model["datasets"][0]["fields"][1]["datatype"] == "Integer"
@@ -634,14 +626,10 @@ class TestMetricFilesystemFuncTool:
             yaml.safe_dump(
                 {
                     "version": "0.2.0.dev0",
-                    "semantic_model": [
-                        {
-                            "name": "sales",
-                            "datasets": [{"name": "orders", "source": "analytics.orders"}],
-                            "relationships": [{"name": "orders_to_customers"}],
-                            "metrics": [_osi_metric("revenue", "SUM(orders.amount)")],
-                        }
-                    ],
+                    "name": "sales",
+                    "datasets": [{"name": "orders", "source": "analytics.orders"}],
+                    "relationships": [{"name": "orders_to_customers"}],
+                    "metrics": [_osi_metric("revenue", "SUM(orders.amount)")],
                 },
                 sort_keys=False,
             ),
@@ -680,7 +668,7 @@ class TestMetricFilesystemFuncTool:
         assert result.success == 1
         assert result.result["created"] == ["retention_query_dataset"]
         document = yaml.safe_load(target.read_text(encoding="utf-8"))
-        model = document["semantic_model"][0]
+        model = document
         assert model["relationships"] == [{"name": "orders_to_customers"}]
         assert model["metrics"] == [_osi_metric("revenue", "SUM(orders.amount)")]
         authored_query_dataset = model["datasets"][-1]
@@ -705,16 +693,7 @@ class TestMetricFilesystemFuncTool:
         target = tmp_path / "subject" / "semantic_models" / "warehouse" / "sales.yml"
         target.parent.mkdir(parents=True)
         target.write_text(
-            yaml.safe_dump(
-                {
-                    "semantic_model": [
-                        {
-                            "name": "sales",
-                            "datasets": [{"name": "orders", "source": "analytics.orders"}],
-                        }
-                    ]
-                }
-            ),
+            yaml.safe_dump({"name": "sales", "datasets": [{"name": "orders", "source": "analytics.orders"}]}),
             encoding="utf-8",
         )
         state = OsiSemanticModelTargetState()
@@ -748,7 +727,7 @@ class TestMetricFilesystemFuncTool:
         target = tmp_path / "subject" / "semantic_models" / "warehouse" / "sales.yml"
         target.parent.mkdir(parents=True)
         target.write_text(
-            "semantic_model:\n  - name: sales\n    datasets:\n      - name: orders\n        source: analytics.orders\n",
+            "name: sales\ndatasets:\n  - name: orders\n    source: analytics.orders\n",
             encoding="utf-8",
         )
         state = OsiSemanticModelTargetState()
@@ -785,26 +764,22 @@ class TestMetricFilesystemFuncTool:
             yaml.safe_dump(
                 {
                     "version": "0.2.0.dev0",
-                    "semantic_model": [
+                    "name": "sales",
+                    "description": "Sales domain",
+                    "datasets": [
+                        {"name": "orders", "source": "analytics.orders"},
+                        {"name": "Customers", "source": "analytics.customers"},
+                    ],
+                    "relationships": [
                         {
-                            "name": "sales",
-                            "description": "Sales domain",
-                            "datasets": [
-                                {"name": "orders", "source": "analytics.orders"},
-                                {"name": "Customers", "source": "analytics.customers"},
-                            ],
-                            "relationships": [
-                                {
-                                    "name": "orders_to_customers",
-                                    "from": "orders",
-                                    "to": "Customers",
-                                    "from_columns": ["customer_id"],
-                                    "to_columns": ["customer_id"],
-                                }
-                            ],
-                            "metrics": [_osi_metric("revenue", "SUM(orders.amount)")],
+                            "name": "orders_to_customers",
+                            "from": "orders",
+                            "to": "Customers",
+                            "from_columns": ["customer_id"],
+                            "to_columns": ["customer_id"],
                         }
                     ],
+                    "metrics": [_osi_metric("revenue", "SUM(orders.amount)")],
                 },
                 sort_keys=False,
             ),
@@ -839,7 +814,7 @@ class TestMetricFilesystemFuncTool:
         assert result.result["already_absent"] == ["missing_dataset"]
         assert result.result["remaining"] == ["orders"]
         document = yaml.safe_load(target.read_text(encoding="utf-8"))
-        model = document["semantic_model"][0]
+        model = document
         assert model["description"] == "Sales domain"
         assert model["relationships"][0]["to"] == "Customers"
         assert model["metrics"] == [_osi_metric("revenue", "SUM(orders.amount)")]
@@ -860,7 +835,7 @@ class TestMetricFilesystemFuncTool:
 
         assert restored.success == 1
         assert restored.result["created"] == ["Customers"]
-        restored_model = yaml.safe_load(target.read_text(encoding="utf-8"))["semantic_model"][0]
+        restored_model = yaml.safe_load(target.read_text(encoding="utf-8"))
         assert [dataset["name"] for dataset in restored_model["datasets"]] == ["orders", "Customers"]
         assert osi_schema_validator.call_count == 2
 
@@ -868,18 +843,11 @@ class TestMetricFilesystemFuncTool:
         target = tmp_path / "subject" / "semantic_models" / "warehouse" / "sales.yml"
         target.parent.mkdir(parents=True)
         target.write_text(
-            "version: 0.2.0.dev0\n"
-            "semantic_model:\n"
-            "  - name: sales\n"
-            "    datasets:\n"
-            "      - name: orders\n"
-            "        source: analytics.orders\n"
-            "    relationships: []\n"
-            "    metrics: []\n",
+            "version: 0.2.0.dev0\nname: sales\ndatasets:\n  - name: orders\n    source: analytics.orders\nrelationships: []\nmetrics: []\n",
             encoding="utf-8",
         )
         original = target.read_bytes()
-        validator = Mock(return_value="semantic_model[0].datasets: [] should be non-empty")
+        validator = Mock(return_value="datasets: [] should be non-empty")
         monkeypatch.setattr(MetricFilesystemFuncTool, "_validate_osi_document", staticmethod(validator))
         state = OsiSemanticModelTargetState()
         state.select(
@@ -928,14 +896,13 @@ class TestMetricFilesystemFuncTool:
         assert result.success == 1
         assert result.result["created"] == ["orders"]
         document = yaml.safe_load(target.read_text(encoding="utf-8"))
-        assert document["semantic_model"] == [
-            {
-                "name": "sales",
-                "datasets": [{"name": "orders", "source": "analytics.orders"}],
-                "relationships": [],
-                "metrics": [],
-            }
-        ]
+        assert document == {
+            "version": "0.2.0.dev0",
+            "name": "sales",
+            "datasets": [{"name": "orders", "source": "analytics.orders"}],
+            "relationships": [],
+            "metrics": [],
+        }
         assert state.target_mutated is True
         osi_schema_validator.assert_called_once()
 
@@ -943,18 +910,11 @@ class TestMetricFilesystemFuncTool:
         target = tmp_path / "subject" / "semantic_models" / "warehouse" / "sales.yml"
         target.parent.mkdir(parents=True)
         target.write_text(
-            "version: 0.2.0.dev0\n"
-            "semantic_model:\n"
-            "  - name: sales\n"
-            "    datasets:\n"
-            "      - name: orders\n"
-            "        source: analytics.orders\n"
-            "    relationships: []\n"
-            "    metrics: []\n",
+            "version: 0.2.0.dev0\nname: sales\ndatasets:\n  - name: orders\n    source: analytics.orders\nrelationships: []\nmetrics: []\n",
             encoding="utf-8",
         )
         original = target.read_text(encoding="utf-8")
-        validator = Mock(return_value="semantic_model[0].datasets must not be empty")
+        validator = Mock(return_value="datasets must not be empty")
         monkeypatch.setattr(MetricFilesystemFuncTool, "_validate_osi_document", staticmethod(validator))
         tool = OsiSemanticModelFilesystemFuncTool(
             root_path=str(tmp_path),
@@ -963,8 +923,8 @@ class TestMetricFilesystemFuncTool:
 
         result = tool.edit_file(
             str(target.relative_to(tmp_path)),
-            "    datasets:\n      - name: orders\n        source: analytics.orders\n",
-            "    datasets: []\n",
+            "datasets:\n  - name: orders\n    source: analytics.orders\n",
+            "datasets: []\n",
         )
 
         assert result.success == 0
@@ -986,14 +946,7 @@ class TestMetricFilesystemFuncTool:
         }
         target.write_text(
             yaml.safe_dump(
-                {
-                    "semantic_model": [
-                        {
-                            "name": "sales",
-                            "datasets": [existing_dataset],
-                        }
-                    ]
-                },
+                {"name": "sales", "datasets": [existing_dataset]},
                 sort_keys=False,
             ),
             encoding="utf-8",
@@ -1014,7 +967,7 @@ class TestMetricFilesystemFuncTool:
 
         assert result.success == 1
         assert result.result["updated"] == ["retained_users"]
-        authored = yaml.safe_load(target.read_text(encoding="utf-8"))["semantic_model"][0]["datasets"][0]
+        authored = yaml.safe_load(target.read_text(encoding="utf-8"))["datasets"][0]
         assert authored["source"] == "SELECT user_id FROM newly_retained_users"
         assert json.loads(authored["custom_extensions"][0]["data"])["source_type"] == "query"
         osi_schema_validator.assert_called_once()
@@ -1033,7 +986,7 @@ class TestMetricFilesystemFuncTool:
         }
         target.write_text(
             yaml.safe_dump(
-                {"semantic_model": [{"name": "sales", "datasets": [existing_dataset]}]},
+                {"name": "sales", "datasets": [existing_dataset]},
                 sort_keys=False,
             ),
             encoding="utf-8",
@@ -1068,18 +1021,14 @@ class TestMetricFilesystemFuncTool:
         existing.write_text(
             yaml.safe_dump(
                 {
-                    "semantic_model": [
+                    "name": "regional_orders",
+                    "datasets": [
                         {
-                            "name": "regional_orders",
-                            "datasets": [
-                                {
-                                    "name": "orders_by_region",
-                                    "source": source_sql.replace("\n", "\r\n"),
-                                    "custom_extensions": [{"vendor_name": "DATUS", "data": '{"source_type":"query"}'}],
-                                }
-                            ],
+                            "name": "orders_by_region",
+                            "source": source_sql.replace("\n", "\r\n"),
+                            "custom_extensions": [{"vendor_name": "DATUS", "data": '{"source_type":"query"}'}],
                         }
-                    ]
+                    ],
                 },
                 sort_keys=False,
             ),
@@ -1111,7 +1060,7 @@ class TestMetricFilesystemFuncTool:
 
         assert result.success == 1
         assert result.result["created"] == ["regional_order_counts"]
-        authored = yaml.safe_load(target.read_text(encoding="utf-8"))["semantic_model"][0]["datasets"][0]
+        authored = yaml.safe_load(target.read_text(encoding="utf-8"))["datasets"][0]
         assert authored["source"] == source_sql
         assert json.loads(authored["custom_extensions"][0]["data"])["source_type"] == "query"
         osi_schema_validator.assert_called_once()
@@ -1132,7 +1081,7 @@ class TestMetricFilesystemFuncTool:
         target = tmp_path / "subject" / "semantic_models" / "warehouse" / "sales.yml"
         target.parent.mkdir(parents=True)
         target.write_text(
-            "version: 0.2.0.dev0\nsemantic_model:\n  - name: sales\n    datasets: []\n",
+            "version: 0.2.0.dev0\nname: sales\ndatasets: []\n",
             encoding="utf-8",
         )
         evidence = GenerationEvidence()
@@ -1157,7 +1106,7 @@ class TestMetricFilesystemFuncTool:
         )
 
         assert result.success == 1
-        dataset = yaml.safe_load(target.read_text(encoding="utf-8"))["semantic_model"][0]["datasets"][0]
+        dataset = yaml.safe_load(target.read_text(encoding="utf-8"))["datasets"][0]
         assert dataset["source"] == exact_sql
         extension_data = json.loads(dataset["custom_extensions"][0]["data"])
         assert extension_data == {"source_type": "query"}
@@ -1172,18 +1121,14 @@ class TestMetricFilesystemFuncTool:
         target.write_text(
             yaml.safe_dump(
                 {
-                    "semantic_model": [
+                    "name": "sales",
+                    "datasets": [
                         {
-                            "name": "sales",
-                            "datasets": [
-                                {
-                                    "name": "retained_users",
-                                    "source": "SELECT user_id FROM retained_users WHERE cohort = 'old'",
-                                    "custom_extensions": [{"vendor_name": "DATUS", "data": '{"source_type":"query"}'}],
-                                }
-                            ],
+                            "name": "retained_users",
+                            "source": "SELECT user_id FROM retained_users WHERE cohort = 'old'",
+                            "custom_extensions": [{"vendor_name": "DATUS", "data": '{"source_type":"query"}'}],
                         }
-                    ]
+                    ],
                 },
                 sort_keys=False,
             ),
@@ -1212,7 +1157,7 @@ class TestMetricFilesystemFuncTool:
 
         assert result.success == 1
         assert result.result["updated"] == ["retained_users"]
-        dataset = yaml.safe_load(target.read_text(encoding="utf-8"))["semantic_model"][0]["datasets"][0]
+        dataset = yaml.safe_load(target.read_text(encoding="utf-8"))["datasets"][0]
         assert dataset["source"] == exact_sql
         assert json.loads(dataset["custom_extensions"][0]["data"])["source_type"] == "query"
         osi_schema_validator.assert_called_once()
@@ -1245,7 +1190,7 @@ class TestMetricFilesystemFuncTool:
         }
         target.write_text(
             yaml.safe_dump(
-                {"semantic_model": [{"name": "sales", "datasets": [existing_dataset]}]},
+                {"name": "sales", "datasets": [existing_dataset]},
                 sort_keys=False,
             ),
             encoding="utf-8",
@@ -1269,7 +1214,7 @@ class TestMetricFilesystemFuncTool:
 
         assert result.success == 1
         assert result.result["updated"] == ["retained_users"]
-        authored = yaml.safe_load(target.read_text(encoding="utf-8"))["semantic_model"][0]["datasets"][0]
+        authored = yaml.safe_load(target.read_text(encoding="utf-8"))["datasets"][0]
         assert authored == {"name": "retained_users", "source": "analytics.retained_users"}
         osi_schema_validator.assert_called_once()
 
@@ -1281,33 +1226,32 @@ class TestMetricFilesystemFuncTool:
         target.write_text(
             """
 version: 0.2.0.dev0
-semantic_model:
-  - name: sales
-    description: Sales domain
-    datasets:
-      - name: orders
-        source: orders
-        fields:
-          - name: amount
-            expression:
-              dialects:
-                - dialect: ANSI_SQL
-                  expression: amount
-            dimension:
-              is_time: false
-    relationships:
-      - name: orders_to_customers
-        from: orders
-        to: customers
-        from_columns: [customer_id]
-        to_columns: [customer_id]
-    metrics:
-      - name: revenue
-        description: Old definition
+name: sales
+description: Sales domain
+datasets:
+  - name: orders
+    source: orders
+    fields:
+      - name: amount
         expression:
           dialects:
             - dialect: ANSI_SQL
-              expression: SUM(amount)
+              expression: amount
+        dimension:
+          is_time: false
+relationships:
+  - name: orders_to_customers
+    from: orders
+    to: customers
+    from_columns: [customer_id]
+    to_columns: [customer_id]
+metrics:
+  - name: revenue
+    description: Old definition
+    expression:
+      dialects:
+        - dialect: ANSI_SQL
+          expression: SUM(amount)
 """.lstrip(),
             encoding="utf-8",
         )
@@ -1335,8 +1279,8 @@ semantic_model:
         assert result.result["created"] == ["order_count"]
         assert result.result["updated"] == ["revenue"]
         after = yaml.safe_load(target.read_text(encoding="utf-8"))
-        before_model = before["semantic_model"][0]
-        after_model = after["semantic_model"][0]
+        before_model = before
+        after_model = after
         assert {key: value for key, value in after_model.items() if key != "metrics"} == {
             key: value for key, value in before_model.items() if key != "metrics"
         }
@@ -1352,18 +1296,11 @@ semantic_model:
             yaml.safe_dump(
                 {
                     "version": "0.2.0.dev0",
-                    "semantic_model": [
-                        {
-                            "name": "sales",
-                            "description": "Sales domain",
-                            "datasets": [{"name": "orders", "source": "orders"}],
-                            "relationships": [{"name": "orders_to_customers"}],
-                            "metrics": [
-                                _osi_metric("revenue", "SUM(orders.amount)"),
-                                _osi_metric("order_count", "COUNT(*)"),
-                            ],
-                        }
-                    ],
+                    "name": "sales",
+                    "description": "Sales domain",
+                    "datasets": [{"name": "orders", "source": "orders"}],
+                    "relationships": [{"name": "orders_to_customers"}],
+                    "metrics": [_osi_metric("revenue", "SUM(orders.amount)"), _osi_metric("order_count", "COUNT(*)")],
                 },
                 sort_keys=False,
             ),
@@ -1391,8 +1328,8 @@ semantic_model:
         assert result.result["already_absent"] == ["missing_metric"]
         assert result.result["remaining"] == ["order_count"]
         after = yaml.safe_load(target.read_text(encoding="utf-8"))
-        assert {key: value for key, value in after["semantic_model"][0].items() if key != "metrics"} == {
-            key: value for key, value in before["semantic_model"][0].items() if key != "metrics"
+        assert {key: value for key, value in after.items() if key != "metrics"} == {
+            key: value for key, value in before.items() if key != "metrics"
         }
         assert state.touched_metric_names == ["revenue", "missing_metric"]
         assert evidence.validation_passed is False
@@ -1407,13 +1344,9 @@ semantic_model:
             yaml.safe_dump(
                 {
                     "version": "0.2.0.dev0",
-                    "semantic_model": [
-                        {
-                            "name": "sales",
-                            "datasets": [{"name": "orders", "source": "orders"}],
-                            "metrics": [metric],
-                        }
-                    ],
+                    "name": "sales",
+                    "datasets": [{"name": "orders", "source": "orders"}],
+                    "metrics": [metric],
                 },
                 sort_keys=False,
             ),
@@ -1444,7 +1377,7 @@ semantic_model:
         target = tmp_path / "subject" / "semantic_models" / "warehouse" / "sales.yml"
         target.parent.mkdir(parents=True)
         target.write_text(
-            "version: 0.2.0.dev0\nsemantic_model:\n  - name: sales\n    datasets: []\n",
+            "version: 0.2.0.dev0\nname: sales\ndatasets: []\n",
             encoding="utf-8",
         )
         original = target.read_bytes()
@@ -1470,12 +1403,7 @@ semantic_model:
         target = tmp_path / "subject" / "semantic_models" / "warehouse" / "sales.yml"
         target.parent.mkdir(parents=True)
         target.write_text(
-            "version: 0.2.0.dev0\n"
-            "semantic_model:\n"
-            "  - name: sales\n"
-            "    datasets:\n"
-            "      - name: orders\n"
-            "        source: orders\n",
+            "version: 0.2.0.dev0\nname: sales\ndatasets:\n  - name: orders\n    source: orders\n",
             encoding="utf-8",
         )
         evidence = GenerationEvidence(
@@ -1507,12 +1435,7 @@ semantic_model:
         target = tmp_path / "subject" / "semantic_models" / "warehouse" / "sales.yml"
         target.parent.mkdir(parents=True)
         target.write_text(
-            "version: 0.2.0.dev0\n"
-            "semantic_model:\n"
-            "  - name: sales\n"
-            "    datasets:\n"
-            "      - name: orders\n"
-            "        source: orders\n",
+            "version: 0.2.0.dev0\nname: sales\ndatasets:\n  - name: orders\n    source: orders\n",
             encoding="utf-8",
         )
         original = target.read_bytes()
@@ -1541,13 +1464,7 @@ semantic_model:
         target = tmp_path / "subject" / "semantic_models" / "warehouse" / "sales.yml"
         target.parent.mkdir(parents=True)
         target.write_text(
-            "version: 0.2.0.dev0\n"
-            "semantic_model:\n"
-            "  - name: sales\n"
-            "    datasets:\n"
-            "      - name: orders\n"
-            "        source: orders\n"
-            "    metrics: []\n",
+            "version: 0.2.0.dev0\nname: sales\ndatasets:\n  - name: orders\n    source: orders\nmetrics: []\n",
             encoding="utf-8",
         )
         original = target.read_bytes()
@@ -1642,7 +1559,7 @@ semantic_model:
     def test_failed_metric_authoring_rollback_returns_false_on_invalid_snapshot(self, tmp_path):
         target = tmp_path / "subject" / "semantic_models" / "warehouse" / "sales.yml"
         target.parent.mkdir(parents=True)
-        target.write_text("semantic_model: []\n", encoding="utf-8")
+        target.write_text("name: model\ndatasets: []\n", encoding="utf-8")
         state = _bound_state(target)
         state.record_artifact_snapshot(target, b"\xff")
         tool = MetricFilesystemFuncTool(
@@ -1657,7 +1574,7 @@ semantic_model:
     def test_failed_metric_authoring_rollback_returns_false_on_write_error(self, tmp_path, monkeypatch):
         target = tmp_path / "subject" / "semantic_models" / "warehouse" / "sales.yml"
         target.parent.mkdir(parents=True)
-        target.write_text("semantic_model: []\n", encoding="utf-8")
+        target.write_text("name: model\ndatasets: []\n", encoding="utf-8")
         state = _bound_state(target)
         state.record_artifact_snapshot(target, target.read_bytes())
         tool = MetricFilesystemFuncTool(
@@ -1671,7 +1588,7 @@ semantic_model:
         )
 
         assert tool.rollback_failed_authoring() is False
-        assert state.artifact_snapshot_content == b"semantic_model: []\n"
+        assert state.artifact_snapshot_content == b"name: model\ndatasets: []\n"
 
     def test_identical_upsert_preserves_bytes_and_registers_publish_scope(self, tmp_path, osi_schema_validator):
         target = tmp_path / "subject" / "semantic_models" / "warehouse" / "sales.yml"
@@ -1682,13 +1599,9 @@ semantic_model:
             yaml.safe_dump(
                 {
                     "version": "0.2.0.dev0",
-                    "semantic_model": [
-                        {
-                            "name": "sales",
-                            "datasets": [{"name": "orders", "source": "orders"}],
-                            "metrics": [metric],
-                        }
-                    ],
+                    "name": "sales",
+                    "datasets": [{"name": "orders", "source": "orders"}],
+                    "metrics": [metric],
                 },
                 sort_keys=False,
             ),
@@ -1719,11 +1632,8 @@ semantic_model:
     def test_upsert_osi_metrics_rejects_present_invalid_metrics_collection(self, tmp_path, invalid_metrics):
         target = tmp_path / "subject" / "semantic_models" / "warehouse" / "sales.yml"
         target.parent.mkdir(parents=True)
-        document = {
-            "version": "0.2.0.dev0",
-            "semantic_model": [{"name": "sales", "datasets": [{"name": "orders", "source": "orders"}]}],
-        }
-        document["semantic_model"][0]["metrics"] = invalid_metrics
+        document = {"version": "0.2.0.dev0", "name": "sales", "datasets": [{"name": "orders", "source": "orders"}]}
+        document["metrics"] = invalid_metrics
         original = yaml.safe_dump(document, sort_keys=False)
         target.write_text(original, encoding="utf-8")
         tool = MetricFilesystemFuncTool(
@@ -1743,13 +1653,7 @@ semantic_model:
     def test_upsert_osi_metrics_validates_metric_schema_before_writing(self, tmp_path, osi_schema_validator):
         target = tmp_path / "subject" / "semantic_models" / "warehouse" / "sales.yml"
         target.parent.mkdir(parents=True)
-        original = """version: 0.2.0.dev0
-semantic_model:
-  - name: sales
-    datasets:
-      - name: orders
-        source: orders
-"""
+        original = "version: 0.2.0.dev0\nname: sales\ndatasets:\n  - name: orders\n    source: orders\n"
         target.write_text(original, encoding="utf-8")
         tool = MetricFilesystemFuncTool(
             root_path=str(tmp_path),
@@ -1771,13 +1675,7 @@ semantic_model:
         target = tmp_path / "subject" / "semantic_models" / "warehouse" / "sales.yml"
         target.parent.mkdir(parents=True)
         target.write_text(
-            """version: 0.2.0.dev0
-semantic_model:
-  - name: sales
-    datasets:
-      - name: orders
-        source: orders
-""",
+            "version: 0.2.0.dev0\nname: sales\ndatasets:\n  - name: orders\n    source: orders\n",
             encoding="utf-8",
         )
         target_state = _bound_state(target)
@@ -1811,7 +1709,7 @@ semantic_model:
             ]
 
         assert all(result.success == 1 for result in results)
-        metrics = yaml.safe_load(target.read_text(encoding="utf-8"))["semantic_model"][0]["metrics"]
+        metrics = yaml.safe_load(target.read_text(encoding="utf-8"))["metrics"]
         assert {metric["name"] for metric in metrics} == {"revenue", "order_count"}
 
     def test_upsert_osi_metrics_requires_existing_model(self, tmp_path):
@@ -1834,7 +1732,7 @@ semantic_model:
         other = model_dir / "other.yml"
         for path, name in ((selected, "selected"), (other, "other")):
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(f"semantic_model:\n  - name: {name}\n    datasets: []\n", encoding="utf-8")
+            path.write_text(f"'name: '{name}\n    datasets: []\n", encoding="utf-8")
         tool = MetricFilesystemFuncTool(
             root_path=str(tmp_path),
             current_node="semantic_modeling",
@@ -1853,7 +1751,7 @@ semantic_model:
     def test_upsert_osi_metrics_rejects_target_changed_since_bind(self, tmp_path):
         target = tmp_path / "subject" / "semantic_models" / "warehouse" / "sales.yml"
         target.parent.mkdir(parents=True)
-        target.write_text("semantic_model:\n  - name: sales\n    datasets: []\n", encoding="utf-8")
+        target.write_text("name: sales\ndatasets: []\n", encoding="utf-8")
         state = _bound_state(target)
         tool = MetricFilesystemFuncTool(
             root_path=str(tmp_path),

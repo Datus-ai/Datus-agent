@@ -216,13 +216,6 @@ def _iter_osi_datasets(docs: List[dict]) -> Iterable[dict]:
     for doc in docs:
         if not isinstance(doc, dict):
             continue
-        semantic_models = doc.get("semantic_model")
-        if isinstance(semantic_models, list):
-            for semantic_model in semantic_models:
-                if isinstance(semantic_model, dict):
-                    for dataset in semantic_model.get("datasets") or []:
-                        if isinstance(dataset, dict):
-                            yield dataset
         for dataset in doc.get("datasets") or []:
             if isinstance(dataset, dict):
                 yield dataset
