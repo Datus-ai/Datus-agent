@@ -111,12 +111,22 @@ class SqlReadContext:
         return self.canonical_name(name)
 
     def __init__(self, connector: Any, datasource: str, *, capture_metadata: bool = True):
+        """Bind metadata reads to this connector's execution session.
+
+        Open lazy SQLite connections before recording their identity. Providers
+        may capture metadata themselves while retaining the same session guard.
+        """
         self.connector = connector
         self.datasource = datasource
         self.dialect = str(connector.dialect)
         self.namespace_order = [name.removesuffix("_name") for name in table_name_field_order(self.dialect)]
         self._folded_names: dict[str, str] = {}
         self._capture_metadata = capture_metadata
+        if self.dialect == "sqlite" and getattr(connector, "connection", None) is None:
+            # Metadata callbacks open lazy SQLite connectors. Establish the
+            # session before pinning its identity, otherwise the first metadata
+            # read appears to replace a connection captured as None.
+            connector.connect()
         if capture_metadata:
             self._state = self._capture()
         else:

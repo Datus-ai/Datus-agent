@@ -1,5 +1,6 @@
 """Physical name binding uses the live session, including attached databases."""
 
+import sqlite3
 from types import SimpleNamespace
 
 import duckdb
@@ -161,6 +162,29 @@ def test_provider_owned_context_refuses_a_replaced_sqlite_connection():
     connector.connection = object()
     with pytest.raises(ValueError, match="connection changed"):
         context.verify_context()
+
+
+def test_provider_owned_context_pins_lazy_sqlite_session_before_metadata(tmp_path):
+    """Metadata opens no replacement session, and an explicit reconnect is refused."""
+    from datus.tools.db_tools.config import SQLiteConfig
+    from datus.tools.db_tools.sqlite_connector import SQLiteConnector
+
+    connector = SQLiteConnector(SQLiteConfig(db_path=str(tmp_path / "lazy.sqlite")))
+    assert connector.connection is None
+    try:
+        context = SqlReadContext(connector, "warehouse", capture_metadata=False)
+        original = connector.connection
+        assert isinstance(original, sqlite3.Connection)
+        context.verify_context()
+        assert context.metadata_query("SELECT 42 AS tenant_id") == '[{"tenant_id": 42}]'
+        assert connector.connection is original
+        context.verify_context()
+        connector.close()
+        connector.connect()
+        with pytest.raises(ValueError, match="connection changed"):
+            context.verify_context()
+    finally:
+        connector.close()
 
 
 def test_policy_targets_fill_omitted_prefixes_from_live_namespace(db):
