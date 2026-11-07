@@ -8,7 +8,7 @@
       
       
       
-        
+        <link rel="canonical" href="https://docs.datus.ai/zh/dev/configuration/agent/">
       
       
         <link rel="prev" href="../introduction/">
@@ -18,9 +18,9 @@
       
       
         
-          
+          <link rel="alternate" href="/dev/" hreflang="en">
         
-          
+          <link rel="alternate" href="/zh/dev/" hreflang="zh">
         
       
       
@@ -57,13 +57,7 @@
 
     
     
-  <!-- datus-docs-seo -->
-<link rel="canonical" href="https://docs.datus.ai/zh/dev/configuration/agent/">
-<link rel="alternate" hreflang="en" href="https://docs.datus.ai/dev/configuration/agent/">
-<link rel="alternate" hreflang="zh-Hans" href="https://docs.datus.ai/zh/dev/configuration/agent/">
-<link rel="alternate" hreflang="x-default" href="https://docs.datus.ai/dev/configuration/agent/">
-<!-- /datus-docs-seo -->
-</head>
+  </head>
   
   
     
@@ -5531,7 +5525,7 @@ Agent home 下的 <code>cache/openrouter_models.json</code>，没有有效缓存
 <code>128000</code> 为默认值，仅在目录上限或剩余上下文不足时调低。公共目录描述其服务供应商的
 限制，私有部署或原厂接口仍可显式配置实际限额。</p>
 <p>默认窗口是本地预算假设，不代表自动探测到了服务端容量。私有部署可以只覆盖需要调整的项；
-已知实际窗口较小时应配置实际值，窗口较大或提供准确 tokenizer 时可更充分地利用容量：</p>
+已知实际窗口较小时应配置实际值，窗口较大或提供准确 tokenizer 时可更充分地利用容量：
 <div class="language-yaml highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="nt">agent</span><span class="p">:</span>
 </span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="w">  </span><span class="nt">models</span><span class="p">:</span>
 </span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="w">    </span><span class="nt">warehouse_llm</span><span class="p">:</span>
@@ -5542,7 +5536,7 @@ Agent home 下的 <code>cache/openrouter_models.json</code>，没有有效缓存
 </span><span id="__span-5-8"><a id="__codelineno-5-8" name="__codelineno-5-8" href="#__codelineno-5-8"></a><span class="w">      </span><span class="nt">context_length</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">262144</span>
 </span><span id="__span-5-9"><a id="__codelineno-5-9" name="__codelineno-5-9" href="#__codelineno-5-9"></a><span class="w">      </span><span class="nt">max_tokens</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">8192</span>
 </span><span id="__span-5-10"><a id="__codelineno-5-10" name="__codelineno-5-10" href="#__codelineno-5-10"></a><span class="w">      </span><span class="nt">tokenizer_ref</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">/opt/model/tokenizer.json</span>
-</span></code></pre></div>
+</span></code></pre></div></p>
 <p><code>context_length</code> 和 <code>max_tokens</code> 必须是正整数，单次调用的输出上限优先于配置默认值。
 <code>tokenizer_ref</code> 支持本地 Hugging Face tokenizer JSON、Hugging Face tokenizer 引用，
 以及与部署编码一致的 <code>tiktoken:&lt;encoding&gt;</code>；本地文件必须能被运行 Datus 的进程读取。
