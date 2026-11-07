@@ -1,5 +1,6 @@
 """Physical name binding uses the live session, including attached databases."""
 
+import sqlite3
 from types import SimpleNamespace
 
 import duckdb
@@ -164,6 +165,7 @@ def test_provider_owned_context_refuses_a_replaced_sqlite_connection():
 
 
 def test_provider_owned_context_pins_lazy_sqlite_session_before_metadata(tmp_path):
+    """Metadata opens no replacement session, and an explicit reconnect is refused."""
     from datus.tools.db_tools.config import SQLiteConfig
     from datus.tools.db_tools.sqlite_connector import SQLiteConnector
 
@@ -172,7 +174,7 @@ def test_provider_owned_context_pins_lazy_sqlite_session_before_metadata(tmp_pat
     try:
         context = SqlReadContext(connector, "warehouse", capture_metadata=False)
         original = connector.connection
-        assert original is not None
+        assert isinstance(original, sqlite3.Connection)
         context.verify_context()
         assert context.metadata_query("SELECT 42 AS tenant_id") == '[{"tenant_id": 42}]'
         assert connector.connection is original
