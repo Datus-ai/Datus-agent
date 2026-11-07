@@ -117,6 +117,11 @@ class SqlReadContext:
         self.namespace_order = [name.removesuffix("_name") for name in table_name_field_order(self.dialect)]
         self._folded_names: dict[str, str] = {}
         self._capture_metadata = capture_metadata
+        if self.dialect == "sqlite" and getattr(connector, "connection", None) is None:
+            # Metadata callbacks open lazy SQLite connectors. Establish the
+            # session before pinning its identity, otherwise the first metadata
+            # read appears to replace a connection captured as None.
+            connector.connect()
         if capture_metadata:
             self._state = self._capture()
         else:
