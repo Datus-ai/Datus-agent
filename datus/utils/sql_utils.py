@@ -1047,12 +1047,10 @@ _DDL_KIND_KEYWORDS: Dict[str, str] = {
 def deployment_read_only_refusal(agent_config: Any, sql: str, dialect: str) -> Optional[str]:
     """Refusal message when ``agent.sql_read_only`` forbids ``sql``, else ``None``.
 
-    For the paths that reach a connector directly instead of going through
-    ``DBFuncTool`` — the workflow ``execute_sql`` node and the output tool's
-    revised-SQL check. Those bypass every tool-layer gate, so without this the
-    deployment-wide switch simply does not apply to them, and the promise in
-    ``docs/configuration/sql_policy.md`` that no entry point may run a non-read
-    statement is false.
+    For paths that reach a connector directly instead of going through
+    ``DBFuncTool``, including manual CLI SQL, the workflow ``execute_sql`` node
+    and the output tool's revised-SQL check. Check the effective SQL at each
+    execution boundary so the deployment switch also covers these callers.
 
     Lives here, next to the checks themselves, so the next direct-connector
     caller has one obvious thing to call rather than a fourth hand-rolled copy
@@ -1069,7 +1067,7 @@ def deployment_read_only_refusal(agent_config: Any, sql: str, dialect: str) -> O
     if not violation:
         return None
     logger.warning(
-        "workflow SQL rejected by read-only policy",
+        "SQL rejected by deployment read-only mode",
         sql_type=sql_type.value,
         source="deployment",
         rule=violation,

@@ -193,10 +193,27 @@ class ObservabilityManager:
             _LAST_TRACE_REFERENCE.set(None)
 
     def get_trace_reference(self) -> TraceReference | None:
+        """Resolve the active span before considering cached trace references.
+
+        An active unsampled span returns ``None``. Only when no valid span is
+        active can the current manager scope or last sampled reference supply
+        a completed trace for callers outside the original span's lifetime.
+        """
         ref = self._current_otel_trace_reference()
         if ref is not None:
             _LAST_TRACE_REFERENCE.set(ref)
             return ref
+
+        try:
+            from opentelemetry import trace
+
+            # A valid active span is authoritative even when it is unsampled.
+            # Cached references belong to an earlier span and are only useful
+            # after the active scope has ended, never for a disabled run.
+            if trace.get_current_span().get_span_context().is_valid:
+                return None
+        except Exception:
+            pass
 
         ref = _CURRENT_TRACE_REFERENCE.get()
         if ref is not None:
@@ -213,11 +230,20 @@ class ObservabilityManager:
         return self._trace_reference_from_span(span)
 
     def _trace_reference_from_span(self, span: Any, *, run_id: str | None = None) -> TraceReference | None:
+        """Build an external trace reference only for a valid sampled span.
+
+        RECORD_ONLY spans retain local correlation IDs but have no exported
+        destination to link to. Missing or broken span contexts return ``None``.
+        """
         try:
             context = span.get_span_context()
         except Exception:
             return None
         if not getattr(context, "is_valid", False):
+            return None
+        # A host may retain local RECORD_ONLY spans while collection is off.
+        # Their IDs correlate local work but have no exported trace to link to.
+        if not getattr(getattr(context, "trace_flags", None), "sampled", False):
             return None
 
         trace_id = _format_trace_id(getattr(context, "trace_id", 0))

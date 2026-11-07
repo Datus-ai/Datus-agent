@@ -110,13 +110,22 @@ class SqlReadContext:
                 name = name.upper()
         return self.canonical_name(name)
 
-    def __init__(self, connector: Any, datasource: str):
+    def __init__(self, connector: Any, datasource: str, *, capture_metadata: bool = True):
         self.connector = connector
         self.datasource = datasource
         self.dialect = str(connector.dialect)
         self.namespace_order = [name.removesuffix("_name") for name in table_name_field_order(self.dialect)]
         self._folded_names: dict[str, str] = {}
-        self._state = self._capture()
+        self._capture_metadata = capture_metadata
+        if capture_metadata:
+            self._state = self._capture()
+        else:
+            # Providers capture database-specific state through metadata_query.
+            # Keep only generic connector coordinates as initial hints.
+            getter = getattr(connector, "get_current_context", None)
+            names = getter() if callable(getter) else {}
+            self._state = {key: str(names.get(key + "_name") or "") for key in ("catalog", "database", "schema")}
+            self._state["search_path"] = []
         # Keep the original object alive so a replacement connection cannot
         # reuse its Python id and appear to be the same SQLite session.
         self._sqlite_connection = getattr(connector, "connection", None) if self.dialect == "sqlite" else None
@@ -127,11 +136,19 @@ class SqlReadContext:
             "search_path": self._state["search_path"],
             "revision": json.dumps(self._state, sort_keys=True),
         }
-        if self.dialect in {"mysql", "tidb"}:
+        if capture_metadata and self.dialect in {"mysql", "tidb"}:
             self.execution_context["case_sensitive_table_names"] = self._state["lower_case_table_names"] == 0
-        elif self.dialect == "spark":
+        elif capture_metadata and self.dialect == "spark":
             self.execution_context["case_sensitive_table_names"] = self._state["case_sensitive_names"]
         self._metadata: dict[tuple, dict] = {}
+
+    def metadata_query(self, sql: str) -> str:
+        """Execute provider-owned metadata SQL on the bound connector.
+
+        Bypass policy interception here: this is an internal metadata callback,
+        otherwise a provider resolving a table would recursively rewrite itself.
+        """
+        return json.dumps(self._query(sql), default=str)
 
     def _query(self, sql: str) -> list[dict]:
         result = self.connector.execute_query(sql, result_format="arrow")
@@ -228,6 +245,10 @@ class SqlReadContext:
         return state
 
     def verify_context(self) -> None:
+        if not self._capture_metadata:
+            if self.dialect == "sqlite" and self.connector.connection is not self._sqlite_connection:
+                raise ValueError("SQL execution connection changed; rebind policy")
+            return
         if self._capture() != self._state or (
             self.dialect == "sqlite" and self.connector.connection is not self._sqlite_connection
         ):

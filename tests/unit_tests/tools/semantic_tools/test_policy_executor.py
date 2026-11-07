@@ -3,6 +3,7 @@
 
 """Real local Dosi/SQL execution with fake host policy decisions; no external services."""
 
+import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -146,6 +147,9 @@ async def test_query_and_attribution_share_scope_and_do_not_mutate_shared_model(
     """Real query and attribution results obey each region scope without model mutation."""
     _, executor, model = execution
     calls = install_policy(monkeypatch, kind=kind)
+    # Engine startup may migrate legacy authored YAML to the current root-model
+    # format. Policy execution must preserve the initialized shared model.
+    await asyncio.to_thread(executor.runtime._handle_for_metric, "revenue")
     original = model.read_bytes()
     for region, expected, baseline in [("west", 8, 10), ("east", 200, 100)]:
         result = await executor.query_metrics(

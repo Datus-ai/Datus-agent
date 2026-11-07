@@ -170,7 +170,7 @@ curl -fsSL https://raw.githubusercontent.com/datus-ai/datus-agent/main/install.s
 
     ---
 
-    数据源、模型、语义层、SQL 策略、存储，以及 `agent.yml` 里的其他设置。
+    数据源、模型、语义层、存储，以及 `agent.yml` 里的其他设置。
 
     [:octicons-arrow-right-24: 配置 Datus](configuration/introduction.zh.md)
 

@@ -505,6 +505,23 @@ agent:
 
 > Context compaction (automatic minor/major passes that keep a long session within the model's context window) is configured under `agent.compact`. See [Context Compaction](compact.md) for how it works and the tunable parameters.
 
+## SQL Read-Only Mode {#sql-read-only}
+
+Set `agent.sql_read_only` to enforce read-only SQL across CLI, API, MCP and workflow execution:
+
+```yaml title="agent.yml"
+agent:
+  sql_read_only: true  # default: false
+```
+
+This blocks SQL writes, DDL and cross-datasource result transfers regardless of the
+interactive permission profile. Statements that contain writes inside a CTE or
+`EXPLAIN` are also refused. The setting requires no plugin and cannot be disabled
+by a request once enabled for the deployment.
+
+For interactive confirmation of individual tool calls, see
+[direct tool execution](../cli/execution_command.md).
+
 ## Complete Configuration Example
 
 Here's a comprehensive agent configuration example with the provider-level format:

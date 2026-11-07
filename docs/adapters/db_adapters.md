@@ -71,4 +71,4 @@ Use the repository's current reference adapter and testing standard rather than 
 
 - [Configure datasources](../configuration/datasources.md)
 - [Use `/datasource` in the CLI](../cli/other_commands.md#datasource)
-- [Configure SQL policy and read-only mode](../configuration/sql_policy.md)
+- [Configure SQL read-only mode](../configuration/agent.md#sql-read-only)

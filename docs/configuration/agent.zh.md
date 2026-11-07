@@ -446,6 +446,21 @@ agent:
 
 > 上下文压缩（在长会话中自动运行的 minor/major 压缩，使会话保持在模型上下文窗口内）通过 `agent.compact` 配置。其工作方式与可调参数见[上下文压缩](compact.md)。
 
+## SQL 只读模式 {#sql-read-only}
+
+设置 `agent.sql_read_only`，可对 CLI、API、MCP 和工作流执行统一启用 SQL 只读限制：
+
+```yaml title="agent.yml"
+agent:
+  sql_read_only: true  # 默认：false
+```
+
+启用后会拒绝 SQL 写入、DDL 和跨数据源结果传输，不受交互式权限档位影响。
+CTE 或 `EXPLAIN` 中包含的写操作也会被拒绝。此配置无需插件，部署启用后，
+单次请求不能将其关闭。
+
+工具调用的交互式确认方式见[工具快捷执行](../cli/execution_command.zh.md)。
+
 ## 完整示例
 ```yaml title="datus-config.yaml"
 agent:

@@ -1979,7 +1979,7 @@ class DatusCLI:
         import time
 
         from datus.cli.manual_exec import build_sql_error_payload, build_sql_message_payload, build_sql_payload
-        from datus.utils.sql_utils import validate_adapter_sql_analysis
+        from datus.utils.sql_utils import deployment_read_only_refusal, validate_adapter_sql_analysis
 
         sql_action = ActionHistory.create_action(
             role=ActionRole.USER,
@@ -2002,7 +2002,17 @@ class DatusCLI:
                 )
                 return None
 
-            validate_adapter_sql_analysis(sql, getattr(self.db_connector, "dialect", "") or "")
+            dialect = getattr(self.db_connector, "dialect", "") or ""
+            refusal = deployment_read_only_refusal(self.agent_config, sql, dialect)
+            if refusal:
+                self.actions.update_action_by_id(
+                    sql_action.action_id,
+                    status=ActionStatus.FAILED,
+                    output={"error": refusal},
+                    messages=f"SQL execution refused: {refusal}",
+                )
+                return build_sql_error_payload(sql, refusal)
+            validate_adapter_sql_analysis(sql, dialect)
             start_time = time.time()
             logger.debug(
                 "sql.execute",

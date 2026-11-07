@@ -253,6 +253,19 @@ def test_sqlite_connection_preserves_native_uri(tmp_path):
     assert connection == {"type": "sqlite", "uri": str(source), "default": True}
 
 
+@pytest.mark.parametrize("host_version", [0, 1])
+def test_spark_source_identity_is_only_sent_to_a_capable_binding(tmp_path, fake_binding, host_version):
+    fake_binding.POLICY_EXECUTION_HOST_VERSION = host_version
+    model = tmp_path / "model.yaml"
+    model.write_text("version: '0.2.0.dev0'\nsemantic_model: []\n")
+    config = DosiConfig(
+        semantic_model_path=str(model), datasource="lake", db_config={"type": "spark", "host": "localhost"}
+    )
+    connection = EngineHandle(config)._runtime_connections(config)["lake"]
+    assert connection["type"] == "hive"
+    assert connection.get("server_type") == ("spark" if host_version else None)
+
+
 def test_athena_connection_preserves_typed_identity_and_result_budgets(tmp_path):
     model = tmp_path / "model.yaml"
     model.write_text("version: 0.2.0.dev0\nname: model\ndatasets: []\n")
