@@ -2600,6 +2600,114 @@ class TestDBFuncToolExecuteReadEnforced:
         assert result.success is False
         connector.execute_query.assert_not_called()
 
+    @pytest.mark.parametrize(
+        "sql, expected",
+        [
+            ("SELECT * FROM orders", [("default_catalog", "shop", "orders")]),
+            ("SELECT * FROM shop.orders", [("default_catalog", "shop", "orders")]),
+            ("SELECT * FROM other.orders", [("default_catalog", "other", "orders")]),
+            ("SELECT * FROM external.other.orders", [("external", "other", "orders")]),
+            (
+                "WITH orders AS (SELECT * FROM orders) SELECT * FROM orders",
+                [("default_catalog", "shop", "orders")],
+            ),
+            (
+                "SELECT * FROM (SELECT * FROM (SELECT * FROM orders o) nested) outer_query",
+                [("default_catalog", "shop", "orders")],
+            ),
+        ],
+    )
+    def test_starrocks_policy_sees_resolved_physical_tables(self, sql, expected):
+        import sqlglot
+        from sqlglot import exp
+        from sqlglot.optimizer.scope import traverse_scope
+
+        connector = self._connector()
+        connector.dialect = "starrocks"
+        connector.get_current_context.return_value = {
+            "catalog_name": "default_catalog",
+            "database_name": "shop",
+            "schema_name": "",
+        }
+        tool = self._make_tool(connector)
+        runtime = Mock()
+        runtime.runtime_names = ("sql-policy",)
+        runtime.before_sql_read.side_effect = lambda sql, **kwargs: SimpleNamespace(
+            allowed=True, sql=sql, applied_policies=[]
+        )
+        runtime.after_read_result.side_effect = lambda result, **kwargs: SimpleNamespace(
+            allowed=True, result=result, applied_policies=[]
+        )
+
+        with patch("datus.tools.policy_runtime.PolicyRuntime", return_value=runtime):
+            result = tool.execute_read_enforced(sql, connector, require_unmodified=True)
+
+        assert result.success is True
+        policy_sql = runtime.before_sql_read.call_args.args[0]
+        tree = sqlglot.parse_one(policy_sql, dialect="starrocks")
+        tables = [
+            (source.catalog, source.db, source.name)
+            for scope in traverse_scope(tree)
+            for _, source in scope.selected_sources.values()
+            if isinstance(source, exp.Table)
+        ]
+        assert tables == expected
+        # Resolving names alone is not a policy rewrite and must not change the
+        # connector input or invalidate reference-calculation verification.
+        assert connector.execute_query.call_args.args[0] == sql
+
+    def test_starrocks_policy_cannot_skip_unresolved_database(self):
+        connector = self._connector()
+        connector.dialect = "starrocks"
+        connector.get_current_context.return_value = {"catalog_name": "default_catalog", "database_name": ""}
+        tool = self._make_tool(connector)
+        runtime = Mock()
+        runtime.runtime_names = ("sql-policy",)
+        runtime.before_sql_read.return_value = SimpleNamespace(allowed=True, sql=None, applied_policies=[])
+        runtime.after_read_result.return_value = SimpleNamespace(allowed=True, result=[], applied_policies=[])
+
+        with patch("datus.tools.policy_runtime.PolicyRuntime", return_value=runtime):
+            result = tool.execute_read_enforced("SELECT * FROM orders", connector)
+
+        assert not result.success
+        connector.execute_query.assert_not_called()
+        runtime.before_sql_read.assert_not_called()
+
+    def test_starrocks_uses_routed_connection_and_executes_policy_rewrite(self):
+        import sqlglot
+        from sqlglot import exp
+
+        primary = self._connector()
+        tool = self._make_tool(primary)
+        routed = self._connector()
+        routed.dialect = "starrocks"
+        routed.get_current_context.return_value = {"catalog_name": "warehouse", "database_name": "retail"}
+        runtime = Mock()
+        runtime.runtime_names = ("sql-policy",)
+        context = {"store_ids": ["scope-marker"]}
+
+        def apply_filter(sql, **kwargs):
+            table = sqlglot.parse_one(sql, dialect="starrocks").find(exp.Table)
+            assert (table.catalog, table.db, table.name) == ("warehouse", "retail", "orders")
+            assert kwargs["policy_context"] is context
+            return SimpleNamespace(
+                allowed=True, sql=sql + " WHERE store_id = 'scope-marker'", applied_policies=["scope"]
+            )
+
+        runtime.before_sql_read.side_effect = apply_filter
+        runtime.after_read_result.side_effect = lambda result, **kwargs: SimpleNamespace(
+            allowed=True, result=result, applied_policies=[]
+        )
+
+        with patch("datus.tools.policy_runtime.PolicyRuntime", return_value=runtime):
+            result = tool.execute_read_enforced("SELECT * FROM orders", routed, policy_context=context)
+
+        assert result.success is True
+        executed = routed.execute_query.call_args.args[0]
+        assert "scope-marker" in executed
+        assert runtime.after_read_result.call_args.kwargs["sql"] == executed
+        primary.execute_query.assert_not_called()
+
 
 class TestDBFuncToolGuardEstimatedRows:
     """guard_estimated_rows: EXPLAIN-based pre-flight row-count guard. Blocks a
