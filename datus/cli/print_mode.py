@@ -14,6 +14,7 @@ import os
 import select
 import sys
 import threading
+import uuid
 from typing import Any
 
 from pydantic import ValidationError
@@ -98,6 +99,7 @@ class PrintModeRunner:
             scope=self.scope,
             session_id=self.session_id,
             execution_mode=self.execution_mode,
+            on_warning=self._write_warning,
         )
 
         if getattr(self, "orchestrator_tools", None):
@@ -289,6 +291,15 @@ class PrintModeRunner:
     def _write_payload(self, payload: MessagePayload):
         sys.stdout.write(payload.model_dump_json() + "\n")
         sys.stdout.flush()
+
+    def _write_warning(self, warning: str) -> None:
+        self._write_payload(
+            MessagePayload(
+                message_id=str(uuid.uuid4()),
+                role="assistant",
+                content=[MessageContent(type="markdown", payload={"content": warning})],
+            )
+        )
 
     def _attach_orchestrator_tools(self, node: Any) -> None:
         from datus.tools.func_tool.orchestrator_tools import OrchestratorIssueTools

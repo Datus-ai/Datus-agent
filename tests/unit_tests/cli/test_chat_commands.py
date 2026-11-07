@@ -473,6 +473,18 @@ class TestCreateNewNode:
         output = _get_console_output(console)
         assert output.strip() == ""
 
+    def test_unknown_subagent_warning_is_printed(self, real_agent_config, mock_llm_create):
+        """An unknown subagent falls back to gen_sql and tells the REPL user."""
+        from datus.agent.node.gen_sql_agentic_node import GenSQLAgenticNode
+
+        console = Console(file=io.StringIO(), no_color=True, width=2000)
+        cmds = _make_chat_commands(real_agent_config, console=console)
+        node = cmds._create_new_node(subagent_name="bogus[agent]")
+
+        assert isinstance(node, GenSQLAgenticNode)
+        output = _get_console_output(console)
+        assert "Unknown subagent 'bogus[agent]'; falling back to gen_sql." in output
+
 
 # ===========================================================================
 # TestCreateNodeInput
