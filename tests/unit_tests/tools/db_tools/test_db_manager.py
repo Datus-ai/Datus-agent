@@ -1146,3 +1146,56 @@ def test_duckdb_fixed_uri_can_bind_a_database_actually_attached_to_the_file(tmp_
         assert conn.database_name == "attached"
     finally:
         manager.close()
+
+
+@pytest.mark.parametrize("service_field", ["database", "service_name"])
+def test_schema_only_adapter_replays_its_captured_execution_context(service_field):
+    configured = DbConfig(
+        type="oracle",
+        database="BAASSYS" if service_field == "database" else "",
+        schema="ORIGINAL",
+        extra={"service_name": "BAASSYS"} if service_field == "service_name" else {},
+    )
+    manager = DBManager({"warehouse": configured})
+    built = []
+
+    def build(config):
+        built.append(config)
+        return SimpleNamespace(database_name="", catalog_name="", schema_name=config.schema)
+
+    manager._build_conn = build
+    with (
+        patch("datus.tools.db_tools.db_manager.connector_registry.has_capabilities", return_value=True),
+        patch("datus.tools.db_tools.db_manager.connector_registry.support_database", return_value=False),
+    ):
+        selected = DatabaseExecutionContext(datasource="warehouse", database=configured.database, schema="TPCDS")
+        original = manager.get_conn("warehouse", context=selected)
+        assert original.database_name == ""
+        # Oracle artifact context captured by the producer: service/PDB is not a SQL database namespace.
+        captured = {"datasource": "warehouse", "catalog": "", "database": "", "schema": "TPCDS"}
+        replayed = manager.get_conn("warehouse", context=DatabaseExecutionContext.from_mapping(captured))
+        assert replayed.schema_name == "TPCDS"
+        assert built[-1].database == configured.database
+        assert built[-1].extra == configured.extra
+        assert configured.schema == "ORIGINAL"
+        other = manager.get_conn("warehouse", context=DatabaseExecutionContext(datasource="warehouse", schema="OTHER"))
+        assert other.schema_name == "OTHER"
+        assert other is not replayed
+
+
+@pytest.mark.parametrize(
+    "engine, has_metadata, supports_database",
+    [("unknown_adapter", False, False), ("postgresql", True, True), ("sqlite", True, False)],
+)
+def test_empty_database_requires_explicit_adapter_metadata_without_a_database_namespace(
+    engine, has_metadata, supports_database
+):
+    manager = DBManager({"warehouse": DbConfig(type=engine, database="configured")})
+    manager._build_conn = Mock()
+    with (
+        patch("datus.tools.db_tools.db_manager.connector_registry.has_capabilities", return_value=has_metadata),
+        patch("datus.tools.db_tools.db_manager.connector_registry.support_database", return_value=supports_database),
+        pytest.raises(ValueError, match="Select a database explicitly"),
+    ):
+        manager.get_conn("warehouse", context=DatabaseExecutionContext(datasource="warehouse"))
+    manager._build_conn.assert_not_called()
