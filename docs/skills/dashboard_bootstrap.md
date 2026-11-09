@@ -13,23 +13,24 @@ chat/skill pipeline, without the legacy picker or BI streams:
 ```
 
 An unspecified shortcut request keeps the reference-SQL and metric context default.
-A visual-only request creates only the selected visual output, using maintained
-metrics by default. No separate migration skill/command is introduced.
+A conversion request creates the selected visual output, reusing maintained
+metrics and adding only missing definitions needed by its charts. No separate migration skill/command is introduced.
 
 ## Select outputs and policy
 
 Examples:
 
 ```text
+Convert this dashboard into a Datus project dashboard: https://bi.example/views/revenue/overview
 Build reference SQL and metrics from the revenue dashboard.
 Rebuild the selected BI dashboard in Datus using existing metrics.
 Sync the selected project dashboards, generate missing metrics, and rebuild them in Datus.
 ```
 
 Reference SQL, metric evidence, visual output and optional agent persistence are
-independent selections. `reuse_only` is the default for reconstruction; an explicit
-request to generate metrics authorizes `create_missing`, which reuses existing
-matching definitions and authors only selected missing ones. Editing conflicting
+independent selections. Conversion into Datus defaults to `create_missing`: reuse
+existing matching definitions and author only missing metrics needed by selected
+charts. An explicit existing-metrics-only instruction selects `reuse_only`. Editing conflicting
 business definitions needs explicit edit scope. SQL fallback requires explicit
 scope and support from the source plugin and target artifact tools.
 
@@ -50,10 +51,20 @@ complete curated DOSI target uses its actual semantic/datasource binding instead
 
 The skill records plugin/profile/site, dashboard/chart scope, selected outputs,
 metric policy, source identity evidence or pending inspection, exclusions and target
-intent in a Generation Manifest. It stops for confirmation before export/generation
-unless the user explicitly requests `skip confirmation` or `auto-run`. Existing
-confirmation and unambiguous user scope are retained; auto-run does not bypass
-system permissions.
+intent in a Generation Manifest. An explicit request to convert an identified
+external dashboard into Datus authorizes bounded source synchronization, a new
+dashboard and its necessary additive metrics; print the manifest and continue.
+Honor plan-only, preview-first and ask-before-writing instructions. Other context
+bootstrap requests stop after the manifest unless already confirmed or explicitly
+set to auto-run. System tool permissions still apply.
+
+The main chat prompt routes natural-language dashboard-URL conversion to this
+skill before delegation. Plugin references resolve URLs to verified native IDs,
+matching configured origin/site without exposing secrets. Use the main agent’s
+`ask_user` only when read-only discovery leaves a material choice unresolved, such
+as ambiguous connections, conflicting business meaning, changed semantics or an
+existing-target edit scope. Child tasks return blockers to the main agent. A unique
+URL match or faithfully authorable missing metric needs no repeat confirmation.
 
 The packaged skill loads only relevant supporting documents:
 

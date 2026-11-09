@@ -1,6 +1,6 @@
 ---
 name: dashboard-bootstrap
-description: Bootstrap reference SQL, semantic models and metrics from BI dashboards, and rebuild selected dashboards as Datus visual dashboards through installed plugins. Use for dashboard context initialization, import, migration or reconstruction.
+description: Bootstrap reference SQL, semantic models and metrics from BI dashboards, and rebuild selected dashboards as Datus visual dashboards through installed plugins. Use for dashboard context initialization, import, migration or reconstruction, including requests to convert an external dashboard URL into a Datus project dashboard.
 ---
 
 # Dashboard Bootstrap
@@ -34,22 +34,46 @@ supporting references; do not restart the main-agent steps below.
 ## Step 0 — Resolve outputs and execution mode
 
 Record user-supplied scope and prior confirmations; do not ask again for known
-values. Load `storage-classify` for requested KB writes. Set `auto_run=true` only
-on an explicit skip-confirmation/auto-run instruction; otherwise it is false.
+values. An explicit request to convert an identified external dashboard into a
+Datus project dashboard authorizes its selected source synchronization, a new
+visual dashboard and the necessary additive metric definitions. Set `auto_run=true`
+for that bounded conversion, or for an explicit skip-confirmation/auto-run request.
+Honor plan-only, preview-first or ask-before-writing instructions instead; other
+context-bootstrap requests keep `auto_run=false`. Print the Generation Manifest
+before work even when proceeding directly. Tool permissions still apply.
+Load `storage-classify` when reference indexing or metric authoring is selected.
 
 - Context initialization selects reference SQL and/or metric evidence as before.
 - Rebuild/migration requests also select `visual_dashboard`; load
   [references/visual-dashboard.md](references/visual-dashboard.md) before planning it.
-- Use `metric_policy=reuse_only` for visual reconstruction unless metric authoring
-  was requested. Explicit requests to generate metrics authorize `create_missing`:
-  reuse suitable metrics, then author only missing selected definitions. Changing
-  an existing conflicting business definition requires that explicit edit scope.
+- For conversion into Datus use `metric_policy=create_missing`: reuse suitable
+  metrics and author only missing definitions necessary for selected charts. An
+  explicit existing-metrics-only instruction selects `reuse_only`. Do not add
+  unrelated KPIs or overwrite an existing conflicting definition; an unresolved
+  conflict goes to the main agent's clarification path.
 - SQL execution is not an automatic fallback for discovery, compilation or permission
   failures. A user-authorized SQL path must also be supported by the plugin and
   existing artifact-tool contract; disclose it per chart as SQL-backed.
 - Preserve analytical semantics by default. Separate requested design changes from
   calculation, grain, filter, security or interaction changes; disclose the latter
   and resolve material ambiguity before generation.
+
+## Clarify material uncertainty in the main agent
+
+Use the available `ask_user` tool only after scoped read-only discovery cannot
+resolve a material choice: several matching profiles/sites/dashboards, ambiguous
+physical source identity, conflicting business definitions, unsupported semantics
+requiring a changed result, or an unclear existing-target edit scope. Present
+verified choices and the consequence, retain the answer, and resume only affected
+phases. Ask independent questions together; dependent follow-ups wait for the
+first answer. If the tool is unavailable, stop with the precise missing information.
+
+A URL uniquely matched to a configured profile, a new target slug, or missing
+metrics that can be faithfully authored are not reasons to ask the user to repeat
+the conversion request, choose a SKILL, or enumerate required metric names.
+A permission/authentication failure requires diagnosis/configuration correction,
+not a question granting SQL fallback. Child tasks return blockers to the main
+agent rather than calling `ask_user` while their parent is waiting.
 
 ## Step 1 — Select a BI plugin and profile
 
@@ -68,8 +92,12 @@ report the mismatch instead of combining contracts from different releases.
 
 ## Step 2 — Select a dashboard
 
-Resolve supplied IDs/URLs through the loaded plugin. Use exact, unique title
-matches only. A project-wide request covers dashboards discovered in that project;
+Resolve supplied IDs/URLs through the loaded plugin's URL guidance. Match the
+URL origin and site to configured non-secret profile fields, then verify returned
+canonical IDs through read-only discovery. A browser URL is not a CLI object ID;
+do not pass it directly to an export argument or guess identity from its title.
+Do not scrape a login page or send profile credentials to another origin. Use
+exact, unique title matches only. A project-wide request covers dashboards discovered in that project;
 do not widen it to the site. Preserve stable dashboard/chart IDs and dependencies.
 
 Enumerate read-only query candidates where supported. Otherwise record the chosen
@@ -110,7 +138,7 @@ cannot contain exported file paths or checksums that do not exist yet.
 When `auto_run=false`, **STOP after the manifest and end the turn**. Do not use
 `ask_user` just to repeat this confirmation. On confirmation continue the same
 scope. When `auto_run=true`, print the manifest and continue, noting the explicit
-waiver. Tool permission prompts still apply.
+conversion scope or waiver. Tool permission prompts still apply.
 
 ## Step 5 — Export the confirmed SQL or source assets
 

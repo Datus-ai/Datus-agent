@@ -24,6 +24,11 @@ With `reuse_only`, let the visual node perform its own discovery and block missi
 metrics; do not dispatch an authoring task just to discover definitions.
 The destination node always rechecks actual metric capabilities itself.
 
+A request to convert an external dashboard into a Datus project dashboard selects
+`create_missing` unless the user explicitly limits it to existing metrics. This
+covers necessary additive definitions, not unrelated measures or changes to an
+existing conflicting business definition.
+
 - `reuse_only`: reuse maintained DOSI definitions; report missing or incompatible
   metrics/dimensions as blocked. No automatic metric authoring.
 - `create_missing`: reuse matching definitions, then run the selected domain's
