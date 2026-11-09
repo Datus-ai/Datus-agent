@@ -117,3 +117,16 @@ def test_final_required_context_checks_bi_result(required, result, expected):
         },
     )
     assert completed.returncode == expected
+
+
+def test_privileged_pr_context_cannot_call_product_gate_workflows():
+    root = Path(__file__).resolve().parents[3]
+    queue = yaml.load((root / ".github/workflows/merge-queue.yml").read_text(), Loader=yaml.BaseLoader)
+    context = yaml.load((root / ".github/workflows/merge-queue-pr.yml").read_text(), Loader=yaml.BaseLoader)
+    assert set(queue["on"]) == {"merge_group", "workflow_dispatch"}
+    assert set(context["on"]) == {"pull_request_target"}
+    (job,) = context["jobs"].values()
+    assert job["name"] == "Merge Queue Gate"
+    assert "uses" not in job
+    assert all("uses" not in step for step in job["steps"])
+    assert all(set(step) == {"name", "run"} for step in job["steps"])

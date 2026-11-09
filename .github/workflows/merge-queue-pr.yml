@@ -1,0 +1,22 @@
+name: Merge Queue PR Context
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: merge-queue-pr-context-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  context:
+    name: Merge Queue Gate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Publish required PR context
+        run: |
+          echo "The required product and deterministic gates run on merge_group before merge."
+          echo "This PR context does not check out or execute pull request code."

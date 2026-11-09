@@ -1,16 +1,11 @@
 name: "Merge Queue Gate"
 
 on:
-  pull_request_target:
-    types:
-      - opened
-      - synchronize
-      - reopened
   merge_group:
   workflow_dispatch:
 
 concurrency:
-  group: merge-queue-gate-${{ github.event.pull_request.number || github.event.merge_group.head_sha || github.sha }}
+  group: merge-queue-gate-${{ github.event.merge_group.head_sha || github.sha }}
   cancel-in-progress: true
 
 permissions:
@@ -25,27 +20,18 @@ jobs:
       policy_cold: ${{ steps.policy.outputs.cold }}
       bi_required: ${{ steps.bi.outputs.required }}
     steps:
-      - name: Publish PR gate context
-        if: ${{ github.event_name == 'pull_request_target' }}
-        run: |
-          echo "Merge Queue Gate publishes this lightweight PR check context."
-          echo "The deterministic merge queue suites run on merge_group before merge."
-
       - name: Checkout code
-        if: ${{ github.event_name != 'pull_request_target' }}
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
           persist-credentials: false
 
       - name: Set up Python
-        if: ${{ github.event_name != 'pull_request_target' }}
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
       - name: Install uv
-        if: ${{ github.event_name != 'pull_request_target' }}
         uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
@@ -55,12 +41,11 @@ jobs:
 
       - name: Select merge queue profile
         id: profile
-        if: ${{ github.event_name != 'pull_request_target' }}
         run: uv run --no-project --with pyyaml python ci/select_gate_profile.py --github-output "$GITHUB_OUTPUT"
 
       - name: Plan required SQL policy acceptance
         id: policy
-        if: ${{ github.event_name != 'pull_request_target' && steps.profile.outputs.profile == 'code' }}
+        if: ${{ steps.profile.outputs.profile == 'code' }}
         run: |
           args=()
           if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then args+=(--force); fi
@@ -68,14 +53,13 @@ jobs:
 
       - name: Plan required BI acceptance
         id: bi
-        if: ${{ github.event_name != 'pull_request_target' && steps.profile.outputs.profile == 'code' }}
+        if: ${{ steps.profile.outputs.profile == 'code' }}
         run: |
           args=()
           if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then args+=(--force); fi
           uv run --no-project --with pyyaml python ci/bi_gate.py plan --github-output "$GITHUB_OUTPUT" "${args[@]}"
 
       - name: Install dependencies
-        if: ${{ github.event_name != 'pull_request_target' }}
         run: |
           if [ "${{ steps.profile.outputs.profile }}" = "code" ] || [ "${{ steps.profile.outputs.ci_tests }}" = "true" ]; then
             uv sync --locked --group ci
@@ -89,11 +73,9 @@ jobs:
           echo "${GITHUB_WORKSPACE}/.venv/bin" >> "$GITHUB_PATH"
 
       - name: Check release metadata
-        if: ${{ github.event_name != 'pull_request_target' }}
         run: python3 ci/check_release_readiness.py
 
       - name: Validate harness coverage map
-        if: ${{ github.event_name != 'pull_request_target' }}
         run: |
           set +e
           python3 ci/harness/validate_coverage_map.py \
@@ -108,16 +90,16 @@ jobs:
           exit "$validation_exit"
 
       - name: Setup config file
-        if: ${{ github.event_name != 'pull_request_target' && steps.profile.outputs.profile == 'code' }}
+        if: ${{ steps.profile.outputs.profile == 'code' }}
         run: |
           cp conf/agent.yml.example conf/agent.yml
 
       - name: Restore tracked test config
-        if: ${{ github.event_name != 'pull_request_target' && steps.profile.outputs.profile == 'code' }}
+        if: ${{ steps.profile.outputs.profile == 'code' }}
         run: git restore --source=HEAD --worktree --staged tests/conf/agent.yml
 
       - name: Isolate test data directory
-        if: ${{ github.event_name != 'pull_request_target' && steps.profile.outputs.profile == 'code' }}
+        if: ${{ steps.profile.outputs.profile == 'code' }}
         run: |
           DATUS_TEST_HOME="${GITHUB_WORKSPACE}/.datus_test_data"
           echo "DATUS_TEST_HOME=$DATUS_TEST_HOME" >> "$GITHUB_ENV"
@@ -125,20 +107,19 @@ jobs:
           sed -i "s|project_root: .datus_test_data/workspace|project_root: $DATUS_TEST_HOME/workspace|g" tests/conf/agent.yml
 
       - name: Prepare small BIRD test fixtures
-        if: ${{ github.event_name != 'pull_request_target' && steps.profile.outputs.profile == 'code' }}
+        if: ${{ steps.profile.outputs.profile == 'code' }}
         run: |
           DATUS_TEST_BIRD_ROOT="$RUNNER_TEMP/datus-ci-bird/dev_databases"
           python3 ci/prepare_ci_bird.py "$DATUS_TEST_BIRD_ROOT"
           echo "DATUS_TEST_BIRD_ROOT=$DATUS_TEST_BIRD_ROOT" >> "$GITHUB_ENV"
 
       - name: Run deterministic merge queue suites
-        if: ${{ github.event_name != 'pull_request_target' }}
         env:
           DATUS_CI_PYTEST_BASETEMP: ${{ runner.temp }}/datus-agent-pytest-${{ github.run_id }}-${{ github.run_attempt }}
         run: python3 ci/run-merge-queue-tests.py
 
       - name: Cleanup pytest temp
-        if: ${{ always() && github.event_name != 'pull_request_target' }}
+        if: ${{ always() }}
         env:
           DATUS_CI_PYTEST_BASETEMP: ${{ runner.temp }}/datus-agent-pytest-${{ github.run_id }}-${{ github.run_attempt }}
           RUNNER_TEMP_ROOT: ${{ runner.temp }}
@@ -162,7 +143,7 @@ jobs:
 
       - name: Upload merge queue artifacts
         uses: actions/upload-artifact@v4
-        if: ${{ always() && github.event_name != 'pull_request_target' }}
+        if: ${{ always() }}
         with:
           name: merge-queue-results
           path: |
@@ -173,7 +154,7 @@ jobs:
 
   sql-policy:
     needs: deterministic
-    if: ${{ github.event_name != 'pull_request_target' && needs.deterministic.outputs.policy_required == 'true' }}
+    if: ${{ needs.deterministic.outputs.policy_required == 'true' }}
     uses: ./.github/workflows/sql-policy-gate.yml
     with:
       agent_ref: ${{ github.sha }}
@@ -183,7 +164,7 @@ jobs:
 
   bi:
     needs: deterministic
-    if: ${{ github.event_name != 'pull_request_target' && needs.deterministic.outputs.bi_required == 'true' }}
+    if: ${{ needs.deterministic.outputs.bi_required == 'true' }}
     uses: ./.github/workflows/bi-gate.yml
     with:
       agent_ref: ${{ github.sha }}

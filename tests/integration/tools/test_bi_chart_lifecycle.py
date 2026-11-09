@@ -33,11 +33,11 @@ async def test_table_grouping_repair_and_deleted_chart_validation(dashboard_agen
     title = "P0 Repair " + uuid.uuid4().hex[:8]
     chart_ids = set()
     dashboard = tool.create_dashboard(title)
-    assert dashboard.success, dashboard.error
+    assert dashboard.success == 1, dashboard.error
     dashboard_id = str(dashboard.result["id"])
 
     async def collect(result):
-        assert result.success, result.error
+        assert result.success == 1, result.error
         await hook.on_tool_end(None, None, None, result)
         return result.result
 
@@ -109,7 +109,7 @@ async def test_table_grouping_repair_and_deleted_chart_validation(dashboard_agen
         assert [t.chart_id for t in hook.session_targets if isinstance(t, ChartTarget)] == [new_id]
         assert [str(i) for i in adapter.get_dashboard_info(dashboard_id).chart_ids] == [new_id]
         await hook.on_end(None, None, None)
-        assert hook.final_report is not None
+        assert [check.name for check in hook.final_report.checks] == ["dashboard_exists", "chart_exists"]
         assert not hook.final_report.has_blocking_failure(), hook.final_report.model_dump()
     finally:
         for chart_id in chart_ids:

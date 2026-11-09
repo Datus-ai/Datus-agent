@@ -1048,11 +1048,14 @@ class TestTableGroupingRegression:
         tool = _build_tool(adapter=FullMockAdapter(), bi_service="grafana")
         assert tool._chart_grouping("table", ["region"], "region") == (["region"], "region")
 
-    @pytest.mark.parametrize("deleted", [True, False])
-    def test_delete_event_only_after_success(self, deleted):
+    @pytest.mark.parametrize(
+        "deleted,event",
+        [(True, {"type": "chart", "platform": "superset", "chart_id": "5"}), (False, None)],
+    )
+    def test_delete_event_only_after_success(self, deleted, event):
         tool = _build_tool(adapter=FullMockAdapter(), bi_service="superset")
         tool.adapter.delete_chart = MagicMock(return_value=deleted)
         result = tool.delete_chart("5")
         assert ("deleted_deliverable" in result.result) is deleted
-        if deleted:
-            assert result.result["deleted_deliverable"] == {"type": "chart", "platform": "superset", "chart_id": "5"}
+        assert result.result.get("deleted_deliverable") == event
+        assert result.result["deleted"] is deleted

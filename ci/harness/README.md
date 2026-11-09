@@ -227,8 +227,9 @@ Live core defaults to `deepseek/deepseek-v4-flash` with `DEEPSEEK_API_KEY`.
 
 Changes to BI tools, validation, Superset authoring/validation skills, their tests,
 dependencies, or CI select `P0 BI Product E2E`. The required Merge Queue Gate
-waits for the isolated `bi-gate.yml` job on `merge_group`; its PR context remains
-lightweight. The job uses pinned BI and plugin fixtures from `p0.yml`, the existing
+waits for the isolated `bi-gate.yml` job on `merge_group`. The separate
+`merge-queue-pr.yml` workflow publishes the lightweight PR context without a
+checkout or reusable workflow call. The job uses pinned BI and plugin fixtures from `p0.yml`, the existing
 self-hosted CI credential template, and dynamically allocated loopback Docker ports.
 It runs the deterministic chart repair/delete contract, managed plugin installation,
 and real-model dashboard creation. Missing, skipped, or failed P0 receipts fail the gate.
