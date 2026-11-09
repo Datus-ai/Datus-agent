@@ -1059,3 +1059,39 @@ class TestTableGroupingRegression:
         assert ("deleted_deliverable" in result.result) is deleted
         assert result.result.get("deleted_deliverable") == event
         assert result.result["deleted"] is deleted
+
+
+@pytest.mark.acceptance
+@pytest.mark.parametrize(
+    "service,kind,create_axis,update_axis",
+    [
+        ("superset_prod", "superset", "", ""),
+        ("superset", "", "", ""),
+        ("grafana_prod", "grafana", "region", None),
+        ("superset", "grafana", "region", None),
+    ],
+)
+def test_table_grouping_uses_adapter_kind_and_preserves_service_identity(service, kind, create_axis, update_axis):
+    from datus.configuration.agent_config import DashboardConfig
+
+    tool = _build_tool(adapter=FullMockAdapter(), bi_service=service)
+    tool.agent_config.dashboard_config[service] = DashboardConfig(platform=service, adapter_type=kind)
+    chart = _ChartInfo(id=5, name="Revenue", chart_type="table")
+    tool.adapter.create_chart = MagicMock(return_value=chart)
+    tool.adapter.update_chart = MagicMock(return_value=chart)
+    tool.adapter.get_chart = MagicMock(return_value=chart)
+    with patch.dict(sys.modules, {"datus_bi_core.models": _bi_core_mock.models}):
+        created = tool.create_chart(
+            "table", "Revenue", dataset_id="1", metrics="SUM(revenue)", dimensions="region", x_axis="region"
+        )
+        updated = tool.update_chart("5", dimensions="region")
+    assert created.success == 1
+    assert updated.success == 1
+    create_spec = tool.adapter.create_chart.call_args.args[0]
+    update_spec = tool.adapter.update_chart.call_args.args[1]
+    assert create_spec.dimensions == ["region"]
+    assert create_spec.x_axis == create_axis
+    assert update_spec.dimensions == ["region"]
+    assert update_spec.x_axis == update_axis
+    assert created.result["deliverable_target"]["platform"] == service
+    assert updated.result["deliverable_target"]["platform"] == service

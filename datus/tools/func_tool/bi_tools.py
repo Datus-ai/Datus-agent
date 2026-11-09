@@ -643,10 +643,10 @@ class BIFuncTool:
         self, chart_type: str, dimensions: Optional[List[str]], x_axis: Optional[str]
     ) -> tuple[Optional[List[str]], Optional[str]]:
         """Superset tables group by dimensions and must clear a previously saved axis."""
-        platform = getattr(self._resolved_dash_cfg, "platform", None)
-        if not isinstance(platform, str):
-            platform = self._resolved_platform()
-        if platform == "superset" and chart_type == "table":
+        adapter_type = getattr(self._resolved_dash_cfg, "adapter_type", "")
+        if not isinstance(adapter_type, str) or not adapter_type:
+            adapter_type = self._resolved_platform()
+        if adapter_type == "superset" and chart_type == "table":
             if x_axis:
                 dimensions = list(dict.fromkeys([*(dimensions or []), x_axis]))
             # None means 'preserve saved axis' to the adapter; empty explicitly clears it.
