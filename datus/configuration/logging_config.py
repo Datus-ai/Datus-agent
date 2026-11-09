@@ -73,7 +73,9 @@ def resolve_logging_arguments(args: argparse.Namespace, agent_config: Any = None
     if getattr(args, "_logging_resolved", False):
         return LoggingConfig(level=args.log_level, redact=getattr(args, "log_redact", {}))
     config = getattr(agent_config, "logging", None)
-    if config is None:
+    # Managed plugin children have an authoritative per-command context. Local
+    # YAML and dotenv files belong to the host, not to this invocation.
+    if config is None and "DATUS_PLUGIN_RUNTIME_CONTEXT" not in os.environ:
         import yaml
         from dotenv import load_dotenv
 

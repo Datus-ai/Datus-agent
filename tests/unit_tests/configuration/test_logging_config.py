@@ -293,3 +293,45 @@ def test_markdown_rendering_keeps_agent_debug_without_parser_noise(tmp_path):
     assert len(parser_records) == 2
     assert "parser-warning-preserved" in parser_records[0]
     assert "parser-error-preserved" in parser_records[1]
+
+
+@pytest.mark.parametrize("runtime_context", ["", "v1.invalid"])
+def test_managed_plugin_logging_never_loads_local_configuration(monkeypatch, runtime_context):
+    """Leave payload validation to dispatch without consulting another tenant's files."""
+    monkeypatch.setenv("DATUS_PLUGIN_RUNTIME_CONTEXT", runtime_context)
+    monkeypatch.setenv("DATUS_LOG_LEVEL", "WARNING")
+
+    def forbidden_config_lookup(*args, **kwargs):
+        """Reject any attempt to resolve a local agent configuration."""
+        pytest.fail("managed plugin logging must not inspect local configuration")
+
+    monkeypatch.setattr("datus.configuration.agent_config_loader.parse_config_path", forbidden_config_lookup)
+    args = argparse.Namespace()
+    result = resolve_logging_arguments(args)
+
+    assert result.level == "WARNING"
+    assert result.redact == {}
+    assert args.log_level_source == "env:DATUS_LOG_LEVEL"
+
+
+@pytest.mark.parametrize("explicit_log_dir", [False, True])
+def test_managed_plugin_log_file_stays_in_allowed_destination(tmp_path, monkeypatch, explicit_log_dir):
+    """Use the workspace default while respecting an explicit host destination."""
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(
+        "datus.utils.path_manager.get_path_manager",
+        lambda **kwargs: SimpleNamespace(logs_dir=tmp_path / "host-logs"),
+    )
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("DATUS_PLUGIN_RUNTIME_CONTEXT", "v1.invalid")
+    args = argparse.Namespace(_logging_resolved=True, log_level="INFO", log_redact={}, log_level_source="default")
+    options = {"log_dir": tmp_path / "explicit-logs"} if explicit_log_dir else {}
+    manager = configure_entrypoint_logging(args, console_output=False, **options)
+    get_logger("datus.plugin").info("managed-plugin-probe")
+    manager.file_handler.flush()
+
+    log_path = Path(manager.file_handler.baseFilename)
+    expected = tmp_path / "explicit-logs" if explicit_log_dir else tmp_path / ".datus" / "logs"
+    assert log_path.is_relative_to(expected)
+    assert "managed-plugin-probe" in log_path.read_text()
