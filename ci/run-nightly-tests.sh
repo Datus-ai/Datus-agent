@@ -1862,6 +1862,7 @@ NIGHTLY_DEDICATED_SUITE_DESELECTS=(
   --deselect tests/integration/agent/test_gen_dashboard_agentic.py
   --deselect tests/integration/agent/test_scheduler_agentic.py
   --deselect tests/integration/tools/test_bi_dashboard.py
+  --deselect tests/integration/tools/test_bi_chart_lifecycle.py
   --deselect tests/integration/plugins/test_dashboard_bootstrap_plugin.py
   --deselect tests/integration/plugins/test_sql_policy_plugin.py
   --deselect tests/integration/storage/test_postgresql_semantic_kb.py
@@ -1893,7 +1894,7 @@ run_logged "Product E2E Nightly Tests" run_with_agent_home "$NIGHTLY_HOME" "$NIG
 # Scheduled Nightly and release P0 run the explicit Superset export/bootstrap
 # contracts. A targeted evaluation also retains the other affected node cases.
 if [ -n "${PRODUCT_TEST_BASE_REF:-}" ]; then
-  run_compose_suite "P0 BI Product E2E" "$SUPERSET_COMPOSE" "postgres:300" "superset:1200" -- run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run python -m pytest -m "$DASHBOARD_MARK_EXPR" tests/integration/plugins/test_dashboard_bootstrap_plugin.py tests/integration/agent/test_gen_dashboard_agentic.py tests/integration/tools/test_bi_dashboard.py -p ci.pytest_fail_on_skip_plugin --fail-on-skip --tb=short --verbose --timeout=600 --timeout-method=thread
+  run_compose_suite "P0 BI Product E2E" "$SUPERSET_COMPOSE" "postgres:300" "superset:1200" -- run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run python -m pytest -m "$DASHBOARD_MARK_EXPR" tests/integration/tools/test_bi_chart_lifecycle.py tests/integration/plugins/test_dashboard_bootstrap_plugin.py tests/integration/agent/test_gen_dashboard_agentic.py tests/integration/tools/test_bi_dashboard.py -p ci.pytest_fail_on_skip_plugin --fail-on-skip --tb=short --verbose --timeout=600 --timeout-method=thread
 else
   run_p0_group "P0 BI Product E2E"
 fi

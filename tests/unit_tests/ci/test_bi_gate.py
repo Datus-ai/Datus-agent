@@ -130,3 +130,22 @@ def test_privileged_pr_context_cannot_call_product_gate_workflows():
     assert "uses" not in job
     assert all("uses" not in step for step in job["steps"])
     assert all(set(step) == {"name", "run"} for step in job["steps"])
+
+
+def test_targeted_bi_suite_runs_every_required_file_with_services_and_excludes_broad_collection():
+    import shlex
+
+    root = Path(__file__).resolve().parents[3]
+    script = (root / "ci/run-nightly-tests.sh").read_text()
+    (command,) = [
+        line
+        for line in script.splitlines()
+        if line.startswith('  run_compose_suite "P0 BI Product E2E"') and "pytest" in line
+    ]
+    targets = set(shlex.split(command))
+    deselects = script.split("NIGHTLY_DEDICATED_SUITE_DESELECTS=(", 1)[1].split("\n)", 1)[0]
+    broad_arguments = shlex.split(deselects)
+    for nodeid in load_profile()["groups"][GROUP]["nodeids"]:
+        path = nodeid.split("::", 1)[0]
+        assert path in targets, f"Required BI contract missing from service-backed targeted suite: {nodeid}"
+        assert any(broad_arguments[i : i + 2] == ["--deselect", path] for i in range(len(broad_arguments)))
