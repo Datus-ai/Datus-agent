@@ -487,7 +487,7 @@ class BIFuncTool:
         description: str = "",
         dimensions: Optional[str] = None,
     ) -> FuncToolResult:
-        """Update a chart. Omit dimensions to preserve grouping; use an empty string to clear it.
+        """Update a chart. Omit dimensions or pass null to preserve grouping; use an empty string to clear it.
 
         For Superset tables, dimensions contains groupby columns; x_axis is not used.
         """

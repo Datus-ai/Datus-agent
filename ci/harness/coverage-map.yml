@@ -2111,6 +2111,10 @@ execution:
         - ci/plan-product-tests.py
         - ci/harness/sql-policy-host.json
         - ci/sql_policy_gate.py
+        - ci/release_artifact.py
+        - ci/pytest_gate_plugin.py
+        - ci/p0_plan.py
+        - ci/stage_p0.py
         - ci/run-nightly-tests.sh
         - .github/workflows/sql-policy-gate.yml
         - .github/workflows/merge-queue.yml

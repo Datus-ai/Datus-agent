@@ -116,7 +116,8 @@ create_chart(
   `metrics="SUM(revenue)"`. Leave `x_axis` empty.
 - Verify the returned columns and grouped values with `get_chart_data`.
 - To repair grouping, call `update_chart(chart_id="...", dimensions="region")`.
-  Omit `dimensions` to preserve it; pass `dimensions=""` to remove grouping.
+  In strict tool calls send `dimensions: null` to preserve it; use an empty
+  string to remove grouping. Direct Python calls may omit `dimensions` or pass `None`.
 - Use the BI tools to inspect and repair chart settings. Do not search the
   filesystem or adapter implementation to troubleshoot chart configuration.
 - If replacement is necessary, attach the verified replacement, then delete

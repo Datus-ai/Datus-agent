@@ -18,6 +18,10 @@ from ci.harness.test_plan import changed_files, impact_plan  # noqa: E402
 from ci.p0_plan import check_p0_execution, load_profile  # noqa: E402
 
 GROUP = "P0 BI Product E2E"
+COMPOSE_UP_TIMEOUT_SECONDS = 1500
+PYTEST_TIMEOUT_SECONDS = 1800
+COMPOSE_LOGS_TIMEOUT_SECONDS = 60
+COMPOSE_DOWN_TIMEOUT_SECONDS = 120
 
 
 def required(changed: list[str]) -> bool:
@@ -147,7 +151,7 @@ def run(work: Path, external: Path) -> None:
                 check=True,
                 stdout=log,
                 stderr=subprocess.STDOUT,
-                timeout=1500,
+                timeout=COMPOSE_UP_TIMEOUT_SECONDS,
             )
         # Docker assigns unused loopback ports when zero is requested, so this
         # gate can run alongside nightly on the same host.
@@ -159,7 +163,9 @@ def run(work: Path, external: Path) -> None:
             port = int(address.rsplit(":", 1)[1])
             env[variable] = f"http://127.0.0.1:{port}" if service == "superset" else str(port)
         with (work / "pytest.log").open("w") as log:
-            result = subprocess.run(command, cwd=ROOT, env=env, stdout=log, stderr=subprocess.STDOUT, timeout=1800)
+            result = subprocess.run(
+                command, cwd=ROOT, env=env, stdout=log, stderr=subprocess.STDOUT, timeout=PYTEST_TIMEOUT_SECONDS
+            )
         receipt["pytest_exit"] = result.returncode
         if result.returncode:
             raise RuntimeError("BI P0 failed; see pytest.log and cases/")
@@ -174,10 +180,16 @@ def run(work: Path, external: Path) -> None:
         (work / "result.json").write_text(json.dumps(receipt, indent=2) + "\n")
         with (work / "services.log").open("a") as log:
             subprocess.run(
-                [*compose, "logs", "--no-color", "--tail", "200"], stdout=log, stderr=subprocess.STDOUT, timeout=60
+                [*compose, "logs", "--no-color", "--tail", "200"],
+                stdout=log,
+                stderr=subprocess.STDOUT,
+                timeout=COMPOSE_LOGS_TIMEOUT_SECONDS,
             )
             subprocess.run(
-                [*compose, "down", "-v", "--remove-orphans"], stdout=log, stderr=subprocess.STDOUT, timeout=120
+                [*compose, "down", "-v", "--remove-orphans"],
+                stdout=log,
+                stderr=subprocess.STDOUT,
+                timeout=COMPOSE_DOWN_TIMEOUT_SECONDS,
             )
     verify(work, sources)
 

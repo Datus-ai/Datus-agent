@@ -16,7 +16,8 @@ permissions:
 jobs:
   superset:
     runs-on: self-hosted
-    timeout-minutes: 45
+    # Script budget is 58 minutes including cleanup; allow setup and upload margin.
+    timeout-minutes: 75
     steps:
       - uses: actions/checkout@v4
         with:

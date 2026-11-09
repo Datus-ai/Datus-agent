@@ -313,3 +313,10 @@ def test_execution_report_records_the_frozen_source_identity(tmp_path):
     )
     assert completed.returncode == 0, completed.stdout + completed.stderr
     assert json.loads(report.read_text())["source_id"] == "source-combination"
+
+
+@pytest.mark.parametrize(
+    "path", ["ci/release_artifact.py", "ci/pytest_gate_plugin.py", "ci/p0_plan.py", "ci/stage_p0.py"]
+)
+def test_verifier_changes_require_installed_host_acceptance(path):
+    assert plan_gate([path])["required"] is True

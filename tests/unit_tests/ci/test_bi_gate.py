@@ -149,3 +149,23 @@ def test_targeted_bi_suite_runs_every_required_file_with_services_and_excludes_b
         path = nodeid.split("::", 1)[0]
         assert path in targets, f"Required BI contract missing from service-backed targeted suite: {nodeid}"
         assert any(broad_arguments[i : i + 2] == ["--deselect", path] for i in range(len(broad_arguments)))
+
+
+def test_bi_job_budget_covers_script_timeouts_cleanup_and_setup():
+    from ci.bi_gate import (
+        COMPOSE_DOWN_TIMEOUT_SECONDS,
+        COMPOSE_LOGS_TIMEOUT_SECONDS,
+        COMPOSE_UP_TIMEOUT_SECONDS,
+        PYTEST_TIMEOUT_SECONDS,
+    )
+
+    root = Path(__file__).resolve().parents[3]
+    workflow = yaml.safe_load((root / ".github/workflows/bi-gate.yml").read_text())
+    script_budget = (
+        COMPOSE_UP_TIMEOUT_SECONDS
+        + PYTEST_TIMEOUT_SECONDS
+        + COMPOSE_LOGS_TIMEOUT_SECONDS
+        + COMPOSE_DOWN_TIMEOUT_SECONDS
+    )
+    setup_and_upload_margin = 15 * 60
+    assert workflow["jobs"]["superset"]["timeout-minutes"] * 60 >= script_budget + setup_and_upload_margin

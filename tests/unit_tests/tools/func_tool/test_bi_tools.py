@@ -1095,3 +1095,39 @@ def test_table_grouping_uses_adapter_kind_and_preserves_service_identity(service
     assert update_spec.x_axis == update_axis
     assert created.result["deliverable_target"]["platform"] == service
     assert updated.result["deliverable_target"]["platform"] == service
+
+
+@pytest.mark.acceptance
+@pytest.mark.asyncio
+@pytest.mark.parametrize("dimensions,expected", [(None, None), ("", [])])
+async def test_strict_update_chart_tool_documents_and_preserves_null_grouping(dimensions, expected):
+    import json
+
+    from agents import RunContextWrapper
+
+    from datus.tools.func_tool.base import trans_to_function_tool
+
+    tool = _build_tool(adapter=FullMockAdapter(), bi_service="superset")
+    chart = _ChartInfo(id=5, name="Revenue", chart_type="table")
+    tool.adapter.get_chart = MagicMock(return_value=chart)
+    tool.adapter.update_chart = MagicMock(return_value=chart)
+    wrapped = trans_to_function_tool(tool.update_chart)
+    assert "dimensions" in wrapped.params_json_schema["required"]
+    assert {"type": "null"} in wrapped.params_json_schema["properties"]["dimensions"]["anyOf"]
+    assert "null to preserve grouping" in wrapped.description
+    arguments = {
+        "chart_id": "5",
+        "title": "Renamed",
+        "chart_type": "",
+        "sql": "",
+        "metrics": "",
+        "x_axis": "",
+        "description": "",
+        "dimensions": dimensions,
+    }
+    with patch.dict(sys.modules, {"datus_bi_core.models": _bi_core_mock.models}):
+        result = await wrapped.on_invoke_tool(RunContextWrapper(context=None), json.dumps(arguments))
+    assert result["success"] == 1
+    spec = tool.adapter.update_chart.call_args.args[1]
+    assert spec.dimensions == expected
+    assert spec.x_axis == ""
