@@ -111,6 +111,17 @@ create_chart(
 - Use a single metric: `metrics="AVG(activity_count)"`
 - No `x_axis` or `dimensions` needed.
 
+**For `table` charts:**
+- Put grouping columns in `dimensions`, for example `dimensions="region"` with
+  `metrics="SUM(revenue)"`. Leave `x_axis` empty.
+- Verify the returned columns and grouped values with `get_chart_data`.
+- To repair grouping, call `update_chart(chart_id="...", dimensions="region")`.
+  Omit `dimensions` to preserve it; pass `dimensions=""` to remove grouping.
+- Use the BI tools to inspect and repair chart settings. Do not search the
+  filesystem or adapter implementation to troubleshoot chart configuration.
+- If replacement is necessary, attach the verified replacement, then delete
+  the obsolete chart before finishing.
+
 **Dashboard design defaults:**
 - Create charts in this visual order: KPI overview, time trends, category
   breakdowns / rankings, composition, then optional detail table.

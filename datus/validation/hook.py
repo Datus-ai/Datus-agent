@@ -127,6 +127,28 @@ class ValidationHook(AgentHooks):
         ``deliverable_target`` to the session. All validation (Layer A + B)
         runs at ``on_end`` against the accumulated session.
         """
+        envelope = result if isinstance(result, dict) else {}
+        payload = getattr(result, "result", envelope.get("result"))
+        success = getattr(result, "success", envelope.get("success", 1))
+        if isinstance(payload, dict) and success and payload.get("deleted") is True:
+            deleted = payload.get("deleted_deliverable")
+            if isinstance(deleted, dict) and deleted.get("type") == "chart":
+                try:
+                    target = ChartTarget.model_validate(deleted)
+                except ValueError:
+                    return
+                self._session_targets = [
+                    existing
+                    for existing in self._session_targets
+                    if not (
+                        isinstance(existing, ChartTarget)
+                        and existing.platform == target.platform
+                        and existing.chart_id == target.chart_id
+                    )
+                ]
+            return
+        if not success:
+            return
         target = self._extract_target(result)
         if target is None:
             return
@@ -140,19 +162,33 @@ class ValidationHook(AgentHooks):
         ``add_chart_to_dashboard`` target should enrich that same chart instead
         of making validation run twice for the same deliverable.
         """
-        if isinstance(target, ChartTarget) and target.dashboard_id:
-            for index, existing in enumerate(self._session_targets):
+        if isinstance(target, ChartTarget):
+            merged = []
+            found = False
+            for existing in self._session_targets:
                 if (
                     isinstance(existing, ChartTarget)
                     and existing.platform == target.platform
                     and existing.chart_id == target.chart_id
                 ):
-                    if existing.dashboard_id == target.dashboard_id:
-                        self._session_targets[index] = target
-                        return
-                    if not existing.dashboard_id:
-                        self._session_targets[index] = target
-                        return
+                    if (
+                        not existing.dashboard_id
+                        or not target.dashboard_id
+                        or existing.dashboard_id == target.dashboard_id
+                    ):
+                        found = True
+                        existing = target.model_copy(
+                            update={
+                                "dashboard_id": target.dashboard_id or existing.dashboard_id,
+                                "chart_name": target.chart_name or existing.chart_name,
+                            }
+                        )
+                if existing not in merged:
+                    merged.append(existing)
+            if not found:
+                merged.append(target)
+            self._session_targets = merged
+            return
         self._session_targets.append(target)
 
     async def on_end(self, context, agent, output) -> None:

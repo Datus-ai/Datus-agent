@@ -102,6 +102,65 @@ acceptance and fixture preparation. The profile and the checks actually executed
 are recorded in `ci/gate-coverage.json`; code profiles retain mandatory core-test
 evidence checks.
 
+## SQL policy merge acceptance
+
+Code changes affecting plugin installation, policy execution, datasource reads,
+Dosi, or shared integration fixtures select `P0 SQL Policy Plugin Contracts`.
+The product plan includes this deterministic group even without live-model targets.
+The existing required `Merge Queue Gate` waits for both the deterministic suites
+and the selected real SQL policy acceptance. A skipped, cancelled or failed
+selected gate cannot satisfy that required context. Documentation profiles keep
+their existing smaller gate.
+
+`sql-policy-gate.yml` runs on ephemeral GitHub-hosted runners. It resolves the
+reviewed policy pin from `sql-policy-host.json` and the engine commit from the
+policy's Cargo dependencies, freezes all three checkout SHAs, then builds Agent,
+engine and policy wheels from those sources. External repositories are read-only
+test dependencies; this workflow does not modify or trigger their CI.
+The gate uses dev-profile test wheels without debug symbols; the engine enables
+the DuckDB/policy host boundary needed here. Release optimization, executor matrices
+and distribution publication remain covered by their existing release workflows.
+Wheel repair runs on a separate wheel copy, so bundling shared libraries cannot
+rewrite the Cargo artifacts reused by subsequent warm builds. Verification also
+checks bundled native libraries against their wheel payloads.
+
+Agent and engine are installed as wheels, and the harness is staged outside the
+Agent checkout. SQL policy is installed through the real managed-plugin CLI into
+an isolated HOME. All installed runtime payloads, including native binaries, must
+match the identified wheels. The P0 checks SQL row filtering, Dosi metrics, denied
+and unrestricted contexts, and HTTP Chat enforcement without an external LLM.
+
+`result.json` records the source SHAs, input/patch hashes, toolchain, wheel hashes,
+cache mode and separate build/install/execution stages. Execution evidence carries
+the source identity and must include successful outcomes for every required P0
+nodeid. Different sources, modified artifacts, missing reports, skips and xfails
+fail validation. The required merge-group result applies to its own synthesized
+commit; evidence is not reused from an earlier PR head.
+
+Normal runs reuse the runner's available build caches. Build/dependency/host-pin
+changes also select a cold run with new empty uv, Cargo and target directories.
+Scheduled Nightly runs both modes against policy main, resolved once to immutable
+SHAs before the matrix starts. The compiled private payloads and caches remain on
+the runner; artifacts contain only receipts and logs. Source-read tokens are used
+only by checkout actions, never exposed to native builds or tests.
+
+Review `p0.yml` and `sql-policy-host.json` together when updating the policy pin.
+Release P0 continues using the reviewed pin; scheduled compatibility checks follow
+policy main. Cross-repository PR-triggered acceptance is outside this Agent gate.
+The scheduled cold contract finishes before the ordinary Nightly suites start;
+its failure also marks the final notification failed, even if those suites pass.
+
+Local reproduction in a dedicated locked Linux environment (this replaces its Agent and
+engine installations):
+
+```sh
+uv pip install 'maturin==1.16.0' 'auditwheel==6.8.2'
+uv run --no-sync python ci/sql_policy_gate.py run \
+  --policy external/datus-sql-policies --engine external/osi-engine \
+  --agent-sha <agent-sha> --policy-sha <policy-sha> --engine-sha <engine-sha> \
+  --mode cold --work /tmp/datus-sql-policy-cold
+```
+
 ## Release P0
 
 `ci/harness/p0.yml` explicitly lists six groups and 24 required nodeids: the
@@ -163,3 +222,20 @@ Live core defaults to `deepseek/deepseek-v4-flash` with `DEEPSEEK_API_KEY`.
 - The permanently skipped plan-confirmation simulation and stale quarantine
   entry were replaced by the production-loop HTTP acceptance test. Other plan
   interaction tests remain.
+
+### BI repair gate
+
+Changes to BI tools, validation, Superset authoring/validation skills, their tests,
+dependencies, or CI select `P0 BI Product E2E`. The required Merge Queue Gate
+waits for the isolated `bi-gate.yml` job on `merge_group`; its PR context remains
+lightweight. The job uses pinned BI and plugin fixtures from `p0.yml`, the existing
+self-hosted CI credential template, and dynamically allocated loopback Docker ports.
+It runs the deterministic chart repair/delete contract, managed plugin installation,
+and real-model dashboard creation. Missing, skipped, or failed P0 receipts fail the gate.
+
+Nightly runs the same deterministic repair contract. Its trace plugin captures BI
+session references inside child tasks and writes resource coordinates, tool result
+shapes, validation targets/checks, and outcomes to `nightly-bi-evidence/`. Prompts,
+SQL text, Bash arguments, credentials, and data rows are excluded. Local execution
+can use `.venv/bin/python ci/bi_gate.py run --work /absolute/new/directory`; installed
+BI packages and Chromium, Docker, source fixtures, and `DEEPSEEK_API_KEY` are required.

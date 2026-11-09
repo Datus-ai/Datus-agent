@@ -69,10 +69,13 @@ PYTEST_BASETEMP_ENV = "DATUS_CI_PYTEST_BASETEMP"
 PR_HARNESS_MARK_EXPR = "(acceptance or component or llm_harness) and not quarantine"
 IMPACTED_UNIT_MARK_EXPR = "not acceptance and not component and not llm_harness and not nightly and not quarantine"
 PR_ACCEPTANCE_TARGETS = [
+    "tests/unit_tests/ci/test_bi_gate.py",
+    "tests/unit_tests/ci/test_bi_diagnostics.py",
     "tests/unit_tests/models/test_request_capacity.py",
     "tests/unit_tests/models/test_image_model_roundtrip.py",
     "tests/unit_tests/models/test_output_limit_requests.py",
     "tests/unit_tests/models/test_output_truncation.py",
+    "tests/unit_tests/plugins/test_managed_plugin_runtime.py",
     "tests/unit_tests/models/test_reasoning_content_roundtrip.py",
     "tests/unit_tests/observability/test_native_model_calls.py",
     "tests/unit_tests/observability/test_model_call.py",
@@ -98,6 +101,9 @@ PR_ACCEPTANCE_TARGETS = [
     "tests/unit_tests/ci/test_run_merge_queue_tests.py",
     "tests/unit_tests/ci/test_gate_profiles.py",
     "tests/unit_tests/ci/test_p0_gate.py",
+    "tests/unit_tests/ci/test_sql_policy_gate.py",
+    "tests/unit_tests/ci/test_format_nightly_feishu_report.py",
+    "tests/unit_tests/ci/test_nightly_checkout_contract.py",
     "tests/unit_tests/ci/harness/test_test_plan.py",
     "tests/unit_tests/ci/test_prepare_ci_bird.py",
     "tests/integration/api/test_api.py",

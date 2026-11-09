@@ -20,6 +20,7 @@ PROVIDER_COVERAGE_MANIFEST_ENABLED="${PROVIDER_COVERAGE_MANIFEST_ENABLED:-1}"
 PROVIDER_COVERAGE_MANIFEST_FINALIZED=0
 NIGHTLY_TRACE_REFERENCES_FILE="${NIGHTLY_TRACE_REFERENCES_FILE:-nightly-trace-references.jsonl}"
 NIGHTLY_TRACE_SUMMARY_FILE="${NIGHTLY_TRACE_SUMMARY_FILE:-nightly-trace-summary.jsonl}"
+export DATUS_NIGHTLY_BI_EVIDENCE_DIR="${DATUS_NIGHTLY_BI_EVIDENCE_DIR:-${PWD}/nightly-bi-evidence}"
 NIGHTLY_PROCESS_DIAGNOSTICS_FILE="${NIGHTLY_PROCESS_DIAGNOSTICS_FILE:-nightly-process-diagnostics.json}"
 NIGHTLY_TRACE_DIAGNOSTICS_FINALIZED=0
 test_exit_code=0
@@ -1744,12 +1745,8 @@ DASHBOARD_MARK_EXPR="nightly and not product_e2e"
 if [ -n "${PRODUCT_TEST_BASE_REF:-}" ]; then
   uv run python ci/plan-product-tests.py --base-ref "$PRODUCT_TEST_BASE_REF" --output ci/product-test-plan.json || exit 1
   mapfile -t PRODUCT_E2E_ROOTS < <(uv run python -c 'import json,sys; sys.stdout.write("\n".join(json.load(open("ci/product-test-plan.json"))["live_targets"]))')
-  if [ "${#PRODUCT_E2E_ROOTS[@]}" -eq 0 ]; then
-    echo "ERROR: No real-model product cases selected for the requested comparison."
-    exit 1
-  fi
   PRODUCT_EXECUTION_DIR=$(mktemp -d "${REPO_ROOT}/ci/product-execution.XXXXXX") || exit 1
-  NIGHTLY_GROUP_FILTER=$(uv run python -c 'import json,re; p=json.load(open("ci/product-test-plan.json")); print("^("+"|".join(re.escape(g) for g in ["Product E2E Nightly Tests", *p["nightly_groups"]])+")$")')
+  NIGHTLY_GROUP_FILTER=$(uv run python -c 'import json; from ci.harness.test_plan import product_group_filter; print(product_group_filter(json.load(open("ci/product-test-plan.json"))))') || exit 1
   PRODUCT_REQUIRED_ARGS=(-p ci.pytest_fail_on_skip_plugin --fail-on-skip)
   if [[ " ${PRODUCT_E2E_ROOTS[*]} " == *"test_init_live.py::test_qwen_scoped_init_supplements_existing_documents"* ]]; then
     export DATUS_RUN_LIVE_INIT=1

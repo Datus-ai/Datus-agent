@@ -1013,3 +1013,46 @@ class TestBIFuncToolResolvePlatform:
         tool = BIFuncTool(cfg)
         with pytest.raises(DatusException, match="Multiple BI platforms"):
             tool._resolved_platform()
+
+
+@pytest.mark.acceptance
+class TestTableGroupingRegression:
+    @pytest.mark.parametrize("axis", ["", "region"])
+    def test_table_keeps_grouping_when_axis_duplicates_dimension(self, axis):
+        tool = _build_tool(adapter=FullMockAdapter(), bi_service="superset")
+        tool.adapter.create_chart = MagicMock(return_value=_ChartInfo(id=5, name="Revenue", chart_type="table"))
+        with patch.dict(sys.modules, {"datus_bi_core.models": _bi_core_mock.models}):
+            assert (
+                tool.create_chart(
+                    "table", "Revenue", dataset_id="1", metrics="SUM(revenue)", dimensions="region", x_axis=axis
+                ).success
+                == 1
+            )
+        spec = tool.adapter.create_chart.call_args.args[0]
+        assert spec.dimensions == ["region"]
+        assert spec.x_axis == ""
+
+    @pytest.mark.parametrize("dimensions,expected", [(None, None), ("region", ["region"]), ("", [])])
+    def test_update_distinguishes_preserve_replace_and_clear(self, dimensions, expected):
+        tool = _build_tool(adapter=FullMockAdapter(), bi_service="superset")
+        tool.adapter.get_chart = MagicMock(return_value=_ChartInfo(id=5, name="Revenue", chart_type="table"))
+        tool.adapter.update_chart = MagicMock(return_value=_ChartInfo(id=5, name="Revenue", chart_type="table"))
+        with patch.dict(sys.modules, {"datus_bi_core.models": _bi_core_mock.models}):
+            assert tool.update_chart("5", dimensions=dimensions).success == 1
+        spec = tool.adapter.update_chart.call_args.args[1]
+        assert spec.dimensions == expected
+        assert spec.x_axis == ""
+        assert spec.metrics is None
+
+    def test_other_platform_keeps_axis(self):
+        tool = _build_tool(adapter=FullMockAdapter(), bi_service="grafana")
+        assert tool._chart_grouping("table", ["region"], "region") == (["region"], "region")
+
+    @pytest.mark.parametrize("deleted", [True, False])
+    def test_delete_event_only_after_success(self, deleted):
+        tool = _build_tool(adapter=FullMockAdapter(), bi_service="superset")
+        tool.adapter.delete_chart = MagicMock(return_value=deleted)
+        result = tool.delete_chart("5")
+        assert ("deleted_deliverable" in result.result) is deleted
+        if deleted:
+            assert result.result["deleted_deliverable"] == {"type": "chart", "platform": "superset", "chart_id": "5"}
