@@ -121,6 +121,7 @@ def test_unit_owners_cover_all_visible_test_consumers():
             "datus/configuration/logging_config.py",
             {
                 "tests/unit_tests/configuration/test_logging_config.py",
+                "tests/unit_tests/plugins/test_runtime_context.py",
                 "tests/unit_tests/utils/test_loggings.py",
                 "tests/unit_tests/observability/test_privacy.py",
                 "tests/unit_tests/agent/node/test_node.py",

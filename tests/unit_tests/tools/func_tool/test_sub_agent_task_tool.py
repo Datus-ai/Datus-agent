@@ -3384,3 +3384,27 @@ async def test_task_delegation_reviews_plans_through_the_parent_session(task_too
         finally:
             parent.tool_channel.cancel_all()
             await pending
+
+
+@pytest.mark.parametrize("outcome", ["generated", "skipped", "blocked"])
+def test_semantic_result_keeps_host_validation_and_reconciliation(task_tool, outcome):
+    """The parent receives structured host evidence for authored, reused and failed outcomes."""
+    evidence = {
+        "business_validation": {"status": "passed", "checks": ["native_month_of_year"]},
+        "validation": {"status": "passed"},
+        "reconciliation": {"success": True},
+    }
+    output = {
+        "success": outcome != "blocked",
+        "status": outcome,
+        "semantic_models": ["subject/semantic_models/sales.yml"] if outcome == "generated" else [],
+        "response": "Result",
+        **evidence,
+    }
+    if outcome == "skipped":
+        output["skip_reason"] = "no_semantic_change"
+    result = task_tool._convert_to_func_result(output, session_id="semantic_session")
+    assert bool(result.success) == (outcome != "blocked")
+    for key, value in evidence.items():
+        assert result.result[key] == value
+    assert result.result["session_id"] == "semantic_session"

@@ -1867,6 +1867,7 @@ execution:
         - tests/unit_tests/agent/node/test_node.py
         - tests/unit_tests/agent/node/test_schema_linking.py
         - tests/unit_tests/configuration/test_logging_config.py
+        - tests/unit_tests/plugins/test_runtime_context.py
         - tests/unit_tests/observability/test_capability_evidence.py
         - tests/unit_tests/observability/test_privacy.py
         - tests/unit_tests/schemas/test_input_result.py
