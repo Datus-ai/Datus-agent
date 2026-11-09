@@ -8,7 +8,7 @@
       
       
       
-        
+        <link rel="canonical" href="https://docs.datus.ai/zh/dev/skills/dashboard_bootstrap/">
       
       
         <link rel="prev" href="../build_kb/">
@@ -18,9 +18,9 @@
       
       
         
-          
+          <link rel="alternate" href="/dev/" hreflang="en">
         
-          
+          <link rel="alternate" href="/zh/dev/" hreflang="zh">
         
       
       
@@ -57,13 +57,7 @@
 
     
     
-  <!-- datus-docs-seo -->
-<link rel="canonical" href="https://docs.datus.ai/zh/dev/skills/dashboard_bootstrap/">
-<link rel="alternate" hreflang="en" href="https://docs.datus.ai/dev/skills/dashboard_bootstrap/">
-<link rel="alternate" hreflang="zh-Hans" href="https://docs.datus.ai/zh/dev/skills/dashboard_bootstrap/">
-<link rel="alternate" hreflang="x-default" href="https://docs.datus.ai/dev/skills/dashboard_bootstrap/">
-<!-- /datus-docs-seo -->
-</head>
+  </head>
   
   
     
@@ -1768,7 +1762,7 @@
   <a href="#_1" class="md-nav__link">
     <span class="md-ellipsis">
       
-        前置条件
+        选择产物与指标策略
       
     </span>
   </a>
@@ -1779,7 +1773,7 @@
   <a href="#_2" class="md-nav__link">
     <span class="md-ellipsis">
       
-        工作流程
+        来源前置条件
       
     </span>
   </a>
@@ -1787,10 +1781,21 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#dashboard-subagents" class="md-nav__link">
+  <a href="#references" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Dashboard subagents
+        工作流程与按需加载的 references
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#subagent" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        可选的大盘 Subagent
       
     </span>
   </a>
@@ -1801,18 +1806,7 @@
   <a href="#_3" class="md-nav__link">
     <span class="md-ellipsis">
       
-        自动执行
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#_4" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        安全与限制
+        完成标准与限制
       
     </span>
   </a>
@@ -5001,7 +4995,7 @@
   <a href="#_1" class="md-nav__link">
     <span class="md-ellipsis">
       
-        前置条件
+        选择产物与指标策略
       
     </span>
   </a>
@@ -5012,7 +5006,7 @@
   <a href="#_2" class="md-nav__link">
     <span class="md-ellipsis">
       
-        工作流程
+        来源前置条件
       
     </span>
   </a>
@@ -5020,10 +5014,21 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#dashboard-subagents" class="md-nav__link">
+  <a href="#references" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Dashboard subagents
+        工作流程与按需加载的 references
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#subagent" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        可选的大盘 Subagent
       
     </span>
   </a>
@@ -5034,18 +5039,7 @@
   <a href="#_3" class="md-nav__link">
     <span class="md-ellipsis">
       
-        自动执行
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#_4" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        安全与限制
+        完成标准与限制
       
     </span>
   </a>
@@ -5078,47 +5072,49 @@
 
 
 <h1 id="dashboard-bootstrap">Dashboard Bootstrap<a class="headerlink" href="#dashboard-bootstrap" title="Permanent link">&para;</a></h1>
-<p><code>dashboard-bootstrap</code> 通过已安装的 BI plugin，从 Dashboard 初始化项目的 reference SQL 和 Dosi metrics。整个流程由 skill 编排，不增加 Dashboard 专用 CLI 命令。</p>
-<p>可以直接用自然语言触发，也可以使用兼容快捷入口 <code>/bootstrap-bi</code>。该入口只把请求转交给同一套 chat/skill pipeline，不再调用旧 Picker 或 BI streams。命令后的文本会作为范围提示原样传递，例如：</p>
+<p><code>dashboard-bootstrap</code> 是主 Agent 构建参考 SQL、DOSI 语义模型和指标，以及按需将 BI 大盘重建为 Datus 可视化大盘的统一入口。源平台访问、原生定义解释和命令由已安装的 BI 插件负责；平台特化指引随插件维护和发布。</p>
+<p>可以使用自然语言或 <code>/bootstrap-bi</code>。该快捷入口把范围转交给同一套 chat/skill 流程，不再调用旧的 Picker 或 BI streams：</p>
 <div class="language-text highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>/bootstrap-bi 使用 Superset prod profile 和 dashboard 42
 </span></code></pre></div>
-<h2 id="_1">前置条件<a class="headerlink" href="#_1" title="Permanent link">&para;</a></h2>
-<ul>
-<li>启用一个能够发现 Dashboard、列举稳定查询候选、导出 SQL，并为每条查询提供脱敏 source identity 的 BI plugin/profile。</li>
-<li>将对应的物理数据库配置为 Datus datasources；不再配置 BI profile 级 datasource 映射。</li>
-<li>生成某批 metric 前，选中由这些查询的真实连接 identity 唯一匹配到的 Datus datasource。</li>
-<li>创建或更新 metric 时使用内置 Dosi 引擎。</li>
-</ul>
-<h2 id="_2">工作流程<a class="headerlink" href="#_2" title="Permanent link">&para;</a></h2>
-<p>可以直接用自然语言发起，例如：</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>从收入 Dashboard 初始化 reference SQL 和 metrics。
+<p>快捷请求未指定产物时，默认仍初始化参考 SQL 和指标上下文。请求转换为 Datus 大盘时，只生成选定的大盘产物，复用已有指标，并补建图表必需的缺失定义。不增加独立的迁移 SKILL 或命令。</p>
+<h2 id="_1">选择产物与指标策略<a class="headerlink" href="#_1" title="Permanent link">&para;</a></h2>
+<p>示例：</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>将下面的大盘转为 Datus 项目大盘：https://bi.example/views/revenue/overview
+</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>从收入大盘构建参考 SQL 和指标。
+</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>使用现有指标，将选定的 BI 大盘重建为 Datus 大盘。
+</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>同步选定项目的大盘，补建缺失指标，并在 Datus 中重建大盘。
 </span></code></pre></div>
-<p>Skill 会依次完成以下选择：</p>
-<ol>
-<li>BI plugin 和 profile；</li>
-<li>Dashboard；</li>
-<li>哪些查询初始化 reference SQL；</li>
-<li>哪些查询作为 metric evidence。</li>
-</ol>
-<p>随后 skill 会输出 Generation Manifest 并停止。下一轮确认或修正 manifest 后，所选 plugin 才会导出 SQL；<code>gen_sql_summary</code> 逐条构建 reference SQL context，<code>semantic_modeling</code> 创建或更新相关的 Dosi dataset、relationship 和 metric。最后，<code>dashboard-bootstrap</code> 会在 <code>create-subagent</code> 可用时加载它，并把 Dashboard 主节点与 attribution 节点持久化到当前加载的 <code>agent.yml</code>。</p>
-<p>两个查询集合相互独立。同一查询可以只进入 reference SQL、只用于 metric、同时进入两条路径，或者都不选。</p>
-<h2 id="dashboard-subagents">Dashboard subagents<a class="headerlink" href="#dashboard-subagents" title="Permanent link">&para;</a></h2>
-<p>当 Agent 配置可修改时，最后一步会按旧流程的命名与工具模式新增或更新两个节点：</p>
+<p>参考 SQL、指标证据、可视化产物和可选的 Agent 配置持久化相互独立。转换为 Datus 大盘默认采用 <code>create_missing</code>：复用已有且匹配的定义，只补建选定图表必需的缺失指标。用户明确要求仅使用已有指标时，采用 <code>reuse_only</code>。修改已有但口径冲突的业务定义，需要明确的修改范围。SQL 回退路径既需要明确授权，也必须得到源插件和目标产物工具的支持。</p>
+<h2 id="_2">来源前置条件<a class="headerlink" href="#_2" title="Permanent link">&para;</a></h2>
+<p>启用适用的 BI 插件和 profile，并将物理数据库配置为 Datus 数据源。来源 SKILL 可以提供查询导出，也可以提供已验证的原生资产包，包含稳定的图表和数据集 ID、定义、依赖及覆盖情况。流程不要求每张原生图表都能提供运行时 SQL。数据集的 Custom SQL 不能直接当作图表的聚合查询。</p>
+<p>保留来源精确的分组表达式，区分日期部分与保留年份的时间桶；原图按月份跨年合并成 12 组时，不能静默改成 24 个年月组。将必需的派生维度交给指标建模，并在可视化前同时核对分组键与总量。来源未声明的单位或币种保持未知，不默认填入 USD。</p>
+<p>指标建模要求逐项证据的物理连接身份与当前数据源有充分且唯一的匹配依据。一个 profile 可以访问多个来源，不设置 BI profile 级数据源映射，也不自动切换共享数据源。复用独立完整的已有 DOSI 目标时，应使用该目标真实的语义和数据源绑定。</p>
+<p>使用 <code>get_datasource_identity</code> 返回的实际运行连接身份；文件数据库还需核对实际选中的文件路径。配置坐标仅用于诊断，实际坐标无法建立时阻断建模。</p>
+<h2 id="references">工作流程与按需加载的 references<a class="headerlink" href="#references" title="Permanent link">&para;</a></h2>
+<p>SKILL 在 Generation Manifest 中记录插件、profile、site、大盘和图表范围、选定产物、指标策略、来源身份依据或待检查项、排除项及目标意图。用户明确要求将指定外部大盘转换为 Datus 大盘，即授权选定范围内的来源同步、新大盘及必需的新增指标；打印 Manifest 后继续执行。遵守“仅规划”“先预览”“写入前确认”等限制。其他上下文初始化请求，若未提前确认或明确选择自动执行，仍在 Manifest 后停止。系统工具权限检查继续生效。</p>
+<p>主聊天提示词会在委派任务前，将自然语言的大盘 URL 转换意图路由至本 SKILL。插件 references 负责将 URL 解析为经过验证的原生 ID，匹配已配置的 origin/site，不暴露连接秘密。只在只读发现仍无法消除实质性歧义时，由主 Agent 调用 <code>ask_user</code>，例如连接身份不唯一、业务口径冲突、需要改变分析语义或不清楚已有产物的修改范围。子任务向主 Agent 返回阻断项。URL 唯一匹配、能够忠实补建的缺失指标，都无需用户重复确认。</p>
+<p>打包后的 SKILL 只加载当前任务需要的辅助文档：</p>
 <ul>
-<li><code>&lt;platform&gt;_&lt;dashboard&gt;</code> 使用 <code>gen_sql</code> 以及数据库和 context-search tools。</li>
-<li><code>&lt;platform&gt;_&lt;dashboard&gt;_attribution</code> 使用 <code>gen_visual_report</code> 以及 semantic attribution tools。</li>
+<li><code>references/source-contract.md</code>：查询导出和原生资产包、身份匹配、校验和验证、来源追溯与覆盖情况。</li>
+<li><code>references/context.md</code>：选定参考 SQL 的索引构建，以及语义模型和指标建模。</li>
+<li><code>references/visual-dashboard.md</code>：分析语义映射、先指标后可视化的依赖顺序、精确的 <code>gen_visual_dashboard</code> 交接、真实指标查询保存与验证。</li>
+<li><code>references/subagents.md</code>：按需持久化旧流程中两个具有精确范围的 Agent 节点。</li>
+<li><code>references/validation.md</code>：分阶段、逐图表的完成证据与重试规则。</li>
 </ul>
-<p>两个节点都只绑定 active datasource 上成功生成的 tables，以及精确的 metric/reference-SQL subject references。Metric scope 使用已同步 Dosi model 中的 <code>&lt;metric.subject_path&gt;.&lt;metric.name&gt;</code>；reference-SQL scope 使用已生成 SQL summary 中的 <code>&lt;subject_tree&gt;.&lt;name&gt;</code>。只写 subject path 会选中整个 subtree，不能用于 Dashboard 的精确条目选择。通用 <code>create-subagent</code> skill 会先在同步后的 subject trees 中解析这些 references，再修改 <code>agent.agentic_nodes</code>、保留其他节点，并在写入后重新校验 YAML。runtime 将配置标记为只读时，该 skill 不可发现，流程会跳过持久化，但不会把 context 构建判为失败。</p>
-<h2 id="_3">自动执行<a class="headerlink" href="#_3" title="Permanent link">&para;</a></h2>
-<p>只有明确说“跳过确认”“直接执行”或 <code>auto-run</code>，流程才会在打印 manifest 后继续。自动执行不会绕过系统权限确认。</p>
-<h2 id="_4">安全与限制<a class="headerlink" href="#_4" title="Permanent link">&para;</a></h2>
+<p>插件 SKILL 提供平台原生语法、命令和能力限制；平台指引不复制到通用 SKILL。CLI、提示词和 SKILL 应来自同一插件版本。发现版本或安装位置不一致时，停止消费来源证据。</p>
+<p>来源导出或检查经过确认后，由 <code>gen_sql_summary</code> 负责参考 SQL 索引，由 <code>semantic_modeling</code> 负责 DOSI 数据集、关系和指标。参考 SQL 索引可以独立执行。需要新指标的大盘，必须等待指标验证、同步与重新发现完成，再运行 <code>gen_visual_dashboard</code>。可视化节点会发现真实指标能力，并通过 <code>save_metric_query_template</code> 保存匹配的图表查询，包括真实试跑结果和模型快照。项目中同时存在新指标和 SQL 模板，不代表大盘已经绑定指标。</p>
+<p>新建的子任务不会继承父 Agent 已加载的 SKILL 正文。交接内容包括精确的来源 ID 和校验和、数据源和模型绑定、指标身份、分析意图、阻断项、已允许的差异，以及辅助 SKILL 和 references 的位置。子任务需要加载所需 SKILL，注册自己对辅助文件的读取范围，再按需阅读 references；不会重新启动主流程，也不会自行补建缺失指标。首次可视化任务前应检查访问能力；无法加载 SKILL 时，在初始交接中直接提供适用的可视化、验证及插件约束。采用 <code>reuse_only</code> 且父 Agent 缺少发现工具时，可由子任务发现并核实已有指标。已验证指标覆盖全部图表、无需语义变更的结果，不要求提供新增定义的验证与同步证据。当前 host 成功返回 generated 和精确模型文件时，已完成其强制的验证与知识库同步；兼容缺少独立证据字段的结果，但仍须做数值核验及指标重新发现。</p>
+<h2 id="subagent">可选的大盘 Subagent<a class="headerlink" href="#subagent" title="Permanent link">&para;</a></h2>
+<p>旧的上下文初始化流程保留最后的可选步骤：在 <code>create-subagent</code> 可用时，创建 <code>&lt;platform&gt;_&lt;dashboard&gt;</code>（<code>gen_sql</code>）及其 <code>_attribution</code> 节点（<code>gen_visual_report</code>）。仅请求可视化重建时，只有用户明确要求，才创建这两个节点。</p>
+<p>两个节点的归属由来源大盘和数据源分区共同确定，仅包含该大盘选定或明确确认的指标及其必要依赖，以及同步后精确的指标和参考 SQL subject references。已验证复用的指标即使没有新文件也保留，不能覆盖另一数据源分区的 scope，也不能因参考 SQL 成功而把选定指标降为 SQL-only scope。通用创建 SKILL 会保留无关配置，并验证写入结果。API 部署配置不可修改时，跳过该阶段；创建失败不会使已完成的上下文或大盘产物失效。</p>
+<h2 id="_3">完成标准与限制<a class="headerlink" href="#_3" title="Permanent link">&para;</a></h2>
+<p>分别报告来源覆盖情况、参考 SQL 索引解析、指标、逐图表的实际查询绑定、渲染和交互、发布以及可选 Agent 的结果。保留部分完成和阻断对象，只重试受影响的最小范围。</p>
 <ul>
-<li>partial、failed、未选择或 checksum 不匹配的 SQL 不会交给 builtin agent。</li>
-<li>Dashboard 名称、描述和 SQL 注释都作为不可信源数据处理。</li>
-<li>query-level source identity 缺失、证据不足或匹配不唯一时，只阻止对应查询的 metric 生成；reference SQL 可以继续。</li>
-<li>一个 Dashboard 可以跨多个 datasource。metric 查询按唯一匹配到的 Datus datasource 分区，每轮只处理当前 active datasource 对应的分区。</li>
-<li>context 构建成功不等于已经证明与源 Dashboard 数值等价。</li>
-<li>subagent 创建失败不会使已成功构建的 context 失效，可单独重试。</li>
+<li>获取的源 SQL、推导 SQL 和目标 SQL 保留不同的来源信息。只有物理来源、方言和执行上下文相同，才对相同 SQL 做下游去重，同时保留全部原始引用和不可变的来源快照。</li>
+<li>参考 SQL 的 YAML 文件落盘后，仅能标记为 <code>written</code>；其精确的 subject 或搜索引用可解析后，才能证明索引完成。不能无依据地解释为“索引延迟”。</li>
+<li>不支持的原生语义和缺失的必需上游加工会阻断依赖它们的图表；生成 SELECT 模型不代表部署或执行 ETL。</li>
+<li>计算、粒度、筛选、安全或交互的变化必须明确保留。渲染成功、预检通过或仅目标侧对账通过，都不能证明与原 BI 大盘数值等价。</li>
+<li>预览与发布是不同状态；只有用户要求发布时，才使用现有发布流程。</li>
 </ul>
 
 
