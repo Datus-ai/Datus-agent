@@ -11,6 +11,7 @@ SKILL = ROOT / "datus/resources/skills/dashboard-bootstrap/SKILL.md"
 
 
 def _parts() -> tuple[dict, str]:
+    """Read skill metadata and its on-demand workflow references."""
     text = SKILL.read_text(encoding="utf-8")
     _, frontmatter, body = text.split("---", 2)
     references = sorted((SKILL.parent / "references").glob("*.md"))
@@ -18,6 +19,7 @@ def _parts() -> tuple[dict, str]:
 
 
 def test_dashboard_bootstrap_skill_is_generic_and_discoverable():
+    """Keep the common workflow discoverable without vendor-specific coupling."""
     metadata, body = _parts()
 
     assert metadata == {
@@ -31,6 +33,7 @@ def test_dashboard_bootstrap_skill_is_generic_and_discoverable():
 
 
 def test_dashboard_bootstrap_skill_has_ordered_selection_and_generation_gate():
+    """Preserve selection before export and the conditional generation gate."""
     _, body = _parts()
 
     ordered_markers = (
@@ -57,6 +60,7 @@ def test_dashboard_bootstrap_skill_has_ordered_selection_and_generation_gate():
 
 
 def test_dashboard_bootstrap_skill_routes_to_builtin_owners():
+    """Route scoped context authoring to the owning builtin agents."""
     _, body = _parts()
 
     assert 'task(\n  type="gen_sql_summary"' in body
@@ -70,6 +74,7 @@ def test_dashboard_bootstrap_skill_routes_to_builtin_owners():
 
 
 def test_dashboard_bootstrap_optionally_creates_scoped_subagents_last():
+    """Persist optional agents only after their scoped artifacts are available."""
     _, body = _parts()
 
     assert "Inspect the skills available to the current main agent for `create-subagent`" in body

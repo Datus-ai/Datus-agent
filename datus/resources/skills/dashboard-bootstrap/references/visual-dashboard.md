@@ -19,7 +19,10 @@ of analytical equivalence.
 Use only metric discovery tools available in the current node. If the main agent
 has discovery, build a preliminary mapping. Otherwise, when missing-metric
 creation is selected, use `semantic_modeling` to inspect/reuse and author only
-missing definitions; require its structured validation/reconciliation results.
+missing definitions. When definitions are authored, require structured validation/
+reconciliation results. A `status="skipped", skip_reason="no_semantic_change"`
+result may proceed without authoring/reconciliation when verified maintained
+metrics cover every selected chart; the skip status alone is not coverage evidence.
 With `reuse_only`, let the visual node perform its own discovery and block missing
 metrics; do not dispatch an authoring task just to discover definitions.
 The destination node always rechecks actual metric capabilities itself.
@@ -42,24 +45,40 @@ existing conflicting business definition.
 
 ## 2. Complete metric work before destination authoring
 
-Wait for all metric authoring required by the chosen charts. Check actual model
-files and structured validation/reconciliation evidence; a successful prose
-summary alone is insufficient. Rediscover full metric identities as
+Wait for all metric authoring required by the chosen charts. After definitions
+are actually authored, check actual model files and structured validation/
+reconciliation evidence; a successful prose summary alone is insufficient.
+A verified no-semantic-change result needs no write/reconciliation evidence: retain
+its existing-metric coverage mapping and continue with destination verification.
+Discover or rediscover full metric identities as
 `{path: [...], name: ...}`, their supported dimensions/parameters and target
-model binding after writes. Keep the real model SHA256 when required by the
+model binding (rediscover after writes). Keep the real model SHA256 when required by the
 plugin's evaluator, rather than inventing a revision.
 
-If main-agent discovery is unavailable, the completed semantic task must return
-its verified identities/model evidence and the visual node must rediscover them
-before saving queries. Failed or stale discovery keeps the affected charts
-pending. Do not invoke visual generation concurrently with the metric task it
-depends on, or generate SQL first with a promise to attach metrics later.
+If main-agent discovery is unavailable on the authoring path, the completed
+semantic task must return verified identities/model evidence, and the visual node
+must rediscover them before saving queries. On `reuse_only`, no semantic task is
+required: hand off the selected chart requirements and mark metric discovery as
+pending in the destination. The visual child must discover maintained metrics and
+record every verified metric's exact `{path, name}`, supported dimensions/
+parameters and actual model file/revision before saving any query. Missing,
+failed or stale discovery keeps the affected charts pending. Do not invoke visual
+generation concurrently with the metric task it depends on, or generate SQL first with a promise to attach metrics later.
 Unrelated ready charts may continue with explicitly partial scope.
 
 ## 3. Delegate one exact destination handoff
 
 Invoke `task(type="gen_visual_dashboard", ...)` only after required metric work.
 Parent-loaded skills are not automatically inherited by a fresh child task.
+Before the first task, check the destination's effective skill patterns and
+`load_skill` availability. Where configuration is mutable and authorized, include
+`dashboard-bootstrap` and the selected plugin rebuild skill in
+`agentic_nodes.gen_visual_dashboard.skills`, preserving other enabled patterns.
+Do not assume defaults expose them. If skill loading or supporting-file access
+is unavailable (including immutable deployments), put the relevant visual,
+validation and plugin constraints and necessary bounded evidence directly in the
+initial handoff; do not wait for a failed first attempt. Never edit immutable
+configuration or bypass file permissions to obtain access.
 Include all of the following in its prompt, or a workspace handoff file it must
 read before writing artifacts:
 
@@ -68,21 +87,27 @@ source: plugin/release, profile/site, verified bundle path + manifest SHA256
 selection: exact dashboard/chart IDs and selected evidence/dependency references
 target: active datasource, database/schema, new slug intent or authorized edit scope
 policy: reuse_only or create_missing completed; permitted SQL exceptions, if any
-metrics: exact discovered {path, name}, supported dimensions/parameters, model file/revision
+metrics: verified {path, name}, dimensions/parameters and model file/revision when known;
+         for reuse_only without parent discovery, discovery_pending + per-chart
+         metric/dimension/parameter requirements and actual target model binding;
+         child must discover and record the verified identities/model before saves
 mapping: per-chart analytical intent, required filters/grain/interactions, differences
 coverage: per-chart blockers/exclusions and any documented source-gap resolutions
-instructions: load the available dashboard-bootstrap and plugin rebuild skills
-              to register their supporting-file roots in this child; then read
-              only the visual/validation and needed platform references at their
-              returned skill_locations; do not restart main-agent orchestration
+instructions: when available, load dashboard-bootstrap and plugin rebuild skills
+              to register supporting-file roots; read selected visual/validation
+              and platform references at their returned skill_locations;
+              otherwise follow the concrete constraints included in this handoff;
+              do not restart main-agent orchestration
 validation: real metric trial calls, parameter checks, render checks, comparison scope
 ```
 
 Pass concrete paths and verified values, never the example's placeholder labels.
 Loading in the parent does not register supporting-file read roots in the child;
 passing an absolute path alone does not grant access. If a child cannot load the
-needed skill or read a reference, include its actual relevant constraints explicitly
-in a retry handoff; never assume it inherited parent context or bypass file access.
+needed skill or read a reference despite the precheck, return the precise blocker
+and supply its actual relevant constraints in the corrected handoff. The initial
+handoff must already include these constraints when unavailable access is known;
+never assume inherited parent context or bypass file access.
 Do not give it a missing-metric creation instruction: the main agent must finish
 that phase first. The main agent must not write dashboard query/render artifacts
 as an alternate path around a failed task.

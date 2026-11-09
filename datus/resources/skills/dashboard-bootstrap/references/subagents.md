@@ -27,7 +27,26 @@ Run this optional step only after all reference-SQL and semantic-modeling tasks 
    - keep at most the first three dashboard-title tokens;
    - join them as `<platform>_<dashboard>`;
    - if the result does not start with a letter, prefix it with `dashboard_`.
-8. Ask `create-subagent` to create or update both scoped nodes:
+8. Before writing either node of any pair, resolve names for the complete selected
+   dashboard set against its stable dashboard IDs and the active configuration's
+   existing node names. Reserve both `<base-name>` and `<base-name>_attribution`:
+   check title-normalization collisions, title-vs-ID/fallback aliases and collisions
+   between either member of different pairs. Never use a title alone as ownership
+   evidence for an existing node.
+   - Keep the legacy name unchanged when neither member collides.
+   - For a collision, append a deterministic identifier suffix derived from the
+     full plugin/profile/site/dashboard ID to the legacy base. Extend the suffix
+     until both members are unique against the whole selection, its dashboard-ID
+     aliases, reserved builtin names and unrelated existing nodes. The suffix does
+     not change the three-token normalization or prefix rules for the base.
+   - Reuse an existing pair only when a persisted mapping or verified provenance
+     identifies the same source dashboard. If ownership is unknown, choose fresh
+     names rather than replacing that node's scope. Retain and report the exact
+     source-ID-to-pair mapping so retries resolve to the same pair.
+   - Build each pair's scope from that dashboard's own successful selected artifacts
+     and active-datasource partition; never reuse the last processed dashboard's
+     scope for another pair. Validate the complete mapping before either write.
+9. Ask `create-subagent` to create or update both scoped nodes:
 
 ```text
 name: <base-name>
