@@ -34,6 +34,18 @@ Return immediately with:
 {"table_name": "", "output": "Cancelled by user."}
 ```
 
+## Continue an existing table
+
+If this session already created the user's target table, handle a follow-up data
+or schema change against that same table. Reuse the established schema and
+datasource, apply only the requested mutation under the normal permission and
+confirmation policy, and verify its effect. Do not rerun CREATE/CTAS, drop and
+recreate the table, or start the creation phases below for an insert/update/delete
+follow-up. Return the existing table name and a bounded summary of the change.
+Verify a row change with one focused read of the affected key/filter. Skip extra
+full-table counts and unchanged-schema lookups unless needed for the requested
+result or a concrete error.
+
 ## Phase 1: Analyze Input
 
 Detect input mode:
@@ -104,8 +116,8 @@ ask_user(questions=[{
 1. **Call `execute_sql(sql)`** with the confirmed or workflow-authorized DDL statement.
 2. **Verify**:
    - SQL Mode: Call `execute_sql("SELECT COUNT(*) FROM {schema}.{table_name}")` to confirm row count
-   - Description Mode: Call `describe_table("{schema}.{table_name}")` to confirm schema matches
-3. **Call `describe_table("{schema}.{table_name}")`** to confirm the created schema.
+   - Description Mode: Verify the requested schema once with `describe_table` or an equivalent dialect-specific query. Check row count only when the request requires it (for example, an empty table).
+3. For SQL Mode, **call `describe_table("{schema}.{table_name}")`** once to confirm the created schema. Reuse this evidence in the summary; do not repeat the same check.
 
 If DDL fails:
 - Parse the error message
@@ -120,14 +132,14 @@ Output a summary including:
 - Row count (for CTAS) or column count (for CREATE TABLE)
 - Column list with types
 - Original SQL (for CTAS) or user description (for CREATE TABLE)
-- Hint: if the user needs a semantic model, suggest `task(type="semantic_modeling", prompt="{table_name}")`.
+- If semantic modeling is needed next, hand the verified table name, datasource, and existing schema evidence back to the caller so it can arrange `semantic_modeling`. Do not invoke another agent from this skill.
 
 ## Important Rules
 
 - Use `ask_user` before executing DDL only when the tool is available.
-- In workflow mode, execute only explicitly requested non-destructive table creation; block ambiguous or destructive work instead of guessing.
+- In workflow mode, new-table requests authorize only the specific non-destructive creation requested. Follow-up changes require an explicit request for the table already delivered by this session and must follow the normal write-permission policy. Stop for ambiguous targets or destructive work without explicit authorization.
 - **DDL is irreversible** — always include the exact DDL SQL in `ask_user` confirmation when interactive, or in the final output when workflow mode executes.
 - If the target table already exists, ask whether to drop/recreate/abort when interactive; require explicit replacement authorization when workflow mode.
 - Language: match user's language (Chinese input → Chinese output)
-- Do NOT modify the source tables — only create new tables
-- **Single responsibility** — gen-table only creates tables and does not generate semantic model YAML. Suggest `semantic_modeling` for Dosi authoring.
+- Preserve the source tables used to build the deliverable. Follow-up changes may target only the table this session delivered.
+- **Single responsibility** — gen-table handles table creation and requested follow-up changes to tables it delivered. Semantic model authoring belongs to `semantic_modeling`; leave that orchestration to the caller instead of generating model YAML or invoking another agent.
