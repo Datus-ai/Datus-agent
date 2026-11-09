@@ -6,6 +6,7 @@
 import asyncio
 import csv
 import io
+import ipaddress
 import json
 import os
 import re
@@ -1379,13 +1380,57 @@ class DBFuncTool:
             bound_tools.append(self.to_function_tool(bound_method))
         return bound_tools
 
-    def get_datasource_identity(self, datasource: str = "") -> FuncToolResult:
-        """Return configured credential-free physical coordinates without opening a connection.
+    @staticmethod
+    def _identity_host_is_valid(value: str) -> bool:
+        """Accept DNS names and IP literals, never credential-like colon pairs."""
+        candidate = value
+        if candidate.startswith("[") and candidate.endswith("]"):
+            candidate = candidate[1:-1]
+            try:
+                return ipaddress.ip_address(candidate).version == 6
+            except ValueError:
+                return False
+        try:
+            ipaddress.ip_address(candidate)
+            return True
+        except ValueError:
+            if ":" in candidate:
+                return False
+        try:
+            candidate = candidate.encode("idna").decode("ascii")
+        except UnicodeError:
+            return False
+        if len(candidate) > 253 or not candidate:
+            return False
+        labels = candidate.rstrip(".").split(".")
+        if len(labels) > 1 and all(label.isdigit() for label in labels):
+            return False
+        return all(re.fullmatch(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?", label) for label in labels)
 
-        Use this before matching imported BI evidence to a Datus datasource. Returns
-        the configured type, host, port, database/catalog/schema and account when
-        available. Missing fields remain unknown; table-name equality cannot replace
-        them. Connection URIs, credentials and adapter extras are never returned.
+    @staticmethod
+    def _public_identity_fields(config: Any) -> Dict[str, Any]:
+        """Project only public coordinates; never serialize a connection object."""
+        identity = {}
+        for field in ("type", "host", "port", "database", "catalog", "schema", "account"):
+            value = config.get(field) if isinstance(config, dict) else getattr(config, field, None)
+            if not isinstance(value, (str, int)) or isinstance(value, bool) or value == "":
+                continue
+            if field == "host" and not DBFuncTool._identity_host_is_valid(str(value)):
+                continue
+            if field == "port" and (not str(value).isdigit() or not 0 < int(value) <= 65535):
+                continue
+            identity[field] = value
+        return identity
+
+    def get_datasource_identity(self, datasource: str = "") -> FuncToolResult:
+        """Inspect public coordinates of the effective runtime connection used by child tasks.
+
+        ``configured_identity`` is diagnostic only: URI, adapter extras and selected
+        databases can override it. Match BI evidence only to ``identity`` when its
+        ``identity_status`` is resolved. File paths come from native database
+        metadata, including the selected glob file or attached DuckDB database.
+        Missing inspector coordinates remain unresolved. Credentials, connection
+        URIs and adapter extras are never returned or read from local config files.
         """
         source = datasource or self._default_datasource
         if self.agent_config is None:
@@ -1396,18 +1441,58 @@ class DBFuncTool:
             return FuncToolResult(success=0, error="Configured datasource identity is unavailable")
         if not isinstance(configs, dict) or source not in configs:
             return FuncToolResult(success=0, error="Requested datasource is not configured")
-        config = configs[source]
-        identity = {}
-        for field in ("type", "host", "port", "database", "catalog", "schema", "account"):
-            value = config.get(field) if isinstance(config, dict) else getattr(config, field, None)
-            if not isinstance(value, (str, int)) or isinstance(value, bool) or value == "":
-                continue
-            if field == "host" and not re.fullmatch(r"[A-Za-z0-9_.:\[\]-]+", str(value)):
-                continue
-            if field == "port" and (not str(value).isdigit() or not 0 < int(value) <= 65535):
-                continue
-            identity[field] = value
-        return FuncToolResult(result={"datasource": source, "identity": identity})
+        configured = self._public_identity_fields(configs[source])
+        identity, context = {}, {}
+        try:
+            connector = self._get_connector(source)
+            context = self.execution_context(connector, source)
+            dialect = self._dialect_name(getattr(connector, "dialect", ""))
+            # These are the adapter's constructed connection coordinates, after
+            # URI/default/extra resolution, rather than AgentConfig defaults.
+            coordinates = self._public_identity_fields(getattr(connector, "config", None))
+            coordinates.update(self._public_identity_fields(connector))
+            coordinates["type"] = dialect
+            for key in ("database", "catalog", "schema"):
+                if context.get(key):
+                    coordinates[key] = context[key]
+            identity = self._public_identity_fields(coordinates)
+            if dialect in {"sqlite", "duckdb"}:
+                query = (
+                    "PRAGMA database_list"
+                    if dialect == "sqlite"
+                    else "SELECT database_name AS name, path AS file FROM duckdb_databases()"
+                )
+                result = connector.execute_query(query, result_format="list")
+                if result.success:
+                    selected = "main" if dialect == "sqlite" else context.get("database")
+                    rows = [row for row in result.sql_return if row.get("name") == selected]
+                    if len(rows) == 1 and isinstance(rows[0].get("file"), str) and rows[0]["file"]:
+                        identity["path"] = str(Path(rows[0]["file"]).expanduser().resolve())
+        except Exception:
+            # Neither exceptions nor a configured fallback establish the endpoint.
+            # They may contain a private URI, so do not return their text.
+            identity, context = {}, {}
+        kind = identity.get("type")
+        resolved = bool(
+            kind
+            and (
+                identity.get("path")
+                if kind in {"sqlite", "duckdb"}
+                else (identity.get("database") or identity.get("catalog"))
+                and (
+                    (identity.get("host") and identity.get("port")) or (kind == "snowflake" and identity.get("account"))
+                )
+            )
+        )
+        return FuncToolResult(
+            result={
+                "datasource": source,
+                "configured_identity": configured,
+                "identity": identity,
+                "identity_status": "resolved" if resolved else "unresolved",
+                "execution_context": context,
+            }
+        )
 
     @mcp_tool(availability_check="has_schema")
     def search_table(

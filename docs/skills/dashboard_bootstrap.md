@@ -52,6 +52,9 @@ Metric authoring requires strong per-evidence physical connection matching to th
 active datasource. A profile can front many sources; no BI-profile-level datasource
 mapping or automatic shared-datasource switch is used. Reuse of an independently
 complete curated DOSI target uses its actual semantic/datasource binding instead.
+Use the effective runtime identity returned by `get_datasource_identity`, including
+the selected file path for file databases; configured coordinates alone are only
+diagnostic. Unknown effective coordinates block authoring.
 
 ## Workflow and on-demand references
 
@@ -103,7 +106,10 @@ create missing metrics itself. Check access before the first visual task; if ski
 loading is unavailable, include the relevant visual, validation and plugin
 constraints directly in that initial handoff. With `reuse_only`, a child can
 complete metric discovery when its parent lacks those tools. A verified
-no-semantic-change result requires no authoring/reconciliation evidence.
+no-semantic-change result requires no authoring/reconciliation evidence. A successful
+host-generated modeling result with exact files certifies its mandatory validation
+and KB sync when separate evidence fields are absent; numerical checks and
+rediscovery still apply.
 
 ## Optional dashboard subagents
 
@@ -111,7 +117,11 @@ Legacy context bootstrap retains the final optional pair when `create-subagent`
 is available: `<platform>_<dashboard>` (`gen_sql`) and its `_attribution` node
 (`gen_visual_report`). Visual-only requests create this pair only when requested.
 Both use successful active-datasource artifacts and exact post-sync metric and
-reference-SQL subject references. The generic creation skill preserves unrelated
+reference-SQL subject references. Pair ownership includes both source dashboard
+and datasource partition. Include only that dashboard's selected/confirmed metrics
+and required dependencies, retaining verified reused metrics even without newly
+authored files; do not overwrite another partition or degrade selected metrics to
+SQL-only scope. The generic creation skill preserves unrelated
 configuration and verifies writes. In immutable API deployments this phase is
 skipped; its failure does not invalidate completed context or dashboard artifacts.
 

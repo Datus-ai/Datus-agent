@@ -52,15 +52,25 @@ invent a currency code from a measure name, example definition, symbol or locale
 ## Match source identity before metric authoring
 
 Never persist a BI-profile-level datasource mapping. Compare each relevant source
-connection with non-secret configured Datus datasource metadata. Call
-`get_datasource_identity` when available; it exposes configured endpoint coordinates
-without credentials. Missing fields remain unresolved rather than inferred from
-matching table names. Never read a secret-bearing config file to obtain them:
+connection with the **effective runtime connection used by `semantic_modeling`**.
+Call `get_datasource_identity` when available and require `identity_status=resolved`.
+Its `identity` comes from the constructed adapter and native metadata;
+`configured_identity` is diagnostic only, because URIs, adapter extras and the
+selected database can override it. Retain its exact `execution_context` in the
+handoff: builtin children inherit the parent's resolved database/catalog/schema.
+If the planned child target differs, verify that target's effective connection
+before authoring. Block authoring whenever effective coordinates cannot be
+established, even if configured coordinates or table names appear to match.
+Never read a secret-bearing config file to obtain missing coordinates:
 
 - Normalize backend aliases, host casing, default ports and physical
   database/catalog names. A network database requires a compatible backend,
   matching database/catalog and exact normalized endpoint. Do not invent host aliases.
-- File databases require the same backend and exact resolved path. Cloud
+- File databases require the same backend and exact resolved `identity.path`.
+  The tool reads native connection metadata for the selected glob-backed file
+  or attached DuckDB catalogue, rather than exposing a glob or assuming the first
+  file. Without a safe runtime inspector, the path remains unresolved and blocks
+  authoring. Cloud
   warehouses use stable account/project/region/catalog fields documented by
   the installed adapters/plugin.
 - Dataset/table/schema equality, BI display names, usernames and SQL text do not

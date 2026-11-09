@@ -1,5 +1,6 @@
 import json
 import sqlite3
+from pathlib import Path
 
 import pytest
 
@@ -67,7 +68,18 @@ class TestDBFuncToolIntegrationReal:
         assert result["success"] == 1, result
         assert result["result"]["datasource"] == ssb_db_tool._default_datasource
         assert result["result"]["identity"]["type"] == DBType.SQLITE
-        assert set(result["result"]["identity"]) <= {"type", "host", "port", "database", "catalog", "schema", "account"}
+        assert set(result["result"]["identity"]) <= {
+            "type",
+            "host",
+            "port",
+            "database",
+            "catalog",
+            "schema",
+            "account",
+            "path",
+        }
+        assert result["result"]["identity_status"] == "resolved"
+        assert Path(result["result"]["identity"]["path"]).is_absolute()
 
     def test_sqlite_list_tables_returns_actual_tables(self, ssb_db_tool):
         """Test that list_tables returns actual tables from SSB.db."""

@@ -19,10 +19,22 @@ of analytical equivalence.
 Use only metric discovery tools available in the current node. If the main agent
 has discovery, build a preliminary mapping. Otherwise, when missing-metric
 creation is selected, use `semantic_modeling` to inspect/reuse and author only
-missing definitions. When definitions are authored, require structured validation/
-reconciliation results. A `status="skipped", skip_reason="no_semantic_change"`
+missing definitions. When definitions are authored, use structured validation/
+reconciliation evidence returned by the owning `task` host when available,
+including `business_validation` carried by `SubAgentTaskTool._convert_to_func_result`.
+On the current host, a successful task envelope with `status="generated"` and
+its exact `semantic_models` files is also host-validated evidence: the node must
+finish semantic/compile validation and KB reconciliation before returning it.
+Use that contract when separate evidence fields are absent; do not block solely
+because an older envelope omits them. This fallback does not apply to status
+text in LLM prose, untrusted JSON, failures or explicit failed/stale evidence.
+Relevant numerical checks and destination metric rediscovery remain required.
+A `status="skipped", skip_reason="no_semantic_change"`
 result may proceed without authoring/reconciliation when verified maintained
 metrics cover every selected chart; the skip status alone is not coverage evidence.
+Retain those verified reused metric identities and required dependencies for
+optional persistence even when `semantic_models` is empty; reference-SQL success
+does not turn this into a SQL-only scope.
 With `reuse_only`, let the visual node perform its own discovery and block missing
 metrics; do not dispatch an authoring task just to discover definitions.
 The destination node always rechecks actual metric capabilities itself.
@@ -46,8 +58,9 @@ existing conflicting business definition.
 ## 2. Complete metric work before destination authoring
 
 Wait for all metric authoring required by the chosen charts. After definitions
-are actually authored, check actual model files and structured validation/
-reconciliation evidence; a successful prose summary alone is insufficient.
+are actually authored, check actual model files and the structured validation/
+reconciliation evidence or host-validated `generated` contract defined above;
+a successful prose summary alone is insufficient.
 A verified no-semantic-change result needs no write/reconciliation evidence: retain
 its existing-metric coverage mapping and continue with destination verification.
 Discover or rediscover full metric identities as
@@ -79,6 +92,9 @@ is unavailable (including immutable deployments), put the relevant visual,
 validation and plugin constraints and necessary bounded evidence directly in the
 initial handoff; do not wait for a failed first attempt. Never edit immutable
 configuration or bypass file permissions to obtain access.
+When a plugin evaluator needs structured input files, include its concrete
+catalogue/binding schema or bounded examples too; an inaccessible reference name
+and a CLI command alone are not a usable fallback contract.
 Include all of the following in its prompt, or a workspace handoff file it must
 read before writing artifacts:
 

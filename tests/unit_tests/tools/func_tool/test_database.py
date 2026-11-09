@@ -2,6 +2,7 @@
 Test cases for DBFuncTool compressor model_name initialization and execute_ddl.
 """
 
+import json
 import re
 from collections import OrderedDict
 from types import SimpleNamespace
@@ -3497,6 +3498,8 @@ class TestDatasourceIdentity:
             port="5432",
             database="analytics",
             schema="sales",
+            catalog="sales_catalog",
+            account="warehouse_account",
             username="private-user",
             password="private-password",
             uri="postgres://private-user:private-password@host/db",
@@ -3511,15 +3514,16 @@ class TestDatasourceIdentity:
         result = tool.get_datasource_identity()
 
         assert result.success == 1
-        assert result.result == {
-            "datasource": "warehouse",
-            "identity": {
-                "type": "postgresql",
-                "host": "warehouse.example.test",
-                "port": "5432",
-                "database": "analytics",
-                "schema": "sales",
-            },
+        assert result.result["identity_status"] == "unresolved"
+        assert result.result["identity"] == {}
+        assert result.result["configured_identity"] == {
+            "type": "postgresql",
+            "host": "warehouse.example.test",
+            "port": "5432",
+            "database": "analytics",
+            "schema": "sales",
+            "catalog": "sales_catalog",
+            "account": "warehouse_account",
         }
 
     def test_unknown_requested_source_does_not_fall_back(self):
@@ -3540,7 +3544,9 @@ class TestDatasourceIdentity:
         assert result.success == 0
         assert result.result is None
 
-    @pytest.mark.parametrize("host", ["postgres://user:secret@host/db", "https://host?token=secret"])
+    @pytest.mark.parametrize(
+        "host", ["postgres://user:secret@host/db", "https://host?token=secret", "user:secret", "bad..host", "999.1.1.1"]
+    )
     def test_credential_bearing_host_is_not_exposed(self, host):
         """Reject URLs in endpoint fields instead of leaking embedded credentials."""
         tool = object.__new__(DBFuncTool)
@@ -3550,7 +3556,9 @@ class TestDatasourceIdentity:
         tool._default_datasource = "warehouse"
         result = tool.get_datasource_identity()
         assert result.success == 1
-        assert result.result == {"datasource": "warehouse", "identity": {"type": "postgresql"}}
+        assert result.result["configured_identity"] == {"type": "postgresql"}
+        assert result.result["identity"] == {}
+        assert result.result["identity_status"] == "unresolved"
 
     def test_config_failure_does_not_expose_exception_credentials(self):
         """A configuration-loader failure must not return its private diagnostic text."""
@@ -3577,4 +3585,157 @@ class TestDatasourceIdentity:
         tool._default_datasource = "warehouse"
         result = tool.get_datasource_identity()
         assert result.success == 1
-        assert result.result == {"datasource": "warehouse", "identity": {"type": "postgresql"}}
+        assert result.result["configured_identity"] == {"type": "postgresql"}
+        assert result.result["identity"] == {}
+        assert result.result["identity_status"] == "unresolved"
+
+    @pytest.mark.parametrize(
+        "host", ["localhost", "warehouse.example.test", "127.0.0.1", "::1", "[2001:db8::1]", "2001:db8::1"]
+    )
+    def test_effective_runtime_coordinates_override_configuration(self, host):
+        """The constructed adapter and selected database, not configured defaults, identify the target."""
+        tool = object.__new__(DBFuncTool)
+        tool.agent_config = SimpleNamespace(
+            current_db_configs=lambda: {
+                "warehouse": DbConfig(
+                    type="postgresql",
+                    host="configured.example",
+                    database="configured",
+                    uri="postgres://user:secret@uri-host/uri-db",
+                    extra={"host": host},
+                )
+            }
+        )
+        tool._default_datasource = "warehouse"
+        tool._get_connector = lambda _: SimpleNamespace(
+            dialect="postgresql",
+            host=host,
+            port=5544,
+            database_name="selected",
+            schema_name="runtime_schema",
+            catalog_name="runtime_catalog",
+        )
+        result = tool.get_datasource_identity()
+        assert result.result["identity_status"] == "resolved"
+        assert result.result["identity"] == {
+            "type": "postgresql",
+            "host": host,
+            "port": 5544,
+            "database": "selected",
+            "schema": "runtime_schema",
+            "catalog": "runtime_catalog",
+        }
+        assert result.result["configured_identity"]["host"] == "configured.example"
+        assert result.result["execution_context"]["database"] == "selected"
+        assert "secret" not in json.dumps(result.result)
+
+    def test_empty_database_is_omitted(self):
+        """An absent database is not fabricated from the datasource display name."""
+        tool = object.__new__(DBFuncTool)
+        tool.agent_config = SimpleNamespace(
+            current_db_configs=lambda: {"warehouse": DbConfig(type="postgresql", database="")}
+        )
+        tool._default_datasource = "warehouse"
+        tool._get_connector = lambda _: SimpleNamespace(
+            dialect="postgresql", host="localhost", port=5432, database_name=""
+        )
+        result = tool.get_datasource_identity()
+        assert "database" not in result.result["configured_identity"]
+        assert "database" not in result.result["identity"]
+        assert result.result["identity_status"] == "unresolved"
+
+    def test_effective_inspection_failure_never_uses_configured_match(self):
+        """A failed runtime inspection stays unresolved and does not leak its error URI."""
+
+        def fail(_):
+            """Emulate an adapter failure with a private diagnostic."""
+            raise ValueError("postgres://private-user:private-password@host/db")
+
+        tool = object.__new__(DBFuncTool)
+        tool.agent_config = SimpleNamespace(
+            current_db_configs=lambda: {
+                "warehouse": DbConfig(type="postgresql", host="configured.example", database="analytics")
+            }
+        )
+        tool._default_datasource = "warehouse"
+        tool._get_connector = fail
+        result = tool.get_datasource_identity()
+        assert result.result["identity"] == {}
+        assert result.result["identity_status"] == "unresolved"
+        assert "private-password" not in json.dumps(result.result)
+
+    def test_glob_identity_reports_selected_sqlite_file(self, tmp_path):
+        """Native SQLite metadata identifies the selected glob file rather than its default sibling."""
+        import sqlite3
+
+        for name in ["a", "b"]:
+            with sqlite3.connect(tmp_path / f"{name}.sqlite") as db:
+                db.execute("CREATE TABLE marker(value TEXT)")
+        configured = DbConfig(type="sqlite", path_pattern=str(tmp_path / "*.sqlite"))
+        manager = DBManager({"warehouse": configured})
+        tool = object.__new__(DBFuncTool)
+        tool.agent_config = SimpleNamespace(current_db_configs=lambda: {"warehouse": configured})
+        tool._db_manager = manager
+        tool._default_datasource = "warehouse"
+        tool._default_database = "b"
+        tool._execution_context = {"datasource": "warehouse", "database": "b"}
+        tool._connector_cache = OrderedDict()
+        tool._connector_cache_size = 8
+        try:
+            result = tool.get_datasource_identity()
+            assert result.result["identity_status"] == "resolved"
+            assert result.result["identity"]["path"] == str((tmp_path / "b.sqlite").resolve())
+            assert result.result["execution_context"]["database"] == "b"
+        finally:
+            manager.close()
+
+    def test_attached_duckdb_identity_reports_selected_catalog_file(self, tmp_path):
+        """A selected attached DuckDB catalogue must not inherit the primary file's identity."""
+        from datus.tools.db_tools.config import DuckDBConfig
+        from datus.tools.db_tools.duckdb_connector import DuckdbConnector
+
+        primary, attached = tmp_path / "primary.duckdb", tmp_path / "attached.duckdb"
+        connector = DuckdbConnector(DuckDBConfig(db_path=str(primary)))
+        connector.connect()
+        connector.connection.execute("ATTACH '" + str(attached).replace("'", "''") + "' AS selected")
+        connector.database_name = "selected"
+        tool = object.__new__(DBFuncTool)
+        tool.agent_config = SimpleNamespace(
+            current_db_configs=lambda: {"warehouse": DbConfig(type="duckdb", uri=str(primary))}
+        )
+        tool._default_datasource = "warehouse"
+        tool._get_connector = lambda _: connector
+        try:
+            result = tool.get_datasource_identity()
+            assert result.result["identity_status"] == "resolved"
+            assert result.result["identity"]["path"] == str(attached.resolve())
+            assert result.result["execution_context"]["database"] == "selected"
+        finally:
+            connector.close()
+
+    def test_host_credential_content_cannot_escape_in_identity(self):
+        """A colon pair mistaken for a hostname must not disclose credential text."""
+        tool = object.__new__(DBFuncTool)
+        tool.agent_config = SimpleNamespace(
+            current_db_configs=lambda: {"warehouse": DbConfig(type="postgresql", host="user:private-secret")}
+        )
+        tool._default_datasource = "warehouse"
+        result = tool.get_datasource_identity()
+        assert "private-secret" not in json.dumps(result.result)
+
+    def test_unavailable_file_metadata_does_not_guess_the_configured_path(self):
+        """An unavailable native inspector keeps file identity unresolved."""
+        tool = object.__new__(DBFuncTool)
+        tool.agent_config = SimpleNamespace(
+            current_db_configs=lambda: {"warehouse": DbConfig(type="sqlite", uri="/configured/first.sqlite")}
+        )
+        tool._default_datasource = "warehouse"
+        tool._get_connector = lambda _: SimpleNamespace(
+            dialect="sqlite",
+            database_name="selected",
+            db_path="/configured/first.sqlite",
+            execute_query=lambda *args, **kwargs: FuncToolResult(success=0, error="Unavailable"),
+        )
+        result = tool.get_datasource_identity()
+        assert "path" not in result.result["identity"]
+        assert result.result["identity_status"] == "unresolved"

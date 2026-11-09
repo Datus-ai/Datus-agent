@@ -1226,7 +1226,17 @@ class SubAgentTaskTool:
             # was created (e.g. errors raised before node construction).
             result_payload = {
                 key: output_payload[key]
-                for key in ("status", "blocker_code", "skip_reason", "response", "semantic_models", "tokens_used")
+                for key in (
+                    "status",
+                    "blocker_code",
+                    "skip_reason",
+                    "response",
+                    "semantic_models",
+                    "tokens_used",
+                    "business_validation",
+                    "validation",
+                    "reconciliation",
+                )
                 if output_payload is not None and key in output_payload
             }
             if session_id:
@@ -1285,7 +1295,18 @@ class SubAgentTaskTool:
                 "tokens_used": tokens,
             }
             result_dict.update(
-                {key: output[key] for key in ("status", "blocker_code", "skip_reason") if output.get(key) is not None}
+                {
+                    key: output[key]
+                    for key in (
+                        "status",
+                        "blocker_code",
+                        "skip_reason",
+                        "business_validation",
+                        "validation",
+                        "reconciliation",
+                    )
+                    if output.get(key) is not None
+                }
             )
             return _wrap(result_dict)
 

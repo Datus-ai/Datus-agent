@@ -90,11 +90,11 @@ def test_dashboard_bootstrap_optionally_creates_scoped_subagents_last():
     assert "creation failure does not invalidate context already built" in body
     assert "<metric.subject_path>.<metric.name>" in body
     assert "<subject_tree>.<name>" in body
-    assert "returned `semantic_models` file" in body
-    assert "every metric in that selected model" in body
+    assert "do not enumerate every metric in a shared domain model" in body
+    assert "both the same source dashboard and the same datasource partition" in body
     assert "returned `sql_summary_file`" in body
     assert "never store metric IDs" in body
-    assert "datasource-only visibility" in body
+    assert "leave an existing pair unchanged" in body
 
     create_offset = body.index("Step 8 — Create dashboard subagents when supported")
     report_offset = body.index("Step 9 — Report")

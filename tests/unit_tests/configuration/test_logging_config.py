@@ -335,3 +335,29 @@ def test_managed_plugin_log_file_stays_in_allowed_destination(tmp_path, monkeypa
     expected = tmp_path / "explicit-logs" if explicit_log_dir else tmp_path / ".datus" / "logs"
     assert log_path.is_relative_to(expected)
     assert "managed-plugin-probe" in log_path.read_text()
+
+
+@pytest.mark.parametrize("enabled", [True, False])
+def test_managed_child_inherits_authoritative_redaction(tmp_path, monkeypatch, enabled):
+    """Child startup applies transported redaction without reading host-local config."""
+    from datus.plugins.runtime_context import PluginRuntimeContext
+
+    redact = {"enabled": enabled, "fields": ["tenant_secret"], "patterns": ["TENANT_[A-Z]+"]}
+    encoded = PluginRuntimeContext("hello", {}, logging={"redact": redact}).encode()
+    monkeypatch.setenv("DATUS_PLUGIN_RUNTIME_CONTEXT", encoded)
+    monkeypatch.delenv("DATUS_LOG_LEVEL", raising=False)
+
+    def forbidden(*args, **kwargs):
+        """Reject a cross-tenant local YAML lookup."""
+        pytest.fail("managed logging must use its transported settings")
+
+    monkeypatch.setattr("datus.configuration.agent_config_loader.parse_config_path", forbidden)
+    args = argparse.Namespace()
+    config = resolve_logging_arguments(args)
+    assert config.redact == redact
+    manager = configure_entrypoint_logging(args, log_dir=tmp_path, console_output=False)
+    get_logger("datus.plugin").info("TENANT_INLINE", tenant_secret="private-field")
+    manager.file_handler.flush()
+    text = Path(manager.file_handler.baseFilename).read_text()
+    assert ("TENANT_INLINE" in text) is not enabled
+    assert ("private-field" in text) is not enabled
