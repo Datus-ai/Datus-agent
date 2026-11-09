@@ -93,7 +93,11 @@ source IDs/checksum, datasource/model binding, metric identities, analytical int
 blockers, approved differences and readable supporting skill/reference locations.
 The child loads the required skills to register its own supporting-file read roots
 before reading the selected references; it does not restart orchestration or
-create missing metrics itself.
+create missing metrics itself. Check access before the first visual task; if skill
+loading is unavailable, include the relevant visual, validation and plugin
+constraints directly in that initial handoff. With `reuse_only`, a child can
+complete metric discovery when its parent lacks those tools. A verified
+no-semantic-change result requires no authoring/reconciliation evidence.
 
 ## Optional dashboard subagents
 
