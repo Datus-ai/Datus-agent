@@ -43,7 +43,10 @@ plugin can supply bounded chart/dataset details. Do not execute downloaded code.
 ## Match source identity before metric authoring
 
 Never persist a BI-profile-level datasource mapping. Compare each relevant source
-connection with non-secret configured Datus datasource metadata:
+connection with non-secret configured Datus datasource metadata. Call
+`get_datasource_identity` when available; it exposes configured endpoint coordinates
+without credentials. Missing fields remain unresolved rather than inferred from
+matching table names. Never read a secret-bearing config file to obtain them:
 
 - Normalize backend aliases, host casing, default ports and physical
   database/catalog names. A network database requires a compatible backend,

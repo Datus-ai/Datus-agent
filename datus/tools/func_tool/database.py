@@ -1351,6 +1351,8 @@ class DBFuncTool:
             methods_to_convert.append(self.search_table)
 
         methods_to_convert.append(self.execute_sql)
+        if self.agent_config is not None:
+            methods_to_convert.append(self.get_datasource_identity)
 
         # Only mount the uploads loader where there is a catalog to load into.
         # Without the datasource every call would fail with "not configured", so
@@ -1376,6 +1378,36 @@ class DBFuncTool:
         for bound_method in methods_to_convert:
             bound_tools.append(self.to_function_tool(bound_method))
         return bound_tools
+
+    def get_datasource_identity(self, datasource: str = "") -> FuncToolResult:
+        """Return configured credential-free physical coordinates without opening a connection.
+
+        Use this before matching imported BI evidence to a Datus datasource. Returns
+        the configured type, host, port, database/catalog/schema and account when
+        available. Missing fields remain unknown; table-name equality cannot replace
+        them. Connection URIs, credentials and adapter extras are never returned.
+        """
+        source = datasource or self._default_datasource
+        if self.agent_config is None:
+            return FuncToolResult(success=0, error="Configured datasource identity is unavailable")
+        try:
+            configs = self.agent_config.current_db_configs()
+        except Exception:
+            return FuncToolResult(success=0, error="Configured datasource identity is unavailable")
+        if not isinstance(configs, dict) or source not in configs:
+            return FuncToolResult(success=0, error="Requested datasource is not configured")
+        config = configs[source]
+        identity = {}
+        for field in ("type", "host", "port", "database", "catalog", "schema", "account"):
+            value = config.get(field) if isinstance(config, dict) else getattr(config, field, None)
+            if not isinstance(value, (str, int)) or isinstance(value, bool) or value == "":
+                continue
+            if field == "host" and not re.fullmatch(r"[A-Za-z0-9_.:\[\]-]+", str(value)):
+                continue
+            if field == "port" and (not str(value).isdigit() or not 0 < int(value) <= 65535):
+                continue
+            identity[field] = value
+        return FuncToolResult(result={"datasource": source, "identity": identity})
 
     @mcp_tool(availability_check="has_schema")
     def search_table(

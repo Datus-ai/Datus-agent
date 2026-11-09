@@ -3483,3 +3483,98 @@ def test_persisted_artifact_binding_keeps_original_database_after_the_turn_switc
     )
     assert tool._get_connector("warehouse") is current
     manager.close()
+
+
+class TestDatasourceIdentity:
+    """Expose configured physical coordinates without returning credential-bearing fields."""
+
+    @pytest.mark.parametrize("as_mapping", [False, True])
+    def test_returns_only_public_configured_coordinates(self, as_mapping):
+        """Dataclass and mapping configurations expose the same strict allowlist."""
+        config = DbConfig(
+            type="postgresql",
+            host="warehouse.example.test",
+            port="5432",
+            database="analytics",
+            schema="sales",
+            username="private-user",
+            password="private-password",
+            uri="postgres://private-user:private-password@host/db",
+            private_key_file="private-key",
+            extra={"api_key": "private-api-key"},
+        )
+        value = config.to_dict() if as_mapping else config
+        tool = object.__new__(DBFuncTool)
+        tool.agent_config = SimpleNamespace(current_db_configs=lambda: {"warehouse": value})
+        tool._default_datasource = "warehouse"
+
+        result = tool.get_datasource_identity()
+
+        assert result.success == 1
+        assert result.result == {
+            "datasource": "warehouse",
+            "identity": {
+                "type": "postgresql",
+                "host": "warehouse.example.test",
+                "port": "5432",
+                "database": "analytics",
+                "schema": "sales",
+            },
+        }
+
+    def test_unknown_requested_source_does_not_fall_back(self):
+        """An explicit unknown name must never resolve to the default connection."""
+        tool = object.__new__(DBFuncTool)
+        tool.agent_config = SimpleNamespace(current_db_configs=lambda: {"warehouse": DbConfig(type="postgresql")})
+        tool._default_datasource = "warehouse"
+        result = tool.get_datasource_identity("missing")
+        assert result.success == 0
+        assert result.result is None
+
+    def test_no_configuration_is_reported_as_unavailable(self):
+        """A connector without authoritative config cannot fabricate physical identity."""
+        tool = object.__new__(DBFuncTool)
+        tool.agent_config = None
+        tool._default_datasource = "warehouse"
+        result = tool.get_datasource_identity()
+        assert result.success == 0
+        assert result.result is None
+
+    @pytest.mark.parametrize("host", ["postgres://user:secret@host/db", "https://host?token=secret"])
+    def test_credential_bearing_host_is_not_exposed(self, host):
+        """Reject URLs in endpoint fields instead of leaking embedded credentials."""
+        tool = object.__new__(DBFuncTool)
+        tool.agent_config = SimpleNamespace(
+            current_db_configs=lambda: {"warehouse": DbConfig(type="postgresql", host=host)}
+        )
+        tool._default_datasource = "warehouse"
+        result = tool.get_datasource_identity()
+        assert result.success == 1
+        assert result.result == {"datasource": "warehouse", "identity": {"type": "postgresql"}}
+
+    def test_config_failure_does_not_expose_exception_credentials(self):
+        """A configuration-loader failure must not return its private diagnostic text."""
+
+        def fail():
+            """Emulate a loader diagnostic containing a private connection URI."""
+            raise ValueError("postgres://private-user:private-password@host/db")
+
+        tool = object.__new__(DBFuncTool)
+        tool.agent_config = SimpleNamespace(current_db_configs=fail)
+        tool._default_datasource = "warehouse"
+        result = tool.get_datasource_identity()
+        assert result.success == 0
+        assert result.error == "Configured datasource identity is unavailable"
+        assert result.result is None
+
+    @pytest.mark.parametrize("port", ["-1", "65536", "private-password", True])
+    def test_invalid_port_is_not_returned_as_identity(self, port):
+        """Malformed endpoint coordinates remain unknown rather than becoming evidence."""
+        tool = object.__new__(DBFuncTool)
+        tool.agent_config = SimpleNamespace(
+            current_db_configs=lambda: {"warehouse": {"type": "postgresql", "port": port}}
+        )
+        tool._default_datasource = "warehouse"
+        result = tool.get_datasource_identity()
+        assert result.success == 1
+        assert result.result == {"datasource": "warehouse", "identity": {"type": "postgresql"}}

@@ -59,6 +59,16 @@ class TestDBFuncToolIntegrationReal:
 
     # ==================== SQLite Tests ====================
 
+    @pytest.mark.asyncio
+    async def test_datasource_identity_is_invocable_without_private_connection_fields(self, ssb_db_tool):
+        """The real function-tool adapter exposes only configured public coordinates."""
+        tool = next(tool for tool in ssb_db_tool.available_tools() if tool.name == "get_datasource_identity")
+        result = await tool.on_invoke_tool(None, "{}")
+        assert result["success"] == 1, result
+        assert result["result"]["datasource"] == ssb_db_tool._default_datasource
+        assert result["result"]["identity"]["type"] == DBType.SQLITE
+        assert set(result["result"]["identity"]) <= {"type", "host", "port", "database", "catalog", "schema", "account"}
+
     def test_sqlite_list_tables_returns_actual_tables(self, ssb_db_tool):
         """Test that list_tables returns actual tables from SSB.db."""
         result = ssb_db_tool.list_tables()
