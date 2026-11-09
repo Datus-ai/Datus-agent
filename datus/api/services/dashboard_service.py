@@ -428,8 +428,6 @@ class DashboardService:
                 code = "POLICY_DENIED"
             elif "METRIC_MODEL_SNAPSHOT_MISSING" in str(exc):
                 code = "METRIC_MODEL_SNAPSHOT_MISSING"
-            elif "METRIC_MODEL_CHANGED" in str(exc):
-                code = "METRIC_MODEL_CHANGED"
             else:
                 code = "METRIC_QUERY_FAILED"
                 logger.exception("Unexpected metric query execution failure", query_name=query.name)

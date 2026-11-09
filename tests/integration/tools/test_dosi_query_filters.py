@@ -549,3 +549,65 @@ def test_published_dashboard_keeps_distinct_native_models(query_tool, monkeypatc
             resolved, runtime_config=query_tool.runtime.config, db_tool=db_tool, params={}, policy_context={}
         )
         assert payload.rows == [{recipe.metric.name: expected}]
+
+
+@pytest.mark.parametrize("published, expected", [(False, {"p1": 240.0, "p2": 62.0}), (True, {"p1": 120.0, "p2": 31.0})])
+@pytest.mark.parametrize("legacy", [False, True])
+@pytest.mark.asyncio
+async def test_dashboard_preview_uses_project_model_and_published_query_uses_frozen_model(
+    query_tool, monkeypatch, published, expected, legacy
+):
+    import hashlib
+
+    import yaml
+
+    from datus.api.services.dashboard_service import DashboardService
+    from datus.schemas.gen_visual_dashboard_models import QueryTemplateMetaFile
+    from datus.schemas.metric_artifact_query import MetricQueryFile
+
+    config = query_tool.agent_config
+    root = Path(config.project_root)
+    model = root / "subject/semantic_models/window_filters/model.yaml"
+    document = yaml.safe_load(model.read_text())
+    snapshot = (
+        {"version": document["version"], "semantic_model": [{k: v for k, v in document.items() if k != "version"}]}
+        if legacy
+        else document
+    )
+    content = yaml.safe_dump(snapshot, sort_keys=False)
+    metric = {"path": ["Commerce"], "name": "score_total"}
+    query = MetricQueryFile(
+        name="scores",
+        goal="Scores by product",
+        metric=metric,
+        dimensions=["scores.product"],
+        datasource="window_filters",
+        model_path=model.relative_to(root).as_posix(),
+        model_revision=hashlib.sha256(content.encode()).hexdigest(),
+        model_snapshot=content,
+        metric_detail=metric,
+        captured_at="2026-10-15T00:00:00Z",
+    )
+    meta = QueryTemplateMetaFile(
+        slug="scores",
+        datasource="window_filters",
+        params=[],
+        columns=[{"name": "product", "type": "string"}, {"name": "score_total", "type": "number"}],
+        sample_row_count=2,
+        saved_at=query.captured_at,
+    )
+    document["metrics"][0]["expression"]["dialects"][0]["expression"] = "2 * SUM(scores.score)"
+    updated = yaml.safe_dump(document, sort_keys=False)
+    model.write_text(updated)
+    db = DBFuncTool(agent_config=config, read_only=True)
+    monkeypatch.setattr("datus.tools.func_tool.DBFuncTool", lambda **kwargs: db)
+    monkeypatch.setattr("datus.tools.func_tool.semantic_tools.SemanticTools", lambda **kwargs: query_tool)
+
+    result = await DashboardService(agent_config=config)._run_metric_query(
+        query, meta, {}, root, {}, published=published
+    )
+
+    assert result.success is True, result.errorMessage
+    assert {row["product"]: row["score_total"] for row in result.data.rows} == expected
+    assert model.read_text() == updated
+    assert query.model_snapshot == content
