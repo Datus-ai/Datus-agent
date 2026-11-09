@@ -111,6 +111,7 @@ def test_bootstrap_supporting_documents_resolve_within_loaded_skill(document):
 
 
 def test_readonly_runtime_loads_bootstrap_without_preloading_supporting_content():
+    """Allow immutable runtimes to load the skill and register reference roots lazily."""
     from datus.tools.skill_tools.skill_config import SkillConfig
     from datus.tools.skill_tools.skill_func_tool import SkillFuncTool
     from datus.tools.skill_tools.skill_manager import SkillManager
