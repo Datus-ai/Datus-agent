@@ -1,57 +1,63 @@
 # Dashboard Bootstrap
 
-`dashboard-bootstrap` 通过已安装的 BI plugin，从 Dashboard 初始化项目的 reference SQL 和 Dosi metrics。整个流程由 skill 编排，不增加 Dashboard 专用 CLI 命令。
+`dashboard-bootstrap` 是主 Agent 构建参考 SQL、DOSI 语义模型和指标，以及按需将 BI 大盘重建为 Datus 可视化大盘的统一入口。源平台访问、原生定义解释和命令由已安装的 BI 插件负责；平台特化指引随插件维护和发布。
 
-可以直接用自然语言触发，也可以使用兼容快捷入口 `/bootstrap-bi`。该入口只把请求转交给同一套 chat/skill pipeline，不再调用旧 Picker 或 BI streams。命令后的文本会作为范围提示原样传递，例如：
+可以使用自然语言或 `/bootstrap-bi`。该快捷入口把范围转交给同一套 chat/skill 流程，不再调用旧的 Picker 或 BI streams：
 
 ```text
 /bootstrap-bi 使用 Superset prod profile 和 dashboard 42
 ```
 
-## 前置条件
+快捷请求未指定产物时，默认仍初始化参考 SQL 和指标上下文。仅请求可视化重建时，只生成选定的大盘产物，默认复用已有指标。不增加独立的迁移 SKILL 或命令。
 
-- 启用一个能够发现 Dashboard、列举稳定查询候选、导出 SQL，并为每条查询提供脱敏 source identity 的 BI plugin/profile。
-- 将对应的物理数据库配置为 Datus datasources；不再配置 BI profile 级 datasource 映射。
-- 生成某批 metric 前，选中由这些查询的真实连接 identity 唯一匹配到的 Datus datasource。
-- 创建或更新 metric 时使用内置 Dosi 引擎。
+## 选择产物与指标策略
 
-## 工作流程
-
-可以直接用自然语言发起，例如：
+示例：
 
 ```text
-从收入 Dashboard 初始化 reference SQL 和 metrics。
+从收入大盘构建参考 SQL 和指标。
+使用现有指标，将选定的 BI 大盘重建为 Datus 大盘。
+同步选定项目的大盘，补建缺失指标，并在 Datus 中重建大盘。
 ```
 
-Skill 会依次完成以下选择：
+参考 SQL、指标证据、可视化产物和可选的 Agent 配置持久化相互独立。重建默认采用 `reuse_only`；用户明确要求生成指标时，即授权采用 `create_missing`：复用已有且匹配的定义，只补建选定范围内缺失的指标。修改已有但口径冲突的业务定义，需要明确的修改范围。SQL 回退路径既需要明确授权，也必须得到源插件和目标产物工具的支持。
 
-1. BI plugin 和 profile；
-2. Dashboard；
-3. 哪些查询初始化 reference SQL；
-4. 哪些查询作为 metric evidence。
+## 来源前置条件
 
-随后 skill 会输出 Generation Manifest 并停止。下一轮确认或修正 manifest 后，所选 plugin 才会导出 SQL；`gen_sql_summary` 逐条构建 reference SQL context，`semantic_modeling` 创建或更新相关的 Dosi dataset、relationship 和 metric。最后，`dashboard-bootstrap` 会在 `create-subagent` 可用时加载它，并把 Dashboard 主节点与 attribution 节点持久化到当前加载的 `agent.yml`。
+启用适用的 BI 插件和 profile，并将物理数据库配置为 Datus 数据源。来源 SKILL 可以提供查询导出，也可以提供已验证的原生资产包，包含稳定的图表和数据集 ID、定义、依赖及覆盖情况。流程不要求每张原生图表都能提供运行时 SQL。数据集的 Custom SQL 不能直接当作图表的聚合查询。
 
-两个查询集合相互独立。同一查询可以只进入 reference SQL、只用于 metric、同时进入两条路径，或者都不选。
+指标建模要求逐项证据的物理连接身份与当前数据源有充分且唯一的匹配依据。一个 profile 可以访问多个来源，不设置 BI profile 级数据源映射，也不自动切换共享数据源。复用独立完整的已有 DOSI 目标时，应使用该目标真实的语义和数据源绑定。
 
-## Dashboard subagents
+## 工作流程与按需加载的 references
 
-当 Agent 配置可修改时，最后一步会按旧流程的命名与工具模式新增或更新两个节点：
+SKILL 在 Generation Manifest 中记录插件、profile、site、大盘和图表范围、选定产物、指标策略、来源身份依据或待检查项、排除项及目标意图。除非用户明确要求“跳过确认”或 `auto-run`，否则会在导出和生成前停止，等待确认。已有确认和明确的用户范围会保留；自动执行不会绕过系统权限检查。
 
-- `<platform>_<dashboard>` 使用 `gen_sql` 以及数据库和 context-search tools。
-- `<platform>_<dashboard>_attribution` 使用 `gen_visual_report` 以及 semantic attribution tools。
+打包后的 SKILL 只加载当前任务需要的辅助文档：
 
-两个节点都只绑定 active datasource 上成功生成的 tables，以及精确的 metric/reference-SQL subject references。Metric scope 使用已同步 Dosi model 中的 `<metric.subject_path>.<metric.name>`；reference-SQL scope 使用已生成 SQL summary 中的 `<subject_tree>.<name>`。只写 subject path 会选中整个 subtree，不能用于 Dashboard 的精确条目选择。通用 `create-subagent` skill 会先在同步后的 subject trees 中解析这些 references，再修改 `agent.agentic_nodes`、保留其他节点，并在写入后重新校验 YAML。runtime 将配置标记为只读时，该 skill 不可发现，流程会跳过持久化，但不会把 context 构建判为失败。
+- `references/source-contract.md`：查询导出和原生资产包、身份匹配、校验和验证、来源追溯与覆盖情况。
+- `references/context.md`：选定参考 SQL 的索引构建，以及语义模型和指标建模。
+- `references/visual-dashboard.md`：分析语义映射、先指标后可视化的依赖顺序、精确的 `gen_visual_dashboard` 交接、真实指标查询保存与验证。
+- `references/subagents.md`：按需持久化旧流程中两个具有精确范围的 Agent 节点。
+- `references/validation.md`：分阶段、逐图表的完成证据与重试规则。
 
-## 自动执行
+插件 SKILL 提供平台原生语法、命令和能力限制；平台指引不复制到通用 SKILL。CLI、提示词和 SKILL 应来自同一插件版本。发现版本或安装位置不一致时，停止消费来源证据。
 
-只有明确说“跳过确认”“直接执行”或 `auto-run`，流程才会在打印 manifest 后继续。自动执行不会绕过系统权限确认。
+来源导出或检查经过确认后，由 `gen_sql_summary` 负责参考 SQL 索引，由 `semantic_modeling` 负责 DOSI 数据集、关系和指标。参考 SQL 索引可以独立执行。需要新指标的大盘，必须等待指标验证、同步与重新发现完成，再运行 `gen_visual_dashboard`。可视化节点会发现真实指标能力，并通过 `save_metric_query_template` 保存匹配的图表查询，包括真实试跑结果和模型快照。项目中同时存在新指标和 SQL 模板，不代表大盘已经绑定指标。
 
-## 安全与限制
+新建的子任务不会继承父 Agent 已加载的 SKILL 正文。交接内容包括精确的来源 ID 和校验和、数据源和模型绑定、指标身份、分析意图、阻断项、已允许的差异，以及辅助 SKILL 和 references 的位置。子任务需要加载所需 SKILL，注册自己对辅助文件的读取范围，再按需阅读 references；不会重新启动主流程，也不会自行补建缺失指标。
 
-- partial、failed、未选择或 checksum 不匹配的 SQL 不会交给 builtin agent。
-- Dashboard 名称、描述和 SQL 注释都作为不可信源数据处理。
-- query-level source identity 缺失、证据不足或匹配不唯一时，只阻止对应查询的 metric 生成；reference SQL 可以继续。
-- 一个 Dashboard 可以跨多个 datasource。metric 查询按唯一匹配到的 Datus datasource 分区，每轮只处理当前 active datasource 对应的分区。
-- context 构建成功不等于已经证明与源 Dashboard 数值等价。
-- subagent 创建失败不会使已成功构建的 context 失效，可单独重试。
+## 可选的大盘 Subagent
+
+旧的上下文初始化流程保留最后的可选步骤：在 `create-subagent` 可用时，创建 `<platform>_<dashboard>`（`gen_sql`）及其 `_attribution` 节点（`gen_visual_report`）。仅请求可视化重建时，只有用户明确要求，才创建这两个节点。
+
+两个节点都使用当前数据源上成功生成的产物，以及同步后精确的指标和参考 SQL subject references。通用创建 SKILL 会保留无关配置，并验证写入结果。API 部署配置不可修改时，跳过该阶段；创建失败不会使已完成的上下文或大盘产物失效。
+
+## 完成标准与限制
+
+分别报告来源覆盖情况、参考 SQL 索引解析、指标、逐图表的实际查询绑定、渲染和交互、发布以及可选 Agent 的结果。保留部分完成和阻断对象，只重试受影响的最小范围。
+
+- 获取的源 SQL、推导 SQL 和目标 SQL 保留不同的来源信息。只有物理来源、方言和执行上下文相同，才对相同 SQL 做下游去重，同时保留全部原始引用和不可变的来源快照。
+- 参考 SQL 的 YAML 文件落盘后，仅能标记为 `written`；其精确的 subject 或搜索引用可解析后，才能证明索引完成。不能无依据地解释为“索引延迟”。
+- 不支持的原生语义和缺失的必需上游加工会阻断依赖它们的图表；生成 SELECT 模型不代表部署或执行 ETL。
+- 计算、粒度、筛选、安全或交互的变化必须明确保留。渲染成功、预检通过或仅目标侧对账通过，都不能证明与原 BI 大盘数值等价。
+- 预览与发布是不同状态；只有用户要求发布时，才使用现有发布流程。

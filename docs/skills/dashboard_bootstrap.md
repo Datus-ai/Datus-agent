@@ -80,7 +80,9 @@ snapshots. Newly created metrics next to SQL templates do not establish binding.
 Fresh child tasks do not inherit parent-loaded skill bodies. Handoffs include exact
 source IDs/checksum, datasource/model binding, metric identities, analytical intent,
 blockers, approved differences and readable supporting skill/reference locations.
-The child does not restart orchestration or create missing metrics itself.
+The child loads the required skills to register its own supporting-file read roots
+before reading the selected references; it does not restart orchestration or
+create missing metrics itself.
 
 ## Optional dashboard subagents
 
