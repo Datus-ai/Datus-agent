@@ -363,6 +363,9 @@ class TestPrepareTemplateContextGenTable:
         assert "Workflow Mode Has No ask_user" in prompt
         assert "Call `ask_user` with the COMPLETE DDL SQL" not in prompt
         assert "Proceed only for explicit non-destructive CREATE TABLE / CTAS requests" in prompt
+        assert "For new tables, treat the request as authorization only" in prompt
+        assert "For a follow-up to a table this session already delivered" in prompt
+        assert "normal write-permission policy" in prompt
 
     def test_interactive_prompt_keeps_ddl_confirmation(self, real_agent_config, mock_llm_create):
         from datus.agent.node.gen_table_agentic_node import GenTableAgenticNode

@@ -685,6 +685,26 @@ class TestChatAgenticNodeMCPSetup:
 class TestChatAgenticNodeSystemPrompt:
     """Verify system prompt generation and error handling."""
 
+    def test_chat_routing_is_in_system_prompt_only(self, real_agent_config, mock_llm_create):
+        from datus.agent.node.chat_agentic_node import ChatAgenticNode
+
+        node = ChatAgenticNode(
+            node_id="chat_routing_owner",
+            description="Chat owns specialist routing",
+            node_type=NodeType.TYPE_CHAT,
+            agent_config=real_agent_config,
+        )
+        prompt = node._get_system_prompt()
+        task_description = node.sub_agent_task_tool.available_tools()[0].description
+
+        assert "Chat routing priority" in prompt
+        assert "prefer ask_metrics even for one number" in prompt
+        assert "Scheduling and external BI operations use installed plugins directly" in prompt
+        assert "only to types listed as available" in prompt
+        assert "External BI-to-Datus conversion is a main-agent orchestration workflow" in prompt
+        assert 'load_skill(skill_name="dashboard-bootstrap")' in prompt
+        assert "Chat routing priority" not in task_description
+
     def test_get_system_prompt_returns_string(self, real_agent_config, mock_llm_create):
         """_get_system_prompt returns a non-empty string for valid template."""
         from datus.agent.node.chat_agentic_node import ChatAgenticNode
@@ -755,7 +775,8 @@ class TestChatAgenticNodeSystemPrompt:
         prompt = node._get_system_prompt()
 
         assert "Ask user tool (`ask_user`)" in prompt
-        assert "call `ask_user` FIRST" in prompt
+        assert "call `ask_user` before dependent writes" in prompt
+        assert "Tool-discoverable metadata is not a" in prompt
 
     def test_get_system_prompt_fallback_on_missing_template(self, real_agent_config, mock_llm_create):
         """_get_system_prompt falls back to chat_system when configured template is missing."""

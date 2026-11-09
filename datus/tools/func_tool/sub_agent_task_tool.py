@@ -70,7 +70,8 @@ BUILTIN_SUBAGENT_DESCRIPTIONS = {
         "For complex SQL (50+ lines), returns {sql_file_path, sql_preview, response} instead - "
         "pass sql_file_path directly to execute_sql() to execute (no need to read_file() first). "
         "Modifications return sql_diff in unified diff format. "
-        "Use for data queries, analysis, and report SQL. Prompt: provide the question directly."
+        "Use for specialist SQL generation, optimization and iterative query changes. "
+        "Follow your own agent's routing rules for governed metrics and simple direct execution."
     ),
     "explore": (
         "Read-only data exploration. Supports 3 exploration directions:\n"
@@ -87,12 +88,11 @@ BUILTIN_SUBAGENT_DESCRIPTIONS = {
         "  * File: workspace SQL files, documentation, configuration files\n"
         "    Prompt example: 'Browse workspace for SQL files and documentation "
         "related to sales'\n"
-        '  For comprehensive exploration, call task(type="explore") MULTIPLE TIMES '
-        "in PARALLEL with direction-specific prompts.\n"
+        "  Start with a focused, bounded task. Split independent necessary directions only when needed.\n"
         "  Returns JSON with {response, tokens_used}."
     ),
     "ask_metrics": (
-        "Answer metric-based questions quickly using existing semantic metrics. "
+        "Preferred owner for metric-based questions using existing semantic metrics, even one KPI value. "
         "Use for KPI values, trends, grouped metric results, and metric attribution "
         "when the question can be answered by the semantic layer. Does not fall back "
         "to raw SQL. If ontology_analyst is offered, prefer it for this datasource. "
@@ -165,7 +165,9 @@ BUILTIN_SUBAGENT_DESCRIPTIONS = {
     "gen_sql_summary": (
         "Analyze and summarize SQL queries into reusable knowledge base entries for semantic search. "
         "Use when asked to summarize, document, or index SQL queries for future reference. "
-        "Prompt MUST contain a complete SQL query, optionally with business context description. "
+        "A NEW session prompt MUST contain a complete SQL query, optionally with business context. "
+        "For follow-up edits, resume the original session and entry using its prior SQL; "
+        "the prompt may contain only the requested change and scope reminders. "
         "Returns JSON with {response, sql_summary_file, tokens_used}."
     ),
     "gen_skill": (
@@ -180,7 +182,9 @@ BUILTIN_SUBAGENT_DESCRIPTIONS = {
         "(1) SQL-based: provide a JOIN/SELECT SQL → CTAS to create a wide table for query acceleration. "
         "(2) Natural language: describe the table structure (columns, types, purpose) → generate CREATE TABLE DDL. "
         "Both modes: the agent analyzes the input, proposes a table schema, asks for confirmation, "
-        "and executes the DDL. For Dosi semantic authoring on the new table, "
+        "and executes the DDL. Also owns later requested inserts, updates or schema changes "
+        "to the table it delivered: resume the same session, preserve the table, apply and verify "
+        "only the requested change instead of creating another table. For Dosi semantic authoring on the new table, "
         "use semantic_modeling separately. Returns JSON with {response, tokens_used}."
     ),
     "gen_job": (
@@ -265,7 +269,10 @@ class SubAgentTaskTool:
                 },
                 "prompt": {
                     "type": "string",
-                    "description": "The task/question to send to the subagent",
+                    "description": (
+                        "Task goal, known evidence, exact target, allowed operations, protected items, "
+                        "and completion/stop conditions. On resume, send the requested change and scope reminders."
+                    ),
                 },
                 "description": {
                     "type": "string",
@@ -936,7 +943,7 @@ class SubAgentTaskTool:
                 except Exception:
                     logger.debug("Failed to release sub-agent session handle", exc_info=True)
 
-        return self._convert_to_func_result(final_output, session_id=node.session_id)
+        return self._convert_to_func_result(final_output, session_id=node.session_id, subagent_type=subagent_type)
 
     def _resolve_inherited_memory_node(self, subagent_type: str) -> Optional[str]:
         """Pick the memory node a sub-agent should inherit (read-only inline).
@@ -1209,7 +1216,9 @@ class SubAgentTaskTool:
 
     # ── result conversion ──────────────────────────────────────────────
 
-    def _convert_to_func_result(self, output, *, session_id: Optional[str] = None) -> FuncToolResult:
+    def _convert_to_func_result(
+        self, output, *, session_id: Optional[str] = None, subagent_type: Optional[str] = None
+    ) -> FuncToolResult:
         """Convert AgenticNode output to FuncToolResult.
 
         ``session_id`` is the subagent's session_id; when provided, it is
@@ -1241,6 +1250,8 @@ class SubAgentTaskTool:
             }
             if session_id:
                 result_payload["session_id"] = session_id
+            if subagent_type:
+                result_payload["type"] = subagent_type
             return FuncToolResult(success=0, error=error_msg, result=result_payload or None)
 
         if not output or not isinstance(output, dict):
@@ -1259,6 +1270,8 @@ class SubAgentTaskTool:
         def _wrap(d: Dict[str, Any]) -> FuncToolResult:
             if session_id:
                 d["session_id"] = session_id
+            if subagent_type:
+                d["type"] = subagent_type
             return FuncToolResult(result=d)
 
         # File-based SQL result: sql_file_path present
@@ -1408,7 +1421,7 @@ class SubAgentTaskTool:
     # ── description builder ────────────────────────────────────────────
 
     def _build_task_description(self) -> str:
-        """Build a dynamic description for the task tool."""
+        """Describe available delegates without overriding the parent agent's role."""
         available = self._get_available_types()
 
         lines = [
@@ -1419,16 +1432,10 @@ class SubAgentTaskTool:
             '- Call format: task(type="<available type>", prompt="<task or question>", '
             'description="<short one-line goal>")',
             "",
-            "Delegate work to a specialized subagent when the requested deliverable belongs to that "
-            "subagent's owning workflow or platform. Task complexity is not the deciding factor: "
-            "a persisted table, semantic model, metric definition, visual artifact, or skill should "
-            "still be handled by its specialized subagent. Scheduling and external BI platform "
-            "operations are the exception: execute installed plugin commands and bundled skills "
-            "directly in the main agent; these plugin-backed operations are not delegatable types. "
-            "Use your own tools "
-            "(list_tables, describe_table, execute_sql, etc.) for read-only answers, explanations, "
-            "or lightweight investigations that do not create or update an artifact owned by another "
-            "platform/workflow.",
+            "Follow your own system prompt to decide what to handle yourself and what to delegate. "
+            "Use task only for a bounded task suited to one of the Available types below. "
+            "Do not assume other types are available or delegate back to yourself. "
+            "Pass the goal, known evidence, exact target, allowed operations, protected items and stop conditions.",
             "",
             "Available types:",
         ]
@@ -1449,31 +1456,33 @@ class SubAgentTaskTool:
             [
                 "",
                 "Guidelines:",
-                "- First classify the deliverable and its owning workflow/platform; delegate when it matches an "
-                "available subagent",
-                "- Handle scheduling and external BI operations directly with installed plugins, not task()",
-                "- For read-only answers, explanations, and lightweight investigations, handle directly with your own tools",
-                '- For complex questions requiring deep exploration, call multiple task(type="explore") '
-                "in PARALLEL, each with a direction-specific prompt (schema+sample, knowledge, file)",
-                '- For quick single-direction lookups, call one task(type="explore") with a focused prompt',
+                "- Start with one focused task; split independent necessary subtasks only when needed.",
                 "- Each task() result — successful OR failed — includes a 'session_id' once the "
                 "subagent has started running. On success the id sits at top level of 'result'; "
                 "on failure (including MaxTurnsExceeded mid-run) it sits at 'result.session_id' "
                 "alongside the error. To CONTINUE refining a prior answer or to RESUME a "
                 "partial run with full prior context (its previous SQL, schema discoveries, "
                 "reasoning), pass that session_id back as the task's 'session_id' argument and "
-                "put ONLY the diff/clarification in 'prompt' — do not re-state the original "
-                "problem. The session_id MUST be reused with the SAME 'type'.",
-                "- Iterate-on-gen_sql example:",
-                '    Turn 1: task(type="gen_sql", prompt="Top 10 customers by revenue last quarter",',
-                '              description="customer revenue ranking")',
-                '          → returns {sql, response, tokens_used, session_id: "gen_sql_session_ab12cd34"}',
-                '    Turn 2: task(type="gen_sql", session_id="gen_sql_session_ab12cd34",',
-                "              prompt=\"Exclude internal test accounts (account_type='test') and group",
-                '                      monthly instead of the quarterly total",',
-                '              description="refine: exclude tests, monthly granularity")',
+                "put the diff/clarification and relevant scope reminders in 'prompt'. "
+                "The session_id MUST be reused with the SAME 'type'.",
+                "- Match a continuation to the specific subtask and target, not merely the latest session ID. "
+                "Resume a failed session to repair that run; if another session delivered the target, "
+                "continue the successful session instead.",
             ]
         )
+        if "gen_sql" in available:
+            lines.extend(
+                [
+                    "- Iterate-on-gen_sql example:",
+                    '    Turn 1: task(type="gen_sql", prompt="Top 10 customers by revenue last quarter",',
+                    '              description="customer revenue ranking")',
+                    '          → returns {sql, response, tokens_used, session_id: "gen_sql_session_ab12cd34"}',
+                    '    Turn 2: task(type="gen_sql", session_id="gen_sql_session_ab12cd34",',
+                    "              prompt=\"Exclude internal test accounts (account_type='test') and group",
+                    '                      monthly instead of the quarterly total",',
+                    '              description="refine: exclude tests, monthly granularity")',
+                ]
+            )
 
         return "\n".join(lines)
 
