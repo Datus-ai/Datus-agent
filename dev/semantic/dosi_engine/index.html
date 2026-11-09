@@ -8,7 +8,7 @@
       
       
       
-        
+        <link rel="canonical" href="https://docs.datus.ai/dev/semantic/dosi_engine/">
       
       
         <link rel="prev" href="../../configuration/nodes/">
@@ -18,9 +18,9 @@
       
       
         
-          
+          <link rel="alternate" href="/dev/" hreflang="en">
         
-          
+          <link rel="alternate" href="/zh/dev/" hreflang="zh">
         
       
       
@@ -57,13 +57,7 @@
 
     
     
-  <!-- datus-docs-seo -->
-<link rel="canonical" href="https://docs.datus.ai/dev/semantic/dosi_engine/">
-<link rel="alternate" hreflang="en" href="https://docs.datus.ai/dev/semantic/dosi_engine/">
-<link rel="alternate" hreflang="zh-Hans" href="https://docs.datus.ai/zh/dev/semantic/dosi_engine/">
-<link rel="alternate" hreflang="x-default" href="https://docs.datus.ai/dev/semantic/dosi_engine/">
-<!-- /datus-docs-seo -->
-</head>
+  </head>
   
   
     
@@ -4291,6 +4285,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#dashboard-metric-queries" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Dashboard Metric Queries
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -5004,6 +5009,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#dashboard-metric-queries" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Dashboard Metric Queries
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -5049,6 +5065,9 @@
 <h2 id="agent-features">Agent features<a class="headerlink" href="#agent-features" title="Permanent link">&para;</a></h2>
 <p>Agent uses Dosi to discover semantic models, metrics, and metric-specific dimensions; compile and execute metric queries; validate exact model artifacts; and run native attribution. The <code>semantic_modeling</code> workflow uses the native authoring contract and validation. Explorer reads, writes, and deletes metric nodes in OSI YAML files, then synchronizes the affected Knowledge Base entries. The external Dosi CLI, REST server, and MCP server are outside Agent's integration.</p>
 <p>Each model file has its own engine instance. The runtime refreshes it after the model file changes. Dosi handles SQL dialects and query planning; Agent supplies the active datasource connection and keeps subject paths in its Knowledge Base.</p>
+<h2 id="dashboard-metric-queries">Dashboard Metric Queries<a class="headerlink" href="#dashboard-metric-queries" title="Permanent link">&para;</a></h2>
+<p>IDE previews compile saved metric queries against the project's current Semantic Model. Editing a metric or upgrading its file format does not require regenerating the dashboard query.</p>
+<p>Published dashboards compile against the model snapshot saved with the artifact. Project model edits do not change their calculation definitions. Dosi can upgrade a frozen model's file format in the temporary execution directory without invalidating the query.</p>
 
 
 
