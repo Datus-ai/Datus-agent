@@ -26,7 +26,8 @@ Retain these fields from verified plugin output; use `unknown` for absent facts:
   snapshot path, manifest SHA256 and capture time. Profile identifies the access
   context, not the warehouse. Do not invent a field missing from the manifest.
 - Each chart's business question, measures/aggregations and calculations,
-  dimensions, time axis/grain, timezone and NULL policy, joins, filter scope/stage,
+  declared units/currency (or `unknown`), dimensions, exact time-grouping
+  expressions and year retention, timezone and NULL policy, joins, filter scope/stage,
   parameters, required security semantics and interactions. Keep exact references
   to the native definition and evidence for each interpretation.
 - SQL ID, asset ID, file, checksum, status and `source` / `derived` / `target`
@@ -39,6 +40,14 @@ Retain these fields from verified plugin output; use `unknown` for absent facts:
 Use summary output first, then inspect exact selected records. Truncated IDs are
 not usable binding keys. Avoid reading entire native definition trees when the
 plugin can supply bounded chart/dataset details. Do not execute downloaded code.
+
+Before authoring, resolve native field instances to exact grouping projections.
+Names such as "month" are insufficient: a calendar month-of-year groups across
+years, whereas a year-month bucket retains the year. Preserve that distinction
+in every handoff and numerical baseline. Create a necessary derived dimension
+through `semantic_modeling` when supported; do not silently substitute a time
+bucket. Unknown units remain unspecified in models and display formatting. Never
+invent a currency code from a measure name, example definition, symbol or locale.
 
 ## Match source identity before metric authoring
 

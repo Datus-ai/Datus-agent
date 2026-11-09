@@ -42,6 +42,12 @@ bundles with stable chart/dataset IDs, definitions, dependencies and coverage.
 The workflow does not require every native chart to expose runtime SQL. Dataset
 Custom SQL is not automatically the chart's aggregate query.
 
+Preserve exact native grouping expressions, including calendar date parts versus
+year-retaining time buckets. A 12-group month-of-year chart must not silently
+become 24 year-month groups. Carry required derived dimensions into metric
+authoring; compare grouping keys as well as totals before visual generation.
+Unspecified source units/currencies stay unspecified rather than defaulting to USD.
+
 Metric authoring requires strong per-evidence physical connection matching to the
 active datasource. A profile can front many sources; no BI-profile-level datasource
 mapping or automatic shared-datasource switch is used. Reuse of an independently

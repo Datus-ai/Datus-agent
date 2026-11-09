@@ -37,9 +37,11 @@ task(
 ```
 
 - For a verified native asset bundle, pass complete available SQL plus exact chart/dataset/expression references, supported semantic intent, source bindings and coverage blockers. Chart SQL may be unavailable; never replace it with guessed SQL. Only semantically complete evidence may enter authoring.
+- Carry exact per-chart grouping/filter projections, including calendar date parts versus year-retaining time buckets, required derived dimensions, declared units and explicitly unknown units. Do not summarize an identified native date part as only "month grain". Authoring must preserve it; an unexpressible projection returns a blocker. Do not populate an unsupported currency/unit default.
 - Include dependent datasets, relationships, measures, and metrics in the same domain request.
 - Let `semantic_modeling` inspect the live schema, select or create one target model, edit Dosi YAML, validate it, and reconcile the Knowledge Base.
 - Never infer success from prose alone; use the task's structured result and validation outcome.
+- Compare authoring output back to the pinned native requirements before visual handoff. A passing trial against a newly chosen baseline cannot justify changed grouping keys or invented unit metadata; correct affected definitions through the owning task first.
 - Do not make reference-SQL success a prerequisite for metrics, or metric success a prerequisite for reference SQL.
 - Report metric partitions matched to other Datus datasources as pending; process them only in a later run after the user activates that datasource. Never silently switch the shared datasource.
 

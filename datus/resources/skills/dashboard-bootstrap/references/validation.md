@@ -31,6 +31,15 @@ values where mathematically comparable; do not sum distinct counts, ratios or
 snapshots as if they were additive. Follow metric-specific tolerances. If only
 synthetic/local data was checked, label it separately from warehouse/source evidence.
 
+Check grouping keys and cardinality as well as totals against the independently
+pinned native intent. For example, two years of data grouped by month-of-year
+can produce 12 groups, while year-month buckets produce 24; equal grand totals
+do not make those charts equivalent. A target metric versus SQL written from
+the same changed assumption is only a target check. Audit declared/unknown units
+too: an unspecified source currency cannot become USD merely because an example
+or a newly authored metric says USD. Return these mismatches to the main agent
+for correction through `semantic_modeling` before saving affected visual queries.
+
 The final report states selected outputs, source bundle/checksum, reference index
 status, model/metric results, actual dashboard query binding, render/interaction
 checks, publication version if any, optional subagents and the smallest retry set.

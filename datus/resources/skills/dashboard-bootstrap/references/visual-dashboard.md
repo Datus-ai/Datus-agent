@@ -92,6 +92,8 @@ metrics: verified {path, name}, dimensions/parameters and model file/revision wh
          metric/dimension/parameter requirements and actual target model binding;
          child must discover and record the verified identities/model before saves
 mapping: per-chart analytical intent, required filters/grain/interactions, differences
+         exact grouping expressions/year retention and verified or unknown units;
+         never substitute calendar date parts with time buckets or invent currency
 coverage: per-chart blockers/exclusions and any documented source-gap resolutions
 instructions: when available, load dashboard-bootstrap and plugin rebuild skills
               to register supporting-file roots; read selected visual/validation
