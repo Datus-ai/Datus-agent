@@ -4,7 +4,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import math
 from pathlib import Path
@@ -121,17 +120,10 @@ def execute_metric_artifact_query(
     model_path = Path(binding["model_path"]).resolve()
     # Absolute Studio paths are never persisted or accepted from a viewer.
     relative_path = model_path.relative_to(project_root.resolve()).as_posix()
-    if saved and (
-        saved.model_path != relative_path
-        or saved.model_revision != binding["model_revision"]
-        or saved.datasource != binding["datasource"]
-    ):
-        raise ValueError(
-            "METRIC_MODEL_CHANGED: saved semantic model or datasource differs; regenerate or republish the query"
-        )
     if saved:
-        # Published execution uses the pinned model and captured identity, not
-        # mutable subject-index availability. Compilation validates dimensions.
+        # The caller selects the project runtime for previews or a frozen
+        # runtime for published queries. Reuse the captured subject identity;
+        # the selected compiler validates the query's dimensions and metric.
         detail = saved.metric_detail
     else:
         detail_result = semantic_tools.metric_record(name=query.metric.name, path=query.metric.path)
@@ -196,8 +188,6 @@ def execute_metric_artifact_query(
     sql = (compiled.metadata or {}).get("sql")
     if not isinstance(sql, str) or not sql.strip():
         raise ValueError("metric engine returned no compiled SQL")
-    if hashlib.sha256(model_path.read_bytes()).hexdigest() != binding["model_revision"]:
-        raise ValueError("semantic model changed while compiling; retry the metric query")
     datasource = binding["datasource"]
     config = getattr(runtime, "config", None)
     db_config = getattr(config, "db_config", None)
