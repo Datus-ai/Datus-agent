@@ -89,6 +89,33 @@ async def test_metric_failure_logs_traceback_only_for_unexpected_errors(
         logger.exception.assert_not_called()
 
 
+@pytest.mark.asyncio
+async def test_dashboard_metric_tools_keep_explicit_request_policy_context(monkeypatch, tmp_path):
+    from datus.tools import func_tool
+    from datus.tools.func_tool import metric_artifact_tools, semantic_tools
+    from datus.utils.exceptions import DatusException
+
+    request_context = {"sql_policy": {"version": "request"}}
+    config_context = {"sql_policy": {"version": "config"}}
+    config = SimpleNamespace(project_root=str(tmp_path), policy_context=config_context)
+    captured = []
+    monkeypatch.setattr(func_tool, "DBFuncTool", lambda **_: object())
+    monkeypatch.setattr(semantic_tools, "SemanticTools", lambda **kwargs: SimpleNamespace(**kwargs))
+
+    def execute(query, *, semantic_tools, policy_context, **_):
+        captured.append(semantic_tools.policy_context_provider())
+        assert policy_context is request_context
+        raise DatusException(ErrorCode.POLICY_DENIED, message="stop after checking the request boundary")
+
+    monkeypatch.setattr(metric_artifact_tools, "execute_metric_artifact_query", execute)
+    query = SimpleNamespace(name="sales", datasource="warehouse", parameter_names=lambda: set())
+    meta = SimpleNamespace(slug="sales", datasource="warehouse", params=[])
+    result = await DashboardService(agent_config=config)._run_metric_query(query, meta, {}, None, request_context)
+    assert result.errorCode == "POLICY_DENIED"
+    assert captured == [request_context]
+    assert config.policy_context is config_context
+
+
 def _write_dashboard(
     project_files_root: Path,
     *,
@@ -135,7 +162,10 @@ def _patch_executor(monkeypatch, *, captured: dict) -> None:
         def __init__(self, *, agent_config, sub_agent_name):
             captured["sub_agent_name"] = sub_agent_name
 
-        def _get_connector(self, datasource):
+        def execution_context(self, connector, datasource):
+            return {"datasource": datasource, "database": "live_database", "schema": "live_schema"}
+
+        def connector_for_datasource_default(self, datasource):
             captured["datasource"] = datasource
             return _FakeConnector()
 
@@ -307,6 +337,11 @@ async def test_run_query_without_published_version_uses_local_template(monkeypat
     assert result.success is True
     assert result.data.row_count == 1
     assert result.data.datasource == "warehouse"
+    assert result.data.execution_context == {
+        "datasource": "warehouse",
+        "database": "live_database",
+        "schema": "live_schema",
+    }
     # The rendered SQL substitutes the param — confirms we read the
     # on-disk ``.sql.j2`` and ran it through ``render_dashboard_template``.
     assert "APAC" in captured["sql"]
@@ -574,7 +609,10 @@ def _patch_failing_executor(monkeypatch, *, exc: Exception | None = None, exec_r
         def __init__(self, *, agent_config, sub_agent_name):
             self.agent_config = agent_config
 
-        def _get_connector(self, datasource):
+        def execution_context(self, connector, datasource):
+            return {"datasource": datasource, "database": "live_database", "schema": "live_schema"}
+
+        def connector_for_datasource_default(self, datasource):
             return _Connector()
 
         def execute_read_enforced(self, sql, connector, *, datasource="", result_format="list", policy_context=None):
@@ -659,7 +697,10 @@ async def test_run_query_datasource_resolution_failure_returns_datasource_unavai
         def __init__(self, *, agent_config, sub_agent_name):
             pass
 
-        def _get_connector(self, datasource):
+        def execution_context(self, connector, datasource):
+            return {"datasource": datasource, "database": "live_database", "schema": "live_schema"}
+
+        def connector_for_datasource_default(self, datasource):
             raise RuntimeError(f"no datasource named {datasource!r}")
 
     import datus.tools.func_tool as func_tool_mod
@@ -842,3 +883,46 @@ async def test_get_detail_skips_malformed_template_meta(tmp_path: Path):
     template_slugs = [t.slug for t in result.data.templates]
     assert "broken" not in template_slugs
     assert "by_region" in template_slugs
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("saved_context", [None, {"datasource": "warehouse", "database": "selected"}])
+async def test_sql_dashboard_legacy_default_and_saved_context_use_the_actual_database(
+    tmp_path, monkeypatch, saved_context
+):
+    import sqlite3
+    from collections import OrderedDict
+
+    from datus.configuration.agent_config import DbConfig
+    from datus.tools import func_tool
+    from datus.tools.db_tools.db_manager import DBManager
+    from datus.tools.func_tool.database import DBFuncTool
+
+    for name, amount in [("configured", 25), ("selected", 999)]:
+        with sqlite3.connect(tmp_path / f"{name}.sqlite") as connection:
+            connection.execute("CREATE TABLE sales(region TEXT, amount INTEGER)")
+            connection.execute("INSERT INTO sales VALUES ('APAC', ?)", (amount,))
+    manager = DBManager(
+        {"warehouse": DbConfig(type="sqlite", path_pattern=str(tmp_path / "*.sqlite"), database="configured")}
+    )
+    tool = object.__new__(DBFuncTool)
+    tool._db_manager = manager
+    tool._default_datasource = "warehouse"
+    tool._default_database = "selected"
+    tool._runtime_db_context = {"datasource": "warehouse", "database": "selected"}
+    tool._execution_context_connectors = OrderedDict()
+    # Route through the real connectors; SQL policy enforcement has separate coverage.
+    tool.execute_read_enforced = lambda sql, connector, **kwargs: connector.execute_query(sql, result_format="list")
+    monkeypatch.setattr(func_tool, "DBFuncTool", lambda **kwargs: tool)
+    dashboard = _write_dashboard(tmp_path)
+    meta = {**_SAMPLE_META, "execution_context": saved_context}
+    (dashboard / "queries/by_region.params.json").write_text(json.dumps(meta))
+    try:
+        result = await DashboardService(agent_config=MagicMock()).run_query(
+            project_files_root=tmp_path, dashboard_slug="demo", query_slug="by_region", params={"region": "APAC"}
+        )
+        assert result.success is True, result.errorMessage
+        assert result.data.rows == [{"region": "APAC", "amount": 25 if saved_context is None else 999}]
+        assert result.data.execution_context["database"] == ("configured" if saved_context is None else "selected")
+    finally:
+        manager.close()

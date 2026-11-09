@@ -101,13 +101,13 @@ agent:
   agentic_nodes:
     gen_visual_report:
       model: claude              # Optional: defaults to the configured model
-      max_turns: 30              # Optional: defaults to 30
+      max_turns: 100              # Optional: defaults to 100
 ```
 
 | Parameter | Required | Description | Default |
 |-----------|----------|-------------|---------|
 | `model` | No | LLM model to use | Configured default |
-| `max_turns` | No | Maximum agent iterations before the run stops | 30 |
+| `max_turns` | No | Maximum agent iterations before the run stops | 100 |
 
 ## Tips for Better Prompts
 

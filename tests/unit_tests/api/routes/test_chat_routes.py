@@ -394,6 +394,37 @@ class TestChatRouteAcceptance:
     """Deterministic Chat API entrance coverage for built-in subagent routing."""
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("request_limits", [{}, {"max_turns": 2}, {"max_turns": 100}])
+    async def test_feedback_preserves_explicit_turn_limit(self, request_limits):
+        """Feedback conversion preserves whether the caller supplied a limit."""
+        from datus.api.models.cli_models import FeedbackChatInput
+        from datus.api.routes.chat_routes import stream_chat_feedback
+
+        async def fake_chat_stream(*args, **kwargs):
+            yield SSEEvent(
+                id=1,
+                event="end",
+                data=SSEEndData(session_id="feedback-limit", total_events=1, action_count=0, duration=0.01),
+            )
+
+        svc = _mock_svc_with_nodes()
+        svc.chat.stream_chat = MagicMock(side_effect=fake_chat_stream)
+        request = FeedbackChatInput(
+            source_session_id="chat_session_source",
+            reaction_emoji="thumbsup",
+            reference_msg="A useful answer",
+            **request_limits,
+        )
+
+        response = await stream_chat_feedback(request, svc, MagicMock(user_id="user-1"), MagicMock())
+        chunks = [chunk async for chunk in response.body_iterator]
+
+        forwarded = svc.chat.stream_chat.call_args.args[0]
+        assert ("max_turns" in forwarded.model_fields_set) == ("max_turns" in request_limits)
+        assert forwarded.max_turns == request.max_turns
+        assert chunks
+
+    @pytest.mark.asyncio
     async def test_stream_chat_routes_gen_sql_to_service_sse(self):
         async def fake_chat_stream(*args, **kwargs):
             yield SSEEvent(id=1, event="session", data=SSESessionData(session_id="gen_sql_acceptance"))

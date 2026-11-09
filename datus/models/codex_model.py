@@ -4,6 +4,7 @@
 
 """Codex model implementation using OAuth authentication and Responses API."""
 
+import asyncio
 import base64
 import json
 import os
@@ -540,6 +541,9 @@ class CodexModel(LLMBaseModel):
         **kwargs,
     ) -> Dict:
         """Generate response with tool support via the Codex Responses API."""
+        from datus.cli.provider_model_catalog import resolve_model_details
+
+        await asyncio.to_thread(resolve_model_details)
         self._refresh_client_token()
         responses_model = self._get_responses_model()
 
@@ -638,6 +642,9 @@ class CodexModel(LLMBaseModel):
         message insertion without any error — the queue then only drains at the
         run boundary via the chat layer's auto-continuation.
         """
+        from datus.cli.provider_model_catalog import resolve_model_details
+
+        await asyncio.to_thread(resolve_model_details)
         if action_history_manager is None:
             action_history_manager = ActionHistoryManager()
 
@@ -1058,6 +1065,7 @@ class CodexModel(LLMBaseModel):
            from the OpenRouter cache that carry a provider prefix
         3. Longest prefix match from providers.yml
         """
+        from datus.cli.provider_model_catalog import model_spec_prefix_matches
         from datus.models.openai_compatible import _load_model_specs
 
         specs = _load_model_specs()
@@ -1077,7 +1085,9 @@ class CodexModel(LLMBaseModel):
         for spec_model, spec in specs.items():
             if not isinstance(spec, dict) or not isinstance(spec.get(field), int):
                 continue
-            if self.model_name.startswith(spec_model) and (best_key is None or len(spec_model) > len(best_key)):
+            if model_spec_prefix_matches(self.model_name, spec_model) and (
+                best_key is None or len(spec_model) > len(best_key)
+            ):
                 best_key = spec_model
         if best_key is None:
             return None

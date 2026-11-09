@@ -835,17 +835,10 @@ class ExplorerService:
         validation failure such as a grain with no time dimension to hang it on
         — returns a structured ``preflight_error`` instead of SQL.
 
-        A metric row policy narrows the query here, before the compile. It has
-        to be here and not at execution time: the policy matches on the
-        datasets a metric reads, and once the runtime has compiled there is
-        only SQL left, where that dataset is no longer visible. The SQL this
-        returns is therefore the query the caller would actually run — which
-        matters because it is also the SQL shown in the preview panel.
-
-        Every caller of this method reaches the runtime by a direct Python call
-        rather than the agent's tool loop, so the transformer that enforces
-        those policies for ``query_metrics`` never wrapped them. ``policy_context``
-        falls back to the one on the config for callers that pin it there.
+        Validate the request policy context, then return business SQL for the
+        SQL-result panel. Its SQL execution endpoint applies the current source
+        policy once. Standalone metric dry-runs still return protected SQL.
+        ``policy_context`` falls back to the one on the config for local callers.
         """
         from datus.api.models.config_models import ErrorCode
         from datus.tools.middleware import ToolTransformDenied
@@ -879,6 +872,9 @@ class ExplorerService:
                 self.sub_agent_name,
                 runtime_db_context_provider=lambda: runtime_db_context,
                 semantic_model_path_provider=self._semantic_model_path_provider,
+                policy_context_provider=lambda: (
+                    policy_context or getattr(self.agent_config, "policy_context", None) or {}
+                ),
             )
             if tools.runtime is None:
                 return Result[MetricPreviewData](
@@ -915,7 +911,7 @@ class ExplorerService:
             # the event loop. dry_run renders SQL and runs the dimension preflight
             # without executing anything.
             func_result = await asyncio.to_thread(
-                tools.query_metrics,
+                tools.compile_metric_for_sql_execution,
                 metrics=[metric_name],
                 dimensions=request.dimensions or [],
                 time_start=request.time_start,

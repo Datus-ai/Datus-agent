@@ -73,7 +73,7 @@ class AskMetricsAgenticNode(AgenticNode):
     ):
         self.execution_mode = execution_mode
         self.configured_node_name = node_name
-        self.max_turns = 50
+        self.max_turns = 100
         if agent_config and hasattr(agent_config, "agentic_nodes") and node_name in agent_config.agentic_nodes:
             agentic_node_config = agent_config.agentic_nodes[node_name]
             if isinstance(agentic_node_config, dict):
@@ -466,6 +466,13 @@ class AskMetricsAgenticNode(AgenticNode):
         input_ref_date = getattr(self.input, "reference_date", None) if self.input else None
         return get_default_current_date(input_ref_date)
 
+    def _system_prompt_snapshot_meta(self, prompt_version: Optional[str]) -> Dict[str, str]:
+        import hashlib
+
+        meta = super()._system_prompt_snapshot_meta(prompt_version)
+        meta["metric_catalog_sha256"] = hashlib.sha256(self.subject_tree_prompt.encode()).hexdigest()
+        return meta
+
     def _get_system_prompt(self, prompt_version: Optional[str] = None) -> str:
         context: Dict[str, Any] = {
             "agent_config": self.agent_config,
@@ -657,6 +664,9 @@ class AskMetricsAgenticNode(AgenticNode):
                 and hasattr(self.semantic_tools, "get_cached_query_metrics_result")
             ):
                 cached_result = self.semantic_tools.get_cached_query_metrics_result(parsed.result_id)
+                if cached_result is None and hasattr(self.semantic_tools, "can_use_query_metrics_preview"):
+                    if not self.semantic_tools.can_use_query_metrics_preview(parsed.result_id):
+                        return {"success": False, "message": "query_metrics result policy scope cannot be verified"}
             sql_query = ""
             if isinstance(cached_result, dict) and cached_result.get("csv"):
                 sql_return = cached_result["csv"]

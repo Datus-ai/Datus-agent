@@ -57,7 +57,7 @@ class NodeType:
     TYPE_EXPLORE = "explore"  # For read-only data exploration and context gathering
     TYPE_GEN_TABLE = "gen_table"  # For wide table generation from JOIN SQL
     TYPE_GEN_JOB = "gen_job"  # For data pipeline jobs: single-database ETL AND cross-database migration
-    TYPE_GEN_SKILL = "gen_skill"  # For interactive skill creation and optimization
+    TYPE_GEN_SKILL = "gen_skill"  # For skill creation, editing, and review
     TYPE_GEN_DASHBOARD = "gen_dashboard"  # For BI dashboard creation and management
     TYPE_SCHEDULER = "scheduler"  # For job scheduler management and monitoring
     TYPE_FEEDBACK = "feedback"  # For conversation feedback analysis and knowledge archival
@@ -112,7 +112,7 @@ class NodeType:
             "Data pipeline job execution: single-database ETL and cross-database migration "
             "(with type mapping, DDL validation, and reconciliation)"
         ),
-        TYPE_GEN_SKILL: "Interactive skill creation and optimization",
+        TYPE_GEN_SKILL: "Skill creation, editing, and review",
         TYPE_GEN_DASHBOARD: "BI dashboard creation and management",
         TYPE_SCHEDULER: "Job scheduler management and monitoring",
         TYPE_FEEDBACK: "Conversation feedback analysis and knowledge archival",

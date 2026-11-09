@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any, Dict, Iterable, Optional
 from unittest.mock import MagicMock
 
@@ -83,7 +84,7 @@ def _basic_catalog() -> Dict[str, Any]:
 class TestProviderScoping:
     @pytest.mark.asyncio
     async def test_only_configured_providers_are_returned(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(models_routes, "load_cached_model_details", lambda: None)
+        monkeypatch.setattr(models_routes, "resolve_model_details", lambda: None)
         monkeypatch.setattr(models_routes, "load_cache_fetched_at", lambda: None)
 
         svc = _make_svc(catalog=_basic_catalog(), available={"openai"})
@@ -98,7 +99,7 @@ class TestProviderScoping:
 
     @pytest.mark.asyncio
     async def test_no_configured_providers_returns_empty(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(models_routes, "load_cached_model_details", lambda: None)
+        monkeypatch.setattr(models_routes, "resolve_model_details", lambda: None)
         monkeypatch.setattr(models_routes, "load_cache_fetched_at", lambda: None)
 
         svc = _make_svc(catalog=_basic_catalog(), available=set())
@@ -110,7 +111,7 @@ class TestProviderScoping:
 
     @pytest.mark.asyncio
     async def test_all_available_returns_every_provider(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(models_routes, "load_cached_model_details", lambda: None)
+        monkeypatch.setattr(models_routes, "resolve_model_details", lambda: None)
         monkeypatch.setattr(models_routes, "load_cache_fetched_at", lambda: None)
 
         svc = _make_svc(catalog=_basic_catalog())
@@ -128,6 +129,35 @@ class TestProviderScoping:
 
 class TestCacheMetadata:
     @pytest.mark.asyncio
+    async def test_catalog_refresh_runs_off_event_loop(self, monkeypatch):
+        def resolve():
+            with pytest.raises(RuntimeError):
+                asyncio.get_running_loop()
+            return {"openai": [{"id": "gpt-4o", "context_length": 256000, "max_tokens": 32768}]}
+
+        monkeypatch.setattr(models_routes, "resolve_model_details", resolve)
+        monkeypatch.setattr(models_routes, "load_cache_fetched_at", lambda: None)
+        result = await list_models(_make_svc(catalog=_basic_catalog(), available={"openai"}))
+        assert result.data.models[0].context_length == 256000
+
+    @pytest.mark.asyncio
+    async def test_resolved_output_limit_supersedes_local_default(self, monkeypatch):
+        monkeypatch.setattr(
+            models_routes,
+            "resolve_model_details",
+            lambda: {"openai": [{"id": "gpt-4o", "context_length": 256000, "max_tokens": 32768}]},
+        )
+        monkeypatch.setattr(models_routes, "load_cache_fetched_at", lambda: None)
+        result = await list_models(_make_svc(catalog=_basic_catalog(), available={"openai"}))
+        model = result.data.models[0]
+        assert model.context_length == 256000
+        assert model.max_tokens == 32768
+
+    def test_numeric_version_does_not_match_older_model_spec(self):
+        catalog = {"model_specs": {"glm-5": {"context_length": 200000}}}
+        assert models_routes._model_spec(catalog, "glm-5.3") == {}
+
+    @pytest.mark.asyncio
     async def test_pricing_and_context_length_pass_through(self, monkeypatch: pytest.MonkeyPatch) -> None:
         cache = {
             "openai": [
@@ -139,7 +169,7 @@ class TestCacheMetadata:
                 }
             ]
         }
-        monkeypatch.setattr(models_routes, "load_cached_model_details", lambda: cache)
+        monkeypatch.setattr(models_routes, "resolve_model_details", lambda: cache)
         monkeypatch.setattr(models_routes, "load_cache_fetched_at", lambda: "2026-04-21T07:15:48Z")
 
         svc = _make_svc(catalog=_basic_catalog(), available={"openai"})
@@ -159,7 +189,7 @@ class TestCacheMetadata:
 
     @pytest.mark.asyncio
     async def test_cache_absent_uses_providers_yml_models(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(models_routes, "load_cached_model_details", lambda: None)
+        monkeypatch.setattr(models_routes, "resolve_model_details", lambda: None)
         monkeypatch.setattr(models_routes, "load_cache_fetched_at", lambda: None)
 
         svc = _make_svc(catalog=_basic_catalog(), available={"claude"})
@@ -182,7 +212,7 @@ class TestCacheMetadata:
         lacks the field."""
         monkeypatch.setattr(
             models_routes,
-            "load_cached_model_details",
+            "resolve_model_details",
             lambda: {"kimi": [{"id": "kimi-k2-0711-preview"}]},
         )
         monkeypatch.setattr(models_routes, "load_cache_fetched_at", lambda: None)
@@ -208,7 +238,7 @@ class TestCacheMetadata:
     async def test_unknown_slug_returns_null_context_and_pricing(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(
             models_routes,
-            "load_cached_model_details",
+            "resolve_model_details",
             lambda: {"openai": [{"id": "brand-new-slug"}]},
         )
         monkeypatch.setattr(models_routes, "load_cache_fetched_at", lambda: "2026-04-21T00:00:00Z")
@@ -227,7 +257,7 @@ class TestCacheMetadata:
     async def test_pricing_with_only_prompt_is_preserved(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(
             models_routes,
-            "load_cached_model_details",
+            "resolve_model_details",
             lambda: {"openai": [{"id": "gpt-4o", "pricing": {"prompt": "0.0000025"}}]},
         )
         monkeypatch.setattr(models_routes, "load_cache_fetched_at", lambda: None)
@@ -251,7 +281,7 @@ class TestCacheCatalogInterplay:
         must not leak into the response."""
         monkeypatch.setattr(
             models_routes,
-            "load_cached_model_details",
+            "resolve_model_details",
             lambda: {
                 "openai": [{"id": "gpt-4o", "context_length": 128000}],
                 "claude": [{"id": "claude-ghost"}],
@@ -273,7 +303,7 @@ class TestCacheCatalogInterplay:
         """If cache has openai but not claude, claude still appears via yaml models."""
         monkeypatch.setattr(
             models_routes,
-            "load_cached_model_details",
+            "resolve_model_details",
             lambda: {"openai": [{"id": "gpt-4o"}]},
         )
         monkeypatch.setattr(models_routes, "load_cache_fetched_at", lambda: "2026-04-21T00:00:00Z")
@@ -296,7 +326,7 @@ class TestCacheCatalogInterplay:
 class TestDefensiveParsing:
     @pytest.mark.asyncio
     async def test_provider_catalog_not_a_dict_returns_empty(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(models_routes, "load_cached_model_details", lambda: None)
+        monkeypatch.setattr(models_routes, "resolve_model_details", lambda: None)
         monkeypatch.setattr(models_routes, "load_cache_fetched_at", lambda: None)
 
         svc = MagicMock()
@@ -313,7 +343,7 @@ class TestDefensiveParsing:
 
     @pytest.mark.asyncio
     async def test_provider_meta_without_models_is_skipped(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(models_routes, "load_cached_model_details", lambda: None)
+        monkeypatch.setattr(models_routes, "resolve_model_details", lambda: None)
         monkeypatch.setattr(models_routes, "load_cache_fetched_at", lambda: None)
 
         catalog = {
@@ -331,7 +361,7 @@ class TestDefensiveParsing:
     async def test_invalid_entry_in_cache_is_skipped(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(
             models_routes,
-            "load_cached_model_details",
+            "resolve_model_details",
             lambda: {"openai": ["not-a-dict", {"id": ""}, {"id": "gpt-4o"}]},  # type: ignore[list-item]
         )
         monkeypatch.setattr(models_routes, "load_cache_fetched_at", lambda: "2026-04-21T00:00:00Z")
@@ -354,7 +384,7 @@ def _custom_model(model: str, type_: str = "openai") -> ModelConfig:
 class TestCustomModels:
     @pytest.mark.asyncio
     async def test_custom_models_are_appended(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(models_routes, "load_cached_model_details", lambda: None)
+        monkeypatch.setattr(models_routes, "resolve_model_details", lambda: None)
         monkeypatch.setattr(models_routes, "load_cache_fetched_at", lambda: None)
 
         custom = {
@@ -374,7 +404,7 @@ class TestCustomModels:
 
     @pytest.mark.asyncio
     async def test_custom_models_pick_up_model_specs(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(models_routes, "load_cached_model_details", lambda: None)
+        monkeypatch.setattr(models_routes, "resolve_model_details", lambda: None)
         monkeypatch.setattr(models_routes, "load_cache_fetched_at", lambda: None)
 
         custom = {"my-ds": _custom_model("deepseek-chat", "deepseek")}
@@ -389,7 +419,7 @@ class TestCustomModels:
 
     @pytest.mark.asyncio
     async def test_empty_custom_models_no_custom_provider(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(models_routes, "load_cached_model_details", lambda: None)
+        monkeypatch.setattr(models_routes, "resolve_model_details", lambda: None)
         monkeypatch.setattr(models_routes, "load_cache_fetched_at", lambda: None)
 
         svc = _make_svc(catalog=_basic_catalog(), available=set(), custom_models={})
@@ -400,7 +430,7 @@ class TestCustomModels:
 
     @pytest.mark.asyncio
     async def test_custom_and_provider_models_coexist(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(models_routes, "load_cached_model_details", lambda: None)
+        monkeypatch.setattr(models_routes, "resolve_model_details", lambda: None)
         monkeypatch.setattr(models_routes, "load_cache_fetched_at", lambda: None)
 
         custom = {"my-ds": _custom_model("deepseek-chat", "deepseek")}
@@ -426,7 +456,7 @@ class TestCustomModels:
 class TestCurrentModel:
     @pytest.mark.asyncio
     async def test_provider_target_takes_priority(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(models_routes, "load_cached_model_details", lambda: None)
+        monkeypatch.setattr(models_routes, "resolve_model_details", lambda: None)
         monkeypatch.setattr(models_routes, "load_cache_fetched_at", lambda: None)
 
         custom = {"my-ds": _custom_model("deepseek-chat", "deepseek")}
@@ -444,7 +474,7 @@ class TestCurrentModel:
 
     @pytest.mark.asyncio
     async def test_custom_target_used_when_no_provider_target(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(models_routes, "load_cached_model_details", lambda: None)
+        monkeypatch.setattr(models_routes, "resolve_model_details", lambda: None)
         monkeypatch.setattr(models_routes, "load_cache_fetched_at", lambda: None)
 
         custom = {"my-ds": _custom_model("deepseek-chat", "deepseek")}
@@ -460,7 +490,7 @@ class TestCurrentModel:
 
     @pytest.mark.asyncio
     async def test_fallback_to_first_custom_model(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(models_routes, "load_cached_model_details", lambda: None)
+        monkeypatch.setattr(models_routes, "resolve_model_details", lambda: None)
         monkeypatch.setattr(models_routes, "load_cache_fetched_at", lambda: None)
 
         custom = {"alpha": _custom_model("gpt-4", "openai")}
@@ -475,7 +505,7 @@ class TestCurrentModel:
 
     @pytest.mark.asyncio
     async def test_fallback_to_first_provider_model(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(models_routes, "load_cached_model_details", lambda: None)
+        monkeypatch.setattr(models_routes, "resolve_model_details", lambda: None)
         monkeypatch.setattr(models_routes, "load_cache_fetched_at", lambda: None)
 
         svc = _make_svc(catalog=_basic_catalog(), available={"openai"})
@@ -485,7 +515,7 @@ class TestCurrentModel:
 
     @pytest.mark.asyncio
     async def test_no_models_returns_none(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(models_routes, "load_cached_model_details", lambda: None)
+        monkeypatch.setattr(models_routes, "resolve_model_details", lambda: None)
         monkeypatch.setattr(models_routes, "load_cache_fetched_at", lambda: None)
 
         svc = _make_svc(catalog=_basic_catalog(), available=set())

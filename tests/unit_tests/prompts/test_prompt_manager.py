@@ -45,6 +45,28 @@ def reset_context_home():
 
 
 class TestPromptManager:
+    @pytest.mark.parametrize(
+        "reference",
+        [
+            "{% include 'child.j2' %}",
+            "{% import 'child.j2' as child %}",
+            "{% extends 'child.j2' %}",
+            "{% include chosen %}",
+        ],
+    )
+    def test_fingerprint_invalidates_when_nested_template_changes(self, tmp_path, reference):
+        manager = _make_manager(tmp_path)
+        _write_template(manager.default_templates_dir, "parent", "1.0", reference)
+        child = manager.default_templates_dir / "child.j2"
+        child.write_text("{% include 'leaf.j2' %}")
+        leaf = manager.default_templates_dir / "leaf.j2"
+        leaf.write_text("old rules")
+        before = manager.template_fingerprint("parent", "1.0")
+        leaf.write_text("new rules")
+        after = manager.template_fingerprint("parent", "1.0")
+        assert before != after
+        assert manager.template_fingerprint("parent", "1.0") == after
+
     def test_user_templates_dir_uses_explicit_path_manager(self, tmp_path):
         path_manager = DatusPathManager(tmp_path / "tenant_home")
         manager = _make_manager(tmp_path, path_manager=path_manager)

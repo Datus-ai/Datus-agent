@@ -24,7 +24,7 @@ LLM selection uses a two-tier system. Most users only need the provider-level co
 
 #### Provider-Level Configuration (Preferred)
 
-Configure credentials under `agent.providers.<name>`. Available models and metadata are loaded from `conf/providers.yml` automatically. Use the [`/model`](../cli/other_commands.md#model) slash command in the CLI to switch between providers and models interactively.
+Configure credentials under `agent.providers.<name>`. Available models and metadata are refreshed automatically from OpenRouter, with `conf/providers.yml` as an offline fallback. Use the [`/model`](../cli/other_commands.md#model) slash command in the CLI to switch between providers and models interactively.
 
 ```yaml
 agent:
@@ -150,14 +150,29 @@ existing configurations do not need new fields:
 | Setting | When omitted |
 | --- | --- |
 | `context_length` | Use existing model specifications or the provider catalogue; fall back to a `1048576` (1M) token budget if unknown |
-| `max_tokens` | Use the model's output specification; fall back to `8192` if unknown. Transports with an output cap also leave room for input and the safety margin, so small windows may get a lower default |
+| `max_tokens` | Retain the known output default, or use `128000` (128K) if unknown, constrained by the discovered output ceiling. Transports with an output cap also leave room for input and the safety margin, so small windows may get a lower default |
 | `tokenizer_ref` | Use LiteLLM counting for known OpenAI models; otherwise reserve UTF-8 bytes, including for private aliases, without downloading a tokenizer |
+
+Model selection and runtime capacity checks share an automatically refreshed
+OpenRouter catalog. On first use, Datus reads the cache under the current Agent
+home (`cache/openrouter_models.json`) or fetches the public catalog with an
+8-second timeout. Metadata stays fresh for 10 minutes; failed refreshes retain
+stale data and wait 60 seconds before retrying. Both context and output limits
+are retained. Async generation and model listing refresh metadata in a worker
+thread; capacity lookups on the event loop only read the current cache snapshot.
+Explicit settings take priority over catalog metadata, with
+`providers.yml` and LiteLLM specifications as offline fallbacks. Numeric model
+versions do not inherit an older version's limits through prefix matching.
+An advertised output ceiling does not automatically increase the default output
+budget: known defaults are retained, and newly discovered models keep the
+`128000` default, lowered when the catalog or remaining context requires it.
+Public catalog limits describe the catalog's serving provider; private or native
+endpoints may require explicit limits matching their deployment.
 
 The fallback window is a local budget assumption, not automatic detection of
 server capacity. Private deployments can override any of these settings. Set
 the actual limit for a smaller window; a larger configured window or a matching
 tokenizer can improve capacity utilization:
-
 ```yaml
 agent:
   models:
@@ -184,6 +199,12 @@ UTF-8 byte estimates can trigger compaction earlier and are not measured provide
 token usage. Output caps above a known maximum are rejected explicitly.
 Remote image URLs and opaque file inputs require extracted content or a provider
 token count; counting only their URL or file ID cannot establish request capacity.
+
+In the OpenAI-compatible and native OpenAI Responses paths, an explicit output-limit
+termination is reported as a failure. Tool runs retain received assistant text
+and usage in the failed result and session; reasoning is not returned as the answer,
+and incomplete tool calls are not executed. Datus does not automatically retry these
+runs. Continue with the existing session when more output is needed.
 
 Large tool results are preserved in the session archive; the model receives a
 bounded view and can continue with `read_tool_result`. Original Python tool
@@ -429,7 +450,6 @@ Dosi is the built-in semantic engine and needs no engine selection. An old `agen
 ### `scoped_context`
 
 `scoped_context` limits what the subagent should see from shared metadata and knowledge:
-
 ```yaml
 scoped_context:
   datasource: finance
@@ -484,6 +504,23 @@ agent:
 ```
 
 > Context compaction (automatic minor/major passes that keep a long session within the model's context window) is configured under `agent.compact`. See [Context Compaction](compact.md) for how it works and the tunable parameters.
+
+## SQL Read-Only Mode {#sql-read-only}
+
+Set `agent.sql_read_only` to enforce read-only SQL across CLI, API, MCP and workflow execution:
+
+```yaml title="agent.yml"
+agent:
+  sql_read_only: true  # default: false
+```
+
+This blocks SQL writes, DDL and cross-datasource result transfers regardless of the
+interactive permission profile. Statements that contain writes inside a CTE or
+`EXPLAIN` are also refused. The setting requires no plugin and cannot be disabled
+by a request once enabled for the deployment.
+
+For interactive confirmation of individual tool calls, see
+[direct tool execution](../cli/execution_command.md).
 
 ## Complete Configuration Example
 

@@ -62,7 +62,7 @@ YAML 写入成功后，generation hook 会自动把它同步到知识库。
 agentic_nodes:
   gen_sql_summary:
     model: deepseek      # 可选：默认使用已配置的模型
-    max_turns: 30        # 可选：默认为 30
+    max_turns: 100        # 可选：默认为 100
 ```
 
 **内置配置**（自动启用）：

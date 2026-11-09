@@ -105,6 +105,7 @@ class SemanticModelingAgenticNode(SemanticAuthoringAgenticNode):
             return
 
         self.tools = []
+        self._setup_semantic_tools()
         self._setup_osi_target_tools()
         self._setup_db_tools(expose_tools=False)
         if self.db_func_tool is not None:
@@ -114,7 +115,6 @@ class SemanticModelingAgenticNode(SemanticAuthoringAgenticNode):
         self._setup_generation_tools()
         self._setup_filesystem_tools()
         self._setup_semantic_plan_file_tool()
-        self._setup_semantic_tools()
         if self.authoring_scope == "full":
             self._setup_semantic_verification_tools()
         if self.execution_mode == "interactive":
@@ -443,7 +443,7 @@ class SemanticModelingAgenticNode(SemanticAuthoringAgenticNode):
             document = yaml.safe_load(content.decode("utf-8"))
         except (UnicodeDecodeError, yaml.YAMLError) as exc:
             raise RuntimeError(f"Cannot inspect semantic-model metrics for scope enforcement: {exc}") from exc
-        models = document.get("semantic_model") if isinstance(document, dict) else None
+        models = [document] if isinstance(document, dict) and "datasets" in document else None
         if not isinstance(models, list) or len(models) != 1 or not isinstance(models[0], dict):
             return []
         metrics = models[0].get("metrics") or []

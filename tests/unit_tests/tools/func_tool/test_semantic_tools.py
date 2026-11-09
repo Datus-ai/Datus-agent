@@ -20,13 +20,13 @@ from datus.tools.semantic_tools.models import (
     AttributionWindow,
     QueryResult,
 )
-from datus.utils.query_result_text import parse_query_result_text
+from datus.utils.query_result_text import QueryResultText, parse_query_result_text
 
 
 def _text(result):
     """An executed query's result text, read back."""
     parsed = parse_query_result_text(result.result)
-    assert parsed is not None, result.result
+    assert isinstance(parsed, QueryResultText), result.result
     return parsed
 
 
@@ -102,6 +102,8 @@ def semantic_tools():
         mock_config = Mock()
         mock_config.active_model.return_value.model = "gpt-4o"
         mock_config.current_datasource = "ns1"
+        mock_config.active_plugin_names.return_value = set()
+        mock_config.policy_context = {}
         mock_config.runtime_db_context.return_value = {}
         mock_config.current_db_config.return_value = None
         mock_config.path_manager.semantic_model_path.return_value = "/tmp/models"
@@ -114,6 +116,7 @@ def mock_runtime(semantic_tools):
     """Set up a mock Dosi runtime on the SemanticTools instance."""
     runtime = Mock()
     semantic_tools._runtime = runtime
+    semantic_tools._runtime_context_key = None
     return runtime
 
 
@@ -1317,6 +1320,15 @@ class TestAvailableTools:
 
 
 class TestRuntimeDbContext:
+    def test_empty_schema_reaches_the_compiler_without_reusing_configured_defaults(self, semantic_tools):
+        semantic_tools.agent_config.current_db_config.return_value = DbConfig(
+            type="postgresql", database="analytics", schema="tenant_a"
+        )
+        semantic_tools.set_runtime_db_context({"database": "analytics", "schema": ""})
+        with patch("datus.tools.func_tool.semantic_tools.DosiRuntime") as runtime:
+            assert semantic_tools.runtime is runtime.return_value
+        assert "schema" not in runtime.call_args.args[0].db_config
+
     @pytest.mark.parametrize("db_type", ["mysql", "postgresql"])
     @pytest.mark.parametrize("auth", [{"auth_mode": "iam"}, {"secret_ref": "test/database"}])
     def test_runtime_preserves_aurora_profile(self, semantic_tools, db_type, auth):
@@ -2032,7 +2044,7 @@ class TestValidateSemantic:
     def test_records_compiled_evidence_without_exposing_descriptions(self, semantic_tools_with_runtime, tmp_path):
         tool, _ = semantic_tools_with_runtime
         artifact = tmp_path / "commerce.yml"
-        artifact.write_text("semantic_model: commerce\n", encoding="utf-8")
+        artifact.write_text("name: commerce\n", encoding="utf-8")
         calls = {}
         evidence = GenerationEvidence()
         tool.generation_evidence = evidence
@@ -2237,7 +2249,7 @@ class TestValidateSemantic:
     def test_records_target_artifact_validation_evidence(self, semantic_tools_with_runtime, tmp_path):
         tool, _ = semantic_tools_with_runtime
         artifact = tmp_path / "commerce.yml"
-        artifact.write_text("semantic_model: commerce\n", encoding="utf-8")
+        artifact.write_text("name: commerce\n", encoding="utf-8")
         evidence = GenerationEvidence()
         tool.generation_evidence = evidence
 
@@ -2271,7 +2283,7 @@ class TestValidateSemantic:
     def test_resolves_target_artifact_validation_evidence(self, semantic_tools_with_runtime, tmp_path):
         tool, _ = semantic_tools_with_runtime
         artifact = tmp_path / "commerce.yml"
-        artifact.write_text("semantic_model: commerce\n", encoding="utf-8")
+        artifact.write_text("name: commerce\n", encoding="utf-8")
 
         with patch(
             "datus.agent.node.semantic_authoring.discover_osi_semantic_models",
@@ -2291,7 +2303,7 @@ class TestValidateSemantic:
     def test_dosi_resolves_osi_target_artifact_evidence(self, semantic_tools_with_runtime, tmp_path):
         tool, _ = semantic_tools_with_runtime
         artifact = tmp_path / "commerce.yml"
-        artifact.write_text("semantic_model: commerce\n", encoding="utf-8")
+        artifact.write_text("name: commerce\n", encoding="utf-8")
 
         with patch(
             "datus.agent.node.semantic_authoring.discover_osi_semantic_models",
@@ -2662,6 +2674,8 @@ def test_query_metrics_exposes_warehouse_cancellation_diagnostics(semantic_tools
 
 def _ontology_config(tmp_path=None):
     config = Mock()
+    config.active_plugin_names.return_value = set()
+    config.policy_context = {}
     config.active_model.return_value.model = "gpt-4o"
     config.current_datasource = "flights_db"
     config.current_db_config.return_value = None
@@ -2669,6 +2683,219 @@ def _ontology_config(tmp_path=None):
     config.path_manager.semantic_model_path.return_value = "/tmp/models/flights_db"
     config.path_manager.ontology_dir = "/tmp/subject/ontology"
     return config
+
+
+def test_cached_results_are_scoped_to_effective_policy_and_namespace(semantic_tools, monkeypatch):
+    bound = SimpleNamespace(snapshot_json='{"version":"tenant-1"}', context_json='{"database":"sales"}')
+    monkeypatch.setattr(semantic_tools, "_bind_dosi_read", lambda: bound)
+    key = semantic_tools._cache_query_metrics_result(["revenue"], [{"revenue": 100}])
+    assert semantic_tools.get_cached_query_metrics_result(key) is not None
+    bound.snapshot_json = '{"version":"tenant-2"}'
+    assert semantic_tools.get_cached_query_metrics_result(key) is None
+    bound.snapshot_json = '{"version":"tenant-1"}'
+    bound.context_json = '{"database":"other"}'
+    assert semantic_tools.get_cached_query_metrics_result(key) is None
+
+
+def test_cache_uses_execution_scope_without_rebinding(semantic_tools, monkeypatch):
+    def unexpected_rebind():
+        raise AssertionError("execution already supplied the policy scope")
+
+    monkeypatch.setattr(semantic_tools, "_bind_dosi_read", unexpected_rebind)
+    key = semantic_tools._cache_query_metrics_result(
+        ["revenue"], [{"revenue": 100}], {"_policy_scope": "execution-scope"}
+    )
+    assert semantic_tools._query_metrics_result_cache[key]["policy_scope"] == "execution-scope"
+
+
+@pytest.mark.parametrize("failure", ["denied", "namespace"])
+def test_cached_results_expire_when_policy_binding_cannot_be_verified(semantic_tools, monkeypatch, failure):
+    from datus.utils.exceptions import DatusException, ErrorCode
+
+    key = semantic_tools._cache_query_metrics_result(["revenue"], [{"revenue": 100}], {"_policy_scope": "old"})
+
+    def fail_binding():
+        if failure == "denied":
+            raise DatusException(ErrorCode.POLICY_DENIED, message="required connector unavailable")
+        raise ValueError("execution namespace changed")
+
+    monkeypatch.setattr(semantic_tools, "_bind_dosi_read", fail_binding)
+    assert semantic_tools.get_cached_query_metrics_result(key) is None
+    result = semantic_tools.get_query_metrics_result(key)
+    assert not result.success
+    assert "Unknown or expired" in result.error
+
+
+@pytest.mark.parametrize("actual_database", ["selected", "configured_default"])
+def test_dosi_policy_metadata_uses_selected_database_and_rejects_mismatch(semantic_tools, monkeypatch, actual_database):
+    from datus.configuration.agent_config import DbConfig
+
+    bound = SimpleNamespace(context_json=json.dumps({"database": actual_database, "schema": "sales"}))
+    runtime = SimpleNamespace(requires_bound_read=lambda _: True, bind_read=lambda **_: bound)
+    monkeypatch.setattr("datus.tools.policy_runtime.PolicyRuntime", lambda _: runtime)
+    manager = Mock()
+    manager.get_conn.return_value.dialect = "postgres"
+    semantic_tools.agent_config.datasource_configs = {"warehouse": DbConfig(type="postgres", schema="public")}
+    monkeypatch.setattr("datus.tools.db_tools.db_manager.db_manager_instance", lambda _: manager)
+    scoped_configs = []
+    scoped_manager = Mock()
+    monkeypatch.setattr(
+        "datus.tools.db_tools.db_manager.DBManager", lambda configs: scoped_configs.append(configs) or scoped_manager
+    )
+    monkeypatch.setattr(
+        semantic_tools,
+        "_runtime_db_context",
+        lambda: {"datasource": "warehouse", "database": "selected", "schema": "sales"},
+    )
+    if actual_database == "selected":
+        assert semantic_tools._bind_dosi_read() is bound
+    else:
+        from datus.utils.exceptions import DatusException
+
+        with pytest.raises(DatusException, match="does not match the policy metadata connection"):
+            semantic_tools._bind_dosi_read()
+    manager.get_conn.assert_called_once_with("warehouse", "selected")
+    scoped_manager.get_conn.assert_called_once_with("warehouse", "selected")
+    assert scoped_configs[0]["warehouse"].schema == "sales"
+    assert semantic_tools.agent_config.datasource_configs["warehouse"].schema == "public"
+
+
+def test_dosi_policy_uses_trusted_request_context(semantic_tools, monkeypatch):
+    from types import MappingProxyType
+
+    contexts = []
+    runtime = SimpleNamespace(requires_bound_read=lambda value: contexts.append(value) or False)
+    monkeypatch.setattr("datus.tools.policy_runtime.PolicyRuntime", lambda _: runtime)
+    semantic_tools.agent_config.policy_context = {"tenant_id": "configured"}
+    semantic_tools._policy_context_provider = lambda: MappingProxyType(
+        {"tenant_id": "request", "sql_policy": {"version": "v2"}}
+    )
+    assert semantic_tools._bind_dosi_read() is None
+    assert contexts == [{"tenant_id": "request", "sql_policy": {"version": "v2"}}]
+
+
+@pytest.mark.parametrize("context", ["invalid", ["tenant_id", 42]])
+def test_dosi_policy_rejects_invalid_request_context(semantic_tools, context):
+    from datus.utils.exceptions import DatusException
+
+    semantic_tools._policy_context_provider = lambda: context
+    with pytest.raises(DatusException, match="Policy context must be a mapping"):
+        semantic_tools._bind_dosi_read()
+
+
+def test_evicted_preview_requires_its_original_policy_scope(semantic_tools, monkeypatch):
+    scope = ["first"]
+    monkeypatch.setattr(semantic_tools, "_policy_cache_scope", lambda: scope[0])
+    monkeypatch.setattr(semantic_tools, "MAX_QUERY_METRICS_RESULT_CACHE_SIZE", 1)
+    first = semantic_tools._cache_query_metrics_result(["revenue"], [{"revenue": 1}])
+    semantic_tools._cache_query_metrics_result(["revenue"], [{"revenue": 2}])
+    assert semantic_tools.get_cached_query_metrics_result(first) is None
+    assert semantic_tools.can_use_query_metrics_preview(first)
+    scope[0] = "second"
+    assert not semantic_tools.can_use_query_metrics_preview(first)
+    assert not semantic_tools.can_use_query_metrics_preview("unknown")
+
+
+def test_dosi_sqlite_policy_uses_main_namespace_instead_of_file_stem(semantic_tools, monkeypatch):
+    bound = SimpleNamespace(context_json=json.dumps({"database": "main", "catalog": None, "schema": None}))
+    runtime = SimpleNamespace(requires_bound_read=lambda _: True, bind_read=lambda **_: bound)
+    monkeypatch.setattr("datus.tools.policy_runtime.PolicyRuntime", lambda _: runtime)
+    connector = SimpleNamespace(dialect="sqlite")
+    manager = SimpleNamespace(get_conn=lambda *_: connector)
+    monkeypatch.setattr("datus.tools.db_tools.db_manager.db_manager_instance", lambda _: manager)
+    monkeypatch.setattr(
+        semantic_tools, "_runtime_db_context", lambda: {"datasource": "warehouse", "database": "file_stem"}
+    )
+    assert semantic_tools._bind_dosi_read() is bound
+
+
+@pytest.mark.parametrize("schema,allowed", [("MAIN", True), ("main", True), ("sales", False)])
+def test_dosi_duckdb_namespace_comparison_uses_live_identifier_rules(semantic_tools, monkeypatch, schema, allowed):
+    import duckdb
+
+    from datus.utils.exceptions import DatusException
+
+    bound = SimpleNamespace(context_json=json.dumps({"database": "memory", "schema": "main"}))
+    runtime = SimpleNamespace(requires_bound_read=lambda _: True, bind_read=lambda **_: bound)
+    monkeypatch.setattr("datus.tools.policy_runtime.PolicyRuntime", lambda _: runtime)
+    with duckdb.connect() as db:
+        connector = SimpleNamespace(
+            dialect="duckdb",
+            execute_query=lambda sql, **_: SimpleNamespace(
+                success=True, sql_return=db.execute(sql).fetch_arrow_table()
+            ),
+        )
+        manager = SimpleNamespace(get_conn=lambda *_: connector)
+        monkeypatch.setattr("datus.tools.db_tools.db_manager.db_manager_instance", lambda _: manager)
+        monkeypatch.setattr(
+            semantic_tools,
+            "_runtime_db_context",
+            lambda: {"datasource": "warehouse", "database": "memory", "schema": schema},
+        )
+        if allowed:
+            assert semantic_tools._bind_dosi_read() is bound
+        else:
+            with pytest.raises(DatusException, match="does not match the policy metadata connection"):
+                semantic_tools._bind_dosi_read()
+
+
+@pytest.mark.parametrize("service_name", ["FREEPDB1", None])
+@pytest.mark.parametrize("actual_database,allowed", [("FREEPDB1", True), ("OTHERPDB", False)])
+def test_dosi_oracle_namespace_uses_the_configured_service_target(
+    semantic_tools, monkeypatch, service_name, actual_database, allowed
+):
+    from datus.configuration.agent_config import DbConfig
+    from datus.utils.exceptions import DatusException
+
+    database = "legacy_alias" if service_name else "FREEPDB1"
+    config = DbConfig(type="oracle", database=database, extra={"service_name": service_name})
+    semantic_tools.agent_config.current_db_config.return_value = config
+    monkeypatch.setattr(
+        "datus.tools.sql_read_context.SqlReadContext",
+        lambda *_: SimpleNamespace(canonical_name=lambda name: name),
+    )
+    bound = SimpleNamespace(context_json=json.dumps({"database": actual_database}))
+    runtime = SimpleNamespace(requires_bound_read=lambda _: True, bind_read=lambda **_: bound)
+    monkeypatch.setattr("datus.tools.policy_runtime.PolicyRuntime", lambda _: runtime)
+    connector = SimpleNamespace(dialect="oracle")
+    manager = SimpleNamespace(get_conn=lambda *_: connector)
+    monkeypatch.setattr("datus.tools.db_tools.db_manager.db_manager_instance", lambda _: manager)
+    monkeypatch.setattr(
+        semantic_tools,
+        "_runtime_db_context",
+        lambda: {"datasource": "warehouse", "database": database},
+    )
+    if allowed:
+        assert semantic_tools._bind_dosi_read() is bound
+    else:
+        # A genuinely different service is still rejected, without relying
+        # on identifier metadata to equate two different connection targets.
+        with pytest.raises(DatusException, match="Dosi database does not match"):
+            semantic_tools._bind_dosi_read()
+
+
+def test_external_metric_compile_uses_the_single_enforcement_handoff(semantic_tools, monkeypatch):
+    runtime = SimpleNamespace(
+        compile_for_sql_execution=AsyncMock(
+            return_value=QueryResult(
+                columns=[],
+                data=[],
+                metadata={"sql": "SELECT SUM(amount) FROM orders"},
+            )
+        ),
+        query_metrics=AsyncMock(return_value=QueryResult(columns=[], data=[], metadata={"sql": "SELECT protected"})),
+    )
+    monkeypatch.setattr(semantic_tools, "_require_runtime", lambda _: (runtime, None))
+    monkeypatch.setattr(semantic_tools, "_query_execution_context", lambda _: {})
+    semantic_tools._warehouse_dry_run_provider = None
+    result = semantic_tools.compile_metric_for_sql_execution(metrics=["revenue"], dry_run=True)
+    assert result.result["metadata"]["sql"] == "SELECT SUM(amount) FROM orders"
+    runtime.compile_for_sql_execution.assert_awaited_once()
+    runtime.query_metrics.assert_not_awaited()
+    displayed = semantic_tools.query_metrics(metrics=["revenue"], dry_run=True)
+    assert displayed.result["metadata"]["sql"] == "SELECT protected"
+    with pytest.raises(ValueError, match="compile-only"):
+        semantic_tools.compile_metric_for_sql_execution(metrics=["revenue"], dry_run=False)
 
 
 def _validation_exception(**fields):
@@ -2706,7 +2933,7 @@ class TestOntologyToolRegistration:
         models_dir.mkdir(parents=True)
         ontology_dir.mkdir(parents=True)
         if plain_model:
-            (models_dir / "flights.yaml").write_text("version: '0.2.0.dev0'\nsemantic_model:\n  - name: flights\n")
+            (models_dir / "flights.yaml").write_text("version: '0.2.0.dev0'\nname: flights\n")
         (ontology_dir / "flights.mapping.yaml").write_text(
             "version: 0.2.0.dev0\nname: flights_mapping\n"
             "ontology_ref: {name: Flights, document: {version: 0.2.0.dev0, name: Flights, ontology: []}}\n"
@@ -2950,3 +3177,29 @@ class TestSelectRecords:
         assert result.success == 0
         assert result.result["code"] == "value_not_in_domain"
         assert result.result["detail"]["violations"] == violations
+
+
+@pytest.mark.parametrize("dry_run", [False, True])
+@pytest.mark.parametrize("context", [{}, {"datasource": "stale", "database": "stale_db"}])
+def test_query_metrics_reports_the_captured_resolved_runtime_context(
+    semantic_tools, mock_runtime, monkeypatch, dry_run, context
+):
+    semantic_tools.agent_config.runtime_db_context.return_value = context
+    mock_runtime.config = SimpleNamespace(
+        datasource="warehouse", db_config={"catalog": "cat", "database": "analytics", "schema": "tenant_a"}
+    )
+    result = QueryResult(columns=["revenue"], data=[{"revenue": 25}], metadata={"sql": "SELECT 25"})
+
+    def run_query(awaitable):
+        semantic_tools.agent_config.runtime_db_context.return_value = {"datasource": "next", "database": "next_db"}
+        return result
+
+    monkeypatch.setattr("datus.tools.func_tool.semantic_tools._run_async", run_query)
+    response = semantic_tools.query_metrics(metrics=["revenue"], dry_run=dry_run)
+    assert response.success == 1, response.error
+    assert response.execution_context == {
+        "datasource": "warehouse",
+        "catalog": "cat",
+        "database": "analytics",
+        "schema": "tenant_a",
+    }

@@ -635,6 +635,7 @@ class TestExplorerServicePreviewMetric:
         tools_stub = SimpleNamespace(
             runtime=runtime,
             query_metrics=query_metrics,
+            compile_metric_for_sql_execution=query_metrics,
             metric_datasets=lambda: {},
         )
 
@@ -834,6 +835,42 @@ class TestExplorerServicePreviewMetric:
         assert query_metrics.call_args.kwargs["metrics"] == ["revenue"]
         assert query_metrics.call_args.kwargs["dimensions"] == ["region"]
 
+    async def test_native_policy_receives_request_context_without_mutating_shared_config(
+        self, real_agent_config, monkeypatch
+    ):
+        from datus.api.models.explorer_models import MetricPreviewInput
+
+        tools = self._patch_tools(
+            monkeypatch,
+            runtime=MagicMock(),
+            query_metrics=MagicMock(return_value=self._func_result(result={"metadata": {"sql": "SELECT 1"}})),
+        )
+        config_context = real_agent_config.policy_context
+        request_context = {"tenant_id": "request", "sql_policy": {"version": "request-only"}}
+        service = ExplorerService(agent_config=real_agent_config)
+        monkeypatch.setattr(service, "_metric_is_in_scope", lambda _: True)
+        result = await service.preview_metric(MetricPreviewInput(subject_path=["revenue"]), request_context)
+        assert result.success
+        assert tools.kwargs["policy_context_provider"]() == request_context
+        assert real_agent_config.policy_context is config_context
+
+    async def test_preview_uses_external_sql_compile_instead_of_protected_display_dry_run(
+        self, real_agent_config, monkeypatch
+    ):
+        from datus.api.models.explorer_models import MetricPreviewInput
+
+        tools = self._patch_tools(monkeypatch, runtime=MagicMock(), query_metrics=MagicMock())
+        tools.query_metrics.side_effect = AssertionError("display dry-run would protect the handoff twice")
+        tools.compile_metric_for_sql_execution = MagicMock(
+            return_value=self._func_result(result={"metadata": {"sql": "SELECT SUM(amount) FROM orders"}})
+        )
+        service = ExplorerService(agent_config=real_agent_config)
+        result = await service.preview_metric(MetricPreviewInput(subject_path=["revenue"]))
+        assert result.success
+        assert result.data.sql == "SELECT SUM(amount) FROM orders"
+        tools.compile_metric_for_sql_execution.assert_called_once()
+        tools.query_metrics.assert_not_called()
+
     async def test_falls_back_to_data_row_sql(self, real_agent_config, monkeypatch):
         """SQL is recovered from the single data row when metadata omits it."""
         from datus.api.models.explorer_models import MetricPreviewInput
@@ -987,38 +1024,34 @@ class TestExplorerServiceOSIAuthoring:
     """OSI metrics are read/written through the semantic runtime (file source of
     truth), not reconstructed from / written as Legacy YAML."""
 
-    SAMPLE = (
-        "version: 0.2.0.dev0\n"
-        "semantic_model:\n"
-        "  - name: sample_shop\n"
-        "    datasets:\n"
-        "      - name: raw_orders\n"
-        "        source: sample_shop.raw_orders\n"
-        "        primary_key: [id]\n"
-        "        fields:\n"
-        # Dosi will not resolve a column that no dataset declares, so the key
-        # column is a field in its own right rather than only a primary_key.
-        "          - name: id\n"
-        "            expression:\n"
-        "              dialects:\n"
-        "                - dialect: STARROCKS\n"
-        "                  expression: id\n"
-        "          - name: order_total\n"
-        "            expression:\n"
-        "              dialects:\n"
-        "                - dialect: STARROCKS\n"
-        "                  expression: order_total\n"
-        "    metrics:\n"
-        "      - name: daily_order_count\n"
-        "        description: Daily order count.\n"
-        "        expression:\n"
-        "          dialects:\n"
-        "            - dialect: STARROCKS\n"
-        "              expression: COUNT(DISTINCT id)\n"
-        "        custom_extensions:\n"
-        "          - vendor_name: DATUS\n"
-        '            data: \'{"dataset":"raw_orders","subject_path":["operations","daily"]}\'\n'
-    )
+    SAMPLE = """version: 0.2.0.dev0
+name: sample_shop
+datasets:
+  - name: raw_orders
+    source: sample_shop.raw_orders
+    primary_key: [id]
+    fields:
+      - name: id
+        expression:
+          dialects:
+            - dialect: STARROCKS
+              expression: id
+      - name: order_total
+        expression:
+          dialects:
+            - dialect: STARROCKS
+              expression: order_total
+metrics:
+  - name: daily_order_count
+    description: Daily order count.
+    expression:
+      dialects:
+        - dialect: STARROCKS
+          expression: COUNT(DISTINCT id)
+    custom_extensions:
+      - vendor_name: DATUS
+        data: '{\"dataset\":\"raw_orders\",\"subject_path\":[\"operations\",\"daily\"]}'
+"""
 
     def _osi_runtime(self, tmp_path):
         # Dosi is the only supported runtime for this OSI-shaped YAML; it is a
@@ -1052,25 +1085,19 @@ class TestExplorerServiceOSIAuthoring:
         svc = ExplorerService(agent_config=real_agent_config)
         self._wire(svc, monkeypatch, runtime)
         model_file = tmp_path / "sample_shop" / "sample_shop.yml"
-        model_file.write_text(self.SAMPLE.split("    metrics:\n")[0])
+        model_file.write_text(self.SAMPLE.split("metrics:\n")[0])
 
         result = await svc.get_metric(["operations", "daily", "daily_order_count"])
 
         assert result.success is False
         assert "was not found" in result.errorMessage
 
-    @pytest.mark.parametrize("shape", ["flat", "mapping", "list"])
-    async def test_get_metric_returns_osi_native_yaml(self, real_agent_config, tmp_path, monkeypatch, shape):
+    async def test_get_metric_returns_osi_native_yaml(self, real_agent_config, tmp_path, monkeypatch):
         import yaml
 
         runtime = self._osi_runtime(tmp_path)
         model_file = tmp_path / "sample_shop" / "sample_shop.yml"
         document = yaml.safe_load(model_file.read_text())
-        model = document["semantic_model"][0]
-        if shape == "flat":
-            document = {"version": document["version"], **model}
-        elif shape == "mapping":
-            document["semantic_model"] = model
         model_file.write_text(yaml.safe_dump(document))
         svc = ExplorerService(agent_config=real_agent_config)
         self._wire(svc, monkeypatch, runtime)
@@ -1173,7 +1200,7 @@ class TestExplorerServiceOSIAuthoring:
         assert result.success is True, result.errorMessage
         assert synced.get("path")  # KB re-sync was triggered
         on_disk = yaml.safe_load((tmp_path / "sample_shop" / "sample_shop.yml").read_text())
-        names = [m["name"] for m in on_disk["semantic_model"][0]["metrics"]]
+        names = [m["name"] for m in on_disk["metrics"]]
         assert set(names) == {"daily_order_count", "gross_revenue"}
 
     async def test_edit_metric_updates_in_place(self, real_agent_config, tmp_path, monkeypatch):
@@ -1201,7 +1228,7 @@ class TestExplorerServiceOSIAuthoring:
         )
         assert result.success is True, result.errorMessage
         on_disk = yaml.safe_load((tmp_path / "sample_shop" / "sample_shop.yml").read_text())
-        model = on_disk["semantic_model"][0]
+        model = on_disk
         assert model["metrics"][0]["description"] == "Edited desc."
         # Sibling dataset preserved.
         assert model["datasets"][0]["name"] == "raw_orders"
@@ -1231,7 +1258,7 @@ class TestExplorerServiceOSIAuthoring:
         )
         assert result.success is True, result.errorMessage
         on_disk = yaml.safe_load((tmp_path / "sample_shop" / "sample_shop.yml").read_text())
-        assert on_disk["semantic_model"][0]["metrics"] == []
+        assert on_disk["metrics"] == []
 
     async def test_delete_fails_when_dosi_runtime_is_unavailable(self, real_agent_config, tmp_path, monkeypatch):
         """A KB-only delete would let the metric return on the next reconcile."""
@@ -1279,7 +1306,7 @@ class TestExplorerServiceOSIAuthoring:
         runtime = self._osi_runtime(tmp_path)
         source_path = tmp_path / "sample_shop" / "sample_shop.yml"
         document = yaml.safe_load(source_path.read_text())
-        document["semantic_model"][0]["metrics"].append(
+        document["metrics"].append(
             {
                 "name": "double_order_count",
                 "expression": {"dialects": [{"dialect": "STARROCKS", "expression": "COUNT(DISTINCT id) * 2"}]},
@@ -1325,7 +1352,7 @@ class TestExplorerServiceOSIAuthoring:
             EditMetricInput(subject_path=["operations", "daily", "daily_order_count"], yaml=edited)
         )
         assert result.success is True, result.errorMessage
-        assert json.loads(json_path.read_text())["semantic_model"][0]["metrics"][0]["description"] == "Edited desc."
+        assert json.loads(json_path.read_text())["metrics"][0]["description"] == "Edited desc."
 
     async def test_create_metric_rolls_back_on_kb_sync_failure(self, real_agent_config, tmp_path, monkeypatch):
         import yaml
@@ -1353,7 +1380,7 @@ class TestExplorerServiceOSIAuthoring:
         assert result.success is False
         assert "boom" in result.errorMessage
         on_disk = yaml.safe_load((tmp_path / "sample_shop" / "sample_shop.yml").read_text())
-        names = [m["name"] for m in on_disk["semantic_model"][0]["metrics"]]
+        names = [m["name"] for m in on_disk["metrics"]]
         assert "gross_revenue" not in names  # rolled back
 
     async def test_edit_metric_restores_previous_on_kb_sync_failure(self, real_agent_config, tmp_path, monkeypatch):
@@ -1383,7 +1410,7 @@ class TestExplorerServiceOSIAuthoring:
         assert result.success is False
         on_disk = yaml.safe_load((tmp_path / "sample_shop" / "sample_shop.yml").read_text())
         # Edit was reverted to the original description.
-        assert on_disk["semantic_model"][0]["metrics"][0]["description"] == "Daily order count."
+        assert on_disk["metrics"][0]["description"] == "Daily order count."
 
     async def test_edit_metric_restores_previous_when_kb_sync_raises(self, real_agent_config, tmp_path, monkeypatch):
         import yaml
@@ -1404,7 +1431,7 @@ class TestExplorerServiceOSIAuthoring:
         )
         assert result.success is False
         on_disk = yaml.safe_load((tmp_path / "sample_shop" / "sample_shop.yml").read_text())
-        assert on_disk["semantic_model"][0]["metrics"][0]["description"] == "Daily order count."
+        assert on_disk["metrics"][0]["description"] == "Daily order count."
 
     async def test_delete_metric_real_write_failure_fails(self, real_agent_config, tmp_path, monkeypatch):
         runtime = self._osi_runtime(tmp_path)
@@ -1442,7 +1469,7 @@ class TestExplorerServiceOSIAuthoring:
         assert result.success is False
         assert "KB error" in result.errorMessage
         on_disk = yaml.safe_load((tmp_path / "sample_shop" / "sample_shop.yml").read_text())
-        assert [metric["name"] for metric in on_disk["semantic_model"][0]["metrics"]] == ["daily_order_count"]
+        assert [metric["name"] for metric in on_disk["metrics"]] == ["daily_order_count"]
 
     async def test_delete_metric_requires_dosi_runtime(self, real_agent_config, monkeypatch):
         svc = ExplorerService(agent_config=real_agent_config)
@@ -1515,7 +1542,7 @@ class TestExplorerServiceOSIAuthoring:
 
         assert result.success is True, result.errorMessage
         on_disk = yaml.safe_load((tmp_path / "sample_shop" / "sample_shop.yml").read_text())
-        assert on_disk["semantic_model"][0]["metrics"] == []
+        assert on_disk["metrics"] == []
         assert kb_deleted == [(["operations", "daily"], "daily_order_count")]
         assert svc.subject_tree_store.get_node_by_path(["operations"]) is None
 

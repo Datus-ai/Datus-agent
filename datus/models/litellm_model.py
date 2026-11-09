@@ -5,6 +5,7 @@
 """Datus compatibility transport for LiteLLM Chat Completions models."""
 
 from collections.abc import AsyncIterator
+from contextlib import aclosing
 from copy import deepcopy
 from typing import Any
 
@@ -13,6 +14,7 @@ from agents.models.chatcmpl_converter import Converter
 from agents.util._json import _to_dump_compatible
 
 from datus.models.observed_model import ObservedLitellmModel
+from datus.models.output_truncation import check_chat_completion, checked_chat_completion_stream
 from datus.models.reasoning_replay import REASONING_ENDPOINT_KEY, is_kimi_model, reasoning_endpoint_identity
 from datus.utils.image_content import is_tool_image_user_message, tool_images_as_user_input
 
@@ -146,9 +148,10 @@ class DatusLitellmModel(ObservedLitellmModel):
     async def stream_response(self, *args: Any, **kwargs: Any) -> AsyncIterator[Any]:
         """Stream events after recording endpoint provenance on reasoning items."""
         endpoint_identity = reasoning_endpoint_identity(self.base_url)
-        async for event in super().stream_response(*args, **kwargs):
-            _stamp_reasoning_event(event, endpoint_identity)
-            yield event
+        async with aclosing(super().stream_response(*args, **kwargs)) as stream:
+            async for event in stream:
+                _stamp_reasoning_event(event, endpoint_identity)
+                yield event
 
     async def _fetch_response(
         self,
@@ -173,9 +176,14 @@ class DatusLitellmModel(ObservedLitellmModel):
                 capacity,
                 self.capacity_payload(system_instructions, input, model_settings, tools, output_schema, handoffs),
             )
-        return await super()._fetch_response(
+        result = await super()._fetch_response(
             system_instructions, input, model_settings, tools, output_schema, handoffs, span, tracing, *args, **kwargs
         )
+        if isinstance(result, tuple):
+            response, stream = result
+            return response, checked_chat_completion_stream(stream)
+        check_chat_completion(result)
+        return result
 
     def capacity_payload(
         self, system_instructions: Any, input: Any, model_settings: Any, tools: Any, output_schema: Any, handoffs: Any

@@ -147,16 +147,15 @@ def test_refresh_osi_yaml_descriptions_patches_dataset_and_dimension():
     docs = [
         yaml.safe_load(
             """
-semantic_model:
-  - name: commerce
-    datasets:
-      - name: orders
-        description: Orders dataset.
-        source:
-          table: marts.orders
-        dimensions:
-          - name: status
-            description: Order status.
+name: commerce
+datasets:
+  - name: orders
+    description: Orders dataset.
+    source:
+      table: marts.orders
+    dimensions:
+      - name: status
+        description: Order status.
 """
         )
     ]
@@ -180,7 +179,7 @@ semantic_model:
 
     changed = refresh_osi_yaml_descriptions(docs, evidence)
 
-    dataset = docs[0]["semantic_model"][0]["datasets"][0]
+    dataset = docs[0]["datasets"][0]
     assert changed == 2
     assert "referenced by 1 historical query" in dataset["description"]
     assert "2 distinct non-null values" in dataset["dimensions"][0]["description"]
@@ -190,19 +189,18 @@ def test_refresh_osi_yaml_descriptions_patches_dataset_fields():
     docs = [
         yaml.safe_load(
             """
-semantic_model:
-  - name: commerce
-    datasets:
-      - name: orders
-        description: Orders dataset.
-        source: marts.orders
-        fields:
-          - name: amount
-            expression:
-              dialects:
-                - dialect: ANSI_SQL
-                  expression: amount
-            description: Order amount.
+name: commerce
+datasets:
+  - name: orders
+    description: Orders dataset.
+    source: marts.orders
+    fields:
+      - name: amount
+        expression:
+          dialects:
+            - dialect: ANSI_SQL
+              expression: amount
+        description: Order amount.
 """
         )
     ]
@@ -226,7 +224,7 @@ semantic_model:
 
     changed = refresh_osi_yaml_descriptions(docs, evidence)
 
-    dataset = docs[0]["semantic_model"][0]["datasets"][0]
+    dataset = docs[0]["datasets"][0]
     assert changed == 2
     assert "observed row count 10" in dataset["description"]
     assert "observed range 1-99" in dataset["fields"][0]["description"]
@@ -235,7 +233,7 @@ semantic_model:
 def test_refresh_osi_yaml_descriptions_skips_nonmatching_dataset():
     docs = [
         None,
-        {"semantic_model": "not-a-list"},
+        {"unrelated": "document"},
         {"datasets": [{"name": "orders", "description": "Orders dataset."}]},
     ]
 

@@ -11,11 +11,29 @@ from typing import Any, Callable, Dict, Iterable, List, Optional, TypeVar
 import json_repair
 from agents import FunctionTool, function_tool
 from agents.function_schema import function_schema
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, Field, ValidationError, model_serializer
 
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
+
+
+class _DuplicateJSONKeyError(ValueError):
+    pass
+
+
+def _unique_json_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise _DuplicateJSONKeyError(f"Duplicate JSON key {key!r}")
+        result[key] = value
+    return result
+
+
+def load_tool_json(value: str) -> Any:
+    """Decode JSON tool input without silently replacing duplicate object keys."""
+    return json.loads(value, object_pairs_hook=_unique_json_object)
 
 
 def normalize_null(value):
@@ -51,7 +69,9 @@ def normalize_tool_args(arguments: dict, params_schema: dict) -> dict:
             normalized[name] = value.casefold() == "true"
         elif kinds == {"array"}:
             try:
-                decoded = json.loads(value)
+                decoded = load_tool_json(value)
+            except _DuplicateJSONKeyError:
+                raise
             except (ValueError, RecursionError):
                 continue
             if isinstance(decoded, list):
@@ -71,7 +91,8 @@ def parse_tool_args(
     a valid JSON object so it can safely replace the raw tool-call arguments
     before the Agents SDK replays or persists the call. A repaired call returns
     an error so the model retries with valid arguments instead of executing
-    parameters that permission hooks did not inspect.
+    parameters that permission hooks did not inspect. Duplicate keys are rejected
+    without choosing a value; their replay arguments are replaced with ``{}``.
     """
     if not args_str:
         return {}, "{}", None
@@ -83,7 +104,14 @@ def parse_tool_args(
         if not stripped:
             return {}, "{}", None
         try:
-            parsed = json.loads(stripped)
+            parsed = load_tool_json(stripped)
+        except _DuplicateJSONKeyError as exc:
+            return (
+                {},
+                "{}",
+                f"{exc} in arguments for tool '{tool_name}'. "
+                "The tool was not executed. Retry with one complete JSON object using unique keys.",
+            )
         except (json.JSONDecodeError, TypeError) as exc:
             original_error = exc
             parsed = None
@@ -133,7 +161,15 @@ def parse_tool_args(
         args_str if isinstance(args_str, str) else json.dumps(parsed, ensure_ascii=False, separators=(",", ":"))
     )
     if params_schema is not None:
-        normalized = normalize_tool_args(parsed, params_schema)
+        try:
+            normalized = normalize_tool_args(parsed, params_schema)
+        except _DuplicateJSONKeyError as exc:
+            return (
+                {},
+                "{}",
+                f"{exc} in arguments for tool '{tool_name}'. "
+                "The tool was not executed. Retry with one complete JSON object using unique keys.",
+            )
         if normalized != parsed:
             parsed = normalized
             canonical_json = json.dumps(parsed, ensure_ascii=False, separators=(",", ":"))
@@ -163,6 +199,16 @@ class FuncToolResult(BaseModel):
         default=None, description="Error message: field is not empty when success=0", init=True
     )
     result: Optional[Any] = Field(default=None, description="Result of the execution", init=True)
+    execution_context: Optional[Dict[str, str]] = Field(
+        default=None, description="Effective non-secret database coordinates"
+    )
+
+    @model_serializer(mode="wrap")
+    def _serialize_context(self, handler):
+        result = handler(self)
+        if self.execution_context is None:
+            result.pop("execution_context", None)
+        return result
 
 
 class FuncToolListResult(BaseModel):

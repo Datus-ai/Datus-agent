@@ -20,7 +20,7 @@ import asyncio
 import hashlib
 import threading
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Callable, Dict, Iterable, List, Optional
 
 import yaml
 
@@ -58,6 +58,9 @@ from datus.tools.semantic_tools.models import (
     ValidationIssue,
     ValidationResult,
 )
+from datus.utils.loggings import get_logger
+
+logger = get_logger(__name__)
 
 
 def _echo(compiled: Dict[str, Any]) -> Dict[str, Any]:
@@ -80,18 +83,78 @@ def _lod_definition(row: Dict[str, Any]) -> Optional[str]:
 class DosiRuntime:
     """Agent's model catalog, query, validation, and editor boundary for Dosi."""
 
-    def __init__(self, config: DosiConfig):
+    def __init__(self, config: DosiConfig, *, read_policy_provider: Optional[Callable[[], Any]] = None):
+        self._read_policy_provider = read_policy_provider
         self.service_type = "dosi"
         self.datasource = config.datasource
         self.config: DosiConfig = config
         self._registry = EngineRegistry(config)
         self._catalog_lock = threading.Lock()
-        self._catalog_signature: tuple[tuple[str, int, int], ...] = ()
+        self._catalog_signature: tuple[tuple[str, int, int, int, int, int], ...] = ()
         self._catalog_handles: tuple[tuple[str, EngineHandle], ...] = ()
         self._metric_to_path: Dict[str, str] = {}
         self._model_to_path: Dict[str, str] = {}
 
+    def _policy_kwargs(self) -> dict:
+        provider = getattr(self, "_read_policy_provider", None)
+        policy = provider() if provider is not None else None
+        return {"policy": policy, "policy_required": True} if policy is not None else {}
+
+    @staticmethod
+    def _policy_scope(kwargs: dict) -> str:
+        policy = kwargs.get("policy")
+        if policy is None:
+            return "unprotected"
+        return hashlib.sha256((policy.snapshot_json + policy.context_json).encode()).hexdigest()
+
+    def initialize(self) -> dict[str, str]:
+        """Load existing files independently; absent/broken models keep authoring usable."""
+        self.model_errors: dict[str, str] = {}
+        try:
+            _, handles = self._registry.snapshot()
+        except SemanticCoreException as exc:
+            self.model_errors["<catalog>"] = str(exc)
+            return self.model_errors
+        for path, handle in handles:
+            try:
+                handle.get()
+            except SemanticCoreException as exc:
+                self.model_errors[path] = str(exc)
+        return dict(self.model_errors)
+
+    def load_model(self, path: str, *, allow_invalid: bool = False):
+        from datus.tools.semantic_tools.dosi.files import file_engine
+
+        return file_engine(path, config=self.config, allow_invalid=allow_invalid)
+
     # ==================== Semantic Model Interface ====================
+
+    @classmethod
+    def from_agent_config(
+        cls, agent_config: Any, *, semantic_model_path: Optional[str] = None, ontology_enabled: bool = False
+    ) -> "DosiRuntime":
+        """Build the semantic runtime without constructing navigation or RAG tools."""
+        from datus.configuration.agent_config import (
+            _apply_runtime_db_context_to_dosi_profile,
+            _db_config_to_dosi_profile,
+        )
+        from datus.tools.semantic_tools.dosi.engine import has_model_files
+
+        context = agent_config.runtime_db_context()
+        datasource = context.get("datasource") or agent_config.current_datasource
+        profile = _apply_runtime_db_context_to_dosi_profile(
+            _db_config_to_dosi_profile(agent_config.current_db_config(datasource)), context
+        )
+        config = DosiConfig(
+            datasource=datasource,
+            db_config=profile,
+            timeout_seconds=float((profile or {}).get("timeout_seconds", 30)),
+            semantic_models_path=str(agent_config.path_manager.semantic_model_path(datasource)),
+            semantic_model_path=semantic_model_path or None,
+        )
+        if ontology_enabled or not has_model_files(config):
+            config = config.model_copy(update={"ontology_dir": str(agent_config.path_manager.ontology_dir)})
+        return cls(config)
 
     def list_semantic_models(
         self,
@@ -427,6 +490,17 @@ class DosiRuntime:
             "datasource": self.datasource or handle.profile_name or "default",
         }
 
+    async def compile_for_sql_execution(self, **arguments: Any) -> QueryResult:
+        """Compile for a host that applies policies at its final SQL boundary.
+
+        Artifact execution uses DBFuncTool to protect the complete SQL once.
+        This request-local compiler cannot execute rows or change the provider
+        on this runtime or its shared engine handles.
+        """
+        if arguments.get("dry_run") is not True:
+            raise ValueError("external SQL execution requires compile-only dry_run")
+        return await DosiRuntime(self.config).query_metrics(**arguments)
+
     async def query_metrics(
         self,
         metrics: List[str],
@@ -442,6 +516,7 @@ class DosiRuntime:
         params: Optional[Dict[str, Any]] = None,
         context_filter: Optional[str] = None,
     ) -> QueryResult:
+        policy_kwargs = await asyncio.to_thread(self._policy_kwargs)
         binding = await asyncio.to_thread(load_binding)
         handle = await asyncio.to_thread(self._handle_for_metrics, metrics)
         engine = await asyncio.to_thread(handle.get)
@@ -484,6 +559,7 @@ class DosiRuntime:
                 engine.compile,
                 self._dry_run_dialect(binding, connection),
                 connection,
+                policy_kwargs,
             )
         try:
             if dry_run:
@@ -495,7 +571,9 @@ class DosiRuntime:
                     # Dry-run SQL is read by humans and LLM callers, never fed
                     # to a driver, so hand back the formatted form.
                     pretty=True,
+                    **policy_kwargs,
                 )
+                self._log_query_sql(compiled, event="sql.dosi.compile", operation="metrics", connection=connection)
                 return QueryResult(
                     columns=["sql"],
                     data=[{"sql": compiled["sql"]}],
@@ -509,7 +587,7 @@ class DosiRuntime:
                         **_echo(compiled),
                     },
                 )
-            result = await self._execute_query(binding, engine, query, connection)
+            result = await self._execute_query(binding, engine, query, connection, policy_kwargs)
             columns, rows = list(result["columns"]), list(result["rows"])
             if handle.has_ontology:
                 columns, rows = self._label_requested_columns(result, dataset_names)
@@ -517,6 +595,7 @@ class DosiRuntime:
                 columns=columns,
                 data=rows,
                 metadata={
+                    "_policy_scope": self._policy_scope(policy_kwargs),
                     "sql": result["sql"],
                     "dialect": result["dialect"],
                     "row_count": result["row_count"],
@@ -637,6 +716,7 @@ class DosiRuntime:
         compile_fn: Any,
         dialect: Optional[str],
         connection: Optional[str],
+        policy_kwargs: Optional[dict] = None,
     ) -> Dict[str, Any]:
         """Rewrite ``order_by`` keys that name a requested concept path to its output column.
 
@@ -653,7 +733,7 @@ class DosiRuntime:
             return query
         probe = {key: value for key, value in query.items() if key not in ("order_by", "limit")}
         try:
-            compiled = compile_fn(probe, dialect=dialect, connection=connection)
+            compiled = compile_fn(probe, dialect=dialect, connection=connection, **(policy_kwargs or {}))
         except Exception:  # noqa: BLE001 - the real call reports it
             return query
         columns = {
@@ -728,6 +808,7 @@ class DosiRuntime:
         limit: Optional[int] = None,
     ) -> QueryResult:
         """Record-level (detail) query rooted on one concept; fields may be concept paths."""
+        policy_kwargs = await asyncio.to_thread(self._policy_kwargs)
         binding = await asyncio.to_thread(load_binding)
         _, handle = await asyncio.to_thread(self._first_answer, lambda engine: engine.describe(from_concept))
         engine = await asyncio.to_thread(handle.get)
@@ -749,6 +830,7 @@ class DosiRuntime:
             engine.compile_select,
             self._dry_run_dialect(binding, connection),
             connection,
+            policy_kwargs,
         )
         try:
             result = await asyncio.to_thread(
@@ -756,11 +838,14 @@ class DosiRuntime:
                 query,
                 connection=connection,
                 timeout_secs=float(self.config.timeout_seconds),
+                **policy_kwargs,
             )
+            self._log_query_sql(result, event="sql.dosi.execute", operation="select", connection=connection)
         except Exception as exc:  # noqa: BLE001 - mapped to typed errors below
             raise_mapped(exc, binding, requested_dimensions=list(fields))
             raise  # unreachable; raise_mapped always raises
         metadata: Dict[str, Any] = {
+            "_policy_scope": self._policy_scope(policy_kwargs),
             "sql": result["sql"],
             "dialect": result["dialect"],
             "row_count": result["row_count"],
@@ -787,6 +872,7 @@ class DosiRuntime:
                     ),
                 )
             )
+        policy_kwargs = await asyncio.to_thread(self._policy_kwargs)
         binding = await asyncio.to_thread(load_binding)
         handle = await asyncio.to_thread(self._handle_for_metric, request.metric)
         engine = await asyncio.to_thread(handle.get)
@@ -798,6 +884,7 @@ class DosiRuntime:
                 native_request,
                 connection=handle.profile_name,
                 timeout_secs=float(self.config.timeout_seconds),
+                **policy_kwargs,
             )
             return AttributionResult.model_validate({**result, "implementation": "dosi"})
         except Exception as exc:  # noqa: BLE001 - mapped to typed errors below
@@ -1056,7 +1143,10 @@ class DosiRuntime:
     def _author(self) -> Any:
         from datus.tools.semantic_tools.dosi.authoring import DosiMetricAuthor
 
-        return DosiMetricAuthor(self._authoring_root())
+        self.initialize()
+        return DosiMetricAuthor(
+            self._authoring_root(), load_model=lambda path: self.load_model(path, allow_invalid=True)
+        )
 
     def read_metric_source(
         self,
@@ -1088,7 +1178,10 @@ class DosiRuntime:
         """Restore a deleted metric to its original model file."""
         from datus.tools.semantic_tools.dosi.authoring import DosiMetricAuthor
 
-        return DosiMetricAuthor(source.file_path).write(source.name, source.text, create=True)
+        self.load_model(source.file_path, allow_invalid=True)
+        return DosiMetricAuthor(
+            source.file_path, load_model=lambda path: self.load_model(path, allow_invalid=True)
+        ).write(source.name, source.text, create=True)
 
     # ==================== Internals ====================
 
@@ -1181,15 +1274,33 @@ class DosiRuntime:
         with self._catalog_lock:
             signature, handles = self._registry.snapshot()
             if signature == self._catalog_signature:
-                return (
-                    self._catalog_handles,
-                    dict(self._metric_to_path),
-                    dict(self._model_to_path),
-                )
+                # External dependencies can change availability without changing the registry signature.
+                available_paths = {path for path, _ in self._catalog_handles}
+                for model_path, handle in handles:
+                    try:
+                        handle.get()
+                    except SemanticCoreException:
+                        if model_path in available_paths:
+                            break
+                        continue
+                    if model_path not in available_paths:
+                        break
+                else:
+                    return (
+                        self._catalog_handles,
+                        dict(self._metric_to_path),
+                        dict(self._model_to_path),
+                    )
 
             metric_to_path: Dict[str, str] = {}
             model_to_path: Dict[str, str] = {}
+            available_handles = []
             for model_path, handle in handles:
+                try:
+                    engine = handle.get()
+                except SemanticCoreException as exc:
+                    logger.warning("Model %s is unavailable: %s", model_path, exc)
+                    continue
                 try:
                     model_names = self._document_model_names(model_path)
                 except (OSError, TypeError, ValueError, yaml.YAMLError) as exc:
@@ -1201,7 +1312,8 @@ class DosiRuntime:
                             f"semantic model {model_name!r} is declared in {owner!r} and {model_path!r}"
                         )
                     model_to_path[model_name] = model_path
-                for row in handle.get().metrics():
+                available_handles.append((model_path, handle))
+                for row in engine.metrics():
                     metric_name = str(row.get("name") or "").strip()
                     if not metric_name:
                         continue
@@ -1214,6 +1326,7 @@ class DosiRuntime:
                         )
                     metric_to_path[metric_name] = model_path
 
+            handles = tuple(available_handles)
             self._catalog_signature = signature
             self._catalog_handles = handles
             self._metric_to_path = metric_to_path
@@ -1406,15 +1519,29 @@ class DosiRuntime:
         except ValueError as exc:
             raise SemanticCoreException(str(exc)) from exc
 
-    async def _execute_query(self, binding, engine, query, connection):
+    def _log_query_sql(self, result: Dict[str, Any], *, event: str, operation: str, connection: Optional[str]) -> None:
+        """Log the SQL returned by the actual native call without recompiling."""
+        logger.debug(
+            event,
+            datasource=self.config.datasource,
+            connection=connection,
+            operation=operation,
+            dialect=result.get("dialect"),
+            sql=result.get("sql"),
+        )
+
+    async def _execute_query(self, binding, engine, query, connection, policy_kwargs=None):
         """Propagate asyncio cancellation into request-local native execution."""
         token_type = getattr(binding, "CancellationToken", None)
         token = token_type() if token_type is not None else None
         kwargs = {"connection": connection, "timeout_secs": float(self.config.timeout_seconds)}
+        kwargs.update(policy_kwargs if policy_kwargs is not None else await asyncio.to_thread(self._policy_kwargs))
         if token is not None:
             kwargs["cancellation"] = token
         try:
-            return await asyncio.to_thread(engine.execute, query, **kwargs)
+            result = await asyncio.to_thread(engine.execute, query, **kwargs)
+            self._log_query_sql(result, event="sql.dosi.execute", operation="metrics", connection=connection)
+            return result
         except asyncio.CancelledError:
             if token is not None:
                 token.cancel()

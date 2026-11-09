@@ -46,7 +46,7 @@ datus --datasource duckdb_demo
 
 ## 当前指标 YAML
 
-下面是 Datus 示例 DuckDB 数据库上真实生成的 `bank_failures.yml` 中 `semantic_model[0].metrics` 的片段，使用了[语义模型](semantic_model.md)页面中的 dataset 和 field。代码块保留了它在完整文件中的缩进；它属于 semantic model 内部，不是一份独立的 YAML 文档。
+下面是 Datus 示例 DuckDB 数据库上真实生成的 `bank_failures.yml` 中 `metrics` 的片段，使用了[语义模型](semantic_model.md)页面中的 dataset 和 field。代码块保留了它在完整文件中的缩进；它属于 semantic model 内部，不是一份独立的 YAML 文档。
 
 ```yaml
     metrics:

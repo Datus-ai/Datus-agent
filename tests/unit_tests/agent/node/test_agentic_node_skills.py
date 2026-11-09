@@ -905,7 +905,7 @@ class TestBuiltinNodeDefaultSkills:
     def test_gen_skill_defaults(self):
         from datus.agent.node.gen_skill_agentic_node import SkillCreatorAgenticNode
 
-        assert SkillCreatorAgenticNode.DEFAULT_SKILLS == "create-skill, optimize-skill"
+        assert SkillCreatorAgenticNode.DEFAULT_SKILLS == "create-skill"
 
 
 class TestMergeSkillPatterns:
@@ -966,7 +966,7 @@ class TestSkillAllowedAgentsConsistency:
             ("gen_table", ["gen-table", "table-validation"]),
             ("semantic_modeling", ["dosi-semantic-authoring"]),
             ("gen_dashboard", ["bi-validation", "grafana-dashboard", "superset-dashboard"]),
-            ("gen_skill", ["create-skill", "optimize-skill"]),
+            ("gen_skill", ["create-skill"]),
             ("scheduler", ["airflow-workflow", "scheduler-validation"]),
         ],
     )

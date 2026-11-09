@@ -85,6 +85,7 @@ def mock_agent_config(tmp_path):
     config.path_manager.project_data_dir = tmp_path / "project-data"
     config.current_datasource = "ns1"
     config.current_db_config.return_value = None
+    config.runtime_db_context.return_value = {}
     return config
 
 
@@ -115,44 +116,34 @@ class TestAvailableTools:
         assert len(tools) == 4
 
 
-@pytest.mark.parametrize("flat", [False, True])
-def test_sync_projects_extension_uid_without_mutating_yaml(generation_tools, tmp_path, flat):
+def test_sync_projects_extension_uid_without_mutating_yaml(generation_tools, tmp_path):
     target = tmp_path / "sales.yml"
     uid = "tz4a98xxat96iws9zmbrgj3a"
     target.write_text(
         json.dumps(
             {
                 "version": "0.2.0.dev0",
-                "semantic_model": [
+                "name": "sales",
+                "datasets": [{"name": "orders", "source": "orders"}],
+                "metrics": [
                     {
-                        "name": "sales",
-                        "datasets": [{"name": "orders", "source": "orders"}],
-                        "metrics": [
+                        "name": "revenue",
+                        "expression": {"dialects": [{"dialect": "ANSI_SQL", "expression": "SUM(orders.amount)"}]},
+                        "custom_extensions": [
                             {
-                                "name": "revenue",
-                                "expression": {
-                                    "dialects": [{"dialect": "ANSI_SQL", "expression": "SUM(orders.amount)"}]
-                                },
-                                "custom_extensions": [
-                                    {
-                                        "vendor_name": "DATUS",
-                                        "data": json.dumps({"uid": uid, "subject_path": ["sales", "revenue", "total"]}),
-                                    }
-                                ],
-                            },
-                            {
-                                "name": "order_count",
-                                "expression": {"dialects": [{"dialect": "ANSI_SQL", "expression": "COUNT(*)"}]},
-                            },
+                                "vendor_name": "DATUS",
+                                "data": json.dumps({"uid": uid, "subject_path": ["sales", "revenue", "total"]}),
+                            }
                         ],
-                    }
+                    },
+                    {
+                        "name": "order_count",
+                        "expression": {"dialects": [{"dialect": "ANSI_SQL", "expression": "COUNT(*)"}]},
+                    },
                 ],
             }
         )
     )
-    if flat:
-        source = json.loads(target.read_text())
-        target.write_text(json.dumps({"version": source["version"], **source["semantic_model"][0]}))
     original = target.read_bytes()
     generation_tools.metric_rag.list_artifact_rows.return_value = []
     generation_tools.semantic_dataset_rag.list_artifact_rows.return_value = []
@@ -184,18 +175,13 @@ def test_sync_rejects_invalid_metric_identities_before_kb_writes(generation_tool
     target.write_text(
         json.dumps(
             {
-                "semantic_model": [
-                    {
-                        "name": "sales",
-                        "metrics": [
-                            {
-                                "name": name,
-                                "custom_extensions": [{"vendor_name": "DATUS", "data": json.dumps({"uid": uid})}],
-                            }
-                            for name, uid in zip(("revenue", "order_count"), uids)
-                        ],
-                    }
-                ]
+                "version": "0.2.0.dev0",
+                "name": "sales",
+                "datasets": [],
+                "metrics": [
+                    {"name": name, "custom_extensions": [{"vendor_name": "DATUS", "data": json.dumps({"uid": uid})}]}
+                    for name, uid in zip(("revenue", "order_count"), uids)
+                ],
             }
         )
     )
@@ -252,14 +238,14 @@ class TestCheckSemanticObjectExists:
         target = tmp_path / "subject" / "semantic_models" / "warehouse" / "orders.yml"
         target.parent.mkdir(parents=True)
         target.write_text(
-            "version: 0.2.0\n"
-            "semantic_model:\n"
-            "  - name: orders_model\n"
-            "    datasets:\n"
-            "      - name: orders\n"
-            "        source: analytics.orders\n"
-            "    metrics:\n"
-            "      - name: live_revenue\n",
+            """version: 0.2.0
+name: orders_model
+datasets:
+  - name: orders
+    source: analytics.orders
+metrics:
+  - name: live_revenue
+""",
             encoding="utf-8",
         )
         _bind_osi_target(generation_tools, target)
@@ -415,12 +401,12 @@ class TestEndSemanticModelGeneration:
         model_file = tmp_path / "subject" / "semantic_models" / "warehouse" / "daily_sales.yml"
         model_file.parent.mkdir(parents=True)
         model_file.write_text(
-            "version: 0.2.0\n"
-            "semantic_model:\n"
-            "  - name: daily_sales\n"
-            "    datasets:\n"
-            "      - name: daily_sales\n"
-            "        source: SELECT sale_date, SUM(amount) AS revenue FROM sales GROUP BY sale_date\n",
+            """version: 0.2.0
+name: daily_sales
+datasets:
+  - name: daily_sales
+    source: SELECT sale_date, SUM(amount) AS revenue FROM sales GROUP BY sale_date
+""",
             encoding="utf-8",
         )
         _plan_osi_target(generation_tools, model_file, model_name="daily_sales")
@@ -444,11 +430,11 @@ class TestEndSemanticModelGeneration:
         finance_file = tmp_path / "semantic_models" / "warehouse" / "finance.yml"
         sales_file.parent.mkdir(parents=True)
         sales_file.write_text(
-            "version: 0.2.0.dev0\nsemantic_model:\n  - name: sales\n    datasets: []\n",
+            "version: 0.2.0.dev0\nname: sales\ndatasets: []\n",
             encoding="utf-8",
         )
         finance_file.write_text(
-            "version: 0.2.0.dev0\nsemantic_model:\n  - name: finance\n    datasets: []\n",
+            "version: 0.2.0.dev0\nname: finance\ndatasets: []\n",
             encoding="utf-8",
         )
         generation_tools.generation_evidence.validation_passed = True
@@ -470,7 +456,7 @@ class TestEndSemanticModelGeneration:
         model_file = tmp_path / "semantic_models" / "warehouse" / "finance.yml"
         model_file.parent.mkdir(parents=True)
         model_file.write_text(
-            "version: 0.2.0.dev0\nsemantic_model:\n  - name: finance\n    datasets: []\n",
+            "version: 0.2.0.dev0\nname: finance\ndatasets: []\n",
             encoding="utf-8",
         )
         _plan_osi_target(generation_tools, model_file, model_name="finance")
@@ -493,7 +479,7 @@ class TestEndSemanticModelGeneration:
     def test_osi_rejects_file_whose_model_name_differs_from_plan(self, generation_tools, tmp_path):
         model_file = tmp_path / "semantic_models" / "warehouse" / "orders.yml"
         model_file.parent.mkdir(parents=True)
-        model_file.write_text("semantic_model:\n  - name: finance\n    datasets: []\n", encoding="utf-8")
+        model_file.write_text("name: finance\ndatasets: []\n", encoding="utf-8")
         _plan_osi_target(generation_tools, model_file, model_name="orders")
         generation_tools.generation_evidence.record_semantic_artifact_validation("finance", model_file)
         mock_pm = Mock(subject_dir=str(tmp_path))
@@ -528,8 +514,8 @@ class TestEndMetricGeneration:
         target = tmp_path / "subject" / "semantic_models" / "warehouse" / "orders.yml"
         wrong_target = target.with_name("customers.yml")
         target.parent.mkdir(parents=True)
-        target.write_text("semantic_model:\n  - name: orders_model\n    metrics: []\n", encoding="utf-8")
-        wrong_target.write_text("semantic_model:\n  - name: customers_model\n    metrics: []\n", encoding="utf-8")
+        target.write_text("name: orders_model\nmetrics: []\n", encoding="utf-8")
+        wrong_target.write_text("name: customers_model\nmetrics: []\n", encoding="utf-8")
         _bind_osi_target(generation_tools, target, touched_metric_names=["order_count"])
         mock_pm = Mock(subject_dir=str(tmp_path / "subject"))
 
@@ -547,13 +533,7 @@ class TestEndMetricGeneration:
         target = tmp_path / "subject" / "semantic_models" / "warehouse" / "orders.yml"
         target.parent.mkdir(parents=True)
         target.write_text(
-            "semantic_model:\n"
-            "  - name: orders_model\n"
-            "    datasets:\n"
-            "      - name: orders\n"
-            "        source: analytics.orders\n"
-            "    metrics:\n"
-            "      - name: order_count\n",
+            "name: orders_model\ndatasets:\n  - name: orders\n    source: analytics.orders\nmetrics:\n  - name: order_count\n",
             encoding="utf-8",
         )
         state = _bind_osi_target(generation_tools, target, touched_metric_names=["order_count"])
@@ -589,13 +569,7 @@ class TestEndMetricGeneration:
         target = tmp_path / "subject" / "semantic_models" / "warehouse" / "orders.yml"
         target.parent.mkdir(parents=True)
         target.write_text(
-            "semantic_model:\n"
-            "  - name: orders_model\n"
-            "    datasets:\n"
-            "      - name: orders\n"
-            "        source: analytics.orders\n"
-            "    metrics:\n"
-            "      - name: order_count\n",
+            "name: orders_model\ndatasets:\n  - name: orders\n    source: analytics.orders\nmetrics:\n  - name: order_count\n",
             encoding="utf-8",
         )
         _bind_osi_target(
@@ -633,12 +607,7 @@ class TestEndMetricGeneration:
         target = tmp_path / "subject" / "semantic_models" / "warehouse" / "orders.yml"
         target.parent.mkdir(parents=True)
         target.write_text(
-            "semantic_model:\n"
-            "  - name: orders_model\n"
-            "    datasets:\n"
-            "      - name: orders\n"
-            "        source: analytics.orders\n"
-            "    metrics: []\n",
+            "name: orders_model\ndatasets:\n  - name: orders\n    source: analytics.orders\nmetrics: []\n",
             encoding="utf-8",
         )
         state = _bind_osi_target(
@@ -676,7 +645,7 @@ class TestEndMetricGeneration:
     def test_osi_rejects_poisoned_target_after_failed_rebind(self, generation_tools, tmp_path):
         target = tmp_path / "subject" / "semantic_models" / "warehouse" / "orders.yml"
         target.parent.mkdir(parents=True)
-        target.write_text("semantic_model:\n  - name: orders_model\n    metrics:\n      - name: order_count\n")
+        target.write_text("name: orders_model\nmetrics:\n  - name: order_count\n")
         state = _bind_osi_target(generation_tools, target, touched_metric_names=["order_count"])
         state.last_error_code = "semantic_model_target_invalid"
         generation_tools.generation_evidence.record_semantic_artifact_validation("orders_model", target)
@@ -696,7 +665,7 @@ class TestEndMetricGeneration:
     def test_osi_treats_touched_name_absent_from_final_yaml_as_deletion(self, generation_tools, tmp_path):
         target = tmp_path / "subject" / "semantic_models" / "warehouse" / "orders.yml"
         target.parent.mkdir(parents=True)
-        target.write_text("semantic_model:\n  - name: orders_model\n    metrics:\n      - name: replacement_metric\n")
+        target.write_text("name: orders_model\nmetrics:\n  - name: replacement_metric\n")
         _bind_osi_target(generation_tools, target, touched_metric_names=["order_count"])
         generation_tools.generation_evidence.record_semantic_artifact_validation("orders_model", target)
         _record_compiled_evidence(generation_tools, target, [])
@@ -726,8 +695,8 @@ class TestEndMetricGeneration:
         target = tmp_path / "subject" / "semantic_models" / "warehouse" / "orders.yml"
         unrelated = target.with_name("finance.yml")
         target.parent.mkdir(parents=True)
-        target.write_text("semantic_model:\n  - name: orders_model\n    metrics:\n      - name: order_count\n")
-        unrelated.write_text("semantic_model:\n  - name: finance\n")
+        target.write_text("name: orders_model\nmetrics:\n  - name: order_count\n")
+        unrelated.write_text("name: finance\n")
         _bind_osi_target(generation_tools, target, touched_metric_names=["order_count"])
         generation_tools.generation_evidence.validation_passed = True
         generation_tools.generation_evidence.record_semantic_artifact_validation("finance", unrelated)
@@ -905,7 +874,7 @@ class TestOsiSync:
     def test_sync_osi_metric_to_db_reconciles_absent_touched_names_without_upsert(self, generation_tools, tmp_path):
         metric_file = tmp_path / "orders_metrics.yml"
         metric_file.write_text(
-            "version: 0.2.0.dev0\nsemantic_model:\n  - name: shop\n    datasets: []\n    metrics: []\n",
+            "version: 0.2.0.dev0\nname: shop\ndatasets: []\nmetrics: []\n",
             encoding="utf-8",
         )
         doc = SimpleNamespace(name="shop", datasets=[], metrics=[])
@@ -927,7 +896,7 @@ class TestOsiSync:
     def test_sync_osi_metric_full_replacement_restores_snapshot_on_failure(self, generation_tools, tmp_path):
         metric_file = tmp_path / "orders_metrics.yml"
         metric_file.write_text(
-            "semantic_model:\n  - name: shop\n    datasets: []\n    metrics: []\n",
+            "name: shop\ndatasets: []\nmetrics: []\n",
             encoding="utf-8",
         )
         snapshot = [{"id": "metric:old_metric", "name": "old_metric", "yaml_path": str(metric_file)}]
@@ -944,25 +913,25 @@ class TestOsiSync:
 
     def test_sync_osi_metric_to_db_upserts_only_metrics_declared_in_current_file(self, generation_tools, tmp_path):
         generation_tools.agent_config.current_db_config.return_value = SimpleNamespace(
-            catalog="default_catalog", database="shop", schema=""
+            to_dict=lambda: {}, catalog="default_catalog", database="shop", schema=""
         )
         metric_file = tmp_path / "orders_metrics.yml"
         metric_file.write_text(
-            "version: 0.2.0.dev0\n"
-            "semantic_model:\n"
-            "  - name: shop\n"
-            "    datasets:\n"
-            "      - name: orders\n"
-            "        source: orders\n"
-            "    metrics:\n"
-            "      - name: order_count\n"
-            "        expression:\n"
-            "          dialects:\n"
-            "            - dialect: ANSI_SQL\n"
-            "              expression: COUNT(DISTINCT order_id)\n"
-            "        custom_extensions:\n"
-            "          - vendor_name: DATUS\n"
-            '            data: \'{"dataset":"orders"}\'\n'
+            """version: 0.2.0.dev0
+name: shop
+datasets:
+  - name: orders
+    source: orders
+metrics:
+  - name: order_count
+    expression:
+      dialects:
+        - dialect: ANSI_SQL
+          expression: COUNT(DISTINCT order_id)
+    custom_extensions:
+      - vendor_name: DATUS
+        data: '{\"dataset\":\"orders\"}'
+"""
         )
         dataset = SimpleNamespace(
             name="orders",
@@ -1013,20 +982,21 @@ class TestOsiSync:
 
     def test_sync_osi_metric_scope_does_not_overwrite_existing_metric_sql(self, generation_tools, tmp_path):
         generation_tools.agent_config.current_db_config.return_value = SimpleNamespace(
-            catalog="default_catalog", database="shop", schema=""
+            to_dict=lambda: {}, catalog="default_catalog", database="shop", schema=""
         )
         metric_file = tmp_path / "orders_metrics.yml"
         metric_file.write_text(
-            "version: 0.2.0.dev0\n"
-            "semantic_model:\n"
-            "  - name: shop\n"
-            "    metrics:\n"
-            "      - name: existing_metric\n"
-            "      - name: new_metric\n"
-            "        expression:\n"
-            "          dialects:\n"
-            "            - dialect: ANSI_SQL\n"
-            "              expression: COUNT(DISTINCT order_id)\n"
+            """version: 0.2.0.dev0
+name: shop
+datasets: []
+metrics:
+  - name: existing_metric
+  - name: new_metric
+    expression:
+      dialects:
+        - dialect: ANSI_SQL
+          expression: COUNT(DISTINCT order_id)
+"""
         )
         dataset = SimpleNamespace(
             name="orders",
@@ -1075,19 +1045,20 @@ class TestOsiSync:
 
     def test_sync_osi_metric_partial_publish_restores_on_later_failure(self, generation_tools, tmp_path):
         generation_tools.agent_config.current_db_config.return_value = SimpleNamespace(
-            catalog="default_catalog", database="shop", schema=""
+            to_dict=lambda: {}, catalog="default_catalog", database="shop", schema=""
         )
         metric_file = tmp_path / "orders_metrics.yml"
         metric_file.write_text(
-            "version: 0.2.0.dev0\n"
-            "semantic_model:\n"
-            "  - name: shop\n"
-            "    metrics:\n"
-            "      - name: order_count\n"
-            "        expression:\n"
-            "          dialects:\n"
-            "            - dialect: ANSI_SQL\n"
-            "              expression: COUNT(DISTINCT order_id)\n"
+            """version: 0.2.0.dev0
+name: shop
+datasets: []
+metrics:
+  - name: order_count
+    expression:
+      dialects:
+        - dialect: ANSI_SQL
+          expression: COUNT(DISTINCT order_id)
+"""
         )
         dataset = SimpleNamespace(
             name="orders",
@@ -1123,19 +1094,19 @@ class TestOsiSync:
 
     def test_sync_osi_metric_to_db_includes_derived_and_joined_dimensions(self, generation_tools, tmp_path):
         generation_tools.agent_config.current_db_config.return_value = SimpleNamespace(
-            catalog="default_catalog", database="shop", schema=""
+            to_dict=lambda: {}, catalog="default_catalog", database="shop", schema=""
         )
         metric_file = tmp_path / "orders_metrics.yml"
         metric_file.write_text(
-            "version: 0.2.0.dev0\n"
-            "semantic_model:\n"
-            "  - name: shop\n"
-            "    datasets:\n"
-            "      - name: orders\n"
-            "        source: orders\n"
-            "    metrics:\n"
-            "      - name: order_count\n"
-            "      - name: order_count_prev\n"
+            """version: 0.2.0.dev0
+name: shop
+datasets:
+  - name: orders
+    source: orders
+metrics:
+  - name: order_count
+  - name: order_count_prev
+"""
         )
         orders = SimpleNamespace(
             name="orders",
@@ -1229,12 +1200,10 @@ class TestOsiSync:
 
     def test_sync_osi_metric_to_db_syncs_every_semantic_file(self, generation_tools, tmp_path):
         generation_tools.agent_config.current_db_config.return_value = SimpleNamespace(
-            catalog="default_catalog", database="shop", schema=""
+            to_dict=lambda: {}, catalog="default_catalog", database="shop", schema=""
         )
         metric_file = tmp_path / "orders_metrics.yml"
-        metric_file.write_text(
-            "version: 0.2.0.dev0\nsemantic_model:\n  - name: shop\n    metrics:\n      - name: order_count\n"
-        )
+        metric_file.write_text("version: 0.2.0.dev0\nname: shop\ndatasets: []\nmetrics:\n  - name: order_count\n")
         orders_file = tmp_path / "orders.yml"
         customers_file = tmp_path / "customers.yml"
         orders_file.write_text("datasets:\n  - name: orders\n")
@@ -1292,9 +1261,7 @@ class TestOsiSync:
         self, generation_tools, tmp_path
     ):
         metric_file = tmp_path / "orders_metrics.yml"
-        metric_file.write_text(
-            "version: 0.2.0.dev0\nsemantic_model:\n  - name: shop\n    metrics:\n      - name: order_count\n"
-        )
+        metric_file.write_text("version: 0.2.0.dev0\nname: shop\ndatasets: []\nmetrics:\n  - name: order_count\n")
         semantic_file = tmp_path / "orders.yml"
         semantic_file.write_text("datasets:\n  - name: orders\n")
         semantic_snapshot = [{"id": "profile:shop:old_orders", "yaml_path": str(semantic_file)}]
@@ -1344,9 +1311,7 @@ class TestOsiSync:
 
     def test_sync_osi_metric_to_db_does_not_write_metrics_when_semantic_write_fails(self, generation_tools, tmp_path):
         metric_file = tmp_path / "orders_metrics.yml"
-        metric_file.write_text(
-            "version: 0.2.0.dev0\nsemantic_model:\n  - name: shop\n    metrics:\n      - name: order_count\n"
-        )
+        metric_file.write_text("version: 0.2.0.dev0\nname: shop\ndatasets: []\nmetrics:\n  - name: order_count\n")
         semantic_file = tmp_path / "orders.yml"
         semantic_file.write_text("datasets:\n  - name: orders\n")
         generation_tools.semantic_dataset_rag.upsert_batch.side_effect = RuntimeError("semantic write failed")
@@ -1383,14 +1348,7 @@ class TestOsiSync:
 
     def test_sync_osi_metric_to_db_reconciles_metric_file_without_metrics(self, generation_tools, tmp_path):
         metric_file = tmp_path / "empty_metrics.yml"
-        metric_file.write_text(
-            "version: 0.2.0.dev0\n"
-            "semantic_model:\n"
-            "  - name: empty\n"
-            "    datasets:\n"
-            "      - name: orders\n"
-            "        source: orders\n"
-        )
+        metric_file.write_text("version: 0.2.0.dev0\nname: empty\ndatasets:\n  - name: orders\n    source: orders\n")
         snapshot = [{"id": "metric:old_metric", "name": "old_metric", "yaml_path": str(metric_file)}]
         generation_tools.metric_rag.list_artifact_rows.return_value = snapshot
         doc = SimpleNamespace(name="empty", datasets=[], metrics=[])
@@ -1406,9 +1364,7 @@ class TestOsiSync:
 
     def test_sync_osi_metric_to_db_rejects_missing_scoped_metric(self, generation_tools, tmp_path):
         metric_file = tmp_path / "orders.yml"
-        metric_file.write_text(
-            "version: 0.2.0.dev0\nsemantic_model:\n  - name: shop\n    metrics:\n      - name: order_count\n"
-        )
+        metric_file.write_text("version: 0.2.0.dev0\nname: shop\ndatasets: []\nmetrics:\n  - name: order_count\n")
 
         result = generation_tools._sync_osi_metric_to_db(
             str(metric_file),
@@ -1421,18 +1377,12 @@ class TestOsiSync:
 
     def test__sync_osi_semantic_objects_to_db_upserts_only_current_dataset_columns(self, generation_tools, tmp_path):
         generation_tools.agent_config.current_db_config.return_value = SimpleNamespace(
-            catalog="default_catalog", database="shop", schema=""
+            to_dict=lambda: {}, catalog="default_catalog", database="shop", schema=""
         )
         generation_tools.semantic_dataset_rag = Mock()
         semantic_file = tmp_path / "orders.yml"
         semantic_file.write_text(
-            "version: 0.2.0.dev0\n"
-            "semantic_model:\n"
-            "  - name: shop\n"
-            "    datasets:\n"
-            "      - name: orders\n"
-            "        source: orders\n"
-            "        primary_key: [order_id]\n"
+            "version: 0.2.0.dev0\nname: shop\ndatasets:\n  - name: orders\n    source: orders\n    primary_key: [order_id]\n"
         )
         customer_segment = SimpleNamespace(
             name="customer_segment",
@@ -1531,23 +1481,22 @@ class TestOsiSync:
 
     def test_sync_osi_semantic_objects_projects_datatype_time_role_without_new_schema(self, generation_tools, tmp_path):
         generation_tools.agent_config.current_db_config.return_value = SimpleNamespace(
-            catalog="default_catalog", database="events", schema=""
+            to_dict=lambda: {}, catalog="default_catalog", database="events", schema=""
         )
         semantic_file = tmp_path / "events.yml"
         semantic_file.write_text(
             """
 version: 0.2.0.dev0
-semantic_model:
-  - name: events_model
-    datasets:
-      - name: events
-        source: events
-        fields:
-          - name: occurred_at
-            datatype: DateTime
-          - name: date_label
-            datatype: Date
-            dimension: {is_time: false}
+name: events_model
+datasets:
+  - name: events
+    source: events
+    fields:
+      - name: occurred_at
+        datatype: DateTime
+      - name: date_label
+        datatype: Date
+        dimension: {is_time: false}
 """.lstrip(),
             encoding="utf-8",
         )
@@ -1566,41 +1515,29 @@ semantic_model:
 
     def test_load_osi_document_selects_only_artifact_model(self, generation_tools, tmp_path):
         (tmp_path / "sales.yml").write_text(
-            "version: 0.2.0.dev0\n"
-            "semantic_model:\n"
-            "  - name: sales\n"
-            "    datasets:\n"
-            "      - name: orders\n"
-            "        source: orders\n"
-            "        primary_key: [order_id]\n"
+            "version: 0.2.0.dev0\nname: sales\ndatasets:\n  - name: orders\n    source: orders\n    primary_key: [order_id]\n"
         )
         (tmp_path / "finance.yml").write_text(
-            "version: 0.2.0.dev0\n"
-            "semantic_model:\n"
-            "  - name: finance\n"
-            "    datasets:\n"
-            "      - name: budgets\n"
-            "        source: budgets\n"
-            "        primary_key: [budget_id]\n"
+            "version: 0.2.0.dev0\nname: finance\ndatasets:\n  - name: budgets\n    source: budgets\n    primary_key: [budget_id]\n"
         )
         metric_file = tmp_path / "finance_metrics.yml"
         metric_file.write_text(
-            "version: 0.2.0.dev0\n"
-            "semantic_model:\n"
-            "  - name: finance\n"
-            "    datasets:\n"
-            "      - name: budgets\n"
-            "        source: budgets\n"
-            "        primary_key: [budget_id]\n"
-            "    metrics:\n"
-            "      - name: budget_total\n"
-            "        expression:\n"
-            "          dialects:\n"
-            "            - dialect: ANSI_SQL\n"
-            "              expression: SUM(amount)\n"
-            "        custom_extensions:\n"
-            "          - vendor_name: DATUS\n"
-            '            data: \'{"dataset":"budgets"}\'\n'
+            """version: 0.2.0.dev0
+name: finance
+datasets:
+  - name: budgets
+    source: budgets
+    primary_key: [budget_id]
+metrics:
+  - name: budget_total
+    expression:
+      dialects:
+        - dialect: ANSI_SQL
+          expression: SUM(amount)
+    custom_extensions:
+      - vendor_name: DATUS
+        data: '{\"dataset\":\"budgets\"}'
+"""
         )
 
         finance_doc = SimpleNamespace(
@@ -1624,20 +1561,20 @@ semantic_model:
     ):
         """Issue #1084 (OSI path): qualified source tables in different databases keep distinct ids."""
         generation_tools.agent_config.current_db_config.return_value = SimpleNamespace(
-            catalog="", database="shop", schema=""
+            to_dict=lambda: {}, catalog="", database="shop", schema=""
         )
         generation_tools.agent_config.db_type = "snowflake"
         generation_tools.semantic_dataset_rag = Mock()
         semantic_file = tmp_path / "orders.yml"
         semantic_file.write_text(
-            "version: 0.2.0.dev0\n"
-            "semantic_model:\n"
-            "  - name: shop\n"
-            "    datasets:\n"
-            "      - name: orders_db1\n"
-            "        source: db1.public.orders\n"
-            "      - name: orders_db2\n"
-            "        source: db2.sales.orders\n"
+            """version: 0.2.0.dev0
+name: shop
+datasets:
+  - name: orders_db1
+    source: db1.public.orders
+  - name: orders_db2
+    source: db2.sales.orders
+"""
         )
         doc = SimpleNamespace(
             name="shop",
@@ -1683,19 +1620,13 @@ semantic_model:
 
     def test__sync_osi_semantic_objects_to_db_fails_when_table_profile_sync_fails(self, generation_tools, tmp_path):
         generation_tools.agent_config.current_db_config.return_value = SimpleNamespace(
-            catalog="default_catalog", database="shop", schema=""
+            to_dict=lambda: {}, catalog="default_catalog", database="shop", schema=""
         )
         generation_tools.semantic_dataset_rag = Mock()
         generation_tools.semantic_dataset_rag.upsert_batch.side_effect = RuntimeError("profile sync failed")
         semantic_file = tmp_path / "orders.yml"
         semantic_file.write_text(
-            "version: 0.2.0.dev0\n"
-            "semantic_model:\n"
-            "  - name: shop\n"
-            "    datasets:\n"
-            "      - name: orders\n"
-            "        source: orders\n"
-            "        primary_key: [order_id]\n"
+            "version: 0.2.0.dev0\nname: shop\ndatasets:\n  - name: orders\n    source: orders\n    primary_key: [order_id]\n"
         )
         dataset = SimpleNamespace(
             name="orders",

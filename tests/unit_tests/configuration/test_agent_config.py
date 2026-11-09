@@ -243,6 +243,33 @@ class TestDbConfigFilterKwargs:
 
 
 class TestDosiDbProfile:
+    @pytest.mark.parametrize("adapter,dialect", [("greenplum", "postgres"), ("spark", "hive")])
+    def test_compatible_wire_profiles_use_the_engine_dialect(self, adapter, dialect):
+        from datus.tools.semantic_tools.dosi.dialects import resolve_profile_dialect
+
+        cfg = DbConfig(type=adapter, host="localhost", database="analytics", extra={"schema_name": "sales"})
+        result = _db_config_to_dosi_profile(cfg)
+        assert result["type"] == dialect
+        assert result["database"] == "analytics"
+        assert result["schema"] == "sales"
+        assert resolve_profile_dialect({"type": adapter}, ["postgres", "hive"]) == dialect
+
+    def test_explicit_schema_wins_over_schema_name_alias(self):
+        cfg = DbConfig(type="trino", host="localhost", extra={"schema": "sales", "schema_name": "other"})
+        assert _db_config_to_dosi_profile(cfg)["schema"] == "sales"
+
+    @pytest.mark.parametrize("database", [None, "legacy_alias"])
+    def test_oracle_service_name_maps_to_the_engine_connection_database(self, database):
+        cfg = DbConfig(
+            type="oracle",
+            host="localhost",
+            database=database,
+            extra={"service_name": "FREEPDB1", "schema_name": "SALES"},
+        )
+        profile = _db_config_to_dosi_profile(cfg)
+        assert profile["database"] == "FREEPDB1"
+        assert profile["schema"] == "SALES"
+
     @pytest.mark.parametrize("auth", [{"auth_mode": "iam"}, {"secret_ref": "test/database"}])
     def test_aurora_settings_keep_types_and_are_independent(self, monkeypatch, auth):
         monkeypatch.setenv("TEST_AWS_REGION", "us-east-1")
@@ -328,6 +355,7 @@ class TestDosiDbProfile:
         )
 
         assert cfg.runtime_db_context() == {
+            "datasource": "",
             "catalog_name": "runtime_catalog",
             "catalog": "runtime_catalog",
             "database_name": "runtime_db",
@@ -339,10 +367,55 @@ class TestDosiDbProfile:
 
         cfg.set_runtime_db_context({"schema_name": "runtime_schema_name"})
         assert cfg.runtime_db_context() == {
+            "datasource": "",
+            "catalog": "",
+            "catalog_name": "",
+            "database": "",
+            "database_name": "",
             "schema_name": "runtime_schema_name",
             "schema": "runtime_schema_name",
             "db_schema": "runtime_schema_name",
         }
+
+    def test_explicitly_cleared_runtime_fields_remove_profile_defaults(self):
+        profile = {"type": "postgresql", "database": "analytics", "schema": "tenant_a"}
+        cleared = _apply_runtime_db_context_to_dosi_profile(profile, {"database": "analytics", "schema": ""})
+        assert cleared == {"type": "postgresql", "database": "analytics"}
+        assert profile["schema"] == "tenant_a"
+
+    @pytest.mark.parametrize(
+        "overrides,expected_schema",
+        [
+            ({"database_name": "analytics"}, "tenant_a"),
+            ({"catalog_name": "cat_a"}, "tenant_a"),
+            ({"database_name": "analytics", "schema_name": "", "catalog_name": None}, "tenant_a"),
+            ({"schema_name": "tenant_b"}, "tenant_b"),
+        ],
+    )
+    def test_cli_partial_overrides_preserve_unspecified_configured_coordinates(
+        self, tmp_path, overrides, expected_schema
+    ):
+        configured = DbConfig(type="postgresql", database="analytics", catalog="cat_a", schema="tenant_a", default=True)
+        cfg = AgentConfig(
+            nodes={},
+            home=str(tmp_path),
+            target="mock",
+            models={"mock": {"type": "openai", "api_key": "unused", "model": "unused"}},
+            services={"datasources": {"warehouse": configured.to_dict()}},
+            skip_init_dirs=True,
+        )
+        cfg.override_by_args(**overrides)
+        context = cfg.runtime_db_context()
+        assert context["database"] == "analytics"
+        assert context["catalog"] == "cat_a"
+        assert context["schema"] == expected_schema
+        compiler = _apply_runtime_db_context_to_dosi_profile(
+            _db_config_to_dosi_profile(cfg.current_db_config()), context
+        )
+        assert compiler["database"] == "analytics"
+        assert compiler["catalog"] == "cat_a"
+        assert compiler["schema"] == expected_schema
+        assert cfg.current_db_config().schema == "tenant_a"
 
 
 # ---------------------------------------------------------------------------
@@ -3090,3 +3163,72 @@ class TestCompactConfigMidTurnKeys:
         cfg = CompactConfig.from_dict({"major": {"bogus": 1}, "minor": {"keep_recent_user_turns": 2}})
         assert cfg.minor.keep_recent_user_turns == 2
         assert cfg.minor.keep_recent_tool_results == 5
+
+
+@pytest.mark.parametrize(
+    "overrides,expected",
+    [
+        ({"catalog_name": "cat_b"}, ("cat_b", "", "")),
+        ({"database_name": "next_db"}, ("cat_a", "next_db", "")),
+    ],
+)
+def test_cli_parent_changes_do_not_splice_configured_children(tmp_path, overrides, expected):
+    cfg = AgentConfig(
+        nodes={},
+        home=str(tmp_path),
+        skip_init_dirs=True,
+        services={
+            "datasources": {
+                "warehouse": {
+                    "type": "postgresql",
+                    "catalog": "cat_a",
+                    "database": "analytics",
+                    "schema": "tenant_a",
+                    "default": True,
+                },
+            }
+        },
+    )
+    cfg.override_by_args(**overrides)
+    actual = cfg.runtime_db_context()
+    assert tuple(actual[k] for k in ("catalog", "database", "schema")) == expected
+
+
+@pytest.mark.parametrize("engine", ["sqlite", "duckdb"])
+def test_cli_schema_override_resolves_the_glob_database_first(tmp_path, engine):
+    import sqlite3
+
+    import duckdb
+
+    path = tmp_path / ("analytics.sqlite" if engine == "sqlite" else "analytics.duckdb")
+    with sqlite3.connect(str(path)) if engine == "sqlite" else duckdb.connect(str(path)):
+        pass
+    cfg = AgentConfig(
+        nodes={},
+        home=str(tmp_path / "home"),
+        skip_init_dirs=True,
+        services={
+            "datasources": {
+                "warehouse": {
+                    "type": engine,
+                    "path_pattern": str(tmp_path / ("*.sqlite" if engine == "sqlite" else "*.duckdb")),
+                    "default": True,
+                },
+            }
+        },
+    )
+    cfg.override_by_args(schema_name="tenant_a")
+    assert cfg.runtime_db_context()["database"] == "analytics"
+    assert cfg.runtime_db_context()["schema"] == "tenant_a"
+
+
+@pytest.mark.parametrize("engine", ["sqlite", "duckdb"])
+@pytest.mark.parametrize("database", ["", "analytics"])
+def test_file_database_default_uses_the_real_file_name_without_a_connector(tmp_path, engine, database):
+    from datus.configuration.agent_config import AgentConfig, DbConfig
+
+    config = object.__new__(AgentConfig)
+    profile = DbConfig(type=engine, uri=str(tmp_path / "analytics.db"), database=database)
+    config.current_db_config = lambda datasource="": profile
+    assert config.default_database_name("warehouse") == "analytics"
+    assert profile.database == database

@@ -66,7 +66,8 @@ class TestExploreAgenticNodeInit:
         assert node.get_node_name() == "explore"
 
     def test_explore_default_max_turns(self, real_agent_config, mock_llm_create):
-        """Default max_turns should be 15."""
+        """Omitting max_turns uses the default of 100."""
+        real_agent_config.agentic_nodes["explore"].pop("max_turns")
         from datus.agent.node.explore_agentic_node import ExploreAgenticNode
 
         node = ExploreAgenticNode(
@@ -76,7 +77,7 @@ class TestExploreAgenticNodeInit:
             agent_config=real_agent_config,
             node_name="explore",
         )
-        assert node.max_turns == 15
+        assert node.max_turns == 100
 
     def test_explore_model_is_mock(self, real_agent_config, mock_llm_create):
         """Model should be the mock model."""

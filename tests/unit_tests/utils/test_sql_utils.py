@@ -1695,6 +1695,8 @@ class TestLooksLikeSqlFileRef:
         [
             "SELECT * FROM users",  # inline SQL has whitespace
             "SELECT 1",
+            "SELECT * FROM test.sql",
+            "SELECT\t*\tFROM\ttest.sql",
             "create table t (id int)",
             "my file.sql",  # embedded space → not a bare path
             "line1\nquery.sql",  # newline → not a single token

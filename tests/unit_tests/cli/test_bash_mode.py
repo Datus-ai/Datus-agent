@@ -510,20 +510,31 @@ class TestRunSqlGate:
         assert gate.error == f"SQL analysis {status}: outside verified subset"
         runtime.assert_not_called()
 
-    def test_native_read_rejects_policy_rewrite(self, monkeypatch):
+    @pytest.mark.parametrize("rewrite_status", ["complete", "unsupported"])
+    def test_native_read_revalidates_policy_rewrite(self, monkeypatch, rewrite_status):
         from datus.cli.bash_mode import run_sql_gate
         from datus.tools.db_tools import connector_registry
         from datus.utils.constants import SQLType
 
-        analysis = SimpleNamespace(status="complete", sql_type=SQLType.SELECT)
-        monkeypatch.setattr(connector_registry, "get_sql_analyzer", lambda dialect: lambda sql: analysis, raising=False)
+        def analyze(sql):
+            return SimpleNamespace(
+                status="complete" if sql == "SELECT 1" else rewrite_status,
+                sql_type=SQLType.SELECT,
+                diagnostic="outside verified subset",
+            )
+
+        monkeypatch.setattr(connector_registry, "get_sql_analyzer", lambda dialect: analyze, raising=False)
         runtime = MagicMock()
         runtime.before_sql_read.return_value = SimpleNamespace(allowed=True, sql="SELECT 1 LIMIT 1")
         with patch("datus.tools.policy_runtime.PolicyRuntime", return_value=runtime):
             gate = run_sql_gate(_sql_cli(), "SELECT 1")
 
-        assert gate.approved is False
-        assert "SQL policy rewriting is unsupported" in gate.error
+        assert gate.approved is (rewrite_status == "complete")
+        if rewrite_status == "complete":
+            assert gate.error is None
+            assert gate.sql == "SELECT 1 LIMIT 1"
+        else:
+            assert "SQL analysis unsupported" in gate.error
         runtime.before_sql_read.assert_called_once()
 
     def test_read_auto_allows_without_prompt(self):

@@ -89,10 +89,9 @@ def ensure_metric_uid(metric: dict[str, Any], previous: dict[str, Any] | None = 
 
 def _named_metrics(document: Any) -> list[dict[str, Any]]:
     """Read named metrics without collapsing entries; native validation checks structure."""
-    models = document.get("semantic_model") if isinstance(document, dict) else None
-    if not isinstance(models, list) or len(models) != 1 or not isinstance(models[0], dict):
+    if not isinstance(document, dict):
         return []
-    metrics = models[0].get("metrics", [])
+    metrics = document.get("metrics", [])
     if not isinstance(metrics, list):
         return []
     return [metric for metric in metrics if isinstance(metric, dict) and normalize_metric_name(metric.get("name"))]

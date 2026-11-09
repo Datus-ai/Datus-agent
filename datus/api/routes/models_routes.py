@@ -8,6 +8,7 @@ context-budget decisions without re-hitting OpenRouter.
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter
@@ -15,7 +16,7 @@ from fastapi import APIRouter
 from datus.api.deps import ServiceDep
 from datus.api.models.base_models import Result
 from datus.api.models.config_models import ModelInfo, ModelPricing, ModelsData
-from datus.cli.provider_model_catalog import load_cache_fetched_at, load_cached_model_details
+from datus.cli.provider_model_catalog import load_cache_fetched_at, model_spec_prefix_matches, resolve_model_details
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
@@ -26,9 +27,8 @@ router = APIRouter(prefix="/api/v1", tags=["models"])
 def _model_spec(catalog: Dict[str, Any], slug: str) -> Dict[str, Any]:
     """Return the ``model_specs`` entry from providers.yml for a slug, or {}.
 
-    Prefix matching mirrors the runtime convention documented in
-    ``datus/conf/providers.yml:154-155``: the longest spec key that is a prefix
-    of the slug wins. Exact matches always take priority.
+    Exact matches take priority, followed by the longest hyphen-delimited
+    prefix. A new numeric version must not inherit an older version's limits.
     """
     specs = catalog.get("model_specs") if isinstance(catalog, dict) else None
     if not isinstance(specs, dict):
@@ -40,7 +40,7 @@ def _model_spec(catalog: Dict[str, Any], slug: str) -> Dict[str, Any]:
     for key in specs.keys():
         if not isinstance(key, str):
             continue
-        if slug.startswith(key) and (best_key is None or len(key) > len(best_key)):
+        if model_spec_prefix_matches(slug, key) and (best_key is None or len(key) > len(best_key)):
             best_key = key
     if best_key is None:
         return {}
@@ -57,11 +57,13 @@ def _build_model_info(
     slug = str(entry.get("id", ""))
     spec = _model_spec(catalog, slug)
     context_length = entry.get("context_length")
-    if not isinstance(context_length, int):
+    if type(context_length) is not int or context_length <= 0:
         spec_ctx = spec.get("context_length")
         context_length = spec_ctx if isinstance(spec_ctx, int) else None
-    spec_max = spec.get("max_tokens")
-    max_tokens = spec_max if isinstance(spec_max, int) else None
+    max_tokens = entry.get("max_tokens")
+    if type(max_tokens) is not int or max_tokens <= 0:
+        spec_max = spec.get("max_tokens")
+        max_tokens = spec_max if isinstance(spec_max, int) else None
 
     pricing_raw = entry.get("pricing")
     pricing = None
@@ -131,13 +133,13 @@ async def list_models(svc: ServiceDep) -> Result[ModelsData]:
       1. OpenRouter cache (``~/.datus/cache/openrouter_models.json``) — richest.
       2. ``providers.yml`` model list with ``model_specs`` for context_length.
     """
+    cached_details = await asyncio.to_thread(resolve_model_details) or {}
     agent_config = svc.agent_config
     catalog = agent_config.provider_catalog if isinstance(agent_config.provider_catalog, dict) else {}
     providers_meta = catalog.get("providers", {}) if isinstance(catalog, dict) else {}
     if not isinstance(providers_meta, dict):
         providers_meta = {}
 
-    cached_details = load_cached_model_details() or {}
     used_cache = False
 
     models: List[ModelInfo] = []

@@ -9,11 +9,12 @@ the client can reconnect and resume from where it left off.
 
 import asyncio
 import copy
+import json
 import os
 import uuid
 from contextlib import ExitStack
 from datetime import datetime
-from typing import Any, AsyncGenerator, Callable, Dict, List, Literal, Optional, Set, Tuple
+from typing import Any, AsyncGenerator, Callable, Dict, List, Literal, Optional
 
 from datus.agent.node.agentic_node import AgenticNode
 from datus.api.hooks.turn_stats_hooks import TurnStatsEvent, get_turn_stats_hook
@@ -31,8 +32,15 @@ from datus.api.models.cli_models import (
     StreamChatInput,
 )
 from datus.api.models.message_contents import PreparedChatMessage
-from datus.api.services.action_sse_converter import action_to_sse_event
+from datus.api.services.action_sse_converter import (
+    _build_response_content,
+    _build_structured_response_content,
+    _response_node_class,
+    _response_protocol,
+    action_to_sse_event,
+)
 from datus.api.services.background_drain import track_background_task
+from datus.api.services.chat_extensions import ChatNodeFactory
 from datus.api.services.turn_stats import TurnStatsCollector, resolve_subagent
 from datus.cli.autocomplete import AtReferenceCompleter
 from datus.cli.execution_state import PendingInputQueue
@@ -70,15 +78,27 @@ def _release_stamp() -> Optional[str]:
 
 logger = get_logger(__name__)
 
+
+def _subagent_datasource(agent_config: AgentConfig, name_or_id: Optional[str]) -> Optional[str]:
+    """Resolve a direct subagent's saved datasource by configuration name or API id."""
+    if not name_or_id:
+        return None
+    for name, entry in (agent_config.agentic_nodes or {}).items():
+        entry_id = entry.get("id") if isinstance(entry, dict) else getattr(entry, "id", None)
+        if name != name_or_id and entry_id != name_or_id:
+            continue
+        config = agent_config.sub_agent_config(name)
+        scope = config.get("scoped_context") if isinstance(config, dict) else getattr(config, "scoped_context", None)
+        datasource = scope.get("datasource") if isinstance(scope, dict) else getattr(scope, "datasource", None)
+        return datasource if isinstance(datasource, str) and datasource else None
+    return None
+
+
 HEARTBEAT_INTERVAL = 10  # seconds
 
 # Max run-boundary auto-continuations per task, bounding a client that keeps
 # POSTing /chat/insert from running one task indefinitely.
 _MAX_INSERT_CONTINUATIONS = 20
-
-# How many (session, datasource) pairs the unbound-datasource warning remembers
-# before it forgets them all and starts again.
-_MAX_WARNED_DATASOURCES = 512
 
 
 def is_thinking_only_content(content_items) -> bool:
@@ -132,7 +152,13 @@ def _assistant_content_fingerprint(event: SSEEvent) -> str:
         content = payload.get("content")
         if content:
             parts.append(str(content).strip())
-    return "\n".join(part for part in parts if part)
+    if not parts:
+        return ""
+    # Equal text in two delegated tasks (or in a child and its parent) is
+    # independent content. Only suppress repeats inside the producing scope.
+    payload = event.data.payload
+    scope = (payload.depth, payload.parent_action_id)
+    return f"{scope!r}:" + "\n".join(parts)
 
 
 def _should_skip_duplicate_assistant_message(
@@ -150,6 +176,8 @@ def _should_skip_duplicate_assistant_message(
       An UPDATE on the id that already owns the text is the legitimate
       overwrite path (streamed thinking deltas replaced by the finished
       response, ``finalize_progress`` stepping one bubble through its stages).
+      Structured result updates also have to replace their JSON stream, even
+      when an earlier attempt already displayed the same readable summary.
 
     Judging UPDATE at all is the point: one assistant turn carrying text plus N
     parallel tool calls opens N ``thinking_stream_*`` messages that each stream
@@ -174,7 +202,14 @@ def _should_skip_duplicate_assistant_message(
     if owner is None:
         return False
     if event.data.type == SSEDataType.UPDATE_MESSAGE:
-        return owner != event.data.payload.message_id
+        if owner == event.data.payload.message_id:
+            return False
+        output = action.output if isinstance(getattr(action, "output", None), dict) else {}
+        raw = output.get("response") or output.get("content") or output.get("raw_output")
+        return (
+            not _is_resolved_sql_file_response(action)
+            and _build_structured_response_content(raw, _response_protocol(action)) is None
+        )
     return True
 
 
@@ -218,6 +253,18 @@ def _should_include_final_response(action, assistant_response_sent: bool) -> boo
     )
 
 
+def _is_resolved_sql_file_response(action: ActionHistory) -> bool:
+    output = action.output if isinstance(getattr(action, "output", None), dict) else {}
+    sql = output.get("sql")
+    return (
+        action.action_type.endswith("_response")
+        and _response_node_class(action) == "gen_sql"
+        and bool(output.get("sql_file_path"))
+        and isinstance(sql, str)
+        and bool(sql.strip())
+    )
+
+
 def _is_visible_assistant_response(action, event: SSEEvent, *, tool_result_seen: bool) -> bool:
     """Return True when an action already emitted user-visible assistant text.
 
@@ -227,6 +274,8 @@ def _is_visible_assistant_response(action, event: SSEEvent, *, tool_result_seen:
     means the wrapper ``chat_response`` would duplicate it.
     """
     if action.role != ActionRole.ASSISTANT or action.status != ActionStatus.SUCCESS:
+        return False
+    if getattr(action, "depth", 0) > 0:
         return False
     if not action.action_type or action.action_type == "thinking_delta" or action.action_type.endswith("_response"):
         return False
@@ -387,7 +436,11 @@ class ChatTask:
         if content_id is None:
             claimed = set(self.content_events.values())
             content_id = next(
-                (key for key, record in self.message_contents.items() if key not in claimed and record["text"] == text),
+                (
+                    key
+                    for key, record in self.message_contents.items()
+                    if key not in claimed and record.get("text") == text
+                ),
                 None,
             )
         if content_id in self.message_contents:
@@ -440,43 +493,16 @@ class ChatTaskManager:
         default_source: Optional[str] = None,
         default_interactive: bool = True,
         stream_thinking: bool = False,
+        *,
+        node_factory: Optional[ChatNodeFactory] = None,
     ) -> None:
+        """Create a project task registry with optional trusted node dispatch."""
+        self._node_factory = node_factory
         self._tasks: Dict[str, ChatTask] = {}
         self._completed_tasks: Dict[str, ChatTask] = {}
         self._default_source = default_source
         self._default_interactive = default_interactive
         self._stream_thinking = stream_thinking
-        # (session_id, datasource) pairs already reported as unbound. A channel
-        # pinned to a datasource that was unbound sends the same name every
-        # turn, and only the first one is news.
-        self._warned_datasources: Set[Tuple[str, str]] = set()
-
-    def _warn_unbound_datasource(self, request: StreamChatInput, agent_config: AgentConfig) -> None:
-        """Report a dropped ``datasource`` once per session, not once per turn.
-
-        Names the available datasources, which is what tells a reader whether
-        the request is stale or the binding is missing — so it is worth building
-        the list, and worth building it only once.
-        """
-        key = (request.session_id or "", request.datasource or "")
-        if key in self._warned_datasources:
-            return
-        # Bounded rather than pruned: this only exists to keep a repeat out of
-        # the log, so forgetting everything occasionally costs one extra line.
-        if len(self._warned_datasources) >= _MAX_WARNED_DATASOURCES:
-            self._warned_datasources.clear()
-        self._warned_datasources.add(key)
-        # %r on both request-supplied values: ``session_id`` is free-form client
-        # input, and repr escapes the CR/LF that would otherwise let it forge a
-        # second log line.
-        logger.warning(
-            "Ignoring datasource %r for session %r: not bound to this project (available: %s); "
-            "falling back to %r and dropping the catalog/database/schema that came with it",
-            request.datasource,
-            request.session_id,
-            sorted(agent_config.services.datasources),
-            agent_config.current_datasource,
-        )
 
     # ------------------------------------------------------------------
     # Public API
@@ -560,34 +586,64 @@ class ChatTaskManager:
                 agent_config.set_active_custom(model_id, persist=False)
             else:
                 agent_config.set_active_provider_model(provider, model_id, persist=False)
-        # Per-request datasource override (e.g. an IM channel pinned to a datasource).
-        # Switches the connection profile; the setter validates it exists in config.
-        #
-        # A name that is not bound falls back to the project's default instead of
-        # raising: the caller is a UI hint (the web composer's picker keeps its own
-        # selection, and one resolved against another project's roster — or unbound
-        # since — arrives here stale), and the setter's DatusException reached the
-        # client as an ``error`` SSE event that killed the whole turn.
-        if request.datasource:
-            if request.datasource in agent_config.services.datasources:
-                agent_config.current_datasource = request.datasource
-            else:
-                self._warn_unbound_datasource(request, agent_config)
-                request.datasource = agent_config.current_datasource or None
-                # The whole selection goes, not just its datasource: these three
-                # name objects INSIDE the warehouse that was just dropped, and
-                # ``_fill_database_context`` below prefers the request's value
-                # over the config's — so keeping them would point the turn at
-                # another warehouse's same-named database, which is the silent
-                # half of the bug the fallback exists to avoid.
-                request.catalog = None
-                request.database = None
-                request.db_schema = None
-        request.catalog, request.database, request.db_schema = _fill_database_context(
-            agent_config,
-            catalog=request.catalog,
-            database=request.database,
-            schema=request.db_schema,
+        from datus.schemas.database_context import EXECUTION_CONTEXT_META_KEY, DatabaseExecutionContext
+
+        previous = {}
+        if request.session_id:
+            raw_context = await asyncio.to_thread(
+                lambda: self._session_manager(agent_config, user_id).load_session_meta(
+                    request.session_id, EXECUTION_CONTEXT_META_KEY
+                )
+            )
+            if raw_context:
+                try:
+                    previous = DatabaseExecutionContext.from_mapping(json.loads(raw_context)).to_dict()
+                except (ValueError, TypeError, AttributeError):
+                    logger.warning("Ignoring malformed execution context for session %s", request.session_id)
+        datasource = request.datasource or previous.get("datasource") or agent_config.current_datasource
+        # A directly addressed subagent owns its execution target. UI selections
+        # and sessions created before a rebind can still name another datasource.
+        # Drop that target's children together rather than applying them to the
+        # bound warehouse. Unscoped agents keep normal per-turn selection.
+        bound_datasource = _subagent_datasource(agent_config, sub_agent_id)
+        if bound_datasource:
+            if datasource != bound_datasource:
+                request.catalog = request.database = request.db_schema = None
+            datasource = bound_datasource
+            request.datasource = bound_datasource
+        if datasource:
+            if datasource not in agent_config.services.datasources:
+                raise ValueError(f"Datasource {datasource!r} is not bound to this project; select a valid datasource")
+            agent_config.current_datasource = datasource
+        # None means omitted; an empty string explicitly clears that level.
+        # A changed parent invalidates inherited children and defaults belonging
+        # to another parent. Never splice a new catalog onto an old db/schema.
+        defaults = agent_config.current_db_config() if datasource else None
+        default_database = ""
+        if defaults is not None:
+            default_database = (
+                await asyncio.to_thread(agent_config.default_database_name, datasource)
+                if defaults.path_pattern
+                else agent_config.default_database_name(datasource)
+            )
+        inherit = previous.get("datasource") == datasource
+        use_defaults = True
+        resolved = []
+        for field, supplied in (
+            ("catalog", request.catalog),
+            ("database", request.database),
+            ("schema", request.db_schema),
+        ):
+            default = default_database if field == "database" else getattr(defaults, field, None) or ""
+            value = supplied
+            if value is None:
+                value = previous.get(field, "") if inherit else default if use_defaults else ""
+            resolved.append(value)
+            inherit = inherit and value == previous.get(field, "")
+            use_defaults = use_defaults and value == default
+        request.catalog, request.database, request.db_schema = resolved
+        agent_config.set_runtime_db_context(
+            datasource=datasource, catalog=request.catalog, database=request.database, schema=request.db_schema
         )
         agent_name = sub_agent_id or "chat"
         safe_name = agent_name.replace(" ", "_")
@@ -801,6 +857,10 @@ class ChatTaskManager:
                 )
 
             node = await asyncio.to_thread(_init_node)
+            # Each request owns its node, including any continuation passes.
+            # An omitted request limit must preserve the configured node limit.
+            if "max_turns" in request.model_fields_set:
+                node.max_turns = request.max_turns
             task.node = node
             task.previous_message_id = await asyncio.to_thread(
                 self._max_message_id, agent_config, node.session_id, user_id
@@ -852,6 +912,7 @@ class ChatTaskManager:
                     data=SSESessionData(
                         session_id=session_id,
                         llm_session_id=node.session_id,
+                        execution_context=agent_config.runtime_db_context(),
                     ),
                     timestamp=now_utc_iso(),
                 ),
@@ -953,6 +1014,8 @@ class ChatTaskManager:
                 assistant_response_sent = False
                 tool_result_seen = False
                 seen_assistant_message_fingerprints: dict[str, str] = {}
+                pending_delta_ids: dict[tuple[int, Optional[str]], str] = {}
+                response_sources: dict[tuple[int, Optional[str]], tuple[str, str]] = {}
                 async for action in node.execute_stream_with_interactions(action_history):
                     action_count += 1
                     if _is_turn_error_action(action):
@@ -978,9 +1041,31 @@ class ChatTaskManager:
                     )
 
                     is_first_delta = True
+                    message_id = action.action_id
+                    scope = (action.depth, action.parent_action_id)
                     if action.action_type == "thinking_delta":
                         is_first_delta = action.action_id not in seen_delta_action_ids
                         seen_delta_action_ids.add(action.action_id)
+                        if effective_stream:
+                            pending_delta_ids[scope] = action.action_id
+                    elif action.action_type == "response":
+                        pending_id = pending_delta_ids.pop(scope, None)
+                        if pending_id and action.action_id not in seen_delta_action_ids:
+                            output = action.output if isinstance(action.output, dict) else {}
+                            raw = output.get("response") or output.get("content") or output.get("raw_output")
+                            if _build_structured_response_content(raw, _response_protocol(action)) is not None:
+                                # Some provider fallback completions mint a fresh
+                                # action id. Replace this producer's JSON stream
+                                # instead of leaving it above a new summary bubble.
+                                message_id = pending_id
+
+                    source = response_sources.get(scope)
+                    is_resolved_sql_update = bool(source and _is_resolved_sql_file_response(action))
+                    if is_resolved_sql_update:
+                        message_id = source[0]
+                        # Only a confirmed file resolution replaces the rendered
+                        # result. Deliverable wrappers can retain a raw aggregate.
+                        self._record_node_response(task, action, source, _build_response_content(action))
 
                     # finalize_progress actions reuse the same id across stages
                     # so the SSE wire emits CREATE then UPDATE_MESSAGE; we mark
@@ -990,21 +1075,26 @@ class ChatTaskManager:
                         is_finalize_progress_update = action.action_id in seen_delta_action_ids
                         seen_delta_action_ids.add(action.action_id)
 
-                    is_update = is_finalize_progress_update or (
-                        effective_stream
-                        and action.action_type == "response"
-                        and isinstance(action.output, dict)
-                        and action.action_id in seen_delta_action_ids
+                    is_update = (
+                        is_resolved_sql_update
+                        or is_finalize_progress_update
+                        or (
+                            effective_stream
+                            and action.action_type == "response"
+                            and isinstance(action.output, dict)
+                            and message_id in seen_delta_action_ids
+                        )
                     )
 
                     sse = action_to_sse_event(
                         action,
                         event_id,
-                        action.action_id,
+                        message_id,
                         stream_thinking=effective_stream,
                         is_first_delta=is_first_delta,
                         is_update=bool(is_update),
-                        include_final_response=_should_include_final_response(action, assistant_response_sent),
+                        include_final_response=is_resolved_sql_update
+                        or _should_include_final_response(action, assistant_response_sent),
                         proxied_tool_names=getattr(node, "proxied_tool_names", None),
                         # A fast prepare can beat the original tool-start frame.
                         # Include its snapshot there too so UPDATE-before-CREATE
@@ -1046,6 +1136,26 @@ class ChatTaskManager:
                         await self._push_event(task, sse)
                         event_id += 1
                         _remember_assistant_message(sse, seen_assistant_message_fingerprints)
+                        if (
+                            action.role == ActionRole.ASSISTANT
+                            and action.status == ActionStatus.SUCCESS
+                            and action.action_type == "response"
+                            and _response_protocol(action) is not None
+                        ):
+                            output = action.output if isinstance(action.output, dict) else {}
+                            raw = output.get("response") or output.get("content") or output.get("raw_output")
+                            if (
+                                isinstance(raw, str)
+                                and _build_structured_response_content(raw, _response_protocol(action)) is not None
+                            ):
+                                response_sources[scope] = (message_id, raw)
+                                self._record_node_response(task, action, (message_id, raw), sse.data.payload.content)
+                            elif isinstance(raw, str) and raw.lstrip().startswith(
+                                ("{", "[", "```json", "```\n{", "```\n[")
+                            ):
+                                # A rejected JSON result must not inherit an older
+                                # display. Plain sibling prose can follow a result.
+                                response_sources.pop(scope, None)
                         if _is_visible_assistant_response(action, sse, tool_result_seen=tool_result_seen):
                             assistant_response_sent = True
                         if action.role == ActionRole.TOOL and action.status != ActionStatus.PROCESSING:
@@ -1228,6 +1338,26 @@ class ChatTaskManager:
         except Exception:
             logger.warning("Turn settlement hook failed for session %s", task.session_id, exc_info=True)
 
+    @staticmethod
+    def _record_node_response(task, action, source: tuple[str, str], contents: List[IMessageContent]) -> None:
+        part = {
+            "type": "node-response",
+            "payload": {
+                "parent_action_id": action.parent_action_id,
+                "raw_output": source[1],
+                "node_class": _response_node_class(action),
+                "content": [item.model_dump() for item in contents],
+            },
+        }
+        if action.depth > 0 and action.parent_action_id:
+            record = task.tool_result_contents.setdefault(
+                f"tool-result:{action.parent_action_id}",
+                {"tool_call_id": action.parent_action_id, "parts": []},
+            )
+            record["parts"] = [item for item in record["parts"] if item["type"] != "node-response"] + [part]
+        else:
+            task.message_contents[f"node-response:{source[0]}"] = {"assistant_text": source[1], "parts": [part]}
+
     async def _persist_message_contents(self, task, agent_config, session_id, user_id) -> None:
         contents = {**task.message_contents, **task.tool_result_contents}
         if not contents or task.previous_message_id is None:
@@ -1343,7 +1473,7 @@ class ChatTaskManager:
         return event_id
 
     @staticmethod
-    def _session_manager(agent_config: AgentConfig, user_id: Optional[str]):
+    def session_manager(agent_config: AgentConfig, user_id: Optional[str]):
         """Build a SessionManager pointed at this run's session dir + scope."""
         from datus.models.session_manager import SessionManager
         from datus.utils.path_manager import get_path_manager
@@ -1352,6 +1482,9 @@ class ChatTaskManager:
             get_path_manager(agent_config=agent_config).sessions_dir
         )
         return SessionManager(session_dir=base_dir, scope=user_id)
+
+    # Preserve the internal name for existing subclasses; hosts use session_manager.
+    _session_manager = session_manager
 
     def _max_user_turn_number(self, agent_config: AgentConfig, session_id: str, user_id: Optional[str]) -> int:
         """Best-effort snapshot of the session's turn counter (0 on any error)."""
@@ -1462,6 +1595,19 @@ class ChatTaskManager:
         feedback flow passes a pre-copied id so the new node opens the cloned
         session file directly instead of mutating ``node.session_id`` later.
         """
+        session_id = session_id if session_id is not None else node_id
+        if self._node_factory is not None:
+            node = self._node_factory(
+                agent_config=agent_config,
+                subagent_id=subagent_id,
+                node_id=node_id,
+                user_id=user_id,
+                interactive=interactive,
+                session_id=session_id,
+            )
+            if node is not None:
+                return node
+
         from datus.agent.node.node_factory import create_interactive_node
 
         execution_mode: Literal["interactive", "workflow"] = "interactive" if interactive else "workflow"
@@ -1484,7 +1630,7 @@ class ChatTaskManager:
             scope=user_id,
             execution_mode=execution_mode,
             node_id=node_id,
-            session_id=session_id if session_id is not None else node_id,
+            session_id=session_id,
         )
 
     # ------------------------------------------------------------------
@@ -1553,12 +1699,10 @@ class ChatTaskManager:
         node_agent_config = getattr(current_node, "agent_config", None)
         if not isinstance(node_agent_config, AgentConfig):
             node_agent_config = None
-        catalog, database, db_schema = _fill_database_context(
-            node_agent_config,
-            catalog=catalog,
-            database=database,
-            schema=db_schema,
-        )
+        if node_agent_config is None or not node_agent_config.runtime_db_context():
+            catalog, database, db_schema = _fill_database_context(
+                node_agent_config, catalog=catalog, database=database, schema=db_schema
+            )
 
         return create_node_input(
             user_message=user_message,

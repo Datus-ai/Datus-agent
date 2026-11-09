@@ -868,6 +868,13 @@ class AgenticNode(Node):
                 f"datasource '{LOCAL_FILES_DATASOURCE}' (dialect: duckdb) after "
                 f"load_file_as_table registers them."
             )
+        previous = getattr(self, "_previous_execution_context", None)
+        if previous:
+            line += (
+                f" Execution target changed from {previous}. Historical tool results, metric catalogs and "
+                "semantic-model paths describe their original targets. Re-discover and bind targets for this turn. "
+                "Preserve existing report/dashboard queries and their datasource bindings when adding new sections."
+            )
         return line
 
     def _semantic_runtime_db_context(self) -> Dict[str, str]:
@@ -887,6 +894,13 @@ class AgenticNode(Node):
             except Exception as e:
                 logger.debug("Unable to read runtime DB context for Dosi: %s", e)
                 runtime_context = {}
+        if isinstance(runtime_context, dict) and runtime_context.get("datasource"):
+            from datus.schemas.database_context import DatabaseExecutionContext
+
+            context = DatabaseExecutionContext.from_mapping(runtime_context).to_dict(include_empty=True)
+            if "schema" in context:
+                context["db_schema"] = context["schema"]
+            return context
         datasource = runtime_context.get("datasource") or datasource
         context: Dict[str, str] = {}
         if datasource:
@@ -1186,6 +1200,29 @@ class AgenticNode(Node):
             return node_class
         return AgenticNode.get_node_name(self)
 
+    def _response_provenance(self, user_input: Any) -> Dict[str, str]:
+        """Identify this producer and any versioned chat result protocol."""
+        source = {"_node_class": self.get_node_class_name()}
+        if source["_node_class"] == "chat":
+            config = getattr(self, "node_config", None) or {}
+            version = (
+                getattr(user_input, "prompt_version", None)
+                or config.get("prompt_version")
+                or getattr(getattr(self, "agent_config", None), "prompt_version", None)
+            )
+            source.update(
+                _system_prompt_template=self._system_prompt_template_name(),
+                _prompt_version=str(version or ""),
+            )
+        return source
+
+    def _resolve_system_prompt_version(self, prompt_version: Optional[str]) -> Optional[str]:
+        """Use the same explicit, node, then agent version for rendering and its cache identity."""
+        version = prompt_version or (getattr(self, "node_config", None) or {}).get("prompt_version")
+        if version is None:
+            version = getattr(getattr(self, "agent_config", None), "prompt_version", None)
+        return version
+
     def _system_prompt_snapshot_meta(self, prompt_version: Optional[str]) -> Dict[str, str]:
         """Identity keys that invalidate the cached system-prompt snapshot.
 
@@ -1193,18 +1230,19 @@ class AgenticNode(Node):
         the inputs that change the prompt's identity within a session: the
         node template, its version, and the active model (a model switch also
         resets the provider-side prefix cache, so rebuilding is free). The
-        live per-turn datasource is injected in the user message instead. The
-        bound database skill is part of the system prompt, so its identity
-        appears here and a dialect switch rebuilds the snapshot. ``language`` DOES
+        live per-turn target is also injected in the user message, but some
+        node templates embed an active datasource or semantic-model directory.
+        The complete database coordinates therefore invalidate the snapshot,
+        even for two sources with the same dialect and database skill. ``language`` DOES
         appear: it is a per-request field on the Chat API, so a user switching
         the UI language mid-session must not keep replaying a snapshot that
         pins the old one. Date and memory stay frozen until the snapshot is rebuilt. Injected
         skill contents are fingerprinted so same-named updates rebuild it.
+        The advertised datasource catalog also changes when a project binds,
+        unbinds or renames a source, even if the current target stays the same.
         """
         agent_config = getattr(self, "agent_config", None)
-        version = prompt_version
-        if version is None and agent_config is not None and hasattr(agent_config, "prompt_version"):
-            version = agent_config.prompt_version
+        version = self._resolve_system_prompt_version(prompt_version)
         # A node-level model override (``node_config.model``) pins the
         # effective model regardless of the agent-level target, so it must be
         # the identity when set — otherwise a /model switch that doesn't
@@ -1221,7 +1259,27 @@ class AgenticNode(Node):
             except Exception:
                 model_id = ""
         language = getattr(agent_config, "language", None) if agent_config is not None else None
+        from datus.schemas.database_context import execution_context_for_node
+        from datus.utils.node_utils import build_datasource_prompt_context
+
+        datasource_catalog = build_datasource_prompt_context(agent_config).get("available_datasources", {})
+
+        try:
+            from datus.prompts.prompt_manager import get_prompt_manager
+
+            template_digest = get_prompt_manager(agent_config=agent_config).template_fingerprint(
+                self._system_prompt_template_name(),
+                version=version,
+            )
+        except (AttributeError, FileNotFoundError, ValueError, TypeError):
+            template_digest = ""
+
         return {
+            "datasource_catalog_sha256": hashlib.sha256(
+                json.dumps(datasource_catalog, sort_keys=True, default=str).encode()
+            ).hexdigest(),
+            "prompt_template_sha256": template_digest,
+            "execution_context": execution_context_for_node(agent_config, getattr(self, "input", None)).identity,
             "node_name": self.get_node_name(),
             # NOT implied by ``node_name``. The node name used to decide the
             # template outright, so listing it here covered both; now
@@ -1336,10 +1394,7 @@ class AgenticNode(Node):
         Returns:
             System prompt string loaded from the template
         """
-        # Get prompt version from parameter, fallback to agent config, then use default
-        version = prompt_version
-        if version is None and self.agent_config and hasattr(self.agent_config, "prompt_version"):
-            version = self.agent_config.prompt_version
+        version = self._resolve_system_prompt_version(prompt_version)
 
         root_path = self._resolve_workspace_root()
 
@@ -3601,6 +3656,24 @@ class AgenticNode(Node):
     # ``_build_error_result``.
     result_class: Any = None
 
+    def _record_execution_context(self) -> None:
+        """Persist effective coordinates and mark a target boundary in this turn."""
+        from datus.schemas.database_context import EXECUTION_CONTEXT_META_KEY, execution_context_for_node
+
+        context = execution_context_for_node(getattr(self, "agent_config", None), self.input)
+        self._previous_execution_context = None
+        if not context.datasource:
+            return
+        try:
+            previous = self.session_manager.load_session_meta(self.session_id, EXECUTION_CONTEXT_META_KEY)
+            if previous and previous != context.identity:
+                self._previous_execution_context = previous
+            self.session_manager.save_session_meta(self.session_id, EXECUTION_CONTEXT_META_KEY, context.identity)
+            turn = self.session_manager.get_max_user_turn_number(self.session_id) + 1
+            self.session_manager.save_session_meta(self.session_id, f"execution_context.turn.{turn}", context.identity)
+        except Exception:  # noqa: BLE001 — metadata bookkeeping must not abort a turn
+            logger.debug("Failed to record execution context for session %s", self.session_id, exc_info=True)
+
     def _apply_turn_db_context(self) -> None:
         """Point the connector at this turn's catalog and schema.
 
@@ -3699,6 +3772,7 @@ class AgenticNode(Node):
             # sub-agents continuing a parent session) all want SDK to see prior
             # items. ``execution_mode`` controls human-in-the-loop, not history.
             ctx.session = self._get_or_create_session()
+            self._record_execution_context()
 
             template_context = self._build_template_context(ctx)
             prompt_version = getattr(self.input, "prompt_version", None)
@@ -3776,6 +3850,7 @@ class AgenticNode(Node):
                 output_data=result.model_dump(),
                 status=ActionStatus.SUCCESS if getattr(result, "success", True) else ActionStatus.FAILED,
             )
+            final_action.input.update(self._response_provenance(ctx.user_input))
             ahm.add_action(final_action)
             yield final_action
 
@@ -3884,6 +3959,7 @@ class AgenticNode(Node):
         self._active_context_rewriter = ctx.context_rewriter
         from datus.utils.tool_result_store import ACTIVE_RESULT_STORE
 
+        response_provenance = self._response_provenance(ctx.user_input)
         result_store_token = ACTIVE_RESULT_STORE.set(None)
         try:
             async for stream_action in self.model.generate_with_tools_stream(
@@ -3906,6 +3982,11 @@ class AgenticNode(Node):
             ):
                 rewritten = self._maybe_rewrite_stream_action(stream_action, ctx)
                 action_to_yield = rewritten or stream_action
+                if action_to_yield.role == ActionRole.ASSISTANT and action_to_yield.depth == 0:
+                    action_to_yield.input = {
+                        **(action_to_yield.input if isinstance(action_to_yield.input, dict) else {}),
+                        **response_provenance,
+                    }
 
                 if (
                     action_to_yield.role == ActionRole.ASSISTANT
@@ -4041,7 +4122,8 @@ class AgenticNode(Node):
 
         Builds an instance of ``self.result_class`` populated with
         ``success=False``, ``error=<formatted>``, ``response=""``,
-        ``tokens_used=0``. Automatically fills ``action_history`` for
+        ``tokens_used=0``. Explicit output truncation preserves partial text
+        and received usage instead. Automatically fills ``action_history`` for
         NodeResult subtypes that declare that field.
 
         Subclasses MUST declare ``result_class`` for this to work; the
@@ -4059,6 +4141,13 @@ class AgenticNode(Node):
             "response": "",
             "tokens_used": 0,
         }
+        from datus.models.output_truncation import ModelOutputTruncatedError
+
+        if isinstance(exc, ModelOutputTruncatedError):
+            from datus.utils.text_utils import strip_litellm_placeholder
+
+            kwargs["response"] = strip_litellm_placeholder(exc.partial_response)
+            kwargs["tokens_used"] = exc.usage.total_tokens
         if "action_history" in getattr(self.result_class, "model_fields", {}):
             kwargs["action_history"] = [a.model_dump() for a in ctx.action_history_manager.get_actions()]
         return self.result_class(**kwargs)

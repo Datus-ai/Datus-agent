@@ -30,7 +30,7 @@ class ChatNodeInput(AtContextInput):
     database: Optional[str] = Field(default=None, description="Database name for context")
     db_schema: Optional[str] = Field(default=None, description="Database schema for context")
     max_turns: int = Field(
-        default=30,
+        default=100,
         description=(
             "Per-interaction override for the maximum conversation turns. "
             "Only takes effect when set explicitly by the caller; otherwise "

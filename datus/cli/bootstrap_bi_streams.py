@@ -369,6 +369,9 @@ def _collect_metrics_from_semantic_models(
             logger.warning("Skipping metric file outside sandbox: %s", relative)
             continue
         try:
+            from datus.tools.semantic_tools.dosi.files import file_engine
+
+            file_engine(resolved, agent_config, allow_invalid=True)
             with open(resolved, "r", encoding="utf-8") as fh:
                 docs = list(yaml.safe_load_all(fh))
         except Exception as exc:
@@ -377,9 +380,7 @@ def _collect_metrics_from_semantic_models(
         for doc in docs:
             if not isinstance(doc, dict):
                 continue
-            semantic_models = doc.get("semantic_model") or []
-            if isinstance(semantic_models, dict):
-                semantic_models = [semantic_models]
+            semantic_models = [doc] if "datasets" in doc else []
             for model in semantic_models:
                 if not isinstance(model, dict) or not model.get("name"):
                     continue

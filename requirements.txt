@@ -55,8 +55,8 @@ tabulate>=0.9.0
 # Plugin manifest: config-schema validation and system-prompt templates
 jsonschema>=4.17,<5
 jinja2>=3.1,<4
-datus-storage-base>=0.1.5,<0.2.0
+datus-storage-base>=0.1.8,<0.2.0
 datus-db-core>=0.1.7
-dosi-engine==0.2.0
+dosi-engine==0.2.1
 datus-bi-core>=0.1.2
 datus-scheduler-core>=0.1.1

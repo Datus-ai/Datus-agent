@@ -227,12 +227,19 @@ class DBFuncTool:
                 raise ValueError("agent_config is required when using DBManager mode")
             self._db_manager = connector_or_manager
             self._default_datasource = default_datasource or (agent_config.current_datasource if agent_config else "")
-            self._default_database = default_database or ""
+            runtime_getter = getattr(agent_config, "runtime_db_context", None)
+            runtime = runtime_getter() if callable(runtime_getter) else {}
+            self._execution_context = runtime if isinstance(runtime, dict) else {}
+            self._default_database = default_database or (
+                self._execution_context.get("database", "")
+                if self._execution_context.get("datasource") == self._default_datasource
+                else ""
+            )
             self._datasources = list(agent_config.current_db_configs().keys()) if agent_config else []
             self._connector_cache: OrderedDict[tuple, BaseSqlConnector] = OrderedDict()
             self._connector_cache_size = connector_cache_size
             # Bind the primary connector to (default datasource, default database).
-            self._primary_connector = self._db_manager.get_conn(self._default_datasource, self._default_database)
+            self._primary_connector = self._resolve_connector(self._default_datasource, self._default_database)
             self._is_multi_connector = True
         else:
             self._init_single_db_connector(connector_or_manager)
@@ -545,6 +552,44 @@ class DBFuncTool:
         connector = self._get_connector(datasource, database)
         return connector.quote_identifier(name)
 
+    def connector_for_execution_context(self, context):
+        """Restore a persisted artifact query's binding independently of this turn."""
+        from datus.schemas.database_context import DatabaseExecutionContext
+
+        coordinates = DatabaseExecutionContext.from_mapping(context)
+        if self._db_manager is None:
+            return self.connector
+        return self._db_manager.get_conn(coordinates.datasource, coordinates.database, context=coordinates)
+
+    def connector_for_datasource_default(self, datasource: Optional[str] = None):
+        """Replay legacy queries using configured defaults, independent of the turn."""
+        if self._db_manager is None:
+            return self.connector
+        return self._db_manager.get_conn(datasource or self._default_datasource)
+
+    def execution_context(self, connector, datasource: Optional[str] = "") -> Dict[str, str]:
+        from datus.schemas.database_context import DatabaseExecutionContext
+
+        return DatabaseExecutionContext.from_mapping(
+            {
+                "datasource": datasource or getattr(self, "_default_datasource", ""),
+                "catalog": getattr(connector, "catalog_name", ""),
+                "database": self._active_database_of(connector),
+                "schema": getattr(connector, "schema_name", ""),
+            }
+        ).to_dict(include_empty=True)
+
+    def _resolve_connector(self, datasource: str, database: str):
+        """Bind native and pooled connections without mutating a shared connection."""
+        context = getattr(self, "_execution_context", {})
+        if context.get("datasource") == datasource and context.get("database", "") == database:
+            from datus.schemas.database_context import DatabaseExecutionContext
+
+            return self._db_manager.get_conn(
+                datasource, database, context=DatabaseExecutionContext.from_mapping(context)
+            )
+        return self._db_manager.get_conn(datasource, database)
+
     def _get_connector(self, datasource: Optional[str] = None, database: str = "") -> BaseSqlConnector:
         """
         Get connector for the specified (datasource, database).
@@ -568,7 +613,7 @@ class DBFuncTool:
         # Multi-connector mode: route by (datasource, database). DBManager.get_conn binds
         # the connector to the database (selects the file for a glob datasource).
         ds = datasource or self._default_datasource
-        db = database or ("" if datasource else self._default_database)
+        db = database or (self._default_database if ds == self._default_datasource else "")
         key = (ds, db)
 
         # Check cache
@@ -578,7 +623,7 @@ class DBFuncTool:
             return self._connector_cache[key]
 
         try:
-            connector = self._db_manager.get_conn(ds, db)
+            connector = self._resolve_connector(ds, db)
         except DatusException:
             # Preserve database-level routing errors (e.g. invalid database name with the
             # list of available databases) so ``/database`` failures stay diagnosable.
@@ -1191,6 +1236,9 @@ class DBFuncTool:
             "execute_ddl",
             "get_table_ddl",
             "quote_sql_identifier",
+            "connector_for_execution_context",
+            "connector_for_datasource_default",
+            "execution_context",
         }
     )
 
@@ -2605,7 +2653,7 @@ class DBFuncTool:
             # lands every row the policy just withheld in a table no policy
             # covers — the person who may only SELECT two stores now owns all
             # four. The plugin cannot see it: it hooks reads, and this is a
-            # write. So on a project that has a policy context at all, a write
+            # write. With request or configured read protection, a write
             # that embeds a query is refused before it is dispatched.
             #
             # The permission prompt is not this check. It asks whether the
@@ -2615,11 +2663,15 @@ class DBFuncTool:
             # Ordered after the read-only gate above: a hardened deployment
             # refuses every write outright, so it never needs to reason about
             # what the write reads.
-            if self.policy_context and write_statement_reads_data(sql, connector.dialect):
+            from datus.tools.policy_runtime import PolicyRuntime
+
+            if write_statement_reads_data(sql, connector.dialect) and (
+                self.policy_context or PolicyRuntime(self.agent_config).requires_bound_read(self.policy_context)
+            ):
                 return FuncToolResult(
                     success=0,
                     error=(
-                        "This project has row-level policies, so a write statement that "
+                        "This project has row-level policies or column masking, so a write statement that "
                         "reads from a query is not allowed — it would copy filtered rows "
                         "into a table no policy covers. Create views and derived tables "
                         "on the database side instead."
@@ -2701,7 +2753,8 @@ class DBFuncTool:
             )
             if result.success:
                 return FuncToolResult(
-                    result=self.compressor.compress(result.sql_return) if compress else result.sql_return
+                    result=self.compressor.compress(result.sql_return) if compress else result.sql_return,
+                    execution_context=self.execution_context(connector, datasource),
                 )
             return FuncToolResult(success=0, error=result.error)
         except Exception as e:
@@ -2754,6 +2807,7 @@ class DBFuncTool:
                 sql,
                 datasource=effective_datasource,
                 dialect=connector.dialect,
+                connector=connector,
                 policy_context=effective_policy_context,
             )
             if not decision.allowed:
@@ -2782,18 +2836,25 @@ class DBFuncTool:
                     error="Read policy rewrote the reference SQL; complete calculation verification is unavailable.",
                     sql_query=enforced_sql,
                 )
-            analyzer_getter = getattr(connector_registry, "get_sql_analyzer", None)
-            if callable(analyzer_getter) and analyzer_getter(connector.dialect) is not None:
-                return ExecuteSQLResult(
-                    success=False,
-                    error="SQL policy rewriting is unsupported for this adapter's limited SQL analysis path.",
-                    sql_query=sql,
-                )
             # A policy rewrite (e.g. an injected LIMIT) must still be a single
             # read-only statement — re-validate so it can't smuggle in DML/DDL.
             validation_error, _ = self._validate_read_sql(enforced_sql, connector)
             if validation_error:
                 return ExecuteSQLResult(success=False, error=validation_error.error, sql_query=enforced_sql)
+        verifier = getattr(decision, "verify_context", None)
+        if verifier is not None:
+            try:
+                verifier()
+            except Exception as exc:
+                return ExecuteSQLResult(
+                    success=False, error=f"SQL policy context changed: {exc}", sql_query=enforced_sql
+                )
+        logger.debug(
+            "sql.execute",
+            datasource=effective_datasource,
+            dialect=connector.dialect,
+            sql=enforced_sql,
+        )
         result = connector.execute_query(enforced_sql, result_format=result_format)
         if not result.success:
             return result
@@ -3142,7 +3203,9 @@ class DBFuncTool:
                 }
                 if target is not None:
                     result_payload["deliverable_target"] = target.model_dump(by_alias=True, exclude_none=True)
-                return FuncToolResult(result=result_payload)
+                return FuncToolResult(
+                    result=result_payload, execution_context=self.execution_context(connector, datasource)
+                )
             else:
                 return FuncToolResult(success=0, error=result.error)
         except Exception as e:
@@ -3298,7 +3361,9 @@ class DBFuncTool:
                 if row_count is not None:
                     target = target.model_copy(update={"rows_affected": row_count})
                 result_payload["deliverable_target"] = target.model_dump(by_alias=True, exclude_none=True)
-            return FuncToolResult(result=result_payload)
+            return FuncToolResult(
+                result=result_payload, execution_context=self.execution_context(connector, datasource)
+            )
         except Exception as e:
             return FuncToolResult(success=0, error=f"Write execution failed: {str(e)}")
 

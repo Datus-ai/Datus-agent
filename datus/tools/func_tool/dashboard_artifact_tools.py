@@ -895,6 +895,7 @@ class DashboardArtifactTools(MetricArtifactToolsMixin):
         # new ``goal`` arg — same semantics (one-line research question),
         # but the analysis-artifact contract names it ``goal`` everywhere.
         meta_payload = {
+            "execution_context": self._db_func_tool.execution_context(connector, ds_label),
             "slug": name,
             "description": goal.strip(),
             "datasource": ds_label,

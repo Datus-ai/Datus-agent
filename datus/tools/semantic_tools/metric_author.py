@@ -5,7 +5,7 @@
 """File-level metric authoring over OSI model documents.
 
 ``MetricAuthor`` reads/mutates a single metric *in place* inside its owning
-``semantic_model.metrics`` list, preserving the rest of the document (datasets,
+root ``metrics`` list, preserving the rest of the document (datasets,
 relationships, sibling metrics) and DATUS ``custom_extensions``. It operates on
 the raw core-schema dicts — not any compiled IR — so round-trips keep
 OSI-native fields (``expression.dialects``, ``ai_context``) intact.
@@ -19,12 +19,13 @@ from __future__ import annotations
 import glob
 import json
 import os
-import stat
-import tempfile
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import yaml
+
+from datus.storage.semantic_model.artifact_file import atomic_write_text, semantic_artifact_lock
 
 from .authoring import MetricMutationResult, MetricSource
 from .dosi.model import iter_semantic_models
@@ -73,11 +74,19 @@ def _model_files(root: str) -> List[str]:
     )
 
 
-def _read_docs(file_path: str) -> List[Any]:
-    with open(file_path, encoding="utf-8") as fh:
-        if file_path.lower().endswith(".json"):
-            return [json.load(fh)]
-        return list(yaml.safe_load_all(fh.read())) or []
+class _DocumentSnapshot(list):
+    """Parsed documents together with the bytes that must still exist at commit."""
+
+    def __init__(self, documents, source: bytes):
+        super().__init__(documents)
+        self.source = source
+
+
+def _read_docs(file_path: str) -> _DocumentSnapshot:
+    source = Path(file_path).read_bytes()
+    text = source.decode("utf-8")
+    docs = [json.loads(text)] if file_path.lower().endswith(".json") else list(yaml.safe_load_all(text))
+    return _DocumentSnapshot(docs, source)
 
 
 def _iter_core_models(docs: List[Any]):
@@ -158,45 +167,31 @@ def default_validate_document(doc: Dict[str, Any]) -> None:
     models = list(iter_semantic_models(doc))
     if not models:
         raise MetricAuthoringError("document must contain a semantic model")
-    wrapped = doc.get("semantic_model")
-    if isinstance(wrapped, list) and any(not isinstance(model, dict) for model in wrapped):
-        raise MetricAuthoringError("each 'semantic_model' entry must be a mapping")
     for model in models:
-        if not isinstance(model, dict):
-            raise MetricAuthoringError("each 'semantic_model' entry must be a mapping")
         for metric in model.get("metrics") or []:
             if not isinstance(metric, dict) or not str(metric.get("name") or "").strip():
                 raise MetricAuthoringError("each metric must be a mapping with a non-empty 'name'")
 
 
 def _atomic_write(file_path: str, docs: List[Any]) -> None:
-    directory = os.path.dirname(file_path) or "."
     if file_path.lower().endswith(".json"):
         if len(docs) != 1:
             raise MetricAuthoringError("JSON model files must contain exactly one document")
         payload = json.dumps(docs[0], ensure_ascii=False, indent=2) + "\n"
     else:
         payload = yaml.safe_dump_all(docs, sort_keys=False, allow_unicode=True, default_flow_style=False)
-    # Preserve the existing file's permission bits; mkstemp creates 0600, which
-    # would otherwise strip group/other read access on first edit.
-    mode = stat.S_IMODE(os.stat(file_path).st_mode) if os.path.exists(file_path) else 0o644
-    fd, tmp_path = tempfile.mkstemp(dir=directory, suffix=".tmp")
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as fh:
-            fh.write(payload)
-        os.chmod(tmp_path, mode)
-        os.replace(tmp_path, file_path)
-    finally:
-        if os.path.exists(tmp_path):
-            os.remove(tmp_path)
+    path = Path(file_path).resolve()
+    with semantic_artifact_lock(path):
+        if path.read_bytes() != docs.source:
+            raise MetricAuthoringError("Model changed during editing; read the current metric and retry.")
+        atomic_write_text(path, payload)
 
 
 class MetricAuthor:
     """Read/write/delete/validate a single metric in its OSI source file.
 
-    Assumes a single writer: the read-modify-write cycle is not file-locked, so
-    concurrent writes to the same model file can lose updates. Callers that
-    allow concurrent authoring must serialize it upstream.
+    Mutations use the native loader's file lock and reject a changed source
+    snapshot, so concurrent edits cannot silently overwrite each other.
 
     Args:
         semantic_models_path: a directory scanned for OSI model YAML/JSON files, or a
@@ -215,11 +210,22 @@ class MetricAuthor:
         validate_document: Optional[Callable[[Dict[str, Any]], None]] = None,
         schema_version: str = DEFAULT_SCHEMA_VERSION,
         error_cls: type[Exception] = MetricAuthoringError,
+        load_model: Optional[Callable[[str], Any]] = None,
     ):
+        self._load_model = load_model
         self._root = semantic_models_path
         self._validate_document = validate_document or default_validate_document
         self._schema_version = schema_version
         self._error_cls = error_cls
+
+    def _read_docs(self, path: str) -> List[Any]:
+        if self._load_model is not None:
+            self._load_model(path)
+        else:
+            from datus.tools.semantic_tools.dosi.files import file_engine
+
+            file_engine(path, allow_invalid=True)
+        return _read_docs(path)
 
     # ---- location -------------------------------------------------------
 
@@ -231,7 +237,7 @@ class MetricAuthor:
     def _locate(self, metric_name: str) -> Optional[_MetricLocation]:
         for file_path in _model_files(self._require_root()):
             try:
-                docs = _read_docs(file_path)
+                docs = self._read_docs(file_path)
             except (yaml.YAMLError, json.JSONDecodeError):
                 continue
             for doc_index, model_index, model in _iter_core_models(docs):
@@ -246,7 +252,7 @@ class MetricAuthor:
             return None
         for file_path in _model_files(self._require_root()):
             try:
-                docs = _read_docs(file_path)
+                docs = self._read_docs(file_path)
             except (yaml.YAMLError, json.JSONDecodeError):
                 continue
             for doc_index, model_index, model in _iter_core_models(docs):
@@ -259,7 +265,7 @@ class MetricAuthor:
         found: List[Tuple[str, List[Any], int, int]] = []
         for file_path in _model_files(self._require_root()):
             try:
-                docs = _read_docs(file_path)
+                docs = self._read_docs(file_path)
             except (yaml.YAMLError, json.JSONDecodeError):
                 continue
             for doc_index, model_index, _model in _iter_core_models(docs):
@@ -395,7 +401,7 @@ class MetricAuthor:
                         "datasets": [],
                         "metrics": [node],
                     }
-                    doc = {"version": self._schema_version, "semantic_model": [model]}
+                    doc = {"version": self._schema_version, **model}
 
             self._validate_document(doc)
         except Exception as exc:  # noqa: BLE001 - surface any validation failure to the caller

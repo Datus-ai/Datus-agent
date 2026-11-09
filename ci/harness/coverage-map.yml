@@ -412,7 +412,6 @@ flow_groups:
         priority: p0
         quality_sensitive: true
         docs:
-          - docs/configuration/sql_policy.md
           - docs/API/introduction.md
         entrypoints:
           - "REST API: /api/v1/chat/stream"
@@ -1574,6 +1573,7 @@ execution:
         - datus/prompts/
       targets:
         - tests/unit_tests/agent/node/
+        - tests/unit_tests/api/services/test_structured_response_rendering.py
         - tests/unit_tests/configuration/
         - tests/unit_tests/prompts/
     - id: datus-schemas
@@ -1722,6 +1722,7 @@ execution:
         - tests/unit_tests/agent/
         - tests/unit_tests/api/
         - tests/unit_tests/ci/
+        - tests/unit_tests/configuration/test_agent_config.py
         - tests/unit_tests/tools/
     - id: datus-tools-skill_tools
       paths:
@@ -2045,6 +2046,8 @@ execution:
         - datus/tools/func_tool/database.py
       targets:
         - tests/unit_tests/agent/node/
+        - tests/unit_tests/api/services/test_chat_task_manager.py
+        - tests/unit_tests/api/services/test_dashboard_service.py
         - tests/unit_tests/api/services/test_database_service.py
         - tests/unit_tests/cli/test_chat_commands.py
         - tests/unit_tests/test_mcp_server.py

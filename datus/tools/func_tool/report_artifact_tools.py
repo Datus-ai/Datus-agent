@@ -759,6 +759,7 @@ class ReportArtifactTools(MetricArtifactToolsMixin):
             )
 
         payload = {
+            "execution_context": self._db_func_tool.execution_context(connector, ds_label),
             "executed_at": utc_now_iso(),
             "datasource": ds_label,
             "row_count": len(rows),

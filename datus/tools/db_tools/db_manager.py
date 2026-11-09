@@ -10,7 +10,8 @@ from typing import Callable, Dict, Optional, Set, Tuple, Union
 from datus_db_core import BaseSqlConnector, ConnectionConfig, DatusDbException, connector_registry
 from sqlalchemy.engine.url import URL, make_url
 
-from datus.configuration.agent_config import DbConfig
+from datus.configuration.agent_config import DbConfig, file_stem_from_uri
+from datus.schemas.database_context import DatabaseExecutionContext
 from datus.tools.db_tools.config import DuckDBConfig, SQLiteConfig
 from datus.utils.constants import DBType
 from datus.utils.exceptions import DatusException, ErrorCode
@@ -287,17 +288,22 @@ def get_connection(
 class DBManager:
     def __init__(self, db_configs: Dict[str, DbConfig]):
         # {datasource: {database: connector}} — a datasource may serve multiple databases.
-        self._conn_dict: Dict[str, Dict[str, BaseSqlConnector]] = {}
+        self._conn_dict: Dict[str, Dict[Union[str, Tuple[str, str, str]], BaseSqlConnector]] = {}
         self._db_configs: Dict[str, DbConfig] = db_configs
 
-    def get_conn(self, datasource: str, database: str = "") -> BaseSqlConnector:
+    def get_conn(
+        self, datasource: str, database: str = "", *, context: Optional[DatabaseExecutionContext] = None
+    ) -> BaseSqlConnector:
         """Connector for ``(datasource, database)``.
 
-        ``database`` empty → the datasource's default database. For a glob (``path_pattern``)
+        Without ``context``, ``database`` empty selects the datasource default.
+        A resolved ``context`` is authoritative and requires a concrete database;
+        an empty one is rejected before opening or reusing a connection.
+        For a glob (``path_pattern``)
         datasource each matched file is a database; for server DBs ``database`` overrides the
         configured one (cloned into the connection URI).
         """
-        return self._init_connection(datasource, database)
+        return self._init_connection(datasource, database, context=context)
 
     def get_connections(self, datasource: str = "") -> Dict[str, BaseSqlConnector]:
         """Connectors for every database served by ``datasource``, keyed by database name.
@@ -386,12 +392,46 @@ class DBManager:
                     f"Available: {', '.join(f['name'] for f in files)}.",
                 )
             return match["name"], dataclasses.replace(cfg, uri=match["uri"], database=match["name"], path_pattern="")
+        db_type = _normalize_dialect_name(cfg.type)
+        if cfg.uri and db_type in (DBType.SQLITE, DBType.DUCKDB):
+            physical = file_stem_from_uri(cfg.uri)
+            if db_type == DBType.SQLITE:
+                if database and database != physical:
+                    raise DatusException(
+                        ErrorCode.COMMON_VALIDATION_FAILED,
+                        message=f"Database {database!r} is not provided by this SQLite file; available: {physical!r}",
+                    )
+                return physical, dataclasses.replace(cfg, database=physical)
+            # DuckDB may attach additional databases during connection setup.
+            # Native USE validates this target before the connector is cached.
+            target = database or cfg.database or physical
+            if physical == ":memory:" and target == ":memory:":
+                target = "memory"
+            return target, dataclasses.replace(cfg, database=target)
         if database and database != cfg.database:
             return database, dataclasses.replace(cfg, database=database)
         return cfg.database or "", cfg
 
-    def _init_connection(self, datasource: str, database: str) -> BaseSqlConnector:
+    def _init_connection(
+        self, datasource: str, database: str, *, context: Optional[DatabaseExecutionContext] = None
+    ) -> BaseSqlConnector:
+        if context is not None:
+            if context.datasource != datasource or (database and database != context.database):
+                raise ValueError("Connection context does not match its datasource/database")
+            if not context.database:
+                raise ValueError(
+                    "Select a database explicitly; a resolved empty database cannot use a connection default"
+                )
+            # Only the context-free legacy path interprets an empty argument
+            # as a request for the configured default.
+            database = context.database
         db_name, db_config = self._resolve_db_config(datasource, database)
+        cache_key = db_name
+        if context is not None:
+            if context.datasource != datasource or (context.database and context.database != db_name):
+                raise ValueError("Connection context does not match its datasource/database")
+            db_config = dataclasses.replace(db_config, catalog=context.catalog, schema=context.schema)
+            cache_key = (db_name, context.catalog, context.schema)
         # Self-heal: a caller may have nulled this datasource's entry to mark its
         # connectors closed (e.g. an external pool on eviction). setdefault keeps
         # an existing None, so rebuild a fresh group rather than calling .get on it.
@@ -399,11 +439,15 @@ class DBManager:
         if not isinstance(group, dict):
             group = {}
             self._conn_dict[datasource] = group
-        cached = group.get(db_name)
+        cached = group.get(cache_key)
         if cached is not None:
             return cached
         conn = self._build_conn(db_config)
-        group[db_name] = conn
+        if _normalize_dialect_name(db_config.type) == DBType.DUCKDB:
+            # Native schema selection must succeed before this binding is
+            # visible to other threads or saved as an artifact query target.
+            conn.connect()
+        group[cache_key] = conn
         return conn
 
     def _build_conn(self, db_config: DbConfig) -> BaseSqlConnector:
@@ -438,6 +482,11 @@ class DBManager:
             db_path = db_config.uri or db_config.database
             if db_path.startswith("sqlite:///"):
                 db_path = db_path.replace("sqlite:///", "")
+            if db_config.uri and db_config.database and db_config.database != file_stem_from_uri(db_path):
+                raise DatusException(
+                    ErrorCode.COMMON_VALIDATION_FAILED,
+                    message=f"Database {db_config.database!r} is not provided by this SQLite file",
+                )
             extra = db_config.extra or {}
             return SQLiteConfig(
                 db_path=db_path,
@@ -456,6 +505,8 @@ class DBManager:
                 db_path=db_path,
                 timeout_seconds=timeout_seconds,
                 database_name=None,  # Let connector extract from file path
+                initial_database=(db_config.database or None) if db_config.uri else None,
+                schema_name=db_config.schema or "",
                 read_only=_bool_extra(extra.get("read_only"), False),
                 enable_external_access=_bool_extra(extra.get("enable_external_access"), True),
                 memory_limit=extra.get("memory_limit"),
