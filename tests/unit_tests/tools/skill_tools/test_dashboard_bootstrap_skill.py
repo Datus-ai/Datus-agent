@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
+import pytest
 import yaml
 
 ROOT = Path(__file__).parents[4]
@@ -11,7 +13,8 @@ SKILL = ROOT / "datus/resources/skills/dashboard-bootstrap/SKILL.md"
 def _parts() -> tuple[dict, str]:
     text = SKILL.read_text(encoding="utf-8")
     _, frontmatter, body = text.split("---", 2)
-    return yaml.safe_load(frontmatter), body
+    references = sorted((SKILL.parent / "references").glob("*.md"))
+    return yaml.safe_load(frontmatter), body + "\n" + "\n".join(path.read_text(encoding="utf-8") for path in references)
 
 
 def test_dashboard_bootstrap_skill_is_generic_and_discoverable():
@@ -91,3 +94,28 @@ def test_dashboard_bootstrap_optionally_creates_scoped_subagents_last():
     create_offset = body.index("Step 8 — Create dashboard subagents when supported")
     report_offset = body.index("Step 9 — Report")
     assert create_offset < report_offset
+
+
+@pytest.mark.parametrize("document", [SKILL, *sorted((SKILL.parent / "references").glob("*.md"))], ids=lambda p: p.name)
+def test_bootstrap_supporting_documents_resolve_within_loaded_skill(document):
+    """Every advertised handoff/reference can be read from its packaged location."""
+    for target in re.findall(r"\[[^\]]+\]\(([^)]+\.md)\)", document.read_text(encoding="utf-8")):
+        resolved = (document.parent / target).resolve()
+        assert resolved.is_relative_to(SKILL.parent.resolve())
+        assert resolved.is_file(), f"Broken supporting reference: {document} -> {target}"
+
+
+def test_readonly_runtime_loads_bootstrap_without_preloading_supporting_content():
+    from datus.tools.skill_tools.skill_config import SkillConfig
+    from datus.tools.skill_tools.skill_func_tool import SkillFuncTool
+    from datus.tools.skill_tools.skill_manager import SkillManager
+
+    manager = SkillManager(config=SkillConfig(directories=[str(SKILL.parent.parent)]), config_mutable=False)
+    result = SkillFuncTool(manager=manager, node_name="chat").load_skill("dashboard-bootstrap")
+
+    assert result.success == 1
+    assert f"<skill_location>{SKILL.parent.resolve()}</skill_location>" in result.result
+    assert "references/visual-dashboard.md" in result.result
+    visual_reference = SKILL.parent / "references/visual-dashboard.md"
+    assert visual_reference.read_text(encoding="utf-8") not in result.result
+    assert SKILL.parent.resolve() in manager.loaded_skill_roots
