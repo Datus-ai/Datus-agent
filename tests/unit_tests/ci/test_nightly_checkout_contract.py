@@ -8,6 +8,7 @@ import time
 from pathlib import Path
 
 import pytest
+import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 WORKFLOW = REPO_ROOT / ".github" / "workflows" / "run-nightly.yml"
@@ -266,9 +267,7 @@ def test_nightly_installs_p0_plugins_only_through_managed_store():
     assert "github.token" not in private_checkout
     assert "- name: Require private repository checkout token" in workflow
 
-    install_block = workflow.split("- name: Install dependencies", maxsplit=1)[1].split(
-        "- name: Ensure Docker runtime", maxsplit=1
-    )[0]
+    install_block = workflow.split("- name: Install dependencies", maxsplit=1)[1].split("- name:", maxsplit=1)[0]
     for package_name, package_path in (
         ("datus-superset-plugin", "./external/Datus-Plugins/datus-superset-plugin"),
         ("datus-sql-policies", "./external/datus-sql-policies"),
@@ -279,6 +278,96 @@ def test_nightly_installs_p0_plugins_only_through_managed_store():
     script = NIGHTLY_SCRIPT.read_text(encoding="utf-8")
     assert "export LOG_FILE" in script
     assert "EXTERNAL_REPOS_ROOT" in next(line for line in script.splitlines() if line.startswith("export LOG_FILE"))
+
+
+@pytest.mark.component
+def test_nightly_prepares_native_builds_with_scoped_ephemeral_auth(tmp_path):
+    workflow = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
+    steps = workflow["jobs"]["run-nightly"]["steps"]
+    step = next(step for step in steps if step["name"] == "Fetch SQL policy native build dependencies")
+    assert step["env"]["PRIVATE_REPO_TOKEN"] == "${{ secrets.RELEASE_BOT_TOKEN }}"
+    source = tmp_path / "external" / "datus-sql-policies"
+    source.mkdir(parents=True)
+    (source / "Cargo.toml").write_text("[workspace]\n", encoding="utf-8")
+    record = tmp_path / "fetch.json"
+    cargo = tmp_path / "cargo"
+    cargo.write_text(
+        f"#!{sys.executable}\n"
+        "import json, os, subprocess, sys\n"
+        "from pathlib import Path\n"
+        "def credentials(path):\n"
+        "    return subprocess.run(['git', 'credential', 'fill'], "
+        "input=f'protocol=https\\nhost=github.com\\npath={path}\\n\\n', "
+        "capture_output=True, text=True)\n"
+        "matched = credentials('Datus-ai/osi-engine')\n"
+        "other = credentials('Datus-ai/unrelated')\n"
+        "Path(os.environ['FETCH_RECORD']).write_text(json.dumps({"
+        "'args': sys.argv[1:], 'credentials': matched.stdout, 'status': matched.returncode, "
+        "'other_status': other.returncode, 'other_output': other.stdout, "
+        "'git_cli': os.environ.get('CARGO_NET_GIT_FETCH_WITH_CLI')}))\n",
+        encoding="utf-8",
+    )
+    cargo.chmod(0o755)
+    git_config = tmp_path / "gitconfig"
+    git_config.write_text("[user]\n\tname = build-probe\n", encoding="utf-8")
+    probe_env = {
+        **os.environ,
+        **step["env"],
+        "PATH": str(tmp_path) + os.pathsep + os.environ["PATH"],
+        "PRIVATE_REPO_TOKEN": "native-fetch-test-token",
+        "FETCH_RECORD": str(record),
+        "GIT_CONFIG_GLOBAL": str(git_config),
+        "GIT_CONFIG_NOSYSTEM": "1",
+    }
+    completed = subprocess.run(
+        ["bash", "-e", "-c", step["run"]], cwd=tmp_path, env=probe_env, capture_output=True, text=True
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    fetched = json.loads(record.read_text())
+    assert fetched["args"] == ["fetch", "--locked", "--manifest-path", "external/datus-sql-policies/Cargo.toml"]
+    assert fetched["git_cli"] == "true"
+    assert fetched["status"] == 0
+    assert "username=x-access-token\n" in fetched["credentials"]
+    assert "password=native-fetch-test-token\n" in fetched["credentials"]
+    assert fetched["other_status"] != 0
+    assert "native-fetch-test-token" not in fetched["other_output"]
+    assert "native-fetch-test-token" not in completed.stdout + completed.stderr
+    assert git_config.read_text() == "[user]\n\tname = build-probe\n"
+
+    build_step = next(step for step in steps if step["name"] == "Build SQL policy native source wheel cache")
+    assert "PRIVATE_REPO_TOKEN" not in build_step.get("env", {})
+    build_record = tmp_path / "build.json"
+    uv = tmp_path / "uv"
+    uv.write_text(
+        f"#!{sys.executable}\n"
+        "import json, os, sys\n"
+        "from pathlib import Path\n"
+        "target = Path(sys.argv[sys.argv.index('--target') + 1])\n"
+        "(target / 'native-plugin').touch()\n"
+        "Path(os.environ['BUILD_RECORD']).write_text(json.dumps({'args': sys.argv[1:]}))\n",
+        encoding="utf-8",
+    )
+    uv.chmod(0o755)
+    completed = subprocess.run(
+        ["bash", "-e", "-c", build_step["run"]],
+        cwd=tmp_path,
+        env={
+            **os.environ,
+            "PATH": str(tmp_path) + os.pathsep + os.environ["PATH"],
+            "RUNNER_TEMP": str(tmp_path),
+            "BUILD_RECORD": str(build_record),
+        },
+        capture_output=True,
+        text=True,
+    )
+    assert completed.returncode == 0, completed.stderr
+    args = json.loads(build_record.read_text())["args"]
+    assert args[:6] == ["pip", "install", "--python", ".venv/bin/python", "--no-deps", "--target"]
+    target = Path(args[6])
+    assert target.parent == tmp_path
+    assert not target.exists()
+    assert args[7:] == ["./external/datus-sql-policies"]
 
 
 def test_nightly_installs_new_database_adapters_from_latest_checkout():

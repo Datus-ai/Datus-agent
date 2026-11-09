@@ -5,7 +5,7 @@ release_sources:
   bi_adapters: efb72734df1e8a3f43a8b89454f9004a849d8f0b
   storage_adapters: 47f4056d15d472c46d2ed9bea9687d3b665e0190
   plugins: b2b39d2d7024461bd03f71137365beba828ea066
-  sql_policies: a5455bf34a03d3fb895847bff4b3b3b19a9418a7
+  sql_policies: ba9e0ab91427191d53bfdb5f9db661d771f6df03
 groups:
   P0 Core Product Contracts:
     include_core_nodeids: true
@@ -27,5 +27,6 @@ groups:
   P0 BI Product E2E:
     service: superset
     nodeids:
+      - tests/integration/tools/test_bi_chart_lifecycle.py::test_table_grouping_repair_and_deleted_chart_validation
       - tests/integration/plugins/test_dashboard_bootstrap_plugin.py::test_dashboard_bootstrap_installs_plugin_and_exports_verified_superset_queries
       - tests/integration/agent/test_gen_dashboard_agentic.py::TestGenDashboardAgenticExecution::test_creates_a_persisted_queryable_dashboard

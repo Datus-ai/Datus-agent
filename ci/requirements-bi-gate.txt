@@ -1,0 +1,4 @@
+# Extra packages used by the BI product gate, validated together on Linux.
+playwright==1.64.1
+pytest-playwright==0.10.0
+datus-postgresql==0.1.11

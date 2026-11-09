@@ -1,0 +1,92 @@
+name: BI Product Gate
+
+on:
+  workflow_call:
+    inputs:
+      agent_ref:
+        type: string
+        required: true
+    secrets:
+      RELEASE_BOT_TOKEN:
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  superset:
+    runs-on: self-hosted
+    # Script budget is 58 minutes including cleanup; allow setup and upload margin.
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.agent_ref }}
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: false
+      - name: Resolve pinned service and plugin fixtures
+        id: sources
+        run: uv run --no-project --with pyyaml python ci/p0_plan.py --github-output "$GITHUB_OUTPUT" > /dev/null
+      - uses: actions/checkout@v4
+        with:
+          repository: Datus-ai/datus-bi-adapters
+          ref: ${{ steps.sources.outputs.bi_adapters }}
+          path: external/datus-bi-adapters
+          token: ${{ secrets.RELEASE_BOT_TOKEN }}
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: Datus-ai/Datus-Plugins
+          ref: ${{ steps.sources.outputs.plugins }}
+          path: external/Datus-Plugins
+          token: ${{ secrets.RELEASE_BOT_TOKEN }}
+          persist-credentials: false
+      - name: Install locked Agent and BI dependencies
+        run: |
+          uv sync --locked --group ci
+          uv pip install -r ci/requirements-bi-gate.txt ./external/datus-bi-adapters/datus-bi-core ./external/datus-bi-adapters/datus-bi-superset
+          uv run --no-sync playwright install chromium
+          uv pip check
+          .venv/bin/python ci/prepare_ci_bird.py "$RUNNER_TEMP/bi-bird"
+      - name: Load the existing CI model and tracing configuration
+        run: |
+          .venv/bin/python - <<'PYENV'
+          import os, uuid
+          from dotenv import dotenv_values
+          values = {}
+          for path in ('/home/datus_ci/ci_template/ci.env', '/home/datus_ci/ci_template/nightly.env'):
+              values.update(dotenv_values(path))
+          names = ('DEEPSEEK_API_KEY', 'LANGFUSE_PUBLIC_KEY', 'LANGFUSE_SECRET_KEY', 'LANGFUSE_HOST', 'LANGFUSE_BASE_URL')
+          with open(os.environ['GITHUB_ENV'], 'a') as output:
+              for name in names:
+                  value = values.get(name)
+                  if value:
+                      print('::add-mask::' + value)
+                      delimiter = uuid.uuid4().hex
+                      output.write(f'{name}<<{delimiter}\n{value}\n{delimiter}\n')
+              output.write('LANGFUSE_TRACING_ENABLED=true\n')
+          if not values.get('DEEPSEEK_API_KEY'):
+              raise SystemExit('CI template is missing DEEPSEEK_API_KEY')
+          PYENV
+      - name: Run deterministic repair and real-model BI P0
+        env:
+          DATUS_TEST_BIRD_ROOT: ${{ runner.temp }}/bi-bird
+        run: .venv/bin/python ci/bi_gate.py run --work "$RUNNER_TEMP/bi-gate"
+      - name: Require complete BI P0 execution evidence
+        if: always()
+        run: .venv/bin/python ci/bi_gate.py verify --work "$RUNNER_TEMP/bi-gate"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bi-product-evidence
+          path: |
+            ${{ runner.temp }}/bi-gate/result.json
+            ${{ runner.temp }}/bi-gate/execution.json
+            ${{ runner.temp }}/bi-gate/*.log
+            ${{ runner.temp }}/bi-gate/traces.jsonl
+            ${{ runner.temp }}/bi-gate/cases/*.json

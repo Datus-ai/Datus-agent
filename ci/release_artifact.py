@@ -21,6 +21,22 @@ def distributions(directory: Path) -> dict[str, str]:
     return {p.name: sha256(p) for p in sorted(directory.iterdir()) if p.suffix == ".whl" or p.name.endswith(".tar.gz")}
 
 
+def verify_wheel_payload(wheel: Path, installed_root: Path, package: str) -> None:
+    """Compare the actual installed package, including native binaries, to its wheel."""
+    with zipfile.ZipFile(wheel) as archive:
+        payload = [
+            name
+            for name in archive.namelist()
+            if name.startswith((package + "/", package + ".libs/")) and not name.endswith("/")
+        ]
+        if not payload:
+            raise ValueError(f"Wheel contains no {package} runtime payload")
+        for name in payload:
+            installed = installed_root / name
+            if ".." in Path(name).parts or not installed.is_file() or installed.read_bytes() != archive.read(name):
+                raise ValueError(f"Installed wheel payload differs: {name}")
+
+
 def verify(directory: Path, source_sha: str) -> dict:
     receipt = json.loads((directory / "release-artifact.json").read_text())
     if receipt["source_sha"] != source_sha:
