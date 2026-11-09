@@ -8,7 +8,7 @@
       
       
       
-        
+        <link rel="canonical" href="https://docs.datus.ai/dev/skills/dashboard_bootstrap/">
       
       
         <link rel="prev" href="../build_kb/">
@@ -18,9 +18,9 @@
       
       
         
-          
+          <link rel="alternate" href="/dev/" hreflang="en">
         
-          
+          <link rel="alternate" href="/zh/dev/" hreflang="zh">
         
       
       
@@ -57,13 +57,7 @@
 
     
     
-  <!-- datus-docs-seo -->
-<link rel="canonical" href="https://docs.datus.ai/dev/skills/dashboard_bootstrap/">
-<link rel="alternate" hreflang="en" href="https://docs.datus.ai/dev/skills/dashboard_bootstrap/">
-<link rel="alternate" hreflang="zh-Hans" href="https://docs.datus.ai/zh/dev/skills/dashboard_bootstrap/">
-<link rel="alternate" hreflang="x-default" href="https://docs.datus.ai/dev/skills/dashboard_bootstrap/">
-<!-- /datus-docs-seo -->
-</head>
+  </head>
   
   
     
@@ -1765,10 +1759,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#prerequisites" class="md-nav__link">
+  <a href="#select-outputs-and-policy" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Prerequisites
+        Select outputs and policy
       
     </span>
   </a>
@@ -1776,10 +1770,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#workflow" class="md-nav__link">
+  <a href="#source-prerequisites" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Workflow
+        Source prerequisites
       
     </span>
   </a>
@@ -1787,10 +1781,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#dashboard-subagents" class="md-nav__link">
+  <a href="#workflow-and-on-demand-references" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Dashboard subagents
+        Workflow and on-demand references
       
     </span>
   </a>
@@ -1798,10 +1792,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#auto-run" class="md-nav__link">
+  <a href="#optional-dashboard-subagents" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Auto-run
+        Optional dashboard subagents
       
     </span>
   </a>
@@ -1809,10 +1803,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#safety-and-limitations" class="md-nav__link">
+  <a href="#completion-and-limitations" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Safety and limitations
+        Completion and limitations
       
     </span>
   </a>
@@ -4998,10 +4992,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#prerequisites" class="md-nav__link">
+  <a href="#select-outputs-and-policy" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Prerequisites
+        Select outputs and policy
       
     </span>
   </a>
@@ -5009,10 +5003,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#workflow" class="md-nav__link">
+  <a href="#source-prerequisites" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Workflow
+        Source prerequisites
       
     </span>
   </a>
@@ -5020,10 +5014,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#dashboard-subagents" class="md-nav__link">
+  <a href="#workflow-and-on-demand-references" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Dashboard subagents
+        Workflow and on-demand references
       
     </span>
   </a>
@@ -5031,10 +5025,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#auto-run" class="md-nav__link">
+  <a href="#optional-dashboard-subagents" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Auto-run
+        Optional dashboard subagents
       
     </span>
   </a>
@@ -5042,10 +5036,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#safety-and-limitations" class="md-nav__link">
+  <a href="#completion-and-limitations" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Safety and limitations
+        Completion and limitations
       
     </span>
   </a>
@@ -5078,47 +5072,126 @@
 
 
 <h1 id="dashboard-bootstrap">Dashboard Bootstrap<a class="headerlink" href="#dashboard-bootstrap" title="Permanent link">&para;</a></h1>
-<p><code>dashboard-bootstrap</code> bootstraps project reference SQL and Dosi metrics from a dashboard through an installed BI plugin. The workflow is skill-driven; it does not add a dashboard-specific CLI command.</p>
-<p>Use natural language or the compatibility shortcut <code>/bootstrap-bi</code>. The shortcut delegates to the same chat/skill pipeline and does not invoke the legacy picker or BI streams. Text after the command is forwarded as scope, for example:</p>
+<p><code>dashboard-bootstrap</code> is the single main-agent entry for building reference SQL,
+DOSI semantic models/metrics and optionally reconstructing BI dashboards as Datus
+visual dashboards. Source access, native interpretation and commands remain in
+the installed BI plugin; platform-specific guidance ships with that plugin.</p>
+<p>Use natural language or <code>/bootstrap-bi</code>; the shortcut forwards scope to the same
+chat/skill pipeline, without the legacy picker or BI streams:</p>
 <div class="language-text highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>/bootstrap-bi use Superset profile prod and dashboard 42
 </span></code></pre></div>
-<h2 id="prerequisites">Prerequisites<a class="headerlink" href="#prerequisites" title="Permanent link">&para;</a></h2>
-<ul>
-<li>Enable a BI plugin and profile that provide dashboard discovery, stable query candidates, SQL export, and a credential-free source identity for every query.</li>
-<li>Configure the corresponding physical databases as Datus datasources. No BI-profile-level datasource mapping is used.</li>
-<li>Before generating metrics for a query batch, select the Datus datasource uniquely matched from those queries' real connection identities.</li>
-<li>Create or update metrics through the built-in Dosi engine.</li>
-</ul>
-<h2 id="workflow">Workflow<a class="headerlink" href="#workflow" title="Permanent link">&para;</a></h2>
-<p>Ask Datus to bootstrap a dashboard, for example:</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>Build reference SQL and metrics from the revenue dashboard.
+<p>An unspecified shortcut request keeps the reference-SQL and metric context default.
+A conversion request creates the selected visual output, reusing maintained
+metrics and adding only missing definitions needed by its charts. No separate migration skill/command is introduced.</p>
+<h2 id="select-outputs-and-policy">Select outputs and policy<a class="headerlink" href="#select-outputs-and-policy" title="Permanent link">&para;</a></h2>
+<p>Examples:</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>Convert this dashboard into a Datus project dashboard: https://bi.example/views/revenue/overview
+</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>Build reference SQL and metrics from the revenue dashboard.
+</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>Rebuild the selected BI dashboard in Datus using existing metrics.
+</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>Sync the selected project dashboards, generate missing metrics, and rebuild them in Datus.
 </span></code></pre></div>
-<p>The skill guides these selections in order:</p>
-<ol>
-<li>BI plugin and profile;</li>
-<li>dashboard;</li>
-<li>queries to index as reference SQL;</li>
-<li>queries to use as metric evidence.</li>
-</ol>
-<p>It then prints a Generation Manifest and stops. Confirm or correct that manifest in the next message. After confirmation, the selected plugin exports SQL, <code>gen_sql_summary</code> indexes each reference query, and <code>semantic_modeling</code> creates or updates the related Dosi datasets, relationships, and metrics. As the final step, <code>dashboard-bootstrap</code> loads <code>create-subagent</code> when that skill is available and persists the dashboard's main and attribution nodes in the loaded <code>agent.yml</code>.</p>
-<p>The two query selections are independent. A query may be used for reference SQL, metrics, both, or neither.</p>
-<h2 id="dashboard-subagents">Dashboard subagents<a class="headerlink" href="#dashboard-subagents" title="Permanent link">&para;</a></h2>
-<p>When Agent configuration is mutable, the final step creates or updates two nodes using the legacy naming and tool pattern:</p>
+<p>Reference SQL, metric evidence, visual output and optional agent persistence are
+independent selections. Conversion into Datus defaults to <code>create_missing</code>: reuse
+existing matching definitions and author only missing metrics needed by selected
+charts. An explicit existing-metrics-only instruction selects <code>reuse_only</code>. Editing conflicting
+business definitions needs explicit edit scope. SQL fallback requires explicit
+scope and support from the source plugin and target artifact tools.</p>
+<h2 id="source-prerequisites">Source prerequisites<a class="headerlink" href="#source-prerequisites" title="Permanent link">&para;</a></h2>
+<p>Enable an appropriate BI plugin/profile and configure physical databases as Datus
+datasources. Source skills may provide query exports, or verified native asset
+bundles with stable chart/dataset IDs, definitions, dependencies and coverage.
+The workflow does not require every native chart to expose runtime SQL. Dataset
+Custom SQL is not automatically the chart's aggregate query.</p>
+<p>Preserve exact native grouping expressions, including calendar date parts versus
+year-retaining time buckets. A 12-group month-of-year chart must not silently
+become 24 year-month groups. Carry required derived dimensions into metric
+authoring; compare grouping keys as well as totals before visual generation.
+Unspecified source units/currencies stay unspecified rather than defaulting to USD.</p>
+<p>Metric authoring requires strong per-evidence physical connection matching to the
+active datasource. A profile can front many sources; no BI-profile-level datasource
+mapping or automatic shared-datasource switch is used. Reuse of an independently
+complete curated DOSI target uses its actual semantic/datasource binding instead.
+Use the effective runtime identity returned by <code>get_datasource_identity</code>, including
+the selected file path for file databases; configured coordinates alone are only
+diagnostic. Unknown effective coordinates block authoring.</p>
+<h2 id="workflow-and-on-demand-references">Workflow and on-demand references<a class="headerlink" href="#workflow-and-on-demand-references" title="Permanent link">&para;</a></h2>
+<p>The skill records plugin/profile/site, dashboard/chart scope, selected outputs,
+metric policy, source identity evidence or pending inspection, exclusions and target
+intent in a Generation Manifest. An explicit request to convert an identified
+external dashboard into Datus authorizes bounded source synchronization, a new
+dashboard and its necessary additive metrics; print the manifest and continue.
+Honor plan-only, preview-first and ask-before-writing instructions. Other context
+bootstrap requests stop after the manifest unless already confirmed or explicitly
+set to auto-run. System tool permissions still apply.</p>
+<p>The main chat prompt routes natural-language dashboard-URL conversion to this
+skill before delegation. Plugin references resolve URLs to verified native IDs,
+matching configured origin/site without exposing secrets. Use the main agent’s
+<code>ask_user</code> only when read-only discovery leaves a material choice unresolved, such
+as ambiguous connections, conflicting business meaning, changed semantics or an
+existing-target edit scope. Child tasks return blockers to the main agent. A unique
+URL match or faithfully authorable missing metric needs no repeat confirmation.</p>
+<p>The packaged skill loads only relevant supporting documents:</p>
 <ul>
-<li><code>&lt;platform&gt;_&lt;dashboard&gt;</code> uses <code>gen_sql</code> with database and context-search tools.</li>
-<li><code>&lt;platform&gt;_&lt;dashboard&gt;_attribution</code> uses <code>gen_visual_report</code> with semantic attribution tools.</li>
+<li><code>references/source-contract.md</code>: query exports/native bundles, identity matching,
+  checksum verification, provenance and coverage.</li>
+<li><code>references/context.md</code>: selected reference indexing and semantic/metric authoring.</li>
+<li><code>references/visual-dashboard.md</code>: analytical mapping, metric-before-visual dependency,
+  exact <code>gen_visual_dashboard</code> handoff, actual metric query saves and validation.</li>
+<li><code>references/subagents.md</code>: optional persistence of the legacy scoped agent pair.</li>
+<li><code>references/validation.md</code>: separate phase/chart evidence, completion and retries.</li>
 </ul>
-<p>Both nodes are scoped only to successful tables and exact metric/reference-SQL subject references for the active datasource. Metric scope uses <code>&lt;metric.subject_path&gt;.&lt;metric.name&gt;</code> from the synchronized Dosi model; reference-SQL scope uses <code>&lt;subject_tree&gt;.&lt;name&gt;</code> from the generated SQL summary. Bare subject paths select whole subtrees and are not used for an exact Dashboard selection. The generic <code>create-subagent</code> skill resolves these references against the post-sync subject trees, edits <code>agent.agentic_nodes</code> without replacing sibling entries, and verifies the YAML after writing. When the runtime marks configuration read-only, that skill is not discoverable and the workflow skips persistence without failing context construction.</p>
-<h2 id="auto-run">Auto-run<a class="headerlink" href="#auto-run" title="Permanent link">&para;</a></h2>
-<p>Explicitly say <code>skip confirmation</code>, <code>auto-run</code>, or an equivalent instruction to let the workflow continue after printing the manifest. Auto-run does not bypass system permission prompts.</p>
-<h2 id="safety-and-limitations">Safety and limitations<a class="headerlink" href="#safety-and-limitations" title="Permanent link">&para;</a></h2>
+<p>Plugin skills provide native syntax, commands and limitations; vendor guides are
+not copied into the common skill. Use CLI, prompts and skills from one plugin
+release. An observed release/location mismatch stops source consumption.</p>
+<p>After confirmed source export/inspection, <code>gen_sql_summary</code> owns reference indexing
+and <code>semantic_modeling</code> owns DOSI datasets, relationships and metrics. Reference
+indexing can proceed independently. A dashboard that requires new metrics waits
+for metric validation/reconciliation and rediscovery before <code>gen_visual_dashboard</code>
+runs. The visual node discovers actual metric capabilities and saves matching
+panels via <code>save_metric_query_template</code>, including real trial results/model
+snapshots. Newly created metrics next to SQL templates do not establish binding.</p>
+<p>Fresh child tasks do not inherit parent-loaded skill bodies. Handoffs include exact
+source IDs/checksum, datasource/model binding, metric identities, analytical intent,
+blockers, approved differences and readable supporting skill/reference locations.
+The child loads the required skills to register its own supporting-file read roots
+before reading the selected references; it does not restart orchestration or
+create missing metrics itself. Check access before the first visual task; if skill
+loading is unavailable, include the relevant visual, validation and plugin
+constraints directly in that initial handoff. With <code>reuse_only</code>, a child can
+complete metric discovery when its parent lacks those tools. A verified
+no-semantic-change result requires no authoring/reconciliation evidence. A successful
+host-generated modeling result with exact files certifies its mandatory validation
+and KB sync when separate evidence fields are absent; numerical checks and
+rediscovery still apply.</p>
+<h2 id="optional-dashboard-subagents">Optional dashboard subagents<a class="headerlink" href="#optional-dashboard-subagents" title="Permanent link">&para;</a></h2>
+<p>Legacy context bootstrap retains the final optional pair when <code>create-subagent</code>
+is available: <code>&lt;platform&gt;_&lt;dashboard&gt;</code> (<code>gen_sql</code>) and its <code>_attribution</code> node
+(<code>gen_visual_report</code>). Visual-only requests create this pair only when requested.
+Both use successful active-datasource artifacts and exact post-sync metric and
+reference-SQL subject references. Pair ownership includes both source dashboard
+and datasource partition. Include only that dashboard's selected/confirmed metrics
+and required dependencies, retaining verified reused metrics even without newly
+authored files; do not overwrite another partition or degrade selected metrics to
+SQL-only scope. The generic creation skill preserves unrelated
+configuration and verifies writes. In immutable API deployments this phase is
+skipped; its failure does not invalidate completed context or dashboard artifacts.</p>
+<h2 id="completion-and-limitations">Completion and limitations<a class="headerlink" href="#completion-and-limitations" title="Permanent link">&para;</a></h2>
+<p>Report source coverage, reference index resolution, metrics, actual per-chart query
+binding, render/interactions, publication and optional agents separately. Preserve
+partial/blocked objects and retry only the smallest affected set.</p>
 <ul>
-<li>Partial, failed, unselected, or checksum-mismatched SQL is never sent to a builtin agent.</li>
-<li>Dashboard labels, descriptions, and SQL comments are treated as untrusted source data.</li>
-<li>Missing, weak, or ambiguous query-level source identity blocks metric generation for only the affected queries; reference SQL may continue.</li>
-<li>A dashboard may span multiple datasources. Metric queries are partitioned by their uniquely matched Datus datasource, and only the currently active partition is authored in one run.</li>
-<li>Successful context generation does not by itself prove numerical equivalence with the source dashboard.</li>
-<li>Subagent creation failure does not invalidate successfully built context and can be retried independently.</li>
+<li>Retrieved, derived and target SQL keep distinct provenance. Identical SQL is
+  deduplicated downstream only with matching physical source, dialect and execution
+  context, preserving all original references and immutable source snapshots.</li>
+<li>A saved reference YAML is only <code>written</code> until its exact subject/search reference
+  resolves; do not presume an unexplained indexing delay.</li>
+<li>Unsupported native semantics and missing required upstream processing block
+  dependent charts; generated SELECT models do not deploy or execute ETL.</li>
+<li>Changes to calculations, grain, filters, security or interactions must remain
+  visible. A successful render, preflight or target-only reconciliation does not
+  prove numerical equivalence with the original BI dashboard.</li>
+<li>Preview and publication are distinct; use the existing publication flow only
+  when requested.</li>
 </ul>
 
 
