@@ -523,8 +523,7 @@ class TestAllToolsNameContract:
             assert method not in names, f"{method} is not an agent tool and must be excluded"
 
     def test_all_tools_name_is_exactly_the_real_tool_surface(self):
-        """The full db_tools surface is exactly the decorated tools plus the
-        gen_job-mounted tools — no more, no less. Pins the saas editor catalog."""
+        """Pin the SaaS catalog, including configured identity and gen_job tools."""
         assert set(DBFuncTool.all_tools_name()) == {
             # @mcp_tool()-decorated
             "search_table",
@@ -537,6 +536,8 @@ class TestAllToolsNameContract:
             "plan_datasource",
             "import_database_file",
             "check_datasource_quality",
+            # mounted when authoritative datasource configuration is available
+            "get_datasource_identity",
             # mounted directly by gen_job
             "transfer_query_result",
             "get_migration_capabilities",
