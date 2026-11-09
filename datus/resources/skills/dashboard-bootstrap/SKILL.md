@@ -8,6 +8,8 @@ description: Bootstrap reference SQL, semantic models and metrics from BI dashbo
 One main-agent workflow owns dashboard context construction and optional Datus
 visual dashboard reconstruction. BI plugins own source access and native semantics;
 builtin agents own reference SQL, DOSI models and visual artifacts.
+Inside a builtin child, load this skill only to access the parent-selected
+supporting references; do not restart the main-agent steps below.
 
 ## Invariants
 

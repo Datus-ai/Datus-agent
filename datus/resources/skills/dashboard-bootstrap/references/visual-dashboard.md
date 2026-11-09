@@ -66,15 +66,18 @@ policy: reuse_only or create_missing completed; permitted SQL exceptions, if any
 metrics: exact discovered {path, name}, supported dimensions/parameters, model file/revision
 mapping: per-chart analytical intent, required filters/grain/interactions, differences
 coverage: per-chart blockers/exclusions and any documented source-gap resolutions
-instructions: load available plugin rebuild skill and only its needed references;
-              read dashboard-bootstrap's visual and validation references at the
-              exact supplied skill_location; do not restart main-agent orchestration
+instructions: load the available dashboard-bootstrap and plugin rebuild skills
+              to register their supporting-file roots in this child; then read
+              only the visual/validation and needed platform references at their
+              returned skill_locations; do not restart main-agent orchestration
 validation: real metric trial calls, parameter checks, render checks, comparison scope
 ```
 
 Pass concrete paths and verified values, never the example's placeholder labels.
-If a child cannot read a reference or load the needed platform skill, include its
-actual relevant constraints explicitly; never assume it inherited parent context.
+Loading in the parent does not register supporting-file read roots in the child;
+passing an absolute path alone does not grant access. If a child cannot load the
+needed skill or read a reference, include its actual relevant constraints explicitly
+in a retry handoff; never assume it inherited parent context or bypass file access.
 Do not give it a missing-metric creation instruction: the main agent must finish
 that phase first. The main agent must not write dashboard query/render artifacts
 as an alternate path around a failed task.
