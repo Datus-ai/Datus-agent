@@ -9,7 +9,7 @@ Run this optional step only after all reference-SQL and semantic-modeling tasks 
 1. Inspect the skills available to the current main agent for `create-subagent`.
 2. If it is absent, report `subagent creation skipped: mutable configuration skill unavailable`. Do not edit configuration by another mechanism, and do not change the success status of context construction.
 3. If it is present, load `create-subagent`. If loading is refused, skip creation and report the refusal without attempting a direct write.
-4. Build one scoped context from successful artifacts for the active datasource only:
+4. Build one scoped context per selected dashboard from that dashboard's successful artifacts for the active datasource only:
    - `datasource`: the active, uniquely matched Datus datasource;
    - `tables`: complete table identifiers returned or used successfully by `semantic_modeling`;
    - `metrics`: exact canonical subject references, each formed from the synchronized metric's stored `subject_path` plus its `name`;
