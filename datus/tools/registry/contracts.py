@@ -69,14 +69,17 @@ class ToolDefinition:
 
     @property
     def capability(self) -> ToolCapability:
+        """Return the effect metadata consumed by host policy."""
         return ToolCapability(self.access, self.direct_call, self.companion_of)
 
     @property
     def category(self) -> str:
+        """Return the canonical permission family."""
         return self.tool_id.split(".", 1)[0]
 
     @property
     def name(self) -> str:
+        """Return the canonical method name independently of transport aliases."""
         return self.tool_id.split(".", 1)[1]
 
 

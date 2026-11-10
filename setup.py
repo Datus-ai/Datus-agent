@@ -19,6 +19,7 @@ class BuildPy(build_py):
     """Include a complete generated inventory in every Python package build."""
 
     def run(self):
+        """Generate the inventory before copying package files into the wheel."""
         compile_tool_catalog()
         super().run()
 
@@ -27,6 +28,7 @@ class Sdist(sdist):
     """Ship matching source declarations and inventory in source distributions."""
 
     def run(self):
+        """Generate the inventory before collecting source distribution files."""
         compile_tool_catalog()
         super().run()
 
