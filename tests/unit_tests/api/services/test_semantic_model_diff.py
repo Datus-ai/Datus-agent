@@ -1,5 +1,6 @@
 """Turn snapshots compare original bytes with final bytes, independent of tools."""
 
+import json
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
@@ -11,7 +12,8 @@ from datus.api.services.semantic_model_diff import SemanticModelSnapshot
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("cursor,expected", [(None, False), (0, True)])
-async def test_completed_turn_resume_only_replays_diff_for_cursor_reconnect(cursor, expected):
+@pytest.mark.parametrize("has_node", [False, True])
+async def test_completed_turn_resume_only_replays_diff_for_cursor_reconnect(cursor, expected, has_node):
     """Replay transient diffs for explicit cursor reconnects, not ordinary history entry."""
     from datus.api.models.cli_models import (
         IMessageContent,
@@ -26,6 +28,8 @@ async def test_completed_turn_resume_only_replays_diff_for_cursor_reconnect(curs
     manager = ChatTaskManager()
     task = ChatTask("session-diff", MagicMock(), user_id="user")
     task.status = "completed"
+    task.run_id = "run-diff"
+    task.node = SimpleNamespace(session_id="llm-diff") if has_node else None
     manager._completed_tasks[task.session_id] = task
     await manager._push_event(
         task,
@@ -49,6 +53,15 @@ async def test_completed_turn_resume_only_replays_diff_for_cursor_reconnect(curs
     )
     stream = "".join([chunk async for chunk in response.body_iterator])
     assert ("semantic-model-diff" in stream) is expected
+    session_frames = [frame for frame in stream.split("\n\n") if frame.startswith("event: session\n")]
+    assert len(session_frames) == int(has_node)
+    for frame in session_frames:
+        session = json.loads(frame.split("data: ", 1)[1])
+        assert (session["session_id"], session["llm_session_id"], session["run_id"]) == (
+            task.session_id,
+            "llm-diff",
+            task.run_id,
+        )
 
 
 def test_aggregates_writes_creates_and_deletions(tmp_path):

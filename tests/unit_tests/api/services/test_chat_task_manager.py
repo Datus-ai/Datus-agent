@@ -29,6 +29,8 @@ from datus.api.services.chat_task_manager import (
     _should_include_final_response,
     _should_skip_duplicate_assistant_message,
 )
+from datus.tools.permission.permission_manager import PermissionManager
+from datus.tools.permission.profiles import get_profile
 from datus.tools.proxy.tool_result_channel import ToolResultChannel
 
 
@@ -49,7 +51,7 @@ async def test_turn_emits_one_final_semantic_diff_without_persisting_it(tmp_path
 
     class FakeNode:
         session_id = "llm-semantic-diff"
-        permission_manager = SimpleNamespace(active_profile="auto")
+        permission_manager = PermissionManager(global_config=get_profile("auto"), active_profile="auto")
         proxied_tool_names = set()
 
         def get_node_name(self):
@@ -139,7 +141,7 @@ async def test_repeated_cancellation_drains_semantic_diff_before_terminal_state(
     real_agent_config._project_root = tmp_path
     failure = {"completed": None, "cancelled": asyncio.CancelledError(), "error": RuntimeError("model failed")}[outcome]
     node = TestRunLoopSettlesTurn._node(raise_after=failure)
-    node.permission_manager = SimpleNamespace(active_profile="auto")
+    node.permission_manager = PermissionManager(global_config=get_profile("auto"), active_profile="auto")
     node.proxied_tool_names = set()
     stream = node.execute_stream_with_interactions
 
@@ -1124,13 +1126,12 @@ class TestChatTaskManagerBehavior:
         """auto/dangerous web sessions run filesystem tools server-side: no
         client proxy (which would block on a browser that may be hidden or
         gone), and an empty proxied set so SSE frames carry proxied=False."""
-        from types import SimpleNamespace
 
         from datus.api.models.cli_models import StreamChatInput
 
         class FakeNode:
             session_id = f"s-web-{profile}"
-            permission_manager = SimpleNamespace(active_profile=profile)
+            permission_manager = PermissionManager(global_config=get_profile(profile), active_profile=profile)
 
             def __init__(self):
                 # Simulate a pre-populated shared set (PermissionHooks may
@@ -1172,7 +1173,6 @@ class TestChatTaskManagerBehavior:
     async def test_run_loop_web_source_normal_profile_still_proxies(self, real_agent_config):
         """A node whose active profile is ``normal`` keeps the client proxy —
         the confirm UI lives in the browser."""
-        from types import SimpleNamespace
 
         from datus.api.models.cli_models import StreamChatInput
 
@@ -1183,7 +1183,7 @@ class TestChatTaskManagerBehavior:
                 self.tool_channel = ToolResultChannel()
                 self.proxied_tool_names = set()
 
-            permission_manager = SimpleNamespace(active_profile="normal")
+            permission_manager = PermissionManager(global_config=get_profile("normal"), active_profile="normal")
 
             def get_node_name(self):
                 return "chat"

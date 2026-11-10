@@ -2297,3 +2297,65 @@ class TestChatDecoupling:
             real_agent_config, "db_tools.*,filesystem_tools.*", name="ask_boundary_db", slug="boundary_db"
         )
         assert "This agent has NO live database access" not in withdb._render_behavioral_rules_section()
+
+
+@pytest.mark.parametrize("kind,cls", [("report", AskReportAgenticNode), ("dashboard", AskDashboardAgenticNode)])
+async def test_skill_setup_uses_ask_node_identity(real_agent_config, mock_llm_create, tmp_path, kind, cls):
+    """Real node construction must retain per-node grants through chat setup."""
+    from agents.tool_context import ToolContext
+    from agents.usage import Usage
+
+    from datus.tools.permission.permission_config import PermissionConfig
+    from datus.tools.skill_tools.skill_config import SkillConfig
+
+    name, slug = "custom_consultant", "skill_report"
+    skill_root = tmp_path / "skills"
+    directory = skill_root / "business"
+    directory.mkdir(parents=True)
+    (directory / "SKILL.md").write_text(
+        f"---\nname: business\ndescription: Guidance\nallowed_agents: [{cls.NODE_NAME}]\n---\nBusiness guidance"
+    )
+    unlinked = skill_root / "unlinked"
+    unlinked.mkdir()
+    (unlinked / "SKILL.md").write_text("---\nname: unlinked\ndescription: Private\n---\nPrivate guidance")
+    real_agent_config.agentic_nodes["chat"] = {
+        "permissions": {"rules": [{"tool": "skills", "pattern": "unlinked", "permission": "allow"}]}
+    }
+    real_agent_config.skills_config = SkillConfig(directories=[str(skill_root)])
+    real_agent_config.permissions_config = PermissionConfig.from_dict({"default_permission": "deny"})
+    real_agent_config.restrict_tool_visibility = True
+    _seed_artifact(real_agent_config.project_root, kind, slug)
+    _register_ask_agent_with_tools(real_agent_config, name=name, kind=kind, slug=slug, tools="skills")
+    real_agent_config.agentic_nodes[name].update(
+        skills="business",
+        permissions={"rules": [{"tool": "skills", "pattern": "business", "permission": "allow"}]},
+    )
+    node = cls(
+        node_id="skill_consultant",
+        description="Skill consultant",
+        node_type="chat",
+        agent_config=real_agent_config,
+        node_name=name,
+        is_subagent=True,
+    )
+    for _ in range(2):
+        node._rebuild_tools()
+        node._ensure_skill_tools_in_tools()
+        node._ensure_tool_transformers()
+        assert [tool.name for tool in node.tools] == ["load_skill"]
+    assert node.permission_manager.check_permission("skills", "business", name) == "allow"
+    assert node.permission_manager.check_permission("skills", "business", "chat") == "deny"
+    context = ToolContext(
+        context=None,
+        usage=Usage(),
+        tool_name="load_skill",
+        tool_call_id="ask_skill",
+        tool_arguments=json.dumps({"skill_name": "business"}),
+    )
+    result = await node.tools[0].on_invoke_tool(context, context.tool_arguments)
+    assert result["success"] == 1
+    assert "Business guidance" in result["result"]
+    context.tool_arguments = json.dumps({"skill_name": "unlinked"})
+    result = await node.tools[0].on_invoke_tool(context, context.tool_arguments)
+    assert result["success"] == 0
+    assert "Private guidance" not in str(result)

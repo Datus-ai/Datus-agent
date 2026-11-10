@@ -20,6 +20,7 @@ from agents import FunctionTool
 from agents.tool_context import ToolContext
 
 from datus.tools.proxy.tool_result_channel import DEFAULT_RESULT_TIMEOUT, ToolResultChannel
+from datus.tools.registry.contracts import clone_registered_tool
 from datus.utils.loggings import get_logger
 
 if TYPE_CHECKING:
@@ -82,12 +83,9 @@ def create_proxy_tool(original: FunctionTool, channel: ToolResultChannel) -> Fun
             logger.warning(f"Proxy tool '{original.name}' error: {e}, call_id={call_id}")
             return {"success": 0, "error": str(e), "result": None}
 
-    return FunctionTool(
-        name=original.name,
-        description=original.description,
-        params_json_schema=original.params_json_schema,
+    return clone_registered_tool(
+        original,
         on_invoke_tool=proxy_invoke,
-        strict_json_schema=original.strict_json_schema,
     )
 
 

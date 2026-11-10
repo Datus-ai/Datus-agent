@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Optional
 
 from datus.tools.func_tool.base import FuncToolResult
+from datus.tools.registry.contracts import tool_contract
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
@@ -40,6 +41,7 @@ class SessionSearchTool:
         # Default: ~/.datus/sessions/
         return os.path.expanduser("~/.datus/sessions")
 
+    @tool_contract(access="restricted", direct_call=False)
     def search_skill_usage(self, skill_name: str, max_sessions: int = 10) -> FuncToolResult:
         """Search session history for usage of a specific skill.
 

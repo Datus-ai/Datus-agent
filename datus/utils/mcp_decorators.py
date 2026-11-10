@@ -52,6 +52,7 @@ from functools import partial
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 from datus.tools.func_tool.base import FuncToolResult
+from datus.tools.registry.contracts import ToolDefinitionError, definition_from_callable
 from datus.utils.mcp_execution import MCPToolExecutor, default_mcp_executor
 
 # ============================================================================
@@ -125,6 +126,9 @@ def get_mcp_tools(cls: type) -> List[Tuple[str, Callable, MCPToolConfig]]:
     tools = []
     for name, method in inspect.getmembers(cls, predicate=inspect.isfunction):
         if hasattr(method, "_mcp_config"):
+            definition = definition_from_callable(method, owner=cls)
+            if name not in (definition.name, *definition.aliases):
+                raise ToolDefinitionError(f"MCP alias {name!r} is not declared by {definition.tool_id}")
             tools.append((name, method, method._mcp_config))
     return tools
 

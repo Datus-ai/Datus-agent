@@ -40,6 +40,9 @@ jobs:
             uv.lock
             pyproject.toml
 
+      - name: Validate generated tool contracts
+        run: python3 datus/tools/registry/catalog_builder.py --check
+
       - name: Install dependencies
         run: |
           uv sync --locked --group ci

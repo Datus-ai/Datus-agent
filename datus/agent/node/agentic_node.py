@@ -4603,11 +4603,21 @@ class AgenticNode(Node):
         :meth:`_ensure_permission_hooks`; this helper does **not** require
         a ``permission_manager`` and never builds ``PermissionHooks``.
         """
+        from agents import FunctionTool
+
+        from datus.tools.registry.contracts import ToolDefinitionError, tool_definition
+
         try:
             for group in self._iter_tool_groups():
                 names = self._tool_group_names(group)
                 if names:
                     self.tool_registry.register_tools(group.permission_category, names)
+            for tool in getattr(self, "tools", None) or []:
+                if isinstance(tool, FunctionTool):
+                    definition = tool_definition(tool)
+                    self.tool_registry.register_tools(definition.category, [tool])
+        except ToolDefinitionError:
+            raise
         except Exception:
             logger.debug(
                 "Failed to populate tool_registry for %s; falling back to lazy registration.",
@@ -4647,6 +4657,7 @@ class AgenticNode(Node):
                 node_name=self.get_node_name(),
                 tool_registry=self.tool_registry,
                 fs_policy=self._make_filesystem_policy(),
+                enforce_method_denials=getattr(self.agent_config, "restrict_tool_visibility", False) is True,
                 non_interactive=non_interactive,
                 proxied_tool_names=self.proxied_tool_names,
                 project_root=getattr(self.agent_config, "project_root", None),
@@ -4723,6 +4734,44 @@ class AgenticNode(Node):
             },
         }
 
+    def _filter_permission_denied_tools(self) -> None:
+        """Opt-in visibility enforcement for restricted hosts, including rebuilds.
+
+        Invocation hooks remain authoritative. Mutate the list in place because
+        a caller may already have captured it before composing its hooks.
+        """
+        if getattr(getattr(self, "agent_config", None), "restrict_tool_visibility", False) is not True:
+            return
+        manager = getattr(self, "permission_manager", None)
+        if manager is None:
+            raise RuntimeError("Restricted tool visibility requires a permission manager")
+        from datus.tools.permission.permission_hooks import PermissionHooks
+
+        self._populate_tool_registry()
+        visible = []
+        for tool in self.tools:
+            if PermissionHooks.is_permission_exempt_tool(tool.name):
+                visible.append(tool)
+                continue
+            # Like PermissionHooks, resolve load_skill by its target Skill, not
+            # by the dispatcher method name. Visibility follows the same
+            # pattern, scope and model-invocation filters as <available_skills>.
+            # The hook and SkillFuncTool still authorize each requested name.
+            if tool.name == "load_skill":
+                skill_manager = getattr(self, "skill_manager", None)
+                if skill_manager is not None:
+                    raw_patterns = self.node_config.get("skills", "")
+                    patterns = skill_manager.parse_skill_patterns(raw_patterns) if raw_patterns else None
+                    skills = skill_manager.get_available_skills(
+                        self.get_node_name(), patterns=patterns, node_class=self.get_node_class_name()
+                    )
+                    if manager.filter_available_skills(skills, self.get_node_name()):
+                        visible.append(tool)
+                continue
+            category = self.tool_registry.get(tool.name, "tools")
+            visible.extend(manager.filter_available_tools([tool], self.get_node_name(), category))
+        self.tools[:] = visible
+
     def _ensure_tool_transformers(self) -> None:
         """Wrap ``self.tools`` with plugin-declared argument transformers, once.
 
@@ -4737,6 +4786,11 @@ class AgenticNode(Node):
         transformers, a failure to apply them raises: transformers are policy
         code, and running without them would silently drop enforcement.
         """
+        from datus.tools.registry.contracts import validate_registered_tools
+
+        validate_registered_tools(self.tools)
+        if getattr(getattr(self, "agent_config", None), "restrict_tool_visibility", False) is True:
+            self._filter_permission_denied_tools()
         # Defensive getattr: test doubles that bypass ``AgenticNode.__init__``
         # may carry neither the flag nor an agent_config (same rationale as the
         # ``interaction_broker`` getattr in ``_stream_once``).

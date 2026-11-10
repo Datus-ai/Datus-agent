@@ -32,6 +32,7 @@ from datus.tools.func_tool.sub_agent_task_tool import (
     SubAgentTaskTool,
 )
 from datus.utils.constants import HIDDEN_SYS_SUB_AGENTS, SYS_SUB_AGENTS
+from tests.helpers.tool_definitions import registered_test_tool
 
 # Built-ins offered only when their prerequisite exists (ontology_analyst needs an ontology).
 CONDITIONAL_SYS_SUB_AGENTS = {"ontology_analyst"}
@@ -2672,7 +2673,6 @@ class TestProxyToolPropagation:
     )
     @pytest.mark.parametrize("tool_name", ["write_file", "edit_file", "delete_file"])
     async def test_web_forwarded_file_call_uses_the_child_executor(self, task_tool, node_name, tool_name):
-        from agents import FunctionTool
 
         from datus.api.services.action_sse_converter import action_to_sse_event
         from datus.schemas.action_bus import ActionBus
@@ -2683,7 +2683,7 @@ class TestProxyToolPropagation:
         task_tool.set_parent_node(parent)
         bus = ActionBus()
         task_tool.set_action_bus(bus)
-        original = FunctionTool(
+        original = registered_test_tool(
             name=tool_name,
             description="File operation",
             params_json_schema={"type": "object"},

@@ -34,6 +34,7 @@ from datus.api.models.chat_models import (
     StopChatInput,
     ToolResultData,
     ToolResultInput,
+    UpdatePermissionModeInput,
 )
 from datus.api.models.cli_models import (
     ChatHistoryData,
@@ -260,6 +261,14 @@ async def resume_chat(
 
     async def generate_sse():
         """Serialize buffered events while omitting transient diffs on ordinary session entry."""
+        # A resumed stream can begin after the original session frame.
+        if task.node is not None:
+            from datus.api.models.cli_models import SSESessionData
+
+            session = SSESessionData(
+                session_id=task.session_id, llm_session_id=task.node.session_id, run_id=task.run_id
+            )
+            yield f"event: session\ndata: {session.model_dump_json()}\n\n"
         async for event in task_manager.consume_events(task, start_from=request.from_event_id):
             if (
                 not include_semantic_diff
@@ -886,3 +895,31 @@ async def _safe_post_chat(
         await hooks.post_chat(http_request, request, ctx)
     except Exception as exc:  # pragma: no cover — defensive
         logger.error("post_chat hook raised: %s", exc, exc_info=True)
+
+
+@router.post("/permission_mode", response_model=Result[dict], summary="Update a running turn's permission mode")
+async def update_permission_mode(
+    request: UpdatePermissionModeInput, svc: ServiceDep, ctx: AppContextDep
+) -> Result[dict]:
+    task = svc.task_manager.get_task(request.session_id)
+    if task is None or task.user_id != ctx.user_id:
+        return Result(success=False, errorCode="SESSION_NOT_FOUND", errorMessage="Chat task not found")
+    if task.status != "running" or task.run_id != request.run_id:
+        return Result(success=False, errorCode="SESSION_NOT_RUNNING", errorMessage="This turn is no longer running")
+    if task.live_permission_profile is None:
+        return Result(success=False, errorCode="TASK_INITIALIZING", errorMessage="Chat task is still initializing")
+    try:
+        task.live_permission_profile.switch(request.permission_mode)
+    except Exception:
+        logger.exception("Failed to switch permission mode for session=%s", request.session_id)
+        return Result(
+            success=False, errorCode="PERMISSION_SWITCH_FAILED", errorMessage="Failed to switch permission mode"
+        )
+    return Result(
+        success=True,
+        data={
+            "session_id": task.session_id,
+            "run_id": task.run_id,
+            "permission_mode": task.live_permission_profile.profile,
+        },
+    )

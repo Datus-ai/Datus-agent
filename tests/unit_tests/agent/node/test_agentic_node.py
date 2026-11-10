@@ -23,6 +23,7 @@ from datus.schemas.action_history import ActionHistory, ActionHistoryManager, Ac
 from datus.schemas.base import BaseInput, BaseResult
 from datus.schemas.token_usage import TokenUsage
 from datus.utils.language_utils import NATIVE_DIRECTIVE_MAP
+from tests.helpers.tool_definitions import registered_test_tool
 
 _UNSET = object()
 
@@ -2045,6 +2046,14 @@ class TestEnsurePermissionHooksProxyWiring:
         kwargs = ph_cls.call_args.kwargs
         assert kwargs["proxied_tool_names"] == set()
 
+    @pytest.mark.parametrize("restricted", [True, False])
+    def test_restricted_hosts_enforce_method_denials_at_invocation(self, restricted):
+        node = self._prepare_node(set())
+        node.agent_config = SimpleNamespace(restrict_tool_visibility=restricted)
+        with patch("datus.tools.permission.permission_hooks.PermissionHooks") as ph_cls:
+            node._ensure_permission_hooks()
+        assert ph_cls.call_args.kwargs["enforce_method_denials"] is restricted
+
     def test_passes_config_mutable_from_agent_config(self):
         """Multi-tenant API nodes suppress project-level permission choices."""
         node = self._prepare_node(set())
@@ -2152,14 +2161,13 @@ class TestEnsureToolTransformers:
 
     @staticmethod
     def _make_fake_node(plugins_enabled: bool = True, tools: Optional[List[Any]] = None) -> SimpleNamespace:
-        from agents import FunctionTool
-
+        """Construct a node with a registered SQL tool for transformer wiring checks."""
         from datus.tools.registry.tool_registry import ToolRegistry
 
         async def invoke(tool_ctx: Any, args_str: str) -> dict:
             return {"success": 1, "result": "ok", "error": None}
 
-        default_tool = FunctionTool(
+        default_tool = registered_test_tool(
             name="execute_sql",
             description="t",
             params_json_schema={"type": "object"},
@@ -2285,3 +2293,222 @@ class TestEnsureToolTransformers:
         assert node.tools is captured
         assert captured[0] is not original_tool
         assert captured[0].name == "execute_sql"
+
+
+def test_restricted_host_hides_denied_tools_and_retains_sql_ask():
+    """Hide denied methods in place on initial assembly and subsequent rebuilds."""
+    from datus.tools.permission.permission_manager import PermissionManager
+    from datus.tools.permission.profiles import build_effective_config
+    from datus.tools.registry.tool_registry import ToolRegistry
+
+    config = build_effective_config(
+        "auto",
+        {
+            "rules": [
+                {"tool": "*", "pattern": "*", "permission": "deny"},
+                {"tool": "db_tools", "pattern": "execute_sql", "permission": "ask"},
+            ]
+        },
+    )
+    tools = [SimpleNamespace(name=name) for name in ("execute_sql", "write_file", "new_unclassified_tool")]
+    captured = tools
+    node = SimpleNamespace(
+        agent_config=SimpleNamespace(restrict_tool_visibility=True),
+        permission_manager=PermissionManager(config),
+        tool_registry=ToolRegistry({"execute_sql": "db_tools", "write_file": "filesystem_tools"}),
+        tools=tools,
+        _populate_tool_registry=lambda: None,
+        get_node_name=lambda: "chat",
+    )
+    AgenticNode._filter_permission_denied_tools(node)
+    assert [tool.name for tool in captured] == ["execute_sql"]
+    # A later tool rebuild must be filtered again, independently of plugin flags.
+    node.tools.append(SimpleNamespace(name="write_file"))
+    AgenticNode._filter_permission_denied_tools(node)
+    assert [tool.name for tool in captured] == ["execute_sql"]
+
+
+@pytest.mark.parametrize("scope", ["global", "node"])
+def test_restricted_visibility_preserves_plan_tool_exemptions(scope):
+    """Real plan helpers survive DENY while ordinary tool grants remain enforced."""
+    from datus.tools.permission.permission_config import PermissionConfig, PermissionRule
+    from datus.tools.permission.permission_manager import PermissionManager
+    from datus.tools.registry.tool_registry import ToolRegistry
+
+    custom = PermissionConfig(
+        rules=[
+            PermissionRule(tool="*", pattern="*", permission="deny"),
+            PermissionRule(tool="filesystem_tools", pattern="read_file", permission="allow"),
+            PermissionRule(tool="db_tools", pattern="execute_sql", permission="ask"),
+        ]
+    )
+    manager = PermissionManager(
+        custom if scope == "global" else PermissionConfig(),
+        node_overrides={"chat": custom} if scope == "node" else None,
+    )
+    plan_tools = AgenticNode._get_plan_mode_tools(SimpleNamespace(_session=None, session_id=None))
+    assert plan_tools
+    assert all(manager.check_permission("tools", tool.name, "chat") == "deny" for tool in plan_tools)
+    tools = [
+        plan_tools[0],
+        SimpleNamespace(name="write_file"),
+        SimpleNamespace(name="read_file"),
+        *plan_tools[1:],
+        SimpleNamespace(name="execute_sql"),
+        SimpleNamespace(name="write_semantic_model_plan_file"),
+        SimpleNamespace(name="unknown_tool"),
+    ]
+    node = SimpleNamespace(
+        agent_config=SimpleNamespace(restrict_tool_visibility=True),
+        permission_manager=manager,
+        tool_registry=ToolRegistry(
+            {
+                "write_file": "filesystem_tools",
+                "read_file": "filesystem_tools",
+                "execute_sql": "db_tools",
+                "write_semantic_model_plan_file": "semantic_tools",
+            }
+        ),
+        tools=tools,
+        _populate_tool_registry=lambda: None,
+        get_node_name=lambda: "chat",
+    )
+    AgenticNode._filter_permission_denied_tools(node)
+    assert node.tools is tools
+    assert tools == [
+        plan_tools[0],
+        SimpleNamespace(name="read_file"),
+        *plan_tools[1:],
+        SimpleNamespace(name="execute_sql"),
+    ]
+
+
+def test_restricted_visibility_requires_permission_enforcement():
+    node = SimpleNamespace(agent_config=SimpleNamespace(restrict_tool_visibility=True), permission_manager=None)
+    with pytest.raises(RuntimeError, match="permission manager"):
+        AgenticNode._filter_permission_denied_tools(node)
+
+
+def test_ordinary_hosts_keep_existing_tool_visibility():
+    tools = [SimpleNamespace(name="write_file")]
+    node = SimpleNamespace(agent_config=SimpleNamespace(), tools=tools)
+    AgenticNode._filter_permission_denied_tools(node)
+    assert node.tools == tools
+
+
+@pytest.fixture
+def restricted_skill_node(tmp_path):
+    from datus.tools.permission.permission_manager import PermissionManager
+    from datus.tools.permission.profiles import build_effective_config
+    from datus.tools.registry.tool_registry import ToolRegistry
+    from datus.tools.skill_tools.skill_config import SkillConfig
+    from datus.tools.skill_tools.skill_func_tool import SkillFuncTool
+    from datus.tools.skill_tools.skill_manager import SkillManager
+
+    def make(*, verdict="allow", patterns="business", metadata="", node_class="gen_sql"):
+        directory = tmp_path / "business"
+        directory.mkdir(exist_ok=True)
+        (directory / "SKILL.md").write_text(
+            f"---\nname: business\ndescription: Frozen instructions\n{metadata}---\nFrozen business guidance"
+        )
+        manager = PermissionManager(
+            build_effective_config(
+                "auto",
+                {
+                    "rules": [
+                        {"tool": "*", "pattern": "*", "permission": "deny"},
+                        {"tool": "skills", "pattern": "business", "permission": verdict},
+                    ]
+                },
+            )
+        )
+        skill_manager = SkillManager(
+            config=SkillConfig(directories=[str(tmp_path)]),
+            permission_manager=manager,
+            config_mutable=False,
+        )
+        skill_tool = SkillFuncTool(skill_manager, "analyst", node_class=node_class)
+        node = SimpleNamespace(
+            agent_config=SimpleNamespace(restrict_tool_visibility=True),
+            permission_manager=manager,
+            skill_manager=skill_manager,
+            skill_func_tool=skill_tool,
+            node_config={"skills": patterns},
+            tool_registry=ToolRegistry({"load_skill": "skills", "write_file": "filesystem_tools"}),
+            tools=[*skill_tool.available_tools(), SimpleNamespace(name="write_file")],
+            _populate_tool_registry=lambda: None,
+            get_node_name=lambda: "analyst",
+            get_node_class_name=lambda: node_class,
+        )
+        return node
+
+    return make
+
+
+@pytest.mark.parametrize("verdict", ["allow", "ask"])
+def test_restricted_skill_loader_visible_for_accessible_skill(restricted_skill_node, verdict):
+    """Expose the loader for an eligible named Skill with ALLOW or ASK access."""
+    node = restricted_skill_node(verdict=verdict, metadata="allowed_agents: [gen_sql]\n")
+    assert node.permission_manager.check_permission("skills", "load_skill", "analyst") == "deny"
+    AgenticNode._filter_permission_denied_tools(node)
+    assert [tool.name for tool in node.tools] == ["load_skill"]
+
+
+@pytest.mark.parametrize(
+    "options",
+    [
+        {"verdict": "deny"},
+        {"patterns": "unselected-*"},
+        {"metadata": "allowed_agents: [other_agent]\n"},
+        {"metadata": "disable_model_invocation: true\n"},
+        {"metadata": "requires_mutable_config: true\n"},
+    ],
+)
+def test_restricted_skill_loader_hidden_without_accessible_skills(restricted_skill_node, options):
+    node = restricted_skill_node(**options)
+    AgenticNode._filter_permission_denied_tools(node)
+    assert node.tools == []
+
+
+@pytest.mark.asyncio
+async def test_visible_skill_loader_still_checks_specific_skill_on_invocation(restricted_skill_node):
+    """A visible loader may load the granted Skill while rejecting unlinked names."""
+    import json
+
+    from agents.tool_context import ToolContext
+    from agents.usage import Usage
+
+    from datus.tools.permission.permission_hooks import PermissionDeniedException, PermissionHooks
+
+    node = restricted_skill_node()
+    tool = node.tools[0]
+    AgenticNode._filter_permission_denied_tools(node)
+    assert [item.name for item in node.tools] == ["load_skill"]
+    hooks = PermissionHooks(
+        broker=SimpleNamespace(request=AsyncMock()),
+        permission_manager=node.permission_manager,
+        node_name="analyst",
+        tool_registry=node.tool_registry,
+        non_interactive=True,
+    )
+    context = ToolContext(
+        context=None,
+        usage=Usage(),
+        tool_name="load_skill",
+        tool_call_id="load_business",
+        tool_arguments=json.dumps({"skill_name": "business"}),
+    )
+    await hooks.on_tool_start(context, None, tool)
+    result = await tool.on_invoke_tool(context, context.tool_arguments)
+    assert result["success"] == 1
+    assert "Frozen business guidance" in result["result"]
+    context.tool_arguments = json.dumps({"skill_name": "unlinked"})
+    with pytest.raises(PermissionDeniedException):
+        await hooks.on_tool_start(context, None, tool)
+
+
+def test_restricted_skill_loader_hidden_without_skill_manager(restricted_skill_node):
+    node = restricted_skill_node()
+    node.skill_manager = None
+    AgenticNode._filter_permission_denied_tools(node)
+    assert node.tools == []

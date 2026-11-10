@@ -18,6 +18,7 @@ from datus.models.request_capacity import (
     RequestCapacity,
     guard_request,
 )
+from datus.tools.registry.contracts import tool_contract
 
 pytestmark = pytest.mark.component
 
@@ -578,6 +579,7 @@ async def test_final_guard_survives_soft_compaction_failure(model):
 
 @pytest.mark.asyncio
 async def test_real_sdk_receives_page_but_tool_event_retains_full_result(model, tmp_path, two_turn_agents_model):
+    """Page model-visible results while retaining complete results in tool events."""
     import json
     from types import SimpleNamespace
 
@@ -592,6 +594,7 @@ async def test_real_sdk_receives_page_but_tool_event_retains_full_result(model, 
 
     tables = [{"name": f"table_{i}"} for i in range(30000)]
 
+    @tool_contract(access="read", direct_call=True, category="db_tools")
     def list_tables():
         """Return the complete table inventory."""
         return FuncToolResult(result=tables)

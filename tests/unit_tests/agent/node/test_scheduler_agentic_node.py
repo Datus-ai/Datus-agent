@@ -26,6 +26,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from datus.tools.registry.contracts import tool_contract
+
 # Patch path for SchedulerTools (imported inside method body via
 # `from datus.tools.func_tool.scheduler_tools import SchedulerTools`)
 _SCHEDULER_TOOLS_PATCH = "datus.tools.func_tool.scheduler_tools.SchedulerTools"
@@ -82,6 +84,7 @@ class _ExecutableSchedulerTools:
             trans_to_function_tool(self.get_run_log),
         ]
 
+    @tool_contract(access="restricted", direct_call=False, category="scheduler_tools")
     def submit_sql_job(self, job_name: str, sql_file_path: str, conn_id=None, schedule=None, description=None):
         from datus.tools.func_tool import FuncToolResult
 
@@ -103,6 +106,7 @@ class _ExecutableSchedulerTools:
             }
         )
 
+    @tool_contract(access="restricted", direct_call=False, category="scheduler_tools")
     def trigger_scheduler_job(self, job_id: str):
         from datus.tools.func_tool import FuncToolResult
 
@@ -110,6 +114,7 @@ class _ExecutableSchedulerTools:
         self.runs.setdefault(job_id, []).append(run)
         return FuncToolResult(result=run)
 
+    @tool_contract(access="restricted", direct_call=False, category="scheduler_tools")
     def get_scheduler_job(self, job_id: str):
         from datus.tools.func_tool import FuncToolResult
 
@@ -118,6 +123,7 @@ class _ExecutableSchedulerTools:
             return FuncToolResult(result={"found": False, "job_id": job_id})
         return FuncToolResult(result={"found": True, **job})
 
+    @tool_contract(access="restricted", direct_call=False, category="scheduler_tools")
     def list_job_runs(self, job_id: str, limit: int = 10, offset: int = 0):
         from datus.tools.func_tool import FuncToolResult
         from datus.tools.func_tool.base import FuncToolListResult
@@ -125,6 +131,7 @@ class _ExecutableSchedulerTools:
         rows = self.runs.get(job_id, [])[offset : offset + limit]
         return FuncToolResult(result=FuncToolListResult(items=rows, total=len(self.runs.get(job_id, []))).model_dump())
 
+    @tool_contract(access="restricted", direct_call=False, category="scheduler_tools")
     def get_run_log(self, job_id: str, run_id: str):
         from datus.tools.func_tool import FuncToolResult
 
