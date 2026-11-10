@@ -23,4 +23,7 @@ def registered_test_tool(*, category=None, tool_type=FunctionTool, **kwargs):
     identity, capability = (
         candidates[0] if candidates else (f"{category or 'tools'}.{name}", ToolCapability("restricted", False))
     )
-    return register_tool_definition(tool_type(**kwargs), ToolDefinition(identity, capability))
+    return register_tool_definition(
+        tool_type(**kwargs),
+        ToolDefinition(identity, capability.access, capability.direct_call, capability.companion_of),
+    )

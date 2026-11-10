@@ -13,13 +13,13 @@ import asyncio
 import copy
 import json
 from contextlib import contextmanager
-from dataclasses import replace
 from pathlib import Path
 from typing import Any, AsyncIterator
 
 from agents import FunctionTool
 
 from datus.tools.func_tool.base import parse_tool_args, write_back_tool_args
+from datus.tools.registry.contracts import clone_registered_tool
 from datus.utils.sql_utils import parse_table_name_parts
 from datus.utils.tool_result_store import ToolResultStore, parse_result
 
@@ -198,7 +198,7 @@ class InitContext:
                     return _error(error)
                 return await self.invoke(_name, _original, context, canonical)
 
-            wrapped_tool = replace(tool, on_invoke_tool=invoke)
+            wrapped_tool = clone_registered_tool(tool, on_invoke_tool=invoke)
             wrapped_tool._init_context = self
             wrapped_tool._init_original_tool = tool
             wrapped.append(wrapped_tool)

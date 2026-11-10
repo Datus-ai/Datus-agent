@@ -79,7 +79,7 @@ tool = registered_function_tool(
 ```
 
 Factories can also supply a literal `ToolDefinition("family.method",
-ToolCapability("restricted", False))`. The compiler inventories these definitions
+access="restricted", direct_call=False)`. The compiler inventories these definitions
 and nested decorated callables too. Runtime-dependent native definitions must be
 derived from declared callables, rather than inferred from names or first use.
 

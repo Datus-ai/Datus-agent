@@ -28,6 +28,8 @@ def test_declaration_requires_both_fields(options):
     """A new registration cannot silently inherit an access or exposure default."""
     with pytest.raises(TypeError):
         tool_contract(**options)
+    with pytest.raises(TypeError):
+        ToolDefinition("custom_tools.inspect", **options)
 
 
 @pytest.mark.parametrize("access,direct", [("reader", True), ("read", "yes"), ("read", 1)])
@@ -70,7 +72,7 @@ async def test_inherited_async_contract_and_override():
             return value + 1
 
     tool = trans_to_function_tool(Child().inspect)
-    assert tool_definition(tool) == ToolDefinition("custom_tools.inspect", ToolCapability("read", False))
+    assert tool_definition(tool) == ToolDefinition("custom_tools.inspect", access="read", direct_call=False)
     assert await tool.on_invoke_tool(None, '{"value":7}') == 7
     with pytest.raises(ToolDefinitionError, match="Missing @tool_contract"):
         trans_to_function_tool(UndeclaredOverride().inspect)
@@ -125,7 +127,7 @@ def test_mcp_registration_requires_the_actual_method_contract():
 
 def test_dynamic_factory_requires_definition_and_preserves_sdk_settings():
     """Dynamic tools and their clones retain declarations and SDK guardrail fields."""
-    definition = ToolDefinition("custom_tools.inspect", ToolCapability("read", False))
+    definition = ToolDefinition("custom_tools.inspect", access="read", direct_call=False)
 
     async def invoke(context, arguments):
         return arguments
@@ -142,6 +144,10 @@ def test_dynamic_factory_requires_definition_and_preserves_sdk_settings():
     assert wrapped.params_json_schema == original.params_json_schema
     with pytest.raises(ToolDefinitionError, match="name"):
         clone_registered_tool(original, name="different_tool")
+    from dataclasses import replace
+
+    with pytest.raises(ToolDefinitionError, match="Unregistered tool"):
+        validate_registered_tools([replace(original)])
 
 
 def test_final_assembly_rejects_unregistered_tools_before_visibility():
@@ -158,7 +164,7 @@ def test_final_assembly_rejects_unregistered_tools_before_visibility():
 
 def test_canonical_identity_cannot_be_overwritten_by_another_group():
     """A mounted tool's definition, rather than its name, determines its category."""
-    definition = ToolDefinition("custom_tools.inspect", ToolCapability("read", False))
+    definition = ToolDefinition("custom_tools.inspect", access="read", direct_call=False)
 
     async def invoke(context, arguments):
         return None
@@ -172,7 +178,7 @@ def test_canonical_identity_cannot_be_overwritten_by_another_group():
     registry.register_tools("custom_tools", [tool])
     assert registry.get("inspect") == "custom_tools"
     second = registered_function_tool(
-        definition=ToolDefinition("other_tools.inspect", ToolCapability("read", False)),
+        definition=ToolDefinition("other_tools.inspect", access="read", direct_call=False),
         name="inspect",
         description="",
         params_json_schema={},
@@ -190,7 +196,7 @@ def test_known_identity_cannot_claim_a_different_effect():
 
     with pytest.raises(ToolDefinitionError, match="Conflicting capability"):
         registered_function_tool(
-            definition=ToolDefinition("filesystem_tools.write_file", ToolCapability("read", True)),
+            definition=ToolDefinition("filesystem_tools.write_file", access="read", direct_call=True),
             name="write_file",
             description="",
             params_json_schema={},

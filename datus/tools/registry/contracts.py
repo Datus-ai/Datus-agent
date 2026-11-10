@@ -49,20 +49,27 @@ class ToolDefinition:
     """Canonical identity carried with an SDK tool through all wrappers."""
 
     tool_id: str
-    capability: ToolCapability
+    access: Access
+    direct_call: bool
+    companion_of: str | None = None
     aliases: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         """Validate canonical and compatibility identities before registration."""
         validate_tool_id(self.tool_id)
-        if not isinstance(self.capability, ToolCapability) or not isinstance(self.aliases, tuple):
-            raise ToolDefinitionError("Tool definitions require a capability and an immutable alias tuple")
+        ToolCapability(self.access, self.direct_call, self.companion_of)
+        if not isinstance(self.aliases, tuple):
+            raise ToolDefinitionError("Tool definitions require an immutable alias tuple")
         for alias in self.aliases:
             if not isinstance(alias, str):
                 raise ToolDefinitionError("Tool aliases must be method names")
             validate_tool_id(f"{self.category}.{alias}")
         if len(set(self.aliases)) != len(self.aliases) or self.name in self.aliases:
             raise ToolDefinitionError(f"Duplicate aliases for {self.tool_id}")
+
+    @property
+    def capability(self) -> ToolCapability:
+        return ToolCapability(self.access, self.direct_call, self.companion_of)
 
     @property
     def category(self) -> str:
@@ -125,7 +132,13 @@ def definition_from_callable(method: Callable, *, owner: type | None = None) -> 
     category = declaration.category or owner_category
     if not isinstance(category, str):
         raise ToolDefinitionError(f"Missing tool category on {method.__qualname__}")
-    definition = ToolDefinition(f"{category}.{method.__name__}", declaration.capability, declaration.aliases)
+    definition = ToolDefinition(
+        f"{category}.{method.__name__}",
+        declaration.capability.access,
+        declaration.capability.direct_call,
+        declaration.capability.companion_of,
+        declaration.aliases,
+    )
     if getattr(method, "__module__", "").startswith("datus."):
         from datus.tools.registry.capabilities import TOOL_CAPABILITIES
 

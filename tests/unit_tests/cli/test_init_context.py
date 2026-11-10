@@ -54,6 +54,9 @@ async def test_cache_and_metadata_only_tool_surface(run):
     """Cache scoped metadata calls while excluding SQL execution from init tools."""
     metadata = Metadata()
     tool = wrapped(run, metadata.describe_table)
+    from datus.tools.registry.contracts import definition_from_callable, tool_definition
+
+    assert tool_definition(tool) == definition_from_callable(metadata.describe_table)
     a = await tool.on_invoke_tool(None, '{"table_name":"orders"}')
     b = await tool.on_invoke_tool(None, '{"table_name":"orders"}')
     assert a == b and metadata.calls == 1

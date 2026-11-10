@@ -175,10 +175,12 @@ def collect_contracts(package_root: Path) -> dict:
                 return  # A shared mixin is inventoried through each concrete tool group.
             if values.get("category") is not None and category is not None and values["category"] != category:
                 raise CatalogError("Tool category conflicts with its declaring class")
-            if not isinstance(family, str) or not family.isidentifier():
+            if not isinstance(family, str) or not family.isascii() or not family.isidentifier():
                 raise CatalogError("A literal or inherited tool category is required")
             aliases = values.get("aliases", ())
-            if not isinstance(aliases, tuple) or any(not isinstance(a, str) or not a.isidentifier() for a in aliases):
+            if not isinstance(aliases, tuple) or any(
+                not isinstance(a, str) or not a.isascii() or not a.isidentifier() for a in aliases
+            ):
                 raise CatalogError("aliases must be a tuple of literal method names")
             if len(set(aliases)) != len(aliases) or method.name in aliases:
                 raise CatalogError("Duplicate alias")
@@ -196,27 +198,21 @@ def collect_contracts(package_root: Path) -> dict:
         """Inventory explicit dynamic factories instead of relying on node execution."""
         path, _, imports = modules[module]
         try:
-            if len(node.args) > 3 or any(k.arg not in {"tool_id", "capability", "aliases"} for k in node.keywords):
+            names = ("tool_id", "access", "direct_call", "companion_of", "aliases")
+            if len(node.args) > len(names) or any(k.arg not in names for k in node.keywords):
                 raise CatalogError("Invalid ToolDefinition arguments")
-            fields = dict(zip(("tool_id", "capability", "aliases"), node.args, strict=False))
+            fields = dict(zip(names, node.args, strict=False))
+            if any(k.arg in fields for k in node.keywords):
+                raise CatalogError("Duplicate ToolDefinition arguments")
             fields.update({k.arg: k.value for k in node.keywords})
-            identity = ast.literal_eval(fields["tool_id"])
-            family, name = identity.split(".")
-            capability = fields["capability"]
-            if not isinstance(capability, ast.Call) or not _resolve(_symbol(capability.func), imports).endswith(
-                ".ToolCapability"
-            ):
-                raise CatalogError("Dynamic definitions require a literal ToolCapability")
-            values = dict(zip(("access", "direct_call", "companion_of"), capability.args, strict=False))
-            if len(capability.args) > 3:
-                raise CatalogError("Invalid ToolCapability arguments")
-            values.update({k.arg: k.value for k in capability.keywords})
-            if not {"access", "direct_call"} <= values.keys():
+            if not {"tool_id", "access", "direct_call"} <= fields.keys():
                 raise CatalogError("Dynamic definitions require explicit access and direct_call")
-            keywords = [ast.keyword(arg=key, value=value) for key, value in values.items()]
+            identity = ast.literal_eval(fields.pop("tool_id"))
+            family, name = identity.split(".")
+            if not name.isascii() or not name.isidentifier():
+                raise CatalogError("Invalid canonical method name")
+            keywords = [ast.keyword(arg=key, value=value) for key, value in fields.items()]
             keywords.append(ast.keyword(arg="category", value=ast.Constant(value=family)))
-            if "aliases" in fields:
-                keywords.append(ast.keyword(arg="aliases", value=fields["aliases"]))
             method = ast.FunctionDef(
                 name=name,
                 args=ast.arguments(
@@ -306,6 +302,8 @@ def collect_contracts(package_root: Path) -> dict:
             if not isinstance(call, ast.Call):
                 continue
             target = _resolve(_symbol(call.func), imports)
+            if target == "dataclasses.replace" and any(k.arg == "on_invoke_tool" for k in call.keywords):
+                errors.append(f"{path}:{call.lineno}: Use clone_registered_tool for function-tool wrappers")
             if target.endswith(".ToolDefinition") and not module.endswith(".registry.contracts"):
                 add_literal_definition(call, module)
             if target.endswith(".registered_function_tool"):

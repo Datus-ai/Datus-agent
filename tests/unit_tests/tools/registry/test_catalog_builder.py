@@ -132,6 +132,7 @@ class Tool:
     "registration",
     [
         "from agents import FunctionTool as Raw\ntool = Raw(name='read_file')",
+        "from dataclasses import replace\ntool = replace(original, on_invoke_tool=invoke)",
         "from agents import function_tool as raw\n@raw\ndef read_file(): pass",
         "import agents as sdk\ntool = sdk.function_tool(lambda: 1)",
         "from datus.tools.registry.contracts import registered_function_tool\ntool = registered_function_tool(name='read_file')",
@@ -140,7 +141,10 @@ class Tool:
 def test_registration_bypasses_fail_during_build(package, registration):
     """SDK aliases and undeclared dynamic factories cannot bypass build validation."""
     source(package, registration)
-    with pytest.raises(CatalogError, match="registered_function_tool|definition explicitly|trans_to_function_tool"):
+    with pytest.raises(
+        CatalogError,
+        match="registered_function_tool|definition explicitly|trans_to_function_tool|clone_registered_tool",
+    ):
         collect_contracts(package)
 
 
@@ -231,7 +235,7 @@ from datus.tools.registry.contracts import tool_contract, ToolDefinition, ToolCa
 from datus.tools.registry.contracts import registered_function_tool, definition_from_callable
 def literal_factory():
     return registered_function_tool(
-        definition=ToolDefinition("tools.dynamic_literal", ToolCapability("restricted", False)),
+        definition=ToolDefinition("tools.dynamic_literal", access="restricted", direct_call=False),
         name="dynamic_literal",
     )
 def nested_factory():

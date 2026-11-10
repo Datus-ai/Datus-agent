@@ -261,9 +261,9 @@ def test_late_user_input_is_retained_without_resetting_the_run(
 async def test_plugin_refresh_keeps_metadata_guard_callable(real_agent_config, mock_llm_create, tmp_path):
     """Refresh plugin wrappers without dropping the init metadata-only guard."""
     import asyncio
-    from dataclasses import replace
 
     from datus.tools.func_tool.base import FuncToolResult, trans_to_function_tool
+    from datus.tools.registry.contracts import clone_registered_tool
 
     node = chat_for(real_agent_config, tmp_path).get_or_create_node()
     calls = []
@@ -283,7 +283,7 @@ async def test_plugin_refresh_keeps_metadata_guard_callable(real_agent_config, m
             async def invoke(context, arguments, original=tool.on_invoke_tool):
                 return await original(context, arguments)
 
-            transformed.append(replace(tool, on_invoke_tool=invoke))
+            transformed.append(clone_registered_tool(tool, on_invoke_tool=invoke))
         node.tools = transformed
         node._tool_transformers_applied = True
 
