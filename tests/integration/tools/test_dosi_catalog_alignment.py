@@ -14,6 +14,7 @@ that is how ``params`` and ``required_dimensions`` once went missing from
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -119,3 +120,56 @@ def test_every_dataset_key_is_classified_and_rendered(model_path):
             assert field["name"] in text, (row["name"], field["name"])
         for relationship in detail.get("relationships") or []:
             assert f"{relationship['cardinality']} {relationship['to']}" in text, row["name"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("extension", ["yaml", "json"])
+async def test_metric_preview_exposes_native_sibling_metric_compile_failure(tmp_path, monkeypatch, extension):
+    import json
+
+    import yaml
+
+    from datus.api.models.explorer_models import SubjectPathInput
+    from datus.api.services.explorer_service import ExplorerService
+    from datus.tools.semantic_tools.dosi.config import DosiConfig
+    from datus.tools.semantic_tools.dosi.runtime import DosiRuntime
+
+    document = {
+        "version": "0.2.0.dev0",
+        "name": "goods_flow",
+        "datasets": [
+            {
+                "name": "goods",
+                "source": "goods",
+                "fields": [
+                    {
+                        "name": "loss_qty",
+                        "expression": {"dialects": [{"dialect": "ANSI_SQL", "expression": "loss_qty"}]},
+                    }
+                ],
+            }
+        ],
+        "metrics": [
+            {"name": name, "expression": {"dialects": [{"dialect": "ANSI_SQL", "expression": expression}]}}
+            for name, expression in [("loss_rate", "SUM(goods.loss_qty)"), ("sales_aum", "SUM(missing_price)")]
+        ],
+    }
+    path = tmp_path / f"goods.{extension}"
+    path.write_text(json.dumps(document) if extension == "json" else yaml.safe_dump(document))
+    runtime = DosiRuntime(DosiConfig(semantic_models_path=str(tmp_path)))
+    monkeypatch.setattr(
+        "datus.tools.func_tool.semantic_tools.SemanticTools",
+        lambda *args, **kwargs: SimpleNamespace(runtime=runtime),
+    )
+    service = ExplorerService.__new__(ExplorerService)
+    service.agent_config = SimpleNamespace(current_db_config=lambda datasource: None)
+    service.datasource_id = "warehouse"
+    service.sub_agent_name = None
+    service._semantic_model_path_provider = None
+
+    result = await service.get_metric_dimensions(SubjectPathInput(subject_path=["goods_flow", "loss_rate"]))
+    assert result.success is False
+    assert path.name in result.errorMessage
+    assert "UnknownColumn" in result.errorMessage
+    assert "sales_aum" in result.errorMessage
+    assert "missing_price" in result.errorMessage
