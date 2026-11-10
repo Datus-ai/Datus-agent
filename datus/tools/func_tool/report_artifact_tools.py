@@ -49,7 +49,7 @@ from datus.tools.func_tool._visual_artifact_cards import scan_render_cards
 from datus.tools.func_tool._visual_artifact_helpers import (
     append_intent_section,
     coerce_uses_arg,
-    upsert_manifest_after_save,
+    touch_manifest_after_save,
     utc_now_iso,
     write_query_brief,
 )
@@ -819,13 +819,12 @@ class ReportArtifactTools(MetricArtifactToolsMixin):
             return FuncToolResult(success=0, error=brief_err)
         (self.queries_dir / f"{name}.metric.json").unlink(missing_ok=True)
 
-        # Manifest upsert (datasources union-add + updated_at bump). Soft
-        # failure — log warning, expose in result, but don't fail the
+        # Refresh recency; finalize derives sources from the saved query files.
+        # Failure is a warning: log it without failing the
         # whole tool call: the artifact's primary contract (SQL+data+
         # brief) is already on disk.
-        manifest_warning = upsert_manifest_after_save(
+        manifest_warning = touch_manifest_after_save(
             self.report_dir / "manifest.json",
-            datasource=ds_label,
             timestamp=payload["executed_at"],
         )
 

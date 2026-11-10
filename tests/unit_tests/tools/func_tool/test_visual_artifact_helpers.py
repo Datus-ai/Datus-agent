@@ -23,7 +23,7 @@ from datus.schemas.artifact_manifest import ArtifactManifest
 from datus.tools.func_tool._visual_artifact_helpers import (
     append_intent_section,
     coerce_uses_arg,
-    upsert_manifest_after_save,
+    touch_manifest_after_save,
     utc_now_iso,
     write_query_brief,
 )
@@ -217,13 +217,13 @@ class TestAppendIntentSection:
             mode="new",
             timestamp="2026-05-14T10:00:00Z",
         )
-        assert err is not None
+        assert isinstance(err, str)
         assert "Failed to append intent section" in err
         assert "disk full" in err
 
 
 # --------------------------------------------------------------------------- #
-# upsert_manifest_after_save                                                  #
+# touch_manifest_after_save                                                  #
 # --------------------------------------------------------------------------- #
 
 
@@ -244,59 +244,59 @@ def _seed_manifest(tmp_path: Path, **overrides) -> Path:
     return path
 
 
-class TestUpsertManifestAfterSave:
-    def test_adds_new_datasource(self, tmp_path: Path):
-        manifest_path = _seed_manifest(tmp_path)
-        err = upsert_manifest_after_save(manifest_path, datasource="primary_pg", timestamp="2026-05-14T11:00:00Z")
+class TestTouchManifestAfterSave:
+    def test_updates_timestamp_preserving_derived_sources(self, tmp_path: Path):
+        manifest_path = _seed_manifest(tmp_path, datasources=["primary_pg"])
+        err = touch_manifest_after_save(manifest_path, timestamp="2026-05-14T11:00:00Z")
         assert err is None
         data = json.loads(manifest_path.read_text(encoding="utf-8"))
         assert data["datasources"] == ["primary_pg"]
         assert data["updated_at"] == "2026-05-14T11:00:00Z"
 
-    def test_duplicate_datasource_idempotent(self, tmp_path: Path):
-        manifest_path = _seed_manifest(tmp_path)
-        upsert_manifest_after_save(manifest_path, datasource="pg", timestamp="2026-05-14T11:00:00Z")
-        upsert_manifest_after_save(manifest_path, datasource="pg", timestamp="2026-05-14T12:00:00Z")
+    def test_repeated_saves_preserve_derived_sources(self, tmp_path: Path):
+        manifest_path = _seed_manifest(tmp_path, datasources=["pg"])
+        touch_manifest_after_save(manifest_path, timestamp="2026-05-14T11:00:00Z")
+        touch_manifest_after_save(manifest_path, timestamp="2026-05-14T12:00:00Z")
         data = json.loads(manifest_path.read_text(encoding="utf-8"))
-        # Datasource appears only once even after two upserts.
+        # Timestamp refreshes leave the derived source index intact.
         assert data["datasources"] == ["pg"]
         # updated_at always bumps to the latest timestamp.
         assert data["updated_at"] == "2026-05-14T12:00:00Z"
 
-    def test_always_bumps_updated_at_even_when_datasource_unchanged(self, tmp_path: Path):
+    def test_always_bumps_updated_at(self, tmp_path: Path):
         manifest_path = _seed_manifest(tmp_path)
-        upsert_manifest_after_save(manifest_path, datasource="pg", timestamp="2026-05-14T11:00:00Z")
-        # Same datasource again, distinct timestamp.
-        upsert_manifest_after_save(manifest_path, datasource="pg", timestamp="2026-05-14T13:00:00Z")
+        touch_manifest_after_save(manifest_path, timestamp="2026-05-14T11:00:00Z")
+        # Another query mutation, distinct timestamp.
+        touch_manifest_after_save(manifest_path, timestamp="2026-05-14T13:00:00Z")
         data = json.loads(manifest_path.read_text(encoding="utf-8"))
         assert data["updated_at"] == "2026-05-14T13:00:00Z"
 
     def test_missing_manifest_returns_error_string(self, tmp_path: Path):
         missing = tmp_path / "missing_manifest.json"
-        err = upsert_manifest_after_save(missing, datasource="x", timestamp="t")
-        assert err is not None
+        err = touch_manifest_after_save(missing, timestamp="t")
+        assert isinstance(err, str)
         assert "manifest missing" in err
 
     def test_corrupt_manifest_returns_error_string(self, tmp_path: Path):
         corrupt = tmp_path / "manifest.json"
         corrupt.write_text("{not-json", encoding="utf-8")
-        err = upsert_manifest_after_save(corrupt, datasource="x", timestamp="t")
-        assert err is not None
+        err = touch_manifest_after_save(corrupt, timestamp="t")
+        assert isinstance(err, str)
         assert "corrupt" in err
 
     def test_schema_invalid_manifest_returns_error_string(self, tmp_path: Path):
         invalid = tmp_path / "manifest.json"
         invalid.write_text('{"slug":"demo"}', encoding="utf-8")  # missing required fields
-        err = upsert_manifest_after_save(invalid, datasource="x", timestamp="t")
-        assert err is not None
+        err = touch_manifest_after_save(invalid, timestamp="t")
+        assert isinstance(err, str)
         assert "schema validation failed" in err
 
-    def test_empty_datasource_skipped(self, tmp_path: Path):
+    def test_initial_empty_source_index_is_preserved(self, tmp_path: Path):
         manifest_path = _seed_manifest(tmp_path)
-        err = upsert_manifest_after_save(manifest_path, datasource="", timestamp="2026-05-14T14:00:00Z")
+        err = touch_manifest_after_save(manifest_path, timestamp="2026-05-14T14:00:00Z")
         assert err is None
         data = json.loads(manifest_path.read_text(encoding="utf-8"))
-        # Empty / None datasource is dropped — only updated_at gets bumped.
+        # Saving a query updates recency while finalize owns the source index.
         assert data["datasources"] == []
         assert data["updated_at"] == "2026-05-14T14:00:00Z"
 
@@ -338,7 +338,7 @@ class TestWriteQueryBrief:
             uses=SubjectRefs(),
             caveats="",
         )
-        assert err is not None
+        assert isinstance(err, str)
         assert "schema validation failed" in err
         # No file gets written when validation fails.
         assert not (queries_dir / "Has-Hyphen.brief.json").exists()
@@ -353,7 +353,7 @@ class TestWriteQueryBrief:
             uses=SubjectRefs(),
             caveats="",
         )
-        assert err is not None
+        assert isinstance(err, str)
         assert "schema validation failed" in err
 
 

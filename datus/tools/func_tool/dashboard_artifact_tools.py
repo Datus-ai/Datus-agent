@@ -49,7 +49,7 @@ from datus.tools.func_tool._visual_artifact_cards import scan_render_cards
 from datus.tools.func_tool._visual_artifact_helpers import (
     append_intent_section,
     coerce_uses_arg,
-    upsert_manifest_after_save,
+    touch_manifest_after_save,
     utc_now_iso,
     write_query_brief,
 )
@@ -951,9 +951,8 @@ class DashboardArtifactTools(MetricArtifactToolsMixin):
             return FuncToolResult(success=0, error=brief_err)
         (self.queries_dir / f"{name}.metric.json").unlink(missing_ok=True)
 
-        manifest_warning = upsert_manifest_after_save(
+        manifest_warning = touch_manifest_after_save(
             self.dashboard_dir / "manifest.json",
-            datasource=ds_label,
             timestamp=meta_payload["saved_at"],
         )
 
