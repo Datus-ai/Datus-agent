@@ -14,6 +14,7 @@ from typing import Any, Callable
 from pydantic import BaseModel, ConfigDict, Field
 
 from datus.tools.func_tool.base import FuncToolResult, tool_schema, trans_to_function_tool
+from datus.tools.registry.contracts import tool_contract
 from datus.utils.query_result_text import parse_query_result_text
 
 
@@ -207,6 +208,7 @@ class SemanticVerificationTools:
         return [trans_to_function_tool(self.verify_semantic_outputs)]
 
     @tool_schema(strict_mode=False)
+    @tool_contract(access="restricted", direct_call=True)
     def verify_semantic_outputs(self, checks: list[SemanticOutputCheck]) -> FuncToolResult:
         """Compare each business output with an explicit reference SELECT.
 

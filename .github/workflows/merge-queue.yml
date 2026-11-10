@@ -54,6 +54,10 @@ jobs:
         if: ${{ github.event_name != 'pull_request_target' }}
         run: uv run --no-project --with pyyaml python ci/select_gate_profile.py --github-output "$GITHUB_OUTPUT"
 
+      - name: Validate generated tool contracts
+        if: ${{ github.event_name != 'pull_request_target' }}
+        run: python3 datus/tools/registry/catalog_builder.py --check
+
       - name: Install dependencies
         if: ${{ github.event_name != 'pull_request_target' }}
         run: |

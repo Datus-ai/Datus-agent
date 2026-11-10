@@ -4603,11 +4603,21 @@ class AgenticNode(Node):
         :meth:`_ensure_permission_hooks`; this helper does **not** require
         a ``permission_manager`` and never builds ``PermissionHooks``.
         """
+        from agents import FunctionTool
+
+        from datus.tools.registry.contracts import ToolDefinitionError, tool_definition
+
         try:
             for group in self._iter_tool_groups():
                 names = self._tool_group_names(group)
                 if names:
                     self.tool_registry.register_tools(group.permission_category, names)
+            for tool in getattr(self, "tools", None) or []:
+                if isinstance(tool, FunctionTool):
+                    definition = tool_definition(tool)
+                    self.tool_registry.register_tools(definition.category, [tool])
+        except ToolDefinitionError:
+            raise
         except Exception:
             logger.debug(
                 "Failed to populate tool_registry for %s; falling back to lazy registration.",
@@ -4776,6 +4786,9 @@ class AgenticNode(Node):
         transformers, a failure to apply them raises: transformers are policy
         code, and running without them would silently drop enforcement.
         """
+        from datus.tools.registry.contracts import validate_registered_tools
+
+        validate_registered_tools(self.tools)
         if getattr(getattr(self, "agent_config", None), "restrict_tool_visibility", False) is True:
             self._filter_permission_denied_tools()
         # Defensive getattr: test doubles that bypass ``AgenticNode.__init__``

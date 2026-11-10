@@ -23,6 +23,7 @@ from datus.schemas.action_history import ActionHistory, ActionHistoryManager, Ac
 from datus.schemas.base import BaseInput, BaseResult
 from datus.schemas.token_usage import TokenUsage
 from datus.utils.language_utils import NATIVE_DIRECTIVE_MAP
+from tests.helpers.tool_definitions import registered_test_tool
 
 _UNSET = object()
 
@@ -2160,14 +2161,13 @@ class TestEnsureToolTransformers:
 
     @staticmethod
     def _make_fake_node(plugins_enabled: bool = True, tools: Optional[List[Any]] = None) -> SimpleNamespace:
-        from agents import FunctionTool
-
+        """Construct a node with a registered SQL tool for transformer wiring checks."""
         from datus.tools.registry.tool_registry import ToolRegistry
 
         async def invoke(tool_ctx: Any, args_str: str) -> dict:
             return {"success": 1, "result": "ok", "error": None}
 
-        default_tool = FunctionTool(
+        default_tool = registered_test_tool(
             name="execute_sql",
             description="t",
             params_json_schema={"type": "object"},

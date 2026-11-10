@@ -16,6 +16,7 @@ from typing import List
 import yaml
 
 from datus.tools.func_tool.base import FuncToolResult
+from datus.tools.registry.contracts import tool_contract
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
@@ -36,6 +37,7 @@ class SkillValidateTool:
 
     permission_category: str = "tools"
 
+    @tool_contract(access="restricted", direct_call=False)
     def validate_skill(self, skill_path: str) -> FuncToolResult:
         """Validate a SKILL.md file and report any issues.
 

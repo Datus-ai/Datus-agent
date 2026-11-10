@@ -1,7 +1,6 @@
 # Copyright 2025-present DatusAI, Inc.
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
-
 # -*- coding: utf-8 -*-
 import asyncio
 import csv
@@ -51,6 +50,7 @@ from datus.tools.db_tools.datasource_plan import DatasourcePlanError, plan_from_
 from datus.tools.db_tools.datasource_quality import QualityChecker, summarize
 from datus.tools.db_tools.db_manager import DBManager, db_manager_instance
 from datus.tools.func_tool.base import FuncToolResult, trans_to_function_tool
+from datus.tools.registry.contracts import tool_contract
 from datus.utils.compress_utils import DataCompressor
 from datus.utils.config_utils import coerce_bool
 from datus.utils.constants import DBType, SQLType
@@ -1422,6 +1422,7 @@ class DBFuncTool:
             identity[field] = value
         return identity
 
+    @tool_contract(access="read", direct_call=True)
     def get_datasource_identity(self, datasource: str = "") -> FuncToolResult:
         """Inspect public coordinates of the effective runtime connection used by child tasks.
 
@@ -1495,6 +1496,7 @@ class DBFuncTool:
         )
 
     @mcp_tool(availability_check="has_schema")
+    @tool_contract(access="read", direct_call=True)
     def search_table(
         self,
         query_text: str,
@@ -1596,6 +1598,7 @@ class DBFuncTool:
             return FuncToolResult(success=0, error=str(e))
 
     @mcp_tool()
+    @tool_contract(access="read", direct_call=True)
     def list_databases(
         self, catalog: Optional[str] = "", datasource: Optional[str] = "", include_sys: Optional[bool] = False
     ) -> FuncToolResult:
@@ -1639,6 +1642,7 @@ class DBFuncTool:
             return FuncToolResult(success=0, error=str(e))
 
     @mcp_tool()
+    @tool_contract(access="read", direct_call=True)
     def list_schemas(
         self,
         catalog: Optional[str] = "",
@@ -1672,6 +1676,7 @@ class DBFuncTool:
             return FuncToolResult(success=0, error=str(e))
 
     @mcp_tool()
+    @tool_contract(access="read", direct_call=True)
     def list_tables(
         self,
         catalog: Optional[str] = "",
@@ -1735,6 +1740,7 @@ class DBFuncTool:
             return FuncToolResult(success=0, error=str(e))
 
     @mcp_tool()
+    @tool_contract(access="read", direct_call=True)
     def describe_table(
         self,
         table_name: str,
@@ -2048,6 +2054,7 @@ class DBFuncTool:
         return resolved
 
     @mcp_tool()
+    @tool_contract(access="restricted", direct_call=True)
     def load_file_as_table(
         self,
         path: str,
@@ -2249,6 +2256,7 @@ class DBFuncTool:
         return exclusive, None
 
     @mcp_tool()
+    @tool_contract(access="restricted", direct_call=True)
     def plan_datasource(
         self,
         ddl: str,
@@ -2350,6 +2358,7 @@ class DBFuncTool:
             return FuncToolResult(success=0, error=f"Failed to plan the datasource: {e}")
 
     @mcp_tool()
+    @tool_contract(access="write", direct_call=True)
     def import_database_file(
         self,
         path: str,
@@ -2531,6 +2540,7 @@ class DBFuncTool:
         return {"removed": removed, "added": added, "kept": len(names) - len(added)}
 
     @mcp_tool()
+    @tool_contract(access="restricted", direct_call=True)
     def check_datasource_quality(
         self,
         config_path: Optional[str] = "",
@@ -2679,6 +2689,7 @@ class DBFuncTool:
             return FuncToolResult(success=0, error=f"Quality check failed: {e}")
 
     @mcp_tool()
+    @tool_contract(access="sql", direct_call=True)
     def execute_sql(
         self,
         sql: str,
@@ -3156,6 +3167,7 @@ class DBFuncTool:
             )
         return None, sql_type
 
+    @tool_contract(access="restricted", direct_call=False)
     def get_table_ddl(
         self,
         table_name: str,
@@ -3221,6 +3233,8 @@ class DBFuncTool:
             return FuncToolResult(success=0, error=str(e))
 
     # Regex matching allowed DDL statement prefixes
+    # Preserve the retired identity for frozen grants; no extra transport is mounted.
+    @tool_contract(access="write", direct_call=True, aliases=("write_query",))
     def execute_ddl(self, sql: str, datasource: Optional[str] = "", database: Optional[str] = "") -> FuncToolResult:
         """
         Execute a single non-read, non-DML SQL statement (the generic write path).
@@ -3618,6 +3632,7 @@ class DBFuncTool:
 
         return FuncToolResult(result={"sql": create_sql})
 
+    @tool_contract(access="write", direct_call=True)
     def transfer_query_result(
         self,
         source_sql: str,
@@ -3986,6 +4001,7 @@ class DBFuncTool:
     # can continue in pure-LLM mode.
 
     @mcp_tool()
+    @tool_contract(access="restricted", direct_call=True)
     def get_migration_capabilities(self, datasource: Optional[str] = "") -> FuncToolResult:
         """
         Get migration target hints (dialect_family, requires, forbids, type_hints,
@@ -4031,6 +4047,7 @@ class DBFuncTool:
         return FuncToolResult(result=capabilities)
 
     @mcp_tool()
+    @tool_contract(access="restricted", direct_call=True)
     def suggest_table_layout(self, datasource: Optional[str] = "", columns_json: str = "[]") -> FuncToolResult:
         """
         Suggest dialect-specific table layout (distribution/partition/order) for
@@ -4071,6 +4088,7 @@ class DBFuncTool:
         return FuncToolResult(result=suggestion)
 
     @mcp_tool()
+    @tool_contract(access="write", direct_call=True)
     def validate_ddl(
         self,
         datasource: Optional[str] = "",

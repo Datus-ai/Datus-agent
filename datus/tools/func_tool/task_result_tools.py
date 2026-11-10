@@ -25,6 +25,7 @@ from agents import FunctionTool
 from pydantic import BaseModel, Field, ValidationError
 
 from datus.tools.func_tool.base import FuncToolResult, trans_to_function_tool
+from datus.tools.registry.contracts import tool_contract
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
@@ -131,6 +132,7 @@ class TaskResultTool:
     def available_tools(self) -> List[FunctionTool]:
         return [trans_to_function_tool(self.submit_task_result, strict_mode=False)]
 
+    @tool_contract(access="restricted", direct_call=False)
     def submit_task_result(
         self,
         outcome: TaskOutcome,

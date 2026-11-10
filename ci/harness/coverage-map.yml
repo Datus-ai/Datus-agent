@@ -1405,6 +1405,7 @@ execution:
     A flow marked partial retains useful test references outside the fixed gate;
     their existence is not evidence that the full flow ran for this change.
   core_nodeids:
+    - tests/unit_tests/tools/registry/test_capabilities.py::test_generated_catalog_matches_source
     - tests/integration/agent/test_core_acceptance.py::test_table_node_creates_a_queryable_data_product
     - tests/integration/agent/test_semantic_modeling_agentic.py::test_dosi_authoring_validates_reconciles_and_queries_without_llm
     - tests/integration/agent/test_core_acceptance.py::test_chat_stream_reaches_model_and_completes
@@ -1704,12 +1705,15 @@ execution:
     - id: datus-tools-registry
       paths:
         - datus/tools/registry/
+        - setup.py
       targets:
         - tests/unit_tests/agent/
         - tests/unit_tests/api/
         - tests/unit_tests/cli/
         - tests/unit_tests/models/
+        - tests/unit_tests/test_mcp_server.py
         - tests/unit_tests/tools/
+        - tests/unit_tests/utils/test_tool_result_store.py
     - id: datus-tools-search_tools
       paths:
         - datus/tools/search_tools/
