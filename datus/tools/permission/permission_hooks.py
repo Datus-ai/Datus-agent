@@ -499,6 +499,11 @@ class PermissionHooks(AgentHooks):
     # are local-only state helpers that never touch the filesystem or DB.
     _PLAN_MODE_BYPASS_TOOLS = frozenset({"confirm_plan", "todo_list", "todo_read", "todo_write", "todo_update"})
 
+    @classmethod
+    def is_permission_exempt_tool(cls, tool_name: str) -> bool:
+        """Identify session planning helpers exempt from generic permission rules."""
+        return tool_name in cls._PLAN_MODE_BYPASS_TOOLS
+
     async def on_tool_start(self, context, agent, tool) -> None:
         """Intercept ALL tool calls for permission checking.
 
@@ -519,6 +524,11 @@ class PermissionHooks(AgentHooks):
         """
         tool_name = getattr(tool, "name", str(tool))
 
+        # Session planning helpers retain their own UX and permission exemption
+        # on restricted hosts as well as ordinary CLI hosts.
+        if self.is_permission_exempt_tool(tool_name):
+            return
+
         # Restricted hosts narrow nodes to concrete methods. A zone/profile or
         # proxy shortcut cannot restore a method the host explicitly denied.
         if self.enforce_method_denials:
@@ -529,11 +539,6 @@ class PermissionHooks(AgentHooks):
                     tool_category=category,
                     tool_name=pattern_name,
                 )
-
-        # Short-circuit plan-mode helpers: they carry their own UX and have
-        # no external side effects, so skip the permission profile entirely.
-        if tool_name in self._PLAN_MODE_BYPASS_TOOLS:
-            return
 
         # External proxies own their permission handling. Semantic plans are
         # written server-side: their separate preview approval must not bypass

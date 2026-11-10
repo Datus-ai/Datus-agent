@@ -3340,6 +3340,33 @@ async def test_restricted_method_denials_precede_zone_sql_and_proxy_shortcuts(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("enforce_method_denials", [False, True])
+@pytest.mark.parametrize("scope", ["global", "node"])
+async def test_plan_helpers_bypass_denials_on_all_hosts(mock_broker, enforce_method_denials, scope):
+    """The real planning tools retain their exemption under global and node DENY."""
+    from datus.agent.node.agentic_node import AgenticNode
+
+    custom = PermissionConfig(rules=[PermissionRule(tool="*", pattern="*", permission=PermissionLevel.DENY)])
+    manager = PermissionManager(
+        custom if scope == "global" else get_profile("auto"),
+        node_overrides={"published": custom} if scope == "node" else None,
+    )
+    hooks = PermissionHooks(
+        broker=mock_broker,
+        permission_manager=manager,
+        node_name="published",
+        tool_registry=ToolRegistry(),
+        enforce_method_denials=enforce_method_denials,
+    )
+    tools = AgenticNode._get_plan_mode_tools(SimpleNamespace(_session=None, session_id=None))
+    assert tools
+    for tool in tools:
+        assert manager.check_permission("tools", tool.name, "published") == PermissionLevel.DENY
+        await hooks.on_tool_start(SimpleNamespace(tool_arguments="{}"), None, tool)
+    mock_broker.request.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_restricted_skill_dispatch_still_authorizes_the_selected_name(mock_broker):
     manager = PermissionManager(
         PermissionConfig(

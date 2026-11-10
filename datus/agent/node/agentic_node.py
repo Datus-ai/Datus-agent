@@ -4735,9 +4735,14 @@ class AgenticNode(Node):
         manager = getattr(self, "permission_manager", None)
         if manager is None:
             raise RuntimeError("Restricted tool visibility requires a permission manager")
+        from datus.tools.permission.permission_hooks import PermissionHooks
+
         self._populate_tool_registry()
         visible = []
         for tool in self.tools:
+            if PermissionHooks.is_permission_exempt_tool(tool.name):
+                visible.append(tool)
+                continue
             # Like PermissionHooks, resolve load_skill by its target Skill, not
             # by the dispatcher method name. Visibility follows the same
             # pattern, scope and model-invocation filters as <available_skills>.

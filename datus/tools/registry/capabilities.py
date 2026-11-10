@@ -49,6 +49,7 @@ DENIED_TOOL_FAMILIES = frozenset(
 
 
 def _entries(category: str, access: Access, names: str, *, direct_call: bool = True) -> dict[str, ToolCapability]:
+    """Declare the same access contract for whitespace-separated family methods."""
     return {f"{category}.{name}": ToolCapability(access, direct_call) for name in names.split()}
 
 

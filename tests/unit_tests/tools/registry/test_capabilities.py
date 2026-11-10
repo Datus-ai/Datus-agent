@@ -4,6 +4,7 @@ from datus.tools.registry.capabilities import TOOL_CAPABILITIES, tool_capability
 
 
 def test_every_configurable_agent_tool_declares_a_capability():
+    """Require capability declarations for every configurable family method."""
     from datus.api.services.agent_service import VALID_TOOL_METHODS
 
     missing = [
@@ -16,6 +17,7 @@ def test_every_configurable_agent_tool_declares_a_capability():
 
 
 def test_every_mcp_tool_declares_a_capability():
+    """Check registered MCP methods against their canonical family contracts."""
     import datus.mcp_server  # noqa: F401
     from datus.utils.mcp_decorators import get_mcp_tools, get_tool_registry
 
@@ -29,6 +31,7 @@ def test_every_mcp_tool_declares_a_capability():
 
 
 def test_companions_have_existing_owners_and_no_cycles():
+    """Ensure paging companions share access with an existing, non-companion owner."""
     companions = [(tool_id, capability) for tool_id, capability in TOOL_CAPABILITIES.items() if capability.companion_of]
     assert companions, "Exercise at least one real paging contract"
     owners = [(tool_id, capability, TOOL_CAPABILITIES[capability.companion_of]) for tool_id, capability in companions]
