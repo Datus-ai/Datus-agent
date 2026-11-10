@@ -2,6 +2,7 @@
 
 import asyncio
 import weakref
+from contextlib import ExitStack
 from typing import Any
 
 from datus.tools.permission.profiles import build_user_overrides, get_profile
@@ -30,8 +31,23 @@ class LivePermissionProfile:
             return
         raw = getattr(self.agent_config, "_raw_permissions", {}) or {}
         overrides = build_user_overrides(profile, {k: v for k, v in raw.items() if k != "profile"})
-        for manager in self._managers:
-            manager.switch_profile(profile, user_overrides=overrides)
+        managers = list(self._managers)
+        # Publish all managers together; a failed rebuild restores exact configs
+        # and session grants, including the manager that raised mid-switch.
+        with ExitStack() as locks:
+            for manager in managers:
+                locks.enter_context(manager._state_lock)
+            snapshots = [(m, m.global_config, m.active_profile, dict(m._session_approvals)) for m in managers]
+            try:
+                for manager in managers:
+                    manager.switch_profile(profile, user_overrides=overrides)
+            except Exception:
+                for manager, config, active, approvals in snapshots:
+                    manager.global_config = config
+                    manager.active_profile = active
+                    manager._session_approvals.clear()
+                    manager._session_approvals.update(approvals)
+                raise
         self.profile = profile
         changed, self.changed = self.changed, asyncio.Event()
         changed.set()

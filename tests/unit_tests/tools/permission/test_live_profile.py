@@ -98,3 +98,31 @@ async def test_explicit_ask_survives_switch_instead_of_blanket_approval():
     assert broker.is_pending(second.action_id)
     await broker.submit(second.action_id, [["y"]])
     await asyncio.wait_for(gate, 1)
+
+
+def test_failed_switch_restores_every_manager_and_existing_session_grants():
+    from unittest.mock import patch
+
+    live, parent, _, _, _ = setup_gate()
+    child = PermissionManager(global_config=get_profile("normal"))
+    live.register(child)
+    for manager in (parent, child):
+        manager.approve_for_session("filesystem_tools", "upsert_osi_metrics")
+    configs = {manager: manager.global_config for manager in (parent, child)}
+    changed = live.changed
+    original = child.switch_profile
+
+    def fail_after_rebuild(*args, **kwargs):
+        original(*args, **kwargs)
+        raise RuntimeError("broken plugin")
+
+    with patch.object(child, "switch_profile", side_effect=fail_after_rebuild):
+        with pytest.raises(RuntimeError, match="broken plugin"):
+            live.switch("dangerous")
+
+    assert live.profile == "normal"
+    assert live.changed is changed and not changed.is_set()
+    for manager in (parent, child):
+        assert manager.active_profile == "normal"
+        assert manager.global_config is configs[manager]
+        assert manager._session_approvals

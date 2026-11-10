@@ -262,7 +262,7 @@ async def resume_chat(
             session = SSESessionData(
                 session_id=task.session_id, llm_session_id=task.node.session_id, run_id=task.run_id
             )
-            yield f"id: -1\nevent: session\ndata: {session.model_dump_json()}\n\n"
+            yield f"event: session\ndata: {session.model_dump_json()}\n\n"
         async for event in task_manager.consume_events(task, start_from=request.from_event_id):
             yield f"id: {event.id}\nevent: {event.event}\ndata: {event.data.model_dump_json()}\n\n"
 
@@ -896,7 +896,13 @@ async def update_permission_mode(
         return Result(success=False, errorCode="SESSION_NOT_RUNNING", errorMessage="This turn is no longer running")
     if task.live_permission_profile is None:
         return Result(success=False, errorCode="TASK_INITIALIZING", errorMessage="Chat task is still initializing")
-    task.live_permission_profile.switch(request.permission_mode)
+    try:
+        task.live_permission_profile.switch(request.permission_mode)
+    except Exception:
+        logger.exception("Failed to switch permission mode for session=%s", request.session_id)
+        return Result(
+            success=False, errorCode="PERMISSION_SWITCH_FAILED", errorMessage="Failed to switch permission mode"
+        )
     return Result(
         success=True,
         data={
