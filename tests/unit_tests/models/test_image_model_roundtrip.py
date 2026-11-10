@@ -395,12 +395,20 @@ async def test_gemini_image_roundtrip_preserves_thought_signature(tmp_path, imag
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("streaming", [False, True])
-async def test_deepseek_http_request_delivers_image_and_reasoning(tmp_path, image_tools, monkeypatch, streaming):
+@pytest.mark.parametrize("model_name", ["deepseek-flash", "deepseek-v4-flash", "deepseek-v4-flash-vision-exp"])
+async def test_deepseek_http_request_delivers_image_and_reasoning(
+    tmp_path, image_tools, monkeypatch, streaming, model_name
+):
     """Exercise the actual provider conversion, mocking only the HTTP transport."""
+    import litellm
     from agents import Runner
     from litellm.llms.custom_httpx.http_handler import AsyncHTTPHandler
 
     from datus.models.deepseek_model import DeepSeekModel
+
+    # A bundled LiteLLM catalog may predate these native model ids.
+    for name in (model_name, f"deepseek/{model_name}"):
+        monkeypatch.delitem(litellm.model_cost, name, raising=False)
 
     requests = []
 
@@ -424,7 +432,7 @@ async def test_deepseek_http_request_delivers_image_and_reasoning(tmp_path, imag
             "id": f"completion_{len(requests)}",
             "object": "chat.completion",
             "created": 1,
-            "model": "deepseek-v4-flash",
+            "model": model_name,
             "choices": [{"index": 0, "message": message, "finish_reason": "tool_calls" if first else "stop"}],
             "usage": {"prompt_tokens": 100, "completion_tokens": 10, "total_tokens": 110},
         }
@@ -448,7 +456,14 @@ async def test_deepseek_http_request_delivers_image_and_reasoning(tmp_path, imag
             "litellm.llms.custom_httpx.llm_http_handler.get_async_httpx_client", lambda **kwargs: handler
         )
         model = DeepSeekModel(
-            ModelConfig(type="deepseek", model="deepseek-v4-flash", api_key="test-key", enable_thinking=True)
+            ModelConfig(
+                type="deepseek",
+                model=model_name,
+                api_key="test-key",
+                enable_thinking=True,
+                context_length=1048576,
+                max_tokens=8192,
+            )
         )
         agent = model._build_agent("Read the image.", str, False, {}, image_tools)
         session = DatusSQLiteSession(create_tables=True, session_id="deepseek", db_path=str(tmp_path / "session.db"))
@@ -466,7 +481,7 @@ async def test_deepseek_http_request_delivers_image_and_reasoning(tmp_path, imag
             assert result.final_output == "A red chart."
             assert len(requests) == 2
             body = requests[1]
-            assert body["model"] == "deepseek-v4-flash"
+            assert body["model"] == model_name
             assert body["thinking"] == {"type": "enabled"}
             tool_call = next(message for message in body["messages"] if message.get("tool_calls"))
             assert tool_call["reasoning_content"] == "Inspect the chart."
@@ -478,5 +493,6 @@ async def test_deepseek_http_request_delivers_image_and_reasoning(tmp_path, imag
             url = image_message["content"][1]["image_url"]["url"]
             with Image.open(io.BytesIO(base64.b64decode(url.split(",", 1)[1]))) as decoded:
                 assert decoded.getpixel((0, 0)) == (255, 0, 0)
+            assert model.request_capacity().count({"messages": body["messages"]}) > 0
         finally:
             session.close()
