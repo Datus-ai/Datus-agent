@@ -786,6 +786,7 @@ class TestSpreadsheetEvidence:
 
     @pytest.fixture
     def source(self, tmp_path):
+        """Build a reporting workbook with staggered headers, formulas and a hidden sheet."""
         import openpyxl
 
         workbook = openpyxl.Workbook()
@@ -817,6 +818,7 @@ class TestSpreadsheetEvidence:
         return path
 
     def test_default_discovery_reports_extent_visibility_and_more_regions(self, source, connection):
+        """Expose real extents and sheet visibility without registering SQL objects."""
         result = inspect_file(source, connection=connection)
         detail, reserved = result["sheet_details"]
         assert result["sheets"] == ["Projects", "Reserved"]
@@ -828,6 +830,7 @@ class TestSpreadsheetEvidence:
         assert registered_objects(connection) == {}
 
     def test_right_hand_staggered_headers_can_be_discovered(self, source, connection):
+        """Read headers beyond the default preview without losing their column positions."""
         result = inspect_file(source, connection=connection, sheet="Projects", cell_range="cu5:cx6")
         detail = result["sheet_details"][0]
         assert detail["range"] == "CU5:CX6"
@@ -835,6 +838,7 @@ class TestSpreadsheetEvidence:
         assert detail["raw_rows"][1] == ["Direct", "East", None, None]
 
     def test_formulas_formats_merges_and_missing_caches_are_source_evidence(self, source, connection):
+        """Preserve source formulas, formats and missing cached results in bounded evidence."""
         result = inspect_file(
             source,
             connection=connection,
@@ -856,7 +860,37 @@ class TestSpreadsheetEvidence:
         assert detail["merged_ranges"] == ["A1:CX1"]
         assert registered_objects(connection) == {}
 
+    def test_merge_inspection_never_opens_an_eager_workbook(self, source, connection, monkeypatch):
+        """Merged-range discovery must retain streaming mode for every workbook read."""
+        import openpyxl
+
+        load_workbook = openpyxl.load_workbook
+
+        def read_only_workbook(*args, **kwargs):
+            """Fail if inspection attempts to materialize worksheet cells."""
+            assert kwargs.get("read_only") is True
+            return load_workbook(*args, **kwargs)
+
+        monkeypatch.setattr(openpyxl, "load_workbook", read_only_workbook)
+        result = inspect_file(
+            source,
+            connection=connection,
+            sheet="Projects",
+            cell_range="A1:D6",
+            include=["values", "formulas", "formats", "merges"],
+        )
+        detail = result["sheet_details"][0]
+        assert detail["merged_ranges"] == ["A1:CX1"]
+        assert detail["raw_rows"][5][0] == "0012"
+
+    @pytest.mark.parametrize("region,expected", [("CX1", ["A1:CX1"]), ("CY1", []), ("A2:D6", [])])
+    def test_merge_inspection_preserves_full_intersecting_ranges(self, source, connection, region, expected):
+        """Include merges touching the requested edge, without clipping or including adjacent merges."""
+        result = inspect_file(source, connection=connection, sheet="Projects", cell_range=region, include=["merges"])
+        assert result["sheet_details"][0]["merged_ranges"] == expected
+
     def test_a_single_cell_and_later_rows_are_addressable(self, source, connection):
+        """Return correctly addressed metadata for a single cell beyond the preview."""
         result = inspect_file(
             source, connection=connection, sheet="Projects", cell_range="A60", include=["formulas", "formats"]
         )
@@ -865,10 +899,12 @@ class TestSpreadsheetEvidence:
 
     @pytest.mark.parametrize("region", ["A0:B2", "A:A", "B2:A1", "XFE1", "A1048577", "A1:CX100", "A1;DROP TABLE t"])
     def test_invalid_or_unbounded_ranges_are_rejected(self, source, connection, region):
+        """Reject invalid coordinates and requests exceeding the inspection cell budget."""
         with pytest.raises(DataFileError):
             inspect_file(source, connection=connection, sheet="Projects", cell_range=region)
 
     def test_range_requires_a_sheet_and_unknown_options_are_rejected(self, source, connection):
+        """Reject ambiguous sheet selection and unsupported evidence fields."""
         with pytest.raises(DataFileError, match="Specify sheet"):
             inspect_file(source, connection=connection, cell_range="A1:B2")
         with pytest.raises(DataFileError, match="Unknown include"):
@@ -877,6 +913,7 @@ class TestSpreadsheetEvidence:
             inspect_file(source, connection=connection, sheet="Missing")
 
     def test_spreadsheet_options_are_not_silently_ignored_for_csv(self, tmp_path, connection):
+        """Reject Excel-only options on a CSV instead of silently ignoring them."""
         path = tmp_path / "records.csv"
         path.write_text("id,cost\n1,2\n")
         with pytest.raises(DataFileError, match="only for .xlsx"):

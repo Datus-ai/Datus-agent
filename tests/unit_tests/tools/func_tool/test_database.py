@@ -3333,6 +3333,7 @@ class TestHeaderRowNormalisation:
         assert self._capture(tmp_path, header_row=-1)["header_row"] == -1
 
     def test_inspection_passes_region_and_evidence_options(self, tmp_path):
+        """Forward the requested region and evidence fields to spreadsheet inspection."""
         from types import SimpleNamespace
 
         tool = self._tool()
@@ -3353,7 +3354,50 @@ class TestHeaderRowNormalisation:
         assert inspect.call_args.kwargs["include"] == ["values", "formulas", "merges"]
         assert inspect.call_args.kwargs["sheet"] == "Projects"
 
+    @pytest.mark.parametrize("suffix", [".xlsx", ".XLSX", ".xlsm"])
+    def test_spreadsheet_inspection_does_not_resolve_a_connector(self, tmp_path, suffix):
+        """Spreadsheet metadata reads must succeed without opening or locking DuckDB."""
+        from types import SimpleNamespace
+
+        import openpyxl
+
+        tool = self._tool()
+        book = tmp_path / f"book{suffix}"
+        workbook = openpyxl.Workbook()
+        workbook.active["A1"] = "Grouped header"
+        workbook.active.merge_cells("A1:C1")
+        workbook.save(book)
+        tool._resolve_data_file = lambda path: SimpleNamespace(resolved=book, display=path)
+        tool._get_connector = Mock(side_effect=AssertionError("Spreadsheet inspection must not touch DuckDB"))
+
+        result = tool.load_file_as_table(path=book.name, inspect_only=True, include=["merges"])
+
+        assert result.success == 1
+        assert result.result["sheet_details"][0]["merged_ranges"] == ["A1:C1"]
+        tool._get_connector.assert_not_called()
+
+    def test_csv_inspection_still_uses_the_exclusive_connection(self, tmp_path):
+        """Formats inspected through SQL retain their existing connection lock."""
+        import contextlib
+        from types import SimpleNamespace
+
+        tool = self._tool()
+        source = tmp_path / "rows.csv"
+        source.write_text("id\n1\n")
+        tool._resolve_data_file = lambda path: SimpleNamespace(resolved=source, display=path)
+        connection = Mock()
+        connector = Mock()
+        connector.exclusive_connection.return_value = contextlib.nullcontext(connection)
+        tool._get_connector = Mock(return_value=connector)
+        with patch("datus.tools.func_tool.database.inspect_file", return_value={"preview_columns": ["id"]}) as inspect:
+            result = tool.load_file_as_table(path="rows.csv", inspect_only=True)
+
+        assert result.success == 1
+        connector.exclusive_connection.assert_called_once_with()
+        assert inspect.call_args.kwargs["connection"] is connection
+
     def test_load_does_not_silently_ignore_inspection_options(self, tmp_path):
+        """Reject inspection-only arguments before registering a SQL table."""
         from types import SimpleNamespace
 
         tool = self._tool()

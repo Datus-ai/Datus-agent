@@ -374,6 +374,7 @@ class TestLegacyXls:
 class TestInspectSpreadsheet:
     @pytest.mark.parametrize("materialize", [False, True])
     def test_mixed_cells_remain_queryable_after_numeric_summary_row(self, tmp_path, excel_connection, materialize):
+        """Preserve mixed cell values and report fallback typing for views and tables."""
         workbook = openpyxl.Workbook()
         worksheet = workbook.active
         worksheet.append(["project", "amount"])

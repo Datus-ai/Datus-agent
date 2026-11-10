@@ -186,6 +186,7 @@ class LoadedTable:
     warnings: List[str] = field(default_factory=list)
 
     def to_dict(self) -> Dict[str, Any]:
+        """Serialize table metadata, including optional source details and typing warnings."""
         payload: Dict[str, Any] = {
             "table": self.table,
             "source_file": self.source_file,
@@ -954,6 +955,38 @@ def _finish_table(
     )
 
 
+def _inspect_merged_ranges(worksheet: Any, bounds: Tuple[int, int, int, int]) -> List[str]:
+    """Stream merge references, retaining only ranges intersecting the requested rectangle."""
+    from defusedxml.ElementTree import iterparse
+    from openpyxl.worksheet.cell_range import CellRange
+    from openpyxl.xml.constants import SHEET_MAIN_NS
+
+    left, top, right, bottom = bounds
+    merged_ranges = []
+    stack = []
+    # ReadOnlyWorksheet resolves the worksheet ZIP member through workbook
+    # relationships; using its source also handles nonstandard member names.
+    with worksheet._get_source() as source:
+        for event, element in iterparse(source, events=("start", "end")):
+            if event == "start":
+                stack.append(element)
+                continue
+            if element.tag == f"{{{SHEET_MAIN_NS}}}mergeCell":
+                merged = CellRange(element.attrib["ref"])
+                if (
+                    merged.min_col <= right
+                    and merged.max_col >= left
+                    and merged.min_row <= bottom
+                    and merged.max_row >= top
+                ):
+                    merged_ranges.append(str(merged))
+            stack.pop()
+            if stack:
+                stack[-1].remove(element)
+            element.clear()
+    return merged_ranges
+
+
 def _inspect_spreadsheet(
     path: Path, *, sheet: Optional[str], cell_range: Optional[str], include: Optional[List[str]]
 ) -> Dict[str, Any]:
@@ -976,9 +1009,8 @@ def _inspect_spreadsheet(
         if (right - left + 1) * (bottom - top + 1) > 4096:
             raise DataFileError("Inspect at most 4096 cells at a time; request a smaller range.")
 
-    # Only merge inspection needs the full worksheet model. Values and formula
-    # inspection can stream; cached results are read separately, never recalculated.
-    workbook = load_workbook(path, read_only="merges" not in fields, data_only=False)
+    # Cached values and formula evidence remain separate streaming reads.
+    workbook = load_workbook(path, read_only=True, data_only=False)
     cached = None
     try:
         if sheet and sheet not in workbook.sheetnames:
@@ -1043,14 +1075,7 @@ def _inspect_spreadsheet(
                 if not bounds:
                     info["detected_header_row"] = detect_header_row(raw_rows)
             if "merges" in fields:
-                info["merged_ranges"] = [
-                    str(merged)
-                    for merged in worksheet.merged_cells.ranges
-                    if merged.min_col <= right
-                    and merged.max_col >= left
-                    and merged.min_row <= bottom
-                    and merged.max_row >= top
-                ]
+                info["merged_ranges"] = _inspect_merged_ranges(worksheet, (left, top, right, bottom))
             details.append(info)
         return {"sheets": workbook.sheetnames, "sheet_details": details}
     finally:

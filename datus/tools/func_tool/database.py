@@ -2155,6 +2155,12 @@ class DBFuncTool:
             if not target.is_file():
                 return FuncToolResult(success=0, error=f"Path is not a file: {resolved.display}")
 
+            if inspect_only and target.suffix.lower() in (".xlsx", ".xlsm"):
+                details = inspect_file(
+                    target, connection=None, sheet=sheet or None, cell_range=range or None, include=include
+                )
+                return FuncToolResult(result=details)
+
             # Legacy single-connector mode returns the primary connector for ANY
             # requested datasource, so without this the CREATE VIEW / COMMENT ON
             # would land in the user's real database. The tool is not mounted in
