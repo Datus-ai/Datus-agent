@@ -92,16 +92,27 @@ async def test_turn_emits_one_final_semantic_diff_without_persisting_it(tmp_path
         if event.event == "message" and event.data.payload.content[0].type == "semantic-model-diff"
     ]
     assert len(notifications) == (0 if outcome == "rollback" else 1)
-    if notifications:
-        event = notifications[0]
-        payload = event.data.payload.content[0].payload
-        [change] = payload["files"]
-        assert change["oldText"] == (None if outcome == "added" else "metrics: [old, retained]\n")
-        assert change["newText"] == (None if outcome == "deleted" else "metrics: [retained, new]\n")
-        assert event.data.payload.message_id == f"semantic-model-diff:{task.turn_id}"
-        assert event.id < next((item.id for item in task.events if item.event in {"end", "error"}), event.id + 1)
-        replayed = [item async for item in manager.consume_events(task, start_from=event.id)]
-        assert replayed[0] == event
+    payloads = [event.data.payload.content[0].payload for event in notifications]
+    expected_changes = (
+        []
+        if outcome == "rollback"
+        else [
+            {
+                "filePath": "subject/semantic_models/ds/model.yml",
+                "changeType": outcome if outcome in {"added", "deleted"} else "modified",
+                "oldText": None if outcome == "added" else "metrics: [old, retained]\n",
+                "newText": None if outcome == "deleted" else "metrics: [retained, new]\n",
+            }
+        ]
+    )
+    assert [change for payload in payloads for change in payload["files"]] == expected_changes
+    assert [event.data.payload.message_id for event in notifications] == [
+        f"semantic-model-diff:{task.turn_id}" for _ in expected_changes
+    ]
+    terminal_id = next((item.id for item in task.events if item.event in {"end", "error"}), len(task.events))
+    assert all(event.id < terminal_id for event in notifications)
+    replayed = [item async for item in manager.consume_events(task, start_from=0)]
+    assert [item for item in replayed if item in notifications] == notifications
     assert not task.message_contents
     assert not task.tool_result_contents
     assert all(action.action_type != "semantic-model-diff" for action in history_actions)
