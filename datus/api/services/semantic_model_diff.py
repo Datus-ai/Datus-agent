@@ -11,6 +11,8 @@ logger = get_logger(__name__)
 
 @dataclass
 class SemanticModelSnapshot:
+    """Retain a turn's original UTF-8 YAML contents for comparison with its final files."""
+
     project_root: Path
     files: dict[str, str]
 
@@ -37,6 +39,7 @@ class SemanticModelSnapshot:
             return None
 
     def changes(self) -> list[dict[str, Any]]:
+        """Return sorted final additions, modifications and deletions, omitting net-zero writes."""
         current = self.capture(self.project_root)
         if current is None:
             return []

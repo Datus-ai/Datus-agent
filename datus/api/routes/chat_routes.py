@@ -242,6 +242,7 @@ async def resume_chat(
     svc: ServiceDep,
     ctx: AppContextDep,
 ):
+    """Resume an owned task, reserving completed-turn diff replay for explicit cursors."""
     task_manager = svc.task_manager
     task = task_manager.get_task(request.session_id)
     if task is not None and task.user_id != ctx.user_id:
@@ -258,6 +259,7 @@ async def resume_chat(
     include_semantic_diff = task.status == "running" or request.from_event_id is not None
 
     async def generate_sse():
+        """Serialize buffered events while omitting transient diffs on ordinary session entry."""
         async for event in task_manager.consume_events(task, start_from=request.from_event_id):
             if (
                 not include_semantic_diff

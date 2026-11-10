@@ -12,6 +12,7 @@ from datus.api.services.semantic_model_diff import SemanticModelSnapshot
 @pytest.mark.asyncio
 @pytest.mark.parametrize("cursor,expected", [(None, False), (0, True)])
 async def test_completed_turn_resume_only_replays_diff_for_cursor_reconnect(cursor, expected):
+    """Replay transient diffs for explicit cursor reconnects, not ordinary history entry."""
     from datus.api.models.cli_models import (
         IMessageContent,
         SSEDataType,
@@ -51,6 +52,7 @@ async def test_completed_turn_resume_only_replays_diff_for_cursor_reconnect(curs
 
 
 def test_aggregates_writes_creates_and_deletions(tmp_path):
+    """Compare all changed files against the starting bytes, including nested YAML paths."""
     root = tmp_path / "subject" / "semantic_models" / "ds" / "nested" / "models"
     root.mkdir(parents=True)
     model = root / "model.yml"
@@ -79,6 +81,7 @@ def test_aggregates_writes_creates_and_deletions(tmp_path):
 
 
 def test_no_change_after_rollback_or_create_then_delete(tmp_path):
+    """Omit restored bytes and temporary files removed before the turn ends."""
     root = tmp_path / "subject" / "semantic_models" / "ds"
     root.mkdir(parents=True)
     model = root / "model.yml"
@@ -93,6 +96,7 @@ def test_no_change_after_rollback_or_create_then_delete(tmp_path):
 
 
 def test_captures_new_directory_and_distinguishes_empty_file(tmp_path):
+    """Treat an empty new YAML file as an addition rather than a missing snapshot."""
     snapshot = SemanticModelSnapshot.capture(tmp_path)
     root = tmp_path / "subject" / "semantic_models" / "ds"
     root.mkdir(parents=True)
@@ -108,6 +112,7 @@ def test_captures_new_directory_and_distinguishes_empty_file(tmp_path):
 
 
 def test_unreadable_scan_is_not_a_deletion_and_symlinks_are_ignored(tmp_path):
+    """Ignore symlinks and suppress incomplete scans instead of inventing deletions."""
     root = tmp_path / "subject" / "semantic_models"
     root.mkdir(parents=True)
     external = tmp_path / "external.yml"
@@ -122,9 +127,11 @@ def test_unreadable_scan_is_not_a_deletion_and_symlinks_are_ignored(tmp_path):
 
 
 def test_scan_failure_never_emits_partial_changes(tmp_path, monkeypatch):
+    """Suppress a failed directory scan rather than reporting partial file changes."""
     snapshot = SemanticModelSnapshot.capture(tmp_path)
 
     def fail(_path, *_args, **_kwargs):
+        """Simulate an unreadable semantic-model directory."""
         raise PermissionError("cannot enumerate")
 
     monkeypatch.setattr(Path, "rglob", fail)

@@ -819,13 +819,11 @@ class ChatTaskManager:
         # before this method's ``finally`` runs — so keep a copy to bill from.
         last_usage = None
         semantic_snapshot = None
-        semantic_diff_sent = False
+        semantic_diff_task: Optional[asyncio.Task[None]] = None
 
-        async def emit_semantic_diff() -> None:
-            nonlocal event_id, semantic_diff_sent
-            if semantic_diff_sent or semantic_snapshot is None:
-                return
-            semantic_diff_sent = True
+        async def publish_semantic_diff() -> None:
+            """Compare settled YAML snapshots and append a live-only SSE message."""
+            nonlocal event_id
             try:
                 changes = await asyncio.to_thread(semantic_snapshot.changes)
                 if not changes:
@@ -856,6 +854,25 @@ class ChatTaskManager:
                 event_id += 1
             except Exception:
                 logger.warning("Failed to emit semantic model diff for session %s", session_id, exc_info=True)
+
+        async def emit_semantic_diff(*, finish_on_cancel: bool = False) -> None:
+            """Reuse one publisher and drain it despite cancellation during terminal cleanup."""
+            nonlocal semantic_diff_task
+            if semantic_snapshot is None:
+                return
+            if semantic_diff_task is None:
+                semantic_diff_task = asyncio.create_task(publish_semantic_diff())
+
+            while True:
+                try:
+                    await asyncio.shield(semantic_diff_task)
+                    return
+                except asyncio.CancelledError:
+                    if not finish_on_cancel:
+                        raise
+                    if semantic_diff_task.cancelled():
+                        logger.warning("Semantic model diff publisher was cancelled for session %s", session_id)
+                        return
 
         try:
             start_time = datetime.now()
@@ -1310,12 +1327,12 @@ class ChatTaskManager:
                 task.status = "completed"
 
         except asyncio.CancelledError:
-            await emit_semantic_diff()
+            await emit_semantic_diff(finish_on_cancel=True)
             task.status = "cancelled"
 
         except Exception as e:
             logger.error(f"Chat task error for session {session_id}: {e}")
-            await emit_semantic_diff()
+            await emit_semantic_diff(finish_on_cancel=True)
             task.status = "error"
             task.error = str(e)
             await self._push_event(

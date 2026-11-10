@@ -2,6 +2,7 @@
 
 import asyncio
 import re
+import threading
 from datetime import datetime
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -34,6 +35,7 @@ from datus.tools.proxy.tool_result_channel import ToolResultChannel
 @pytest.mark.asyncio
 @pytest.mark.parametrize("outcome", ["added", "modified", "deleted", "rollback", "error", "cancelled"])
 async def test_turn_emits_one_final_semantic_diff_without_persisting_it(tmp_path, real_agent_config, outcome):
+    """Aggregate each terminal outcome into one replayable diff without adding history content."""
     from datus.api.models.cli_models import StreamChatInput
     from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
 
@@ -51,9 +53,11 @@ async def test_turn_emits_one_final_semantic_diff_without_persisting_it(tmp_path
         proxied_tool_names = set()
 
         def get_node_name(self):
+            """Identify the stub as the top-level chat node."""
             return "chat"
 
         async def execute_stream_with_interactions(self, action_history_manager):
+            """Perform real file writes before the requested success, failure or cancellation."""
             model.write_text("metrics: [old, retained, new]\n")
             model.write_text("metrics: [retained, new]\n")
             if outcome == "deleted":
@@ -75,6 +79,7 @@ async def test_turn_emits_one_final_semantic_diff_without_persisting_it(tmp_path
             history_actions.extend(action_history_manager.get_actions())
 
         async def get_last_turn_usage(self):
+            """Return no usage for this filesystem-only fixture."""
             return None
 
     manager = ChatTaskManager()
@@ -116,6 +121,137 @@ async def test_turn_emits_one_final_semantic_diff_without_persisting_it(tmp_path
     assert not task.message_contents
     assert not task.tool_result_contents
     assert all(action.action_type != "semantic-model-diff" for action in history_actions)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("outcome", ["completed", "cancelled", "error"])
+async def test_repeated_cancellation_drains_semantic_diff_before_terminal_state(
+    tmp_path, real_agent_config, monkeypatch, outcome
+):
+    """Keep SSE consumers open until the final diff survives repeated stop requests."""
+    from datus.api.models.cli_models import StreamChatInput
+    from datus.api.services.semantic_model_diff import SemanticModelSnapshot
+
+    root = tmp_path / "subject" / "semantic_models" / "ds"
+    root.mkdir(parents=True)
+    model = root / "model.yml"
+    model.write_text("metrics: [original]\n")
+    real_agent_config._project_root = tmp_path
+    failure = {"completed": None, "cancelled": asyncio.CancelledError(), "error": RuntimeError("model failed")}[outcome]
+    node = TestRunLoopSettlesTurn._node(raise_after=failure)
+    node.permission_manager = SimpleNamespace(active_profile="auto")
+    node.proxied_tool_names = set()
+    stream = node.execute_stream_with_interactions
+
+    async def write_then_stream(action_history_manager):
+        """Change the real YAML before the fake model reaches its terminal outcome."""
+        model.write_text("metrics: [final]\n")
+        async for action in stream(action_history_manager):
+            yield action
+
+    node.execute_stream_with_interactions = write_then_stream
+    manager = ChatTaskManager()
+    manager._create_node = lambda *args, **kwargs: node
+    manager._create_node_input = lambda **kwargs: SimpleNamespace(**kwargs)
+    task = ChatTask(session_id="repeated-stop", asyncio_task=MagicMock())
+    task.on_turn_end = MagicMock()
+    manager._tasks[task.session_id] = task
+    loop = asyncio.get_running_loop()
+    scan_started = asyncio.Event()
+    release_scan = threading.Event()
+    publication_started = asyncio.Event()
+    release_publication = asyncio.Event()
+    changes = SemanticModelSnapshot.changes
+    push_event = manager._push_event
+
+    def blocked_changes(snapshot):
+        """Hold the worker scan while the run receives several cancellations."""
+        loop.call_soon_threadsafe(scan_started.set)
+        assert release_scan.wait(timeout=3)
+        return changes(snapshot)
+
+    async def blocked_publication(current, event):
+        """Hold the actual SSE append to verify consumers cannot finish early."""
+        if isinstance(event.data, SSEMessageData) and event.data.payload.content[0].type == "semantic-model-diff":
+            publication_started.set()
+            await release_publication.wait()
+        await push_event(current, event)
+
+    async def consume():
+        """Exercise the real live SSE consumer while publication is pending."""
+        return [event async for event in manager.consume_events(task, start_from=0)]
+
+    monkeypatch.setattr(SemanticModelSnapshot, "changes", blocked_changes)
+    monkeypatch.setattr(manager, "_push_event", blocked_publication)
+    runner = asyncio.create_task(
+        manager._run_loop(
+            task,
+            real_agent_config,
+            StreamChatInput(message="update metrics", source="web", session_id=task.session_id),
+        )
+    )
+    task.asyncio_task = runner
+    consumer = asyncio.create_task(consume())
+    try:
+        await asyncio.wait_for(scan_started.wait(), timeout=2)
+        for _ in range(2):
+            runner.cancel()
+            await asyncio.sleep(0)
+        assert not runner.done()
+        assert task.status == "running"
+        assert not task.settled
+        assert manager.get_task(task.session_id) is task
+        assert not consumer.done()
+
+        release_scan.set()
+        await asyncio.wait_for(publication_started.wait(), timeout=2)
+        for _ in range(2):
+            runner.cancel()
+            await asyncio.sleep(0)
+        assert not runner.done()
+        assert task.status == "running"
+        assert not task.settled
+        assert not consumer.done()
+
+        release_publication.set()
+        _, pending = await asyncio.wait([runner, consumer], timeout=2)
+        assert not pending
+        assert runner.result() is None
+        events = consumer.result()
+        notifications = [
+            event
+            for event in events
+            if isinstance(event.data, SSEMessageData) and event.data.payload.content[0].type == "semantic-model-diff"
+        ]
+        assert len(notifications) == 1
+        assert notifications[0].data.payload.content[0].payload["files"] == [
+            {
+                "filePath": "subject/semantic_models/ds/model.yml",
+                "changeType": "modified",
+                "oldText": "metrics: [original]\n",
+                "newText": "metrics: [final]\n",
+            }
+        ]
+        expected_status = "error" if outcome == "error" else "cancelled"
+        expected_error = "model failed" if outcome == "error" else None
+        assert task.status == expected_status
+        assert task.error == expected_error
+        task.on_turn_end.assert_called_once()
+        usage, error, status, turn_id = task.on_turn_end.call_args.args
+        assert (status, error, turn_id) == (expected_status, expected_error, task.turn_id)
+        assert usage["total_tokens"] == 120
+        assert task.settled
+        assert task.session_id not in manager._tasks
+        assert manager._completed_tasks[task.session_id] is task
+        errors = [event for event in events if event.event == "error"]
+        assert [event.data.error for event in errors] == (["model failed"] if outcome == "error" else [])
+        assert all(notifications[0].id < event.id for event in errors)
+    finally:
+        release_scan.set()
+        release_publication.set()
+        runner.cancel()
+        consumer.cancel()
+        await asyncio.gather(runner, consumer, return_exceptions=True)
 
 
 class TestFillDatabaseContext:
