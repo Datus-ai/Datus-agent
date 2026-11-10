@@ -243,6 +243,7 @@ async def resume_chat(
     svc: ServiceDep,
     ctx: AppContextDep,
 ):
+    """Resume an owned task, reserving completed-turn diff replay for explicit cursors."""
     task_manager = svc.task_manager
     task = task_manager.get_task(request.session_id)
     if task is not None and task.user_id != ctx.user_id:
@@ -254,7 +255,12 @@ async def resume_chat(
             errorMessage="Task not found or already completed. Use the history API to retrieve messages.",
         )
 
+    # A fresh history viewer must not replay completed-turn notifications. A
+    # cursor reconnect still needs the final diff when its transport dropped.
+    include_semantic_diff = task.status == "running" or request.from_event_id is not None
+
     async def generate_sse():
+        """Serialize buffered events while omitting transient diffs on ordinary session entry."""
         # A resumed stream can begin after the original session frame.
         if task.node is not None:
             from datus.api.models.cli_models import SSESessionData
@@ -264,6 +270,12 @@ async def resume_chat(
             )
             yield f"event: session\ndata: {session.model_dump_json()}\n\n"
         async for event in task_manager.consume_events(task, start_from=request.from_event_id):
+            if (
+                not include_semantic_diff
+                and event.event == "message"
+                and any(part.type == "semantic-model-diff" for part in event.data.payload.content)
+            ):
+                continue
             yield f"id: {event.id}\nevent: {event.event}\ndata: {event.data.model_dump_json()}\n\n"
 
     return StreamingResponse(generate_sse(), media_type="text/event-stream", headers=_sse_headers())
