@@ -31,6 +31,82 @@ from datus.api.services.chat_task_manager import (
 from datus.tools.proxy.tool_result_channel import ToolResultChannel
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("outcome", ["added", "modified", "deleted", "rollback", "error", "cancelled"])
+async def test_turn_emits_one_final_semantic_diff_without_persisting_it(tmp_path, real_agent_config, outcome):
+    from datus.api.models.cli_models import StreamChatInput
+    from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
+
+    root = tmp_path / "subject" / "semantic_models" / "ds"
+    root.mkdir(parents=True)
+    model = root / "model.yml"
+    if outcome != "added":
+        model.write_text("metrics: [old, retained]\n")
+    real_agent_config._project_root = tmp_path
+    history_actions = []
+
+    class FakeNode:
+        session_id = "llm-semantic-diff"
+        permission_manager = SimpleNamespace(active_profile="auto")
+        proxied_tool_names = set()
+
+        def get_node_name(self):
+            return "chat"
+
+        async def execute_stream_with_interactions(self, action_history_manager):
+            model.write_text("metrics: [old, retained, new]\n")
+            model.write_text("metrics: [retained, new]\n")
+            if outcome == "deleted":
+                model.unlink()
+            if outcome == "error":
+                raise RuntimeError("terminal failure")
+            if outcome == "cancelled":
+                raise asyncio.CancelledError
+            if outcome == "rollback":
+                model.write_text("metrics: [old, retained]\n")
+            yield ActionHistory(
+                action_id="final",
+                role=ActionRole.ASSISTANT,
+                action_type="chat_response",
+                input={},
+                output={"response": "done"},
+                status=ActionStatus.SUCCESS,
+            )
+            history_actions.extend(action_history_manager.get_actions())
+
+        async def get_last_turn_usage(self):
+            return None
+
+    manager = ChatTaskManager()
+    manager._create_node = lambda *args, **kwargs: FakeNode()
+    manager._create_node_input = lambda **kwargs: SimpleNamespace(**kwargs)
+    task = ChatTask(session_id="semantic-turn", asyncio_task=MagicMock())
+    await manager._run_loop(
+        task,
+        real_agent_config,
+        StreamChatInput(message="update metrics", source="web", session_id="semantic-turn"),
+    )
+    notifications = [
+        event
+        for event in task.events
+        if event.event == "message" and event.data.payload.content[0].type == "semantic-model-diff"
+    ]
+    assert len(notifications) == (0 if outcome == "rollback" else 1)
+    if notifications:
+        event = notifications[0]
+        payload = event.data.payload.content[0].payload
+        [change] = payload["files"]
+        assert change["oldText"] == (None if outcome == "added" else "metrics: [old, retained]\n")
+        assert change["newText"] == (None if outcome == "deleted" else "metrics: [retained, new]\n")
+        assert event.data.payload.message_id == f"semantic-model-diff:{task.turn_id}"
+        assert event.id < next((item.id for item in task.events if item.event in {"end", "error"}), event.id + 1)
+        replayed = [item async for item in manager.consume_events(task, start_from=event.id)]
+        assert replayed[0] == event
+    assert not task.message_contents
+    assert not task.tool_result_contents
+    assert all(action.action_type != "semantic-model-diff" for action in history_actions)
+
+
 class TestFillDatabaseContext:
     """Tests for _fill_database_context."""
 

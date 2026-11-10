@@ -253,8 +253,18 @@ async def resume_chat(
             errorMessage="Task not found or already completed. Use the history API to retrieve messages.",
         )
 
+    # A fresh history viewer must not replay completed-turn notifications. A
+    # cursor reconnect still needs the final diff when its transport dropped.
+    include_semantic_diff = task.status == "running" or request.from_event_id is not None
+
     async def generate_sse():
         async for event in task_manager.consume_events(task, start_from=request.from_event_id):
+            if (
+                not include_semantic_diff
+                and event.event == "message"
+                and any(part.type == "semantic-model-diff" for part in event.data.payload.content)
+            ):
+                continue
             yield f"id: {event.id}\nevent: {event.event}\ndata: {event.data.model_dump_json()}\n\n"
 
     return StreamingResponse(generate_sse(), media_type="text/event-stream", headers=_sse_headers())
