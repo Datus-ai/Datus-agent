@@ -389,8 +389,9 @@ class MetricArtifactToolsMixin:
         return self._save_metric_artifact(name, query, goal, hypothesis, caveats, params, sample_params)
 
     def _save_metric_artifact(self, name, query, goal, hypothesis, caveats, params, sample_params) -> FuncToolResult:
+        """Persist a metric recipe and query result, then refresh the manifest timestamp."""
         from datus.api.services.dashboard_service import _validate_params
-        from datus.tools.func_tool._visual_artifact_helpers import upsert_manifest_after_save
+        from datus.tools.func_tool._visual_artifact_helpers import touch_manifest_after_save
         from datus.tools.func_tool.report_artifact_tools import _MAX_QUERY_BYTES, _atomic_write_text
 
         kind = "dashboard" if params is not None else "report"
@@ -473,9 +474,7 @@ class MetricArtifactToolsMixin:
             for suffix in (".sql", ".sql.j2"):
                 (self.queries_dir / f"{name}{suffix}").unlink(missing_ok=True)
             artifact_dir = self.dashboard_dir if kind == "dashboard" else self.report_dir
-            warning = upsert_manifest_after_save(
-                artifact_dir / "manifest.json", datasource=payload.datasource, timestamp=payload.executed_at
-            )
+            warning = touch_manifest_after_save(artifact_dir / "manifest.json", timestamp=payload.executed_at)
             return FuncToolResult(
                 result={
                     "name": name,

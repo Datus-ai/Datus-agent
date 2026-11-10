@@ -1065,3 +1065,31 @@ async def test_dashboard_rejects_a_saved_context_pointing_at_another_datasource(
     assert response.errorCode == "TEMPLATE_CORRUPT"
     assert "execution context must match" in response.errorMessage
     env.db.execute_read_enforced.assert_not_called()
+
+
+@pytest.mark.ci
+@pytest.mark.parametrize("kind", ["report", "dashboard"])
+def test_metric_save_and_finalize_share_the_query_source_contract(environment, kind):
+    """Keep metric provenance on the query until finalize rebuilds the manifest index."""
+    from unittest.mock import Mock
+
+    from datus.agent.node.visual_artifact._visual_artifact_finalize import run_finalize_analysis
+
+    options = {"params": [], "sample_params": {}} if kind == "dashboard" else {}
+    tools, result = _save(environment, kind, **options)
+    assert result.success == 1, result.error
+    root = tools.dashboard_dir if kind == "dashboard" else tools.report_dir
+    meta_path = tools.queries_dir / ("sales.params.json" if kind == "dashboard" else "sales.json")
+    assert json.loads(meta_path.read_text())["datasource"] == "warehouse"
+    assert json.loads((root / "manifest.json").read_text())["datasources"] == []
+    model = Mock(spec=["generate_with_json_output", "generate"])
+    model.generate_with_json_output.side_effect = RuntimeError("narrative unavailable")
+    run_finalize_analysis(
+        model=model,
+        artifact_kind=kind,
+        artifact_dir=root,
+        queries_dir=tools.queries_dir,
+        analysis_dir=root / "analysis",
+        actions=[],
+    )
+    assert json.loads((root / "manifest.json").read_text())["datasources"] == ["warehouse"]

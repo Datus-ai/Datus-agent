@@ -58,6 +58,8 @@ from datus.schemas.analysis_artifacts import (
 )
 from datus.schemas.artifact_manifest import ArtifactManifest
 from datus.tools.func_tool._visual_artifact_helpers import _atomic_write_text
+from datus.utils.artifact_files import iter_artifact_files
+from datus.utils.artifact_metadata import collect_query_datasources
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
@@ -710,20 +712,14 @@ def aggregate_referenced_tables(queries_dir: Path) -> List[str]:
     return _dedupe_table_references(tables)
 
 
-def update_manifest_key_tables(manifest_path: Path, key_tables: List[str]) -> Optional[str]:
-    """Refresh ``manifest.key_tables`` in place.
+def update_manifest_query_metadata(
+    manifest_path: Path, key_tables: List[str], *, datasources: Optional[List[str]] = None
+) -> Optional[str]:
+    """Replace derived query indexes while preserving authored manifest fields.
 
-    Read-validate-replace cycle (similar to ``upsert_manifest_after_save``)
-    so any other manifest mutation that happened mid-run survives. We
-    always overwrite ``key_tables`` rather than union-add: the field is
-    code-generated and each finalize run reflects the current SQL set
-    authoritatively, including queries that were deleted in an
-    edit-mode rerun.
-
-    Returns an error string on failure, ``None`` on success. Missing /
-    corrupt manifest is non-fatal — finalize is the *last* step, the
-    artifact's primary contract is already on disk by the time this
-    runs.
+    Production finalize supplies both lists from the same current query set.
+    Omitting datasources supports callers that only refresh table references.
+    Returns an error string on a best-effort read/validate/atomic-write failure.
     """
     if not manifest_path.is_file():
         return "manifest missing — cannot update key_tables"
@@ -735,10 +731,12 @@ def update_manifest_key_tables(manifest_path: Path, key_tables: List[str]) -> Op
         manifest = ArtifactManifest.model_validate(raw)
     except Exception as exc:
         return f"manifest schema validation failed during key_tables update: {exc}"
-    if manifest.key_tables == key_tables:
+    if manifest.key_tables == key_tables and (datasources is None or manifest.datasources == datasources):
         # No-op: skip the disk write so we don't bump mtime needlessly.
         return None
     manifest.key_tables = key_tables
+    if datasources is not None:
+        manifest.datasources = datasources
     try:
         _atomic_write_text(
             manifest_path,
@@ -1289,7 +1287,7 @@ def run_finalize_analysis(
         }
 
     The deterministic, code-only outputs (``subject_refs.json`` and
-    ``manifest.key_tables``) are produced whether or not the finalize
+    ``manifest.key_tables`` / ``manifest.datasources``) are produced whether or not the finalize
     LLM call succeeded — both are aggregated from on-disk artifacts
     (``queries/*.brief.json`` / ``queries/*.sql``) and have no LLM
     dependency. The follow-up ``ask_*`` consultant depends on
@@ -1309,7 +1307,7 @@ def run_finalize_analysis(
       Gated on the main finalize LLM succeeding so we don't burn a
       second LLM call when the first one is already broken.
     * ``analysis/subject_refs.json`` — present iff non-empty. LLM-free.
-    * ``manifest.json`` — ``key_tables`` field refreshed. LLM-free.
+    * ``manifest.json`` — ``key_tables`` and ``datasources`` rebuilt before the LLM stage.
 
     ``skip_narrative`` short-circuits the two LLM stages (insights /
     suggested_questions + intent curation) for render-only edits where the
@@ -1324,6 +1322,21 @@ def run_finalize_analysis(
     warnings: List[str] = []
     output: Optional[FinalizeAnalysisOutput] = None
     llm_error: Optional[str] = None
+
+    key_tables = aggregate_referenced_tables(queries_dir)
+    try:
+        query_paths = {
+            path.relative_to(artifact_dir).as_posix(): path
+            for path in iter_artifact_files(artifact_dir, artifact_kind, queries_only=True)
+        }
+        datasources = collect_query_datasources(query_paths, lambda name: query_paths[name].read_text(encoding="utf-8"))
+        metadata_error = update_manifest_query_metadata(
+            artifact_dir / "manifest.json", key_tables, datasources=datasources
+        )
+        if metadata_error:
+            warnings.append(metadata_error)
+    except OSError as exc:
+        warnings.append(f"Cannot aggregate artifact query metadata: {exc}")
 
     if skip_narrative and not narrative_outputs_present(analysis_dir, artifact_kind=artifact_kind):
         # Nothing on disk to preserve — honouring the skip would leave this
@@ -1415,14 +1428,6 @@ def run_finalize_analysis(
     write_err = write_subject_refs(analysis_dir, refs)
     if write_err:
         warnings.append(write_err)
-
-    # Refresh manifest.key_tables — code-aggregated, LLM-free hint the
-    # follow-up ask agent reads to skip schema discovery round-trips.
-    # Soft-fail: warnings surface in the result, never block the artifact.
-    key_tables = aggregate_referenced_tables(queries_dir)
-    kt_err = update_manifest_key_tables(artifact_dir / "manifest.json", key_tables)
-    if kt_err:
-        warnings.append(kt_err)
 
     if on_progress is not None:
         try:
