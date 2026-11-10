@@ -10,6 +10,7 @@ import pytest
 from datus_storage_base.conditions import build_where
 
 from datus.storage.rag_scope import _build_sub_agent_filter
+from datus.tools.db_tools import ConnectorRegistry, connector_registry
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -242,8 +243,16 @@ class TestRuntimeOverrideIntegration:
         ("pg", "postgresql", "schema_name", "reporting"),
     ],
 )
-def test_grouped_table_filter_follows_active_datasource(source, dialect, expected_column, expected_value):
+def test_grouped_table_filter_follows_active_datasource(source, dialect, expected_column, expected_value, monkeypatch):
     """Filter RAG rows using the active source's namespace and dialect."""
+    # Namespace contracts are test inputs, independent of optional adapter installation.
+    monkeypatch.setattr(ConnectorRegistry, "_capabilities", ConnectorRegistry._capabilities.copy())
+    for name, capabilities in {
+        "starrocks": {"catalog", "database"},
+        "mysql": {"database"},
+        "postgresql": {"database", "schema"},
+    }.items():
+        connector_registry.register_handlers(name, capabilities=capabilities)
     config = _mock_agent_config(
         sub_agent_configs={
             "ask": {
