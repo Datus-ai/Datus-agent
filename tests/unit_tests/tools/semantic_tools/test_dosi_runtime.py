@@ -1540,6 +1540,80 @@ async def test_catalog_wraps_malformed_sibling_document(tmp_path, monkeypatch):
     assert [metric.name for metric in metrics] == ["order_count"]
 
 
+@pytest.fixture
+def unavailable_model_runtime(tmp_path, monkeypatch, fake_binding):
+    from datus.tools.semantic_tools.dosi.config import DosiConfig
+    from datus.tools.semantic_tools.dosi.runtime import DosiRuntime
+
+    broken = tmp_path / "goods.yaml"
+    _write_model(broken, "goods_model", ["loss_rate", "sales_aum"])
+    broken.write_text(broken.read_text() + "# missing_price\n")
+    _write_model(tmp_path / "orders.yaml", "orders_model", ["order_count"])
+    _install_file_catalog(monkeypatch, {"goods": ["loss_rate", "sales_aum"], "orders": ["order_count"]})
+    original_init = FakeEngine.__init__
+
+    def load(engine, model_path=None, **kwargs):
+        if "missing_price" in Path(model_path).read_text():
+            raise fake_binding.ModelError("UnknownColumn in metric 'sales_aum': missing_price")
+        original_init(engine, model_path=model_path, **kwargs)
+
+    monkeypatch.setattr(FakeEngine, "__init__", load)
+    return DosiRuntime(DosiConfig(semantic_models_path=str(tmp_path))), broken
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ["dimensions", "describe", "query"])
+async def test_unavailable_metric_preserves_its_model_load_error(unavailable_model_runtime, operation):
+    runtime, broken = unavailable_model_runtime
+    with pytest.raises(SemanticValidationException) as exc:
+        if operation == "dimensions":
+            await runtime.get_dimensions("loss_rate")
+        elif operation == "describe":
+            await runtime.describe_metric("loss_rate")
+        else:
+            await runtime.query_metrics(["order_count", "loss_rate"], dry_run=True)
+
+    error = exc.value.payload
+    assert error.code == "model_load_error"
+    assert error.metrics == ["loss_rate"]
+    assert "UnknownColumn in metric 'sales_aum': missing_price" in error.message
+    assert str(broken) in error.message
+    assert "missing_price" in error.detail["model_errors"][str(broken)]
+    assert error.suggested_retry is None
+
+
+@pytest.mark.asyncio
+async def test_broken_model_does_not_replace_unrelated_unknown_metric_errors(unavailable_model_runtime):
+    runtime, _ = unavailable_model_runtime
+    assert [metric.name for metric in await runtime.list_metrics()] == ["order_count"]
+    assert (await runtime.query_metrics(["order_count"], dry_run=True)).metadata["sql"]
+    with pytest.raises(SemanticValidationException) as exc:
+        await runtime.get_dimensions("does_not_exist")
+    assert exc.value.payload.code == "unknown_metric"
+    assert "candidates: order_count" in exc.value.payload.message
+
+
+@pytest.mark.asyncio
+async def test_unavailable_metric_diagnostics_refresh_after_repair(unavailable_model_runtime):
+    runtime, broken = unavailable_model_runtime
+    with pytest.raises(SemanticValidationException) as exc:
+        await runtime.get_dimensions("loss_rate")
+    assert exc.value.payload.code == "model_load_error"
+
+    broken.write_text(broken.read_text().replace("missing_price", "unit_price"))
+    assert [metric.name for metric in await runtime.list_metrics()] == ["loss_rate", "sales_aum", "order_count"]
+    assert [dimension.name for dimension in await runtime.get_dimensions("loss_rate")] == [
+        "goods.status",
+        "goods.event_date",
+    ]
+
+    broken.write_text(broken.read_text().replace("unit_price", "missing_price"))
+    with pytest.raises(SemanticValidationException) as exc:
+        await runtime.get_dimensions("loss_rate")
+    assert exc.value.payload.code == "model_load_error"
+    assert "missing_price" in exc.value.payload.message
+
+
 @pytest.mark.asyncio
 async def test_semantic_models_path_refreshes_when_file_is_added(tmp_path, monkeypatch):
     from datus.tools.semantic_tools.dosi.config import DosiConfig
