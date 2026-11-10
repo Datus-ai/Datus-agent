@@ -3932,3 +3932,34 @@ class TestGlobDatabaseListingScopes:
         result = tool.list_databases(datasource="files")
         assert result.success == 0
         assert result.error
+
+
+@pytest.mark.ci
+@pytest.mark.parametrize("scope_failure", ["empty", "unlisted", "unbound"])
+def test_read_validation_returns_scope_failures_before_explain(scope_failure):
+    """Scope errors retain their text and SQL type and never reach EXPLAIN execution."""
+    from datus.utils.constants import SQLType
+
+    connector = Mock(dialect="mysql")
+    tool = object.__new__(DBFuncTool)
+    tool._primary_connector = connector
+    tool._tables_by_datasource = {"mysql": ""}
+    tool._connector_datasources = {id(connector): "mysql"}
+    if scope_failure == "unlisted":
+        tool._tables_by_datasource = {"other": "*"}
+    elif scope_failure == "unbound":
+        tool._connector_datasources = {}
+    sql = "SELECT * FROM sales.orders"
+    with pytest.raises(DatusException) as scope_error:
+        tool._check_sql_table_scope(sql, connector)
+    expected_error = str(scope_error.value)
+
+    failure, sql_type = tool._validate_read_sql(sql, connector)
+    assert failure.success == 0
+    assert failure.error == expected_error
+    assert sql_type == SQLType.SELECT
+
+    guard_failure = tool.guard_estimated_rows(sql, connector)
+    assert guard_failure.success == 0
+    assert guard_failure.error == expected_error
+    connector.execute_query.assert_not_called()

@@ -3233,6 +3233,7 @@ class DBFuncTool:
         return None
 
     def _validate_read_sql(self, sql: str, connector: BaseSqlConnector) -> tuple[Optional[FuncToolResult], SQLType]:
+        """Return read and scope validation failures with the detected SQL type."""
         from datus.utils.sql_utils import (
             READ_ONLY_MULTI_STATEMENT,
             READ_ONLY_NON_READ,
@@ -3276,7 +3277,7 @@ class DBFuncTool:
 
         try:
             out_of_scope = self._check_sql_table_scope(sql, connector)
-        except ValueError as error:
+        except (ValueError, DatusException) as error:
             return FuncToolResult(success=0, error=str(error)), sql_type
         if out_of_scope:
             return (
