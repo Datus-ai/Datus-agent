@@ -231,3 +231,54 @@ class TestRuntimeOverrideIntegration:
         # YAML system_prompt and tools survive because override didn't set them.
         assert merged["system_prompt"] == "yaml_prompt"
         assert merged["tools"] == "list_tables,describe_table"
+
+
+@pytest.mark.ci
+@pytest.mark.parametrize(
+    ("source", "dialect", "expected_column", "expected_value"),
+    [
+        ("sr", "starrocks", "database_name", "analytics"),
+        ("mysql", "mysql", "database_name", "sales"),
+        ("pg", "postgresql", "schema_name", "reporting"),
+    ],
+)
+def test_grouped_table_filter_follows_active_datasource(source, dialect, expected_column, expected_value):
+    config = _mock_agent_config(
+        sub_agent_configs={
+            "ask": {
+                "scoped_context": {
+                    "datasource": "sr",
+                    "tables": "default_catalog.analytics.*",
+                    "tables_by_datasource": {
+                        "sr": "default_catalog.analytics.*",
+                        "mysql": "sales.*",
+                        "pg": "warehouse.reporting.*",
+                    },
+                }
+            }
+        },
+        db_type=dialect,
+    )
+    config.current_datasource = source
+    result = _build_sub_agent_filter(config, "ask", _mock_storage(), "tables")
+    clause = build_where(result)
+    assert f"{expected_column} = '{expected_value}'" in clause
+
+
+@pytest.mark.ci
+def test_grouped_table_filter_refuses_unlisted_datasource():
+    from datus.utils.exceptions import DatusException
+
+    config = _mock_agent_config(
+        sub_agent_configs={
+            "ask": {
+                "scoped_context": {
+                    "tables_by_datasource": {"sr": "default_catalog.analytics.*"},
+                }
+            }
+        },
+        db_type="mysql",
+    )
+    config.current_datasource = "unrelated"
+    with pytest.raises(DatusException, match="scoped context"):
+        _build_sub_agent_filter(config, "ask", _mock_storage(), "tables")

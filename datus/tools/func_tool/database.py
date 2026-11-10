@@ -217,10 +217,31 @@ class DBFuncTool:
                        passing False does not make the tool writable on a
                        hardened deployment.
         """
+        # A grouped scope declares its own default independently of the
+        # project's current connection. Keep the live policy config unchanged.
+        storage_config = agent_config
+        if agent_config is not None and sub_agent_name:
+            self.agent_config = agent_config
+            sub_config = self._load_sub_agent_config(sub_agent_name)
+            scope = sub_config.scoped_context if sub_config else None
+            if scope is not None and scope.tables_by_datasource is not None and scope.datasource:
+                from copy import copy
+
+                default_datasource = default_datasource or scope.datasource
+                if default_datasource not in scope.tables_by_datasource:
+                    raise DatusException(
+                        ErrorCode.COMMON_VALIDATION_FAILED,
+                        message=f"Datasource '{default_datasource}' is outside the scoped context.",
+                    )
+                storage_config = copy(agent_config)
+                storage_config.current_datasource = default_datasource
+
         if connector_or_manager is None:
             if not agent_config:
                 raise ValueError("agent_config is required when connector_or_manager is not provided")
             connector_or_manager = db_manager_instance(agent_config.datasource_configs)
+
+        self._connector_datasources: Dict[int, str] = {}
 
         # Determine mode based on input type
         if isinstance(connector_or_manager, DBManager):
@@ -253,17 +274,26 @@ class DBFuncTool:
         # posture, before the deployment-wide switch is ORed in.
         self._read_only = read_only
         self._filesystem_root = filesystem_root
-        if agent_config and metadata_fts_enabled(agent_config):
-            self.schema_rag = create_metadata_rag(agent_config, sub_agent_name)
+        if storage_config and metadata_fts_enabled(storage_config):
+            self.schema_rag = create_metadata_rag(storage_config, sub_agent_name)
         else:
-            self.schema_rag = SchemaWithValueRAG(agent_config, sub_agent_name) if agent_config else None
+            self.schema_rag = SchemaWithValueRAG(storage_config, sub_agent_name) if storage_config else None
         self._field_order = self._determine_field_order()
         self._scoped_patterns = self._load_scoped_patterns(scoped_tables)
+        self._tables_by_datasource = None
+        if sub_agent_name:
+            sub_config = self._load_sub_agent_config(sub_agent_name)
+            if sub_config and sub_config.scoped_context:
+                self._tables_by_datasource = sub_config.scoped_context.tables_by_datasource
+        if self._tables_by_datasource is not None:
+            self._require_scoped_datasource(self._default_datasource)
+            self._datasources = [name for name in self._datasources if name in self._tables_by_datasource]
+            self._scoped_patterns = self._patterns_for_connector(self._primary_connector)
 
         self._semantic_datasets = None
         if agent_config and isinstance(getattr(agent_config, "project_name", ""), str):
             try:
-                self._semantic_datasets = SemanticDatasetRAG(agent_config, sub_agent_name)
+                self._semantic_datasets = SemanticDatasetRAG(storage_config, sub_agent_name)
             except Exception as exc:
                 logger.debug(f"Failed to initialize semantic dataset storage: {exc}")
         self.has_schema = self._has_schema_storage()
@@ -560,13 +590,17 @@ class DBFuncTool:
         coordinates = DatabaseExecutionContext.from_mapping(context)
         if self._db_manager is None:
             return self.connector
-        return self._db_manager.get_conn(coordinates.datasource, coordinates.database, context=coordinates)
+        self._require_scoped_datasource(coordinates.datasource)
+        connector = self._db_manager.get_conn(coordinates.datasource, coordinates.database, context=coordinates)
+        return self._track_connector(connector, coordinates.datasource)
 
     def connector_for_datasource_default(self, datasource: Optional[str] = None):
         """Replay legacy queries using configured defaults, independent of the turn."""
         if self._db_manager is None:
             return self.connector
-        return self._db_manager.get_conn(datasource or self._default_datasource)
+        source = datasource or self._default_datasource
+        self._require_scoped_datasource(source)
+        return self._track_connector(self._db_manager.get_conn(source), source)
 
     def execution_context(self, connector, datasource: Optional[str] = "") -> Dict[str, str]:
         from datus.schemas.database_context import DatabaseExecutionContext
@@ -586,10 +620,46 @@ class DBFuncTool:
         if context.get("datasource") == datasource and context.get("database", "") == database:
             from datus.schemas.database_context import DatabaseExecutionContext
 
-            return self._db_manager.get_conn(
+            connector = self._db_manager.get_conn(
                 datasource, database, context=DatabaseExecutionContext.from_mapping(context)
             )
-        return self._db_manager.get_conn(datasource, database)
+        else:
+            connector = self._db_manager.get_conn(datasource, database)
+        return self._track_connector(connector, datasource)
+
+    def _require_scoped_datasource(self, datasource: str) -> None:
+        scopes = getattr(self, "_tables_by_datasource", None)
+        if scopes is not None and datasource not in scopes:
+            raise DatusException(
+                ErrorCode.COMMON_VALIDATION_FAILED,
+                message=f"Datasource '{datasource}' is outside the scoped context.",
+            )
+
+    def _track_connector(self, connector: BaseSqlConnector, datasource: str) -> BaseSqlConnector:
+        if not hasattr(self, "_connector_datasources"):
+            self._connector_datasources = {}
+        self._connector_datasources[id(connector)] = datasource
+        return connector
+
+    def _patterns_for_connector(self, connector: Optional[BaseSqlConnector] = None) -> List[ScopedTablePattern]:
+        scopes = getattr(self, "_tables_by_datasource", None)
+        if scopes is None:
+            return self._scoped_patterns
+        connector = connector or self._primary_connector
+        source = self._connector_datasources.get(id(connector))
+        if source is None:
+            raise DatusException(ErrorCode.COMMON_VALIDATION_FAILED, message="Unbound connector in scoped context.")
+        self._require_scoped_datasource(source)
+        if not hasattr(self, "_datasource_pattern_cache"):
+            self._datasource_pattern_cache = {}
+        key = (source, connector.dialect, scopes[source])
+        if key not in self._datasource_pattern_cache:
+            self._datasource_pattern_cache[key] = [
+                pattern
+                for token in scopes[source].replace("\n", ",").split(",")
+                if (pattern := self._parse_scope_token(token, connector)) is not None
+            ]
+        return self._datasource_pattern_cache[key]
 
     def _get_connector(self, datasource: Optional[str] = None, database: str = "") -> BaseSqlConnector:
         """
@@ -614,6 +684,7 @@ class DBFuncTool:
         # Multi-connector mode: route by (datasource, database). DBManager.get_conn binds
         # the connector to the database (selects the file for a glob datasource).
         ds = datasource or self._default_datasource
+        self._require_scoped_datasource(ds)
         db = database or (self._default_database if ds == self._default_datasource else "")
         key = (ds, db)
 
@@ -665,9 +736,10 @@ class DBFuncTool:
         val = getattr(connector, "database_name", None)
         return val if isinstance(val, str) else ""
 
-    def _determine_field_order(self) -> Sequence[str]:
-        dialect = getattr(self._primary_connector, "dialect", "") or ""
-        capabilities = get_effective_capabilities(self._primary_connector, dialect)
+    def _determine_field_order(self, connector: Optional[BaseSqlConnector] = None) -> Sequence[str]:
+        connector = connector or self._primary_connector
+        dialect = getattr(connector, "dialect", "") or ""
+        capabilities = get_effective_capabilities(connector, dialect)
         fields: List[str] = []
         if "catalog" in capabilities:
             fields.append("catalog")
@@ -719,14 +791,22 @@ class DBFuncTool:
 
         try:
             return SubAgentConfig.model_validate(config)
-        except Exception:
+        except Exception as exc:
+            raw_scope = config.get("scoped_context") if isinstance(config, dict) else None
+            if isinstance(raw_scope, dict) and "tables_by_datasource" in raw_scope:
+                raise DatusException(
+                    ErrorCode.COMMON_VALIDATION_FAILED,
+                    message="Malformed datasource table scopes; refusing unscoped database access.",
+                ) from exc
             return None
 
-    def _parse_scope_token(self, token: str) -> Optional[ScopedTablePattern]:
+    def _parse_scope_token(
+        self, token: str, connector: Optional[BaseSqlConnector] = None
+    ) -> Optional[ScopedTablePattern]:
         token = (token or "").strip()
         if not token:
             return None
-        dialect = getattr(self._primary_connector, "dialect", "") or ""
+        dialect = getattr(connector or self._primary_connector, "dialect", "") or ""
         parsed = parse_table_name_parts(token, dialect)
         if not parsed.get("table_name"):
             return None
@@ -1030,7 +1110,7 @@ class DBFuncTool:
         explicit: Optional[str],
         connector: Optional[BaseSqlConnector] = None,
     ) -> str:
-        if field not in self._field_order:
+        if field not in (self._determine_field_order(connector) if connector is not None else self._field_order):
             return ""
         if explicit:
             return self._normalize_identifier_part(explicit)
@@ -1107,10 +1187,9 @@ class DBFuncTool:
                 setattr(coordinate, field, self._normalize_identifier_part(parsed[parsed_field]))
         return coordinate
 
-    def _table_matches_scope(self, coordinate: TableCoordinate) -> bool:
-        if not self._scoped_patterns:
-            return True
-        return any(pattern.matches(coordinate) for pattern in self._scoped_patterns)
+    def _table_matches_scope(self, coordinate: TableCoordinate, connector: Optional[BaseSqlConnector] = None) -> bool:
+        patterns = self._patterns_for_connector(connector)
+        return not patterns or any(pattern.matches(coordinate) for pattern in patterns)
 
     def _filter_table_entries(
         self,
@@ -1120,7 +1199,7 @@ class DBFuncTool:
         schema: Optional[str],
         connector: BaseSqlConnector,
     ) -> List[Dict[str, Any]]:
-        if not self._scoped_patterns:
+        if not self._patterns_for_connector(connector):
             return list(entries)
 
         filtered: List[Dict[str, Any]] = []
@@ -1132,7 +1211,7 @@ class DBFuncTool:
                 schema=schema,
                 connector=connector,
             )
-            if self._table_matches_scope(coordinate):
+            if self._table_matches_scope(coordinate, connector):
                 filtered.append(entry)
         return filtered
 
@@ -1143,14 +1222,17 @@ class DBFuncTool:
             return False
         return True
 
-    def _database_matches_scope(self, catalog: Optional[str], database: str) -> bool:
-        if not self._scoped_patterns:
+    def _database_matches_scope(
+        self, catalog: Optional[str], database: str, connector: Optional[BaseSqlConnector] = None
+    ) -> bool:
+        patterns = self._patterns_for_connector(connector)
+        if not patterns:
             return True
-        catalog_value = self._default_field_value("catalog", catalog or "")
-        database_value = self._default_field_value("database", database or "")
+        catalog_value = self._default_field_value("catalog", catalog or "", connector)
+        database_value = self._default_field_value("database", database or "", connector)
 
         wildcard_allowed = False
-        for pattern in self._scoped_patterns:
+        for pattern in patterns:
             if not self._matches_catalog_database(pattern, catalog_value, database_value):
                 continue
             if pattern.database:
@@ -1160,15 +1242,22 @@ class DBFuncTool:
             wildcard_allowed = True
         return wildcard_allowed
 
-    def _schema_matches_scope(self, catalog: Optional[str], database: Optional[str], schema: str) -> bool:
-        if not self._scoped_patterns:
+    def _schema_matches_scope(
+        self,
+        catalog: Optional[str],
+        database: Optional[str],
+        schema: str,
+        connector: Optional[BaseSqlConnector] = None,
+    ) -> bool:
+        patterns = self._patterns_for_connector(connector)
+        if not patterns:
             return True
-        catalog_value = self._default_field_value("catalog", catalog or "")
-        database_value = self._default_field_value("database", database or "")
-        schema_value = self._default_field_value("schema", schema or "")
+        catalog_value = self._default_field_value("catalog", catalog or "", connector)
+        database_value = self._default_field_value("database", database or "", connector)
+        schema_value = self._default_field_value("schema", schema or "", connector)
 
         wildcard_allowed = False
-        for pattern in self._scoped_patterns:
+        for pattern in patterns:
             if not self._matches_catalog_database(pattern, catalog_value, database_value):
                 continue
             if pattern.schema:
@@ -1180,11 +1269,12 @@ class DBFuncTool:
 
     def _check_sql_table_scope(self, sql: str, connector: Optional[BaseSqlConnector] = None) -> List[str]:
         """Return table names from *sql* that fall outside the scoped context."""
-        if not self._scoped_patterns:
+        routed_connector = connector or self._primary_connector
+        patterns = self._patterns_for_connector(routed_connector)
+        if not patterns:
             return []
         from datus.utils.sql_utils import extract_table_names
 
-        routed_connector = connector or self._primary_connector
         dialect = getattr(routed_connector, "dialect", "") or ""
         table_names = extract_table_names(sql, dialect=dialect, ignore_empty=True)
         if not table_names:
@@ -1195,9 +1285,11 @@ class DBFuncTool:
         for name in table_names:
             coordinate = self._build_table_coordinate(raw_name=name, connector=routed_connector)
             if native_analysis:
-                candidates = [pattern for pattern in self._scoped_patterns if pattern.matches(coordinate)]
+                candidates = [pattern for pattern in patterns if pattern.matches(coordinate)]
                 unresolved = [
-                    field for field in self._field_order if field != "table" and not getattr(coordinate, field)
+                    field
+                    for field in self._determine_field_order(routed_connector)
+                    if field != "table" and not getattr(coordinate, field)
                 ]
                 if candidates and not any(
                     all(getattr(pattern, field) in ("", "*", "%") for field in unresolved) for pattern in candidates
@@ -1210,7 +1302,7 @@ class DBFuncTool:
                     raise ValueError(
                         f"Unresolved {field} in SQL scope analysis; qualify the table or configure context"
                     )
-            if not self._table_matches_scope(coordinate):
+            if not self._table_matches_scope(coordinate, routed_connector):
                 out_of_scope.append(name)
         return out_of_scope
 
@@ -1631,12 +1723,13 @@ class DBFuncTool:
                 cfg = None
             if cfg is not None and getattr(cfg, "path_pattern", ""):
                 databases = self.agent_config.list_databases(source)
-                filtered = [db for db in databases if self._database_matches_scope(catalog, db)]
+                connector = self._get_connector(source)
+                filtered = [db for db in databases if self._database_matches_scope(catalog, db, connector)]
                 return FuncToolResult(result=filtered)
         try:
             connector = self._get_connector(source)
             databases = connector.get_databases(catalog, include_sys=include_sys)
-            filtered = [db for db in databases if self._database_matches_scope(catalog, db)]
+            filtered = [db for db in databases if self._database_matches_scope(catalog, db, connector)]
             return FuncToolResult(result=filtered)
         except Exception as e:
             return FuncToolResult(success=0, error=str(e))
@@ -1666,11 +1759,13 @@ class DBFuncTool:
         """
         try:
             catalog, database, _ = self._normalize_namespace_args(catalog, database, "", datasource)
-            if database and not self._database_matches_scope(catalog, database):
-                return FuncToolResult(result=[])
             connector = self._get_connector(datasource, database)
+            if database and not self._database_matches_scope(catalog, database, connector):
+                return FuncToolResult(result=[])
             schemas = connector.get_schemas(catalog, database, include_sys=include_sys)
-            filtered = [schema for schema in schemas if self._schema_matches_scope(catalog, database, schema)]
+            filtered = [
+                schema for schema in schemas if self._schema_matches_scope(catalog, database, schema, connector)
+            ]
             return FuncToolResult(result=filtered)
         except Exception as e:
             return FuncToolResult(success=0, error=str(e))
@@ -1809,7 +1904,7 @@ class DBFuncTool:
                 connector=connector,
             )
 
-            if not self._table_matches_scope(coordinate):
+            if not self._table_matches_scope(coordinate, connector):
                 error_msg = f"Table '{table_name}' is outside the scoped context."
                 logger.warning(error_msg)
                 return FuncToolResult(
@@ -2235,7 +2330,7 @@ class DBFuncTool:
         # as a whole - one replaces tables, the other enumerates and reports on all of them - so
         # there is no meaningful way to honour the scope, and silently ignoring it would let a
         # scoped agent reach past its boundary. Refuse instead.
-        if self._scoped_patterns:
+        if self._scoped_patterns or getattr(self, "_tables_by_datasource", None) is not None:
             return None, FuncToolResult(
                 success=0,
                 error=(
@@ -3208,7 +3303,7 @@ class DBFuncTool:
                 schema=schema_name,
                 connector=connector,
             )
-            if not self._table_matches_scope(coordinate):
+            if not self._table_matches_scope(coordinate, connector):
                 return FuncToolResult(
                     success=0,
                     error=f"Table '{table_name}' is outside the scoped context.",

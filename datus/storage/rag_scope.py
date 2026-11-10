@@ -50,6 +50,17 @@ def _build_sub_agent_filter(
         return None
 
     scope_value = getattr(sub_agent_config.scoped_context, check_scope_attr, None)
+    if check_scope_attr == "tables" and sub_agent_config.scoped_context.tables_by_datasource is not None:
+        source = agent_config.current_datasource
+        scopes = sub_agent_config.scoped_context.tables_by_datasource
+        if source not in scopes:
+            from datus.utils.exceptions import DatusException, ErrorCode
+
+            raise DatusException(
+                code=ErrorCode.COMMON_VALIDATION_FAILED,
+                message=f"Datasource '{source}' is outside the scoped context.",
+            )
+        scope_value = scopes[source]
     if not scope_value:
         return None
 

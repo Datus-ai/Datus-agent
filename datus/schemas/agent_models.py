@@ -19,12 +19,16 @@ class ScopedContextLists(BaseModel):
 class ScopedContext(BaseModel):
     datasource: Optional[str] = Field(default_factory=str, description="The datasource identifier")
     tables: Optional[str] = Field(default=None, init=True, description="Tables to be used by sub-agents")
+    tables_by_datasource: Optional[Dict[str, str]] = Field(
+        default=None,
+        description="Per-datasource table scopes; when set, unlisted datasources are inaccessible",
+    )
     metrics: Optional[str] = Field(default=None, init=True, description="Metrics to be used by sub-agents")
     sqls: Optional[str] = Field(default=None, init=True, description="Reference SQL to be used by sub-agents")
 
     @property
     def is_empty(self) -> bool:
-        return not self.tables and not self.metrics and not self.sqls
+        return self.tables_by_datasource is None and not self.tables and not self.metrics and not self.sqls
 
     def as_lists(self) -> ScopedContextLists:
         def _split(value: Optional[str]) -> List[str]:
@@ -122,7 +126,11 @@ class SubAgentConfig(BaseModel):
         return False
 
     def is_in_datasource(self, datasource: str) -> bool:
-        return self.has_scoped_context() and datasource == self.scoped_context.datasource
+        if not self.has_scoped_context():
+            return False
+        if self.scoped_context.tables_by_datasource is not None:
+            return datasource in self.scoped_context.tables_by_datasource
+        return datasource == self.scoped_context.datasource
 
     def with_effective_scoped_context(self, parent_sc: Optional[ScopedContext]) -> "SubAgentConfig":
         merged = merge_scoped_contexts(parent_sc, self.scoped_context)

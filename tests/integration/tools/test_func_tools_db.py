@@ -667,3 +667,62 @@ class TestSqlReadOnlyDeploymentAgainstRealSqlite:
 
         assert tool.execute_sql("INSERT INTO t (id, name) VALUES (2, 'added')").success == 1
         assert self._rows(db_path) == [(1, "original"), (2, "added")]
+
+
+@pytest.mark.acceptance
+def test_mixed_datasource_scopes_enforce_real_sqlite_and_duckdb_reads(tmp_path, monkeypatch):
+    """One tool routes two dialects while table scopes remain source-local."""
+    from types import SimpleNamespace
+    from unittest.mock import MagicMock
+
+    import duckdb
+
+    from datus.configuration.agent_config import DbConfig
+    from datus.schemas.agent_models import SubAgentConfig
+    from datus.tools.db_tools.db_manager import DBManager
+
+    sqlite_path = tmp_path / "sqlite_source.db"
+    duck_path = tmp_path / "duck_source.duckdb"
+    with sqlite3.connect(sqlite_path) as connection:
+        connection.execute("CREATE TABLE allowed(value TEXT)")
+        connection.execute("INSERT INTO allowed VALUES ('sqlite')")
+        connection.execute("CREATE TABLE secret(value TEXT)")
+    with duckdb.connect(str(duck_path)) as connection:
+        connection.execute("CREATE TABLE allowed(value VARCHAR)")
+        connection.execute("INSERT INTO allowed VALUES ('duckdb')")
+        connection.execute("CREATE TABLE secret(value VARCHAR)")
+    configs = {
+        "sqlite": DbConfig(type="sqlite", uri=str(sqlite_path)),
+        "duck": DbConfig(type="duckdb", uri=str(duck_path)),
+    }
+    node = SubAgentConfig(
+        scoped_context={
+            "datasource": "sqlite",
+            "tables": "sqlite_source.allowed",
+            "tables_by_datasource": {"sqlite": "sqlite_source.allowed", "duck": "duck_source.main.allowed"},
+        }
+    )
+    config = SimpleNamespace(
+        current_datasource="sqlite",
+        sql_read_only=True,
+        project_name="",
+        current_db_configs=lambda: configs,
+        active_plugin_names=lambda: set(),
+        sub_agent_config=lambda _: node,
+    )
+    monkeypatch.setattr("datus.tools.func_tool.database.metadata_fts_enabled", lambda _: False)
+    monkeypatch.setattr("datus.tools.func_tool.database.SchemaWithValueRAG", MagicMock())
+    monkeypatch.setattr("datus.tools.func_tool.database.SemanticDatasetRAG", MagicMock())
+    manager = DBManager(configs)
+    try:
+        tool = DBFuncTool(manager, agent_config=config, sub_agent_name="ask_dashboard", read_only=True)
+        for name, expected in [("sqlite", "sqlite"), ("duck", "duckdb")]:
+            result = tool.read_query("SELECT value FROM allowed", datasource=name, compress=False)
+            assert result.success == 1, result.error
+            assert result.result == [{"value": expected}]
+            denied = tool.read_query("SELECT value FROM secret", datasource=name, compress=False)
+            assert denied.success == 0
+            assert "outside scoped context" in denied.error
+    finally:
+        for name in configs:
+            manager.get_conn(name).close()

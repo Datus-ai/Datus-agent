@@ -3743,3 +3743,87 @@ class TestDatasourceIdentity:
         result = tool.get_datasource_identity()
         assert "path" not in result.result["identity"]
         assert result.result["identity_status"] == "unresolved"
+
+
+@pytest.mark.ci
+class TestDatasourceTableScopes:
+    """Mixed dialect scopes must follow the routed source and never OR across sources."""
+
+    @pytest.fixture(params=["sr", "mysql", "pg"])
+    def scoped_tool(self, request):
+        from datus.schemas.agent_models import SubAgentConfig
+
+        connectors = {
+            "sr": Mock(dialect="starrocks", catalog_name="default_catalog", database_name="analytics", schema_name=""),
+            "mysql": Mock(dialect="mysql", catalog_name="", database_name="sales", schema_name=""),
+            "pg": Mock(dialect="postgresql", catalog_name="", database_name="warehouse", schema_name="public"),
+            "unrelated": Mock(dialect="mysql", catalog_name="", database_name="private", schema_name=""),
+        }
+        scopes = {"sr": "default_catalog.analytics.*", "mysql": "sales.*", "pg": "warehouse.reporting.*"}
+        config = _mock_agent_config(current_datasource="unrelated", project_name="scope-test")
+        config.current_db_configs.return_value = {
+            name: DbConfig(type=connector.dialect) for name, connector in connectors.items()
+        }
+        config.sub_agent_config.return_value = SubAgentConfig(
+            scoped_context={
+                "datasource": request.param,
+                "tables": scopes[request.param],
+                "tables_by_datasource": scopes,
+            }
+        )
+        manager = Mock(spec=DBManager)
+        manager.get_conn.side_effect = lambda name, *args, **kwargs: connectors[name]
+        with (
+            patch("datus.tools.func_tool.database.metadata_fts_enabled", return_value=False),
+            patch("datus.tools.func_tool.database.SchemaWithValueRAG") as rag,
+            patch("datus.tools.func_tool.database.SemanticDatasetRAG") as semantic,
+        ):
+            rag.return_value.schema_store.table_size.return_value = 0
+            semantic.return_value.get_size.return_value = 0
+            tool = DBFuncTool(manager, agent_config=config, sub_agent_name="ask_dashboard")
+        return tool, connectors
+
+    @pytest.mark.parametrize(
+        ("source", "allowed", "denied"),
+        [
+            ("sr", "default_catalog.analytics.orders", "default_catalog.other.orders"),
+            ("mysql", "sales.orders", "analytics.orders"),
+            ("pg", "warehouse.reporting.orders", "warehouse.public.orders"),
+        ],
+    )
+    def test_sql_scopes_follow_each_sources_dialect(self, scoped_tool, source, allowed, denied):
+        tool, _ = scoped_tool
+        connector = tool._get_connector(source)
+        assert tool._check_sql_table_scope(f"SELECT * FROM {allowed}", connector) == []
+        denied_tables = tool._check_sql_table_scope(f"SELECT * FROM {denied}", connector)
+        assert denied_tables
+        assert all(name.endswith("orders") for name in denied_tables)
+
+    def test_secondary_metadata_uses_its_own_scope(self, scoped_tool):
+        tool, connectors = scoped_tool
+        connectors["pg"].get_schemas.return_value = ["reporting", "public"]
+        result = tool.list_schemas(database="warehouse", datasource="pg")
+        assert result.success == 1
+        assert result.result == ["reporting"]
+
+    def test_unlisted_source_is_refused(self, scoped_tool):
+        tool, _ = scoped_tool
+        with pytest.raises(DatusException, match="scoped context"):
+            tool._get_connector("unrelated")
+
+    def test_persisted_query_cannot_bypass_source_scope(self, scoped_tool):
+        tool, _ = scoped_tool
+        with pytest.raises(DatusException, match="scoped context"):
+            tool.connector_for_execution_context({"datasource": "unrelated", "database": "private"})
+
+
+@pytest.mark.ci
+def test_malformed_source_scopes_cannot_degrade_into_an_unscoped_tool():
+    tool = object.__new__(DBFuncTool)
+    tool.agent_config = SimpleNamespace(
+        sub_agent_config=lambda _: {
+            "scoped_context": {"tables_by_datasource": {"sr": ["default_catalog.analytics.*"]}},
+        }
+    )
+    with pytest.raises(DatusException, match="refusing unscoped"):
+        tool._load_sub_agent_config("ask_dashboard")
