@@ -4755,7 +4755,8 @@ class AgenticNode(Node):
         transformers, a failure to apply them raises: transformers are policy
         code, and running without them would silently drop enforcement.
         """
-        self._filter_permission_denied_tools()
+        if getattr(getattr(self, "agent_config", None), "restrict_tool_visibility", False) is True:
+            self._filter_permission_denied_tools()
         # Defensive getattr: test doubles that bypass ``AgenticNode.__init__``
         # may carry neither the flag nor an agent_config (same rationale as the
         # ``interaction_broker`` getattr in ``_stream_once``).
