@@ -948,7 +948,119 @@ def _finish_table(
     )
 
 
-def inspect_file(path: Path, *, connection: Any, sheet: Optional[str] = None) -> Dict[str, Any]:
+def _inspect_spreadsheet(
+    path: Path, *, sheet: Optional[str], cell_range: Optional[str], include: Optional[List[str]]
+) -> Dict[str, Any]:
+    """Read bounded cell evidence. Header and business interpretation belong to the caller."""
+    from openpyxl import load_workbook
+    from openpyxl.utils.cell import range_boundaries
+
+    fields = set(include or ["values"])
+    unknown = fields - {"values", "formulas", "formats", "merges"}
+    if unknown:
+        raise DataFileError(f"Unknown include fields: {sorted(unknown)}. Use values, formulas, formats, merges.")
+    bounds = None
+    if cell_range:
+        if not re.fullmatch(r"[A-Za-z]{1,3}[1-9][0-9]*(?::[A-Za-z]{1,3}[1-9][0-9]*)?", cell_range):
+            raise DataFileError("range must be an A1 cell or rectangle, for example CU1:CX10.")
+        bounds = range_boundaries(cell_range.upper())
+        left, top, right, bottom = bounds
+        if right > 16384 or bottom > 1048576 or right < left or bottom < top:
+            raise DataFileError("range is reversed or exceeds Excel worksheet limits.")
+        if (right - left + 1) * (bottom - top + 1) > 4096:
+            raise DataFileError("Inspect at most 4096 cells at a time; request a smaller range.")
+
+    # Only merge inspection needs the full worksheet model. Values and formula
+    # inspection can stream; cached results are read separately, never recalculated.
+    workbook = load_workbook(path, read_only="merges" not in fields, data_only=False)
+    cached = None
+    try:
+        if sheet and sheet not in workbook.sheetnames:
+            raise DataFileError(f"Sheet {sheet!r} not found in {path.name}. Available: {workbook.sheetnames}")
+        if bounds and not sheet:
+            raise DataFileError("Specify sheet when inspecting a range.")
+        if "values" in fields:
+            cached = load_workbook(path, read_only=True, data_only=True)
+        details = []
+        for name in [sheet] if sheet else workbook.sheetnames:
+            worksheet = workbook[name]
+            max_row, max_column = sheet_bounds(path, name)
+            info: Dict[str, Any] = {
+                "sheet": name,
+                "state": worksheet.sheet_state,
+                "used_rows": max_row,
+                "used_columns": max_column,
+            }
+            if not max_row or not max_column:
+                info["empty"] = True
+                details.append(info)
+                continue
+            left, top, right, bottom = bounds or (
+                1,
+                1,
+                min(max_column, HEADER_PROBE_COLUMN_LIMIT),
+                min(max_row, HEADER_PROBE_ROW_LIMIT),
+            )
+            info["range"] = f"{column_letter(left)}{top}:{column_letter(right)}{bottom}"
+            info["has_more_rows"] = bottom < max_row
+            info["has_more_columns"] = right < max_column
+            cell_metadata = bool(fields & {"formulas", "formats"})
+            if cell_metadata:
+                info["cells"] = []
+            raw_rows = []
+            cached_rows = (
+                iter(cached[name].iter_rows(min_row=top, max_row=bottom, min_col=left, max_col=right))
+                if cached
+                else None
+            )
+            for row in worksheet.iter_rows(min_row=top, max_row=bottom, min_col=left, max_col=right):
+                values = next(cached_rows) if cached_rows is not None else None
+                raw_row = []
+                for index, cell in enumerate(row):
+                    address = f"{column_letter(left + index)}{top + len(raw_rows)}"
+                    evidence: Dict[str, Any] = {"address": address}
+                    if "values" in fields:
+                        evidence["value"] = _jsonable(values[index].value)
+                        raw_row.append(evidence["value"])
+                    if "formulas" in fields:
+                        formula = cell.value if cell.data_type == "f" else None
+                        # openpyxl exposes array formulas as objects rather than strings.
+                        evidence["formula"] = getattr(formula, "text", formula)
+                    if "formats" in fields:
+                        evidence["number_format"] = cell.number_format
+                        evidence["data_type"] = cell.data_type
+                    if cell_metadata:
+                        info["cells"].append(evidence)
+                raw_rows.append(raw_row)
+            if "values" in fields:
+                info["raw_rows"] = raw_rows
+                if not bounds:
+                    info["detected_header_row"] = detect_header_row(raw_rows)
+            if "merges" in fields:
+                info["merged_ranges"] = [
+                    str(merged)
+                    for merged in worksheet.merged_cells.ranges
+                    if merged.min_col <= right
+                    and merged.max_col >= left
+                    and merged.min_row <= bottom
+                    and merged.max_row >= top
+                ]
+            details.append(info)
+        return {"sheets": workbook.sheetnames, "sheet_details": details}
+    finally:
+        workbook.close()
+        if cached is not None:
+            cached.close()
+
+
+def inspect_file(
+    path: Path,
+    *,
+    connection: Any,
+    sheet: Optional[str] = None,
+    cell_range: Optional[str] = None,
+    include: Optional[List[str]] = None,
+) -> Dict[str, Any]:
     """Describe a file without creating anything.
 
     The point is the *un-interpreted* grid for spreadsheets: when the header
@@ -959,29 +1071,11 @@ def inspect_file(path: Path, *, connection: Any, sheet: Optional[str] = None) ->
     result: Dict[str, Any] = {"file": path.name, "format": suffix.lstrip(".")}
 
     if suffix in _EXCEL_SUFFIXES:
-        sheets = enumerate_sheets(path)
-        result["sheets"] = sheets
-        targets = [sheet] if sheet else sheets
-        grids = []
-        for name in targets:
-            if name not in sheets:
-                raise DataFileError(f"Sheet {name!r} not found in {path.name}. Available: {sheets}")
-            max_row, max_column = sheet_bounds(path, name)
-            if max_row < 1 or max_column < 1:
-                grids.append({"sheet": name, "empty": True})
-                continue
-            grid = _probe_grid(connection, path, name, max_row, max_column)
-            grids.append(
-                {
-                    "sheet": name,
-                    "used_rows": max_row,
-                    "used_columns": max_column,
-                    "detected_header_row": detect_header_row(grid),
-                    "raw_rows": [[_jsonable(cell) for cell in row] for row in grid],
-                }
-            )
-        result["sheet_details"] = grids
+        result.update(_inspect_spreadsheet(path, sheet=sheet, cell_range=cell_range, include=include))
         return result
+
+    if cell_range or include:
+        raise DataFileError("range and include are supported only for .xlsx/.xlsm inspection.")
 
     if suffix in _CSV_SUFFIXES:
         detected = detect_csv_encoding(path)

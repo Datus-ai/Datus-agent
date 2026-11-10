@@ -779,3 +779,105 @@ class TestTextDateHints:
         """``TRY_CAST('2017' AS DATE)`` is NULL, so a year column stays un-hinted."""
         column = self._profile(connection, ["2017", "2018"])
         assert "cast_hint" not in column
+
+
+class TestSpreadsheetEvidence:
+    """Inspection returns coordinates and source evidence without running SQL or guessing a layout."""
+
+    @pytest.fixture
+    def source(self, tmp_path):
+        import openpyxl
+
+        workbook = openpyxl.Workbook()
+        sheet = workbook.active
+        sheet.title = "Projects"
+        sheet.merge_cells("A1:CX1")
+        sheet["A1"] = "Quarterly costs"
+        sheet["A3"] = "Basic information"
+        sheet["B3"] = "Costs"
+        sheet["A4"] = "Project code"
+        sheet["B4"] = "Cost"
+        sheet["A5"] = "Subtotal"
+        sheet["CU5"] = "Management type"
+        sheet["CV5"] = "Region"
+        sheet["CW5"] = "Owner"
+        sheet["A6"] = "0012"
+        sheet["B6"] = 120
+        sheet["C6"] = "=B6/10000"
+        sheet["C6"].number_format = "0.00%"
+        sheet["CU6"] = "Direct"
+        sheet["CV6"] = "East"
+        sheet["CX6"] = "=IF(B6>0,1,0)"
+        sheet["A60"] = "Last project"
+        sheet["D200"].number_format = "0.00"
+        hidden = workbook.create_sheet("Reserved")
+        hidden.sheet_state = "hidden"
+        path = tmp_path / "costs.xlsx"
+        workbook.save(path)
+        return path
+
+    def test_default_discovery_reports_extent_visibility_and_more_regions(self, source, connection):
+        result = inspect_file(source, connection=connection)
+        detail, reserved = result["sheet_details"]
+        assert result["sheets"] == ["Projects", "Reserved"]
+        assert (detail["used_rows"], detail["used_columns"]) == (60, 102)
+        assert detail["range"] == "A1:BL30"
+        assert detail["has_more_columns"] and detail["has_more_rows"]
+        assert detail["raw_rows"][4][0] == "Subtotal"
+        assert reserved["state"] == "hidden" and reserved["empty"]
+        assert registered_objects(connection) == {}
+
+    def test_right_hand_staggered_headers_can_be_discovered(self, source, connection):
+        result = inspect_file(source, connection=connection, sheet="Projects", cell_range="cu5:cx6")
+        detail = result["sheet_details"][0]
+        assert detail["range"] == "CU5:CX6"
+        assert detail["raw_rows"][0] == ["Management type", "Region", "Owner", None]
+        assert detail["raw_rows"][1] == ["Direct", "East", None, None]
+
+    def test_formulas_formats_merges_and_missing_caches_are_source_evidence(self, source, connection):
+        result = inspect_file(
+            source,
+            connection=connection,
+            sheet="Projects",
+            cell_range="A1:D6",
+            include=["values", "formulas", "formats", "merges"],
+        )
+        detail = result["sheet_details"][0]
+        cells = {cell["address"]: cell for cell in detail["cells"]}
+        assert cells["A6"]["value"] == "0012"
+        assert cells["B6"]["value"] == 120
+        assert cells["C6"] == {
+            "address": "C6",
+            "value": None,
+            "formula": "=B6/10000",
+            "number_format": "0.00%",
+            "data_type": "f",
+        }
+        assert detail["merged_ranges"] == ["A1:CX1"]
+        assert registered_objects(connection) == {}
+
+    def test_a_single_cell_and_later_rows_are_addressable(self, source, connection):
+        result = inspect_file(
+            source, connection=connection, sheet="Projects", cell_range="A60", include=["formulas", "formats"]
+        )
+        detail = result["sheet_details"][0]
+        assert detail["cells"][0] == {"address": "A60", "formula": None, "number_format": "General", "data_type": "s"}
+
+    @pytest.mark.parametrize("region", ["A0:B2", "A:A", "B2:A1", "XFE1", "A1048577", "A1:CX100", "A1;DROP TABLE t"])
+    def test_invalid_or_unbounded_ranges_are_rejected(self, source, connection, region):
+        with pytest.raises(DataFileError):
+            inspect_file(source, connection=connection, sheet="Projects", cell_range=region)
+
+    def test_range_requires_a_sheet_and_unknown_options_are_rejected(self, source, connection):
+        with pytest.raises(DataFileError, match="Specify sheet"):
+            inspect_file(source, connection=connection, cell_range="A1:B2")
+        with pytest.raises(DataFileError, match="Unknown include"):
+            inspect_file(source, connection=connection, include=["execute"])
+        with pytest.raises(DataFileError, match="Available"):
+            inspect_file(source, connection=connection, sheet="Missing")
+
+    def test_spreadsheet_options_are_not_silently_ignored_for_csv(self, tmp_path, connection):
+        path = tmp_path / "records.csv"
+        path.write_text("id,cost\n1,2\n")
+        with pytest.raises(DataFileError, match="only for .xlsx"):
+            inspect_file(path, connection=connection, cell_range="A1:B2")

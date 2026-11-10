@@ -3332,6 +3332,40 @@ class TestHeaderRowNormalisation:
         silently auto-detecting would hide a caller bug."""
         assert self._capture(tmp_path, header_row=-1)["header_row"] == -1
 
+    def test_inspection_passes_region_and_evidence_options(self, tmp_path):
+        from types import SimpleNamespace
+
+        tool = self._tool()
+        book = tmp_path / "book.xlsx"
+        book.write_bytes(b"")
+        tool._resolve_data_file = lambda path: SimpleNamespace(resolved=book, display=path)
+        with patch("datus.tools.func_tool.database.inspect_file", return_value={"sheet_details": []}) as inspect:
+            result = tool.load_file_as_table(
+                path="book.xlsx",
+                sheet="Projects",
+                inspect_only=True,
+                range="CU1:CX10",
+                include=["values", "formulas", "merges"],
+            )
+        assert result.success == 1
+        assert result.result == {"sheet_details": []}
+        assert inspect.call_args.kwargs["cell_range"] == "CU1:CX10"
+        assert inspect.call_args.kwargs["include"] == ["values", "formulas", "merges"]
+        assert inspect.call_args.kwargs["sheet"] == "Projects"
+
+    def test_load_does_not_silently_ignore_inspection_options(self, tmp_path):
+        from types import SimpleNamespace
+
+        tool = self._tool()
+        book = tmp_path / "book.xlsx"
+        book.write_bytes(b"")
+        tool._resolve_data_file = lambda path: SimpleNamespace(resolved=book, display=path)
+        with patch("datus.tools.func_tool.database.load_file") as load:
+            result = tool.load_file_as_table(path="book.xlsx", range="A1:B2")
+        assert result.success == 0
+        assert "inspect_only=true" in result.error
+        load.assert_not_called()
+
 
 @pytest.mark.asyncio
 async def test_registered_sql_timeout_is_structured_and_late_worker_cannot_replace_it(monkeypatch):

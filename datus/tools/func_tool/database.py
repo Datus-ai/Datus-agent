@@ -2063,6 +2063,8 @@ class DBFuncTool:
         encoding: Optional[str] = "",
         materialize: bool = False,
         inspect_only: bool = False,
+        range: Optional[str] = "",
+        include: Optional[List[str]] = None,
     ) -> FuncToolResult:
         """
         Register an uploaded data file as queryable SQL table(s).
@@ -2105,6 +2107,14 @@ class DBFuncTool:
             inspect_only: Register nothing; return the sheet list and the raw
                 un-parsed top-left cells. Use it to work out the right
                 ``header_row`` for an awkward layout.
+            range: Inspection only, .xlsx/.xlsm: an A1 cell or rectangle such as
+                CU1:CX10. Requires sheet; at most 4096 cells. Omit to inspect the
+                first 30 rows and 64 columns, then follow has_more_* as needed.
+            include: Inspection only, .xlsx/.xlsm: any of values, formulas,
+                formats, merges. Defaults to values. Returns cell coordinates,
+                cached values (no recalculation), formula text, number formats
+                and intersecting merge ranges as requested. Header detection is
+                a heuristic; interpret the evidence before choosing header_row.
 
         Returns:
             dict: A dictionary with the execution result, containing these keys:
@@ -2180,8 +2190,17 @@ class DBFuncTool:
 
             with exclusive() as connection:
                 if inspect_only:
-                    details = inspect_file(target, connection=connection, sheet=sheet or None)
+                    details = inspect_file(
+                        target,
+                        connection=connection,
+                        sheet=sheet or None,
+                        cell_range=range or None,
+                        include=include,
+                    )
                     return FuncToolResult(result=details)
+
+                if range or include:
+                    return FuncToolResult(success=0, error="range and include require inspect_only=true.")
 
                 loaded, skipped = load_file(
                     target,
