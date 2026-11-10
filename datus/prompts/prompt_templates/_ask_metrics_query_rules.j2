@@ -2,6 +2,11 @@
 {% if "attribution_analyze" in tools %}
 ## Attribution Playbook
 
+- Use supplied business knowledge and metric/dataset descriptions to guide candidate dimensions and follow-up questions.
+{% if "read_file" in tools or "glob" in tools or "grep" in tools %}
+- When relevant business background is missing, consider a targeted project-file lookup using the available context tools. Reuse evidence already supplied; a file lookup is not a mandatory step before attribution.
+{% endif %}
+- Distinguish measured dimension contributions from business explanations. Documented events may support an explanation, but do not establish causation by themselves; label unverified causes as hypotheses.
 - Use the fields of the datasets under `get_metric`'s `dimension_datasets`{% if "get_dataset" in tools %} (see `get_dataset`){% endif %} to choose 3-5 low-cardinality categorical candidates. Exclude time dimensions and numeric measures, IDs, or high-cardinality fields unless the user explicitly needs one.
 - Use equal-length baseline and current windows. If the result contains `unequal_windows`, disclose that values were not normalized before comparing them.
 - Read the observed change from `total_change`. If `strategy` is `unsupported`, disclose `unsupported_reason` and do not give a dimension-attribution conclusion.
