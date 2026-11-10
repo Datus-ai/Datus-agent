@@ -41,6 +41,7 @@ from datus.api.services.action_sse_converter import (
 )
 from datus.api.services.background_drain import track_background_task
 from datus.api.services.chat_extensions import ChatNodeFactory
+from datus.api.services.semantic_model_diff import SemanticModelSnapshot
 from datus.api.services.turn_stats import TurnStatsCollector, resolve_subagent
 from datus.cli.autocomplete import AtReferenceCompleter
 from datus.cli.execution_state import PendingInputQueue
@@ -819,9 +820,66 @@ class ChatTaskManager:
         # own snapshot when its stream closes, which on a cancel or a crash is
         # before this method's ``finally`` runs — so keep a copy to bill from.
         last_usage = None
+        semantic_snapshot = None
+        semantic_diff_task: Optional[asyncio.Task[None]] = None
+
+        async def publish_semantic_diff() -> None:
+            """Compare settled YAML snapshots and append a live-only SSE message."""
+            nonlocal event_id
+            try:
+                changes = await asyncio.to_thread(semantic_snapshot.changes)
+                if not changes:
+                    return
+                # Buffered for SSE resume only. Never add this to the node's action
+                # history or task.message_contents: opening history must not replay it.
+                await self._push_event(
+                    task,
+                    SSEEvent(
+                        id=event_id,
+                        event="message",
+                        data=SSEMessageData(
+                            type=SSEDataType.CREATE_MESSAGE,
+                            payload=SSEMessagePayload(
+                                message_id=f"semantic-model-diff:{turn_id}",
+                                role="assistant",
+                                content=[
+                                    IMessageContent(
+                                        type="semantic-model-diff",
+                                        payload={"turnId": turn_id, "files": changes},
+                                    )
+                                ],
+                            ),
+                        ),
+                        timestamp=now_utc_iso(),
+                    ),
+                )
+                event_id += 1
+            except Exception:
+                logger.warning("Failed to emit semantic model diff for session %s", session_id, exc_info=True)
+
+        async def emit_semantic_diff(*, finish_on_cancel: bool = False) -> None:
+            """Reuse one publisher and drain it despite cancellation during terminal cleanup."""
+            nonlocal semantic_diff_task
+            if semantic_snapshot is None:
+                return
+            if semantic_diff_task is None:
+                semantic_diff_task = asyncio.create_task(publish_semantic_diff())
+
+            while True:
+                try:
+                    await asyncio.shield(semantic_diff_task)
+                    return
+                except asyncio.CancelledError:
+                    if not finish_on_cancel:
+                        raise
+                    if semantic_diff_task.cancelled():
+                        logger.warning("Semantic model diff publisher was cancelled for session %s", session_id)
+                        return
 
         try:
             start_time = datetime.now()
+            if (request.source or self._default_source) == "web":
+                semantic_snapshot = await asyncio.to_thread(SemanticModelSnapshot.capture, agent_config.project_root)
 
             # Snapshot the turn counter BEFORE the run so the @-context persist
             # below only fires when this run actually adds a new user turn.
@@ -1246,6 +1304,9 @@ class ChatTaskManager:
 
             await self._persist_message_contents(task, agent_config, node.session_id, user_id)
 
+            # Compare only after every pass, host finalization and rollback has finished.
+            await emit_semantic_diff()
+
             # 7. End event
             token_kwargs: dict = {}
             try:
@@ -1275,10 +1336,12 @@ class ChatTaskManager:
                 task.status = "completed"
 
         except asyncio.CancelledError:
+            await emit_semantic_diff(finish_on_cancel=True)
             task.status = "cancelled"
 
         except Exception as e:
             logger.error(f"Chat task error for session {session_id}: {e}")
+            await emit_semantic_diff(finish_on_cancel=True)
             task.status = "error"
             task.error = str(e)
             await self._push_event(
