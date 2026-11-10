@@ -32,8 +32,9 @@ def main():
     print(json.dumps(plan, indent=2))
     if output := os.environ.get("GITHUB_OUTPUT"):
         with open(output, "a") as handle:
-            handle.write(f"required={str(bool(plan['live_targets'])).lower()}\n")
+            handle.write(f"required={str(bool(plan['live_targets'] or plan['nightly_groups'])).lower()}\n")
             handle.write(f"targets={json.dumps(plan['live_targets'])}\n")
+            handle.write(f"nightly_groups={json.dumps(plan['nightly_groups'])}\n")
 
 
 if __name__ == "__main__":

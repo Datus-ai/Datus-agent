@@ -2,6 +2,7 @@
 
 import json
 import os
+import re
 import subprocess
 import sys
 
@@ -14,6 +15,7 @@ from ci.harness.test_plan import (
     check_product_execution,
     impact_plan,
     load_map,
+    product_group_filter,
     unit_test_plan,
     validate_unit_rules,
 )
@@ -57,6 +59,20 @@ def test_storage_changes_select_required_postgresql_acceptance(path):
 
 def test_documentation_changes_have_no_remote_model_requirement():
     assert impact_plan(["docs/index.md"])["live_targets"] == []
+
+
+def test_policy_changes_select_p0_without_requiring_remote_models(tmp_path):
+    plan = impact_plan(["datus/plugins/store.py"])
+    assert plan["live_targets"] == []
+    assert "P0 SQL Policy Plugin Contracts" in plan["nightly_groups"]
+    from ci.p0_plan import load_profile
+
+    nodes = load_profile()["groups"]["P0 SQL Policy Plugin Contracts"]["nodeids"]
+    report = tmp_path / "execution.json"
+    report.write_text(json.dumps({"collected": nodes, "outcomes": {node: "passed" for node in nodes}, "exit_code": 0}))
+    assert check_product_execution(plan, [report])["status"] == "success"
+    assert re.search(product_group_filter(plan), "P0 SQL Policy Plugin Contracts")
+    assert not re.search(product_group_filter(plan), "Product E2E Nightly Tests")
 
 
 @pytest.mark.parametrize(
@@ -121,6 +137,7 @@ def test_unit_owners_cover_all_visible_test_consumers():
             "datus/configuration/logging_config.py",
             {
                 "tests/unit_tests/configuration/test_logging_config.py",
+                "tests/unit_tests/plugins/test_runtime_context.py",
                 "tests/unit_tests/utils/test_loggings.py",
                 "tests/unit_tests/observability/test_privacy.py",
                 "tests/unit_tests/agent/node/test_node.py",

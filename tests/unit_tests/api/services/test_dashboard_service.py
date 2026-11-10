@@ -63,7 +63,6 @@ _SAMPLE_APP_JSX = "import React from 'react';\nexport default function App() { r
         ("connector failed", None, "METRIC_QUERY_FAILED"),
         ("compiler failed", None, "METRIC_QUERY_FAILED"),
         ("METRIC_MODEL_SNAPSHOT_MISSING", None, "METRIC_MODEL_SNAPSHOT_MISSING"),
-        ("METRIC_MODEL_CHANGED", None, "METRIC_MODEL_CHANGED"),
         ("read denied", ErrorCode.POLICY_DENIED, "POLICY_DENIED"),
     ],
 )

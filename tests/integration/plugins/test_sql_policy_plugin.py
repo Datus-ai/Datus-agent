@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -125,7 +126,7 @@ def _request(policy_context: dict) -> Request:
 @pytest.mark.timeout(300)
 @pytest.mark.asyncio
 async def test_managed_sql_policy_enforces_sql_semantic_and_api_reads(
-    p0_external_sources,
+    sql_policy_source,
     managed_plugin_runtime,
     tmp_path,
 ):
@@ -133,7 +134,7 @@ async def test_managed_sql_policy_enforces_sql_semantic_and_api_reads(
     assert importlib.util.find_spec("datus_sql_policies") is None, (
         "P0 must not have a globally installed datus-sql-policies fallback"
     )
-    installed = managed_plugin_runtime.install(p0_external_sources.sql_policies)
+    installed = managed_plugin_runtime.install(sql_policy_source)
     assert "sql-policy" in installed.stdout
 
     database = tmp_path / "orders.duckdb"
@@ -181,6 +182,10 @@ async def test_managed_sql_policy_enforces_sql_semantic_and_api_reads(
         assert plugin_spec is not None and plugin_spec.origin
         managed_plugin_dir = datus_home / "plugins" / "sql-policy"
         assert Path(plugin_spec.origin).resolve().is_relative_to(managed_plugin_dir.resolve())
+        if wheel := os.environ.get("DATUS_SQL_POLICY_WHEEL"):
+            from ci.release_artifact import verify_wheel_payload
+
+            verify_wheel_payload(Path(wheel), managed_plugin_dir, "datus_sql_policies")
 
         scoped = _scoped_context()
         config.policy_context = scoped

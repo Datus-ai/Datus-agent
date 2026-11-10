@@ -1,6 +1,7 @@
 """Record collected and executed nodeids, including xdist skips and crashes."""
 
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -37,7 +38,11 @@ def pytest_runtest_logreport(report):
 def pytest_sessionfinish(session, exitstatus):
     target = session.config.getoption("--gate-report")
     if target and not hasattr(session.config, "workerinput"):
+        identity = {"source_id": os.environ["DATUS_GATE_SOURCE_ID"]} if os.environ.get("DATUS_GATE_SOURCE_ID") else {}
         Path(target).write_text(
-            json.dumps({"collected": sorted(_collected), "outcomes": _outcomes, "exit_code": int(exitstatus)}, indent=2)
+            json.dumps(
+                {"collected": sorted(_collected), "outcomes": _outcomes, "exit_code": int(exitstatus), **identity},
+                indent=2,
+            )
             + "\n"
         )

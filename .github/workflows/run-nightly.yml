@@ -76,7 +76,19 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  sql-policy-cold-contract:
+    if: ${{ github.event_name == 'schedule' && inputs.test_profile != 'p0' }}
+    uses: ./.github/workflows/sql-policy-gate.yml
+    with:
+      agent_ref: ${{ inputs.datus_agent_ref || github.sha }}
+      policy_ref: main
+      cold: true
+    secrets:
+      RELEASE_BOT_TOKEN: ${{ secrets.RELEASE_BOT_TOKEN }}
+
   run-nightly:
+    needs: sql-policy-cold-contract
+    if: ${{ !cancelled() }}
     runs-on: self-hosted
     env:
       DATUS_AGENT_REF: ${{ inputs.datus_agent_ref || github.ref_name }}
@@ -222,6 +234,19 @@ jobs:
           persist-credentials: false
           token: ${{ secrets.RELEASE_BOT_TOKEN }}
 
+      - name: Fetch SQL policy native build dependencies
+        env:
+          PRIVATE_REPO_TOKEN: ${{ secrets.RELEASE_BOT_TOKEN }}
+          CARGO_NET_GIT_FETCH_WITH_CLI: "true"
+          GIT_TERMINAL_PROMPT: "0"
+          GIT_CONFIG_COUNT: "1"
+          GIT_CONFIG_KEY_0: credential.https://github.com/Datus-ai/osi-engine.helper
+          GIT_CONFIG_VALUE_0: '!f() { printf "username=x-access-token\npassword=%s\n" "$PRIVATE_REPO_TOKEN"; }; f'
+        run: |
+          if [ -f external/datus-sql-policies/Cargo.toml ]; then
+            cargo fetch --locked --manifest-path external/datus-sql-policies/Cargo.toml
+          fi
+
       # Source checkouts of datus-gaussdb carry no vendored libpq (wheels get
       # it at release-build time); without it the gaussdb driver binds the
       # runner's vanilla PostgreSQL libpq and segfaults the pytest process.
@@ -331,6 +356,16 @@ jobs:
             --external-repos-root "$GITHUB_WORKSPACE/external"
           uv pip check
           uv run --no-sync playwright install --with-deps chromium
+
+      - name: Build SQL policy native source wheel cache
+        timeout-minutes: 15
+        run: |
+          if [ -f external/datus-sql-policies/Cargo.toml ]; then
+            native_build_root="$(mktemp -d "$RUNNER_TEMP/datus-sql-policy-build.XXXXXX")"
+            trap 'rm -rf "$native_build_root"' EXIT
+            uv pip install --python .venv/bin/python --no-deps \
+              --target "$native_build_root" ./external/datus-sql-policies
+          fi
 
       - name: Ensure Docker runtime
         env:
@@ -679,6 +714,7 @@ jobs:
               [ ! -f "$path" ] || cp "$path" "$GITHUB_WORKSPACE/"
             done
             cp -R ci/p0-execution* "$GITHUB_WORKSPACE/ci/"
+            if [ -d nightly-bi-evidence ]; then cp -R nightly-bi-evidence "$GITHUB_WORKSPACE/"; fi
           fi
           exit "$status"
 
@@ -706,6 +742,7 @@ jobs:
             ci/product-execution-coverage.json
             nightly-failure-classification.json
             provider-coverage-manifest.json
+            nightly-bi-evidence/*.json
             nightly-trace-references.jsonl
             nightly-trace-summary.jsonl
             nightly-process-diagnostics.json
@@ -746,16 +783,21 @@ jobs:
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
-            const { buildNightlyFeishuMessage } = require('./ci/format-nightly-feishu-report');
+            const { buildNightlyFeishuMessage, nightlyStatus } = require('./ci/format-nightly-feishu-report');
 
-            const testStatus = '${{ steps.nightly_tests.outputs.test_exit_code }}' === '0' ? 'PASSED' : 'FAILED';
+            const coldResult = '${{ needs.sql-policy-cold-contract.result }}';
+            const testStatus = nightlyStatus(
+              '${{ steps.nightly_tests.outputs.test_exit_code }}',
+              coldResult,
+              '${{ github.event_name == 'schedule' && inputs.test_profile != 'p0' }}' === 'true',
+            );
             const today = new Date().toISOString().split('T')[0];
             const messageBody = buildNightlyFeishuMessage({
               status: testStatus,
               runNumber: '${{ github.run_number }}',
               runUrl: '${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}',
               date: today,
-            });
+            }) + `\nSQL policy build contract: ${coldResult}`;
 
             // Send to Feishu
             const https = require('https');

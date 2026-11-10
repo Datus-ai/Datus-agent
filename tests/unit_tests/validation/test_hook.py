@@ -636,3 +636,42 @@ class TestSchedulerRuntimeValidation:
         await hook.on_end(None, None, None)
 
         assert hook.final_report.has_blocking_failure()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("deleted,success", [(True, 1), (False, 1), (True, 0)])
+async def test_deleted_chart_removes_only_matching_platform_and_resource(deleted, success):
+    from datus.validation import DashboardTarget
+
+    hook = _make_hook(FakeDBFuncTool(exists=True, rows=3))
+    hook._session_targets = [
+        ChartTarget(platform="superset", chart_id="3", dashboard_id="1"),
+        ChartTarget(platform="superset", chart_id="3", dashboard_id="2"),
+        ChartTarget(platform="grafana", chart_id="3", dashboard_id="1"),
+        ChartTarget(platform="superset", chart_id="4", dashboard_id="1"),
+        DashboardTarget(platform="superset", dashboard_id="1"),
+    ]
+    await hook.on_tool_end(
+        None,
+        None,
+        None,
+        {
+            "success": success,
+            "result": {
+                "deleted": deleted,
+                "deleted_deliverable": {"type": "chart", "platform": "superset", "chart_id": "3"},
+            },
+        },
+    )
+    assert len(hook.session_targets) == (3 if deleted and success else 5)
+
+
+@pytest.mark.asyncio
+async def test_chart_update_preserves_each_dashboard_context_without_duplicate_targets():
+    hook = _make_hook(FakeDBFuncTool(exists=True, rows=3))
+    for dashboard in ["1", "2", None, "1"]:
+        target = ChartTarget(platform="superset", chart_id="3", dashboard_id=dashboard, chart_name="Revenue")
+        await hook.on_tool_end(None, None, None, FakeToolResult({"deliverable_target": target.model_dump()}))
+    assert len(hook.session_targets) == 2
+    assert {target.dashboard_id for target in hook.session_targets} == {"1", "2"}
+    assert all(target.chart_name == "Revenue" for target in hook.session_targets)

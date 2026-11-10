@@ -1425,6 +1425,7 @@ execution:
       paths:
         - datus/agent/node/
       targets:
+        - tests/unit_tests/ci/test_bi_diagnostics.py
         - tests/unit_tests/agent/
         - tests/unit_tests/api/
         - tests/unit_tests/cli/
@@ -1437,6 +1438,7 @@ execution:
       paths:
         - datus/agent/
       targets:
+        - tests/unit_tests/ci/test_bi_diagnostics.py
         - tests/unit_tests/agent/
         - tests/unit_tests/api/
         - tests/unit_tests/cli/
@@ -1563,6 +1565,7 @@ execution:
       paths:
         - datus/observability/
       targets:
+        - tests/unit_tests/ci/test_bi_diagnostics.py
         - tests/unit_tests/agent/
         - tests/unit_tests/api/
         - tests/unit_tests/models/
@@ -1671,6 +1674,7 @@ execution:
       paths:
         - datus/tools/func_tool/
       targets:
+        - tests/unit_tests/ci/test_bi_diagnostics.py
         - tests/unit_tests/agent/
         - tests/unit_tests/api/
         - tests/unit_tests/cli/
@@ -1867,6 +1871,7 @@ execution:
         - tests/unit_tests/agent/node/test_node.py
         - tests/unit_tests/agent/node/test_schema_linking.py
         - tests/unit_tests/configuration/test_logging_config.py
+        - tests/unit_tests/plugins/test_runtime_context.py
         - tests/unit_tests/observability/test_capability_evidence.py
         - tests/unit_tests/observability/test_privacy.py
         - tests/unit_tests/schemas/test_input_result.py
@@ -2058,6 +2063,7 @@ execution:
       paths:
         - datus/tools/func_tool/base.py
       targets:
+        - tests/unit_tests/ci/test_bi_diagnostics.py
         - tests/unit_tests/agent/node/
         - tests/unit_tests/api/
         - tests/unit_tests/cli/
@@ -2083,6 +2089,38 @@ execution:
         - tests/unit_tests/test_saas_adaptation.py
         - tests/unit_tests/tools/func_tool/
   impact_rules:
+    - id: sql-policy-host
+      paths:
+        - datus/plugins/
+        - datus/tools/policy_runtime.py
+        - datus/tools/func_tool/database.py
+        - datus/tools/db_tools/
+        - datus/tools/semantic_tools/dosi/
+        - datus/api/auth/
+        - datus/api/routes/chat_routes.py
+        - datus/cli/plugin_service.py
+        - datus/cli/plugin_cli.py
+        - datus/configuration/agent_config.py
+        - tests/integration/conftest.py
+        - tests/integration/plugins/test_sql_policy_plugin.py
+        - tests/conftest.py
+        - pyproject.toml
+        - uv.lock
+        - ci/harness/p0.yml
+        - ci/harness/coverage-map.yml
+        - ci/harness/test_plan.py
+        - ci/plan-product-tests.py
+        - ci/harness/sql-policy-host.json
+        - ci/sql_policy_gate.py
+        - ci/release_artifact.py
+        - ci/pytest_gate_plugin.py
+        - ci/p0_plan.py
+        - ci/stage_p0.py
+        - ci/run-nightly-tests.sh
+        - .github/workflows/sql-policy-gate.yml
+        - .github/workflows/merge-queue.yml
+        - .github/workflows/run-nightly.yml
+      nightly_groups: [P0 SQL Policy Plugin Contracts]
     - id: model-runtime
       paths: [datus/models/, conf/, pyproject.toml, uv.lock]
       live_targets: [tests/integration/agent/test_core_live.py]
@@ -2131,7 +2169,20 @@ execution:
       paths: [datus/agent/node/gen_table_agentic_node.py, tests/integration/agent/test_gen_table_agentic.py]
       live_targets: [tests/integration/agent/test_gen_table_agentic.py]
     - id: node-gen_dashboard
-      paths: [datus/agent/node/gen_dashboard_agentic_node.py, tests/integration/agent/test_gen_dashboard_agentic.py]
+      paths:
+        - datus/agent/node/gen_dashboard_agentic_node.py
+        - datus/tools/func_tool/bi_tools.py
+        - datus/validation/
+        - datus/resources/skills/superset-dashboard/
+        - datus/resources/skills/bi-validation/
+        - tests/integration/agent/test_gen_dashboard_agentic.py
+        - tests/integration/tools/test_bi_chart_lifecycle.py
+        - tests/unit_tests/tools/func_tool/test_bi_tools.py
+        - tests/unit_tests/validation/
+        - pyproject.toml
+        - uv.lock
+        - ci/
+        - .github/workflows/
       live_targets: [tests/integration/agent/test_gen_dashboard_agentic.py]
       nightly_groups: [P0 BI Product E2E]
     - id: node-gen_visual_report

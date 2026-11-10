@@ -20,6 +20,7 @@ PROVIDER_COVERAGE_MANIFEST_ENABLED="${PROVIDER_COVERAGE_MANIFEST_ENABLED:-1}"
 PROVIDER_COVERAGE_MANIFEST_FINALIZED=0
 NIGHTLY_TRACE_REFERENCES_FILE="${NIGHTLY_TRACE_REFERENCES_FILE:-nightly-trace-references.jsonl}"
 NIGHTLY_TRACE_SUMMARY_FILE="${NIGHTLY_TRACE_SUMMARY_FILE:-nightly-trace-summary.jsonl}"
+export DATUS_NIGHTLY_BI_EVIDENCE_DIR="${DATUS_NIGHTLY_BI_EVIDENCE_DIR:-${PWD}/nightly-bi-evidence}"
 NIGHTLY_PROCESS_DIAGNOSTICS_FILE="${NIGHTLY_PROCESS_DIAGNOSTICS_FILE:-nightly-process-diagnostics.json}"
 NIGHTLY_TRACE_DIAGNOSTICS_FINALIZED=0
 test_exit_code=0
@@ -1744,12 +1745,8 @@ DASHBOARD_MARK_EXPR="nightly and not product_e2e"
 if [ -n "${PRODUCT_TEST_BASE_REF:-}" ]; then
   uv run python ci/plan-product-tests.py --base-ref "$PRODUCT_TEST_BASE_REF" --output ci/product-test-plan.json || exit 1
   mapfile -t PRODUCT_E2E_ROOTS < <(uv run python -c 'import json,sys; sys.stdout.write("\n".join(json.load(open("ci/product-test-plan.json"))["live_targets"]))')
-  if [ "${#PRODUCT_E2E_ROOTS[@]}" -eq 0 ]; then
-    echo "ERROR: No real-model product cases selected for the requested comparison."
-    exit 1
-  fi
   PRODUCT_EXECUTION_DIR=$(mktemp -d "${REPO_ROOT}/ci/product-execution.XXXXXX") || exit 1
-  NIGHTLY_GROUP_FILTER=$(uv run python -c 'import json,re; p=json.load(open("ci/product-test-plan.json")); print("^("+"|".join(re.escape(g) for g in ["Product E2E Nightly Tests", *p["nightly_groups"]])+")$")')
+  NIGHTLY_GROUP_FILTER=$(uv run python -c 'import json; from ci.harness.test_plan import product_group_filter; print(product_group_filter(json.load(open("ci/product-test-plan.json"))))') || exit 1
   PRODUCT_REQUIRED_ARGS=(-p ci.pytest_fail_on_skip_plugin --fail-on-skip)
   if [[ " ${PRODUCT_E2E_ROOTS[*]} " == *"test_init_live.py::test_qwen_scoped_init_supplements_existing_documents"* ]]; then
     export DATUS_RUN_LIVE_INIT=1
@@ -1865,6 +1862,7 @@ NIGHTLY_DEDICATED_SUITE_DESELECTS=(
   --deselect tests/integration/agent/test_gen_dashboard_agentic.py
   --deselect tests/integration/agent/test_scheduler_agentic.py
   --deselect tests/integration/tools/test_bi_dashboard.py
+  --deselect tests/integration/tools/test_bi_chart_lifecycle.py
   --deselect tests/integration/plugins/test_dashboard_bootstrap_plugin.py
   --deselect tests/integration/plugins/test_sql_policy_plugin.py
   --deselect tests/integration/storage/test_postgresql_semantic_kb.py
@@ -1896,7 +1894,7 @@ run_logged "Product E2E Nightly Tests" run_with_agent_home "$NIGHTLY_HOME" "$NIG
 # Scheduled Nightly and release P0 run the explicit Superset export/bootstrap
 # contracts. A targeted evaluation also retains the other affected node cases.
 if [ -n "${PRODUCT_TEST_BASE_REF:-}" ]; then
-  run_compose_suite "P0 BI Product E2E" "$SUPERSET_COMPOSE" "postgres:300" "superset:1200" -- run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run python -m pytest -m "$DASHBOARD_MARK_EXPR" tests/integration/plugins/test_dashboard_bootstrap_plugin.py tests/integration/agent/test_gen_dashboard_agentic.py tests/integration/tools/test_bi_dashboard.py -p ci.pytest_fail_on_skip_plugin --fail-on-skip --tb=short --verbose --timeout=600 --timeout-method=thread
+  run_compose_suite "P0 BI Product E2E" "$SUPERSET_COMPOSE" "postgres:300" "superset:1200" -- run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run python -m pytest -m "$DASHBOARD_MARK_EXPR" tests/integration/tools/test_bi_chart_lifecycle.py tests/integration/plugins/test_dashboard_bootstrap_plugin.py tests/integration/agent/test_gen_dashboard_agentic.py tests/integration/tools/test_bi_dashboard.py -p ci.pytest_fail_on_skip_plugin --fail-on-skip --tb=short --verbose --timeout=600 --timeout-method=thread
 else
   run_p0_group "P0 BI Product E2E"
 fi

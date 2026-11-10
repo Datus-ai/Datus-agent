@@ -243,17 +243,54 @@ async def test_dashboard_producer_loads_as_metric_and_live_values_are_bound(envi
     assert env.runtime.calls[-1]["where"] == "(orders.region = 'North')"
 
 
-def test_saved_model_change_refuses_execution_before_warehouse_read(environment):
+def test_preview_uses_current_metric_compilation_after_model_changes(environment, monkeypatch):
+    from datus.utils.metric_artifact_models import resolve_metric_query_snapshot
+
     env = environment
     tools, saved = _save(env)
     assert saved.success == 1
-    recipe = MetricQueryFile.model_validate_json((tools.queries_dir / "sales.metric.json").read_text())
-    env.model.write_text("different model", encoding="utf-8")
-    with pytest.raises(ValueError, match="METRIC_MODEL_CHANGED"):
-        execute_metric_artifact_query(
-            recipe, semantic_tools=env.semantic, db_tool=env.db, project_root=env.root, saved=recipe
-        )
-    assert env.db.execute_read_enforced.call_count == 1
+    recipe_path = tools.queries_dir / "sales.metric.json"
+    original_recipe = recipe_path.read_bytes()
+    recipe = resolve_metric_query_snapshot(
+        MetricQueryFile.model_validate_json(original_recipe), artifact_dir=tools.queries_dir.parent
+    )
+    env.model.write_text("version: 0.2.0.dev0\nname: model\ndatasets: []\ndescription: Updated metric\n")
+
+    async def compile_updated_metric(**kwargs):
+        assert kwargs["metrics"] == ["revenue"]
+        return QueryResult(metadata={"sql": "SELECT 2 * SUM(amount) AS revenue FROM orders"})
+
+    monkeypatch.setattr(env.runtime, "query_metrics", compile_updated_metric)
+    payload, _ = execute_metric_artifact_query(
+        recipe, semantic_tools=env.semantic, db_tool=env.db, project_root=env.root, saved=recipe
+    )
+    assert payload.rows == [{"revenue": 50.0}]
+    assert env.db.execute_read_enforced.call_count == 2
+    assert recipe_path.read_bytes() == original_recipe
+
+
+def test_metric_execution_accepts_model_reformatting_during_compilation(environment, monkeypatch):
+    from datus.utils.metric_artifact_models import resolve_metric_query_snapshot
+
+    env = environment
+    tools, saved = _save(env)
+    assert saved.success == 1
+    recipe = resolve_metric_query_snapshot(
+        MetricQueryFile.model_validate_json((tools.queries_dir / "sales.metric.json").read_text()),
+        artifact_dir=tools.queries_dir.parent,
+    )
+    original_compile = env.runtime.query_metrics
+
+    async def compile_and_reformat(**kwargs):
+        env.model.write_text('{"version":"0.2.0.dev0","name":"model","datasets":[]}')
+        return await original_compile(**kwargs)
+
+    monkeypatch.setattr(env.runtime, "query_metrics", compile_and_reformat)
+    payload, _ = execute_metric_artifact_query(
+        recipe, semantic_tools=env.semantic, db_tool=env.db, project_root=env.root, saved=recipe
+    )
+    assert payload.rows == [{"revenue": 25.0}]
+    assert env.db.execute_read_enforced.call_count == 2
 
 
 def test_policy_denial_never_persists_metric_or_falls_back_to_sql(environment):
@@ -580,7 +617,8 @@ def test_conflicting_snapshot_fails_without_changing_recipe_or_model(environment
 
 
 @pytest.mark.parametrize("legacy", [False, True])
-def test_published_execution_uses_saved_model_after_studio_changes(environment, monkeypatch, legacy):
+@pytest.mark.parametrize("normalizes_model", [False, True])
+def test_published_execution_uses_saved_model_after_studio_changes(environment, monkeypatch, legacy, normalizes_model):
     from pathlib import Path
 
     from datus.tools.func_tool.metric_artifact_tools import execute_published_metric_query
@@ -588,6 +626,8 @@ def test_published_execution_uses_saved_model_after_studio_changes(environment, 
     from datus.utils.metric_artifact_models import resolve_metric_query_snapshot
 
     env = environment
+    if normalizes_model:
+        env.model.write_text("version: 0.2.0.dev0\nsemantic_model:\n- name: model\n  datasets: []\n")
     tools, saved = _save(env, "dashboard", params=[], sample_params={})
     assert saved.success == 1, saved.error
     recipe_path = tools.queries_dir / "sales.metric.json"
@@ -606,6 +646,8 @@ def test_published_execution_uses_saved_model_after_studio_changes(environment, 
             self.path = Path(config.semantic_model_path)
             assert self.path.read_bytes() == original
             assert config.semantic_models_path is None
+            if normalizes_model:
+                self.path.write_text("version: 0.2.0.dev0\nname: model\ndatasets: []\n")
 
         def artifact_metric_binding(self, name):
             assert name == "revenue"
