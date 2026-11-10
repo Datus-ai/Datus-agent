@@ -4737,6 +4737,21 @@ class AgenticNode(Node):
         self._populate_tool_registry()
         visible = []
         for tool in self.tools:
+            # Like PermissionHooks, resolve load_skill by its target Skill, not
+            # by the dispatcher method name. Visibility follows the same
+            # pattern, scope and model-invocation filters as <available_skills>.
+            # The hook and SkillFuncTool still authorize each requested name.
+            if tool.name == "load_skill":
+                skill_manager = getattr(self, "skill_manager", None)
+                if skill_manager is not None:
+                    raw_patterns = self.node_config.get("skills", "")
+                    patterns = skill_manager.parse_skill_patterns(raw_patterns) if raw_patterns else None
+                    skills = skill_manager.get_available_skills(
+                        self.get_node_name(), patterns=patterns, node_class=self.get_node_class_name()
+                    )
+                    if manager.filter_available_skills(skills, self.get_node_name()):
+                        visible.append(tool)
+                continue
             category = self.tool_registry.get(tool.name, "tools")
             visible.extend(manager.filter_available_tools([tool], self.get_node_name(), category))
         self.tools[:] = visible
