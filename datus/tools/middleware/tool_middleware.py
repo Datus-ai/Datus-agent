@@ -37,7 +37,6 @@ Transformer contract (duck-typed so plugin packages never import ``datus.*``):
 from __future__ import annotations
 
 import asyncio
-import dataclasses
 import inspect
 import json
 from typing import Any, Callable, Dict, List, Optional, Set, Union
@@ -191,13 +190,9 @@ def wrap_tool_with_transformers(
     # 0.7.0). Forwarding by field name keeps the wrapper faithful across SDK
     # versions without this module tracking each new field by hand; ``getattr``
     # defaults tolerate SDK-added fields that a test double may not carry.
-    carried = {
-        field.name: getattr(original, field.name, None)
-        for field in dataclasses.fields(FunctionTool)
-        if field.init and field.name != "on_invoke_tool"
-    }
-    carried["on_invoke_tool"] = transforming_invoke
-    return FunctionTool(**carried)
+    from datus.tools.registry.contracts import clone_registered_tool
+
+    return clone_registered_tool(original, on_invoke_tool=transforming_invoke)
 
 
 class ToolTransformDenied(Exception):

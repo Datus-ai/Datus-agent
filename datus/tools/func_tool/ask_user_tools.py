@@ -19,6 +19,7 @@ from pydantic import BaseModel, Field
 from datus.cli.execution_state import InteractionBroker, InteractionCancelled
 from datus.schemas.interaction_event import InteractionEvent
 from datus.tools.func_tool.base import FuncToolResult, trans_to_function_tool
+from datus.tools.registry.contracts import tool_contract
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
@@ -72,6 +73,7 @@ class AskUserTool:
     def set_tool_context(self, ctx: Any) -> None:
         self._tool_context = ctx
 
+    @tool_contract(access="restricted", direct_call=False)
     async def ask_user(
         self,
         questions: List[QuestionItem],

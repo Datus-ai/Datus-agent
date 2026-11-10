@@ -19,6 +19,7 @@ from datus.schemas.action_history import ActionHistory
 from datus.schemas.semantic_agentic_node_models import SemanticModelingNodeResult, SemanticNodeInput
 from datus.tools.func_tool.base import FuncToolResult
 from datus.tools.func_tool.generation_tools import GenerationTools
+from datus.tools.registry.contracts import tool_contract
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
@@ -154,6 +155,7 @@ class SemanticModelingAgenticNode(SemanticAuthoringAgenticNode):
             ]
         )
 
+    @tool_contract(access="restricted", direct_call=True, category="semantic_tools")
     def list_existing_osi_semantic_models(self) -> FuncToolResult:
         """Inspect existing models before selecting an authoring target."""
         result = self.osi_target_tools.list_existing_osi_semantic_models()
@@ -187,6 +189,7 @@ class SemanticModelingAgenticNode(SemanticAuthoringAgenticNode):
             },
         )
 
+    @tool_contract(access="restricted", direct_call=True, category="semantic_tools")
     def plan_osi_semantic_model_target(
         self,
         semantic_model_name: str = "",
@@ -217,6 +220,7 @@ class SemanticModelingAgenticNode(SemanticAuthoringAgenticNode):
             dimension_tables=dimension_tables,
         )
 
+    @tool_contract(access="write", direct_call=True, category="semantic_tools")
     def bind_osi_semantic_model_target(
         self,
         semantic_model_file: str = "",

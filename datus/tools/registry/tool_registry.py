@@ -42,9 +42,20 @@ class ToolRegistry:
         """Register a list of tool objects under *category*.
 
         Each tool must expose a ``.name`` attribute (or be stringifiable).
+        String entries are classification hints, not evidence of registration;
+        mounted SDK function tools must carry their own verified definition.
         """
         for tool in tools:
             tool_name = getattr(tool, "name", str(tool))
+            if not isinstance(tool, str):
+                from agents import FunctionTool
+
+                from datus.tools.registry.contracts import ToolDefinitionError, tool_definition
+
+                if isinstance(tool, FunctionTool):
+                    definition = tool_definition(tool)
+                    if definition.category != category:
+                        raise ToolDefinitionError(f"Cannot register {definition.tool_id} under {category}")
             self._registry[tool_name] = category
             _known_categories[tool_name] = category
             logger.debug(f"Registered tool '{tool_name}' with category '{category}'")

@@ -16,6 +16,7 @@ from datus.schemas.gen_visual_dashboard_models import QueryTemplateMetaFile, Tem
 from datus.schemas.gen_visual_report_models import ColumnSemanticType, QueryColumnMeta, QueryResultFile
 from datus.schemas.metric_artifact_query import MetricQueryFile, MetricQueryRequest, ParamRef
 from datus.tools.func_tool.base import FuncToolResult
+from datus.tools.registry.contracts import tool_contract
 from datus.utils.async_utils import run_async
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.metric_artifact_models import resolve_metric_query_snapshot
@@ -355,6 +356,7 @@ class MetricArtifactToolsMixin:
             return f"Invalid saved metric query: {exc}"
         return None
 
+    @tool_contract(access="restricted", direct_call=False)
     def save_metric_query(
         self, name: str, query: dict[str, Any], goal: str, hypothesis: str, caveats: str = ""
     ) -> FuncToolResult:
@@ -367,6 +369,7 @@ class MetricArtifactToolsMixin:
         """
         return self._save_metric_artifact(name, query, goal, hypothesis, caveats, None, None)
 
+    @tool_contract(access="restricted", direct_call=False)
     def save_metric_query_template(
         self,
         name: str,

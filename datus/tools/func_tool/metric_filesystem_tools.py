@@ -1,7 +1,6 @@
 # Copyright 2025-present DatusAI, Inc.
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
-
 import copy
 import json
 import re
@@ -15,6 +14,7 @@ from datus.storage.semantic_model.artifact_file import atomic_write_text, semant
 from datus.tools.func_tool.base import FuncToolResult, load_tool_json, tool_schema
 from datus.tools.func_tool.filesystem_tools import FilesystemFuncTool
 from datus.tools.func_tool.fs_path_policy import PathZone, ResolvedPath
+from datus.tools.registry.contracts import tool_contract
 from datus.tools.semantic_tools.metric_identity import (
     ensure_metric_uid,
     metric_definitions,
@@ -80,6 +80,7 @@ class MetricFilesystemFuncTool(FilesystemFuncTool):
         return names
 
     @tool_schema(strict_mode=False)
+    @tool_contract(access="write", direct_call=True)
     def upsert_osi_datasets(self, path: str, datasets_json: List[Dict[str, Any]] | str) -> FuncToolResult:
         """Create or update datasets in a planned OSI semantic-model file.
 
@@ -241,6 +242,7 @@ class MetricFilesystemFuncTool(FilesystemFuncTool):
             }
         )
 
+    @tool_contract(access="write", direct_call=True)
     def delete_osi_datasets(self, path: str, dataset_names: List[str]) -> FuncToolResult:
         """Delete explicitly named datasets from a planned OSI semantic model.
 
@@ -385,6 +387,7 @@ class MetricFilesystemFuncTool(FilesystemFuncTool):
         return extensions
 
     @tool_schema(strict_mode=False)
+    @tool_contract(access="write", direct_call=True)
     def upsert_osi_metrics(self, path: str, metrics_json: List[Dict[str, Any]] | str) -> FuncToolResult:
         """Create or update metrics in an existing OSI semantic-model file.
 
@@ -551,6 +554,7 @@ class MetricFilesystemFuncTool(FilesystemFuncTool):
             }
         )
 
+    @tool_contract(access="write", direct_call=True)
     def delete_osi_metrics(self, path: str, metric_names: List[str]) -> FuncToolResult:
         """Delete named metrics from one bound OSI semantic-model file.
 
@@ -737,6 +741,7 @@ class OsiSemanticModelFilesystemFuncTool(MetricFilesystemFuncTool):
             trans_to_function_tool(self.grep),
         ]
 
+    @tool_contract(access="write", direct_call=True)
     def edit_file(self, path: str, old_string: str, new_string: str) -> FuncToolResult:  # type: ignore[override]
         """Edit an existing OSI document only when the complete result is valid."""
         if not old_string:
@@ -889,6 +894,7 @@ class SemanticModelingFilesystemFuncTool(OsiSemanticModelFilesystemFuncTool):
             trans_to_function_tool(self.grep),
         ]
 
+    @tool_contract(access="write", direct_call=True)
     def edit_file(self, path: str, old_string: str, new_string: str) -> FuncToolResult:  # type: ignore[override]
         """Replace one exact text occurrence on the selected target, validating before writing.
 

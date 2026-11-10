@@ -14,6 +14,7 @@ from datus.configuration.agent_config import DbConfig
 from datus.tools.db_tools.db_manager import DBManager
 from datus.tools.func_tool.base import FuncToolResult
 from datus.tools.func_tool.database import DBFuncTool
+from datus.tools.registry.contracts import tool_contract
 from datus.utils.exceptions import DatusException
 
 _ANSI = re.compile(r"\x1b\[[0-9;]*m")
@@ -3352,6 +3353,7 @@ async def test_registered_sql_timeout_is_structured_and_late_worker_cannot_repla
         def _excluded_tool_params(self):
             return set()
 
+        @tool_contract(access="sql", direct_call=True)
         def execute_sql(self, sql: str) -> FuncToolResult:
             started.set()
             try:
@@ -3381,6 +3383,7 @@ async def test_registered_sql_timeout_is_structured_and_late_worker_cannot_repla
 
 @pytest.mark.asyncio
 async def test_registered_sql_preserves_real_failure_and_parent_cancellation():
+    """Preserve driver failures and cancellation through the registered SQL invoker."""
     import asyncio
     from types import SimpleNamespace
 
@@ -3395,6 +3398,7 @@ async def test_registered_sql_preserves_real_failure_and_parent_cancellation():
         def _excluded_tool_params(self):
             return set()
 
+        @tool_contract(access="sql", direct_call=True)
         async def execute_sql(self, sql: str) -> FuncToolResult:
             self.started.set()
             if self.wait:

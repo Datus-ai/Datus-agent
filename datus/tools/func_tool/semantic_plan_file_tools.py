@@ -17,6 +17,7 @@ from uuid import NAMESPACE_URL, uuid5
 
 from datus.storage.semantic_model.artifact_file import atomic_write_text, path_mutation_lock
 from datus.tools.func_tool.base import FuncToolResult, tool_schema
+from datus.tools.registry.contracts import tool_contract
 
 try:
     import fcntl
@@ -301,6 +302,7 @@ class SemanticPlanFileTools:
         return [trans_to_function_tool(self.write_semantic_model_plan_file)]
 
     @tool_schema(strict_mode=False)
+    @tool_contract(access="write", direct_call=True)
     def write_semantic_model_plan_file(self, model_name: str, plan_json: dict[str, Any] | str) -> FuncToolResult:
         """Convert planning JSON to a graph and write it without changing the model.
 

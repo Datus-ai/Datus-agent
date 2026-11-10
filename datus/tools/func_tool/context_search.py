@@ -1,7 +1,6 @@
 # Copyright 2025-present DatusAI, Inc.
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
-
 # -*- coding: utf-8 -*-
 from typing import Any, Dict, List, Literal, Optional
 
@@ -14,6 +13,7 @@ from datus.storage.reference_sql.store import ReferenceSqlRAG
 from datus.storage.reference_template.store import ReferenceTemplateRAG
 from datus.storage.semantic_dataset.store import MetricKindNotHere, SemanticDatasetRAG
 from datus.tools.func_tool.base import FuncToolResult, normalize_null, trans_to_function_tool
+from datus.tools.registry.contracts import tool_contract
 from datus.utils.loggings import get_logger
 from datus.utils.mcp_decorators import mcp_tool, mcp_tool_class
 
@@ -189,6 +189,7 @@ class ContextSearchTools:
         return tools
 
     @mcp_tool()
+    @tool_contract(access="read", direct_call=True)
     def list_subject_tree(self) -> FuncToolResult:
         """
         Get the domain-layer taxonomy from subject_tree store.
@@ -263,6 +264,7 @@ class ContextSearchTools:
             return []
 
     @mcp_tool(availability_check="has_metrics")
+    @tool_contract(access="read", direct_call=True)
     def search_metrics(
         self,
         query_text: str,
@@ -295,6 +297,7 @@ class ContextSearchTools:
             return FuncToolResult(success=0, error=str(e))
 
     @mcp_tool(availability_check="has_reference_sql")
+    @tool_contract(access="read", direct_call=True)
     def search_reference_sql(
         self, query_text: str, subject_path: Optional[List[str]] = None, top_n: int = 5
     ) -> FuncToolResult:
@@ -329,6 +332,7 @@ class ContextSearchTools:
             return FuncToolResult(success=0, error=str(e))
 
     @mcp_tool(availability_check="has_reference_sql")
+    @tool_contract(access="read", direct_call=True)
     def get_reference_sql(self, subject_path: List[str], name: str = "") -> FuncToolResult:
         """
         Get reference SQL detail by exact subject path and name.
@@ -359,6 +363,7 @@ class ContextSearchTools:
             return FuncToolResult(success=0, error=str(e))
 
     @mcp_tool(availability_check="has_semantic_objects")
+    @tool_contract(access="read", direct_call=True)
     def search_semantic_objects(
         self,
         query_text: str,

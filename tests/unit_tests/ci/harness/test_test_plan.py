@@ -130,6 +130,7 @@ def test_unit_owners_cover_all_visible_test_consumers():
                 "tests/unit_tests/utils/test_mcp_execution.py",
                 "tests/unit_tests/utils/test_windows_compatibility.py",
                 "tests/unit_tests/tools/mcp_tools/",
+                "tests/unit_tests/tools/registry/",
                 "tests/unit_tests/api/services/test_mcp_service.py",
             },
         ),

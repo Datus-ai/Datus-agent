@@ -6,6 +6,7 @@
 from typing import Callable, Optional
 
 from datus.tools.func_tool.base import FuncToolResult, trans_to_function_tool
+from datus.tools.registry.contracts import tool_contract
 from datus.utils.tool_result_store import ToolResultStore
 
 
@@ -18,6 +19,7 @@ class ToolResultFuncTool:
     def available_tools(self):
         return [trans_to_function_tool(self.read_tool_result)]
 
+    @tool_contract(access="read", direct_call=False)
     def read_tool_result(
         self, result_id: str, section: str = "", cursor: Optional[str] = None, limit: int = 100
     ) -> FuncToolResult:

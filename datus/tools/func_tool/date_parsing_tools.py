@@ -1,7 +1,6 @@
 # Copyright 2025-present DatusAI, Inc.
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
-
 # -*- coding: utf-8 -*-
 from typing import List, Optional
 
@@ -11,6 +10,7 @@ from datus.configuration.agent_config import AgentConfig
 from datus.models.base import LLMBaseModel
 from datus.tools.date_tools import DateParserTool
 from datus.tools.func_tool.base import FuncToolResult, trans_to_function_tool
+from datus.tools.registry.contracts import tool_contract
 from datus.utils.loggings import get_logger
 from datus.utils.mcp_decorators import mcp_tool, mcp_tool_class
 
@@ -73,6 +73,7 @@ class DateParsingTools:
         ]
 
     @mcp_tool()
+    @tool_contract(access="read", direct_call=False)
     def parse_temporal_expressions(
         self,
         task_text: str,

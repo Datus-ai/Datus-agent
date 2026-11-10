@@ -1,7 +1,6 @@
 # Copyright 2025-present DatusAI, Inc.
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
-
 # -*- coding: utf-8 -*-
 import json
 from collections.abc import Iterable
@@ -34,6 +33,7 @@ from datus.storage.semantic_dataset.store import (
 )
 from datus.tools.func_tool.base import FuncToolResult, trans_to_function_tool
 from datus.tools.func_tool.generation_evidence import GenerationEvidence
+from datus.tools.registry.contracts import tool_contract
 from datus.tools.semantic_tools.dosi.model import document_model_names
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
@@ -139,6 +139,7 @@ class GenerationTools:
             )
         ]
 
+    @tool_contract(access="read", direct_call=True)
     def check_semantic_object_exists(
         self,
         name: str = "",
@@ -373,6 +374,7 @@ class GenerationTools:
             raise ValueError(f"The planned OSI target is {planned_name!r}, but the file declares {model_names[0]!r}.")
         return semantic_model_file, resolved, model_names[0]
 
+    @tool_contract(access="write", direct_call=True)
     def publish_semantic_model(self, semantic_model_files: List[str]) -> FuncToolResult:
         """Validate publication evidence and sync semantic artifacts to storage.
 
@@ -432,6 +434,7 @@ class GenerationTools:
             logger.error(f"Error completing semantic model generation: {e}")
             return FuncToolResult(success=0, error=f"Failed to complete generation: {str(e)}")
 
+    @tool_contract(access="write", direct_call=True)
     def publish_metrics(self, metric_file: str) -> FuncToolResult:
         """Validate publication evidence and sync metric artifacts to storage.
 
@@ -1603,6 +1606,7 @@ class GenerationTools:
         existing = {normalize_metric_name(row["name"]): row.get("uid") for row in rows}
         return [name for name, uid in metric_uids.items() if existing.get(normalize_metric_name(name)) != uid]
 
+    @tool_contract(access="write", direct_call=True)
     def sync_osi_to_db(
         self,
         osi_file_path: str,
@@ -1769,6 +1773,7 @@ class GenerationTools:
             logger.error(f"Error syncing OSI document to DB: {e}", exc_info=True)
             return {"success": False, "error": str(e), "synced": 0}
 
+    @tool_contract(access="read", direct_call=True)
     def generate_sql_summary_id(self, sql_query: str, comment: str = "") -> FuncToolResult:
         """
         Generate a unique ID for SQL summary based on SQL query and comment.
