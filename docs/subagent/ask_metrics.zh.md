@@ -100,6 +100,11 @@ graph LR
 | `semantic_tools.get_dataset` | 描述单个数据集：字段及其定义、fixed 字段、时间字段和关联 |
 | `semantic_tools.query_metrics` | 查询指标值 |
 | `semantic_tools.attribution_analyze` | 按候选维度解释指标变化 |
+| `filesystem_tools.read_file` | 读取相关的项目业务定义或背景 |
+| `filesystem_tools.glob` | 定位相关项目文件 |
+| `filesystem_tools.grep` | 在项目文件中搜索具体业务关键词 |
+
+任何问题在业务范围或解释存在信息缺口时，都可以按需探索文件。AskMetrics 优先复用已提供的知识和指标、数据集描述；上下文充分的简单问数直接查询。归因分析可以参考业务定义或运营记录，但不要求先探索文件。使用项目文档时会引用文件路径，并区分实测贡献与业务假设。
 
 如果 Dosi 无法加载当前模型，AskMetrics 无法回答指标问题。如果上下文搜索不可用，AskMetrics 仍可使用 Dosi 工具，但不会有主题树路由上下文。
 
@@ -147,7 +152,7 @@ agent:
 
 如果省略 `system_prompt`，Datus 会先查找与自定义 agent 名称匹配的模板，例如 `sales_metric_qa_system_1.0.j2`，找不到时再回退到内置 `ask_metrics_system` 模板。
 
-`tools` 可以是逗号分隔字符串，也可以是列表。默认工具面聚焦指标。自定义 agent 可以按需选择其他用户可见工具类别，但保持 AskMetrics 仅使用指标工具通常能得到更稳定的回答。
+`tools` 可以是逗号分隔字符串，也可以是列表。显式白名单会替换默认工具，不会自动追加这三个文件工具。如果已有自定义白名单需要读取项目文件，请在指标工具之外按需加入 `filesystem_tools.read_file`、`filesystem_tools.glob` 和 `filesystem_tools.grep`。自定义 agent 也可以按需选择其他用户可见工具类别。
 
 已有自定义工具列表需要移除 `context_search_tools.get_metrics`。需要指标定义时使用 `semantic_tools.get_metric`；发现候选指标仍可使用 `context_search_tools.search_metrics`。
 
