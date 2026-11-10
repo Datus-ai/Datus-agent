@@ -50,7 +50,8 @@ def _build_sub_agent_filter(
         return None
 
     scope_value = getattr(sub_agent_config.scoped_context, check_scope_attr, None)
-    if check_scope_attr == "tables" and sub_agent_config.scoped_context.tables_by_datasource is not None:
+    grouped_tables = check_scope_attr == "tables" and sub_agent_config.scoped_context.tables_by_datasource is not None
+    if grouped_tables:
         source = agent_config.current_datasource
         scopes = sub_agent_config.scoped_context.tables_by_datasource
         if source not in scopes:
@@ -61,12 +62,20 @@ def _build_sub_agent_filter(
                 message=f"Datasource '{source}' is outside the scoped context.",
             )
         scope_value = scopes[source]
-    if not scope_value:
+    if not scope_value and not grouped_tables:
         return None
 
     if check_scope_attr == "tables":
         dialect = getattr(agent_config, "db_type", "")
-        return ScopedFilterBuilder.build_table_filter(scope_value, dialect, table_column)
+        table_filter = ScopedFilterBuilder.build_table_filter(scope_value, dialect, table_column)
+        if grouped_tables and table_filter is None:
+            from datus.utils.exceptions import DatusException, ErrorCode
+
+            raise DatusException(
+                code=ErrorCode.COMMON_VALIDATION_FAILED,
+                message=f"Datasource '{source}' has no valid table scope; use '*' to explicitly allow all tables.",
+            )
+        return table_filter
     elif check_scope_attr in ("metrics", "sqls"):
         subject_tree = getattr(storage, "subject_tree", None)
         if subject_tree is None:

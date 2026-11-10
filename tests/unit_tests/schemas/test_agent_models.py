@@ -186,6 +186,7 @@ class TestSubAgentConfigEffectiveScopedContext:
 @pytest.mark.ci
 @pytest.mark.parametrize("source", ["sr", "mysql", "pg"])
 def test_grouped_scope_survives_payload_and_inheritance(source):
+    """Preserve per-source table scopes through serialization and sub-agent inheritance."""
     scopes = {"sr": "default_catalog.analytics.*", "mysql": "sales.*", "pg": "warehouse.reporting.*"}
     parent = ScopedContext(datasource=source, tables_by_datasource=scopes)
     inherited = SubAgentConfig(system_prompt="ask").with_effective_scoped_context(parent)

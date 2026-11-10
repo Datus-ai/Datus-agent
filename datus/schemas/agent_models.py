@@ -28,6 +28,7 @@ class ScopedContext(BaseModel):
 
     @property
     def is_empty(self) -> bool:
+        """Whether no table, grouped datasource, metric, or SQL scope is configured."""
         return self.tables_by_datasource is None and not self.tables and not self.metrics and not self.sqls
 
     def as_lists(self) -> ScopedContextLists:
@@ -126,6 +127,7 @@ class SubAgentConfig(BaseModel):
         return False
 
     def is_in_datasource(self, datasource: str) -> bool:
+        """Check membership in grouped sources, or the legacy single datasource."""
         if not self.has_scoped_context():
             return False
         if self.scoped_context.tables_by_datasource is not None:

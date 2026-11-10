@@ -3751,6 +3751,7 @@ class TestDatasourceTableScopes:
 
     @pytest.fixture(params=["sr", "mysql", "pg"])
     def scoped_tool(self, request):
+        """Build a mixed-dialect tool whose configured default is independent of the project default."""
         from datus.schemas.agent_models import SubAgentConfig
 
         connectors = {
@@ -3792,6 +3793,7 @@ class TestDatasourceTableScopes:
         ],
     )
     def test_sql_scopes_follow_each_sources_dialect(self, scoped_tool, source, allowed, denied):
+        """Allow and deny SQL tables according to the routed source's own dialect."""
         tool, _ = scoped_tool
         connector = tool._get_connector(source)
         assert tool._check_sql_table_scope(f"SELECT * FROM {allowed}", connector) == []
@@ -3800,6 +3802,7 @@ class TestDatasourceTableScopes:
         assert all(name.endswith("orders") for name in denied_tables)
 
     def test_secondary_metadata_uses_its_own_scope(self, scoped_tool):
+        """Restrict secondary-source schema metadata using that source's grouped scope."""
         tool, connectors = scoped_tool
         connectors["pg"].get_schemas.return_value = ["reporting", "public"]
         result = tool.list_schemas(database="warehouse", datasource="pg")
@@ -3807,11 +3810,13 @@ class TestDatasourceTableScopes:
         assert result.result == ["reporting"]
 
     def test_unlisted_source_is_refused(self, scoped_tool):
+        """Reject connector selection for a source absent from the grouped scope."""
         tool, _ = scoped_tool
         with pytest.raises(DatusException, match="scoped context"):
             tool._get_connector("unrelated")
 
     def test_persisted_query_cannot_bypass_source_scope(self, scoped_tool):
+        """Reject saved execution contexts that route outside the allowed source map."""
         tool, _ = scoped_tool
         with pytest.raises(DatusException, match="scoped context"):
             tool.connector_for_execution_context({"datasource": "unrelated", "database": "private"})
@@ -3819,6 +3824,7 @@ class TestDatasourceTableScopes:
 
 @pytest.mark.ci
 def test_malformed_source_scopes_cannot_degrade_into_an_unscoped_tool():
+    """Reject invalid grouped-scope shapes instead of dropping the restriction."""
     tool = object.__new__(DBFuncTool)
     tool.agent_config = SimpleNamespace(
         sub_agent_config=lambda _: {
@@ -3827,3 +3833,102 @@ def test_malformed_source_scopes_cannot_degrade_into_an_unscoped_tool():
     )
     with pytest.raises(DatusException, match="refusing unscoped"):
         tool._load_sub_agent_config("ask_dashboard")
+
+
+@pytest.mark.ci
+@pytest.mark.parametrize("scope", ["", "   ", ",\n,", ".", "..."])
+def test_listed_datasource_without_parseable_patterns_is_rejected(scope):
+    """A listed source with no usable table pattern must never grant all tables."""
+    connector = Mock(dialect="mysql", database_name="sales", catalog_name="", schema_name="")
+    tool = object.__new__(DBFuncTool)
+    tool._tables_by_datasource = {"mysql": scope}
+    tool._connector_datasources = {id(connector): "mysql"}
+    tool._primary_connector = connector
+    with pytest.raises(DatusException, match="scope"):
+        tool._check_sql_table_scope("SELECT * FROM sales.private_orders", connector)
+
+
+@pytest.mark.ci
+def test_explicit_wildcard_grouped_scope_allows_tables():
+    """An explicit wildcard remains the supported unrestricted grouped scope."""
+    connector = Mock(dialect="mysql", database_name="sales", catalog_name="", schema_name="")
+    tool = object.__new__(DBFuncTool)
+    tool._tables_by_datasource = {"mysql": "*"}
+    tool._connector_datasources = {id(connector): "mysql"}
+    tool._primary_connector = connector
+    assert tool._check_sql_table_scope("SELECT * FROM sales.orders", connector) == []
+
+
+@pytest.mark.ci
+@pytest.mark.parametrize("scoped_tables", [["orders"], ("sales.orders",)])
+def test_grouped_scopes_cannot_replace_an_explicit_run_allowlist(scoped_tables):
+    """Conflicting scope mechanisms must be rejected rather than widen the run's allowlist."""
+    from datus.schemas.agent_models import SubAgentConfig
+
+    config = _mock_agent_config(current_datasource="mysql")
+    config.current_db_configs.return_value = {"mysql": DbConfig(type="mysql")}
+    config.sub_agent_config.return_value = SubAgentConfig(
+        scoped_context={"datasource": "mysql", "tables_by_datasource": {"mysql": "sales.*"}}
+    )
+    manager = Mock(spec=DBManager)
+    manager.get_conn.return_value = Mock(dialect="mysql")
+    with (
+        patch("datus.tools.func_tool.database.metadata_fts_enabled", return_value=False),
+        patch("datus.tools.func_tool.database.SchemaWithValueRAG"),
+        patch("datus.tools.func_tool.database.SemanticDatasetRAG"),
+        pytest.raises(DatusException, match="scoped_tables.*tables_by_datasource"),
+    ):
+        DBFuncTool(manager, agent_config=config, sub_agent_name="ask", scoped_tables=scoped_tables)
+
+
+@pytest.mark.ci
+class TestGlobDatabaseListingScopes:
+    """File discovery is connection-free until a grouped scope requires filtering."""
+
+    @pytest.fixture
+    def tool(self):
+        """Build an enumeration-only tool whose connector access fails visibly."""
+        tool = object.__new__(DBFuncTool)
+        tool.agent_config = SimpleNamespace(
+            current_db_config=lambda _: SimpleNamespace(path_pattern="/data/*.sqlite"),
+            list_databases=Mock(return_value=["sales", "private"]),
+        )
+        tool._is_multi_connector = True
+        tool._datasources = ["files"]
+        tool._default_datasource = "files"
+        tool._tables_by_datasource = None
+        tool._get_connector = Mock(side_effect=ConnectionError("connector unavailable"))
+        return tool
+
+    def test_unscoped_listing_does_not_open_connector(self, tool):
+        """A glob discovery call must work even when no database can be opened."""
+        result = tool.list_databases(datasource="files")
+        assert result.success == 1
+        assert result.result == ["sales", "private"]
+        tool._get_connector.assert_not_called()
+
+    def test_grouped_listing_filters_databases(self, tool):
+        """The grouped scope filters glob discoveries through the source's dialect."""
+        connector = Mock(dialect="sqlite", catalog_name="", database_name="sales", schema_name="")
+        tool._get_connector = Mock(return_value=connector)
+        tool._primary_connector = connector
+        tool._tables_by_datasource = {"files": "sales.*"}
+        tool._connector_datasources = {id(connector): "files"}
+        result = tool.list_databases(datasource="files")
+        assert result.success == 1
+        assert result.result == ["sales"]
+        tool._get_connector.assert_called()
+
+    @pytest.mark.parametrize("failure_stage", ["enumeration", "connector", "filter"])
+    def test_glob_errors_return_failed_result(self, tool, failure_stage):
+        """Discovery, connector, and scope errors use the public failure contract."""
+        tool._tables_by_datasource = {"files": "sales.*"}
+        tool._primary_connector = Mock(dialect="sqlite")
+        if failure_stage == "enumeration":
+            tool.agent_config.list_databases.side_effect = RuntimeError("discovery failed")
+        elif failure_stage == "filter":
+            tool._get_connector = Mock(return_value=tool._primary_connector)
+            tool._database_matches_scope = Mock(side_effect=ValueError("invalid scope"))
+        result = tool.list_databases(datasource="files")
+        assert result.success == 0
+        assert result.error

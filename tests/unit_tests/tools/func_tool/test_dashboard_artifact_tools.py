@@ -1440,6 +1440,7 @@ class TestDashboardFilesystemFuncTool:
 
 @pytest.mark.ci
 def test_template_save_keeps_query_source_authoritative_until_finalize(dashboard_tools, project_root):
+    """Save template datasource provenance without incrementally modifying the source index."""
     result = dashboard_tools.save_query_template(
         name="source_owner",
         sql_template=_REVENUE_TEMPLATE,

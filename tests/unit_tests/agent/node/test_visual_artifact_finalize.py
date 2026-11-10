@@ -1160,6 +1160,7 @@ class TestAggregateReferencedTables:
 
 class TestUpdateManifestQueryMetadata:
     def test_writes_key_tables_to_existing_manifest(self, tmp_path: Path):
+        """Replace derived table references while preserving authored manifest fields."""
         manifest_path = _seed_manifest(tmp_path)
         err = update_manifest_query_metadata(manifest_path, ["Account", "Person"])
         assert err is None
@@ -1200,10 +1201,12 @@ class TestUpdateManifestQueryMetadata:
         assert write_calls == []  # no second write because content was identical
 
     def test_missing_manifest_returns_error_string(self, tmp_path: Path):
+        """Return a warning string when the manifest does not exist."""
         err = update_manifest_query_metadata(tmp_path / "nope.json", ["Account"])
         assert "manifest missing" in err
 
     def test_corrupt_manifest_returns_error_string(self, tmp_path: Path):
+        """Return a warning string when the manifest cannot be parsed."""
         path = tmp_path / "manifest.json"
         path.write_text("{not-json", encoding="utf-8")
         err = update_manifest_query_metadata(path, ["Account"])
@@ -2277,6 +2280,7 @@ def test_reference_snapshot_finalization_respects_render_only_edits(tmp_path, sk
 @pytest.mark.parametrize("kind", ["report", "dashboard"])
 @pytest.mark.parametrize("skip_narrative", [False, True])
 def test_finalize_rebuilds_sources_after_switch_and_delete_even_without_narrative(tmp_path, kind, skip_narrative):
+    """Rebuild source indexes after edits even when narrative generation is skipped or fails."""
     artifact_dir, queries_dir, analysis_dir = _make_artifact_layout(tmp_path)
     path = artifact_dir / "manifest.json"
     original = json.loads(path.read_text())
@@ -2293,6 +2297,7 @@ def test_finalize_rebuilds_sources_after_switch_and_delete_even_without_narrativ
     model.generate_with_json_output.side_effect = RuntimeError("narrative unavailable")
 
     def finalize():
+        """Run finalize with the configured narrative mode against the current query files."""
         return run_finalize_analysis(
             model=model,
             artifact_kind=kind,
@@ -2319,10 +2324,12 @@ def test_finalize_rebuilds_sources_after_switch_and_delete_even_without_narrativ
 
 @pytest.mark.ci
 def test_query_source_index_is_available_before_narrative_starts(tmp_path):
+    """Make deterministic source metadata available before any narrative model call."""
     artifact_dir, queries_dir, analysis_dir = _make_artifact_layout(tmp_path)
     observed = []
 
     def narrative(*args, **kwargs):
+        """Observe the source index at narrative entry, then simulate a model failure."""
         observed.append(json.loads((artifact_dir / "manifest.json").read_text())["datasources"])
         raise RuntimeError("narrative unavailable")
 
@@ -2341,6 +2348,7 @@ def test_query_source_index_is_available_before_narrative_starts(tmp_path):
 
 @pytest.mark.ci
 def test_finalize_keeps_previous_index_when_query_metadata_cannot_be_read(tmp_path, monkeypatch):
+    """Preserve the previous manifest and surface unreadable query metadata as a warning."""
     artifact_dir, queries_dir, analysis_dir = _make_artifact_layout(tmp_path)
     path = artifact_dir / "manifest.json"
     manifest = json.loads(path.read_text())
@@ -2351,6 +2359,7 @@ def test_finalize_keeps_previous_index_when_query_metadata_cannot_be_read(tmp_pa
     original_read = Path.read_text
 
     def read(file, *args, **kwargs):
+        """Fail only the query metadata read while leaving other artifact reads available."""
         if file == queries_dir / "rev_by_region.json":
             raise OSError("metadata unavailable")
         return original_read(file, *args, **kwargs)

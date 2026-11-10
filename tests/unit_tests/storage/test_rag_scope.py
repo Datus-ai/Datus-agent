@@ -243,6 +243,7 @@ class TestRuntimeOverrideIntegration:
     ],
 )
 def test_grouped_table_filter_follows_active_datasource(source, dialect, expected_column, expected_value):
+    """Filter RAG rows using the active source's namespace and dialect."""
     config = _mock_agent_config(
         sub_agent_configs={
             "ask": {
@@ -267,6 +268,7 @@ def test_grouped_table_filter_follows_active_datasource(source, dialect, expecte
 
 @pytest.mark.ci
 def test_grouped_table_filter_refuses_unlisted_datasource():
+    """Reject RAG access through a datasource outside the grouped scope."""
     from datus.utils.exceptions import DatusException
 
     config = _mock_agent_config(
@@ -282,3 +284,30 @@ def test_grouped_table_filter_refuses_unlisted_datasource():
     config.current_datasource = "unrelated"
     with pytest.raises(DatusException, match="scoped context"):
         _build_sub_agent_filter(config, "ask", _mock_storage(), "tables")
+
+
+@pytest.mark.ci
+@pytest.mark.parametrize("scope", ["", "   ", ",\n,", ".", "..."])
+def test_grouped_rag_filter_rejects_listed_source_without_patterns(scope):
+    """An empty or unparseable listed scope cannot become unrestricted RAG access."""
+    from datus.utils.exceptions import DatusException
+
+    config = _mock_agent_config(
+        sub_agent_configs={"ask": {"scoped_context": {"tables_by_datasource": {"mysql": scope}}}},
+        db_type="mysql",
+    )
+    config.current_datasource = "mysql"
+    with pytest.raises(DatusException, match="scope"):
+        _build_sub_agent_filter(config, "ask", _mock_storage(), "tables")
+
+
+@pytest.mark.ci
+def test_grouped_rag_filter_accepts_explicit_wildcard():
+    """Wildcard access must be intentional and still produce a valid filter."""
+    config = _mock_agent_config(
+        sub_agent_configs={"ask": {"scoped_context": {"tables_by_datasource": {"mysql": "*"}}}},
+        db_type="mysql",
+    )
+    config.current_datasource = "mysql"
+    result = _build_sub_agent_filter(config, "ask", _mock_storage(), "tables")
+    assert "table_name LIKE '%'" in build_where(result)

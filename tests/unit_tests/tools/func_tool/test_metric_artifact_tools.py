@@ -1070,6 +1070,7 @@ async def test_dashboard_rejects_a_saved_context_pointing_at_another_datasource(
 @pytest.mark.ci
 @pytest.mark.parametrize("kind", ["report", "dashboard"])
 def test_metric_save_and_finalize_share_the_query_source_contract(environment, kind):
+    """Keep metric provenance on the query until finalize rebuilds the manifest index."""
     from unittest.mock import Mock
 
     from datus.agent.node.visual_artifact._visual_artifact_finalize import run_finalize_analysis

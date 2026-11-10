@@ -1063,6 +1063,7 @@ class TestReportFilesystemFuncTool:
 
 @pytest.mark.ci
 def test_save_keeps_query_source_authoritative_until_finalize(report_tools, project_root):
+    """Preserve query datasource provenance and touch only manifest recency during save."""
     import json
 
     result = report_tools.save_query(
