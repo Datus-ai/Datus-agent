@@ -24,7 +24,6 @@ def register_image_model_capabilities(model: str) -> None:
     if model in {
         "deepseek/deepseek-flash",
         "deepseek/deepseek-v4-flash",
-        "deepseek/deepseek-v4-flash-vision-exp",
     }:
         litellm.register_model(
             {

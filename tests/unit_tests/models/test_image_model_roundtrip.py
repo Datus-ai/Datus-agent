@@ -395,7 +395,7 @@ async def test_gemini_image_roundtrip_preserves_thought_signature(tmp_path, imag
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("streaming", [False, True])
-@pytest.mark.parametrize("model_name", ["deepseek-flash", "deepseek-v4-flash", "deepseek-v4-flash-vision-exp"])
+@pytest.mark.parametrize("model_name", ["deepseek-flash", "deepseek-v4-flash"])
 async def test_deepseek_http_request_delivers_image_and_reasoning(
     tmp_path, image_tools, monkeypatch, streaming, model_name
 ):
