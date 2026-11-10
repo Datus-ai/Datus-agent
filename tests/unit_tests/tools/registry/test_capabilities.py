@@ -29,11 +29,11 @@ def test_every_mcp_tool_declares_a_capability():
 
 
 def test_companions_have_existing_owners_and_no_cycles():
-    for tool_id, capability in TOOL_CAPABILITIES.items():
-        if capability.companion_of:
-            owner = TOOL_CAPABILITIES[capability.companion_of]
-            assert owner.companion_of is None, tool_id
-            assert owner.access == capability.access, tool_id
+    companions = [(tool_id, capability) for tool_id, capability in TOOL_CAPABILITIES.items() if capability.companion_of]
+    assert companions, "Exercise at least one real paging contract"
+    owners = [(tool_id, capability, TOOL_CAPABILITIES[capability.companion_of]) for tool_id, capability in companions]
+    assert all(owner.companion_of is None for _, _, owner in owners)
+    assert all(owner.access == capability.access for _, capability, owner in owners)
 
 
 def test_unknown_tools_are_not_inferred_from_their_names():

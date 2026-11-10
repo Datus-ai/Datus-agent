@@ -1818,6 +1818,7 @@ execution:
         - datus/utils/mcp_decorators.py
         - datus/utils/mcp_execution.py
       targets:
+        - tests/unit_tests/tools/registry/
         - tests/unit_tests/api/services/test_mcp_service.py
         - tests/unit_tests/test_mcp_server.py
         - tests/unit_tests/tools/mcp_tools/
