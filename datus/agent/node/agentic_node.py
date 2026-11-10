@@ -4647,6 +4647,7 @@ class AgenticNode(Node):
                 node_name=self.get_node_name(),
                 tool_registry=self.tool_registry,
                 fs_policy=self._make_filesystem_policy(),
+                enforce_method_denials=getattr(self.agent_config, "restrict_tool_visibility", False) is True,
                 non_interactive=non_interactive,
                 proxied_tool_names=self.proxied_tool_names,
                 project_root=getattr(self.agent_config, "project_root", None),

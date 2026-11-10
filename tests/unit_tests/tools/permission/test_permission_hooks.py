@@ -3294,3 +3294,70 @@ async def test_proxied_plan_writer_cannot_bypass_custom_rules(
         hooks._request_user_confirmation.assert_awaited_once()
     else:
         hooks._request_user_confirmation.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("scope", ["global", "node"])
+@pytest.mark.parametrize(
+    "category,name,arguments",
+    [
+        ("filesystem_tools", name, {"path": "orders.yml"})
+        for name in ("write_file", "edit_file", "delete_file", "upsert_osi_datasets", "upsert_osi_metrics")
+    ]
+    + [
+        ("semantic_tools", "publish_semantic_model", {}),
+        ("semantic_tools", "write_semantic_model_plan_file", {}),
+        ("db_tools", "execute_sql", {"sql": "SELECT 1"}),
+        ("bash_tools", "bash", {"command": "echo denied"}),
+    ],
+)
+async def test_restricted_method_denials_precede_zone_sql_and_proxy_shortcuts(
+    tmp_path, mock_broker, scope, category, name, arguments
+):
+    """Auto INTERNAL writes, SQL reads and client proxies cannot widen host grants."""
+    custom = PermissionConfig(rules=[PermissionRule(tool=category, pattern=name, permission=PermissionLevel.DENY)])
+    base = get_profile("auto")
+    manager = PermissionManager(
+        base.merge_with(custom) if scope == "global" else base,
+        node_overrides={"published": custom} if scope == "node" else None,
+        active_profile="auto",
+    )
+    hooks = PermissionHooks(
+        broker=mock_broker,
+        permission_manager=manager,
+        node_name="published",
+        tool_registry=ToolRegistry({name: category}),
+        fs_policy=FilesystemPolicy(root_path=tmp_path, current_node="published", strict=True),
+        enforce_method_denials=True,
+        proxied_tool_names={name} if category == "semantic_tools" else None,
+    )
+    with pytest.raises(PermissionDeniedException) as exc:
+        await hooks.on_tool_start(
+            SimpleNamespace(tool_arguments=json.dumps(arguments)), None, SimpleNamespace(name=name)
+        )
+    assert exc.value.tool_category == category
+    mock_broker.request.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_restricted_skill_dispatch_still_authorizes_the_selected_name(mock_broker):
+    manager = PermissionManager(
+        PermissionConfig(
+            default_permission=PermissionLevel.DENY,
+            rules=[
+                PermissionRule(tool="skills", pattern="business", permission=PermissionLevel.ALLOW),
+            ],
+        ),
+        active_profile="auto",
+    )
+    hooks = PermissionHooks(
+        broker=mock_broker,
+        permission_manager=manager,
+        node_name="published",
+        tool_registry=ToolRegistry({"load_skill": "skills"}),
+        enforce_method_denials=True,
+    )
+    tool = SimpleNamespace(name="load_skill")
+    await hooks.on_tool_start(SimpleNamespace(tool_arguments='{"skill_name":"business"}'), None, tool)
+    with pytest.raises(PermissionDeniedException):
+        await hooks.on_tool_start(SimpleNamespace(tool_arguments='{"skill_name":"unlinked"}'), None, tool)

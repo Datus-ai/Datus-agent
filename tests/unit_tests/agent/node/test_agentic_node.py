@@ -2045,6 +2045,14 @@ class TestEnsurePermissionHooksProxyWiring:
         kwargs = ph_cls.call_args.kwargs
         assert kwargs["proxied_tool_names"] == set()
 
+    @pytest.mark.parametrize("restricted", [True, False])
+    def test_restricted_hosts_enforce_method_denials_at_invocation(self, restricted):
+        node = self._prepare_node(set())
+        node.agent_config = SimpleNamespace(restrict_tool_visibility=restricted)
+        with patch("datus.tools.permission.permission_hooks.PermissionHooks") as ph_cls:
+            node._ensure_permission_hooks()
+        assert ph_cls.call_args.kwargs["enforce_method_denials"] is restricted
+
     def test_passes_config_mutable_from_agent_config(self):
         """Multi-tenant API nodes suppress project-level permission choices."""
         node = self._prepare_node(set())
