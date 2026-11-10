@@ -439,7 +439,13 @@ class SubAgentTaskTool:
         if parent_manager is None:
             return
 
+        from datus.tools.permission.live_profile import LivePermissionProfile
         from datus.tools.permission.profile_override import apply_profile_override
+
+        live_profile = getattr(parent_manager, "live_profile", None)
+        if isinstance(live_profile, LivePermissionProfile):
+            live_profile.register(getattr(node, "permission_manager", None))
+            return
 
         apply_profile_override(
             getattr(node, "permission_manager", None),

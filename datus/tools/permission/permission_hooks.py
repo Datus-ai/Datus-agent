@@ -505,6 +505,30 @@ class PermissionHooks(AgentHooks):
         return tool_name in cls._PLAN_MODE_BYPASS_TOOLS
 
     async def on_tool_start(self, context, agent, tool) -> None:
+        """Recheck pending gates when this run's permission profile changes."""
+        from datus.tools.permission.live_profile import LivePermissionProfile
+
+        live = getattr(self.permission_manager, "live_profile", None)
+        if not isinstance(live, LivePermissionProfile):
+            return await self._check_tool_start(context, agent, tool)
+        while True:
+            changed = live.changed
+            check = asyncio.create_task(self._check_tool_start(context, agent, tool))
+            notification = asyncio.create_task(changed.wait())
+            try:
+                done, _ = await asyncio.wait((check, notification), return_when=asyncio.FIRST_COMPLETED)
+                if check in done and not changed.is_set():
+                    return await check
+                # Only the permission gate is restarted, never the tool itself.
+                check.cancel("permission_mode_changed")
+                await asyncio.gather(check, return_exceptions=True)
+            finally:
+                for pending in (check, notification):
+                    if not pending.done():
+                        pending.cancel()
+                await asyncio.gather(check, notification, return_exceptions=True)
+
+    async def _check_tool_start(self, context, agent, tool) -> None:
         """Intercept ALL tool calls for permission checking.
 
         This method is called before each tool execution. It:

@@ -570,6 +570,7 @@ class SSESessionData(BaseModel):
     session_id: str = Field(..., description="Service session ID")
     llm_session_id: Optional[str] = Field(None, description="LLM session ID")
 
+    run_id: Optional[str] = Field(None, description="Identity of this running turn, for live permission changes")
     execution_context: Optional[Dict[str, str]] = Field(None, description="Resolved non-secret execution coordinates")
 
 

@@ -1022,3 +1022,49 @@ class TestSemanticPlanReviewDecisions:
         response = await submit_tool_result(request, _mock_svc(task), SimpleNamespace(user_id="owner"))
         assert response.errorCode == "INVALID_REVIEW"
         assert not context.decisions
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "owner,run_id,status,code",
+    [
+        ("other", "run-1", "running", "SESSION_NOT_FOUND"),
+        ("u1", "previous-run", "running", "SESSION_NOT_RUNNING"),
+        ("u1", "run-1", "completed", "SESSION_NOT_RUNNING"),
+    ],
+)
+async def test_live_permission_rejects_wrong_owner_or_turn(owner, run_id, status, code):
+    from types import SimpleNamespace
+
+    from datus.api.models.chat_models import UpdatePermissionModeInput
+    from datus.api.routes.chat_routes import update_permission_mode
+
+    task = SimpleNamespace(user_id=owner, run_id="run-1", status=status)
+    result = await update_permission_mode(
+        UpdatePermissionModeInput(session_id="s1", run_id=run_id, permission_mode="dangerous"),
+        _mock_svc(task),
+        SimpleNamespace(user_id="u1"),
+    )
+    assert result.success is False
+    assert result.errorCode == code
+
+
+@pytest.mark.asyncio
+async def test_live_permission_updates_only_requested_task():
+    from types import SimpleNamespace
+
+    from datus.api.models.chat_models import UpdatePermissionModeInput
+    from datus.api.routes.chat_routes import update_permission_mode
+    from datus.tools.permission.live_profile import LivePermissionProfile
+
+    state = LivePermissionProfile(SimpleNamespace(_raw_permissions={}), "normal")
+    task = SimpleNamespace(
+        user_id="u1", session_id="s1", run_id="run-1", status="running", live_permission_profile=state
+    )
+    result = await update_permission_mode(
+        UpdatePermissionModeInput(session_id="s1", run_id="run-1", permission_mode="dangerous"),
+        _mock_svc(task),
+        SimpleNamespace(user_id="u1"),
+    )
+    assert result.success is True
+    assert result.data["permission_mode"] == state.profile == "dangerous"
