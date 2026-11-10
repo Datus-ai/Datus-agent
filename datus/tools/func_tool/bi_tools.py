@@ -470,13 +470,14 @@ class BIFuncTool:
                 if ds_uid:
                     extra["datasource_uid"] = ds_uid
 
+            dims_list, axis = self._chart_grouping(chart_type, dims_list, x_axis or None)
             spec = ChartSpec(
                 chart_type=chart_type,
                 title=title,
                 description=description,
                 dataset_id=ds_id,
                 sql=sql or None,
-                x_axis=x_axis or None,
+                x_axis=axis,
                 metrics=metrics_list,
                 dimensions=dims_list,
                 extra=extra,
@@ -499,8 +500,12 @@ class BIFuncTool:
         metrics: str = "",
         x_axis: str = "",
         description: str = "",
+        dimensions: Optional[str] = None,
     ) -> FuncToolResult:
-        """Update an existing chart's type, SQL, metrics, or title."""
+        """Update a chart. Omit dimensions or pass null to preserve grouping; use an empty string to clear it.
+
+        For Superset tables, dimensions contains groupby columns; x_axis is not used.
+        """
         try:
             from datus_bi_core.models import ChartSpec
 
@@ -508,13 +513,17 @@ class BIFuncTool:
             existing = self.adapter.get_chart(chart_id)
             if existing is None:
                 return FuncToolResult(success=0, error=f"Chart {chart_id} not found")
+            effective_type = chart_type or existing.chart_type
+            dims = [d.strip() for d in dimensions.split(",") if d.strip()] if dimensions is not None else None
+            dims, axis = self._chart_grouping(effective_type, dims, x_axis or None)
             spec = ChartSpec(
-                chart_type=chart_type or existing.chart_type,
+                chart_type=effective_type,
                 title=title or existing.name,
                 description=description or getattr(existing, "description", "") or "",
                 sql=sql or getattr(existing, "sql", None),
-                x_axis=x_axis or getattr(existing, "x_axis", None),
-                metrics=metrics_list or getattr(existing, "metrics", None),
+                x_axis=axis,
+                metrics=metrics_list,
+                dimensions=dims,
             )
             result = self.adapter.update_chart(chart_id, spec)
             payload = result.model_dump()
@@ -548,8 +557,11 @@ class BIFuncTool:
     def delete_chart(self, chart_id: str) -> FuncToolResult:
         """Delete a chart by its ID."""
         try:
-            success = self.adapter.delete_chart(chart_id)
-            return FuncToolResult(result={"deleted": success, "chart_id": chart_id})
+            success = bool(self.adapter.delete_chart(chart_id))
+            payload = {"deleted": success, "chart_id": chart_id}
+            if success:
+                payload["deleted_deliverable"] = self._build_bi_target("chart", {"id": chart_id})
+            return FuncToolResult(result=payload)
         except Exception as exc:
             logger.warning(f"delete_chart failed: {exc}")
             return FuncToolResult(success=0, error=str(exc))
@@ -648,6 +660,20 @@ class BIFuncTool:
     # ------------------------------------------------------------------ #
     # DeliverableTarget self-reporting
     # ------------------------------------------------------------------ #
+
+    def _chart_grouping(
+        self, chart_type: str, dimensions: Optional[List[str]], x_axis: Optional[str]
+    ) -> tuple[Optional[List[str]], Optional[str]]:
+        """Superset tables group by dimensions and must clear a previously saved axis."""
+        adapter_type = getattr(self._resolved_dash_cfg, "adapter_type", "")
+        if not isinstance(adapter_type, str) or not adapter_type:
+            adapter_type = self._resolved_platform()
+        if adapter_type == "superset" and chart_type == "table":
+            if x_axis:
+                dimensions = list(dict.fromkeys([*(dimensions or []), x_axis]))
+            # None means 'preserve saved axis' to the adapter; empty explicitly clears it.
+            return dimensions, ""
+        return dimensions, x_axis
 
     def _build_bi_target(
         self,

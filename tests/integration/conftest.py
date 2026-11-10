@@ -73,10 +73,13 @@ class ManagedPluginRuntime:
         cwd: Path | None = None,
         timeout: float | None = None,
     ) -> subprocess.CompletedProcess[str]:
+        host_home = Path.home()
         env = os.environ.copy()
-        # Isolating HOME must not also discard uv's dependency/build cache;
-        # otherwise every managed source install re-downloads its wheelhouse.
-        env.setdefault("UV_CACHE_DIR", str(Path.home() / ".cache" / "uv"))
+        # Keep build caches and rustup's toolchain selection when isolating the
+        # plugin store. Native source plugins build through maturin/Cargo.
+        env.setdefault("UV_CACHE_DIR", str(host_home / ".cache" / "uv"))
+        env.setdefault("RUSTUP_HOME", str(host_home / ".rustup"))
+        env.setdefault("CARGO_HOME", str(host_home / ".cargo"))
         env["HOME"] = str(self.home)
         command = [str(self.datus_executable), *args]
         try:
@@ -104,15 +107,22 @@ class ManagedPluginRuntime:
             # ``subprocess.run(check=True)`` retains the full environment in
             # its failing frame, which --showlocals would publish to CI logs.
             env.clear()
-            raise subprocess.CalledProcessError(
+            error = subprocess.CalledProcessError(
                 completed.returncode,
                 completed.args,
                 output=completed.stdout,
                 stderr=completed.stderr,
             )
+            for stream, output in (("stdout", completed.stdout), ("stderr", completed.stderr)):
+                if output:
+                    error.add_note(f"{stream} (last 20 lines):\n" + "\n".join(output.splitlines()[-20:]))
+            raise error
         return completed
 
     def install(self, source: Path) -> subprocess.CompletedProcess[str]:
+        wheel = os.environ.get("DATUS_SQL_POLICY_WHEEL")
+        if source.name == "datus-sql-policies" and wheel:
+            return self.run("plugin", "install", f"whl:{Path(wheel).resolve(strict=True)}")
         return self.run("plugin", "install", f"src:{source}")
 
 
@@ -177,6 +187,22 @@ def _resolve_external_root() -> Path:
         if (candidate / "datus-storage-adapters").is_dir() and (candidate / "Datus-Plugins").is_dir():
             return candidate
     pytest.fail("P0 external repository root was not found; set EXTERNAL_REPOS_ROOT", pytrace=False)
+
+
+@pytest.fixture(scope="session")
+def sql_policy_source() -> Path:
+    source = _resolve_external_root() / "datus-sql-policies"
+    if not source.is_dir():
+        pytest.fail(f"P0 SQL policy source checkout missing: {source}", pytrace=False)
+    return source
+
+
+@pytest.fixture(scope="session")
+def superset_plugin_source() -> Path:
+    source = _resolve_external_root() / "Datus-Plugins" / "datus-superset-plugin"
+    if not source.is_dir():
+        pytest.fail(f"P0 Superset plugin source checkout missing: {source}", pytrace=False)
+    return source
 
 
 @pytest.fixture(scope="session")
