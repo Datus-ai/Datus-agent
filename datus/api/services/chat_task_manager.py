@@ -391,6 +391,8 @@ class ChatTask:
     def __init__(self, session_id: str, asyncio_task: asyncio.Task, user_id: Optional[str] = None):
         self.session_id = session_id
         self.user_id = user_id
+        self.run_id = uuid.uuid4().hex
+        self.live_permission_profile = None
         self.asyncio_task = asyncio_task
         self.node: Optional[AgenticNode] = None
         self.events: list[SSEEvent] = []
@@ -903,6 +905,12 @@ class ChatTaskManager:
             # switch the freshly created node's PermissionManager in
             # place — it is scoped to this request only.
             self._apply_permission_mode_override(node, agent_config, request.permission_mode)
+            from datus.tools.permission.live_profile import LivePermissionProfile
+
+            permission_manager = getattr(node, "permission_manager", None)
+            if permission_manager is not None:
+                task.live_permission_profile = LivePermissionProfile(agent_config, permission_manager.active_profile)
+                task.live_permission_profile.register(permission_manager)
 
             await self._push_event(
                 task,
@@ -910,6 +918,7 @@ class ChatTaskManager:
                     id=event_id,
                     event="session",
                     data=SSESessionData(
+                        run_id=task.run_id,
                         session_id=session_id,
                         llm_session_id=node.session_id,
                         execution_context=agent_config.runtime_db_context(),
