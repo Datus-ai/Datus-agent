@@ -4723,6 +4723,24 @@ class AgenticNode(Node):
             },
         }
 
+    def _filter_permission_denied_tools(self) -> None:
+        """Opt-in visibility enforcement for restricted hosts, including rebuilds.
+
+        Invocation hooks remain authoritative. Mutate the list in place because
+        a caller may already have captured it before composing its hooks.
+        """
+        if getattr(getattr(self, "agent_config", None), "restrict_tool_visibility", False) is not True:
+            return
+        manager = getattr(self, "permission_manager", None)
+        if manager is None:
+            raise RuntimeError("Restricted tool visibility requires a permission manager")
+        self._populate_tool_registry()
+        visible = []
+        for tool in self.tools:
+            category = self.tool_registry.get(tool.name, "tools")
+            visible.extend(manager.filter_available_tools([tool], self.get_node_name(), category))
+        self.tools[:] = visible
+
     def _ensure_tool_transformers(self) -> None:
         """Wrap ``self.tools`` with plugin-declared argument transformers, once.
 
@@ -4737,6 +4755,7 @@ class AgenticNode(Node):
         transformers, a failure to apply them raises: transformers are policy
         code, and running without them would silently drop enforcement.
         """
+        self._filter_permission_denied_tools()
         # Defensive getattr: test doubles that bypass ``AgenticNode.__init__``
         # may carry neither the flag nor an agent_config (same rationale as the
         # ``interaction_broker`` getattr in ``_stream_once``).

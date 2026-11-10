@@ -2285,3 +2285,48 @@ class TestEnsureToolTransformers:
         assert node.tools is captured
         assert captured[0] is not original_tool
         assert captured[0].name == "execute_sql"
+
+
+def test_restricted_host_hides_denied_tools_and_retains_sql_ask():
+    from datus.tools.permission.permission_manager import PermissionManager
+    from datus.tools.permission.profiles import build_effective_config
+    from datus.tools.registry.tool_registry import ToolRegistry
+
+    config = build_effective_config(
+        "auto",
+        {
+            "rules": [
+                {"tool": "*", "pattern": "*", "permission": "deny"},
+                {"tool": "db_tools", "pattern": "execute_sql", "permission": "ask"},
+            ]
+        },
+    )
+    tools = [SimpleNamespace(name=name) for name in ("execute_sql", "write_file", "new_unclassified_tool")]
+    captured = tools
+    node = SimpleNamespace(
+        agent_config=SimpleNamespace(restrict_tool_visibility=True),
+        permission_manager=PermissionManager(config),
+        tool_registry=ToolRegistry({"execute_sql": "db_tools", "write_file": "filesystem_tools"}),
+        tools=tools,
+        _populate_tool_registry=lambda: None,
+        get_node_name=lambda: "chat",
+    )
+    AgenticNode._filter_permission_denied_tools(node)
+    assert [tool.name for tool in captured] == ["execute_sql"]
+    # A later tool rebuild must be filtered again, independently of plugin flags.
+    node.tools.append(SimpleNamespace(name="write_file"))
+    AgenticNode._filter_permission_denied_tools(node)
+    assert [tool.name for tool in captured] == ["execute_sql"]
+
+
+def test_restricted_visibility_requires_permission_enforcement():
+    node = SimpleNamespace(agent_config=SimpleNamespace(restrict_tool_visibility=True), permission_manager=None)
+    with pytest.raises(RuntimeError, match="permission manager"):
+        AgenticNode._filter_permission_denied_tools(node)
+
+
+def test_ordinary_hosts_keep_existing_tool_visibility():
+    tools = [SimpleNamespace(name="write_file")]
+    node = SimpleNamespace(agent_config=SimpleNamespace(), tools=tools)
+    AgenticNode._filter_permission_denied_tools(node)
+    assert node.tools == tools
