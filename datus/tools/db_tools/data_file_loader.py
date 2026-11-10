@@ -183,6 +183,7 @@ class LoadedTable:
     preview_columns: List[str] = field(default_factory=list)
     preview_rows: List[List[Any]] = field(default_factory=list)
     materialized: bool = False
+    warnings: List[str] = field(default_factory=list)
 
     def to_dict(self) -> Dict[str, Any]:
         payload: Dict[str, Any] = {
@@ -203,6 +204,8 @@ class LoadedTable:
             payload["encoding"] = self.encoding
         if self.materialized:
             payload["materialized"] = True
+        if self.warnings:
+            payload["warnings"] = self.warnings
         return payload
 
 
@@ -597,7 +600,9 @@ def _json_scan(path: Path) -> str:
     return f"read_json_auto({quote_literal(str(path))})"
 
 
-def _xlsx_scan(path: Path, sheet: str, header_row: int, max_row: int, max_column: int) -> Tuple[str, str]:
+def _xlsx_scan(
+    path: Path, sheet: str, header_row: int, max_row: int, max_column: int, *, all_varchar: bool = False
+) -> Tuple[str, str]:
     """``(scan_expression, used_range)`` for one sheet, bounded to its real extent.
 
     ``stop_at_empty=false`` is stated rather than inferred. The range already
@@ -609,7 +614,8 @@ def _xlsx_scan(path: Path, sheet: str, header_row: int, max_row: int, max_column
     used_range = f"A{header_row}:{column_letter(max_column)}{max_row}"
     scan = (
         f"read_xlsx({quote_literal(str(path))}, sheet={quote_literal(sheet)}, "
-        f"range={quote_literal(used_range)}, header=true, stop_at_empty=false)"
+        f"range={quote_literal(used_range)}, header=true, stop_at_empty=false"
+        f"{', all_varchar=true' if all_varchar else ''})"
     )
     return scan, used_range
 
@@ -1167,20 +1173,36 @@ def load_file(
                     sheet_index=index,
                     taken=_names_owned_by_others(existing, tag),
                 )
-                scan, used_range = _xlsx_scan(path, name, resolved_header, max_row, max_column)
-                _create_view(connection, table, scan, materialize, tag)
-                existing[table] = tag
-                loaded.append(
-                    _finish_table(
-                        connection,
-                        table=table,
-                        source_file=rel_path,
-                        sheet=name,
-                        header_row=resolved_header,
-                        used_range=used_range,
-                        materialized=materialize,
+                for all_varchar in (False, True):
+                    scan, used_range = _xlsx_scan(
+                        path, name, resolved_header, max_row, max_column, all_varchar=all_varchar
                     )
-                )
+                    try:
+                        _create_view(connection, table, scan, materialize, tag)
+                        item = _finish_table(
+                            connection,
+                            table=table,
+                            source_file=rel_path,
+                            sheet=name,
+                            header_row=resolved_header,
+                            used_range=used_range,
+                            materialized=materialize,
+                        )
+                    except Exception as exc:
+                        # Summary rows and pricing terms can defeat DuckDB's
+                        # first-row type inference. Keep the source values as
+                        # text so the caller can inspect and explicitly cast.
+                        if all_varchar or "Could not convert" not in str(exc):
+                            raise
+                        continue
+                    if all_varchar:
+                        item.warnings.append(
+                            "Mixed cell types prevented automatic typing; values were preserved as text. "
+                            "Inspect the source and use explicit casts for numeric analysis."
+                        )
+                    existing[table] = tag
+                    loaded.append(item)
+                    break
             except DataFileError as exc:
                 skipped.append(SkippedSheet(name, str(exc)))
             except Exception as exc:
