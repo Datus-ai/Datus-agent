@@ -175,7 +175,9 @@ class ToolResultStore:
             if body.get("read_with") == "read_file":
                 add(body)
                 return
-            extra = body.get("extra") or {}
+            extra = body.get("extra")
+            if not isinstance(extra, dict):
+                return
             if extra.get("read_with") == "read_tool_result":
                 add(extra)
             elif extra.get("snapshot_id") and tool:

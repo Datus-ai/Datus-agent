@@ -1162,6 +1162,29 @@ async def test_compaction_retains_native_snapshot_arguments_and_persists_them(tm
                 {"role": "assistant", "content": [{"type": "tool_use", "id": "c", "name": "list_tables", "input": {}}]},
                 {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "c", "content": json_text(page)}]},
             ]
+        external_output = {"success": 1, "result": {"extra": "ordinary upstream description", "items": []}}
+        if item_format == "responses":
+            items.extend(
+                [
+                    {"type": "function_call", "call_id": "external", "name": "external_tool", "arguments": "{}"},
+                    {"type": "function_call_output", "call_id": "external", "output": json_text(external_output)},
+                ]
+            )
+        else:
+            items.extend(
+                [
+                    {
+                        "role": "assistant",
+                        "content": [{"type": "tool_use", "id": "external", "name": "external_tool", "input": {}}],
+                    },
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "tool_result", "tool_use_id": "external", "content": json_text(external_output)}
+                        ],
+                    },
+                ]
+            )
         await node._session.add_items(items)
         for _ in range(2):
             if mid_turn:

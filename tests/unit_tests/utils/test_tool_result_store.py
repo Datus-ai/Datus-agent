@@ -187,3 +187,39 @@ def test_missing_legacy_reference_does_not_break_compaction(store):
 
     summary = build_continuation_message("Continue", "history.jsonl", [{"result_id": "0" * 64}])
     assert store.recovery_references([{"role": "assistant", "content": summary}]) == []
+
+
+@pytest.mark.parametrize("native", [False, True])
+@pytest.mark.parametrize("extra", ["ordinary description", ["ordinary value"], 7, None])
+def test_non_mapping_extra_preserves_other_result_references(store, native, extra):
+    snapshot_id = "snapshot:" + "1" * 32
+    outputs = [
+        (
+            "catalog",
+            "list_tables",
+            {"result": {"has_more": True, "extra": {"snapshot_id": snapshot_id, "next_offset": 100}}},
+        ),
+        ("external", "external_tool", {"result": {"extra": extra, "items": []}}),
+    ]
+    items = []
+    for call_id, name, output in outputs:
+        if native:
+            items.extend(
+                [
+                    {"role": "assistant", "content": [{"type": "tool_use", "id": call_id, "name": name, "input": {}}]},
+                    {
+                        "role": "user",
+                        "content": [{"type": "tool_result", "tool_use_id": call_id, "content": json_text(output)}],
+                    },
+                ]
+            )
+        else:
+            items.extend(
+                [
+                    {"type": "function_call", "call_id": call_id, "name": name, "arguments": "{}"},
+                    {"type": "function_call_output", "call_id": call_id, "output": json_text(output)},
+                ]
+            )
+    before = copy.deepcopy(items)
+    assert store.recovery_references(items) == [{"tool": "list_tables", "snapshot_id": snapshot_id, "offset": 100}]
+    assert items == before

@@ -67,6 +67,7 @@ class SnapshotStore:
         return snapshot_id
 
     def read(self, snapshot_id: str, tool: str, scope: Any, query: dict) -> Any:
+        """Internal read-only payload; callers must detach a shaped page before exposing it."""
         if not isinstance(snapshot_id, str) or re.fullmatch(r"snapshot:[a-f0-9]{32}", snapshot_id) is None:
             raise ValueError("Invalid snapshot_id")
         path = self._path(snapshot_id)

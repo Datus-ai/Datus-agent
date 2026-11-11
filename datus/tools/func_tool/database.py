@@ -10,6 +10,7 @@ import json
 import os
 import re
 from collections import OrderedDict
+from copy import deepcopy
 from dataclasses import dataclass
 from fnmatch import fnmatchcase
 from pathlib import Path
@@ -1753,7 +1754,8 @@ class DBFuncTool:
             )
             snapshot_id = store.save(name, items, scope, query)
         rows = [{"name": item} if isinstance(item, str) else item for item in items]
-        return FuncToolResult(result=list_page(rows, snapshot_id, size, offset))
+        page = list_page(rows, snapshot_id, size, offset)
+        return FuncToolResult(result=deepcopy(page))
 
     @mcp_tool()
     @tool_contract(access="read", direct_call=True)

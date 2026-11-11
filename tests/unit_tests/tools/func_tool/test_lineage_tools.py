@@ -7,6 +7,7 @@
 import asyncio
 import json
 import os
+from copy import deepcopy
 from types import SimpleNamespace
 
 import pytest
@@ -850,3 +851,28 @@ async def test_native_lineage_sections_are_lossless_and_snapshot_is_stable(tmp_p
     nodes = query(tool, snapshot_id=rid, section="nodes", page_size=1500)
     assert {row["key"]: row["value"] for row in nodes["items"]} == legacy["nodes"]
     assert tool.query_lineage(snapshot_id=rid, direction="upstream").success == 0
+
+
+@pytest.mark.parametrize("section", ["lineage", "nodes", "files"])
+def test_returned_lineage_page_mutations_do_not_change_memory_snapshot(tmp_path, section):
+    from datus.utils.tool_result_store import ACTIVE_RESULT_STORE
+
+    tool = make_tool(tmp_path)
+    upsert(tool, sql="INSERT INTO t SELECT * FROM s", source_id="batch")
+    token = ACTIVE_RESULT_STORE.set(None)
+    try:
+        first = query(tool, page_size=1)
+        snapshot_id = first["extra"]["snapshot_id"]
+        page = query(tool, snapshot_id=snapshot_id, section=section, page_size=1)
+        expected = deepcopy(page)
+        if section == "lineage":
+            page["items"][0]["sources"].append("caller_changed")
+        elif section == "nodes":
+            page["items"][0]["value"]["role"] = "caller_changed"
+        else:
+            page["items"][0]["value"] = "caller_changed"
+        page["stats"]["tables"] = -1
+        page["sections"][section] = -1
+        assert query(tool, snapshot_id=snapshot_id, section=section, page_size=1) == expected
+    finally:
+        ACTIVE_RESULT_STORE.reset(token)

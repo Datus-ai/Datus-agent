@@ -5,6 +5,7 @@ Test cases for DBFuncTool compressor model_name initialization and execute_ddl.
 import json
 import re
 from collections import OrderedDict
+from copy import deepcopy
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
@@ -4103,3 +4104,29 @@ class TestNativeCatalogPagination:
         tool._scoped_patterns = [ScopedTablePattern(raw="only", table="only")]
         assert tool.list_tables(snapshot_id=page["extra"]["snapshot_id"]).success == 0
         assert connector.get_tables.call_count == 1
+
+    @pytest.mark.parametrize(
+        "name,provider",
+        [("list_tables", "get_tables"), ("list_databases", "get_databases"), ("list_schemas", "get_schemas")],
+    )
+    def test_returned_page_mutations_do_not_change_memory_snapshot(self, catalog, name, provider):
+        from datus.utils.tool_result_store import ACTIVE_RESULT_STORE
+
+        tool, connector = catalog
+        method = getattr(tool, name)
+        token = ACTIVE_RESULT_STORE.set(None)
+        try:
+            first = method(page_size=1)
+            assert first.success == 1, first.error
+            snapshot_id = first.result["extra"]["snapshot_id"]
+            page = method(snapshot_id=snapshot_id, offset=1, page_size=1)
+            assert page.success == 1, page.error
+            expected = deepcopy(page.result)
+            page.result["items"][0].clear()
+            page.result["extra"]["offset"] = -1
+            reread = method(snapshot_id=snapshot_id, offset=1, page_size=1)
+            assert reread.success == 1, reread.error
+            assert reread.result == expected
+            assert getattr(connector, provider).call_count == 1
+        finally:
+            ACTIVE_RESULT_STORE.reset(token)

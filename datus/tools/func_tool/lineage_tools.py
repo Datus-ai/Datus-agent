@@ -9,6 +9,7 @@ from __future__ import annotations
 import glob
 import os
 import re
+from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Literal, Optional, Pattern, Tuple
@@ -426,7 +427,7 @@ class LineageTools:
         )
         if "hint" in result:
             page["hint"] = result["hint"]
-        return FuncToolResult(result=page)
+        return FuncToolResult(result=deepcopy(page))
 
     def _stale_sources(
         self, document: LineageDocument, source_ids: Iterable[str], settings: AnalysisSettings
