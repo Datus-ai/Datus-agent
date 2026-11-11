@@ -54,7 +54,7 @@ In "Q4 2025 Revenue Analysis", switch the revenue trend chart to monthly aggrega
       WHERE signup_month >= '2025-07-01'
   ```
 
-You can also mix the two — point at a metric for the headline KPI and supply ad-hoc SQL for a specific drilldown.
+You can also mix the two — point at a metric for the headline KPI and supply ad-hoc SQL for a specific drilldown. Neither metrics nor SQL are mandatory. Consider available metrics first and prefer suitable existing definitions; choose the source that best fits each part of the analysis.
 
 ## How a Report Gets Built
 
@@ -85,7 +85,7 @@ Each call is a surgical change. The agent locates the affected module, edits it,
 
 To build the report, `gen_visual_report` uses everything that's already wired into your project:
 
-- **Your semantic layer** — defined metrics and dimensions take precedence over ad-hoc SQL whenever they fit the question.
+- **Your semantic layer** — consider available metrics and prefer suitable existing definitions; SQL remains a valid choice.
 - **Your databases** — the agent reads schema, samples values, and runs the queries against your configured datasources.
 - **Your knowledge base** — curated reference SQL and business glossary entries are consulted before the agent writes anything from scratch.
 - **Previous reports** — when you ask the agent to use an existing report as inspiration, it can read that report's data and components.

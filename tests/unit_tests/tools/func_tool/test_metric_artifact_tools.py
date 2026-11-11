@@ -324,20 +324,32 @@ def test_metric_bundle_validation_rejects_mismatched_sidecars(environment, chang
     assert "Invalid saved metric query" in tools._validate_metric_queries("report")
 
 
-def test_sql_fallback_requires_recorded_reason_and_clears_previous_metric_source(environment):
-    tools, saved = _save(environment)
+@pytest.mark.parametrize("kind", ["report", "dashboard"])
+@pytest.mark.parametrize("record_selection", [False, True])
+def test_sql_can_replace_metric_source_with_optional_selection_notes(environment, kind, record_selection):
+    options = {"params": [], "sample_params": {}} if kind == "dashboard" else {}
+    tools, saved = _save(environment, kind, **options)
     assert saved.success == 1
-    args = dict(
-        name="sales", sql="SELECT COUNT(*) AS total FROM orders", goal="Custom analysis", hypothesis="There are orders"
-    )
-    denied = tools.save_query(**args)
-    assert not denied.success and "fallback_reason" in denied.error
-    fallback = tools.save_query(
-        **args, fallback_reason="Needs a count that no existing metric defines", candidate_metrics=[REF]
-    )
-    assert fallback.success == 1, fallback.error
+    args = dict(name="sales", goal="Revenue total", hypothesis="Revenue is positive")
+    if record_selection:
+        args.update(fallback_reason="Reusing SQL for this view", candidate_metrics=[REF])
+    if kind == "report":
+        saved_sql = tools.save_query(**args, sql="SELECT SUM(amount) AS total FROM orders")
+    else:
+        saved_sql = tools.save_query_template(
+            **args, sql_template="-- @datus-params\nSELECT SUM(amount) AS total FROM orders", sample_params={}
+        )
+    assert saved_sql.success == 1, saved_sql.error
+    assert saved_sql.result["preview_rows"] == [{"total": 25.0}]
     brief = json.loads((tools.queries_dir / "sales.brief.json").read_text())
-    assert brief["source_selection"]["candidate_metrics"] == [REF]
+    if record_selection:
+        assert brief["source_selection"] == {
+            "reason": args["fallback_reason"],
+            "candidate_metrics": [REF],
+        }
+    else:
+        assert brief.get("source_selection") is None
+    assert brief["uses"]["metrics"] == []
     assert not (tools.queries_dir / "sales.metric.json").exists()
 
 

@@ -631,6 +631,10 @@ class ReportArtifactTools(MetricArtifactToolsMixin):
                 no implicit assumptions get an empty string — filler like
                 "no caveats" is NOT acceptable.
             datasource: Logical datasource name. Empty string uses the default.
+            fallback_reason: Optional explanation for choosing SQL. Retained for
+                compatibility; SQL does not require a metric capability gap.
+            candidate_metrics: Optional metric identities considered when an
+                explanation is supplied. These are not metric usage attribution.
 
         Returns:
             FuncToolResult.result is a dict like::
@@ -675,11 +679,6 @@ class ReportArtifactTools(MetricArtifactToolsMixin):
                     "hypothesis must be a non-empty one-sentence concrete prediction this query validates. "
                     "If you don't have a hypothesis, skip the query."
                 ),
-            )
-        if self._semantic_tools is not None and not fallback_reason.strip():
-            return FuncToolResult(
-                success=0,
-                error="Use the single-metric save tool whenever it meets the need. SQL fallback requires fallback_reason and candidate_metrics after checking metric capabilities.",
             )
         source_selection = (
             {"reason": fallback_reason.strip(), "candidate_metrics": candidate_metrics or []}
