@@ -412,6 +412,9 @@ def test_db_read_cannot_skip_a_batch_only_policy(monkeypatch, allowed):
         lambda active: {"sql-policy": lambda profile: SimpleNamespace(after_read_batch=hook)},
     )
     db = connector()
+    db.execute_query.return_value = SimpleNamespace(
+        success=True, sql_return=pa.table({"email": ["a@example.com"]}), error=None, result_format="arrow"
+    )
     result = make_db_tool(db, config()).execute_read_enforced("SELECT * FROM orders", db)
     assert received == [[{"email": "a@example.com"}]]
     if allowed:

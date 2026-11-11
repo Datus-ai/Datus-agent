@@ -700,6 +700,69 @@ def test_batch_only_policies_run_before_csv_or_pandas_serialization(environment,
         assert result.sql_return is None
 
 
+@pytest.mark.parametrize("case", ["empty", "unsigned", "null"])
+@pytest.mark.parametrize("allowed", [False, True])
+def test_batch_only_list_reads_preserve_database_schema_and_policy_order(environment, monkeypatch, case, allowed):
+    tool, source, _, _ = environment
+    runtime = PolicyRuntime(None)
+    calls = []
+
+    def whole(rows, **kwargs):
+        assert isinstance(rows, list)
+        calls.append("whole")
+        return SimpleNamespace(allowed=True, result=rows)
+
+    def mask(table, **kwargs):
+        calls.append("batch")
+        assert table.schema.names == ["id", "secret"]
+        assert table.schema.field("id").type == pa.uint64()
+        return SimpleNamespace(
+            allowed=allowed,
+            reason="Batch policy denied read",
+            result=table.set_column(1, "secret", pa.array(["masked"] * table.num_rows)),
+        )
+
+    runtime._runtimes = [
+        ("whole", SimpleNamespace(after_read_result=whole)),
+        ("batch", SimpleNamespace(after_read_batch=mask)),
+    ]
+    monkeypatch.setattr("datus.tools.policy_runtime.PolicyRuntime", lambda config: runtime)
+    query = Mock(wraps=source.execute_query)
+    monkeypatch.setattr(source, "execute_query", query)
+    rows = 0 if case == "empty" else 1
+    value = "NULL" if case == "null" else "18446744073709551615"
+    sql = f"SELECT {value}::UBIGINT AS id, 'private' AS secret FROM range({rows})"
+    result = tool.execute_read_enforced(sql, source)
+    query.assert_called_once_with(sql, result_format="arrow")
+    assert calls == ["whole", "batch"]
+    if allowed:
+        assert result.success is True, result.error
+        assert result.result_format == "list"
+        expected_id = None if case == "null" else 18446744073709551615
+        assert result.sql_return == [{"id": expected_id, "secret": "masked"}] * rows
+    else:
+        assert result.success is False
+        assert result.error == "Batch policy denied read"
+        assert result.sql_return is None
+
+
+def test_batch_only_passthrough_preserves_unmodified_reference_reads(environment, monkeypatch):
+    tool, source, _, _ = environment
+    runtime = PolicyRuntime(None)
+    calls = []
+
+    def passthrough(table, **kwargs):
+        calls.append(table.num_rows)
+        return SimpleNamespace(allowed=True, result=table)
+
+    runtime._runtimes = [("batch", SimpleNamespace(after_read_batch=passthrough))]
+    monkeypatch.setattr("datus.tools.policy_runtime.PolicyRuntime", lambda config: runtime)
+    result = tool.execute_read_enforced("SELECT 1 AS id", source, require_unmodified=True)
+    assert result.success is True, result.error
+    assert result.sql_return == [{"id": 1}]
+    assert calls == [1]
+
+
 @pytest.mark.parametrize("streaming", [False, True])
 def test_whole_result_policy_selects_buffered_reads_and_runs_once(environment, monkeypatch, streaming):
     tool, source, _, root = environment

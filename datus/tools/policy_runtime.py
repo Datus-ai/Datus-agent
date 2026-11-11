@@ -413,8 +413,13 @@ class PolicyRuntime:
         datasource: str,
         dialect: str,
         policy_context: Optional[Dict[str, Any]],
+        batch_schema: Any = None,
     ) -> ReadResultDecision:
-        """Apply complete-result policies, including plugins with only a batch hook."""
+        """Apply complete-result policies, including plugins with only a batch hook.
+
+        ``batch_schema`` retains database types when ordinary list results are
+        empty or all-null. It is an internal hint and is not passed to plugins.
+        """
         context = self._normalize_context(policy_context)
         current_result = result
         applied: list[str] = []
@@ -437,7 +442,17 @@ class PolicyRuntime:
                     columns = set(current_result[0]) if current_result else set()
                     if any(not isinstance(row, dict) or set(row) != columns for row in current_result):
                         raise ValueError("Batch policies require rows with consistent column names")
-                    hook_result = pa.Table.from_pylist(current_result)
+                    candidate = None
+                    if batch_schema is not None:
+                        try:
+                            candidate = pa.Table.from_pylist(current_result, schema=batch_schema)
+                        except (pa.ArrowException, TypeError, ValueError, OverflowError):
+                            pass  # A whole-result hook may have changed columns or value types.
+                    hook_result = (
+                        candidate
+                        if candidate is not None and _same_row_value(current_result, candidate.to_pylist())
+                        else pa.Table.from_pylist(current_result)
+                    )
                     if not _same_row_value(current_result, hook_result.to_pylist()):
                         raise ValueError("Arrow conversion would change query values")
                 except (pa.ArrowException, TypeError, ValueError, OverflowError) as exc:
@@ -464,7 +479,9 @@ class PolicyRuntime:
                         ErrorCode.TOOL_INVALID_INPUT,
                         message=f"Policy runtime {plugin_name!r} after_read_batch must return an Arrow table",
                     )
-                decision = replace(decision, result=decision.result.to_pylist())
+                batch_schema = decision.result.schema
+                restored = current_result if decision.result is hook_result else decision.result.to_pylist()
+                decision = replace(decision, result=restored)
             current_result = decision.result
             applied.extend(decision.applied_policies)
         return ReadResultDecision(allowed=True, result=current_result, applied_policies=applied)

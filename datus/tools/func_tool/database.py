@@ -3255,23 +3255,36 @@ class DBFuncTool(BulkQueryTools):
             dialect=connector.dialect,
             sql=enforced_sql,
         )
-        # CSV has already discarded database types. Batch-only policies need
-        # typed rows, so apply policies before presentation serialization.
-        serialize_after_policy = (
-            result_format in {"csv", "pandas"} and getattr(runtime, "has_batch_only_result_hooks", False) is True
+        # CSV and empty row lists lose database type/schema information. Fetch
+        # typed rows once and preserve it for batch-only policy enforcement.
+        typed_policy_result = (
+            result_format in {"csv", "pandas", "list"}
+            and getattr(runtime, "has_batch_only_result_hooks", False) is True
         )
-        result = connector.execute_query(
-            enforced_sql, result_format="arrow" if serialize_after_policy else result_format
-        )
+        result = connector.execute_query(enforced_sql, result_format="arrow" if typed_policy_result else result_format)
         if not result.success:
             return result
         try:
+            policy_options = {}
+            if typed_policy_result:
+                import pyarrow as pa
+
+                if not isinstance(result.sql_return, pa.Table):
+                    raise DatusException(
+                        ErrorCode.TOOL_INVALID_INPUT, message="Batch-only result policies require typed Arrow results"
+                    )
+                if result_format == "list":
+                    # Whole-result hooks keep their ordinary row-list input.
+                    # An empty list still carries its database schema to batch hooks.
+                    policy_options["batch_schema"] = result.sql_return.schema
+                    result.sql_return = result.sql_return.to_pylist()
             result_decision = runtime.after_read_result(
                 result.sql_return,
                 sql=enforced_sql,
                 datasource=effective_datasource,
                 dialect=connector.dialect,
                 policy_context=effective_policy_context,
+                **policy_options,
             )
             if not result_decision.allowed:
                 raise DatusException(
@@ -3287,7 +3300,7 @@ class DBFuncTool(BulkQueryTools):
                     sql_query=enforced_sql,
                 )
             result.sql_return = result_decision.result
-            if serialize_after_policy:
+            if typed_policy_result and result_format in {"csv", "pandas"}:
                 import pandas as pd
                 import pyarrow as pa
 
@@ -3299,6 +3312,9 @@ class DBFuncTool(BulkQueryTools):
                 # Nullable integer IDs must not pass through pandas float64.
                 frame = result.sql_return.to_pandas(types_mapper=pd.ArrowDtype)
                 result.sql_return = frame.to_csv(index=False) if result_format == "csv" else frame
+            if typed_policy_result:
+                if result_format == "list" and isinstance(result.sql_return, pa.Table):
+                    result.sql_return = result.sql_return.to_pylist()
                 result.result_format = result_format
             if result_decision.applied_policies:
                 logger.info(
