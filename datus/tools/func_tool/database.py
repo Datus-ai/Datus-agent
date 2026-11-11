@@ -10,6 +10,7 @@ import json
 import os
 import re
 from collections import OrderedDict
+from copy import deepcopy
 from dataclasses import dataclass
 from fnmatch import fnmatchcase
 from pathlib import Path
@@ -57,6 +58,7 @@ from datus.utils.constants import DBType, SQLType
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
 from datus.utils.mcp_decorators import mcp_tool, mcp_tool_class
+from datus.utils.result_pagination import SnapshotStore, list_page, native_pagination, validate_page
 from datus.utils.sql_utils import parse_dialect, parse_table_name_parts
 
 logger = get_logger(__name__)
@@ -1712,10 +1714,60 @@ class DBFuncTool:
         except Exception as e:
             return FuncToolResult(success=0, error=str(e))
 
+    def _catalog_snapshot_scope(self) -> dict:
+        return {
+            "datasource": self._default_datasource,
+            "database": self._default_database,
+            "policy": self.policy_context,
+            "tables": [vars(pattern) for pattern in self._scoped_patterns],
+            "grouped_tables": getattr(self, "_tables_by_datasource", None),
+            "context": getattr(self, "_execution_context", {}),
+        }
+
+    def _catalog_snapshot_store(self) -> SnapshotStore:
+        if "_catalog_pages" not in self.__dict__:
+            self._catalog_pages = SnapshotStore()
+        return self._catalog_pages
+
+    def _catalog_page(
+        self,
+        name: str,
+        items: Optional[list],
+        page_size: Optional[int],
+        offset: int,
+        snapshot_id: Optional[str],
+        query: dict,
+    ) -> FuncToolResult:
+        if page_size is None and snapshot_id is None and offset == 0:
+            return FuncToolResult(result=items)
+        size = 200 if page_size is None else page_size
+        validate_page(size, offset)
+        store = self._catalog_snapshot_store()
+        scope = self._catalog_snapshot_scope()
+        if snapshot_id:
+            items = store.read(snapshot_id, name, scope, query)
+        else:
+            if offset:
+                raise ValueError("Read the first page before supplying offset; continue with snapshot_id")
+            items = sorted(
+                items, key=lambda x: (x.get("type", ""), x.get("qualified_name", "")) if isinstance(x, dict) else x
+            )
+            snapshot_id = store.save(name, items, scope, query)
+        rows = [{"name": item} if isinstance(item, str) else item for item in items]
+        page = list_page(rows, snapshot_id, size, offset)
+        return FuncToolResult(result=deepcopy(page))
+
     @mcp_tool()
     @tool_contract(access="read", direct_call=True)
+    @native_pagination()
     def list_databases(
-        self, catalog: Optional[str] = "", datasource: Optional[str] = "", include_sys: Optional[bool] = False
+        self,
+        catalog: Optional[str] = "",
+        datasource: Optional[str] = "",
+        include_sys: Optional[bool] = None,
+        page_size: Optional[int] = None,
+        offset: int = 0,
+        snapshot_id: Optional[str] = None,
     ) -> FuncToolResult:
         """
         Enumerate databases accessible through the current connection.
@@ -1727,10 +1779,28 @@ class DBFuncTool:
             datasource: Optional datasource to route the query to. Defaults to the current datasource.
             include_sys: Set True to include system databases; defaults to False.
 
+        Pagination:
+            Agent calls default to 200 records. Use page_size, offset and the returned
+            snapshot_id to continue without another catalog read. No page-size hard cap.
+            Direct calls without pagination arguments retain the complete list.
+
         Returns:
             FuncToolResult with result as a list of database names ordered by the connector. On failure success=0 with
             an explanatory error message.
         """
+        query = {"catalog": catalog, "datasource": datasource, "include_sys": include_sys}
+        try:
+            if page_size is not None:
+                validate_page(page_size, offset)
+            if snapshot_id:
+                return self._catalog_page("list_databases", None, page_size, offset, snapshot_id, query)
+            if offset:
+                raise ValueError("Read the first page before supplying offset; continue with snapshot_id")
+        except (OSError, ValueError, TypeError) as exc:
+            return FuncToolResult(success=0, error=str(exc))
+        include_sys = False if include_sys is None else include_sys
+        query["include_sys"] = include_sys
+
         if self._is_multi_connector and datasource and datasource not in self._datasources:
             return FuncToolResult(
                 success=0, error=f"Datasource '{datasource}' not found. Available: {list(self._datasources)}"
@@ -1747,27 +1817,31 @@ class DBFuncTool:
                 if cfg is not None and getattr(cfg, "path_pattern", ""):
                     databases = self.agent_config.list_databases(source)
                     if getattr(self, "_tables_by_datasource", None) is None:
-                        return FuncToolResult(result=databases)
+                        return self._catalog_page("list_databases", databases, page_size, offset, None, query)
                     catalog, _, _ = self._normalize_namespace_args(catalog, "", "", datasource)
                     connector = self._get_connector(source)
                     filtered = [db for db in databases if self._database_matches_scope(catalog, db, connector)]
-                    return FuncToolResult(result=filtered)
+                    return self._catalog_page("list_databases", filtered, page_size, offset, None, query)
             catalog, _, _ = self._normalize_namespace_args(catalog, "", "", datasource)
             connector = self._get_connector(source)
             databases = connector.get_databases(catalog, include_sys=include_sys)
             filtered = [db for db in databases if self._database_matches_scope(catalog, db, connector)]
-            return FuncToolResult(result=filtered)
+            return self._catalog_page("list_databases", filtered, page_size, offset, None, query)
         except Exception as e:
             return FuncToolResult(success=0, error=str(e))
 
     @mcp_tool()
     @tool_contract(access="read", direct_call=True)
+    @native_pagination()
     def list_schemas(
         self,
         catalog: Optional[str] = "",
         database: Optional[str] = "",
         datasource: Optional[str] = "",
-        include_sys: bool = False,
+        include_sys: Optional[bool] = None,
+        page_size: Optional[int] = None,
+        offset: int = 0,
+        snapshot_id: Optional[str] = None,
     ) -> FuncToolResult:
         """
         List schema names under the supplied catalog/database coordinate.
@@ -1780,31 +1854,53 @@ class DBFuncTool:
             datasource: Optional datasource to route the query to. Defaults to the current datasource.
             include_sys: Set True to include system schemas; defaults to False.
 
+        Pagination:
+            Agent calls default to 200 records. Use page_size, offset and the returned
+            snapshot_id to continue without another catalog read. No page-size hard cap.
+            Direct calls without pagination arguments retain the complete list.
+
         Returns:
             FuncToolResult with result holding the schema name list. On failure success=0 with an explanatory message.
         """
+        query = {"catalog": catalog, "database": database, "datasource": datasource, "include_sys": include_sys}
+        try:
+            if page_size is not None:
+                validate_page(page_size, offset)
+            if snapshot_id:
+                return self._catalog_page("list_schemas", None, page_size, offset, snapshot_id, query)
+            if offset:
+                raise ValueError("Read the first page before supplying offset; continue with snapshot_id")
+        except (OSError, ValueError, TypeError) as exc:
+            return FuncToolResult(success=0, error=str(exc))
+        include_sys = False if include_sys is None else include_sys
+        query["include_sys"] = include_sys
+
         try:
             catalog, database, _ = self._normalize_namespace_args(catalog, database, "", datasource)
             connector = self._get_connector(datasource, database)
             if database and not self._database_matches_scope(catalog, database, connector):
-                return FuncToolResult(result=[])
+                return self._catalog_page("list_schemas", [], page_size, offset, None, query)
             schemas = connector.get_schemas(catalog, database, include_sys=include_sys)
             filtered = [
                 schema for schema in schemas if self._schema_matches_scope(catalog, database, schema, connector)
             ]
-            return FuncToolResult(result=filtered)
+            return self._catalog_page("list_schemas", filtered, page_size, offset, None, query)
         except Exception as e:
             return FuncToolResult(success=0, error=str(e))
 
     @mcp_tool()
     @tool_contract(access="read", direct_call=True)
+    @native_pagination()
     def list_tables(
         self,
         catalog: Optional[str] = "",
         database: Optional[str] = "",
         schema_name: Optional[str] = "",
         datasource: Optional[str] = "",
-        include_views: Optional[bool] = True,
+        include_views: Optional[bool] = None,
+        page_size: Optional[int] = None,
+        offset: int = 0,
+        snapshot_id: Optional[str] = None,
     ) -> FuncToolResult:
         """
         Return table-like objects (tables, views, materialized views) visible to the connector.
@@ -1816,12 +1912,36 @@ class DBFuncTool:
             datasource: Optional datasource to route the query to. Defaults to the current datasource.
             include_views: When True (default) also include views and materialized views.
 
+        Pagination:
+            Agent calls default to 200 records. Use page_size, offset and the returned
+            snapshot_id to continue without another catalog read. No page-size hard cap.
+            Direct calls without pagination arguments retain the complete list.
+
         Returns:
             FuncToolResult with result=[{"type": "table|view|materialized_view", "qualified_name": str}, ...].
             ``qualified_name`` is ``[db.][schema.]table``, prefixing only the levels the caller did not pass
             (e.g. pass ``database`` but not ``schema`` and each entry carries its resolved ``schema.table``).
             On failure success=0 with an explanatory error message.
         """
+        query = {
+            "catalog": catalog,
+            "database": database,
+            "schema_name": schema_name,
+            "datasource": datasource,
+            "include_views": include_views,
+        }
+        try:
+            if page_size is not None:
+                validate_page(page_size, offset)
+            if snapshot_id:
+                return self._catalog_page("list_tables", None, page_size, offset, snapshot_id, query)
+            if offset:
+                raise ValueError("Read the first page before supplying offset; continue with snapshot_id")
+        except (OSError, ValueError, TypeError) as exc:
+            return FuncToolResult(success=0, error=str(exc))
+        include_views = True if include_views is None else include_views
+        query["include_views"] = include_views
+
         try:
             catalog, database, schema_name = self._normalize_namespace_args(
                 catalog,
@@ -1856,7 +1976,7 @@ class DBFuncTool:
                     logger.debug(f"get_materialized_views unavailable on {connector.dialect}: {e}")
 
             filtered_result = self._filter_table_entries(result, catalog, database, schema_name, connector)
-            return FuncToolResult(result=filtered_result)
+            return self._catalog_page("list_tables", filtered_result, page_size, offset, None, query)
         except Exception as e:
             return FuncToolResult(success=0, error=str(e))
 

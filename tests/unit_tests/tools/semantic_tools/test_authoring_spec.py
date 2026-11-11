@@ -3,6 +3,7 @@
 import copy
 import re
 from importlib import resources
+from pathlib import Path
 
 import pytest
 import yaml
@@ -170,11 +171,15 @@ def test_reference_cache_reuses_content_and_refreshes_same_version_changes(contr
 
 
 @pytest.mark.parametrize("authoring_scope", ["full", "datasets"])
+@pytest.mark.parametrize("custom_root", [False, True])
 def test_modeling_reads_generated_references_in_strict_mode_and_resumes(
-    contract, real_agent_config, mock_llm_create, authoring_scope
+    contract, real_agent_config, mock_llm_create, tmp_path, authoring_scope, custom_root
 ):
     from datus.agent.node.semantic_modeling_agentic_node import SemanticModelingAgenticNode
     from datus.schemas.semantic_agentic_node_models import SemanticNodeInput
+
+    if custom_root:
+        real_agent_config.session_dir = str(tmp_path / "custom_sessions")
 
     def new_node(session_id):
         node = SemanticModelingAgenticNode(
@@ -183,6 +188,8 @@ def test_modeling_reads_generated_references_in_strict_mode_and_resumes(
             session_id=session_id,
             authoring_scope=authoring_scope,
         )
+        if custom_root:
+            node.relocate_session(scope="tenant", session_subdir="parent_session")
         node.input = SemanticNodeInput(user_message="Model order revenue", authoring_scope=authoring_scope)
         return node
 
@@ -190,7 +197,7 @@ def test_modeling_reads_generated_references_in_strict_mode_and_resumes(
     filesystem = node._make_filesystem_tool(strict=True)
     context = node._prepare_template_context(node.input)
     prompt = node._get_session_system_prompt(template_context=context)
-    data_dir = real_agent_config.path_manager.session_data_dir(node.session_id)
+    data_dir = Path(node._resolve_session_data_dir())
     reference = next(data_dir.rglob("capability-window.yaml"))
     assert str(reference.parent) in prompt
     assert yaml.safe_load(filesystem.read_file(str(reference)).result)["definitions"] == contract["definitions"]

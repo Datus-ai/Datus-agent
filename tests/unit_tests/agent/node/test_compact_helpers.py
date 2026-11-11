@@ -1134,28 +1134,58 @@ async def test_cancelled_rewrite_finishes_bookkeeping_before_esc_rollback(tmp_pa
 @pytest.mark.asyncio
 @pytest.mark.parametrize("item_format", ["responses", "anthropic"])
 @pytest.mark.parametrize("mid_turn", [False, True])
-async def test_compaction_retains_exact_archive_cursor_and_persists_it(tmp_path, item_format, mid_turn):
+async def test_compaction_retains_native_snapshot_arguments_and_persists_them(tmp_path, item_format, mid_turn):
     from datus.agent.node.context_rewriter import build_user_item
-    from datus.utils.tool_result_store import json_text
+    from datus.utils.result_pagination import SnapshotStore, list_page
+    from datus.utils.tool_result_store import ACTIVE_RESULT_STORE, json_text
 
     node = TestMeasuredContextContracts._node(tmp_path)
     store = node._get_tool_result_store()
-    rows = [{"name": f"column_{i}", "comment": "a sourced field definition"} for i in range(5000)]
-    preview = store.project("columns", {"success": 1, "result": {"columns": rows}})
-    extra = preview["result"]["extra"]
-    page = store.read(extra["result_id"], "columns", extra["next_cursor"])
-    ref = {key: page["result"]["extra"][key] for key in ("result_id", "section", "cursor", "next_cursor")}
-    node._pinned_model.summarize_items.return_value = {"content": "Continue " + ref["result_id"][:8]}
-    request = build_user_item("Continue checking the current source", item_format)
-    if item_format == "responses":
-        items = [request, {"type": "function_call_output", "call_id": "c", "output": json_text(page)}]
-    else:
-        items = [
-            request,
-            {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "c", "content": json_text(page)}]},
-        ]
-    await node._session.add_items(items)
+    rows = [{"name": f"table_{i}"} for i in range(5000)]
+    token = ACTIVE_RESULT_STORE.set(store)
     try:
+        snapshots = SnapshotStore()
+        rid = snapshots.save("list_tables", rows, {}, {})
+        page = {"success": 1, "result": list_page(rows, rid, 100, 100)}
+        ref = {"tool": "list_tables", "snapshot_id": rid, "offset": 200}
+        node._pinned_model.summarize_items.return_value = {"content": "Continue checking tables"}
+        request = build_user_item("Continue checking the current source", item_format)
+        if item_format == "responses":
+            items = [
+                request,
+                {"type": "function_call", "call_id": "c", "name": "list_tables", "arguments": "{}"},
+                {"type": "function_call_output", "call_id": "c", "output": json_text(page)},
+            ]
+        else:
+            items = [
+                request,
+                {"role": "assistant", "content": [{"type": "tool_use", "id": "c", "name": "list_tables", "input": {}}]},
+                {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "c", "content": json_text(page)}]},
+            ]
+        external_output = {"success": 1, "result": {"extra": "ordinary upstream description", "items": []}}
+        if item_format == "responses":
+            items.extend(
+                [
+                    {"type": "function_call", "call_id": "external", "name": "external_tool", "arguments": "{}"},
+                    {"type": "function_call_output", "call_id": "external", "output": json_text(external_output)},
+                ]
+            )
+        else:
+            items.extend(
+                [
+                    {
+                        "role": "assistant",
+                        "content": [{"type": "tool_use", "id": "external", "name": "external_tool", "input": {}}],
+                    },
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "tool_result", "tool_use_id": "external", "content": json_text(external_output)}
+                        ],
+                    },
+                ]
+            )
+        await node._session.add_items(items)
         for _ in range(2):
             if mid_turn:
                 result = await node.compact_mid_turn(
@@ -1166,8 +1196,8 @@ async def test_compaction_retains_exact_archive_cursor_and_persists_it(tmp_path,
             assert result["success"] and result["mode"] == "major"
             items = await node._session.get_items()
             assert store.recovery_references(items) == [ref]
-        resumed = store.read(ref["result_id"], ref["section"], ref["next_cursor"])
-        start = len(preview["result"]["items"]) + len(page["result"]["items"])
-        assert resumed["result"]["items"] == rows[start : start + len(resumed["result"]["items"])]
+        resumed = SnapshotStore().read(rid, "list_tables", {}, {})
+        assert list_page(resumed, rid, 100, ref["offset"])["items"] == rows[200:300]
     finally:
+        ACTIVE_RESULT_STORE.reset(token)
         node._session.close()
