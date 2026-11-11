@@ -281,6 +281,35 @@ def test_nightly_installs_p0_plugins_only_through_managed_store():
 
 
 @pytest.mark.component
+def test_nightly_sets_up_shared_rust_toolchain_before_native_builds(tmp_path):
+    workflow = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
+    steps = workflow["jobs"]["run-nightly"]["steps"]
+    setup = next(step for step in steps if step.get("uses", "").startswith("dtolnay/rust-toolchain@"))
+    resolver_id = re.fullmatch(r"\$\{\{ steps\.(\w+)\.outputs\.rust_toolchain \}\}", setup["with"]["toolchain"])
+    assert resolver_id is not None
+    resolver = next(step for step in steps if step.get("id") == resolver_id.group(1))
+    assert steps.index(resolver) < steps.index(setup)
+    for name in ("Fetch SQL policy native build dependencies", "Build SQL policy native source wheel cache"):
+        native_step = next(step for step in steps if step.get("name") == name)
+        assert steps.index(setup) < steps.index(native_step)
+
+    # Execute the workflow resolver to check that it follows the shared version pin.
+    script = resolver["run"].split("python - <<'PY'\n", 1)[1].rsplit("\nPY", 1)[0]
+    output = tmp_path / "github-output"
+    subprocess.run(
+        [sys.executable, "-c", script],
+        cwd=REPO_ROOT,
+        env={**os.environ, "GITHUB_OUTPUT": str(output)},
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    config = json.loads((REPO_ROOT / "ci/harness/sql-policy-host.json").read_text())
+    assert output.read_text() == f"rust_toolchain={config['rust_toolchain']}\n"
+
+
+@pytest.mark.component
 def test_nightly_prepares_native_builds_with_scoped_ephemeral_auth(tmp_path):
     workflow = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
     steps = workflow["jobs"]["run-nightly"]["steps"]
@@ -295,6 +324,7 @@ def test_nightly_prepares_native_builds_with_scoped_ephemeral_auth(tmp_path):
         f"#!{sys.executable}\n"
         "import json, os, subprocess, sys\n"
         "from pathlib import Path\n"
+        "if sys.argv[1:] == ['--version']: sys.exit(0)\n"
         "def credentials(path):\n"
         "    return subprocess.run(['git', 'credential', 'fill'], "
         "input=f'protocol=https\\nhost=github.com\\npath={path}\\n\\n', "

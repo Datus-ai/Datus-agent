@@ -234,6 +234,22 @@ jobs:
           persist-credentials: false
           token: ${{ secrets.RELEASE_BOT_TOKEN }}
 
+      - name: Resolve SQL policy Rust toolchain
+        id: policy_rust
+        run: |
+          uv run --no-project --with pyyaml python - <<'PY'
+          import os
+          from ci.sql_policy_gate import load_config
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write('rust_toolchain=' + load_config()['rust_toolchain'] + '\n')
+          PY
+
+      # Jobs do not inherit the toolchain installed by the policy gate.
+      - name: Set up SQL policy Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ steps.policy_rust.outputs.rust_toolchain }}
+
       - name: Fetch SQL policy native build dependencies
         env:
           PRIVATE_REPO_TOKEN: ${{ secrets.RELEASE_BOT_TOKEN }}
@@ -244,6 +260,7 @@ jobs:
           GIT_CONFIG_VALUE_0: '!f() { printf "username=x-access-token\npassword=%s\n" "$PRIVATE_REPO_TOKEN"; }; f'
         run: |
           if [ -f external/datus-sql-policies/Cargo.toml ]; then
+            cargo --version
             cargo fetch --locked --manifest-path external/datus-sql-policies/Cargo.toml
           fi
 
@@ -759,7 +776,7 @@ jobs:
           # runs in --dry-run, so it only writes the digest artifact and makes no
           # GitHub issue changes. To enable per-flow issue sync, create the
           # `coverage-gap` label once and drop the --dry-run flag below.
-          uv run python ci/harness/check_nightly_coverage.py \
+          uv run --no-project --with pyyaml python ci/harness/check_nightly_coverage.py \
             --coverage-map ci/harness/coverage-map.yml \
             --nightly-manifest nightly-manifest.json \
             --output coverage-gap-report.md \
